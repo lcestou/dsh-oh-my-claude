@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { LlmAdapter, LlmError } from "@deepseek-ai/dsh-llm";
 import z from "@deepseek-ai/schemastery";
 import { registerSessionRoutes } from "./sessions.js";
+import { KEY_HEADER, MCP_PATH, registerMcpBridge } from "./mcp.js";
 import {
   ClaudeProcess,
   allowResult,
@@ -61,6 +62,10 @@ export const Config = z.object({
     .min(100)
     .default(600)
     .description("Characters of tool arguments/results shown in the activity blocks"),
+  dshTools: z
+    .boolean()
+    .default(true)
+    .description("Expose dsh tools (subagents, jobs, skills...) to Claude Code over MCP"),
   debug: z.boolean().default(false).description("Log spawn arguments (minus the prompt) per call"),
   approvals: z
     .boolean()
@@ -297,6 +302,7 @@ export function buildArgs({
   accessMode,
   flags,
   promptText,
+  mcp,
 }) {
   const args = ["-p"];
   if (usesStdin(flags)) args.push("--input-format", "stream-json");
@@ -331,6 +337,10 @@ export function buildArgs({
   }
   if (session && supports(flags, "--session-id") && supports(flags, "--resume")) {
     args.push(session.resuming ? "--resume" : "--session-id", session.id);
+  }
+  if (mcp && supports(flags, "--mcp-config")) {
+    const dsh = { type: "http", url: mcp.url, headers: { [KEY_HEADER]: mcp.key } };
+    args.push("--mcp-config", JSON.stringify({ mcpServers: { dsh } }));
   }
   return args;
 }
@@ -437,6 +447,7 @@ function finishReason(result) {
 export class Translator {
   constructor({ toolActivity = true, toolTextLimit = TOOL_TEXT_LIMIT } = {}) {
     this.toolActivity = toolActivity;
+    this.dshIds = new Set(); // tool_use ids of dsh tools called over the MCP bridge
     this.limit = toolTextLimit;
     this.index = 0;
     this.open = new Map(); // api block index → { index, blockType, text }
@@ -446,16 +457,20 @@ export class Translator {
     this.toolPending = false; // a tool_use block closed and its result has not arrived yet
   }
 
+  deltaType(block) {
+    return block.blockType === "text" ? "text-delta" : "reasoning-delta";
+  }
+
   startBlock(blockType, prefix = "") {
     const block = { index: this.index++, blockType, text: prefix };
     const events = [{ type: "block-start", index: block.index, blockType }];
-    if (prefix) events.push({ type: "reasoning-delta", index: block.index, text: prefix });
+    if (prefix) events.push({ type: this.deltaType(block), index: block.index, text: prefix });
     return { block, events };
   }
 
   delta(block, text) {
     block.text += text;
-    const type = block.blockType === "text" ? "text-delta" : "reasoning-delta";
+    const type = this.deltaType(block);
     return { type, index: block.index, text };
   }
 
@@ -555,7 +570,7 @@ export class Translator {
         this.open.set(apiIndex, { index: -1, blockType: "hidden", text: "", tool: true });
         return [];
       }
-      opened = this.startBlock("reasoning", `▶ ${cb.name} `);
+      opened = this.startBlock(...this.toolLead(cb));
       opened.block.tool = true;
     } else return [];
     this.open.set(apiIndex, opened.block);
@@ -580,15 +595,23 @@ export class Translator {
       else if (b.type === "thinking" && b.thinking)
         events.push(...this.wholeBlock("reasoning", b.thinking));
       else if (b.type === "tool_use" && this.toolActivity) {
+        const [kind, lead] = this.toolLead(b);
         events.push(
-          ...this.wholeBlock(
-            "reasoning",
-            `▶ ${b.name} ${clip(JSON.stringify(b.input ?? {}), this.limit)}`,
-          ),
+          ...this.wholeBlock(kind, lead + clip(JSON.stringify(b.input ?? {}), this.limit)),
         );
       }
     }
     return events;
+  }
+
+  /** dsh tools reached over the MCP bridge (subagents, jobs...) render as visible text rows, the
+   *  rest as collapsed reasoning. Returns [block kind, lead text]. */
+  toolLead(cb) {
+    if (cb.name?.startsWith("mcp__dsh__")) {
+      this.dshIds.add(cb.id);
+      return ["text", `⤷ ${cb.name.slice("mcp__dsh__".length)} `];
+    }
+    return ["reasoning", `▶ ${cb.name} `];
   }
 
   toolResults(content, parentToolUseId) {
@@ -601,8 +624,12 @@ export class Translator {
       if (b.is_error && DENIED_RE.test(raw)) this.denied++;
       const body = clip(raw || "(empty)", this.limit);
       const tag = parentToolUseId ? "↳ " : "";
+      const dsh = this.dshIds.delete(b.tool_use_id);
       events.push(
-        ...this.wholeBlock("reasoning", `${tag}◀ ${b.is_error ? "error" : "result"}\n${body}`),
+        ...this.wholeBlock(
+          dsh ? "text" : "reasoning",
+          `${tag}${dsh ? "⤶" : "◀"} ${b.is_error ? "error" : "result"}\n${body}`,
+        ),
       );
     }
     return events;
@@ -695,6 +722,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       accessMode,
       flags: cli.flags,
       promptText,
+      mcp:
+        this.mcp && options.sessionId && !options.purpose && this.config.dshTools
+          ? { url: `${this.mcp.base}${MCP_PATH}/${options.sessionId}`, key: this.mcp.key }
+          : undefined,
     });
     // Spec = what a running process was spawned with. `resuming` is deliberately left out: it flips
     // to true after the first turn and must not force a respawn.
@@ -1010,6 +1041,12 @@ export function apply(ctx, config) {
   ]);
   const adapter = new ClaudeCodeAdapter(ctx, config);
   ctx.llm.registerAdapter(["claude-code"], adapter);
+  registerMcpBridge(ctx, { log: (level, msg) => adapter.log(level, msg), version: "0.6.0" }).then(
+    (mcp) => {
+      adapter.mcp = mcp;
+    },
+    (e) => adapter.log("warn", `mcp bridge unavailable: ${e?.message ?? e}`),
+  );
   registerSessionRoutes(ctx, {
     log: (level, msg) => adapter.log(level, msg),
     projectDir: (cwd) => join(CLAUDE_HOME, "projects", projectDirName(cwd)),

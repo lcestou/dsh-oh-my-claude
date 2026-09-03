@@ -196,6 +196,30 @@ assert.deepEqual(done[0].usage, {
 assert.equal(done[1].reason.kind, "stop");
 assert.equal(tr.finished, true);
 
+// dsh tools called over the MCP bridge render as visible text rows, results too
+const trd = new Translator();
+const dshCall = trd.translate({
+  type: "assistant",
+  message: {
+    content: [
+      { type: "tool_use", id: "d1", name: "mcp__dsh__subagent_local", input: { prompt: "x" } },
+    ],
+  },
+});
+assert.equal(dshCall[0].blockType, "text", "bridge call is a text block");
+assert.match(dshCall[1].text, /^⤷ subagent_local /, "bridge call drops the mcp prefix");
+const dshResult = trd.translate({
+  type: "user",
+  message: { content: [{ type: "tool_result", tool_use_id: "d1", content: "abc" }] },
+});
+assert.equal(dshResult[0].blockType, "text", "bridge result is a text block");
+assert.match(dshResult[1].text, /^⤶ result\nabc/);
+const nativeResult = trd.translate({
+  type: "user",
+  message: { content: [{ type: "tool_result", tool_use_id: "other", content: "y" }] },
+});
+assert.equal(nativeResult[0].blockType, "reasoning", "other tools stay in reasoning");
+
 // translator fallback: no partials seen → whole assistant message is emitted
 const tr2 = new Translator({ toolActivity: false });
 const whole = tr2.translate({

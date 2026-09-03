@@ -41,6 +41,7 @@ All keys are optional.
 | `approvals` | `true` | Relay Claude Code permission prompts and AskUserQuestion to dsh dialogs. |
 | `processIdleMs` | `1800000` | Kill a session's idle Claude process after this long without a turn. |
 | `maxProcesses` | `4` | Cap on live Claude processes; the longest idle is evicted first. |
+| `dshTools` | `true` | Serve dsh tools (subagents, jobs, goals, skills, web search) to Claude Code over MCP. |
 
 Effort: none is advertised as default, so Claude Code's own default applies unless you pick one in dsh. Claude Code's own subagents stream back as `↳ subagent` reasoning blocks. Tool calls the CLI denies because it cannot prompt are counted and reported in one line at the end of the turn.
 
@@ -60,6 +61,8 @@ Effort: none is advertised as default, so Claude Code's own default applies unle
 
 **Terminal sessions.** Settings → Claude Code lists the Claude Code transcripts of a workspace (`~/.claude/projects/<cwd>/*.jsonl`), including sessions started with `claude` in a terminal. Open turns one into a dsh session: the transcript is converted to dsh events (prompts, replies, thinking, tool calls and results) so the history renders, and the dsh session takes the Claude session id as its own id, so the next prompt resumes that very Claude session with its full context. The transcript is only read; Claude Code keeps appending to the same file, so the session can be continued from either side. Claude's own subagent sidechains and an unanswered trailing prompt are left out of the copy. The browser half is `src/client/index.jsx`, built into `lib/client.js` by `bun run build`.
 
+**dsh tools over MCP.** Every dsh tool the session's agent can see, except the shell and file ones Claude Code has natively, is served to the Claude process as an MCP server named `dsh` (`--mcp-config`, Streamable HTTP on the dsh web port, path `/dsh-llm-claude/mcp/<session id>`, guarded by a key generated per dsh process). Claude Code sees them as `mcp__dsh__*`: `subagent_local`, `researcher_local`, `list_agents`, `send_message`, jobs, goals, skills, web search. A subagent started this way is a real child of the dsh session: it runs on whatever route the preset pins (someone-llm here), shows in the session header's subagent dropdown, and its completion notice reaches the next Claude turn as context. Switch off with `dshTools: false`. Source `src/mcp.js`.
+
 **Auxiliary calls.** dsh's session-title and compaction requests run as one turn with no tools and no session of their own, from a scratch directory so they never show up in a workspace's session list.
 
 **Errors.** Abort from the UI kills the child. Non-zero exits surface with the last stderr; a real rate limit surfaces as `RATE_LIMIT` with the provider's reset time as retry-after.
@@ -68,7 +71,7 @@ Effort: none is advertised as default, so Claude Code's own default applies unle
 
 ## Not covered
 
-- dsh's own tools are invisible to the child. The system prompt still mentions them, so Claude Code may occasionally talk about a tool it cannot call.
+- dsh's shell and file tools are not proxied; Claude Code uses its own, under its own permission mode.
 - Claude Code sessions are not deleted when dsh sessions are.
 
 ## Check

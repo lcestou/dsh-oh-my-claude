@@ -15,14 +15,16 @@ const json = (res, status, value) => {
   res.end(JSON.stringify(value));
 };
 
-const readBody = (req) =>
+/** Parse a JSON request body, capped at `limit` bytes. */
+export const readBody = (req, limit = BODY_LIMIT) =>
   new Promise((resolve, reject) => {
     let size = 0;
     const chunks = [];
     req.on("data", (c) => {
       size += c.length;
-      if (size > BODY_LIMIT) reject(new Error("body too large"));
-      else chunks.push(c);
+      if (size <= limit) return chunks.push(c);
+      reject(new Error("body too large"));
+      req.destroy();
     });
     req.on("end", () => {
       try {

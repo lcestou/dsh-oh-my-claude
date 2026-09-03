@@ -1,6 +1,6 @@
 {
   "name": "dsh-llm-claude",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "type": "module",
   "description": "Claude Code CLI as an LLM provider for dsh (DeepSeek Harness): live model list, session resume, images, tool activity",
   "main": "src/adapter.js",
@@ -10,7 +10,7 @@
     "./package.json": "./package.json"
   },
   "scripts": {
-    "test": "node src/adapter.test.js && node src/transcript.test.js",
+    "test": "node src/adapter.test.js && node src/transcript.test.js && node src/mcp.test.js",
     "check": "oxlint src/ --max-warnings=0 && oxfmt --check src/ && bun run test && bun run build",
     "lint": "oxlint src/ --max-warnings=0",
     "format": "oxfmt src/",

@@ -127,7 +127,8 @@ export class ClaudeProcess {
     this.child = spawn("claude", args, {
       cwd,
       stdio: ["pipe", "pipe", "pipe"],
-      env: { ...process.env },
+      // dsh subagents proxied over MCP can run for a while; the CLI default tool timeout is shorter.
+      env: { MCP_TOOL_TIMEOUT: "3600000", ...process.env },
     });
     this.child.stdin.on("error", () => {});
     this.child.stderr.on("data", (d) => {
