@@ -1,15 +1,25 @@
 // dsh LLM adapter that drives the Claude Code CLI (`claude -p --input-format stream-json --output-format stream-json`).
-import { execFile, spawn } from "node:child_process";
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { createInterface } from "node:readline";
 import { LlmAdapter, LlmError } from "@deepseek-ai/dsh-llm";
 import z from "@deepseek-ai/schemastery";
+import {
+  ClaudeProcess,
+  allowResult,
+  answersFor,
+  controlErrorLine,
+  controlResponseLine,
+  denyResult,
+  parseQuestions,
+  permissionReason,
+  userTurnLine,
+} from "./process.js";
 
 export const name = "dsh-llm-claude";
-export const inject = ["llm", "sessions", "attachments"];
+export const inject = ["llm", "sessions", "attachments", "agents", "approval", "userQuestions"];
 
 export const Config = z.object({
   permissionMode: z
@@ -36,6 +46,39 @@ export const Config = z.object({
     .boolean()
     .default(true)
     .description("Keep one Claude Code session per dsh session via --session-id/--resume"),
+  idleTimeoutMs: z
+    .number()
+    .step(1)
+    .min(1000)
+    .default(1_800_000)
+    .description(
+      "Kill the child when no stream event arrives for this long (a running tool emits nothing until it ends)",
+    ),
+  toolTextLimit: z
+    .number()
+    .step(1)
+    .min(100)
+    .default(600)
+    .description("Characters of tool arguments/results shown in the activity blocks"),
+  debug: z.boolean().default(false).description("Log spawn arguments (minus the prompt) per call"),
+  approvals: z
+    .boolean()
+    .default(true)
+    .description(
+      "Route Claude Code permission prompts and AskUserQuestion to dsh dialogs (--permission-prompt-tool stdio)",
+    ),
+  processIdleMs: z
+    .number()
+    .step(1)
+    .min(10_000)
+    .default(30 * 60 * 1000)
+    .description("Kill a session's idle Claude Code process after this long without a turn"),
+  maxProcesses: z
+    .number()
+    .step(1)
+    .min(1)
+    .default(4)
+    .description("Cap on live Claude Code processes; the longest-idle one is evicted first"),
 });
 
 const EFFORTS_ALL = ["low", "medium", "high", "xhigh", "max"];
@@ -57,7 +100,7 @@ export const KNOWN_MODELS = [
   M("claude-haiku-4-5", "Claude Haiku 4.5", 200_000, []),
 ];
 
-const DEFAULT_EFFORT = "high"; // Claude Code's own default; `--effort` only sent when dsh picks one
+// No default effort is advertised: `--effort` is only sent when dsh picks one, so the CLI's own default rules.
 const CLAUDE_HOME = join(homedir(), ".claude");
 const MAX_IMAGES = 20;
 const TOOL_TEXT_LIMIT = 600;
@@ -122,12 +165,7 @@ export function resolveModelInfo(provider, modelId, models = catalog.models) {
   if (!found) return info;
   info.context = { contextWindow: found.contextWindow };
   if (found.efforts.length > 0) {
-    info.reasoning = {
-      efforts: found.efforts.map((id) => ({ id, name: id })),
-      defaultEffort: found.efforts.includes(DEFAULT_EFFORT)
-        ? DEFAULT_EFFORT
-        : found.efforts[found.efforts.length - 1],
-    };
+    info.reasoning = { efforts: found.efforts.map((id) => ({ id, name: id })) };
   }
   return info;
 }
@@ -264,6 +302,7 @@ export function buildArgs({
   else args.push(promptText ?? "");
   args.push("--output-format", "stream-json", "--verbose");
   if (supports(flags, "--include-partial-messages")) args.push("--include-partial-messages");
+  if (supports(flags, "--forward-subagent-text")) args.push("--forward-subagent-text");
   if (model) args.push("--model", model);
   if (reasoningEffort && supports(flags, "--effort")) args.push("--effort", reasoningEffort);
   if (typeof system === "string" && system && supports(flags, "--append-system-prompt")) {
@@ -277,6 +316,11 @@ export function buildArgs({
   if (supports(flags, "--permission-mode")) {
     args.push("--permission-mode", permissionModeFor(config, accessMode));
   }
+  if (config.approvals && usesStdin(flags) && supports(flags, "--permission-prompt-tool")) {
+    args.push("--permission-prompt-tool", "stdio");
+  }
+  // "default" is what the Agent SDK passes; without it the CLI keeps AskUserQuestion out of -p runs.
+  if (supports(flags, "--tools")) args.push("--tools", "default");
   if (config.allowedTools.length > 0) args.push("--allowedTools", ...config.allowedTools);
   if (config.disallowedTools.length > 0) args.push("--disallowedTools", ...config.disallowedTools);
   for (const d of config.addDirs) args.push("--add-dir", d);
@@ -330,13 +374,14 @@ export function buildInput(promptText, images) {
       source: { type: "base64", media_type: img.mediaType, data: img.data },
     });
   }
-  return `${JSON.stringify({ type: "user", message: { role: "user", content } })}\n`;
+  return userTurnLine(content);
 }
 
 // ---------------------------------------------------------------------------
 // stream-json → dsh chunks
 
 const clip = (s, n = TOOL_TEXT_LIMIT) => (s.length > n ? `${s.slice(0, n)}…` : s);
+const DENIED_RE = /requires? approval|permission (was )?denied|not allowed/i;
 
 function toolResultText(block) {
   const c = block.content;
@@ -386,12 +431,15 @@ function finishReason(result) {
  * Tool calls and results are shown as reasoning blocks: the CLI runs its own tools, dsh only watches.
  */
 export class Translator {
-  constructor({ toolActivity = true } = {}) {
+  constructor({ toolActivity = true, toolTextLimit = TOOL_TEXT_LIMIT } = {}) {
     this.toolActivity = toolActivity;
+    this.limit = toolTextLimit;
     this.index = 0;
     this.open = new Map(); // api block index → { index, blockType, text }
     this.sawPartial = false;
     this.finished = false;
+    this.denied = 0; // tool calls Claude Code refused because a non-interactive run cannot ask
+    this.toolPending = false; // a tool_use block closed and its result has not arrived yet
   }
 
   startBlock(blockType, prefix = "") {
@@ -426,12 +474,22 @@ export class Translator {
       case "stream_event":
         return this.partial(event.event ?? {});
       case "assistant":
-        return this.assistant(event.message?.content ?? []);
+        return this.assistant(event.message?.content ?? [], event.parent_tool_use_id);
       case "user":
-        return this.toolResults(event.message?.content ?? []);
+        return this.toolResults(event.message?.content ?? [], event.parent_tool_use_id);
       case "result": {
         this.finished = true;
-        const events = event.usage ? [usageEvent(event.usage)] : [];
+        const events = [];
+        if (this.denied > 0 && !event.is_error) {
+          const n = this.denied;
+          events.push(
+            ...this.wholeBlock(
+              "text",
+              `\n\n_Claude Code denied ${n} tool call${n === 1 ? "" : "s"} that needed approval. Switch Access mode to Full Access to allow them._`,
+            ),
+          );
+        }
+        if (event.usage) events.push(usageEvent(event.usage));
         events.push({ type: "finish", reason: finishReason(event) });
         return events;
       }
@@ -458,13 +516,14 @@ export class Translator {
     switch (ev.type) {
       case "message_start":
         this.sawPartial = true;
+        this.toolPending = false;
         this.open.clear();
         return [];
       case "content_block_start":
         return this.openBlock(ev.index, ev.content_block ?? {});
       case "content_block_delta": {
         const block = this.open.get(ev.index);
-        if (!block) return [];
+        if (!block || block.index < 0) return [];
         const d = ev.delta ?? {};
         const text = d.text ?? d.thinking ?? d.partial_json ?? "";
         return text ? [this.delta(block, text)] : [];
@@ -473,7 +532,10 @@ export class Translator {
         const block = this.open.get(ev.index);
         if (!block) return [];
         this.open.delete(ev.index);
-        return [this.endBlock(block)];
+        // A finished tool_use block means the CLI is now running that tool: no stream events until
+        // its result arrives, however long it takes. Callers read this to pause their idle timer.
+        this.toolPending = block.tool === true;
+        return block.index < 0 ? [] : [this.endBlock(block)];
       }
       default:
         return [];
@@ -484,14 +546,29 @@ export class Translator {
     let opened;
     if (cb.type === "text") opened = this.startBlock("text");
     else if (cb.type === "thinking") opened = this.startBlock("reasoning");
-    else if (cb.type === "tool_use" && this.toolActivity)
+    else if (cb.type === "tool_use") {
+      if (!this.toolActivity) {
+        this.open.set(apiIndex, { index: -1, blockType: "hidden", text: "", tool: true });
+        return [];
+      }
       opened = this.startBlock("reasoning", `▶ ${cb.name} `);
-    else return [];
+      opened.block.tool = true;
+    } else return [];
     this.open.set(apiIndex, opened.block);
     return opened.events;
   }
 
-  assistant(content) {
+  assistant(content, parentToolUseId) {
+    // Claude Code subagent output (--forward-subagent-text) arrives as whole messages tagged with the
+    // parent tool id; it never comes as partials, so it is always rendered, folded into reasoning.
+    if (parentToolUseId) {
+      if (!this.toolActivity) return [];
+      const text = content
+        .filter((b) => b.type === "text" && b.text)
+        .map((b) => b.text)
+        .join("\n");
+      return text ? this.wholeBlock("reasoning", `↳ subagent\n${clip(text, this.limit)}`) : [];
+    }
     if (this.sawPartial) return []; // already streamed as deltas
     const events = [];
     for (const b of content) {
@@ -500,20 +577,29 @@ export class Translator {
         events.push(...this.wholeBlock("reasoning", b.thinking));
       else if (b.type === "tool_use" && this.toolActivity) {
         events.push(
-          ...this.wholeBlock("reasoning", `▶ ${b.name} ${clip(JSON.stringify(b.input ?? {}))}`),
+          ...this.wholeBlock(
+            "reasoning",
+            `▶ ${b.name} ${clip(JSON.stringify(b.input ?? {}), this.limit)}`,
+          ),
         );
       }
     }
     return events;
   }
 
-  toolResults(content) {
+  toolResults(content, parentToolUseId) {
+    this.toolPending = false;
     if (!this.toolActivity) return [];
     const events = [];
     for (const b of content) {
       if (b.type !== "tool_result") continue;
-      const body = clip(toolResultText(b).trim() || "(empty)");
-      events.push(...this.wholeBlock("reasoning", `◀ ${b.is_error ? "error" : "result"}\n${body}`));
+      const raw = toolResultText(b).trim();
+      if (b.is_error && DENIED_RE.test(raw)) this.denied++;
+      const body = clip(raw || "(empty)", this.limit);
+      const tag = parentToolUseId ? "↳ " : "";
+      events.push(
+        ...this.wholeBlock("reasoning", `${tag}◀ ${b.is_error ? "error" : "result"}\n${body}`),
+      );
     }
     return events;
   }
@@ -522,11 +608,14 @@ export class Translator {
 // ---------------------------------------------------------------------------
 // Adapter
 
+const specKey = (spec) => JSON.stringify(spec);
+
 export class ClaudeCodeAdapter extends LlmAdapter {
   constructor(ctx, config) {
     super();
     this.ctx = ctx;
     this.config = config;
+    this.processes = new Map(); // dsh sessionId → ClaudeProcess
   }
 
   providerInfo(provider) {
@@ -549,6 +638,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     }
   }
 
+  log(level, message) {
+    this.ctx?.logger?.[level]?.(`dsh-llm-claude: ${message}`);
+  }
+
   async loadImages(refs, signal) {
     const store = this.ctx?.attachments;
     if (!store || refs.length === 0) return [];
@@ -558,21 +651,18 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         const stored = await store.readImage(ref, signal);
         out.push({ mediaType: ref.mediaType, data: Buffer.from(stored.data).toString("base64") });
       } catch (error) {
-        this.ctx?.logger?.warn?.(
-          `dsh-llm-claude: skipping image ${ref.attachmentId}: ${error?.message ?? error}`,
-        );
+        this.log("warn", `skipping image ${ref.attachmentId}: ${error?.message ?? error}`);
       }
     }
     return out;
   }
 
+  /** Everything one turn needs: spawn args + spec for the long-lived process, and the stdin line for this turn. */
   async prepare(options, { forceFresh = false } = {}) {
     const cli = await probeCli();
     if (!this.loggedVersion) {
       this.loggedVersion = true;
-      this.ctx?.logger?.info?.(
-        `dsh-llm-claude: claude ${cli.version}, stdin input ${usesStdin(cli.flags) ? "on" : "off"}`,
-      );
+      this.log("info", `claude ${cli.version}, stdin input ${usesStdin(cli.flags) ? "on" : "off"}`);
     }
     const cwd = (options.sessionId && this.sessionCwd(options.sessionId)) || process.cwd();
     let session;
@@ -596,74 +686,306 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       flags: cli.flags,
       promptText,
     });
-    return { cwd, args, session, input: stdin ? buildInput(promptText, images) : null };
+    // Spec = what a running process was spawned with. `resuming` is deliberately left out: it flips
+    // to true after the first turn and must not force a respawn.
+    const spec = {
+      cwd,
+      model,
+      effort: options.reasoningEffort ?? null,
+      mode: permissionModeFor(this.config, accessMode),
+      sessionId: session?.id ?? null,
+    };
+    return {
+      cwd,
+      args,
+      session,
+      spec,
+      accessMode,
+      input: stdin ? buildInput(promptText, images) : null,
+    };
   }
 
   async *stream(options) {
-    yield* this.attempt(options, false);
+    if (options.purpose || !options.sessionId || !this.config.resume) {
+      yield* this.oneShot(options);
+      return;
+    }
+    yield* this.turn(options, false);
   }
 
-  /** One `claude -p` run. A resume that the CLI no longer knows is retried once as a fresh session. */
-  async *attempt(options, forceFresh) {
-    const { cwd, args, session, input } = await this.prepare(options, { forceFresh });
-    const child = spawn("claude", args, {
-      cwd,
-      stdio: [input === null ? "ignore" : "pipe", "pipe", "pipe"],
-      env: { ...process.env },
-    });
-    if (input !== null) {
-      child.stdin.on("error", () => {});
-      child.stdin.end(input);
+  // ── persistent path ──────────────────────────────────────────────────────
+
+  /** Reuse the session's process when its spec still matches; otherwise replace it. */
+  async acquire(options, forceFresh) {
+    const prep = await this.prepare(options, { forceFresh });
+    if (prep.input === null) return { prep, proc: null }; // text-mode CLI: fall back to one-shot semantics
+    const key = specKey(prep.spec);
+    let proc = this.processes.get(options.sessionId);
+    if (proc && (!proc.alive || proc.key !== key || proc.busy)) {
+      proc.kill();
+      proc = undefined;
     }
-    let stderr = "";
-    let stray = ""; // non-JSON stdout lines, where the CLI prints "No conversation found"
-    child.stderr.on("data", (d) => {
-      stderr = (stderr + d).slice(-2000);
+    if (!proc) {
+      this.evict();
+      proc = new ClaudeProcess({
+        args: prep.args,
+        cwd: prep.cwd,
+        spec: prep.spec,
+        onExit: (p) => {
+          if (this.processes.get(options.sessionId) === p) this.processes.delete(options.sessionId);
+        },
+      });
+      proc.key = key;
+      proc.resuming = prep.session?.resuming ?? false;
+      this.processes.set(options.sessionId, proc);
+      if (this.config.debug) {
+        this.log("info", `spawn cwd=${prep.cwd} claude ${prep.args.join(" ")}`);
+      }
+    }
+    return { prep, proc };
+  }
+
+  /** Drop processes idle past processIdleMs, then keep the live count under maxProcesses by
+   *  killing the longest-idle ones that are not mid-turn. Called before each spawn. */
+  evict() {
+    const now = Date.now();
+    for (const [id, p] of this.processes) {
+      if (!p.alive || (!p.busy && now - p.lastUsed > this.config.processIdleMs)) {
+        p.kill();
+        this.processes.delete(id);
+      }
+    }
+    const idle = [...this.processes.entries()]
+      .filter(([, p]) => !p.busy)
+      .sort((a, b) => a[1].lastUsed - b[1].lastUsed);
+    while (this.processes.size >= this.config.maxProcesses && idle.length > 0) {
+      const [id, p] = idle.shift();
+      p.kill();
+      this.processes.delete(id);
+    }
+  }
+
+  async *turn(options, forceFresh) {
+    const { prep, proc } = await this.acquire(options, forceFresh);
+    if (proc === null) {
+      yield* this.oneShot(options);
+      return;
+    }
+    const tr = new Translator({
+      toolActivity: this.config.toolActivity,
+      toolTextLimit: this.config.toolTextLimit,
     });
-    const exit = new Promise((resolve) => child.on("close", resolve));
-    const onAbort = () => child.kill();
-    options.signal?.addEventListener("abort", onAbort, { once: true });
-    const rl = createInterface({ input: child.stdout, crlfDelay: Infinity });
-    const tr = new Translator({ toolActivity: this.config.toolActivity && !options.purpose });
+    const pending = new Map(); // control request id → AbortController
     let retryFresh = false;
+    let idle = false;
+    let timer;
+    const armIdle = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        idle = true;
+        proc.kill();
+      }, this.config.idleTimeoutMs);
+    };
+    const onAbort = () => proc.kill();
+    options.signal?.addEventListener("abort", onAbort, { once: true });
+    proc.busy = true;
+    proc.lastUsed = Date.now();
     try {
-      for await (const line of rl) {
-        let event;
-        try {
-          event = JSON.parse(line);
-        } catch {
-          stray = (stray + line + "\n").slice(-2000);
+      if (!proc.write(prep.input))
+        throw new LlmError("claude process is not running", "PROVIDER_ERROR");
+      armIdle();
+      for (;;) {
+        const event = await proc.nextEvent();
+        if (event === null) break;
+        armIdle();
+        if (event.type === "control_request") {
+          yield* this.handleControl(event, options, prep, proc, pending, tr);
           continue;
         }
-        if (isStaleResume(event) && session?.resuming && !forceFresh) {
+        if (event.type === "control_cancel_request") {
+          pending.get(event.request_id)?.abort();
+          continue;
+        }
+        if (event.type === "control_response") continue; // replies to our own initialize etc.
+        if (isStaleResume(event) && proc.resuming && !forceFresh) {
           retryFresh = true;
           break;
         }
         yield* tr.translate(event);
+        if (tr.toolPending) clearTimeout(timer); // tool running: silence is expected, do not time out
         if (tr.finished) break;
       }
       if (retryFresh) {
-        await rememberStarted(session.id, false);
+        await rememberStarted(prep.session.id, false);
       } else if (tr.finished) {
-        if (session) await rememberStarted(session.id, true);
+        if (prep.session) await rememberStarted(prep.session.id, true);
       } else {
-        const code = await exit;
         const reason = options.signal?.aborted
           ? { kind: "aborted", failure: { message: "aborted", code: "ABORTED" } }
-          : {
-              kind: "error",
-              failure: {
-                message: `claude exited ${code}: ${(stderr || stray).trim() || "no output"}`,
-                code: "PROVIDER_ERROR",
-              },
-            };
+          : idle
+            ? {
+                kind: "error",
+                failure: {
+                  message: `claude produced no output for ${Math.round(this.config.idleTimeoutMs / 1000)}s and was stopped`,
+                  code: "IDLE_TIMEOUT",
+                },
+              }
+            : {
+                kind: "error",
+                failure: {
+                  message: `claude exited ${proc.exitCode}: ${(proc.stderr || proc.stray).trim() || "no output"}`,
+                  code: "PROVIDER_ERROR",
+                },
+              };
         yield { type: "finish", reason };
       }
     } finally {
+      clearTimeout(timer);
       options.signal?.removeEventListener("abort", onAbort);
-      child.kill();
+      for (const c of pending.values()) c.abort();
+      proc.busy = false;
+      proc.lastUsed = Date.now();
+      if (retryFresh || !tr.finished) {
+        proc.kill();
+        this.processes.delete(options.sessionId);
+      }
     }
-    if (retryFresh) yield* this.attempt(options, true);
+    if (retryFresh) yield* this.turn(options, true);
+  }
+
+  /** Answer a CLI control request. Permission prompts and questions become dsh dialogs; the answer is written back on stdin. */
+  async *handleControl(event, options, prep, proc, pending, tr) {
+    const request = event.request ?? {};
+    const requestId = event.request_id;
+    if (request.subtype !== "can_use_tool") {
+      proc.write(
+        controlErrorLine(
+          requestId,
+          `${request.subtype ?? "unknown"} is not supported by dsh-llm-claude`,
+        ),
+      );
+      return;
+    }
+    const toolName = request.tool_name ?? "tool";
+    const input = request.input ?? {};
+    const toolUseId = request.tool_use_id ?? requestId;
+    const controller = new AbortController();
+    pending.set(requestId, controller);
+    const signal = options.signal
+      ? AbortSignal.any([options.signal, controller.signal])
+      : controller.signal;
+    const agent = this.ctx?.agents?.get?.(options.sessionId);
+    const label = toolName === "AskUserQuestion" ? "❓ question" : `⚑ approval: ${toolName}`;
+    yield* tr.wholeBlock("reasoning", `${label} ${permissionReason(toolName, input, request)}`);
+    // Decide asynchronously so the stream keeps flowing while the user thinks; the CLI waits on stdin.
+    const reply = (line) => {
+      if (!proc.write(line))
+        this.log("warn", `control response for ${toolName} dropped: claude process already exited`);
+    };
+    this.decide({ toolName, input, request, toolUseId, agent, signal, accessMode: prep.accessMode })
+      .then((result) => reply(controlResponseLine(requestId, result)))
+      .catch((error) => reply(controlErrorLine(requestId, String(error?.message ?? error))))
+      .finally(() => pending.delete(requestId));
+  }
+
+  async decide({ toolName, input, request, toolUseId, agent, signal, accessMode }) {
+    if (toolName === "AskUserQuestion") {
+      const questions = parseQuestions(input, toolUseId);
+      const ask = this.ctx?.userQuestions?.ask;
+      if (!questions || !ask) return denyResult(toolUseId, "dsh could not present this question");
+      try {
+        const response = await this.ctx.userQuestions.ask({ questions, agent, signal });
+        return allowResult(toolUseId, { ...input, answers: answersFor(questions, response) });
+      } catch (error) {
+        return denyResult(toolUseId, `question cancelled: ${error?.message ?? error}`);
+      }
+    }
+    if (accessMode === "danger-full-access") return allowResult(toolUseId, input);
+    const approval = this.ctx?.approval;
+    if (!approval || !agent)
+      return denyResult(toolUseId, "dsh approval is unavailable for this session");
+    let outcome;
+    try {
+      outcome = await approval.request({
+        agent,
+        toolName,
+        reason: permissionReason(toolName, input, request),
+        signal,
+      });
+    } catch (error) {
+      return denyResult(toolUseId, `approval failed: ${error?.message ?? error}`);
+    }
+    if (outcome === "allowed-once") return allowResult(toolUseId, input);
+    return denyResult(
+      toolUseId,
+      outcome === "rejected" ? "The user denied this action in dsh." : `approval ${outcome}`,
+    );
+  }
+
+  // ── one-shot path (aux calls, text-mode CLI, no session id) ──────────────
+
+  async *oneShot(options) {
+    const { cwd, args, session, input } = await this.prepare(options);
+    const proc = new ClaudeProcess({
+      args: args.filter(
+        (a, i) => !(a === "--permission-prompt-tool" || args[i - 1] === "--permission-prompt-tool"),
+      ),
+      cwd,
+      spec: {},
+    });
+    if (this.config.debug) this.log("info", `one-shot cwd=${cwd} claude ${proc.args.join(" ")}`);
+    if (input !== null) {
+      proc.write(input);
+      proc.child.stdin.end();
+    } else {
+      proc.child.stdin.end();
+    }
+    const tr = new Translator({ toolActivity: false, toolTextLimit: this.config.toolTextLimit });
+    const onAbort = () => proc.kill();
+    options.signal?.addEventListener("abort", onAbort, { once: true });
+    let timer;
+    let idle = false;
+    const armIdle = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        idle = true;
+        proc.kill();
+      }, this.config.idleTimeoutMs);
+    };
+    armIdle();
+    try {
+      for (;;) {
+        const event = await proc.nextEvent();
+        if (event === null) break;
+        armIdle();
+        if (event.type === "control_request") {
+          proc.write(controlErrorLine(event.request_id, "not supported in one-shot mode"));
+          continue;
+        }
+        yield* tr.translate(event);
+        if (tr.finished) break;
+      }
+      if (tr.finished) {
+        if (session) await rememberStarted(session.id, true);
+        return;
+      }
+      const reason = options.signal?.aborted
+        ? { kind: "aborted", failure: { message: "aborted", code: "ABORTED" } }
+        : {
+            kind: "error",
+            failure: {
+              message: idle
+                ? `claude produced no output for ${Math.round(this.config.idleTimeoutMs / 1000)}s and was stopped`
+                : `claude exited ${proc.exitCode}: ${(proc.stderr || proc.stray).trim() || "no output"}`,
+              code: idle ? "IDLE_TIMEOUT" : "PROVIDER_ERROR",
+            },
+          };
+      yield { type: "finish", reason };
+    } finally {
+      clearTimeout(timer);
+      options.signal?.removeEventListener("abort", onAbort);
+      proc.kill();
+    }
   }
 }
 

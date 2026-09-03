@@ -35,12 +35,24 @@ All keys are optional.
 | `titleModel` | `haiku` | Model used for dsh's session-title requests. |
 | `toolActivity` | `true` | Show Claude Code tool calls and results as reasoning blocks. |
 | `resume` | `true` | Keep one Claude Code session per dsh session. |
+| `idleTimeoutMs` | `1800000` | Kill the child when no stream event arrives for this long; surfaces as `IDLE_TIMEOUT`. |
+| `toolTextLimit` | `600` | Characters of tool arguments and results shown in activity blocks. |
+| `debug` | `false` | Log the spawn arguments (prompt redacted) and cwd per call. |
+| `approvals` | `true` | Relay Claude Code permission prompts and AskUserQuestion to dsh dialogs. |
+| `processIdleMs` | `1800000` | Kill a session's idle Claude process after this long without a turn. |
+| `maxProcesses` | `4` | Cap on live Claude processes; the longest idle is evicted first. |
+
+Effort: none is advertised as default, so Claude Code's own default applies unless you pick one in dsh. Claude Code's own subagents stream back as `↳ subagent` reasoning blocks. Tool calls the CLI denies because it cannot prompt are counted and reported in one line at the end of the turn.
 
 ## How it works
 
 **Models.** The picker is filled from the Anthropic Models API, using `ANTHROPIC_API_KEY` if set, otherwise the access token Claude Code stores in `~/.claude/.credentials.json`. Cached ten minutes; the hardcoded list in `src/adapter.js` is the fallback. Context window and effort levels come from the same response, and picking an effort in dsh maps to `--effort`.
 
 **Sessions.** Each dsh session gets a deterministic Claude Code session id. The first request starts it with `--session-id`; later requests find the transcript under `~/.claude/projects/<cwd>/` and pass `--resume`, sending only the new turn. Reopening an old dsh session resumes the same Claude Code session, with all its tool history. Forked sessions start fresh from the full dsh transcript. The child runs in the dsh session's working directory, so Claude Code sees the right CLAUDE.md and project files.
+
+**Process.** One `claude` process stays alive per dsh session (`processIdleMs`, default 30 min; `maxProcesses`, default 4, evicts the longest idle). Turns after the first start in about a second because hooks, CLAUDE.md and MCP servers are already loaded. A change of model, effort, working directory or permission mode replaces the process; the Claude session is resumed, so nothing is lost.
+
+**Approvals and questions.** With `approvals: true` (default) the child runs with `--permission-prompt-tool stdio`. When Claude Code would ask permission, dsh's own approval dialog appears; Approve runs the tool, Deny tells Claude the user refused. Claude's `AskUserQuestion` becomes a dsh question form and the answer goes back to Claude. Under Full Access nothing asks. Each ask also shows as a `⚑ approval: Tool …` or `❓ question …` row.
 
 **Streaming.** Text and thinking arrive as live deltas. Claude Code's tool calls show as reasoning blocks prefixed `▶ ToolName` with the arguments, and their results as `◀ result`. dsh never runs those tools; Claude Code does, under the configured permission mode.
 
@@ -55,7 +67,6 @@ All keys are optional.
 ## Not covered
 
 - dsh's own tools are invisible to the child. The system prompt still mentions them, so Claude Code may occasionally talk about a tool it cannot call.
-- Claude Code permission prompts cannot be relayed to the dsh UI. Under `acceptEdits` anything that would prompt is denied; use `bypassPermissions` or `allowedTools` to widen.
 - Claude Code sessions are not deleted when dsh sessions are.
 
 ## Check

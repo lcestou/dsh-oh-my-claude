@@ -33,7 +33,11 @@ assert.equal(resolveModelInfo("claude-code", "claude-fable-5-1").name, "Claude F
 assert.equal(resolveModelInfo("claude-code", "bogus").name, "bogus");
 assert.equal(resolveModelInfo("claude-code", "bogus").context, undefined);
 assert.equal(resolveModelInfo("claude-code", "claude-fable-5-1").context.contextWindow, 1_000_000);
-assert.equal(resolveModelInfo("claude-code", "claude-fable-5-1").reasoning.defaultEffort, "high");
+assert.equal(
+  resolveModelInfo("claude-code", "claude-fable-5-1").reasoning.defaultEffort,
+  undefined,
+);
+assert.equal(resolveModelInfo("claude-code", "claude-fable-5-1").reasoning.efforts.length, 5);
 assert.equal(resolveModelInfo("claude-code", "claude-haiku-4-5").reasoning, undefined);
 assert.deepEqual(resolveModelInfo("claude-code", "claude-haiku-4-5").inputModalities, [
   "text",
@@ -91,7 +95,12 @@ const chat = buildArgs({
   session: { id: "u", resuming: true },
 });
 assert.ok(chat.includes("--include-partial-messages") && chat.includes("--input-format"));
-assert.deepEqual(chat.slice(-4), ["--permission-mode", "acceptEdits", "--resume", "u"]);
+assert.deepEqual(chat.slice(-2), ["--resume", "u"]);
+assert.ok(
+  chat.join(" ").includes("--permission-prompt-tool stdio") &&
+    chat.join(" ").includes("--tools default"),
+);
+assert.ok(chat.join(" ").includes("--permission-mode acceptEdits"));
 assert.ok(
   chat.join(" ").includes("--effort max") && chat.join(" ").includes("--append-system-prompt sys"),
 );
@@ -99,6 +108,7 @@ const fresh = buildArgs({ model: "m", config, session: { id: "u", resuming: fals
 assert.deepEqual(fresh.slice(-2), ["--session-id", "u"]);
 const aux = buildArgs({ model: "haiku", purpose: "session-title", config, session: undefined });
 assert.deepEqual(aux.slice(-4), ["--tools", "", "--max-turns", "1"]);
+assert.equal(aux.filter((a) => a === "--tools").length, 1);
 assert.ok(!aux.includes("--permission-mode"));
 const custom = buildArgs({
   model: "m",
@@ -259,7 +269,7 @@ assert.equal(
   "plan",
 );
 const switched = buildArgs({ model: "m", config, accessMode: "danger-full-access" });
-assert.deepEqual(switched.slice(-2), ["--permission-mode", "bypassPermissions"]);
+assert.ok(switched.join(" ").includes("--permission-mode bypassPermissions"));
 
 // CLI flag probe: missing flags are left out; missing --input-format switches to positional prompt
 assert.equal(supports(null, "--anything"), true);
@@ -317,5 +327,140 @@ assert.equal(
     .failure.message,
   "a; b",
 );
+
+// denied tool calls are counted and reported once at the end of the turn
+const td = new Translator({ toolTextLimit: 100 });
+td.translate({
+  type: "user",
+  message: {
+    content: [{ type: "tool_result", is_error: true, content: "This command requires approval" }],
+  },
+});
+td.translate({
+  type: "user",
+  message: { content: [{ type: "tool_result", is_error: true, content: "boom" }] },
+});
+const ended = td.translate({ type: "result", is_error: false, stop_reason: "end_turn" });
+assert.equal(ended[0].type, "block-start");
+assert.ok(ended.find((e) => e.type === "text-delta").text.includes("denied 1 tool call "));
+assert.equal(ended.at(-1).reason.kind, "stop");
+assert.equal(new Translator().translate({ type: "result", is_error: false })[0].type, "finish");
+
+// forwarded subagent text renders as reasoning even while partials are on
+const ts2 = new Translator();
+ts2.translate({ type: "stream_event", event: { type: "message_start" } });
+const sub = ts2.translate({
+  type: "assistant",
+  parent_tool_use_id: "toolu_1",
+  message: { content: [{ type: "text", text: "child says hi" }] },
+});
+assert.equal(sub.at(-1).block.text, "↳ subagent\nchild says hi");
+assert.equal(
+  new Translator({ toolTextLimit: 5 })
+    .translate({
+      type: "user",
+      message: { content: [{ type: "tool_result", content: "abcdefghij" }] },
+    })
+    .at(-1).block.text,
+  "◀ result\nabcde…",
+);
+assert.ok(buildArgs({ model: "m", config }).includes("--forward-subagent-text"));
+assert.equal(new Config({}).idleTimeoutMs, 1_800_000);
+
+// control channel helpers
+const {
+  parseQuestions,
+  answersFor,
+  userTurnLine,
+  controlResponseLine,
+  allowResult,
+  denyResult,
+  permissionReason,
+} = await import("./process.js");
+const qs = parseQuestions(
+  {
+    questions: [
+      {
+        question: "Tea or coffee?",
+        header: "Drink",
+        options: [{ label: "tea" }, { label: "coffee", description: "hot" }],
+      },
+    ],
+  },
+  "toolu_9",
+);
+assert.equal(qs.length, 1);
+assert.equal(qs[0].id, "toolu_9:0");
+assert.deepEqual(qs[0].options[1], { label: "coffee", description: "hot" });
+assert.equal(parseQuestions({ questions: [] }, "x"), undefined);
+assert.equal(
+  parseQuestions({ questions: [{ question: "q", options: [{ nope: 1 }] }] }, "x"),
+  undefined,
+);
+assert.deepEqual(answersFor(qs, { answers: [{ id: "toolu_9:0", selected: ["tea"] }] }), {
+  "Tea or coffee?": "tea",
+});
+assert.deepEqual(
+  answersFor(qs, { answers: [{ id: "toolu_9:0", selected: [], custom: "water" }] }),
+  { "Tea or coffee?": "water" },
+);
+const turn = JSON.parse(userTurnLine([{ type: "text", text: "hi" }]));
+assert.equal(turn.type, "user");
+assert.equal(turn.parent_tool_use_id, null);
+assert.equal(turn.message.content[0].text, "hi");
+const cr = JSON.parse(controlResponseLine("r1", allowResult("t1", { a: 1 })));
+assert.equal(cr.type, "control_response");
+assert.equal(cr.response.request_id, "r1");
+assert.equal(cr.response.response.behavior, "allow");
+assert.deepEqual(cr.response.response.updatedInput, { a: 1 });
+assert.equal(denyResult("t1", "no").decisionClassification, "user_reject");
+assert.equal(
+  permissionReason("Bash", { command: "ls -la" }, { title: "Run ls" }),
+  "Run ls — ls -la",
+);
+assert.ok(buildArgs({ model: "m", config }).includes("--permission-prompt-tool"));
+assert.ok(
+  !buildArgs({ model: "m", config: new Config({ approvals: false }) }).includes(
+    "--permission-prompt-tool",
+  ),
+);
+assert.ok(
+  !buildArgs({ model: "m", purpose: "session-title", config }).includes("--permission-prompt-tool"),
+);
+
+// idle-timer pause: a closed tool_use block sets toolPending until the tool result arrives
+const tp = new Translator();
+tp.translate({ type: "stream_event", event: { type: "message_start" } });
+tp.translate({
+  type: "stream_event",
+  event: {
+    type: "content_block_start",
+    index: 0,
+    content_block: { type: "tool_use", name: "Bash" },
+  },
+});
+assert.equal(tp.toolPending, false);
+tp.translate({ type: "stream_event", event: { type: "content_block_stop", index: 0 } });
+assert.equal(tp.toolPending, true);
+tp.translate({ type: "user", message: { content: [{ type: "tool_result", content: "done" }] } });
+assert.equal(tp.toolPending, false);
+const tq = new Translator({ toolActivity: false });
+tq.translate({ type: "stream_event", event: { type: "message_start" } });
+assert.deepEqual(
+  tq.translate({
+    type: "stream_event",
+    event: {
+      type: "content_block_start",
+      index: 0,
+      content_block: { type: "tool_use", name: "Bash" },
+    },
+  }),
+  [],
+);
+assert.deepEqual(
+  tq.translate({ type: "stream_event", event: { type: "content_block_stop", index: 0 } }),
+  [],
+);
+assert.equal(tq.toolPending, true);
 
 console.log("ok");
