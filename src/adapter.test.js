@@ -828,3 +828,21 @@ console.log("ok");
   );
 }
 console.log("relay ok");
+
+// Unknown stream-json shapes warn once (schema-drift canary); knowingly-benign types stay silent.
+{
+  const warnings = [];
+  const tr = new Translator({ log: (level, msg) => level === "warn" && warnings.push(msg) });
+  tr.translate({ type: "system", subtype: "init" }); // benign top-level: no warn
+  tr.translate({ type: "brand_new_event" }); // unknown: warn
+  tr.translate({ type: "brand_new_event" }); // same type again: deduped, no second warn
+  tr.partial({ type: "message_delta" }); // benign partial: no warn
+  tr.partial({ type: "mystery_partial" }); // unknown partial: warn
+  tr.openBlock(9, { type: "redacted_thinking" }); // unknown content block: warn
+  assert.equal(warnings.length, 3, "one warn per distinct unknown type, deduped");
+  assert.match(warnings[0], /brand_new_event/);
+  assert.match(warnings[0], /schema may have changed/);
+  assert.match(warnings[1], /mystery_partial/);
+  assert.match(warnings[2], /redacted_thinking/);
+}
+console.log("schema-guard ok");

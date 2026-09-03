@@ -541,6 +541,19 @@ export function* relayBlocks(tr, call) {
   };
 }
 
+// Top-level CLI event types we knowingly swallow (protocol/handshake, not renderable content).
+// Anything not here and not handled in translate() is a stream-json schema drift worth one warning.
+const BENIGN_EVENTS = new Set([
+  "system",
+  "control_request",
+  "control_cancel_request",
+  "control_response",
+  "timeout",
+  "dsh_relay",
+]);
+// stream_event sub-types with no renderable delta (SSE bookkeeping).
+const BENIGN_PARTIALS = new Set(["message_delta", "message_stop", "ping"]);
+
 export class Translator {
   constructor({
     toolActivity = true,
@@ -548,7 +561,10 @@ export class Translator {
     relay = false,
     dshIds,
     relayed,
+    log,
   } = {}) {
+    this.log = typeof log === "function" ? log : () => {};
+    this.unknownSeen = new Set(); // (where:type) already warned, so schema drift warns once, not per event
     this.toolActivity = toolActivity;
     this.relay = relay; // dsh tool calls are relayed to dsh's own loop: hide Claude's view of them
     this.dshIds = dshIds ?? new Set(); // tool_use ids of dsh tools called over the MCP bridge
@@ -566,6 +582,19 @@ export class Translator {
 
   deltaType(block) {
     return block.blockType === "text" ? "text-delta" : "reasoning-delta";
+  }
+
+  /** Warn once when a CLI event/block type is neither handled nor knowingly ignored, so a Claude
+   *  Code stream-json schema change shows up loud in the log instead of as silently dropped output. */
+  noteUnknown(where, type) {
+    if (type === null || type === undefined) return;
+    const key = `${where}:${type}`;
+    if (this.unknownSeen.has(key)) return;
+    this.unknownSeen.add(key);
+    this.log(
+      "warn",
+      `unhandled Claude Code ${where} "${type}" — stream-json schema may have changed`,
+    );
   }
 
   /** A block is announced on its first text. Claude emits thinking blocks that carry only a
@@ -647,6 +676,7 @@ export class Translator {
         return [{ type: "finish", reason: { kind: "error", failure } }];
       }
       default:
+        if (!BENIGN_EVENTS.has(event?.type)) this.noteUnknown("event", event?.type);
         return [];
     }
   }
@@ -677,6 +707,7 @@ export class Translator {
         return block.index < 0 ? [] : this.endBlock(block);
       }
       default:
+        if (!BENIGN_PARTIALS.has(ev?.type)) this.noteUnknown("stream event", ev?.type);
         return [];
     }
   }
@@ -697,7 +728,10 @@ export class Translator {
       }
       opened = this.startBlock(...this.toolLead(cb));
       opened.block.tool = true;
-    } else return [];
+    } else {
+      this.noteUnknown("content block", cb.type);
+      return [];
+    }
     this.open.set(apiIndex, opened.block);
     return opened.events;
   }
@@ -1115,6 +1149,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       relay: this.mcp !== undefined && this.config.dshTools,
       dshIds: proc.dshIds,
       relayed: proc.relayed,
+      log: this.log.bind(this),
     });
     const pending = new Map(); // control request id → AbortController
     let outcome = "ended"; // ended | finished | relayed | parked | retry
@@ -1330,7 +1365,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     } else {
       proc.child.stdin.end();
     }
-    const tr = new Translator({ toolActivity: false, toolTextLimit: this.config.toolTextLimit });
+    const tr = new Translator({
+      toolActivity: false,
+      toolTextLimit: this.config.toolTextLimit,
+      log: this.log.bind(this),
+    });
     const onAbort = () => proc.kill();
     options.signal?.addEventListener("abort", onAbort, { once: true });
     let timer;
