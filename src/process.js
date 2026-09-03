@@ -122,6 +122,7 @@ export class ClaudeProcess {
     this.lastUsed = Date.now();
     this.stderr = "";
     this.stray = "";
+    this.sent = new Set(); // rpcIds of steers already forwarded to Claude mid-turn
     this.exitCode = undefined;
     this.queue = new LineQueue();
     this.child = spawn("claude", args, {
@@ -139,6 +140,8 @@ export class ClaudeProcess {
     this.child.on("close", (code) => {
       this.exitCode = code ?? -1;
       this.queue.close();
+      this.relay?.reject(new Error(`claude exited ${this.exitCode} while dsh ran its tool call`));
+      this.relay = undefined;
       onExit?.(this);
     });
   }
@@ -157,11 +160,17 @@ export class ClaudeProcess {
     if (this.alive) this.child.kill();
   }
 
+  /** Queue a synthetic event for the turn loop (the MCP bridge relaying a dsh tool call). */
+  inject(event) {
+    this.queue.push(event);
+  }
+
   /** Next parsed JSON line; plain text lines are kept in `stray` for error messages. Null when the process ended. */
   async nextEvent() {
     for (;;) {
       const line = await this.queue.next();
       if (line === null) return null;
+      if (typeof line === "object") return line; // injected by inject()
       try {
         return JSON.parse(line);
       } catch {

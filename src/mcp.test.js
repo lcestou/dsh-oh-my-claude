@@ -85,4 +85,36 @@ const boom = await handleRpc(
 assert.equal(boom.result.isError, true, "open failure is an error reply, not a throw");
 assert.match(boom.result.content[0].text, /prompt refused/);
 assert.equal(logged.length, 1, "failure is logged once");
+const relayed = await handleRpc(
+  {
+    jsonrpc: "2.0",
+    id: 8,
+    method: "tools/call",
+    params: { name: "subagent_local", arguments: { a: 1 } },
+  },
+  { ...env, relay: async (name, args) => ({ text: `relayed ${name} ${JSON.stringify(args)}` }) },
+);
+assert.equal(relayed.result.content[0].text, 'relayed subagent_local {"a":1}');
+assert.equal(relayed.result.isError, undefined);
+const fallback = await handleRpc(
+  {
+    jsonrpc: "2.0",
+    id: 9,
+    method: "tools/call",
+    params: { name: "subagent_local", arguments: {} },
+  },
+  { ...env, relay: async () => undefined },
+);
+assert.equal(fallback.result.isError, undefined, "no live turn: executed directly");
+assert.notEqual(fallback.result.content[0].text, undefined);
+const relayErr = await handleRpc(
+  {
+    jsonrpc: "2.0",
+    id: 10,
+    method: "tools/call",
+    params: { name: "subagent_local", arguments: {} },
+  },
+  { ...env, relay: async () => ({ text: "boom", isError: true }) },
+);
+assert.equal(relayErr.result.isError, true);
 console.log("mcp ok");

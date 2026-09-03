@@ -79,7 +79,7 @@ const errorReply = (id, e) => ({
 });
 
 /** One JSON-RPC request against the tools visible to `agent`. Returns null for notifications. */
-export async function handleRpc(msg, { tools, agent, signal, version, open, log }) {
+export async function handleRpc(msg, { tools, agent, signal, version, open, relay, log }) {
   const reply = (result) => ({ jsonrpc: "2.0", id: msg.id, result });
   const failed = (e) => {
     log?.("warn", `mcp bridge: ${msg.params?.name ?? msg.method} failed: ${e?.stack ?? e}`);
@@ -116,6 +116,14 @@ export async function handleRpc(msg, { tools, agent, signal, version, open, log 
       const tool = HIDDEN.has(name) ? undefined : tools.get(name, agent);
       if (!tool) return errorReply(msg.id, `unknown tool ${name}`);
       try {
+        // A live Claude turn takes the call first: dsh then runs the tool itself and renders it
+        // natively (subagent cards, counts, notices). Otherwise execute it here.
+        const relayed = relay ? await relay(name, args, signal) : undefined;
+        if (relayed)
+          return reply({
+            content: [{ type: "text", text: relayed.text }],
+            ...(relayed.isError ? { isError: true } : {}),
+          });
         const exec = { agent, signal, name, arguments: args, callId: randomUUID() };
         const returned = await tool.execute(args, exec);
         const rendered = tool.output?.render ? tool.output.render(args, returned) : returned;
@@ -142,7 +150,7 @@ const send = (res, status, value) => {
  * Mount `POST /dsh-llm-claude/mcp/<dsh session id>`. Resolves once the web server is up with the
  * base URL and key the adapter must hand to `claude --mcp-config`.
  */
-export function registerMcpBridge(ctx, { log, version }) {
+export function registerMcpBridge(ctx, { log, version, relay }) {
   const key = randomUUID();
   return new Promise((resolve) => {
     ctx.inject(
@@ -175,6 +183,9 @@ export function registerMcpBridge(ctx, { log, version }) {
                   signal: controller.signal,
                   version,
                   open: (args) => openSession(ctx, agent, args, controller.signal),
+                  relay: relay
+                    ? (name, args, signal) => relay(sessionId, name, args, signal)
+                    : undefined,
                   log,
                 });
                 return out === null ? send(res, 202) : send(res, 200, out);

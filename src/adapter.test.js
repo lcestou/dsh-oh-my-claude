@@ -19,6 +19,11 @@ import {
   projectDirName,
   resolveModelInfo,
   selectTurns,
+  relayBlocks,
+  toolResultFor,
+  stepContextFor,
+  dropSent,
+  afterLastAssistant,
 } from "./adapter.js";
 
 const config = new Config({});
@@ -488,3 +493,134 @@ assert.deepEqual(
 assert.equal(tq.toolPending, true);
 
 console.log("ok");
+
+// --- native relay: Claude's view of a relayed dsh tool call stays hidden, dsh renders it ---
+{
+  const tr = new Translator({ relay: true });
+  const start = tr.translate({
+    type: "stream_event",
+    event: {
+      type: "content_block_start",
+      index: 0,
+      content_block: { type: "tool_use", id: "tu1", name: "mcp__dsh__subagent_local" },
+    },
+  });
+  assert.deepEqual(start, [], "relayed dsh tool_use opens no visible block");
+  const stop = tr.translate({
+    type: "stream_event",
+    event: { type: "content_block_stop", index: 0 },
+  });
+  assert.deepEqual(stop, []);
+  assert.equal(tr.toolPending, true, "still counts as a running tool for the idle timer");
+  const res = tr.translate({
+    type: "user",
+    message: { content: [{ type: "tool_result", tool_use_id: "tu1", content: "done" }] },
+  });
+  assert.deepEqual(res, [], "its result row is dsh's to render, not ours");
+  const plain = new Translator({ relay: false });
+  plain.translate({
+    type: "stream_event",
+    event: {
+      type: "content_block_start",
+      index: 0,
+      content_block: { type: "tool_use", id: "tu2", name: "mcp__dsh__subagent_local" },
+    },
+  });
+  assert.equal(plain.open.get(0).blockType, "text", "without relay the old visible row stays");
+}
+{
+  const tr = new Translator();
+  tr.index = 3;
+  const chunks = [...relayBlocks(tr, { id: "c1", name: "subagent_local", args: { prompt: "hi" } })];
+  assert.deepEqual(
+    chunks.map((c) => c.type),
+    ["block-start", "tool-call-delta", "block-end"],
+  );
+  assert.equal(chunks[0].index, 3);
+  assert.equal(tr.index, 4, "reserves one block index");
+  assert.deepEqual(chunks[2].block, {
+    type: "tool-call",
+    id: "c1",
+    name: "subagent_local",
+    arguments: '{"prompt":"hi"}',
+  });
+}
+{
+  const messages = [
+    { role: "user", content: [{ type: "text", text: "go" }] },
+    { role: "assistant", content: [{ type: "tool-call", id: "c1", name: "x", arguments: "{}" }] },
+    {
+      role: "user",
+      source: { kind: "tool", callId: "c1" },
+      content: [{ type: "tool-result", toolCallId: "c1", content: [{ type: "text", text: "42" }] }],
+    },
+  ];
+  assert.deepEqual(toolResultFor(messages, "c1"), { text: "42", isError: false });
+  assert.equal(toolResultFor(messages, "nope"), undefined);
+  assert.equal(toolResultFor([{ role: "user", content: [] }], "c1"), undefined);
+}
+{
+  const base = [
+    { role: "user", content: [{ type: "text", text: "go" }] },
+    { role: "assistant", content: [{ type: "tool-call", id: "c1", name: "x", arguments: "{}" }] },
+    {
+      role: "user",
+      source: { kind: "tool", callId: "c1" },
+      content: [{ type: "tool-result", toolCallId: "c1", content: [{ type: "text", text: "42" }] }],
+    },
+  ];
+  assert.equal(stepContextFor(base), "", "only the tool result: nothing to add");
+  const steered = [
+    ...base,
+    {
+      role: "user",
+      source: { kind: "user" },
+      content: [{ type: "text", text: "also check /tmp" }],
+    },
+    {
+      role: "user",
+      source: { kind: "subagent-settled" },
+      content: [{ type: "text", text: "child done" }],
+    },
+  ];
+  const ctx = stepContextFor(steered);
+  assert.match(ctx, /also check \/tmp/);
+  assert.match(ctx, /child done/);
+  assert.doesNotMatch(
+    ctx,
+    /\bgo\b/,
+    "the turn's original prompt is before the assistant step, not repeated",
+  );
+}
+{
+  const msgs = [
+    {
+      role: "user",
+      source: { kind: "user", rpcId: "r1" },
+      content: [{ type: "text", text: "go" }],
+    },
+    { role: "assistant", content: [{ type: "text", text: "ok" }] },
+    {
+      role: "user",
+      source: { kind: "user", rpcId: "r2" },
+      content: [{ type: "text", text: "steer" }],
+    },
+    {
+      role: "user",
+      source: { kind: "user", rpcId: "r3" },
+      content: [{ type: "text", text: "new" }],
+    },
+  ];
+  assert.equal(afterLastAssistant(msgs).length, 2);
+  assert.deepEqual(
+    dropSent(msgs, new Set(["r2"])).map((m) => m.source?.rpcId),
+    ["r1", undefined, "r3"],
+  );
+  assert.equal(dropSent(msgs, new Set()).length, 4);
+  assert.equal(
+    dropSent(afterLastAssistant(msgs), new Set(["r2", "r3"])).length,
+    0,
+    "all already live-sent: no-op turn",
+  );
+}
+console.log("relay ok");
