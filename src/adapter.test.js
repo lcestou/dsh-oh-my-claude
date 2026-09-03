@@ -4,6 +4,7 @@ import {
   Config,
   KNOWN_MODELS,
   Translator,
+  ClaudeCodeAdapter,
   accessModeOf,
   buildArgs,
   permissionModeFor,
@@ -22,9 +23,12 @@ import {
   relayBlocks,
   toolResultFor,
   stepContextFor,
+  forkTranscriptText,
+  userPromptCount,
   dropSent,
   afterLastAssistant,
 } from "./adapter.js";
+import { LineQueue, TIMEOUT } from "./process.js";
 
 const config = new Config({});
 assert.equal(config.permissionMode, "dsh");
@@ -136,14 +140,16 @@ const tr = new Translator();
 const se = (event) => tr.translate({ type: "stream_event", event });
 assert.deepEqual(se({ type: "message_start" }), []);
 assert.deepEqual(
-  se({ type: "content_block_start", index: 0, content_block: { type: "thinking" } }).map(
-    (e) => e.type,
-  ),
-  ["block-start"],
+  se({ type: "content_block_start", index: 0, content_block: { type: "thinking" } }),
+  [],
+  "a block is announced with its first text, not at start",
 );
 assert.deepEqual(
   se({ type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "hmm" } }),
-  [{ type: "reasoning-delta", index: 0, text: "hmm" }],
+  [
+    { type: "block-start", index: 0, blockType: "reasoning" },
+    { type: "reasoning-delta", index: 0, text: "hmm" },
+  ],
 );
 assert.deepEqual(
   se({ type: "content_block_delta", index: 0, delta: { type: "signature_delta", signature: "x" } }),
@@ -179,7 +185,10 @@ se({ type: "message_start" });
 se({ type: "content_block_start", index: 0, content_block: { type: "text" } });
 assert.deepEqual(
   se({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "pong" } }),
-  [{ type: "text-delta", index: 3, text: "pong" }],
+  [
+    { type: "block-start", index: 3, blockType: "text" },
+    { type: "text-delta", index: 3, text: "pong" },
+  ],
 );
 assert.equal(tr.finished, false);
 const done = tr.translate({
@@ -512,6 +521,7 @@ console.log("ok");
   });
   assert.deepEqual(stop, []);
   assert.equal(tr.toolPending, true, "still counts as a running tool for the idle timer");
+  tr.relayed.add("tu1"); // dsh ran it natively
   const res = tr.translate({
     type: "user",
     message: { content: [{ type: "tool_result", tool_use_id: "tu1", content: "done" }] },
@@ -621,6 +631,200 @@ console.log("ok");
     dropSent(afterLastAssistant(msgs), new Set(["r2", "r3"])).length,
     0,
     "all already live-sent: no-op turn",
+  );
+}
+{
+  const adapter = new ClaudeCodeAdapter(
+    { on() {} },
+    Config({ maxProcesses: 2, processIdleMs: 10_000 }),
+  );
+  const fake = (extra) => ({
+    alive: true,
+    busy: false,
+    relays: new Map(),
+    lastUsed: Date.now() - 20_000,
+    killed: 0,
+    kill() {
+      this.killed++;
+    },
+    ...extra,
+  });
+  const parked = fake({ relays: new Map([["c1", {}]]) });
+  const steered = fake({ parked: "steer" });
+  const idle = fake({});
+  adapter.processes.set("a", parked);
+  adapter.processes.set("b", steered);
+  adapter.processes.set("c", idle);
+  adapter.evict();
+  assert.equal(parked.killed, 0, "a process waiting on dsh's tool result is not idle");
+  assert.equal(steered.killed, 0, "a process parked for a steer is not idle");
+  assert.equal(idle.killed, 1, "a truly idle process past processIdleMs is culled");
+}
+{
+  const tr = new Translator({ relay: true });
+  tr.aborting = true;
+  const fin = tr.translate({ type: "result", subtype: "error_during_execution", is_error: true });
+  assert.equal(
+    fin.at(-1).reason.kind,
+    "aborted",
+    "an interrupted turn finishes as aborted, not error",
+  );
+  const plain = new Translator({ relay: true });
+  const fin2 = plain.translate({
+    type: "result",
+    subtype: "error_during_execution",
+    is_error: true,
+    result: "x",
+  });
+  assert.equal(fin2.at(-1).reason.kind, "error");
+}
+{
+  const tr = new Translator({ relay: true });
+  tr.translate({
+    type: "assistant",
+    message: {
+      content: [
+        { type: "tool_use", id: "d1", name: "mcp__dsh__subagent_local", input: {} },
+        { type: "tool_use", id: "d2", name: "mcp__dsh__subagent_local", input: {} },
+        { type: "tool_use", id: "b1", name: "Bash", input: {} },
+      ],
+    },
+  });
+  assert.equal(tr.dshIds.size, 2, "whole-message path counts outstanding dsh calls for batching");
+}
+{
+  const line = (o) => JSON.stringify(o);
+  const src = [
+    line({ type: "user", sessionId: "OLD", message: { role: "user", content: "first" } }),
+    line({
+      type: "assistant",
+      sessionId: "OLD",
+      message: { role: "assistant", content: [{ type: "text", text: "a1" }] },
+    }),
+    line({
+      type: "user",
+      sessionId: "OLD",
+      message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t" }] },
+    }),
+    line({
+      type: "user",
+      sessionId: "OLD",
+      message: { role: "user", content: [{ type: "text", text: "second" }] },
+    }),
+    line({
+      type: "assistant",
+      sessionId: "OLD",
+      message: { role: "assistant", content: [{ type: "text", text: "a2" }] },
+    }),
+  ].join("\n");
+  const cut = forkTranscriptText(src, "OLD", "NEW", 1);
+  assert.equal(
+    cut.split("\n").filter(Boolean).length,
+    3,
+    "kept only the first prompt's turn (tool results are not prompts)",
+  );
+  assert.doesNotMatch(cut, /OLD/);
+  assert.match(cut, /"sessionId":"NEW"/);
+  assert.equal(
+    forkTranscriptText(src, "OLD", "NEW", 0).split("\n").filter(Boolean).length,
+    5,
+    "keep <= 0 keeps everything",
+  );
+  assert.equal(forkTranscriptText(src, "OLD", "NEW", 9).split("\n").filter(Boolean).length, 5);
+  const msgs = [
+    { role: "user", source: { kind: "user" }, content: [] },
+    { role: "assistant", content: [] },
+    { role: "user", source: { kind: "subagent-settled" }, content: [] },
+    { role: "user", source: { kind: "user" }, content: [] },
+  ];
+  assert.equal(userPromptCount(msgs), 2);
+}
+{
+  const q = new LineQueue();
+  assert.equal(await q.next(30), TIMEOUT, "times out with nothing queued");
+  q.push("late");
+  assert.equal(
+    await q.next(30),
+    "late",
+    "a line pushed after a timeout is not swallowed by the dead waiter",
+  );
+  const pending = q.next(1000);
+  q.push("now");
+  assert.equal(await pending, "now");
+}
+{
+  const tr = new Translator();
+  const s1 = tr.translate({
+    type: "stream_event",
+    event: { type: "content_block_start", index: 0, content_block: { type: "thinking" } },
+  });
+  assert.deepEqual(s1, [], "a thinking block is not announced before it has text");
+  const e1 = tr.translate({
+    type: "stream_event",
+    event: { type: "content_block_stop", index: 0 },
+  });
+  assert.deepEqual(e1, [], "an empty thinking block closes silently: no empty bubble");
+  tr.translate({
+    type: "stream_event",
+    event: { type: "content_block_start", index: 1, content_block: { type: "thinking" } },
+  });
+  const d = tr.translate({
+    type: "stream_event",
+    event: {
+      type: "content_block_delta",
+      index: 1,
+      delta: { type: "thinking_delta", thinking: "hmm" },
+    },
+  });
+  assert.deepEqual(
+    d.map((c) => c.type),
+    ["block-start", "reasoning-delta"],
+    "block-start rides ahead of the first text",
+  );
+  const e2 = tr.translate({
+    type: "stream_event",
+    event: { type: "content_block_stop", index: 1 },
+  });
+  assert.equal(e2[0].type, "block-end");
+  assert.equal(e2[0].block.text, "hmm");
+}
+{
+  const a = new ClaudeCodeAdapter({ on() {} }, Config({}));
+  const b = new ClaudeCodeAdapter({ on() {} }, Config({}));
+  a.processes.set("shared", { alive: true });
+  assert.equal(
+    b.processes.get("shared")?.alive,
+    true,
+    "a reloaded adapter adopts running processes",
+  );
+  a.processes.delete("shared");
+}
+{
+  const tr = new Translator({ relay: true });
+  const open = (id) =>
+    tr.translate({
+      type: "stream_event",
+      event: {
+        type: "content_block_start",
+        index: 0,
+        content_block: { type: "tool_use", id, name: "mcp__dsh__subagent_local" },
+      },
+    });
+  const result = (id) =>
+    tr.translate({
+      type: "user",
+      message: { content: [{ type: "tool_result", tool_use_id: id, content: "out" }] },
+    });
+  open("r1");
+  tr.relayed.add("r1");
+  assert.deepEqual(result("r1"), [], "a relayed call's result is dsh's to draw");
+  open("f1");
+  const shown = result("f1");
+  assert.equal(shown.at(-1).block.type, "text");
+  assert.match(
+    shown.at(-1).block.text,
+    /subagent_local \(ran in bridge\)/,
+    "a call that fell back is drawn as one row",
   );
 }
 console.log("relay ok");

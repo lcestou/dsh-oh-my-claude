@@ -13,6 +13,11 @@ export function controlResponseLine(requestId, response) {
   return `${JSON.stringify({ type: "control_response", response: { subtype: "success", request_id: requestId, response } })}\n`;
 }
 
+/** stdin line asking the CLI to stop the current turn; it answers with a result and stays alive. */
+export function interruptLine(requestId) {
+  return `${JSON.stringify({ type: "control_request", request_id: requestId, request: { subtype: "interrupt" } })}\n`;
+}
+
 export function controlErrorLine(requestId, error) {
   return `${JSON.stringify({ type: "control_response", response: { subtype: "error", request_id: requestId, error } })}\n`;
 }
@@ -86,8 +91,11 @@ export function permissionReason(toolName, input, request) {
   return text.length > 400 ? `${text.slice(0, 400)}…` : text || toolName;
 }
 
+/** Returned by `next(timeoutMs)` when nothing arrived in time; the waiter is withdrawn, no line is lost. */
+export const TIMEOUT = Symbol("timeout");
+
 /** Async line queue over a child's stdout: `next()` resolves with the next line, or null once the child is gone. */
-class LineQueue {
+export class LineQueue {
   constructor() {
     this.lines = [];
     this.waiters = [];
@@ -102,10 +110,24 @@ class LineQueue {
     this.closed = true;
     for (const w of this.waiters.splice(0)) w(null);
   }
-  next() {
+  next(timeoutMs) {
     if (this.lines.length > 0) return Promise.resolve(this.lines.shift());
     if (this.closed) return Promise.resolve(null);
-    return new Promise((resolve) => this.waiters.push(resolve));
+    return new Promise((resolve) => {
+      const waiter = (line) => {
+        clearTimeout(timer);
+        resolve(line);
+      };
+      const timer =
+        timeoutMs === undefined
+          ? undefined
+          : setTimeout(() => {
+              const i = this.waiters.indexOf(waiter);
+              if (i >= 0) this.waiters.splice(i, 1);
+              resolve(TIMEOUT);
+            }, timeoutMs);
+      this.waiters.push(waiter);
+    });
   }
 }
 
@@ -123,6 +145,7 @@ export class ClaudeProcess {
     this.stderr = "";
     this.stray = "";
     this.sent = new Set(); // rpcIds of steers already forwarded to Claude mid-turn
+    this.relays = new Map(); // relayed dsh tool call id → { resolve, reject, ... } awaiting dsh's result
     this.exitCode = undefined;
     this.queue = new LineQueue();
     this.child = spawn("claude", args, {
@@ -140,8 +163,9 @@ export class ClaudeProcess {
     this.child.on("close", (code) => {
       this.exitCode = code ?? -1;
       this.queue.close();
-      this.relay?.reject(new Error(`claude exited ${this.exitCode} while dsh ran its tool call`));
-      this.relay = undefined;
+      for (const r of this.relays.values())
+        r.reject(new Error(`claude exited ${this.exitCode} while dsh ran its tool call`));
+      this.relays.clear();
       onExit?.(this);
     });
   }
@@ -165,11 +189,13 @@ export class ClaudeProcess {
     this.queue.push(event);
   }
 
-  /** Next parsed JSON line; plain text lines are kept in `stray` for error messages. Null when the process ended. */
-  async nextEvent() {
+  /** Next parsed JSON line; plain text lines are kept in `stray` for error messages. Null when the
+   *  process ended, `{ type: "timeout" }` when `timeoutMs` passed first. */
+  async nextEvent(timeoutMs) {
     for (;;) {
-      const line = await this.queue.next();
+      const line = await this.queue.next(timeoutMs);
       if (line === null) return null;
+      if (line === TIMEOUT) return { type: "timeout" };
       if (typeof line === "object") return line; // injected by inject()
       try {
         return JSON.parse(line);

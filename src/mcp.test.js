@@ -117,4 +117,9 @@ const relayErr = await handleRpc(
   { ...env, relay: async () => ({ text: "boom", isError: true }) },
 );
 assert.equal(relayErr.result.isError, true);
+const listed = await handleRpc({ jsonrpc: "2.0", id: 11, method: "tools/list" }, env);
+assert.ok(
+  listed.result.tools.every((t) => t.annotations?.readOnlyHint === true),
+  "dsh tools are marked concurrency-safe for the CLI",
+);
 console.log("mcp ok");

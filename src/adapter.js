@@ -2,6 +2,7 @@
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { LlmAdapter, LlmError } from "@deepseek-ai/dsh-llm";
@@ -18,6 +19,7 @@ import {
   parseQuestions,
   permissionReason,
   userTurnLine,
+  interruptLine,
 } from "./process.js";
 
 export const name = "dsh-llm-claude";
@@ -486,6 +488,46 @@ export function stepContextFor(messages) {
     : `\n\n<user_messages_during_tool_call>\n${parts.join("\n\n")}\n</user_messages_during_tool_call>`;
 }
 
+/** Cross-reload registry of live Claude processes (see ClaudeCodeAdapter constructor). */
+export const PROCESS_REGISTRY = Symbol.for("dsh-llm-claude.processes");
+
+/** How long to wait for the rest of a parallel dsh tool-call batch after the first one arrives. */
+const RELAY_BATCH_MS = 1500;
+/** After asking the CLI to interrupt, how long before falling back to killing the process. */
+const INTERRUPT_GRACE_MS = 5000;
+
+/** Count the human prompts dsh has in a transcript (context injections and tool results excluded). */
+export function userPromptCount(messages) {
+  return (messages ?? []).filter((m) => m.role === "user" && m.source?.kind === "user").length;
+}
+
+/** A Claude Code transcript copied under a new id, cut before the (keep+1)-th human prompt so a
+ *  dsh fork at an earlier turn rewinds Claude too. keep <= 0 keeps everything. */
+export function forkTranscriptText(text, fromId, toId, keep) {
+  const out = [];
+  let prompts = 0;
+  for (const line of text.split("\n")) {
+    if (!line) continue;
+    if (keep > 0) {
+      let entry;
+      try {
+        entry = JSON.parse(line);
+      } catch {
+        entry = undefined;
+      }
+      const content = entry?.message?.content;
+      const human =
+        entry?.type === "user" &&
+        entry.isSidechain !== true &&
+        (typeof content === "string" ||
+          (Array.isArray(content) && !content.some((b) => b?.type === "tool_result")));
+      if (human && ++prompts > keep) break;
+    }
+    out.push(line);
+  }
+  return `${out.join("\n").replaceAll(fromId, toId)}\n`;
+}
+
 /** The stream chunks that make one relayed dsh tool call a native tool-call block. */
 export function* relayBlocks(tr, call) {
   const index = tr.index++;
@@ -505,10 +547,13 @@ export class Translator {
     toolTextLimit = TOOL_TEXT_LIMIT,
     relay = false,
     dshIds,
+    relayed,
   } = {}) {
     this.toolActivity = toolActivity;
     this.relay = relay; // dsh tool calls are relayed to dsh's own loop: hide Claude's view of them
     this.dshIds = dshIds ?? new Set(); // tool_use ids of dsh tools called over the MCP bridge
+    this.dshNames = new Map(); // dsh tool_use id → tool name, for a fallback row
+    this.relayed = relayed ?? new Set(); // dsh tool_use ids dsh ran natively; results not drawn here
     this.limit = toolTextLimit;
     this.index = 0;
     this.open = new Map(); // api block index → { index, blockType, text }
@@ -516,36 +561,48 @@ export class Translator {
     this.finished = false;
     this.denied = 0; // tool calls Claude Code refused because a non-interactive run cannot ask
     this.toolPending = false; // a tool_use block closed and its result has not arrived yet
+    this.aborting = false; // dsh cancelled: the CLI's interrupt result finishes as aborted, not error
   }
 
   deltaType(block) {
     return block.blockType === "text" ? "text-delta" : "reasoning-delta";
   }
 
+  /** A block is announced on its first text. Claude emits thinking blocks that carry only a
+   *  signature and never any text; announcing those eagerly draws an empty bubble. */
   startBlock(blockType, prefix = "") {
-    const block = { index: this.index++, blockType, text: prefix };
-    const events = [{ type: "block-start", index: block.index, blockType }];
-    if (prefix) events.push({ type: this.deltaType(block), index: block.index, text: prefix });
-    return { block, events };
+    const block = { index: this.index++, blockType, text: "", started: false };
+    return { block, events: prefix ? this.delta(block, prefix) : [] };
   }
 
+  /** Text for a block, with its block-start ahead of the first non-empty piece. Empty in, empty out. */
   delta(block, text) {
+    if (!text) return [];
     block.text += text;
-    const type = this.deltaType(block);
-    return { type, index: block.index, text };
+    const events = [];
+    if (!block.started) {
+      block.started = true;
+      events.push({ type: "block-start", index: block.index, blockType: block.blockType });
+    }
+    events.push({ type: this.deltaType(block), index: block.index, text });
+    return events;
   }
 
+  /** Close a block; one that never got text was never announced and closes silently. */
   endBlock(block) {
-    return {
-      type: "block-end",
-      index: block.index,
-      block: { type: block.blockType, text: block.text },
-    };
+    if (!block.started) return [];
+    return [
+      {
+        type: "block-end",
+        index: block.index,
+        block: { type: block.blockType, text: block.text },
+      },
+    ];
   }
 
   wholeBlock(blockType, text) {
     const { block, events } = this.startBlock(blockType);
-    events.push(this.delta(block, text), this.endBlock(block));
+    events.push(...this.delta(block, text), ...this.endBlock(block));
     return events;
   }
 
@@ -570,7 +627,12 @@ export class Translator {
           );
         }
         if (event.usage) events.push(usageEvent(event.usage));
-        events.push({ type: "finish", reason: finishReason(event) });
+        events.push({
+          type: "finish",
+          reason: this.aborting
+            ? { kind: "aborted", failure: { message: "aborted", code: "ABORTED" } }
+            : finishReason(event),
+        });
         return events;
       }
       case "rate_limit_event": {
@@ -606,7 +668,7 @@ export class Translator {
         if (!block || block.index < 0) return [];
         const d = ev.delta ?? {};
         const text = d.text ?? d.thinking ?? d.partial_json ?? "";
-        return text ? [this.delta(block, text)] : [];
+        return this.delta(block, text);
       }
       case "content_block_stop": {
         const block = this.open.get(ev.index);
@@ -615,7 +677,7 @@ export class Translator {
         // A finished tool_use block means the CLI is now running that tool: no stream events until
         // its result arrives, however long it takes. Callers read this to pause their idle timer.
         this.toolPending = block.tool === true;
-        return block.index < 0 ? [] : [this.endBlock(block)];
+        return block.index < 0 ? [] : this.endBlock(block);
       }
       default:
         return [];
@@ -628,7 +690,10 @@ export class Translator {
     else if (cb.type === "thinking") opened = this.startBlock("reasoning");
     else if (cb.type === "tool_use") {
       const dsh = cb.name?.startsWith("mcp__dsh__") === true;
-      if (dsh) this.dshIds.add(cb.id);
+      if (dsh) {
+        this.dshIds.add(cb.id);
+        this.dshNames.set(cb.id, cb.name.slice("mcp__dsh__".length));
+      }
       if (!this.toolActivity || (dsh && this.relay)) {
         this.open.set(apiIndex, { index: -1, blockType: "hidden", text: "", tool: true });
         return [];
@@ -657,11 +722,13 @@ export class Translator {
       if (b.type === "text" && b.text) events.push(...this.wholeBlock("text", b.text));
       else if (b.type === "thinking" && b.thinking)
         events.push(...this.wholeBlock("reasoning", b.thinking));
-      else if (
-        b.type === "tool_use" &&
-        this.toolActivity &&
-        !(this.relay && b.name?.startsWith("mcp__dsh__"))
-      ) {
+      else if (b.type === "tool_use") {
+        const dsh = b.name?.startsWith("mcp__dsh__") === true;
+        if (dsh) {
+          this.dshIds.add(b.id);
+          this.dshNames.set(b.id, b.name.slice("mcp__dsh__".length));
+        }
+        if (!this.toolActivity || (dsh && this.relay)) continue;
         const [kind, lead] = this.toolLead(b);
         events.push(
           ...this.wholeBlock(kind, lead + clip(JSON.stringify(b.input ?? {}), this.limit)),
@@ -692,11 +759,15 @@ export class Translator {
       const body = clip(raw || "(empty)", this.limit);
       const tag = parentToolUseId ? "↳ " : "";
       const dsh = this.dshIds.delete(b.tool_use_id);
-      if (dsh && this.relay) continue; // dsh already rendered the native call and its result
+      if (dsh && this.relayed.delete(b.tool_use_id)) continue; // dsh drew the native call and result
+      const name = this.dshNames.get(b.tool_use_id);
+      this.dshNames.delete(b.tool_use_id);
+      // A dsh call that could not be relayed ran inside the bridge: show it as one compact row.
+      const lead = dsh && this.relay ? `⤷ ${name ?? "dsh tool"} (ran in bridge)\n` : "";
       events.push(
         ...this.wholeBlock(
           dsh ? "text" : "reasoning",
-          `${tag}${dsh ? "⤶" : "◀"} ${b.is_error ? "error" : "result"}\n${body}`,
+          `${lead}${tag}${dsh ? "⤶" : "◀"} ${b.is_error ? "error" : "result"}\n${body}`,
         ),
       );
     }
@@ -714,7 +785,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     super();
     this.ctx = ctx;
     this.config = config;
-    this.processes = new Map(); // dsh sessionId → ClaudeProcess
+    // Kept on globalThis so a hot reload of this plugin adopts the running Claude processes
+    // instead of orphaning them: their pipes belong to this node process, not to the plugin scope.
+    this.processes = globalThis[PROCESS_REGISTRY] ??= new Map(); // dsh sessionId → ClaudeProcess
     // Steers: dsh only delivers them at step boundaries, and a Claude turn has none of its own.
     // Forward them to Claude's stdin as they arrive; the CLI injects them at its next tool call.
     ctx.on?.(
@@ -722,7 +795,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       (session, event) => {
         if (event?.type !== "agent/inbox/spliced" || event.data?.target !== "next-step") return;
         const proc = this.processes.get(session?.id);
-        if (!proc?.alive || !proc.busy || proc.relay !== undefined) return;
+        if (!proc?.alive || !proc.busy || proc.relays.size > 0) return;
         for (const m of event.data.inserted ?? []) {
           const rpcId = m.source?.rpcId;
           if (m.role !== "user" || m.source?.kind !== "user" || !rpcId) continue;
@@ -778,6 +851,47 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     return out;
   }
 
+  /** A dsh fork of a Claude session becomes a Claude fork: the parent's transcript is copied under
+   *  the new id, cut at the forked turn. True when a copy was made. */
+  async forkTranscript(options, cwd, id) {
+    let header;
+    try {
+      header = this.ctx?.sessions?.get(options.sessionId)?.header;
+    } catch {
+      return false;
+    }
+    const parentId = header?.parentSession;
+    if (!parentId || header.origin === "subagent") return false;
+    const parentCwd = this.sessionCwd(parentId) ?? cwd;
+    const parentClaude = (await claudeSessionExists(parentCwd, parentId))
+      ? parentId
+      : claudeSessionId(parentId);
+    let text;
+    try {
+      text = await readFile(
+        join(CLAUDE_HOME, "projects", projectDirName(parentCwd), `${parentClaude}.jsonl`),
+        "utf8",
+      );
+    } catch {
+      return false;
+    }
+    // ponytail: prompt counting assumes one Claude prompt per dsh user turn; a turn dsh skipped
+    // as already-forwarded (see dropSent) shifts the cut by one.
+    const keep =
+      userPromptCount(options.messages) - userPromptCount(afterLastAssistant(options.messages));
+    const dest = join(CLAUDE_HOME, "projects", projectDirName(cwd), `${id}.jsonl`);
+    try {
+      await mkdir(dirname(dest), { recursive: true });
+      await writeFile(dest, forkTranscriptText(text, parentClaude, id, keep));
+    } catch (error) {
+      this.log("warn", `fork transcript copy failed: ${error?.message ?? error}`);
+      return false;
+    }
+    await rememberStarted(id, true);
+    this.log("info", `forked claude session ${parentClaude} -> ${id} (${keep} prompts kept)`);
+    return true;
+  }
+
   /** Everything one turn needs: spawn args + spec for the long-lived process, and the stdin line for this turn. */
   async prepare(options, { forceFresh = false } = {}) {
     const cli = await probeCli();
@@ -795,7 +909,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       // A dsh session opened from a Claude Code transcript carries the Claude id itself.
       const own = await claudeSessionExists(cwd, options.sessionId);
       const id = own ? options.sessionId : claudeSessionId(options.sessionId);
-      const known = own || (await loadStarted()).has(id) || (await claudeSessionExists(cwd, id));
+      let known = own || (await loadStarted()).has(id) || (await claudeSessionExists(cwd, id));
+      if (!known && !forceFresh) known = await this.forkTranscript(options, cwd, id);
       session = { id, resuming: known && !forceFresh };
     }
     const turns = selectTurns(options.messages, session?.resuming ?? false);
@@ -880,14 +995,16 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    *  killing the longest-idle ones that are not mid-turn. Called before each spawn. */
   evict() {
     const now = Date.now();
+    // A process parked on a relayed tool call or a steer is mid-turn, not idle.
+    const settled = (p) => !p.busy && p.relays.size === 0 && !p.parked;
     for (const [id, p] of this.processes) {
-      if (!p.alive || (!p.busy && now - p.lastUsed > this.config.processIdleMs)) {
+      if (!p.alive || (settled(p) && now - p.lastUsed > this.config.processIdleMs)) {
         p.kill();
         this.processes.delete(id);
       }
     }
     const idle = [...this.processes.entries()]
-      .filter(([, p]) => !p.busy)
+      .filter(([, p]) => settled(p))
       .sort((a, b) => a[1].lastUsed - b[1].lastUsed);
     while (this.processes.size >= this.config.maxProcesses && idle.length > 0) {
       const [id, p] = idle.shift();
@@ -900,23 +1017,25 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // A process parked on a relayed dsh tool call resumes when dsh sends the tool's result back;
     // anything else (a new prompt, a fresh start) abandons that call and starts over.
     const held = this.processes.get(options.sessionId);
-    // Parked after a live steer reached Claude: dsh has now drawn the steer, keep translating
-    // the same Claude turn so the rest of it lands below the steer.
-    const steerResume = held?.parked === "steer" && held.alive && !forceFresh ? held : undefined;
-    if (!steerResume && held?.sent.size > 0) {
-      // dsh delivers a steer Claude already got live as a boundary message or a new prompt.
-      const fresh = afterLastAssistant(options.messages);
-      if (fresh.length > 0 && dropSent(fresh, held.sent).length === 0) {
-        yield { type: "finish", reason: { kind: "stop" } }; // nothing new: Claude answered it already
-        return;
-      }
+    // Continue the Claude process instead of prompting it when (a) it is parked after a live steer
+    // reached Claude mid-turn: dsh has drawn the steer, keep translating so the rest lands below
+    // it; or (b) everything dsh delivers now was already forwarded live and no tool call followed:
+    // the CLI then answered the steer as its own turn, and that reply is waiting in the pipe.
+    const fresh = afterLastAssistant(options.messages);
+    const onlySent =
+      held?.sent.size > 0 && fresh.length > 0 && dropSent(fresh, held.sent).length === 0;
+    const steerResume =
+      held?.alive && !forceFresh && (held.parked === "steer" || onlySent) ? held : undefined;
+    if (!steerResume && held?.sent.size > 0)
       options = { ...options, messages: dropSent(options.messages, held.sent) };
-    }
-    const resume = held?.relay !== undefined && held.alive && !forceFresh ? held : undefined;
-    const result = resume ? toolResultFor(options.messages, resume.relay.id) : undefined;
-    if (resume && !result) {
-      resume.relay.reject(new Error("dsh moved on without a result for this tool call"));
-      resume.relay = undefined;
+    const resume = held?.relays.size > 0 && held.alive && !forceFresh ? held : undefined;
+    const results = resume
+      ? [...resume.relays.keys()].map((id) => toolResultFor(options.messages, id))
+      : [];
+    if (resume && results.some((r) => r === undefined)) {
+      for (const r of resume.relays.values())
+        r.reject(new Error("dsh moved on without a result for this tool call"));
+      resume.relays.clear();
       resume.kill();
       this.processes.delete(options.sessionId);
       yield* this.turn(options, true);
@@ -932,12 +1051,16 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       return;
     }
     proc.prep = prep;
-    if (!resume) proc.dshIds = new Set(); // ids only need to survive a relay round trip
+    if (!resume) {
+      proc.dshIds = new Set(); // ids only need to survive a relay round trip
+      proc.relayed = new Set();
+    }
     const tr = new Translator({
       toolActivity: this.config.toolActivity,
       toolTextLimit: this.config.toolTextLimit,
       relay: this.mcp !== undefined && this.config.dshTools,
       dshIds: proc.dshIds,
+      relayed: proc.relayed,
     });
     const pending = new Map(); // control request id → AbortController
     let retryFresh = false;
@@ -952,17 +1075,29 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         proc.kill();
       }, this.config.idleTimeoutMs);
     };
-    const onAbort = () => proc.kill();
+    const onAbort = () => {
+      // Ask the CLI to stop; it answers with a result and stays alive for the next turn. Kill only
+      // if it does not.
+      tr.aborting = true;
+      if (!proc.write(interruptLine(`interrupt-${randomUUID()}`))) return proc.kill();
+      const fallback = setTimeout(() => {
+        if (!tr.finished) proc.kill();
+      }, INTERRUPT_GRACE_MS);
+      fallback.unref?.();
+    };
     options.signal?.addEventListener("abort", onAbort, { once: true });
     proc.busy = true;
     proc.lastUsed = Date.now();
     try {
       if (resume) {
-        const relay = resume.relay;
-        resume.relay = undefined;
-        relay.resolve({
-          ...result,
-          text: result.text + stepContextFor(options.messages),
+        const relays = [...resume.relays.values()];
+        resume.relays.clear();
+        const extra = stepContextFor(options.messages); // steers and notices ride on the last result
+        relays.forEach((relay, i) => {
+          const result = results[i];
+          relay.resolve(
+            i === relays.length - 1 ? { ...result, text: result.text + extra } : result,
+          );
         });
       } else if (steerResume) {
         proc.parked = undefined;
@@ -976,42 +1111,78 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       } else if (!proc.write(prep.input))
         throw new LlmError("claude process is not running", "PROVIDER_ERROR");
       armIdle();
-      for (;;) {
-        const event = await proc.nextEvent();
-        if (event === null) break;
-        armIdle();
-        if (event.type === "dsh_relay") {
-          // Hand the call to dsh: end this step with a tool-call, keep Claude parked on its MCP
-          // request, and resolve it when dsh calls back with the result.
-          yield* relayBlocks(tr, event);
-          proc.relay = event;
-          relayed = true;
-          break;
-        }
+      const self = this;
+      /** One CLI event. Returns what the loop should do next. */
+      const dispatch = async function* (event) {
         if (event.type === "control_request") {
-          yield* this.handleControl(event, options, prep, proc, pending, tr);
-          continue;
+          yield* self.handleControl(event, options, prep, proc, pending, tr);
+          return "continue";
         }
         if (event.type === "control_cancel_request") {
           pending.get(event.request_id)?.abort();
-          continue;
+          return "continue";
         }
-        if (event.type === "control_response") continue; // replies to our own initialize etc.
-        if (isStaleResume(event) && proc.resuming && !forceFresh) {
-          retryFresh = true;
-          break;
-        }
+        if (event.type === "control_response" || event.type === "timeout") return "continue";
+        if (isStaleResume(event) && proc.resuming && !forceFresh) return "retry";
         yield* tr.translate(event);
         if (tr.toolPending) clearTimeout(timer); // tool running: silence is expected, do not time out
-        if (tr.finished) break;
+        if (tr.finished) return "break";
         if (proc.steerPending && event.type === "user") {
           // Tool results are in; the CLI injects the forwarded steer next. End the dsh step here
           // so dsh draws the steer now, then resume this same Claude turn on the next call.
           proc.steerPending = false;
           proc.parked = "steer";
-          parked = true;
+          return "park";
+        }
+        return "continue";
+      };
+      for (;;) {
+        const event = await proc.nextEvent();
+        if (event === null) break;
+        armIdle();
+        if (event.type === "dsh_relay") {
+          // Hand the call(s) to dsh: Claude fires parallel dsh calls as separate MCP requests, so
+          // gather the batch (one per outstanding dsh tool_use block), end this step with those
+          // tool-calls, keep Claude parked on its requests, and resolve them when dsh calls back.
+          const calls = [event];
+          let dead = false;
+          while (calls.length < tr.dshIds.size) {
+            const more = await proc.nextEvent(RELAY_BATCH_MS);
+            if (more === null) {
+              dead = true;
+              break;
+            }
+            if (more.type === "timeout") break;
+            if (more.type === "dsh_relay") {
+              calls.push(more);
+              continue;
+            }
+            const what = yield* dispatch(more);
+            if (what !== "continue") {
+              dead = true; // the turn ended under us; do not park
+              break;
+            }
+          }
+          if (dead) {
+            for (const c of calls)
+              c.reject(new Error("claude turn ended before dsh could run the tool"));
+            break;
+          }
+          // The oldest outstanding dsh tool_use blocks are the ones these calls came from.
+          const ids = [...tr.dshIds];
+          for (const [i, call] of calls.entries()) {
+            if (ids[i] !== undefined) tr.relayed.add(ids[i]);
+            yield* relayBlocks(tr, call);
+            proc.relays.set(call.id, call);
+          }
+          relayed = true;
           break;
         }
+        const what = yield* dispatch(event);
+        if (what === "continue") continue;
+        if (what === "retry") retryFresh = true;
+        if (what === "park") parked = true;
+        break;
       }
       if (relayed) {
         yield { type: "finish", reason: { kind: "tool-calls" } };
@@ -1059,7 +1230,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    *  can take it (idle process, a relay already pending); the bridge then executes it directly. */
   relay(sessionId, name, args, signal) {
     const proc = this.processes.get(sessionId);
-    if (!proc?.alive || !proc.busy || proc.relay !== undefined) return undefined;
+    if (!proc?.alive || !proc.busy || proc.relays.size > 0) return undefined;
     return new Promise((resolve, reject) => {
       signal?.addEventListener("abort", () => reject(new Error("relay aborted")), { once: true });
       proc.inject({ type: "dsh_relay", id: randomUUID(), name, args, resolve, reject });
@@ -1215,7 +1386,7 @@ export function apply(ctx, config) {
   ctx.llm.registerAdapter(["claude-code"], adapter);
   registerMcpBridge(ctx, {
     log: (level, msg) => adapter.log(level, msg),
-    version: "0.8.0",
+    version: "0.9.0",
     relay: (sessionId, name, args, signal) => adapter.relay(sessionId, name, args, signal),
   }).then(
     (mcp) => {

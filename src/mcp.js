@@ -100,7 +100,15 @@ export async function handleRpc(msg, { tools, agent, signal, version, open, rela
         tools: tools
           .schemas(agent)
           .filter((t) => !HIDDEN.has(t.name))
-          .map((t) => ({ name: t.name, description: t.description, inputSchema: t.parameters }))
+          // readOnlyHint is what Claude Code keys concurrency on: without it every MCP call runs
+          // one after another, so parallel subagents would serialize. dsh's own permission
+          // presets still govern what a child may do.
+          .map((t) => ({
+            name: t.name,
+            description: t.description,
+            inputSchema: t.parameters,
+            annotations: { readOnlyHint: true },
+          }))
           .concat(open ? [OPEN_SESSION] : []),
       });
     case "tools/call": {
@@ -146,12 +154,15 @@ const send = (res, status, value) => {
   res.end(value === undefined ? "" : JSON.stringify(value));
 };
 
+/** The bridge key outlives a plugin hot reload: running Claude processes were spawned with it. */
+const KEY_REGISTRY = Symbol.for("dsh-llm-claude.mcpKey");
+
 /**
  * Mount `POST /dsh-llm-claude/mcp/<dsh session id>`. Resolves once the web server is up with the
  * base URL and key the adapter must hand to `claude --mcp-config`.
  */
 export function registerMcpBridge(ctx, { log, version, relay }) {
-  const key = randomUUID();
+  const key = (globalThis[KEY_REGISTRY] ??= randomUUID());
   return new Promise((resolve) => {
     ctx.inject(
       ["webServer", "tools", "agents", "sessions", "sessionController", "workspaceRegistry"],
