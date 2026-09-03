@@ -166,9 +166,9 @@ export function registerMcpBridge(ctx, { log, version, relay }) {
   return new Promise((resolve) => {
     ctx.inject(
       ["webServer", "tools", "agents", "sessions", "sessionController", "workspaceRegistry"],
-      (ctx) => {
-        ctx.effect(() =>
-          ctx.webServer.register({
+      (host) => {
+        host.effect(() =>
+          host.webServer.register({
             kind: "prefix",
             path: MCP_PATH,
             handler: async (req, res) => {
@@ -177,7 +177,7 @@ export function registerMcpBridge(ctx, { log, version, relay }) {
               const sessionId = decodeURIComponent(
                 (req.url ?? "").slice(MCP_PATH.length + 1).split("?")[0],
               );
-              const agent = ctx.agents.get(sessionId);
+              const agent = host.agents.get(sessionId);
               if (!agent)
                 return send(res, 404, { error: `no live agent for session ${sessionId}` });
               const controller = new AbortController();
@@ -189,11 +189,11 @@ export function registerMcpBridge(ctx, { log, version, relay }) {
               try {
                 const msg = await readBody(req, BODY_LIMIT);
                 const out = await handleRpc(msg, {
-                  tools: ctx.tools,
+                  tools: host.tools,
                   agent,
                   signal: controller.signal,
                   version,
-                  open: (args) => openSession(ctx, agent, args, controller.signal),
+                  open: (args) => openSession(host, agent, args, controller.signal),
                   relay: relay
                     ? (name, args, signal) => relay(sessionId, name, args, signal)
                     : undefined,
@@ -207,7 +207,7 @@ export function registerMcpBridge(ctx, { log, version, relay }) {
             },
           }),
         );
-        resolve({ base: `http://127.0.0.1:${ctx.webServer.port}`, key });
+        resolve({ base: `http://127.0.0.1:${host.webServer.port}`, key });
       },
     );
   });

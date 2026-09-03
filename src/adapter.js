@@ -91,7 +91,7 @@ export const Config = z.object({
 
 const EFFORTS_ALL = ["low", "medium", "high", "xhigh", "max"];
 const EFFORTS_45 = ["low", "medium", "high"];
-const M = (id, name, contextWindow, efforts) => ({ id, name, contextWindow, efforts });
+const M = (id, label, contextWindow, efforts) => ({ id, name: label, contextWindow, efforts });
 
 // Fallback catalog when the Models API is unreachable. Ids are what `claude --model` accepts.
 export const KNOWN_MODELS = [
@@ -642,11 +642,8 @@ export class Translator {
         if (status === "allowed") return [];
         this.finished = true;
         const resetMs = Number.isFinite(info.resetsAt) ? info.resetsAt * 1000 - Date.now() : 0;
-        const failure = {
-          message: `Rate limited (${status})`,
-          code: "RATE_LIMIT",
-          ...(resetMs > 0 ? { providerRetryAfterMs: resetMs } : {}),
-        };
+        const failure = { message: `Rate limited (${status})`, code: "RATE_LIMIT" };
+        if (resetMs > 0) failure.providerRetryAfterMs = resetMs;
         return [{ type: "finish", reason: { kind: "error", failure } }];
       }
       default:
@@ -760,10 +757,10 @@ export class Translator {
       const tag = parentToolUseId ? "↳ " : "";
       const dsh = this.dshIds.delete(b.tool_use_id);
       if (dsh && this.relayed.delete(b.tool_use_id)) continue; // dsh drew the native call and result
-      const name = this.dshNames.get(b.tool_use_id);
+      const toolName = this.dshNames.get(b.tool_use_id);
       this.dshNames.delete(b.tool_use_id);
       // A dsh call that could not be relayed ran inside the bridge: show it as one compact row.
-      const lead = dsh && this.relay ? `⤷ ${name ?? "dsh tool"} (ran in bridge)\n` : "";
+      const lead = dsh && this.relay ? `⤷ ${toolName ?? "dsh tool"} (ran in bridge)\n` : "";
       events.push(
         ...this.wholeBlock(
           dsh ? "text" : "reasoning",
@@ -1013,45 +1010,102 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     }
   }
 
-  async *turn(options, forceFresh) {
-    // A process parked on a relayed dsh tool call resumes when dsh sends the tool's result back;
-    // anything else (a new prompt, a fresh start) abandons that call and starts over.
+  /**
+   * How this dsh request continues the session's Claude process, if at all:
+   * - `relay`: parked on relayed tool call(s) and dsh brought every result: answer them, keep going.
+   * - `steer`: parked after a live steer reached Claude mid-turn, or everything dsh delivers now was
+   *   already forwarded and the CLI answered it as a turn of its own: keep translating, write nothing
+   *   new (or only the messages Claude has not seen).
+   * - `abandon`: parked on relays but dsh moved on without their results: reject them, start over.
+   * - `prompt`: a normal turn; steers Claude already got live are dropped from the prompt.
+   */
+  continuationFor(options, forceFresh) {
     const held = this.processes.get(options.sessionId);
-    // Continue the Claude process instead of prompting it when (a) it is parked after a live steer
-    // reached Claude mid-turn: dsh has drawn the steer, keep translating so the rest lands below
-    // it; or (b) everything dsh delivers now was already forwarded live and no tool call followed:
-    // the CLI then answered the steer as its own turn, and that reply is waiting in the pipe.
+    const live = held?.alive && !forceFresh ? held : undefined;
     const fresh = afterLastAssistant(options.messages);
     const onlySent =
-      held?.sent.size > 0 && fresh.length > 0 && dropSent(fresh, held.sent).length === 0;
-    const steerResume =
-      held?.alive && !forceFresh && (held.parked === "steer" || onlySent) ? held : undefined;
-    if (!steerResume && held?.sent.size > 0)
-      options = { ...options, messages: dropSent(options.messages, held.sent) };
-    const resume = held?.relays.size > 0 && held.alive && !forceFresh ? held : undefined;
-    const results = resume
-      ? [...resume.relays.keys()].map((id) => toolResultFor(options.messages, id))
-      : [];
-    if (resume && results.some((r) => r === undefined)) {
-      for (const r of resume.relays.values())
+      live?.sent.size > 0 && fresh.length > 0 && dropSent(fresh, live.sent).length === 0;
+    if (live && live.relays.size > 0) {
+      const results = [...live.relays.keys()].map((id) => toolResultFor(options.messages, id));
+      return results.some((r) => r === undefined)
+        ? { mode: "abandon", proc: live, options }
+        : { mode: "relay", proc: live, options, results };
+    }
+    if (live && (live.parked === "steer" || onlySent))
+      return { mode: "steer", proc: live, options };
+    const messages = held?.sent.size > 0 ? dropSent(options.messages, held.sent) : options.messages;
+    return { mode: "prompt", options: { ...options, messages } };
+  }
+
+  /** First write of a turn: relay results, unsent steers, or the prompt itself. */
+  openTurn(cont, proc, prep) {
+    if (cont.mode === "relay") {
+      const relays = [...proc.relays.values()];
+      proc.relays.clear();
+      const extra = stepContextFor(cont.options.messages); // steers and notices ride on the last result
+      relays.forEach((relay, i) => {
+        const result = cont.results[i];
+        relay.resolve(i === relays.length - 1 ? { ...result, text: result.text + extra } : result);
+      });
+      return;
+    }
+    if (cont.mode === "steer") {
+      proc.parked = undefined;
+      for (const m of afterLastAssistant(cont.options.messages)) {
+        const rpcId = m.source?.rpcId;
+        if (m.role !== "user" || m.source?.kind !== "user" || !rpcId || proc.sent.has(rpcId))
+          continue;
+        const text = textOf(m.content);
+        if (text && proc.write(buildInput(text, []))) proc.sent.add(rpcId);
+      }
+      return;
+    }
+    if (!proc.write(prep.input))
+      throw new LlmError("claude process is not running", "PROVIDER_ERROR");
+  }
+
+  /** Why a turn that neither finished nor parked ended. */
+  endReason(proc, options, idle) {
+    if (options.signal?.aborted)
+      return { kind: "aborted", failure: { message: "aborted", code: "ABORTED" } };
+    if (idle)
+      return {
+        kind: "error",
+        failure: {
+          message: `claude produced no output for ${Math.round(this.config.idleTimeoutMs / 1000)}s and was stopped`,
+          code: "IDLE_TIMEOUT",
+        },
+      };
+    return {
+      kind: "error",
+      failure: {
+        message: `claude exited ${proc.exitCode}: ${(proc.stderr || proc.stray).trim() || "no output"}`,
+        code: "PROVIDER_ERROR",
+      },
+    };
+  }
+
+  async *turn(options, forceFresh) {
+    const cont = this.continuationFor(options, forceFresh);
+    options = cont.options;
+    if (cont.mode === "abandon") {
+      for (const r of cont.proc.relays.values())
         r.reject(new Error("dsh moved on without a result for this tool call"));
-      resume.relays.clear();
-      resume.kill();
+      cont.proc.relays.clear();
+      cont.proc.kill();
       this.processes.delete(options.sessionId);
       yield* this.turn(options, true);
       return;
     }
-    const { prep, proc } = resume
-      ? { prep: resume.prep, proc: resume }
-      : steerResume
-        ? { prep: steerResume.prep, proc: steerResume }
-        : await this.acquire(options, forceFresh);
+    const { prep, proc } = cont.proc
+      ? { prep: cont.proc.prep, proc: cont.proc }
+      : await this.acquire(options, forceFresh);
     if (proc === null) {
       yield* this.oneShot(options);
       return;
     }
     proc.prep = prep;
-    if (!resume) {
+    if (cont.mode !== "relay") {
       proc.dshIds = new Set(); // ids only need to survive a relay round trip
       proc.relayed = new Set();
     }
@@ -1063,9 +1117,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       relayed: proc.relayed,
     });
     const pending = new Map(); // control request id → AbortController
-    let retryFresh = false;
-    let relayed = false;
-    let parked = false;
+    let outcome = "ended"; // ended | finished | relayed | parked | retry
     let idle = false;
     let timer;
     const armIdle = () => {
@@ -1088,152 +1140,106 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     options.signal?.addEventListener("abort", onAbort, { once: true });
     proc.busy = true;
     proc.lastUsed = Date.now();
-    try {
-      if (resume) {
-        const relays = [...resume.relays.values()];
-        resume.relays.clear();
-        const extra = stepContextFor(options.messages); // steers and notices ride on the last result
-        relays.forEach((relay, i) => {
-          const result = results[i];
-          relay.resolve(
-            i === relays.length - 1 ? { ...result, text: result.text + extra } : result,
-          );
-        });
-      } else if (steerResume) {
-        proc.parked = undefined;
-        for (const m of afterLastAssistant(options.messages)) {
-          const rpcId = m.source?.rpcId;
-          if (m.role !== "user" || m.source?.kind !== "user" || !rpcId || proc.sent.has(rpcId))
-            continue;
-          const text = textOf(m.content);
-          if (text && proc.write(buildInput(text, []))) proc.sent.add(rpcId);
-        }
-      } else if (!proc.write(prep.input))
-        throw new LlmError("claude process is not running", "PROVIDER_ERROR");
-      armIdle();
-      const self = this;
-      /** One CLI event. Returns what the loop should do next. */
-      const dispatch = async function* (event) {
-        if (event.type === "control_request") {
-          yield* self.handleControl(event, options, prep, proc, pending, tr);
-          return "continue";
-        }
-        if (event.type === "control_cancel_request") {
-          pending.get(event.request_id)?.abort();
-          return "continue";
-        }
-        if (event.type === "control_response" || event.type === "timeout") return "continue";
-        if (isStaleResume(event) && proc.resuming && !forceFresh) return "retry";
-        yield* tr.translate(event);
-        if (tr.toolPending) clearTimeout(timer); // tool running: silence is expected, do not time out
-        if (tr.finished) return "break";
-        if (proc.steerPending && event.type === "user") {
-          // Tool results are in; the CLI injects the forwarded steer next. End the dsh step here
-          // so dsh draws the steer now, then resume this same Claude turn on the next call.
-          proc.steerPending = false;
-          proc.parked = "steer";
-          return "park";
-        }
+    const self = this;
+    /** One CLI event. Returns what the loop should do next. */
+    const dispatch = async function* (event) {
+      if (event.type === "control_request") {
+        yield* self.handleControl(event, options, prep, proc, pending, tr);
         return "continue";
+      }
+      if (event.type === "control_cancel_request") {
+        pending.get(event.request_id)?.abort();
+        return "continue";
+      }
+      if (event.type === "control_response" || event.type === "timeout") return "continue";
+      if (isStaleResume(event) && proc.resuming && !forceFresh) return "retry";
+      yield* tr.translate(event);
+      if (tr.toolPending) clearTimeout(timer); // tool running: silence is expected, do not time out
+      if (tr.finished) return "finished";
+      if (proc.steerPending && event.type === "user") {
+        // Tool results are in; the CLI injects the forwarded steer next. End the dsh step here
+        // so dsh draws the steer now, then resume this same Claude turn on the next call.
+        proc.steerPending = false;
+        proc.parked = "steer";
+        return "parked";
+      }
+      return "continue";
+    };
+    /** Claude fires parallel dsh calls as separate MCP requests: gather the batch (one per
+     *  outstanding dsh tool_use block), end this step with those tool-calls, keep Claude parked on
+     *  its requests, and resolve them when dsh calls back. Returns the turn outcome: "relayed", or
+     *  whatever ended the turn under us (its calls are then rejected). */
+    const relayBatch = async function* (first) {
+      const calls = [first];
+      const abandon = (outcomeUnderUs) => {
+        for (const c of calls)
+          c.reject(new Error("claude turn ended before dsh could run the tool"));
+        return outcomeUnderUs;
       };
+      while (calls.length < tr.dshIds.size) {
+        const more = await proc.nextEvent(RELAY_BATCH_MS);
+        if (more === null) return abandon("ended");
+        if (more.type === "timeout") break;
+        if (more.type === "dsh_relay") {
+          calls.push(more);
+          continue;
+        }
+        const what = yield* dispatch(more);
+        if (what !== "continue") return abandon(what);
+      }
+      // The oldest outstanding dsh tool_use blocks are the ones these calls came from.
+      const ids = [...tr.dshIds];
+      for (const [i, call] of calls.entries()) {
+        if (ids[i] !== undefined) tr.relayed.add(ids[i]);
+        yield* relayBlocks(tr, call);
+        proc.relays.set(call.id, call);
+      }
+      return "relayed";
+    };
+    try {
+      this.openTurn(cont, proc, prep);
+      armIdle();
       for (;;) {
         const event = await proc.nextEvent();
         if (event === null) break;
         armIdle();
         if (event.type === "dsh_relay") {
-          // Hand the call(s) to dsh: Claude fires parallel dsh calls as separate MCP requests, so
-          // gather the batch (one per outstanding dsh tool_use block), end this step with those
-          // tool-calls, keep Claude parked on its requests, and resolve them when dsh calls back.
-          const calls = [event];
-          let dead = false;
-          while (calls.length < tr.dshIds.size) {
-            const more = await proc.nextEvent(RELAY_BATCH_MS);
-            if (more === null) {
-              dead = true;
-              break;
-            }
-            if (more.type === "timeout") break;
-            if (more.type === "dsh_relay") {
-              calls.push(more);
-              continue;
-            }
-            const what = yield* dispatch(more);
-            if (what !== "continue") {
-              dead = true; // the turn ended under us; do not park
-              break;
-            }
-          }
-          if (dead) {
-            for (const c of calls)
-              c.reject(new Error("claude turn ended before dsh could run the tool"));
-            break;
-          }
-          // The oldest outstanding dsh tool_use blocks are the ones these calls came from.
-          const ids = [...tr.dshIds];
-          for (const [i, call] of calls.entries()) {
-            if (ids[i] !== undefined) tr.relayed.add(ids[i]);
-            yield* relayBlocks(tr, call);
-            proc.relays.set(call.id, call);
-          }
-          relayed = true;
+          outcome = yield* relayBatch(event);
           break;
         }
         const what = yield* dispatch(event);
         if (what === "continue") continue;
-        if (what === "retry") retryFresh = true;
-        if (what === "park") parked = true;
+        outcome = what;
         break;
       }
-      if (relayed) {
-        yield { type: "finish", reason: { kind: "tool-calls" } };
-      } else if (parked) {
-        yield { type: "finish", reason: { kind: "stop" } };
-      } else if (retryFresh) {
-        await rememberStarted(prep.session.id, false);
-      } else if (tr.finished) {
+      if (outcome === "relayed") yield { type: "finish", reason: { kind: "tool-calls" } };
+      else if (outcome === "parked") yield { type: "finish", reason: { kind: "stop" } };
+      else if (outcome === "retry") await rememberStarted(prep.session.id, false);
+      else if (outcome === "finished") {
         if (prep.session) await rememberStarted(prep.session.id, true);
-      } else {
-        const reason = options.signal?.aborted
-          ? { kind: "aborted", failure: { message: "aborted", code: "ABORTED" } }
-          : idle
-            ? {
-                kind: "error",
-                failure: {
-                  message: `claude produced no output for ${Math.round(this.config.idleTimeoutMs / 1000)}s and was stopped`,
-                  code: "IDLE_TIMEOUT",
-                },
-              }
-            : {
-                kind: "error",
-                failure: {
-                  message: `claude exited ${proc.exitCode}: ${(proc.stderr || proc.stray).trim() || "no output"}`,
-                  code: "PROVIDER_ERROR",
-                },
-              };
-        yield { type: "finish", reason };
-      }
+      } else yield { type: "finish", reason: this.endReason(proc, options, idle) };
     } finally {
       clearTimeout(timer);
       options.signal?.removeEventListener("abort", onAbort);
       for (const c of pending.values()) c.abort();
       proc.busy = false;
       proc.lastUsed = Date.now();
-      if (retryFresh || (!tr.finished && !relayed && !parked)) {
+      if (outcome === "retry" || outcome === "ended") {
         proc.kill();
         this.processes.delete(options.sessionId);
       }
     }
-    if (retryFresh) yield* this.turn(options, true);
+    if (outcome === "retry") yield* this.turn(options, true);
   }
 
   /** Offer a dsh tool call from the MCP bridge to the session's live turn. Undefined when no turn
    *  can take it (idle process, a relay already pending); the bridge then executes it directly. */
-  relay(sessionId, name, args, signal) {
+  relay(sessionId, toolName, args, signal) {
     const proc = this.processes.get(sessionId);
     if (!proc?.alive || !proc.busy || proc.relays.size > 0) return undefined;
     return new Promise((resolve, reject) => {
       signal?.addEventListener("abort", () => reject(new Error("relay aborted")), { once: true });
-      proc.inject({ type: "dsh_relay", id: randomUUID(), name, args, resolve, reject });
+      proc.inject({ type: "dsh_relay", id: randomUUID(), name: toolName, args, resolve, reject });
     });
   }
 
@@ -1387,7 +1393,7 @@ export function apply(ctx, config) {
   registerMcpBridge(ctx, {
     log: (level, msg) => adapter.log(level, msg),
     version: "0.9.0",
-    relay: (sessionId, name, args, signal) => adapter.relay(sessionId, name, args, signal),
+    relay: (sessionId, toolName, args, signal) => adapter.relay(sessionId, toolName, args, signal),
   }).then(
     (mcp) => {
       adapter.mcp = mcp;
