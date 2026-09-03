@@ -1041,7 +1041,7 @@ export function apply(ctx, config) {
   ]);
   const adapter = new ClaudeCodeAdapter(ctx, config);
   ctx.llm.registerAdapter(["claude-code"], adapter);
-  registerMcpBridge(ctx, { log: (level, msg) => adapter.log(level, msg), version: "0.6.0" }).then(
+  registerMcpBridge(ctx, { log: (level, msg) => adapter.log(level, msg), version: "0.7.0" }).then(
     (mcp) => {
       adapter.mcp = mcp;
     },

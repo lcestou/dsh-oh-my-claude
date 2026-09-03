@@ -47,4 +47,42 @@ const bad = await handleRpc(
   env,
 );
 assert.equal(bad.result.isError, true, "hidden tools cannot be called either");
+const opened = [];
+const env2 = { ...env, open: async (args) => (opened.push(args), "opened session s1") };
+const list2 = await handleRpc({ jsonrpc: "2.0", id: 5, method: "tools/list" }, env2);
+assert.deepEqual(
+  list2.result.tools.map((t) => t.name),
+  ["subagent_local", "open_session"],
+  "open_session is offered when the host provides it",
+);
+const openCall = await handleRpc(
+  {
+    jsonrpc: "2.0",
+    id: 6,
+    method: "tools/call",
+    params: { name: "open_session", arguments: { prompt: "go" } },
+  },
+  env2,
+);
+assert.equal(openCall.result.content[0].text, "opened session s1");
+assert.deepEqual(opened, [{ prompt: "go" }]);
+const logged = [];
+const boom = await handleRpc(
+  {
+    jsonrpc: "2.0",
+    id: 7,
+    method: "tools/call",
+    params: { name: "open_session", arguments: { prompt: "x" } },
+  },
+  {
+    ...env2,
+    open: async () => {
+      throw new Error("prompt refused");
+    },
+    log: (...a) => logged.push(a),
+  },
+);
+assert.equal(boom.result.isError, true, "open failure is an error reply, not a throw");
+assert.match(boom.result.content[0].text, /prompt refused/);
+assert.equal(logged.length, 1, "failure is logged once");
 console.log("mcp ok");
