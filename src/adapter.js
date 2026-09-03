@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { LlmAdapter, LlmError } from "@deepseek-ai/dsh-llm";
 import z from "@deepseek-ai/schemastery";
+import { registerSessionRoutes } from "./sessions.js";
 import {
   ClaudeProcess,
   allowResult,
@@ -340,6 +341,9 @@ export function buildArgs({
 
 const STATE_DIR = join(homedir(), ".local", "state", "dsh-llm-claude");
 const STATE_FILE = join(STATE_DIR, "sessions.json");
+const AUX_DIR = join(STATE_DIR, "aux");
+let auxReady;
+const auxCwd = () => (auxReady ??= mkdir(AUX_DIR, { recursive: true }).then(() => AUX_DIR));
 let started; // Set of Claude session ids known to exist
 
 async function loadStarted() {
@@ -664,11 +668,17 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       this.loggedVersion = true;
       this.log("info", `claude ${cli.version}, stdin input ${usesStdin(cli.flags) ? "on" : "off"}`);
     }
-    const cwd = (options.sessionId && this.sessionCwd(options.sessionId)) || process.cwd();
+    // Title/compaction one-shots run from a scratch dir so their transcripts never show up in a
+    // workspace's Claude Code session list.
+    const cwd = options.purpose
+      ? await auxCwd()
+      : (options.sessionId && this.sessionCwd(options.sessionId)) || process.cwd();
     let session;
     if (!options.purpose && this.config.resume && options.sessionId) {
-      const id = claudeSessionId(options.sessionId);
-      const known = (await loadStarted()).has(id) || (await claudeSessionExists(cwd, id));
+      // A dsh session opened from a Claude Code transcript carries the Claude id itself.
+      const own = await claudeSessionExists(cwd, options.sessionId);
+      const id = own ? options.sessionId : claudeSessionId(options.sessionId);
+      const known = own || (await loadStarted()).has(id) || (await claudeSessionExists(cwd, id));
       session = { id, resuming: known && !forceFresh };
     }
     const turns = selectTurns(options.messages, session?.resuming ?? false);
@@ -998,5 +1008,11 @@ export function apply(ctx, config) {
       settingsPath: [],
     },
   ]);
-  ctx.llm.registerAdapter(["claude-code"], new ClaudeCodeAdapter(ctx, config));
+  const adapter = new ClaudeCodeAdapter(ctx, config);
+  ctx.llm.registerAdapter(["claude-code"], adapter);
+  registerSessionRoutes(ctx, {
+    log: (level, msg) => adapter.log(level, msg),
+    projectDir: (cwd) => join(CLAUDE_HOME, "projects", projectDirName(cwd)),
+    startedIds: loadStarted,
+  });
 }

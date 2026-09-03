@@ -18,7 +18,7 @@ Then add the plugin to the profile's `cordis.patch.yml`:
       config: {}
 ```
 
-Restart `dsh web` after installing and after every edit to `src/`. The patch layer hot-reloads, plugin code does not. pnpm hardlinks the `file:` dependency per file, so editors that replace files break the link; copy `src/` over `node_modules/dsh-llm-claude/src/` if `cmp` shows a difference.
+Restart `dsh web` after installing and after every edit to `src/`. The patch layer hot-reloads, plugin code does not. pnpm hardlinks the `file:` dependency per file, so editors that replace files break the link; copy `src/` and `lib/` over `node_modules/dsh-llm-claude/` if `cmp` shows a difference. The Settings page needs `lib/client.js`, which `bun run build` produces from `src/client/index.jsx`; it is committed, so a plain install has it.
 
 ## Configuration
 
@@ -58,7 +58,9 @@ Effort: none is advertised as default, so Claude Code's own default applies unle
 
 **Images.** Image attachments in the user turn are read from dsh's attachment store and sent inline as base64.
 
-**Auxiliary calls.** dsh's session-title and compaction requests run as one turn with no tools and no session of their own.
+**Terminal sessions.** Settings → Claude Code lists the Claude Code transcripts of a workspace (`~/.claude/projects/<cwd>/*.jsonl`), including sessions started with `claude` in a terminal. Open turns one into a dsh session: the transcript is converted to dsh events (prompts, replies, thinking, tool calls and results) so the history renders, and the dsh session takes the Claude session id as its own id, so the next prompt resumes that very Claude session with its full context. The transcript is only read; Claude Code keeps appending to the same file, so the session can be continued from either side. Claude's own subagent sidechains and an unanswered trailing prompt are left out of the copy. The browser half is `src/client/index.jsx`, built into `lib/client.js` by `bun run build`.
+
+**Auxiliary calls.** dsh's session-title and compaction requests run as one turn with no tools and no session of their own, from a scratch directory so they never show up in a workspace's session list.
 
 **Errors.** Abort from the UI kills the child. Non-zero exits surface with the last stderr; a real rate limit surfaces as `RATE_LIMIT` with the provider's reset time as retry-after.
 
@@ -75,4 +77,4 @@ Effort: none is advertised as default, so Claude Code's own default applies unle
 bun run check
 ```
 
-Lint, format check, and the offline self-check in `src/adapter.test.js`. Covers config defaults, model resolution, session id derivation, turn selection, argument building, stream-json translation, and the catalog fallback.
+Lint, format check, the offline self-checks (`src/adapter.test.js`, `src/transcript.test.js`) and the client build. Covers config defaults, model resolution, session id derivation, turn selection, argument building, stream-json translation, the catalog fallback, and the transcript conversion (turn folding, tool result pairing, listing filters).
