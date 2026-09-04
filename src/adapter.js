@@ -1397,11 +1397,26 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   /** Claude finished a turn of its own (a background task it launched completed) while dsh was
    *  idle. Drop a notice into the session's inbox so dsh opens a turn now and the reply shows,
    *  instead of riding on top of the user's next prompt. */
-  wake(sessionId, proc) {
+  async wake(sessionId, proc) {
     if (proc.busy) return;
-    const agent = this.ctx?.agents?.get?.(sessionId);
-    if (typeof agent?.followup !== "function") return;
+    let agent = this.ctx?.agents?.get?.(sessionId);
+    let how = "live";
+    if (agent === undefined && typeof this.sessionController?.resolveAgent === "function") {
+      // Idle for minutes: dsh unloaded the Agent. Resume it the way a typed prompt would.
+      try {
+        agent = await this.sessionController.resolveAgent(sessionId);
+        how = "resumed";
+      } catch (error) {
+        this.log("warn", `wake: could not resume session ${sessionId}: ${error?.message ?? error}`);
+        return;
+      }
+    }
+    if (typeof agent?.followup !== "function") {
+      this.log("warn", `wake: no agent for session ${sessionId}; reply waits for the next prompt`);
+      return;
+    }
     try {
+      this.log("info", `wake: idle reply in session ${sessionId} (agent ${how})`);
       agent.followup(
         createUserMessage({
           content: [{ type: "text", text: WAKE_TEXT }],
@@ -1580,6 +1595,11 @@ export function apply(ctx, config) {
   ]);
   const adapter = new ClaudeCodeAdapter(ctx, config);
   ctx.llm.registerAdapter(["claude-code"], adapter);
+  // dsh drops a session's Agent out of `ctx.agents` after a few idle minutes; the controller's
+  // resolveAgent() cold-resumes it, which is what a wake after a long idle needs.
+  ctx.inject(["sessionController"], (host) => {
+    adapter.sessionController = host.sessionController;
+  });
   registerMcpBridge(ctx, {
     log: (level, msg) => adapter.log(level, msg),
     version: "0.9.0",

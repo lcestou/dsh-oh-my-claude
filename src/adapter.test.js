@@ -857,6 +857,39 @@ console.log("ok");
   assert.match(manual.at(-1).block.text, /\(manual\)\._/, "manual trigger, no token count");
 }
 {
+  // wake(): a live agent gets the notice directly; an unloaded one is resumed through the
+  // session controller first; a busy process never wakes.
+  const sent = [];
+  const agent = { followup: (m) => sent.push(m) };
+  const ctx = { on() {}, agents: { get: () => undefined }, logger: { info() {}, warn() {} } };
+  const a = new ClaudeCodeAdapter(ctx, Config({}));
+  let resumed = 0;
+  a.sessionController = { resolveAgent: async () => (resumed++, agent) };
+  await a.wake("s1", { busy: false });
+  assert.equal(resumed, 1, "unloaded agent: resumed through the controller");
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].role, "user");
+  assert.deepEqual(
+    [sent[0].source.kind, sent[0].source.plugin, sent[0].source.form],
+    ["plugin", "dsh-llm-claude", "notice"],
+  );
+  assert.equal(sent[0].content[0].text, WAKE_TEXT);
+  ctx.agents.get = () => agent;
+  await a.wake("s1", { busy: false });
+  assert.equal(resumed, 1, "live agent: no resume");
+  assert.equal(sent.length, 2);
+  await a.wake("s1", { busy: true });
+  assert.equal(sent.length, 2, "busy process: the turn is dsh's own, no wake");
+  ctx.agents.get = () => undefined;
+  a.sessionController = {
+    resolveAgent: async () => {
+      throw new Error("gone");
+    },
+  };
+  await a.wake("s1", { busy: false });
+  assert.equal(sent.length, 2, "resume failure is logged, not thrown");
+}
+{
   const tr = new Translator();
   const s1 = tr.translate({
     type: "stream_event",
