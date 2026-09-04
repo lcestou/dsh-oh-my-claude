@@ -2,7 +2,9 @@
 // one as a dsh session. Built into lib/client.js by `bun run build`; dsh serves it from the package.
 import { useEffect, useState } from "react";
 
+/** Plugin name identifier. */
 export const name = "dsh-llm-claude-client";
+/** Services injected into the client plugin by dsh. */
 export const inject = ["slots", "sessions", "workspaces"];
 
 const ROUTE = "/dsh-llm-claude";
@@ -27,10 +29,18 @@ const row = {
 const meta = { opacity: 0.65, fontSize: 12, whiteSpace: "nowrap" };
 const btn = { padding: "4px 10px", cursor: "pointer" };
 
+/**
+ * Registers the Claude Code session browser panel in dsh settings.
+ * Creates a UI for listing and opening Claude Code transcripts.
+ */
 export function apply(ctx) {
   const workspaceItems = () => ctx.workspaces.list.getSnapshot()?.items ?? [];
   const knownSessions = () => ctx.sessions.list.getSnapshot()?.byId ?? {};
 
+  /**
+   * React component displaying Claude Code transcripts for a workspace,
+   * allowing users to open sessions in dsh.
+   */
   function Section() {
     const [workspaces, setWorkspaces] = useState(workspaceItems);
     const [workspaceId, setWorkspaceId] = useState(() => workspaces[0]?.workspaceId ?? "");
@@ -96,14 +106,20 @@ export function apply(ctx) {
     const known = knownSessions();
     return (
       <div>
-        <h2 style={{ marginTop: 0 }}>Claude Code sessions</h2>
-        <p style={{ opacity: 0.75 }}>
+        <h2 id="dsh-llm-claude-heading" style={{ marginTop: 0 }}>
+          Claude Code sessions
+        </h2>
+        <p id="dsh-llm-claude-description" style={{ opacity: 0.75 }}>
           Sessions Claude Code ran in this workspace, including ones started in the terminal. Open
           one to continue it here; the terminal transcript is read, never written.
         </p>
-        <label>
+        <label id="dsh-llm-claude-workspace-label">
           Workspace{" "}
-          <select value={workspaceId} onChange={(e) => setWorkspaceId(e.target.value)}>
+          <select
+            id="dsh-llm-claude-workspace-select"
+            value={workspaceId}
+            onChange={(e) => setWorkspaceId(e.target.value)}
+          >
             {workspaces.map((w) => (
               <option key={w.workspaceId} value={w.workspaceId}>
                 {w.title || w.path}
@@ -111,20 +127,35 @@ export function apply(ctx) {
             ))}
           </select>
         </label>
-        {error && <p style={{ color: "#d33" }}>{error}</p>}
-        {state === "loading" && <p style={meta}>Loading…</p>}
-        {state !== "loading" && workspace && sessions.length === 0 && (
-          <p style={meta}>No transcripts for {workspace.path}.</p>
+        {error && (
+          <p id="dsh-llm-claude-error" style={{ color: "#d33" }}>
+            {error}
+          </p>
         )}
-        <div>
+        {state === "loading" && (
+          <p id="dsh-llm-claude-loading" style={meta}>
+            Loading…
+          </p>
+        )}
+        {state !== "loading" && workspace && sessions.length === 0 && (
+          <p id="dsh-llm-claude-empty" style={meta}>
+            No transcripts for {workspace.path}.
+          </p>
+        )}
+        <div id="dsh-llm-claude-sessions">
           {sessions.map((s) => {
             const opened = Boolean(known[s.id]);
             const busy = state === `opening:${s.id}`;
             return (
-              <div key={s.id} style={row}>
+              <div key={s.id} data-testid="dsh-llm-claude-session-row" style={row}>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div
-                    style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                    id={`dsh-llm-claude-session-${s.id}-title`}
+                    style={{
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
                   >
                     {s.title || s.id}
                   </div>
@@ -133,7 +164,13 @@ export function apply(ctx) {
                     {s.turnsPartial ? "+" : ""} prompts · {size(s.bytes)} · {s.id.slice(0, 8)}
                   </div>
                 </div>
-                <button type="button" style={btn} disabled={busy} onClick={() => open(s)}>
+                <button
+                  id={`dsh-llm-claude-session-${s.id}-button`}
+                  type="button"
+                  style={btn}
+                  disabled={busy}
+                  onClick={() => open(s)}
+                >
                   {busy ? "Opening…" : opened ? "Show" : "Open"}
                 </button>
               </div>

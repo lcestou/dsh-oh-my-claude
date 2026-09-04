@@ -22,9 +22,12 @@ import {
   interruptLine,
 } from "./process.js";
 
+/** Plugin name identifier. */
 export const name = "dsh-llm-claude";
+/** Services injected into the plugin by the dsh runtime. */
 export const inject = ["llm", "sessions", "attachments", "agents", "approval", "userQuestions"];
 
+/** Configuration schema for Claude Code plugin settings. */
 export const Config = z.object({
   permissionMode: z
     .union(["dsh", "acceptEdits", "bypassPermissions", "plan", "dontAsk", "auto", "manual"])
@@ -119,6 +122,11 @@ const TOOL_TEXT_LIMIT = 600;
 const CATALOG_TTL_MS = 10 * 60 * 1000;
 let catalog = { at: 0, models: KNOWN_MODELS };
 
+/**
+ * Retrieves authentication headers for the Anthropic API, checking
+ * environment variables and stored credentials.
+ * @returns {Promise<object|null>} API auth headers or null if unavailable
+ */
 async function authHeaders() {
   if (process.env.ANTHROPIC_API_KEY) return { "x-api-key": process.env.ANTHROPIC_API_KEY };
   try {
@@ -133,12 +141,23 @@ async function authHeaders() {
   return null;
 }
 
+/**
+ * Converts an Anthropic Models API response into the internal model format.
+ * @param {object} m - Model metadata from the API
+ * @returns {object} Internal model representation
+ */
 export function modelFromApi(m) {
   const eff = m.capabilities?.effort;
   const efforts = eff?.supported ? EFFORTS_ALL.filter((l) => eff[l]?.supported) : [];
   return M(m.id, m.display_name ?? m.id, m.max_input_tokens ?? 200_000, efforts);
 }
 
+/**
+ * Fetches or returns cached model catalog from Anthropic Models API.
+ * Falls back to KNOWN_MODELS if the API is unreachable.
+ * @param {Function} fetchImpl - Fetch implementation to use (default: global fetch)
+ * @returns {Promise<Array>} Array of available models
+ */
 export async function getCatalog(fetchImpl = fetch) {
   if (Date.now() - catalog.at < CATALOG_TTL_MS) return catalog.models;
   const headers = await authHeaders();
@@ -161,6 +180,12 @@ export async function getCatalog(fetchImpl = fetch) {
   return catalog.models;
 }
 
+/**
+ * Constructs base model information object with provider and modalities.
+ * @param {string} provider - Provider identifier
+ * @param {object} model - Model object with id and name
+ * @returns {object} Model info with provider and inputModalities
+ */
 function modelInfo(provider, model) {
   return { provider, id: model.id, name: model.name, inputModalities: ["text", "image"] };
 }
@@ -193,6 +218,12 @@ export function projectDirName(cwd) {
   return cwd.replace(/[^A-Za-z0-9]/g, "-");
 }
 
+/**
+ * Checks if a Claude Code session transcript exists on disk.
+ * @param {string} cwd - Working directory path
+ * @param {string} id - Claude session ID
+ * @returns {Promise<boolean>} True if the transcript file exists
+ */
 async function claudeSessionExists(cwd, id) {
   try {
     await access(join(CLAUDE_HOME, "projects", projectDirName(cwd), `${id}.jsonl`));
@@ -247,6 +278,12 @@ export function buildPrompt(turns) {
   return parts.map((t) => (multi ? `[${t.role}]\n${t.text}` : t.text)).join("\n\n");
 }
 
+/**
+ * Extracts image attachment references from message turns.
+ * Limits to the last MAX_IMAGES to avoid exceeding CLI limits.
+ * @param {Array} turns - Message turns
+ * @returns {Array} Image attachment references
+ */
 function imageRefs(turns) {
   const refs = [];
   for (const m of turns) {
@@ -273,6 +310,13 @@ export function accessModeOf(messages) {
   return mode;
 }
 
+/**
+ * Resolves the Claude Code permission mode based on configuration and
+ * dsh access mode.
+ * @param {object} config - Plugin configuration
+ * @param {string} accessMode - dsh access mode
+ * @returns {string} Permission mode for Claude Code
+ */
 export function permissionModeFor(config, accessMode) {
   if (config.permissionMode !== "dsh") return config.permissionMode;
   return MODE_FOR_ACCESS[accessMode] ?? "acceptEdits";
@@ -283,6 +327,12 @@ export function permissionModeFor(config, accessMode) {
 // process and anything missing is left out. Unknown = assume supported (probe failed, older CLI).
 
 let cliProbe;
+/**
+ * Probes the Claude Code CLI to determine its version and supported flags.
+ * Caches the result across multiple calls.
+ * @param {Function} exec - execFile implementation (default: node's execFile)
+ * @returns {Promise<object>} Object with flags Set and version string
+ */
 export function probeCli(exec = execFile) {
   cliProbe ??= (async () => {
     const run = (args) =>
@@ -298,11 +348,19 @@ export function probeCli(exec = execFile) {
   return cliProbe;
 }
 
+/**
+ * Checks if a CLI flag is supported. Returns true if flags are unknown
+ * (probe failed) to assume support.
+ */
 export const supports = (flags, flag) => !flags || flags.has(flag);
 
 /** Text mode when the CLI lacks --input-format: prompt goes positional, images are dropped. */
 export const usesStdin = (flags) => supports(flags, "--input-format");
 
+/**
+ * Constructs command-line arguments for spawning a Claude Code process.
+ * Handles model, effort, permissions, MCP config, and other flags.
+ */
 export function buildArgs({
   model,
   reasoningEffort,
@@ -369,6 +427,11 @@ let auxReady;
 const auxCwd = () => (auxReady ??= mkdir(AUX_DIR, { recursive: true }).then(() => AUX_DIR));
 let started; // Set of Claude session ids known to exist
 
+/**
+ * Loads the set of Claude session IDs that this plugin has started.
+ * Cached after the first call.
+ * @returns {Promise<Set>} Set of known Claude session IDs
+ */
 async function loadStarted() {
   if (started) return started;
   try {
@@ -379,6 +442,12 @@ async function loadStarted() {
   return started;
 }
 
+/**
+ * Records or removes a Claude session ID from the known sessions list.
+ * @param {string} id - Claude session ID to track or forget
+ * @param {boolean} keep - If true, add to known; if false, remove from known
+ * @returns {Promise<void>}
+ */
 async function rememberStarted(id, keep = true) {
   const set = await loadStarted();
   if (keep ? set.has(id) : !set.has(id)) return;

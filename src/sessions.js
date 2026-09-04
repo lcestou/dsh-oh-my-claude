@@ -56,6 +56,10 @@ function openTranscript(ctx, projectDir, cwd, id) {
   return job;
 }
 
+/**
+ * Loads a Claude Code transcript and creates a dsh session from it, or
+ * returns the existing session if one with this id is already live.
+ */
 async function openTranscriptOnce(ctx, projectDir, cwd, id) {
   if (ctx.sessions.get(id)) return { id, existed: true };
   const persisted = await ctx.sessionPersistence.list();

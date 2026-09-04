@@ -9,6 +9,12 @@ export function userTurnLine(content) {
   return `${JSON.stringify({ type: "user", session_id: "", message: { role: "user", content }, parent_tool_use_id: null })}\n`;
 }
 
+/**
+ * Formats a successful control response as a stdin line for the Claude Code process.
+ * @param {string} requestId - The request ID to respond to
+ * @param {any} response - The response value
+ * @returns {string} A JSON line ready for stdin
+ */
 export function controlResponseLine(requestId, response) {
   return `${JSON.stringify({ type: "control_response", response: { subtype: "success", request_id: requestId, response } })}\n`;
 }
@@ -18,10 +24,23 @@ export function interruptLine(requestId) {
   return `${JSON.stringify({ type: "control_request", request_id: requestId, request: { subtype: "interrupt" } })}\n`;
 }
 
+/**
+ * Formats a control response error as a stdin line for the Claude Code process.
+ * @param {string} requestId - The request ID that caused the error
+ * @param {any} error - The error value
+ * @returns {string} A JSON line ready for stdin
+ */
 export function controlErrorLine(requestId, error) {
   return `${JSON.stringify({ type: "control_response", response: { subtype: "error", request_id: requestId, error } })}\n`;
 }
 
+/**
+ * Creates an approval decision allowing a tool call to proceed with
+ * optional input modifications.
+ * @param {string} toolUseId - The tool call ID to approve
+ * @param {any} input - The updated tool input
+ * @returns {object} An approval decision object
+ */
 export const allowResult = (toolUseId, input) => ({
   behavior: "allow",
   updatedInput: input,
@@ -29,6 +48,12 @@ export const allowResult = (toolUseId, input) => ({
   decisionClassification: "user_temporary",
 });
 
+/**
+ * Creates an approval decision denying a tool call from proceeding.
+ * @param {string} toolUseId - The tool call ID to deny
+ * @param {string} message - The reason for denial
+ * @returns {object} A denial decision object
+ */
 export const denyResult = (toolUseId, message) => ({
   behavior: "deny",
   message,

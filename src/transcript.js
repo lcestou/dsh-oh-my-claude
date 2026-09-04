@@ -33,6 +33,13 @@ function promptText(content) {
 /** Injected material Claude Code stores as user lines: slash-command echoes, hook output, reminders. */
 const isNoise = (text) => /^\s*<(command-|local-command|system-reminder)/.test(text);
 
+/**
+ * Truncates a string to a maximum byte length without breaking Unicode
+ * characters.
+ * @param {string} text - The text to truncate
+ * @param {number} max - Maximum byte length
+ * @returns {string} The truncated text
+ */
 export function truncateBytes(text, max) {
   if (Buffer.byteLength(text) <= max) return text;
   let out = "";
@@ -299,6 +306,11 @@ export function toSessionEvents(folded) {
   return events;
 }
 
+/**
+ * Reads and parses a Claude Code transcript file into folded turns.
+ * @param {string} path - Path to the transcript file
+ * @returns {Promise<object>} Folded transcript with turns, title, and createdAt
+ */
 export async function readTranscript(path) {
   return foldTranscript(await readFile(path, "utf8"));
 }

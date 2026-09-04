@@ -5,7 +5,9 @@
 import { randomUUID } from "node:crypto";
 import { readBody } from "./sessions.js";
 
+/** HTTP endpoint path for the MCP bridge handler. */
 export const MCP_PATH = "/dsh-llm-claude/mcp";
+/** HTTP header name for the MCP bridge authentication key. */
 export const KEY_HEADER = "x-dsh-llm-claude-key";
 const PROTOCOL = "2025-06-18";
 const BODY_LIMIT = 1024 * 1024;
@@ -43,6 +45,10 @@ const OPEN_SESSION = {
   },
 };
 
+/**
+ * Creates and initializes a new top-level dsh session with an initial prompt.
+ * Used by the MCP bridge to fan out sessions from Claude Code to dsh.
+ */
 async function openSession(ctx, agent, args, signal) {
   const cwd = agent.session?.header?.cwd ?? ctx.sessions.get(agent.session?.id)?.header?.cwd;
   const workspaceId =
