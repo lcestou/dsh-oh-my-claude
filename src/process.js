@@ -159,7 +159,10 @@ export class ClaudeProcess {
       this.stderr = (this.stderr + d).slice(-2000);
     });
     const rl = createInterface({ input: this.child.stdout, crlfDelay: Infinity });
-    rl.on("line", (line) => this.queue.push(line));
+    rl.on("line", (line) => {
+      this.queue.push(line);
+      this.noteIdleResult(line);
+    });
     this.child.on("close", (code) => {
       this.exitCode = code ?? -1;
       this.queue.close();
@@ -193,6 +196,17 @@ export class ClaudeProcess {
    *  of its own when a background task it started finishes; with dsh idle, that whole turn is
    *  buffered here and the next prompt would end on its stale result, leaving every later reply
    *  one prompt behind. */
+  /** A `result` line while no turn is reading: Claude just finished a turn of its own. Tell the
+   *  adapter (`onIdleResult`) so it can open a dsh turn and show the reply now. */
+  noteIdleResult(line) {
+    if (this.busy || !this.onIdleResult || !line.includes('"result"')) return;
+    try {
+      if (JSON.parse(line).type === "result") this.onIdleResult();
+    } catch {
+      // not JSON: nextEvent() files it under `stray`
+    }
+  }
+
   countStaleResults() {
     let n = 0;
     for (const line of this.queue.lines) {

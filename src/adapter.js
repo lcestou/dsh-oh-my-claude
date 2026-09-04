@@ -5,7 +5,7 @@ import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { LlmAdapter, LlmError } from "@deepseek-ai/dsh-llm";
+import { LlmAdapter, LlmError, boundContextSummary, createUserMessage } from "@deepseek-ai/dsh-llm";
 import z from "@deepseek-ai/schemastery";
 import { registerSessionRoutes } from "./sessions.js";
 import { KEY_HEADER, MCP_PATH, registerMcpBridge } from "./mcp.js";
@@ -473,6 +473,17 @@ export function afterLastAssistant(messages) {
   let last = -1;
   for (let i = 0; i < list.length; i++) if (list[i].role === "assistant") last = i;
   return list.slice(last + 1);
+}
+
+/** Notice this plugin drops into a session's inbox to open a turn after Claude replied on its own. */
+export const WAKE_TEXT = "Claude Code finished a background task and replied.";
+const isWake = (m) =>
+  m.role === "user" && m.source?.kind === "plugin" && m.source.plugin === "dsh-llm-claude";
+/** A turn opened by our own wake notice, with no user prompt to send: only drain what Claude
+ *  already wrote. A user prompt in the same batch takes precedence and is sent normally. */
+export function wakeOnlyTurn(messages) {
+  const fresh = afterLastAssistant(messages);
+  return fresh.some(isWake) && !fresh.some((m) => m.source?.kind === "user");
 }
 
 /** Drop user messages Claude already received live on stdin (matched by the prompt's rpcId). */
@@ -1023,6 +1034,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       });
       proc.key = key;
       proc.resuming = prep.session?.resuming ?? false;
+      proc.onIdleResult = () => this.wake(options.sessionId, proc);
       this.processes.set(options.sessionId, proc);
       if (this.config.debug) {
         this.log("info", `spawn cwd=${prep.cwd} claude ${prep.args.join(" ")}`);
@@ -1162,6 +1174,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     });
     const pending = new Map(); // control request id → AbortController
     let outcome = "ended"; // ended | finished | relayed | parked | retry
+    const wakeOnly = cont.mode === "prompt" && wakeOnlyTurn(options.messages);
     let idle = false;
     let timer;
     const armIdle = () => {
@@ -1199,8 +1212,13 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       if (isStaleResume(event) && proc.resuming && !forceFresh) return "retry";
       if (event.type === "result" && proc.staleResults > 0) {
         // End of a turn Claude ran on its own between prompts (see ClaudeProcess.countStaleResults).
-        // Its text already streamed into this step; draw a rule and keep reading for the real reply.
+        // Its text already streamed into this step. On a wake-only turn the last one ends the
+        // turn; under a real prompt, draw a rule and keep reading for the real reply.
         proc.staleResults--;
+        if (wakeOnly && proc.staleResults === 0) {
+          yield* tr.translate(event);
+          return "finished";
+        }
         yield* tr.wholeBlock("text", "\n\n---\n\n");
         return "continue";
       }
@@ -1251,7 +1269,14 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       // A fresh prompt: anything already queued is output from a turn Claude ran while dsh was
       // idle (background task finished). Relay/steer modes are mid-turn; their queue is live.
       proc.staleResults = cont.mode === "prompt" ? (proc.countStaleResults?.() ?? 0) : 0;
-      this.openTurn(cont, proc, prep);
+      // Our own wake notice opened this turn: nothing to send, only that queued output to show.
+      // If a user prompt already drained it, there is nothing to do at all.
+      if (wakeOnly && proc.staleResults === 0) {
+        outcome = "finished";
+        yield { type: "finish", reason: { kind: "stop" } };
+        return;
+      }
+      if (!wakeOnly) this.openTurn(cont, proc, prep);
       armIdle();
       for (;;) {
         const event = await proc.nextEvent();
@@ -1284,6 +1309,30 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       }
     }
     if (outcome === "retry") yield* this.turn(options, true);
+  }
+
+  /** Claude finished a turn of its own (a background task it launched completed) while dsh was
+   *  idle. Drop a notice into the session's inbox so dsh opens a turn now and the reply shows,
+   *  instead of riding on top of the user's next prompt. */
+  wake(sessionId, proc) {
+    if (proc.busy) return;
+    const agent = this.ctx?.agents?.get?.(sessionId);
+    if (typeof agent?.followup !== "function") return;
+    try {
+      agent.followup(
+        createUserMessage({
+          content: [{ type: "text", text: WAKE_TEXT }],
+          source: {
+            kind: "plugin",
+            plugin: "dsh-llm-claude",
+            form: "notice",
+            summary: boundContextSummary(WAKE_TEXT),
+          },
+        }),
+      );
+    } catch (error) {
+      this.log("warn", `wake after idle reply failed: ${error?.message ?? error}`);
+    }
   }
 
   /** Offer a dsh tool call from the MCP bridge to the session's live turn. Undefined when no turn

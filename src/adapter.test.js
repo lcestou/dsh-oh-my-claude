@@ -27,6 +27,8 @@ import {
   userPromptCount,
   dropSent,
   afterLastAssistant,
+  wakeOnlyTurn,
+  WAKE_TEXT,
 } from "./adapter.js";
 import { ClaudeProcess, LineQueue, TIMEOUT } from "./process.js";
 
@@ -782,6 +784,47 @@ console.log("ok");
   await queue.next();
   await queue.next();
   assert.equal(count(), 1, "only what is still queued counts");
+}
+{
+  // Idle result → wake callback; busy or non-result lines stay silent.
+  let woke = 0;
+  const fake = { busy: false, onIdleResult: () => woke++ };
+  const note = (line) => ClaudeProcess.prototype.noteIdleResult.call(fake, line);
+  note('{"type":"assistant","message":{"content":[{"type":"text","text":"result"}]}}');
+  note("plain result text");
+  assert.equal(woke, 0, "assistant text and junk do not wake");
+  note('{"type":"result","subtype":"success"}');
+  assert.equal(woke, 1, "an idle result wakes once");
+  fake.busy = true;
+  note('{"type":"result","subtype":"success"}');
+  assert.equal(woke, 1, "a result during a live turn is the turn's own, no wake");
+  fake.busy = false;
+  fake.onIdleResult = undefined;
+  note('{"type":"result","subtype":"success"}');
+  assert.equal(woke, 1, "no callback, no throw");
+}
+{
+  const wake = {
+    role: "user",
+    source: { kind: "plugin", plugin: "dsh-llm-claude", form: "notice", summary: WAKE_TEXT },
+    content: [{ type: "text", text: WAKE_TEXT }],
+  };
+  const user = { role: "user", source: { kind: "user" }, content: [{ type: "text", text: "hi" }] };
+  const other = { role: "user", source: { kind: "plugin", plugin: "dsh-skills" }, content: [] };
+  const asst = { role: "assistant", content: [{ type: "text", text: "ok" }] };
+  assert.equal(wakeOnlyTurn([user, asst, wake]), true, "our notice alone opens a drain-only turn");
+  assert.equal(
+    wakeOnlyTurn([user, asst, wake, other]),
+    true,
+    "other plugins' context does not change that",
+  );
+  assert.equal(wakeOnlyTurn([user, asst, wake, user]), false, "a user prompt in the batch wins");
+  assert.equal(
+    wakeOnlyTurn([wake, asst, user]),
+    false,
+    "an old notice behind an assistant reply is history",
+  );
+  assert.equal(wakeOnlyTurn([user, asst, other]), false, "no notice, no drain turn");
 }
 {
   const tr = new Translator();
