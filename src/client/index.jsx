@@ -87,6 +87,20 @@ const pill = (color) => ({
   opacity: 0.9,
   whiteSpace: "nowrap",
 });
+const code = {
+  width: "100%",
+  boxSizing: "border-box",
+  padding: 12,
+  borderRadius: 8,
+  border: `1px solid ${T.border}`,
+  background: T.field,
+  color: T.text,
+  fontFamily: T.mono,
+  fontSize: 13,
+  lineHeight: 1.5,
+  tabSize: 2,
+  whiteSpace: "pre",
+};
 const select = {
   padding: "4px 8px",
   borderRadius: 8,
@@ -147,10 +161,15 @@ export function summarize(settings) {
   return out;
 }
 
-/** `~/.claude/settings.json` in a textarea: live JSON check, Save, Reload, Ctrl/Cmd+S. */
+/**
+ * `~/.claude/settings.json`: read-only view until Edit is pressed, then a textarea with live JSON
+ * check, Save (Ctrl/Cmd+S) and Cancel. The gate exists so browsing the panel can never change
+ * the file by accident.
+ */
 function SettingsEditor() {
   const [file, setFile] = useState(null);
   const [text, setText] = useState("");
+  const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState("");
@@ -163,6 +182,7 @@ function SettingsEditor() {
       .then((body) => {
         setFile(body);
         setText(body.text);
+        setEditing(false);
         setSaved("");
       })
       .catch((e) => setError(String(e.message ?? e)))
@@ -195,6 +215,7 @@ function SettingsEditor() {
       .then(readJson)
       .then((body) => {
         setFile((f) => ({ ...f, text, exists: true, mtime: body.mtime }));
+        setEditing(false);
         setSaved(
           `Saved ${new Date(body.mtime).toLocaleTimeString()} · previous copy in ${body.backup}`,
         );
@@ -222,18 +243,49 @@ function SettingsEditor() {
           </div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
-          <button type="button" style={btn} disabled={busy} onClick={load}>
-            Reload
-          </button>
-          <button
-            id="dsh-llm-claude-settings-save"
-            type="button"
-            style={{ ...btnPrimary, opacity: canSave ? 1 : 0.5 }}
-            disabled={!canSave}
-            onClick={save}
-          >
-            {busy ? "Saving…" : "Save"}
-          </button>
+          {editing ? (
+            <>
+              <button
+                id="dsh-llm-claude-settings-cancel"
+                type="button"
+                style={btn}
+                disabled={busy}
+                onClick={() => {
+                  setText(file?.text ?? "");
+                  setEditing(false);
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                id="dsh-llm-claude-settings-save"
+                type="button"
+                style={{ ...btnPrimary, opacity: canSave ? 1 : 0.5 }}
+                disabled={!canSave}
+                onClick={save}
+              >
+                {busy ? "Saving…" : "Save"}
+              </button>
+            </>
+          ) : (
+            <>
+              <button type="button" style={btn} disabled={busy} onClick={load}>
+                Reload
+              </button>
+              <button
+                id="dsh-llm-claude-settings-edit"
+                type="button"
+                style={btn}
+                disabled={busy || file === null}
+                onClick={() => {
+                  setSaved("");
+                  setEditing(true);
+                }}
+              >
+                Edit
+              </button>
+            </>
+          )}
         </div>
       </div>
       <p style={{ margin: "0 0 10px", color: T.muted, fontSize: 13 }}>
@@ -252,28 +304,29 @@ function SettingsEditor() {
           ))}
         </div>
       )}
-      <textarea
-        id="dsh-llm-claude-settings-text"
-        value={text}
-        spellCheck={false}
-        onChange={(e) => setText(e.target.value)}
-        onKeyDown={onKeyDown}
-        style={{
-          width: "100%",
-          boxSizing: "border-box",
-          minHeight: 320,
-          resize: "vertical",
-          padding: 12,
-          borderRadius: 8,
-          border: `1px solid ${parsed.error ? T.err : T.border}`,
-          background: T.field,
-          color: T.text,
-          fontFamily: T.mono,
-          fontSize: 13,
-          lineHeight: 1.5,
-          tabSize: 2,
-        }}
-      />
+      {editing ? (
+        <textarea
+          id="dsh-llm-claude-settings-text"
+          value={text}
+          spellCheck={false}
+          autoFocus
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={onKeyDown}
+          style={{
+            ...code,
+            minHeight: 320,
+            resize: "vertical",
+            border: `1px solid ${parsed.error ? T.err : T.brand}`,
+          }}
+        />
+      ) : (
+        <pre
+          id="dsh-llm-claude-settings-view"
+          style={{ ...code, maxHeight: 320, overflow: "auto", margin: 0 }}
+        >
+          {text}
+        </pre>
+      )}
       <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginTop: 6 }}>
         <span style={{ fontSize: 12, color: parsed.error ? T.err : T.ok }}>
           {parsed.error
@@ -281,7 +334,11 @@ function SettingsEditor() {
             : `Valid JSON · ${Object.keys(parsed.value).length} keys${dirty ? " · unsaved changes" : ""}`}
         </span>
         <span style={{ ...meta, whiteSpace: "normal", textAlign: "right" }}>
-          {error ? <span style={{ color: T.err }}>{error}</span> : saved || "Ctrl+S saves"}
+          {error ? (
+            <span style={{ color: T.err }}>{error}</span>
+          ) : (
+            saved || (editing ? "Ctrl+S saves · Cancel discards" : "Read-only until Edit")
+          )}
         </span>
       </div>
     </section>
