@@ -276,6 +276,17 @@ assert.equal(
     .length,
   0,
 );
+// "allowed_warning" = near the cap, not a limit: the turn must go on (ending it made dsh's
+// retry re-send the prompt, seen live 2026-09-04)
+const warned = new Translator();
+assert.deepEqual(
+  warned.translate({
+    type: "rate_limit_event",
+    rate_limit_info: { status: "allowed_warning", utilization: 0.9, resetsAt: 1 },
+  }),
+  [],
+);
+assert.equal(warned.finished, false, "allowed_warning does not end the turn");
 const limited = new Translator().translate({
   type: "rate_limit_event",
   rate_limit_info: { status: "rejected" },

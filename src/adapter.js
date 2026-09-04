@@ -768,10 +768,12 @@ export class Translator {
         return events;
       }
       case "rate_limit_event": {
-        // Emitted on every run with status "allowed"; only a non-allowed status is an error.
+        // Emitted on every run. Status is allowed | allowed_warning | rejected (SDK types);
+        // only "rejected" is a limit. allowed_warning means "near the cap", the turn goes on.
+        // Treating it as an error ended turns early and dsh's retry re-sent the prompt.
         const info = event.rate_limit_info ?? {};
         const status = info.status ?? "allowed";
-        if (status === "allowed") return [];
+        if (status !== "rejected") return [];
         this.finished = true;
         const resetMs = Number.isFinite(info.resetsAt) ? info.resetsAt * 1000 - Date.now() : 0;
         const failure = { message: `Rate limited (${status})`, code: "RATE_LIMIT" };
