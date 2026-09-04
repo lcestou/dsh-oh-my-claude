@@ -954,6 +954,46 @@ console.log("ok");
   assert.ok(p.includes("is a phrase I typed"), "user text is never filtered");
 }
 {
+  // Hot reload: a surviving process must never throw into readline, and a new adapter
+  // re-adopts the callbacks. Seen live 2026-09-04: `patchReload: live` disposed the old scope,
+  // an idle result then threw "cannot get required service" from the stdout handler.
+  const boom = () => {
+    throw new Error('cannot get required service "agents" in inactive context');
+  };
+  const fake = { busy: false, onIdleResult: boom };
+  ClaudeProcess.prototype.noteIdleResult.call(fake, '{"type":"result"}'); // must not throw
+  fake.onIdleResult = () => Promise.reject(new Error("async boom"));
+  ClaudeProcess.prototype.noteIdleResult.call(fake, '{"type":"result"}'); // no unhandled rejection
+  const deadCtx = {
+    on() {},
+    get agents() {
+      return boom();
+    },
+    get logger() {
+      return boom();
+    },
+  };
+  const dead = new ClaudeCodeAdapter(deadCtx, Config({}));
+  await dead.wake("s", { busy: false }); // scope gone: swallowed, logged if it can
+  dead.log("warn", "x"); // logger on a dead scope: swallowed
+  // a reloaded adapter re-points every adopted process at itself
+  const reg = globalThis[Symbol.for("dsh-llm-claude.processes")];
+  const stale = { busy: false, onIdleResult: boom, alive: true };
+  reg.set("adopted", stale);
+  let woke = 0;
+  const liveCtx = {
+    on() {},
+    agents: { get: () => ({ followup: () => woke++ }) },
+    logger: { info() {}, warn() {} },
+  };
+  const fresh = new ClaudeCodeAdapter(liveCtx, Config({}));
+  assert.notEqual(stale.onIdleResult, boom, "callback re-bound on construction");
+  await stale.onIdleResult();
+  assert.equal(woke, 1, "adopted process wakes through the new adapter");
+  assert.equal(fresh.processes.get("adopted"), stale);
+  reg.delete("adopted");
+}
+{
   const tr = new Translator();
   const s1 = tr.translate({
     type: "stream_event",

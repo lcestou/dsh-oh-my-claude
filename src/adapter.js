@@ -949,6 +949,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // Kept on globalThis so a hot reload of this plugin adopts the running Claude processes
     // instead of orphaning them: their pipes belong to this node process, not to the plugin scope.
     this.processes = globalThis[PROCESS_REGISTRY] ??= new Map(); // dsh sessionId → ClaudeProcess
+    // Adopted processes still point their idle-reply callback at the previous (now dead) adapter.
+    for (const [sessionId, proc] of this.processes) {
+      proc.onIdleResult = () => this.wake(sessionId, proc);
+    }
     // Steers: dsh only delivers them at step boundaries, and a Claude turn has none of its own.
     // Forward them to Claude's stdin as they arrive; the CLI injects them at its next tool call.
     ctx.on?.(
@@ -994,7 +998,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   }
 
   log(level, message) {
-    this.ctx?.logger?.[level]?.(`dsh-llm-claude: ${message}`);
+    try {
+      this.ctx?.logger?.[level]?.(`dsh-llm-claude: ${message}`);
+    } catch {
+      // cordis throws on service access from an inactive scope; a log line is not worth that
+    }
   }
 
   async loadImages(refs, signal) {
@@ -1426,7 +1434,15 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    *  instead of riding on top of the user's next prompt. */
   async wake(sessionId, proc) {
     if (proc.busy) return;
-    let agent = this.ctx?.agents?.get?.(sessionId);
+    let agent;
+    try {
+      agent = this.ctx?.agents?.get?.(sessionId);
+    } catch (error) {
+      // This adapter's cordis scope is gone (plugin hot-reloaded); the new instance re-adopts
+      // the process in its constructor, so the next idle reply will wake through it.
+      this.log("warn", `wake: adapter scope inactive (${error?.message ?? error}); skipped`);
+      return;
+    }
     let how = "live";
     if (agent === undefined && typeof this.sessionController?.resolveAgent === "function") {
       // Idle for minutes: dsh unloaded the Agent. Resume it the way a typed prompt would.

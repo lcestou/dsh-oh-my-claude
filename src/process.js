@@ -225,10 +225,20 @@ export class ClaudeProcess {
    *  adapter (`onIdleResult`) so it can open a dsh turn and show the reply now. */
   noteIdleResult(line) {
     if (this.busy || !this.onIdleResult || !line.includes('"result"')) return;
+    let isResult = false;
     try {
-      if (JSON.parse(line).type === "result") this.onIdleResult();
+      isResult = JSON.parse(line).type === "result";
     } catch {
       // not JSON: nextEvent() files it under `stray`
+    }
+    if (!isResult) return;
+    try {
+      // A throw here is inside readline's data handler: it would take the whole host down.
+      // The adapter behind the callback may have been hot-reloaded away (dead cordis scope).
+      const r = this.onIdleResult();
+      if (r && typeof r.catch === "function") r.catch(() => {});
+    } catch {
+      // logged by the adapter when it can; nothing else to do here
     }
   }
 
