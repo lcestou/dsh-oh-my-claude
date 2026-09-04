@@ -112,7 +112,8 @@ export const KNOWN_MODELS = [
 ];
 
 // No default effort is advertised: `--effort` is only sent when dsh picks one, so the CLI's own default rules.
-const CLAUDE_HOME = join(homedir(), ".claude");
+/** Claude Code's config dir: transcripts, settings.json. Honors CLAUDE_CONFIG_DIR like the CLI. */
+const CLAUDE_HOME = process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude");
 const MAX_IMAGES = 20;
 const TOOL_TEXT_LIMIT = 600;
 
@@ -1675,5 +1676,6 @@ export function apply(ctx, config) {
     projectDir: (cwd) => join(CLAUDE_HOME, "projects", projectDirName(cwd)),
     startedIds: loadStarted,
     claudeIdOf: claudeSessionId,
+    settingsPath: join(CLAUDE_HOME, "settings.json"),
   });
 }

@@ -1,6 +1,7 @@
 // Host half of "open a Claude Code session in dsh": lists the transcripts of a workspace and turns
 // one into a cold dsh session whose id is the Claude session id, so the adapter resumes it as-is.
 // Served under /dsh-llm-claude/*, guarded by dsh's own request policy (trusted host + login cookie).
+import { readFile, writeFile, rename, copyFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { listTranscripts, readTranscript, toSessionEvents } from "./transcript.js";
 
@@ -37,6 +38,43 @@ export const readBody = (req, limit = BODY_LIMIT) =>
   });
 
 const validId = (id) => typeof id === "string" && /^[0-9a-f-]{36}$/.test(id);
+
+/** settings.json must be one JSON object; anything else Claude Code would reject or ignore. */
+export function parseSettingsText(text) {
+  if (typeof text !== "string") return { error: "text must be a string" };
+  let value;
+  try {
+    value = JSON.parse(text);
+  } catch (e) {
+    return { error: e?.message ?? "invalid JSON" };
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    return { error: "settings.json must be a JSON object" };
+  return { value };
+}
+
+/** Read Claude Code's settings file; a missing file reads as an empty object. */
+async function readSettings(path) {
+  try {
+    const [text, info] = await Promise.all([readFile(path, "utf8"), stat(path)]);
+    return { path, exists: true, text, mtime: info.mtimeMs };
+  } catch (e) {
+    if (e?.code === "ENOENT") return { path, exists: false, text: "{}\n", mtime: 0 };
+    throw e;
+  }
+}
+
+/** Keep the previous copy as .bak, write to a temp file, rename over: never a half-written file. */
+async function writeSettings(path, text) {
+  const backup = `${path}.bak`;
+  await copyFile(path, backup).catch((e) => {
+    if (e?.code !== "ENOENT") throw e;
+  });
+  const tmp = `${path}.tmp-${process.pid}`;
+  await writeFile(tmp, text.endsWith("\n") ? text : `${text}\n`, "utf8");
+  await rename(tmp, path);
+  return { path, backup, mtime: (await stat(path)).mtimeMs };
+}
 
 /**
  * Claude transcript id → the dsh session it belongs to, for the dsh sessions of one workspace.
@@ -116,7 +154,10 @@ async function openTranscriptOnce(ctx, projectDir, cwd, id, claudeIdOf, registry
 }
 
 /** `projectDir(cwd)` → Claude Code project dir; `startedIds()` → ids the adapter started itself. */
-export function registerSessionRoutes(ctx, { log, projectDir, startedIds, claudeIdOf }) {
+export function registerSessionRoutes(
+  ctx,
+  { log, projectDir, startedIds, claudeIdOf, settingsPath },
+) {
   // Optional: stock dsh has it; without it archived sessions list but cannot be restored.
   let registry;
   ctx.inject(["workspaceRegistry"], (host) => {
@@ -162,6 +203,17 @@ export function registerSessionRoutes(ctx, { log, projectDir, startedIds, claude
                   200,
                   await openTranscript(ctx, projectDir, cwd, id, claudeIdOf, registry),
                 );
+              }
+              if (settingsPath && url.pathname === `${ROUTE_PREFIX}/settings`) {
+                if (req.method === "GET") return json(res, 200, await readSettings(settingsPath));
+                if (req.method === "PUT") {
+                  const { text } = await readBody(req, 1024 * 1024);
+                  const parsed = parseSettingsText(text);
+                  if (parsed.error) return json(res, 400, { error: parsed.error });
+                  const written = await writeSettings(settingsPath, text);
+                  log("info", `settings.json saved (${text.length} chars)`);
+                  return json(res, 200, written);
+                }
               }
               return json(res, 404, { error: "not found" });
             } catch (e) {

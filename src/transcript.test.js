@@ -4,7 +4,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { foldTranscript, listTranscripts, toSessionEvents, truncateBytes } from "./transcript.js";
-import { dshSessionsFor } from "./sessions.js";
+import { dshSessionsFor, parseSettingsText } from "./sessions.js";
 
 const line = (o) => JSON.stringify(o);
 const T = "2026-09-03T08:00:00.000Z";
@@ -225,5 +225,12 @@ assert.equal(big.turns, 1);
   assert.equal(map.get("c-d2"), map.get("d2"));
   assert.equal(map.has("c-d3"), false);
 }
+
+// settings.json editor accepts one JSON object and nothing else.
+assert.deepEqual(parseSettingsText('{"model":"x"}'), { value: { model: "x" } });
+assert.ok(/Unexpected|JSON/.test(parseSettingsText("{oops").error));
+assert.equal(parseSettingsText("[1]").error, "settings.json must be a JSON object");
+assert.equal(parseSettingsText("null").error, "settings.json must be a JSON object");
+assert.equal(parseSettingsText(42).error, "text must be a string");
 
 console.log("transcript ok");
