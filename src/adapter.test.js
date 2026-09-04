@@ -29,6 +29,7 @@ import {
   afterLastAssistant,
   wakeOnlyTurn,
   WAKE_TEXT,
+  withoutNativeInstructions,
 } from "./adapter.js";
 import { ClaudeProcess, LineQueue, TIMEOUT } from "./process.js";
 
@@ -899,6 +900,58 @@ console.log("ok");
   };
   await a.wake("s1", { busy: false });
   assert.equal(sent.length, 2, "resume failure is logged, not thrown");
+}
+{
+  // dsh's instruction bundle: CLAUDE.md blocks go, Claude Code loads those files itself.
+  const bundle = [
+    "<system-reminder>",
+    "The following workspace instructions may be relevant to your work.",
+    "Instructions from: ~/.dsh/AGENTS.md",
+    "",
+    "# Global rules",
+    "be lazy",
+    "",
+    "Instructions from: AGENTS.md",
+    "",
+    "see CLAUDE.md",
+    "",
+    "Instructions from: CLAUDE.md",
+    "",
+    "# CRITICAL DIRECTIVES",
+    "no rm -rf",
+    "",
+    "</system-reminder>",
+  ].join("\n");
+  const out = withoutNativeInstructions(bundle);
+  assert.ok(out.includes("Instructions from: ~/.dsh/AGENTS.md") && out.includes("be lazy"));
+  assert.ok(out.includes("Instructions from: AGENTS.md"));
+  assert.ok(!out.includes("Instructions from: CLAUDE.md") && !out.includes("no rm -rf"));
+  assert.ok(out.endsWith("</system-reminder>"), "wrapper closed after dropping the last block");
+  assert.equal(withoutNativeInstructions("plain text, no headers"), "plain text, no headers");
+  const only =
+    "<system-reminder>\nIntro\nInstructions from: sub/dir/CLAUDE.md\n\nx\n</system-reminder>";
+  assert.equal(withoutNativeInstructions(only), "", "only native files: whole injection dropped");
+  const nested =
+    "Instructions from: ~/.claude/CLAUDE.md\n\ny\n\nInstructions from: docs/AGENTS.md\n\nz\n";
+  const n = withoutNativeInstructions(nested);
+  assert.ok(!n.includes("~/.claude/CLAUDE.md") && n.includes("docs/AGENTS.md") && n.includes("z"));
+  // buildPrompt applies it only to agent-instructions messages
+  const msgs = [
+    { role: "user", source: { kind: "user" }, content: [{ type: "text", text: "hi" }] },
+    {
+      role: "user",
+      source: { kind: "agent-instructions" },
+      content: [{ type: "text", text: bundle }],
+    },
+    {
+      role: "user",
+      source: { kind: "user" },
+      content: [{ type: "text", text: "Instructions from: CLAUDE.md is a phrase I typed" }],
+    },
+  ];
+  const p = buildPrompt(msgs);
+  assert.ok(p.includes("be lazy") && !p.includes("no rm -rf"));
+  assert.ok(p.includes("is a phrase I typed"), "user text is never filtered");
 }
 {
   const tr = new Translator();

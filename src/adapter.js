@@ -260,9 +260,34 @@ export function selectTurns(messages, resuming) {
   return turns.slice(last + 1);
 }
 
+/** dsh's instruction bundle repeats files Claude Code already loads on its own (`CLAUDE.md` in the
+ *  workspace, `~/.claude/CLAUDE.md`), so those blocks are dropped from what goes to Claude. The
+ *  bundle is one `<system-reminder>` with `Instructions from: <path>` headers; a block runs to
+ *  the next header or the closing tag. Empty when nothing but the wrapper would remain. */
+export function withoutNativeInstructions(text) {
+  const header = /^Instructions from: (.+)$/m;
+  if (!header.test(text)) return text;
+  const close = /\s*<\/system-reminder>\s*$/.exec(text);
+  const body = close ? text.slice(0, close.index) : text;
+  const pieces = body.split(/^(?=Instructions from: )/m);
+  const kept = pieces.filter((p) => {
+    const m = header.exec(p);
+    return !m || !/(^|\/)CLAUDE\.md\s*$/.test(m[1].trim());
+  });
+  if (kept.length === pieces.length) return text;
+  if (!kept.some((p) => header.test(p))) return "";
+  return kept.join("").trimEnd() + (close ? close[0] : "");
+}
+
+/** Prompt text of one dsh message, with Claude-native instruction files filtered out. */
+const promptText = (m) =>
+  m.source?.kind === "agent-instructions"
+    ? withoutNativeInstructions(textOf(m.content))
+    : textOf(m.content);
+
 /** Text body sent as the user prompt. Assistant turns get role labels so history stays legible. */
 export function buildPrompt(turns) {
-  const parts = turns.map((m) => ({ role: m.role, text: textOf(m.content) })).filter((t) => t.text);
+  const parts = turns.map((m) => ({ role: m.role, text: promptText(m) })).filter((t) => t.text);
   if (!parts.some((t) => t.role === "user")) {
     // Attachment-only turn: the user sent an image (or other non-text block) with no typed
     // text. Images ride along separately via imageRefs, but Claude still needs a non-empty
@@ -571,7 +596,7 @@ export function stepContextFor(messages) {
   for (const m of afterLastAssistant(messages)) {
     if (m.role !== "user") continue;
     if (m.source?.kind === "tool") continue;
-    const text = textOf(m.content);
+    const text = promptText(m);
     if (text) parts.push(text);
   }
   return parts.length === 0
