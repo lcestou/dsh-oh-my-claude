@@ -123,6 +123,19 @@ assert.ok(chat.join(" ").includes("--permission-mode acceptEdits"));
 assert.ok(
   chat.join(" ").includes("--effort max") && chat.join(" ").includes("--append-system-prompt sys"),
 );
+assert.ok(!chat.join(" ").includes("mcp__dsh__"), "no dsh guidance without the bridge");
+// bridged dsh tools: the system prompt gains the subagent guidance so Claude uses mcp__dsh__*
+const bridged = buildArgs({
+  model: "m",
+  system: "sys",
+  config,
+  session: { id: "u", resuming: false },
+  mcp: { url: "http://x/mcp/u", key: "k" },
+});
+const bridgedSystem = bridged[bridged.indexOf("--append-system-prompt") + 1];
+assert.ok(bridgedSystem.startsWith("sys\n\n"), "dsh system prompt comes first");
+assert.ok(bridgedSystem.includes("never the built-in Agent/Task tool"));
+assert.ok(bridgedSystem.includes("mcp__dsh__list_subagent_models"));
 const fresh = buildArgs({ model: "m", config, session: { id: "u", resuming: false } });
 assert.deepEqual(fresh.slice(-2), ["--session-id", "u"]);
 const aux = buildArgs({ model: "haiku", purpose: "session-title", config, session: undefined });

@@ -386,6 +386,22 @@ export const usesStdin = (flags) => supports(flags, "--input-format");
  * Constructs command-line arguments for spawning a Claude Code process.
  * Handles model, effort, permissions, MCP config, and other flags.
  */
+/**
+ * Appended to the system prompt whenever dsh tools are bridged. Claude Code's own Agent tool
+ * spawns children dsh cannot see (no card, no header count, no notice), so subagents must go
+ * through the bridged tools. Routes are box-specific, hence the pointer to list_subagent_models.
+ */
+export const DSH_TOOLS_GUIDANCE = [
+  "dsh tools are available as mcp__dsh__* over MCP. For any subagent, worker, helper or a",
+  "specific model, use those and never the built-in Agent/Task tool: a native Agent child is",
+  "invisible to dsh (no card, no header count, no completion notice, no transcript).",
+  "mcp__dsh__subagent takes provider and model for a named route; mcp__dsh__list_subagent_models",
+  "lists the allowed routes; omit both for the default. Other preset subagent tools",
+  "(mcp__dsh__subagent_*, mcp__dsh__researcher_*) and mcp__dsh__subagent_fork are children",
+  "too. run_in_background: false returns the answer inline; background returns an id and the",
+  "notice arrives next turn. mcp__dsh__open_session makes a new top-level session, not a child.",
+].join(" ");
+
 export function buildArgs({
   model,
   reasoningEffort,
@@ -406,8 +422,9 @@ export function buildArgs({
   if (supports(flags, "--forward-subagent-text")) args.push("--forward-subagent-text");
   if (model) args.push("--model", model);
   if (reasoningEffort && supports(flags, "--effort")) args.push("--effort", reasoningEffort);
-  if (typeof system === "string" && system && supports(flags, "--append-system-prompt")) {
-    args.push("--append-system-prompt", system);
+  const appended = [system, mcp ? DSH_TOOLS_GUIDANCE : ""].filter(Boolean).join("\n\n");
+  if (appended && supports(flags, "--append-system-prompt")) {
+    args.push("--append-system-prompt", appended);
   }
   if (purpose) {
     // Auxiliary calls (title, compaction): one turn, no tools, no session of their own. Without
