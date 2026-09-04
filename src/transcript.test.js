@@ -4,6 +4,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { foldTranscript, listTranscripts, toSessionEvents, truncateBytes } from "./transcript.js";
+import { dshSessionsFor } from "./sessions.js";
 
 const line = (o) => JSON.stringify(o);
 const T = "2026-09-03T08:00:00.000Z";
@@ -209,5 +210,20 @@ const big = (await listTranscripts(dir)).find((s) => s.id === idD);
 assert.ok(big, "long first line still lists");
 assert.equal(big.title, "what is in this image");
 assert.equal(big.turns, 1);
+
+// dsh sessions of a workspace map both their own id and their Claude transcript id; archived flag
+// rides along; other workspaces are ignored.
+{
+  const headers = [
+    { id: "d1", cwd: "/w" },
+    { id: "d2", cwd: "/w" },
+    { id: "d3", cwd: "/other" },
+  ];
+  const map = dshSessionsFor(headers, "/w", (id) => `c-${id}`, new Set(["d2"]));
+  assert.deepEqual(map.get("c-d1"), { id: "d1", archived: false });
+  assert.deepEqual(map.get("d2"), { id: "d2", archived: true });
+  assert.equal(map.get("c-d2"), map.get("d2"));
+  assert.equal(map.has("c-d3"), false);
+}
 
 console.log("transcript ok");

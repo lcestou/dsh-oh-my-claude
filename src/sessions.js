@@ -37,6 +37,24 @@ export const readBody = (req, limit = BODY_LIMIT) =>
   });
 
 const validId = (id) => typeof id === "string" && /^[0-9a-f-]{36}$/.test(id);
+
+/**
+ * Claude transcript id → the dsh session it belongs to, for the dsh sessions of one workspace.
+ * A session this plugin started keeps its Claude transcript under `claudeIdOf(dsh id)`; one opened
+ * from this panel shares the id. Archived sessions are included so the panel can bring them back
+ * without any archive plugin.
+ */
+export function dshSessionsFor(headers, cwd, claudeIdOf, archived = new Set()) {
+  const map = new Map();
+  for (const h of headers) {
+    if (h.cwd !== cwd) continue;
+    const id = String(h.id);
+    const entry = { id, archived: archived.has(id) };
+    map.set(id, entry);
+    map.set(claudeIdOf(id), entry);
+  }
+  return map;
+}
 const validCwd = (cwd) => typeof cwd === "string" && cwd.startsWith("/") && !cwd.includes("\0");
 
 /**
@@ -47,10 +65,12 @@ const validCwd = (cwd) => typeof cwd === "string" && cwd.startsWith("/") && !cwd
 const opening = new Map();
 
 /** Same id opened twice at once (double click, two tabs) shares one creation. */
-function openTranscript(ctx, projectDir, cwd, id) {
+function openTranscript(ctx, projectDir, cwd, id, claudeIdOf, registry) {
   let job = opening.get(id);
   if (!job) {
-    job = openTranscriptOnce(ctx, projectDir, cwd, id).finally(() => opening.delete(id));
+    job = openTranscriptOnce(ctx, projectDir, cwd, id, claudeIdOf, registry).finally(() =>
+      opening.delete(id),
+    );
     opening.set(id, job);
   }
   return job;
@@ -60,10 +80,27 @@ function openTranscript(ctx, projectDir, cwd, id) {
  * Loads a Claude Code transcript and creates a dsh session from it, or
  * returns the existing session if one with this id is already live.
  */
-async function openTranscriptOnce(ctx, projectDir, cwd, id) {
+async function openTranscriptOnce(ctx, projectDir, cwd, id, claudeIdOf, registry) {
   if (ctx.sessions.get(id)) return { id, existed: true };
-  const persisted = await ctx.sessionPersistence.list();
-  if (persisted.some((h) => String(h.id) === id)) return { id, existed: true };
+  const owned = dshSessionsFor(
+    await ctx.sessionPersistence.list(),
+    cwd,
+    claudeIdOf,
+    new Set(registry?.archivedSessionIds ?? []),
+  ).get(id);
+  if (owned) {
+    // ponytail: unarchive through the registry's own operation queue; dsh core has archiveSession
+    // but no inverse, and the another plugin plugin does exactly this.
+    if (owned.archived && registry?.enqueueOperation)
+      await registry.enqueueOperation(async () => {
+        const state = registry.requireState();
+        await registry.setState({
+          ...state,
+          archivedSessionIds: state.archivedSessionIds.filter((x) => x !== owned.id),
+        });
+      });
+    return { id: owned.id, existed: true };
+  }
   const folded = await readTranscript(join(projectDir(cwd), `${id}.jsonl`));
   if (folded.turns.length === 0) throw new Error("transcript has no completed turn");
   const seed = toSessionEvents(folded);
@@ -79,7 +116,12 @@ async function openTranscriptOnce(ctx, projectDir, cwd, id) {
 }
 
 /** `projectDir(cwd)` → Claude Code project dir; `startedIds()` → ids the adapter started itself. */
-export function registerSessionRoutes(ctx, { log, projectDir, startedIds }) {
+export function registerSessionRoutes(ctx, { log, projectDir, startedIds, claudeIdOf }) {
+  // Optional: stock dsh has it; without it archived sessions list but cannot be restored.
+  let registry;
+  ctx.inject(["workspaceRegistry"], (host) => {
+    registry = host.workspaceRegistry;
+  });
   ctx.inject(["webServer", "connection", "sessions", "sessionPersistence"], (ctx) => {
     ctx.effect(
       () =>
@@ -95,21 +137,31 @@ export function registerSessionRoutes(ctx, { log, projectDir, startedIds }) {
                 const cwd = url.searchParams.get("cwd") ?? "";
                 if (!validCwd(cwd))
                   return json(res, 400, { error: "cwd must be an absolute path" });
-                // Hide transcripts the adapter started for a dsh session of another id; ones opened
-                // from here share the id with their dsh session and stay listed as "Show".
-                const persisted = new Set(
-                  (await ctx.sessionPersistence.list()).map((h) => String(h.id)),
+                // Transcripts of dsh sessions (started here or opened from here) are listed with
+                // their dsh id so the panel opens the existing session. Ones the adapter started
+                // for a dsh session that no longer exists are hidden.
+                const owned = dshSessionsFor(
+                  await ctx.sessionPersistence.list(),
+                  cwd,
+                  claudeIdOf,
+                  new Set(registry?.archivedSessionIds ?? []),
                 );
-                const hidden = new Set(
-                  [...(await startedIds())].filter((id) => !persisted.has(id)),
-                );
-                return json(res, 200, { sessions: await listTranscripts(projectDir(cwd), hidden) });
+                const hidden = new Set([...(await startedIds())].filter((id) => !owned.has(id)));
+                const sessions = (await listTranscripts(projectDir(cwd), hidden)).map((s) => {
+                  const d = owned.get(s.id);
+                  return d ? { ...s, dsh: d } : s;
+                });
+                return json(res, 200, { sessions });
               }
               if (req.method === "POST" && url.pathname === `${ROUTE_PREFIX}/open`) {
                 const { cwd, id } = await readBody(req);
                 if (!validCwd(cwd) || !validId(id))
                   return json(res, 400, { error: "cwd and id required" });
-                return json(res, 200, await openTranscript(ctx, projectDir, cwd, id));
+                return json(
+                  res,
+                  200,
+                  await openTranscript(ctx, projectDir, cwd, id, claudeIdOf, registry),
+                );
               }
               return json(res, 404, { error: "not found" });
             } catch (e) {

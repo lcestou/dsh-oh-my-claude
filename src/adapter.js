@@ -1674,5 +1674,6 @@ export function apply(ctx, config) {
     log: (level, msg) => adapter.log(level, msg),
     projectDir: (cwd) => join(CLAUDE_HOME, "projects", projectDirName(cwd)),
     startedIds: loadStarted,
+    claudeIdOf: claudeSessionId,
   });
 }

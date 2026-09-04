@@ -85,7 +85,10 @@ export function apply(ctx) {
       setState(`opening:${s.id}`);
       setError("");
       try {
-        if (!knownSessions()[s.id]) {
+        // A dsh session already exists server-side: unarchive if needed, then open. A terminal
+        // transcript is converted server-side, then adopted by the client.
+        const id = s.dsh?.id ?? s.id;
+        if (s.dsh?.archived || (!s.dsh && !knownSessions()[id])) {
           const r = await fetch(`${ROUTE}/open`, {
             method: "POST",
             headers: { "content-type": "application/json" },
@@ -93,9 +96,10 @@ export function apply(ctx) {
           });
           if (!r.ok)
             throw new Error((await r.json().catch(() => ({}))).error ?? `HTTP ${r.status}`);
-          await ctx.sessions.create({ workspaceId: workspace.workspaceId, sessionId: s.id });
+          if (!s.dsh)
+            await ctx.sessions.create({ workspaceId: workspace.workspaceId, sessionId: id });
         }
-        ctx.sessions.open(s.id);
+        ctx.sessions.open(id);
       } catch (e) {
         setError(String(e.message ?? e));
       } finally {
@@ -110,8 +114,9 @@ export function apply(ctx) {
           Claude Code sessions
         </h2>
         <p id="dsh-llm-claude-description" style={{ opacity: 0.75 }}>
-          Sessions Claude Code ran in this workspace, including ones started in the terminal. Open
-          one to continue it here; the terminal transcript is read, never written.
+          Every Claude Code session of this workspace: ones started here in dsh (archived ones too)
+          and ones started with `claude` in a terminal. Open continues it here; a terminal
+          transcript is read, never written.
         </p>
         <label id="dsh-llm-claude-workspace-label">
           Workspace{" "}
@@ -139,13 +144,12 @@ export function apply(ctx) {
         )}
         {state !== "loading" && workspace && sessions.length === 0 && (
           <p id="dsh-llm-claude-empty" style={meta}>
-            No terminal Claude Code transcripts for {workspace.path}. Claude sessions started here
-            in dsh live in the session list, not in this panel.
+            No Claude Code sessions for {workspace.path}.
           </p>
         )}
         <div id="dsh-llm-claude-sessions">
           {sessions.map((s) => {
-            const opened = Boolean(known[s.id]);
+            const opened = Boolean(known[s.dsh?.id ?? s.id]) && !s.dsh?.archived;
             const busy = state === `opening:${s.id}`;
             return (
               <div key={s.id} data-testid="dsh-llm-claude-session-row" style={row}>
@@ -163,6 +167,7 @@ export function apply(ctx) {
                   <div style={meta}>
                     {ago(s.modifiedAt)} · {s.turns}
                     {s.turnsPartial ? "+" : ""} prompts · {size(s.bytes)} · {s.id.slice(0, 8)}
+                    {s.dsh ? (s.dsh.archived ? " · dsh, archived" : " · dsh") : " · terminal"}
                   </div>
                 </div>
                 <button
@@ -172,7 +177,7 @@ export function apply(ctx) {
                   disabled={busy}
                   onClick={() => open(s)}
                 >
-                  {busy ? "Opening…" : opened ? "Show" : "Open"}
+                  {busy ? "Opening…" : opened ? "Show" : s.dsh?.archived ? "Restore" : "Open"}
                 </button>
               </div>
             );
