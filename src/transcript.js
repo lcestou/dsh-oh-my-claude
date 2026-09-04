@@ -1,6 +1,8 @@
 // Claude Code transcripts (~/.claude/projects/<cwd>/<uuid>.jsonl) → dsh session events, so a
 // session started in the terminal can be opened in dsh with its history and resumed from there.
-import { readdir, readFile, stat, open } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { readdir, readFile, stat } from "node:fs/promises";
+import { createInterface } from "node:readline";
 import { join } from "node:path";
 
 const UUID_FILE = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/;
@@ -63,19 +65,24 @@ const titleFrom = (text) =>
 /** One-shots older plugin versions ran inside the workspace dir (titles now run from a scratch dir). */
 const isAuxPrompt = (text) => text.startsWith("Generate the session title");
 
-/** Read only the head of a transcript: first real prompt, timestamps, summary. Cheap for a listing. */
+/**
+ * Read only the head of a transcript: first real prompt, timestamps, summary. Cheap for a listing.
+ * Whole lines, not a byte window: a first prompt with pasted images is one JSON line of several
+ * hundred KB, and cutting it mid-line made the transcript vanish from the list.
+ */
 async function peek(path, maxBytes = 256 * 1024) {
-  const fh = await open(path, "r");
-  try {
-    const buf = Buffer.alloc(maxBytes);
-    const { bytesRead } = await fh.read(buf, 0, maxBytes, 0);
-    return {
-      lines: buf.subarray(0, bytesRead).toString("utf8").split("\n"),
-      partial: bytesRead === maxBytes,
-    };
-  } finally {
-    await fh.close();
+  const lines = [];
+  let bytes = 0;
+  const rl = createInterface({ input: createReadStream(path), crlfDelay: Infinity });
+  for await (const line of rl) {
+    lines.push(line);
+    bytes += Buffer.byteLength(line) + 1;
+    if (bytes >= maxBytes) {
+      rl.close();
+      return { lines, partial: true };
+    }
   }
+  return { lines, partial: false };
 }
 
 /**

@@ -139,7 +139,8 @@ export function apply(ctx) {
         )}
         {state !== "loading" && workspace && sessions.length === 0 && (
           <p id="dsh-llm-claude-empty" style={meta}>
-            No transcripts for {workspace.path}.
+            No terminal Claude Code transcripts for {workspace.path}. Claude sessions started here
+            in dsh live in the session list, not in this panel.
           </p>
         )}
         <div id="dsh-llm-claude-sessions">

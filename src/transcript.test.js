@@ -184,4 +184,30 @@ assert.deepEqual(
 );
 assert.deepEqual(await listTranscripts(join(dir, "missing")), []);
 
+// A first prompt with pasted images is one JSON line far past the 256 KB peek window. A byte
+// window cut it mid-line and the transcript vanished from the list.
+const idD = "44444444-4444-4444-8444-444444444444";
+await writeFile(
+  join(dir, `${idD}.jsonl`),
+  [
+    line({ type: "attachment", sessionId: idD }),
+    line({
+      type: "user",
+      uuid: "u",
+      timestamp: T,
+      message: {
+        role: "user",
+        content: [
+          { type: "image", source: { type: "base64", data: "A".repeat(400 * 1024) } },
+          { type: "text", text: "what is in this image" },
+        ],
+      },
+    }),
+  ].join("\n"),
+);
+const big = (await listTranscripts(dir)).find((s) => s.id === idD);
+assert.ok(big, "long first line still lists");
+assert.equal(big.title, "what is in this image");
+assert.equal(big.turns, 1);
+
 console.log("transcript ok");
