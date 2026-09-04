@@ -4,21 +4,33 @@ Claude Code CLI as an LLM provider for [dsh](https://github.com/deepseek-ai/dsh)
 
 ## Install
 
+Needs the Claude Code CLI on `PATH` and already logged in (`claude --version` works, `claude` opens without asking you to sign in). Nothing else: no API key, no Node build step.
+
 ```sh
-cd ~/.dsh/profiles/web
-pnpm add file:/path/to/dsh-llm-claude-code
+dsh plugin --profile web add github:lcestou/dsh-llm-claude
+systemctl --user restart dsh-web.service   # or restart `dsh web` however you run it
 ```
 
-Then add the plugin to the profile's `cordis.patch.yml`:
+The package declares a dsh bundle, so `dsh plugin add` registers it in the profile by itself. After the restart, "Claude Code" appears in the model picker with the models your login can use. Pick one and chat.
+
+Optional, in `~/.dsh/settings.yaml`:
 
 ```yaml
-- insert:
-    - id: llm-claude
-      name: 'dsh-llm-claude'
-      config: {}
+agent-default-model:            # make Claude Code the default for new sessions
+  provider: claude-code
+  model: claude-fable-5-1
+subagent-model-selection:       # let dsh subagents run on Claude Code too
+  enabled: true
+  allowedModels:
+    - provider: claude-code
+      model: claude-haiku-4-5
 ```
 
-Restart `dsh web` after installing and after every edit to `src/`. The patch layer hot-reloads, plugin code does not. pnpm hardlinks the `file:` dependency per file, so editors that replace files break the link; copy `src/` and `lib/` over `node_modules/dsh-llm-claude/` if `cmp` shows a difference. The Settings page needs `lib/client.js`, which `bun run build` produces from `src/client/index.jsx`; it is committed, so a plain install has it.
+Plugin settings live under Settings → Claude Code, or as `config:` on the bundle row if you override it in the profile's `cordis.patch.yml`.
+
+### Developing
+
+Install from a checkout instead: `dsh plugin --profile web add link:/path/to/dsh-llm-claude-code`. Restart after every edit to `src/`; the patch layer hot-reloads, plugin code does not. The Settings page needs `lib/client.js`, which `bun run build` produces from `src/client/index.jsx`; it is committed, so a plain install has it. `bun run check` runs lint, format check, tests and the build.
 
 ## Configuration
 

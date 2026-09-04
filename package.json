@@ -1,6 +1,6 @@
 {
   "name": "dsh-llm-claude",
-  "version": "0.9.5",
+  "version": "0.9.6",
   "type": "module",
   "description": "Claude Code CLI as an LLM provider for dsh (DeepSeek Harness): live model list, session resume, images, tool activity",
   "main": "src/adapter.js",
@@ -33,7 +33,8 @@
   "files": [
     "src",
     "lib",
-    "README.md"
+    "README.md",
+    "cordis.patch.yml"
   ],
   "dsh": {
     "client": {
@@ -43,11 +44,15 @@
         "@deepseek-ai/dsh-client-ui-settings",
         "@deepseek-ai/dsh-client-ui-slots"
       ]
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
     }
   },
   "peerDependenciesMeta": {
     "react": {
       "optional": true
     }
-  }
+  },
+  "repository": "https://github.com/lcestou/dsh-llm-claude"
 }

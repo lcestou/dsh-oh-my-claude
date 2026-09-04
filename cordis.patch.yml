@@ -1,0 +1,8 @@
+# dsh-llm-claude bundle patch: one insert registering the plugin. dsh mounts this layer for
+# every profile that lists `dsh-llm-claude` in `dsh.profile.bundles`; `dsh plugin add` adds
+# the entry itself because package.json declares `dsh.bundle.patch`.
+# The row id must match the exported cordis `name` in src/adapter.js.
+- insert:
+    - id: llm-claude
+      name: 'dsh-llm-claude'
+      config: {}
