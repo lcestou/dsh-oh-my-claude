@@ -232,8 +232,17 @@ export function selectTurns(messages, resuming) {
 /** Text body sent as the user prompt. Assistant turns get role labels so history stays legible. */
 export function buildPrompt(turns) {
   const parts = turns.map((m) => ({ role: m.role, text: textOf(m.content) })).filter((t) => t.text);
-  if (!parts.some((t) => t.role === "user"))
+  if (!parts.some((t) => t.role === "user")) {
+    // Attachment-only turn: the user sent an image (or other non-text block) with no typed
+    // text. Images ride along separately via imageRefs, but Claude still needs a non-empty
+    // prompt on stdin, so synthesize a minimal one rather than reject the whole turn.
+    const hasUserAttachment = turns.some(
+      (m) =>
+        m.role === "user" && Array.isArray(m.content) && m.content.some((b) => b.type !== "text"),
+    );
+    if (hasUserAttachment) return "(see attached)";
     throw new LlmError("no user message", "INVALID_REQUEST");
+  }
   const multi = parts.some((t) => t.role === "assistant");
   return parts.map((t) => (multi ? `[${t.role}]\n${t.text}` : t.text)).join("\n\n");
 }
@@ -1188,6 +1197,13 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       }
       if (event.type === "control_response" || event.type === "timeout") return "continue";
       if (isStaleResume(event) && proc.resuming && !forceFresh) return "retry";
+      if (event.type === "result" && proc.staleResults > 0) {
+        // End of a turn Claude ran on its own between prompts (see ClaudeProcess.countStaleResults).
+        // Its text already streamed into this step; draw a rule and keep reading for the real reply.
+        proc.staleResults--;
+        yield* tr.wholeBlock("text", "\n\n---\n\n");
+        return "continue";
+      }
       yield* tr.translate(event);
       if (tr.toolPending) clearTimeout(timer); // tool running: silence is expected, do not time out
       if (tr.finished) return "finished";
@@ -1232,6 +1248,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       return "relayed";
     };
     try {
+      // A fresh prompt: anything already queued is output from a turn Claude ran while dsh was
+      // idle (background task finished). Relay/steer modes are mid-turn; their queue is live.
+      proc.staleResults = cont.mode === "prompt" ? (proc.countStaleResults?.() ?? 0) : 0;
       this.openTurn(cont, proc, prep);
       armIdle();
       for (;;) {

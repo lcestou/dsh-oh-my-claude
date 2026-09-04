@@ -28,7 +28,7 @@ import {
   dropSent,
   afterLastAssistant,
 } from "./adapter.js";
-import { LineQueue, TIMEOUT } from "./process.js";
+import { ClaudeProcess, LineQueue, TIMEOUT } from "./process.js";
 
 const config = new Config({});
 assert.equal(config.permissionMode, "dsh");
@@ -94,6 +94,13 @@ assert.equal(
   "[user]\nhi\n\n[assistant]\nyo\n\n[user]\nagain\n\n[user]\n<system-reminder>ctx</system-reminder>",
 );
 assert.throws(() => buildPrompt([{ role: "assistant", content: "x" }]));
+// image-only / attachment-only user turn: no typed text, but not rejected — synthesize a prompt
+assert.equal(
+  buildPrompt([{ role: "user", content: [{ type: "image", attachment: { path: "/x.png" } }] }]),
+  "(see attached)",
+);
+// no user turn at all still rejects
+assert.throws(() => buildPrompt([{ role: "assistant", content: [{ type: "text", text: "x" }] }]));
 
 // args: chat call carries permission mode and session flags; aux calls are one turn, no tools
 const chat = buildArgs({
@@ -751,6 +758,30 @@ console.log("ok");
   const pending = q.next(1000);
   q.push("now");
   assert.equal(await pending, "now");
+}
+{
+  // Claude ran a turn on its own while dsh was idle (background task finished): its whole
+  // output is queued ahead of the next prompt. Count its results so the turn loop skips them.
+  const queue = new LineQueue();
+  const count = () => ClaudeProcess.prototype.countStaleResults.call({ queue });
+  assert.equal(count(), 0, "empty queue");
+  queue.push(
+    JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "done" }] } }),
+  );
+  queue.push(JSON.stringify({ type: "result", subtype: "success", is_error: false }));
+  queue.push('{"type":"assistant","message":{"content":[{"type":"text","text":"result"}]}}');
+  queue.push("not json result line");
+  queue.push({ type: "dsh_relay" });
+  assert.equal(
+    count(),
+    1,
+    "one stale turn: text mentioning result, junk and injected objects do not count",
+  );
+  queue.push(JSON.stringify({ type: "result", subtype: "success", is_error: false }));
+  assert.equal(count(), 2, "two stale turns");
+  await queue.next();
+  await queue.next();
+  assert.equal(count(), 1, "only what is still queued counts");
 }
 {
   const tr = new Translator();

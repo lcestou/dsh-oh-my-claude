@@ -189,6 +189,23 @@ export class ClaudeProcess {
     this.queue.push(event);
   }
 
+  /** How many `result` events sit in the queue with no turn reading them. Claude Code runs a turn
+   *  of its own when a background task it started finishes; with dsh idle, that whole turn is
+   *  buffered here and the next prompt would end on its stale result, leaving every later reply
+   *  one prompt behind. */
+  countStaleResults() {
+    let n = 0;
+    for (const line of this.queue.lines) {
+      if (typeof line !== "string" || !line.includes('"result"')) continue;
+      try {
+        if (JSON.parse(line).type === "result") n++;
+      } catch {
+        // not JSON: nextEvent() files it under `stray`
+      }
+    }
+    return n;
+  }
+
   /** Next parsed JSON line; plain text lines are kept in `stray` for error messages. Null when the
    *  process ended, `{ type: "timeout" }` when `timeoutMs` passed first. */
   async nextEvent(timeoutMs) {
