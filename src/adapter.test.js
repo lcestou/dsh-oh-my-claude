@@ -125,7 +125,15 @@ assert.ok(
 const fresh = buildArgs({ model: "m", config, session: { id: "u", resuming: false } });
 assert.deepEqual(fresh.slice(-2), ["--session-id", "u"]);
 const aux = buildArgs({ model: "haiku", purpose: "session-title", config, session: undefined });
-assert.deepEqual(aux.slice(-4), ["--tools", "", "--max-turns", "1"]);
+assert.deepEqual(aux.slice(-5), ["--tools", "", "--max-turns", "1", "--no-session-persistence"]);
+const auxOld = buildArgs({
+  model: "haiku",
+  purpose: "session-title",
+  config,
+  session: undefined,
+  flags: new Set(["--tools", "--max-turns"]),
+});
+assert.deepEqual(auxOld.slice(-4), ["--tools", "", "--max-turns", "1"], "older CLI: flag left out");
 assert.equal(aux.filter((a) => a === "--tools").length, 1);
 assert.ok(!aux.includes("--permission-mode"));
 const custom = buildArgs({
@@ -825,6 +833,28 @@ console.log("ok");
     "an old notice behind an assistant reply is history",
   );
   assert.equal(wakeOnlyTurn([user, asst, other]), false, "no notice, no drain turn");
+}
+{
+  // Claude Code's own compaction shows as one line; other system events stay silent.
+  const t = new Translator();
+  assert.deepEqual(t.translate({ type: "system", subtype: "init", session_id: "x" }), []);
+  const out = t.translate({
+    type: "system",
+    subtype: "compact_boundary",
+    compact_metadata: { trigger: "auto", pre_tokens: 150000 },
+  });
+  assert.equal(out.at(-1).type, "block-end");
+  assert.match(
+    out.at(-1).block.text,
+    /Context compacted by Claude Code \(auto, 150000 tokens before\)/,
+  );
+  assert.equal(t.finished, false, "compaction does not end the turn");
+  const manual = t.translate({
+    type: "system",
+    subtype: "compact_boundary",
+    compact_metadata: { trigger: "manual" },
+  });
+  assert.match(manual.at(-1).block.text, /\(manual\)\._/, "manual trigger, no token count");
 }
 {
   const tr = new Translator();

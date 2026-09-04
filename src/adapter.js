@@ -327,8 +327,10 @@ export function buildArgs({
     args.push("--append-system-prompt", system);
   }
   if (purpose) {
-    // Auxiliary calls (title, compaction): one turn, no tools, no session of their own.
+    // Auxiliary calls (title, compaction): one turn, no tools, no session of their own. Without
+    // --no-session-persistence each one still leaves a transcript under the scratch project dir.
     args.push("--tools", "", "--max-turns", "1");
+    if (supports(flags, "--no-session-persistence")) args.push("--no-session-persistence");
     return args;
   }
   if (supports(flags, "--permission-mode")) {
@@ -657,6 +659,18 @@ export class Translator {
 
   translate(event) {
     switch (event?.type) {
+      case "system": {
+        // Claude Code compacted its own context (auto or /compact). One line so the user knows
+        // why the model may have lost detail; every other system subtype is handshake noise.
+        if (event.subtype !== "compact_boundary") return [];
+        const meta = event.compact_metadata ?? {};
+        const how = meta.trigger === "manual" ? "manual" : "auto";
+        const size = Number.isFinite(meta.pre_tokens) ? `, ${meta.pre_tokens} tokens before` : "";
+        return this.wholeBlock(
+          "text",
+          `\n\n_Context compacted by Claude Code (${how}${size})._\n\n`,
+        );
+      }
       case "stream_event":
         return this.partial(event.event ?? {});
       case "assistant":
