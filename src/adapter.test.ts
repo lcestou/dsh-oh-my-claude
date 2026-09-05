@@ -35,7 +35,7 @@ import {
   markBusy,
   takeInterrupted,
 } from "./adapter.js";
-import { ClaudeProcess, LineQueue, TIMEOUT, seamSpawner, todosFromInput } from "./process.js";
+import { ClaudeProcess, LineQueue, TIMEOUT, seamSpawner } from "./process.js";
 import type { ClaudeEvent, ClaudeProcessSpec, SubprocessHandle } from "./process.js";
 import type { LooseMessage } from "./adapter.js";
 import type { FinishReason, LlmFailure, Message, StreamChunk } from "@deepseek-ai/dsh-llm";
@@ -1027,45 +1027,42 @@ console.log("ok");
   assert.match(failed.at(-1).block.text, /Compaction failed: Not enough messages to compact\./);
 }
 {
-  // todosFromInput maps Claude's list to dsh's shape, drops entries with no content, and coerces an
-  // unknown status to "pending". Bad containers yield an empty list, never a throw.
-  assert.deepEqual(todosFromInput(undefined), []);
-  assert.deepEqual(todosFromInput({ todos: "nope" }), []);
+  // restoreTodos re-appends the last todo/write so the panel survives dsh's per-turn reset.
+  // It reads persisted session events (survives restart) and is source-agnostic.
+  const makeStub = (persistTodos: boolean, events: Array<{ type: string; data: any }>) => {
+    const appended: Array<{ type: string; data: any }> = [];
+    const session = {
+      snapshotEvents: () => events,
+      append: (type: string, data: any) => appended.push({ type, data }),
+    };
+    const stub = {
+      config: { persistTodos },
+      ctx: { sessions: { get: () => session } },
+      log: () => {},
+    };
+    return { stub, appended };
+  };
+  const active = [
+    { type: "turn/start", data: {} },
+    { type: "todo/write", data: { todos: [{ content: "a", status: "in_progress" }] } },
+    { type: "turn/start", data: {} },
+  ];
+  // Live turn/start: last non-empty list is re-appended.
+  const a = makeStub(true, active);
+  (ClaudeCodeAdapter.prototype as any).restoreTodos.call(a.stub, "s1");
   assert.deepEqual(
-    todosFromInput({
-      todos: [
-        { content: "one", status: "completed", activeForm: "doing one" },
-        { content: "two", status: "in_progress" },
-        { content: "", status: "bogus" },
-        { status: "pending" },
-      ],
-    }),
-    [
-      { content: "one", status: "completed" },
-      { content: "two", status: "in_progress" },
-      { content: "", status: "pending" },
-    ],
+    a.appended,
+    [{ type: "todo/write", data: { todos: [{ content: "a", status: "in_progress" }] } }],
+    "last todo list re-appended after turn/start",
   );
-}
-{
-  // A native TodoWrite is mirrored to dsh's todo panel (onTodoWrite) and draws no visible tool row.
-  const seen: unknown[] = [];
-  const t = new Translator({ onTodoWrite: (todos) => seen.push(todos) }) as any;
-  const out = t.translate({
-    type: "assistant",
-    message: {
-      content: [
-        {
-          type: "tool_use",
-          id: "t1",
-          name: "TodoWrite",
-          input: { todos: [{ content: "a", status: "pending" }] },
-        },
-      ],
-    },
-  });
-  assert.deepEqual(seen, [[{ content: "a", status: "pending" }]], "mirrored once, mapped");
-  assert.deepEqual(out, [], "TodoWrite is not drawn as a tool row");
+  // Disabled: nothing is written.
+  const b = makeStub(false, active);
+  (ClaudeCodeAdapter.prototype as any).restoreTodos.call(b.stub, "s1");
+  assert.deepEqual(b.appended, [], "persistTodos off writes nothing");
+  // Empty last list (todos cleared): nothing to restore.
+  const c = makeStub(true, [{ type: "todo/write", data: { todos: [] } }]);
+  (ClaudeCodeAdapter.prototype as any).restoreTodos.call(c.stub, "s1");
+  assert.deepEqual(c.appended, [], "an empty list is not re-appended");
 }
 {
   // wake(): a live agent gets the notice directly; an unloaded one is resumed through the

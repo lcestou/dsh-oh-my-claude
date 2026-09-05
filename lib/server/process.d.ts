@@ -225,13 +225,6 @@ export declare const denyResult: (toolUseId: string, message: string) => {
 };
 /** Claude's AskUserQuestion input → dsh question items. Undefined when the shape is not what the tool documents. */
 export declare function parseQuestions(input: Record<string, unknown>, toolUseId: string): AskUserQuestionItem[] | undefined;
-/** One entry of Claude Code's TodoWrite list, mapped to dsh's `todo/write` shape (drops `activeForm`). */
-export interface TodoItem {
-    content: string;
-    status: "pending" | "in_progress" | "completed";
-}
-/** Claude Code's TodoWrite `input.todos` → dsh `TodoItem[]`. Bad shapes drop out silently. */
-export declare function todosFromInput(input: Record<string, unknown> | undefined): TodoItem[];
 /** dsh answers → the `answers` map Claude expects back in updatedInput, keyed by question text. */
 export declare function answersFor(questions: Array<{
     id: string;

@@ -57,8 +57,7 @@ import {
   takeInterrupted,
   trace,
 } from "./state.js";
-import { errorText, todosFromInput, toolResultText } from "./process.js";
-import type { TodoItem } from "./process.js";
+import { errorText, toolResultText } from "./process.js";
 import { forkTranscriptText } from "./transcript.js";
 export { markBusy, takeInterrupted } from "./state.js";
 export { forkTranscriptText } from "./transcript.js";
@@ -137,7 +136,7 @@ export type Config = {
   idleTimeoutMs: number;
   toolTextLimit: number;
   dshTools: boolean;
-  mirrorTodos: boolean;
+  persistTodos: boolean;
   debug: boolean;
   approvals: boolean;
   processIdleMs: number;
@@ -203,10 +202,12 @@ export const Config = z.object({
     .boolean()
     .default(true)
     .description("Expose dsh tools (subagents, jobs, skills...) to Claude Code over MCP"),
-  mirrorTodos: z
+  persistTodos: z
     .boolean()
     .default(true)
-    .description("Mirror Claude Code's own TodoWrite lists into dsh's todo panel"),
+    .description(
+      "Keep the todo list on screen across messages and resume (dsh clears it each turn by default)",
+    ),
   debug: z.boolean().default(false).description("Log spawn arguments (minus the prompt) per call"),
   approvals: z
     .boolean()
@@ -863,7 +864,6 @@ export interface TranslatorBlock {
 
 export class Translator {
   log: (level: string, msg: string) => void;
-  onTodoWrite: (todos: TodoItem[]) => void;
   unknownSeen: Set<string>; // (where:type) already warned, so schema drift warns once, not per event
   toolActivity: boolean;
   relay: boolean; // dsh tool calls are relayed to dsh's own loop: hide Claude's view of them
@@ -886,7 +886,6 @@ export class Translator {
     dshIds,
     relayed,
     log,
-    onTodoWrite,
   }: {
     toolActivity?: boolean;
     toolTextLimit?: number;
@@ -894,10 +893,8 @@ export class Translator {
     dshIds?: Set<string>;
     relayed?: Set<string>;
     log?: (level: string, msg: string) => void;
-    onTodoWrite?: (todos: TodoItem[]) => void;
   } = {}) {
     this.log = log ?? (() => {});
-    this.onTodoWrite = onTodoWrite ?? (() => {});
     this.unknownSeen = new Set(); // (where:type) already warned, so schema drift warns once, not per event
     this.toolActivity = toolActivity;
     this.relay = relay; // dsh tool calls are relayed to dsh's own loop: hide Claude's view of them
@@ -1097,8 +1094,7 @@ export class Translator {
         this.dshIds.add(cb.id);
         this.dshNames.set(cb.id, toolName.slice("mcp__dsh__".length));
       }
-      // TodoWrite is mirrored into the todo panel (see assistant()), so its raw row is hidden here.
-      if (!this.toolActivity || (dsh && this.relay) || toolName === "TodoWrite") {
+      if (!this.toolActivity || (dsh && this.relay)) {
         this.open.set(apiIndex, {
           index: -1,
           blockType: "hidden",
@@ -1126,11 +1122,6 @@ export class Translator {
       const text = content.flatMap((b) => (b.type === "text" && b.text ? [b.text] : [])).join("\n");
       return text ? this.wholeBlock("reasoning", `↳ subagent\n${clip(text, this.limit)}`) : [];
     }
-    // Mirror Claude Code's own TodoWrite into dsh's todo panel. Runs whether or not this message
-    // streamed: the whole `input.todos` list lands on the assistant message, never on the partials.
-    for (const b of content)
-      if (b.type === "tool_use" && b.name === "TodoWrite")
-        this.onTodoWrite(todosFromInput(b.input));
     if (this.sawPartial) return []; // already streamed as deltas
     const events: StreamChunk[] = [];
     for (const b of content) {
@@ -1139,7 +1130,6 @@ export class Translator {
         events.push(...this.wholeBlock("reasoning", b.thinking));
       else if (b.type === "tool_use") {
         const toolName = b.name ?? "";
-        if (toolName === "TodoWrite") continue; // mirrored to the todo panel, not shown as a row
         const dsh = toolName.startsWith("mcp__dsh__");
         if (dsh) {
           this.dshIds.add(b.id);
@@ -1232,6 +1222,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       const session = sessionArg as { id?: string };
       // SAFETY: same event object, narrowed to the agent/inbox/spliced shape this handler reads
       const event = eventArg as SpliceEvent;
+      // dsh nulls the todo panel on every turn/start; re-append the last list so it persists.
+      if (event?.type === "turn/start") {
+        this.restoreTodos(session?.id ?? "");
+        return;
+      }
       if (event?.type !== "agent/inbox/spliced" || event.data?.target !== "next-step") return;
       const proc = this.processes.get(session?.id ?? "");
       if (!proc?.alive || !proc.busy || proc.relays.size > 0) return;
@@ -1627,7 +1622,6 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       dshIds: proc.dshIds,
       relayed: proc.relayed,
       log: this.log.bind(this),
-      onTodoWrite: (todos) => this.mirrorTodos(options.sessionId, todos),
     });
     const pending = new Map(); // control request id → AbortController
     let outcome: Outcome = "ended"; // ended | finished | relayed | parked | retry
@@ -1773,18 +1767,21 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     if (outcome === "retry") yield* this.turn(options, true);
   }
 
-  /** Append Claude Code's own TodoWrite list to the session as a `todo/write` event so dsh's todo
-   *  panel renders it. It is a real session event, so it replays on resume without re-sending. */
-  mirrorTodos(sessionId: string, todos: TodoItem[]) {
-    if (!this.config.mirrorTodos) return;
+  /** dsh's todo projection resets to null on every `turn/start`, so the panel empties each message.
+   *  Re-append the last todo list so it persists across messages and, because it reads persisted
+   *  session events, across a restart too. Source-agnostic: works for dsh's own todo tool.
+   *  ponytail: O(n) scan of session events per turn; cache the last list if long sessions lag. */
+  restoreTodos(sessionId: string) {
+    if (!this.config.persistTodos || !sessionId) return;
     try {
-      const agent = this.ctx?.agents?.get?.(asSessionId(sessionId));
-      const data = {
-        todos: todos.map((t) => ({ content: t.content, status: t.status })),
-      } satisfies Record<string, JsonValue>;
-      agent?.session?.append("todo/write", data);
+      const session = this.ctx?.sessions?.get?.(asSessionId(sessionId));
+      if (!session) return;
+      let todos: JsonValue | undefined;
+      for (const e of session.snapshotEvents()) if (e.type === "todo/write") todos = e.data.todos;
+      if (!Array.isArray(todos) || todos.length === 0) return;
+      session.append("todo/write", { todos });
     } catch (error) {
-      this.log("warn", `todo mirror: ${errorText(error)}`);
+      this.log("warn", `todo restore: ${errorText(error)}`);
     }
   }
 
