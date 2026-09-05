@@ -187,14 +187,14 @@ export function authFromStatus(text) {
  * spawns, its version, the config dir it will read, and who is logged in. Same-box by design:
  * the plugin runs Claude Code as a child process, never over ssh.
  */
-async function runtimeStatus(configDir) {
+async function runtimeStatus(configDir, command = "claude") {
   const [which, version, status] = await Promise.all([
     run(
       process.platform === "win32" ? "where" : "sh",
-      process.platform === "win32" ? ["claude"] : ["-c", "command -v claude"],
+      process.platform === "win32" ? [command] : ["-c", `command -v ${command}`],
     ),
-    run("claude", ["--version"]),
-    run("claude", ["auth", "status"]),
+    run(command, ["--version"]),
+    run(command, ["auth", "status"]),
   ]);
   return {
     host: hostname(),
@@ -310,7 +310,7 @@ async function openTranscriptOnce(ctx, projectDir, cwd, id, claudeIdOf, registry
 /** `projectDir(cwd)` → Claude Code project dir; `startedIds()` → ids the adapter started itself. */
 export function registerSessionRoutes(
   ctx,
-  { log, projectDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath },
+  { log, projectDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, command },
 ) {
   // Optional: stock dsh has it; without it archived sessions list but cannot be restored.
   let registry;
@@ -370,7 +370,7 @@ export function registerSessionRoutes(
                 }
               }
               if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/status`)
-                return json(res, 200, await runtimeStatus(configDir));
+                return json(res, 200, await runtimeStatus(configDir, command));
               if (boxesPath && url.pathname === `${ROUTE_PREFIX}/boxes`) {
                 if (req.method === "GET")
                   return json(res, 200, { boxes: await readBoxes(boxesPath) });

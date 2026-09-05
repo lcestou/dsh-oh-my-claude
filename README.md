@@ -38,6 +38,8 @@ All keys are optional.
 
 | Key | Default | Meaning |
 |---|---|---|
+| `command` | `claude` | Claude Code binary: a name on PATH or an absolute path. |
+| `spawn` | `node` | How the process starts. `node`: directly, with dsh's environment. `dsh`: through dsh's subprocess seam (`ctx.subprocess`). With a remote provider such as [a remote subprocess provider](https://example.com/remote-provider) mounted, a remote workspace then runs Claude Code on that machine; the seam scrubs credential-shaped env vars (KEY/TOKEN/SECRET/PASSWORD), so log in on the machine that runs it. |
 | `permissionMode` | `dsh` | Claude Code permission mode for the tools it runs itself. `dsh` follows the session's access-mode switch in the dsh UI: read-only → `plan`, workspace-write → `acceptEdits`, danger-full-access → `bypassPermissions`. Any explicit value pins it. |
 | `allowedTools` | `[]` | Extra `--allowedTools` entries. |
 | `disallowedTools` | `[]` | `--disallowedTools` entries. |
@@ -93,7 +95,9 @@ The plugin runs Claude Code as a child process of dsh, so everything is on the m
 
 Same box, several clients (laptop, phone, another PC on the LAN): run `dsh web` where Claude Code is logged in and open that URL from anywhere.
 
-**Several boxes.** The plugin does not ssh: a wrapper named `claude` that did would run the model elsewhere while the panel still read local transcripts and settings. Instead, install dsh and this plugin on each machine that has Claude Code, and list the others under Settings → Claude Code → Boxes (name, URL, optional dsh token). Each row is probed from this dsh: host, `claude` version, who is logged in, plugin version (a mismatch is flagged). Open jumps the browser to that box; sessions and logins stay where they are. The token is that box's dsh launch token, needed only when this browser has never logged into it; a proxy that injects the token (the NPM setup in the docs) needs none. Saved in `~/.local/state/dsh-llm-claude/boxes.json`, routes `GET`/`PUT /dsh-llm-claude/boxes` and `GET /dsh-llm-claude/boxes/status`, behind dsh's login. Same shape as another tool's environments, minus the tunnel service.
+**Several boxes.** The plugin does not ssh itself: a wrapper named `claude` that did would run the model elsewhere while the panel still read local transcripts and settings. Instead, install dsh and this plugin on each machine that has Claude Code, and list the others under Settings → Claude Code → Boxes (name, URL, optional dsh token). Each row is probed from this dsh: host, `claude` version, who is logged in, plugin version (a mismatch is flagged). Open jumps the browser to that box; sessions and logins stay where they are. The token is that box's dsh launch token, needed only when this browser has never logged into it; a proxy that injects the token (the NPM setup in the docs) needs none. Saved in `~/.local/state/dsh-llm-claude/boxes.json`, routes `GET`/`PUT /dsh-llm-claude/boxes` and `GET /dsh-llm-claude/boxes/status`, behind dsh's login. Same shape as another tool's environments, minus the tunnel service.
+
+**Remote through dsh's own seam.** dsh separates *what runs a process* from *who asks*: `ctx.subprocess` is a seam, and community providers such as `a remote subprocess provider` mount a remote one. With `spawn: dsh` this plugin starts `claude` through that seam instead of node's `spawn`, so a workspace that a remote subprocess provider routes to another machine runs Claude Code there, with that machine's login and transcripts, and no ssh code in this plugin. Caveats: the seam's environment is dsh's scrubbed one (credentials come from the remote login); the MCP bridge URL points at this dsh's port, which a remote process cannot reach unless forwarded, so `dshTools` is best off for such workspaces; the session browser and settings editor stay local. The seam contract is covered by `src/adapter.test.js`; a live remote run needs a remote subprocess provider mounted.
 
 ## Not covered
 

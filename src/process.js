@@ -4,6 +4,44 @@
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 
+/** Child env on top of the parent's: dsh subagents over MCP can outlive the CLI's default tool timeout. */
+const CHILD_ENV = { MCP_TOOL_TIMEOUT: "3600000" };
+
+/**
+ * Node's own spawn, shaped like a dsh `SubprocessHandle` so the process code has one shape to
+ * talk to: `stdin`/`stdout`/`stderr` streams, `done` resolving with the exit code, `terminate()`.
+ */
+export function nodeSpawner(command, args, cwd) {
+  const child = spawn(command, args, {
+    cwd,
+    stdio: ["pipe", "pipe", "pipe"],
+    env: { ...CHILD_ENV, ...process.env },
+  });
+  return {
+    stdin: child.stdin,
+    stdout: child.stdout,
+    stderr: child.stderr,
+    done: new Promise((resolve) =>
+      child.on("close", (exitCode, signal) => resolve({ exitCode, signal })),
+    ),
+    terminate: () => child.kill(),
+  };
+}
+
+/**
+ * dsh's subprocess seam (`ctx.subprocess`). Same shape by definition. With a remote provider such
+ * as a remote subprocess provider mounted, Claude Code runs on the remote machine for a remote workspace; the seam
+ * scrubs credential-shaped env vars, so credentials come from the login on that machine.
+ */
+export const seamSpawner = (subprocess) => (command, args, cwd) =>
+  subprocess.spawn({
+    argv: [command, ...args],
+    cwd,
+    env: CHILD_ENV,
+    graceMs: 5000,
+    stdio: { stdin: "pipe", stdout: "pipe", stderr: "pipe" },
+  });
+
 /** stdin line for one user turn. `session_id` empty and `parent_tool_use_id` null match what the SDK writes. */
 export function userTurnLine(content) {
   return `${JSON.stringify({ type: "user", session_id: "", message: { role: "user", content }, parent_tool_use_id: null })}\n`;
@@ -161,7 +199,7 @@ export class LineQueue {
  * with (cwd, model, effort, permission mode, session flags); a turn whose spec differs replaces it.
  */
 export class ClaudeProcess {
-  constructor({ args, cwd, spec, onExit }) {
+  constructor({ args, cwd, spec, onExit, command = "claude", spawner = nodeSpawner }) {
     this.spec = spec;
     this.args = args;
     this.cwd = cwd;
@@ -173,14 +211,9 @@ export class ClaudeProcess {
     this.relays = new Map(); // relayed dsh tool call id → { resolve, reject, ... } awaiting dsh's result
     this.exitCode = undefined;
     this.queue = new LineQueue();
-    this.child = spawn("claude", args, {
-      cwd,
-      stdio: ["pipe", "pipe", "pipe"],
-      // dsh subagents proxied over MCP can run for a while; the CLI default tool timeout is shorter.
-      env: { MCP_TOOL_TIMEOUT: "3600000", ...process.env },
-    });
-    this.child.stdin.on("error", () => {});
-    this.child.stderr.on("data", (d) => {
+    this.child = spawner(command, args, cwd);
+    this.child.stdin?.on("error", () => {});
+    this.child.stderr?.on("data", (d) => {
       this.stderr = (this.stderr + d).slice(-2000);
     });
     const rl = createInterface({ input: this.child.stdout, crlfDelay: Infinity });
@@ -188,14 +221,19 @@ export class ClaudeProcess {
       this.queue.push(line);
       this.noteIdleResult(line);
     });
-    this.child.on("close", (code) => {
-      this.exitCode = code ?? -1;
-      this.queue.close();
-      for (const r of this.relays.values())
-        r.reject(new Error(`claude exited ${this.exitCode} while dsh ran its tool call`));
-      this.relays.clear();
-      onExit?.(this);
-    });
+    this.child.done.then(
+      (outcome) => this.closed(outcome?.exitCode ?? -1, onExit),
+      () => this.closed(-1, onExit),
+    );
+  }
+
+  closed(code, onExit) {
+    this.exitCode = code;
+    this.queue.close();
+    for (const r of this.relays.values())
+      r.reject(new Error(`claude exited ${this.exitCode} while dsh ran its tool call`));
+    this.relays.clear();
+    onExit?.(this);
   }
 
   get alive() {
@@ -209,7 +247,7 @@ export class ClaudeProcess {
   }
 
   kill() {
-    if (this.alive) this.child.kill();
+    if (this.alive) this.child.terminate();
   }
 
   /** Queue a synthetic event for the turn loop (the MCP bridge relaying a dsh tool call). */

@@ -30,8 +30,10 @@ import {
   wakeOnlyTurn,
   WAKE_TEXT,
   withoutNativeInstructions,
+  finishReason,
 } from "./adapter.js";
-import { ClaudeProcess, LineQueue, TIMEOUT } from "./process.js";
+import { ClaudeProcess, LineQueue, TIMEOUT, seamSpawner } from "./process.js";
+import { PassThrough } from "node:stream";
 
 const config = new Config({});
 assert.equal(config.permissionMode, "dsh");
@@ -1100,3 +1102,75 @@ console.log("relay ok");
   assert.match(warnings[2], /redacted_thinking/);
 }
 console.log("schema-guard ok");
+
+// A logged-out CLI surfaces as a clear instruction, whichever way the CLI words it.
+{
+  const notIn = finishReason({ is_error: true, result: "Not logged in · Please run /login" });
+  assert.match(notIn.failure.message, /not logged in on .+claude auth login/);
+  const expired = finishReason({
+    is_error: true,
+    api_error_status: 401,
+    result: "Failed to authenticate. API Error: 401 OAuth access token is invalid.",
+  });
+  assert.match(expired.failure.message, /not logged in on/);
+  assert.match(expired.failure.message, /OAuth access token is invalid/);
+  const other = finishReason({ is_error: true, result: "rate limited" });
+  assert.equal(other.failure.message, "rate limited");
+}
+
+// ClaudeProcess talks to one handle shape; a fake spawner proves write, line intake, exit, kill.
+{
+  const stdin = new PassThrough();
+  const stdout = new PassThrough();
+  const stderr = new PassThrough();
+  let terminated = 0;
+  let finish;
+  const handle = {
+    stdin,
+    stdout,
+    stderr,
+    done: new Promise((r) => (finish = r)),
+    terminate: () => {
+      terminated++;
+      finish({ exitCode: 143, signal: "SIGTERM" });
+    },
+  };
+  const seen = [];
+  const proc = new ClaudeProcess({
+    args: ["-p"],
+    cwd: "/",
+    spec: {},
+    spawner: (command, args, cwd) => {
+      seen.push([command, args, cwd]);
+      return handle;
+    },
+    command: "/opt/claude",
+  });
+  assert.deepEqual(seen, [["/opt/claude", ["-p"], "/"]]);
+  let written = "";
+  stdin.on("data", (d) => (written += d));
+  assert.equal(proc.write("hello\n"), true);
+  stdout.write('{"type":"system","subtype":"init"}\n');
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(written, "hello\n");
+  assert.equal(proc.queue.lines.length, 1, "stdout line reached the queue");
+  assert.equal(proc.alive, true);
+  proc.kill();
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(terminated, 1);
+  assert.equal(proc.alive, false);
+  assert.equal(proc.exitCode, 143);
+  assert.equal(proc.write("late\n"), false);
+}
+
+// The seam spawner hands dsh a fully explicit spec: raw pipes, the binary first in argv, small env.
+{
+  let spec;
+  const spawner = seamSpawner({ spawn: (s) => ((spec = s), { done: new Promise(() => {}) }) });
+  spawner("claude", ["-p", "--verbose"], "/w");
+  assert.deepEqual(spec.argv, ["claude", "-p", "--verbose"]);
+  assert.equal(spec.cwd, "/w");
+  assert.deepEqual(spec.stdio, { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+  assert.deepEqual(Object.keys(spec.env), ["MCP_TOOL_TIMEOUT"]);
+  assert.ok(spec.graceMs > 0);
+}

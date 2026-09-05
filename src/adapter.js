@@ -3,7 +3,7 @@ import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { homedir } from "node:os";
+import { homedir, hostname } from "node:os";
 import { join } from "node:path";
 import { LlmAdapter, LlmError, boundContextSummary, createUserMessage } from "@deepseek-ai/dsh-llm";
 import z from "@deepseek-ai/schemastery";
@@ -20,6 +20,8 @@ import {
   permissionReason,
   userTurnLine,
   interruptLine,
+  nodeSpawner,
+  seamSpawner,
 } from "./process.js";
 
 /** Plugin name identifier. */
@@ -29,6 +31,16 @@ export const inject = ["llm", "sessions", "attachments", "agents", "approval", "
 
 /** Configuration schema for Claude Code plugin settings. */
 export const Config = z.object({
+  command: z
+    .string()
+    .default("claude")
+    .description("Claude Code binary: a name on PATH or an absolute path"),
+  spawn: z
+    .union(["node", "dsh"])
+    .default("node")
+    .description(
+      "How the Claude Code process is started. 'node': directly, with dsh's environment. 'dsh': through dsh's subprocess seam (ctx.subprocess); with a remote provider such as a remote subprocess provider mounted, a remote workspace then runs Claude Code on that machine. The seam scrubs credential-shaped env vars (KEY/TOKEN/SECRET/PASSWORD), so log in on the machine that runs it",
+    ),
   permissionMode: z
     .union(["dsh", "acceptEdits", "bypassPermissions", "plan", "dontAsk", "auto", "manual"])
     .default("dsh")
@@ -359,13 +371,11 @@ let cliProbe;
  * @param {Function} exec - execFile implementation (default: node's execFile)
  * @returns {Promise<object>} Object with flags Set and version string
  */
-export function probeCli(exec = execFile) {
+export function probeCli(exec = execFile, command = "claude") {
   cliProbe ??= (async () => {
     const run = (args) =>
       new Promise((resolve) => {
-        exec("claude", args, { timeout: 8000 }, (err, stdout) =>
-          resolve(err ? "" : String(stdout)),
-        );
+        exec(command, args, { timeout: 8000 }, (err, stdout) => resolve(err ? "" : String(stdout)));
       });
     const [help, version] = await Promise.all([run(["--help"]), run(["--version"])]);
     const flags = new Set(help.match(/--[a-zA-Z-]+/g) ?? []);
@@ -554,10 +564,16 @@ export function isStaleResume(event) {
   return /No conversation found/i.test(JSON.stringify(event.errors ?? event.result ?? ""));
 }
 
-function finishReason(result) {
+/** A logged-out CLI: the -p mode text, or the API's 401 once a stored token has expired. */
+const NOT_LOGGED_IN_RE =
+  /not logged in|authentication_error|failed to authenticate|oauth .*invalid/i;
+
+export function finishReason(result) {
   if (result.is_error) {
     const errors = Array.isArray(result.errors) ? result.errors.join("; ") : "";
-    const message = String(result.result ?? errors ?? result.subtype ?? "claude error");
+    let message = String(result.result ?? errors ?? result.subtype ?? "claude error");
+    if (result.api_error_status === 401 || NOT_LOGGED_IN_RE.test(message))
+      message = `Claude Code is not logged in on ${hostname()}. Run \`claude auth login\` in a terminal there, then send your message again. (${message})`;
     return { kind: "error", failure: { message, code: "PROVIDER_ERROR" } };
   }
   if (result.stop_reason === "max_tokens") return { kind: "max-tokens" };
@@ -1081,7 +1097,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
 
   /** Everything one turn needs: spawn args + spec for the long-lived process, and the stdin line for this turn. */
   async prepare(options, { forceFresh = false } = {}) {
-    const cli = await probeCli();
+    const cli = await probeCli(execFile, this.config.command);
     if (!this.loggedVersion) {
       this.loggedVersion = true;
       this.log("info", `claude ${cli.version}, stdin input ${usesStdin(cli.flags) ? "on" : "off"}`);
@@ -1138,6 +1154,16 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     };
   }
 
+  /** Node's spawn, or dsh's subprocess seam when configured and mounted. */
+  spawner() {
+    if (this.config.spawn === "dsh" && this.subprocess) return seamSpawner(this.subprocess);
+    if (this.config.spawn === "dsh" && !this.warnedNoSeam) {
+      this.warnedNoSeam = true;
+      this.log("warn", "spawn: dsh requested but ctx.subprocess is not mounted; using node spawn");
+    }
+    return nodeSpawner;
+  }
+
   async *stream(options) {
     if (options.purpose || !options.sessionId || !this.config.resume) {
       yield* this.oneShot(options);
@@ -1164,6 +1190,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         args: prep.args,
         cwd: prep.cwd,
         spec: prep.spec,
+        command: this.config.command,
+        spawner: this.spawner(),
         onExit: (p) => {
           if (this.processes.get(options.sessionId) === p) this.processes.delete(options.sessionId);
         },
@@ -1584,6 +1612,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       ),
       cwd,
       spec: {},
+      command: this.config.command,
+      spawner: this.spawner(),
     });
     if (this.config.debug) this.log("info", `one-shot cwd=${cwd} claude ${proc.args.join(" ")}`);
     if (input !== null) {
@@ -1661,6 +1691,10 @@ export function apply(ctx, config) {
   ctx.inject(["sessionController"], (host) => {
     adapter.sessionController = host.sessionController;
   });
+  // Optional: the subprocess seam (stock dsh mounts a local provider; a remote subprocess provider a remote one).
+  ctx.inject(["subprocess"], (host) => {
+    adapter.subprocess = host.subprocess;
+  });
   registerMcpBridge(ctx, {
     log: (level, msg) => adapter.log(level, msg),
     version: "0.9.0",
@@ -1679,5 +1713,6 @@ export function apply(ctx, config) {
     settingsPath: join(CLAUDE_HOME, "settings.json"),
     configDir: CLAUDE_HOME,
     boxesPath: join(STATE_DIR, "boxes.json"),
+    command: adapter.config.command,
   });
 }
