@@ -1891,7 +1891,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const proc = this.processes.get(registryKey(this.providerId, sessionId));
     if (!proc?.alive) return { ...info, live: false };
     // 5 s: the CLI answers at once when it reads stdin; a longer wait would only stall the chip.
-    const reply = await this.control(proc, { subtype: "set_permission_mode", mode: info.mode }, 5000);
+    const reply = await this.control(
+      proc,
+      { subtype: "set_permission_mode", mode: info.mode },
+      5000,
+    );
     return reply.ok ? { ...info, live: true } : { ...info, live: true, error: reply.error };
   }
 
