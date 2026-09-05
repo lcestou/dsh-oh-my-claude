@@ -21,6 +21,9 @@ export type ClaudeEvent = {
     type: "system";
     subtype?: string;
     compact_metadata?: Record<string, unknown>;
+    status?: string | null;
+    compact_result?: string;
+    compact_error?: string;
 } | {
     type: "stream_event";
     event?: ClaudeStreamPartial;

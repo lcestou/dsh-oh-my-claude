@@ -37,7 +37,16 @@ export interface SubprocessHandle {
 }
 
 export type ClaudeEvent =
-  | { type: "system"; subtype?: string; compact_metadata?: Record<string, unknown> }
+  | {
+      type: "system";
+      subtype?: string;
+      compact_metadata?: Record<string, unknown>;
+      // subtype "status": `status:"compacting"` opens the silent summarize stretch; a later frame
+      // with `status:null` carries `compact_result` ("success"|"failed") and, on failure, `compact_error`.
+      status?: string | null;
+      compact_result?: string;
+      compact_error?: string;
+    }
   | { type: "stream_event"; event?: ClaudeStreamPartial }
   | { type: "assistant"; message?: ClaudeAssistantMessage; parent_tool_use_id?: string | null }
   | {

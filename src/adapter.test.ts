@@ -1004,6 +1004,28 @@ console.log("ok");
   assert.match(manual.at(-1).block.text, /\(manual\)\._/, "manual trigger, no token count");
 }
 {
+  // The compaction start frame (status:"compacting") is announced at once, so the silent summarize
+  // stretch has a visible anchor and does not arrive delayed as the boundary line alone.
+  const t = new Translator() as any;
+  const start = t.translate({ type: "system", subtype: "status", status: "compacting" });
+  assert.match(start.at(-1).block.text, /Compacting context…/);
+  assert.equal(t.finished, false, "the start frame does not end the turn");
+  // The success end frame is silent; the boundary line reports the result.
+  assert.deepEqual(
+    t.translate({ type: "system", subtype: "status", status: null, compact_result: "success" }),
+    [],
+  );
+  // A failed run gets no boundary, so its error surfaces here.
+  const failed = t.translate({
+    type: "system",
+    subtype: "status",
+    status: null,
+    compact_result: "failed",
+    compact_error: "Not enough messages to compact.",
+  });
+  assert.match(failed.at(-1).block.text, /Compaction failed: Not enough messages to compact\./);
+}
+{
   // wake(): a live agent gets the notice directly; an unloaded one is resumed through the
   // session controller first; a busy process never wakes.
   const sent: unknown[] = [];
