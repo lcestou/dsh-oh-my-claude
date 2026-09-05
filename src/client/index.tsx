@@ -3,7 +3,7 @@
 // open here or jump to the box), and two collapsed cards: the saved boxes and Claude Code's own
 // settings.json. Built into lib/client.js by `bun run build`.
 import type { CSSProperties, ReactNode } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 /** Plugin name identifier. */
 export const name = "dsh-oh-my-claude-client";
@@ -1308,20 +1308,18 @@ function TranscriptRow({
   return (
     <button
       type="button"
-      style={{ ...btn, width: "100%", textAlign: "left", padding: "5px 10px" }}
+      style={{ ...btn, display: "flex", alignItems: "center", width: "100%", textAlign: "left", padding: "5px 10px", overflow: "hidden" }}
       onClick={async () => {
         await openHere(ctx, s, cwd);
         onClose();
       }}
     >
-      <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+      <span
+        style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+      >
         {label}
       </span>
-      {s.cwd && (
-        <span title={s.cwd} style={meta}>
-          {shortPath(s.cwd)} · {ago(s.modifiedAt)}
-        </span>
-      )}
+      <span style={{ ...meta, flex: "none", marginLeft: 8 }}>{ago(s.modifiedAt)}</span>
     </button>
   );
 }
@@ -1336,6 +1334,24 @@ function RestoreButton({ sessionId, ctx }: RestoreButtonProps) {
   const cwd = entry?.cwd;
   const [transcripts, setTranscripts] = useState<SessionData[]>([]);
   const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLSpanElement>(null);
+
+  // The list is a popover over the composer: close it on an outside click or Escape.
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (e.target instanceof Node && !rootRef.current?.contains(e.target)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!cwd) return;
@@ -1356,23 +1372,29 @@ function RestoreButton({ sessionId, ctx }: RestoreButtonProps) {
   if (rest.length === 0) return null;
 
   return (
-    <span style={{ display: "inline-flex", flexDirection: "column", alignItems: "flex-start" }}>
+    <span ref={rootRef} style={{ position: "relative", display: "inline-flex" }}>
       <button type="button" style={btn} onClick={() => setOpen((v) => !v)}>
         Restore Claude session
       </button>
       {open && (
-        <span
+        <div
+          role="menu"
           style={{
-            marginTop: 4,
+            position: "absolute",
+            bottom: "calc(100% + 6px)",
+            left: 0,
+            width: 440,
+            zIndex: 40,
             display: "flex",
             flexDirection: "column",
             gap: 4,
-            maxHeight: 240,
+            maxHeight: 280,
             overflowY: "auto",
             background: T.card,
             border: `1px solid ${T.border}`,
             borderRadius: 8,
             padding: 6,
+            boxShadow: "0 8px 24px rgba(0,0,0,.18)",
           }}
         >
           {rest.map((s) => (
@@ -1383,7 +1405,7 @@ function RestoreButton({ sessionId, ctx }: RestoreButtonProps) {
               {owned.length} already open
             </span>
           )}
-        </span>
+        </div>
       )}
     </span>
   );
