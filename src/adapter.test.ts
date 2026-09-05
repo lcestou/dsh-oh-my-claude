@@ -35,7 +35,7 @@ import {
   markBusy,
   takeInterrupted,
 } from "./adapter.js";
-import { ClaudeProcess, LineQueue, TIMEOUT, seamSpawner } from "./process.js";
+import { ClaudeProcess, LineQueue, TIMEOUT, seamSpawner, todosFromInput } from "./process.js";
 import type { ClaudeEvent, ClaudeProcessSpec, SubprocessHandle } from "./process.js";
 import type { LooseMessage } from "./adapter.js";
 import type { FinishReason, LlmFailure, Message, StreamChunk } from "@deepseek-ai/dsh-llm";
@@ -1025,6 +1025,47 @@ console.log("ok");
     compact_error: "Not enough messages to compact.",
   });
   assert.match(failed.at(-1).block.text, /Compaction failed: Not enough messages to compact\./);
+}
+{
+  // todosFromInput maps Claude's list to dsh's shape, drops entries with no content, and coerces an
+  // unknown status to "pending". Bad containers yield an empty list, never a throw.
+  assert.deepEqual(todosFromInput(undefined), []);
+  assert.deepEqual(todosFromInput({ todos: "nope" }), []);
+  assert.deepEqual(
+    todosFromInput({
+      todos: [
+        { content: "one", status: "completed", activeForm: "doing one" },
+        { content: "two", status: "in_progress" },
+        { content: "", status: "bogus" },
+        { status: "pending" },
+      ],
+    }),
+    [
+      { content: "one", status: "completed" },
+      { content: "two", status: "in_progress" },
+      { content: "", status: "pending" },
+    ],
+  );
+}
+{
+  // A native TodoWrite is mirrored to dsh's todo panel (onTodoWrite) and draws no visible tool row.
+  const seen: unknown[] = [];
+  const t = new Translator({ onTodoWrite: (todos) => seen.push(todos) }) as any;
+  const out = t.translate({
+    type: "assistant",
+    message: {
+      content: [
+        {
+          type: "tool_use",
+          id: "t1",
+          name: "TodoWrite",
+          input: { todos: [{ content: "a", status: "pending" }] },
+        },
+      ],
+    },
+  });
+  assert.deepEqual(seen, [[{ content: "a", status: "pending" }]], "mirrored once, mapped");
+  assert.deepEqual(out, [], "TodoWrite is not drawn as a tool row");
 }
 {
   // wake(): a live agent gets the notice directly; an unloaded one is resumed through the

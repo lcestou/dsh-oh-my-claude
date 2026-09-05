@@ -3,6 +3,7 @@ import z from "@deepseek-ai/schemastery";
 import { type ClaudeEvent, ClaudeProcess } from "./process.js";
 import type { Agent, ImageAttachmentRef, JsonValue, PluginContext, SessionController, SessionId, SubprocessRuntime } from "./dsh.js";
 import { ADAPTER_CURRENT, RESUME_TIMER, PROCESS_REGISTRY } from "./dsh.js";
+import type { TodoItem } from "./process.js";
 export { markBusy, takeInterrupted } from "./state.js";
 export { forkTranscriptText } from "./transcript.js";
 import type { FinishReason } from "@deepseek-ai/dsh-llm";
@@ -56,6 +57,7 @@ export type Config = {
     idleTimeoutMs: number;
     toolTextLimit: number;
     dshTools: boolean;
+    mirrorTodos: boolean;
     debug: boolean;
     approvals: boolean;
     processIdleMs: number;
@@ -81,6 +83,7 @@ export declare const Config: z<Schemastery.ObjectS<{
     idleTimeoutMs: z<number, number>;
     toolTextLimit: z<number, number>;
     dshTools: z<boolean, boolean>;
+    mirrorTodos: z<boolean, boolean>;
     debug: z<boolean, boolean>;
     approvals: z<boolean, boolean>;
     processIdleMs: z<number, number>;
@@ -100,6 +103,7 @@ export declare const Config: z<Schemastery.ObjectS<{
     idleTimeoutMs: z<number, number>;
     toolTextLimit: z<number, number>;
     dshTools: z<boolean, boolean>;
+    mirrorTodos: z<boolean, boolean>;
     debug: z<boolean, boolean>;
     approvals: z<boolean, boolean>;
     processIdleMs: z<number, number>;
@@ -307,6 +311,7 @@ export interface TranslatorBlock {
 }
 export declare class Translator {
     log: (level: string, msg: string) => void;
+    onTodoWrite: (todos: TodoItem[]) => void;
     unknownSeen: Set<string>;
     toolActivity: boolean;
     relay: boolean;
@@ -321,13 +326,14 @@ export declare class Translator {
     denied: number;
     toolPending: boolean;
     aborting: boolean;
-    constructor({ toolActivity, toolTextLimit, relay, dshIds, relayed, log, }?: {
+    constructor({ toolActivity, toolTextLimit, relay, dshIds, relayed, log, onTodoWrite, }?: {
         toolActivity?: boolean;
         toolTextLimit?: number;
         relay?: boolean;
         dshIds?: Set<string>;
         relayed?: Set<string>;
         log?: (level: string, msg: string) => void;
+        onTodoWrite?: (todos: TodoItem[]) => void;
     });
     deltaType(block: TranslatorBlock): "text-delta" | "reasoning-delta";
     /** Warn once when a CLI event/block type is neither handled nor knowingly ignored, so a Claude
@@ -429,6 +435,9 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     /** Why a turn that neither finished nor parked ended. */
     endReason(proc: ClaudeProcess, options: SessionOptions, idle: boolean): FinishReason;
     turn(options: SessionOptions, forceFresh?: boolean): AsyncGenerator<StreamChunk>;
+    /** Append Claude Code's own TodoWrite list to the session as a `todo/write` event so dsh's todo
+     *  panel renders it. It is a real session event, so it replays on resume without re-sending. */
+    mirrorTodos(sessionId: string, todos: TodoItem[]): void;
     /** Claude finished a turn of its own (a background task it launched completed) while dsh was
      *  idle. Drop a notice into the session's inbox so dsh opens a turn now and the reply shows,
      *  instead of riding on top of the user's next prompt. */

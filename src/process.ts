@@ -290,6 +290,26 @@ export function parseQuestions(
   return out;
 }
 
+/** One entry of Claude Code's TodoWrite list, mapped to dsh's `todo/write` shape (drops `activeForm`). */
+export interface TodoItem {
+  content: string;
+  status: "pending" | "in_progress" | "completed";
+}
+
+/** Claude Code's TodoWrite `input.todos` → dsh `TodoItem[]`. Bad shapes drop out silently. */
+export function todosFromInput(input: Record<string, unknown> | undefined): TodoItem[] {
+  const list = input?.todos;
+  if (!Array.isArray(list)) return [];
+  const out: TodoItem[] = [];
+  for (const item of list) {
+    if (!item || typeof item !== "object" || typeof item.content !== "string") continue;
+    const status =
+      item.status === "in_progress" || item.status === "completed" ? item.status : "pending";
+    out.push({ content: item.content, status });
+  }
+  return out;
+}
+
 /** dsh answers → the `answers` map Claude expects back in updatedInput, keyed by question text. */
 export function answersFor(
   questions: Array<{ id: string; question: string; multiSelect?: boolean }>,
