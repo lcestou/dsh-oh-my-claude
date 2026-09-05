@@ -18,6 +18,7 @@ import {
 } from "@deepseek-ai/dsh-llm";
 import z from "@deepseek-ai/schemastery";
 import { registerSessionRoutes } from "./sessions.js";
+import { registerUsageRoute } from "./usage.js";
 import { KEY_HEADER, MCP_PATH, registerMcpBridge } from "./mcp.js";
 import {
   type ClaudeEvent,
@@ -2011,6 +2012,7 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
     },
     (e) => adapter.log("warn", `mcp bridge unavailable: ${errorText(e)}`),
   );
+  registerUsageRoute(ctx, (level, msg) => adapter.log(level, msg));
   registerSessionRoutes(ctx, {
     log: (level: string, msg: string) => adapter.log(level, msg),
     projectDir: (cwd: string) => join(CLAUDE_HOME, "projects", projectDirName(cwd)),

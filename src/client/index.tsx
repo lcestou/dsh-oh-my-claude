@@ -1060,6 +1060,109 @@ function followDeepLink(ctx: ClientCtx) {
   void tick();
 }
 
+interface UsageWindow {
+  label: string;
+  usedPercent: number;
+  resetsAt: number | null;
+}
+type UsageReply =
+  | { ok: true; fetchedAt: number; windows: UsageWindow[] }
+  | { ok: false; error: string; windows?: undefined };
+
+/** "in 2 h 10 min" inside a day, else weekday and time. */
+const resetText = (at: number | null): string => {
+  if (at === null) return "";
+  const ms = at - Date.now();
+  if (ms <= 0) return "resets now";
+  if (ms < 86_400_000) {
+    const h = Math.floor(ms / 3_600_000);
+    const m = Math.round((ms % 3_600_000) / 60_000);
+    return `resets in ${h ? `${h} h ` : ""}${m} min`;
+  }
+  return `resets ${new Date(at).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })}`;
+};
+
+let usageCache: { at: number; reply: UsageReply } | undefined;
+const loadUsage = async (): Promise<UsageReply> => {
+  if (usageCache && Date.now() - usageCache.at < 60_000) return usageCache.reply;
+  const reply = await readJson<UsageReply>(await fetch(`${ROUTE}/usage?force=1`));
+  usageCache = { at: Date.now(), reply };
+  return reply;
+};
+
+/** Fill a block with the usage rows, styled like the meter's own legend rows. */
+function renderUsage(block: HTMLElement, reply: UsageReply) {
+  block.replaceChildren();
+  if (!reply.ok) {
+    const p = document.createElement("div");
+    p.textContent = `Claude usage: ${reply.error}`;
+    p.style.color = T.faint;
+    block.append(p);
+    return;
+  }
+  for (const w of reply.windows) {
+    const line = document.createElement("div");
+    line.style.cssText =
+      "display:flex;justify-content:space-between;align-items:center;gap:12px;padding:2px 0";
+    const dt = document.createElement("span");
+    dt.textContent = w.label;
+    dt.style.color = T.muted;
+    const dd = document.createElement("span");
+    dd.style.cssText = `font-variant-numeric:tabular-nums;color:${w.usedPercent >= 90 ? T.err : w.usedPercent >= 70 ? T.warn : T.text}`;
+    dd.textContent = `${Math.round(w.usedPercent)}%`;
+    const when = document.createElement("span");
+    when.textContent = resetText(w.resetsAt);
+    when.style.cssText = `color:${T.faint};margin-left:auto;font-size:11px`;
+    line.append(dt, when, dd);
+    block.append(line);
+  }
+  if (reply.windows.length === 0) {
+    const p = document.createElement("div");
+    p.textContent = "Claude usage: no limits reported";
+    p.style.color = T.faint;
+    block.append(p);
+  }
+}
+
+/**
+ * Put the plan usage inside dsh's context-meter popover, above the "N% of context used" line.
+ * The meter (dsh-client-ui-conversation ContextMeter) has no slot, so this watches the DOM for
+ * its dialog: the `[role=dialog]` that follows a `button[aria-haspopup=dialog]` holding a ring.
+ * ponytail: DOM hook on a structural selector; swap for a slot the day the meter grows one.
+ */
+function watchContextMeter() {
+  const MARK = "data-dsh-llm-claude-usage";
+  const attach = (panel: HTMLElement) => {
+    if (panel.hasAttribute(MARK)) return;
+    panel.setAttribute(MARK, "1");
+    const block = document.createElement("div");
+    block.style.cssText = `border-bottom:1px solid ${T.border};margin-bottom:10px;padding-bottom:8px;font-size:12px;line-height:20px`;
+    const title = document.createElement("div");
+    title.textContent = "Claude usage";
+    title.style.cssText = `color:${T.faint};margin-bottom:2px`;
+    const rows = document.createElement("div");
+    rows.textContent = "Loading…";
+    rows.style.color = T.faint;
+    block.append(title, rows);
+    panel.prepend(block);
+    loadUsage().then(
+      (reply) => renderUsage(rows, reply),
+      (e: Error) => renderUsage(rows, { ok: false, error: e.message }),
+    );
+  };
+  const scan = (root: ParentNode) => {
+    for (const el of root.querySelectorAll<HTMLElement>(
+      'button[aria-haspopup="dialog"] + [role="dialog"]',
+    ))
+      if (el.previousElementSibling?.querySelector("svg circle + circle")) attach(el);
+  };
+  new MutationObserver((records) => {
+    for (const r of records)
+      for (const n of r.addedNodes) if (n instanceof HTMLElement) scan(n.parentElement ?? n);
+  }).observe(document.body, { childList: true, subtree: true });
+  scan(document.body);
+}
+
 /**
  * Registers the Claude Code panel in dsh settings: runtime line, one session list across boxes,
  * then the saved boxes and Claude Code's settings.json as collapsed cards.
@@ -1091,6 +1194,7 @@ interface ClientCtx {
 }
 export function apply(ctx: ClientCtx) {
   followDeepLink(ctx);
+  watchContextMeter();
 
   function Section() {
     const [boxes, setBoxes] = useState<BoxData[]>([]);

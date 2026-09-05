@@ -51,7 +51,8 @@
         "src/transcript.ts",
         "src/mcp.ts",
         "src/sessions.ts",
-        "src/state.ts"
+        "src/state.ts",
+        "src/usage.ts"
       ],
       "rules": {
         "anti-slop/no-runtime-typeof": "off",
