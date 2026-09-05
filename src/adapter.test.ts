@@ -1973,3 +1973,52 @@ console.log("keeper-mode ok");
   assert.equal(injected.length, 2, "aux stream queued no warning");
   console.log("idle-watchdog ok");
 }
+
+// control(): the request goes out as one stdin line, the reply comes back through the process's
+// control listener (so it works between turns), and rewind() decodes the rewind_files answer.
+{
+  const adapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  const written: string[] = [];
+  const proc: any = {
+    alive: true,
+    busy: false,
+    controlListener: undefined,
+    write(line: string) {
+      written.push(line);
+      const req = JSON.parse(line);
+      setTimeout(() => {
+        const response =
+          req.request.subtype === "rewind_files"
+            ? { canRewind: true, filesChanged: ["a.ts", "b.ts"], insertions: 3, deletions: 1 }
+            : {};
+        proc.controlListener({
+          type: "control_response",
+          request_id: req.request_id,
+          response: { subtype: "success", request_id: req.request_id, response },
+        });
+      }, 0);
+      return true;
+    },
+  };
+  const ok = await adapter.control(proc, { subtype: "set_permission_mode", mode: "plan" });
+  assert.equal(ok.ok, true);
+  assert.equal(JSON.parse(written[0]!).request.mode, "plan");
+  adapter.processes.set(registryKey(adapter.providerId, "s1"), proc);
+  const dry = await adapter.rewind("s1", "u-1", true);
+  assert.deepEqual(dry, {
+    ok: true,
+    dryRun: true,
+    canRewind: true,
+    filesChanged: ["a.ts", "b.ts"],
+    insertions: 3,
+    deletions: 1,
+  });
+  assert.equal(written.length, 2, "dry run sends rewind_files only");
+  const real = await adapter.rewind("s1", "u-1", false);
+  assert.equal(real.ok, true);
+  assert.equal(JSON.parse(written.at(-1)!).request.subtype, "rewind_conversation");
+  const none = await adapter.rewind("nope", "u-1", true);
+  assert.equal(none.ok, false);
+  assert.match(none.error ?? "", /no live Claude process/);
+  console.log("control ok");
+}

@@ -113,6 +113,7 @@ import { probeBox, registerSessionRoutes } from "./sessions.js";
     claudeIdOf: (id: string) => id,
     configDir: join(tmp, "claude"),
     boxesPath,
+    rewind: async (sid, uuid, dryRun) => ({ ok: true, dryRun, canRewind: true }),
   });
   assert.ok(handler);
 
@@ -178,6 +179,53 @@ import { probeBox, registerSessionRoutes } from "./sessions.js";
   assert.equal(r.ok, true);
   r = await respond("GET", `${mem}&name=a.md`);
   assert.equal(r.error, "not found");
+
+  // Rewind prompt list: user prompts of the session's transcript, newest first, by uuid.
+  const rw = `/dsh-oh-my-claude/rewind?session=sid1&cwd=${encodeURIComponent(cwd)}`;
+  r = await respond("GET", rw);
+  assert.deepEqual(r.prompts, [], "no transcript: empty list");
+  const line = (o: object) => JSON.stringify(o) + "\n";
+  await writeFile(
+    join(tmp, "projects", cwd, "sid1.jsonl"),
+    line({
+      type: "user",
+      uuid: "u-1",
+      timestamp: "2026-09-05T10:00:00Z",
+      message: { role: "user", content: [{ type: "text", text: "first prompt" }] },
+    }) +
+      line({
+        type: "assistant",
+        uuid: "a-1",
+        timestamp: "2026-09-05T10:00:01Z",
+        message: { id: "m1", role: "assistant", content: [{ type: "text", text: "reply" }] },
+      }) +
+      line({
+        type: "user",
+        uuid: "u-2",
+        timestamp: "2026-09-05T10:01:00Z",
+        message: { role: "user", content: [{ type: "text", text: "second prompt" }] },
+      }) +
+      line({
+        type: "assistant",
+        uuid: "a-2",
+        timestamp: "2026-09-05T10:01:01Z",
+        message: { id: "m2", role: "assistant", content: [{ type: "text", text: "reply" }] },
+      }),
+  );
+  r = await respond("GET", rw);
+  assert.deepEqual(
+    r.prompts.map((p: { id: string; text: string }) => [p.id, p.text]),
+    [
+      ["u-2", "second prompt"],
+      ["u-1", "first prompt"],
+    ],
+  );
+  r = await respond(
+    "POST",
+    "/dsh-oh-my-claude/rewind",
+    JSON.stringify({ session: "sid1", uuid: "nope" }),
+  );
+  assert.equal(r.error, "session and uuid required");
 }
 
 console.log("sessions ok");

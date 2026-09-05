@@ -14,7 +14,12 @@ import { asSessionId } from "./dsh.js";
 import type { JsonValue, PluginContext, WorkspaceRegistry } from "./dsh.js";
 import { errorText } from "./process.js";
 import { PERMISSION_MODES, isPermissionMode } from "./state.js";
-import type { PermissionModeInfo, PermissionModeReply } from "./adapter.js";
+import type {
+  PermissionModeInfo,
+  PermissionModeReply,
+  RewindPrompt,
+  RewindReply,
+} from "./adapter.js";
 
 const ROUTE_PREFIX = "/dsh-oh-my-claude";
 const BODY_LIMIT = 64 * 1024;
@@ -539,6 +544,28 @@ export interface SessionRouteOptions {
     info: (sessionId: string) => PermissionModeInfo;
     set: (sessionId: string, mode: string | null) => Promise<PermissionModeReply>;
   };
+  /** Rewind a session's files (and, unless a dry run, Claude's conversation) to a user prompt. */
+  rewind?: (sessionId: string, uuid: string, dryRun: boolean) => Promise<RewindReply>;
+}
+
+/** The transcript file of a dsh session: under its Claude id (sessions the adapter started) or
+ *  its own id (sessions restored from a transcript), whichever exists. */
+async function transcriptPathFor(
+  dir: string,
+  sessionId: string,
+  claudeIdOf: (id: string) => string,
+): Promise<string | undefined> {
+  for (const id of [claudeIdOf(sessionId), sessionId]) {
+    const path = join(dir, `${id}.jsonl`);
+    if (
+      await stat(path).then(
+        () => true,
+        () => false,
+      )
+    )
+      return path;
+  }
+  return undefined;
 }
 
 /** `projectDir(cwd)` → Claude Code project dir; `startedIds()` → ids the adapter started itself. */
@@ -557,6 +584,7 @@ export function registerSessionRoutes(
     turnRecords,
     idle,
     permissionModes,
+    rewind,
   }: SessionRouteOptions,
 ): void {
   // Optional: stock dsh has it; without it archived sessions list but cannot be restored.
@@ -715,6 +743,34 @@ export function registerSessionRoutes(
                   ok ? 200 : 404,
                   ok ? { extended: true } : { error: "unknown session" },
                 );
+              }
+              // Rewind: the session's user prompts (from Claude's transcript), then the rewind itself.
+              if (rewind && req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/rewind`) {
+                const sid = url.searchParams.get("session");
+                const cwd = url.searchParams.get("cwd") ?? "";
+                if (!sid || !validCwd(cwd))
+                  return json(res, 400, { error: "session and an absolute cwd required" });
+                const path = await transcriptPathFor(projectDir(cwd), sid, claudeIdOf);
+                if (!path) return json(res, 200, { prompts: [] });
+                const folded = await readTranscript(path);
+                const prompts: RewindPrompt[] = folded.turns
+                  .map((t) => ({
+                    id: t.id,
+                    time: t.time,
+                    text: t.content
+                      .map((c) => c.text)
+                      .join("\n")
+                      .slice(0, 200),
+                  }))
+                  .toReversed()
+                  .slice(0, 20);
+                return json(res, 200, { prompts });
+              }
+              if (rewind && req.method === "POST" && url.pathname === `${ROUTE_PREFIX}/rewind`) {
+                const { session: sid, uuid, dryRun } = await readBody(req);
+                if (typeof sid !== "string" || !sid || !validId(uuid))
+                  return json(res, 400, { error: "session and uuid required" });
+                return json(res, 200, await rewind(sid, uuid, dryRun === true));
               }
               if (permissionModes && url.pathname === `${ROUTE_PREFIX}/permission-mode`) {
                 if (req.method === "GET") {

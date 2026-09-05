@@ -34,7 +34,9 @@ import {
   permissionReason,
   userTurnLine,
   interruptLine,
-  setPermissionModeLine,
+  controlRequestLine,
+  decodeRewindResult,
+  toJsonValue,
   nodeSpawner,
   seamSpawner,
   attachKeeper,
@@ -84,6 +86,7 @@ import {
   trace,
 } from "./state.js";
 import { errorText, toolResultText } from "./process.js";
+import type { RewindResult } from "./process.js";
 import { forkTranscriptText } from "./transcript.js";
 export { markBusy, takeInterrupted } from "./state.js";
 export { forkTranscriptText } from "./transcript.js";
@@ -298,8 +301,21 @@ export const Config = z.object({
 });
 
 /** Keys the shared process registry by instance so two mounts never see each other's processes. */
-/** Outcome of a control request this plugin sent to the CLI. */
-export type ControlReply = { ok: true; error?: undefined } | { ok: false; error: string };
+/** Outcome of a control request this plugin sent to the CLI; `response` is the CLI's payload. */
+export type ControlReply =
+  | { ok: true; error?: undefined; response?: JsonValue }
+  | { ok: false; error: string; response?: undefined };
+/** One user prompt of a session's transcript, as the Rewind list shows it. */
+export interface RewindPrompt {
+  id: string;
+  time: number;
+  text: string;
+}
+/** What `rewind_files` answers, plus whether the conversation was rewound too. */
+export interface RewindReply extends Partial<RewindResult> {
+  ok: boolean;
+  dryRun: boolean;
+}
 /** What the permission-mode route reports: the mode in force and the stored override. */
 export interface PermissionModeInfo {
   mode: string;
@@ -1874,22 +1890,84 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const info = this.permissionModeInfo(sessionId);
     const proc = this.processes.get(registryKey(this.providerId, sessionId));
     if (!proc?.alive) return { ...info, live: false };
-    // The effective mode, not the argument: clearing the override puts the live process back on
-    // the config mode.
-    const requestId = `permission-${randomUUID()}`;
-    if (!proc.write(setPermissionModeLine(requestId, info.mode))) return { ...info, live: false };
-    if (!proc.busy) return { ...info, live: true }; // answered when the next turn starts
-    const reply = await new Promise<ControlReply>((resolve) => {
+    // 5 s: the CLI answers at once when it reads stdin; a longer wait would only stall the chip.
+    const reply = await this.control(proc, { subtype: "set_permission_mode", mode: info.mode }, 5000);
+    return reply.ok ? { ...info, live: true } : { ...info, live: true, error: reply.error };
+  }
+
+  /** Hand a `control_response` to whoever sent the request; true when someone was waiting. */
+  resolveControl(event: ClaudeEvent): boolean {
+    if (event.type !== "control_response") return false;
+    const id = event.response?.request_id ?? event.request_id;
+    const waiter = this.controlWaiters.get(id);
+    if (!waiter) return false;
+    this.controlWaiters.delete(id);
+    if (event.response?.subtype === "error")
+      waiter({ ok: false, error: errorText(event.response.error) });
+    else waiter({ ok: true, response: toJsonValue(event.response?.response) });
+    return true;
+  }
+
+  /**
+   * Send one control request and wait for its answer. The process hands `control_response` lines
+   * to `resolveControl` as they arrive, so this works between turns as well as inside one.
+   */
+  control(
+    proc: ClaudeProcess,
+    request: Record<string, JsonValue>,
+    timeoutMs = 15_000,
+  ): Promise<ControlReply> {
+    proc.controlListener ??= (event) => this.resolveControl(event);
+    const requestId = `omc-${randomUUID()}`;
+    return new Promise<ControlReply>((resolve) => {
       const timer = setTimeout(() => {
         this.controlWaiters.delete(requestId);
-        resolve({ ok: false, error: "no reply from claude within 5s" });
-      }, 5000);
+        resolve({
+          ok: false,
+          error: `no reply from claude within ${Math.round(timeoutMs / 1000)}s`,
+        });
+      }, timeoutMs);
       this.controlWaiters.set(requestId, (r) => {
         clearTimeout(timer);
         resolve(r);
       });
+      if (!proc.write(controlRequestLine(requestId, request))) {
+        clearTimeout(timer);
+        this.controlWaiters.delete(requestId);
+        resolve({ ok: false, error: "claude process is not accepting input" });
+      }
     });
-    return reply.ok ? { ...info, live: true } : { ...info, live: true, error: reply.error };
+  }
+
+  /**
+   * Rewind a session to one of its user prompts: `rewind_files` (dry run first, from the UI) puts
+   * the working tree back, then `rewind_conversation` drops Claude's context after that prompt.
+   * dsh's own transcript is not touched.
+   */
+  async rewind(sessionId: string, uuid: string, dryRun: boolean): Promise<RewindReply> {
+    const proc = this.processes.get(registryKey(this.providerId, sessionId));
+    if (!proc?.alive)
+      return {
+        ok: false,
+        dryRun,
+        error: "no live Claude process for this session; send a prompt first",
+      };
+    const files = await this.control(proc, {
+      subtype: "rewind_files",
+      user_message_id: uuid,
+      dry_run: dryRun,
+    });
+    if (!files.ok) return { ok: false, dryRun, error: files.error };
+    const r = decodeRewindResult(files.response);
+    const reply: RewindReply = { ...r, ok: r.canRewind, dryRun };
+    if (dryRun || !reply.ok) return reply;
+    const conv = await this.control(proc, {
+      subtype: "rewind_conversation",
+      target_message_uuid: uuid,
+    });
+    if (!conv.ok)
+      return { ...reply, ok: false, error: `files rewound, conversation not: ${conv.error}` };
+    return reply;
   }
 
   /**
@@ -2421,7 +2499,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     );
     const handleControl = this.handleControl.bind(this);
     const clearIdle = this.clearIdle.bind(this);
-    const controlWaiters = this.controlWaiters;
+    const resolveControl = this.resolveControl.bind(this);
     /** One CLI event. Returns what the loop should do next. */
     const dispatch = async function* (event: ClaudeEvent) {
       if (event.type === "idle_warning") {
@@ -2440,13 +2518,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         return "continue";
       }
       if (event.type === "control_response") {
-        const id = event.response?.request_id ?? event.request_id;
-        const waiter = controlWaiters.get(id);
-        if (waiter) {
-          controlWaiters.delete(id);
-          const failed = event.response?.subtype === "error";
-          waiter(failed ? { ok: false, error: errorText(event.response?.error) } : { ok: true });
-        }
+        resolveControl(event);
         return "continue";
       }
       if (event.type === "timeout") return "continue";
@@ -2996,6 +3068,8 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
         info: (sessionId: string) => adapter.permissionModeInfo(sessionId),
         set: (sessionId: string, mode: string | null) => adapter.setPermissionMode(sessionId, mode),
       },
+      rewind: (sessionId: string, uuid: string, dryRun: boolean) =>
+        adapter.rewind(sessionId, uuid, dryRun),
     });
   }
 }

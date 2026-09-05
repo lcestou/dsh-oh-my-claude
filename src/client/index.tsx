@@ -2301,6 +2301,159 @@ function MemoryButton({ sessionId, ctx }: RestoreButtonProps) {
   );
 }
 
+/** One user prompt from `GET /rewind`. */
+interface RewindPrompt {
+  id: string;
+  time: number;
+  text: string;
+}
+interface RewindReply {
+  ok: boolean;
+  dryRun: boolean;
+  error?: string;
+  filesChanged?: string[];
+  insertions?: number;
+  deletions?: number;
+}
+
+const rewindSummary = (r: RewindReply) =>
+  r.error
+    ? r.error
+    : `${r.filesChanged?.length ?? 0} files, +${r.insertions ?? 0} −${r.deletions ?? 0}`;
+
+/**
+ * "Rewind" control in `conversation.input.left` on Claude sessions: lists the session's user
+ * prompts, dry-runs the file rewind for the picked one, and on confirm rewinds files and Claude's
+ * conversation. dsh's own transcript stays as it is.
+ */
+function RewindButton({ sessionId, ctx }: RestoreButtonProps) {
+  const cwd = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.cwd;
+  const isClaude = activeClaudeSession(ctx) === sessionId;
+  const [open, setOpen] = useState(false);
+  const [prompts, setPrompts] = useState<RewindPrompt[]>([]);
+  const [picked, setPicked] = useState<RewindPrompt | null>(null);
+  const [preview, setPreview] = useState<RewindReply | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const rootRef = useRef<HTMLSpanElement>(null);
+  useDismiss(open, () => setOpen(false), rootRef);
+
+  useEffect(() => {
+    if (!open || !cwd) return;
+    let live = true;
+    setPicked(null);
+    setPreview(null);
+    setError("");
+    fetch(`${ROUTE}/rewind?session=${encodeURIComponent(sessionId)}&cwd=${encodeURIComponent(cwd)}`)
+      .then((r) => readJson<{ prompts?: RewindPrompt[] }>(r))
+      .then((b) => live && setPrompts(b.prompts ?? []))
+      .catch((e: Error) => live && setError(e.message));
+    return () => {
+      live = false;
+    };
+  }, [open, cwd, sessionId]);
+
+  if (!isClaude || !cwd) return null;
+  const run = async (uuid: string, dryRun: boolean) => {
+    setBusy(true);
+    setError("");
+    try {
+      const reply = await readJson<RewindReply>(
+        await fetch(`${ROUTE}/rewind`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ session: sessionId, uuid, dryRun }),
+        }),
+      );
+      setPreview(reply);
+      if (!dryRun && reply.ok) setOpen(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const pick = (p: RewindPrompt) => {
+    setPicked(p);
+    setPreview(null);
+    run(p.id, true);
+  };
+  return (
+    <span ref={rootRef} style={{ position: "relative", display: "inline-flex" }}>
+      <button
+        type="button"
+        style={btn}
+        title="Put files and Claude's context back to an earlier prompt"
+        onClick={() => setOpen((v) => !v)}
+      >
+        Rewind
+      </button>
+      {open && (
+        <div role="dialog" aria-label="Rewind" style={{ ...popover, width: 520, maxHeight: 360 }}>
+          {picked === null ? (
+            prompts.length === 0 ? (
+              <span style={{ ...meta, padding: "2px 4px" }}>No completed prompts yet</span>
+            ) : (
+              prompts.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  style={{
+                    ...btn,
+                    display: "flex",
+                    width: "100%",
+                    textAlign: "left",
+                    padding: "5px 10px",
+                  }}
+                  onClick={() => pick(p)}
+                >
+                  <span
+                    style={{
+                      flex: 1,
+                      minWidth: 0,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {p.text}
+                  </span>
+                  <span style={{ ...meta, flex: "none", marginLeft: 8 }}>{ago(p.time)}</span>
+                </button>
+              ))
+            )
+          ) : (
+            <>
+              <span style={{ fontSize: 13, padding: "2px 4px" }}>Rewind to: {picked.text}</span>
+              <span style={{ ...meta, padding: "2px 4px" }}>
+                {busy && !preview ? "Checking…" : preview ? rewindSummary(preview) : ""}
+              </span>
+              <span style={{ ...meta, padding: "2px 4px" }}>
+                Files go back and Claude forgets everything after this prompt. This dsh transcript
+                keeps showing what happened.
+              </span>
+              <div style={{ display: "flex", gap: 8, padding: "2px 4px" }}>
+                <button type="button" style={btn} disabled={busy} onClick={() => setPicked(null)}>
+                  ‹ Back
+                </button>
+                <button
+                  type="button"
+                  style={btnPrimary}
+                  disabled={busy || !preview?.ok}
+                  onClick={() => run(picked.id, false)}
+                >
+                  Rewind
+                </button>
+              </div>
+            </>
+          )}
+          {error && <span style={{ color: T.err, fontSize: 12 }}>{error}</span>}
+        </div>
+      )}
+    </span>
+  );
+}
+
 /**
  * Registers the Claude Code panel in dsh settings: runtime line, one session list across boxes,
  * then the saved boxes and Claude Code's settings.json as collapsed cards.
@@ -2429,6 +2582,10 @@ export function apply(ctx: ClientCtx) {
     ctx.slots.register(
       { name: "conversation.input.left", id: "claude-memory", order: 51 },
       (props) => (props.sessionId ? <MemoryButton sessionId={props.sessionId} ctx={ctx} /> : null),
+    );
+    ctx.slots.register(
+      { name: "conversation.input.left", id: "claude-rewind", order: 52 },
+      (props) => (props.sessionId ? <RewindButton sessionId={props.sessionId} ctx={ctx} /> : null),
     );
     return null;
   });

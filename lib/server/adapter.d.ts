@@ -4,6 +4,7 @@ import z from "@deepseek-ai/schemastery";
 import { type ClaudeEvent, ClaudeProcess } from "./process.js";
 import type { Agent, ImageAttachmentRef, JsonValue, PluginContext, SessionController, SessionId, SubprocessRuntime } from "./dsh.js";
 import { ADAPTER_CURRENT, RESUME_TIMER, PROCESS_REGISTRY } from "./dsh.js";
+import type { RewindResult } from "./process.js";
 export { markBusy, takeInterrupted } from "./state.js";
 export { forkTranscriptText } from "./transcript.js";
 import type { FinishReason } from "@deepseek-ai/dsh-llm";
@@ -128,14 +129,27 @@ export declare const Config: z<Schemastery.ObjectS<{
     providerName: z<string, string>;
 }>>;
 /** Keys the shared process registry by instance so two mounts never see each other's processes. */
-/** Outcome of a control request this plugin sent to the CLI. */
+/** Outcome of a control request this plugin sent to the CLI; `response` is the CLI's payload. */
 export type ControlReply = {
     ok: true;
     error?: undefined;
+    response?: JsonValue;
 } | {
     ok: false;
     error: string;
+    response?: undefined;
 };
+/** One user prompt of a session's transcript, as the Rewind list shows it. */
+export interface RewindPrompt {
+    id: string;
+    time: number;
+    text: string;
+}
+/** What `rewind_files` answers, plus whether the conversation was rewound too. */
+export interface RewindReply extends Partial<RewindResult> {
+    ok: boolean;
+    dryRun: boolean;
+}
 /** What the permission-mode route reports: the mode in force and the stored override. */
 export interface PermissionModeInfo {
     mode: string;
@@ -526,6 +540,19 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * stdin during a turn; between turns the line is queued and answered when the next turn opens.
      */
     setPermissionMode(sessionId: string, mode: string | null): Promise<PermissionModeReply>;
+    /** Hand a `control_response` to whoever sent the request; true when someone was waiting. */
+    resolveControl(event: ClaudeEvent): boolean;
+    /**
+     * Send one control request and wait for its answer. The process hands `control_response` lines
+     * to `resolveControl` as they arrive, so this works between turns as well as inside one.
+     */
+    control(proc: ClaudeProcess, request: Record<string, JsonValue>, timeoutMs?: number): Promise<ControlReply>;
+    /**
+     * Rewind a session to one of its user prompts: `rewind_files` (dry run first, from the UI) puts
+     * the working tree back, then `rewind_conversation` drops Claude's context after that prompt.
+     * dsh's own transcript is not touched.
+     */
+    rewind(sessionId: string, uuid: string, dryRun: boolean): Promise<RewindReply>;
     /**
      * `/temporary`: toggle "keep no Claude transcript" for the current dsh session. Registered here,
      * from the first init frame, because at apply() the commands service is not up yet and the

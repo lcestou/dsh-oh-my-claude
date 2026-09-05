@@ -241,9 +241,39 @@ export function interruptLine(requestId: string): string {
   return `${JSON.stringify({ type: "control_request", request_id: requestId, request: { subtype: "interrupt" } })}\n`;
 }
 
-/** stdin line to switch the Claude Code permission mode live; the CLI answers with success or an error. */
-export function setPermissionModeLine(requestId: string, mode: string): string {
-  return `${JSON.stringify({ type: "control_request", request_id: requestId, request: { subtype: "set_permission_mode", mode } })}\n`;
+/** A control response payload as JSON, or undefined when it is not representable. */
+export function toJsonValue(v: unknown): JsonValue | undefined {
+  if (v === undefined) return undefined;
+  try {
+    // SAFETY: a JSON round trip yields JSON by construction
+    return JSON.parse(JSON.stringify(v)) as JsonValue;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The fields of a `rewind_files` answer this plugin reports. */
+export interface RewindResult {
+  canRewind: boolean;
+  error?: string;
+  filesChanged?: string[];
+  insertions?: number;
+  deletions?: number;
+}
+export function decodeRewindResult(v: JsonValue | undefined): RewindResult {
+  const r = typeof v === "object" && v !== null && !Array.isArray(v) ? v : {};
+  const out: RewindResult = { canRewind: r.canRewind === true };
+  if (typeof r.error === "string") out.error = r.error;
+  if (Array.isArray(r.filesChanged))
+    out.filesChanged = r.filesChanged.filter((f): f is string => typeof f === "string");
+  if (typeof r.insertions === "number") out.insertions = r.insertions;
+  if (typeof r.deletions === "number") out.deletions = r.deletions;
+  return out;
+}
+
+/** stdin line for any control request this plugin sends; the CLI answers with a `control_response`. */
+export function controlRequestLine(requestId: string, request: Record<string, JsonValue>): string {
+  return `${JSON.stringify({ type: "control_request", request_id: requestId, request })}\n`;
 }
 
 /**
@@ -698,6 +728,8 @@ export class ClaudeProcess {
   idleKilled: boolean = false;
   staleResults: number = 0;
   prep?: TurnPrep;
+  /** Sees every `control_response` line as it arrives, even between turns; true means consumed. */
+  controlListener?: (event: ClaudeEvent) => boolean;
 
   constructor({
     args,
@@ -732,6 +764,14 @@ export class ClaudeProcess {
     });
     const rl = createInterface({ input: this.child.stdout, crlfDelay: Infinity });
     rl.on("line", (line) => {
+      if (this.controlListener && line.includes('"control_response"')) {
+        try {
+          // SAFETY: I/O boundary; the listener branches on `type` and ignores anything else
+          if (this.controlListener(JSON.parse(line) as ClaudeEvent)) return;
+        } catch {
+          // not JSON: queue it like any other line
+        }
+      }
       this.queue.push(line);
       this.noteIdleResult(line);
     });

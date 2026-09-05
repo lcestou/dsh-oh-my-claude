@@ -207,8 +207,19 @@ export declare function userTurnLine(content: unknown): string;
 export declare function controlResponseLine(requestId: string, response: unknown): string;
 /** stdin line asking the CLI to stop the current turn; it answers with a result and stays alive. */
 export declare function interruptLine(requestId: string): string;
-/** stdin line to switch the Claude Code permission mode live; the CLI answers with success or an error. */
-export declare function setPermissionModeLine(requestId: string, mode: string): string;
+/** A control response payload as JSON, or undefined when it is not representable. */
+export declare function toJsonValue(v: unknown): JsonValue | undefined;
+/** The fields of a `rewind_files` answer this plugin reports. */
+export interface RewindResult {
+    canRewind: boolean;
+    error?: string;
+    filesChanged?: string[];
+    insertions?: number;
+    deletions?: number;
+}
+export declare function decodeRewindResult(v: JsonValue | undefined): RewindResult;
+/** stdin line for any control request this plugin sends; the CLI answers with a `control_response`. */
+export declare function controlRequestLine(requestId: string, request: Record<string, JsonValue>): string;
 /**
  * Formats a control response error as a stdin line for the Claude Code process.
  * @param {string} requestId - The request ID that caused the error
@@ -375,6 +386,8 @@ export declare class ClaudeProcess {
     idleKilled: boolean;
     staleResults: number;
     prep?: TurnPrep;
+    /** Sees every `control_response` line as it arrives, even between turns; true means consumed. */
+    controlListener?: (event: ClaudeEvent) => boolean;
     constructor({ args, cwd, spec, onExit, command, spawner, }: {
         args: string[];
         cwd: string;
