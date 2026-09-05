@@ -95,6 +95,8 @@ export type ClaudeEvent =
       response?: { subtype?: string; request_id?: string; response?: unknown; error?: unknown };
     }
   | { type: "timeout" }
+  /** Queued by the adapter's idle watchdog shortly before it stops a silent process. */
+  | { type: "idle_warning"; silentSeconds: number; leftSeconds: number }
   | RelayEvent;
 
 /** What dsh hands back for a relayed tool call: the text Claude gets, and whether it failed. */
@@ -687,6 +689,8 @@ export class ClaudeProcess {
   relayed?: Set<string>;
   steerPending: boolean = false;
   parked: "steer" | undefined = undefined;
+  /** Set by the idle watchdog when it kills the process. */
+  idleKilled: boolean = false;
   staleResults: number = 0;
   prep?: TurnPrep;
 

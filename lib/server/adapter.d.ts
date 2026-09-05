@@ -319,6 +319,12 @@ export interface TurnRecord {
     cacheRead: number;
     cacheWrite: number;
 }
+/** The slice of a Claude process the idle watchdog needs. */
+export interface IdleTarget {
+    idleKilled: boolean;
+    kill(): void;
+    inject(event: ClaudeEvent): void;
+}
 /** `--resume` of a session Claude Code no longer has: a result whose errors name the missing conversation. */
 export declare function isStaleResume(event: ClaudeEvent): boolean;
 export declare function finishReason(result: {
@@ -459,6 +465,16 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     /** Per-session turn accounting buffer (last 50 turns); keyed by dsh sessionId. Lives on
      *  globalThis so the route registered at boot reads what a hot-reloaded adapter fills. */
     readonly turnBuffer: Map<string, TurnRecord[]>;
+    /** Per-session idle watchdog deadline in epoch ms; null means no active arm. */
+    readonly idleDeadlineMap: Map<string, number | null>;
+    /** Per-session kill and warning timers, keyed by session id. */
+    readonly idleKillTimers: Map<string, NodeJS.Timeout>;
+    readonly idleWarnTimers: Map<string, NodeJS.Timeout>;
+    /** What each armed key watches, so a route can re-arm it. */
+    readonly idleTargets: Map<string, {
+        proc: IdleTarget;
+        warn: boolean;
+    }>;
     /** Per-session permission mode overrides; loaded from disk at init, saved on change. */
     permissionModes: Map<string, string | null>;
     /** dsh access mode seen on each session's last turn, so the effective mode can be reported. */
@@ -565,6 +581,17 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     continuationFor(options: SessionOptions, forceFresh?: boolean): Continuation;
     /** First write of a turn: relay results, unsent steers, or the prompt itself. */
     openTurn(cont: Continuation, proc: ClaudeProcess, prep: TurnPrep): void;
+    /**
+     * Arm the idle watchdog for a stream: `proc` is killed after `idleTimeoutMs` of silence. Every
+     * event re-arms. Shortly before the kill (60 s, or half the timeout when it is under 120 s) a
+     * warning event is queued on the process so the turn loop draws a countdown row; `warn: false`
+     * skips that for the aux stream, whose loop has no reasoning lane.
+     */
+    armIdle(key: string, proc: IdleTarget, warn?: boolean): void;
+    /** Stop the watchdog for a stream: the turn ended, or a tool is running and silence is expected. */
+    clearIdle(key: string): void;
+    /** Push a stream's deadline out by one full timeout; false when nothing is armed under `key`. */
+    extendIdle(key: string): boolean;
     /** Why a turn that neither finished nor parked ended. */
     endReason(proc: ClaudeProcess, options: SessionOptions, idle: boolean): FinishReason;
     turn(options: SessionOptions, forceFresh?: boolean): AsyncGenerator<StreamChunk>;

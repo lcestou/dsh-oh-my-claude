@@ -130,6 +130,12 @@ export interface SessionRouteOptions {
     command?: string;
     /** Per-session turn accounting buffer from the adapter. */
     turnRecords?: Map<string, import("./adapter.js").TurnRecord[]>;
+    /** Idle watchdog state from the adapter. */
+    idle?: {
+        deadlineFor(session: string): number | null;
+        extend(session: string): boolean;
+        timeoutMs: number;
+    };
     /** Per-session permission mode: read the effective mode, set or clear the override. */
     permissionModes?: {
         info: (sessionId: string) => PermissionModeInfo;
@@ -137,5 +143,5 @@ export interface SessionRouteOptions {
     };
 }
 /** `projectDir(cwd)` → Claude Code project dir; `startedIds()` → ids the adapter started itself. */
-export declare function registerSessionRoutes(ctx: PluginContext, { log, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, command, turnRecords, permissionModes, }: SessionRouteOptions): void;
+export declare function registerSessionRoutes(ctx: PluginContext, { log, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, command, turnRecords, idle, permissionModes, }: SessionRouteOptions): void;
 export {};

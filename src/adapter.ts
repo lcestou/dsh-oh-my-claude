@@ -838,6 +838,13 @@ export interface TurnRecord {
   cacheWrite: number;
 }
 
+/** The slice of a Claude process the idle watchdog needs. */
+export interface IdleTarget {
+  idleKilled: boolean;
+  kill(): void;
+  inject(event: ClaudeEvent): void;
+}
+
 /** Per-session ring buffer (last 50 turns) keyed by dsh sessionId, on the adapter instance. */
 const TURN_RING = 50;
 
@@ -1504,6 +1511,13 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   /** Per-session turn accounting buffer (last 50 turns); keyed by dsh sessionId. Lives on
    *  globalThis so the route registered at boot reads what a hot-reloaded adapter fills. */
   readonly turnBuffer: Map<string, TurnRecord[]>;
+  /** Per-session idle watchdog deadline in epoch ms; null means no active arm. */
+  readonly idleDeadlineMap = new Map<string, number | null>();
+  /** Per-session kill and warning timers, keyed by session id. */
+  readonly idleKillTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  readonly idleWarnTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** What each armed key watches, so a route can re-arm it. */
+  readonly idleTargets = new Map<string, { proc: IdleTarget; warn: boolean }>();
   /** Per-session permission mode overrides; loaded from disk at init, saved on change. */
   permissionModes: Map<string, string | null>;
   /** dsh access mode seen on each session's last turn, so the effective mode can be reported. */
@@ -2176,6 +2190,58 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       throw new LlmError("claude process is not running", "PROVIDER_ERROR");
   }
 
+  /**
+   * Arm the idle watchdog for a stream: `proc` is killed after `idleTimeoutMs` of silence. Every
+   * event re-arms. Shortly before the kill (60 s, or half the timeout when it is under 120 s) a
+   * warning event is queued on the process so the turn loop draws a countdown row; `warn: false`
+   * skips that for the aux stream, whose loop has no reasoning lane.
+   */
+  armIdle(key: string, proc: IdleTarget, warn = true): void {
+    const timeoutMs = this.config.idleTimeoutMs;
+    const warnMs = timeoutMs < 120_000 ? Math.round(timeoutMs / 2) : 60_000;
+    this.clearIdle(key);
+    const deadline = Date.now() + timeoutMs;
+    this.idleDeadlineMap.set(key, deadline);
+    this.idleTargets.set(key, { proc, warn });
+    this.idleKillTimers.set(
+      key,
+      setTimeout(() => {
+        this.idleDeadlineMap.set(key, null);
+        proc.idleKilled = true;
+        proc.kill();
+      }, timeoutMs),
+    );
+    if (!warn) return;
+    this.idleWarnTimers.set(
+      key,
+      setTimeout(() => {
+        proc.inject({
+          type: "idle_warning",
+          silentSeconds: Math.round((timeoutMs - warnMs) / 1000),
+          leftSeconds: Math.round(warnMs / 1000),
+        });
+      }, timeoutMs - warnMs),
+    );
+  }
+
+  /** Stop the watchdog for a stream: the turn ended, or a tool is running and silence is expected. */
+  clearIdle(key: string): void {
+    clearTimeout(this.idleKillTimers.get(key));
+    clearTimeout(this.idleWarnTimers.get(key));
+    this.idleKillTimers.delete(key);
+    this.idleWarnTimers.delete(key);
+    this.idleTargets.delete(key);
+    this.idleDeadlineMap.set(key, null);
+  }
+
+  /** Push a stream's deadline out by one full timeout; false when nothing is armed under `key`. */
+  extendIdle(key: string): boolean {
+    const target = this.idleTargets.get(key);
+    if (!target || !this.idleDeadlineMap.get(key)) return false;
+    this.armIdle(key, target.proc, target.warn);
+    return true;
+  }
+
   /** Why a turn that neither finished nor parked ended. */
   // SAFETY: returns FinishReason shape for the adapter loop
   endReason(proc: ClaudeProcess, options: SessionOptions, idle: boolean): FinishReason {
@@ -2322,15 +2388,6 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const pending = new Map(); // control request id → AbortController
     let outcome: Outcome = "ended"; // ended | finished | relayed | parked | retry
     const wakeOnly = cont.mode === "prompt" && wakeOnlyTurn(options.messages);
-    let idle = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const armIdle = () => {
-      clearTimeout(timer);
-      timer = setTimeout(() => {
-        idle = true;
-        proc.kill();
-      }, this.config.idleTimeoutMs);
-    };
     const onAbort = () => {
       // Ask the CLI to stop; it answers with a result and stays alive for the next turn. Kill only
       // if it does not.
@@ -2348,9 +2405,17 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       this.log("warn", `busy.json: ${errorText(e)}`),
     );
     const handleControl = this.handleControl.bind(this);
+    const clearIdle = this.clearIdle.bind(this);
     const controlWaiters = this.controlWaiters;
     /** One CLI event. Returns what the loop should do next. */
     const dispatch = async function* (event: ClaudeEvent) {
+      if (event.type === "idle_warning") {
+        yield* tr.wholeBlock(
+          "reasoning",
+          `⏳ Idle watchdog: no output for ${event.silentSeconds}s, stopping in ${event.leftSeconds}s`,
+        );
+        return "continue";
+      }
       if (event.type === "control_request") {
         yield* handleControl(event, options, prep, proc, pending, tr);
         return "continue";
@@ -2384,7 +2449,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         return "continue";
       }
       yield* tr.translate(event);
-      if (tr.toolPending) clearTimeout(timer); // tool running: silence is expected, do not time out
+      if (tr.toolPending) clearIdle(options.sessionId); // tool running: silence is expected
       if (tr.finished) return "finished";
       if (proc.steerPending && event.type === "user") {
         // Tool results are in; the CLI injects the forwarded steer next. End the dsh step here
@@ -2438,11 +2503,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         return;
       }
       if (!wakeOnly) this.openTurn(cont, proc, prep);
-      armIdle();
+      this.armIdle(options.sessionId, proc);
       for (;;) {
         const event = await proc.nextEvent();
         if (event === null) break;
-        armIdle();
+        if (event.type !== "idle_warning") this.armIdle(options.sessionId, proc);
         if (event.type === "dsh_relay") {
           outcome = yield* relayBatch(event);
           break;
@@ -2458,9 +2523,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         if (prep.session) await rememberStarted(prep.session.id, false);
       } else if (outcome === "finished") {
         if (prep.session) await rememberStarted(prep.session.id, true);
-      } else yield { type: "finish", reason: this.endReason(proc, options, idle) };
+      } else yield { type: "finish", reason: this.endReason(proc, options, proc.idleKilled) };
     } finally {
-      clearTimeout(timer);
+      this.clearIdle(options.sessionId);
       options.signal?.removeEventListener("abort", onAbort);
       for (const c of pending.values()) c.abort();
       proc.busy = false;
@@ -2787,21 +2852,13 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     });
     const onAbort = () => proc.kill();
     options.signal?.addEventListener("abort", onAbort, { once: true });
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let idle = false;
-    const armIdle = () => {
-      clearTimeout(timer);
-      timer = setTimeout(() => {
-        idle = true;
-        proc.kill();
-      }, this.config.idleTimeoutMs);
-    };
-    armIdle();
+    const idleKey = `aux-${randomUUID()}`;
+    this.armIdle(idleKey, proc, false);
     try {
       for (;;) {
         const event = await proc.nextEvent();
         if (event === null) break;
-        armIdle();
+        this.armIdle(idleKey, proc, false);
         if (event.type === "control_request") {
           proc.write(controlErrorLine(event.request_id, "not supported in one-shot mode"));
           continue;
@@ -2818,16 +2875,16 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         : {
             kind: "error",
             failure: {
-              message: idle
+              message: proc.idleKilled
                 ? `claude produced no output for ${Math.round(this.config.idleTimeoutMs / 1000)}s and was stopped`
                 : `claude exited ${proc.exitCode}: ${(proc.stderr || proc.stray).trim() || "no output"}`,
-              code: idle ? "IDLE_TIMEOUT" : "PROVIDER_ERROR",
+              code: proc.idleKilled ? "IDLE_TIMEOUT" : "PROVIDER_ERROR",
             },
           };
       // SAFETY: reason matches FinishReason shape for error/aborted cases
       yield { type: "finish", reason: reason as FinishReason };
     } finally {
-      clearTimeout(timer);
+      this.clearIdle(idleKey);
       options.signal?.removeEventListener("abort", onAbort);
       proc.kill();
     }
@@ -2915,6 +2972,11 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       boxesPath: join(STATE_DIR, "boxes.json"),
       command: adapter.config.command,
       turnRecords: adapter.turnBuffer,
+      idle: {
+        deadlineFor: (session: string) => adapter.idleDeadlineMap.get(session) ?? null,
+        extend: (session: string) => adapter.extendIdle(session),
+        timeoutMs: adapter.config.idleTimeoutMs,
+      },
       permissionModes: {
         info: (sessionId: string) => adapter.permissionModeInfo(sessionId),
         set: (sessionId: string, mode: string | null) => adapter.setPermissionMode(sessionId, mode),

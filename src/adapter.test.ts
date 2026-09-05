@@ -1905,3 +1905,49 @@ console.log("temporary ok");
   assert.equal(defaultAdapter.keeperEnv().MCP_TOOL_TIMEOUT, "3600000");
 }
 console.log("keeper-mode ok");
+
+// Idle watchdog: the warning event is queued at half the timeout, the kill lands at the timeout,
+// an extend pushes both out, and a tool in flight pauses the whole thing.
+{
+  const idleAdapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({ idleTimeoutMs: 1000 }));
+  const injected: string[] = [];
+  let killed = 0;
+  const proc = {
+    idleKilled: false,
+    kill: () => {
+      killed += 1;
+    },
+    inject: (e: { type: string }) => {
+      injected.push(e.type);
+    },
+  };
+  const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+  idleAdapter.armIdle("s1", proc);
+  const first = idleAdapter.idleDeadlineMap.get("s1") ?? 0;
+  assert.ok(first > Date.now() + 900, "deadline is one timeout out");
+  await wait(600);
+  assert.deepEqual(injected, ["idle_warning"], "warning queued at half the timeout");
+  assert.equal(killed, 0);
+  assert.equal(idleAdapter.extendIdle("s1"), true);
+  assert.ok(
+    (idleAdapter.idleDeadlineMap.get("s1") ?? 0) > first + 500,
+    "extend pushed the deadline",
+  );
+  await wait(600);
+  assert.equal(killed, 0, "extend postponed the kill");
+  assert.equal(injected.length, 2, "a second warning after the extend");
+  await wait(600);
+  assert.equal(killed, 1, "killed at the new deadline");
+  assert.equal(proc.idleKilled, true);
+  assert.equal(idleAdapter.idleDeadlineMap.get("s1"), null);
+  assert.equal(idleAdapter.extendIdle("s1"), false, "nothing armed: extend is a no-op");
+
+  // Aux streams never warn; clearIdle stops the kill.
+  idleAdapter.armIdle("aux", proc, false);
+  idleAdapter.clearIdle("aux");
+  await wait(1100);
+  assert.equal(killed, 1, "cleared watchdog does not kill");
+  assert.equal(injected.length, 2, "aux stream queued no warning");
+  console.log("idle-watchdog ok");
+}

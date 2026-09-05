@@ -528,6 +528,12 @@ export interface SessionRouteOptions {
   command?: string;
   /** Per-session turn accounting buffer from the adapter. */
   turnRecords?: Map<string, import("./adapter.js").TurnRecord[]>;
+  /** Idle watchdog state from the adapter. */
+  idle?: {
+    deadlineFor(session: string): number | null;
+    extend(session: string): boolean;
+    timeoutMs: number;
+  };
   /** Per-session permission mode: read the effective mode, set or clear the override. */
   permissionModes?: {
     info: (sessionId: string) => PermissionModeInfo;
@@ -549,6 +555,7 @@ export function registerSessionRoutes(
     boxesPath,
     command,
     turnRecords,
+    idle,
     permissionModes,
   }: SessionRouteOptions,
 ): void {
@@ -687,6 +694,27 @@ export function registerSessionRoutes(
                   total.count += 1;
                 }
                 return json(res, 200, { turns, total });
+              }
+              if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/idle`) {
+                const sid = url.searchParams.get("session");
+                if (!sid) return json(res, 400, { error: "session param required" });
+                if (!idle) return json(res, 404, { error: "idle tracking not available" });
+                return json(res, 200, {
+                  deadline: idle.deadlineFor(sid),
+                  timeoutMs: idle.timeoutMs,
+                });
+              }
+              if (req.method === "POST" && url.pathname === `${ROUTE_PREFIX}/idle/extend`) {
+                const { session } = await readBody(req);
+                if (!session) return json(res, 400, { error: "session param required" });
+                if (!idle) return json(res, 404, { error: "idle tracking not available" });
+                const sid = typeof session === "string" ? session : "";
+                const ok = sid ? idle.extend(sid) : false;
+                return json(
+                  res,
+                  ok ? 200 : 404,
+                  ok ? { extended: true } : { error: "unknown session" },
+                );
               }
               if (permissionModes && url.pathname === `${ROUTE_PREFIX}/permission-mode`) {
                 if (req.method === "GET") {

@@ -1917,6 +1917,72 @@ function TurnAccountingChip({ sessionId }: { sessionId: string }) {
   );
 }
 
+interface IdleReply {
+  deadline: number | null;
+  timeoutMs: number;
+}
+
+/** Small chip that warns when the idle watchdog is about to kill the process. */
+function IdleChip({ sessionId }: { sessionId: string }) {
+  const [deadline, setDeadline] = useState<number | null>(null);
+  const visibleRef = useRef(true);
+
+  useEffect(() => {
+    let alive = true;
+    const fetchIdle = async () => {
+      try {
+        const r = await fetch(`${ROUTE}/idle?session=${encodeURIComponent(sessionId)}`);
+        if (!r.ok) return;
+        // SAFETY: the body is our own JSON route; the union type names both shapes the caller checks
+        const body = (await r.json()) as IdleReply | { error: string };
+        if ("error" in body) return;
+        if (alive) setDeadline(body.deadline ?? null);
+      } catch {
+        // network error: keep previous deadline
+      }
+    };
+    fetchIdle();
+    const interval = setInterval(() => {
+      if (visibleRef.current) fetchIdle();
+    }, 5_000);
+    const onVisibility = () => {
+      visibleRef.current = document.visibilityState === "visible";
+      if (visibleRef.current) fetchIdle();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      alive = false;
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [sessionId]);
+
+  const remainingMs = deadline ? deadline - Date.now() : 0;
+  if (!deadline || remainingMs > 60_000) return null;
+  const seconds = Math.max(0, Math.round(remainingMs / 1000));
+  const extend = async () => {
+    try {
+      await fetch(`${ROUTE}/idle/extend`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ session: sessionId }),
+      });
+    } catch {
+      // extend failed silently; next poll will reflect state
+    }
+  };
+  return (
+    <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+      <span style={{ fontSize: 11, color: T.warn, fontFamily: T.mono }}>
+        stopping in {seconds}s
+      </span>
+      <button type="button" style={btn} onClick={extend}>
+        Extend
+      </button>
+    </span>
+  );
+}
+
 interface RestoreButtonProps {
   sessionId: string;
   ctx: ClientCtx;
@@ -2341,6 +2407,10 @@ export function apply(ctx: ClientCtx) {
     ctx.slots.register(
       { name: "conversation.session.header.actions", id: "claude-turn-accounting", order: 30 },
       (props) => (props.sessionId ? <TurnAccountingChip sessionId={props.sessionId} /> : null),
+    );
+    ctx.slots.register(
+      { name: "conversation.session.header.actions", id: "claude-idle-warn", order: 31 },
+      (props) => (props.sessionId ? <IdleChip sessionId={props.sessionId} /> : null),
     );
     return null;
   });
