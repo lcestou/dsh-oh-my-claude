@@ -318,7 +318,7 @@ export declare function afterLastAssistant(messages: LooseMessage[] | undefined)
 /** Notice this plugin drops into a session's inbox to open a turn after Claude replied on its own. */
 export declare const WAKE_TEXT = "Claude Code finished a background task and replied.";
 /** Sent as a real prompt after dsh restarts mid-turn: the process is gone, Claude must carry on. */
-export declare const RESTART_TEXT = "dsh restarted while this turn was in progress and the Claude Code process was replaced. Pick up where the transcript stops and finish the task.";
+export declare const RESTART_TEXT = "dsh restarted while this turn was in progress and the Claude Code process was replaced. Pick up where the transcript stops and finish the task. If this session has an active goal, dsh disarmed it on resume: call get_goal, then update_goal with action resume, so the goal rounds keep driving the work without anyone typing.";
 /** A turn opened by our own wake notice, with no user prompt to send: only drain what Claude
  *  already wrote. A user prompt in the same batch takes precedence and is sent normally. */
 export declare function wakeOnlyTurn(messages: LooseMessage[] | undefined): boolean;
