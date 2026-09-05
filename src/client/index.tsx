@@ -1611,7 +1611,9 @@ const ensureTurnStatusStyle = () => {
   styleEl = document.createElement("style");
   styleEl.id = "dsh-oh-my-claude-turn-status";
   // The frames differ in advance width in a proportional font; a fixed cell keeps the verb still.
-  styleEl.textContent = `[data-dsh-oh-my-claude-turn]{background-image:linear-gradient(90deg,${CLAUDE_ORANGE} 0%,${CLAUDE_ORANGE} 40%,${CLAUDE_SHIMMER} 50%,${CLAUDE_ORANGE} 60%,${CLAUDE_ORANGE} 100%)}[data-dsh-oh-my-claude-turn]>span[aria-hidden]{display:inline-block;width:1.3em;text-align:center;flex:none}`;
+  // `body[data-omc-claude]` is set while the open session is a Claude mount, so the row is orange
+  // from its first paint; the watcher then swaps the text and adds the spinner a frame later.
+  styleEl.textContent = `body[data-omc-claude] [role="status"][aria-live="polite"],[data-dsh-oh-my-claude-turn]{background-image:linear-gradient(90deg,${CLAUDE_ORANGE} 0%,${CLAUDE_ORANGE} 40%,${CLAUDE_SHIMMER} 50%,${CLAUDE_ORANGE} 60%,${CLAUDE_ORANGE} 100%)}[data-dsh-oh-my-claude-turn]>span[aria-hidden]{display:inline-block;width:1.3em;text-align:center;flex:none}`;
   document.head.appendChild(styleEl);
 };
 
@@ -1711,6 +1713,14 @@ const wireTurnStatus = (
  */
 function watchTurnStatus(ctx: ClientCtx) {
   ensureTurnStatusStyle(); // a hot reload drops the old module's style tag but keeps marked elements
+  // Keep a body flag in step with the open session so the first-paint colour rule applies before
+  // the observer runs (the flash of dsh's blue the owner saw on first load).
+  const markBody = () => {
+    if (activeClaudeSession(ctx)) document.body.setAttribute("data-omc-claude", "1");
+    else document.body.removeAttribute("data-omc-claude");
+  };
+  markBody();
+  setInterval(markBody, 1000);
   const attach = async (el: HTMLElement) => {
     // Only act on [role="status"][aria-live="polite"] (dsh's turn-status element).
     if (el.getAttribute("role") !== "status" || el.getAttribute("aria-live") !== "polite") return;
