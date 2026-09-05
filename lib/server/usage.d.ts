@@ -19,6 +19,8 @@ export type UsageReply = {
     windows?: undefined;
     host?: string;
     email?: string | null;
+    /** Set only on a 429: ms to wait before the endpoint is worth touching again. */
+    retryAfterMs?: number;
 };
 /**
  * The usage payload lists `limits` (kind `session`, `weekly_all`, `weekly_scoped` with a model
@@ -32,6 +34,9 @@ export type UsageFetch = (url: string, init: {
     signal: AbortSignal;
 }) => Promise<{
     status: number;
+    headers?: {
+        get(name: string): string | null;
+    };
     json(): Promise<unknown>;
 }>;
 /** Read usage with the stored login; never throws, the panel shows the reason instead. */

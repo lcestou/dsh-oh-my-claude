@@ -39,4 +39,17 @@ const dead = await readUsage(async () => {
   throw new Error("ECONNREFUSED");
 });
 assert.equal(dead.ok, false);
+
+// a 429 surfaces retryAfterMs from the header (seconds), so the route can back off
+const limited = await readUsage(async () => ({
+  status: 429,
+  headers: { get: (n: string) => (n === "retry-after" ? "120" : null) },
+  json: async () => ({}),
+}));
+assert.equal(limited.ok, false);
+assert.equal(limited.ok === false && limited.retryAfterMs, 120_000);
+
+// a 429 with no header still backs off at the floor (60s), never 0
+const noHeader = await readUsage(async () => ({ status: 429, json: async () => ({}) }));
+assert.equal(noHeader.ok === false && noHeader.retryAfterMs, 60_000);
 console.log("usage ok");

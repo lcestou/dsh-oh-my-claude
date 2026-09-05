@@ -11,6 +11,17 @@ const ROUTE = "/dsh-llm-claude/usage";
 /** Background answers are served from cache this long; a popover open may force a refresh sooner. */
 const CACHE_MS = 5 * 60_000;
 const FORCE_MIN_AGE_MS = 30_000;
+/** After a 429 with no usable Retry-After, wait at least this long before touching the endpoint. */
+const RATE_LIMIT_FLOOR_MS = 60_000;
+
+/** Retry-After (seconds, or an HTTP-date) → ms; the floor when the header is missing or unparsable. */
+function retryAfterMs(header: string | null | undefined): number {
+  if (!header) return RATE_LIMIT_FLOOR_MS;
+  const secs = Number(header);
+  if (Number.isFinite(secs)) return Math.max(secs * 1000, RATE_LIMIT_FLOOR_MS);
+  const at = Date.parse(header);
+  return Number.isNaN(at) ? RATE_LIMIT_FLOOR_MS : Math.max(at - Date.now(), RATE_LIMIT_FLOOR_MS);
+}
 
 /** One rate-limit window as the panel shows it. */
 export interface UsageWindow {
@@ -23,7 +34,15 @@ export interface UsageWindow {
 /** What the route answers: the windows in display order, or why there are none. */
 export type UsageReply =
   | { ok: true; fetchedAt: number; windows: UsageWindow[]; host?: string; email?: string | null }
-  | { ok: false; error: string; windows?: undefined; host?: string; email?: string | null };
+  | {
+      ok: false;
+      error: string;
+      windows?: undefined;
+      host?: string;
+      email?: string | null;
+      /** Set only on a 429: ms to wait before the endpoint is worth touching again. */
+      retryAfterMs?: number;
+    };
 
 type Rec = Record<string, unknown>;
 const isRec = (v: unknown): v is Rec => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -90,7 +109,11 @@ export function usageWindows(payload: unknown): UsageWindow[] {
 export type UsageFetch = (
   url: string,
   init: { headers: Record<string, string>; signal: AbortSignal },
-) => Promise<{ status: number; json(): Promise<unknown> }>;
+) => Promise<{
+  status: number;
+  headers?: { get(name: string): string | null };
+  json(): Promise<unknown>;
+}>;
 
 /** Read usage with the stored login; never throws, the panel shows the reason instead. */
 export async function readUsage(fetchImpl: UsageFetch = fetch): Promise<UsageReply> {
@@ -102,7 +125,12 @@ export async function readUsage(fetchImpl: UsageFetch = fetch): Promise<UsageRep
       signal: AbortSignal.timeout(15_000),
     });
     if (r.status === 401) return { ok: false, error: "login expired: run claude auth login" };
-    if (r.status === 429) return { ok: false, error: "usage endpoint rate limited" };
+    if (r.status === 429)
+      return {
+        ok: false,
+        error: "usage endpoint rate limited",
+        retryAfterMs: retryAfterMs(r.headers?.get("retry-after")),
+      };
     if (r.status !== 200) return { ok: false, error: `HTTP ${r.status}` };
     return { ok: true, fetchedAt: Date.now(), windows: usageWindows(await r.json()) };
   } catch (e) {
@@ -118,10 +146,17 @@ export function registerUsageRoute(
 ) {
   let cached: { at: number; reply: UsageReply } | undefined;
   let inFlight: Promise<UsageReply> | undefined;
+  // A 429 backs the endpoint off until here, even when the client keeps forcing; serve cache meanwhile.
+  let rateLimitedUntil = 0;
+  const rateLimited = (): UsageReply =>
+    cached?.reply.ok ? cached.reply : { ok: false, error: "usage endpoint rate limited" };
   const read = (force: boolean): Promise<UsageReply> => {
+    if (Date.now() < rateLimitedUntil) return Promise.resolve(rateLimited());
     const age = cached ? Date.now() - cached.at : Infinity;
     if (cached && age < (force ? FORCE_MIN_AGE_MS : CACHE_MS)) return Promise.resolve(cached.reply);
     inFlight ??= readUsage().then((reply) => {
+      if (!reply.ok && reply.retryAfterMs)
+        rateLimitedUntil = Date.now() + Math.max(reply.retryAfterMs, RATE_LIMIT_FLOOR_MS);
       // One transient failure keeps the last good answer for its remaining cache life; the
       // fetch time is not refreshed, so a failure that persists surfaces once that life is over.
       if (reply.ok || !cached?.reply.ok || age >= CACHE_MS) cached = { at: Date.now(), reply };
