@@ -756,6 +756,8 @@ export function commandNames(value: JsonValue | undefined): string[] {
   for (const v of value) if (String(v) === v && /^[a-z0-9][a-z0-9_-]*$/.test(v)) out.add(v);
   return [...out];
 }
+/** Bridged Claude commands are registered as `/claude-<name>` in dsh. */
+export const BRIDGE_PREFIX = "claude-";
 const PLAN_APPROVE = "Approve";
 const PLAN_KEEP = "Keep planning";
 // Claude Code tool names → dsh tool name that the client-ui-tool presenter recognises.
@@ -1719,10 +1721,14 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const failed: string[] = [];
     for (const cmd of names) {
       if (this.bridged.has(cmd)) continue;
-      if (agent && commands.find(agent, cmd) !== undefined) continue; // dsh's own wins
+      // Prefixed on the dsh side: dsh's command menu throws when a host command name collides
+      // with a client-side contribution, and Claude's catalog is 200 names long (2026-09-05, the
+      // whole menu went blank). The line handed to Claude keeps the bare name.
+      const dshName = `${BRIDGE_PREFIX}${cmd}`;
+      if (agent && commands.find(agent, dshName) !== undefined) continue;
       try {
         const dispose = commands.register({
-          name: cmd,
+          name: dshName,
           description: `Claude Code /${cmd}`,
           input: { hint: "<arguments>" },
           handler: ({ agent: target, rawInput }) => {

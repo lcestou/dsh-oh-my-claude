@@ -1819,7 +1819,11 @@ console.log("plan-review ok");
   });
   const a = new ClaudeCodeAdapter(fakeCtx(guarded), Config({ commandBridge: true }));
   a.bridgeCommands(["compact"], undefined);
-  assert.deepEqual(registered, ["compact", "temporary"], "the catalog plus /temporary");
+  assert.deepEqual(
+    registered,
+    ["claude-compact", "temporary"],
+    "the prefixed catalog plus /temporary",
+  );
   assert.equal(a.bridged.size, 2, "compact and temporary");
 }
 console.log("command-bridge ok");

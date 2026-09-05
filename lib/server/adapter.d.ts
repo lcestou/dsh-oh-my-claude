@@ -285,6 +285,8 @@ export declare function buildInput(prompt: string, images: Array<{
 }>): string;
 /** Names from the CLI's init frame that dsh's command grammar accepts (lowercase, `[a-z0-9_-]`), deduped. */
 export declare function commandNames(value: JsonValue | undefined): string[];
+/** Bridged Claude commands are registered as `/claude-<name>` in dsh. */
+export declare const BRIDGE_PREFIX = "claude-";
 export interface TurnRecord {
     at: number;
     costUsd: number;
