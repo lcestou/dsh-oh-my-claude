@@ -57,6 +57,7 @@ export type Config = {
     idleTimeoutMs: number;
     toolTextLimit: number;
     dshTools: boolean;
+    fastMode: boolean;
     commandBridge: boolean;
     redactSecrets: boolean;
     persistTodos: boolean;
@@ -87,6 +88,7 @@ export declare const Config: z<Schemastery.ObjectS<{
     idleTimeoutMs: z<number, number>;
     toolTextLimit: z<number, number>;
     dshTools: z<boolean, boolean>;
+    fastMode: z<boolean, boolean>;
     commandBridge: z<boolean, boolean>;
     redactSecrets: z<boolean, boolean>;
     persistTodos: z<boolean, boolean>;
@@ -112,6 +114,7 @@ export declare const Config: z<Schemastery.ObjectS<{
     idleTimeoutMs: z<number, number>;
     toolTextLimit: z<number, number>;
     dshTools: z<boolean, boolean>;
+    fastMode: z<boolean, boolean>;
     commandBridge: z<boolean, boolean>;
     redactSecrets: z<boolean, boolean>;
     persistTodos: z<boolean, boolean>;

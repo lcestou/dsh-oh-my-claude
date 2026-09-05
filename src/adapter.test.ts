@@ -1822,3 +1822,34 @@ console.log("plan-review ok");
   assert.equal(a.bridged.size, 1);
 }
 console.log("command-bridge ok");
+
+// fastMode: off by default; on, the process is launched with --settings {"fastMode":true} when the CLI lists --settings.
+{
+  assert.equal(Config({}).fastMode, false);
+  const flags = new Set(["--settings", "--effort", "--output-format"]);
+  const on = buildArgs({
+    model: "opus",
+    reasoningEffort: null,
+    system: "",
+    purpose: undefined,
+    config: Config({ fastMode: true }),
+    flags,
+    mcp: null,
+  } as any);
+  const i = on.indexOf("--settings");
+  assert.ok(
+    i >= 0 && on[i + 1] === JSON.stringify({ fastMode: true }),
+    "fast mode launches with --settings",
+  );
+  const off = buildArgs({
+    model: "opus",
+    reasoningEffort: null,
+    system: "",
+    purpose: undefined,
+    config: Config({}),
+    flags,
+    mcp: null,
+  } as any);
+  assert.equal(off.indexOf("--settings"), -1, "no --settings without fastMode");
+}
+console.log("fast-mode ok");

@@ -74,6 +74,7 @@ All keys are optional.
 | `approvals` | `true` | Relay Claude Code permission prompts and AskUserQuestion to dsh dialogs. |
 | `processIdleMs` | `1800000` | Kill a session's idle Claude process after this long without a turn. |
 | `maxProcesses` | `4` | Cap on live Claude processes; the longest idle is evicted first. |
+| `fastMode` | `false` | Launch every Claude process with fast mode on (`--settings '{"fastMode":true}'`, Opus only, higher cost). The bridged `/fast` then toggles it for that session; in headless mode the toggle only works when the session started this way. |
 | `commandBridge` | `true` | Register Claude Code's slash commands (skills, custom commands, from the CLI's init frame) as dsh `/commands` that hand the line to Claude. dsh's own command of the same name wins. |
 | `redactSecrets` | `true` | Mask values of env vars named `*KEY`, `*TOKEN`, `*SECRET`, `*PASSWORD` or `*CREDENTIAL` (8+ chars) in Claude's tool results as `[redacted:NAME]` before dsh sees them. |
 | `persistTodos` | `true` | Re-append the last todo list at each turn start so dsh's panel keeps it. |

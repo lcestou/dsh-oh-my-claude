@@ -150,6 +150,7 @@ export type Config = {
   idleTimeoutMs: number;
   toolTextLimit: number;
   dshTools: boolean;
+  fastMode: boolean;
   commandBridge: boolean;
   redactSecrets: boolean;
   persistTodos: boolean;
@@ -220,6 +221,12 @@ export const Config = z.object({
     .boolean()
     .default(true)
     .description("Expose dsh tools (subagents, jobs, skills...) to Claude Code over MCP"),
+  fastMode: z
+    .boolean()
+    .default(false)
+    .description(
+      "Launch each Claude process with fast mode enabled (--settings fastMode); the bridged /fast then toggles it per session",
+    ),
   commandBridge: z
     .boolean()
     .default(true)
@@ -673,6 +680,9 @@ export function buildArgs({
   if (supports(flags, "--forward-subagent-text")) args.push("--forward-subagent-text");
   if (model) args.push("--model", model);
   if (reasoningEffort && supports(flags, "--effort")) args.push("--effort", reasoningEffort);
+  // In -p mode /fast only works in a session launched with fast mode in --settings (fast-mode docs).
+  if (config.fastMode && supports(flags, "--settings"))
+    args.push("--settings", JSON.stringify({ fastMode: true }));
   const appended = [system, mcp ? DSH_TOOLS_GUIDANCE : ""].filter(Boolean).join("\n\n");
   if (appended && supports(flags, "--append-system-prompt")) {
     args.push("--append-system-prompt", appended);
