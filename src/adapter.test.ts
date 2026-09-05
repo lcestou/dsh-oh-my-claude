@@ -34,9 +34,10 @@ import {
   RESTART_TEXT,
   markBusy,
   takeInterrupted,
+  registryKey,
 } from "./adapter.js";
 import { ClaudeProcess, LineQueue, TIMEOUT, seamSpawner } from "./process.js";
-import { resolveClaudeHome, CLAUDE_HOME } from "./state.js";
+import { resolveClaudeHome, CLAUDE_HOME, stateDir } from "./state.js";
 import type { ClaudeEvent, ClaudeProcessSpec, SubprocessHandle } from "./process.js";
 import type { LooseMessage } from "./adapter.js";
 import type { FinishReason, LlmFailure, Message, StreamChunk } from "@deepseek-ai/dsh-llm";
@@ -104,6 +105,45 @@ assert.equal(config.permissionMode, "dsh");
 assert.deepEqual(config.allowedTools, []);
 assert.equal(config.titleModel, "haiku");
 assert.equal(config.resume, true);
+
+// providerId defaults to claude-code; settingsNs and displayName derive correctly
+assert.equal(config.providerId, "claude-code");
+const workConfig = new Config({ providerId: "claude-code-work", providerName: "Work" });
+assert.equal(workConfig.providerId, "claude-code-work");
+// registry key separates instances even with the same sessionId
+assert.notEqual(
+  registryKey("claude-code-work", "s1"),
+  registryKey("claude-code", "s1"),
+  "different provider ids produce different keys",
+);
+assert.equal(registryKey("claude-code-work", "s1").slice(0, 15), "claude-code-wor");
+// invalid provider id throws at construction
+const badCtx = { on() {} } as unknown as import("./dsh.js").PluginContext;
+assert.throws(
+  () => new ClaudeCodeAdapter(badCtx, new Config({ providerId: "gpt" })),
+  /invalid providerId/,
+);
+// displayName and settingsNs derive from config
+const defaultAdapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+assert.equal(defaultAdapter.providerId, "claude-code");
+assert.equal(defaultAdapter.displayName, "Oh My Claude");
+assert.equal(defaultAdapter.settingsNs, "llm-claude-code");
+const workAdapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), workConfig);
+assert.equal(workAdapter.providerId, "claude-code-work");
+assert.equal(workAdapter.displayName, "Work");
+// empty providerName falls back to auto-derived name
+const autoWorkAdapter = new ClaudeCodeAdapter(
+  fakeCtx({ on() {} }),
+  new Config({ providerId: "claude-code-work" }),
+);
+assert.equal(autoWorkAdapter.displayName, "Oh My Claude (work)");
+assert.equal(workAdapter.settingsNs, "llm-claude-code-work");
+// state dir for non-default id nests under STATE_DIR/<providerId>
+assert.equal(stateDir("claude-code"), joinPath(homedir(), ".local", "state", "dsh-oh-my-claude"));
+assert.ok(
+  stateDir("claude-code-work").includes("/claude-code-work"),
+  "non-default state dir contains the provider id segment",
+);
 
 // resolveModelInfo echoes the requested id and only borrows the display name
 const rmi = (id: string) => resolveModelInfo("claude-code", id) as any;
@@ -813,9 +853,9 @@ console.log("ok");
   const parked = fake({ relays: new Map([["c1", {}]]) });
   const steered = fake({ parked: "steer" });
   const idle = fake({});
-  adapter.processes.set("a", parked);
-  adapter.processes.set("b", steered);
-  adapter.processes.set("c", idle);
+  adapter.processes.set(registryKey("claude-code", "a"), parked);
+  adapter.processes.set(registryKey("claude-code", "b"), steered);
+  adapter.processes.set(registryKey("claude-code", "c"), idle);
   adapter.evict();
   assert.equal(parked.killed, 0, "a process waiting on dsh's tool result is not idle");
   assert.equal(steered.killed, 0, "a process parked for a steer is not idle");
@@ -1193,7 +1233,7 @@ console.log("ok");
   // a reloaded adapter re-points every adopted process at itself
   const reg = (globalThis as any)[Symbol.for("dsh-oh-my-claude.processes")];
   const stale = { busy: false, onIdleResult: boom, alive: true };
-  reg.set("adopted", stale);
+  reg.set(registryKey("claude-code", "adopted"), stale);
   let woke = 0;
   const liveCtx = {
     on() {},
@@ -1204,8 +1244,8 @@ console.log("ok");
   assert.notEqual(stale.onIdleResult, boom, "callback re-bound on construction");
   await stale.onIdleResult();
   assert.equal(woke, 1, "adopted process wakes through the new adapter");
-  assert.equal(fresh.processes.get("adopted"), stale);
-  reg.delete("adopted");
+  assert.equal(fresh.processes.get(registryKey("claude-code", "adopted")), stale);
+  reg.delete(registryKey("claude-code", "adopted"));
 }
 {
   const tr = new Translator() as any;
@@ -1246,13 +1286,13 @@ console.log("ok");
 {
   const a = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
   const b = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
-  a.processes.set("shared", fakeProc({ alive: true }));
+  a.processes.set(registryKey("claude-code", "shared"), fakeProc({ alive: true }));
   assert.equal(
-    b.processes.get("shared")?.alive,
+    b.processes.get(registryKey("claude-code", "shared"))?.alive,
     true,
     "a reloaded adapter adopts running processes",
   );
-  a.processes.delete("shared");
+  a.processes.delete(registryKey("claude-code", "shared"));
 }
 {
   const tr = new Translator({ relay: true }) as any;
@@ -1427,7 +1467,7 @@ console.log("schema-guard ok");
   await markBusy("live", true, file);
   const ctx = { on() {}, agents: { get: () => undefined }, logger: { info() {}, warn() {} } };
   const a = new ClaudeCodeAdapter(fakeCtx(ctx), Config({}));
-  a.processes.set("live", fakeProc({ busy: true }));
+  a.processes.set(registryKey("claude-code", "live"), fakeProc({ busy: true }));
   const woke: [string, ClaudeProcess | undefined, string | undefined][] = [];
   a.wake = async (id, proc, text) => {
     woke.push([id, proc, text]);

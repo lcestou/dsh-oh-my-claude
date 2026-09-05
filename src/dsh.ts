@@ -4,9 +4,9 @@
 // Mirrors: @deepseek-ai/cordis/lib/types/context.d.ts + per-service module augmentations
 import type { GenerateOptions, Message } from "@deepseek-ai/dsh-llm";
 
-/** Symbol for the current adapter instance on globalThis (hot-reload cross-plugin process adoption). */
+/** Map of providerId → adapter on globalThis (hot-reload cross-plugin process adoption; per-instance). */
 export const ADAPTER_CURRENT = Symbol.for("dsh-oh-my-claude.adapter");
-/** Symbol for the resume timer on globalThis (scoped outside cordis to survive plugin re-instantiation). */
+/** Map of providerId → timer on globalThis (scoped outside cordis to survive plugin re-instantiation). */
 export const RESUME_TIMER = Symbol.for("dsh-oh-my-claude.resume-timer");
 /** Symbol for the Claude process registry on globalThis (adopted processes across hot reloads). */
 export const PROCESS_REGISTRY = Symbol.for("dsh-oh-my-claude.processes");

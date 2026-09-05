@@ -5,6 +5,8 @@ export declare const CLAUDE_HOME: string;
 export declare function resolveClaudeHome(dir: string): string;
 export declare const STATE_DIR: string;
 export declare const STATE_FILE: string;
+/** Derive per-instance state dir from a provider id; default id uses the shared top-level path. */
+export declare function stateDir(providerId: string): string;
 /** Sessions with a turn in flight. Survives a dsh restart so those sessions can be nudged back. */
 export declare const BUSY_FILE: string;
 /** Plugin info logs never reach dsh's web.log; the resume path keeps its own trace file. */
@@ -19,12 +21,12 @@ export declare function takeInterrupted(path?: string): Promise<string[]>;
 export declare const auxCwd: () => Promise<string>;
 /**
  * Loads the set of Claude session IDs that this plugin has started.
- * Cached after the first call.
+ * Cached after the first call; per-instance when a state file is given.
  */
-export declare function loadStarted(): Promise<Set<string>>;
+export declare function loadStarted(stateFile?: string): Promise<Set<string>>;
 /**
  * Records or removes a Claude session ID from the known sessions list.
  */
-export declare function rememberStarted(id: string, keep?: boolean): Promise<void>;
+export declare function rememberStarted(id: string, keep?: boolean, stateFile?: string): Promise<void>;
 /** Headers for the Anthropic Models API: an API key from the env, else Claude Code's stored OAuth token. */
 export declare function authHeaders(home?: string): Promise<Record<string, string> | null>;

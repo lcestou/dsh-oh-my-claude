@@ -1682,7 +1682,7 @@ function watchTurnStatus(ctx: ClientCtx) {
     } catch {
       return; // no scope or binding for this session yet: not ours to restyle
     }
-    if (provider !== "claude-code") return;
+    if (!provider || !provider.startsWith("claude-code")) return;
     spinnerSettings ??= loadSpinnerSettings(); // once per page load
     const settings = await spinnerSettings;
     if (el.isConnected) wireTurnStatus(el, activeId, settings.verbs, settings.frameSet);

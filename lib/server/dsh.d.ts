@@ -1,7 +1,7 @@
 import type { GenerateOptions, Message } from "@deepseek-ai/dsh-llm";
-/** Symbol for the current adapter instance on globalThis (hot-reload cross-plugin process adoption). */
+/** Map of providerId → adapter on globalThis (hot-reload cross-plugin process adoption; per-instance). */
 export declare const ADAPTER_CURRENT: unique symbol;
-/** Symbol for the resume timer on globalThis (scoped outside cordis to survive plugin re-instantiation). */
+/** Map of providerId → timer on globalThis (scoped outside cordis to survive plugin re-instantiation). */
 export declare const RESUME_TIMER: unique symbol;
 /** Symbol for the Claude process registry on globalThis (adopted processes across hot reloads). */
 export declare const PROCESS_REGISTRY: unique symbol;

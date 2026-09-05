@@ -62,6 +62,8 @@ export type Config = {
     approvals: boolean;
     processIdleMs: number;
     maxProcesses: number;
+    providerId: string;
+    providerName: string;
 };
 /** Plugin name identifier. */
 export declare const name = "dsh-oh-my-claude";
@@ -89,6 +91,8 @@ export declare const Config: z<Schemastery.ObjectS<{
     processIdleMs: z<number, number>;
     maxProcesses: z<number, number>;
     configDir: z<string, string>;
+    providerId: z<string, string>;
+    providerName: z<string, string>;
 }>, Schemastery.ObjectT<{
     command: z<string, string>;
     spawn: z<"dsh" | "node", "dsh" | "node">;
@@ -110,7 +114,11 @@ export declare const Config: z<Schemastery.ObjectS<{
     processIdleMs: z<number, number>;
     maxProcesses: z<number, number>;
     configDir: z<string, string>;
+    providerId: z<string, string>;
+    providerName: z<string, string>;
 }>>;
+/** Keys the shared process registry by instance so two mounts never see each other's processes. */
+export declare function registryKey(providerId: string, sessionId: string): string;
 declare const EFFORTS_ALL: readonly ["low", "medium", "high", "xhigh", "max"];
 /** One effort level's capability flag, as the Models API reports it. */
 type EffortLevelCaps = {
@@ -392,6 +400,10 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     loggedVersion: boolean;
     sessionController?: SessionController;
     claudeHome: string;
+    providerId: string;
+    displayName: string;
+    settingsNs: string;
+    stateDir: string;
     constructor(ctx: PluginContext, config: Schemastery.TypeT<typeof Config>);
     providerInfo(provider: string): {
         id: string;
@@ -433,6 +445,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     }>;
     /** Drop processes idle past processIdleMs, then keep the live count under maxProcesses by
      *  killing the longest-idle ones that are not mid-turn. Called before each spawn. */
+    /** Live processes belonging to this mount; the registry is shared across mounts. */
+    ownProcessCount(): number;
     evict(): void;
     /**
      * How this dsh request continues the session's Claude process, if at all:

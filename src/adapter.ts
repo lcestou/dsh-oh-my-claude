@@ -51,6 +51,7 @@ import {
   CLAUDE_HOME,
   resolveClaudeHome,
   STATE_DIR,
+  stateDir,
   auxCwd,
   authHeaders,
   loadStarted,
@@ -144,6 +145,8 @@ export type Config = {
   approvals: boolean;
   processIdleMs: number;
   maxProcesses: number;
+  providerId: string;
+  providerName: string;
 };
 
 /** Plugin name identifier. */
@@ -236,7 +239,24 @@ export const Config = z.object({
     .description(
       "Claude Code config dir for this plugin instance (exported as CLAUDE_CONFIG_DIR); empty = CLAUDE_CONFIG_DIR env or ~/.claude",
     ),
+  providerId: z
+    .string()
+    .default("claude-code")
+    .description(
+      "Provider id; 'claude-code' is the default, anything starting with 'claude-code-' mounts a second instance",
+    ),
+  providerName: z
+    .string()
+    .default("")
+    .description(
+      "Display name for this instance in the model picker; empty = 'Oh My Claude' for the default id, else 'Oh My Claude (<suffix>)'",
+    ),
 });
+
+/** Keys the shared process registry by instance so two mounts never see each other's processes. */
+export function registryKey(providerId: string, sessionId: string): string {
+  return `${providerId}:${sessionId}`;
+}
 
 const EFFORTS_ALL = ["low", "medium", "high", "xhigh", "max"] as const;
 /** One effort level's capability flag, as the Models API reports it. */
@@ -1324,11 +1344,29 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   loggedVersion = false;
   sessionController?: SessionController;
   claudeHome: string;
+  providerId: string;
+  displayName: string;
+  settingsNs: string;
+  stateDir: string;
   constructor(ctx: PluginContext, config: Schemastery.TypeT<typeof Config>) {
     super();
     this.ctx = ctx;
     this.config = config;
+    this.providerId = config.providerId;
+    // SAFETY: regex only matches 'claude-code' or 'claude-code-…'; the string shape is enforced by the schema default
+    if (!/^claude-code(-.+)?$/.test(this.providerId)) {
+      throw new Error(
+        `invalid providerId "${this.providerId}": must be 'claude-code' or start with 'claude-code-'`,
+      );
+    }
     this.claudeHome = resolveClaudeHome(config.configDir);
+    this.displayName =
+      config.providerName ||
+      (this.providerId === "claude-code"
+        ? "Oh My Claude"
+        : `Oh My Claude (${this.providerId.slice("claude-code".length).slice(1)})`);
+    this.settingsNs = `llm-${this.providerId}`;
+    this.stateDir = stateDir(this.providerId);
     this.warnedNoSeam = false;
     this.loggedVersion = false;
     // Kept on globalThis so a hot reload of this plugin adopts the running Claude processes
@@ -1337,9 +1375,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const registry = globalThis as typeof globalThis & {
       [PROCESS_REGISTRY]?: Map<string, ClaudeProcess>;
     };
-    this.processes = registry[PROCESS_REGISTRY] ??= new Map(); // dsh sessionId → ClaudeProcess
+    this.processes = registry[PROCESS_REGISTRY] ??= new Map(); // providerId:sessionId → ClaudeProcess
     // Adopted processes still point their idle-reply callback at the previous (now dead) adapter.
-    for (const [sessionId, proc] of this.processes) {
+    for (const [key, proc] of this.processes) {
+      if (!key.startsWith(`${this.providerId}:`)) continue; // another mount's process, not ours
+      const sessionId = key.slice(this.providerId.length + 1);
       proc.onIdleResult = () => this.wake(sessionId, proc);
     }
     // Steers: dsh only delivers them at step boundaries, and a Claude turn has none of its own.
@@ -1350,7 +1390,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       // SAFETY: same event object, narrowed to the agent/inbox/spliced shape this handler reads
       const event = eventArg as SpliceEvent;
       if (event?.type !== "agent/inbox/spliced" || event.data?.target !== "next-step") return;
-      const proc = this.processes.get(session?.id ?? "");
+      const proc = this.processes.get(registryKey(this.providerId, session?.id ?? ""));
       if (!proc?.alive || !proc.busy || proc.relays.size > 0) return;
       for (const m of event.data?.inserted ?? []) {
         const src = m.source;
@@ -1368,7 +1408,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   }
 
   override providerInfo(provider: string) {
-    return { id: provider, name: "Oh My Claude" };
+    return { id: provider, name: this.displayName };
   }
 
   override async listModels(provider: string) {
@@ -1532,13 +1572,13 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    * does not have to come back and poke each one. Sessions with a live (adopted) process are a
    * hot reload, not a restart, and are left alone.
    */
-  async resumeInterrupted(path?: string) {
+  async resumeInterrupted(path = join(this.stateDir, "busy.json")) {
     const ids = await takeInterrupted(path);
     await trace(
       `boot: interrupted=${JSON.stringify(ids)} live=${JSON.stringify([...this.processes.keys()])}`,
     );
     for (const id of ids) {
-      const proc = this.processes.get(id);
+      const proc = this.processes.get(registryKey(this.providerId, id));
       if (proc) {
         // A hot reload, or the user already typed since boot: the turn is live, keep it tracked.
         if (proc.busy) await markBusy(id, true, path);
@@ -1585,7 +1625,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const prep = await this.prepare(options, { forceFresh });
     if (prep.input === null) return { prep, proc: null }; // text-mode CLI: fall back to one-shot semantics
     const key = specKey(prep.spec);
-    let proc = this.processes.get(options.sessionId);
+    const key2 = registryKey(this.providerId, options.sessionId);
+    let proc = this.processes.get(key2);
     if (proc && (!proc.alive || proc.key !== key || proc.busy)) {
       proc.kill();
       proc = undefined;
@@ -1599,13 +1640,13 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         command: this.config.command,
         spawner: this.spawner(),
         onExit: (p) => {
-          if (this.processes.get(options.sessionId) === p) this.processes.delete(options.sessionId);
+          if (this.processes.get(key2) === p) this.processes.delete(key2);
         },
       });
       proc.key = key;
       proc.resuming = prep.session?.resuming ?? false;
       proc.onIdleResult = () => this.wake(options.sessionId, proc);
-      this.processes.set(options.sessionId, proc);
+      this.processes.set(key2, proc);
       if (this.config.debug) {
         this.log("info", `spawn cwd=${prep.cwd} claude ${prep.args.join(" ")}`);
       }
@@ -1615,23 +1656,32 @@ export class ClaudeCodeAdapter extends LlmAdapter {
 
   /** Drop processes idle past processIdleMs, then keep the live count under maxProcesses by
    *  killing the longest-idle ones that are not mid-turn. Called before each spawn. */
+  /** Live processes belonging to this mount; the registry is shared across mounts. */
+  ownProcessCount(): number {
+    let n = 0;
+    for (const key of this.processes.keys()) if (key.startsWith(`${this.providerId}:`)) n++;
+    return n;
+  }
+
   evict() {
     const now = Date.now();
-    for (const [id, p] of this.processes) {
+    for (const [key, p] of this.processes) {
+      if (!key.startsWith(`${this.providerId}:`)) continue;
       if (!p.alive || (isSettled(p) && now - p.lastUsed > this.config.processIdleMs)) {
         p.kill();
-        this.processes.delete(id);
+        this.processes.delete(key);
       }
     }
     const idle = [...this.processes.entries()]
+      .filter(([k]) => k.startsWith(`${this.providerId}:`))
       .filter(([, p]) => isSettled(p))
       .toSorted((a, b) => a[1].lastUsed - b[1].lastUsed);
-    while (this.processes.size >= this.config.maxProcesses && idle.length > 0) {
+    while (this.ownProcessCount() >= this.config.maxProcesses && idle.length > 0) {
       const next = idle.shift();
       if (!next) break;
-      const [id, p] = next;
+      const [key, p] = next;
       p.kill();
-      this.processes.delete(id);
+      this.processes.delete(key);
     }
   }
 
@@ -1646,7 +1696,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    */
   // SAFETY: mirrors acquire() shape for the turn loop
   continuationFor(options: SessionOptions, forceFresh?: boolean): Continuation {
-    const held = this.processes.get(options.sessionId);
+    const held = this.processes.get(registryKey(this.providerId, options.sessionId));
     const live = held?.alive && !forceFresh ? held : undefined;
     const fresh = afterLastAssistant(options.messages);
     const onlySent =
@@ -1727,7 +1777,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         r.reject(new Error("dsh moved on without a result for this tool call"));
       cont.proc.relays.clear();
       cont.proc.kill();
-      this.processes.delete(options.sessionId);
+      this.processes.delete(registryKey(this.providerId, options.sessionId));
       yield* this.turn(options, true);
       return;
     }
@@ -1856,7 +1906,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     options.signal?.addEventListener("abort", onAbort, { once: true });
     proc.busy = true;
     proc.lastUsed = Date.now();
-    markBusy(options.sessionId, true).catch((e) => this.log("warn", `busy.json: ${errorText(e)}`));
+    markBusy(options.sessionId, true, join(this.stateDir, "busy.json")).catch((e) =>
+      this.log("warn", `busy.json: ${errorText(e)}`),
+    );
     const handleControl = this.handleControl.bind(this);
     /** One CLI event. Returns what the loop should do next. */
     const dispatch = async function* (event: ClaudeEvent) {
@@ -1964,12 +2016,12 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       for (const c of pending.values()) c.abort();
       proc.busy = false;
       proc.lastUsed = Date.now();
-      markBusy(options.sessionId, false).catch((e) =>
+      markBusy(options.sessionId, false, join(this.stateDir, "busy.json")).catch((e) =>
         this.log("warn", `busy.json: ${errorText(e)}`),
       );
       if (outcome === "retry" || outcome === "ended") {
         proc.kill();
-        this.processes.delete(options.sessionId);
+        this.processes.delete(registryKey(this.providerId, options.sessionId));
       }
     }
     if (outcome === "retry") yield* this.turn(options, true);
@@ -2052,7 +2104,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     args: Record<string, JsonValue>,
     signal: AbortSignal,
   ): Promise<RelayResult> | undefined {
-    const proc = this.processes.get(sessionId);
+    const proc = this.processes.get(registryKey(this.providerId, sessionId));
     if (!proc?.alive || !proc.busy || proc.relays.size > 0) return undefined;
     return new Promise<RelayResult>((resolve, reject) => {
       signal?.addEventListener("abort", () => reject(new Error("relay aborted")), { once: true });
@@ -2213,17 +2265,17 @@ export class ClaudeCodeAdapter extends LlmAdapter {
 }
 
 export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Config>) {
+  const adapter = new ClaudeCodeAdapter(ctx, config);
+  const claudeHome = adapter.claudeHome;
   ctx.llm.registerConfigurableProviders([
     {
-      provider: "claude-code",
-      displayName: "Oh My Claude",
-      settingsNs: "llm-claude-code",
+      provider: adapter.providerId,
+      displayName: adapter.displayName,
+      settingsNs: adapter.settingsNs,
       settingsPath: [],
     },
   ]);
-  const adapter = new ClaudeCodeAdapter(ctx, config);
-  const claudeHome = adapter.claudeHome;
-  ctx.llm.registerAdapter(["claude-code"], adapter);
+  ctx.llm.registerAdapter([adapter.providerId], adapter);
   // dsh drops a session's Agent out of `ctx.agents` after a few idle minutes; the controller's
   // resolveAgent() cold-resumes it, which is what a wake after a long idle needs.
   ctx.inject?.(["sessionController"], (host) => {
@@ -2234,16 +2286,17 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
   // when settings apply at boot, and a scope-bound timer was disposed before it fired.
   // SAFETY: the two symbols are this plugin's own keys on globalThis, typed here once
   const g = globalThis as typeof globalThis & {
-    [ADAPTER_CURRENT]?: ClaudeCodeAdapter;
+    [ADAPTER_CURRENT]?: Map<string, ClaudeCodeAdapter>;
     [RESUME_TIMER]?: ReturnType<typeof setTimeout>;
   };
-  g[ADAPTER_CURRENT] = adapter;
+  (g[ADAPTER_CURRENT] ??= new Map()).set(adapter.providerId, adapter);
   if (!g[RESUME_TIMER]) {
     g[RESUME_TIMER] = setTimeout(() => {
-      const current = g[ADAPTER_CURRENT] ?? adapter;
-      current
-        .resumeInterrupted()
-        .catch((e) => trace(`resume after restart failed: ${errorText(e)}`));
+      // Resume every mounted instance over its own busy file.
+      for (const inst of g[ADAPTER_CURRENT]?.values() ?? [])
+        inst
+          .resumeInterrupted(join(inst.stateDir, "busy.json"))
+          .catch((e) => trace(`resume after restart failed: ${errorText(e)}`));
     }, RESUME_DELAY_MS);
     g[RESUME_TIMER].unref?.();
     void trace("timer armed");
@@ -2253,31 +2306,38 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
     // SAFETY: cordis hands services untyped; dsh's subprocess seam is what this key holds
     adapter.subprocess = host.subprocess as Pick<SubprocessRuntime, "spawn"> | undefined;
   });
-  registerMcpBridge(ctx, {
-    log: (level, msg) => adapter.log(level, msg),
-    version: "0.9.0",
-    relay: (sessionId, toolName, args, signal) => adapter.relay(sessionId, toolName, args, signal),
-  }).then(
-    (mcp) => {
-      adapter.mcp = mcp;
-    },
-    (e) => adapter.log("warn", `mcp bridge unavailable: ${errorText(e)}`),
-  );
-  registerUsageRoute(
-    ctx,
-    (level, msg) => adapter.log(level, msg),
-    () => accountIdentity(adapter.config.command),
-    claudeHome,
-  );
-  registerSessionRoutes(ctx, {
-    log: (level: string, msg: string) => adapter.log(level, msg),
-    projectDir: (cwd: string) => join(claudeHome, "projects", projectDirName(cwd)),
-    projectsDir: join(claudeHome, "projects"),
-    startedIds: loadStarted,
-    claudeIdOf: claudeSessionId,
-    settingsPath: join(claudeHome, "settings.json"),
-    configDir: claudeHome,
-    boxesPath: join(STATE_DIR, "boxes.json"),
-    command: adapter.config.command,
-  });
+  // Routes, MCP bridge, usage route and the client panel are registered once per process: only
+  // the default instance owns them. A non-default mount logs an info line and skips registration.
+  if (adapter.providerId !== "claude-code") {
+    adapter.log("info", "panel/routes/usage belong to the default claude-code instance");
+  } else {
+    registerMcpBridge(ctx, {
+      log: (level, msg) => adapter.log(level, msg),
+      version: "0.9.0",
+      relay: (sessionId, toolName, args, signal) =>
+        adapter.relay(sessionId, toolName, args, signal),
+    }).then(
+      (mcp) => {
+        adapter.mcp = mcp;
+      },
+      (e) => adapter.log("warn", `mcp bridge unavailable: ${errorText(e)}`),
+    );
+    registerUsageRoute(
+      ctx,
+      (level, msg) => adapter.log(level, msg),
+      () => accountIdentity(adapter.config.command),
+      claudeHome,
+    );
+    registerSessionRoutes(ctx, {
+      log: (level: string, msg: string) => adapter.log(level, msg),
+      projectDir: (cwd: string) => join(claudeHome, "projects", projectDirName(cwd)),
+      projectsDir: join(claudeHome, "projects"),
+      startedIds: loadStarted,
+      claudeIdOf: claudeSessionId,
+      settingsPath: join(claudeHome, "settings.json"),
+      configDir: claudeHome,
+      boxesPath: join(STATE_DIR, "boxes.json"),
+      command: adapter.config.command,
+    });
+  }
 }

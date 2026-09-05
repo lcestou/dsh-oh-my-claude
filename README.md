@@ -76,6 +76,8 @@ All keys are optional.
 | `maxProcesses` | `4` | Cap on live Claude processes; the longest idle is evicted first. |
 | `persistTodos` | `true` | Re-append the last todo list at each turn start so dsh's panel keeps it. |
 | `configDir` | `` | Claude Code config dir for this plugin instance (exported as `CLAUDE_CONFIG_DIR` to every spawned CLI process); empty = the env var or `~/.claude`. Moves transcripts, `settings.json` and `.credentials.json` together — groundwork for multi-account mounts. |
+| `providerId` | `claude-code` | Provider id in the model picker. The default is `claude-code`; anything starting with `claude-code-` (e.g. `claude-code-work`) mounts a second independent instance with its own login, state and process registry. |
+| `providerName` | `` | Display name in the model picker. Empty = "Oh My Claude" for the default id, else "Oh My Claude (\<suffix\>)" where suffix is the part after `claude-code-`. |
 | `dshTools` | `true` | Serve dsh tools (subagents, jobs, goals, skills, web search) to Claude Code over MCP. |
 
 Effort: none is advertised as default, so Claude Code's own default applies unless you pick one in dsh. Claude Code's own subagents stream back as `↳ subagent` reasoning blocks. Tool calls the CLI denies because it cannot prompt are counted and reported in one line at the end of the turn.
@@ -125,6 +127,23 @@ The plugin runs Claude Code as a child process of dsh, so everything is on the m
 - **Binary**: `claude` from that process's `PATH`. No path setting; put it on the PATH of the user running dsh.
 - **Config dir**: the plugin's `configDir` if set, else `$CLAUDE_CONFIG_DIR` if set for the dsh process, otherwise `~/.claude` of that user. Transcripts (`projects/`), `settings.json` and the login token all live there, the same place a terminal `claude` on that machine uses.
 - **Login**: done once, in a terminal on that machine, with `claude auth login`. The panel's first line shows which binary, which config dir, which host and which account dsh sees; if it says not logged in, that is the fix.
+
+**Several accounts.** Mount the plugin more than once in the profile's `cordis.patch.yml` — same `name: dsh-oh-my-claude`, distinct `id` values, each with its own `configDir` and a `providerId` starting with `claude-code-`:
+
+```yaml
+- id: oh-my-claude
+  name: dsh-oh-my-claude
+  config:
+    configDir: ~/.claude
+- id: oh-my-claude-work
+  name: dsh-oh-my-claude
+  config:
+    providerId: claude-code-work
+    providerName: Work
+    configDir: ~/.claude-work
+```
+
+Each mount gets its own `CLAUDE_CONFIG_DIR`, state files under `~/.local/state/dsh-oh-my-claude/<providerId>/` (sessions, busy log, resume trace), and a separate row in the process registry, so the two logins never mix. In v1 the session browser, settings editor, MCP bridge, usage route and turn-status panel all belong to the default `claude-code` instance; a non-default mount logs one info line saying so.
 
 Same box, several clients (laptop, phone, another PC on the LAN): run `dsh web` where Claude Code is logged in and open that URL from anywhere.
 

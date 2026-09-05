@@ -21,6 +21,11 @@ export function resolveClaudeHome(dir: string): string {
 // where Claude Code keeps its transcripts. A wrong guess still degrades to a fresh full-transcript run.
 export const STATE_DIR = join(homedir(), ".local", "state", "dsh-oh-my-claude");
 export const STATE_FILE = join(STATE_DIR, "sessions.json");
+/** Derive per-instance state dir from a provider id; default id uses the shared top-level path. */
+export function stateDir(providerId: string): string {
+  return providerId === "claude-code" ? STATE_DIR : join(STATE_DIR, providerId);
+}
+
 /** Sessions with a turn in flight. Survives a dsh restart so those sessions can be nudged back. */
 export const BUSY_FILE = join(STATE_DIR, "busy.json");
 /** Plugin info logs never reach dsh's web.log; the resume path keeps its own trace file. */
@@ -73,36 +78,44 @@ let auxReady: Promise<string> | undefined;
 export const auxCwd = (): Promise<string> =>
   (auxReady ??= mkdir(AUX_DIR, { recursive: true }).then(() => AUX_DIR));
 
-let started: Set<string> | undefined; // Set of Claude session ids known to exist
+const startedCache = new Map<string, Set<string>>(); // per-stateFile cache for known sessions
 
 /**
  * Loads the set of Claude session IDs that this plugin has started.
- * Cached after the first call.
+ * Cached after the first call; per-instance when a state file is given.
  */
-export async function loadStarted(): Promise<Set<string>> {
-  if (started) return started;
+export async function loadStarted(stateFile = STATE_FILE): Promise<Set<string>> {
+  const cached = startedCache.get(stateFile);
+  if (cached) return cached;
   try {
-    const ids: unknown = JSON.parse(await readFile(STATE_FILE, "utf8"));
-    started = new Set(
+    const ids: unknown = JSON.parse(await readFile(stateFile, "utf8"));
+    const set = new Set(
       Array.isArray(ids) ? ids.filter((x): x is string => typeof x === "string") : [],
     );
+    startedCache.set(stateFile, set);
+    return set;
   } catch {
-    started = new Set();
+    const empty = new Set<string>();
+    startedCache.set(stateFile, empty);
+    return empty;
   }
-  return started;
 }
 
 /**
  * Records or removes a Claude session ID from the known sessions list.
  */
-export async function rememberStarted(id: string, keep = true): Promise<void> {
-  const set = await loadStarted();
+export async function rememberStarted(
+  id: string,
+  keep = true,
+  stateFile = STATE_FILE,
+): Promise<void> {
+  const set = await loadStarted(stateFile);
   if (keep ? set.has(id) : !set.has(id)) return;
   if (keep) set.add(id);
   else set.delete(id);
   try {
-    await mkdir(STATE_DIR, { recursive: true });
-    await writeFile(STATE_FILE, JSON.stringify([...set]));
+    await mkdir(dirname(stateFile), { recursive: true });
+    await writeFile(stateFile, JSON.stringify([...set]));
   } catch {
     /* state is an optimization only */
   }
