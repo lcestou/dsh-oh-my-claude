@@ -1127,7 +1127,7 @@ function renderUsage(block: HTMLElement, reply: UsageReply) {
 /**
  * Put the plan usage inside dsh's context-meter popover, above the "N% of context used" line.
  * The meter (dsh-client-ui-conversation ContextMeter) has no slot, so this watches the DOM for
- * its dialog: the `[role=dialog]` that follows a `button[aria-haspopup=dialog]` holding a ring.
+ * its dialog: a `[role=dialog]` whose parent holds a `button[aria-haspopup=dialog]` with the ring.
  * ponytail: DOM hook on a structural selector; swap for a slot the day the meter grows one.
  */
 function watchContextMeter() {
@@ -1150,11 +1150,14 @@ function watchContextMeter() {
       (e: Error) => renderUsage(rows, { ok: false, error: e.message }),
     );
   };
+  // The hover tooltip can sit between the button and the dialog at insertion time, so the
+  // dialog is matched through its parent rather than as the button's next sibling.
   const scan = (root: ParentNode) => {
-    for (const el of root.querySelectorAll<HTMLElement>(
-      'button[aria-haspopup="dialog"] + [role="dialog"]',
-    ))
-      if (el.previousElementSibling?.querySelector("svg circle + circle")) attach(el);
+    for (const el of root.querySelectorAll<HTMLElement>('[role="dialog"]'))
+      if (
+        el.parentElement?.querySelector(':scope > button[aria-haspopup="dialog"] circle + circle')
+      )
+        attach(el);
   };
   new MutationObserver((records) => {
     for (const r of records)
