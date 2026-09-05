@@ -2171,10 +2171,19 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       // 2026-09-05: with no browser attached, the restart notice was spliced but no turn started
       // until the next typed prompt. Record the agent's phase after the followup so the next
       // occurrence says whether the loop was idle (driver never kicked) or busy (maintenance).
-      // SAFETY: dsh's Agent exposes status() ("idle" | "running"); an older build without it
-      // reads as "unknown" rather than throwing
-      const a = agent as { status?: () => string };
-      const phase = () => (a.status ? a.status() : "unknown");
+      // dsh's Agent exposes `status` as a getter ("idle" | "running"); some builds expose a
+      // method. Read it defensively: a throw inside setTimeout would take the whole dsh process
+      // down (2026-09-05: 14 crash-loop restarts from `a.status()` on a string).
+      // SAFETY: only read, never called; any value stringifies, a getter that throws is caught
+      const a = agent as { status?: unknown };
+      const phase = (): string => {
+        try {
+          const v = a.status;
+          return v === undefined ? "unknown" : String(v).slice(0, 40);
+        } catch (error) {
+          return `error:${errorText(error)}`;
+        }
+      };
       for (const delayMs of [2000, 15000]) {
         setTimeout(() => {
           void trace(`wake ${sessionId}: phase ${phase()} at +${delayMs}ms`);
