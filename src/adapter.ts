@@ -2094,6 +2094,20 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     } catch (error) {
       this.log("warn", `wake after idle reply failed: ${errorText(error)}`);
     }
+    if (text === RESTART_TEXT) {
+      // 2026-09-05: with no browser attached, the restart notice was spliced but no turn started
+      // until the next typed prompt. Record the agent's phase after the followup so the next
+      // occurrence says whether the loop was idle (driver never kicked) or busy (maintenance).
+      // SAFETY: dsh's Agent exposes status() ("idle" | "running"); an older build without it
+      // reads as "unknown" rather than throwing
+      const a = agent as { status?: () => string };
+      const phase = () => (a.status ? a.status() : "unknown");
+      for (const delayMs of [2000, 15000]) {
+        setTimeout(() => {
+          void trace(`wake ${sessionId}: phase ${phase()} at +${delayMs}ms`);
+        }, delayMs);
+      }
+    }
   }
 
   /** Offer a dsh tool call from the MCP bridge to the session's live turn. Undefined when no turn
