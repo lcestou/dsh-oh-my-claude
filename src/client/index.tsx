@@ -1287,28 +1287,137 @@ function watchContextMeter() {
   scan(document.body);
 }
 
+interface RestoreButtonProps {
+  sessionId: string;
+  ctx: ClientCtx;
+}
+
+/** One-row transcript pick inside the compact restore list. */
+function TranscriptRow({
+  s,
+  cwd,
+  ctx,
+  onClose,
+}: {
+  s: SessionData;
+  cwd: string;
+  ctx: ClientCtx;
+  onClose: () => void;
+}) {
+  const label = s.title ?? s.id;
+  return (
+    <button
+      type="button"
+      style={{ ...btn, width: "100%", textAlign: "left", padding: "5px 10px" }}
+      onClick={async () => {
+        await openHere(ctx, s, cwd);
+        onClose();
+      }}
+    >
+      <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        {label}
+      </span>
+      {s.cwd && (
+        <span title={s.cwd} style={meta}>
+          {shortPath(s.cwd)} · {ago(s.modifiedAt)}
+        </span>
+      )}
+    </button>
+  );
+}
+
+/** A transcript already tracked by a live (not archived) dsh session: it is in the sidebar, skip it. */
+export const isOwnedActive = (s: { dsh?: { id?: string; archived?: boolean } }): boolean =>
+  !!s.dsh?.id && !s.dsh.archived;
+
+/** "Restore Claude session" button rendered in `conversation.input.left` on blank sessions. */
+function RestoreButton({ sessionId, ctx }: RestoreButtonProps) {
+  const entry = ctx.sessions.list.getSnapshot()?.byId[sessionId];
+  const cwd = entry?.cwd;
+  const [transcripts, setTranscripts] = useState<SessionData[]>([]);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!cwd) return;
+    let live = true; // the composer unmounts on session switch; drop a late reply
+    fetch(`${ROUTE}/sessions?cwd=${encodeURIComponent(cwd)}`)
+      .then((r) => readJson<{ sessions?: SessionData[] }>(r))
+      .then((body) => live && setTranscripts(body.sessions ?? []))
+      .catch(() => live && setTranscripts([]));
+    return () => {
+      live = false;
+    };
+  }, [cwd]);
+
+  // Hide when the session already has content, the workspace is unknown, or nothing to restore.
+  if (!cwd || entry?.blank === false) return null;
+  const owned = transcripts.filter(isOwnedActive);
+  const rest = transcripts.filter((s) => !isOwnedActive(s)).slice(0, 8);
+  if (rest.length === 0) return null;
+
+  return (
+    <span style={{ display: "inline-flex", flexDirection: "column", alignItems: "flex-start" }}>
+      <button type="button" style={btn} onClick={() => setOpen((v) => !v)}>
+        Restore Claude session
+      </button>
+      {open && (
+        <span
+          style={{
+            marginTop: 4,
+            display: "flex",
+            flexDirection: "column",
+            gap: 4,
+            maxHeight: 240,
+            overflowY: "auto",
+            background: T.card,
+            border: `1px solid ${T.border}`,
+            borderRadius: 8,
+            padding: 6,
+          }}
+        >
+          {rest.map((s) => (
+            <TranscriptRow key={s.id} s={s} cwd={cwd} ctx={ctx} onClose={() => setOpen(false)} />
+          ))}
+          {owned.length > 0 && (
+            <span style={{ fontSize: 11, color: T.faint, padding: "2px 4px" }}>
+              {owned.length} already open
+            </span>
+          )}
+        </span>
+      )}
+    </span>
+  );
+}
+
 /**
  * Registers the Claude Code panel in dsh settings: runtime line, one session list across boxes,
  * then the saved boxes and Claude Code's settings.json as collapsed cards.
  */
 type DshSlots = {
-  inject: (section: string, factory: () => ReactNode) => void;
+  inject: (slot: string, factory: () => ReactNode) => void;
   register: (
     spec: {
       name: string;
-      id: string;
-      order: number;
-      label: string;
-      inject: () => Record<string, never>;
+      id?: string;
+      order?: number;
+      label?: string;
+      inject?: () => Record<string, never>;
     },
-    Component: () => ReactNode,
+    Component: (props: { sessionId?: string }) => ReactNode,
   ) => void;
 };
 /** The dsh client services this panel uses, the ones `inject` names. */
 interface ClientCtx {
   slots: DshSlots;
   sessions: {
-    list: { getSnapshot: () => { byId: Record<string, { id: string }>; phase?: string } };
+    // `cwd` and `blank` come from SessionSummary (dsh-session-persistence);
+    // the snapshot stores one per live session keyed by sessionId.
+    list: {
+      getSnapshot: () => {
+        byId: Record<string, { id: string; cwd?: string; blank?: boolean }>;
+        phase?: string;
+      };
+    };
     open: (id: string) => void;
     create: (opts: { sessionId: string; workspaceId?: string }) => Promise<void>;
   };
@@ -1365,6 +1474,16 @@ export function apply(ctx: ClientCtx) {
         inject: () => ({}),
       },
       Section,
+    );
+    return null;
+  });
+
+  // Restore button placed next to the composer input on blank sessions.
+  ctx.slots.inject("conversation.input.left", () => {
+    ctx.slots.register(
+      { name: "conversation.input.left", id: "restore-claude-session", order: 50 },
+      // Session-scoped slots receive `sessionId` (dsh-client-ui-jobs reads it the same way).
+      (props) => (props.sessionId ? <RestoreButton sessionId={props.sessionId} ctx={ctx} /> : null),
     );
     return null;
   });
