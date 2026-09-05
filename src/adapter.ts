@@ -1190,6 +1190,21 @@ export class Translator {
             );
           return [];
         }
+        // Auto-memory traffic: one line each way, so the Memory button's count is explained.
+        if (event.subtype === "memory_saved") {
+          const paths = event.written_paths ?? [];
+          const names = paths.map((f) => f.slice(f.lastIndexOf("/") + 1)).join(", ");
+          return this.wholeBlock(
+            "reasoning",
+            `${event.verb ?? "Saved"} ${paths.length} ${paths.length === 1 ? "memory" : "memories"}${names ? `: ${names}` : ""}`,
+          );
+        }
+        if (event.subtype === "memory_recall") {
+          const n = event.memories?.length ?? 0;
+          return n > 0
+            ? this.wholeBlock("reasoning", `Recalled ${n} ${n === 1 ? "memory" : "memories"}`)
+            : [];
+        }
         // Claude Code compacted its own context (auto or /compact). One line so the user knows
         // why the model may have lost detail; every other system subtype is handshake noise.
         if (event.subtype !== "compact_boundary") return [];

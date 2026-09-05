@@ -52,6 +52,11 @@ export type ClaudeEvent =
       status?: string | null;
       compact_result?: string;
       compact_error?: string;
+      // subtype "memory_saved": the auto-memory files Claude just wrote; "memory_recall": the ones
+      // it pulled into context at the start of a turn.
+      written_paths?: string[];
+      verb?: string;
+      memories?: Array<{ path?: string; scope?: string }>;
     }
   | { type: "stream_event"; event?: ClaudeStreamPartial }
   | { type: "assistant"; message?: ClaudeAssistantMessage; parent_tool_use_id?: string | null }

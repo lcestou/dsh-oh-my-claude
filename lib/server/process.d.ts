@@ -26,6 +26,12 @@ export type ClaudeEvent = {
     status?: string | null;
     compact_result?: string;
     compact_error?: string;
+    written_paths?: string[];
+    verb?: string;
+    memories?: Array<{
+        path?: string;
+        scope?: string;
+    }>;
 } | {
     type: "stream_event";
     event?: ClaudeStreamPartial;

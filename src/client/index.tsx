@@ -2157,8 +2157,12 @@ function MemoryButton({ sessionId, ctx }: RestoreButtonProps) {
       .then((b) => setFiles(b.files ?? []))
       .catch((e: Error) => setError(e.message));
   };
-  // Re-list when the popover opens: Claude may have written a memory since the last look.
-  useEffect(refresh, [cwd, open]);
+  // Re-list when the popover opens and every half minute: Claude writes memories mid-turn.
+  useEffect(() => {
+    refresh();
+    const timer = setInterval(refresh, 30_000);
+    return () => clearInterval(timer);
+  }, [cwd, open]);
 
   const openFile = async (n: string) => {
     setError("");

@@ -1107,6 +1107,28 @@ console.log("ok");
   assert.match(manual.at(-1).block.text, /\(manual\)/, "manual trigger, no token count");
 }
 {
+  // Auto-memory traffic: saved files and recalls show as one reasoning line each; an empty recall is silent.
+  const t = new Translator() as any;
+  const saved = t.translate({
+    type: "system",
+    subtype: "memory_saved",
+    written_paths: [
+      "/h/.claude/projects/p/memory/feedback-x.md",
+      "/h/.claude/projects/p/memory/MEMORY.md",
+    ],
+  });
+  assert.equal(saved.at(-1).block.type, "reasoning");
+  assert.equal(saved.at(-1).block.text, "Saved 2 memories: feedback-x.md, MEMORY.md");
+  const recalled = t.translate({
+    type: "system",
+    subtype: "memory_recall",
+    mode: "select",
+    memories: [{ path: "a.md" }],
+  });
+  assert.equal(recalled.at(-1).block.text, "Recalled 1 memory");
+  assert.deepEqual(t.translate({ type: "system", subtype: "memory_recall", memories: [] }), []);
+}
+{
   // The compaction start frame (status:"compacting") is announced at once, so the silent summarize
   // stretch has a visible anchor and does not arrive delayed as the boundary line alone.
   const t = new Translator() as any;
