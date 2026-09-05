@@ -1840,6 +1840,44 @@ interface RestoreButtonProps {
   ctx: ClientCtx;
 }
 
+/** A popover anchored above a composer control, so a list never expands the composer bar. */
+const popover: CSSProperties = {
+  position: "absolute",
+  bottom: "calc(100% + 6px)",
+  left: 0,
+  width: 440,
+  zIndex: 40,
+  display: "flex",
+  flexDirection: "column",
+  gap: 4,
+  maxHeight: 280,
+  overflowY: "auto",
+  background: T.card,
+  border: `1px solid ${T.border}`,
+  borderRadius: 8,
+  padding: 6,
+  boxShadow: "0 8px 24px rgba(0,0,0,.18)",
+};
+
+/** Close an open popover on an outside click or Escape. */
+function useDismiss(open: boolean, close: () => void, root: { current: HTMLElement | null }) {
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (e.target instanceof Node && !root.current?.contains(e.target)) close();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") close();
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open, close, root]);
+}
+
 /** One-row transcript pick inside the compact restore list. */
 function TranscriptRow({
   s,
@@ -1898,22 +1936,7 @@ function RestoreButton({ sessionId, ctx }: RestoreButtonProps) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLSpanElement>(null);
 
-  // The list is a popover over the composer: close it on an outside click or Escape.
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (e.target instanceof Node && !rootRef.current?.contains(e.target)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
+  useDismiss(open, () => setOpen(false), rootRef);
 
   useEffect(() => {
     if (!cwd) return;
@@ -1939,26 +1962,7 @@ function RestoreButton({ sessionId, ctx }: RestoreButtonProps) {
         Restore Claude session
       </button>
       {open && (
-        <div
-          role="menu"
-          style={{
-            position: "absolute",
-            bottom: "calc(100% + 6px)",
-            left: 0,
-            width: 440,
-            zIndex: 40,
-            display: "flex",
-            flexDirection: "column",
-            gap: 4,
-            maxHeight: 280,
-            overflowY: "auto",
-            background: T.card,
-            border: `1px solid ${T.border}`,
-            borderRadius: 8,
-            padding: 6,
-            boxShadow: "0 8px 24px rgba(0,0,0,.18)",
-          }}
-        >
+        <div role="menu" style={popover}>
           {rest.map((s) => (
             <TranscriptRow key={s.id} s={s} cwd={cwd} ctx={ctx} onClose={() => setOpen(false)} />
           ))}
@@ -1967,6 +1971,178 @@ function RestoreButton({ sessionId, ctx }: RestoreButtonProps) {
               {owned.length} already open
             </span>
           )}
+        </div>
+      )}
+    </span>
+  );
+}
+
+/** One of Claude's auto-memory files for the current workspace, as `GET /memory` lists it. */
+interface MemoryFile {
+  name: string;
+  size: number;
+  mtime: number;
+  summary: string;
+}
+
+/**
+ * "Memory" control in `conversation.input.left`: lists the workspace's Claude auto-memory files
+ * (`<project dir>/memory/*.md`, MEMORY.md first) and edits or deletes one in place.
+ */
+function MemoryButton({ sessionId, ctx }: RestoreButtonProps) {
+  const cwd = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.cwd;
+  const [files, setFiles] = useState<MemoryFile[]>([]);
+  const [open, setOpen] = useState(false);
+  const [file, setFile] = useState<string | null>(null);
+  const [text, setText] = useState("");
+  const [saved, setSaved] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const rootRef = useRef<HTMLSpanElement>(null);
+  useDismiss(open, () => setOpen(false), rootRef);
+
+  const q = cwd ? `cwd=${encodeURIComponent(cwd)}` : "";
+  const refresh = () => {
+    if (!cwd) return;
+    fetch(`${ROUTE}/memory?${q}`)
+      .then((r) => readJson<{ files?: MemoryFile[] }>(r))
+      .then((b) => setFiles(b.files ?? []))
+      .catch((e: Error) => setError(e.message));
+  };
+  // Re-list when the popover opens: Claude may have written a memory since the last look.
+  useEffect(refresh, [cwd, open]);
+
+  const openFile = async (n: string) => {
+    setError("");
+    try {
+      const body = await readJson<{ text: string }>(
+        await fetch(`${ROUTE}/memory?${q}&name=${encodeURIComponent(n)}`),
+      );
+      setFile(n);
+      setText(body.text);
+      setSaved(body.text);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+  const save = async () => {
+    if (!file) return;
+    setBusy(true);
+    setError("");
+    try {
+      await readJson(
+        await fetch(`${ROUTE}/memory`, {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ cwd, name: file, text }),
+        }),
+      );
+      setSaved(text);
+      refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const remove = async () => {
+    if (!file || !window.confirm(`Delete ${file}? MEMORY.md drops its line too.`)) return;
+    setBusy(true);
+    setError("");
+    try {
+      await readJson(
+        await fetch(`${ROUTE}/memory?${q}&name=${encodeURIComponent(file)}`, { method: "DELETE" }),
+      );
+      setFile(null);
+      refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!cwd || (files.length === 0 && !open)) return null;
+  const dirty = text !== saved;
+  return (
+    <span ref={rootRef} style={{ position: "relative", display: "inline-flex" }}>
+      <button
+        type="button"
+        style={btn}
+        title="Claude's auto-memory for this workspace"
+        onClick={() => setOpen((v) => !v)}
+      >
+        Memory · {files.length}
+      </button>
+      {open && (
+        <div
+          role="dialog"
+          aria-label="Claude memory"
+          style={{ ...popover, width: 560, maxHeight: 420 }}
+        >
+          {file === null ? (
+            files.map((f) => (
+              <button
+                key={f.name}
+                type="button"
+                style={{
+                  ...btn,
+                  display: "flex",
+                  width: "100%",
+                  textAlign: "left",
+                  padding: "5px 10px",
+                }}
+                onClick={() => openFile(f.name)}
+              >
+                <span style={{ flex: "none", fontFamily: T.mono, fontSize: 12 }}>{f.name}</span>
+                <span
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    marginLeft: 10,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    color: T.muted,
+                  }}
+                >
+                  {f.summary}
+                </span>
+                <span style={{ ...meta, flex: "none", marginLeft: 8 }}>{ago(f.mtime)}</span>
+              </button>
+            ))
+          ) : (
+            <>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <button type="button" style={btn} onClick={() => setFile(null)} disabled={busy}>
+                  ‹ Back
+                </button>
+                <span style={{ flex: 1, fontFamily: T.mono, fontSize: 12 }}>{file}</span>
+                <button type="button" style={btn} onClick={remove} disabled={busy}>
+                  Delete
+                </button>
+                <button
+                  type="button"
+                  style={dirty ? btnPrimary : btn}
+                  onClick={save}
+                  disabled={busy || !dirty}
+                >
+                  Save
+                </button>
+              </div>
+              <textarea
+                value={text}
+                spellCheck={false}
+                autoFocus
+                onChange={(e) => setText(e.target.value)}
+                onKeyDown={(e) => {
+                  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") save();
+                }}
+                style={{ ...code, minHeight: 300, resize: "vertical", whiteSpace: "pre-wrap" }}
+              />
+            </>
+          )}
+          {error && <span style={{ color: T.err, fontSize: 12 }}>{error}</span>}
         </div>
       )}
     </span>
@@ -2088,6 +2264,10 @@ export function apply(ctx: ClientCtx) {
       { name: "conversation.input.left", id: "restore-claude-session", order: 50 },
       // Session-scoped slots receive `sessionId` (dsh-client-ui-jobs reads it the same way).
       (props) => (props.sessionId ? <RestoreButton sessionId={props.sessionId} ctx={ctx} /> : null),
+    );
+    ctx.slots.register(
+      { name: "conversation.input.left", id: "claude-memory", order: 51 },
+      (props) => (props.sessionId ? <MemoryButton sessionId={props.sessionId} ctx={ctx} /> : null),
     );
     return null;
   });

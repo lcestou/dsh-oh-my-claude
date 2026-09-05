@@ -116,7 +116,7 @@ import { probeBox, registerSessionRoutes } from "./sessions.js";
   });
   assert.ok(handler);
 
-  const respond = async (method: string, url: string) => {
+  const respond = async (method: string, url: string, body?: string) => {
     let respBody = "";
     const resChunks: Buffer[] = [];
     // SAFETY: partial fake for tests
@@ -128,7 +128,15 @@ import { probeBox, registerSessionRoutes } from "./sessions.js";
       },
     };
     // SAFETY: partial fake for tests
-    const fakeReq = { method, url, on: () => {}, destroy: () => {} } as any;
+    const fakeReq = {
+      method,
+      url,
+      on: (ev: string, cb: (c?: Buffer) => void) => {
+        if (ev === "data" && body !== undefined) cb(Buffer.from(body));
+        if (ev === "end") cb();
+      },
+      destroy: () => {},
+    } as any;
     await handler!(fakeReq, fakeRes);
     respBody = Buffer.concat(resChunks).toString("utf8");
     return JSON.parse(respBody);
@@ -141,6 +149,35 @@ import { probeBox, registerSessionRoutes } from "./sessions.js";
   // 404: unknown box url
   r = await respond("GET", "/dsh-oh-my-claude/boxes/settings?url=http://z");
   assert.equal(r.error, "unknown box");
+
+  // Memory routes: list, read, write, delete under <project dir>/memory; names are bare .md files.
+  const cwd = "/work/app";
+  const mem = `/dsh-oh-my-claude/memory?cwd=${encodeURIComponent(cwd)}`;
+  r = await respond("GET", "/dsh-oh-my-claude/memory");
+  assert.equal(r.error, "cwd must be an absolute path");
+  r = await respond("GET", mem);
+  assert.deepEqual(r.files, [], "no memory dir lists empty");
+  r = await respond(
+    "PUT",
+    "/dsh-oh-my-claude/memory",
+    JSON.stringify({ cwd, name: "../x.md", text: "" }),
+  );
+  assert.equal(r.error, "name must be a .md file");
+  r = await respond(
+    "PUT",
+    "/dsh-oh-my-claude/memory",
+    JSON.stringify({ cwd, name: "a.md", text: "---\ndescription: fact a\n---\nA" }),
+  );
+  assert.equal(r.ok, true);
+  r = await respond("GET", mem);
+  assert.equal(r.files[0].name, "a.md");
+  assert.equal(r.files[0].summary, "fact a");
+  r = await respond("GET", `${mem}&name=a.md`);
+  assert.equal(r.text, "---\ndescription: fact a\n---\nA");
+  r = await respond("DELETE", `${mem}&name=a.md`);
+  assert.equal(r.ok, true);
+  r = await respond("GET", `${mem}&name=a.md`);
+  assert.equal(r.error, "not found");
 }
 
 console.log("sessions ok");

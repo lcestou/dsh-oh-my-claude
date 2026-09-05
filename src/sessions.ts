@@ -5,10 +5,11 @@
 import { execFile } from "node:child_process";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { hostname } from "node:os";
-import { readdir, readFile, writeFile, rename, copyFile, stat } from "node:fs/promises";
+import { readdir, readFile, writeFile, rename, copyFile, stat, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { listTranscripts, readTranscript, toSessionEvents } from "./transcript.js";
 import type { TranscriptListItem } from "./transcript.js";
+import { deleteMemory, isMemoryName, listMemory } from "./memory.js";
 import { asSessionId } from "./dsh.js";
 import type { JsonValue, PluginContext, WorkspaceRegistry } from "./dsh.js";
 import { errorText } from "./process.js";
@@ -54,6 +55,8 @@ export const readBody = (req: IncomingMessage, limit = BODY_LIMIT): Promise<Json
     req.on("error", reject);
   });
 
+const validMemoryName = (name: unknown): name is string =>
+  typeof name === "string" && isMemoryName(name);
 const validId = (id: unknown): id is string => typeof id === "string" && /^[0-9a-f-]{36}$/.test(id);
 
 /** What parseSettingsText hands back: the object, or why the text is not one. */
@@ -604,6 +607,40 @@ export function registerSessionRoutes(
                   200,
                   await openTranscript(routeHost, projectDir, cwd, id, claudeIdOf, registry),
                 );
+              }
+              // Claude's auto-memory for a workspace: list, read, write, delete one file.
+              if (url.pathname === `${ROUTE_PREFIX}/memory`) {
+                const body = req.method === "GET" ? {} : await readBody(req, 1024 * 1024);
+                const cwd = url.searchParams.get("cwd") ?? body.cwd;
+                if (!validCwd(cwd))
+                  return json(res, 400, { error: "cwd must be an absolute path" });
+                const dir = join(projectDir(cwd), "memory");
+                const name = url.searchParams.get("name") ?? body.name;
+                if (req.method === "GET" && name === undefined)
+                  return json(res, 200, { dir, files: await listMemory(dir) });
+                if (!validMemoryName(name))
+                  return json(res, 400, { error: "name must be a .md file" });
+                const path = join(dir, name);
+                if (req.method === "GET") {
+                  const text = await readFile(path, "utf8").catch(() => null);
+                  return text === null
+                    ? json(res, 404, { error: "not found" })
+                    : json(res, 200, { text });
+                }
+                if (req.method === "PUT") {
+                  if (typeof body.text !== "string")
+                    return json(res, 400, { error: "text required" });
+                  await mkdir(dir, { recursive: true });
+                  await writeFile(path, body.text, "utf8");
+                  log("info", `memory ${name} saved (${body.text.length} chars)`);
+                  return json(res, 200, { ok: true });
+                }
+                if (req.method === "DELETE") {
+                  await deleteMemory(dir, name);
+                  log("info", `memory ${name} deleted`);
+                  return json(res, 200, { ok: true });
+                }
+                return json(res, 405, { error: "method not allowed" });
               }
               if (settingsPath && url.pathname === `${ROUTE_PREFIX}/settings`) {
                 if (req.method === "GET") return json(res, 200, await readSettings(settingsPath));
