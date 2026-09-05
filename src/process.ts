@@ -234,6 +234,11 @@ export function interruptLine(requestId: string): string {
   return `${JSON.stringify({ type: "control_request", request_id: requestId, request: { subtype: "interrupt" } })}\n`;
 }
 
+/** stdin line to switch the Claude Code permission mode live; the CLI answers with success or an error. */
+export function setPermissionModeLine(requestId: string, mode: string): string {
+  return `${JSON.stringify({ type: "control_request", request_id: requestId, request: { subtype: "set_permission_mode", mode } })}\n`;
+}
+
 /**
  * Formats a control response error as a stdin line for the Claude Code process.
  * @param {string} requestId - The request ID that caused the error

@@ -34,6 +34,7 @@ import {
   permissionReason,
   userTurnLine,
   interruptLine,
+  setPermissionModeLine,
   nodeSpawner,
   seamSpawner,
   attachKeeper,
@@ -70,10 +71,13 @@ import {
   CLAUDE_HOME,
   hasPendingNotice,
   loadStarted,
+  isPermissionMode,
+  loadPermissionModes,
   markBusy,
   noteBoot,
   rememberStarted,
   resolveClaudeHome,
+  savePermissionMode,
   STATE_DIR,
   stateDir,
   takeInterrupted,
@@ -294,6 +298,19 @@ export const Config = z.object({
 });
 
 /** Keys the shared process registry by instance so two mounts never see each other's processes. */
+/** Outcome of a control request this plugin sent to the CLI. */
+export type ControlReply = { ok: true; error?: undefined } | { ok: false; error: string };
+/** What the permission-mode route reports: the mode in force and the stored override. */
+export interface PermissionModeInfo {
+  mode: string;
+  override: string | null;
+}
+export interface PermissionModeReply extends PermissionModeInfo {
+  /** A live process was told; false when the override only applies at the next spawn. */
+  live: boolean;
+  error?: string;
+}
+
 export function registryKey(providerId: string, sessionId: string): string {
   return `${providerId}:${sessionId}`;
 }
@@ -673,6 +690,7 @@ export function buildArgs({
   promptText,
   mcp,
   temporary = false,
+  permissionMode,
 }: Pick<GenerateOptions, "reasoningEffort" | "system" | "purpose"> & {
   model: string | undefined;
   config: Schemastery.TypeT<typeof Config>;
@@ -683,6 +701,8 @@ export function buildArgs({
   mcp?: { url: string; key: string } | undefined;
   /** /temporary: keep no Claude transcript for this session. */
   temporary?: boolean;
+  /** Optional permission mode override; if provided, used instead of computing from config. */
+  permissionMode?: string;
 }) {
   const args = ["-p"];
   if (usesStdin(flags)) args.push("--input-format", "stream-json");
@@ -709,7 +729,8 @@ export function buildArgs({
   if (temporary && supports(flags, "--no-session-persistence"))
     args.push("--no-session-persistence");
   if (supports(flags, "--permission-mode")) {
-    args.push("--permission-mode", permissionModeFor(config, accessMode));
+    const mode = permissionMode ?? permissionModeFor(config, accessMode);
+    args.push("--permission-mode", mode);
   }
   if (config.approvals && usesStdin(flags) && supports(flags, "--permission-prompt-tool")) {
     args.push("--permission-prompt-tool", "stdio");
@@ -1483,6 +1504,12 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   /** Per-session turn accounting buffer (last 50 turns); keyed by dsh sessionId. Lives on
    *  globalThis so the route registered at boot reads what a hot-reloaded adapter fills. */
   readonly turnBuffer: Map<string, TurnRecord[]>;
+  /** Per-session permission mode overrides; loaded from disk at init, saved on change. */
+  permissionModes: Map<string, string | null>;
+  /** dsh access mode seen on each session's last turn, so the effective mode can be reported. */
+  accessModes: Map<string, string | undefined>;
+  /** Callers waiting for the CLI's `control_response` to a request this plugin sent, by request id. */
+  controlWaiters: Map<string, (reply: ControlReply) => void>;
   claudeHome: string;
   providerId: string;
   displayName: string;
@@ -1508,6 +1535,14 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         : `Oh My Claude (${this.providerId.slice("claude-code".length).slice(1)})`);
     this.settingsNs = `llm-${this.providerId}`;
     this.stateDir = stateDir(this.providerId);
+    this.permissionModes = new Map(); // loaded async below; fire-and-forget
+    this.accessModes = new Map();
+    this.controlWaiters = new Map();
+    loadPermissionModes(this.stateDir)
+      .then((modes) => {
+        this.permissionModes = modes;
+      })
+      .catch(() => {}); // state is an optimization only
     this.warnedNoSeam = false;
     this.loggedVersion = false;
     // Kept on globalThis so a hot reload of this plugin adopts the running Claude processes
@@ -1562,6 +1597,13 @@ export class ClaudeCodeAdapter extends LlmAdapter {
 
   override async resolveModel(provider: string, model: string, _signal?: AbortSignal) {
     return resolveModelInfo(provider, model, await getCatalog());
+  }
+
+  /** Get the effective permission mode for a session, checking for an override first. */
+  getPermissionMode(sessionId: string, accessMode: string | undefined): string {
+    const override = this.permissionModes.get(sessionId);
+    if (override !== undefined && override !== null) return override;
+    return permissionModeFor(this.config, accessMode);
   }
 
   sessionCwd(sessionId: string): string | undefined {
@@ -1681,6 +1723,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const images = stdin ? await this.loadImages(imageRefs(turns), options.signal) : [];
     const model = options.purpose === "session-title" ? this.config.titleModel : options.model;
     const accessMode = accessModeOf(options.messages);
+    if (options.sessionId) this.accessModes.set(options.sessionId, accessMode);
+    const effectivePermissionMode = options.sessionId
+      ? this.getPermissionMode(options.sessionId, accessMode)
+      : undefined;
     const args = buildArgs({
       ...options,
       model,
@@ -1690,6 +1736,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       flags: cli.flags,
       promptText: prompt,
       temporary,
+      permissionMode: effectivePermissionMode,
       mcp:
         this.mcp && options.sessionId && !options.purpose && this.config.dshTools
           ? { url: `${this.mcp.base}${MCP_PATH}/${options.sessionId}`, key: this.mcp.key }
@@ -1701,7 +1748,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       cwd,
       model,
       effort: options.reasoningEffort ?? null,
-      mode: permissionModeFor(this.config, accessMode),
+      mode: effectivePermissionMode ?? permissionModeFor(this.config, accessMode),
       sessionId: session?.id ?? null,
       temporary,
     };
@@ -1769,6 +1816,51 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         `command bridge: ${failed.length} of ${names.length} not registered (first: ${failed[0]})`,
       );
     this.registerTemporaryCommand(commands);
+  }
+
+  /** The effective mode for a session and the stored override, for the header chip. */
+  permissionModeInfo(sessionId: string): PermissionModeInfo {
+    const override = this.permissionModes.get(sessionId) ?? null;
+    return {
+      mode: this.getPermissionMode(sessionId, this.accessModes.get(sessionId)),
+      override,
+    };
+  }
+
+  /**
+   * Store a session's permission mode override (null clears it) and, when that session's Claude
+   * process is alive, switch it live with a `set_permission_mode` control request. The CLI reads
+   * stdin during a turn; between turns the line is queued and answered when the next turn opens.
+   */
+  async setPermissionMode(sessionId: string, mode: string | null): Promise<PermissionModeReply> {
+    if (mode !== null && !isPermissionMode(mode))
+      return {
+        ...this.permissionModeInfo(sessionId),
+        live: false,
+        error: `unknown mode "${mode}"`,
+      };
+    await savePermissionMode(this.stateDir, sessionId, mode);
+    if (mode === null) this.permissionModes.delete(sessionId);
+    else this.permissionModes.set(sessionId, mode);
+    const info = this.permissionModeInfo(sessionId);
+    const proc = this.processes.get(registryKey(this.providerId, sessionId));
+    if (!proc?.alive) return { ...info, live: false };
+    // The effective mode, not the argument: clearing the override puts the live process back on
+    // the config mode.
+    const requestId = `permission-${randomUUID()}`;
+    if (!proc.write(setPermissionModeLine(requestId, info.mode))) return { ...info, live: false };
+    if (!proc.busy) return { ...info, live: true }; // answered when the next turn starts
+    const reply = await new Promise<ControlReply>((resolve) => {
+      const timer = setTimeout(() => {
+        this.controlWaiters.delete(requestId);
+        resolve({ ok: false, error: "no reply from claude within 5s" });
+      }, 5000);
+      this.controlWaiters.set(requestId, (r) => {
+        clearTimeout(timer);
+        resolve(r);
+      });
+    });
+    return reply.ok ? { ...info, live: true } : { ...info, live: true, error: reply.error };
   }
 
   /**
@@ -2256,6 +2348,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       this.log("warn", `busy.json: ${errorText(e)}`),
     );
     const handleControl = this.handleControl.bind(this);
+    const controlWaiters = this.controlWaiters;
     /** One CLI event. Returns what the loop should do next. */
     const dispatch = async function* (event: ClaudeEvent) {
       if (event.type === "control_request") {
@@ -2266,7 +2359,17 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         pending.get(event.request_id)?.abort();
         return "continue";
       }
-      if (event.type === "control_response" || event.type === "timeout") return "continue";
+      if (event.type === "control_response") {
+        const id = event.response?.request_id ?? event.request_id;
+        const waiter = controlWaiters.get(id);
+        if (waiter) {
+          controlWaiters.delete(id);
+          const failed = event.response?.subtype === "error";
+          waiter(failed ? { ok: false, error: errorText(event.response?.error) } : { ok: true });
+        }
+        return "continue";
+      }
+      if (event.type === "timeout") return "continue";
       if (isStaleResume(event) && proc.resuming && !forceFresh) return "retry";
       if (event.type === "result" && proc.staleResults > 0) {
         // End of a turn Claude ran on its own between prompts (see ClaudeProcess.countStaleResults).
@@ -2812,6 +2915,10 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       boxesPath: join(STATE_DIR, "boxes.json"),
       command: adapter.config.command,
       turnRecords: adapter.turnBuffer,
+      permissionModes: {
+        info: (sessionId: string) => adapter.permissionModeInfo(sessionId),
+        set: (sessionId: string, mode: string | null) => adapter.setPermissionMode(sessionId, mode),
+      },
     });
   }
 }

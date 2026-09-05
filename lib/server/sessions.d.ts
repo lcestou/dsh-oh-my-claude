@@ -1,6 +1,7 @@
 import type { IncomingMessage } from "node:http";
 import type { TranscriptListItem } from "./transcript.js";
 import type { JsonValue, PluginContext } from "./dsh.js";
+import type { PermissionModeInfo, PermissionModeReply } from "./adapter.js";
 /** Any JSON object, as a request body or a stored file decodes to. */
 type JsonObject = Record<string, JsonValue>;
 /** Parse a JSON request body, capped at `limit` bytes. A non-object body reads as an empty object. */
@@ -129,7 +130,12 @@ export interface SessionRouteOptions {
     command?: string;
     /** Per-session turn accounting buffer from the adapter. */
     turnRecords?: Map<string, import("./adapter.js").TurnRecord[]>;
+    /** Per-session permission mode: read the effective mode, set or clear the override. */
+    permissionModes?: {
+        info: (sessionId: string) => PermissionModeInfo;
+        set: (sessionId: string, mode: string | null) => Promise<PermissionModeReply>;
+    };
 }
 /** `projectDir(cwd)` → Claude Code project dir; `startedIds()` → ids the adapter started itself. */
-export declare function registerSessionRoutes(ctx: PluginContext, { log, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, command, turnRecords, }: SessionRouteOptions): void;
+export declare function registerSessionRoutes(ctx: PluginContext, { log, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, command, turnRecords, permissionModes, }: SessionRouteOptions): void;
 export {};

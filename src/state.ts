@@ -215,6 +215,63 @@ export function hasPendingNotice(
   return pending;
 }
 
+/** Claude Code permission modes the CLI accepts for `--permission-mode` and `set_permission_mode`. */
+export const PERMISSION_MODES = [
+  "default",
+  "acceptEdits",
+  "plan",
+  "auto",
+  "dontAsk",
+  "bypassPermissions",
+] as const;
+export type PermissionMode = (typeof PERMISSION_MODES)[number];
+export const isPermissionMode = (v: string): v is PermissionMode =>
+  PERMISSION_MODES.some((m) => m === v);
+
+/** Per-session permission mode overrides. Keyed by dsh session id; null means unset. */
+export const PERMISSION_MODES_FILE = (d: string) => join(d, "permission-modes.json");
+let permissionModesChain = Promise.resolve();
+
+/** Load the per-session permission mode overrides from disk. */
+export async function loadPermissionModes(dir: string): Promise<Map<string, string | null>> {
+  const file = PERMISSION_MODES_FILE(dir);
+  try {
+    const parsed: unknown = JSON.parse(await readFile(file, "utf8"));
+    const map = new Map<string, string | null>();
+    if (typeof parsed === "object" && parsed !== null) {
+      for (const [k, v] of Object.entries(parsed)) {
+        if (typeof v === "string" || v === null) {
+          map.set(k, v);
+        }
+      }
+    }
+    return map;
+  } catch {
+    return new Map();
+  }
+}
+
+/** Save a session's permission mode override (or clear it with null); serialized read-modify-write. */
+export function savePermissionMode(
+  dir: string,
+  sessionId: string,
+  mode: string | null,
+): Promise<void> {
+  const run = permissionModesChain.then(async () => {
+    const file = PERMISSION_MODES_FILE(dir);
+    const map = await loadPermissionModes(dir);
+    if (mode === null) map.delete(sessionId);
+    else map.set(sessionId, mode);
+    const obj: Record<string, string | null> = {};
+    for (const [k, v] of map) obj[k] = v;
+    await mkdir(dirname(file), { recursive: true });
+    await writeFile(file, JSON.stringify(obj));
+  });
+  // The caller sees a failed write; the chain itself carries on for the next save.
+  permissionModesChain = run.catch(() => {});
+  return run;
+}
+
 /** Whole name segments only: `GH_TOKEN`, `DB_PASSWORD`, `API_KEY` match; `SECRETARY` does not. */
 const SECRET_NAME = /(^|_)(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?)(_|$)/i;
 

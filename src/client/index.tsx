@@ -1765,6 +1765,88 @@ interface TurnsReply {
   };
 }
 
+/** What `GET /permission-mode` reports. */
+interface PermissionModeState {
+  mode: string;
+  override: string | null;
+  modes: string[];
+  live?: boolean;
+  error?: string;
+}
+
+/**
+ * Permission mode chip in the session header of Claude sessions: a select over the CLI's modes,
+ * with "config" meaning no override. A change is stored per session and pushed to a live process.
+ */
+function PermissionChip({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
+  const [state, setState] = useState<PermissionModeState | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const isClaude = activeClaudeSession(ctx) === sessionId;
+
+  useEffect(() => {
+    if (!isClaude) return;
+    let alive = true;
+    fetch(`${ROUTE}/permission-mode?session=${encodeURIComponent(sessionId)}`)
+      .then((r) => readJson<PermissionModeState>(r))
+      .then((b) => alive && setState(b))
+      .catch(() => alive && setState(null));
+    return () => {
+      alive = false;
+    };
+  }, [sessionId, isClaude]);
+
+  if (!isClaude || !state) return null;
+  const change = async (value: string) => {
+    setBusy(true);
+    setError("");
+    try {
+      const reply = await readJson<PermissionModeState>(
+        await fetch(`${ROUTE}/permission-mode`, {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ session: sessionId, mode: value || null }),
+        }),
+      );
+      setState({ ...state, ...reply });
+      if (reply.error) setError(reply.error);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+      <select
+        aria-label="Claude permission mode"
+        value={state.override ?? ""}
+        disabled={busy}
+        onChange={(e) => change(e.currentTarget.value)}
+        title={
+          state.override
+            ? `Permission mode ${state.mode}, set for this session`
+            : `Permission mode ${state.mode}, from the plugin config`
+        }
+        style={{
+          ...select,
+          fontSize: 12,
+          padding: "3px 8px",
+          color: state.override ? CLAUDE_ORANGE : T.text,
+        }}
+      >
+        <option value="">config · {state.mode}</option>
+        {state.modes.map((m) => (
+          <option key={m} value={m}>
+            {m}
+          </option>
+        ))}
+      </select>
+      {error && <span style={{ color: T.err, fontSize: 11 }}>{error}</span>}
+    </span>
+  );
+}
+
 /** Small chip in the session header showing last-turn cost/duration/cache share, with total on hover. */
 function TurnAccountingChip({ sessionId }: { sessionId: string }) {
   const [turns, setTurns] = useState<TurnRecord[]>([]);
@@ -2251,6 +2333,11 @@ export function apply(ctx: ClientCtx) {
 
   // Turn accounting chip in the session header.
   ctx.slots.inject("conversation.session.header.actions", () => {
+    ctx.slots.register(
+      { name: "conversation.session.header.actions", id: "claude-permission-mode", order: 32 },
+      (props) =>
+        props.sessionId ? <PermissionChip sessionId={props.sessionId} ctx={ctx} /> : null,
+    );
     ctx.slots.register(
       { name: "conversation.session.header.actions", id: "claude-turn-accounting", order: 30 },
       (props) => (props.sessionId ? <TurnAccountingChip sessionId={props.sessionId} /> : null),

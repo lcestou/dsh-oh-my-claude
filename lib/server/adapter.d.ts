@@ -128,6 +128,24 @@ export declare const Config: z<Schemastery.ObjectS<{
     providerName: z<string, string>;
 }>>;
 /** Keys the shared process registry by instance so two mounts never see each other's processes. */
+/** Outcome of a control request this plugin sent to the CLI. */
+export type ControlReply = {
+    ok: true;
+    error?: undefined;
+} | {
+    ok: false;
+    error: string;
+};
+/** What the permission-mode route reports: the mode in force and the stored override. */
+export interface PermissionModeInfo {
+    mode: string;
+    override: string | null;
+}
+export interface PermissionModeReply extends PermissionModeInfo {
+    /** A live process was told; false when the override only applies at the next spawn. */
+    live: boolean;
+    error?: string;
+}
 export declare function registryKey(providerId: string, sessionId: string): string;
 declare const EFFORTS_ALL: readonly ["low", "medium", "high", "xhigh", "max"];
 /** One effort level's capability flag, as the Models API reports it. */
@@ -262,7 +280,7 @@ export declare const usesStdin: (flags: Set<string> | null | undefined) => boole
  * through the bridged tools. Routes are box-specific, hence the pointer to list_subagent_models.
  */
 export declare const DSH_TOOLS_GUIDANCE: string;
-export declare function buildArgs({ model, reasoningEffort, system, purpose, config, session, accessMode, flags, promptText, mcp, temporary, }: Pick<GenerateOptions, "reasoningEffort" | "system" | "purpose"> & {
+export declare function buildArgs({ model, reasoningEffort, system, purpose, config, session, accessMode, flags, promptText, mcp, temporary, permissionMode, }: Pick<GenerateOptions, "reasoningEffort" | "system" | "purpose"> & {
     model: string | undefined;
     config: Schemastery.TypeT<typeof Config>;
     session?: {
@@ -278,6 +296,8 @@ export declare function buildArgs({ model, reasoningEffort, system, purpose, con
     } | undefined;
     /** /temporary: keep no Claude transcript for this session. */
     temporary?: boolean;
+    /** Optional permission mode override; if provided, used instead of computing from config. */
+    permissionMode?: string;
 }): string[];
 /** One stream-json input line: the user turn with text and inline images. */
 export declare function buildInput(prompt: string, images: Array<{
@@ -439,6 +459,12 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     /** Per-session turn accounting buffer (last 50 turns); keyed by dsh sessionId. Lives on
      *  globalThis so the route registered at boot reads what a hot-reloaded adapter fills. */
     readonly turnBuffer: Map<string, TurnRecord[]>;
+    /** Per-session permission mode overrides; loaded from disk at init, saved on change. */
+    permissionModes: Map<string, string | null>;
+    /** dsh access mode seen on each session's last turn, so the effective mode can be reported. */
+    accessModes: Map<string, string | undefined>;
+    /** Callers waiting for the CLI's `control_response` to a request this plugin sent, by request id. */
+    controlWaiters: Map<string, (reply: ControlReply) => void>;
     claudeHome: string;
     providerId: string;
     displayName: string;
@@ -456,6 +482,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
         inputModalities: readonly ["text", "image"];
     }[]>;
     resolveModel(provider: string, model: string, _signal?: AbortSignal): Promise<LlmResolvedModelInfo>;
+    /** Get the effective permission mode for a session, checking for an override first. */
+    getPermissionMode(sessionId: string, accessMode: string | undefined): string;
     sessionCwd(sessionId: string): string | undefined;
     log(level: string, message: string): void;
     loadImages(refs: ImageAttachmentRef[], signal: AbortSignal | undefined): Promise<LoadedImage[]>;
@@ -474,6 +502,14 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * custom command the way the terminal does; dsh keeps its own command of the same name.
      */
     bridgeCommands(names: string[], agent: Agent | undefined): void;
+    /** The effective mode for a session and the stored override, for the header chip. */
+    permissionModeInfo(sessionId: string): PermissionModeInfo;
+    /**
+     * Store a session's permission mode override (null clears it) and, when that session's Claude
+     * process is alive, switch it live with a `set_permission_mode` control request. The CLI reads
+     * stdin during a turn; between turns the line is queued and answered when the next turn opens.
+     */
+    setPermissionMode(sessionId: string, mode: string | null): Promise<PermissionModeReply>;
     /**
      * `/temporary`: toggle "keep no Claude transcript" for the current dsh session. Registered here,
      * from the first init frame, because at apply() the commands service is not up yet and the

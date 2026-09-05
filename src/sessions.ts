@@ -13,6 +13,8 @@ import { deleteMemory, isMemoryName, listMemory } from "./memory.js";
 import { asSessionId } from "./dsh.js";
 import type { JsonValue, PluginContext, WorkspaceRegistry } from "./dsh.js";
 import { errorText } from "./process.js";
+import { PERMISSION_MODES, isPermissionMode } from "./state.js";
+import type { PermissionModeInfo, PermissionModeReply } from "./adapter.js";
 
 const ROUTE_PREFIX = "/dsh-oh-my-claude";
 const BODY_LIMIT = 64 * 1024;
@@ -526,6 +528,11 @@ export interface SessionRouteOptions {
   command?: string;
   /** Per-session turn accounting buffer from the adapter. */
   turnRecords?: Map<string, import("./adapter.js").TurnRecord[]>;
+  /** Per-session permission mode: read the effective mode, set or clear the override. */
+  permissionModes?: {
+    info: (sessionId: string) => PermissionModeInfo;
+    set: (sessionId: string, mode: string | null) => Promise<PermissionModeReply>;
+  };
 }
 
 /** `projectDir(cwd)` → Claude Code project dir; `startedIds()` → ids the adapter started itself. */
@@ -542,6 +549,7 @@ export function registerSessionRoutes(
     boxesPath,
     command,
     turnRecords,
+    permissionModes,
   }: SessionRouteOptions,
 ): void {
   // Optional: stock dsh has it; without it archived sessions list but cannot be restored.
@@ -679,6 +687,24 @@ export function registerSessionRoutes(
                   total.count += 1;
                 }
                 return json(res, 200, { turns, total });
+              }
+              if (permissionModes && url.pathname === `${ROUTE_PREFIX}/permission-mode`) {
+                if (req.method === "GET") {
+                  const sid = url.searchParams.get("session");
+                  if (!sid) return json(res, 400, { error: "session param required" });
+                  return json(res, 200, { ...permissionModes.info(sid), modes: PERMISSION_MODES });
+                }
+                if (req.method === "PUT") {
+                  const { session: sid, mode } = await readBody(req);
+                  if (typeof sid !== "string" || !sid)
+                    return json(res, 400, { error: "session required" });
+                  if (mode !== null && (typeof mode !== "string" || !isPermissionMode(mode)))
+                    return json(res, 400, {
+                      error: `mode must be one of ${PERMISSION_MODES.join(", ")} or null`,
+                    });
+                  return json(res, 200, await permissionModes.set(sid, mode));
+                }
+                return json(res, 405, { error: "method not allowed" });
               }
               if (boxesPath && url.pathname === `${ROUTE_PREFIX}/boxes`) {
                 if (req.method === "GET")

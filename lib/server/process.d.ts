@@ -195,6 +195,8 @@ export declare function userTurnLine(content: unknown): string;
 export declare function controlResponseLine(requestId: string, response: unknown): string;
 /** stdin line asking the CLI to stop the current turn; it answers with a result and stays alive. */
 export declare function interruptLine(requestId: string): string;
+/** stdin line to switch the Claude Code permission mode live; the CLI answers with success or an error. */
+export declare function setPermissionModeLine(requestId: string, mode: string): string;
 /**
  * Formats a control response error as a stdin line for the Claude Code process.
  * @param {string} requestId - The request ID that caused the error

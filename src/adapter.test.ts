@@ -231,6 +231,13 @@ assert.ok(
     chat.join(" ").includes("--tools default"),
 );
 assert.ok(chat.join(" ").includes("--permission-mode acceptEdits"));
+// Permission mode override is passed through to args
+const override = buildArgs({
+  model: "m",
+  config,
+  permissionMode: "plan",
+} as any);
+assert.ok(override.join(" ").includes("--permission-mode plan"), "override takes precedence");
 assert.ok(
   chat.join(" ").includes("--effort max") && chat.join(" ").includes("--append-system-prompt sys"),
 );

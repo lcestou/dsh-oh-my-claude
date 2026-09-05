@@ -47,6 +47,16 @@ interface LooseEvent {
  * 2026-09-05 after a crash loop).
  */
 export declare function hasPendingNotice(events: Iterable<LooseEvent>, plugin: string, texts?: readonly string[]): boolean;
+/** Claude Code permission modes the CLI accepts for `--permission-mode` and `set_permission_mode`. */
+export declare const PERMISSION_MODES: readonly ["default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"];
+export type PermissionMode = (typeof PERMISSION_MODES)[number];
+export declare const isPermissionMode: (v: string) => v is PermissionMode;
+/** Per-session permission mode overrides. Keyed by dsh session id; null means unset. */
+export declare const PERMISSION_MODES_FILE: (d: string) => string;
+/** Load the per-session permission mode overrides from disk. */
+export declare function loadPermissionModes(dir: string): Promise<Map<string, string | null>>;
+/** Save a session's permission mode override (or clear it with null); serialized read-modify-write. */
+export declare function savePermissionMode(dir: string, sessionId: string, mode: string | null): Promise<void>;
 /**
  * A replacer that masks the values of secret-looking environment variables (`*KEY`, `*TOKEN`,
  * `*SECRET`, `*PASSWORD`, `*CREDENTIAL`, eight characters or longer) as `[redacted:NAME]`.
