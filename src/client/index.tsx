@@ -731,10 +731,11 @@ interface SettingsFile {
 interface SettingsEditorProps {
   open: boolean;
   onToggle: () => void;
+  box?: BoxData;
 }
 
 /** `~/.claude/settings.json`: read-only until Edit, then live JSON check, Save, Cancel. */
-function SettingsEditor({ open, onToggle }: SettingsEditorProps) {
+function SettingsEditor({ open, onToggle, box }: SettingsEditorProps) {
   const [file, setFile] = useState<SettingsFile | null>(null);
   const [text, setText] = useState("");
   const [editing, setEditing] = useState(false);
@@ -742,10 +743,14 @@ function SettingsEditor({ open, onToggle }: SettingsEditorProps) {
   const [error, setError] = useState("");
   const [saved, setSaved] = useState("");
 
+  const settingsUrl = box
+    ? `${ROUTE}/boxes/settings?url=${encodeURIComponent(box.url)}`
+    : `${ROUTE}/settings`;
+
   const load = () => {
     setBusy(true);
     setError("");
-    fetch(`${ROUTE}/settings`)
+    fetch(settingsUrl)
       .then((r) => readJson<SettingsFile>(r))
       .then((b) => {
         setFile(b);
@@ -756,7 +761,7 @@ function SettingsEditor({ open, onToggle }: SettingsEditorProps) {
       .catch((e: Error) => setError(e.message))
       .finally(() => setBusy(false));
   };
-  useEffect(load, []);
+  useEffect(load, [settingsUrl]);
 
   const parsed = useMemo<{ value?: JsonObject; error?: string }>(() => {
     try {
@@ -774,7 +779,7 @@ function SettingsEditor({ open, onToggle }: SettingsEditorProps) {
     if (!canSave) return;
     setBusy(true);
     setError("");
-    fetch(`${ROUTE}/settings`, {
+    fetch(settingsUrl, {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ text }),
@@ -938,6 +943,7 @@ function Boxes({ boxes, setBoxes, open, onToggle }: BoxesProps) {
   const [draft, setDraft] = useState({ name: "", url: "", token: "" });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [openSettingsUrl, setOpenSettingsUrl] = useState<string | null>(null);
 
   const refresh = () => {
     if (boxes.length === 0) return;
@@ -1038,6 +1044,14 @@ function Boxes({ boxes, setBoxes, open, onToggle }: BoxesProps) {
                 )}
               </div>
             </div>
+            <button
+              type="button"
+              style={btn}
+              disabled={busy || !ok}
+              onClick={() => setOpenSettingsUrl(openSettingsUrl === b.url ? null : b.url)}
+            >
+              Edit settings
+            </button>
             <button type="button" style={btn} disabled={busy} onClick={() => remove(b.url)}>
               Remove
             </button>
@@ -1047,6 +1061,15 @@ function Boxes({ boxes, setBoxes, open, onToggle }: BoxesProps) {
           </div>
         );
       })}
+      {openSettingsUrl && (
+        <div style={{ padding: "0 0 4px" }}>
+          <SettingsEditor
+            open
+            onToggle={() => setOpenSettingsUrl(null)}
+            box={boxes.find((b) => b.url === openSettingsUrl)!}
+          />
+        </div>
+      )}
       <form
         onSubmit={add}
         style={{

@@ -194,6 +194,15 @@ export type FetchLike = (
   text(): Promise<string>;
 }>;
 
+/** Fetch options the probe builds, extended with optional method/body for proxy routes. */
+interface ProbeFetchOpts {
+  headers?: Record<string, string>;
+  redirect: "manual";
+  signal: AbortSignal;
+  method?: string;
+  body?: string;
+}
+
 const cookieOf = (r: { headers: { get(name: string): string | null } }) =>
   (r.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
 
@@ -205,15 +214,20 @@ export async function probeBox<T = RuntimeStatus>(
   box: Box,
   fetchImpl: FetchLike = fetch,
   path = "status",
+  init?: { method?: string; body?: string },
 ): Promise<Probe<T>> {
   const { url, token } = box;
   const signal = AbortSignal.timeout(path === "status" ? 6000 : 12000);
-  const status = (cookie: string) =>
-    fetchImpl(`${url}/dsh-oh-my-claude/${path}`, {
-      headers: cookie ? { cookie } : {},
-      redirect: "manual",
-      signal,
-    });
+  const status = (cookie: string) => {
+    const fetchHeaders: Record<string, string> = {};
+    if (cookie) fetchHeaders.cookie = cookie;
+    if (init?.body !== undefined) fetchHeaders["content-type"] = "application/json";
+    const opts: ProbeFetchOpts = { redirect: "manual", signal };
+    if (Object.keys(fetchHeaders).length) opts.headers = fetchHeaders;
+    if (init?.method !== undefined) opts.method = init.method;
+    if (init?.body !== undefined) opts.body = init.body;
+    return fetchImpl(`${url}/dsh-oh-my-claude/${path}`, opts);
+  };
   try {
     let cookie = "";
     if (token) {
@@ -648,6 +662,30 @@ export function registerSessionRoutes(
                   self: { plugin: PLUGIN_VERSION, host: hostname() },
                   boxes: boxes.map((b, i) => ({ name: b.name, url: b.url, ...probed[i] })),
                 });
+              }
+              if (boxesPath && url.pathname === `${ROUTE_PREFIX}/boxes/settings`) {
+                const urlParam = url.searchParams.get("url");
+                if (!urlParam) return json(res, 400, { error: "url parameter required" });
+                const boxes = await readBoxes(boxesPath);
+                const box = boxes.find((b) => b.url === urlParam);
+                if (!box) return json(res, 404, { error: "unknown box" });
+                if (req.method === "GET") {
+                  const p = await probeBox(box, fetch, "settings", { method: "GET" });
+                  if (!p.ok) return json(res, 502, { error: p.error });
+                  return json(res, 200, p.status);
+                }
+                if (req.method === "PUT") {
+                  const { text } = await readBody(req, 1024 * 1024);
+                  const parsed = parseSettingsText(text);
+                  if (parsed.error !== undefined) return json(res, 400, { error: parsed.error });
+                  const p = await probeBox(box, fetch, "settings", {
+                    method: "PUT",
+                    body: JSON.stringify({ text }),
+                  });
+                  if (!p.ok) return json(res, 502, { error: p.error });
+                  return json(res, 200, p.status);
+                }
+                return json(res, 405, { error: "method not allowed" });
               }
               return json(res, 404, { error: "not found" });
             } catch (e) {

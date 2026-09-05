@@ -79,7 +79,10 @@ export type FetchLike = (url: string, init: {
  * Log into a box like a browser would (dsh's `/?token=` sets the auth cookie; an NPM-style proxy
  * redirects to that URL by itself) and read its plugin status. Never throws: the panel shows why.
  */
-export declare function probeBox<T = RuntimeStatus>(box: Box, fetchImpl?: FetchLike, path?: string): Promise<Probe<T>>;
+export declare function probeBox<T = RuntimeStatus>(box: Box, fetchImpl?: FetchLike, path?: string, init?: {
+    method?: string;
+    body?: string;
+}): Promise<Probe<T>>;
 /** The login half of `claude auth status` output. */
 export interface AuthStatus {
     loggedIn: boolean;
