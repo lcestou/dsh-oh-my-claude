@@ -73,6 +73,7 @@ const emptySpec: ClaudeProcessSpec = {
   effort: null,
   mode: "",
   sessionId: null,
+  temporary: false,
 };
 /** The failure of an error or aborted finish; throws when the reason has none, which fails the test. */
 const failureOf = (r: FinishReason | undefined): LlmFailure => {
@@ -1853,3 +1854,20 @@ console.log("command-bridge ok");
   assert.equal(off.indexOf("--settings"), -1, "no --settings without fastMode");
 }
 console.log("fast-mode ok");
+
+// temporary: buildArgs adds --no-session-persistence only when asked and the CLI lists it.
+{
+  const flags = new Set(["--no-session-persistence", "--permission-mode"]);
+  const base = {
+    model: "opus",
+    reasoningEffort: null,
+    system: "",
+    purpose: undefined,
+    config: Config({}),
+    flags,
+    mcp: null,
+  };
+  assert.ok(buildArgs({ ...base, temporary: true } as any).includes("--no-session-persistence"));
+  assert.ok(!buildArgs({ ...base } as any).includes("--no-session-persistence"));
+}
+console.log("temporary ok");

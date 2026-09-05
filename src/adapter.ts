@@ -51,6 +51,7 @@ import {
   COMMAND_CATALOG,
   RESUME_TIMER,
   PROCESS_REGISTRY,
+  TEMPORARY_SESSIONS,
   TURN_RECORDS,
   asSessionId,
 } from "./dsh.js";
@@ -663,6 +664,7 @@ export function buildArgs({
   flags,
   promptText,
   mcp,
+  temporary = false,
 }: Pick<GenerateOptions, "reasoningEffort" | "system" | "purpose"> & {
   model: string | undefined;
   config: Schemastery.TypeT<typeof Config>;
@@ -671,6 +673,8 @@ export function buildArgs({
   flags?: Set<string> | null;
   promptText?: string;
   mcp?: { url: string; key: string } | undefined;
+  /** /temporary: keep no Claude transcript for this session. */
+  temporary?: boolean;
 }) {
   const args = ["-p"];
   if (usesStdin(flags)) args.push("--input-format", "stream-json");
@@ -694,6 +698,8 @@ export function buildArgs({
     if (supports(flags, "--no-session-persistence")) args.push("--no-session-persistence");
     return args;
   }
+  if (temporary && supports(flags, "--no-session-persistence"))
+    args.push("--no-session-persistence");
   if (supports(flags, "--permission-mode")) {
     args.push("--permission-mode", permissionModeFor(config, accessMode));
   }
@@ -1459,6 +1465,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   sessionController?: SessionController;
   /** Masks secret env values in tool results; undefined when `redactSecrets` is off. */
   readonly redact: ((s: string) => string) | undefined;
+  /** dsh sessions marked temporary with /temporary; on globalThis so a reload keeps them. */
+  readonly temporary: Set<string>;
   /** Per-session turn accounting buffer (last 50 turns); keyed by dsh sessionId. Lives on
    *  globalThis so the route registered at boot reads what a hot-reloaded adapter fills. */
   readonly turnBuffer: Map<string, TurnRecord[]>;
@@ -1495,9 +1503,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const registry = globalThis as typeof globalThis & {
       [PROCESS_REGISTRY]?: Map<string, ClaudeProcess>;
       [TURN_RECORDS]?: Map<string, TurnRecord[]>;
+      [TEMPORARY_SESSIONS]?: Set<string>;
     };
     this.processes = registry[PROCESS_REGISTRY] ??= new Map(); // providerId:sessionId → ClaudeProcess
     this.turnBuffer = registry[TURN_RECORDS] ??= new Map();
+    this.temporary = registry[TEMPORARY_SESSIONS] ??= new Set();
     // Adopted processes still point their idle-reply callback at the previous (now dead) adapter.
     for (const [key, proc] of this.processes) {
       if (!key.startsWith(`${this.providerId}:`)) continue; // another mount's process, not ours
@@ -1640,7 +1650,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       ? await auxCwd()
       : (options.sessionId && this.sessionCwd(options.sessionId)) || process.cwd();
     let session;
-    if (!options.purpose && this.config.resume && options.sessionId) {
+    const temporary = Boolean(options.sessionId) && this.temporary.has(options.sessionId ?? "");
+    if (!options.purpose && this.config.resume && options.sessionId && !temporary) {
       // A dsh session opened from a Claude Code transcript carries the Claude id itself.
       const own = await claudeSessionExists(this.claudeHome, cwd, options.sessionId);
       const id = own ? options.sessionId : claudeSessionId(options.sessionId);
@@ -1665,6 +1676,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       accessMode,
       flags: cli.flags,
       promptText: prompt,
+      temporary,
       mcp:
         this.mcp && options.sessionId && !options.purpose && this.config.dshTools
           ? { url: `${this.mcp.base}${MCP_PATH}/${options.sessionId}`, key: this.mcp.key }
@@ -1678,6 +1690,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       effort: options.reasoningEffort ?? null,
       mode: permissionModeFor(this.config, accessMode),
       sessionId: session?.id ?? null,
+      temporary,
     };
     return {
       cwd,
@@ -2478,7 +2491,14 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         (a, i) => !(a === "--permission-prompt-tool" || args[i - 1] === "--permission-prompt-tool"),
       ),
       cwd,
-      spec: { cwd, model: options.model ?? "", effort: null, mode: "plan", sessionId: null },
+      spec: {
+        cwd,
+        model: options.model ?? "",
+        effort: null,
+        mode: "plan",
+        sessionId: null,
+        temporary: false,
+      },
       command: this.config.command,
       spawner: this.spawner(),
       onExit: () => {},
@@ -2574,6 +2594,30 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
   // A hot reload disposes the previous instance's command registrations with its scope and
   // brings no new init frame; re-bridge from the catalog the last one saw.
   if (g[COMMAND_CATALOG]) adapter.bridgeCommands(g[COMMAND_CATALOG], undefined);
+  // /temporary: toggle "keep no Claude transcript" for the current dsh session. The next process
+  // for that session starts with --no-session-persistence; a live one is replaced by the spec change.
+  if (adapter.providerId === "claude-code") {
+    try {
+      ctx.get("commands")?.register({
+        name: "temporary",
+        description: "Oh My Claude: keep no Claude transcript for this session (toggle)",
+        handler: ({ agent }) => {
+          const id = String(agent.id);
+          const on = !adapter.temporary.has(id);
+          if (on) adapter.temporary.add(id);
+          else adapter.temporary.delete(id);
+          return {
+            kind: "success",
+            text: on
+              ? "Temporary: on. Claude keeps no transcript for this session from the next turn; after a dsh restart the session continues from dsh's own log."
+              : "Temporary: off. The next turn starts a Claude session that is kept again.",
+          };
+        },
+      });
+    } catch (error) {
+      adapter.log("warn", `/temporary not registered: ${errorText(error)}`);
+    }
+  }
   if (!g[RESUME_TIMER]) {
     g[RESUME_TIMER] = setTimeout(() => {
       // Resume every mounted instance over its own busy file.

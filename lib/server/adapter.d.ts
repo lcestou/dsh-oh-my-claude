@@ -261,7 +261,7 @@ export declare const usesStdin: (flags: Set<string> | null | undefined) => boole
  * through the bridged tools. Routes are box-specific, hence the pointer to list_subagent_models.
  */
 export declare const DSH_TOOLS_GUIDANCE: string;
-export declare function buildArgs({ model, reasoningEffort, system, purpose, config, session, accessMode, flags, promptText, mcp, }: Pick<GenerateOptions, "reasoningEffort" | "system" | "purpose"> & {
+export declare function buildArgs({ model, reasoningEffort, system, purpose, config, session, accessMode, flags, promptText, mcp, temporary, }: Pick<GenerateOptions, "reasoningEffort" | "system" | "purpose"> & {
     model: string | undefined;
     config: Schemastery.TypeT<typeof Config>;
     session?: {
@@ -275,6 +275,8 @@ export declare function buildArgs({ model, reasoningEffort, system, purpose, con
         url: string;
         key: string;
     } | undefined;
+    /** /temporary: keep no Claude transcript for this session. */
+    temporary?: boolean;
 }): string[];
 /** One stream-json input line: the user turn with text and inline images. */
 export declare function buildInput(prompt: string, images: Array<{
@@ -427,6 +429,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     sessionController?: SessionController;
     /** Masks secret env values in tool results; undefined when `redactSecrets` is off. */
     readonly redact: ((s: string) => string) | undefined;
+    /** dsh sessions marked temporary with /temporary; on globalThis so a reload keeps them. */
+    readonly temporary: Set<string>;
     /** Per-session turn accounting buffer (last 50 turns); keyed by dsh sessionId. Lives on
      *  globalThis so the route registered at boot reads what a hot-reloaded adapter fills. */
     readonly turnBuffer: Map<string, TurnRecord[]>;

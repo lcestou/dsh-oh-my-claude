@@ -14,6 +14,8 @@ export const PROCESS_REGISTRY = Symbol.for("dsh-oh-my-claude.processes");
 export const TURN_RECORDS = Symbol.for("dsh-oh-my-claude.turns");
 /** The CLI's last slash-command catalog, so a hot-reloaded adapter re-registers the bridge without a new init frame. */
 export const COMMAND_CATALOG = Symbol.for("dsh-oh-my-claude.commands");
+/** dsh session ids marked temporary (/temporary): their Claude processes keep no transcript. */
+export const TEMPORARY_SESSIONS = Symbol.for("dsh-oh-my-claude.temporary");
 
 /** The same brand dsh-llm puts on GenerateOptions.sessionId, so ids flow through without casts. */
 export type SessionId = NonNullable<GenerateOptions["sessionId"]>;

@@ -400,6 +400,8 @@ export interface ClaudeProcessSpec {
   effort: string | null;
   mode: string;
   sessionId: string | null;
+  /** Launched with --no-session-persistence: Claude keeps no transcript for this session. */
+  temporary: boolean;
 }
 
 export interface ClaudeProcessOnExit {

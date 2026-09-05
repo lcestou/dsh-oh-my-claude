@@ -9,6 +9,8 @@ export declare const PROCESS_REGISTRY: unique symbol;
 export declare const TURN_RECORDS: unique symbol;
 /** The CLI's last slash-command catalog, so a hot-reloaded adapter re-registers the bridge without a new init frame. */
 export declare const COMMAND_CATALOG: unique symbol;
+/** dsh session ids marked temporary (/temporary): their Claude processes keep no transcript. */
+export declare const TEMPORARY_SESSIONS: unique symbol;
 /** The same brand dsh-llm puts on GenerateOptions.sessionId, so ids flow through without casts. */
 export type SessionId = NonNullable<GenerateOptions["sessionId"]>;
 /** Any JSON document; what MCP tool arguments and relay payloads are made of. */
