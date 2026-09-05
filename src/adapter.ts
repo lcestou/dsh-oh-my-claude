@@ -2393,7 +2393,14 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     signal: AbortSignal,
   ): Promise<RelayResult> | undefined {
     const proc = this.processes.get(registryKey(this.providerId, sessionId));
-    if (!proc?.alive || !proc.busy || proc.relays.size > 0) return undefined;
+    if (!proc?.alive || !proc.busy || proc.relays.size > 0) {
+      // Why a dsh tool ran in the bridge instead of dsh's loop; goal tools refuse the bridge path.
+      void trace(
+        join(this.stateDir, "resume.log"),
+        `relay ${toolName} for ${sessionId} declined: alive=${String(proc?.alive)} busy=${String(proc?.busy)} pending=${proc?.relays.size ?? 0}`,
+      );
+      return undefined;
+    }
     return new Promise<RelayResult>((resolve, reject) => {
       signal?.addEventListener("abort", () => reject(new Error("relay aborted")), { once: true });
       proc.inject({ type: "dsh_relay", id: randomUUID(), name: toolName, args, resolve, reject });
