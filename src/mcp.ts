@@ -18,8 +18,7 @@ export const KEY_HEADER = "x-dsh-oh-my-claude-key";
 const PROTOCOL = "2025-06-18";
 const BODY_LIMIT = 1024 * 1024;
 /** dsh tools Claude Code already has natively; proxying them would only confuse the model. */
-const HIDDEN = new Set([
-  "bash",
+export const HIDDEN = new Set([
   "read",
   "write",
   "edit",

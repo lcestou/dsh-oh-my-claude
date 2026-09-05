@@ -197,6 +197,11 @@ const bridgedSystem = bridged[bridged.indexOf("--append-system-prompt") + 1]!;
 assert.ok(bridgedSystem.startsWith("sys\n\n"), "dsh system prompt comes first");
 assert.ok(bridgedSystem.includes("never the built-in Agent/Task tool"));
 assert.ok(bridgedSystem.includes("mcp__dsh__list_subagent_models"));
+assert.ok(bridgedSystem.includes("mcp__dsh__bash"), "guidance names the bridged bash tool");
+assert.ok(
+  bridgedSystem.includes("run_in_background: true"),
+  "guidance tells Claude to use run_in_background on it",
+);
 const fresh = buildArgs({ model: "m", config, session: { id: "u", resuming: false } } as any);
 assert.deepEqual(fresh.slice(-2), ["--session-id", "u"]);
 const aux = buildArgs({

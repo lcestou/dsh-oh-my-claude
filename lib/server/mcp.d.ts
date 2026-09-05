@@ -4,6 +4,8 @@ import type { Agent, DshToolsRegistry, JsonValue, PluginContext } from "./dsh.js
 export declare const MCP_PATH = "/dsh-oh-my-claude/mcp";
 /** HTTP header name for the MCP bridge authentication key. */
 export declare const KEY_HEADER = "x-dsh-oh-my-claude-key";
+/** dsh tools Claude Code already has natively; proxying them would only confuse the model. */
+export declare const HIDDEN: Set<string>;
 /** The open_session arguments Claude sends, as far as the bridge reads them. */
 interface OpenSessionArgs {
     prompt?: JsonValue;

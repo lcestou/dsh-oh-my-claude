@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { handleRpc } from "./mcp.js";
+import { handleRpc, HIDDEN } from "./mcp.js";
 
 const agent = { id: "a1" };
 // SAFETY: partial fake for tests
@@ -44,9 +44,11 @@ const list = (await handleRpc({ jsonrpc: "2.0", id: 2, method: "tools/list" }, e
 assert.ok(list);
 assert.deepEqual(
   list.result.tools.map((t) => t.name),
-  ["subagent_local"],
-  "native shell/file tools are hidden",
+  ["subagent_local", "bash"],
+  "bash is bridged; only file tools remain hidden",
 );
+assert.ok(!HIDDEN.has("bash"), "bash is no longer hidden so dsh can register background jobs");
+assert.ok(HIDDEN.has("read") && HIDDEN.has("edit"), "file tools stay hidden");
 // SAFETY: tools array has at least one element for this test
 const firstTool = list.result.tools[0];
 assert.ok(firstTool);
@@ -63,11 +65,11 @@ const call = (await handleRpc(
 assert.ok(call);
 assert.deepEqual(call.result.content, [{ type: "text", text: "ran:hi" }]);
 const bad = (await handleRpc(
-  { jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "bash" } },
+  { jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "no_such_tool" } },
   env,
 )) as { result: { isError?: boolean } } | null;
 assert.ok(bad);
-assert.equal(bad.result.isError, true, "hidden tools cannot be called either");
+assert.equal(bad.result.isError, true, "unregistered tools still error");
 const opened: unknown[] = [];
 const env2 = { ...env, open: async (args: unknown) => (opened.push(args), "opened session s1") };
 const list2 = (await handleRpc({ jsonrpc: "2.0", id: 5, method: "tools/list" }, env2)) as {
@@ -76,7 +78,7 @@ const list2 = (await handleRpc({ jsonrpc: "2.0", id: 5, method: "tools/list" }, 
 assert.ok(list2);
 assert.deepEqual(
   list2.result.tools.map((t) => t.name),
-  ["subagent_local", "open_session"],
+  ["subagent_local", "bash", "open_session"],
   "open_session is offered when the host provides it",
 );
 const openCall = (await handleRpc(

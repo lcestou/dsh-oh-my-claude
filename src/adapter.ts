@@ -593,6 +593,12 @@ export const DSH_TOOLS_GUIDANCE = [
   "(mcp__dsh__subagent_*, mcp__dsh__researcher_*) and mcp__dsh__subagent_fork are children",
   "too. run_in_background: false returns the answer inline; background returns an id and the",
   "notice arrives next turn. mcp__dsh__open_session makes a new top-level session, not a child.",
+  "Long-running or background commands (test suites, builds, code reviews, watchers, anything you",
+  "would run with `run_in_background`) go through `mcp__dsh__bash` with `run_in_background: true`;",
+  "dsh registers the job, shows its card and panel entry, and the finish notice arrives next turn;",
+  "read output with `mcp__dsh__job_output`, stop with `mcp__dsh__job_kill`. Short foreground",
+  "commands stay on native `Bash`; do not use native `Bash` `run_in_background` because dsh cannot",
+  "see it.",
 ].join(" ");
 
 export function buildArgs({
