@@ -18,7 +18,8 @@ export type UsageReply = {
 };
 /**
  * The usage payload lists `limits` (kind `session`, `weekly_all`, `weekly_scoped` with a model
- * scope); older answers carried `five_hour` / `seven_day` objects with `utilization`. Both read.
+ * scope, and whatever kinds get added later); older answers carried `five_hour` / `seven_day`
+ * objects with `utilization`. All read; unknown kinds keep their API name as the label.
  */
 export declare function usageWindows(payload: unknown): UsageWindow[];
 /** The subset of fetch the reader uses, so tests can hand in a fake. */

@@ -40,7 +40,8 @@ const resetOf = (v: unknown): number | null => {
 
 /**
  * The usage payload lists `limits` (kind `session`, `weekly_all`, `weekly_scoped` with a model
- * scope); older answers carried `five_hour` / `seven_day` objects with `utilization`. Both read.
+ * scope, and whatever kinds get added later); older answers carried `five_hour` / `seven_day`
+ * objects with `utilization`. All read; unknown kinds keep their API name as the label.
  */
 export function usageWindows(payload: unknown): UsageWindow[] {
   const row = isRec(payload) ? payload : {};
@@ -53,15 +54,15 @@ export function usageWindows(payload: unknown): UsageWindow[] {
   const limits = Array.isArray(row.limits) ? row.limits : [];
   let session: UsageWindow | undefined;
   let weekly: UsageWindow | undefined;
-  const scoped: UsageWindow[] = [];
+  const others: UsageWindow[] = [];
   for (const entry of limits) {
-    if (!isRec(entry)) continue;
+    if (!isRec(entry) || entry.is_active === false) continue;
     const usedPercent = percentOf(entry.percent);
     if (usedPercent === null) continue;
     const resetsAt = resetOf(entry.resets_at);
     if (entry.kind === "session") session ??= { label: "5-hour", usedPercent, resetsAt };
     else if (entry.kind === "weekly_all") weekly ??= { label: "Weekly", usedPercent, resetsAt };
-    else if (entry.kind === "weekly_scoped" && entry.is_active !== false) {
+    else if (entry.kind === "weekly_scoped") {
       const scope = isRec(entry.scope) ? entry.scope : {};
       const model = isRec(scope.model) ? scope.model : {};
       const name =
@@ -70,14 +71,18 @@ export function usageWindows(payload: unknown): UsageWindow[] {
           : typeof scope.surface === "string"
             ? scope.surface
             : "Model";
-      scoped.push({ label: `${name} weekly`, usedPercent, resetsAt });
+      others.push({ label: `${name} weekly`, usedPercent, resetsAt });
+    } else if (typeof entry.kind === "string") {
+      // A window kind this code has not met yet: show it under its own name rather than hide it.
+      const label = entry.kind.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
+      others.push({ label, usedPercent, resetsAt });
     }
   }
   if (session) out.push(session);
   else legacy(row.five_hour, "5-hour");
   if (weekly) out.push(weekly);
   else legacy(row.seven_day, "Weekly");
-  out.push(...scoped);
+  out.push(...others);
   return out;
 }
 

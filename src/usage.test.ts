@@ -14,6 +14,8 @@ const w = usageWindows({
     },
     { kind: "weekly_scoped", percent: 5, is_active: false, scope: { surface: "code" } },
     { kind: "session", percent: 99 },
+    { kind: "opus_daily", percent: 7, resets_at: null },
+    { kind: "sonnet_daily", percent: 3, is_active: false },
   ],
 });
 assert.deepEqual(
@@ -22,6 +24,7 @@ assert.deepEqual(
     ["5-hour", 34.4, Date.parse("2026-09-05T12:00:00Z")],
     ["Weekly", 12, 1_800_000_000_000],
     ["Opus weekly", 100, null],
+    ["Opus daily", 7, null],
   ],
 );
 // legacy shape

@@ -1125,11 +1125,16 @@ function renderUsage(block: HTMLElement, reply: UsageReply) {
 }
 
 /**
- * Put the plan usage inside dsh's context-meter popover, above the "N% of context used" line.
+ * Put the plan usage inside dsh's context-meter popover, above the "N% of context used" line,
+ * and one compact line into the ring's hover tooltip.
  * The meter (dsh-client-ui-conversation ContextMeter) has no slot, so this watches the DOM for
  * its dialog: a `[role=dialog]` whose parent holds a `button[aria-haspopup=dialog]` with the ring.
  * ponytail: DOM hook on a structural selector; swap for a slot the day the meter grows one.
  */
+/** The span dsh wraps the context ring in: its button holds the two-circle ring. */
+const isRingRoot = (el: HTMLElement | null) =>
+  !!el?.querySelector(':scope > button[aria-haspopup="dialog"] circle + circle');
+
 function watchContextMeter() {
   const MARK = "data-dsh-llm-claude-usage";
   const attach = (panel: HTMLElement) => {
@@ -1152,12 +1157,29 @@ function watchContextMeter() {
   };
   // The hover tooltip can sit between the button and the dialog at insertion time, so the
   // dialog is matched through its parent rather than as the button's next sibling.
+  // The hover bubble (`role=tooltip`, a sibling of the ring button) gets one compact line.
+  const bubble = (tip: HTMLElement) => {
+    if (tip.hasAttribute(MARK)) return;
+    tip.setAttribute(MARK, "1");
+    const line = document.createElement("div");
+    line.textContent = "Claude usage…";
+    tip.append(line);
+    loadUsage().then(
+      (reply) => {
+        line.textContent = reply.ok
+          ? `Claude ${reply.windows.map((w) => `${w.label.toLowerCase()} ${Math.round(w.usedPercent)}%`).join(" · ") || "usage: no limits"}`
+          : `Claude usage: ${reply.error}`;
+      },
+      (e: Error) => {
+        line.textContent = `Claude usage: ${e.message}`;
+      },
+    );
+  };
   const scan = (root: ParentNode) => {
     for (const el of root.querySelectorAll<HTMLElement>('[role="dialog"]'))
-      if (
-        el.parentElement?.querySelector(':scope > button[aria-haspopup="dialog"] circle + circle')
-      )
-        attach(el);
+      if (isRingRoot(el.parentElement)) attach(el);
+    for (const el of root.querySelectorAll<HTMLElement>('[role="tooltip"]'))
+      if (isRingRoot(el.parentElement)) bubble(el);
   };
   new MutationObserver((records) => {
     for (const r of records)
