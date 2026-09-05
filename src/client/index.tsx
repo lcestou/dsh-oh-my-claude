@@ -2,6 +2,7 @@
 // box), one session list across this box and every saved box (filter by box, workspace, origin;
 // open here or jump to the box), and two collapsed cards: the saved boxes and Claude Code's own
 // settings.json. Built into lib/client.js by `bun run build`.
+import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 
 /** Plugin name identifier. */
@@ -13,16 +14,16 @@ const ROUTE = "/dsh-llm-claude";
 /** Deep link another box's panel sends us to: `#claude-session=<id>&cwd=<path>`. */
 const HASH_KEY = "claude-session";
 
-const ago = (ms) => {
+const ago = (ms: number): string => {
   const s = Math.max(0, (Date.now() - ms) / 1000);
   if (s < 3600) return `${Math.max(1, Math.round(s / 60))} min ago`;
   if (s < 86400) return `${Math.round(s / 3600)} h ago`;
   return new Date(ms).toLocaleDateString();
 };
-const size = (bytes) =>
+const size = (bytes: number): string =>
   bytes < 1_000_000 ? `${Math.round(bytes / 1000)} KB` : `${(bytes / 1_000_000).toFixed(1)} MB`;
 /** `/home/me/Projects/app` → `Projects/app`; keeps the full path for the title attribute. */
-const shortPath = (p) => {
+const shortPath = (p: string | undefined): string => {
   if (!p) return "";
   const parts = p.split("/").filter(Boolean);
   return parts.length > 2 ? parts.slice(-2).join("/") : p;
@@ -45,30 +46,30 @@ const T = {
   onBrand: "var(--dsw-alias-label-primary-inverted, #fff)",
 };
 
-const card = {
+const card: CSSProperties = {
   background: T.card,
   border: `1px solid ${T.border}`,
   borderRadius: 12,
   padding: "14px 18px",
   marginTop: 14,
 };
-const cardHead = {
+const cardHead: CSSProperties = {
   display: "flex",
   alignItems: "center",
   justifyContent: "space-between",
   gap: 12,
   flexWrap: "wrap",
 };
-const h3 = { margin: 0, fontSize: 15, fontWeight: 600, color: T.text };
-const meta = { color: T.faint, fontSize: 12, whiteSpace: "nowrap" };
-const row = {
+const h3: CSSProperties = { margin: 0, fontSize: 15, fontWeight: 600, color: T.text };
+const meta: CSSProperties = { color: T.faint, fontSize: 12, whiteSpace: "nowrap" };
+const row: CSSProperties = {
   display: "flex",
   gap: 12,
   alignItems: "center",
   padding: "9px 0",
   borderTop: `1px solid ${T.border}`,
 };
-const btn = {
+const btn: CSSProperties = {
   padding: "5px 12px",
   cursor: "pointer",
   borderRadius: 8,
@@ -78,13 +79,13 @@ const btn = {
   fontSize: 13,
   whiteSpace: "nowrap",
 };
-const btnPrimary = {
+const btnPrimary: CSSProperties = {
   ...btn,
   background: T.brand,
   color: T.onBrand,
   border: "1px solid transparent",
 };
-const pill = (color) => ({
+const pill = (color: string): CSSProperties => ({
   display: "inline-block",
   padding: "1px 8px",
   borderRadius: 999,
@@ -96,7 +97,7 @@ const pill = (color) => ({
   opacity: 0.9,
   whiteSpace: "nowrap",
 });
-const chip = (active, disabled) => ({
+const chip = (active: boolean, disabled: boolean): CSSProperties => ({
   ...btn,
   padding: "3px 10px",
   fontSize: 12,
@@ -107,7 +108,7 @@ const chip = (active, disabled) => ({
   cursor: disabled ? "not-allowed" : "pointer",
   opacity: disabled ? 0.6 : 1,
 });
-const select = {
+const select: CSSProperties = {
   padding: "4px 8px",
   borderRadius: 8,
   border: `1px solid ${T.border}`,
@@ -116,8 +117,8 @@ const select = {
   fontSize: 13,
   maxWidth: 260,
 };
-const input = { ...select, minWidth: 0, flex: 1 };
-const code = {
+const input: CSSProperties = { ...select, minWidth: 0, flex: 1 };
+const code: CSSProperties = {
   width: "100%",
   boxSizing: "border-box",
   padding: 12,
@@ -132,14 +133,33 @@ const code = {
   whiteSpace: "pre",
 };
 
-const readJson = async (r) => {
-  const body = await r.json().catch(() => ({}));
+/** Decode a reply from this plugin's own routes; a non-2xx status throws its `error` text. */
+const readJson = async <T,>(r: Response): Promise<T> => {
+  // SAFETY: the body comes from this plugin's own routes; the caller names the route's reply shape
+  const body = (await r.json().catch(() => ({}))) as T & { error?: string };
   if (!r.ok) throw new Error(body.error ?? `HTTP ${r.status}`);
   return body;
 };
 
+type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
+type JsonObject = { [key: string]: Json };
+/** JSON.parse hands back one of six shapes; this tells the plain object apart. */
+const isObj = (v: Json | undefined): v is JsonObject => v instanceof Object && !Array.isArray(v);
+const count = (v: Json | undefined): number =>
+  Array.isArray(v) ? v.length : isObj(v) ? Object.keys(v).length : 0;
+
+interface CardProps {
+  id: string;
+  title: string;
+  summary?: string;
+  actions?: ReactNode;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}
+
 /** Collapsible card: title, a one-line summary that stays visible when closed, optional actions. */
-function Card({ id, title, summary, actions, open, onToggle, children }) {
+function Card({ id, title, summary, actions, open, onToggle, children }: CardProps) {
   return (
     <section id={id} style={card}>
       <div style={cardHead}>
@@ -171,37 +191,38 @@ function Card({ id, title, summary, actions, open, onToggle, children }) {
 }
 
 /** Where a transcript lives: terminal only, a live dsh session, or an archived one. */
-function Origin({ s }) {
+function Origin({ s }: { s: { dsh?: { archived?: boolean; id?: string } } }) {
   if (!s.dsh) return <span style={pill(T.faint)}>terminal</span>;
   if (s.dsh.archived) return <span style={pill(T.warn)}>archived</span>;
   return <span style={pill(T.brand)}>dsh</span>;
 }
-const originOf = (s) => (!s.dsh ? "terminal" : s.dsh.archived ? "archived" : "dsh");
+const originOf = (s: { dsh?: { archived?: boolean } }): string =>
+  !s.dsh ? "terminal" : s.dsh.archived ? "archived" : "dsh";
 
 /** Facts worth a glance before opening the editor. */
-export function summarize(settings) {
-  if (!settings || typeof settings !== "object") return [];
-  const out = [];
-  const count = (v) =>
-    Array.isArray(v) ? v.length : v && typeof v === "object" ? Object.keys(v).length : 0;
+export function summarize(settings: JsonObject | undefined): Array<[string, string]> {
+  if (!settings) return [];
+  const out: Array<[string, string]> = [];
   if (settings.model) out.push(["model", String(settings.model)]);
-  if (settings.hooks && typeof settings.hooks === "object") {
-    const events = Object.keys(settings.hooks);
-    const hooks = events.reduce(
-      (n, e) =>
+  const hooksObj = settings.hooks;
+  if (isObj(hooksObj)) {
+    const events = Object.keys(hooksObj);
+    const hooks = events.reduce<number>((n, e) => {
+      const groups = hooksObj[e];
+      return (
         n +
-        (Array.isArray(settings.hooks[e])
-          ? settings.hooks[e].reduce(
-              (m, g) => m + (Array.isArray(g?.hooks) ? g.hooks.length : 1),
+        (Array.isArray(groups)
+          ? groups.reduce<number>(
+              (m, g) => m + (isObj(g) && Array.isArray(g.hooks) ? g.hooks.length : 1),
               0,
             )
-          : 0),
-      0,
-    );
+          : 0)
+      );
+    }, 0);
     out.push(["hooks", `${hooks} on ${events.length} event${events.length === 1 ? "" : "s"}`]);
   }
   const p = settings.permissions;
-  if (p && typeof p === "object") {
+  if (isObj(p)) {
     const parts = ["allow", "ask", "deny"]
       .filter((k) => count(p[k]) > 0)
       .map((k) => `${count(p[k])} ${k}`);
@@ -217,7 +238,11 @@ export function summarize(settings) {
 }
 
 /** Open a transcript row on this box: unarchive/open a dsh session, or import a terminal one. */
-async function openHere(ctx, s, cwd) {
+async function openHere(
+  ctx: ClientCtx,
+  s: { dsh?: { id?: string; archived?: boolean }; id: string; cwd?: string },
+  cwd: string,
+) {
   const known = () => ctx.sessions.list.getSnapshot()?.byId ?? {};
   const id = s.dsh?.id ?? s.id;
   if (s.dsh?.archived || (!s.dsh && !known()[id])) {
@@ -230,31 +255,49 @@ async function openHere(ctx, s, cwd) {
     );
     if (!s.dsh) {
       const ws = (ctx.workspaces.list.getSnapshot()?.items ?? []).find((w) => w.path === cwd);
-      await ctx.sessions.create({
-        ...(ws ? { workspaceId: ws.workspaceId } : {}),
-        sessionId: id,
-      });
+      await ctx.sessions.create(
+        ws ? { sessionId: id, workspaceId: ws.workspaceId } : { sessionId: id },
+      );
     }
   }
   ctx.sessions.open(id);
 }
 
+/** Go to a box's dsh, logged in via its token if we hold one. */
+const jump = (b: { url: string; token?: string }) =>
+  window.location.assign(b.token ? `${b.url}/?token=${encodeURIComponent(b.token)}` : b.url);
+
 /** Link that opens a transcript on another box: its dsh, logged in via token if we hold one. */
-const jumpUrl = (box, s) =>
+const jumpUrl = (box: { url: string; token?: string }, s: { id: string; cwd?: string }): string =>
   `${box.url}/${box.token ? `?token=${encodeURIComponent(box.token)}` : ""}#${HASH_KEY}=${encodeURIComponent(s.id)}&cwd=${encodeURIComponent(s.cwd ?? "")}`;
 
+interface RuntimeStatus {
+  binary?: string;
+  version?: string;
+  loggedIn?: boolean;
+  email?: string;
+  authMethod?: string;
+  host?: string;
+  configDir?: string;
+  error?: string;
+}
+
+interface RuntimeProps {
+  onStatus: (s: RuntimeStatus | null) => void;
+}
+
 /** One line answering "which claude, which account, which machine". */
-function Runtime({ onStatus }) {
-  const [st, setSt] = useState(null);
+function Runtime({ onStatus }: RuntimeProps) {
+  const [st, setSt] = useState<RuntimeStatus | null>(null);
   const [error, setError] = useState("");
   useEffect(() => {
     fetch(`${ROUTE}/status`)
-      .then(readJson)
-      .then((s) => {
-        setSt(s);
-        onStatus?.(s);
+      .then((r) => readJson<RuntimeStatus | null>(r))
+      .then((status) => {
+        setSt(status);
+        onStatus?.(status);
       })
-      .catch((e) => setError(String(e.message ?? e)));
+      .catch((e: Error) => setError(e.message));
   }, []);
   if (error)
     return (
@@ -308,14 +351,55 @@ function Runtime({ onStatus }) {
   );
 }
 
+interface SessionData {
+  id: string;
+  title?: string;
+  cwd?: string;
+  modifiedAt: number;
+  turns: number;
+  turnsPartial?: boolean;
+  bytes: number;
+  dsh?: { archived?: boolean; id?: string };
+}
+
+interface RemoteSessionData extends SessionData {
+  url: string;
+  host?: string;
+  ok?: boolean;
+  error?: string;
+  sessions?: SessionData[];
+  name?: string;
+}
+
+interface BoxData {
+  url: string;
+  name: string;
+  token?: string;
+}
+
+interface SessionsProps {
+  ctx: ClientCtx;
+  boxes: BoxData[];
+}
+
+interface GroupInfo {
+  key: string;
+  name: string;
+  host?: string;
+  ok: boolean;
+  error?: string;
+  sessions: SessionData[];
+  box?: BoxData;
+}
+
 /**
  * Every Claude Code transcript we can see: this box (all workspaces) plus each reachable saved
  * box. Filter by box, workspace and origin; sorted by box, newest first. Open acts here; a row
  * from another box jumps to that box with a deep link its panel understands.
  */
-function Sessions({ ctx, boxes }) {
-  const [local, setLocal] = useState(null);
-  const [remote, setRemote] = useState([]);
+function Sessions({ ctx, boxes }: SessionsProps) {
+  const [local, setLocal] = useState<{ host?: string; sessions?: SessionData[] } | null>(null);
+  const [remote, setRemote] = useState<RemoteSessionData[]>([]);
   const [loading, setLoading] = useState(true);
   const [remoteLoading, setRemoteLoading] = useState(false);
   const [error, setError] = useState("");
@@ -328,22 +412,22 @@ function Sessions({ ctx, boxes }) {
     setLoading(true);
     setError("");
     fetch(`${ROUTE}/sessions?all=1`)
-      .then(readJson)
-      .then(setLocal)
-      .catch((e) => setError(String(e.message ?? e)))
+      .then((r) => readJson<{ host?: string; sessions?: SessionData[] } | null>(r))
+      .then((body) => setLocal(body ?? null))
+      .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
     if (boxes.length === 0) return;
     setRemoteLoading(true);
     fetch(`${ROUTE}/boxes/sessions`)
-      .then(readJson)
-      .then((body) => setRemote(body.boxes ?? []))
-      .catch((e) => setError(String(e.message ?? e)))
+      .then((r) => readJson<{ boxes?: RemoteSessionData[] } | null>(r))
+      .then((body) => setRemote(body?.boxes ?? []))
+      .catch((e: Error) => setError(e.message))
       .finally(() => setRemoteLoading(false));
   };
   useEffect(load, [boxes.map((b) => b.url).join("|")]);
 
-  const groups = useMemo(() => {
-    const out = [];
+  const groups = useMemo<GroupInfo[]>(() => {
+    const out: GroupInfo[] = [];
     if (local)
       out.push({
         key: "local",
@@ -367,8 +451,8 @@ function Sessions({ ctx, boxes }) {
     return out;
   }, [local, remote, boxes, remoteLoading]);
 
-  const rows = useMemo(() => {
-    const out = [];
+  const rows = useMemo<Array<{ g: GroupInfo; s: SessionData }>>(() => {
+    const out: Array<{ g: GroupInfo; s: SessionData }> = [];
     for (const g of groups) {
       if (box !== "all" && g.key !== box) continue;
       for (const s of g.sessions) {
@@ -378,23 +462,25 @@ function Sessions({ ctx, boxes }) {
       }
     }
     const order = new Map(groups.map((g, i) => [g.key, i]));
-    return out.sort(
-      (a, b) => order.get(a.g.key) - order.get(b.g.key) || b.s.modifiedAt - a.s.modifiedAt,
+    return out.toSorted(
+      (a, b) =>
+        (order.get(a.g.key) ?? 0) - (order.get(b.g.key) ?? 0) || b.s.modifiedAt - a.s.modifiedAt,
     );
   }, [groups, box, cwd, origin]);
 
-  const cwds = useMemo(() => {
-    const set = new Set();
+  const cwds = useMemo<string[]>(() => {
+    const set = new Set<string>();
     for (const g of groups)
       if (box === "all" || g.key === box) for (const s of g.sessions) if (s.cwd) set.add(s.cwd);
-    return [...set].sort();
+    return [...set].toSorted();
   }, [groups, box]);
   useEffect(() => {
     if (cwd !== "all" && !cwds.includes(cwd)) setCwd("all");
   }, [cwds.join("|")]);
 
-  const open = async (r) => {
+  const open = async (r: { g: { key: string; box?: BoxData; name: string }; s: SessionData }) => {
     if (r.g.key !== "local") {
+      if (!r.g.box) return;
       window.location.assign(jumpUrl(r.g.box, r.s));
       return;
     }
@@ -403,14 +489,17 @@ function Sessions({ ctx, boxes }) {
     try {
       await openHere(ctx, r.s, r.s.cwd ?? "");
       if (r.s.dsh?.archived)
-        setLocal((l) => ({
-          ...l,
-          sessions: l.sessions.map((x) =>
-            x.id === r.s.id ? { ...x, dsh: { ...x.dsh, archived: false } } : x,
-          ),
-        }));
+        setLocal((l) => {
+          if (!l?.sessions) return l;
+          return {
+            ...l,
+            sessions: l.sessions.map((x) =>
+              x.id === r.s.id ? { ...x, dsh: { ...x.dsh, archived: false } } : x,
+            ),
+          };
+        });
     } catch (e) {
-      setError(String(e.message ?? e));
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusyId("");
     }
@@ -418,7 +507,7 @@ function Sessions({ ctx, boxes }) {
 
   const known = ctx.sessions.list.getSnapshot()?.byId ?? {};
   const total = groups.reduce((n, g) => n + g.sessions.length, 0);
-  let lastGroup = null;
+  let lastGroup: { key: string } | null = null;
   return (
     <section id="dsh-llm-claude-sessions-card" style={card}>
       <div style={cardHead}>
@@ -437,7 +526,7 @@ function Sessions({ ctx, boxes }) {
         id="dsh-llm-claude-session-filters"
         style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", marginTop: 10 }}
       >
-        <button type="button" style={chip(box === "all")} onClick={() => setBox("all")}>
+        <button type="button" style={chip(box === "all", false)} onClick={() => setBox("all")}>
           All boxes
         </button>
         {groups.map((g) => (
@@ -572,9 +661,22 @@ function Sessions({ ctx, boxes }) {
   );
 }
 
+interface SettingsFile {
+  text: string;
+  path?: string;
+  exists?: boolean;
+  mtime?: number | string;
+  backup?: string;
+}
+
+interface SettingsEditorProps {
+  open: boolean;
+  onToggle: () => void;
+}
+
 /** `~/.claude/settings.json`: read-only until Edit, then live JSON check, Save, Cancel. */
-function SettingsEditor({ open, onToggle }) {
-  const [file, setFile] = useState(null);
+function SettingsEditor({ open, onToggle }: SettingsEditorProps) {
+  const [file, setFile] = useState<SettingsFile | null>(null);
   const [text, setText] = useState("");
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -585,26 +687,25 @@ function SettingsEditor({ open, onToggle }) {
     setBusy(true);
     setError("");
     fetch(`${ROUTE}/settings`)
-      .then(readJson)
-      .then((body) => {
-        setFile(body);
-        setText(body.text);
+      .then((r) => readJson<SettingsFile>(r))
+      .then((b) => {
+        setFile(b);
+        setText(b.text);
         setEditing(false);
         setSaved("");
       })
-      .catch((e) => setError(String(e.message ?? e)))
+      .catch((e: Error) => setError(e.message))
       .finally(() => setBusy(false));
   };
   useEffect(load, []);
 
-  const parsed = useMemo(() => {
+  const parsed = useMemo<{ value?: JsonObject; error?: string }>(() => {
     try {
-      const value = JSON.parse(text);
-      if (!value || typeof value !== "object" || Array.isArray(value))
-        return { error: "settings.json must be a JSON object" };
+      const value: Json = JSON.parse(text);
+      if (!isObj(value)) return { error: "settings.json must be a JSON object" };
       return { value };
     } catch (e) {
-      return { error: String(e.message ?? e) };
+      return { error: e instanceof Error ? e.message : String(e) };
     }
   }, [text]);
   const dirty = file !== null && text !== file.text;
@@ -619,18 +720,18 @@ function SettingsEditor({ open, onToggle }) {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ text }),
     })
-      .then(readJson)
-      .then((body) => {
-        setFile((f) => ({ ...f, text, exists: true, mtime: body.mtime }));
+      .then((r) => readJson<{ mtime?: number | string; backup?: string }>(r))
+      .then((b) => {
+        setFile((f) => ({ ...f, text, exists: true, mtime: b.mtime }));
         setEditing(false);
         setSaved(
-          `Saved ${new Date(body.mtime).toLocaleTimeString()} · previous copy in ${body.backup}`,
+          `Saved ${new Date(b.mtime ?? 0).toLocaleTimeString()} · previous copy in ${b.backup ?? "?"}`,
         );
       })
-      .catch((e) => setError(String(e.message ?? e)))
+      .catch((e: Error) => setError(e.message))
       .finally(() => setBusy(false));
   };
-  const onKeyDown = (e) => {
+  const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
       e.preventDefault();
       save();
@@ -732,7 +833,7 @@ function SettingsEditor({ open, onToggle }) {
         <span style={{ fontSize: 12, color: parsed.error ? T.err : T.ok }}>
           {parsed.error
             ? `Invalid JSON: ${parsed.error}`
-            : `Valid JSON · ${Object.keys(parsed.value).length} keys${dirty ? " · unsaved changes" : ""}`}
+            : `Valid JSON · ${Object.keys(parsed.value ?? {}).length} keys${dirty ? " · unsaved changes" : ""}`}
         </span>
         <span style={{ ...meta, whiteSpace: "normal", textAlign: "right" }}>
           {error ? (
@@ -746,14 +847,35 @@ function SettingsEditor({ open, onToggle }) {
   );
 }
 
+interface BoxesProps {
+  boxes: BoxData[];
+  setBoxes: React.Dispatch<React.SetStateAction<BoxData[]>>;
+  open: boolean;
+  onToggle: () => void;
+}
+
+interface ProbeEntry {
+  url: string;
+  ok?: boolean;
+  error?: string;
+  status?: {
+    host?: string;
+    binary?: string;
+    version?: string;
+    loggedIn?: boolean;
+    email?: string;
+    plugin?: string;
+  };
+}
+
 /**
  * Other dsh servers ("boxes"), each with its own Claude Code login. Same idea as another tool's
  * environments: the browser hops to the box, nothing is proxied. Saved on this dsh, probed
  * server-side so the row shows host, claude version, login and plugin version before you jump.
  */
-function Boxes({ boxes, setBoxes, open, onToggle }) {
-  const [probe, setProbe] = useState({});
-  const [self, setSelf] = useState(null);
+function Boxes({ boxes, setBoxes, open, onToggle }: BoxesProps) {
+  const [probe, setProbe] = useState<Record<string, ProbeEntry>>({});
+  const [self, setSelf] = useState<{ plugin?: string } | null>(null);
   const [draft, setDraft] = useState({ name: "", url: "", token: "" });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -763,17 +885,17 @@ function Boxes({ boxes, setBoxes, open, onToggle }) {
     setBusy(true);
     setError("");
     fetch(`${ROUTE}/boxes/status`)
-      .then(readJson)
-      .then((body) => {
-        setSelf(body.self);
-        setProbe(Object.fromEntries(body.boxes.map((b) => [b.url, b])));
+      .then((r) => readJson<{ self?: { plugin?: string }; boxes?: ProbeEntry[] }>(r))
+      .then((b) => {
+        setSelf(b.self ?? null);
+        setProbe(Object.fromEntries((b.boxes ?? []).map((entry) => [entry.url, entry])));
       })
-      .catch((e) => setError(String(e.message ?? e)))
+      .catch((e: Error) => setError(e.message))
       .finally(() => setBusy(false));
   };
   useEffect(refresh, [boxes.map((b) => b.url).join("|")]);
 
-  const save = (next) => {
+  const save = (next: BoxData[]) => {
     setBusy(true);
     setError("");
     return fetch(`${ROUTE}/boxes`, {
@@ -781,19 +903,17 @@ function Boxes({ boxes, setBoxes, open, onToggle }) {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ boxes: next }),
     })
-      .then(readJson)
-      .then((body) => setBoxes(body.boxes))
-      .catch((e) => setError(String(e.message ?? e)))
+      .then((r) => readJson<{ boxes?: BoxData[] }>(r))
+      .then((b) => setBoxes(b.boxes ?? []))
+      .catch((e: Error) => setError(e.message))
       .finally(() => setBusy(false));
   };
-  const add = (e) => {
+  const add = (e: React.FormEvent) => {
     e.preventDefault();
     if (!draft.name.trim() || !draft.url.trim()) return;
     save([...boxes, draft]).then(() => setDraft({ name: "", url: "", token: "" }));
   };
-  const remove = (url) => save(boxes.filter((b) => b.url !== url));
-  const jump = (b) =>
-    window.location.assign(b.token ? `${b.url}/?token=${encodeURIComponent(b.token)}` : b.url);
+  const remove = (url: string) => save(boxes.filter((b) => b.url !== url));
 
   const reachable = boxes.filter((b) => probe[b.url]?.ok).length;
   const summary =
@@ -823,7 +943,7 @@ function Boxes({ boxes, setBoxes, open, onToggle }) {
       {boxes.map((b) => {
         const st = probe[b.url];
         const ok = st?.ok;
-        const skew = ok && self && st.status.plugin && st.status.plugin !== self.plugin;
+        const skew = ok && self && st.status?.plugin && st.status.plugin !== self.plugin;
         return (
           <div key={b.url} data-testid="dsh-llm-claude-box-row" style={row}>
             <div style={{ flex: 1, minWidth: 0 }}>
@@ -842,7 +962,7 @@ function Boxes({ boxes, setBoxes, open, onToggle }) {
                 <span style={{ fontFamily: T.mono }}>{b.url}</span>
                 {!st && <span style={pill(T.faint)}>{busy ? "checking" : "unchecked"}</span>}
                 {st && !ok && <span style={pill(T.err)}>{st.error}</span>}
-                {ok && (
+                {ok && st.status && (
                   <>
                     <span style={pill(T.faint)}>{st.status.host}</span>
                     <span style={pill(st.status.binary ? T.ok : T.err)}>
@@ -914,10 +1034,10 @@ function Boxes({ boxes, setBoxes, open, onToggle }) {
 }
 
 /** A deep link from another box's panel: open that session here once dsh is ready. */
-function followDeepLink(ctx) {
+function followDeepLink(ctx: ClientCtx) {
   const m = /[#&]claude-session=([^&]+)(?:&cwd=([^&]*))?/.exec(window.location.hash ?? "");
   if (!m) return;
-  const id = decodeURIComponent(m[1]);
+  const id = decodeURIComponent(m[1] ?? "");
   const cwd = decodeURIComponent(m[2] ?? "");
   window.history.replaceState(null, "", window.location.pathname + window.location.search);
   const started = Date.now();
@@ -925,11 +1045,16 @@ function followDeepLink(ctx) {
     const ready = ctx.sessions.list.getSnapshot()?.phase === "ready";
     if (!ready && Date.now() - started < 15000) return void setTimeout(tick, 250);
     try {
-      const { sessions } = await readJson(await fetch(`${ROUTE}/sessions?all=1`));
+      const body = await readJson<{ sessions?: SessionData[] } | null>(
+        await fetch(`${ROUTE}/sessions?all=1`),
+      );
+      const sessions = body?.sessions ?? [];
       const s = sessions.find((x) => x.id === id) ?? { id, cwd };
       await openHere(ctx, s, s.cwd ?? cwd);
     } catch (e) {
-      console.warn(`[dsh-llm-claude] deep link failed: ${e?.message ?? e}`);
+      console.warn(
+        `[dsh-llm-claude] deep link failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
     }
   };
   void tick();
@@ -939,20 +1064,45 @@ function followDeepLink(ctx) {
  * Registers the Claude Code panel in dsh settings: runtime line, one session list across boxes,
  * then the saved boxes and Claude Code's settings.json as collapsed cards.
  */
-export function apply(ctx) {
+type DshSlots = {
+  inject: (section: string, factory: () => ReactNode) => void;
+  register: (
+    spec: {
+      name: string;
+      id: string;
+      order: number;
+      label: string;
+      inject: () => Record<string, never>;
+    },
+    Component: () => ReactNode,
+  ) => void;
+};
+/** The dsh client services this panel uses, the ones `inject` names. */
+interface ClientCtx {
+  slots: DshSlots;
+  sessions: {
+    list: { getSnapshot: () => { byId: Record<string, { id: string }>; phase?: string } };
+    open: (id: string) => void;
+    create: (opts: { sessionId: string; workspaceId?: string }) => Promise<void>;
+  };
+  workspaces: {
+    list: { getSnapshot: () => { items: Array<{ path: string; workspaceId: string }> } };
+  };
+}
+export function apply(ctx: ClientCtx) {
   followDeepLink(ctx);
 
   function Section() {
-    const [boxes, setBoxes] = useState(null);
+    const [boxes, setBoxes] = useState<BoxData[]>([]);
     const [openBoxes, setOpenBoxes] = useState(false);
     const [openSettings, setOpenSettings] = useState(false);
     const [error, setError] = useState("");
     useEffect(() => {
       fetch(`${ROUTE}/boxes`)
-        .then(readJson)
-        .then((body) => setBoxes(body.boxes ?? []))
-        .catch((e) => {
-          setError(String(e.message ?? e));
+        .then((r) => readJson<{ boxes?: BoxData[] }>(r))
+        .then((b) => setBoxes(b.boxes ?? []))
+        .catch((e: Error) => {
+          setError(e.message);
           setBoxes([]);
         });
     }, []);
@@ -961,7 +1111,7 @@ export function apply(ctx) {
         <h2 id="dsh-llm-claude-heading" style={{ marginTop: 0 }}>
           Claude Code
         </h2>
-        <Runtime />
+        <Runtime onStatus={() => {}} />
         {error && <p style={{ color: T.err, fontSize: 13 }}>{error}</p>}
         {boxes !== null && <Sessions ctx={ctx} boxes={boxes} />}
         {boxes !== null && (
@@ -977,7 +1127,7 @@ export function apply(ctx) {
     );
   }
 
-  ctx.slots.inject("settings.section", () =>
+  ctx.slots.inject("settings.section", () => {
     ctx.slots.register(
       {
         name: "settings.section",
@@ -987,6 +1137,7 @@ export function apply(ctx) {
         inject: () => ({}),
       },
       Section,
-    ),
-  );
+    );
+    return null;
+  });
 }

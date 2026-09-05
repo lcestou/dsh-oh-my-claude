@@ -1,15 +1,26 @@
 // dsh LLM adapter that drives the Claude Code CLI (`claude -p --input-format stream-json --output-format stream-json`).
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { access, appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { homedir, hostname } from "node:os";
+import { hostname } from "node:os";
 import { join } from "node:path";
-import { LlmAdapter, LlmError, boundContextSummary, createUserMessage } from "@deepseek-ai/dsh-llm";
+import {
+  LlmAdapter,
+  LlmError,
+  type ContentBlock,
+  type GenerateOptions,
+  type LlmModelInfo,
+  type LlmResolvedModelInfo,
+  type StreamChunk,
+  boundContextSummary,
+  createUserMessage,
+} from "@deepseek-ai/dsh-llm";
 import z from "@deepseek-ai/schemastery";
 import { registerSessionRoutes } from "./sessions.js";
 import { KEY_HEADER, MCP_PATH, registerMcpBridge } from "./mcp.js";
 import {
+  type ClaudeEvent,
   ClaudeProcess,
   allowResult,
   answersFor,
@@ -23,6 +34,112 @@ import {
   nodeSpawner,
   seamSpawner,
 } from "./process.js";
+import type {
+  Agent,
+  ApprovalOutcome,
+  ImageAttachmentRef,
+  JsonValue,
+  PluginContext,
+  SessionController,
+  SessionId,
+  SubprocessRuntime,
+} from "./dsh.js";
+import { ADAPTER_CURRENT, RESUME_TIMER, PROCESS_REGISTRY, asSessionId } from "./dsh.js";
+import {
+  CLAUDE_HOME,
+  STATE_DIR,
+  auxCwd,
+  authHeaders,
+  loadStarted,
+  markBusy,
+  rememberStarted,
+  takeInterrupted,
+  trace,
+} from "./state.js";
+import { errorText, toolResultText } from "./process.js";
+import { forkTranscriptText } from "./transcript.js";
+export { markBusy, takeInterrupted } from "./state.js";
+export { forkTranscriptText } from "./transcript.js";
+import type {
+  ContentBlockType,
+  FinishReason,
+  LlmFailure,
+  ReasoningEffortId,
+  TokenUsage,
+  ToolCallId,
+} from "@deepseek-ai/dsh-llm";
+import type {
+  ClaudeContentBlock,
+  ClaudeProcessSpec,
+  ClaudeStreamPartial,
+  RelayEvent,
+  RelayResult,
+  TurnPrep,
+} from "./process.js";
+
+/** A dsh request that belongs to a session; everything on the persistent path has one. */
+type SessionOptions = GenerateOptions & { sessionId: SessionId };
+/** The CLI asking for a permission or a question. */
+type ControlRequestEvent = Extract<ClaudeEvent, { type: "control_request" }>;
+/** How a turn ended, as the turn loop tracks it. */
+type Outcome = "continue" | "finished" | "parked" | "retry" | "relayed" | "ended" | undefined;
+/** How this request continues the session's Claude process; see continuationFor(). */
+type Continuation =
+  | { mode: "abandon" | "steer"; proc: ClaudeProcess; options: SessionOptions }
+  | { mode: "relay"; proc: ClaudeProcess; options: SessionOptions; results: RelayResult[] }
+  | { mode: "prompt"; proc?: undefined; options: SessionOptions };
+/** dsh splicing messages into a session's inbox mid-turn; the steers this adapter forwards live. */
+type SpliceEvent = {
+  type?: string;
+  data?: { target?: string; inserted?: LooseMessage[] };
+};
+/** The permission decision inputs, one control request's worth. */
+interface Decision {
+  toolName: string;
+  input: Record<string, JsonValue>;
+  request: NonNullable<ControlRequestEvent["request"]>;
+  toolUseId: string;
+  agent: Agent | undefined;
+  signal: AbortSignal;
+  accessMode: string | undefined;
+}
+
+/** A live process always carries the prep it was spawned with; acquire() sets it before use. */
+/** A process parked on a relayed tool call or a steer is mid-turn, not idle. */
+const isSettled = (p: ClaudeProcess) => !p.busy && p.relays.size === 0 && !p.parked;
+function requirePrep(proc: ClaudeProcess): TurnPrep {
+  if (!proc.prep) throw new LlmError("claude process has no turn state", "PROVIDER_ERROR");
+  return proc.prep;
+}
+
+/** Configuration shape produced by the Config schema with defaults applied. */
+export type Config = {
+  command: string;
+  spawn: "node" | "dsh";
+  permissionMode:
+    | "dsh"
+    | "acceptEdits"
+    | "bypassPermissions"
+    | "plan"
+    | "dontAsk"
+    | "auto"
+    | "manual";
+  allowedTools: string[];
+  disallowedTools: string[];
+  addDirs: string[];
+  maxTurns?: number;
+  maxBudgetUsd?: number;
+  titleModel: string;
+  toolActivity: boolean;
+  resume: boolean;
+  idleTimeoutMs: number;
+  toolTextLimit: number;
+  dshTools: boolean;
+  debug: boolean;
+  approvals: boolean;
+  processIdleMs: number;
+  maxProcesses: number;
+};
 
 /** Plugin name identifier. */
 export const name = "dsh-llm-claude";
@@ -104,9 +221,21 @@ export const Config = z.object({
     .description("Cap on live Claude Code processes; the longest-idle one is evicted first"),
 });
 
-const EFFORTS_ALL = ["low", "medium", "high", "xhigh", "max"];
+const EFFORTS_ALL = ["low", "medium", "high", "xhigh", "max"] as const;
+/** One effort level's capability flag, as the Models API reports it. */
+type EffortLevelCaps = { supported?: boolean };
+/** The effort capability block: an overall flag plus one flag per level. */
+type EffortCaps = { supported?: boolean } & Partial<
+  Record<(typeof EFFORTS_ALL)[number], EffortLevelCaps>
+>;
 const EFFORTS_45 = ["low", "medium", "high"];
-const M = (id, label, contextWindow, efforts) => ({ id, name: label, contextWindow, efforts });
+const M = (id: string, label: string, contextWindow: number, efforts: readonly string[]) => ({
+  provider: "claude-code",
+  id,
+  name: label,
+  contextWindow,
+  efforts,
+});
 
 // Fallback catalog when the Models API is unreachable. Ids are what `claude --model` accepts.
 export const KNOWN_MODELS = [
@@ -124,8 +253,6 @@ export const KNOWN_MODELS = [
 ];
 
 // No default effort is advertised: `--effort` is only sent when dsh picks one, so the CLI's own default rules.
-/** Claude Code's config dir: transcripts, settings.json. Honors CLAUDE_CONFIG_DIR like the CLI. */
-const CLAUDE_HOME = process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude");
 const MAX_IMAGES = 20;
 const TOOL_TEXT_LIMIT = 600;
 
@@ -140,29 +267,20 @@ let catalog = { at: 0, models: KNOWN_MODELS };
  * environment variables and stored credentials.
  * @returns {Promise<object|null>} API auth headers or null if unavailable
  */
-async function authHeaders() {
-  if (process.env.ANTHROPIC_API_KEY) return { "x-api-key": process.env.ANTHROPIC_API_KEY };
-  try {
-    const raw = await readFile(join(CLAUDE_HOME, ".credentials.json"), "utf8");
-    const oauth = JSON.parse(raw).claudeAiOauth;
-    if (oauth?.accessToken && (oauth.expiresAt ?? 0) > Date.now()) {
-      return { Authorization: `Bearer ${oauth.accessToken}`, "anthropic-beta": "oauth-2025-04-20" };
-    }
-  } catch {
-    /* no stored credential */
-  }
-  return null;
-}
-
 /**
  * Converts an Anthropic Models API response into the internal model format.
  * @param {object} m - Model metadata from the API
  * @returns {object} Internal model representation
  */
-export function modelFromApi(m) {
+export function modelFromApi(m: {
+  id?: string;
+  display_name?: string;
+  max_input_tokens?: number;
+  capabilities?: { effort?: EffortCaps };
+}): LlmModelInfo {
   const eff = m.capabilities?.effort;
-  const efforts = eff?.supported ? EFFORTS_ALL.filter((l) => eff[l]?.supported) : [];
-  return M(m.id, m.display_name ?? m.id, m.max_input_tokens ?? 200_000, efforts);
+  const efforts: string[] = eff?.supported ? EFFORTS_ALL.filter((l) => eff[l]?.supported) : [];
+  return M(m.id ?? "", m.display_name ?? m.id ?? "", m.max_input_tokens ?? 200_000, efforts);
 }
 
 /**
@@ -177,7 +295,10 @@ export async function getCatalog(fetchImpl = fetch) {
   if (headers) {
     try {
       const res = await fetchImpl("https://api.anthropic.com/v1/models?limit=100", {
-        headers: { ...headers, "anthropic-version": "2023-06-01" },
+        headers: {
+          ...headers,
+          "anthropic-version": "2023-06-01",
+        },
         signal: AbortSignal.timeout(5000),
       });
       if (res.ok) {
@@ -199,19 +320,33 @@ export async function getCatalog(fetchImpl = fetch) {
  * @param {object} model - Model object with id and name
  * @returns {object} Model info with provider and inputModalities
  */
-function modelInfo(provider, model) {
-  return { provider, id: model.id, name: model.name, inputModalities: ["text", "image"] };
+function modelInfo(provider: string, model: { id?: string; name?: string }) {
+  return {
+    provider,
+    id: model.id ?? "",
+    name: model.name ?? "",
+    inputModalities: ["text", "image"] as const,
+  };
 }
 
 /** Exact model metadata. `id` must echo the requested id: dsh-llm normalizeModelInfo rejects mismatches. */
-export function resolveModelInfo(provider, modelId, models = catalog.models) {
+export function resolveModelInfo(
+  provider: string,
+  modelId: string,
+  models: ReturnType<typeof M>[] = catalog.models,
+): LlmResolvedModelInfo {
   const pool = [...models, ...KNOWN_MODELS];
   const found = pool.find((m) => m.id === modelId) ?? pool.find((m) => m.id.startsWith(modelId));
-  const info = { ...modelInfo(provider, { id: modelId, name: found?.name ?? modelId }) };
+  const info: LlmResolvedModelInfo = {
+    ...modelInfo(provider, { id: modelId, name: found?.name ?? modelId }),
+  };
   if (!found) return info;
   info.context = { contextWindow: found.contextWindow };
   if (found.efforts.length > 0) {
-    info.reasoning = { efforts: found.efforts.map((id) => ({ id, name: id })) };
+    info.reasoning = {
+      // SAFETY: effort ids come from the CLI's own catalog; the brand marks provenance only
+      efforts: found.efforts.map((id) => ({ id: id as ReasoningEffortId, name: id })),
+    };
   }
   return info;
 }
@@ -220,24 +355,21 @@ export function resolveModelInfo(provider, modelId, models = catalog.models) {
 // Session mapping: one Claude Code session per dsh session
 
 /** Deterministic UUID for a dsh session id, so a reopened dsh session resumes the same Claude session. */
-export function claudeSessionId(sessionId) {
+export function claudeSessionId(sessionId: string): string {
   const h = createHash("sha256").update(`dsh-llm-claude:${sessionId}`).digest("hex");
-  const variant = ((parseInt(h[16], 16) & 0x3) | 0x8).toString(16);
+  const variant = ((parseInt(h.charAt(16), 16) & 0x3) | 0x8).toString(16);
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-${variant}${h.slice(17, 20)}-${h.slice(20, 32)}`;
 }
 
 /** Claude Code stores transcripts under ~/.claude/projects/<cwd with non-alphanumerics as '-'>/<id>.jsonl */
-export function projectDirName(cwd) {
+export function projectDirName(cwd: string): string {
   return cwd.replace(/[^A-Za-z0-9]/g, "-");
 }
 
 /**
  * Checks if a Claude Code session transcript exists on disk.
- * @param {string} cwd - Working directory path
- * @param {string} id - Claude session ID
- * @returns {Promise<boolean>} True if the transcript file exists
  */
-async function claudeSessionExists(cwd, id) {
+async function claudeSessionExists(cwd: string, id: string): Promise<boolean> {
   try {
     await access(join(CLAUDE_HOME, "projects", projectDirName(cwd), `${id}.jsonl`));
     return true;
@@ -249,27 +381,34 @@ async function claudeSessionExists(cwd, id) {
 // ---------------------------------------------------------------------------
 // Request assembly
 
-const textOf = (content) => {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content))
-    return content
-      .filter((b) => b.type === "text")
-      .map((b) => b.text)
-      .join("\n");
-  return String(content ?? "");
+/** The slice of a dsh message this adapter reads; dsh's own Message type is wider. */
+/** The slice of a dsh message this adapter reads; exported for test fixtures. */
+export type LooseMessage = {
+  role?: string;
+  source?: { kind?: string; plugin?: string; rpcId?: string };
+  content?: string | ContentBlock[];
 };
 
-const isTurn = (m) => (m.role === "user" && m.source?.kind !== "tool") || m.role === "assistant";
+const textOf = (content: LooseMessage["content"]): string => {
+  if (!Array.isArray(content)) return content ?? "";
+  return content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("\n");
+};
+
+const isTurn = (m: LooseMessage) =>
+  (m.role === "user" && m.source?.kind !== "tool") || m.role === "assistant";
 
 /**
  * Pick the messages that go into this call. Resuming: only what came after the last assistant turn
  * (the new prompt plus dsh's context injections). Fresh: the whole transcript, since `claude -p` is stateless.
  */
-export function selectTurns(messages, resuming) {
+export function selectTurns(
+  messages: LooseMessage[] | undefined,
+  resuming: boolean,
+): LooseMessage[] {
   const turns = (messages ?? []).filter(isTurn);
   if (!resuming) return turns;
   let last = -1;
-  for (let i = 0; i < turns.length; i++) if (turns[i].role === "assistant") last = i;
+  for (let i = 0; i < turns.length; i++) if (turns[i]?.role === "assistant") last = i;
   return turns.slice(last + 1);
 }
 
@@ -277,7 +416,7 @@ export function selectTurns(messages, resuming) {
  *  workspace, `~/.claude/CLAUDE.md`), so those blocks are dropped from what goes to Claude. The
  *  bundle is one `<system-reminder>` with `Instructions from: <path>` headers; a block runs to
  *  the next header or the closing tag. Empty when nothing but the wrapper would remain. */
-export function withoutNativeInstructions(text) {
+export function withoutNativeInstructions(text: string): string {
   const header = /^Instructions from: (.+)$/m;
   if (!header.test(text)) return text;
   const close = /\s*<\/system-reminder>\s*$/.exec(text);
@@ -285,7 +424,7 @@ export function withoutNativeInstructions(text) {
   const pieces = body.split(/^(?=Instructions from: )/m);
   const kept = pieces.filter((p) => {
     const m = header.exec(p);
-    return !m || !/(^|\/)CLAUDE\.md\s*$/.test(m[1].trim());
+    return !m || !/(^|\/)CLAUDE\.md\s*$/.test((m[1] ?? "").trim());
   });
   if (kept.length === pieces.length) return text;
   if (!kept.some((p) => header.test(p))) return "";
@@ -293,14 +432,16 @@ export function withoutNativeInstructions(text) {
 }
 
 /** Prompt text of one dsh message, with Claude-native instruction files filtered out. */
-const promptText = (m) =>
+const promptTextOf = (m: LooseMessage): string =>
   m.source?.kind === "agent-instructions"
     ? withoutNativeInstructions(textOf(m.content))
     : textOf(m.content);
 
 /** Text body sent as the user prompt. Assistant turns get role labels so history stays legible. */
-export function buildPrompt(turns) {
-  const parts = turns.map((m) => ({ role: m.role, text: promptText(m) })).filter((t) => t.text);
+export function buildPrompt(turns: LooseMessage[]): string {
+  const parts = turns
+    .map((m) => ({ role: m.role, text: promptTextOf(m) }))
+    .filter((t) => t.text !== "");
   if (!parts.some((t) => t.role === "user")) {
     // Attachment-only turn: the user sent an image (or other non-text block) with no typed
     // text. Images ride along separately via imageRefs, but Claude still needs a non-empty
@@ -322,8 +463,12 @@ export function buildPrompt(turns) {
  * @param {Array} turns - Message turns
  * @returns {Array} Image attachment references
  */
-function imageRefs(turns) {
-  const refs = [];
+// Lightweight image ref shape; full ImageAttachmentRef from dsh-attachment has attachmentId too.
+/** An image loaded from dsh's attachment store, ready for the stdin line. */
+type LoadedImage = { mediaType: string; data: string; attachmentId?: string };
+
+function imageRefs(turns: LooseMessage[]): ImageAttachmentRef[] {
+  const refs: ImageAttachmentRef[] = [];
   for (const m of turns) {
     if (m.role !== "user" || !Array.isArray(m.content)) continue;
     for (const b of m.content) if (b.type === "image" && b.attachment) refs.push(b.attachment);
@@ -335,11 +480,17 @@ const MODE_FOR_ACCESS = {
   "read-only": "plan",
   "workspace-write": "acceptEdits",
   "danger-full-access": "bypassPermissions",
-};
+} as const satisfies Record<string, string>;
+/** Claude permission mode for a dsh access mode, or undefined for one this table does not know. */
+const modeForAccess = (accessMode: string): string | undefined =>
+  // SAFETY: the key is checked against the table before it is used as its index
+  Object.hasOwn(MODE_FOR_ACCESS, accessMode)
+    ? MODE_FOR_ACCESS[accessMode as keyof typeof MODE_FOR_ACCESS]
+    : undefined;
 
 /** dsh's access-mode switch arrives as text in the runtime-context injection; the last snapshot wins. */
-export function accessModeOf(messages) {
-  let mode;
+export function accessModeOf(messages: LooseMessage[] | undefined): string | undefined {
+  let mode: string | undefined;
   for (const m of messages ?? []) {
     if (m.role !== "user") continue;
     const found = textOf(m.content).match(/Current DSH file policy: ([a-z-]+)/);
@@ -355,9 +506,12 @@ export function accessModeOf(messages) {
  * @param {string} accessMode - dsh access mode
  * @returns {string} Permission mode for Claude Code
  */
-export function permissionModeFor(config, accessMode) {
+export function permissionModeFor(
+  config: Schemastery.TypeT<typeof Config>,
+  accessMode: string | undefined,
+): string {
   if (config.permissionMode !== "dsh") return config.permissionMode;
-  return MODE_FOR_ACCESS[accessMode] ?? "acceptEdits";
+  return modeForAccess(accessMode ?? "") ?? "acceptEdits";
 }
 
 // ---------------------------------------------------------------------------
@@ -371,10 +525,19 @@ let cliProbe;
  * @param {Function} exec - execFile implementation (default: node's execFile)
  * @returns {Promise<object>} Object with flags Set and version string
  */
-export function probeCli(exec = execFile, command = "claude") {
+/** The slice of node's execFile the probe uses; tests hand in a fake with this shape. */
+export type ExecLike = (
+  cmd: string,
+  args: string[],
+  opts: { timeout: number },
+  cb: (err: Error | null, stdout: string | Buffer) => void,
+) => void;
+
+// SAFETY: execFile's overloads include exactly this call shape; the alias only narrows them
+export function probeCli(exec: ExecLike = execFile as ExecLike, command = "claude") {
   cliProbe ??= (async () => {
-    const run = (args) =>
-      new Promise((resolve) => {
+    const run = (args: string[]) =>
+      new Promise<string>((resolve) => {
         exec(command, args, { timeout: 8000 }, (err, stdout) => resolve(err ? "" : String(stdout)));
       });
     const [help, version] = await Promise.all([run(["--help"]), run(["--version"])]);
@@ -388,10 +551,12 @@ export function probeCli(exec = execFile, command = "claude") {
  * Checks if a CLI flag is supported. Returns true if flags are unknown
  * (probe failed) to assume support.
  */
-export const supports = (flags, flag) => !flags || flags.has(flag);
+export const supports = (flags: Set<string> | null | undefined, flag: string) =>
+  !flags || flags.has(flag);
 
 /** Text mode when the CLI lacks --input-format: prompt goes positional, images are dropped. */
-export const usesStdin = (flags) => supports(flags, "--input-format");
+export const usesStdin = (flags: Set<string> | null | undefined) =>
+  supports(flags, "--input-format");
 
 /**
  * Constructs command-line arguments for spawning a Claude Code process.
@@ -424,6 +589,14 @@ export function buildArgs({
   flags,
   promptText,
   mcp,
+}: Pick<GenerateOptions, "reasoningEffort" | "system" | "purpose"> & {
+  model: string | undefined;
+  config: Schemastery.TypeT<typeof Config>;
+  session?: { id: string; resuming: boolean } | undefined;
+  accessMode?: string | undefined;
+  flags?: Set<string> | null;
+  promptText?: string;
+  mcp?: { url: string; key: string } | undefined;
 }) {
   const args = ["-p"];
   if (usesStdin(flags)) args.push("--input-format", "stream-json");
@@ -469,89 +642,16 @@ export function buildArgs({
   return args;
 }
 
-// ---------------------------------------------------------------------------
-// Session state: which Claude sessions this plugin started, so resume does not depend on guessing
-// where Claude Code keeps its transcripts. A wrong guess still degrades to a fresh full-transcript run.
-
-const STATE_DIR = join(homedir(), ".local", "state", "dsh-llm-claude");
-const STATE_FILE = join(STATE_DIR, "sessions.json");
-/** Sessions with a turn in flight. Survives a dsh restart so those sessions can be nudged back. */
-const BUSY_FILE = join(STATE_DIR, "busy.json");
-let busyChain = Promise.resolve();
-
-/** Record (or clear) that a session's turn is running; serialized read-modify-write. */
-export function markBusy(id, on, path = BUSY_FILE) {
-  busyChain = busyChain.then(
-    async () => {
-      let ids = [];
-      try {
-        ids = JSON.parse(await readFile(path, "utf8"));
-      } catch {}
-      const set = new Set(Array.isArray(ids) ? ids : []);
-      if (on ? set.has(id) : !set.has(id)) return;
-      if (on) set.add(id);
-      else set.delete(id);
-      await mkdir(dirname(path), { recursive: true });
-      await writeFile(path, JSON.stringify([...set]));
-    },
-    () => {},
-  );
-  return busyChain;
-}
-
-/** Sessions whose turn the previous dsh process left unfinished; cleared on read. */
-export async function takeInterrupted(path = BUSY_FILE) {
-  let ids = [];
-  try {
-    ids = JSON.parse(await readFile(path, "utf8"));
-  } catch {
-    return [];
-  }
-  await writeFile(path, "[]").catch(() => {});
-  return Array.isArray(ids) ? ids.filter((x) => typeof x === "string") : [];
-}
-const AUX_DIR = join(STATE_DIR, "aux");
-let auxReady;
-const auxCwd = () => (auxReady ??= mkdir(AUX_DIR, { recursive: true }).then(() => AUX_DIR));
-let started; // Set of Claude session ids known to exist
-
-/**
- * Loads the set of Claude session IDs that this plugin has started.
- * Cached after the first call.
- * @returns {Promise<Set>} Set of known Claude session IDs
- */
-async function loadStarted() {
-  if (started) return started;
-  try {
-    started = new Set(JSON.parse(await readFile(STATE_FILE, "utf8")));
-  } catch {
-    started = new Set();
-  }
-  return started;
-}
-
-/**
- * Records or removes a Claude session ID from the known sessions list.
- * @param {string} id - Claude session ID to track or forget
- * @param {boolean} keep - If true, add to known; if false, remove from known
- * @returns {Promise<void>}
- */
-async function rememberStarted(id, keep = true) {
-  const set = await loadStarted();
-  if (keep ? set.has(id) : !set.has(id)) return;
-  if (keep) set.add(id);
-  else set.delete(id);
-  try {
-    await mkdir(STATE_DIR, { recursive: true });
-    await writeFile(STATE_FILE, JSON.stringify([...set]));
-  } catch {
-    /* state is an optimization only */
-  }
-}
-
 /** One stream-json input line: the user turn with text and inline images. */
-export function buildInput(promptText, images) {
-  const content = [{ type: "text", text: promptText }];
+export function buildInput(
+  prompt: string,
+  images: Array<{ mediaType: string; data: string }>,
+): string {
+  const content: Array<{
+    type: string;
+    text?: string;
+    source?: { type: string; media_type: string; data: string };
+  }> = [{ type: "text", text: prompt }];
   for (const img of images) {
     content.push({
       type: "image",
@@ -564,37 +664,32 @@ export function buildInput(promptText, images) {
 // ---------------------------------------------------------------------------
 // stream-json → dsh chunks
 
-const clip = (s, n = TOOL_TEXT_LIMIT) => (s.length > n ? `${s.slice(0, n)}…` : s);
+const clip = (s: string, n = TOOL_TEXT_LIMIT): string => (s.length > n ? `${s.slice(0, n)}…` : s);
 const DENIED_RE = /requires? approval|permission (was )?denied|not allowed/i;
 
-function toolResultText(block) {
-  const c = block.content;
-  if (typeof c === "string") return c;
-  if (Array.isArray(c))
-    return c.map((b) => (b.type === "text" ? b.text : `[${b.type}]`)).join("\n");
-  return "";
-}
-
-function usageEvent(u) {
+function usageEvent(u: {
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_read_input_tokens?: number;
+  cache_creation_input_tokens?: number;
+}): StreamChunk {
   // dsh TokenUsage: inputTokens excludes cache hits; the three prompt counters plus output sum to totalTokens.
   const input = u.input_tokens ?? 0;
   const output = u.output_tokens ?? 0;
   const cacheRead = u.cache_read_input_tokens ?? 0;
   const cacheWrite = u.cache_creation_input_tokens ?? 0;
-  return {
-    type: "usage",
-    usage: {
-      inputTokens: input,
-      outputTokens: output,
-      totalTokens: input + cacheRead + cacheWrite + output,
-      ...(cacheRead ? { cacheReadTokens: cacheRead } : {}),
-      ...(cacheWrite ? { cacheWriteTokens: cacheWrite } : {}),
-    },
+  const usage: TokenUsage = {
+    inputTokens: input,
+    outputTokens: output,
+    totalTokens: input + cacheRead + cacheWrite + output,
   };
+  if (cacheRead) usage.cacheReadTokens = cacheRead;
+  if (cacheWrite) usage.cacheWriteTokens = cacheWrite;
+  return { type: "usage", usage };
 }
 
 /** `--resume` of a session Claude Code no longer has: a result whose errors name the missing conversation. */
-export function isStaleResume(event) {
+export function isStaleResume(event: ClaudeEvent): boolean {
   if (event?.type !== "result" || !event.is_error) return false;
   return /No conversation found/i.test(JSON.stringify(event.errors ?? event.result ?? ""));
 }
@@ -603,7 +698,14 @@ export function isStaleResume(event) {
 const NOT_LOGGED_IN_RE =
   /not logged in|authentication_error|failed to authenticate|oauth .*invalid/i;
 
-export function finishReason(result) {
+export function finishReason(result: {
+  is_error?: boolean;
+  stop_reason?: string;
+  result?: unknown;
+  errors?: unknown[];
+  api_error_status?: number;
+  subtype?: string;
+}): FinishReason {
   if (result.is_error) {
     const errors = Array.isArray(result.errors) ? result.errors.join("; ") : "";
     let message = String(result.result ?? errors ?? result.subtype ?? "claude error");
@@ -621,22 +723,27 @@ export function finishReason(result) {
  * Tool calls and results are shown as reasoning blocks: the CLI runs its own tools, dsh only watches.
  */
 /** dsh's tool-result for a relayed call, searched from the newest message back. */
-export function toolResultFor(messages, id) {
-  for (let i = (messages ?? []).length - 1; i >= 0; i--) {
-    const m = messages[i];
-    if (m.role !== "user" || m.source?.kind !== "tool") continue;
-    for (const b of m.content ?? [])
+export function toolResultFor(
+  messages: LooseMessage[] | undefined,
+  id: string,
+): { text: string; isError?: boolean } | undefined {
+  const list = messages ?? [];
+  for (let i = list.length - 1; i >= 0; i--) {
+    const m = list[i];
+    if (!m || m.role !== "user" || m.source?.kind !== "tool" || !Array.isArray(m.content)) continue;
+    for (const b of m.content) {
       if (b.type === "tool-result" && b.toolCallId === id)
         return { text: textOf(b.content), isError: b.isError === true };
+    }
   }
   return undefined;
 }
 
 /** Messages dsh delivered after the last assistant step. */
-export function afterLastAssistant(messages) {
+export function afterLastAssistant(messages: LooseMessage[] | undefined): LooseMessage[] {
   const list = messages ?? [];
   let last = -1;
-  for (let i = 0; i < list.length; i++) if (list[i].role === "assistant") last = i;
+  for (let i = 0; i < list.length; i++) if (list[i]?.role === "assistant") last = i;
   return list.slice(last + 1);
 }
 
@@ -647,33 +754,39 @@ export const RESTART_TEXT =
   "dsh restarted while this turn was in progress and the Claude Code process was replaced. Pick up where the transcript stops and finish the task.";
 /** How long after boot to nudge interrupted sessions; dsh needs its sessions and agents loaded. */
 const RESUME_DELAY_MS = 10_000;
-const isWake = (m) =>
+const isWake = (m: LooseMessage) =>
   m.role === "user" &&
   m.source?.kind === "plugin" &&
   m.source.plugin === "dsh-llm-claude" &&
   textOf(m.content) === WAKE_TEXT;
 /** A turn opened by our own wake notice, with no user prompt to send: only drain what Claude
  *  already wrote. A user prompt in the same batch takes precedence and is sent normally. */
-export function wakeOnlyTurn(messages) {
+export function wakeOnlyTurn(messages: LooseMessage[] | undefined): boolean {
   const fresh = afterLastAssistant(messages);
   return fresh.some(isWake) && !fresh.some((m) => m.source?.kind === "user");
 }
 
 /** Drop user messages Claude already received live on stdin (matched by the prompt's rpcId). */
-export function dropSent(messages, sent) {
+export function dropSent<T extends LooseMessage>(
+  messages: T[] | undefined,
+  sent: Set<string> | undefined,
+): T[] {
   if (!sent || sent.size === 0) return messages ?? [];
-  return (messages ?? []).filter((m) => !(m.source?.rpcId && sent.has(m.source.rpcId)));
+  return (messages ?? []).filter((m) => {
+    const rpcId = m.source?.rpcId;
+    return !(rpcId && sent.has(rpcId));
+  });
 }
 
 /** What dsh delivered at this step boundary besides the tool result: steers the user sent while
  *  the tool ran, subagent notices, other injections. Claude only sees the tool result, so they
  *  ride along with it. Empty when there is nothing. */
-export function stepContextFor(messages) {
+export function stepContextFor(messages: LooseMessage[] | undefined): string {
   const parts = [];
   for (const m of afterLastAssistant(messages)) {
     if (m.role !== "user") continue;
     if (m.source?.kind === "tool") continue;
-    const text = promptText(m);
+    const text = promptTextOf(m);
     if (text) parts.push(text);
   }
   return parts.length === 0
@@ -681,67 +794,42 @@ export function stepContextFor(messages) {
     : `\n\n<user_messages_during_tool_call>\n${parts.join("\n\n")}\n</user_messages_during_tool_call>`;
 }
 
-/** Cross-reload registry of live Claude processes (see ClaudeCodeAdapter constructor). */
-export const PROCESS_REGISTRY = Symbol.for("dsh-llm-claude.processes");
-/** Process-wide: the newest adapter instance and the one boot timer that nudges interrupted sessions. */
-const ADAPTER_CURRENT = Symbol.for("dsh-llm-claude.adapter");
-const RESUME_TIMER = Symbol.for("dsh-llm-claude.resume-timer");
-/** Plugin info logs never reach dsh's web.log; the resume path keeps its own trace file. */
-const RESUME_LOG = join(STATE_DIR, "resume.log");
-async function trace(line) {
-  try {
-    await mkdir(STATE_DIR, { recursive: true });
-    await appendFile(RESUME_LOG, `${new Date().toISOString()} ${line}\n`);
-  } catch {}
-}
-
+// Re-export symbols so tests that import from adapter.ts can access them too.
+export { PROCESS_REGISTRY, ADAPTER_CURRENT, RESUME_TIMER };
 /** How long to wait for the rest of a parallel dsh tool-call batch after the first one arrives. */
 const RELAY_BATCH_MS = 1500;
 /** After asking the CLI to interrupt, how long before falling back to killing the process. */
 const INTERRUPT_GRACE_MS = 5000;
 
 /** Count the human prompts dsh has in a transcript (context injections and tool results excluded). */
-export function userPromptCount(messages) {
+export function userPromptCount(messages: LooseMessage[] | undefined): number {
   return (messages ?? []).filter((m) => m.role === "user" && m.source?.kind === "user").length;
 }
 
-/** A Claude Code transcript copied under a new id, cut before the (keep+1)-th human prompt so a
- *  dsh fork at an earlier turn rewinds Claude too. keep <= 0 keeps everything. */
-export function forkTranscriptText(text, fromId, toId, keep) {
-  const out = [];
-  let prompts = 0;
-  for (const line of text.split("\n")) {
-    if (!line) continue;
-    if (keep > 0) {
-      let entry;
-      try {
-        entry = JSON.parse(line);
-      } catch {
-        entry = undefined;
-      }
-      const content = entry?.message?.content;
-      const human =
-        entry?.type === "user" &&
-        entry.isSidechain !== true &&
-        (typeof content === "string" ||
-          (Array.isArray(content) && !content.some((b) => b?.type === "tool_result")));
-      if (human && ++prompts > keep) break;
-    }
-    out.push(line);
-  }
-  return `${out.join("\n").replaceAll(fromId, toId)}\n`;
-}
-
 /** The stream chunks that make one relayed dsh tool call a native tool-call block. */
-export function* relayBlocks(tr, call) {
+export function* relayBlocks(tr: Translator, call: RelayEvent): IterableIterator<StreamChunk> {
   const index = tr.index++;
   const args = JSON.stringify(call.args ?? {});
-  yield { type: "block-start", index, blockType: "tool-call" };
-  yield { type: "tool-call-delta", index, id: call.id, name: call.name, argumentsDelta: args };
+  // SAFETY: ToolCallId is a branded string, cast from plain string
+  yield { type: "block-start", index, blockType: "tool-call" as ContentBlockType };
+  yield {
+    type: "tool-call-delta",
+    index,
+    // SAFETY: relay ids are minted by this plugin (randomUUID); the brand marks provenance only
+    id: call.id as ToolCallId,
+    name: call.name,
+    argumentsDelta: args,
+  };
   yield {
     type: "block-end",
     index,
-    block: { type: "tool-call", id: call.id, name: call.name, arguments: args },
+    block: {
+      type: "tool-call",
+      // SAFETY: same minted id as the delta above
+      id: call.id as ToolCallId,
+      name: call.name,
+      arguments: args,
+    },
   };
 }
 
@@ -758,7 +846,31 @@ const BENIGN_EVENTS = new Set([
 // stream_event sub-types with no renderable delta (SSE bookkeeping).
 const BENIGN_PARTIALS = new Set(["message_delta", "message_stop", "ping"]);
 
+export interface TranslatorBlock {
+  index: number;
+  blockType: string;
+  text: string;
+  started: boolean;
+  tool?: boolean;
+}
+
 export class Translator {
+  log: (level: string, msg: string) => void;
+  unknownSeen: Set<string>; // (where:type) already warned, so schema drift warns once, not per event
+  toolActivity: boolean;
+  relay: boolean; // dsh tool calls are relayed to dsh's own loop: hide Claude's view of them
+  dshIds: Set<string>; // tool_use ids of dsh tools called over the MCP bridge
+  dshNames: Map<string, string>; // dsh tool_use id → tool name, for a fallback row
+  relayed: Set<string>; // dsh tool_use ids dsh ran natively; results not drawn here
+  limit: number;
+  index: number;
+  open: Map<number, TranslatorBlock>; // api block index → { index, blockType, text }
+  sawPartial: boolean;
+  finished: boolean;
+  denied: number; // tool calls Claude Code refused because a non-interactive run cannot ask
+  toolPending: boolean; // a tool_use block closed and its result has not arrived yet
+  aborting: boolean; // dsh cancelled: the CLI's interrupt result finishes as aborted, not error
+
   constructor({
     toolActivity = true,
     toolTextLimit = TOOL_TEXT_LIMIT,
@@ -766,8 +878,15 @@ export class Translator {
     dshIds,
     relayed,
     log,
+  }: {
+    toolActivity?: boolean;
+    toolTextLimit?: number;
+    relay?: boolean;
+    dshIds?: Set<string>;
+    relayed?: Set<string>;
+    log?: (level: string, msg: string) => void;
   } = {}) {
-    this.log = typeof log === "function" ? log : () => {};
+    this.log = log ?? (() => {});
     this.unknownSeen = new Set(); // (where:type) already warned, so schema drift warns once, not per event
     this.toolActivity = toolActivity;
     this.relay = relay; // dsh tool calls are relayed to dsh's own loop: hide Claude's view of them
@@ -784,13 +903,13 @@ export class Translator {
     this.aborting = false; // dsh cancelled: the CLI's interrupt result finishes as aborted, not error
   }
 
-  deltaType(block) {
+  deltaType(block: TranslatorBlock): "text-delta" | "reasoning-delta" {
     return block.blockType === "text" ? "text-delta" : "reasoning-delta";
   }
 
   /** Warn once when a CLI event/block type is neither handled nor knowingly ignored, so a Claude
    *  Code stream-json schema change shows up loud in the log instead of as silently dropped output. */
-  noteUnknown(where, type) {
+  noteUnknown(where: string, type: string | null | undefined) {
     if (type === null || type === undefined) return;
     const key = `${where}:${type}`;
     if (this.unknownSeen.has(key)) return;
@@ -803,43 +922,51 @@ export class Translator {
 
   /** A block is announced on its first text. Claude emits thinking blocks that carry only a
    *  signature and never any text; announcing those eagerly draws an empty bubble. */
-  startBlock(blockType, prefix = "") {
-    const block = { index: this.index++, blockType, text: "", started: false };
+  startBlock(blockType: string, prefix = "") {
+    const block: TranslatorBlock = { index: this.index++, blockType, text: "", started: false };
     return { block, events: prefix ? this.delta(block, prefix) : [] };
   }
 
   /** Text for a block, with its block-start ahead of the first non-empty piece. Empty in, empty out. */
-  delta(block, text) {
+  delta(block: TranslatorBlock, text: string): StreamChunk[] {
     if (!text) return [];
     block.text += text;
-    const events = [];
+    const events: StreamChunk[] = [];
     if (!block.started) {
       block.started = true;
-      events.push({ type: "block-start", index: block.index, blockType: block.blockType });
+      // SAFETY: blocks are opened with "text", "reasoning" or "tool-call"; hidden ones never announce
+      events.push({
+        type: "block-start",
+        index: block.index,
+        blockType: block.blockType as ContentBlockType,
+      });
     }
     events.push({ type: this.deltaType(block), index: block.index, text });
     return events;
   }
 
   /** Close a block; one that never got text was never announced and closes silently. */
-  endBlock(block) {
+  endBlock(block: TranslatorBlock): StreamChunk[] {
     if (!block.started) return [];
     return [
       {
         type: "block-end",
         index: block.index,
-        block: { type: block.blockType, text: block.text },
+        block:
+          block.blockType === "text"
+            ? { type: "text", text: block.text }
+            : { type: "reasoning", text: block.text },
       },
     ];
   }
 
-  wholeBlock(blockType, text) {
+  wholeBlock(blockType: string, text: string): StreamChunk[] {
     const { block, events } = this.startBlock(blockType);
     events.push(...this.delta(block, text), ...this.endBlock(block));
     return events;
   }
 
-  translate(event) {
+  translate(event: ClaudeEvent): StreamChunk[] {
     switch (event?.type) {
       case "system": {
         // Claude Code compacted its own context (auto or /compact). One line so the user knows
@@ -848,20 +975,21 @@ export class Translator {
         const meta = event.compact_metadata ?? {};
         const how = meta.trigger === "manual" ? "manual" : "auto";
         const size = Number.isFinite(meta.pre_tokens) ? `, ${meta.pre_tokens} tokens before` : "";
+        // SAFETY: "text" is a valid ContentBlockType
         return this.wholeBlock(
-          "text",
+          "text" as ContentBlockType,
           `\n\n_Context compacted by Claude Code (${how}${size})._\n\n`,
         );
       }
       case "stream_event":
-        return this.partial(event.event ?? {});
+        return this.partial(event.event ?? { type: "" });
       case "assistant":
         return this.assistant(event.message?.content ?? [], event.parent_tool_use_id);
       case "user":
         return this.toolResults(event.message?.content ?? [], event.parent_tool_use_id);
       case "result": {
         this.finished = true;
-        const events = [];
+        const events: StreamChunk[] = [];
         if (this.denied > 0 && !event.is_error) {
           const n = this.denied;
           events.push(
@@ -888,8 +1016,13 @@ export class Translator {
         const status = info.status ?? "allowed";
         if (status !== "rejected") return [];
         this.finished = true;
-        const resetMs = Number.isFinite(info.resetsAt) ? info.resetsAt * 1000 - Date.now() : 0;
-        const failure = { message: `Rate limited (${status})`, code: "RATE_LIMIT" };
+        const resetMs = Number.isFinite(info.resetsAt)
+          ? (info.resetsAt ?? 0) * 1000 - Date.now()
+          : 0;
+        const failure: LlmFailure & { providerRetryAfterMs?: number } = {
+          message: `Rate limited (${status})`,
+          code: "RATE_LIMIT",
+        };
         if (resetMs > 0) failure.providerRetryAfterMs = resetMs;
         return [{ type: "finish", reason: { kind: "error", failure } }];
       }
@@ -899,7 +1032,8 @@ export class Translator {
     }
   }
 
-  partial(ev) {
+  // SAFETY: ev is ClaudeStreamPartial from Claude Code stream-json protocol
+  partial(ev: ClaudeStreamPartial) {
     switch (ev.type) {
       case "message_start":
         this.sawPartial = true;
@@ -907,18 +1041,18 @@ export class Translator {
         this.open.clear();
         return [];
       case "content_block_start":
-        return this.openBlock(ev.index, ev.content_block ?? {});
+        return this.openBlock(ev.index ?? -1, ev.content_block ?? {});
       case "content_block_delta": {
-        const block = this.open.get(ev.index);
+        const block = this.open.get(ev.index ?? -1);
         if (!block || block.index < 0) return [];
         const d = ev.delta ?? {};
         const text = d.text ?? d.thinking ?? d.partial_json ?? "";
         return this.delta(block, text);
       }
       case "content_block_stop": {
-        const block = this.open.get(ev.index);
+        const block = this.open.get(ev.index ?? -1);
         if (!block) return [];
-        this.open.delete(ev.index);
+        this.open.delete(ev.index ?? -1);
         // A finished tool_use block means the CLI is now running that tool: no stream events until
         // its result arrives, however long it takes. Callers read this to pause their idle timer.
         this.toolPending = block.tool === true;
@@ -930,18 +1064,25 @@ export class Translator {
     }
   }
 
-  openBlock(apiIndex, cb) {
-    let opened;
+  openBlock(apiIndex: number, cb: { type?: string; id?: string; name?: string }) {
+    let opened: { block: TranslatorBlock; events: StreamChunk[] };
     if (cb.type === "text") opened = this.startBlock("text");
     else if (cb.type === "thinking") opened = this.startBlock("reasoning");
     else if (cb.type === "tool_use") {
-      const dsh = cb.name?.startsWith("mcp__dsh__") === true;
-      if (dsh) {
+      const toolName = cb.name ?? "";
+      const dsh = toolName.startsWith("mcp__dsh__");
+      if (dsh && cb.id) {
         this.dshIds.add(cb.id);
-        this.dshNames.set(cb.id, cb.name.slice("mcp__dsh__".length));
+        this.dshNames.set(cb.id, toolName.slice("mcp__dsh__".length));
       }
       if (!this.toolActivity || (dsh && this.relay)) {
-        this.open.set(apiIndex, { index: -1, blockType: "hidden", text: "", tool: true });
+        this.open.set(apiIndex, {
+          index: -1,
+          blockType: "hidden",
+          text: "",
+          started: false,
+          tool: true,
+        });
         return [];
       }
       opened = this.startBlock(...this.toolLead(cb));
@@ -954,28 +1095,26 @@ export class Translator {
     return opened.events;
   }
 
-  assistant(content, parentToolUseId) {
+  assistant(content: ClaudeContentBlock[], parentToolUseId: string | null | undefined) {
     // Claude Code subagent output (--forward-subagent-text) arrives as whole messages tagged with the
     // parent tool id; it never comes as partials, so it is always rendered, folded into reasoning.
     if (parentToolUseId) {
       if (!this.toolActivity) return [];
-      const text = content
-        .filter((b) => b.type === "text" && b.text)
-        .map((b) => b.text)
-        .join("\n");
+      const text = content.flatMap((b) => (b.type === "text" && b.text ? [b.text] : [])).join("\n");
       return text ? this.wholeBlock("reasoning", `↳ subagent\n${clip(text, this.limit)}`) : [];
     }
     if (this.sawPartial) return []; // already streamed as deltas
-    const events = [];
+    const events: StreamChunk[] = [];
     for (const b of content) {
       if (b.type === "text" && b.text) events.push(...this.wholeBlock("text", b.text));
       else if (b.type === "thinking" && b.thinking)
         events.push(...this.wholeBlock("reasoning", b.thinking));
       else if (b.type === "tool_use") {
-        const dsh = b.name?.startsWith("mcp__dsh__") === true;
+        const toolName = b.name ?? "";
+        const dsh = toolName.startsWith("mcp__dsh__");
         if (dsh) {
           this.dshIds.add(b.id);
-          this.dshNames.set(b.id, b.name.slice("mcp__dsh__".length));
+          this.dshNames.set(b.id, toolName.slice("mcp__dsh__".length));
         }
         if (!this.toolActivity || (dsh && this.relay)) continue;
         const [kind, lead] = this.toolLead(b);
@@ -989,28 +1128,30 @@ export class Translator {
 
   /** dsh tools reached over the MCP bridge (subagents, jobs...) render as visible text rows, the
    *  rest as collapsed reasoning. Returns [block kind, lead text]. */
-  toolLead(cb) {
-    if (cb.name?.startsWith("mcp__dsh__")) {
-      this.dshIds.add(cb.id);
-      return ["text", `⤷ ${cb.name.slice("mcp__dsh__".length)} `];
+  toolLead(cb: { id?: string; name?: string }): [string, string] {
+    const toolName = cb.name ?? "";
+    if (toolName.startsWith("mcp__dsh__")) {
+      if (cb.id) this.dshIds.add(cb.id);
+      return ["text", `⤷ ${toolName.slice("mcp__dsh__".length)} `];
     }
     return ["reasoning", `▶ ${cb.name} `];
   }
 
-  toolResults(content, parentToolUseId) {
+  toolResults(content: ClaudeContentBlock[], parentToolUseId: string | null | undefined) {
     this.toolPending = false;
     if (!this.toolActivity) return [];
-    const events = [];
+    const events: StreamChunk[] = [];
     for (const b of content) {
       if (b.type !== "tool_result") continue;
       const raw = toolResultText(b).trim();
       if (b.is_error && DENIED_RE.test(raw)) this.denied++;
       const body = clip(raw || "(empty)", this.limit);
       const tag = parentToolUseId ? "↳ " : "";
-      const dsh = this.dshIds.delete(b.tool_use_id);
-      if (dsh && this.relayed.delete(b.tool_use_id)) continue; // dsh drew the native call and result
-      const toolName = this.dshNames.get(b.tool_use_id);
-      this.dshNames.delete(b.tool_use_id);
+      const toolUseId = b.tool_use_id ?? "";
+      const dsh = this.dshIds.delete(toolUseId);
+      if (dsh && this.relayed.delete(toolUseId)) continue; // dsh drew the native call and result
+      const toolName = this.dshNames.get(toolUseId);
+      this.dshNames.delete(toolUseId);
       // A dsh call that could not be relayed ran inside the bridge: show it as one compact row.
       const lead = dsh && this.relay ? `⤷ ${toolName ?? "dsh tool"} (ran in bridge)\n` : "";
       events.push(
@@ -1027,82 +1168,107 @@ export class Translator {
 // ---------------------------------------------------------------------------
 // Adapter
 
-const specKey = (spec) => JSON.stringify(spec);
+const specKey = (spec: ClaudeProcessSpec) => JSON.stringify(spec);
 
 export class ClaudeCodeAdapter extends LlmAdapter {
-  constructor(ctx, config) {
+  ctx: PluginContext;
+  config: Schemastery.TypeT<typeof Config>;
+  subprocess?: Pick<SubprocessRuntime, "spawn">;
+  processes: Map<string, ClaudeProcess>;
+  mcp?: { base: string; key: string };
+  warnedNoSeam = false;
+  loggedVersion = false;
+  sessionController?: SessionController;
+  constructor(ctx: PluginContext, config: Schemastery.TypeT<typeof Config>) {
     super();
     this.ctx = ctx;
     this.config = config;
+    this.warnedNoSeam = false;
+    this.loggedVersion = false;
     // Kept on globalThis so a hot reload of this plugin adopts the running Claude processes
     // instead of orphaning them: their pipes belong to this node process, not to the plugin scope.
-    this.processes = globalThis[PROCESS_REGISTRY] ??= new Map(); // dsh sessionId → ClaudeProcess
+    // SAFETY: the registry symbol is this plugin's own key on globalThis, typed here once
+    const registry = globalThis as typeof globalThis & {
+      [PROCESS_REGISTRY]?: Map<string, ClaudeProcess>;
+    };
+    this.processes = registry[PROCESS_REGISTRY] ??= new Map(); // dsh sessionId → ClaudeProcess
     // Adopted processes still point their idle-reply callback at the previous (now dead) adapter.
     for (const [sessionId, proc] of this.processes) {
       proc.onIdleResult = () => this.wake(sessionId, proc);
     }
     // Steers: dsh only delivers them at step boundaries, and a Claude turn has none of its own.
     // Forward them to Claude's stdin as they arrive; the CLI injects them at its next tool call.
-    ctx.on?.(
-      "session/event",
-      (session, event) => {
-        if (event?.type !== "agent/inbox/spliced" || event.data?.target !== "next-step") return;
-        const proc = this.processes.get(session?.id);
-        if (!proc?.alive || !proc.busy || proc.relays.size > 0) return;
-        for (const m of event.data.inserted ?? []) {
-          const rpcId = m.source?.rpcId;
-          if (m.role !== "user" || m.source?.kind !== "user" || !rpcId) continue;
-          const text = textOf(m.content);
-          if (!text) continue;
-          // ponytail: text only; a steer with images waits for the boundary like before.
-          if (proc.write(buildInput(text, []))) {
-            proc.sent.add(rpcId);
-            proc.steerPending = true;
-          }
+    ctx.on?.("session/event", (sessionArg, eventArg) => {
+      // SAFETY: dsh's session/event carries (session, event); only the spliced-inbox fields are read
+      const session = sessionArg as { id?: string };
+      // SAFETY: same event object, narrowed to the agent/inbox/spliced shape this handler reads
+      const event = eventArg as SpliceEvent;
+      if (event?.type !== "agent/inbox/spliced" || event.data?.target !== "next-step") return;
+      const proc = this.processes.get(session?.id ?? "");
+      if (!proc?.alive || !proc.busy || proc.relays.size > 0) return;
+      for (const m of event.data?.inserted ?? []) {
+        const src = m.source;
+        const rpcId = src?.rpcId;
+        if (m.role !== "user" || src?.kind !== "user" || !rpcId) continue;
+        const text = textOf(m.content);
+        if (!text) continue;
+        // ponytail: text only; a steer with images waits for the boundary like before.
+        if (proc.write(buildInput(text, []))) {
+          proc.sent.add(rpcId);
+          proc.steerPending = true;
         }
-      },
-      { global: true },
-    );
+      }
+    });
   }
 
-  providerInfo(provider) {
+  override providerInfo(provider: string) {
     return { id: provider, name: "Claude Code" };
   }
 
-  async listModels(provider) {
+  override async listModels(provider: string) {
     return (await getCatalog()).map((m) => modelInfo(provider, m));
   }
 
-  async resolveModel(provider, model, _signal) {
+  override async resolveModel(provider: string, model: string, _signal?: AbortSignal) {
     return resolveModelInfo(provider, model, await getCatalog());
   }
 
-  sessionCwd(sessionId) {
+  sessionCwd(sessionId: string): string | undefined {
     try {
-      return this.ctx?.sessions?.get(sessionId)?.header?.cwd;
+      return this.ctx.sessions.get(asSessionId(sessionId))?.header?.cwd;
     } catch {
       return undefined;
     }
   }
 
-  log(level, message) {
+  log(level: string, message: string) {
     try {
-      this.ctx?.logger?.[level]?.(`dsh-llm-claude: ${message}`);
+      this.ctx.logger[level]?.(`dsh-llm-claude: ${message}`);
     } catch {
       // cordis throws on service access from an inactive scope; a log line is not worth that
     }
   }
 
-  async loadImages(refs, signal) {
-    const store = this.ctx?.attachments;
+  async loadImages(
+    refs: ImageAttachmentRef[],
+    signal: AbortSignal | undefined,
+  ): Promise<LoadedImage[]> {
+    const store = this.ctx.attachments;
     if (!store || refs.length === 0) return [];
-    const out = [];
+    const out: LoadedImage[] = [];
     for (const ref of refs) {
       try {
         const stored = await store.readImage(ref, signal);
-        out.push({ mediaType: ref.mediaType, data: Buffer.from(stored.data).toString("base64") });
-      } catch (error) {
-        this.log("warn", `skipping image ${ref.attachmentId}: ${error?.message ?? error}`);
+        out.push({
+          mediaType: ref.mediaType,
+          data: Buffer.from(stored.data).toString("base64"),
+          attachmentId: ref.attachmentId,
+        });
+      } catch (error: unknown) {
+        this.log(
+          "warn",
+          `skipping image ${ref.attachmentId ?? "unknown"}: ${error instanceof Error ? error.message : String(error)}`,
+        );
       }
     }
     return out;
@@ -1110,15 +1276,15 @@ export class ClaudeCodeAdapter extends LlmAdapter {
 
   /** A dsh fork of a Claude session becomes a Claude fork: the parent's transcript is copied under
    *  the new id, cut at the forked turn. True when a copy was made. */
-  async forkTranscript(options, cwd, id) {
+  async forkTranscript(options: GenerateOptions, cwd: string, id: string): Promise<boolean> {
     let header;
     try {
-      header = this.ctx?.sessions?.get(options.sessionId)?.header;
+      header = options.sessionId ? this.ctx.sessions.get(options.sessionId)?.header : undefined;
     } catch {
       return false;
     }
     const parentId = header?.parentSession;
-    if (!parentId || header.origin === "subagent") return false;
+    if (!parentId || header?.origin === "subagent") return false;
     const parentCwd = this.sessionCwd(parentId) ?? cwd;
     const parentClaude = (await claudeSessionExists(parentCwd, parentId))
       ? parentId
@@ -1141,7 +1307,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       await mkdir(dirname(dest), { recursive: true });
       await writeFile(dest, forkTranscriptText(text, parentClaude, id, keep));
     } catch (error) {
-      this.log("warn", `fork transcript copy failed: ${error?.message ?? error}`);
+      this.log("warn", `fork transcript copy failed: ${errorText(error)}`);
       return false;
     }
     await rememberStarted(id, true);
@@ -1150,7 +1316,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   }
 
   /** Everything one turn needs: spawn args + spec for the long-lived process, and the stdin line for this turn. */
-  async prepare(options, { forceFresh = false } = {}) {
+  // SAFETY: options shape from dsh LlmAdapter.generate() contract
+  async prepare(
+    options: GenerateOptions,
+    { forceFresh = false }: { forceFresh?: boolean } = {},
+  ): Promise<TurnPrep> {
     const cli = await probeCli(execFile, this.config.command);
     if (!this.loggedVersion) {
       this.loggedVersion = true;
@@ -1171,7 +1341,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       session = { id, resuming: known && !forceFresh };
     }
     const turns = selectTurns(options.messages, session?.resuming ?? false);
-    const promptText = buildPrompt(turns);
+    const prompt = buildPrompt(turns);
     const stdin = usesStdin(cli.flags);
     const images = stdin ? await this.loadImages(imageRefs(turns), options.signal) : [];
     const model = options.purpose === "session-title" ? this.config.titleModel : options.model;
@@ -1183,7 +1353,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       session,
       accessMode,
       flags: cli.flags,
-      promptText,
+      promptText: prompt,
       mcp:
         this.mcp && options.sessionId && !options.purpose && this.config.dshTools
           ? { url: `${this.mcp.base}${MCP_PATH}/${options.sessionId}`, key: this.mcp.key }
@@ -1204,7 +1374,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       session,
       spec,
       accessMode,
-      input: stdin ? buildInput(promptText, images) : null,
+      input: stdin ? buildInput(prompt, images) : null,
     };
   }
 
@@ -1213,7 +1383,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    * does not have to come back and poke each one. Sessions with a live (adopted) process are a
    * hot reload, not a restart, and are left alone.
    */
-  async resumeInterrupted(path) {
+  async resumeInterrupted(path?: string) {
     const ids = await takeInterrupted(path);
     await trace(
       `boot: interrupted=${JSON.stringify(ids)} live=${JSON.stringify([...this.processes.keys()])}`,
@@ -1230,7 +1400,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         await this.wake(id, undefined, RESTART_TEXT);
         await trace(`nudged ${id}`);
       } catch (e) {
-        await trace(`nudge ${id} failed: ${e?.message ?? e}`);
+        await trace(`nudge ${id} failed: ${errorText(e)}`);
       }
     }
     return ids;
@@ -1246,18 +1416,20 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     return nodeSpawner;
   }
 
-  async *stream(options) {
+  async *stream(options: GenerateOptions) {
     if (options.purpose || !options.sessionId || !this.config.resume) {
       yield* this.oneShot(options);
       return;
     }
-    yield* this.turn(options, false);
+    // SAFETY: sessionId was checked just above; the persistent path always has one
+    yield* this.turn(options as SessionOptions, false);
   }
 
   // ── persistent path ──────────────────────────────────────────────────────
 
   /** Reuse the session's process when its spec still matches; otherwise replace it. */
-  async acquire(options, forceFresh) {
+  // SAFETY: options from dsh LlmAdapter.generate(); forceFresh is optional bool flag
+  async acquire(options: SessionOptions, forceFresh?: boolean) {
     const prep = await this.prepare(options, { forceFresh });
     if (prep.input === null) return { prep, proc: null }; // text-mode CLI: fall back to one-shot semantics
     const key = specKey(prep.spec);
@@ -1293,19 +1465,19 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    *  killing the longest-idle ones that are not mid-turn. Called before each spawn. */
   evict() {
     const now = Date.now();
-    // A process parked on a relayed tool call or a steer is mid-turn, not idle.
-    const settled = (p) => !p.busy && p.relays.size === 0 && !p.parked;
     for (const [id, p] of this.processes) {
-      if (!p.alive || (settled(p) && now - p.lastUsed > this.config.processIdleMs)) {
+      if (!p.alive || (isSettled(p) && now - p.lastUsed > this.config.processIdleMs)) {
         p.kill();
         this.processes.delete(id);
       }
     }
     const idle = [...this.processes.entries()]
-      .filter(([, p]) => settled(p))
-      .sort((a, b) => a[1].lastUsed - b[1].lastUsed);
+      .filter(([, p]) => isSettled(p))
+      .toSorted((a, b) => a[1].lastUsed - b[1].lastUsed);
     while (this.processes.size >= this.config.maxProcesses && idle.length > 0) {
-      const [id, p] = idle.shift();
+      const next = idle.shift();
+      if (!next) break;
+      const [id, p] = next;
       p.kill();
       this.processes.delete(id);
     }
@@ -1320,32 +1492,40 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    * - `abandon`: parked on relays but dsh moved on without their results: reject them, start over.
    * - `prompt`: a normal turn; steers Claude already got live are dropped from the prompt.
    */
-  continuationFor(options, forceFresh) {
+  // SAFETY: mirrors acquire() shape for the turn loop
+  continuationFor(options: SessionOptions, forceFresh?: boolean): Continuation {
     const held = this.processes.get(options.sessionId);
     const live = held?.alive && !forceFresh ? held : undefined;
     const fresh = afterLastAssistant(options.messages);
     const onlySent =
-      live?.sent.size > 0 && fresh.length > 0 && dropSent(fresh, live.sent).length === 0;
+      (live?.sent.size ?? 0) > 0 && fresh.length > 0 && dropSent(fresh, live?.sent).length === 0;
     if (live && live.relays.size > 0) {
       const results = [...live.relays.keys()].map((id) => toolResultFor(options.messages, id));
       return results.some((r) => r === undefined)
         ? { mode: "abandon", proc: live, options }
-        : { mode: "relay", proc: live, options, results };
+        : {
+            mode: "relay",
+            proc: live,
+            options,
+            results: results.filter((r): r is RelayResult => r !== undefined),
+          };
     }
     if (live && (live.parked === "steer" || onlySent))
       return { mode: "steer", proc: live, options };
-    const messages = held?.sent.size > 0 ? dropSent(options.messages, held.sent) : options.messages;
+    const messages =
+      (held?.sent.size ?? 0) > 0 ? dropSent(options.messages, held?.sent) : options.messages;
     return { mode: "prompt", options: { ...options, messages } };
   }
 
   /** First write of a turn: relay results, unsent steers, or the prompt itself. */
-  openTurn(cont, proc, prep) {
+  openTurn(cont: Continuation, proc: ClaudeProcess, prep: TurnPrep) {
     if (cont.mode === "relay") {
       const relays = [...proc.relays.values()];
       proc.relays.clear();
       const extra = stepContextFor(cont.options.messages); // steers and notices ride on the last result
       relays.forEach((relay, i) => {
         const result = cont.results[i];
+        if (!result) return; // cannot happen: results were built from relays.keys()
         relay.resolve(i === relays.length - 1 ? { ...result, text: result.text + extra } : result);
       });
       return;
@@ -1361,12 +1541,13 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       }
       return;
     }
-    if (!proc.write(prep.input))
+    if (prep.input === null || !proc.write(prep.input))
       throw new LlmError("claude process is not running", "PROVIDER_ERROR");
   }
 
   /** Why a turn that neither finished nor parked ended. */
-  endReason(proc, options, idle) {
+  // SAFETY: returns FinishReason shape for the adapter loop
+  endReason(proc: ClaudeProcess, options: SessionOptions, idle: boolean): FinishReason {
     if (options.signal?.aborted)
       return { kind: "aborted", failure: { message: "aborted", code: "ABORTED" } };
     if (idle)
@@ -1386,7 +1567,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     };
   }
 
-  async *turn(options, forceFresh) {
+  async *turn(options: SessionOptions, forceFresh?: boolean): AsyncGenerator<StreamChunk> {
     const cont = this.continuationFor(options, forceFresh);
     options = cont.options;
     if (cont.mode === "abandon") {
@@ -1399,7 +1580,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       return;
     }
     const { prep, proc } = cont.proc
-      ? { prep: cont.proc.prep, proc: cont.proc }
+      ? { prep: requirePrep(cont.proc), proc: cont.proc }
       : await this.acquire(options, forceFresh);
     if (proc === null) {
       yield* this.oneShot(options);
@@ -1419,10 +1600,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       log: this.log.bind(this),
     });
     const pending = new Map(); // control request id → AbortController
-    let outcome = "ended"; // ended | finished | relayed | parked | retry
+    let outcome: Outcome = "ended"; // ended | finished | relayed | parked | retry
     const wakeOnly = cont.mode === "prompt" && wakeOnlyTurn(options.messages);
     let idle = false;
-    let timer;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const armIdle = () => {
       clearTimeout(timer);
       timer = setTimeout(() => {
@@ -1443,14 +1624,12 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     options.signal?.addEventListener("abort", onAbort, { once: true });
     proc.busy = true;
     proc.lastUsed = Date.now();
-    markBusy(options.sessionId, true).catch((e) =>
-      this.log("warn", `busy.json: ${e?.message ?? e}`),
-    );
-    const self = this;
+    markBusy(options.sessionId, true).catch((e) => this.log("warn", `busy.json: ${errorText(e)}`));
+    const handleControl = this.handleControl.bind(this);
     /** One CLI event. Returns what the loop should do next. */
-    const dispatch = async function* (event) {
+    const dispatch = async function* (event: ClaudeEvent) {
       if (event.type === "control_request") {
-        yield* self.handleControl(event, options, prep, proc, pending, tr);
+        yield* handleControl(event, options, prep, proc, pending, tr);
         return "continue";
       }
       if (event.type === "control_cancel_request") {
@@ -1487,9 +1666,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
      *  outstanding dsh tool_use block), end this step with those tool-calls, keep Claude parked on
      *  its requests, and resolve them when dsh calls back. Returns the turn outcome: "relayed", or
      *  whatever ended the turn under us (its calls are then rejected). */
-    const relayBatch = async function* (first) {
-      const calls = [first];
-      const abandon = (outcomeUnderUs) => {
+    const relayBatch = async function* (first: RelayEvent) {
+      const calls: RelayEvent[] = [first];
+      const abandon = (outcomeUnderUs: Outcome) => {
         for (const c of calls)
           c.reject(new Error("claude turn ended before dsh could run the tool"));
         return outcomeUnderUs;
@@ -1542,8 +1721,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       }
       if (outcome === "relayed") yield { type: "finish", reason: { kind: "tool-calls" } };
       else if (outcome === "parked") yield { type: "finish", reason: { kind: "stop" } };
-      else if (outcome === "retry") await rememberStarted(prep.session.id, false);
-      else if (outcome === "finished") {
+      else if (outcome === "retry") {
+        if (prep.session) await rememberStarted(prep.session.id, false);
+      } else if (outcome === "finished") {
         if (prep.session) await rememberStarted(prep.session.id, true);
       } else yield { type: "finish", reason: this.endReason(proc, options, idle) };
     } finally {
@@ -1553,7 +1733,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       proc.busy = false;
       proc.lastUsed = Date.now();
       markBusy(options.sessionId, false).catch((e) =>
-        this.log("warn", `busy.json: ${e?.message ?? e}`),
+        this.log("warn", `busy.json: ${errorText(e)}`),
       );
       if (outcome === "retry" || outcome === "ended") {
         proc.kill();
@@ -1566,30 +1746,30 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   /** Claude finished a turn of its own (a background task it launched completed) while dsh was
    *  idle. Drop a notice into the session's inbox so dsh opens a turn now and the reply shows,
    *  instead of riding on top of the user's next prompt. */
-  async wake(sessionId, proc, text = WAKE_TEXT) {
+  async wake(sessionId: string, proc: ClaudeProcess | undefined, text = WAKE_TEXT) {
     if (proc?.busy) return;
     if (text === RESTART_TEXT) await trace(`wake ${sessionId}: start`);
     let agent;
     try {
-      agent = this.ctx?.agents?.get?.(sessionId);
+      agent = this.ctx?.agents?.get?.(asSessionId(sessionId));
     } catch (error) {
       // This adapter's cordis scope is gone (plugin hot-reloaded); the new instance re-adopts
       // the process in its constructor, so the next idle reply will wake through it.
-      this.log("warn", `wake: adapter scope inactive (${error?.message ?? error}); skipped`);
+      this.log("warn", `wake: adapter scope inactive (${errorText(error)}); skipped`);
       return;
     }
     let how = "live";
-    if (agent === undefined && typeof this.sessionController?.resolveAgent === "function") {
+    if (agent === undefined && this.sessionController) {
       // Idle for minutes: dsh unloaded the Agent. Resume it the way a typed prompt would.
       try {
         agent = await this.sessionController.resolveAgent(sessionId);
         how = "resumed";
       } catch (error) {
-        this.log("warn", `wake: could not resume session ${sessionId}: ${error?.message ?? error}`);
+        this.log("warn", `wake: could not resume session ${sessionId}: ${errorText(error)}`);
         return;
       }
     }
-    if (typeof agent?.followup !== "function") {
+    if (!agent) {
       this.log("warn", `wake: no agent for session ${sessionId}; reply waits for the next prompt`);
       if (text === RESTART_TEXT) await trace(`wake ${sessionId}: no agent (${how})`);
       return;
@@ -1609,23 +1789,35 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         }),
       );
     } catch (error) {
-      this.log("warn", `wake after idle reply failed: ${error?.message ?? error}`);
+      this.log("warn", `wake after idle reply failed: ${errorText(error)}`);
     }
   }
 
   /** Offer a dsh tool call from the MCP bridge to the session's live turn. Undefined when no turn
    *  can take it (idle process, a relay already pending); the bridge then executes it directly. */
-  relay(sessionId, toolName, args, signal) {
+  relay(
+    sessionId: string,
+    toolName: string,
+    args: Record<string, JsonValue>,
+    signal: AbortSignal,
+  ): Promise<RelayResult> | undefined {
     const proc = this.processes.get(sessionId);
     if (!proc?.alive || !proc.busy || proc.relays.size > 0) return undefined;
-    return new Promise((resolve, reject) => {
+    return new Promise<RelayResult>((resolve, reject) => {
       signal?.addEventListener("abort", () => reject(new Error("relay aborted")), { once: true });
       proc.inject({ type: "dsh_relay", id: randomUUID(), name: toolName, args, resolve, reject });
     });
   }
 
   /** Answer a CLI control request. Permission prompts and questions become dsh dialogs; the answer is written back on stdin. */
-  async *handleControl(event, options, prep, proc, pending, tr) {
+  async *handleControl(
+    event: ControlRequestEvent,
+    options: SessionOptions,
+    prep: TurnPrep,
+    proc: ClaudeProcess,
+    pending: Map<string, AbortController>,
+    tr: Translator,
+  ) {
     const request = event.request ?? {};
     const requestId = event.request_id;
     if (request.subtype !== "can_use_tool") {
@@ -1649,17 +1841,18 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const label = toolName === "AskUserQuestion" ? "❓ question" : `⚑ approval: ${toolName}`;
     yield* tr.wholeBlock("reasoning", `${label} ${permissionReason(toolName, input, request)}`);
     // Decide asynchronously so the stream keeps flowing while the user thinks; the CLI waits on stdin.
-    const reply = (line) => {
+    const reply = (line: string) => {
       if (!proc.write(line))
         this.log("warn", `control response for ${toolName} dropped: claude process already exited`);
     };
     this.decide({ toolName, input, request, toolUseId, agent, signal, accessMode: prep.accessMode })
       .then((result) => reply(controlResponseLine(requestId, result)))
-      .catch((error) => reply(controlErrorLine(requestId, String(error?.message ?? error))))
+      .catch((error) => reply(controlErrorLine(requestId, errorText(error))))
       .finally(() => pending.delete(requestId));
   }
 
-  async decide({ toolName, input, request, toolUseId, agent, signal, accessMode }) {
+  // SAFETY: destructured from ClaudeCodeControlRequest shape in process.ts
+  async decide({ toolName, input, request, toolUseId, agent, signal, accessMode }: Decision) {
     if (toolName === "AskUserQuestion") {
       const questions = parseQuestions(input, toolUseId);
       const ask = this.ctx?.userQuestions?.ask;
@@ -1668,14 +1861,14 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         const response = await this.ctx.userQuestions.ask({ questions, agent, signal });
         return allowResult(toolUseId, { ...input, answers: answersFor(questions, response) });
       } catch (error) {
-        return denyResult(toolUseId, `question cancelled: ${error?.message ?? error}`);
+        return denyResult(toolUseId, `question cancelled: ${errorText(error)}`);
       }
     }
     if (accessMode === "danger-full-access") return allowResult(toolUseId, input);
     const approval = this.ctx?.approval;
     if (!approval || !agent)
       return denyResult(toolUseId, "dsh approval is unavailable for this session");
-    let outcome;
+    let outcome: ApprovalOutcome;
     try {
       outcome = await approval.request({
         agent,
@@ -1684,7 +1877,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         signal,
       });
     } catch (error) {
-      return denyResult(toolUseId, `approval failed: ${error?.message ?? error}`);
+      return denyResult(toolUseId, `approval failed: ${errorText(error)}`);
     }
     if (outcome === "allowed-once") return allowResult(toolUseId, input);
     return denyResult(
@@ -1695,16 +1888,17 @@ export class ClaudeCodeAdapter extends LlmAdapter {
 
   // ── one-shot path (aux calls, text-mode CLI, no session id) ──────────────
 
-  async *oneShot(options) {
+  async *oneShot(options: GenerateOptions): AsyncGenerator<StreamChunk> {
     const { cwd, args, session, input } = await this.prepare(options);
     const proc = new ClaudeProcess({
       args: args.filter(
         (a, i) => !(a === "--permission-prompt-tool" || args[i - 1] === "--permission-prompt-tool"),
       ),
       cwd,
-      spec: {},
+      spec: { cwd, model: options.model ?? "", effort: null, mode: "plan", sessionId: null },
       command: this.config.command,
       spawner: this.spawner(),
+      onExit: () => {},
     });
     if (this.config.debug) this.log("info", `one-shot cwd=${cwd} claude ${proc.args.join(" ")}`);
     if (input !== null) {
@@ -1720,7 +1914,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     });
     const onAbort = () => proc.kill();
     options.signal?.addEventListener("abort", onAbort, { once: true });
-    let timer;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     let idle = false;
     const armIdle = () => {
       clearTimeout(timer);
@@ -1757,7 +1951,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
               code: idle ? "IDLE_TIMEOUT" : "PROVIDER_ERROR",
             },
           };
-      yield { type: "finish", reason };
+      // SAFETY: reason matches FinishReason shape for error/aborted cases
+      yield { type: "finish", reason: reason as FinishReason };
     } finally {
       clearTimeout(timer);
       options.signal?.removeEventListener("abort", onAbort);
@@ -1766,7 +1961,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   }
 }
 
-export function apply(ctx, config) {
+export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Config>) {
   ctx.llm.registerConfigurableProviders([
     {
       provider: "claude-code",
@@ -1779,25 +1974,32 @@ export function apply(ctx, config) {
   ctx.llm.registerAdapter(["claude-code"], adapter);
   // dsh drops a session's Agent out of `ctx.agents` after a few idle minutes; the controller's
   // resolveAgent() cold-resumes it, which is what a wake after a long idle needs.
-  ctx.inject(["sessionController"], (host) => {
-    adapter.sessionController = host.sessionController;
+  ctx.inject?.(["sessionController"], (host) => {
+    // SAFETY: cordis hands services untyped; this key holds dsh's session controller
+    adapter.sessionController = host.sessionController as SessionController | undefined;
   });
   // One timer per dsh process, never tied to this cordis scope: dsh re-instantiates the plugin
   // when settings apply at boot, and a scope-bound timer was disposed before it fired.
-  globalThis[ADAPTER_CURRENT] = adapter;
-  if (!globalThis[RESUME_TIMER]) {
-    globalThis[RESUME_TIMER] = setTimeout(() => {
-      const current = globalThis[ADAPTER_CURRENT];
+  // SAFETY: the two symbols are this plugin's own keys on globalThis, typed here once
+  const g = globalThis as typeof globalThis & {
+    [ADAPTER_CURRENT]?: ClaudeCodeAdapter;
+    [RESUME_TIMER]?: ReturnType<typeof setTimeout>;
+  };
+  g[ADAPTER_CURRENT] = adapter;
+  if (!g[RESUME_TIMER]) {
+    g[RESUME_TIMER] = setTimeout(() => {
+      const current = g[ADAPTER_CURRENT] ?? adapter;
       current
         .resumeInterrupted()
-        .catch((e) => trace(`resume after restart failed: ${e?.message ?? e}`));
+        .catch((e) => trace(`resume after restart failed: ${errorText(e)}`));
     }, RESUME_DELAY_MS);
-    globalThis[RESUME_TIMER].unref?.();
+    g[RESUME_TIMER].unref?.();
     void trace("timer armed");
   }
   // Optional: the subprocess seam (stock dsh mounts a local provider; a remote subprocess provider a remote one).
-  ctx.inject(["subprocess"], (host) => {
-    adapter.subprocess = host.subprocess;
+  ctx.inject?.(["subprocess"], (host) => {
+    // SAFETY: cordis hands services untyped; dsh's subprocess seam is what this key holds
+    adapter.subprocess = host.subprocess as Pick<SubprocessRuntime, "spawn"> | undefined;
   });
   registerMcpBridge(ctx, {
     log: (level, msg) => adapter.log(level, msg),
@@ -1807,11 +2009,11 @@ export function apply(ctx, config) {
     (mcp) => {
       adapter.mcp = mcp;
     },
-    (e) => adapter.log("warn", `mcp bridge unavailable: ${e?.message ?? e}`),
+    (e) => adapter.log("warn", `mcp bridge unavailable: ${errorText(e)}`),
   );
   registerSessionRoutes(ctx, {
-    log: (level, msg) => adapter.log(level, msg),
-    projectDir: (cwd) => join(CLAUDE_HOME, "projects", projectDirName(cwd)),
+    log: (level: string, msg: string) => adapter.log(level, msg),
+    projectDir: (cwd: string) => join(CLAUDE_HOME, "projects", projectDirName(cwd)),
     projectsDir: join(CLAUDE_HOME, "projects"),
     startedIds: loadStarted,
     claudeIdOf: claudeSessionId,

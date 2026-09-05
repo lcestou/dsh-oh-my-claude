@@ -1,16 +1,22 @@
 // Host half of "open a Claude Code session in dsh": lists the transcripts of a workspace and turns
 // one into a cold dsh session whose id is the Claude session id, so the adapter resumes it as-is.
 // Served under /dsh-llm-claude/*, guarded by dsh's own request policy (trusted host + login cookie).
+// This is an I/O boundary: HTTP bodies, probe output and JSON files are decoded here.
 import { execFile } from "node:child_process";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { hostname } from "node:os";
 import { readdir, readFile, writeFile, rename, copyFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { listTranscripts, readTranscript, toSessionEvents } from "./transcript.js";
+import type { TranscriptListItem } from "./transcript.js";
+import { asSessionId } from "./dsh.js";
+import type { JsonValue, PluginContext, WorkspaceRegistry } from "./dsh.js";
+import { errorText } from "./process.js";
 
 const ROUTE_PREFIX = "/dsh-llm-claude";
 const BODY_LIMIT = 64 * 1024;
 
-const json = (res, status, value) => {
+const json = (res: ServerResponse, status: number, value: unknown) => {
   res.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
     "cache-control": "no-store",
@@ -18,12 +24,18 @@ const json = (res, status, value) => {
   res.end(JSON.stringify(value));
 };
 
-/** Parse a JSON request body, capped at `limit` bytes. */
-export const readBody = (req, limit = BODY_LIMIT) =>
+/** Any JSON object, as a request body or a stored file decodes to. */
+type JsonObject = Record<string, JsonValue>;
+
+const isJsonObject = (v: unknown): v is JsonObject =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+
+/** Parse a JSON request body, capped at `limit` bytes. A non-object body reads as an empty object. */
+export const readBody = (req: IncomingMessage, limit = BODY_LIMIT): Promise<JsonObject> =>
   new Promise((resolve, reject) => {
     let size = 0;
-    const chunks = [];
-    req.on("data", (c) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (c: Buffer) => {
       size += c.length;
       if (size <= limit) return chunks.push(c);
       reject(new Error("body too large"));
@@ -31,7 +43,10 @@ export const readBody = (req, limit = BODY_LIMIT) =>
     });
     req.on("end", () => {
       try {
-        resolve(chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {});
+        const parsed: unknown = chunks.length
+          ? JSON.parse(Buffer.concat(chunks).toString("utf8"))
+          : {};
+        resolve(isJsonObject(parsed) ? parsed : {});
       } catch (e) {
         reject(e);
       }
@@ -39,24 +54,28 @@ export const readBody = (req, limit = BODY_LIMIT) =>
     req.on("error", reject);
   });
 
-const validId = (id) => typeof id === "string" && /^[0-9a-f-]{36}$/.test(id);
+const validId = (id: unknown): id is string => typeof id === "string" && /^[0-9a-f-]{36}$/.test(id);
+
+/** What parseSettingsText hands back: the object, or why the text is not one. */
+export type ParsedSettings =
+  | { value: JsonObject; error?: undefined }
+  | { error: string; value?: undefined };
 
 /** settings.json must be one JSON object; anything else Claude Code would reject or ignore. */
-export function parseSettingsText(text) {
+export function parseSettingsText(text: unknown): ParsedSettings {
   if (typeof text !== "string") return { error: "text must be a string" };
-  let value;
+  let value: unknown;
   try {
     value = JSON.parse(text);
   } catch (e) {
-    return { error: e?.message ?? "invalid JSON" };
+    return { error: e instanceof Error ? e.message : "invalid JSON" };
   }
-  if (!value || typeof value !== "object" || Array.isArray(value))
-    return { error: "settings.json must be a JSON object" };
+  if (!isJsonObject(value)) return { error: "settings.json must be a JSON object" };
   return { value };
 }
 
 /** Output of a probe command, or "" plus the failure text so the panel can show why. */
-const run = (cmd, args) =>
+const run = (cmd: string, args: string[]): Promise<{ out: string; error?: string }> =>
   new Promise((resolve) =>
     execFile(cmd, args, { timeout: 8000, windowsHide: true }, (e, out, err) =>
       resolve(
@@ -72,29 +91,45 @@ const run = (cmd, args) =>
     ),
   );
 
-const PLUGIN_VERSION = JSON.parse(
+const packageJson: unknown = JSON.parse(
   await readFile(new URL("../package.json", import.meta.url), "utf8"),
-).version;
+);
+const PLUGIN_VERSION =
+  isJsonObject(packageJson) && typeof packageJson.version === "string" ? packageJson.version : "";
 
 const MAX_BOXES = 20;
+
+/** Another dsh server this panel can hop to; `token` is that box's dsh launch token. */
+export interface Box {
+  name: string;
+  url: string;
+  token?: string;
+}
+
+/** What validateBoxes hands back: the cleaned list, or why the input is not one. */
+export type ValidatedBoxes =
+  | { boxes: Box[]; error?: undefined }
+  | { error: string; boxes?: undefined };
+
 /**
  * The saved list of other dsh servers ("boxes"), each running this plugin with its own Claude
  * Code login. The browser hops between them; nothing is proxied. `token` is that box's dsh launch
  * token, kept so a browser without its cookie can still open it (same trick as the NPM proxy).
  */
-export function validateBoxes(input) {
+export function validateBoxes(input: unknown): ValidatedBoxes {
   if (!Array.isArray(input)) return { error: "boxes must be an array" };
   if (input.length > MAX_BOXES) return { error: `at most ${MAX_BOXES} boxes` };
-  const boxes = [];
-  const seen = new Set();
-  for (const b of input) {
-    const name = String(b?.name ?? "").trim();
-    const url = String(b?.url ?? "")
+  const boxes: Box[] = [];
+  const seen = new Set<string>();
+  for (const raw of input) {
+    const b = isJsonObject(raw) ? raw : {};
+    const name = String(b.name ?? "").trim();
+    const url = String(b.url ?? "")
       .trim()
       .replace(/\/+$/, "");
-    const token = b?.token === undefined || b?.token === null ? "" : String(b.token).trim();
+    const token = b.token === undefined || b.token === null ? "" : String(b.token).trim();
     if (!name || name.length > 40) return { error: "each box needs a name (1-40 chars)" };
-    let parsed;
+    let parsed: URL;
     try {
       parsed = new URL(url);
     } catch {
@@ -104,12 +139,14 @@ export function validateBoxes(input) {
     if (token.length > 200) return { error: `"${name}": token too long` };
     if (seen.has(url)) return { error: `"${name}": duplicate url` };
     seen.add(url);
-    boxes.push({ name, url, ...(token ? { token } : {}) });
+    const box: Box = { name, url };
+    if (token) box.token = token;
+    boxes.push(box);
   }
   return { boxes };
 }
 
-async function readBoxes(path) {
+async function readBoxes(path: string): Promise<Box[]> {
   try {
     const v = validateBoxes(JSON.parse(await readFile(path, "utf8")));
     return v.boxes ?? [];
@@ -118,20 +155,61 @@ async function readBoxes(path) {
   }
 }
 
+/** What a box's `/status` reports; the panel shows these fields as pills. */
+export interface RuntimeStatus {
+  host: string;
+  plugin: string;
+  binary: string | null;
+  version: string | null;
+  error?: string;
+  configDir: string;
+  loggedIn: boolean;
+  authMethod: string | null;
+  email?: string | null;
+  projectsDirectory?: string | null;
+}
+
+/** A box's `/sessions?all=1` answer. */
+export interface BoxSessions {
+  host: string;
+  sessions: TranscriptListItem[];
+}
+
+/** One probe's outcome: the decoded body, or why the box could not be reached. */
+export type Probe<T> = { ok: true; status: T } | { ok: false; error: string };
+
+/** The subset of fetch the probe uses, so tests can hand in a fake. */
+export type FetchLike = (
+  url: string,
+  init: { headers?: Record<string, string>; redirect: "manual"; signal: AbortSignal },
+) => Promise<{
+  status: number;
+  ok: boolean;
+  headers: { get(name: string): string | null };
+  json(): Promise<unknown>;
+  text(): Promise<string>;
+}>;
+
+const cookieOf = (r: { headers: { get(name: string): string | null } }) =>
+  (r.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
+
 /**
  * Log into a box like a browser would (dsh's `/?token=` sets the auth cookie; an NPM-style proxy
  * redirects to that URL by itself) and read its plugin status. Never throws: the panel shows why.
  */
-export async function probeBox(box, fetchImpl = fetch, path = "status") {
+export async function probeBox<T = RuntimeStatus>(
+  box: Box,
+  fetchImpl: FetchLike = fetch,
+  path = "status",
+): Promise<Probe<T>> {
   const { url, token } = box;
   const signal = AbortSignal.timeout(path === "status" ? 6000 : 12000);
-  const status = (cookie) =>
+  const status = (cookie: string) =>
     fetchImpl(`${url}/dsh-llm-claude/${path}`, {
       headers: cookie ? { cookie } : {},
       redirect: "manual",
       signal,
     });
-  const cookieOf = (r) => (r.headers.get("set-cookie") ?? "").split(";")[0];
   try {
     let cookie = "";
     if (token) {
@@ -163,21 +241,33 @@ export async function probeBox(box, fetchImpl = fetch, path = "status") {
     if (r.status === 404)
       return { ok: false, error: "dsh-llm-claude missing or too old on this box" };
     if (!r.ok) return { ok: false, error: `HTTP ${r.status}` };
-    return { ok: true, status: await r.json() };
+    // SAFETY: the body is another instance of this plugin answering the same route; the caller
+    // names which route it asked and only reads the fields that route publishes
+    return { ok: true, status: (await r.json()) as T };
   } catch (e) {
-    return { ok: false, error: String(e?.cause?.message ?? e?.message ?? e).slice(0, 200) };
+    const cause = e instanceof Error && e.cause instanceof Error ? e.cause.message : undefined;
+    return { ok: false, error: String(cause ?? errorText(e)).slice(0, 200) };
   }
 }
 
+/** The login half of `claude auth status` output. */
+export interface AuthStatus {
+  loggedIn: boolean;
+  authMethod: string | null;
+  email?: string | null;
+  projectsDirectory?: string | null;
+}
+
 /** The login half of `claude auth status` output, tolerant of an older CLI printing prose. */
-export function authFromStatus(text) {
+export function authFromStatus(text: string): AuthStatus {
   try {
-    const j = JSON.parse(text);
+    const parsed: unknown = JSON.parse(text);
+    const j = isJsonObject(parsed) ? parsed : {};
     return {
       loggedIn: j.loggedIn === true,
-      authMethod: j.authMethod ?? null,
-      email: j.email ?? null,
-      projectsDirectory: j.projectsDirectory ?? null,
+      authMethod: typeof j.authMethod === "string" ? j.authMethod : null,
+      email: typeof j.email === "string" ? j.email : null,
+      projectsDirectory: typeof j.projectsDirectory === "string" ? j.projectsDirectory : null,
     };
   } catch {
     return { loggedIn: /logged in/i.test(text) && !/not logged in/i.test(text), authMethod: null };
@@ -189,7 +279,7 @@ export function authFromStatus(text) {
  * spawns, its version, the config dir it will read, and who is logged in. Same-box by design:
  * the plugin runs Claude Code as a child process, never over ssh.
  */
-async function runtimeStatus(configDir, command = "claude") {
+async function runtimeStatus(configDir: string, command = "claude"): Promise<RuntimeStatus> {
   const [which, version, status] = await Promise.all([
     run(
       process.platform === "win32" ? "where" : "sh",
@@ -198,52 +288,78 @@ async function runtimeStatus(configDir, command = "claude") {
     run(command, ["--version"]),
     run(command, ["auth", "status"]),
   ]);
-  return {
+  const out: RuntimeStatus = {
     host: hostname(),
     plugin: PLUGIN_VERSION,
     binary: which.out.trim().split(/\r?\n/)[0] || null,
     version: version.out.trim() || null,
-    ...(version.error ? { error: version.error } : {}),
     configDir,
     ...authFromStatus(status.out),
   };
+  if (version.error) out.error = version.error;
+  return out;
 }
 
 /** Every transcript under the Claude projects dir, each with the cwd its records name. */
-async function listAllTranscripts(projectsDir, hidden) {
-  let dirs = [];
+async function listAllTranscripts(
+  projectsDir: string,
+  hidden: Set<string>,
+): Promise<TranscriptListItem[]> {
+  let dirs: string[] = [];
   try {
-    dirs = (await readdir(projectsDir, { withFileTypes: true })).filter((d) => d.isDirectory());
+    dirs = (await readdir(projectsDir, { withFileTypes: true }))
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name);
   } catch {
     return [];
   }
   const lists = await Promise.all(
-    dirs.map((d) => listTranscripts(join(projectsDir, d.name), hidden).catch(() => [])),
+    dirs.map((name) => listTranscripts(join(projectsDir, name), hidden).catch(() => [])),
   );
   return lists.flat();
 }
 
+/** Claude Code's settings file as the editor reads it. */
+interface SettingsFile {
+  path: string;
+  exists: boolean;
+  text: string;
+  mtime: number;
+}
+
+const isEnoent = (e: unknown): boolean =>
+  typeof e === "object" && e !== null && "code" in e && e.code === "ENOENT";
+
 /** Read Claude Code's settings file; a missing file reads as an empty object. */
-async function readSettings(path) {
+async function readSettings(path: string): Promise<SettingsFile> {
   try {
     const [text, info] = await Promise.all([readFile(path, "utf8"), stat(path)]);
     return { path, exists: true, text, mtime: info.mtimeMs };
   } catch (e) {
-    if (e?.code === "ENOENT") return { path, exists: false, text: "{}\n", mtime: 0 };
+    if (isEnoent(e)) return { path, exists: false, text: "{}\n", mtime: 0 };
     throw e;
   }
 }
 
 /** Keep the previous copy as .bak, write to a temp file, rename over: never a half-written file. */
-async function writeSettings(path, text) {
+async function writeSettings(
+  path: string,
+  text: string,
+): Promise<{ path: string; backup: string; mtime: number }> {
   const backup = `${path}.bak`;
-  await copyFile(path, backup).catch((e) => {
-    if (e?.code !== "ENOENT") throw e;
+  await copyFile(path, backup).catch((e: unknown) => {
+    if (!isEnoent(e)) throw e;
   });
   const tmp = `${path}.tmp-${process.pid}`;
   await writeFile(tmp, text.endsWith("\n") ? text : `${text}\n`, "utf8");
   await rename(tmp, path);
   return { path, backup, mtime: (await stat(path)).mtimeMs };
+}
+
+/** A dsh session a transcript belongs to, and whether it is archived. */
+export interface OwnedSession {
+  id: string;
+  archived: boolean;
 }
 
 /**
@@ -252,28 +368,54 @@ async function writeSettings(path, text) {
  * from this panel shares the id. Archived sessions are included so the panel can bring them back
  * without any archive plugin.
  */
-export function dshSessionsFor(headers, cwd, claudeIdOf, archived = new Set()) {
-  const map = new Map();
+export function dshSessionsFor(
+  headers: readonly { id: string; cwd?: string }[],
+  cwd: string | null,
+  claudeIdOf: (id: string) => string,
+  archived: Set<string> = new Set(),
+): Map<string, OwnedSession> {
+  const map = new Map<string, OwnedSession>();
   for (const h of headers) {
     if (cwd !== null && h.cwd !== cwd) continue;
     const id = String(h.id);
-    const entry = { id, archived: archived.has(id) };
+    const entry: OwnedSession = { id, archived: archived.has(id) };
     map.set(id, entry);
     map.set(claudeIdOf(id), entry);
   }
   return map;
 }
-const validCwd = (cwd) => typeof cwd === "string" && cwd.startsWith("/") && !cwd.includes("\0");
+const validCwd = (cwd: unknown): cwd is string =>
+  typeof cwd === "string" && cwd.startsWith("/") && !cwd.includes("\0");
+
+/** What /open answers: the dsh session id to open, and whether it existed before. */
+interface Opened {
+  id: string;
+  existed: boolean;
+  turns?: number;
+  events?: number;
+}
+
+/** The host services the routes read; injected before the route mounts. */
+type RouteHost = Required<
+  Pick<PluginContext, "webServer" | "connection" | "sessions" | "sessionPersistence">
+>;
 
 /**
  * Create the dsh session for one transcript: seed with the converted history, flush to disk,
  * leave. The client then adopts it through the normal `sessions.create({ sessionId })` path,
  * which attaches it to the workspace and makes it live.
  */
-const opening = new Map();
+const opening = new Map<string, Promise<Opened>>();
 
 /** Same id opened twice at once (double click, two tabs) shares one creation. */
-function openTranscript(ctx, projectDir, cwd, id, claudeIdOf, registry) {
+function openTranscript(
+  ctx: RouteHost,
+  projectDir: (cwd: string) => string,
+  cwd: string,
+  id: string,
+  claudeIdOf: (id: string) => string,
+  registry: WorkspaceRegistry | undefined,
+): Promise<Opened> {
   let job = opening.get(id);
   if (!job) {
     job = openTranscriptOnce(ctx, projectDir, cwd, id, claudeIdOf, registry).finally(() =>
@@ -288,8 +430,15 @@ function openTranscript(ctx, projectDir, cwd, id, claudeIdOf, registry) {
  * Loads a Claude Code transcript and creates a dsh session from it, or
  * returns the existing session if one with this id is already live.
  */
-async function openTranscriptOnce(ctx, projectDir, cwd, id, claudeIdOf, registry) {
-  if (ctx.sessions.get(id)) return { id, existed: true };
+async function openTranscriptOnce(
+  ctx: RouteHost,
+  projectDir: (cwd: string) => string,
+  cwd: string,
+  id: string,
+  claudeIdOf: (id: string) => string,
+  registry: WorkspaceRegistry | undefined,
+): Promise<Opened> {
+  if (ctx.sessions.get(asSessionId(id))) return { id, existed: true };
   const owned = dshSessionsFor(
     await ctx.sessionPersistence.list(),
     cwd,
@@ -312,7 +461,10 @@ async function openTranscriptOnce(ctx, projectDir, cwd, id, claudeIdOf, registry
   const folded = await readTranscript(join(projectDir(cwd), `${id}.jsonl`));
   if (folded.turns.length === 0) throw new Error("transcript has no completed turn");
   const seed = toSessionEvents(folded);
-  const session = ctx.sessions.prepare(id, { seed, meta: { cwd, createdAt: folded.createdAt } });
+  const session = ctx.sessions.prepare(asSessionId(id), {
+    seed,
+    meta: { cwd, createdAt: folded.createdAt },
+  });
   const leave = ctx.sessions.enter(session);
   try {
     ctx.sessions.announce(session);
@@ -323,9 +475,25 @@ async function openTranscriptOnce(ctx, projectDir, cwd, id, claudeIdOf, registry
   return { id, existed: false, turns: folded.turns.length, events: seed.length };
 }
 
+/** Everything the routes need from the adapter. */
+export interface SessionRouteOptions {
+  log: (level: string, msg: string) => void;
+  /** Claude Code project dir for a workspace path. */
+  projectDir: (cwd: string) => string;
+  /** The parent of every project dir. */
+  projectsDir: string;
+  /** Claude session ids the adapter started itself. */
+  startedIds: () => Promise<Iterable<string>>;
+  claudeIdOf: (id: string) => string;
+  settingsPath?: string;
+  configDir: string;
+  boxesPath?: string;
+  command?: string;
+}
+
 /** `projectDir(cwd)` → Claude Code project dir; `startedIds()` → ids the adapter started itself. */
 export function registerSessionRoutes(
-  ctx,
+  ctx: PluginContext,
   {
     log,
     projectDir,
@@ -336,21 +504,24 @@ export function registerSessionRoutes(
     configDir,
     boxesPath,
     command,
-  },
-) {
+  }: SessionRouteOptions,
+): void {
   // Optional: stock dsh has it; without it archived sessions list but cannot be restored.
-  let registry;
-  ctx.inject(["workspaceRegistry"], (host) => {
+  let registry: WorkspaceRegistry | undefined;
+  ctx.inject?.(["workspaceRegistry"], (host) => {
     registry = host.workspaceRegistry;
   });
-  ctx.inject(["webServer", "connection", "sessions", "sessionPersistence"], (ctx) => {
-    ctx.effect(
+  ctx.inject?.(["webServer", "connection", "sessions", "sessionPersistence"], (host) => {
+    const { webServer, connection, sessions, sessionPersistence } = host;
+    if (!webServer || !connection || !sessionPersistence) return;
+    const routeHost: RouteHost = { webServer, connection, sessions, sessionPersistence };
+    host.effect?.(
       () =>
-        ctx.webServer.register({
+        webServer.register({
           kind: "prefix",
           path: ROUTE_PREFIX,
-          handler: async (req, res) => {
-            const rejection = ctx.connection.requestRejection(req);
+          handler: async (req: IncomingMessage, res: ServerResponse) => {
+            const rejection = connection.requestRejection(req);
             if (rejection !== undefined) return json(res, rejection, { error: "forbidden" });
             const url = new URL(req.url ?? "/", "http://dsh");
             try {
@@ -361,33 +532,33 @@ export function registerSessionRoutes(
                   return json(res, 400, { error: "cwd must be an absolute path" });
                 if (all) {
                   const owned = dshSessionsFor(
-                    await ctx.sessionPersistence.list(),
+                    await sessionPersistence.list(),
                     null,
                     claudeIdOf,
                     new Set(registry?.archivedSessionIds ?? []),
                   );
                   const hidden = new Set([...(await startedIds())].filter((id) => !owned.has(id)));
-                  const sessions = (await listAllTranscripts(projectsDir, hidden)).map((s) => {
+                  const items = (await listAllTranscripts(projectsDir, hidden)).map((s) => {
                     const d = owned.get(s.id);
                     return d ? { ...s, dsh: d } : s;
                   });
-                  return json(res, 200, { host: hostname(), sessions });
+                  return json(res, 200, { host: hostname(), sessions: items });
                 }
                 // Transcripts of dsh sessions (started here or opened from here) are listed with
                 // their dsh id so the panel opens the existing session. Ones the adapter started
                 // for a dsh session that no longer exists are hidden.
                 const owned = dshSessionsFor(
-                  await ctx.sessionPersistence.list(),
+                  await sessionPersistence.list(),
                   cwd,
                   claudeIdOf,
                   new Set(registry?.archivedSessionIds ?? []),
                 );
                 const hidden = new Set([...(await startedIds())].filter((id) => !owned.has(id)));
-                const sessions = (await listTranscripts(projectDir(cwd), hidden)).map((s) => {
+                const items = (await listTranscripts(projectDir(cwd), hidden)).map((s) => {
                   const d = owned.get(s.id);
                   return d ? { ...s, dsh: d } : s;
                 });
-                return json(res, 200, { sessions });
+                return json(res, 200, { sessions: items });
               }
               if (req.method === "POST" && url.pathname === `${ROUTE_PREFIX}/open`) {
                 const { cwd, id } = await readBody(req);
@@ -396,7 +567,7 @@ export function registerSessionRoutes(
                 return json(
                   res,
                   200,
-                  await openTranscript(ctx, projectDir, cwd, id, claudeIdOf, registry),
+                  await openTranscript(routeHost, projectDir, cwd, id, claudeIdOf, registry),
                 );
               }
               if (settingsPath && url.pathname === `${ROUTE_PREFIX}/settings`) {
@@ -404,9 +575,10 @@ export function registerSessionRoutes(
                 if (req.method === "PUT") {
                   const { text } = await readBody(req, 1024 * 1024);
                   const parsed = parseSettingsText(text);
-                  if (parsed.error) return json(res, 400, { error: parsed.error });
-                  const written = await writeSettings(settingsPath, text);
-                  log("info", `settings.json saved (${text.length} chars)`);
+                  if (parsed.error !== undefined) return json(res, 400, { error: parsed.error });
+                  const body = typeof text === "string" ? text : "";
+                  const written = await writeSettings(settingsPath, body);
+                  log("info", `settings.json saved (${body.length} chars)`);
                   return json(res, 200, written);
                 }
               }
@@ -417,7 +589,7 @@ export function registerSessionRoutes(
                   return json(res, 200, { boxes: await readBoxes(boxesPath) });
                 if (req.method === "PUT") {
                   const v = validateBoxes((await readBody(req)).boxes);
-                  if (v.error) return json(res, 400, { error: v.error });
+                  if (v.error !== undefined) return json(res, 400, { error: v.error });
                   await writeFile(boxesPath, `${JSON.stringify(v.boxes, null, 2)}\n`, "utf8");
                   return json(res, 200, { boxes: v.boxes });
                 }
@@ -429,17 +601,22 @@ export function registerSessionRoutes(
               ) {
                 const boxes = await readBoxes(boxesPath);
                 const probed = await Promise.all(
-                  boxes.map((b) => probeBox(b, fetch, "sessions?all=1")),
+                  boxes.map((b) => probeBox<BoxSessions>(b, fetch, "sessions?all=1")),
                 );
                 return json(res, 200, {
-                  boxes: boxes.map((b, i) => ({
-                    name: b.name,
-                    url: b.url,
-                    ok: probed[i].ok,
-                    ...(probed[i].ok
-                      ? { host: probed[i].status.host, sessions: probed[i].status.sessions ?? [] }
-                      : { error: probed[i].error }),
-                  })),
+                  boxes: boxes.map((b, i) => {
+                    const p = probed[i];
+                    if (!p) return { name: b.name, url: b.url, ok: false, error: "not probed" };
+                    return p.ok
+                      ? {
+                          name: b.name,
+                          url: b.url,
+                          ok: true,
+                          host: p.status.host,
+                          sessions: p.status.sessions ?? [],
+                        }
+                      : { name: b.name, url: b.url, ok: false, error: p.error };
+                  }),
                 });
               }
               if (
@@ -456,8 +633,8 @@ export function registerSessionRoutes(
               }
               return json(res, 404, { error: "not found" });
             } catch (e) {
-              log("warn", `session route failed: ${e?.message ?? e}`);
-              return json(res, 500, { error: String(e?.message ?? e) });
+              log("warn", `session route failed: ${errorText(e)}`);
+              return json(res, 500, { error: errorText(e) });
             }
           },
         }),

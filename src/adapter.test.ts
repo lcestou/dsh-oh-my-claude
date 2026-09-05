@@ -36,10 +36,66 @@ import {
   takeInterrupted,
 } from "./adapter.js";
 import { ClaudeProcess, LineQueue, TIMEOUT, seamSpawner } from "./process.js";
+import type { ClaudeEvent, ClaudeProcessSpec, SubprocessHandle } from "./process.js";
+import type { LooseMessage } from "./adapter.js";
+import type { FinishReason, LlmFailure, Message, StreamChunk } from "@deepseek-ai/dsh-llm";
+import type { Agent, PluginContext, SubprocessSpawnSpec } from "./dsh.js";
+import type { SubprocessHandle as SeamHandle } from "./dsh.js";
+
+// Test fakes stand in for dsh services and CLI events. One cast per shape, here, instead of one
+// per fake; every fake is partial on purpose and the test names what it exercises.
+// SAFETY: partial fake for tests
+const fakeCtx = (o: object): PluginContext => o as unknown as PluginContext;
+// SAFETY: partial fake for tests
+const fakeProc = (o: object): ClaudeProcess => o as unknown as ClaudeProcess;
+// SAFETY: partial fake for tests
+const fakeAgent = (o: object): Agent => o as unknown as Agent;
+// SAFETY: tests feed the translator event types it has never seen, on purpose
+const anyEvent = (o: object): ClaudeEvent => o as unknown as ClaudeEvent;
+/** Message fixtures: the shapes dsh sends, written loosely; typed here once for the helpers under test. */
+// SAFETY: test fixture, checked by the assertions that read it
+const message = (m: object): LooseMessage => m as LooseMessage;
+const messageList = (list: object[]): LooseMessage[] => list.map(message);
+const emptySpec: ClaudeProcessSpec = {
+  cwd: "",
+  model: undefined,
+  effort: null,
+  mode: "",
+  sessionId: null,
+};
+/** The failure of an error or aborted finish; throws when the reason has none, which fails the test. */
+const failureOf = (r: FinishReason | undefined): LlmFailure => {
+  if (r && (r.kind === "error" || r.kind === "aborted")) return r.failure;
+  throw new Error(`no failure on finish reason ${r?.kind}`);
+};
+/** Narrow a chunk to one type or fail the test with the type it actually had. */
+const chunkOf = <K extends StreamChunk["type"]>(c: StreamChunk | undefined, type: K) => {
+  if (c?.type !== type) throw new Error(`expected a ${type} chunk, got ${c?.type}`);
+  return c as Extract<StreamChunk, { type: K }>;
+};
+/** The text of a text or reasoning block-end. */
+const blockTextOf = (c: StreamChunk | undefined): string => {
+  const b = chunkOf(c, "block-end").block;
+  if (b.type === "text" || b.type === "reasoning") return b.text;
+  throw new Error(`block has no text: ${b.type}`);
+};
 import { PassThrough } from "node:stream";
 import { tmpdir } from "node:os";
 import { mkdtemp } from "node:fs/promises";
 import { join as joinPath } from "node:path";
+
+declare module "./adapter.js" {
+  interface Translator {
+    finished: boolean;
+    toolPending: boolean;
+    relayed: Set<string>;
+    open: Map<number, import("./adapter.js").TranslatorBlock>;
+    index: number;
+    dshIds: Set<string>;
+    aborting: boolean;
+    log: (level: string, msg: string) => void;
+  }
+}
 
 const config = new Config({});
 assert.equal(config.permissionMode, "dsh");
@@ -48,21 +104,16 @@ assert.equal(config.titleModel, "haiku");
 assert.equal(config.resume, true);
 
 // resolveModelInfo echoes the requested id and only borrows the display name
-assert.equal(resolveModelInfo("claude-code", "claude-opus-4").id, "claude-opus-4");
-assert.equal(resolveModelInfo("claude-code", "claude-fable-5-1").name, "Claude Fable 5.1");
-assert.equal(resolveModelInfo("claude-code", "bogus").name, "bogus");
-assert.equal(resolveModelInfo("claude-code", "bogus").context, undefined);
-assert.equal(resolveModelInfo("claude-code", "claude-fable-5-1").context.contextWindow, 1_000_000);
-assert.equal(
-  resolveModelInfo("claude-code", "claude-fable-5-1").reasoning.defaultEffort,
-  undefined,
-);
-assert.equal(resolveModelInfo("claude-code", "claude-fable-5-1").reasoning.efforts.length, 5);
-assert.equal(resolveModelInfo("claude-code", "claude-haiku-4-5").reasoning, undefined);
-assert.deepEqual(resolveModelInfo("claude-code", "claude-haiku-4-5").inputModalities, [
-  "text",
-  "image",
-]);
+const rmi = (id: string) => resolveModelInfo("claude-code", id) as any;
+assert.equal(rmi("claude-opus-4").id, "claude-opus-4");
+assert.equal(rmi("claude-fable-5-1").name, "Claude Fable 5.1");
+assert.equal(rmi("bogus").name, "bogus");
+assert.equal(rmi("bogus").context, undefined);
+assert.equal(rmi("claude-fable-5-1").context.contextWindow, 1_000_000);
+assert.equal(rmi("claude-fable-5-1").reasoning.defaultEffort, undefined);
+assert.equal(rmi("claude-fable-5-1").reasoning.efforts.length, 5);
+assert.equal(rmi("claude-haiku-4-5").reasoning, undefined);
+assert.deepEqual(rmi("claude-haiku-4-5").inputModalities, ["text", "image"]);
 
 // session mapping is deterministic and UUID-shaped
 const sid = claudeSessionId("abc");
@@ -72,28 +123,28 @@ assert.notEqual(sid, claudeSessionId("abd"));
 assert.equal(projectDirName("/home/someone/.dsh/x"), "-home-someone--dsh-x");
 
 // turn selection: fresh sends everything, resume sends only what follows the last assistant turn
-const inj = {
+const inj = message({
   role: "user",
   content: [{ type: "text", text: "<system-reminder>ctx</system-reminder>" }],
-};
-const toolMsg = {
+});
+const toolMsg = message({
   role: "user",
   source: { kind: "tool", callId: "x" },
   content: [{ type: "tool-result" }],
-};
-const history = [
+});
+const history = messageList([
   { role: "user", content: "hi" },
   { role: "assistant", content: "yo" },
   toolMsg,
   { role: "user", content: "again" },
   inj,
-];
+]);
 assert.equal(selectTurns(history, false).length, 4);
 assert.deepEqual(
-  selectTurns(history, true).map((m) => textOf(m)),
+  selectTurns(history, true).map((m: any) => textOf(m)),
   ["again", "<system-reminder>ctx</system-reminder>"],
 );
-function textOf(m) {
+function textOf(m: any) {
   return typeof m.content === "string" ? m.content : m.content[0].text;
 }
 assert.equal(
@@ -120,7 +171,7 @@ const chat = buildArgs({
   system: "sys",
   config,
   session: { id: "u", resuming: true },
-});
+} as any);
 assert.ok(chat.includes("--include-partial-messages") && chat.includes("--input-format"));
 assert.deepEqual(chat.slice(-2), ["--resume", "u"]);
 assert.ok(
@@ -139,14 +190,19 @@ const bridged = buildArgs({
   config,
   session: { id: "u", resuming: false },
   mcp: { url: "http://x/mcp/u", key: "k" },
-});
-const bridgedSystem = bridged[bridged.indexOf("--append-system-prompt") + 1];
+} as any);
+const bridgedSystem = bridged[bridged.indexOf("--append-system-prompt") + 1]!;
 assert.ok(bridgedSystem.startsWith("sys\n\n"), "dsh system prompt comes first");
 assert.ok(bridgedSystem.includes("never the built-in Agent/Task tool"));
 assert.ok(bridgedSystem.includes("mcp__dsh__list_subagent_models"));
-const fresh = buildArgs({ model: "m", config, session: { id: "u", resuming: false } });
+const fresh = buildArgs({ model: "m", config, session: { id: "u", resuming: false } } as any);
 assert.deepEqual(fresh.slice(-2), ["--session-id", "u"]);
-const aux = buildArgs({ model: "haiku", purpose: "session-title", config, session: undefined });
+const aux = buildArgs({
+  model: "haiku",
+  purpose: "session-title",
+  config,
+  session: undefined,
+} as any);
 assert.deepEqual(aux.slice(-5), ["--tools", "", "--max-turns", "1", "--no-session-persistence"]);
 const auxOld = buildArgs({
   model: "haiku",
@@ -154,14 +210,14 @@ const auxOld = buildArgs({
   config,
   session: undefined,
   flags: new Set(["--tools", "--max-turns"]),
-});
+} as any);
 assert.deepEqual(auxOld.slice(-4), ["--tools", "", "--max-turns", "1"], "older CLI: flag left out");
 assert.equal(aux.filter((a) => a === "--tools").length, 1);
 assert.ok(!aux.includes("--permission-mode"));
 const custom = buildArgs({
   model: "m",
   config: new Config({ allowedTools: ["Bash"], addDirs: ["/x"], maxTurns: 3 }),
-});
+} as any);
 assert.ok(
   custom.join(" ").includes("--allowedTools Bash") &&
     custom.join(" ").includes("--add-dir /x") &&
@@ -175,8 +231,8 @@ assert.equal(line.message.content[0].text, "hi");
 assert.equal(line.message.content[1].source.media_type, "image/png");
 
 // translator: partial deltas become live text/reasoning, whole assistant messages are then ignored
-const tr = new Translator();
-const se = (event) => tr.translate({ type: "stream_event", event });
+const tr = new Translator() as any;
+const se = (event: any) => tr.translate({ type: "stream_event", event });
 assert.deepEqual(se({ type: "message_start" }), []);
 assert.deepEqual(
   se({ type: "content_block_start", index: 0, content_block: { type: "thinking" } }),
@@ -202,7 +258,8 @@ assert.deepEqual(
     type: "content_block_start",
     index: 1,
     content_block: { type: "tool_use", name: "Read" },
-  }).map((e) => e.type),
+    // SAFETY: partial fake for tests; StreamChunk type not exported
+  }).map((e: { type: string }) => e.type),
   ["block-start", "reasoning-delta"],
 );
 se({
@@ -236,8 +293,9 @@ const done = tr.translate({
   stop_reason: "end_turn",
   usage: { input_tokens: 2, output_tokens: 4, cache_read_input_tokens: 10 },
 });
+// SAFETY: partial fake for tests
 assert.deepEqual(
-  done.map((e) => e.type),
+  done.map((e: { type: string }) => e.type),
   ["usage", "finish"],
 );
 assert.deepEqual(done[0].usage, {
@@ -250,7 +308,7 @@ assert.equal(done[1].reason.kind, "stop");
 assert.equal(tr.finished, true);
 
 // dsh tools called over the MCP bridge render as visible text rows, results too
-const trd = new Translator();
+const trd = new Translator() as any;
 const dshCall = trd.translate({
   type: "assistant",
   message: {
@@ -274,7 +332,7 @@ const nativeResult = trd.translate({
 assert.equal(nativeResult[0].blockType, "reasoning", "other tools stay in reasoning");
 
 // translator fallback: no partials seen → whole assistant message is emitted
-const tr2 = new Translator({ toolActivity: false });
+const tr2 = new Translator({ toolActivity: false }) as any;
 const whole = tr2.translate({
   type: "assistant",
   message: {
@@ -285,8 +343,9 @@ const whole = tr2.translate({
     ],
   },
 });
+// SAFETY: partial fake for tests
 assert.deepEqual(
-  whole.map((e) => e.type),
+  whole.map((e: { type: string }) => e.type),
   ["block-start", "reasoning-delta", "block-end", "block-start", "text-delta", "block-end"],
 );
 assert.deepEqual(
@@ -300,7 +359,7 @@ assert.equal(
 );
 // "allowed_warning" = near the cap, not a limit: the turn must go on (ending it made dsh's
 // retry re-send the prompt, seen live 2026-09-04)
-const warned = new Translator();
+const warned = new Translator() as any;
 assert.deepEqual(
   warned.translate({
     type: "rate_limit_event",
@@ -313,12 +372,16 @@ const limited = new Translator().translate({
   type: "rate_limit_event",
   rate_limit_info: { status: "rejected" },
 });
-assert.equal(limited[0].reason.failure.code, "RATE_LIMIT");
-assert.equal(
-  new Translator().translate({ type: "result", is_error: true, result: "boom" }).at(-1).reason
-    .failure.message,
-  "boom",
-);
+// SAFETY: rate_limit_event always produces a finish chunk with error reason
+const limitedFirst = limited[0];
+assert.ok(limitedFirst && "reason" in limitedFirst && limitedFirst.reason.kind === "error");
+assert.equal(failureOf(chunkOf(limitedFirst, "finish").reason).code, "RATE_LIMIT");
+// SAFETY: result error always produces a finish chunk with error reason
+const resultChunk = new Translator()
+  .translate({ type: "result", is_error: true, result: "boom" })
+  .at(-1);
+assert.ok(resultChunk && "reason" in resultChunk && resultChunk.reason.kind === "error");
+assert.equal(failureOf(chunkOf(resultChunk, "finish").reason).message, "boom");
 assert.deepEqual(new Translator().translate({ type: "system", subtype: "init" }), []);
 
 // Models API mapping + fallback
@@ -330,14 +393,20 @@ const api = modelFromApi({
     effort: { supported: true, low: { supported: true }, max: { supported: false } },
   },
 });
-assert.deepEqual(api, { id: "claude-x", name: "X", contextWindow: 500, efforts: ["low"] });
+assert.deepEqual(api, {
+  provider: "claude-code",
+  id: "claude-x",
+  name: "X",
+  contextWindow: 500,
+  efforts: ["low"],
+});
 const failing = await getCatalog(async () => {
   throw new Error("offline");
 });
 assert.equal(failing, KNOWN_MODELS);
 
 // access-mode switch from the dsh UI → Claude Code permission mode, unless config pins one
-const policy = (mode) => ({
+const policy = (mode: string): LooseMessage => ({
   role: "user",
   content: [
     { type: "text", text: `Current runtime context.\n\nCurrent DSH file policy: ${mode}. Any` },
@@ -356,7 +425,7 @@ assert.equal(
   permissionModeFor(new Config({ permissionMode: "plan" }), "danger-full-access"),
   "plan",
 );
-const switched = buildArgs({ model: "m", config, accessMode: "danger-full-access" });
+const switched = buildArgs({ model: "m", config, accessMode: "danger-full-access" } as any);
 assert.ok(switched.join(" ").includes("--permission-mode bypassPermissions"));
 
 // CLI flag probe: missing flags are left out; missing --input-format switches to positional prompt
@@ -369,7 +438,7 @@ const legacy = buildArgs({
   flags: oldCli,
   promptText: "hello there",
   session: { id: "u", resuming: true },
-});
+} as any);
 assert.deepEqual(legacy.slice(0, 2), ["-p", "hello there"]);
 assert.ok(
   !legacy.includes("--include-partial-messages") &&
@@ -390,7 +459,7 @@ assert.ok(probed.flags.has("--effort") && probed.flags.has("--input-format"));
 
 // rate limit carries the provider reset time as retry-after
 const soon = Math.floor(Date.now() / 1000) + 120;
-const rl = new Translator().translate({
+const rl = (new Translator() as any).translate({
   type: "rate_limit_event",
   rate_limit_info: { status: "rejected", resetsAt: soon },
 });
@@ -410,14 +479,13 @@ assert.equal(
 );
 assert.equal(isStaleResume({ type: "result", is_error: true, errors: ["boom"] }), false);
 assert.equal(isStaleResume({ type: "result", is_error: false }), false);
-assert.equal(
-  new Translator().translate({ type: "result", is_error: true, errors: ["a", "b"] })[0].reason
-    .failure.message,
-  "a; b",
-);
+// SAFETY: result with errors produces a finish chunk with error reason
+const rl2 = new Translator().translate({ type: "result", is_error: true, errors: ["a", "b"] });
+assert.ok(rl2[0] && "reason" in rl2[0] && rl2[0].reason.kind === "error");
+assert.equal(rl2[0].reason.failure.message, "a; b");
 
 // denied tool calls are counted and reported once at the end of the turn
-const td = new Translator({ toolTextLimit: 100 });
+const td = new Translator({ toolTextLimit: 100 }) as any;
 td.translate({
   type: "user",
   message: {
@@ -430,29 +498,35 @@ td.translate({
 });
 const ended = td.translate({ type: "result", is_error: false, stop_reason: "end_turn" });
 assert.equal(ended[0].type, "block-start");
-assert.ok(ended.find((e) => e.type === "text-delta").text.includes("denied 1 tool call "));
+// SAFETY: text-delta event exists for this transcript
+const textDelta = ended.find((e: { type: string }) => e.type === "text-delta");
+assert.ok(textDelta && "text" in textDelta);
+assert.ok((textDelta as { text?: string }).text?.includes("denied 1 tool call "));
 assert.equal(ended.at(-1).reason.kind, "stop");
-assert.equal(new Translator().translate({ type: "result", is_error: false })[0].type, "finish");
+assert.equal(new Translator().translate({ type: "result", is_error: false })[0]?.type, "finish");
 
 // forwarded subagent text renders as reasoning even while partials are on
-const ts2 = new Translator();
+const ts2 = new Translator() as any;
 ts2.translate({ type: "stream_event", event: { type: "message_start" } });
 const sub = ts2.translate({
   type: "assistant",
   parent_tool_use_id: "toolu_1",
   message: { content: [{ type: "text", text: "child says hi" }] },
 });
-assert.equal(sub.at(-1).block.text, "↳ subagent\nchild says hi");
-assert.equal(
-  new Translator({ toolTextLimit: 5 })
-    .translate({
-      type: "user",
-      message: { content: [{ type: "tool_result", content: "abcdefghij" }] },
-    })
-    .at(-1).block.text,
-  "◀ result\nabcde…",
-);
-assert.ok(buildArgs({ model: "m", config }).includes("--forward-subagent-text"));
+// SAFETY: subagent message always produces a block-end chunk
+const subLast = sub.at(-1);
+assert.ok(subLast && "block" in subLast);
+assert.equal(subLast.block.text, "↳ subagent\nchild says hi");
+// SAFETY: tool_result always produces a block-end chunk
+const toolResultChunk = new Translator({ toolTextLimit: 5 })
+  .translate({
+    type: "user",
+    message: { content: [{ type: "tool_result", content: "abcdefghij" }] },
+  })
+  .at(-1);
+assert.ok(toolResultChunk && "block" in toolResultChunk);
+assert.equal(blockTextOf(toolResultChunk), "◀ result\nabcde…");
+assert.ok(buildArgs({ model: "m", config } as any).includes("--forward-subagent-text"));
 assert.equal(new Config({}).idleTimeoutMs, 1_800_000);
 
 // control channel helpers
@@ -477,19 +551,26 @@ const qs = parseQuestions(
   },
   "toolu_9",
 );
+assert.ok(qs);
 assert.equal(qs.length, 1);
-assert.equal(qs[0].id, "toolu_9:0");
-assert.deepEqual(qs[0].options[1], { label: "coffee", description: "hot" });
+// SAFETY: qs[0] exists because we asserted length === 1
+const firstQ = qs[0];
+assert.ok(firstQ);
+assert.equal(firstQ.id, "toolu_9:0");
+// SAFETY: options[1] exists because we asserted options has 2 elements
+const secondOpt = firstQ.options[1];
+assert.ok(secondOpt);
+assert.deepEqual(secondOpt, { label: "coffee", description: "hot" });
 assert.equal(parseQuestions({ questions: [] }, "x"), undefined);
 assert.equal(
   parseQuestions({ questions: [{ question: "q", options: [{ nope: 1 }] }] }, "x"),
   undefined,
 );
-assert.deepEqual(answersFor(qs, { answers: [{ id: "toolu_9:0", selected: ["tea"] }] }), {
+assert.deepEqual(answersFor(qs as any, { answers: [{ id: "toolu_9:0", selected: ["tea"] }] }), {
   "Tea or coffee?": "tea",
 });
 assert.deepEqual(
-  answersFor(qs, { answers: [{ id: "toolu_9:0", selected: [], custom: "water" }] }),
+  answersFor(qs as any, { answers: [{ id: "toolu_9:0", selected: [], custom: "water" }] }),
   { "Tea or coffee?": "water" },
 );
 const turn = JSON.parse(userTurnLine([{ type: "text", text: "hi" }]));
@@ -513,11 +594,13 @@ assert.ok(
   ),
 );
 assert.ok(
-  !buildArgs({ model: "m", purpose: "session-title", config }).includes("--permission-prompt-tool"),
+  !buildArgs({ model: "m", purpose: "session-title", config } as any).includes(
+    "--permission-prompt-tool",
+  ),
 );
 
 // idle-timer pause: a closed tool_use block sets toolPending until the tool result arrives
-const tp = new Translator();
+const tp = new Translator() as any;
 tp.translate({ type: "stream_event", event: { type: "message_start" } });
 tp.translate({
   type: "stream_event",
@@ -532,7 +615,7 @@ tp.translate({ type: "stream_event", event: { type: "content_block_stop", index:
 assert.equal(tp.toolPending, true);
 tp.translate({ type: "user", message: { content: [{ type: "tool_result", content: "done" }] } });
 assert.equal(tp.toolPending, false);
-const tq = new Translator({ toolActivity: false });
+const tq = new Translator({ toolActivity: false }) as any;
 tq.translate({ type: "stream_event", event: { type: "message_start" } });
 assert.deepEqual(
   tq.translate({
@@ -555,7 +638,7 @@ console.log("ok");
 
 // --- native relay: Claude's view of a relayed dsh tool call stays hidden, dsh renders it ---
 {
-  const tr = new Translator({ relay: true });
+  const tr = new Translator({ relay: true }) as any;
   const start = tr.translate({
     type: "stream_event",
     event: {
@@ -577,7 +660,7 @@ console.log("ok");
     message: { content: [{ type: "tool_result", tool_use_id: "tu1", content: "done" }] },
   });
   assert.deepEqual(res, [], "its result row is dsh's to render, not ours");
-  const plain = new Translator({ relay: false });
+  const plain = new Translator({ relay: false }) as any;
   plain.translate({
     type: "stream_event",
     event: {
@@ -586,19 +669,39 @@ console.log("ok");
       content_block: { type: "tool_use", id: "tu2", name: "mcp__dsh__subagent_local" },
     },
   });
-  assert.equal(plain.open.get(0).blockType, "text", "without relay the old visible row stays");
+  // SAFETY: open has entry for index 0
+  const plainBlock = plain.open.get(0);
+  assert.ok(plainBlock);
+  assert.equal(plainBlock.blockType, "text", "without relay the old visible row stays");
 }
 {
-  const tr = new Translator();
+  const tr = new Translator() as any;
   tr.index = 3;
-  const chunks = [...relayBlocks(tr, { id: "c1", name: "subagent_local", args: { prompt: "hi" } })];
+  // SAFETY: partial fake for tests; RelayEvent requires type/resolve/reject not used in test
+  const chunks = [
+    ...relayBlocks(
+      tr as any,
+      {
+        id: "c1",
+        name: "subagent_local",
+        args: { prompt: "hi" },
+      } as unknown as import("./process.js").RelayEvent,
+    ),
+  ];
   assert.deepEqual(
     chunks.map((c) => c.type),
     ["block-start", "tool-call-delta", "block-end"],
   );
-  assert.equal(chunks[0].index, 3);
+  // SAFETY: chunks[0] exists because relayBlocks yields at least one chunk
+  const firstChunk = chunks[0];
+  assert.ok(firstChunk);
+  // SAFETY: chunks[0] has index from translator state
+  assert.equal((firstChunk as { index?: number }).index, 3);
   assert.equal(tr.index, 4, "reserves one block index");
-  assert.deepEqual(chunks[2].block, {
+  // SAFETY: chunks[2] exists and has block property
+  const lastChunk = chunks[2];
+  assert.ok(lastChunk && "block" in lastChunk);
+  assert.deepEqual(chunkOf(lastChunk, "block-end").block, {
     type: "tool-call",
     id: "c1",
     name: "subagent_local",
@@ -606,7 +709,7 @@ console.log("ok");
   });
 }
 {
-  const messages = [
+  const messages = messageList([
     { role: "user", content: [{ type: "text", text: "go" }] },
     { role: "assistant", content: [{ type: "tool-call", id: "c1", name: "x", arguments: "{}" }] },
     {
@@ -614,13 +717,13 @@ console.log("ok");
       source: { kind: "tool", callId: "c1" },
       content: [{ type: "tool-result", toolCallId: "c1", content: [{ type: "text", text: "42" }] }],
     },
-  ];
+  ]);
   assert.deepEqual(toolResultFor(messages, "c1"), { text: "42", isError: false });
   assert.equal(toolResultFor(messages, "nope"), undefined);
   assert.equal(toolResultFor([{ role: "user", content: [] }], "c1"), undefined);
 }
 {
-  const base = [
+  const base = messageList([
     { role: "user", content: [{ type: "text", text: "go" }] },
     { role: "assistant", content: [{ type: "tool-call", id: "c1", name: "x", arguments: "{}" }] },
     {
@@ -628,9 +731,9 @@ console.log("ok");
       source: { kind: "tool", callId: "c1" },
       content: [{ type: "tool-result", toolCallId: "c1", content: [{ type: "text", text: "42" }] }],
     },
-  ];
+  ]);
   assert.equal(stepContextFor(base), "", "only the tool result: nothing to add");
-  const steered = [
+  const steered = messageList([
     ...base,
     {
       role: "user",
@@ -642,7 +745,7 @@ console.log("ok");
       source: { kind: "subagent-settled" },
       content: [{ type: "text", text: "child done" }],
     },
-  ];
+  ]);
   const ctx = stepContextFor(steered);
   assert.match(ctx, /also check \/tmp/);
   assert.match(ctx, /child done/);
@@ -653,7 +756,7 @@ console.log("ok");
   );
 }
 {
-  const msgs = [
+  const msgs = messageList([
     {
       role: "user",
       source: { kind: "user", rpcId: "r1" },
@@ -670,7 +773,7 @@ console.log("ok");
       source: { kind: "user", rpcId: "r3" },
       content: [{ type: "text", text: "new" }],
     },
-  ];
+  ]);
   assert.equal(afterLastAssistant(msgs).length, 2);
   assert.deepEqual(
     dropSent(msgs, new Set(["r2"])).map((m) => m.source?.rpcId),
@@ -684,11 +787,12 @@ console.log("ok");
   );
 }
 {
+  // SAFETY: partial fake for tests; PluginContext requires many fields not used here
   const adapter = new ClaudeCodeAdapter(
-    { on() {} },
+    { on() {} } as unknown as import("./dsh.js").PluginContext,
     Config({ maxProcesses: 2, processIdleMs: 10_000 }),
   );
-  const fake = (extra) => ({
+  const fake = (extra: any) => ({
     alive: true,
     busy: false,
     relays: new Map(),
@@ -711,7 +815,7 @@ console.log("ok");
   assert.equal(idle.killed, 1, "a truly idle process past processIdleMs is culled");
 }
 {
-  const tr = new Translator({ relay: true });
+  const tr = new Translator({ relay: true }) as any;
   tr.aborting = true;
   const fin = tr.translate({ type: "result", subtype: "error_during_execution", is_error: true });
   assert.equal(
@@ -726,10 +830,12 @@ console.log("ok");
     is_error: true,
     result: "x",
   });
-  assert.equal(fin2.at(-1).reason.kind, "error");
+  // SAFETY: fin2 has at least one element with error reason
+  const fin2Last = fin2.at(-1);
+  assert.ok(fin2Last && "reason" in fin2Last && fin2Last.reason.kind === "error");
 }
 {
-  const tr = new Translator({ relay: true });
+  const tr = new Translator({ relay: true }) as any;
   tr.translate({
     type: "assistant",
     message: {
@@ -743,7 +849,7 @@ console.log("ok");
   assert.equal(tr.dshIds.size, 2, "whole-message path counts outstanding dsh calls for batching");
 }
 {
-  const line = (o) => JSON.stringify(o);
+  const line = (o: any) => JSON.stringify(o);
   const src = [
     line({ type: "user", sessionId: "OLD", message: { role: "user", content: "first" } }),
     line({
@@ -781,12 +887,12 @@ console.log("ok");
     "keep <= 0 keeps everything",
   );
   assert.equal(forkTranscriptText(src, "OLD", "NEW", 9).split("\n").filter(Boolean).length, 5);
-  const msgs = [
+  const msgs = messageList([
     { role: "user", source: { kind: "user" }, content: [] },
     { role: "assistant", content: [] },
     { role: "user", source: { kind: "subagent-settled" }, content: [] },
     { role: "user", source: { kind: "user" }, content: [] },
-  ];
+  ]);
   assert.equal(userPromptCount(msgs), 2);
 }
 {
@@ -830,7 +936,7 @@ console.log("ok");
   // Idle result → wake callback; busy or non-result lines stay silent.
   let woke = 0;
   const fake = { busy: false, onIdleResult: () => woke++ };
-  const note = (line) => ClaudeProcess.prototype.noteIdleResult.call(fake, line);
+  const note = (line: any) => ClaudeProcess.prototype.noteIdleResult.call(fake, line);
   note('{"type":"assistant","message":{"content":[{"type":"text","text":"result"}]}}');
   note("plain result text");
   assert.equal(woke, 0, "assistant text and junk do not wake");
@@ -840,19 +946,27 @@ console.log("ok");
   note('{"type":"result","subtype":"success"}');
   assert.equal(woke, 1, "a result during a live turn is the turn's own, no wake");
   fake.busy = false;
-  fake.onIdleResult = undefined;
+  (fake as any).onIdleResult = undefined;
   note('{"type":"result","subtype":"success"}');
   assert.equal(woke, 1, "no callback, no throw");
 }
 {
-  const wake = {
+  const wake = message({
     role: "user",
     source: { kind: "plugin", plugin: "dsh-llm-claude", form: "notice", summary: WAKE_TEXT },
     content: [{ type: "text", text: WAKE_TEXT }],
-  };
-  const user = { role: "user", source: { kind: "user" }, content: [{ type: "text", text: "hi" }] };
-  const other = { role: "user", source: { kind: "plugin", plugin: "dsh-skills" }, content: [] };
-  const asst = { role: "assistant", content: [{ type: "text", text: "ok" }] };
+  });
+  const user = message({
+    role: "user",
+    source: { kind: "user" },
+    content: [{ type: "text", text: "hi" }],
+  });
+  const other = message({
+    role: "user",
+    source: { kind: "plugin", plugin: "dsh-skills" },
+    content: [],
+  });
+  const asst = message({ role: "assistant", content: [{ type: "text", text: "ok" }] });
   assert.equal(wakeOnlyTurn([user, asst, wake]), true, "our notice alone opens a drain-only turn");
   assert.equal(
     wakeOnlyTurn([user, asst, wake, other]),
@@ -869,7 +983,7 @@ console.log("ok");
 }
 {
   // Claude Code's own compaction shows as one line; other system events stay silent.
-  const t = new Translator();
+  const t = new Translator() as any;
   assert.deepEqual(t.translate({ type: "system", subtype: "init", session_id: "x" }), []);
   const out = t.translate({
     type: "system",
@@ -892,34 +1006,45 @@ console.log("ok");
 {
   // wake(): a live agent gets the notice directly; an unloaded one is resumed through the
   // session controller first; a busy process never wakes.
-  const sent = [];
-  const agent = { followup: (m) => sent.push(m) };
-  const ctx = { on() {}, agents: { get: () => undefined }, logger: { info() {}, warn() {} } };
-  const a = new ClaudeCodeAdapter(ctx, Config({}));
+  const sent: unknown[] = [];
+  const agent = fakeAgent({ followup: (m: Message) => sent.push(m) });
+  // SAFETY: partial fake for tests; PluginContext requires many fields not used here
+  const ctx = {
+    on() {},
+    agents: { get: () => undefined },
+    logger: { info() {}, warn() {} },
+  } as unknown as import("./dsh.js").PluginContext;
+  const a = new ClaudeCodeAdapter(fakeCtx(ctx), Config({}));
   let resumed = 0;
-  a.sessionController = { resolveAgent: async () => (resumed++, agent) };
-  await a.wake("s1", { busy: false });
+  (a as any).sessionController = { resolveAgent: async () => (resumed++, agent) };
+  // SAFETY: partial fake for tests; ClaudeProcess requires many fields not used here
+  await a.wake("s1", fakeProc({ busy: false }));
   assert.equal(resumed, 1, "unloaded agent: resumed through the controller");
   assert.equal(sent.length, 1);
-  assert.equal(sent[0].role, "user");
+  const firstMsg = sent[0] as {
+    role?: string;
+    source?: { kind?: string; plugin?: string; form?: string };
+    content?: Array<{ text?: string }>;
+  };
+  assert.equal(firstMsg.role, "user");
   assert.deepEqual(
-    [sent[0].source.kind, sent[0].source.plugin, sent[0].source.form],
+    [firstMsg.source?.kind, firstMsg.source?.plugin, firstMsg.source?.form],
     ["plugin", "dsh-llm-claude", "notice"],
   );
-  assert.equal(sent[0].content[0].text, WAKE_TEXT);
+  assert.equal(firstMsg.content?.[0]?.text, WAKE_TEXT);
   ctx.agents.get = () => agent;
-  await a.wake("s1", { busy: false });
+  await a.wake("s1", fakeProc({ busy: false }));
   assert.equal(resumed, 1, "live agent: no resume");
   assert.equal(sent.length, 2);
-  await a.wake("s1", { busy: true });
+  await a.wake("s1", { busy: true } as unknown as import("./process.js").ClaudeProcess);
   assert.equal(sent.length, 2, "busy process: the turn is dsh's own, no wake");
   ctx.agents.get = () => undefined;
-  a.sessionController = {
+  (a as any).sessionController = {
     resolveAgent: async () => {
       throw new Error("gone");
     },
   };
-  await a.wake("s1", { busy: false });
+  await a.wake("s1", fakeProc({ busy: false }));
   assert.equal(sent.length, 2, "resume failure is logged, not thrown");
 }
 {
@@ -957,7 +1082,7 @@ console.log("ok");
   const n = withoutNativeInstructions(nested);
   assert.ok(!n.includes("~/.claude/CLAUDE.md") && n.includes("docs/AGENTS.md") && n.includes("z"));
   // buildPrompt applies it only to agent-instructions messages
-  const msgs = [
+  const msgs = messageList([
     { role: "user", source: { kind: "user" }, content: [{ type: "text", text: "hi" }] },
     {
       role: "user",
@@ -969,7 +1094,7 @@ console.log("ok");
       source: { kind: "user" },
       content: [{ type: "text", text: "Instructions from: CLAUDE.md is a phrase I typed" }],
     },
-  ];
+  ]);
   const p = buildPrompt(msgs);
   assert.ok(p.includes("be lazy") && !p.includes("no rm -rf"));
   assert.ok(p.includes("is a phrase I typed"), "user text is never filtered");
@@ -983,7 +1108,7 @@ console.log("ok");
   };
   const fake = { busy: false, onIdleResult: boom };
   ClaudeProcess.prototype.noteIdleResult.call(fake, '{"type":"result"}'); // must not throw
-  fake.onIdleResult = () => Promise.reject(new Error("async boom"));
+  (fake as any).onIdleResult = () => Promise.reject(new Error("async boom"));
   ClaudeProcess.prototype.noteIdleResult.call(fake, '{"type":"result"}'); // no unhandled rejection
   const deadCtx = {
     on() {},
@@ -994,11 +1119,11 @@ console.log("ok");
       return boom();
     },
   };
-  const dead = new ClaudeCodeAdapter(deadCtx, Config({}));
-  await dead.wake("s", { busy: false }); // scope gone: swallowed, logged if it can
+  const dead = new ClaudeCodeAdapter(fakeCtx(deadCtx), Config({}));
+  await dead.wake("s", fakeProc({ busy: false })); // scope gone: swallowed, logged if it can
   dead.log("warn", "x"); // logger on a dead scope: swallowed
   // a reloaded adapter re-points every adopted process at itself
-  const reg = globalThis[Symbol.for("dsh-llm-claude.processes")];
+  const reg = (globalThis as any)[Symbol.for("dsh-llm-claude.processes")];
   const stale = { busy: false, onIdleResult: boom, alive: true };
   reg.set("adopted", stale);
   let woke = 0;
@@ -1007,7 +1132,7 @@ console.log("ok");
     agents: { get: () => ({ followup: () => woke++ }) },
     logger: { info() {}, warn() {} },
   };
-  const fresh = new ClaudeCodeAdapter(liveCtx, Config({}));
+  const fresh = new ClaudeCodeAdapter(fakeCtx(liveCtx), Config({}));
   assert.notEqual(stale.onIdleResult, boom, "callback re-bound on construction");
   await stale.onIdleResult();
   assert.equal(woke, 1, "adopted process wakes through the new adapter");
@@ -1015,7 +1140,7 @@ console.log("ok");
   reg.delete("adopted");
 }
 {
-  const tr = new Translator();
+  const tr = new Translator() as any;
   const s1 = tr.translate({
     type: "stream_event",
     event: { type: "content_block_start", index: 0, content_block: { type: "thinking" } },
@@ -1039,7 +1164,7 @@ console.log("ok");
     },
   });
   assert.deepEqual(
-    d.map((c) => c.type),
+    d.map((c: StreamChunk) => c.type),
     ["block-start", "reasoning-delta"],
     "block-start rides ahead of the first text",
   );
@@ -1051,9 +1176,9 @@ console.log("ok");
   assert.equal(e2[0].block.text, "hmm");
 }
 {
-  const a = new ClaudeCodeAdapter({ on() {} }, Config({}));
-  const b = new ClaudeCodeAdapter({ on() {} }, Config({}));
-  a.processes.set("shared", { alive: true });
+  const a = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  const b = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  a.processes.set("shared", fakeProc({ alive: true }));
   assert.equal(
     b.processes.get("shared")?.alive,
     true,
@@ -1062,8 +1187,8 @@ console.log("ok");
   a.processes.delete("shared");
 }
 {
-  const tr = new Translator({ relay: true });
-  const open = (id) =>
+  const tr = new Translator({ relay: true }) as any;
+  const open = (id: any) =>
     tr.translate({
       type: "stream_event",
       event: {
@@ -1072,7 +1197,7 @@ console.log("ok");
         content_block: { type: "tool_use", id, name: "mcp__dsh__subagent_local" },
       },
     });
-  const result = (id) =>
+  const result = (id: string) =>
     tr.translate({
       type: "user",
       message: { content: [{ type: "tool_result", tool_use_id: id, content: "out" }] },
@@ -1093,35 +1218,37 @@ console.log("relay ok");
 
 // Unknown stream-json shapes warn once (schema-drift canary); knowingly-benign types stay silent.
 {
-  const warnings = [];
-  const tr = new Translator({ log: (level, msg) => level === "warn" && warnings.push(msg) });
+  const warnings: string[] = [];
+  const tr = new Translator({
+    log: (level: any, msg: any) => level === "warn" && warnings.push(msg),
+  } as any);
   tr.translate({ type: "system", subtype: "init" }); // benign top-level: no warn
-  tr.translate({ type: "brand_new_event" }); // unknown: warn
-  tr.translate({ type: "brand_new_event" }); // same type again: deduped, no second warn
+  tr.translate(anyEvent({ type: "brand_new_event" })); // unknown: warn
+  tr.translate(anyEvent({ type: "brand_new_event" })); // same type again: deduped, no second warn
   tr.partial({ type: "message_delta" }); // benign partial: no warn
   tr.partial({ type: "mystery_partial" }); // unknown partial: warn
   tr.openBlock(9, { type: "redacted_thinking" }); // unknown content block: warn
   assert.equal(warnings.length, 3, "one warn per distinct unknown type, deduped");
-  assert.match(warnings[0], /brand_new_event/);
-  assert.match(warnings[0], /schema may have changed/);
-  assert.match(warnings[1], /mystery_partial/);
-  assert.match(warnings[2], /redacted_thinking/);
+  assert.match(warnings[0] ?? "", /brand_new_event/);
+  assert.match(warnings[0] ?? "", /schema may have changed/);
+  assert.match(warnings[1] ?? "", /mystery_partial/);
+  assert.match(warnings[2] ?? "", /redacted_thinking/);
 }
 console.log("schema-guard ok");
 
 // A logged-out CLI surfaces as a clear instruction, whichever way the CLI words it.
 {
   const notIn = finishReason({ is_error: true, result: "Not logged in · Please run /login" });
-  assert.match(notIn.failure.message, /not logged in on .+claude auth login/);
+  assert.match(failureOf(notIn).message, /not logged in on .+claude auth login/);
   const expired = finishReason({
     is_error: true,
     api_error_status: 401,
     result: "Failed to authenticate. API Error: 401 OAuth access token is invalid.",
   });
-  assert.match(expired.failure.message, /not logged in on/);
-  assert.match(expired.failure.message, /OAuth access token is invalid/);
+  assert.match(failureOf(expired).message, /not logged in on/);
+  assert.match(failureOf(expired).message, /OAuth access token is invalid/);
   const other = finishReason({ is_error: true, result: "rate limited" });
-  assert.equal(other.failure.message, "rate limited");
+  assert.equal(failureOf(other).message, "rate limited");
 }
 
 // ClaudeProcess talks to one handle shape; a fake spawner proves write, line intake, exit, kill.
@@ -1130,8 +1257,8 @@ console.log("schema-guard ok");
   const stdout = new PassThrough();
   const stderr = new PassThrough();
   let terminated = 0;
-  let finish;
-  const handle = {
+  let finish: (r: { exitCode: number | null; signal: string | null }) => void = () => {};
+  const handle: SubprocessHandle = {
     stdin,
     stdout,
     stderr,
@@ -1141,11 +1268,11 @@ console.log("schema-guard ok");
       finish({ exitCode: 143, signal: "SIGTERM" });
     },
   };
-  const seen = [];
+  const seen: [string, string[], string][] = [];
   const proc = new ClaudeProcess({
     args: ["-p"],
     cwd: "/",
-    spec: {},
+    spec: emptySpec,
     spawner: (command, args, cwd) => {
       seen.push([command, args, cwd]);
       return handle;
@@ -1171,13 +1298,27 @@ console.log("schema-guard ok");
 
 // The seam spawner hands dsh a fully explicit spec: raw pipes, the binary first in argv, small env.
 {
-  let spec;
-  const spawner = seamSpawner({ spawn: (s) => ((spec = s), { done: new Promise(() => {}) }) });
+  let spec: SubprocessSpawnSpec | undefined;
+  const idle: SeamHandle = {
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    done: new Promise(() => {}),
+    terminate() {},
+    waitForExit: async () => {},
+  };
+  const spawner = seamSpawner({
+    spawn: (s) => {
+      spec = s;
+      return idle;
+    },
+  });
   spawner("claude", ["-p", "--verbose"], "/w");
+  assert.ok(spec, "spawn was called");
   assert.deepEqual(spec.argv, ["claude", "-p", "--verbose"]);
   assert.equal(spec.cwd, "/w");
   assert.deepEqual(spec.stdio, { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
-  assert.deepEqual(Object.keys(spec.env), ["MCP_TOOL_TIMEOUT"]);
+  assert.deepEqual(Object.keys(spec.env ?? {}), ["MCP_TOOL_TIMEOUT"]);
   assert.ok(spec.graceMs > 0);
 }
 
@@ -1195,13 +1336,17 @@ console.log("schema-guard ok");
 
 // The restart nudge is a real prompt, not a drain-only wake: only the idle-reply text drains.
 {
-  const user = { role: "user", content: [{ type: "text", text: "hi" }], source: { kind: "user" } };
-  const asst = { role: "assistant", content: [{ type: "text", text: "yo" }] };
-  const restart = {
+  const user = message({
+    role: "user",
+    content: [{ type: "text", text: "hi" }],
+    source: { kind: "user" },
+  });
+  const asst = message({ role: "assistant", content: [{ type: "text", text: "yo" }] });
+  const restart = message({
     role: "user",
     content: [{ type: "text", text: RESTART_TEXT }],
     source: { kind: "plugin", plugin: "dsh-llm-claude", form: "notice" },
-  };
+  });
   assert.equal(wakeOnlyTurn([user, asst, restart]), false, "restart notice is sent, not drained");
 }
 
@@ -1213,10 +1358,12 @@ console.log("schema-guard ok");
   await markBusy("dead", true, file);
   await markBusy("live", true, file);
   const ctx = { on() {}, agents: { get: () => undefined }, logger: { info() {}, warn() {} } };
-  const a = new ClaudeCodeAdapter(ctx, Config({}));
-  a.processes.set("live", { busy: true });
-  const woke = [];
-  a.wake = async (id, proc, text) => woke.push([id, proc, text]);
+  const a = new ClaudeCodeAdapter(fakeCtx(ctx), Config({}));
+  a.processes.set("live", fakeProc({ busy: true }));
+  const woke: [string, ClaudeProcess | undefined, string | undefined][] = [];
+  a.wake = async (id, proc, text) => {
+    woke.push([id, proc, text]);
+  };
   await a.resumeInterrupted(file);
   assert.deepEqual(woke, [["dead", undefined, RESTART_TEXT]]);
   assert.deepEqual(await takeInterrupted(file), ["live"], "live session stays tracked");

@@ -1,28 +1,39 @@
 {
   "name": "dsh-llm-claude",
-  "version": "0.16.1",
+  "version": "0.17.0",
   "type": "module",
   "description": "Claude Code CLI as an LLM provider for dsh (DeepSeek Harness): live model list, session resume, images, tool activity",
-  "main": "src/adapter.js",
+  "main": "lib/server/adapter.js",
   "exports": {
-    ".": "./src/adapter.js",
+    ".": {
+      "types": "./lib/server/adapter.d.ts",
+      "default": "./lib/server/adapter.js"
+    },
     "./client": "./lib/client.js",
     "./package.json": "./package.json"
   },
   "scripts": {
-    "test": "node src/adapter.test.js && node src/transcript.test.js && node src/mcp.test.js",
-    "check": "oxlint src/ --max-warnings=0 && oxfmt --check src/ && bun run test && bun run build",
+    "typecheck": "tsc --noEmit",
+    "test": "bun src/adapter.test.ts && bun src/transcript.test.ts && bun src/mcp.test.ts",
     "lint": "oxlint src/ --max-warnings=0",
     "format": "oxfmt src/",
     "deadcode": "fallow",
-    "build": "NODE_ENV=production bun build src/client/index.jsx --format=cjs --target=browser --outfile=lib/client.js --external react --external react/jsx-runtime --external '@deepseek-ai/*' --banner='window.__ModuleLoader__.load({ id: \"dsh-llm-claude\", factory: (require) => { var module = { exports: {} }; var exports = module.exports;' --footer='return module.exports; } });'"
+    "build:server": "tsc -p tsconfig.build.json",
+    "build:client": "NODE_ENV=production bun build src/client/index.tsx --format=cjs --target=browser --outfile=lib/client.js --external react --external react/jsx-runtime --external '@deepseek-ai/*' --banner='window.__ModuleLoader__.load({ id: \"dsh-llm-claude\", factory: (require) => { var module = { exports: {} }; var exports = module.exports;' --footer='return module.exports; } });'",
+    "build": "bun run build:server && bun run build:client",
+    "check": "oxlint src/ --max-warnings=0 && oxfmt --check src/ && bun run typecheck && bun run test && bun run build",
+    "prepare": "bun run build"
   },
   "dependencies": {},
   "devDependencies": {
+    "@oxlint/plugins": "1.80.0",
+    "@types/node": "^26.4.1",
+    "@types/react": "18",
     "fallow": "^3.17.0",
     "oxfmt": "^0.66.0",
     "oxlint": "^1.80.0",
-    "react": "18"
+    "react": "18",
+    "typescript": "^7.0.2"
   },
   "peerDependencies": {
     "@deepseek-ai/dsh-llm": "^0.1.2-alpha.4",
@@ -54,5 +65,6 @@
       "optional": true
     }
   },
-  "repository": "https://github.com/lcestou/dsh-llm-claude"
+  "repository": "https://github.com/lcestou/dsh-llm-claude",
+  "types": "lib/server/adapter.d.ts"
 }

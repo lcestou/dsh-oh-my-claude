@@ -12,7 +12,7 @@ import {
   validateBoxes,
 } from "./sessions.js";
 
-const line = (o) => JSON.stringify(o);
+const line = (o: any) => JSON.stringify(o);
 const T = "2026-09-03T08:00:00.000Z";
 const transcript = [
   line({ type: "summary", summary: "Fix the widget" }),
@@ -91,13 +91,29 @@ const folded = foldTranscript(transcript);
 assert.equal(folded.title, "Fix the widget");
 assert.equal(folded.turns.length, 1, "unanswered trailing prompt is dropped");
 const [turn] = folded.turns;
+// SAFETY: we just asserted turns.length === 1 so turn is defined
+assert.ok(turn);
 assert.equal(turn.steps.length, 2, "one step per Claude message id");
+// SAFETY: steps[0] and its content are guaranteed by the transcript shape
+const step0 = turn.steps[0];
+assert.ok(step0);
 assert.deepEqual(
-  turn.steps[0].content.map((b) => b.type),
+  step0.content.map((b) => b.type),
   ["reasoning", "tool-call"],
 );
-assert.equal(turn.steps[0].results.get("t1").content[0].text, "contents");
-assert.equal(turn.steps[1].content[0].text, "Done.");
+// SAFETY: results has an entry for "t1" from the transcript data
+const t1Result = step0.results.get("t1");
+assert.ok(t1Result);
+// SAFETY: content[0] is a text block from the transcript
+const firstContent = t1Result.content[0];
+assert.ok(firstContent && "text" in firstContent);
+assert.equal(firstContent.text, "contents");
+// SAFETY: steps[1] exists and has text content
+const step1 = turn.steps[1];
+assert.ok(step1);
+const step1Content = step1.content[0];
+assert.ok(step1Content && "text" in step1Content);
+assert.equal(step1Content.text, "Done.");
 
 const events = toSessionEvents(folded);
 assert.deepEqual(
@@ -118,13 +134,29 @@ assert.deepEqual(
   ],
 );
 events.forEach((e, i) => assert.equal(e.seq, i, "contiguous seqs"));
+// SAFETY: transcript contains exactly one tool/call event
 const call = events.find((e) => e.type === "tool/call");
+assert.ok(call);
 assert.equal(call.data.arguments, '{"file_path":"/x"}', "tool/call carries a JSON string");
+// SAFETY: transcript contains exactly one tool/result event
 const result = events.find((e) => e.type === "tool/result");
+assert.ok(result);
 assert.deepEqual(result.sourceEventSeqs, [call.seq]);
-assert.equal(result.data.message.content[0].toolCallId, "t1");
+// SAFETY: result data has the expected message shape
+const resultMsg = result.data.message as { content: Array<{ toolCallId?: string }> };
+// SAFETY: content[0] exists for this transcript
+const firstResultContent = resultMsg.content[0];
+assert.ok(firstResultContent);
+assert.equal(firstResultContent.toolCallId, "t1");
+// SAFETY: transcript contains an assistant/message with two content blocks
+const assistantMsg = events.find((e) => e.type === "assistant/message");
+assert.ok(assistantMsg);
+const assistantData = assistantMsg.data.message as { content: Array<{ arguments?: string }> };
+// SAFETY: content[1] exists for this transcript
+const secondContent = assistantData.content[1];
+assert.ok(secondContent);
 assert.equal(
-  events.find((e) => e.type === "assistant/message").data.message.content[1].arguments,
+  secondContent.arguments,
   '{"file_path":"/x"}',
   "message block keeps arguments as a JSON string",
 );
@@ -132,7 +164,11 @@ for (const e of events)
   if (["user/message", "assistant/message", "tool/result"].includes(e.type))
     assert.equal(e.surfaceOp, "append");
   else assert.equal(e.surfaceOp, undefined);
-assert.equal(events.at(-1).data.source.kind, "user", "title pinned");
+// SAFETY: last event is a session/title with source.kind === "user"
+const lastEvent = events.at(-1);
+assert.ok(lastEvent);
+const lastData = lastEvent.data as { source?: { kind?: string } };
+assert.equal(lastData.source?.kind, "user", "title pinned");
 assert.ok(JSON.stringify(events), "lossless JSON");
 
 // Missing tool result gets an empty synthetic one, so the wire invariant holds.
@@ -152,10 +188,13 @@ const orphan = foldTranscript(
   ].join("\n"),
 );
 const orphanEvents = toSessionEvents(orphan);
-assert.deepEqual(
-  orphanEvents.find((e) => e.type === "tool/result").data.message.content[0].content,
-  [],
-);
+// SAFETY: orphan transcript produces exactly one tool/result event with empty content
+const orphanResult = orphanEvents.find((e) => e.type === "tool/result");
+assert.ok(orphanResult);
+const orphanContent = (orphanResult.data.message as { content: Array<{ content?: unknown }> })
+  .content[0];
+assert.ok(orphanContent);
+assert.deepEqual(orphanContent.content, []);
 assert.equal(orphan.title, "run it");
 
 assert.equal(truncateBytes("héllo", 3), "hé");
@@ -182,12 +221,17 @@ await writeFile(
 );
 await writeFile(join(dir, "agent-notes.jsonl"), transcript);
 const listed = await listTranscripts(dir);
-assert.deepEqual(listed.map((s) => s.id).sort(), [idA, idC]);
-assert.equal(listed.find((s) => s.id === idA).title, "Fix the widget");
-assert.equal(listed.find((s) => s.id === idA).turns, 2, "counts prompts, not tool results");
-assert.equal(listed.find((s) => s.id === idC).title, "hello there");
-assert.equal(listed.find((s) => s.id === idC).cwd, "/proj/c", "cwd read off the records");
-assert.equal(listed.find((s) => s.id === idA).cwd, undefined);
+assert.deepEqual(listed.map((s) => s.id).toSorted(), [idA, idC]);
+// SAFETY: listed contains entries for both idA and idC
+const entryA = listed.find((s) => s.id === idA);
+assert.ok(entryA);
+assert.equal(entryA.title, "Fix the widget");
+assert.equal(entryA.turns, 2, "counts prompts, not tool results");
+assert.equal(entryA.cwd, undefined);
+const entryC = listed.find((s) => s.id === idC);
+assert.ok(entryC);
+assert.equal(entryC.title, "hello there");
+assert.equal(entryC.cwd, "/proj/c", "cwd read off the records");
 assert.deepEqual(
   (await listTranscripts(dir, new Set([idA]))).map((s) => s.id),
   [idC],
@@ -238,7 +282,9 @@ assert.equal(big.turns, 1);
 
 // settings.json editor accepts one JSON object and nothing else.
 assert.deepEqual(parseSettingsText('{"model":"x"}'), { value: { model: "x" } });
-assert.ok(/Unexpected|JSON/.test(parseSettingsText("{oops").error));
+// SAFETY: parseSettingsText returns an error string for invalid JSON
+const oopsResult = parseSettingsText("{oops");
+assert.ok(oopsResult.error && /Unexpected|JSON/.test(oopsResult.error));
 assert.equal(parseSettingsText("[1]").error, "settings.json must be a JSON object");
 assert.equal(parseSettingsText("null").error, "settings.json must be a JSON object");
 assert.equal(parseSettingsText(42).error, "text must be a string");
@@ -272,14 +318,20 @@ assert.ok(validateBoxes("nope").error);
 // probeBox: token login sets the cookie, a proxy redirect to /?token= is followed once, 401 is
 // reported as a login problem, a dead host as its error text. Fake fetch, no network.
 {
-  const calls = [];
-  const res = (status, headers = {}, body = {}) => ({
+  // SAFETY: partial fake for tests
+  const calls: [string, string][] = [];
+  const res = (
+    status: number,
+    headers: Record<string, string> = {},
+    body: Record<string, unknown> = {},
+  ) => ({
     status,
     ok: status >= 200 && status < 300,
-    headers: { get: (k) => headers[k.toLowerCase()] ?? null },
+    headers: { get: (k: string) => headers[k.toLowerCase()] ?? null },
     json: async () => body,
   });
-  const fakeFetch = async (u, init) => {
+  // SAFETY: partial fake for tests
+  const fakeFetch = async (u: string, init?: { headers?: Record<string, string> }) => {
     calls.push([u, init?.headers?.cookie ?? ""]);
     if (u === "http://box/?token=T") return res(303, { "set-cookie": "dsh-auth-x=1; Path=/" });
     if (u === "http://box/dsh-llm-claude/status")
@@ -295,17 +347,40 @@ assert.ok(validateBoxes("nope").error);
     if (u === "http://proxy/dsh-llm-claude/status") return res(200, {}, { host: "proxy" });
     throw new Error("ECONNREFUSED");
   };
-  assert.deepEqual(await probeBox({ url: "http://box", token: "T" }, fakeFetch), {
-    ok: true,
-    status: { host: "box" },
-  });
-  assert.deepEqual(await probeBox({ url: "http://proxy" }, fakeFetch), {
-    ok: true,
-    status: { host: "proxy" },
-  });
-  assert.equal((await probeBox({ url: "http://box" }, fakeFetch)).ok, false);
-  assert.match((await probeBox({ url: "http://box" }, fakeFetch)).error, /token/);
-  assert.match((await probeBox({ url: "http://dead" }, fakeFetch)).error, /ECONNREFUSED/);
+  // SAFETY: partial fake for tests; Box requires name but probeBox only uses url/token
+  // SAFETY: cast to fetch signature for test double
+  const boxResult = await probeBox(
+    { name: "box", url: "http://box", token: "T" },
+    fakeFetch as unknown as typeof fetch,
+  );
+  assert.equal(boxResult.ok, true);
+  assert.equal(
+    (boxResult as { ok: true; status: { host: string; name?: string } }).status.host,
+    "box",
+  );
+
+  const proxyResult = await probeBox(
+    { name: "proxy", url: "http://proxy" },
+    fakeFetch as unknown as typeof fetch,
+  );
+  assert.equal(proxyResult.ok, true);
+  assert.equal(
+    (proxyResult as { ok: true; status: { host: string; name?: string } }).status.host,
+    "proxy",
+  );
+
+  const boxFail = await probeBox(
+    { name: "box", url: "http://box" },
+    fakeFetch as unknown as typeof fetch,
+  );
+  assert.equal(boxFail.ok, false);
+  assert.match((boxFail as { ok: false; error: string }).error, /token/);
+
+  const deadResult = await probeBox(
+    { name: "dead", url: "http://dead" },
+    fakeFetch as unknown as typeof fetch,
+  );
+  assert.match((deadResult as { ok: false; error: string }).error, /ECONNREFUSED/);
 }
 
 console.log("transcript ok");

@@ -1,48 +1,50 @@
 // Claude Code transcripts (~/.claude/projects/<cwd>/<uuid>.jsonl) → dsh session events, so a
 // session started in the terminal can be opened in dsh with its history and resumed from there.
+// This is an I/O boundary: transcript lines are decoded here and typed shapes leave.
 import { createReadStream } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { join } from "node:path";
+import type { JsonValue } from "./dsh.js";
 
 const UUID_FILE = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/;
 const RESULT_TEXT_LIMIT = 4000;
 const TITLE_BYTES = 80;
 
-const parseLine = (line) => {
+/** A decoded transcript line: any JSON object. Fields are read with narrowing, never assumed. */
+type Rec = Record<string, unknown>;
+
+const isRec = (v: unknown): v is Rec => typeof v === "object" && v !== null && !Array.isArray(v);
+
+const parseLine = (line: string): Rec | undefined => {
   try {
-    return JSON.parse(line);
+    const v: unknown = JSON.parse(line);
+    return isRec(v) ? v : undefined;
   } catch {
     return undefined;
   }
 };
 
-const timeOf = (rec, fallback) => {
-  const t = Date.parse(rec?.timestamp ?? "");
+const timeOf = (rec: Rec | undefined, fallback: number): number => {
+  const t = Date.parse(typeof rec?.timestamp === "string" ? rec.timestamp : "");
   return Number.isFinite(t) ? t : fallback;
 };
 
 /** Plain text of a user prompt, or "" for tool results / injections that are not a prompt. */
-function promptText(content) {
+function promptText(content: unknown): string {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
-  return content
-    .filter((b) => b?.type === "text" && typeof b.text === "string")
-    .map((b) => b.text)
-    .join("\n");
+  const texts: string[] = [];
+  for (const b of content)
+    if (isRec(b) && b.type === "text" && typeof b.text === "string") texts.push(b.text);
+  return texts.join("\n");
 }
 
 /** Injected material Claude Code stores as user lines: slash-command echoes, hook output, reminders. */
-const isNoise = (text) => /^\s*<(command-|local-command|system-reminder)/.test(text);
+const isNoise = (text: string) => /^\s*<(command-|local-command|system-reminder)/.test(text);
 
-/**
- * Truncates a string to a maximum byte length without breaking Unicode
- * characters.
- * @param {string} text - The text to truncate
- * @param {number} max - Maximum byte length
- * @returns {string} The truncated text
- */
-export function truncateBytes(text, max) {
+/** Truncate to a byte budget without splitting a character. */
+export function truncateBytes(text: string, max: number): string {
   if (Buffer.byteLength(text) <= max) return text;
   let out = "";
   for (const ch of text) {
@@ -52,26 +54,30 @@ export function truncateBytes(text, max) {
   return out;
 }
 
-const titleFrom = (text) =>
+const titleFrom = (text: string): string =>
   truncateBytes(
-    text
-      .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "")
-      .trim()
-      .split("\n")[0]
-      .replace(/\s+/g, " "),
+    (
+      text
+        .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "")
+        .trim()
+        .split("\n")[0] ?? ""
+    ).replace(/\s+/g, " "),
     TITLE_BYTES,
   );
 
 /** One-shots older plugin versions ran inside the workspace dir (titles now run from a scratch dir). */
-const isAuxPrompt = (text) => text.startsWith("Generate the session title");
+const isAuxPrompt = (text: string) => text.startsWith("Generate the session title");
 
 /**
  * Read only the head of a transcript: first real prompt, timestamps, summary. Cheap for a listing.
  * Whole lines, not a byte window: a first prompt with pasted images is one JSON line of several
  * hundred KB, and cutting it mid-line made the transcript vanish from the list.
  */
-async function peek(path, maxBytes = 256 * 1024) {
-  const lines = [];
+async function peek(
+  path: string,
+  maxBytes = 256 * 1024,
+): Promise<{ lines: string[]; partial: boolean }> {
+  const lines: string[] = [];
   let bytes = 0;
   const rl = createInterface({ input: createReadStream(path), crlfDelay: Infinity });
   for await (const line of rl) {
@@ -85,28 +91,44 @@ async function peek(path, maxBytes = 256 * 1024) {
   return { lines, partial: false };
 }
 
+/** One transcript in a listing: what the session browser shows before opening it. */
+export interface TranscriptListItem {
+  id: string;
+  title: string;
+  createdAt: number;
+  modifiedAt: number;
+  bytes: number;
+  turns: number;
+  turnsPartial: boolean;
+  cwd?: string;
+}
+
 /**
  * Transcripts in one project dir, newest first. `exclude` holds Claude session ids that already
  * belong to dsh sessions the plugin started itself (their dsh side is the source of truth).
  */
-export async function listTranscripts(dir, exclude = new Set()) {
-  let names;
+export async function listTranscripts(
+  dir: string,
+  exclude: Set<string> = new Set(),
+): Promise<TranscriptListItem[]> {
+  let names: string[];
   try {
     names = await readdir(dir);
   } catch {
     return [];
   }
-  const out = [];
+  const out: TranscriptListItem[] = [];
   for (const name of names) {
     const m = UUID_FILE.exec(name);
-    if (!m || exclude.has(m[1])) continue;
+    const id = m?.[1];
+    if (!id || exclude.has(id)) continue;
     const path = join(dir, name);
     const info = await stat(path);
     let title = "";
-    let summary;
+    let summary: string | undefined;
     let createdAt = info.mtimeMs;
     let turns = 0;
-    let cwd;
+    let cwd: string | undefined;
     const head = await peek(path);
     for (const line of head.lines) {
       const rec = parseLine(line);
@@ -114,7 +136,7 @@ export async function listTranscripts(dir, exclude = new Set()) {
       if (cwd === undefined && typeof rec.cwd === "string") cwd = rec.cwd;
       if (rec.type === "summary" && typeof rec.summary === "string") summary = rec.summary;
       if (rec.type !== "user" || rec.isSidechain || rec.isMeta) continue;
-      const text = promptText(rec.message?.content);
+      const text = promptText(isRec(rec.message) ? rec.message.content : undefined);
       if (!text) continue;
       if (turns === 0 && isAuxPrompt(text)) break;
       turns += 1;
@@ -122,47 +144,87 @@ export async function listTranscripts(dir, exclude = new Set()) {
       if (!title && !isNoise(text)) title = titleFrom(text);
     }
     if (turns === 0) continue;
-    out.push({
-      id: m[1],
+    const item: TranscriptListItem = {
+      id,
       title: summary ?? title ?? "",
       createdAt,
       modifiedAt: info.mtimeMs,
       bytes: info.size,
       turns,
       turnsPartial: head.partial,
-      ...(cwd ? { cwd } : {}),
-    });
+    };
+    if (cwd) item.cwd = cwd;
+    out.push(item);
   }
-  return out.sort((a, b) => b.modifiedAt - a.modifiedAt);
+  return out.toSorted((a, b) => b.modifiedAt - a.modifiedAt);
 }
 
-const textBlocks = (content) => {
+/** The dsh content blocks a transcript turn becomes. */
+export type SeedBlock =
+  | { type: "text"; text: string }
+  | { type: "reasoning"; text: string }
+  | { type: "tool-call"; id: string; name: string; arguments: string };
+
+const textBlocks = (content: unknown): Array<{ type: "text"; text: string }> => {
   if (typeof content === "string") return content ? [{ type: "text", text: content }] : [];
   if (!Array.isArray(content)) return [];
-  const out = [];
+  const out: Array<{ type: "text"; text: string }> = [];
   for (const b of content) {
-    if (b?.type === "text" && typeof b.text === "string") out.push({ type: "text", text: b.text });
-    else if (b?.type === "image") out.push({ type: "text", text: "[image]" });
+    if (!isRec(b)) continue;
+    if (b.type === "text" && typeof b.text === "string") out.push({ type: "text", text: b.text });
+    else if (b.type === "image") out.push({ type: "text", text: "[image]" });
   }
   return out;
 };
 
-const resultBlocks = (content) => {
+const resultBlocks = (content: unknown): Array<{ type: "text"; text: string }> => {
   const blocks = textBlocks(content);
   const text = blocks.map((b) => b.text).join("\n");
   return text ? [{ type: "text", text: truncateBytes(text, RESULT_TEXT_LIMIT) }] : [];
 };
+
+/** One tool call's outcome inside a folded step. */
+export interface FoldedResult {
+  content: Array<{ type: "text"; text: string }>;
+  isError: boolean;
+  time: number;
+}
+
+/** One assistant message of a turn: its blocks, its tool calls, and their results by call id. */
+export interface FoldedStep {
+  msgId: string | undefined;
+  id: string;
+  model: string | undefined;
+  time: number;
+  content: SeedBlock[];
+  calls: Array<{ id: string; name: string; arguments: Record<string, JsonValue> }>;
+  results: Map<string, FoldedResult>;
+}
+
+/** One user prompt and the assistant steps that answered it. */
+export interface FoldedTurn {
+  id: string;
+  time: number;
+  content: Array<{ type: "text"; text: string }>;
+  steps: FoldedStep[];
+}
+
+export interface FoldedTranscript {
+  turns: FoldedTurn[];
+  title: string | undefined;
+  createdAt: number;
+}
 
 /**
  * Fold a transcript into turns: one user prompt, then assistant steps (one per Claude message id)
  * with their tool calls and results. Sidechains (Claude's own subagents) and unfinished trailing
  * prompts are dropped; the seed must end on a completed turn.
  */
-export function foldTranscript(text) {
-  const turns = [];
-  let cur;
-  let title;
-  let createdAt;
+export function foldTranscript(text: string): FoldedTranscript {
+  const turns: FoldedTurn[] = [];
+  let cur: FoldedTurn | undefined;
+  let title: string | undefined;
+  let createdAt: number | undefined;
   const close = () => {
     if (cur?.steps.length) turns.push(cur);
     cur = undefined;
@@ -174,19 +236,22 @@ export function foldTranscript(text) {
       title = rec.summary;
       continue;
     }
-    const msg = rec.message;
+    const msg = isRec(rec.message) ? rec.message : undefined;
     if (rec.type === "user") {
-      const content = Array.isArray(msg?.content) ? msg.content : [];
-      const results = content.filter((b) => b?.type === "tool_result");
+      const content: unknown[] = Array.isArray(msg?.content) ? msg.content : [];
+      const results = content.filter((b): b is Rec => isRec(b) && b.type === "tool_result");
       if (results.length) {
         const step = cur?.steps.at(-1);
         if (!step) continue;
         for (const r of results)
-          step.results.set(r.tool_use_id, {
-            content: resultBlocks(r.content),
-            isError: r.is_error === true,
-            time: timeOf(rec, step.time),
-          });
+          step.results.set(
+            typeof r.tool_use_id === "string" ? r.tool_use_id : String(r.tool_use_id),
+            {
+              content: resultBlocks(r.content),
+              isError: r.is_error === true,
+              time: timeOf(rec, step.time),
+            },
+          );
         continue;
       }
       if (rec.isMeta) continue;
@@ -197,15 +262,23 @@ export function foldTranscript(text) {
       createdAt ??= time;
       const plain = promptText(msg?.content);
       if (!title && !isNoise(plain)) title = titleFrom(plain);
-      cur = { id: rec.uuid ?? `u${turns.length}`, time, content: prompt, steps: [] };
+      cur = {
+        id: typeof rec.uuid === "string" ? rec.uuid : `u${turns.length}`,
+        time,
+        content: prompt,
+        steps: [],
+      };
     } else if (rec.type === "assistant" && cur) {
       const last = cur.steps.at(-1);
-      const step =
-        last && last.msgId === msg?.id
+      const msgId = typeof msg?.id === "string" ? msg.id : undefined;
+      const step: FoldedStep =
+        last && last.msgId === msgId
           ? last
           : {
-              msgId: msg?.id,
-              id: msg?.id ?? rec.uuid ?? `a${turns.length}:${cur.steps.length}`,
+              msgId,
+              id:
+                msgId ??
+                (typeof rec.uuid === "string" ? rec.uuid : `a${turns.length}:${cur.steps.length}`),
               model: typeof msg?.model === "string" ? msg.model : undefined,
               time: timeOf(rec, cur.time),
               content: [],
@@ -213,13 +286,16 @@ export function foldTranscript(text) {
               results: new Map(),
             };
       if (step !== last) cur.steps.push(step);
-      for (const b of Array.isArray(msg?.content) ? msg.content : []) {
-        if (b?.type === "text" && typeof b.text === "string")
+      const blocks: unknown[] = Array.isArray(msg?.content) ? msg.content : [];
+      for (const b of blocks) {
+        if (!isRec(b)) continue;
+        if (b.type === "text" && typeof b.text === "string")
           step.content.push({ type: "text", text: b.text });
-        else if (b?.type === "thinking" && typeof b.thinking === "string")
+        else if (b.type === "thinking" && typeof b.thinking === "string")
           step.content.push({ type: "reasoning", text: b.thinking });
-        else if (b?.type === "tool_use" && typeof b.id === "string") {
-          const args = b.input && typeof b.input === "object" ? b.input : {};
+        else if (b.type === "tool_use" && typeof b.id === "string") {
+          // SAFETY: a tool_use input is the JSON object Claude sent; any JSON object is a JsonValue map
+          const args = isRec(b.input) ? (b.input as Record<string, JsonValue>) : {};
           // dsh keeps tool-call arguments as a JSON string (its token meter reads `.length`).
           step.content.push({
             type: "tool-call",
@@ -236,10 +312,33 @@ export function foldTranscript(text) {
   return { turns, title, createdAt: createdAt ?? Date.now() };
 }
 
+/** A tool result as the seed writes it into a user message. */
+type ToolResultSeed = {
+  type: "tool-result";
+  toolCallId: string;
+  content: Array<{ type: "text"; text: string }>;
+  isError?: boolean;
+};
+
+/** One dsh session event as the seed writes it: the shapes dsh persists itself. */
+export interface SeedEvent {
+  type: string;
+  seq: number;
+  time: number;
+  data: Record<string, JsonValue>;
+  surfaceOp?: "append";
+  sourceEventSeqs?: number[];
+}
+
 /** dsh session events for folded turns. Shapes follow what dsh writes itself; seqs are contiguous from 0. */
-export function toSessionEvents(folded) {
-  const events = [];
-  const push = (type, time, data, extra) => {
+export function toSessionEvents(folded: FoldedTranscript): SeedEvent[] {
+  const events: SeedEvent[] = [];
+  const push = (
+    type: string,
+    time: number,
+    data: Record<string, JsonValue>,
+    extra?: { surfaceOp?: "append"; sourceEventSeqs?: number[] },
+  ): number => {
     events.push({ type, seq: events.length, time, data, ...extra });
     return events.length - 1;
   };
@@ -280,6 +379,12 @@ export function toSessionEvents(folded) {
           arguments: JSON.stringify(c.arguments),
         });
         const r = s.results.get(c.id) ?? { content: [], isError: false, time: s.time };
+        const block: ToolResultSeed = {
+          type: "tool-result",
+          toolCallId: c.id,
+          content: r.content,
+        };
+        if (r.isError) block.isError = true;
         push(
           "tool/result",
           r.time,
@@ -289,14 +394,7 @@ export function toSessionEvents(folded) {
             message: {
               id: `${c.id}:result`,
               role: "user",
-              content: [
-                {
-                  type: "tool-result",
-                  toolCallId: c.id,
-                  content: r.content,
-                  ...(r.isError ? { isError: true } : {}),
-                },
-              ],
+              content: [block],
               source: { kind: "tool", callId: c.id },
             },
           },
@@ -316,11 +414,35 @@ export function toSessionEvents(folded) {
   return events;
 }
 
-/**
- * Reads and parses a Claude Code transcript file into folded turns.
- * @param {string} path - Path to the transcript file
- * @returns {Promise<object>} Folded transcript with turns, title, and createdAt
- */
-export async function readTranscript(path) {
+/** Reads and parses a Claude Code transcript file into folded turns. */
+export async function readTranscript(path: string): Promise<FoldedTranscript> {
   return foldTranscript(await readFile(path, "utf8"));
+}
+
+/** A Claude Code transcript copied under a new id, cut before the (keep+1)-th human prompt so a
+ *  dsh fork at an earlier turn rewinds Claude too. keep <= 0 keeps everything. */
+export function forkTranscriptText(
+  text: string,
+  fromId: string,
+  toId: string,
+  keep: number,
+): string {
+  const out: string[] = [];
+  let prompts = 0;
+  for (const line of text.split("\n")) {
+    if (!line) continue;
+    if (keep > 0) {
+      const entry = parseLine(line);
+      const message = isRec(entry?.message) ? entry.message : undefined;
+      const content = message?.content;
+      const human =
+        entry?.type === "user" &&
+        entry.isSidechain !== true &&
+        (typeof content === "string" ||
+          (Array.isArray(content) && !content.some((b) => isRec(b) && b.type === "tool_result")));
+      if (human && ++prompts > keep) break;
+    }
+    out.push(line);
+  }
+  return `${out.join("\n").replaceAll(fromId, toId)}\n`;
 }

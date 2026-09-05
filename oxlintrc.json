@@ -1,8 +1,0 @@
-{
-  "rules": {
-    "correctness": "error",
-    "suspicious": "error",
-    "complexity": "warn",
-    "style": "warn"
-  }
-}
