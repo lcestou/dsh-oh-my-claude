@@ -69,6 +69,8 @@ Effort: none is advertised as default, so Claude Code's own default applies unle
 
 **Approvals and questions.** With `approvals: true` (default) the child runs with `--permission-prompt-tool stdio`. When Claude Code would ask permission, dsh's own approval dialog appears; Approve runs the tool, Deny tells Claude the user refused. Claude's `AskUserQuestion` becomes a dsh question form and the answer goes back to Claude. Under Full Access nothing asks. Each ask also shows as a `⚑ approval: Tool …` or `❓ question …` row.
 
+**Restarts.** A dsh restart kills every Claude Code child. Sessions that had a turn running are written to `~/.local/state/dsh-llm-claude/busy.json` as the turn starts and removed as it ends; about ten seconds after dsh comes back, each one still listed gets a plugin notice as a real prompt ("dsh restarted while this turn was in progress…"), the Claude session resumes with `--resume`, and the work continues without anyone typing. Sessions that were idle are left alone. Hot reloads keep their processes and are not restarts.
+
 **Streaming.** Text and thinking arrive as live deltas. Claude Code's tool calls show as reasoning blocks prefixed `▶ ToolName` with the arguments, and their results as `◀ result`. dsh never runs those tools; Claude Code does, under the configured permission mode.
 
 **Images.** Image attachments in the user turn are read from dsh's attachment store and sent inline as base64.

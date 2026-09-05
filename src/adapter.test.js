@@ -31,9 +31,15 @@ import {
   WAKE_TEXT,
   withoutNativeInstructions,
   finishReason,
+  RESTART_TEXT,
+  markBusy,
+  takeInterrupted,
 } from "./adapter.js";
 import { ClaudeProcess, LineQueue, TIMEOUT, seamSpawner } from "./process.js";
 import { PassThrough } from "node:stream";
+import { tmpdir } from "node:os";
+import { mkdtemp } from "node:fs/promises";
+import { join as joinPath } from "node:path";
 
 const config = new Config({});
 assert.equal(config.permissionMode, "dsh");
@@ -1173,4 +1179,45 @@ console.log("schema-guard ok");
   assert.deepEqual(spec.stdio, { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
   assert.deepEqual(Object.keys(spec.env), ["MCP_TOOL_TIMEOUT"]);
   assert.ok(spec.graceMs > 0);
+}
+
+// Busy bookkeeping survives a restart: mark on turn start, clear on end, take once after boot.
+{
+  const dir = await mkdtemp(joinPath(tmpdir(), "dsh-llm-claude-busy-"));
+  const file = joinPath(dir, "busy.json");
+  await markBusy("a", true, file);
+  await markBusy("b", true, file);
+  await markBusy("a", false, file);
+  assert.deepEqual(await takeInterrupted(file), ["b"]);
+  assert.deepEqual(await takeInterrupted(file), [], "taken once");
+  assert.deepEqual(await takeInterrupted(joinPath(dir, "missing.json")), []);
+}
+
+// The restart nudge is a real prompt, not a drain-only wake: only the idle-reply text drains.
+{
+  const user = { role: "user", content: [{ type: "text", text: "hi" }], source: { kind: "user" } };
+  const asst = { role: "assistant", content: [{ type: "text", text: "yo" }] };
+  const restart = {
+    role: "user",
+    content: [{ type: "text", text: RESTART_TEXT }],
+    source: { kind: "plugin", plugin: "dsh-llm-claude", form: "notice" },
+  };
+  assert.equal(wakeOnlyTurn([user, asst, restart]), false, "restart notice is sent, not drained");
+}
+
+// resumeInterrupted(): nudges sessions the previous process left mid-turn with the restart text,
+// skips ones whose process this instance adopted (a hot reload), and clears the file.
+{
+  const dir = await mkdtemp(joinPath(tmpdir(), "dsh-llm-claude-resume-"));
+  const file = joinPath(dir, "busy.json");
+  await markBusy("dead", true, file);
+  await markBusy("live", true, file);
+  const ctx = { on() {}, agents: { get: () => undefined }, logger: { info() {}, warn() {} } };
+  const a = new ClaudeCodeAdapter(ctx, Config({}));
+  a.processes.set("live", { busy: true });
+  const woke = [];
+  a.wake = async (id, proc, text) => woke.push([id, proc, text]);
+  await a.resumeInterrupted(file);
+  assert.deepEqual(woke, [["dead", undefined, RESTART_TEXT]]);
+  assert.deepEqual(await takeInterrupted(file), [], "cleared after the nudge");
 }

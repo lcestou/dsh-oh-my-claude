@@ -475,6 +475,41 @@ export function buildArgs({
 
 const STATE_DIR = join(homedir(), ".local", "state", "dsh-llm-claude");
 const STATE_FILE = join(STATE_DIR, "sessions.json");
+/** Sessions with a turn in flight. Survives a dsh restart so those sessions can be nudged back. */
+const BUSY_FILE = join(STATE_DIR, "busy.json");
+let busyChain = Promise.resolve();
+
+/** Record (or clear) that a session's turn is running; serialized read-modify-write. */
+export function markBusy(id, on, path = BUSY_FILE) {
+  busyChain = busyChain.then(
+    async () => {
+      let ids = [];
+      try {
+        ids = JSON.parse(await readFile(path, "utf8"));
+      } catch {}
+      const set = new Set(Array.isArray(ids) ? ids : []);
+      if (on ? set.has(id) : !set.has(id)) return;
+      if (on) set.add(id);
+      else set.delete(id);
+      await mkdir(dirname(path), { recursive: true });
+      await writeFile(path, JSON.stringify([...set]));
+    },
+    () => {},
+  );
+  return busyChain;
+}
+
+/** Sessions whose turn the previous dsh process left unfinished; cleared on read. */
+export async function takeInterrupted(path = BUSY_FILE) {
+  let ids = [];
+  try {
+    ids = JSON.parse(await readFile(path, "utf8"));
+  } catch {
+    return [];
+  }
+  await writeFile(path, "[]").catch(() => {});
+  return Array.isArray(ids) ? ids.filter((x) => typeof x === "string") : [];
+}
 const AUX_DIR = join(STATE_DIR, "aux");
 let auxReady;
 const auxCwd = () => (auxReady ??= mkdir(AUX_DIR, { recursive: true }).then(() => AUX_DIR));
@@ -607,8 +642,16 @@ export function afterLastAssistant(messages) {
 
 /** Notice this plugin drops into a session's inbox to open a turn after Claude replied on its own. */
 export const WAKE_TEXT = "Claude Code finished a background task and replied.";
+/** Sent as a real prompt after dsh restarts mid-turn: the process is gone, Claude must carry on. */
+export const RESTART_TEXT =
+  "dsh restarted while this turn was in progress and the Claude Code process was replaced. Pick up where the transcript stops and finish the task.";
+/** How long after boot to nudge interrupted sessions; dsh needs its sessions and agents loaded. */
+const RESUME_DELAY_MS = 10_000;
 const isWake = (m) =>
-  m.role === "user" && m.source?.kind === "plugin" && m.source.plugin === "dsh-llm-claude";
+  m.role === "user" &&
+  m.source?.kind === "plugin" &&
+  m.source.plugin === "dsh-llm-claude" &&
+  textOf(m.content) === WAKE_TEXT;
 /** A turn opened by our own wake notice, with no user prompt to send: only drain what Claude
  *  already wrote. A user prompt in the same batch takes precedence and is sent normally. */
 export function wakeOnlyTurn(messages) {
@@ -1154,6 +1197,21 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     };
   }
 
+  /**
+   * After a dsh restart, sessions that had a turn running get a prompt to continue, so the user
+   * does not have to come back and poke each one. Sessions with a live (adopted) process are a
+   * hot reload, not a restart, and are left alone.
+   */
+  async resumeInterrupted(path) {
+    const ids = await takeInterrupted(path);
+    for (const id of ids) {
+      if (this.processes.has(id)) continue;
+      this.log("info", `resume after restart: session ${id}`);
+      await this.wake(id, undefined, RESTART_TEXT);
+    }
+    return ids;
+  }
+
   /** Node's spawn, or dsh's subprocess seam when configured and mounted. */
   spawner() {
     if (this.config.spawn === "dsh" && this.subprocess) return seamSpawner(this.subprocess);
@@ -1361,6 +1419,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     options.signal?.addEventListener("abort", onAbort, { once: true });
     proc.busy = true;
     proc.lastUsed = Date.now();
+    markBusy(options.sessionId, true).catch((e) =>
+      this.log("warn", `busy.json: ${e?.message ?? e}`),
+    );
     const self = this;
     /** One CLI event. Returns what the loop should do next. */
     const dispatch = async function* (event) {
@@ -1467,6 +1528,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       for (const c of pending.values()) c.abort();
       proc.busy = false;
       proc.lastUsed = Date.now();
+      markBusy(options.sessionId, false).catch((e) =>
+        this.log("warn", `busy.json: ${e?.message ?? e}`),
+      );
       if (outcome === "retry" || outcome === "ended") {
         proc.kill();
         this.processes.delete(options.sessionId);
@@ -1478,8 +1542,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   /** Claude finished a turn of its own (a background task it launched completed) while dsh was
    *  idle. Drop a notice into the session's inbox so dsh opens a turn now and the reply shows,
    *  instead of riding on top of the user's next prompt. */
-  async wake(sessionId, proc) {
-    if (proc.busy) return;
+  async wake(sessionId, proc, text = WAKE_TEXT) {
+    if (proc?.busy) return;
     let agent;
     try {
       agent = this.ctx?.agents?.get?.(sessionId);
@@ -1508,12 +1572,12 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       this.log("info", `wake: idle reply in session ${sessionId} (agent ${how})`);
       agent.followup(
         createUserMessage({
-          content: [{ type: "text", text: WAKE_TEXT }],
+          content: [{ type: "text", text }],
           source: {
             kind: "plugin",
             plugin: "dsh-llm-claude",
             form: "notice",
-            summary: boundContextSummary(WAKE_TEXT),
+            summary: boundContextSummary(text),
           },
         }),
       );
@@ -1691,6 +1755,13 @@ export function apply(ctx, config) {
   ctx.inject(["sessionController"], (host) => {
     adapter.sessionController = host.sessionController;
   });
+  const resume = setTimeout(() => {
+    adapter
+      .resumeInterrupted()
+      .catch((e) => adapter.log("warn", `resume after restart failed: ${e?.message ?? e}`));
+  }, RESUME_DELAY_MS);
+  resume.unref?.();
+  ctx.effect(() => () => clearTimeout(resume), "dsh-llm-claude resume timer");
   // Optional: the subprocess seam (stock dsh mounts a local provider; a remote subprocess provider a remote one).
   ctx.inject(["subprocess"], (host) => {
     adapter.subprocess = host.subprocess;
