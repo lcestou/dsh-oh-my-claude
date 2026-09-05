@@ -351,7 +351,7 @@ function Runtime({ onStatus }: RuntimeProps) {
   );
 }
 
-interface SessionData {
+export interface SessionData {
   id: string;
   title?: string;
   cwd?: string;
@@ -382,7 +382,7 @@ interface SessionsProps {
   boxes: BoxData[];
 }
 
-interface GroupInfo {
+export interface GroupInfo {
   key: string;
   name: string;
   host?: string;
@@ -390,6 +390,37 @@ interface GroupInfo {
   error?: string;
   sessions: SessionData[];
   box?: BoxData;
+}
+
+/** Rows shown per box before "Load more"; each press adds another PAGE. */
+const PAGE = 10;
+
+/**
+ * Rows in box order, newest first within each box, each box capped to `shown[key]` (default PAGE).
+ * `hidden[key]` is how many more that box has past the cap; `matched[key]` its filtered total, for
+ * the "Load all" label. Pure so the paging math is checked without a DOM.
+ */
+export function pageSessions(
+  groups: GroupInfo[],
+  filters: { box: string; cwd: string; origin: string; shown: Record<string, number> },
+) {
+  const { box, cwd, origin, shown } = filters;
+  const list: Array<{ g: GroupInfo; s: SessionData }> = [];
+  const hidden: Record<string, number> = {};
+  const matched: Record<string, number> = {};
+  for (const g of groups) {
+    if (box !== "all" && g.key !== box) continue;
+    const gs = g.sessions
+      .filter(
+        (s) => (cwd === "all" || s.cwd === cwd) && (origin === "all" || originOf(s) === origin),
+      )
+      .toSorted((a, b) => b.modifiedAt - a.modifiedAt);
+    matched[g.key] = gs.length;
+    const cap = shown[g.key] ?? PAGE;
+    if (gs.length > cap) hidden[g.key] = gs.length - cap;
+    for (const s of gs.slice(0, cap)) list.push({ g, s });
+  }
+  return { list, hidden, matched };
 }
 
 /**
@@ -407,6 +438,8 @@ function Sessions({ ctx, boxes }: SessionsProps) {
   const [cwd, setCwd] = useState("all");
   const [origin, setOrigin] = useState("all");
   const [busyId, setBusyId] = useState("");
+  // How many rows each box shows; every box starts at PAGE and grows by "Load more".
+  const [shown, setShown] = useState<Record<string, number>>({});
 
   const load = () => {
     setLoading(true);
@@ -451,22 +484,13 @@ function Sessions({ ctx, boxes }: SessionsProps) {
     return out;
   }, [local, remote, boxes, remoteLoading]);
 
-  const rows = useMemo<Array<{ g: GroupInfo; s: SessionData }>>(() => {
-    const out: Array<{ g: GroupInfo; s: SessionData }> = [];
-    for (const g of groups) {
-      if (box !== "all" && g.key !== box) continue;
-      for (const s of g.sessions) {
-        if (cwd !== "all" && s.cwd !== cwd) continue;
-        if (origin !== "all" && originOf(s) !== origin) continue;
-        out.push({ g, s });
-      }
-    }
-    const order = new Map(groups.map((g, i) => [g.key, i]));
-    return out.toSorted(
-      (a, b) =>
-        (order.get(a.g.key) ?? 0) - (order.get(b.g.key) ?? 0) || b.s.modifiedAt - a.s.modifiedAt,
-    );
-  }, [groups, box, cwd, origin]);
+  // Rows in box order, newest first within each box, capped to that box's `shown` count. `hidden`
+  // and `matched` are per box so the footer can offer "Load more"/"Load all" and count the rest.
+  const paged = useMemo(
+    () => pageSessions(groups, { box, cwd, origin, shown }),
+    [groups, box, cwd, origin, shown],
+  );
+  const rows = paged.list;
 
   const cwds = useMemo<string[]>(() => {
     const set = new Set<string>();
@@ -581,7 +605,7 @@ function Sessions({ ctx, boxes }: SessionsProps) {
         </p>
       )}
       <div id="dsh-llm-claude-sessions" style={{ marginTop: 6 }}>
-        {rows.map((r) => {
+        {rows.map((r, i) => {
           const header =
             box === "all" && r.g !== lastGroup ? (
               <div
@@ -601,6 +625,9 @@ function Sessions({ ctx, boxes }: SessionsProps) {
               </div>
             ) : null;
           lastGroup = r.g;
+          const lastOfGroup = i === rows.length - 1 || rows[i + 1]?.g.key !== r.g.key;
+          const more = paged.hidden[r.g.key] ?? 0;
+          const grown = (shown[r.g.key] ?? PAGE) > PAGE;
           const isLocal = r.g.key === "local";
           const opened = isLocal && Boolean(known[r.s.dsh?.id ?? r.s.id]) && !r.s.dsh?.archived;
           const busy = busyId === r.s.id;
@@ -654,6 +681,34 @@ function Sessions({ ctx, boxes }: SessionsProps) {
                 {label}
               </button>
             </div>,
+            lastOfGroup && more > 0 ? (
+              <div
+                key={`more-${r.g.key}`}
+                data-testid="dsh-llm-claude-load-more"
+                style={{ display: "flex", gap: 8, padding: "6px 0 2px" }}
+              >
+                <button
+                  type="button"
+                  style={btn}
+                  onClick={() =>
+                    setShown((m) => ({ ...m, [r.g.key]: (m[r.g.key] ?? PAGE) + PAGE }))
+                  }
+                >
+                  Load {Math.min(PAGE, more)} more
+                </button>
+                {grown && (
+                  <button
+                    type="button"
+                    style={btn}
+                    onClick={() =>
+                      setShown((m) => ({ ...m, [r.g.key]: paged.matched[r.g.key] ?? PAGE }))
+                    }
+                  >
+                    Load all {paged.matched[r.g.key] ?? ""}
+                  </button>
+                )}
+              </div>
+            ) : null,
           ];
         })}
       </div>
