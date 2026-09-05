@@ -48,6 +48,7 @@
     {
       "files": [
         "src/process.ts",
+        "src/keeper.ts",
         "src/transcript.ts",
         "src/mcp.ts",
         "src/sessions.ts",

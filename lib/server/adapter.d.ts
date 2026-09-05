@@ -1,3 +1,4 @@
+import type { Spawner } from "./process.js";
 import { LlmAdapter, type ContentBlock, type GenerateOptions, type LlmModelInfo, type LlmResolvedModelInfo, type StreamChunk } from "@deepseek-ai/dsh-llm";
 import z from "@deepseek-ai/schemastery";
 import { type ClaudeEvent, ClaudeProcess } from "./process.js";
@@ -6,7 +7,7 @@ import { ADAPTER_CURRENT, RESUME_TIMER, PROCESS_REGISTRY } from "./dsh.js";
 export { markBusy, takeInterrupted } from "./state.js";
 export { forkTranscriptText } from "./transcript.js";
 import type { FinishReason } from "@deepseek-ai/dsh-llm";
-import type { ClaudeContentBlock, ClaudeStreamPartial, RelayEvent, RelayResult, TurnPrep } from "./process.js";
+import type { ClaudeContentBlock, ClaudeProcessSpec, ClaudeStreamPartial, RelayEvent, RelayResult, TurnPrep } from "./process.js";
 /** A dsh request that belongs to a session; everything on the persistent path has one. */
 type SessionOptions = GenerateOptions & {
     sessionId: SessionId;
@@ -75,7 +76,7 @@ export declare const inject: string[];
 /** Configuration schema for Claude Code plugin settings. */
 export declare const Config: z<Schemastery.ObjectS<{
     command: z<string, string>;
-    spawn: z<"dsh" | "node", "dsh" | "node">;
+    spawn: z<"dsh" | "keeper" | "node", "dsh" | "keeper" | "node">;
     permissionMode: z<"acceptEdits" | "auto" | "bypassPermissions" | "dontAsk" | "dsh" | "manual" | "plan", "acceptEdits" | "auto" | "bypassPermissions" | "dontAsk" | "dsh" | "manual" | "plan">;
     allowedTools: z<string[], string[]>;
     disallowedTools: z<string[], string[]>;
@@ -101,7 +102,7 @@ export declare const Config: z<Schemastery.ObjectS<{
     providerName: z<string, string>;
 }>, Schemastery.ObjectT<{
     command: z<string, string>;
-    spawn: z<"dsh" | "node", "dsh" | "node">;
+    spawn: z<"dsh" | "keeper" | "node", "dsh" | "keeper" | "node">;
     permissionMode: z<"acceptEdits" | "auto" | "bypassPermissions" | "dontAsk" | "dsh" | "manual" | "plan", "acceptEdits" | "auto" | "bypassPermissions" | "dontAsk" | "dsh" | "manual" | "plan">;
     allowedTools: z<string[], string[]>;
     disallowedTools: z<string[], string[]>;
@@ -318,6 +319,8 @@ export declare function afterLastAssistant(messages: LooseMessage[] | undefined)
 /** Notice this plugin drops into a session's inbox to open a turn after Claude replied on its own. */
 export declare const WAKE_TEXT = "Claude Code finished a background task and replied.";
 /** Sent as a real prompt after dsh restarts mid-turn: the process is gone, Claude must carry on. */
+/** Sent when a restarted dsh reattaches to a Claude process that kept running meanwhile. */
+export declare const RECONNECT_TEXT = "dsh restarted and reattached to your still-running Claude Code process; what you did meanwhile is shown above. Continue where you are.";
 export declare const RESTART_TEXT = "dsh restarted while this turn was in progress and the Claude Code process was replaced. Pick up where the transcript stops and finish the task. If this session has an active goal, dsh disarmed it on resume: call get_goal, then update_goal with action resume, so the goal rounds keep driving the work without anyone typing.";
 /** A turn opened by our own wake notice, with no user prompt to send: only drain what Claude
  *  already wrote. A user prompt in the same batch takes precedence and is sent normally. */
@@ -487,7 +490,19 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      */
     resumeInterrupted(path?: string): Promise<string[] | undefined>;
     /** Node's spawn, or dsh's subprocess seam when configured and mounted. */
-    spawner(): import("./process.js").Spawner;
+    /** Where a session's keeper lives: one directory per provider id and dsh session. */
+    keeperDir(sessionId: string): string;
+    /** The child env a keeper hands Claude: dsh's environment plus the plugin's additions. */
+    keeperEnv(): Record<string, string>;
+    /** Spawner for one session: keeper mode needs the session to place and name the keeper. */
+    spawnerFor(sessionId: string | undefined, spec: ClaudeProcessSpec): Spawner;
+    /**
+     * At boot, reattach to keepers whose Claude process is still alive (a dsh restart left them
+     * running) and register them as this instance's processes. One with output waiting gets a
+     * drain turn so what Claude did during the gap shows up without anyone typing.
+     */
+    adoptKeepers(): Promise<void>;
+    spawner(): Spawner;
     stream(options: GenerateOptions): AsyncGenerator<StreamChunk, void, any>;
     /** Reuse the session's process when its spec still matches; otherwise replace it. */
     acquire(options: SessionOptions, forceFresh?: boolean): Promise<{

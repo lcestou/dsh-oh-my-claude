@@ -1875,3 +1875,15 @@ console.log("fast-mode ok");
   assert.ok(!buildArgs({ ...base } as any).includes("--no-session-persistence"));
 }
 console.log("temporary ok");
+
+// keeper mode: the default spawn, one keeper dir per provider id and dsh session, stable across calls.
+{
+  assert.equal(Config({}).spawn, "keeper");
+  const a1 = defaultAdapter.keeperDir("s1");
+  assert.equal(a1, defaultAdapter.keeperDir("s1"), "deterministic");
+  assert.notEqual(a1, defaultAdapter.keeperDir("s2"));
+  assert.notEqual(a1, workAdapter.keeperDir("s1"), "per provider id");
+  assert.ok(a1.includes("/keepers/"));
+  assert.equal(defaultAdapter.keeperEnv().MCP_TOOL_TIMEOUT, "3600000");
+}
+console.log("keeper-mode ok");

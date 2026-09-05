@@ -4,6 +4,8 @@
 // left out: Claude Code has its own. Guarded by a per-process key that only the adapter knows.
 // This is an I/O boundary: JSON-RPC bodies are decoded here.
 import { randomUUID } from "node:crypto";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { readBody } from "./sessions.js";
 import { errorText } from "./process.js";
@@ -266,6 +268,8 @@ export interface BridgeOptions {
     args: Record<string, JsonValue>,
     signal: AbortSignal,
   ) => Promise<RelayResult | undefined> | undefined;
+  /** Path of a file holding the bridge key; created once, reused across restarts. */
+  keyFile?: string;
 }
 
 /** A JSON-RPC body is any JSON object; the bridge reads three fields off it. */
@@ -283,13 +287,28 @@ const asRpc = (body: Record<string, JsonValue>): JsonRpcRequest => ({
  * Mount `POST /dsh-oh-my-claude/mcp/<dsh session id>`. Resolves once the web server is up with the
  * base URL and key the adapter must hand to `claude --mcp-config`.
  */
+function stableKey(file: string): string {
+  try {
+    const k = readFileSync(file, "utf8").trim();
+    if (/^[0-9a-f-]{36}$/.test(k)) return k;
+  } catch {}
+  const k = randomUUID();
+  try {
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, k, { mode: 0o600 });
+  } catch {}
+  return k;
+}
+
 export function registerMcpBridge(
   ctx: PluginContext,
-  { log, version, relay }: BridgeOptions,
+  { log, version, relay, keyFile }: BridgeOptions,
 ): Promise<{ base: string; key: string }> {
   // SAFETY: the key symbol is this plugin's own key on globalThis, typed here once
   const g = globalThis as typeof globalThis & { [KEY_REGISTRY]?: string };
-  const key = (g[KEY_REGISTRY] ??= randomUUID());
+  // A key file keeps the bridge key stable across dsh restarts, so a Claude process that outlived
+  // dsh (keeper mode) still authenticates against the new bridge.
+  const key = (g[KEY_REGISTRY] ??= keyFile ? stableKey(keyFile) : randomUUID());
   return new Promise((resolve) => {
     ctx.inject?.(
       ["webServer", "tools", "agents", "sessions", "sessionController", "workspaceRegistry"],

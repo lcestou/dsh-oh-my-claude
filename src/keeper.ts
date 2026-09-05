@@ -1,0 +1,135 @@
+/**
+ * Keeper: owns one Claude Code process outside dsh's process tree so a dsh restart never touches
+ * it. dsh attaches over a unix socket, sends stdin lines, receives stdout lines; while nobody is
+ * attached the keeper buffers Claude's output (bounded) and replays it on the next attach. Started
+ * as `node keeper.js <dir>` where `<dir>/spec.json` holds { command, args, cwd, env, sessionId }.
+ * Runs under its own systemd user scope when the adapter can arrange it, so a service restart's
+ * cgroup kill does not reach it. Line protocol, JSON per line:
+ *   client → keeper: { t: "hello" } | { t: "in", line } | { t: "kill" }
+ *   keeper → client: { t: "out", line } | { t: "err", line } | { t: "exit", code, signal } | { t: "hello", pid, claudePid, buffered }
+ */
+import { spawn } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { createServer, type Socket } from "node:net";
+import { join } from "node:path";
+import { createInterface } from "node:readline";
+
+const BUFFER_LINES = 20_000; // ~ a long tool-heavy turn; older lines drop with a notice line
+
+interface KeeperSpec {
+  command: string;
+  args: string[];
+  cwd: string;
+  env: Record<string, string>;
+  sessionId: string;
+}
+
+function main(dir: string) {
+  // SAFETY: spec.json is written by this plugin's spawnKeeper from a typed object moments earlier
+  const spec = JSON.parse(readFileSync(join(dir, "spec.json"), "utf8")) as KeeperSpec;
+  const sockPath = join(dir, "keeper.sock");
+  const infoPath = join(dir, "keeper.json");
+  mkdirSync(dir, { recursive: true });
+  if (existsSync(sockPath)) unlinkSync(sockPath);
+  process.on("SIGHUP", () => {}); // the launching terminal or service may hang up; we stay
+  process.on("SIGTERM", () => {}); // only an explicit kill message ends Claude
+
+  const child = spawn(spec.command, spec.args, {
+    cwd: spec.cwd,
+    env: spec.env,
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  child.stdin.on("error", () => {});
+  let client: Socket | undefined;
+  const buffer: string[] = [];
+  let dropped = 0;
+  let exit: { code: number | null; signal: string | null } | undefined;
+
+  const send = (msg: object) => {
+    const line = `${JSON.stringify(msg)}\n`;
+    if (client && !client.destroyed) {
+      client.write(line);
+      return;
+    }
+    if (buffer.length >= BUFFER_LINES) {
+      buffer.shift();
+      dropped++;
+    }
+    buffer.push(line);
+  };
+  const writeInfo = () =>
+    writeFileSync(
+      infoPath,
+      JSON.stringify({
+        pid: process.pid,
+        claudePid: child.pid,
+        sessionId: spec.sessionId,
+        startedAt: Date.now(),
+        exit: exit ?? null,
+      }),
+    );
+  writeInfo();
+
+  createInterface({ input: child.stdout, crlfDelay: Infinity }).on("line", (line) =>
+    send({ t: "out", line }),
+  );
+  createInterface({ input: child.stderr, crlfDelay: Infinity }).on("line", (line) =>
+    send({ t: "err", line }),
+  );
+  child.on("exit", (code, signal) => {
+    exit = { code, signal };
+    writeInfo();
+    send({ t: "exit", code, signal });
+    // Give an attached client time to read the exit, then leave.
+    setTimeout(() => process.exit(0), 3000).unref();
+  });
+
+  const server = createServer((sock) => {
+    // One client at a time: a new dsh replaces the old (which is gone anyway after a restart).
+    if (client && !client.destroyed) client.destroy();
+    client = sock;
+    sock.on("error", () => {});
+    sock.on("close", () => {
+      if (client === sock) client = undefined;
+    });
+    createInterface({ input: sock, crlfDelay: Infinity }).on("line", (raw) => {
+      let msg: { t?: string; line?: string };
+      try {
+        // SAFETY: the only client is this plugin's attachKeeper; fields are checked before use
+        msg = JSON.parse(raw) as { t?: string; line?: string };
+      } catch {
+        return;
+      }
+      if (msg.t === "hello") {
+        sock.write(
+          `${JSON.stringify({ t: "hello", pid: process.pid, claudePid: child.pid, buffered: buffer.length, dropped })}\n`,
+        );
+        if (dropped > 0)
+          sock.write(
+            `${JSON.stringify({ t: "err", line: `keeper: ${dropped} output lines dropped while detached` })}\n`,
+          );
+        for (const l of buffer) sock.write(l);
+        buffer.length = 0;
+        dropped = 0;
+        if (exit) sock.write(`${JSON.stringify({ t: "exit", ...exit })}\n`);
+      } else if (msg.t === "in" && typeof msg.line === "string") {
+        if (!exit) child.stdin.write(msg.line);
+      } else if (msg.t === "kill") {
+        if (!exit) child.kill("SIGTERM");
+      }
+    });
+  });
+  server.listen(sockPath);
+  process.on("exit", () => {
+    try {
+      unlinkSync(sockPath);
+    } catch {}
+  });
+}
+
+const dir = process.argv[2];
+if (!dir) {
+  process.stderr.write("usage: keeper.js <dir>\n");
+  process.exit(2);
+}
+main(dir);

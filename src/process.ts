@@ -2,6 +2,10 @@
 // channel the Agent SDK uses over the same stream: `control_request` lines from the CLI (permission
 // prompts, user questions) answered with `control_response` lines on stdin.
 import { spawn } from "node:child_process";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { connect } from "node:net";
+import { join } from "node:path";
+import { PassThrough, Writable } from "node:stream";
 import { createInterface } from "node:readline";
 import type { AskUserQuestionItem, JsonValue, SubprocessRuntime } from "./dsh.js";
 export type { JsonValue } from "./dsh.js";
@@ -346,6 +350,10 @@ export class LineQueue {
     this.waiters = [];
     this.closed = false;
   }
+  /** Lines waiting with no turn reading them. */
+  get size(): number {
+    return this.lines.length;
+  }
   push(line: string | ClaudeEvent | Record<string, unknown>) {
     const w = this.waiters.shift();
     if (w && line !== null) {
@@ -406,6 +414,241 @@ export interface ClaudeProcessSpec {
 
 export interface ClaudeProcessOnExit {
   (proc: ClaudeProcess): void;
+}
+
+/** Where a keeper lives: its socket, spec, info and the Claude process it owns. */
+export interface KeeperPaths {
+  dir: string;
+  sock: string;
+  spec: string;
+  info: string;
+}
+export const keeperPaths = (dir: string): KeeperPaths => ({
+  dir,
+  sock: join(dir, "keeper.sock"),
+  spec: join(dir, "spec.json"),
+  info: join(dir, "keeper.json"),
+});
+
+/** What `keeper.json` says about a keeper; `exit` is set once Claude has left. */
+export interface KeeperInfo {
+  pid: number;
+  claudePid: number;
+  sessionId: string;
+  startedAt: number;
+  exit: { code: number | null; signal: string | null } | null;
+}
+
+export function readKeeperInfo(dir: string): KeeperInfo | undefined {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(keeperPaths(dir).info, "utf8"));
+    if (typeof parsed !== "object" || parsed === null) return undefined;
+    // SAFETY: keeper.json is written by keeper.ts from a typed object; each field is re-checked below
+    const p = parsed as Partial<KeeperInfo>;
+    if (typeof p.pid !== "number" || typeof p.sessionId !== "string") return undefined;
+    return {
+      pid: p.pid,
+      claudePid: typeof p.claudePid === "number" ? p.claudePid : -1,
+      sessionId: p.sessionId,
+      startedAt: typeof p.startedAt === "number" ? p.startedAt : 0,
+      exit: p.exit ?? null,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+/** True when a pid is alive (signal 0). */
+export const pidAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Attach to a keeper's socket and present it as a SubprocessHandle: stdin lines become `in`
+ * messages, `out`/`err` lines feed the readable sides, `exit` settles `done`, terminate sends
+ * `kill`. Rejects when the socket does not answer within `timeoutMs`.
+ */
+export function attachKeeper(dir: string, timeoutMs = 5000): Promise<SubprocessHandle> {
+  const paths = keeperPaths(dir);
+  return new Promise((resolve, reject) => {
+    const started = Date.now();
+    const tryConnect = () => {
+      const sock = connect(paths.sock);
+      sock.once("error", () => {
+        if (Date.now() - started > timeoutMs) reject(new Error(`keeper at ${dir} did not answer`));
+        else setTimeout(tryConnect, 150);
+      });
+      sock.once("connect", () => {
+        sock.removeAllListeners("error");
+        sock.on("error", () => {});
+        const stdout = new PassThrough();
+        const stderr = new PassThrough();
+        let resolveDone:
+          | ((v: { exitCode: number | null; signal: string | null }) => void)
+          | undefined;
+        const done = new Promise<{ exitCode: number | null; signal: string | null }>((r) => {
+          resolveDone = r;
+        });
+        let settled = false;
+        const settle = (code: number | null, signal: string | null) => {
+          if (settled) return;
+          settled = true;
+          stdout.end();
+          stderr.end();
+          resolveDone?.({ exitCode: code, signal });
+        };
+        createInterface({ input: sock, crlfDelay: Infinity }).on("line", (raw) => {
+          let msg: { t?: string; line?: string; code?: number | null; signal?: string | null };
+          try {
+            // SAFETY: the peer is this plugin's keeper.ts; fields are checked before use
+            msg = JSON.parse(raw) as typeof msg;
+          } catch {
+            return;
+          }
+          if (msg.t === "out" && typeof msg.line === "string") stdout.write(`${msg.line}\n`);
+          else if (msg.t === "err" && typeof msg.line === "string") stderr.write(`${msg.line}\n`);
+          else if (msg.t === "exit") settle(msg.code ?? null, msg.signal ?? null);
+        });
+        // A closed socket with no `exit` first means the keeper is gone (crashed, or another dsh
+        // took the connection); either way this handle's process is over for us.
+        sock.on("close", () => settle(-1, "socket-closed"));
+        const stdin = new Writable({
+          write(chunk, _enc, cb) {
+            const text = String(chunk);
+            for (const line of text.split("\n"))
+              if (line !== "") sock.write(`${JSON.stringify({ t: "in", line: `${line}\n` })}\n`);
+            cb();
+          },
+        });
+        sock.write(`${JSON.stringify({ t: "hello" })}\n`);
+        resolve({
+          stdin,
+          stdout,
+          stderr,
+          done,
+          terminate: () => {
+            sock.write(`${JSON.stringify({ t: "kill" })}\n`);
+          },
+        });
+      });
+    };
+    tryConnect();
+  });
+}
+
+/**
+ * A SubprocessHandle that is usable at once while the real one is still being attached: stdin
+ * writes queue until then, stdout/stderr are piped through, done and terminate follow the real one.
+ */
+export function lazyHandle(pending: Promise<SubprocessHandle>): SubprocessHandle {
+  const stdout = new PassThrough();
+  const stderr = new PassThrough();
+  const queued: string[] = [];
+  let real: SubprocessHandle | undefined;
+  let killed = false;
+  const settled = pending.then(
+    (h) => {
+      real = h;
+      h.stdout.pipe(stdout);
+      h.stderr.pipe(stderr);
+      for (const line of queued) h.stdin.write(line);
+      queued.length = 0;
+      if (killed) h.terminate();
+      return h.done;
+    },
+    (error: Error) => {
+      stderr.write(`keeper: ${error.message}\n`);
+      stdout.end();
+      stderr.end();
+      return { exitCode: -1, signal: null };
+    },
+  );
+  const stdin = new Writable({
+    write(chunk, _enc, cb) {
+      if (real) real.stdin.write(String(chunk));
+      else queued.push(String(chunk));
+      cb();
+    },
+  });
+  return {
+    stdin,
+    stdout,
+    stderr,
+    done: settled,
+    terminate: () => {
+      killed = true;
+      real?.terminate();
+    },
+  };
+}
+
+export interface KeeperSpec {
+  command: string;
+  args: string[];
+  cwd: string;
+  env: Record<string, string>;
+  sessionId: string;
+  /** The adapter's process spec, so an adopted keeper matches the next request's spec. */
+  procSpec?: ClaudeProcessSpec;
+}
+
+export function readKeeperSpec(dir: string): KeeperSpec | undefined {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(keeperPaths(dir).spec, "utf8"));
+    if (typeof parsed !== "object" || parsed === null) return undefined;
+    // SAFETY: spec.json is written by spawnKeeper from a KeeperSpec; the fields that matter are re-checked
+    const s = parsed as KeeperSpec;
+    if (typeof s.command !== "string" || !Array.isArray(s.args) || typeof s.sessionId !== "string")
+      return undefined;
+    return s;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Launch the keeper in its own systemd user scope when possible (a service restart's cgroup kill
+ *  then misses it), else as a detached process with its own group. */
+export function launchKeeper(argv: string[], unit: string): void {
+  const detached = () => {
+    const c = spawn(argv[0] ?? process.execPath, argv.slice(1), {
+      detached: true,
+      stdio: "ignore",
+    });
+    c.unref();
+  };
+  try {
+    const c = spawn(
+      "systemd-run",
+      ["--user", "--scope", "--quiet", "--collect", `--unit=${unit}`, ...argv],
+      { detached: true, stdio: "ignore" },
+    );
+    c.on("error", detached);
+    c.unref();
+  } catch {
+    detached();
+  }
+}
+
+/**
+ * Start a keeper for one Claude process and attach to it. `launch` runs the keeper command line
+ * (plain detached spawn, or a systemd user scope so a service restart's cgroup kill misses it).
+ */
+export async function spawnKeeper(
+  dir: string,
+  spec: KeeperSpec,
+  launch: (argv: string[]) => void,
+): Promise<SubprocessHandle> {
+  const paths = keeperPaths(dir);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(paths.spec, JSON.stringify(spec));
+  const keeperJs = new URL("./keeper.js", import.meta.url).pathname;
+  launch([process.execPath, keeperJs, dir]);
+  return attachKeeper(dir, 8000);
 }
 
 export type Spawner = (

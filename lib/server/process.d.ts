@@ -251,6 +251,8 @@ export declare class LineQueue {
     waiters: Array<(line: string | typeof TIMEOUT | null) => void>;
     closed: boolean;
     constructor();
+    /** Lines waiting with no turn reading them. */
+    get size(): number;
     push(line: string | ClaudeEvent | Record<string, unknown>): void;
     close(): void;
     next(timeoutMs?: number): Promise<string | typeof TIMEOUT | null>;
@@ -279,6 +281,57 @@ export interface ClaudeProcessSpec {
 export interface ClaudeProcessOnExit {
     (proc: ClaudeProcess): void;
 }
+/** Where a keeper lives: its socket, spec, info and the Claude process it owns. */
+export interface KeeperPaths {
+    dir: string;
+    sock: string;
+    spec: string;
+    info: string;
+}
+export declare const keeperPaths: (dir: string) => KeeperPaths;
+/** What `keeper.json` says about a keeper; `exit` is set once Claude has left. */
+export interface KeeperInfo {
+    pid: number;
+    claudePid: number;
+    sessionId: string;
+    startedAt: number;
+    exit: {
+        code: number | null;
+        signal: string | null;
+    } | null;
+}
+export declare function readKeeperInfo(dir: string): KeeperInfo | undefined;
+/** True when a pid is alive (signal 0). */
+export declare const pidAlive: (pid: number) => boolean;
+/**
+ * Attach to a keeper's socket and present it as a SubprocessHandle: stdin lines become `in`
+ * messages, `out`/`err` lines feed the readable sides, `exit` settles `done`, terminate sends
+ * `kill`. Rejects when the socket does not answer within `timeoutMs`.
+ */
+export declare function attachKeeper(dir: string, timeoutMs?: number): Promise<SubprocessHandle>;
+/**
+ * A SubprocessHandle that is usable at once while the real one is still being attached: stdin
+ * writes queue until then, stdout/stderr are piped through, done and terminate follow the real one.
+ */
+export declare function lazyHandle(pending: Promise<SubprocessHandle>): SubprocessHandle;
+export interface KeeperSpec {
+    command: string;
+    args: string[];
+    cwd: string;
+    env: Record<string, string>;
+    sessionId: string;
+    /** The adapter's process spec, so an adopted keeper matches the next request's spec. */
+    procSpec?: ClaudeProcessSpec;
+}
+export declare function readKeeperSpec(dir: string): KeeperSpec | undefined;
+/** Launch the keeper in its own systemd user scope when possible (a service restart's cgroup kill
+ *  then misses it), else as a detached process with its own group. */
+export declare function launchKeeper(argv: string[], unit: string): void;
+/**
+ * Start a keeper for one Claude process and attach to it. `launch` runs the keeper command line
+ * (plain detached spawn, or a systemd user scope so a service restart's cgroup kill misses it).
+ */
+export declare function spawnKeeper(dir: string, spec: KeeperSpec, launch: (argv: string[]) => void): Promise<SubprocessHandle>;
 export type Spawner = (command: string, args: string[], cwd: string, envOverride?: Record<string, string>) => SubprocessHandle;
 /**
  * A running Claude Code process bound to one dsh session. `spec` is what the process was spawned
