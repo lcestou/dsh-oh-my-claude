@@ -44,7 +44,7 @@ const OPEN_SESSION: ToolSchema = {
         type: "string",
         description: "Workspace id to open it in. Default: the workspace of this session.",
       },
-      provider: { type: "string", description: "LLM provider id, e.g. someone-llm." },
+      provider: { type: "string", description: "LLM provider id, e.g. claude-code." },
       model: { type: "string", description: "Model id for that provider." },
       agentPreset: { type: "string", description: "Agent preset id. Default: the dsh default." },
     },

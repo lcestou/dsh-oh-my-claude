@@ -1,4 +1,5 @@
-import { chromium } from "/home/someone/Projects/pewtron/node_modules/playwright/index.mjs";
+// Dev-only check. Point PLAYWRIGHT_ROOT at any project that has Playwright installed.
+import { chromium } from `${process.env.PLAYWRIGHT_ROOT ?? process.cwd()}/node_modules/playwright/index.mjs`;
 const [token, out] = process.argv.slice(2);
 const b = await chromium.launch({ headless: true });
 const p = await b.newPage({ viewport: { width: 1400, height: 900 }, deviceScaleFactor: 2 });

@@ -1397,7 +1397,7 @@ const maskEmail = (email: string): string => {
   if (at < 1) return email;
   return `${email[0]}${"*".repeat(Math.max(3, at - 1))}${email.slice(at)}`;
 };
-/** "m*****@gmail.com on someone" or whichever half is known; the usage is this box's login. */
+/** "m*****@example.com on <host>" or whichever half is known; the usage is this box's login. */
 const whose = (r: UsageReply): string =>
   [r.email ? maskEmail(r.email) : null, r.host].filter((x): x is string => !!x).join(" on ");
 
