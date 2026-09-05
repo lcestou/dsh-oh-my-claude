@@ -278,6 +278,20 @@ export function authFromStatus(text: string): AuthStatus {
   }
 }
 
+/** Which box and which login the usage belongs to; the CLI call is cached ten minutes. */
+export interface AccountIdentity {
+  host: string;
+  email: string | null;
+}
+let identityCache: { at: number; value: AccountIdentity } | undefined;
+export async function accountIdentity(command = "claude"): Promise<AccountIdentity> {
+  if (identityCache && Date.now() - identityCache.at < 10 * 60_000) return identityCache.value;
+  const status = await run(command, ["auth", "status"]);
+  const value = { host: hostname(), email: authFromStatus(status.out).email ?? null };
+  identityCache = { at: Date.now(), value };
+  return value;
+}
+
 /**
  * What the panel needs to answer "is this the right machine and account": which `claude` dsh
  * spawns, its version, the config dir it will read, and who is logged in. Same-box by design:

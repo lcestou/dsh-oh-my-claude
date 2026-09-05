@@ -11,10 +11,14 @@ export type UsageReply = {
     ok: true;
     fetchedAt: number;
     windows: UsageWindow[];
+    host?: string;
+    email?: string | null;
 } | {
     ok: false;
     error: string;
     windows?: undefined;
+    host?: string;
+    email?: string | null;
 };
 /**
  * The usage payload lists `limits` (kind `session`, `weekly_all`, `weekly_scoped` with a model
@@ -33,4 +37,7 @@ export type UsageFetch = (url: string, init: {
 /** Read usage with the stored login; never throws, the panel shows the reason instead. */
 export declare function readUsage(fetchImpl?: UsageFetch): Promise<UsageReply>;
 /** Serve `/dsh-llm-claude/usage` (`?force=1` refreshes sooner) from a small cache. */
-export declare function registerUsageRoute(ctx: PluginContext, log: (level: string, msg: string) => void): void;
+export declare function registerUsageRoute(ctx: PluginContext, log: (level: string, msg: string) => void, identity: () => Promise<{
+    host: string;
+    email: string | null;
+}>): void;

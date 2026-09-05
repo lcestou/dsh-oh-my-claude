@@ -22,8 +22,8 @@ export interface UsageWindow {
 
 /** What the route answers: the windows in display order, or why there are none. */
 export type UsageReply =
-  | { ok: true; fetchedAt: number; windows: UsageWindow[] }
-  | { ok: false; error: string; windows?: undefined };
+  | { ok: true; fetchedAt: number; windows: UsageWindow[]; host?: string; email?: string | null }
+  | { ok: false; error: string; windows?: undefined; host?: string; email?: string | null };
 
 type Rec = Record<string, unknown>;
 const isRec = (v: unknown): v is Rec => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -111,7 +111,11 @@ export async function readUsage(fetchImpl: UsageFetch = fetch): Promise<UsageRep
 }
 
 /** Serve `/dsh-llm-claude/usage` (`?force=1` refreshes sooner) from a small cache. */
-export function registerUsageRoute(ctx: PluginContext, log: (level: string, msg: string) => void) {
+export function registerUsageRoute(
+  ctx: PluginContext,
+  log: (level: string, msg: string) => void,
+  identity: () => Promise<{ host: string; email: string | null }>,
+) {
   let cached: { at: number; reply: UsageReply } | undefined;
   let inFlight: Promise<UsageReply> | undefined;
   const read = (force: boolean): Promise<UsageReply> => {
@@ -147,7 +151,9 @@ export function registerUsageRoute(ctx: PluginContext, log: (level: string, msg:
             if (req.method !== "GET") return send(405, { error: "GET only" });
             try {
               const force = new URL(req.url ?? "/", "http://dsh").searchParams.get("force") === "1";
-              return send(200, await read(force));
+              // The usage belongs to this box's login; say so, the browser hops between boxes.
+              const [reply, who] = await Promise.all([read(force), identity()]);
+              return send(200, { ...reply, ...who });
             } catch (e) {
               log("warn", `usage route failed: ${errorText(e)}`);
               return send(500, { error: errorText(e) });

@@ -17,7 +17,7 @@ import {
   createUserMessage,
 } from "@deepseek-ai/dsh-llm";
 import z from "@deepseek-ai/schemastery";
-import { registerSessionRoutes } from "./sessions.js";
+import { accountIdentity, registerSessionRoutes } from "./sessions.js";
 import { registerUsageRoute } from "./usage.js";
 import { KEY_HEADER, MCP_PATH, registerMcpBridge } from "./mcp.js";
 import {
@@ -2012,7 +2012,11 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
     },
     (e) => adapter.log("warn", `mcp bridge unavailable: ${errorText(e)}`),
   );
-  registerUsageRoute(ctx, (level, msg) => adapter.log(level, msg));
+  registerUsageRoute(
+    ctx,
+    (level, msg) => adapter.log(level, msg),
+    () => accountIdentity(adapter.config.command),
+  );
   registerSessionRoutes(ctx, {
     log: (level: string, msg: string) => adapter.log(level, msg),
     projectDir: (cwd: string) => join(CLAUDE_HOME, "projects", projectDirName(cwd)),

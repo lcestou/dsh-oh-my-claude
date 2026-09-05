@@ -1066,8 +1066,11 @@ interface UsageWindow {
   resetsAt: number | null;
 }
 type UsageReply =
-  | { ok: true; fetchedAt: number; windows: UsageWindow[] }
-  | { ok: false; error: string; windows?: undefined };
+  | { ok: true; fetchedAt: number; windows: UsageWindow[]; host?: string; email?: string | null }
+  | { ok: false; error: string; windows?: undefined; host?: string; email?: string | null };
+/** "me@example.com on someone" or whichever half is known; the usage is this box's login. */
+const whose = (r: UsageReply): string =>
+  [r.email, r.host].filter((x): x is string => !!x).join(" on ");
 
 /** "in 2 h 10 min" inside a day, else weekday and time. */
 const resetText = (at: number | null): string => {
@@ -1151,7 +1154,11 @@ function watchContextMeter() {
     block.append(title, rows);
     panel.prepend(block);
     loadUsage().then(
-      (reply) => renderUsage(rows, reply),
+      (reply) => {
+        const who = whose(reply);
+        if (who) title.textContent = `Claude usage · ${who}`;
+        renderUsage(rows, reply);
+      },
       (e: Error) => renderUsage(rows, { ok: false, error: e.message }),
     );
   };
@@ -1166,8 +1173,9 @@ function watchContextMeter() {
     tip.append(line);
     loadUsage().then(
       (reply) => {
+        const who = reply.host ? ` (${reply.host})` : "";
         line.textContent = reply.ok
-          ? `Claude ${reply.windows.map((w) => `${w.label.toLowerCase()} ${Math.round(w.usedPercent)}%`).join(" · ") || "usage: no limits"}`
+          ? `Claude ${reply.windows.map((w) => `${w.label.toLowerCase()} ${Math.round(w.usedPercent)}%`).join(" · ") || "usage: no limits"}${who}`
           : `Claude usage: ${reply.error}`;
       },
       (e: Error) => {
