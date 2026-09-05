@@ -47,4 +47,11 @@ interface LooseEvent {
  * 2026-09-05 after a crash loop).
  */
 export declare function hasPendingNotice(events: Iterable<LooseEvent>, plugin: string): boolean;
+/**
+ * A replacer that masks the values of secret-looking environment variables (`*KEY`, `*TOKEN`,
+ * `*SECRET`, `*PASSWORD`, `*CREDENTIAL`, eight characters or longer) as `[redacted:NAME]`.
+ * Built once per adapter from its own environment; the Claude CLI inherits that environment, so a
+ * `cat .env` or an echoed header would otherwise land verbatim in the session log.
+ */
+export declare function buildRedactor(env: Record<string, string | undefined>): (s: string) => string;
 export {};

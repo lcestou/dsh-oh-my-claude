@@ -178,6 +178,10 @@ export interface AskUserQuestionItem {
   header?: string;
   options: Array<{ label: string; description?: string }>;
   multiSelect: boolean;
+  /** Supporting markdown under the question; with a plan-review intent dsh renders it as the plan. */
+  detail?: string;
+  /** Presentation intent dsh recognises (`plan-review`: `detail` is a plan, `approve` names the yes option). */
+  intent?: { kind: "plan-review"; approve: string };
 }
 
 export interface AskUserQuestionRequest {

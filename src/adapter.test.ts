@@ -38,7 +38,14 @@ import {
   registryKey,
 } from "./adapter.js";
 import { ClaudeProcess, LineQueue, TIMEOUT, seamSpawner } from "./process.js";
-import { CLAUDE_HOME, hasPendingNotice, noteBoot, resolveClaudeHome, stateDir } from "./state.js";
+import {
+  buildRedactor,
+  CLAUDE_HOME,
+  hasPendingNotice,
+  noteBoot,
+  resolveClaudeHome,
+  stateDir,
+} from "./state.js";
 import type { ClaudeEvent, ClaudeProcessSpec, SubprocessHandle } from "./process.js";
 import type { LooseMessage } from "./adapter.js";
 import type { FinishReason, LlmFailure, Message, StreamChunk } from "@deepseek-ai/dsh-llm";
@@ -1682,3 +1689,92 @@ console.log("boot ok");
   );
 }
 console.log("pending-notice ok");
+
+// buildRedactor masks secret-looking env values, longest first, and leaves short or unnamed ones.
+{
+  const redact = buildRedactor({
+    MY_API_KEY: "abcdefgh12",
+    LONGER_TOKEN: "abcdefgh12xyz",
+    PATH: "/usr/bin:/bin",
+    SHORT_KEY: "abc",
+  });
+  assert.equal(
+    redact("k=abcdefgh12xyz and abcdefgh12"),
+    "k=[redacted:LONGER_TOKEN] and [redacted:MY_API_KEY]",
+  );
+  assert.equal(
+    redact("PATH=/usr/bin:/bin abc"),
+    "PATH=/usr/bin:/bin abc",
+    "path and short values untouched",
+  );
+  assert.equal(Config({}).redactSecrets, true);
+}
+// Translator applies the injected redactor to tool results before the row is appended.
+{
+  const results: string[] = [];
+  const tr = new Translator({
+    onToolCall: () => 1,
+    onToolResult: (_id, text) => {
+      results.push(text);
+    },
+    redact: (s) => s.split("hunter22").join("[redacted:PW]"),
+  }) as any;
+  tr.translate({
+    type: "assistant",
+    message: { content: [{ type: "tool_use", id: "t9", name: "Bash", input: { command: "env" } }] },
+  });
+  tr.translate({
+    type: "user",
+    message: {
+      content: [{ type: "tool_result", tool_use_id: "t9", content: "DB_PASSWORD=hunter22" }],
+    },
+  });
+  assert.deepEqual(results, ["DB_PASSWORD=[redacted:PW]"]);
+}
+console.log("redaction ok");
+
+// decide(): ExitPlanMode goes through userQuestions.ask with the plan-review intent; Approve
+// allows the tool, anything else denies with the typed feedback.
+{
+  const asked: Array<{
+    questions: Array<{ id: string; detail?: string; intent?: { kind: string } }>;
+  }> = [];
+  let answer: { answers: Array<{ id: string; selected?: string[]; custom?: string }> } = {
+    answers: [],
+  };
+  const ctx = fakeCtx({
+    on() {},
+    userQuestions: {
+      ask: async (req: {
+        questions: Array<{ id: string; detail?: string; intent?: { kind: string } }>;
+      }) => {
+        asked.push(req);
+        return answer;
+      },
+    },
+  });
+  const adapter = new ClaudeCodeAdapter(ctx, Config({}));
+  const base = {
+    toolName: "ExitPlanMode",
+    input: { plan: "# Plan\n1. do it" },
+    request: { subtype: "can_use_tool" },
+    toolUseId: "tu-plan",
+    agent: undefined,
+    signal: new AbortController().signal,
+    accessMode: "workspace-write",
+  };
+  answer = { answers: [{ id: "plan-review:tu-plan", selected: ["Approve"] }] };
+  // SAFETY: the Decision shape is internal; the test passes the fields decide() reads
+  const ok = await adapter.decide(base as any);
+  assert.equal(asked.length, 1);
+  assert.equal(asked[0]!.questions[0]!.intent?.kind, "plan-review");
+  assert.equal(asked[0]!.questions[0]!.detail, "# Plan\n1. do it");
+  assert.equal(ok.behavior, "allow", "Approve allows ExitPlanMode");
+  answer = {
+    answers: [{ id: "plan-review:tu-plan", selected: ["Keep planning"], custom: "add tests" }],
+  };
+  const no = await adapter.decide(base as any);
+  assert.equal(no.behavior, "deny");
+  assert.ok(String(no.message).includes("add tests"), "feedback goes back to Claude");
+}
+console.log("plan-review ok");

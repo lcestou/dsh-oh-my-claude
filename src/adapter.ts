@@ -50,6 +50,7 @@ import { ADAPTER_CURRENT, RESUME_TIMER, PROCESS_REGISTRY, asSessionId } from "./
 import {
   authHeaders,
   auxCwd,
+  buildRedactor,
   CLAUDE_HOME,
   hasPendingNotice,
   loadStarted,
@@ -142,6 +143,7 @@ export type Config = {
   idleTimeoutMs: number;
   toolTextLimit: number;
   dshTools: boolean;
+  redactSecrets: boolean;
   persistTodos: boolean;
   debug: boolean;
   approvals: boolean;
@@ -210,6 +212,12 @@ export const Config = z.object({
     .boolean()
     .default(true)
     .description("Expose dsh tools (subagents, jobs, skills...) to Claude Code over MCP"),
+  redactSecrets: z
+    .boolean()
+    .default(true)
+    .description(
+      "Mask values of env vars named *KEY, *TOKEN, *SECRET, *PASSWORD or *CREDENTIAL in Claude's tool results before they reach dsh",
+    ),
   persistTodos: z
     .boolean()
     .default(true)
@@ -711,6 +719,8 @@ export function buildInput(
 
 const clip = (s: string, n = TOOL_TEXT_LIMIT): string => (s.length > n ? `${s.slice(0, n)}…` : s);
 const DENIED_RE = /requires? approval|permission (was )?denied|not allowed/i;
+const PLAN_APPROVE = "Approve";
+const PLAN_KEEP = "Keep planning";
 // Claude Code tool names → dsh tool name that the client-ui-tool presenter recognises.
 // Unknown names fall through to the generic "others" row.
 const NATIVE_TOOL_MAP = {
@@ -962,6 +972,8 @@ export class Translator {
   onToolResult?: (callId: string, text: string, isError: boolean, meta?: object) => void;
   /** Injected: fire per-turn accounting summary from the result frame. */
   onResult?: (summary: TurnRecord) => void;
+  /** Injected: mask secret values in tool results before they are shown or appended. */
+  redact?: (s: string) => string;
   /** callId → original input JSON string, kept so Edit can build meta.diffs from it. */
   readonly callInputs = new Map<string, string>();
 
@@ -975,6 +987,7 @@ export class Translator {
     onToolCall,
     onToolResult,
     onResult,
+    redact,
   }: {
     toolActivity?: boolean;
     toolTextLimit?: number;
@@ -985,6 +998,7 @@ export class Translator {
     onToolCall?: (callId: string, name: string, args: string) => number | undefined;
     onToolResult?: (callId: string, text: string, isError: boolean, meta?: object) => void;
     onResult?: (summary: TurnRecord) => void;
+    redact?: (s: string) => string;
   } = {}) {
     this.log = log ?? (() => {});
     this.unknownSeen = new Set(); // (where:type) already warned, so schema drift warns once, not per event
@@ -1004,6 +1018,7 @@ export class Translator {
     this.onToolCall = onToolCall;
     this.onToolResult = onToolResult;
     this.onResult = onResult;
+    this.redact = redact;
   }
 
   deltaType(block: TranslatorBlock): "text-delta" | "reasoning-delta" {
@@ -1333,7 +1348,8 @@ export class Translator {
     const events: StreamChunk[] = [];
     for (const b of content) {
       if (b.type !== "tool_result") continue;
-      const raw = toolResultText(b).trim();
+      const rawText = toolResultText(b).trim();
+      const raw = this.redact ? this.redact(rawText) : rawText;
       if (b.is_error && DENIED_RE.test(raw)) this.denied++;
       const body = clip(raw || "(empty)", this.limit);
       const tag = parentToolUseId ? "↳ " : "";
@@ -1400,6 +1416,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   warnedNoSeam = false;
   loggedVersion = false;
   sessionController?: SessionController;
+  /** Masks secret env values in tool results; undefined when `redactSecrets` is off. */
+  readonly redact: ((s: string) => string) | undefined;
   /** Per-session turn accounting buffer (last 50 turns); keyed by dsh sessionId. */
   readonly turnBuffer = new Map<string, TurnRecord[]>();
   claudeHome: string;
@@ -1419,6 +1437,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       );
     }
     this.claudeHome = resolveClaudeHome(config.configDir);
+    this.redact = config.redactSecrets ? buildRedactor(process.env) : undefined;
     this.displayName =
       config.providerName ||
       (this.providerId === "claude-code"
@@ -1920,6 +1939,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
               }
             }
           : undefined,
+      redact: this.redact,
       onResult: (summary: TurnRecord) => {
         // ponytail: ring buffer capped at 50 entries per session; upgrade to a durable store if cost history beyond one page is needed.
         const buf = this.turnBuffer.get(options.sessionId) ?? [];
@@ -2286,6 +2306,49 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         return allowResult(toolUseId, { ...input, answers: answersFor(questions, response) });
       } catch (error) {
         return denyResult(toolUseId, `question cancelled: ${errorText(error)}`);
+      }
+    }
+    if (toolName === "ExitPlanMode") {
+      // Claude's plan arrives as a permission request with input.plan (markdown). Present it the
+      // way dsh presents its own exit_plan_mode, so the native Plan review panel renders it.
+      const plan = String(input.plan ?? "");
+      if (plan !== "") {
+        const id = `plan-review:${toolUseId}`;
+        try {
+          const response = await this.ctx.userQuestions.ask({
+            questions: [
+              {
+                id,
+                header: "Plan review",
+                question: "Approve this plan and leave plan mode?",
+                detail: plan,
+                options: [
+                  { label: PLAN_APPROVE, description: "Leave plan mode and carry the plan out." },
+                  {
+                    label: PLAN_KEEP,
+                    description: "Stay in plan mode; your feedback goes to Claude.",
+                  },
+                ],
+                intent: { kind: "plan-review", approve: PLAN_APPROVE },
+                multiSelect: false,
+              },
+            ],
+            agent,
+            signal,
+          });
+          const item = (response.answers ?? []).find((a) => a.id === id);
+          const feedback = item?.custom ?? "";
+          if (item?.selected?.length === 1 && item.selected[0] === PLAN_APPROVE && feedback === "")
+            return allowResult(toolUseId, input);
+          return denyResult(
+            toolUseId,
+            feedback === ""
+              ? "The user chose to keep planning; revise the plan and present it again."
+              : `The user chose to keep planning; their feedback: ${feedback}`,
+          );
+        } catch (error) {
+          return denyResult(toolUseId, `plan review cancelled: ${errorText(error)}`);
+        }
       }
     }
     if (accessMode === "danger-full-access") return allowResult(toolUseId, input);

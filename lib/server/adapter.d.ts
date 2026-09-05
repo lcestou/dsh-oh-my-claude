@@ -57,6 +57,7 @@ export type Config = {
     idleTimeoutMs: number;
     toolTextLimit: number;
     dshTools: boolean;
+    redactSecrets: boolean;
     persistTodos: boolean;
     debug: boolean;
     approvals: boolean;
@@ -85,6 +86,7 @@ export declare const Config: z<Schemastery.ObjectS<{
     idleTimeoutMs: z<number, number>;
     toolTextLimit: z<number, number>;
     dshTools: z<boolean, boolean>;
+    redactSecrets: z<boolean, boolean>;
     persistTodos: z<boolean, boolean>;
     debug: z<boolean, boolean>;
     approvals: z<boolean, boolean>;
@@ -108,6 +110,7 @@ export declare const Config: z<Schemastery.ObjectS<{
     idleTimeoutMs: z<number, number>;
     toolTextLimit: z<number, number>;
     dshTools: z<boolean, boolean>;
+    redactSecrets: z<boolean, boolean>;
     persistTodos: z<boolean, boolean>;
     debug: z<boolean, boolean>;
     approvals: z<boolean, boolean>;
@@ -347,9 +350,11 @@ export declare class Translator {
     onToolResult?: (callId: string, text: string, isError: boolean, meta?: object) => void;
     /** Injected: fire per-turn accounting summary from the result frame. */
     onResult?: (summary: TurnRecord) => void;
+    /** Injected: mask secret values in tool results before they are shown or appended. */
+    redact?: (s: string) => string;
     /** callId → original input JSON string, kept so Edit can build meta.diffs from it. */
     readonly callInputs: Map<string, string>;
-    constructor({ toolActivity, toolTextLimit, relay, dshIds, relayed, log, onToolCall, onToolResult, onResult, }?: {
+    constructor({ toolActivity, toolTextLimit, relay, dshIds, relayed, log, onToolCall, onToolResult, onResult, redact, }?: {
         toolActivity?: boolean;
         toolTextLimit?: number;
         relay?: boolean;
@@ -359,6 +364,7 @@ export declare class Translator {
         onToolCall?: (callId: string, name: string, args: string) => number | undefined;
         onToolResult?: (callId: string, text: string, isError: boolean, meta?: object) => void;
         onResult?: (summary: TurnRecord) => void;
+        redact?: (s: string) => string;
     });
     deltaType(block: TranslatorBlock): "text-delta" | "reasoning-delta";
     /** Warn once when a CLI event/block type is neither handled nor knowingly ignored, so a Claude
@@ -408,6 +414,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     warnedNoSeam: boolean;
     loggedVersion: boolean;
     sessionController?: SessionController;
+    /** Masks secret env values in tool results; undefined when `redactSecrets` is off. */
+    readonly redact: ((s: string) => string) | undefined;
     /** Per-session turn accounting buffer (last 50 turns); keyed by dsh sessionId. */
     readonly turnBuffer: Map<string, TurnRecord[]>;
     claudeHome: string;

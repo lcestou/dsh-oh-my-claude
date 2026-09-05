@@ -204,3 +204,27 @@ export function hasPendingNotice(events: Iterable<LooseEvent>, plugin: string): 
   }
   return pending;
 }
+
+/** Whole name segments only: `GH_TOKEN`, `DB_PASSWORD`, `API_KEY` match; `SECRETARY` does not. */
+const SECRET_NAME = /(^|_)(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?)(_|$)/i;
+
+/**
+ * A replacer that masks the values of secret-looking environment variables (`*KEY`, `*TOKEN`,
+ * `*SECRET`, `*PASSWORD`, `*CREDENTIAL`, eight characters or longer) as `[redacted:NAME]`.
+ * Built once per adapter from its own environment; the Claude CLI inherits that environment, so a
+ * `cat .env` or an echoed header would otherwise land verbatim in the session log.
+ */
+export function buildRedactor(env: Record<string, string | undefined>): (s: string) => string {
+  const secrets: Array<[string, string]> = [];
+  for (const [name, value] of Object.entries(env)) {
+    if (typeof value !== "string" || value.length < 8 || !SECRET_NAME.test(name)) continue;
+    secrets.push([name, value]);
+  }
+  secrets.sort((a, b) => b[1].length - a[1].length); // longest first, so a prefix never masks part
+  return (s: string) => {
+    let out = s;
+    for (const [name, value] of secrets)
+      if (out.includes(value)) out = out.split(value).join(`[redacted:${name}]`);
+    return out;
+  };
+}
