@@ -116,8 +116,8 @@ export type UsageFetch = (
 }>;
 
 /** Read usage with the stored login; never throws, the panel shows the reason instead. */
-export async function readUsage(fetchImpl: UsageFetch = fetch): Promise<UsageReply> {
-  const headers = await authHeaders();
+export async function readUsage(fetchImpl: UsageFetch = fetch, home?: string): Promise<UsageReply> {
+  const headers = await authHeaders(home);
   if (!headers?.Authorization) return { ok: false, error: "needs a Claude Code login" };
   try {
     const r = await fetchImpl(USAGE_URL, {
@@ -143,6 +143,7 @@ export function registerUsageRoute(
   ctx: PluginContext,
   log: (level: string, msg: string) => void,
   identity: () => Promise<{ host: string; email: string | null }>,
+  home?: string,
 ) {
   let cached: { at: number; reply: UsageReply } | undefined;
   let inFlight: Promise<UsageReply> | undefined;
@@ -154,7 +155,7 @@ export function registerUsageRoute(
     if (Date.now() < rateLimitedUntil) return Promise.resolve(rateLimited());
     const age = cached ? Date.now() - cached.at : Infinity;
     if (cached && age < (force ? FORCE_MIN_AGE_MS : CACHE_MS)) return Promise.resolve(cached.reply);
-    inFlight ??= readUsage().then((reply) => {
+    inFlight ??= readUsage(undefined, home).then((reply) => {
       if (!reply.ok && reply.retryAfterMs)
         rateLimitedUntil = Date.now() + Math.max(reply.retryAfterMs, RATE_LIMIT_FLOOR_MS);
       // One transient failure keeps the last good answer for its remaining cache life; the

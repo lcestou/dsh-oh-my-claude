@@ -9,6 +9,14 @@ import { dirname, join } from "node:path";
 /** Claude Code's config dir: transcripts, settings.json. Honors CLAUDE_CONFIG_DIR like the CLI. */
 export const CLAUDE_HOME = process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude");
 
+/** Resolve a raw configDir value to an absolute path for this plugin instance.
+ * Non-empty → expanded absolute path; empty → falls through to CLAUDE_HOME. */
+export function resolveClaudeHome(dir: string): string {
+  if (!dir) return CLAUDE_HOME;
+  const expanded = dir.startsWith("~") ? join(homedir(), dir.slice(1)) : dir;
+  return expanded.startsWith("/") ? expanded : join(process.cwd(), expanded);
+}
+
 // Session state: which Claude sessions this plugin started, so resume does not depend on guessing
 // where Claude Code keeps its transcripts. A wrong guess still degrades to a fresh full-transcript run.
 export const STATE_DIR = join(homedir(), ".local", "state", "dsh-oh-my-claude");
@@ -101,10 +109,10 @@ export async function rememberStarted(id: string, keep = true): Promise<void> {
 }
 
 /** Headers for the Anthropic Models API: an API key from the env, else Claude Code's stored OAuth token. */
-export async function authHeaders(): Promise<Record<string, string> | null> {
+export async function authHeaders(home = CLAUDE_HOME): Promise<Record<string, string> | null> {
   if (process.env.ANTHROPIC_API_KEY) return { "x-api-key": process.env.ANTHROPIC_API_KEY };
   try {
-    const raw = await readFile(join(CLAUDE_HOME, ".credentials.json"), "utf8");
+    const raw = await readFile(join(home, ".credentials.json"), "utf8");
     const parsed: unknown = JSON.parse(raw);
     const oauth =
       typeof parsed === "object" && parsed !== null && "claudeAiOauth" in parsed

@@ -44,6 +44,7 @@ interface Decision {
 export type Config = {
     command: string;
     spawn: "node" | "dsh";
+    configDir: string;
     permissionMode: "dsh" | "acceptEdits" | "bypassPermissions" | "plan" | "dontAsk" | "auto" | "manual";
     allowedTools: string[];
     disallowedTools: string[];
@@ -87,6 +88,7 @@ export declare const Config: z<Schemastery.ObjectS<{
     approvals: z<boolean, boolean>;
     processIdleMs: z<number, number>;
     maxProcesses: z<number, number>;
+    configDir: z<string, string>;
 }>, Schemastery.ObjectT<{
     command: z<string, string>;
     spawn: z<"dsh" | "node", "dsh" | "node">;
@@ -107,6 +109,7 @@ export declare const Config: z<Schemastery.ObjectS<{
     approvals: z<boolean, boolean>;
     processIdleMs: z<number, number>;
     maxProcesses: z<number, number>;
+    configDir: z<string, string>;
 }>>;
 declare const EFFORTS_ALL: readonly ["low", "medium", "high", "xhigh", "max"];
 /** One effort level's capability flag, as the Models API reports it. */
@@ -388,6 +391,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     warnedNoSeam: boolean;
     loggedVersion: boolean;
     sessionController?: SessionController;
+    claudeHome: string;
     constructor(ctx: PluginContext, config: Schemastery.TypeT<typeof Config>);
     providerInfo(provider: string): {
         id: string;

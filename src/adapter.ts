@@ -49,6 +49,7 @@ import type {
 import { ADAPTER_CURRENT, RESUME_TIMER, PROCESS_REGISTRY, asSessionId } from "./dsh.js";
 import {
   CLAUDE_HOME,
+  resolveClaudeHome,
   STATE_DIR,
   auxCwd,
   authHeaders,
@@ -118,6 +119,7 @@ function requirePrep(proc: ClaudeProcess): TurnPrep {
 export type Config = {
   command: string;
   spawn: "node" | "dsh";
+  configDir: string;
   permissionMode:
     | "dsh"
     | "acceptEdits"
@@ -228,6 +230,12 @@ export const Config = z.object({
     .min(1)
     .default(4)
     .description("Cap on live Claude Code processes; the longest-idle one is evicted first"),
+  configDir: z
+    .string()
+    .default("")
+    .description(
+      "Claude Code config dir for this plugin instance (exported as CLAUDE_CONFIG_DIR); empty = CLAUDE_CONFIG_DIR env or ~/.claude",
+    ),
 });
 
 const EFFORTS_ALL = ["low", "medium", "high", "xhigh", "max"] as const;
@@ -300,7 +308,7 @@ export function modelFromApi(m: {
  */
 export async function getCatalog(fetchImpl = fetch) {
   if (Date.now() - catalog.at < CATALOG_TTL_MS) return catalog.models;
-  const headers = await authHeaders();
+  const headers = await authHeaders(CLAUDE_HOME);
   if (headers) {
     try {
       const res = await fetchImpl("https://api.anthropic.com/v1/models?limit=100", {
@@ -378,9 +386,9 @@ export function projectDirName(cwd: string): string {
 /**
  * Checks if a Claude Code session transcript exists on disk.
  */
-async function claudeSessionExists(cwd: string, id: string): Promise<boolean> {
+async function claudeSessionExists(home: string, cwd: string, id: string): Promise<boolean> {
   try {
-    await access(join(CLAUDE_HOME, "projects", projectDirName(cwd), `${id}.jsonl`));
+    await access(join(home, "projects", projectDirName(cwd), `${id}.jsonl`));
     return true;
   } catch {
     return false;
@@ -1309,10 +1317,12 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   warnedNoSeam = false;
   loggedVersion = false;
   sessionController?: SessionController;
+  claudeHome: string;
   constructor(ctx: PluginContext, config: Schemastery.TypeT<typeof Config>) {
     super();
     this.ctx = ctx;
     this.config = config;
+    this.claudeHome = resolveClaudeHome(config.configDir);
     this.warnedNoSeam = false;
     this.loggedVersion = false;
     // Kept on globalThis so a hot reload of this plugin adopts the running Claude processes
@@ -1416,13 +1426,13 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const parentId = header?.parentSession;
     if (!parentId || header?.origin === "subagent") return false;
     const parentCwd = this.sessionCwd(parentId) ?? cwd;
-    const parentClaude = (await claudeSessionExists(parentCwd, parentId))
+    const parentClaude = (await claudeSessionExists(this.claudeHome, parentCwd, parentId))
       ? parentId
       : claudeSessionId(parentId);
     let text;
     try {
       text = await readFile(
-        join(CLAUDE_HOME, "projects", projectDirName(parentCwd), `${parentClaude}.jsonl`),
+        join(this.claudeHome, "projects", projectDirName(parentCwd), `${parentClaude}.jsonl`),
         "utf8",
       );
     } catch {
@@ -1432,7 +1442,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // as already-forwarded (see dropSent) shifts the cut by one.
     const keep =
       userPromptCount(options.messages) - userPromptCount(afterLastAssistant(options.messages));
-    const dest = join(CLAUDE_HOME, "projects", projectDirName(cwd), `${id}.jsonl`);
+    const dest = join(this.claudeHome, "projects", projectDirName(cwd), `${id}.jsonl`);
     try {
       await mkdir(dirname(dest), { recursive: true });
       await writeFile(dest, forkTranscriptText(text, parentClaude, id, keep));
@@ -1464,9 +1474,12 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     let session;
     if (!options.purpose && this.config.resume && options.sessionId) {
       // A dsh session opened from a Claude Code transcript carries the Claude id itself.
-      const own = await claudeSessionExists(cwd, options.sessionId);
+      const own = await claudeSessionExists(this.claudeHome, cwd, options.sessionId);
       const id = own ? options.sessionId : claudeSessionId(options.sessionId);
-      let known = own || (await loadStarted()).has(id) || (await claudeSessionExists(cwd, id));
+      let known =
+        own ||
+        (await loadStarted()).has(id) ||
+        (await claudeSessionExists(this.claudeHome, cwd, id));
       if (!known && !forceFresh) known = await this.forkTranscript(options, cwd, id);
       session = { id, resuming: known && !forceFresh };
     }
@@ -1538,12 +1551,15 @@ export class ClaudeCodeAdapter extends LlmAdapter {
 
   /** Node's spawn, or dsh's subprocess seam when configured and mounted. */
   spawner() {
-    if (this.config.spawn === "dsh" && this.subprocess) return seamSpawner(this.subprocess);
-    if (this.config.spawn === "dsh" && !this.warnedNoSeam) {
+    const base =
+      this.config.spawn === "dsh" && this.subprocess ? seamSpawner(this.subprocess) : nodeSpawner;
+    if (this.config.spawn === "dsh" && !this.subprocess && !this.warnedNoSeam) {
       this.warnedNoSeam = true;
       this.log("warn", "spawn: dsh requested but ctx.subprocess is not mounted; using node spawn");
     }
-    return nodeSpawner;
+    if (!this.config.configDir) return base;
+    const envOverride = { CLAUDE_CONFIG_DIR: this.claudeHome };
+    return (command: string, args: string[], cwd: string) => base(command, args, cwd, envOverride);
   }
 
   async *stream(options: GenerateOptions) {
@@ -2200,6 +2216,7 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
     },
   ]);
   const adapter = new ClaudeCodeAdapter(ctx, config);
+  const claudeHome = adapter.claudeHome;
   ctx.llm.registerAdapter(["claude-code"], adapter);
   // dsh drops a session's Agent out of `ctx.agents` after a few idle minutes; the controller's
   // resolveAgent() cold-resumes it, which is what a wake after a long idle needs.
@@ -2244,15 +2261,16 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
     ctx,
     (level, msg) => adapter.log(level, msg),
     () => accountIdentity(adapter.config.command),
+    claudeHome,
   );
   registerSessionRoutes(ctx, {
     log: (level: string, msg: string) => adapter.log(level, msg),
-    projectDir: (cwd: string) => join(CLAUDE_HOME, "projects", projectDirName(cwd)),
-    projectsDir: join(CLAUDE_HOME, "projects"),
+    projectDir: (cwd: string) => join(claudeHome, "projects", projectDirName(cwd)),
+    projectsDir: join(claudeHome, "projects"),
     startedIds: loadStarted,
     claudeIdOf: claudeSessionId,
-    settingsPath: join(CLAUDE_HOME, "settings.json"),
-    configDir: CLAUDE_HOME,
+    settingsPath: join(claudeHome, "settings.json"),
+    configDir: claudeHome,
     boxesPath: join(STATE_DIR, "boxes.json"),
     command: adapter.config.command,
   });

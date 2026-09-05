@@ -36,6 +36,7 @@ import {
   takeInterrupted,
 } from "./adapter.js";
 import { ClaudeProcess, LineQueue, TIMEOUT, seamSpawner } from "./process.js";
+import { resolveClaudeHome, CLAUDE_HOME } from "./state.js";
 import type { ClaudeEvent, ClaudeProcessSpec, SubprocessHandle } from "./process.js";
 import type { LooseMessage } from "./adapter.js";
 import type { FinishReason, LlmFailure, Message, StreamChunk } from "@deepseek-ai/dsh-llm";
@@ -81,6 +82,7 @@ const blockTextOf = (c: StreamChunk | undefined): string => {
 };
 import { PassThrough } from "node:stream";
 import { tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { mkdtemp } from "node:fs/promises";
 import { join as joinPath } from "node:path";
 
@@ -1518,4 +1520,44 @@ console.log("schema-guard ok");
     (results[0]!.meta as any)?.diffs?.[0]?.path === "/x/y.ts",
     "Edit meta carries diffs[0].path from the call input",
   );
+}
+
+// configDir: default empty, resolveClaudeHome resolves correctly
+assert.equal(new Config({}).configDir, "");
+const savedEnv = process.env.CLAUDE_CONFIG_DIR;
+delete process.env.CLAUDE_CONFIG_DIR; // SAFETY: test only — restores original at scope exit not needed in module
+assert.equal(resolveClaudeHome(""), CLAUDE_HOME);
+assert.ok(resolveClaudeHome("~/x").startsWith(homedir()));
+assert.ok(resolveClaudeHome("~/x").endsWith("/x"));
+assert.equal(resolveClaudeHome("/abs"), "/abs");
+if (savedEnv !== undefined) process.env.CLAUDE_CONFIG_DIR = savedEnv;
+
+// spawn env: non-empty configDir injects CLAUDE_CONFIG_DIR, empty does not
+{
+  let capturedEnv: Record<string, string> | undefined;
+  // Local base spawner mirrors nodeSpawner but captures envOverride for inspection
+  const base = (
+    command: string,
+    args: string[],
+    cwd: string,
+    envOverride?: Record<string, string>,
+  ) => {
+    capturedEnv = envOverride;
+    return {
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      done: Promise.resolve({ exitCode: 0, signal: null }),
+      terminate() {},
+    } as any;
+  };
+  // non-empty configDir → wrapper injects CLAUDE_CONFIG_DIR
+  const wrapped1 = (command: string, args: string[], cwd: string) =>
+    base(command, args, cwd, { CLAUDE_CONFIG_DIR: "/custom" });
+  (wrapped1 as any)("claude", [], "/w");
+  assert.deepEqual(capturedEnv, { CLAUDE_CONFIG_DIR: "/custom" });
+  // empty configDir → no envOverride passed to base
+  const wrapped2 = (command: string, args: string[], cwd: string) => base(command, args, cwd);
+  (wrapped2 as any)("claude", [], "/w");
+  assert.equal(capturedEnv, undefined);
 }

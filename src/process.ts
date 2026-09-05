@@ -167,12 +167,18 @@ export interface TranslatedEvent {
 /**
  * Node's own spawn, shaped like a dsh `SubprocessHandle` so the process code has one shape to
  * talk to: `stdin`/`stdout`/`stderr` streams, `done` resolving with the exit code, `terminate()`.
+ * `envOverride` is merged last so configured values win over the parent's environment.
  */
-export function nodeSpawner(command: string, args: string[], cwd: string): SubprocessHandle {
+export function nodeSpawner(
+  command: string,
+  args: string[],
+  cwd: string,
+  envOverride?: Record<string, string>,
+): SubprocessHandle {
   const child = spawn(command, args, {
     cwd,
     stdio: ["pipe", "pipe", "pipe"],
-    env: { ...CHILD_ENV, ...process.env },
+    env: { ...CHILD_ENV, ...process.env, ...envOverride },
   });
   return {
     stdin: child.stdin,
@@ -189,14 +195,15 @@ export function nodeSpawner(command: string, args: string[], cwd: string): Subpr
  * dsh's subprocess seam (`ctx.subprocess`). Same shape by definition. With a remote provider such
  * as a remote subprocess provider mounted, Claude Code runs on the remote machine for a remote workspace; the seam
  * scrubs credential-shaped env vars, so credentials come from the login on that machine.
+ * `envOverride` is merged last so configured values win.
  */
 export const seamSpawner =
   (subprocess: Pick<SubprocessRuntime, "spawn">): Spawner =>
-  (command, args, cwd) =>
+  (command, args, cwd, envOverride) =>
     subprocess.spawn({
       argv: [command, ...args],
       cwd,
-      env: CHILD_ENV,
+      env: { ...CHILD_ENV, ...envOverride },
       graceMs: 5000,
       stdio: { stdin: "pipe", stdout: "pipe", stderr: "pipe" },
     });
@@ -397,7 +404,12 @@ export interface ClaudeProcessOnExit {
   (proc: ClaudeProcess): void;
 }
 
-export type Spawner = (command: string, args: string[], cwd: string) => SubprocessHandle;
+export type Spawner = (
+  command: string,
+  args: string[],
+  cwd: string,
+  envOverride?: Record<string, string>,
+) => SubprocessHandle;
 
 /**
  * A running Claude Code process bound to one dsh session. `spec` is what the process was spawned

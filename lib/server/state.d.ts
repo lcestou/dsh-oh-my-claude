@@ -1,5 +1,8 @@
 /** Claude Code's config dir: transcripts, settings.json. Honors CLAUDE_CONFIG_DIR like the CLI. */
 export declare const CLAUDE_HOME: string;
+/** Resolve a raw configDir value to an absolute path for this plugin instance.
+ * Non-empty → expanded absolute path; empty → falls through to CLAUDE_HOME. */
+export declare function resolveClaudeHome(dir: string): string;
 export declare const STATE_DIR: string;
 export declare const STATE_FILE: string;
 /** Sessions with a turn in flight. Survives a dsh restart so those sessions can be nudged back. */
@@ -24,4 +27,4 @@ export declare function loadStarted(): Promise<Set<string>>;
  */
 export declare function rememberStarted(id: string, keep?: boolean): Promise<void>;
 /** Headers for the Anthropic Models API: an API key from the env, else Claude Code's stored OAuth token. */
-export declare function authHeaders(): Promise<Record<string, string> | null>;
+export declare function authHeaders(home?: string): Promise<Record<string, string> | null>;
