@@ -33,10 +33,12 @@ export const RESUME_LOG = join(STATE_DIR, "resume.log");
 let busyChain = Promise.resolve();
 
 /** Append one line to the resume trace; best effort, never throws. */
-export async function trace(line: string): Promise<void> {
+export async function trace(fileOrLine: string, maybeLine?: string): Promise<void> {
+  const file = maybeLine === undefined ? RESUME_LOG : fileOrLine;
+  const line = maybeLine ?? fileOrLine;
   try {
-    await mkdir(STATE_DIR, { recursive: true });
-    await appendFile(RESUME_LOG, `${new Date().toISOString()} ${line}\n`);
+    await mkdir(dirname(file), { recursive: true });
+    await appendFile(file, `${new Date().toISOString()} ${line}\n`);
   } catch {}
 }
 

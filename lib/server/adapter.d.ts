@@ -293,11 +293,6 @@ export declare function finishReason(result: {
     api_error_status?: number;
     subtype?: string;
 }): FinishReason;
-/**
- * Incremental translator from Claude Code stream-json lines to dsh StreamChunks.
- * Prefers partial `stream_event`s; falls back to whole `assistant` messages when no partials arrived.
- * Tool calls and results are shown as reasoning blocks: the CLI runs its own tools, dsh only watches.
- */
 /** dsh's tool-result for a relayed call, searched from the newest message back. */
 export declare function toolResultFor(messages: LooseMessage[] | undefined, id: string): {
     text: string;

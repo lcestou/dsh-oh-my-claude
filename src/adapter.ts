@@ -795,6 +795,17 @@ export function finishReason(result: {
  * Prefers partial `stream_event`s; falls back to whole `assistant` messages when no partials arrived.
  * Tool calls and results are shown as reasoning blocks: the CLI runs its own tools, dsh only watches.
  */
+/** The `kind` dsh's loop puts on an abort reason ("disposed" on shutdown), else undefined. */
+function abortKind(signal: AbortSignal | undefined): string | undefined {
+  if (!signal?.aborted) return undefined;
+  const reason: unknown = signal.reason;
+  if (reason instanceof Object && "kind" in reason && !Array.isArray(reason)) {
+    const kind = reason.kind;
+    return kind === "disposed" || kind === "aborted" || kind === "cancelled" ? kind : undefined;
+  }
+  return undefined;
+}
+
 /** dsh's tool-result for a relayed call, searched from the newest message back. */
 export function toolResultFor(
   messages: LooseMessage[] | undefined,
@@ -1620,7 +1631,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    */
   async resumeInterrupted(path = join(this.stateDir, "busy.json")) {
     const ids = await takeInterrupted(path);
+    const log = join(dirname(path), "resume.log"); // beside the busy file, so tests stay in tmp
     await trace(
+      log,
       `boot: interrupted=${JSON.stringify(ids)} live=${JSON.stringify([...this.processes.keys()])}`,
     );
     for (const id of ids) {
@@ -1628,14 +1641,14 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       if (proc) {
         // A hot reload, or the user already typed since boot: the turn is live, keep it tracked.
         if (proc.busy) await markBusy(id, true, path);
-        await trace(`skip ${id}: process live (busy=${proc.busy})`);
+        await trace(log, `skip ${id}: process live (busy=${proc.busy})`);
         continue;
       }
       try {
         await this.wake(id, undefined, RESTART_TEXT);
-        await trace(`nudged ${id}`);
+        await trace(log, `nudged ${id}`);
       } catch (e) {
-        await trace(`nudge ${id} failed: ${errorText(e)}`);
+        await trace(log, `nudge ${id} failed: ${errorText(e)}`);
       }
     }
     return ids;
@@ -2069,9 +2082,16 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       for (const c of pending.values()) c.abort();
       proc.busy = false;
       proc.lastUsed = Date.now();
-      markBusy(options.sessionId, false, join(this.stateDir, "busy.json")).catch((e) =>
-        this.log("warn", `busy.json: ${errorText(e)}`),
-      );
+      // A dsh shutdown aborts the stream with a "disposed" reason. Clearing the busy mark then
+      // leaves nothing for the boot resume to nudge (2026-09-05, third restart of the day), so the
+      // mark stays for that one case and the next boot picks the session up.
+      if (abortKind(options.signal) === "disposed") {
+        void trace(`kept busy ${options.sessionId}: stream aborted by disposal`);
+      } else {
+        markBusy(options.sessionId, false, join(this.stateDir, "busy.json")).catch((e) =>
+          this.log("warn", `busy.json: ${errorText(e)}`),
+        );
+      }
       if (outcome === "retry" || outcome === "ended") {
         proc.kill();
         this.processes.delete(registryKey(this.providerId, options.sessionId));

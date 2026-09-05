@@ -12,7 +12,7 @@ export declare const BUSY_FILE: string;
 /** Plugin info logs never reach dsh's web.log; the resume path keeps its own trace file. */
 export declare const RESUME_LOG: string;
 /** Append one line to the resume trace; best effort, never throws. */
-export declare function trace(line: string): Promise<void>;
+export declare function trace(fileOrLine: string, maybeLine?: string): Promise<void>;
 /** Record (or clear) that a session's turn is running; serialized read-modify-write. */
 export declare function markBusy(id: string, on: boolean, path?: string): Promise<void>;
 /** Sessions whose turn the previous dsh process left unfinished; cleared on read. */
