@@ -91,8 +91,12 @@ const run = (cmd: string, args: string[]): Promise<{ out: string; error?: string
     ),
   );
 
+// Source runs from src/, the tsc build from lib/server/: the plugin's package.json is one or
+// two levels up, so try the nearer one first and fall back to the farther.
 const packageJson: unknown = JSON.parse(
-  await readFile(new URL("../package.json", import.meta.url), "utf8"),
+  await readFile(new URL("../package.json", import.meta.url), "utf8").catch(() =>
+    readFile(new URL("../../package.json", import.meta.url), "utf8"),
+  ),
 );
 const PLUGIN_VERSION =
   isJsonObject(packageJson) && typeof packageJson.version === "string" ? packageJson.version : "";
