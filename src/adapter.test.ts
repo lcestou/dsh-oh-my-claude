@@ -1001,7 +1001,8 @@ console.log("ok");
     subtype: "compact_boundary",
     compact_metadata: { trigger: "manual" },
   });
-  assert.match(manual.at(-1).block.text, /\(manual\)\._/, "manual trigger, no token count");
+  assert.equal(out.at(-1).block.type, "reasoning", "compaction rides the reasoning lane");
+  assert.match(manual.at(-1).block.text, /\(manual\)/, "manual trigger, no token count");
 }
 {
   // The compaction start frame (status:"compacting") is announced at once, so the silent summarize
