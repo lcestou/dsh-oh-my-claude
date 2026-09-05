@@ -345,8 +345,71 @@ function SettingsEditor() {
   );
 }
 
+/** One line answering "which claude, which account, which machine". */
+function Runtime() {
+  const [st, setSt] = useState(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    fetch(`${ROUTE}/status`)
+      .then(readJson)
+      .then(setSt)
+      .catch((e) => setError(String(e.message ?? e)));
+  }, []);
+  if (error)
+    return (
+      <p id="dsh-llm-claude-runtime" style={{ color: T.err, fontSize: 13, margin: "0 0 4px" }}>
+        {error}
+      </p>
+    );
+  if (!st)
+    return (
+      <p id="dsh-llm-claude-runtime" style={{ ...meta, margin: "0 0 4px" }}>
+        Checking claude…
+      </p>
+    );
+  const who = st.loggedIn
+    ? `logged in${st.email ? ` as ${st.email}` : ""}${st.authMethod ? ` (${st.authMethod})` : ""}`
+    : "not logged in";
+  return (
+    <div
+      id="dsh-llm-claude-runtime"
+      style={{
+        display: "flex",
+        flexWrap: "wrap",
+        gap: 6,
+        alignItems: "center",
+        margin: "0 0 4px",
+        fontSize: 13,
+        color: T.muted,
+      }}
+    >
+      <span style={pill(st.binary ? T.ok : T.err)}>
+        {st.binary ? `claude ${st.version ?? ""}`.trim() : "claude not on PATH"}
+      </span>
+      <span style={pill(st.loggedIn ? T.ok : T.err)}>{who}</span>
+      <span style={pill(T.faint)}>{st.host}</span>
+      <span style={{ fontFamily: T.mono, fontSize: 12, color: T.faint }}>
+        {st.binary ?? ""} · {st.configDir}
+      </span>
+      {st.error && (
+        <span style={{ width: "100%", color: T.err, fontFamily: T.mono, fontSize: 12 }}>
+          {st.error}
+        </span>
+      )}
+      {!st.loggedIn && (
+        <span style={{ width: "100%", color: T.err }}>
+          Sign in on this machine first: run{" "}
+          <code style={{ fontFamily: T.mono }}>claude auth login</code> in a terminal, then reload
+          this page.
+        </span>
+      )}
+    </div>
+  );
+}
+
 /**
- * Registers the Claude Code panel in dsh settings: session browser + settings.json editor.
+ * Registers the Claude Code panel in dsh settings: runtime line, session browser, settings.json
+ * editor.
  */
 export function apply(ctx) {
   const workspaceItems = () => ctx.workspaces.list.getSnapshot()?.items ?? [];
@@ -520,6 +583,7 @@ export function apply(ctx) {
         <h2 id="dsh-llm-claude-heading" style={{ marginTop: 0 }}>
           Claude Code
         </h2>
+        <Runtime />
         <Sessions />
         <SettingsEditor />
       </div>

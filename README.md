@@ -83,6 +83,16 @@ Effort: none is advertised as default, so Claude Code's own default applies unle
 
 **Surviving Claude Code updates.** Claude Code updates itself. On first use per process the adapter reads `claude --help` and `--version`; any flag the installed CLI does not list is left out (`--effort`, `--append-system-prompt`, `--include-partial-messages`, `--max-budget-usd`, session flags). Without `--input-format` the prompt goes positionally and images are skipped. Whole-message fallback covers a CLI that stops sending partial events. Started session ids are kept in `~/.local/state/dsh-llm-claude/sessions.json`; a `--resume` the CLI rejects is retried once as a fresh run. Model ids and effort levels come from the Models API, so new models need no code change. The version in use is logged at first request.
 
+## Where things live
+
+The plugin runs Claude Code as a child process of dsh, so everything is on the machine that runs `dsh web`:
+
+- **Binary**: `claude` from that process's `PATH`. No path setting; put it on the PATH of the user running dsh.
+- **Config dir**: `$CLAUDE_CONFIG_DIR` if set for the dsh process, otherwise `~/.claude` of that user. Transcripts (`projects/`), `settings.json` and the login token all live there, the same place a terminal `claude` on that machine uses.
+- **Login**: done once, in a terminal on that machine, with `claude auth login`. The panel's first line shows which binary, which config dir, which host and which account dsh sees; if it says not logged in, that is the fix.
+
+Same box, several clients (laptop, phone, another PC on the LAN): run `dsh web` where Claude Code is logged in and open that URL from anywhere. A remote Claude Code install on another machine is not supported: the plugin does not ssh, and a wrapper script named `claude` that does would still read settings and transcripts from the local dir, so the panel would show the wrong files. Install dsh on the machine that has Claude Code instead.
+
 ## Not covered
 
 - dsh's shell and file tools are not proxied; Claude Code uses its own, under its own permission mode.

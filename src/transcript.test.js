@@ -4,7 +4,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { foldTranscript, listTranscripts, toSessionEvents, truncateBytes } from "./transcript.js";
-import { dshSessionsFor, parseSettingsText } from "./sessions.js";
+import { authFromStatus, dshSessionsFor, parseSettingsText } from "./sessions.js";
 
 const line = (o) => JSON.stringify(o);
 const T = "2026-09-03T08:00:00.000Z";
@@ -232,5 +232,16 @@ assert.ok(/Unexpected|JSON/.test(parseSettingsText("{oops").error));
 assert.equal(parseSettingsText("[1]").error, "settings.json must be a JSON object");
 assert.equal(parseSettingsText("null").error, "settings.json must be a JSON object");
 assert.equal(parseSettingsText(42).error, "text must be a string");
+
+// `claude auth status` is JSON on current CLIs; older ones print prose. Both must not throw.
+assert.deepEqual(
+  authFromStatus(
+    '{"loggedIn":true,"authMethod":"claude.ai","email":"a@b","projectsDirectory":"/p"}',
+  ),
+  { loggedIn: true, authMethod: "claude.ai", email: "a@b", projectsDirectory: "/p" },
+);
+assert.equal(authFromStatus('{"loggedIn":false}').loggedIn, false);
+assert.equal(authFromStatus("Not logged in").loggedIn, false);
+assert.equal(authFromStatus("Logged in as x").loggedIn, true);
 
 console.log("transcript ok");

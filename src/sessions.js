@@ -1,6 +1,8 @@
 // Host half of "open a Claude Code session in dsh": lists the transcripts of a workspace and turns
 // one into a cold dsh session whose id is the Claude session id, so the adapter resumes it as-is.
 // Served under /dsh-llm-claude/*, guarded by dsh's own request policy (trusted host + login cookie).
+import { execFile } from "node:child_process";
+import { hostname } from "node:os";
 import { readFile, writeFile, rename, copyFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { listTranscripts, readTranscript, toSessionEvents } from "./transcript.js";
@@ -51,6 +53,62 @@ export function parseSettingsText(text) {
   if (!value || typeof value !== "object" || Array.isArray(value))
     return { error: "settings.json must be a JSON object" };
   return { value };
+}
+
+/** Output of a probe command, or "" plus the failure text so the panel can show why. */
+const run = (cmd, args) =>
+  new Promise((resolve) =>
+    execFile(cmd, args, { timeout: 8000, windowsHide: true }, (e, out, err) =>
+      resolve(
+        e
+          ? {
+              out: "",
+              error: String(err || e.message)
+                .trim()
+                .slice(0, 300),
+            }
+          : { out: String(out) },
+      ),
+    ),
+  );
+
+/** The login half of `claude auth status` output, tolerant of an older CLI printing prose. */
+export function authFromStatus(text) {
+  try {
+    const j = JSON.parse(text);
+    return {
+      loggedIn: j.loggedIn === true,
+      authMethod: j.authMethod ?? null,
+      email: j.email ?? null,
+      projectsDirectory: j.projectsDirectory ?? null,
+    };
+  } catch {
+    return { loggedIn: /logged in/i.test(text) && !/not logged in/i.test(text), authMethod: null };
+  }
+}
+
+/**
+ * What the panel needs to answer "is this the right machine and account": which `claude` dsh
+ * spawns, its version, the config dir it will read, and who is logged in. Same-box by design:
+ * the plugin runs Claude Code as a child process, never over ssh.
+ */
+async function runtimeStatus(configDir) {
+  const [which, version, status] = await Promise.all([
+    run(
+      process.platform === "win32" ? "where" : "sh",
+      process.platform === "win32" ? ["claude"] : ["-c", "command -v claude"],
+    ),
+    run("claude", ["--version"]),
+    run("claude", ["auth", "status"]),
+  ]);
+  return {
+    host: hostname(),
+    binary: which.out.trim().split(/\r?\n/)[0] || null,
+    version: version.out.trim() || null,
+    ...(version.error ? { error: version.error } : {}),
+    configDir,
+    ...authFromStatus(status.out),
+  };
 }
 
 /** Read Claude Code's settings file; a missing file reads as an empty object. */
@@ -156,7 +214,7 @@ async function openTranscriptOnce(ctx, projectDir, cwd, id, claudeIdOf, registry
 /** `projectDir(cwd)` → Claude Code project dir; `startedIds()` → ids the adapter started itself. */
 export function registerSessionRoutes(
   ctx,
-  { log, projectDir, startedIds, claudeIdOf, settingsPath },
+  { log, projectDir, startedIds, claudeIdOf, settingsPath, configDir },
 ) {
   // Optional: stock dsh has it; without it archived sessions list but cannot be restored.
   let registry;
@@ -215,6 +273,8 @@ export function registerSessionRoutes(
                   return json(res, 200, written);
                 }
               }
+              if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/status`)
+                return json(res, 200, await runtimeStatus(configDir));
               return json(res, 404, { error: "not found" });
             } catch (e) {
               log("warn", `session route failed: ${e?.message ?? e}`);
