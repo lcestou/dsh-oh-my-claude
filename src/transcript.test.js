@@ -280,8 +280,13 @@ assert.ok(validateBoxes("nope").error);
     if (u === "http://box/?token=T") return res(303, { "set-cookie": "dsh-auth-x=1; Path=/" });
     if (u === "http://box/dsh-llm-claude/status")
       return init?.headers?.cookie === "dsh-auth-x=1" ? res(200, {}, { host: "box" }) : res(401);
-    if (u === "http://proxy/dsh-llm-claude/status" && !init?.headers?.cookie)
-      return res(302, { location: "/?token=P" });
+    if (u === "http://box/") return { ...res(200), text: async () => "<html>plain dsh</html>" };
+    if (u === "http://proxy/dsh-llm-claude/status" && !init?.headers?.cookie) return res(401);
+    if (u === "http://proxy/")
+      return {
+        ...res(200),
+        text: async () => '<meta http-equiv="refresh" content="0;url=/?token=P"><script>',
+      };
     if (u === "http://proxy/?token=P") return res(303, { "set-cookie": "dsh-auth-p=1" });
     if (u === "http://proxy/dsh-llm-claude/status") return res(200, {}, { host: "proxy" });
     throw new Error("ECONNREFUSED");

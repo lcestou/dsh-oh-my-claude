@@ -142,12 +142,20 @@ export async function probeBox({ url, token }, fetchImpl = fetch) {
       );
     }
     let r = await status(cookie);
-    const location = r.headers.get("location") ?? "";
-    if (r.status >= 300 && r.status < 400 && /[?&]token=/.test(location)) {
-      cookie = cookieOf(
-        await fetchImpl(new URL(location, url).href, { redirect: "manual", signal }),
-      );
-      r = await status(cookie);
+    if (!cookie && (r.status === 401 || (r.status >= 300 && r.status < 400))) {
+      // A token-injecting proxy answers the front page with a redirect or a tiny page whose
+      // only job is to navigate to /?token=…; take the token from either and log in with it.
+      const front = await fetchImpl(`${url}/`, { redirect: "manual", signal });
+      const hint =
+        (front.headers.get("location") ?? "") +
+        (front.status === 200 ? (await front.text()).slice(0, 4000) : "");
+      const found = /[?&]token=([A-Za-z0-9_.~-]+)/.exec(hint);
+      if (found) {
+        cookie = cookieOf(
+          await fetchImpl(`${url}/?token=${found[1]}`, { redirect: "manual", signal }),
+        );
+        r = await status(cookie);
+      }
     }
     if (r.status === 401 || r.status === 403)
       return { ok: false, error: "login required: add this box's dsh token" };
