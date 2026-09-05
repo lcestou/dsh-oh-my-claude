@@ -469,6 +469,13 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * custom command the way the terminal does; dsh keeps its own command of the same name.
      */
     bridgeCommands(names: string[], agent: Agent | undefined): void;
+    /**
+     * `/temporary`: toggle "keep no Claude transcript" for the current dsh session. Registered here,
+     * from the first init frame, because at apply() the commands service is not up yet and the
+     * optional lookup returns nothing. The next process for the session starts with
+     * --no-session-persistence; a live one is replaced by the spec change.
+     */
+    registerTemporaryCommand(commands: NonNullable<PluginContext["commands"]>): void;
     /** Two boots closer than this are a crash loop, not a restart. */
     static readonly BOOT_BACKOFF_MS = 60000;
     /**

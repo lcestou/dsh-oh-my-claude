@@ -1751,6 +1751,38 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         "warn",
         `command bridge: ${failed.length} of ${names.length} not registered (first: ${failed[0]})`,
       );
+    this.registerTemporaryCommand(commands);
+  }
+
+  /**
+   * `/temporary`: toggle "keep no Claude transcript" for the current dsh session. Registered here,
+   * from the first init frame, because at apply() the commands service is not up yet and the
+   * optional lookup returns nothing. The next process for the session starts with
+   * --no-session-persistence; a live one is replaced by the spec change.
+   */
+  registerTemporaryCommand(commands: NonNullable<PluginContext["commands"]>) {
+    if (this.bridged.has("temporary")) return;
+    try {
+      const dispose = commands.register({
+        name: "temporary",
+        description: "Oh My Claude: keep no Claude transcript for this session (toggle)",
+        handler: ({ agent }) => {
+          const id = String(agent.id);
+          const on = !this.temporary.has(id);
+          if (on) this.temporary.add(id);
+          else this.temporary.delete(id);
+          return {
+            kind: "success",
+            text: on
+              ? "Temporary: on. Claude keeps no transcript for this session from the next turn; after a dsh restart the session continues from dsh's own log."
+              : "Temporary: off. The next turn starts a Claude session that is kept again.",
+          };
+        },
+      });
+      this.bridged.set("temporary", dispose);
+    } catch (error) {
+      this.log("warn", `/temporary not registered: ${errorText(error)}`);
+    }
   }
 
   /** Two boots closer than this are a crash loop, not a restart. */
@@ -2594,30 +2626,6 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
   // A hot reload disposes the previous instance's command registrations with its scope and
   // brings no new init frame; re-bridge from the catalog the last one saw.
   if (g[COMMAND_CATALOG]) adapter.bridgeCommands(g[COMMAND_CATALOG], undefined);
-  // /temporary: toggle "keep no Claude transcript" for the current dsh session. The next process
-  // for that session starts with --no-session-persistence; a live one is replaced by the spec change.
-  if (adapter.providerId === "claude-code") {
-    try {
-      ctx.get("commands")?.register({
-        name: "temporary",
-        description: "Oh My Claude: keep no Claude transcript for this session (toggle)",
-        handler: ({ agent }) => {
-          const id = String(agent.id);
-          const on = !adapter.temporary.has(id);
-          if (on) adapter.temporary.add(id);
-          else adapter.temporary.delete(id);
-          return {
-            kind: "success",
-            text: on
-              ? "Temporary: on. Claude keeps no transcript for this session from the next turn; after a dsh restart the session continues from dsh's own log."
-              : "Temporary: off. The next turn starts a Claude session that is kept again.",
-          };
-        },
-      });
-    } catch (error) {
-      adapter.log("warn", `/temporary not registered: ${errorText(error)}`);
-    }
-  }
   if (!g[RESUME_TIMER]) {
     g[RESUME_TIMER] = setTimeout(() => {
       // Resume every mounted instance over its own busy file.
