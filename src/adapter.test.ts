@@ -38,7 +38,7 @@ import {
   takeInterrupted,
   registryKey,
 } from "./adapter.js";
-import { ClaudeProcess, LineQueue, TIMEOUT, seamSpawner } from "./process.js";
+import { CHILD_ENV, ClaudeProcess, LineQueue, TIMEOUT, seamSpawner } from "./process.js";
 import {
   buildRedactor,
   CLAUDE_HOME,
@@ -1503,7 +1503,11 @@ console.log("schema-guard ok");
   assert.deepEqual(spec.argv, ["claude", "-p", "--verbose"]);
   assert.equal(spec.cwd, "/w");
   assert.deepEqual(spec.stdio, { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
-  assert.deepEqual(Object.keys(spec.env ?? {}), ["MCP_TOOL_TIMEOUT"]);
+  assert.deepEqual(
+    Object.keys(spec.env ?? {}),
+    Object.keys(CHILD_ENV),
+    "child env only, no dsh env leak",
+  );
   assert.ok(spec.graceMs > 0);
 }
 

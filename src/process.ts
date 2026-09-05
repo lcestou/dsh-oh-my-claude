@@ -30,7 +30,13 @@ function toolResultBlockText(b: unknown): string {
 }
 
 /** Child env on top of the parent's: dsh subagents over MCP can outlive the CLI's default tool timeout. */
-const CHILD_ENV = { MCP_TOOL_TIMEOUT: "3600000" };
+/** What every Claude child gets on top of dsh's environment: a long MCP tool timeout for relayed
+ *  dsh tools, and file checkpointing, which stream-json runs leave off unless asked, so that the
+ *  `rewind_files` control request has something to rewind to. */
+export const CHILD_ENV = {
+  MCP_TOOL_TIMEOUT: "3600000",
+  CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: "1",
+};
 
 export interface SubprocessHandle {
   stdin: import("node:stream").Writable;

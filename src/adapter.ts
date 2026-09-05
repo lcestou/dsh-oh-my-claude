@@ -85,7 +85,7 @@ import {
   takeInterrupted,
   trace,
 } from "./state.js";
-import { errorText, toolResultText } from "./process.js";
+import { CHILD_ENV, errorText, toolResultText } from "./process.js";
 import type { RewindResult } from "./process.js";
 import { forkTranscriptText } from "./transcript.js";
 export { markBusy, takeInterrupted } from "./state.js";
@@ -2057,7 +2057,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   keeperEnv() {
     const env: Record<string, string> = {};
     for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v;
-    env.MCP_TOOL_TIMEOUT = "3600000";
+    Object.assign(env, CHILD_ENV);
     if (this.config.configDir) env.CLAUDE_CONFIG_DIR = this.claudeHome;
     return env;
   }
