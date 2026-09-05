@@ -176,6 +176,7 @@ await writeFile(
     type: "user",
     uuid: "u",
     timestamp: T,
+    cwd: "/proj/c",
     message: { role: "user", content: "hello there" },
   }),
 );
@@ -185,6 +186,8 @@ assert.deepEqual(listed.map((s) => s.id).sort(), [idA, idC]);
 assert.equal(listed.find((s) => s.id === idA).title, "Fix the widget");
 assert.equal(listed.find((s) => s.id === idA).turns, 2, "counts prompts, not tool results");
 assert.equal(listed.find((s) => s.id === idC).title, "hello there");
+assert.equal(listed.find((s) => s.id === idC).cwd, "/proj/c", "cwd read off the records");
+assert.equal(listed.find((s) => s.id === idA).cwd, undefined);
 assert.deepEqual(
   (await listTranscripts(dir, new Set([idA]))).map((s) => s.id),
   [idC],
@@ -230,6 +233,7 @@ assert.equal(big.turns, 1);
   assert.deepEqual(map.get("d2"), { id: "d2", archived: true });
   assert.equal(map.get("c-d2"), map.get("d2"));
   assert.equal(map.has("c-d3"), false);
+  assert.equal(dshSessionsFor(headers, null, (id) => `c-${id}`).has("c-d3"), true, "null = all");
 }
 
 // settings.json editor accepts one JSON object and nothing else.

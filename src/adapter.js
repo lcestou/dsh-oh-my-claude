@@ -1779,6 +1779,7 @@ export function apply(ctx, config) {
   registerSessionRoutes(ctx, {
     log: (level, msg) => adapter.log(level, msg),
     projectDir: (cwd) => join(CLAUDE_HOME, "projects", projectDirName(cwd)),
+    projectsDir: join(CLAUDE_HOME, "projects"),
     startedIds: loadStarted,
     claudeIdOf: claudeSessionId,
     settingsPath: join(CLAUDE_HOME, "settings.json"),

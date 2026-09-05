@@ -1,6 +1,6 @@
 {
   "name": "dsh-llm-claude",
-  "version": "0.15.0",
+  "version": "0.16.0",
   "type": "module",
   "description": "Claude Code CLI as an LLM provider for dsh (DeepSeek Harness): live model list, session resume, images, tool activity",
   "main": "src/adapter.js",

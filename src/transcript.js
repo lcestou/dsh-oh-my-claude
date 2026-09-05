@@ -106,10 +106,12 @@ export async function listTranscripts(dir, exclude = new Set()) {
     let summary;
     let createdAt = info.mtimeMs;
     let turns = 0;
+    let cwd;
     const head = await peek(path);
     for (const line of head.lines) {
       const rec = parseLine(line);
       if (!rec) continue;
+      if (cwd === undefined && typeof rec.cwd === "string") cwd = rec.cwd;
       if (rec.type === "summary" && typeof rec.summary === "string") summary = rec.summary;
       if (rec.type !== "user" || rec.isSidechain || rec.isMeta) continue;
       const text = promptText(rec.message?.content);
@@ -128,6 +130,7 @@ export async function listTranscripts(dir, exclude = new Set()) {
       bytes: info.size,
       turns,
       turnsPartial: head.partial,
+      ...(cwd ? { cwd } : {}),
     });
   }
   return out.sort((a, b) => b.modifiedAt - a.modifiedAt);

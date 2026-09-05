@@ -3,7 +3,7 @@
 // Served under /dsh-llm-claude/*, guarded by dsh's own request policy (trusted host + login cookie).
 import { execFile } from "node:child_process";
 import { hostname } from "node:os";
-import { readFile, writeFile, rename, copyFile, stat } from "node:fs/promises";
+import { readdir, readFile, writeFile, rename, copyFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { listTranscripts, readTranscript, toSessionEvents } from "./transcript.js";
 
@@ -122,10 +122,11 @@ async function readBoxes(path) {
  * Log into a box like a browser would (dsh's `/?token=` sets the auth cookie; an NPM-style proxy
  * redirects to that URL by itself) and read its plugin status. Never throws: the panel shows why.
  */
-export async function probeBox({ url, token }, fetchImpl = fetch) {
-  const signal = AbortSignal.timeout(6000);
+export async function probeBox(box, fetchImpl = fetch, path = "status") {
+  const { url, token } = box;
+  const signal = AbortSignal.timeout(path === "status" ? 6000 : 12000);
   const status = (cookie) =>
-    fetchImpl(`${url}/dsh-llm-claude/status`, {
+    fetchImpl(`${url}/dsh-llm-claude/${path}`, {
       headers: cookie ? { cookie } : {},
       redirect: "manual",
       signal,
@@ -159,7 +160,8 @@ export async function probeBox({ url, token }, fetchImpl = fetch) {
     }
     if (r.status === 401 || r.status === 403)
       return { ok: false, error: "login required: add this box's dsh token" };
-    if (r.status === 404) return { ok: false, error: "dsh-llm-claude not installed on this box" };
+    if (r.status === 404)
+      return { ok: false, error: "dsh-llm-claude missing or too old on this box" };
     if (!r.ok) return { ok: false, error: `HTTP ${r.status}` };
     return { ok: true, status: await r.json() };
   } catch (e) {
@@ -207,6 +209,20 @@ async function runtimeStatus(configDir, command = "claude") {
   };
 }
 
+/** Every transcript under the Claude projects dir, each with the cwd its records name. */
+async function listAllTranscripts(projectsDir, hidden) {
+  let dirs = [];
+  try {
+    dirs = (await readdir(projectsDir, { withFileTypes: true })).filter((d) => d.isDirectory());
+  } catch {
+    return [];
+  }
+  const lists = await Promise.all(
+    dirs.map((d) => listTranscripts(join(projectsDir, d.name), hidden).catch(() => [])),
+  );
+  return lists.flat();
+}
+
 /** Read Claude Code's settings file; a missing file reads as an empty object. */
 async function readSettings(path) {
   try {
@@ -239,7 +255,7 @@ async function writeSettings(path, text) {
 export function dshSessionsFor(headers, cwd, claudeIdOf, archived = new Set()) {
   const map = new Map();
   for (const h of headers) {
-    if (h.cwd !== cwd) continue;
+    if (cwd !== null && h.cwd !== cwd) continue;
     const id = String(h.id);
     const entry = { id, archived: archived.has(id) };
     map.set(id, entry);
@@ -310,7 +326,17 @@ async function openTranscriptOnce(ctx, projectDir, cwd, id, claudeIdOf, registry
 /** `projectDir(cwd)` → Claude Code project dir; `startedIds()` → ids the adapter started itself. */
 export function registerSessionRoutes(
   ctx,
-  { log, projectDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, command },
+  {
+    log,
+    projectDir,
+    projectsDir,
+    startedIds,
+    claudeIdOf,
+    settingsPath,
+    configDir,
+    boxesPath,
+    command,
+  },
 ) {
   // Optional: stock dsh has it; without it archived sessions list but cannot be restored.
   let registry;
@@ -330,8 +356,23 @@ export function registerSessionRoutes(
             try {
               if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/sessions`) {
                 const cwd = url.searchParams.get("cwd") ?? "";
-                if (!validCwd(cwd))
+                const all = url.searchParams.get("all") === "1";
+                if (!all && !validCwd(cwd))
                   return json(res, 400, { error: "cwd must be an absolute path" });
+                if (all) {
+                  const owned = dshSessionsFor(
+                    await ctx.sessionPersistence.list(),
+                    null,
+                    claudeIdOf,
+                    new Set(registry?.archivedSessionIds ?? []),
+                  );
+                  const hidden = new Set([...(await startedIds())].filter((id) => !owned.has(id)));
+                  const sessions = (await listAllTranscripts(projectsDir, hidden)).map((s) => {
+                    const d = owned.get(s.id);
+                    return d ? { ...s, dsh: d } : s;
+                  });
+                  return json(res, 200, { host: hostname(), sessions });
+                }
                 // Transcripts of dsh sessions (started here or opened from here) are listed with
                 // their dsh id so the panel opens the existing session. Ones the adapter started
                 // for a dsh session that no longer exists are hidden.
@@ -380,6 +421,26 @@ export function registerSessionRoutes(
                   await writeFile(boxesPath, `${JSON.stringify(v.boxes, null, 2)}\n`, "utf8");
                   return json(res, 200, { boxes: v.boxes });
                 }
+              }
+              if (
+                boxesPath &&
+                req.method === "GET" &&
+                url.pathname === `${ROUTE_PREFIX}/boxes/sessions`
+              ) {
+                const boxes = await readBoxes(boxesPath);
+                const probed = await Promise.all(
+                  boxes.map((b) => probeBox(b, fetch, "sessions?all=1")),
+                );
+                return json(res, 200, {
+                  boxes: boxes.map((b, i) => ({
+                    name: b.name,
+                    url: b.url,
+                    ok: probed[i].ok,
+                    ...(probed[i].ok
+                      ? { host: probed[i].status.host, sessions: probed[i].status.sessions ?? [] }
+                      : { error: probed[i].error }),
+                  })),
+                });
               }
               if (
                 boxesPath &&
