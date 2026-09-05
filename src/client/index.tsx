@@ -1164,13 +1164,16 @@ function watchContextMeter() {
   };
   // The hover tooltip can sit between the button and the dialog at insertion time, so the
   // dialog is matched through its parent rather than as the button's next sibling.
-  // The hover bubble (`role=tooltip`, a sibling of the ring button) gets one compact line.
+  // The hover bubble (`role=tooltip`, a sibling of the ring button) gets one compact line on top.
   const bubble = (tip: HTMLElement) => {
     if (tip.hasAttribute(MARK)) return;
     tip.setAttribute(MARK, "1");
     const line = document.createElement("div");
     line.textContent = "Claude usage…";
-    tip.append(line);
+    // Above dsh's own sentence, like the panel rows, with a hairline between.
+    line.style.cssText =
+      "border-bottom:1px solid rgba(255,255,255,.25);margin-bottom:4px;padding-bottom:4px";
+    tip.prepend(line);
     loadUsage().then(
       (reply) => {
         const who = reply.host ? ` (${reply.host})` : "";
