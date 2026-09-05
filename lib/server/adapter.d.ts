@@ -437,12 +437,14 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     prepare(options: GenerateOptions, { forceFresh }?: {
         forceFresh?: boolean;
     }): Promise<TurnPrep>;
+    /** Two boots closer than this are a crash loop, not a restart. */
+    static readonly BOOT_BACKOFF_MS = 60000;
     /**
      * After a dsh restart, sessions that had a turn running get a prompt to continue, so the user
      * does not have to come back and poke each one. Sessions with a live (adopted) process are a
      * hot reload, not a restart, and are left alone.
      */
-    resumeInterrupted(path?: string): Promise<string[]>;
+    resumeInterrupted(path?: string): Promise<string[] | undefined>;
     /** Node's spawn, or dsh's subprocess seam when configured and mounted. */
     spawner(): import("./process.js").Spawner;
     stream(options: GenerateOptions): AsyncGenerator<StreamChunk, void, any>;

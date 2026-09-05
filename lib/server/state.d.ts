@@ -30,3 +30,21 @@ export declare function loadStarted(stateFile?: string): Promise<Set<string>>;
 export declare function rememberStarted(id: string, keep?: boolean, stateFile?: string): Promise<void>;
 /** Headers for the Anthropic Models API: an API key from the env, else Claude Code's stored OAuth token. */
 export declare function authHeaders(home?: string): Promise<Record<string, string> | null>;
+/**
+ * Record this boot's time in `file` and return how long ago the previous boot was, or undefined
+ * when there was none (or the file is unreadable). Best effort, never throws.
+ */
+export declare function noteBoot(file: string, now?: number): Promise<number | undefined>;
+/** The shape of a durable session event this module inspects; anything else is ignored. */
+interface LooseEvent {
+    type: string;
+    data?: unknown;
+}
+/**
+ * True when the session log already holds a next-turn inbox message from `plugin` that no turn
+ * has consumed yet (an `agent/inbox/spliced` after the last `turn/start`). dsh restores the inbox
+ * from the log on resume, so nudging again would queue a duplicate notice (14 of them on
+ * 2026-09-05 after a crash loop).
+ */
+export declare function hasPendingNotice(events: Iterable<LooseEvent>, plugin: string): boolean;
+export {};

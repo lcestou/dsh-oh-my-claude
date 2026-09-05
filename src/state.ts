@@ -146,3 +146,61 @@ export async function authHeaders(home = CLAUDE_HOME): Promise<Record<string, st
   }
   return null;
 }
+
+/**
+ * Record this boot's time in `file` and return how long ago the previous boot was, or undefined
+ * when there was none (or the file is unreadable). Best effort, never throws.
+ */
+export async function noteBoot(file: string, now = Date.now()): Promise<number | undefined> {
+  let previous: number | undefined;
+  try {
+    const parsed: unknown = JSON.parse(await readFile(file, "utf8"));
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      "at" in parsed &&
+      typeof parsed.at === "number"
+    )
+      previous = parsed.at;
+  } catch {}
+  try {
+    await mkdir(dirname(file), { recursive: true });
+    await writeFile(file, JSON.stringify({ at: now }));
+  } catch {}
+  return previous === undefined ? undefined : now - previous;
+}
+
+/** The shape of a durable session event this module inspects; anything else is ignored. */
+interface LooseEvent {
+  type: string;
+  data?: unknown;
+}
+
+/**
+ * True when the session log already holds a next-turn inbox message from `plugin` that no turn
+ * has consumed yet (an `agent/inbox/spliced` after the last `turn/start`). dsh restores the inbox
+ * from the log on resume, so nudging again would queue a duplicate notice (14 of them on
+ * 2026-09-05 after a crash loop).
+ */
+export function hasPendingNotice(events: Iterable<LooseEvent>, plugin: string): boolean {
+  let pending = false;
+  for (const e of events) {
+    if (e.type === "turn/start") {
+      pending = false;
+      continue;
+    }
+    if (e.type !== "agent/inbox/spliced") continue;
+    const d = e.data;
+    if (typeof d !== "object" || d === null || !("inserted" in d) || !Array.isArray(d.inserted))
+      continue;
+    const target = "target" in d ? d.target : undefined;
+    if (target !== "next-turn") continue;
+    for (const m of d.inserted) {
+      if (typeof m !== "object" || m === null || !("source" in m)) continue;
+      const src = m.source;
+      if (typeof src === "object" && src !== null && "plugin" in src && src.plugin === plugin)
+        pending = true;
+    }
+  }
+  return pending;
+}

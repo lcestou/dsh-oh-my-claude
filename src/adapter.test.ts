@@ -38,7 +38,7 @@ import {
   registryKey,
 } from "./adapter.js";
 import { ClaudeProcess, LineQueue, TIMEOUT, seamSpawner } from "./process.js";
-import { resolveClaudeHome, CLAUDE_HOME, stateDir } from "./state.js";
+import { CLAUDE_HOME, hasPendingNotice, noteBoot, resolveClaudeHome, stateDir } from "./state.js";
 import type { ClaudeEvent, ClaudeProcessSpec, SubprocessHandle } from "./process.js";
 import type { LooseMessage } from "./adapter.js";
 import type { FinishReason, LlmFailure, Message, StreamChunk } from "@deepseek-ai/dsh-llm";
@@ -1645,3 +1645,40 @@ if (savedEnv !== undefined) process.env.CLAUDE_CONFIG_DIR = savedEnv;
   (wrapped2 as any)("claude", [], "/w");
   assert.equal(capturedEnv, undefined);
 }
+
+// noteBoot: first boot has no previous, a second boot reports the gap, and the file survives.
+{
+  const dir = await mkdtemp(joinPath(tmpdir(), "omc-boot-"));
+  const file = joinPath(dir, "boot.json");
+  assert.equal(await noteBoot(file, 1_000), undefined, "no previous boot");
+  assert.equal(await noteBoot(file, 31_000), 30_000, "gap since the previous boot");
+  assert.equal(
+    await noteBoot(joinPath(dir, "nope", "boot.json"), 5),
+    undefined,
+    "missing dir tolerated",
+  );
+}
+console.log("boot ok");
+
+// hasPendingNotice: a next-turn plugin notice after the last turn/start is pending; one before
+// a later turn/start, a next-step splice, or another plugin's notice is not.
+{
+  const notice = (plugin: string, target = "next-turn") => ({
+    type: "agent/inbox/spliced",
+    data: { target, start: 0, removedCount: 0, inserted: [{ source: { kind: "plugin", plugin } }] },
+  });
+  const turn = { type: "turn/start", data: { turn: 1 } };
+  assert.equal(hasPendingNotice([notice("dsh-oh-my-claude")], "dsh-oh-my-claude"), true);
+  assert.equal(hasPendingNotice([notice("dsh-oh-my-claude"), turn], "dsh-oh-my-claude"), false);
+  assert.equal(hasPendingNotice([turn, notice("dsh-oh-my-claude")], "dsh-oh-my-claude"), true);
+  assert.equal(
+    hasPendingNotice([notice("dsh-oh-my-claude", "next-step")], "dsh-oh-my-claude"),
+    false,
+  );
+  assert.equal(hasPendingNotice([notice("other")], "dsh-oh-my-claude"), false);
+  assert.equal(
+    hasPendingNotice([{ type: "agent/inbox/spliced", data: null }], "dsh-oh-my-claude"),
+    false,
+  );
+}
+console.log("pending-notice ok");
