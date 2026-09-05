@@ -20,6 +20,8 @@ export interface SubprocessHandle {
 export type ClaudeEvent = {
     type: "system";
     subtype?: string;
+    /** subtype "init": the CLI's slash-command catalog (skills, custom commands, built-ins). */
+    slash_commands?: JsonValue;
     compact_metadata?: Record<string, unknown>;
     status?: string | null;
     compact_result?: string;

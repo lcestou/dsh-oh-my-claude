@@ -57,6 +57,7 @@ export type Config = {
     idleTimeoutMs: number;
     toolTextLimit: number;
     dshTools: boolean;
+    commandBridge: boolean;
     redactSecrets: boolean;
     persistTodos: boolean;
     debug: boolean;
@@ -70,6 +71,8 @@ export type Config = {
 export declare const name = "dsh-oh-my-claude";
 /** Services injected into the plugin by the dsh runtime. */
 export declare const inject: string[];
+/** Optional services: mounted when present, the plugin works without them. */
+export declare const optionalInject: string[];
 /** Configuration schema for Claude Code plugin settings. */
 export declare const Config: z<Schemastery.ObjectS<{
     command: z<string, string>;
@@ -86,6 +89,7 @@ export declare const Config: z<Schemastery.ObjectS<{
     idleTimeoutMs: z<number, number>;
     toolTextLimit: z<number, number>;
     dshTools: z<boolean, boolean>;
+    commandBridge: z<boolean, boolean>;
     redactSecrets: z<boolean, boolean>;
     persistTodos: z<boolean, boolean>;
     debug: z<boolean, boolean>;
@@ -110,6 +114,7 @@ export declare const Config: z<Schemastery.ObjectS<{
     idleTimeoutMs: z<number, number>;
     toolTextLimit: z<number, number>;
     dshTools: z<boolean, boolean>;
+    commandBridge: z<boolean, boolean>;
     redactSecrets: z<boolean, boolean>;
     persistTodos: z<boolean, boolean>;
     debug: z<boolean, boolean>;
@@ -275,6 +280,8 @@ export declare function buildInput(prompt: string, images: Array<{
     mediaType: string;
     data: string;
 }>): string;
+/** Names from the CLI's init frame that dsh's command grammar accepts (lowercase, `[a-z0-9_-]`), deduped. */
+export declare function commandNames(value: JsonValue | undefined): string[];
 export interface TurnRecord {
     at: number;
     costUsd: number;
@@ -352,9 +359,11 @@ export declare class Translator {
     onResult?: (summary: TurnRecord) => void;
     /** Injected: mask secret values in tool results before they are shown or appended. */
     redact?: (s: string) => string;
+    /** Injected: the CLI's slash-command catalog from its init frame. */
+    onInit?: (commands: string[]) => void;
     /** callId → original input JSON string, kept so Edit can build meta.diffs from it. */
     readonly callInputs: Map<string, string>;
-    constructor({ toolActivity, toolTextLimit, relay, dshIds, relayed, log, onToolCall, onToolResult, onResult, redact, }?: {
+    constructor({ toolActivity, toolTextLimit, relay, dshIds, relayed, log, onToolCall, onToolResult, onResult, redact, onInit, }?: {
         toolActivity?: boolean;
         toolTextLimit?: number;
         relay?: boolean;
@@ -365,6 +374,7 @@ export declare class Translator {
         onToolResult?: (callId: string, text: string, isError: boolean, meta?: object) => void;
         onResult?: (summary: TurnRecord) => void;
         redact?: (s: string) => string;
+        onInit?: (commands: string[]) => void;
     });
     deltaType(block: TranslatorBlock): "text-delta" | "reasoning-delta";
     /** Warn once when a CLI event/block type is neither handled nor knowingly ignored, so a Claude
@@ -445,6 +455,14 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     prepare(options: GenerateOptions, { forceFresh }?: {
         forceFresh?: boolean;
     }): Promise<TurnPrep>;
+    /** Claude slash commands already registered as dsh commands, name → disposer. */
+    readonly bridged: Map<string, () => void>;
+    /**
+     * Register Claude Code's slash commands (from the CLI's init frame) as dsh `/commands`. The
+     * handler hands the line to Claude as the next prompt, where the CLI expands the skill or
+     * custom command the way the terminal does; dsh keeps its own command of the same name.
+     */
+    bridgeCommands(names: string[], agent: Agent | undefined): void;
     /** Two boots closer than this are a crash loop, not a restart. */
     static readonly BOOT_BACKOFF_MS = 60000;
     /**

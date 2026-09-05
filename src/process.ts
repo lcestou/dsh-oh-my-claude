@@ -40,6 +40,8 @@ export type ClaudeEvent =
   | {
       type: "system";
       subtype?: string;
+      /** subtype "init": the CLI's slash-command catalog (skills, custom commands, built-ins). */
+      slash_commands?: JsonValue;
       compact_metadata?: Record<string, unknown>;
       // subtype "status": `status:"compacting"` opens the silent summarize stretch; a later frame
       // with `status:null` carries `compact_result` ("success"|"failed") and, on failure, `compact_error`.

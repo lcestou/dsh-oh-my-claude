@@ -335,6 +335,21 @@ export interface PluginContext {
   agents: AgentRegistry;
   approval: ApprovalService;
   userQuestions: UserQuestionService;
+  /** dsh-commands (`/name` in the composer); optional so a host without it still mounts the plugin. */
+  commands?: {
+    register(definition: {
+      name: string;
+      description: string;
+      input?: { hint?: string };
+      recordInput?: boolean;
+      handler: (invocation: {
+        agent: Agent;
+        rawInput: string;
+        signal: AbortSignal;
+      }) => { kind: "success"; text?: string } | { kind: "error"; text: string };
+    }): () => void;
+    find(agent: Agent, name: string): object | undefined;
+  };
   workspaceRegistry: WorkspaceRegistry;
   subprocess?: SubprocessRuntime;
   attachments: {

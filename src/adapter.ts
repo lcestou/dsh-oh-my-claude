@@ -143,6 +143,7 @@ export type Config = {
   idleTimeoutMs: number;
   toolTextLimit: number;
   dshTools: boolean;
+  commandBridge: boolean;
   redactSecrets: boolean;
   persistTodos: boolean;
   debug: boolean;
@@ -157,6 +158,8 @@ export type Config = {
 export const name = "dsh-oh-my-claude";
 /** Services injected into the plugin by the dsh runtime. */
 export const inject = ["llm", "sessions", "attachments", "agents", "approval", "userQuestions"];
+/** Optional services: mounted when present, the plugin works without them. */
+export const optionalInject = ["commands"];
 
 /** Configuration schema for Claude Code plugin settings. */
 export const Config = z.object({
@@ -212,6 +215,12 @@ export const Config = z.object({
     .boolean()
     .default(true)
     .description("Expose dsh tools (subagents, jobs, skills...) to Claude Code over MCP"),
+  commandBridge: z
+    .boolean()
+    .default(true)
+    .description(
+      "Register Claude Code's slash commands (skills, custom commands) as dsh /commands that send the line to Claude",
+    ),
   redactSecrets: z
     .boolean()
     .default(true)
@@ -719,6 +728,13 @@ export function buildInput(
 
 const clip = (s: string, n = TOOL_TEXT_LIMIT): string => (s.length > n ? `${s.slice(0, n)}…` : s);
 const DENIED_RE = /requires? approval|permission (was )?denied|not allowed/i;
+/** Names from the CLI's init frame that dsh's command grammar accepts (lowercase, `[a-z0-9_-]`), deduped. */
+export function commandNames(value: JsonValue | undefined): string[] {
+  if (!Array.isArray(value)) return [];
+  const out = new Set<string>();
+  for (const v of value) if (String(v) === v && /^[a-z0-9][a-z0-9_-]*$/.test(v)) out.add(v);
+  return [...out];
+}
 const PLAN_APPROVE = "Approve";
 const PLAN_KEEP = "Keep planning";
 // Claude Code tool names → dsh tool name that the client-ui-tool presenter recognises.
@@ -974,6 +990,8 @@ export class Translator {
   onResult?: (summary: TurnRecord) => void;
   /** Injected: mask secret values in tool results before they are shown or appended. */
   redact?: (s: string) => string;
+  /** Injected: the CLI's slash-command catalog from its init frame. */
+  onInit?: (commands: string[]) => void;
   /** callId → original input JSON string, kept so Edit can build meta.diffs from it. */
   readonly callInputs = new Map<string, string>();
 
@@ -988,6 +1006,7 @@ export class Translator {
     onToolResult,
     onResult,
     redact,
+    onInit,
   }: {
     toolActivity?: boolean;
     toolTextLimit?: number;
@@ -999,6 +1018,7 @@ export class Translator {
     onToolResult?: (callId: string, text: string, isError: boolean, meta?: object) => void;
     onResult?: (summary: TurnRecord) => void;
     redact?: (s: string) => string;
+    onInit?: (commands: string[]) => void;
   } = {}) {
     this.log = log ?? (() => {});
     this.unknownSeen = new Set(); // (where:type) already warned, so schema drift warns once, not per event
@@ -1019,6 +1039,7 @@ export class Translator {
     this.onToolResult = onToolResult;
     this.onResult = onResult;
     this.redact = redact;
+    this.onInit = onInit;
   }
 
   deltaType(block: TranslatorBlock): "text-delta" | "reasoning-delta" {
@@ -1087,6 +1108,11 @@ export class Translator {
   translate(event: ClaudeEvent): StreamChunk[] {
     switch (event?.type) {
       case "system": {
+        if (event.subtype === "init") {
+          const names = commandNames(event.slash_commands);
+          if (names.length > 0) this.onInit?.(names);
+          return [];
+        }
         // Compaction opens with a `status:"compacting"` frame, then a long silent stretch while the
         // CLI summarizes, then `compact_boundary` when done. Announce the start at once so the silence
         // is explained; the boundary line reports the result. A failed run gets neither boundary nor a
@@ -1645,6 +1671,54 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     };
   }
 
+  /** Claude slash commands already registered as dsh commands, name → disposer. */
+  readonly bridged = new Map<string, () => void>();
+
+  /**
+   * Register Claude Code's slash commands (from the CLI's init frame) as dsh `/commands`. The
+   * handler hands the line to Claude as the next prompt, where the CLI expands the skill or
+   * custom command the way the terminal does; dsh keeps its own command of the same name.
+   */
+  bridgeCommands(names: string[], agent: Agent | undefined) {
+    const commands = this.ctx?.commands;
+    if (!this.config.commandBridge || this.providerId !== "claude-code" || !commands) return;
+    const failed: string[] = [];
+    for (const cmd of names) {
+      if (this.bridged.has(cmd)) continue;
+      if (agent && commands.find(agent, cmd) !== undefined) continue; // dsh's own wins
+      try {
+        const dispose = commands.register({
+          name: cmd,
+          description: `Claude Code /${cmd}`,
+          input: { hint: "<arguments>" },
+          handler: ({ agent: target, rawInput }) => {
+            const line = `/${cmd}${rawInput}`;
+            target.followup(
+              createUserMessage({
+                content: [{ type: "text", text: line }],
+                source: {
+                  kind: "plugin",
+                  plugin: "dsh-oh-my-claude",
+                  form: "notice",
+                  summary: boundContextSummary(line),
+                },
+              }),
+            );
+            return { kind: "success", text: `${line} sent to Claude Code` };
+          },
+        });
+        this.bridged.set(cmd, dispose);
+      } catch (error) {
+        failed.push(`/${cmd}: ${errorText(error)}`);
+      }
+    }
+    if (failed.length > 0)
+      this.log(
+        "warn",
+        `command bridge: ${failed.length} of ${names.length} not registered (first: ${failed[0]})`,
+      );
+  }
+
   /** Two boots closer than this are a crash loop, not a restart. */
   static readonly BOOT_BACKOFF_MS = 60_000;
 
@@ -1940,6 +2014,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
             }
           : undefined,
       redact: this.redact,
+      onInit: (names) => this.bridgeCommands(names, this.ctx?.agents?.get?.(options.sessionId)),
       onResult: (summary: TurnRecord) => {
         // ponytail: ring buffer capped at 50 entries per session; upgrade to a durable store if cost history beyond one page is needed.
         const buf = this.turnBuffer.get(options.sessionId) ?? [];

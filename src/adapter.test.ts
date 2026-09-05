@@ -4,6 +4,7 @@ import {
   Config,
   KNOWN_MODELS,
   Translator,
+  commandNames,
   ClaudeCodeAdapter,
   accessModeOf,
   buildArgs,
@@ -1778,3 +1779,22 @@ console.log("redaction ok");
   assert.ok(String(no.message).includes("add tests"), "feedback goes back to Claude");
 }
 console.log("plan-review ok");
+
+// commandNames keeps dsh-grammar names from the init frame; the Translator hands them to onInit.
+{
+  assert.deepEqual(commandNames(["afmdamc", "Bad Name", "ok-1", 5, "ok-1", "_x"]), [
+    "afmdamc",
+    "ok-1",
+  ]);
+  assert.deepEqual(commandNames("nope"), []);
+  const seen: string[][] = [];
+  const tr = new Translator({ onInit: (names) => seen.push(names) }) as any;
+  const out = tr.translate({
+    type: "system",
+    subtype: "init",
+    slash_commands: ["compact", "verify"],
+  });
+  assert.deepEqual(out, [], "init frame emits no chunk");
+  assert.deepEqual(seen, [["compact", "verify"]]);
+}
+console.log("command-bridge ok");
