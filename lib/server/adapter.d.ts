@@ -320,8 +320,8 @@ export declare function afterLastAssistant(messages: LooseMessage[] | undefined)
 export declare const WAKE_TEXT = "Claude Code finished a background task and replied.";
 /** Sent as a real prompt after dsh restarts mid-turn: the process is gone, Claude must carry on. */
 /** Sent when a restarted dsh reattaches to a Claude process that kept running meanwhile. */
-export declare const RECONNECT_TEXT = "dsh restarted and reattached to your still-running Claude Code process; what you did meanwhile is shown above. Continue where you are.";
-export declare const RESTART_TEXT = "dsh restarted while this turn was in progress and the Claude Code process was replaced. Pick up where the transcript stops and finish the task. If this session has an active goal, dsh disarmed it on resume: call get_goal, then update_goal with action resume, so the goal rounds keep driving the work without anyone typing.";
+export declare const RECONNECT_TEXT = "[Oh My Claude] dsh restarted and reattached to your still-running Claude Code process; what you did meanwhile is shown above. Continue where you are.";
+export declare const RESTART_TEXT = "[Oh My Claude] dsh restarted while this turn was in progress and the Claude Code process was replaced. Pick up where the transcript stops and finish the task. If this session has an active goal, dsh disarmed it on resume: call get_goal, then update_goal with action resume, so the goal rounds keep driving the work without anyone typing.";
 /** A turn opened by our own wake notice, with no user prompt to send: only drain what Claude
  *  already wrote. A user prompt in the same batch takes precedence and is sent normally. */
 export declare function wakeOnlyTurn(messages: LooseMessage[] | undefined): boolean;

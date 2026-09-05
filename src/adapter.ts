@@ -895,9 +895,9 @@ export const WAKE_TEXT = "Claude Code finished a background task and replied.";
 /** Sent as a real prompt after dsh restarts mid-turn: the process is gone, Claude must carry on. */
 /** Sent when a restarted dsh reattaches to a Claude process that kept running meanwhile. */
 export const RECONNECT_TEXT =
-  "dsh restarted and reattached to your still-running Claude Code process; what you did meanwhile is shown above. Continue where you are.";
+  "[Oh My Claude] dsh restarted and reattached to your still-running Claude Code process; what you did meanwhile is shown above. Continue where you are.";
 export const RESTART_TEXT =
-  "dsh restarted while this turn was in progress and the Claude Code process was replaced. Pick up where the transcript stops and finish the task. If this session has an active goal, dsh disarmed it on resume: call get_goal, then update_goal with action resume, so the goal rounds keep driving the work without anyone typing.";
+  "[Oh My Claude] dsh restarted while this turn was in progress and the Claude Code process was replaced. Pick up where the transcript stops and finish the task. If this session has an active goal, dsh disarmed it on resume: call get_goal, then update_goal with action resume, so the goal rounds keep driving the work without anyone typing.";
 /** How long after boot to nudge interrupted sessions; dsh needs its sessions and agents loaded. */
 const RESUME_DELAY_MS = 10_000;
 const isWake = (m: LooseMessage) =>
