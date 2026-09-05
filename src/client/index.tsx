@@ -312,7 +312,7 @@ function Runtime({ onStatus }: RuntimeProps) {
       </p>
     );
   const who = st.loggedIn
-    ? `logged in${st.email ? ` as ${st.email}` : ""}${st.authMethod ? ` (${st.authMethod})` : ""}`
+    ? `logged in${st.email ? ` as ${maskEmail(st.email)}` : ""}${st.authMethod ? ` (${st.authMethod})` : ""}`
     : "not logged in";
   return (
     <div
@@ -1068,9 +1068,15 @@ interface UsageWindow {
 type UsageReply =
   | { ok: true; fetchedAt: number; windows: UsageWindow[]; host?: string; email?: string | null }
   | { ok: false; error: string; windows?: undefined; host?: string; email?: string | null };
-/** "me@example.com on someone" or whichever half is known; the usage is this box's login. */
+/** "m*****@gmail.com": first letter, stars, domain; the panel is shared on screen. */
+const maskEmail = (email: string): string => {
+  const at = email.indexOf("@");
+  if (at < 1) return email;
+  return `${email[0]}${"*".repeat(Math.max(3, at - 1))}${email.slice(at)}`;
+};
+/** "m*****@gmail.com on someone" or whichever half is known; the usage is this box's login. */
 const whose = (r: UsageReply): string =>
-  [r.email, r.host].filter((x): x is string => !!x).join(" on ");
+  [r.email ? maskEmail(r.email) : null, r.host].filter((x): x is string => !!x).join(" on ");
 
 /** "in 2 h 10 min" inside a day, else weekday and time. */
 const resetText = (at: number | null): string => {
