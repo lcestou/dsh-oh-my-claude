@@ -1678,5 +1678,6 @@ export function apply(ctx, config) {
     claudeIdOf: claudeSessionId,
     settingsPath: join(CLAUDE_HOME, "settings.json"),
     configDir: CLAUDE_HOME,
+    boxesPath: join(STATE_DIR, "boxes.json"),
   });
 }

@@ -407,9 +407,181 @@ function Runtime() {
   );
 }
 
+const input = { ...select, minWidth: 0, flex: 1 };
+
+/**
+ * Other dsh servers ("boxes"), each with its own Claude Code login. Same idea as another tool's
+ * environments: the browser hops to the box, nothing is proxied. Saved on this dsh, probed
+ * server-side so the row shows host, claude version, login and plugin version before you jump.
+ */
+function Boxes() {
+  const [boxes, setBoxes] = useState([]);
+  const [probe, setProbe] = useState({});
+  const [self, setSelf] = useState(null);
+  const [draft, setDraft] = useState({ name: "", url: "", token: "" });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const refresh = () => {
+    setBusy(true);
+    setError("");
+    fetch(`${ROUTE}/boxes/status`)
+      .then(readJson)
+      .then((body) => {
+        setSelf(body.self);
+        setProbe(Object.fromEntries(body.boxes.map((b) => [b.url, b])));
+      })
+      .catch((e) => setError(String(e.message ?? e)))
+      .finally(() => setBusy(false));
+  };
+  useEffect(() => {
+    fetch(`${ROUTE}/boxes`)
+      .then(readJson)
+      .then((body) => {
+        setBoxes(body.boxes ?? []);
+        if ((body.boxes ?? []).length > 0) refresh();
+      })
+      .catch((e) => setError(String(e.message ?? e)));
+  }, []);
+
+  const save = (next) => {
+    setBusy(true);
+    setError("");
+    return fetch(`${ROUTE}/boxes`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ boxes: next }),
+    })
+      .then(readJson)
+      .then((body) => {
+        setBoxes(body.boxes);
+        refresh();
+      })
+      .catch((e) => {
+        setError(String(e.message ?? e));
+        setBusy(false);
+      });
+  };
+  const add = (e) => {
+    e.preventDefault();
+    if (!draft.name.trim() || !draft.url.trim()) return;
+    save([...boxes, draft]).then(() => setDraft({ name: "", url: "", token: "" }));
+  };
+  const remove = (url) => save(boxes.filter((b) => b.url !== url));
+  const jump = (b) =>
+    window.location.assign(b.token ? `${b.url}/?token=${encodeURIComponent(b.token)}` : b.url);
+
+  return (
+    <section id="dsh-llm-claude-boxes" style={card}>
+      <div style={cardHead}>
+        <div>
+          <h3 style={h3}>Boxes</h3>
+          <div style={{ ...meta, marginTop: 2 }}>
+            Other machines running dsh with this plugin. Open jumps there; each box keeps its own
+            Claude Code login and sessions.
+          </div>
+        </div>
+        <button type="button" style={btn} disabled={busy || boxes.length === 0} onClick={refresh}>
+          {busy ? "Checking…" : "Refresh"}
+        </button>
+      </div>
+      {error && <p style={{ color: T.err, fontSize: 13, margin: "4px 0" }}>{error}</p>}
+      {boxes.map((b) => {
+        const st = probe[b.url];
+        const ok = st?.ok;
+        const skew = ok && self && st.status.plugin && st.status.plugin !== self.plugin;
+        return (
+          <div key={b.url} data-testid="dsh-llm-claude-box-row" style={row}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ color: T.text, fontWeight: 600 }}>{b.name}</div>
+              <div
+                style={{
+                  ...meta,
+                  marginTop: 3,
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: 6,
+                  alignItems: "center",
+                  whiteSpace: "normal",
+                }}
+              >
+                <span style={{ fontFamily: T.mono }}>{b.url}</span>
+                {!st && <span style={pill(T.faint)}>{busy ? "checking" : "unchecked"}</span>}
+                {st && !ok && <span style={pill(T.err)}>{st.error}</span>}
+                {ok && (
+                  <>
+                    <span style={pill(T.faint)}>{st.status.host}</span>
+                    <span style={pill(st.status.binary ? T.ok : T.err)}>
+                      {st.status.binary ? `claude ${st.status.version ?? ""}`.trim() : "no claude"}
+                    </span>
+                    <span style={pill(st.status.loggedIn ? T.ok : T.err)}>
+                      {st.status.loggedIn ? (st.status.email ?? "logged in") : "not logged in"}
+                    </span>
+                    <span style={pill(skew ? T.warn : T.faint)}>
+                      plugin {st.status.plugin ?? "?"}
+                      {skew ? ` ≠ ${self.plugin} here` : ""}
+                    </span>
+                  </>
+                )}
+              </div>
+            </div>
+            <button type="button" style={btn} disabled={busy} onClick={() => remove(b.url)}>
+              Remove
+            </button>
+            <button type="button" style={btnPrimary} onClick={() => jump(b)}>
+              Open
+            </button>
+          </div>
+        );
+      })}
+      <form
+        onSubmit={add}
+        style={{
+          ...row,
+          borderTop: boxes.length ? `1px solid ${T.border}` : "none",
+          paddingTop: boxes.length ? 12 : 4,
+          flexWrap: "wrap",
+        }}
+      >
+        <input
+          style={{ ...input, flex: "0 1 140px" }}
+          placeholder="Name"
+          value={draft.name}
+          onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+        />
+        <input
+          style={{ ...input, flex: "1 1 260px" }}
+          placeholder="https://dsh.other-box.lan"
+          value={draft.url}
+          onChange={(e) => setDraft({ ...draft, url: e.target.value })}
+        />
+        <input
+          style={{ ...input, flex: "1 1 200px" }}
+          type="password"
+          autoComplete="off"
+          placeholder="dsh token (optional)"
+          value={draft.token}
+          onChange={(e) => setDraft({ ...draft, token: e.target.value })}
+        />
+        <button
+          type="submit"
+          style={btn}
+          disabled={busy || !draft.name.trim() || !draft.url.trim()}
+        >
+          Add
+        </button>
+      </form>
+      <div style={{ ...meta, whiteSpace: "normal", marginTop: 4 }}>
+        Token: the box's dsh launch token (printed when dsh web starts, or already in its URL behind
+        a proxy). Needed only when this browser has never logged into that box.
+      </div>
+    </section>
+  );
+}
+
 /**
  * Registers the Claude Code panel in dsh settings: runtime line, session browser, settings.json
- * editor.
+ * editor, boxes.
  */
 export function apply(ctx) {
   const workspaceItems = () => ctx.workspaces.list.getSnapshot()?.items ?? [];
@@ -586,6 +758,7 @@ export function apply(ctx) {
         <Runtime />
         <Sessions />
         <SettingsEditor />
+        <Boxes />
       </div>
     );
   }

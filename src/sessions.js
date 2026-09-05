@@ -72,6 +72,93 @@ const run = (cmd, args) =>
     ),
   );
 
+const PLUGIN_VERSION = JSON.parse(
+  await readFile(new URL("../package.json", import.meta.url), "utf8"),
+).version;
+
+const MAX_BOXES = 20;
+/**
+ * The saved list of other dsh servers ("boxes"), each running this plugin with its own Claude
+ * Code login. The browser hops between them; nothing is proxied. `token` is that box's dsh launch
+ * token, kept so a browser without its cookie can still open it (same trick as the NPM proxy).
+ */
+export function validateBoxes(input) {
+  if (!Array.isArray(input)) return { error: "boxes must be an array" };
+  if (input.length > MAX_BOXES) return { error: `at most ${MAX_BOXES} boxes` };
+  const boxes = [];
+  const seen = new Set();
+  for (const b of input) {
+    const name = String(b?.name ?? "").trim();
+    const url = String(b?.url ?? "")
+      .trim()
+      .replace(/\/+$/, "");
+    const token = b?.token === undefined || b?.token === null ? "" : String(b.token).trim();
+    if (!name || name.length > 40) return { error: "each box needs a name (1-40 chars)" };
+    let parsed;
+    try {
+      parsed = new URL(url);
+    } catch {
+      return { error: `"${name}": url must be absolute http(s)` };
+    }
+    if (!/^https?:$/.test(parsed.protocol)) return { error: `"${name}": url must be http(s)` };
+    if (token.length > 200) return { error: `"${name}": token too long` };
+    if (seen.has(url)) return { error: `"${name}": duplicate url` };
+    seen.add(url);
+    boxes.push({ name, url, ...(token ? { token } : {}) });
+  }
+  return { boxes };
+}
+
+async function readBoxes(path) {
+  try {
+    const v = validateBoxes(JSON.parse(await readFile(path, "utf8")));
+    return v.boxes ?? [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Log into a box like a browser would (dsh's `/?token=` sets the auth cookie; an NPM-style proxy
+ * redirects to that URL by itself) and read its plugin status. Never throws: the panel shows why.
+ */
+export async function probeBox({ url, token }, fetchImpl = fetch) {
+  const signal = AbortSignal.timeout(6000);
+  const status = (cookie) =>
+    fetchImpl(`${url}/dsh-llm-claude/status`, {
+      headers: cookie ? { cookie } : {},
+      redirect: "manual",
+      signal,
+    });
+  const cookieOf = (r) => (r.headers.get("set-cookie") ?? "").split(";")[0];
+  try {
+    let cookie = "";
+    if (token) {
+      cookie = cookieOf(
+        await fetchImpl(`${url}/?token=${encodeURIComponent(token)}`, {
+          redirect: "manual",
+          signal,
+        }),
+      );
+    }
+    let r = await status(cookie);
+    const location = r.headers.get("location") ?? "";
+    if (r.status >= 300 && r.status < 400 && /[?&]token=/.test(location)) {
+      cookie = cookieOf(
+        await fetchImpl(new URL(location, url).href, { redirect: "manual", signal }),
+      );
+      r = await status(cookie);
+    }
+    if (r.status === 401 || r.status === 403)
+      return { ok: false, error: "login required: add this box's dsh token" };
+    if (r.status === 404) return { ok: false, error: "dsh-llm-claude not installed on this box" };
+    if (!r.ok) return { ok: false, error: `HTTP ${r.status}` };
+    return { ok: true, status: await r.json() };
+  } catch (e) {
+    return { ok: false, error: String(e?.cause?.message ?? e?.message ?? e).slice(0, 200) };
+  }
+}
+
 /** The login half of `claude auth status` output, tolerant of an older CLI printing prose. */
 export function authFromStatus(text) {
   try {
@@ -103,6 +190,7 @@ async function runtimeStatus(configDir) {
   ]);
   return {
     host: hostname(),
+    plugin: PLUGIN_VERSION,
     binary: which.out.trim().split(/\r?\n/)[0] || null,
     version: version.out.trim() || null,
     ...(version.error ? { error: version.error } : {}),
@@ -214,7 +302,7 @@ async function openTranscriptOnce(ctx, projectDir, cwd, id, claudeIdOf, registry
 /** `projectDir(cwd)` → Claude Code project dir; `startedIds()` → ids the adapter started itself. */
 export function registerSessionRoutes(
   ctx,
-  { log, projectDir, startedIds, claudeIdOf, settingsPath, configDir },
+  { log, projectDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath },
 ) {
   // Optional: stock dsh has it; without it archived sessions list but cannot be restored.
   let registry;
@@ -275,6 +363,28 @@ export function registerSessionRoutes(
               }
               if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/status`)
                 return json(res, 200, await runtimeStatus(configDir));
+              if (boxesPath && url.pathname === `${ROUTE_PREFIX}/boxes`) {
+                if (req.method === "GET")
+                  return json(res, 200, { boxes: await readBoxes(boxesPath) });
+                if (req.method === "PUT") {
+                  const v = validateBoxes((await readBody(req)).boxes);
+                  if (v.error) return json(res, 400, { error: v.error });
+                  await writeFile(boxesPath, `${JSON.stringify(v.boxes, null, 2)}\n`, "utf8");
+                  return json(res, 200, { boxes: v.boxes });
+                }
+              }
+              if (
+                boxesPath &&
+                req.method === "GET" &&
+                url.pathname === `${ROUTE_PREFIX}/boxes/status`
+              ) {
+                const boxes = await readBoxes(boxesPath);
+                const probed = await Promise.all(boxes.map((b) => probeBox(b)));
+                return json(res, 200, {
+                  self: { plugin: PLUGIN_VERSION, host: hostname() },
+                  boxes: boxes.map((b, i) => ({ name: b.name, url: b.url, ...probed[i] })),
+                });
+              }
               return json(res, 404, { error: "not found" });
             } catch (e) {
               log("warn", `session route failed: ${e?.message ?? e}`);

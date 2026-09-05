@@ -4,7 +4,13 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { foldTranscript, listTranscripts, toSessionEvents, truncateBytes } from "./transcript.js";
-import { authFromStatus, dshSessionsFor, parseSettingsText } from "./sessions.js";
+import {
+  authFromStatus,
+  dshSessionsFor,
+  parseSettingsText,
+  probeBox,
+  validateBoxes,
+} from "./sessions.js";
 
 const line = (o) => JSON.stringify(o);
 const T = "2026-09-03T08:00:00.000Z";
@@ -243,5 +249,54 @@ assert.deepEqual(
 assert.equal(authFromStatus('{"loggedIn":false}').loggedIn, false);
 assert.equal(authFromStatus("Not logged in").loggedIn, false);
 assert.equal(authFromStatus("Logged in as x").loggedIn, true);
+
+// boxes: names, absolute http(s) urls, optional token, no duplicates, trailing slash dropped.
+assert.deepEqual(validateBoxes([{ name: "nas", url: "https://dsh.example/", token: "t" }]), {
+  boxes: [{ name: "nas", url: "https://dsh.example", token: "t" }],
+});
+assert.ok(validateBoxes([{ name: "", url: "http://x" }]).error);
+assert.ok(validateBoxes([{ name: "a", url: "dsh.example" }]).error);
+assert.ok(validateBoxes([{ name: "a", url: "ftp://x" }]).error);
+assert.ok(
+  validateBoxes([
+    { name: "a", url: "http://x" },
+    { name: "b", url: "http://x/" },
+  ]).error,
+);
+assert.ok(validateBoxes("nope").error);
+
+// probeBox: token login sets the cookie, a proxy redirect to /?token= is followed once, 401 is
+// reported as a login problem, a dead host as its error text. Fake fetch, no network.
+{
+  const calls = [];
+  const res = (status, headers = {}, body = {}) => ({
+    status,
+    ok: status >= 200 && status < 300,
+    headers: { get: (k) => headers[k.toLowerCase()] ?? null },
+    json: async () => body,
+  });
+  const fakeFetch = async (u, init) => {
+    calls.push([u, init?.headers?.cookie ?? ""]);
+    if (u === "http://box/?token=T") return res(303, { "set-cookie": "dsh-auth-x=1; Path=/" });
+    if (u === "http://box/dsh-llm-claude/status")
+      return init?.headers?.cookie === "dsh-auth-x=1" ? res(200, {}, { host: "box" }) : res(401);
+    if (u === "http://proxy/dsh-llm-claude/status" && !init?.headers?.cookie)
+      return res(302, { location: "/?token=P" });
+    if (u === "http://proxy/?token=P") return res(303, { "set-cookie": "dsh-auth-p=1" });
+    if (u === "http://proxy/dsh-llm-claude/status") return res(200, {}, { host: "proxy" });
+    throw new Error("ECONNREFUSED");
+  };
+  assert.deepEqual(await probeBox({ url: "http://box", token: "T" }, fakeFetch), {
+    ok: true,
+    status: { host: "box" },
+  });
+  assert.deepEqual(await probeBox({ url: "http://proxy" }, fakeFetch), {
+    ok: true,
+    status: { host: "proxy" },
+  });
+  assert.equal((await probeBox({ url: "http://box" }, fakeFetch)).ok, false);
+  assert.match((await probeBox({ url: "http://box" }, fakeFetch)).error, /token/);
+  assert.match((await probeBox({ url: "http://dead" }, fakeFetch)).error, /ECONNREFUSED/);
+}
 
 console.log("transcript ok");

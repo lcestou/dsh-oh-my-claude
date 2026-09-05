@@ -91,7 +91,9 @@ The plugin runs Claude Code as a child process of dsh, so everything is on the m
 - **Config dir**: `$CLAUDE_CONFIG_DIR` if set for the dsh process, otherwise `~/.claude` of that user. Transcripts (`projects/`), `settings.json` and the login token all live there, the same place a terminal `claude` on that machine uses.
 - **Login**: done once, in a terminal on that machine, with `claude auth login`. The panel's first line shows which binary, which config dir, which host and which account dsh sees; if it says not logged in, that is the fix.
 
-Same box, several clients (laptop, phone, another PC on the LAN): run `dsh web` where Claude Code is logged in and open that URL from anywhere. A remote Claude Code install on another machine is not supported: the plugin does not ssh, and a wrapper script named `claude` that does would still read settings and transcripts from the local dir, so the panel would show the wrong files. Install dsh on the machine that has Claude Code instead.
+Same box, several clients (laptop, phone, another PC on the LAN): run `dsh web` where Claude Code is logged in and open that URL from anywhere.
+
+**Several boxes.** The plugin does not ssh: a wrapper named `claude` that did would run the model elsewhere while the panel still read local transcripts and settings. Instead, install dsh and this plugin on each machine that has Claude Code, and list the others under Settings → Claude Code → Boxes (name, URL, optional dsh token). Each row is probed from this dsh: host, `claude` version, who is logged in, plugin version (a mismatch is flagged). Open jumps the browser to that box; sessions and logins stay where they are. The token is that box's dsh launch token, needed only when this browser has never logged into it; a proxy that injects the token (the NPM setup in the docs) needs none. Saved in `~/.local/state/dsh-llm-claude/boxes.json`, routes `GET`/`PUT /dsh-llm-claude/boxes` and `GET /dsh-llm-claude/boxes/status`, behind dsh's login. Same shape as another tool's environments, minus the tunnel service.
 
 ## Not covered
 
