@@ -63,7 +63,7 @@ export type Config = {
     maxProcesses: number;
 };
 /** Plugin name identifier. */
-export declare const name = "dsh-llm-claude";
+export declare const name = "dsh-oh-my-claude";
 /** Services injected into the plugin by the dsh runtime. */
 export declare const inject: string[];
 /** Configuration schema for Claude Code plugin settings. */

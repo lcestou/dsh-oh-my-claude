@@ -1,9 +1,9 @@
 import type { RelayResult } from "./process.js";
 import type { Agent, DshToolsRegistry, JsonValue, PluginContext } from "./dsh.js";
 /** HTTP endpoint path for the MCP bridge handler. */
-export declare const MCP_PATH = "/dsh-llm-claude/mcp";
+export declare const MCP_PATH = "/dsh-oh-my-claude/mcp";
 /** HTTP header name for the MCP bridge authentication key. */
-export declare const KEY_HEADER = "x-dsh-llm-claude-key";
+export declare const KEY_HEADER = "x-dsh-oh-my-claude-key";
 /** The open_session arguments Claude sends, as far as the bridge reads them. */
 interface OpenSessionArgs {
     prompt?: JsonValue;
@@ -48,7 +48,7 @@ export interface BridgeOptions {
     relay?: (sessionId: string, name: string, args: Record<string, JsonValue>, signal: AbortSignal) => Promise<RelayResult | undefined> | undefined;
 }
 /**
- * Mount `POST /dsh-llm-claude/mcp/<dsh session id>`. Resolves once the web server is up with the
+ * Mount `POST /dsh-oh-my-claude/mcp/<dsh session id>`. Resolves once the web server is up with the
  * base URL and key the adapter must hand to `claude --mcp-config`.
  */
 export declare function registerMcpBridge(ctx: PluginContext, { log, version, relay }: BridgeOptions): Promise<{

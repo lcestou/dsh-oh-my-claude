@@ -144,7 +144,7 @@ export type Config = {
 };
 
 /** Plugin name identifier. */
-export const name = "dsh-llm-claude";
+export const name = "dsh-oh-my-claude";
 /** Services injected into the plugin by the dsh runtime. */
 export const inject = ["llm", "sessions", "attachments", "agents", "approval", "userQuestions"];
 
@@ -765,7 +765,7 @@ const RESUME_DELAY_MS = 10_000;
 const isWake = (m: LooseMessage) =>
   m.role === "user" &&
   m.source?.kind === "plugin" &&
-  m.source.plugin === "dsh-llm-claude" &&
+  m.source.plugin === "dsh-oh-my-claude" &&
   textOf(m.content) === WAKE_TEXT;
 /** A turn opened by our own wake notice, with no user prompt to send: only drain what Claude
  *  already wrote. A user prompt in the same batch takes precedence and is sent normally. */
@@ -1241,7 +1241,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   }
 
   override providerInfo(provider: string) {
-    return { id: provider, name: "Claude Code" };
+    return { id: provider, name: "Oh My Claude" };
   }
 
   override async listModels(provider: string) {
@@ -1262,7 +1262,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
 
   log(level: string, message: string) {
     try {
-      this.ctx.logger[level]?.(`dsh-llm-claude: ${message}`);
+      this.ctx.logger[level]?.(`dsh-oh-my-claude: ${message}`);
     } catch {
       // cordis throws on service access from an inactive scope; a log line is not worth that
     }
@@ -1823,7 +1823,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
           content: [{ type: "text", text }],
           source: {
             kind: "plugin",
-            plugin: "dsh-llm-claude",
+            plugin: "dsh-oh-my-claude",
             form: "notice",
             summary: boundContextSummary(text),
           },
@@ -1865,7 +1865,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       proc.write(
         controlErrorLine(
           requestId,
-          `${request.subtype ?? "unknown"} is not supported by dsh-llm-claude`,
+          `${request.subtype ?? "unknown"} is not supported by dsh-oh-my-claude`,
         ),
       );
       return;
@@ -2006,7 +2006,7 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
   ctx.llm.registerConfigurableProviders([
     {
       provider: "claude-code",
-      displayName: "Claude Code",
+      displayName: "Oh My Claude",
       settingsNs: "llm-claude-code",
       settingsPath: [],
     },

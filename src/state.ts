@@ -11,7 +11,7 @@ export const CLAUDE_HOME = process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".cl
 
 // Session state: which Claude sessions this plugin started, so resume does not depend on guessing
 // where Claude Code keeps its transcripts. A wrong guess still degrades to a fresh full-transcript run.
-export const STATE_DIR = join(homedir(), ".local", "state", "dsh-llm-claude");
+export const STATE_DIR = join(homedir(), ".local", "state", "dsh-oh-my-claude");
 export const STATE_FILE = join(STATE_DIR, "sessions.json");
 /** Sessions with a turn in flight. Survives a dsh restart so those sessions can be nudged back. */
 export const BUSY_FILE = join(STATE_DIR, "busy.json");

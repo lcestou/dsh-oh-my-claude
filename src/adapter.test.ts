@@ -953,7 +953,7 @@ console.log("ok");
 {
   const wake = message({
     role: "user",
-    source: { kind: "plugin", plugin: "dsh-llm-claude", form: "notice", summary: WAKE_TEXT },
+    source: { kind: "plugin", plugin: "dsh-oh-my-claude", form: "notice", summary: WAKE_TEXT },
     content: [{ type: "text", text: WAKE_TEXT }],
   });
   const user = message({
@@ -1090,7 +1090,7 @@ console.log("ok");
   assert.equal(firstMsg.role, "user");
   assert.deepEqual(
     [firstMsg.source?.kind, firstMsg.source?.plugin, firstMsg.source?.form],
-    ["plugin", "dsh-llm-claude", "notice"],
+    ["plugin", "dsh-oh-my-claude", "notice"],
   );
   assert.equal(firstMsg.content?.[0]?.text, WAKE_TEXT);
   ctx.agents.get = () => agent;
@@ -1184,7 +1184,7 @@ console.log("ok");
   await dead.wake("s", fakeProc({ busy: false })); // scope gone: swallowed, logged if it can
   dead.log("warn", "x"); // logger on a dead scope: swallowed
   // a reloaded adapter re-points every adopted process at itself
-  const reg = (globalThis as any)[Symbol.for("dsh-llm-claude.processes")];
+  const reg = (globalThis as any)[Symbol.for("dsh-oh-my-claude.processes")];
   const stale = { busy: false, onIdleResult: boom, alive: true };
   reg.set("adopted", stale);
   let woke = 0;
@@ -1385,7 +1385,7 @@ console.log("schema-guard ok");
 
 // Busy bookkeeping survives a restart: mark on turn start, clear on end, take once after boot.
 {
-  const dir = await mkdtemp(joinPath(tmpdir(), "dsh-llm-claude-busy-"));
+  const dir = await mkdtemp(joinPath(tmpdir(), "dsh-oh-my-claude-busy-"));
   const file = joinPath(dir, "busy.json");
   await markBusy("a", true, file);
   await markBusy("b", true, file);
@@ -1406,7 +1406,7 @@ console.log("schema-guard ok");
   const restart = message({
     role: "user",
     content: [{ type: "text", text: RESTART_TEXT }],
-    source: { kind: "plugin", plugin: "dsh-llm-claude", form: "notice" },
+    source: { kind: "plugin", plugin: "dsh-oh-my-claude", form: "notice" },
   });
   assert.equal(wakeOnlyTurn([user, asst, restart]), false, "restart notice is sent, not drained");
 }
@@ -1414,7 +1414,7 @@ console.log("schema-guard ok");
 // resumeInterrupted(): nudges sessions the previous process left mid-turn with the restart text,
 // skips ones whose process this instance adopted (a hot reload), and clears the file.
 {
-  const dir = await mkdtemp(joinPath(tmpdir(), "dsh-llm-claude-resume-"));
+  const dir = await mkdtemp(joinPath(tmpdir(), "dsh-oh-my-claude-resume-"));
   const file = joinPath(dir, "busy.json");
   await markBusy("dead", true, file);
   await markBusy("live", true, file);

@@ -1,4 +1,4 @@
-// Browser half: Settings → "Claude Code". A runtime line (which claude, which account, which
+// Browser half: Settings → "Oh My Claude". A runtime line (which claude, which account, which
 // box), one session list across this box and every saved box (filter by box, workspace, origin;
 // open here or jump to the box), and two collapsed cards: the saved boxes and Claude Code's own
 // settings.json. Built into lib/client.js by `bun run build`.
@@ -6,11 +6,11 @@ import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 
 /** Plugin name identifier. */
-export const name = "dsh-llm-claude-client";
+export const name = "dsh-oh-my-claude-client";
 /** Services injected into the client plugin by dsh. */
 export const inject = ["slots", "sessions", "workspaces"];
 
-const ROUTE = "/dsh-llm-claude";
+const ROUTE = "/dsh-oh-my-claude";
 /** Deep link another box's panel sends us to: `#claude-session=<id>&cwd=<path>`. */
 const HASH_KEY = "claude-session";
 
@@ -301,13 +301,13 @@ function Runtime({ onStatus }: RuntimeProps) {
   }, []);
   if (error)
     return (
-      <p id="dsh-llm-claude-runtime" style={{ color: T.err, fontSize: 13, margin: "0 0 4px" }}>
+      <p id="dsh-oh-my-claude-runtime" style={{ color: T.err, fontSize: 13, margin: "0 0 4px" }}>
         {error}
       </p>
     );
   if (!st)
     return (
-      <p id="dsh-llm-claude-runtime" style={{ ...meta, margin: "0 0 4px" }}>
+      <p id="dsh-oh-my-claude-runtime" style={{ ...meta, margin: "0 0 4px" }}>
         Checking claude…
       </p>
     );
@@ -316,7 +316,7 @@ function Runtime({ onStatus }: RuntimeProps) {
     : "not logged in";
   return (
     <div
-      id="dsh-llm-claude-runtime"
+      id="dsh-oh-my-claude-runtime"
       style={{
         display: "flex",
         flexWrap: "wrap",
@@ -533,7 +533,7 @@ function Sessions({ ctx, boxes }: SessionsProps) {
   const total = groups.reduce((n, g) => n + g.sessions.length, 0);
   let lastGroup: { key: string } | null = null;
   return (
-    <section id="dsh-llm-claude-sessions-card" style={card}>
+    <section id="dsh-oh-my-claude-sessions-card" style={card}>
       <div style={cardHead}>
         <div>
           <h3 style={h3}>Sessions</h3>
@@ -547,7 +547,7 @@ function Sessions({ ctx, boxes }: SessionsProps) {
         </button>
       </div>
       <div
-        id="dsh-llm-claude-session-filters"
+        id="dsh-oh-my-claude-session-filters"
         style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", marginTop: 10 }}
       >
         <button type="button" style={chip(box === "all", false)} onClick={() => setBox("all")}>
@@ -568,7 +568,7 @@ function Sessions({ ctx, boxes }: SessionsProps) {
         ))}
         <span style={{ flex: 1 }} />
         <select
-          id="dsh-llm-claude-cwd-filter"
+          id="dsh-oh-my-claude-cwd-filter"
           style={select}
           value={cwd}
           onChange={(e) => setCwd(e.target.value)}
@@ -582,7 +582,7 @@ function Sessions({ ctx, boxes }: SessionsProps) {
           ))}
         </select>
         <select
-          id="dsh-llm-claude-origin-filter"
+          id="dsh-oh-my-claude-origin-filter"
           style={select}
           value={origin}
           onChange={(e) => setOrigin(e.target.value)}
@@ -595,16 +595,16 @@ function Sessions({ ctx, boxes }: SessionsProps) {
         </select>
       </div>
       {error && (
-        <p id="dsh-llm-claude-error" style={{ color: T.err, fontSize: 13, margin: "8px 0 0" }}>
+        <p id="dsh-oh-my-claude-error" style={{ color: T.err, fontSize: 13, margin: "8px 0 0" }}>
           {error}
         </p>
       )}
       {!loading && rows.length === 0 && (
-        <p id="dsh-llm-claude-empty" style={{ ...meta, marginTop: 10 }}>
+        <p id="dsh-oh-my-claude-empty" style={{ ...meta, marginTop: 10 }}>
           No Claude Code sessions match.
         </p>
       )}
-      <div id="dsh-llm-claude-sessions" style={{ marginTop: 6 }}>
+      <div id="dsh-oh-my-claude-sessions" style={{ marginTop: 6 }}>
         {rows.map((r, i) => {
           const header =
             box === "all" && r.g !== lastGroup ? (
@@ -642,7 +642,11 @@ function Sessions({ ctx, boxes }: SessionsProps) {
                   : "Open";
           return [
             header,
-            <div key={`${r.g.key}-${r.s.id}`} data-testid="dsh-llm-claude-session-row" style={row}>
+            <div
+              key={`${r.g.key}-${r.s.id}`}
+              data-testid="dsh-oh-my-claude-session-row"
+              style={row}
+            >
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div
                   style={{
@@ -672,7 +676,7 @@ function Sessions({ ctx, boxes }: SessionsProps) {
                 </div>
               </div>
               <button
-                id={`dsh-llm-claude-session-${r.s.id}-button`}
+                id={`dsh-oh-my-claude-session-${r.s.id}-button`}
                 type="button"
                 style={opened ? btn : btnPrimary}
                 disabled={busy}
@@ -684,7 +688,7 @@ function Sessions({ ctx, boxes }: SessionsProps) {
             lastOfGroup && more > 0 ? (
               <div
                 key={`more-${r.g.key}`}
-                data-testid="dsh-llm-claude-load-more"
+                data-testid="dsh-oh-my-claude-load-more"
                 style={{ display: "flex", gap: 8, padding: "6px 0 2px" }}
               >
                 <button
@@ -804,7 +808,7 @@ function SettingsEditor({ open, onToggle }: SettingsEditorProps) {
   const actions = editing ? (
     <>
       <button
-        id="dsh-llm-claude-settings-cancel"
+        id="dsh-oh-my-claude-settings-cancel"
         type="button"
         style={btn}
         disabled={busy}
@@ -816,7 +820,7 @@ function SettingsEditor({ open, onToggle }: SettingsEditorProps) {
         Cancel
       </button>
       <button
-        id="dsh-llm-claude-settings-save"
+        id="dsh-oh-my-claude-settings-save"
         type="button"
         style={{ ...btnPrimary, opacity: canSave ? 1 : 0.5 }}
         disabled={!canSave}
@@ -831,7 +835,7 @@ function SettingsEditor({ open, onToggle }: SettingsEditorProps) {
         Reload
       </button>
       <button
-        id="dsh-llm-claude-settings-edit"
+        id="dsh-oh-my-claude-settings-edit"
         type="button"
         style={btn}
         disabled={busy || file === null}
@@ -846,7 +850,7 @@ function SettingsEditor({ open, onToggle }: SettingsEditorProps) {
   ) : null;
   return (
     <Card
-      id="dsh-llm-claude-settings"
+      id="dsh-oh-my-claude-settings"
       title="settings.json"
       summary={summary}
       actions={actions}
@@ -863,7 +867,7 @@ function SettingsEditor({ open, onToggle }: SettingsEditorProps) {
       </p>
       {editing ? (
         <textarea
-          id="dsh-llm-claude-settings-text"
+          id="dsh-oh-my-claude-settings-text"
           value={text}
           spellCheck={false}
           autoFocus
@@ -878,7 +882,7 @@ function SettingsEditor({ open, onToggle }: SettingsEditorProps) {
         />
       ) : (
         <pre
-          id="dsh-llm-claude-settings-view"
+          id="dsh-oh-my-claude-settings-view"
           style={{ ...code, maxHeight: 320, overflow: "auto", margin: 0 }}
         >
           {text}
@@ -977,7 +981,7 @@ function Boxes({ boxes, setBoxes, open, onToggle }: BoxesProps) {
       : `${boxes.length} saved · ${busy ? "checking…" : `${reachable} reachable`}`;
   return (
     <Card
-      id="dsh-llm-claude-boxes"
+      id="dsh-oh-my-claude-boxes"
       title="Boxes"
       summary={summary}
       actions={
@@ -1000,7 +1004,7 @@ function Boxes({ boxes, setBoxes, open, onToggle }: BoxesProps) {
         const ok = st?.ok;
         const skew = ok && self && st.status?.plugin && st.status.plugin !== self.plugin;
         return (
-          <div key={b.url} data-testid="dsh-llm-claude-box-row" style={row}>
+          <div key={b.url} data-testid="dsh-oh-my-claude-box-row" style={row}>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ color: T.text, fontWeight: 600 }}>{b.name}</div>
               <div
@@ -1108,7 +1112,7 @@ function followDeepLink(ctx: ClientCtx) {
       await openHere(ctx, s, s.cwd ?? cwd);
     } catch (e) {
       console.warn(
-        `[dsh-llm-claude] deep link failed: ${e instanceof Error ? e.message : String(e)}`,
+        `[dsh-oh-my-claude] deep link failed: ${e instanceof Error ? e.message : String(e)}`,
       );
     }
   };
@@ -1200,7 +1204,7 @@ const isRingRoot = (el: HTMLElement | null) =>
   !!el?.querySelector(':scope > button[aria-haspopup="dialog"] circle + circle');
 
 function watchContextMeter() {
-  const MARK = "data-dsh-llm-claude-usage";
+  const MARK = "data-dsh-oh-my-claude-usage";
   const attach = (panel: HTMLElement) => {
     if (panel.hasAttribute(MARK)) return;
     panel.setAttribute(MARK, "1");
@@ -1309,8 +1313,8 @@ export function apply(ctx: ClientCtx) {
     }, []);
     return (
       <div>
-        <h2 id="dsh-llm-claude-heading" style={{ marginTop: 0 }}>
-          Claude Code
+        <h2 id="dsh-oh-my-claude-heading" style={{ marginTop: 0 }}>
+          Oh My Claude
         </h2>
         <Runtime onStatus={() => {}} />
         {error && <p style={{ color: T.err, fontSize: 13 }}>{error}</p>}
@@ -1334,7 +1338,7 @@ export function apply(ctx: ClientCtx) {
         name: "settings.section",
         id: "claude-code-sessions",
         order: 19,
-        label: "Claude Code",
+        label: "Oh My Claude",
         inject: () => ({}),
       },
       Section,

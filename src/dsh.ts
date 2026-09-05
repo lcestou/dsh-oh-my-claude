@@ -5,11 +5,11 @@
 import type { GenerateOptions, Message } from "@deepseek-ai/dsh-llm";
 
 /** Symbol for the current adapter instance on globalThis (hot-reload cross-plugin process adoption). */
-export const ADAPTER_CURRENT = Symbol.for("dsh-llm-claude.adapter");
+export const ADAPTER_CURRENT = Symbol.for("dsh-oh-my-claude.adapter");
 /** Symbol for the resume timer on globalThis (scoped outside cordis to survive plugin re-instantiation). */
-export const RESUME_TIMER = Symbol.for("dsh-llm-claude.resume-timer");
+export const RESUME_TIMER = Symbol.for("dsh-oh-my-claude.resume-timer");
 /** Symbol for the Claude process registry on globalThis (adopted processes across hot reloads). */
-export const PROCESS_REGISTRY = Symbol.for("dsh-llm-claude.processes");
+export const PROCESS_REGISTRY = Symbol.for("dsh-oh-my-claude.processes");
 
 /** The same brand dsh-llm puts on GenerateOptions.sessionId, so ids flow through without casts. */
 export type SessionId = NonNullable<GenerateOptions["sessionId"]>;

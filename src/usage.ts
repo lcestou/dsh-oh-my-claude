@@ -7,7 +7,7 @@ import { errorText } from "./process.js";
 import type { PluginContext } from "./dsh.js";
 
 const USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
-const ROUTE = "/dsh-llm-claude/usage";
+const ROUTE = "/dsh-oh-my-claude/usage";
 /** Background answers are served from cache this long; a popover open may force a refresh sooner. */
 const CACHE_MS = 5 * 60_000;
 const FORCE_MIN_AGE_MS = 30_000;
@@ -138,7 +138,7 @@ export async function readUsage(fetchImpl: UsageFetch = fetch): Promise<UsageRep
   }
 }
 
-/** Serve `/dsh-llm-claude/usage` (`?force=1` refreshes sooner) from a small cache. */
+/** Serve `/dsh-oh-my-claude/usage` (`?force=1` refreshes sooner) from a small cache. */
 export function registerUsageRoute(
   ctx: PluginContext,
   log: (level: string, msg: string) => void,
@@ -195,7 +195,7 @@ export function registerUsageRoute(
             }
           },
         }),
-      "dsh-llm-claude usage route",
+      "dsh-oh-my-claude usage route",
     );
   });
 }

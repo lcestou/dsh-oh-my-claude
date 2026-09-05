@@ -200,7 +200,7 @@ assert.equal(orphan.title, "run it");
 assert.equal(truncateBytes("héllo", 3), "hé");
 
 // Listing: uuid files only, sidechain-only and empty files skipped, newest first, excluded ids hidden.
-const dir = await mkdtemp(join(tmpdir(), "dsh-llm-claude-"));
+const dir = await mkdtemp(join(tmpdir(), "dsh-oh-my-claude-"));
 const idA = "11111111-1111-4111-8111-111111111111";
 const idB = "22222222-2222-4222-8222-222222222222";
 const idC = "33333333-3333-4333-8333-333333333333";
@@ -334,17 +334,17 @@ assert.ok(validateBoxes("nope").error);
   const fakeFetch = async (u: string, init?: { headers?: Record<string, string> }) => {
     calls.push([u, init?.headers?.cookie ?? ""]);
     if (u === "http://box/?token=T") return res(303, { "set-cookie": "dsh-auth-x=1; Path=/" });
-    if (u === "http://box/dsh-llm-claude/status")
+    if (u === "http://box/dsh-oh-my-claude/status")
       return init?.headers?.cookie === "dsh-auth-x=1" ? res(200, {}, { host: "box" }) : res(401);
     if (u === "http://box/") return { ...res(200), text: async () => "<html>plain dsh</html>" };
-    if (u === "http://proxy/dsh-llm-claude/status" && !init?.headers?.cookie) return res(401);
+    if (u === "http://proxy/dsh-oh-my-claude/status" && !init?.headers?.cookie) return res(401);
     if (u === "http://proxy/")
       return {
         ...res(200),
         text: async () => '<meta http-equiv="refresh" content="0;url=/?token=P"><script>',
       };
     if (u === "http://proxy/?token=P") return res(303, { "set-cookie": "dsh-auth-p=1" });
-    if (u === "http://proxy/dsh-llm-claude/status") return res(200, {}, { host: "proxy" });
+    if (u === "http://proxy/dsh-oh-my-claude/status") return res(200, {}, { host: "proxy" });
     throw new Error("ECONNREFUSED");
   };
   // SAFETY: partial fake for tests; Box requires name but probeBox only uses url/token

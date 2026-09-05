@@ -12,9 +12,9 @@ import type { Agent, DshToolsRegistry, JsonValue, PluginContext, ToolSchema } fr
 import { asSessionId } from "./dsh.js";
 
 /** HTTP endpoint path for the MCP bridge handler. */
-export const MCP_PATH = "/dsh-llm-claude/mcp";
+export const MCP_PATH = "/dsh-oh-my-claude/mcp";
 /** HTTP header name for the MCP bridge authentication key. */
-export const KEY_HEADER = "x-dsh-llm-claude-key";
+export const KEY_HEADER = "x-dsh-oh-my-claude-key";
 const PROTOCOL = "2025-06-18";
 const BODY_LIMIT = 1024 * 1024;
 /** dsh tools Claude Code already has natively; proxying them would only confuse the model. */
@@ -255,7 +255,7 @@ const send = (res: ServerResponse, status: number, value?: unknown) => {
 };
 
 /** The bridge key outlives a plugin hot reload: running Claude processes were spawned with it. */
-const KEY_REGISTRY = Symbol.for("dsh-llm-claude.mcpKey");
+const KEY_REGISTRY = Symbol.for("dsh-oh-my-claude.mcpKey");
 
 /** What the adapter hands the bridge. */
 export interface BridgeOptions {
@@ -281,7 +281,7 @@ const asRpc = (body: Record<string, JsonValue>): JsonRpcRequest => ({
 });
 
 /**
- * Mount `POST /dsh-llm-claude/mcp/<dsh session id>`. Resolves once the web server is up with the
+ * Mount `POST /dsh-oh-my-claude/mcp/<dsh session id>`. Resolves once the web server is up with the
  * base URL and key the adapter must hand to `claude --mcp-config`.
  */
 export function registerMcpBridge(

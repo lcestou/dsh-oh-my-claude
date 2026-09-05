@@ -1,6 +1,6 @@
 // Host half of "open a Claude Code session in dsh": lists the transcripts of a workspace and turns
 // one into a cold dsh session whose id is the Claude session id, so the adapter resumes it as-is.
-// Served under /dsh-llm-claude/*, guarded by dsh's own request policy (trusted host + login cookie).
+// Served under /dsh-oh-my-claude/*, guarded by dsh's own request policy (trusted host + login cookie).
 // This is an I/O boundary: HTTP bodies, probe output and JSON files are decoded here.
 import { execFile } from "node:child_process";
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -13,7 +13,7 @@ import { asSessionId } from "./dsh.js";
 import type { JsonValue, PluginContext, WorkspaceRegistry } from "./dsh.js";
 import { errorText } from "./process.js";
 
-const ROUTE_PREFIX = "/dsh-llm-claude";
+const ROUTE_PREFIX = "/dsh-oh-my-claude";
 const BODY_LIMIT = 64 * 1024;
 
 const json = (res: ServerResponse, status: number, value: unknown) => {
@@ -209,7 +209,7 @@ export async function probeBox<T = RuntimeStatus>(
   const { url, token } = box;
   const signal = AbortSignal.timeout(path === "status" ? 6000 : 12000);
   const status = (cookie: string) =>
-    fetchImpl(`${url}/dsh-llm-claude/${path}`, {
+    fetchImpl(`${url}/dsh-oh-my-claude/${path}`, {
       headers: cookie ? { cookie } : {},
       redirect: "manual",
       signal,
@@ -243,7 +243,7 @@ export async function probeBox<T = RuntimeStatus>(
     if (r.status === 401 || r.status === 403)
       return { ok: false, error: "login required: add this box's dsh token" };
     if (r.status === 404)
-      return { ok: false, error: "dsh-llm-claude missing or too old on this box" };
+      return { ok: false, error: "dsh-oh-my-claude missing or too old on this box" };
     if (!r.ok) return { ok: false, error: `HTTP ${r.status}` };
     // SAFETY: the body is another instance of this plugin answering the same route; the caller
     // names which route it asked and only reads the fields that route publishes
@@ -656,7 +656,7 @@ export function registerSessionRoutes(
             }
           },
         }),
-      "dsh-llm-claude session routes",
+      "dsh-oh-my-claude session routes",
     );
   });
 }

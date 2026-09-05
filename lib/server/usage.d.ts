@@ -41,7 +41,7 @@ export type UsageFetch = (url: string, init: {
 }>;
 /** Read usage with the stored login; never throws, the panel shows the reason instead. */
 export declare function readUsage(fetchImpl?: UsageFetch): Promise<UsageReply>;
-/** Serve `/dsh-llm-claude/usage` (`?force=1` refreshes sooner) from a small cache. */
+/** Serve `/dsh-oh-my-claude/usage` (`?force=1` refreshes sooner) from a small cache. */
 export declare function registerUsageRoute(ctx: PluginContext, log: (level: string, msg: string) => void, identity: () => Promise<{
     host: string;
     email: string | null;
