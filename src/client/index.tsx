@@ -46,6 +46,12 @@ const T = {
   onBrand: "var(--dsw-alias-label-primary-inverted, #fff)",
 };
 
+/** Claude's brand orange and its shimmer stop (the CLI theme table): the one accent this plugin adds. */
+const CLAUDE_ORANGE = "#D97757";
+const CLAUDE_SHIMMER = "#F59575";
+/** Claude's own spinner glyph, used as the mark beside anything Claude-owned in dsh's chrome. */
+const CLAUDE_MARK = "✻";
+
 const card: CSSProperties = {
   background: T.card,
   border: `1px solid ${T.border}`,
@@ -1401,20 +1407,34 @@ function renderUsage(block: HTMLElement, reply: UsageReply) {
     return;
   }
   for (const w of reply.windows) {
-    const line = document.createElement("div");
-    line.style.cssText =
-      "display:flex;justify-content:space-between;align-items:center;gap:12px;padding:2px 0";
-    const dt = document.createElement("span");
-    dt.textContent = w.label;
-    dt.style.color = T.muted;
-    const dd = document.createElement("span");
-    dd.style.cssText = `font-variant-numeric:tabular-nums;color:${w.usedPercent >= 90 ? T.err : w.usedPercent >= 70 ? T.warn : T.text}`;
-    dd.textContent = `${Math.round(w.usedPercent)}%`;
+    // Label and reset on the left, percent on the right, a thin bar under both: the same shape
+    // dsh draws for the context meter below, so the two sections read as one panel.
+    const pct = Math.max(0, Math.min(100, w.usedPercent));
+    const tone = pct >= 90 ? T.err : pct >= 70 ? T.warn : CLAUDE_ORANGE;
+    const row = document.createElement("div");
+    row.style.cssText =
+      "display:grid;grid-template-columns:1fr auto;align-items:baseline;column-gap:12px;row-gap:3px;padding:3px 0";
+    const label = document.createElement("span");
+    label.textContent = w.label;
+    label.style.cssText = `color:${T.text};font-weight:500`;
+    const value = document.createElement("span");
+    value.textContent = `${Math.round(pct)}%`;
+    value.style.cssText = `font-variant-numeric:tabular-nums;font-weight:600;color:${tone}`;
+    const bar = document.createElement("div");
+    bar.setAttribute("role", "progressbar");
+    bar.setAttribute("aria-valuenow", String(Math.round(pct)));
+    bar.setAttribute("aria-valuemin", "0");
+    bar.setAttribute("aria-valuemax", "100");
+    bar.setAttribute("aria-label", `${w.label} ${Math.round(pct)}% used`);
+    bar.style.cssText = `grid-column:1 / -1;height:4px;border-radius:2px;background:${T.border};overflow:hidden`;
+    const fill = document.createElement("div");
+    fill.style.cssText = `height:100%;width:${pct}%;border-radius:2px;background:linear-gradient(90deg,${tone},${pct >= 70 ? tone : CLAUDE_SHIMMER})`;
+    bar.append(fill);
     const when = document.createElement("span");
     when.textContent = resetText(w.resetsAt);
-    when.style.cssText = `color:${T.faint};margin-left:auto;font-size:11px`;
-    line.append(dt, when, dd);
-    block.append(line);
+    when.style.cssText = `grid-column:1 / -1;color:${T.faint};font-size:11px;line-height:16px`;
+    row.append(label, value, bar, when);
+    block.append(row);
   }
   if (reply.windows.length === 0) {
     const p = document.createElement("div");
@@ -1441,19 +1461,31 @@ function watchContextMeter() {
     if (panel.hasAttribute(MARK)) return;
     panel.setAttribute(MARK, "1");
     const block = document.createElement("div");
-    block.style.cssText = `border-bottom:1px solid ${T.border};margin-bottom:10px;padding-bottom:8px;font-size:12px;line-height:20px`;
+    block.style.cssText = `border-bottom:1px solid ${T.border};margin-bottom:10px;padding-bottom:8px;font-size:13px;line-height:20px`;
     const title = document.createElement("div");
-    title.textContent = "Claude usage";
-    title.style.cssText = `color:${T.faint};margin-bottom:2px`;
+    title.style.cssText = `display:flex;align-items:center;gap:6px;color:${T.text};font-weight:600`;
+    const mark = document.createElement("span");
+    mark.textContent = CLAUDE_MARK;
+    mark.setAttribute("aria-hidden", "true");
+    mark.style.cssText = `color:${CLAUDE_ORANGE};font-size:14px;line-height:1`;
+    const titleText = document.createElement("span");
+    titleText.textContent = "Claude usage";
+    title.append(mark, titleText);
+    // Account and box on their own caption line: the email plus host wrapped the title before.
+    const caption = document.createElement("div");
+    caption.style.cssText = `color:${T.faint};font-size:11px;line-height:16px;margin:-2px 0 4px 20px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap`;
     const rows = document.createElement("div");
     rows.textContent = "Loading…";
     rows.style.color = T.faint;
-    block.append(title, rows);
+    block.append(title, caption, rows);
     panel.prepend(block);
     loadUsage().then(
       (reply) => {
         const who = whose(reply);
-        if (who) title.textContent = `Claude usage · ${who}`;
+        if (who) {
+          caption.textContent = who;
+          caption.title = who;
+        } else caption.remove();
         renderUsage(rows, reply);
       },
       (e: Error) => renderUsage(rows, { ok: false, error: e.message }),
@@ -1466,20 +1498,26 @@ function watchContextMeter() {
     if (tip.hasAttribute(MARK)) return;
     tip.setAttribute(MARK, "1");
     const line = document.createElement("div");
-    line.textContent = "Claude usage…";
     // Above dsh's own sentence, like the panel rows, with a hairline between.
     line.style.cssText =
-      "border-bottom:1px solid rgba(255,255,255,.25);margin-bottom:4px;padding-bottom:4px";
+      "border-bottom:1px solid rgba(255,255,255,.25);margin-bottom:4px;padding-bottom:4px;display:flex;gap:6px;align-items:baseline";
+    const mark = document.createElement("span");
+    mark.textContent = CLAUDE_MARK;
+    mark.setAttribute("aria-hidden", "true");
+    mark.style.color = CLAUDE_SHIMMER;
+    const text = document.createElement("span");
+    text.textContent = "Claude usage…";
+    line.append(mark, text);
     tip.prepend(line);
     loadUsage().then(
       (reply) => {
         const who = reply.host ? ` (${reply.host})` : "";
-        line.textContent = reply.ok
+        text.textContent = reply.ok
           ? `Claude ${reply.windows.map((w) => `${w.label.toLowerCase()} ${Math.round(w.usedPercent)}%`).join(" · ") || "usage: no limits"}${who}`
           : `Claude usage: ${reply.error}`;
       },
       (e: Error) => {
-        line.textContent = `Claude usage: ${e.message}`;
+        text.textContent = `Claude usage: ${e.message}`;
       },
     );
   };
@@ -1496,9 +1534,6 @@ function watchContextMeter() {
   scan(document.body);
 }
 
-/** Claude orange gradient stops for the turn-status shimmer override. */
-const CLAUDE_ORANGE = "#D97757";
-const CLAUDE_SHIMMER = "#F59575";
 
 /** Fetch Claude Code's settings.json text and extract spinnerVerbs if present. */
 let spinnerSettings: Promise<{ verbs: string[]; frameSet: typeof DEFAULT_FRAMES }> | undefined;
