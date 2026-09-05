@@ -1529,19 +1529,21 @@ const loadSpinnerSettings = async (): Promise<{
 };
 
 /** Wire one turn-status element for a claude-code session: verb + ping-pong spinner + orange gradient. */
+/** Inject (or re-inject after a hot reload) the Claude-orange rule; idempotent by id. */
+const ensureTurnStatusStyle = () => {
+  let styleEl = document.getElementById("dsh-oh-my-claude-turn-status");
+  if (styleEl) return;
+  styleEl = document.createElement("style");
+  styleEl.id = "dsh-oh-my-claude-turn-status";
+  // The frames differ in advance width in a proportional font; a fixed cell keeps the verb still.
+  styleEl.textContent = `[data-dsh-oh-my-claude-turn]{background-image:linear-gradient(90deg,${CLAUDE_ORANGE} 0%,${CLAUDE_ORANGE} 40%,${CLAUDE_SHIMMER} 50%,${CLAUDE_ORANGE} 60%,${CLAUDE_ORANGE} 100%)}[data-dsh-oh-my-claude-turn]>span[aria-hidden]{display:inline-block;width:1.3em;text-align:center;flex:none}`;
+  document.head.appendChild(styleEl);
+};
+
 const wireTurnStatus = (el: HTMLElement, verbs: string[], frames: readonly string[]) => {
+  ensureTurnStatusStyle();
   if (el.hasAttribute("data-dsh-oh-my-claude-turn")) return;
   el.setAttribute("data-dsh-oh-my-claude-turn", "1");
-
-  // Inject the Claude-orange gradient rule once per page.
-  let styleEl = document.getElementById("dsh-oh-my-claude-turn-status");
-  if (!styleEl) {
-    styleEl = document.createElement("style");
-    styleEl.id = "dsh-oh-my-claude-turn-status";
-    // SAFETY: the gradient stops are hardcoded Claude-orange constants; no user input here.
-    styleEl.textContent = `[data-dsh-oh-my-claude-turn]{background-image:linear-gradient(90deg,${CLAUDE_ORANGE} 0%,${CLAUDE_ORANGE} 40%,${CLAUDE_SHIMMER} 50%,${CLAUDE_ORANGE} 60%,${CLAUDE_ORANGE} 100%)}`;
-    document.head.appendChild(styleEl);
-  }
 
   // Build the leading spinner span.
   const spinner = document.createElement("span");
@@ -1613,6 +1615,7 @@ const wireTurnStatus = (el: HTMLElement, verbs: string[], frames: readonly strin
  * ponytail: DOM hook on a structural selector; swap for a slot the day the turn status grows one.
  */
 function watchTurnStatus(ctx: ClientCtx) {
+  ensureTurnStatusStyle(); // a hot reload drops the old module's style tag but keeps marked elements
   const attach = async (el: HTMLElement) => {
     // Only act on [role="status"][aria-live="polite"] (dsh's turn-status element).
     if (el.getAttribute("role") !== "status" || el.getAttribute("aria-live") !== "polite") return;
