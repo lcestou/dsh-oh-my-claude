@@ -433,7 +433,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     endReason(proc: ClaudeProcess, options: SessionOptions, idle: boolean): FinishReason;
     turn(options: SessionOptions, forceFresh?: boolean): AsyncGenerator<StreamChunk>;
     /** dsh's todo projection resets to null on every `turn/start`, so the panel empties each message.
-     *  Re-append the last todo list so it persists across messages and, because it reads persisted
+     *  Called at the top of an open turn (dsh's invariant rejects a `todo/write` outside one), this
+     *  re-appends the last todo list so it persists across messages and, because it reads persisted
      *  session events, across a restart too. Source-agnostic: works for dsh's own todo tool.
      *  ponytail: O(n) scan of session events per turn; cache the last list if long sessions lag. */
     restoreTodos(sessionId: string): void;

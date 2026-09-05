@@ -1222,11 +1222,6 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       const session = sessionArg as { id?: string };
       // SAFETY: same event object, narrowed to the agent/inbox/spliced shape this handler reads
       const event = eventArg as SpliceEvent;
-      // dsh nulls the todo panel on every turn/start; re-append the last list so it persists.
-      if (event?.type === "turn/start") {
-        this.restoreTodos(session?.id ?? "");
-        return;
-      }
       if (event?.type !== "agent/inbox/spliced" || event.data?.target !== "next-step") return;
       const proc = this.processes.get(session?.id ?? "");
       if (!proc?.alive || !proc.busy || proc.relays.size > 0) return;
@@ -1614,6 +1609,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     if (cont.mode !== "relay") {
       proc.dshIds = new Set(); // ids only need to survive a relay round trip
       proc.relayed = new Set();
+      // dsh clears the todo panel at turn/start; re-append the last list now that the turn is
+      // open (a todo/write outside an open turn is rejected by dsh's todo invariant).
+      this.restoreTodos(options.sessionId);
     }
     const tr = new Translator({
       toolActivity: this.config.toolActivity,
@@ -1768,7 +1766,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   }
 
   /** dsh's todo projection resets to null on every `turn/start`, so the panel empties each message.
-   *  Re-append the last todo list so it persists across messages and, because it reads persisted
+   *  Called at the top of an open turn (dsh's invariant rejects a `todo/write` outside one), this
+   *  re-appends the last todo list so it persists across messages and, because it reads persisted
    *  session events, across a restart too. Source-agnostic: works for dsh's own todo tool.
    *  ponytail: O(n) scan of session events per turn; cache the last list if long sessions lag. */
   restoreTodos(sessionId: string) {
