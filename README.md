@@ -42,6 +42,15 @@ Lint contract, read before writing code (the anti-slop rules in `.oxlintrc.json`
 - No `_prefixed` identifiers (`no-underscore-dangle`), no shadowed names (`no-shadow`), no unused variables.
 - Run `bun run check` after each edit, not once at the end: the first run tells you which rule you are fighting, and `oxfmt src/` fixes formatting in place.
 
+Client bundle safety: dsh hot-reloads `lib/client.js` the moment `bun run build` writes it, into every open tab. A wrong service name in `export const inject` leaves the plugin `pending (waiting for service: …)` and every panel it owns disappears (2026-09-05: `models` instead of `modelDirectories`). After any client build, run the headless check and read its first line:
+
+```sh
+TOKEN=$(grep -o 'token=[A-Za-z0-9_-]*' ~/.local/state/dsh/web.log | tail -1 | cut -d= -f2)
+cd ~/Projects/pewtron && /usr/bin/node ~/Projects/dsh-llm-claude-code/tools/playwright/peek.mjs "$TOKEN"
+```
+
+It prints the sidebar text (a `Failed to load plugins` line means roll back with `git show main:lib/client.js > lib/client.js` and rebuild). `tools/playwright/turn-status.mjs <token> <out.png>` and `restore-button.mjs <token> <out.png>` screenshot the two DOM features; Playwright is installed in `~/Projects/pewtron`, which is why the scripts run from there.
+
 ## Configuration
 
 All keys are optional.

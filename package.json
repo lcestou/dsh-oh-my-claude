@@ -14,7 +14,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "bun src/adapter.test.ts && bun src/sessions.test.ts && bun src/transcript.test.ts && bun src/mcp.test.ts && bun src/usage.test.ts && bun src/client/pageSessions.test.ts && bun src/client/restore.test.ts",
+    "test": "bun src/adapter.test.ts && bun src/sessions.test.ts && bun src/transcript.test.ts && bun src/mcp.test.ts && bun src/usage.test.ts && bun src/client/pageSessions.test.ts && bun src/client/restore.test.ts && bun src/client/spinner.test.ts",
     "lint": "oxlint src/ --max-warnings=0",
     "format": "oxfmt src/",
     "deadcode": "fallow",

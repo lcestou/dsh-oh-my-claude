@@ -8,7 +8,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 /** Plugin name identifier. */
 export const name = "dsh-oh-my-claude-client";
 /** Services injected into the client plugin by dsh. */
-export const inject = ["slots", "sessions", "workspaces"];
+export const inject = ["slots", "sessions", "workspaces", "modelDirectories"];
 
 const ROUTE = "/dsh-oh-my-claude";
 /** Deep link another box's panel sends us to: `#claude-session=<id>&cwd=<path>`. */
@@ -147,6 +147,215 @@ type JsonObject = { [key: string]: Json };
 const isObj = (v: Json | undefined): v is JsonObject => v instanceof Object && !Array.isArray(v);
 const count = (v: Json | undefined): number =>
   Array.isArray(v) ? v.length : isObj(v) ? Object.keys(v).length : 0;
+
+/** Default Claude Code spinner verbs, extracted from the installed CLI bundle. */
+const DEFAULT_VERBS = [
+  "Accomplishing",
+  "Actioning",
+  "Actualizing",
+  "Architecting",
+  "Baking",
+  "Beaming",
+  "Beboppin'",
+  "Befuddling",
+  "Billowing",
+  "Blanching",
+  "Bloviating",
+  "Boogieing",
+  "Boondoggling",
+  "Booping",
+  "Bootstrapping",
+  "Brewing",
+  "Bunning",
+  "Burrowing",
+  "Calculating",
+  "Canoodling",
+  "Caramelizing",
+  "Cascading",
+  "Catapulting",
+  "Cerebrating",
+  "Channeling",
+  "Channelling",
+  "Choreographing",
+  "Churning",
+  "Clauding",
+  "Coalescing",
+  "Cogitating",
+  "Combobulating",
+  "Composing",
+  "Computing",
+  "Concocting",
+  "Considering",
+  "Contemplating",
+  "Cooking",
+  "Crafting",
+  "Creating",
+  "Crunching",
+  "Crystallizing",
+  "Cultivating",
+  "Deciphering",
+  "Deliberating",
+  "Determining",
+  "Dilly-dallying",
+  "Discombobulating",
+  "Doing",
+  "Doodling",
+  "Drizzling",
+  "Ebbing",
+  "Effecting",
+  "Elucidating",
+  "Embellishing",
+  "Enchanting",
+  "Envisioning",
+  "Fermenting",
+  "Fiddle-faddling",
+  "Finagling",
+  "Flambéing",
+  "Flibbertigibbeting",
+  "Flowing",
+  "Flummoxing",
+  "Fluttering",
+  "Forging",
+  "Forming",
+  "Frolicking",
+  "Frosting",
+  "Gallivanting",
+  "Galloping",
+  "Garnishing",
+  "Generating",
+  "Gesticulating",
+  "Germinating",
+  "Gitifying",
+  "Grooving",
+  "Gusting",
+  "Harmonizing",
+  "Hashing",
+  "Hatching",
+  "Herding",
+  "Honking",
+  "Hullaballooing",
+  "Hyperspacing",
+  "Ideating",
+  "Imagining",
+  "Improvising",
+  "Incubating",
+  "Inferring",
+  "Infusing",
+  "Ionizing",
+  "Jitterbugging",
+  "Julienning",
+  "Kneading",
+  "Leavening",
+  "Levitating",
+  "Lollygagging",
+  "Manifesting",
+  "Marinating",
+  "Meandering",
+  "Metamorphosing",
+  "Misting",
+  "Moonwalking",
+  "Moseying",
+  "Mulling",
+  "Mustering",
+  "Musing",
+  "Nebulizing",
+  "Nesting",
+  "Newspapering",
+  "Noodling",
+  "Nucleating",
+  "Orbiting",
+  "Orchestrating",
+  "Osmosing",
+  "Perambulating",
+  "Percolating",
+  "Perusing",
+  "Philosophising",
+  "Photosynthesizing",
+  "Pollinating",
+  "Pondering",
+  "Pontificating",
+  "Pouncing",
+  "Precipitating",
+  "Prestidigitating",
+  "Processing",
+  "Proofing",
+  "Propagating",
+  "Puttering",
+  "Puzzling",
+  "Quantumizing",
+  "Razzle-dazzling",
+  "Razzmatazzing",
+  "Recombobulating",
+  "Reticulating",
+  "Roosting",
+  "Ruminating",
+  "Sautéing",
+  "Scampering",
+  "Schlepping",
+  "Scurrying",
+  "Seasoning",
+  "Shenaniganing",
+  "Shimmying",
+  "Simmering",
+  "Skedaddling",
+  "Sketching",
+  "Slithering",
+  "Smooshing",
+  "Sock-hopping",
+  "Spelunking",
+  "Spinning",
+  "Sprouting",
+  "Stewing",
+  "Sublimating",
+  "Swirling",
+  "Swooping",
+  "Symbioting",
+  "Synthesizing",
+  "Tempering",
+  "Thinking",
+  "Thundering",
+  "Tinkering",
+  "Tomfoolering",
+  "Topsy-turvying",
+  "Transfiguring",
+  "Transmuting",
+  "Twisting",
+  "Undulating",
+  "Unfurling",
+  "Unravelling",
+  "Vibing",
+  "Waddling",
+  "Wandering",
+  "Warping",
+  "Whatchamacalliting",
+  "Whirlpooling",
+  "Whirring",
+  "Whisking",
+  "Wibbling",
+  "Working",
+  "Wrangling",
+  "Zesting",
+  "Zigzagging",
+] as const;
+
+/** Default ping-pong frames, played forward then reversed (~120 ms per frame). */
+const DEFAULT_FRAMES = ["·", "✢", "✳", "✶", "✻", "✻"] as const;
+
+/** Pick a verb at random from the list using the provided random function. */
+export function pickVerb(list: readonly string[], random: () => number): string {
+  // SAFETY: random() returns [0,1), so floor(random()*length) is always a valid index.
+  return list[Math.floor(random() * list.length)]!;
+}
+
+/** Merge default verbs with a settings.json spinnerVerbs entry. */
+export function mergeVerbs(
+  defaults: readonly string[],
+  setting: { mode: "append" | "replace"; verbs: string[] } | undefined,
+): string[] {
+  if (!setting) return [...defaults];
+  if (setting.mode === "replace") return [...setting.verbs];
+  return [...defaults, ...setting.verbs];
+}
 
 interface CardProps {
   id: string;
@@ -1287,6 +1496,150 @@ function watchContextMeter() {
   scan(document.body);
 }
 
+/** Claude orange gradient stops for the turn-status shimmer override. */
+const CLAUDE_ORANGE = "#D97757";
+const CLAUDE_SHIMMER = "#F59575";
+
+/** Fetch Claude Code's settings.json text and extract spinnerVerbs if present. */
+let spinnerSettings: Promise<{ verbs: string[]; frameSet: typeof DEFAULT_FRAMES }> | undefined;
+const loadSpinnerSettings = async (): Promise<{
+  verbs: string[];
+  frameSet: typeof DEFAULT_FRAMES;
+}> => {
+  try {
+    const body = await readJson<SettingsFile>(await fetch(`${ROUTE}/settings`));
+    const parsed = JSON.parse(body.text);
+    if (!isObj(parsed)) return { verbs: [...DEFAULT_VERBS], frameSet: [...DEFAULT_FRAMES] };
+    const sv = parsed.spinnerVerbs;
+    // SAFETY: spinnerVerbs comes from parsed JSON (a JsonObject); the cast is to read its known keys.
+    if (!isObj(sv) || !Array.isArray((sv as { verbs?: unknown }).verbs))
+      return { verbs: [...DEFAULT_VERBS], frameSet: [...DEFAULT_FRAMES] };
+    // SAFETY: mode is a string key on the JsonObject; we validate the value below.
+    const mode = (sv as { mode?: string }).mode;
+    if (mode !== "append" && mode !== "replace")
+      return { verbs: [...DEFAULT_VERBS], frameSet: [...DEFAULT_FRAMES] };
+    // SAFETY: mode and verbs have been validated above; the cast narrows to the expected shape.
+    return {
+      verbs: mergeVerbs(DEFAULT_VERBS, sv as { mode: "append" | "replace"; verbs: string[] }),
+      frameSet: [...DEFAULT_FRAMES],
+    };
+  } catch {
+    return { verbs: [...DEFAULT_VERBS], frameSet: [...DEFAULT_FRAMES] };
+  }
+};
+
+/** Wire one turn-status element for a claude-code session: verb + ping-pong spinner + orange gradient. */
+const wireTurnStatus = (el: HTMLElement, verbs: string[], frames: readonly string[]) => {
+  if (el.hasAttribute("data-dsh-oh-my-claude-turn")) return;
+  el.setAttribute("data-dsh-oh-my-claude-turn", "1");
+
+  // Inject the Claude-orange gradient rule once per page.
+  let styleEl = document.getElementById("dsh-oh-my-claude-turn-status");
+  if (!styleEl) {
+    styleEl = document.createElement("style");
+    styleEl.id = "dsh-oh-my-claude-turn-status";
+    // SAFETY: the gradient stops are hardcoded Claude-orange constants; no user input here.
+    styleEl.textContent = `[data-dsh-oh-my-claude-turn]{background-image:linear-gradient(90deg,${CLAUDE_ORANGE} 0%,${CLAUDE_ORANGE} 40%,${CLAUDE_SHIMMER} 50%,${CLAUDE_ORANGE} 60%,${CLAUDE_ORANGE} 100%)}`;
+    document.head.appendChild(styleEl);
+  }
+
+  // Build the leading spinner span.
+  const spinner = document.createElement("span");
+  spinner.setAttribute("aria-hidden", "true");
+  el.prepend(spinner);
+
+  // Find the original text node (first child before the clock span).
+  const textNode = Array.from(el.childNodes).find(
+    (n): n is Text => n.nodeType === Node.TEXT_NODE && !!n.textContent?.trim().length,
+  );
+
+  const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let frameIndex = 0;
+  let direction = 1; // 1 = forward, -1 = reverse
+
+  const tick = () => {
+    if (reduced) {
+      spinner.textContent = "✻";
+      return;
+    }
+    // SAFETY: frameIndex is kept within bounds by the ping-pong logic above.
+    spinner.textContent = frames[frameIndex]!;
+    frameIndex += direction;
+    if (frameIndex >= frames.length) {
+      frameIndex = frames.length - 2;
+      direction = -1;
+    } else if (frameIndex < 0) {
+      frameIndex = 1;
+      direction = 1;
+    }
+  };
+  tick();
+  const interval = setInterval(tick, 120);
+
+  // Pick a fresh verb once per element instance.
+  if (textNode) textNode.nodeValue = `${pickVerb(verbs, Math.random)}…`;
+
+  // Re-apply on characterData mutations (dsh may reset the text node).
+  const obs = new MutationObserver((records) => {
+    for (const r of records) {
+      if (r.type === "characterData" && textNode && r.target === textNode) {
+        textNode.nodeValue = `${pickVerb(verbs, Math.random)}…`;
+      }
+    }
+  });
+  obs.observe(el, {
+    childList: true,
+    subtree: true,
+    characterData: true,
+    characterDataOldValue: false,
+  });
+
+  // Clear when the element is removed from the DOM.
+  const remObs = new MutationObserver((records) => {
+    for (const r of records)
+      for (const n of r.removedNodes)
+        if (n === el) {
+          clearInterval(interval);
+          obs.disconnect();
+          remObs.disconnect();
+          return;
+        }
+  });
+  remObs.observe(document.body, { childList: true, subtree: true });
+};
+
+/**
+ * Watch dsh's turn-status elements and restyle ones driven by claude-code sessions.
+ * ponytail: DOM hook on a structural selector; swap for a slot the day the turn status grows one.
+ */
+function watchTurnStatus(ctx: ClientCtx) {
+  const attach = async (el: HTMLElement) => {
+    // Only act on [role="status"][aria-live="polite"] (dsh's turn-status element).
+    if (el.getAttribute("role") !== "status" || el.getAttribute("aria-live") !== "polite") return;
+    const activeId = ctx.sessions.list.getSnapshot()?.current;
+    if (!activeId) return;
+    let provider: string | undefined;
+    try {
+      provider = ctx.modelDirectories.directoryFor(activeId).store.getSnapshot().current?.provider;
+    } catch {
+      return; // no scope or binding for this session yet: not ours to restyle
+    }
+    if (provider !== "claude-code") return;
+    spinnerSettings ??= loadSpinnerSettings(); // once per page load
+    const settings = await spinnerSettings;
+    if (el.isConnected) wireTurnStatus(el, settings.verbs, settings.frameSet);
+  };
+  const scan = (root: ParentNode) => {
+    for (const el of root.querySelectorAll<HTMLElement>('[role="status"][aria-live="polite"]'))
+      attach(el);
+  };
+  new MutationObserver((records) => {
+    for (const r of records)
+      for (const n of r.addedNodes) if (n instanceof HTMLElement) scan(n.parentElement ?? n);
+  }).observe(document.body, { childList: true, subtree: true });
+  scan(document.body);
+}
+
 interface RestoreButtonProps {
   sessionId: string;
   ctx: ClientCtx;
@@ -1308,14 +1661,28 @@ function TranscriptRow({
   return (
     <button
       type="button"
-      style={{ ...btn, display: "flex", alignItems: "center", width: "100%", textAlign: "left", padding: "5px 10px", overflow: "hidden" }}
+      style={{
+        ...btn,
+        display: "flex",
+        alignItems: "center",
+        width: "100%",
+        textAlign: "left",
+        padding: "5px 10px",
+        overflow: "hidden",
+      }}
       onClick={async () => {
         await openHere(ctx, s, cwd);
         onClose();
       }}
     >
       <span
-        style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+        style={{
+          flex: 1,
+          minWidth: 0,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
       >
         {label}
       </span>
@@ -1438,6 +1805,7 @@ interface ClientCtx {
       getSnapshot: () => {
         byId: Record<string, { id: string; cwd?: string; blank?: boolean }>;
         phase?: string;
+        current?: string;
       };
     };
     open: (id: string) => void;
@@ -1446,10 +1814,20 @@ interface ClientCtx {
   workspaces: {
     list: { getSnapshot: () => { items: Array<{ path: string; workspaceId: string }> } };
   };
+  // From dsh-client-ui-model-selection (`ModelDirectoryResolver`, registered as `modelDirectories`).
+  modelDirectories: {
+    directoryFor: (sessionId: string) => {
+      store: {
+        subscribe: (fn: () => void) => () => void;
+        getSnapshot: () => { current: { provider: string; model: string } | null };
+      };
+    };
+  };
 }
 export function apply(ctx: ClientCtx) {
   followDeepLink(ctx);
   watchContextMeter();
+  watchTurnStatus(ctx);
 
   function Section() {
     const [boxes, setBoxes] = useState<BoxData[]>([]);
