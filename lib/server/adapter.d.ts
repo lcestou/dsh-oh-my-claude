@@ -71,8 +71,6 @@ export type Config = {
 export declare const name = "dsh-oh-my-claude";
 /** Services injected into the plugin by the dsh runtime. */
 export declare const inject: string[];
-/** Optional services: mounted when present, the plugin works without them. */
-export declare const optionalInject: string[];
 /** Configuration schema for Claude Code plugin settings. */
 export declare const Config: z<Schemastery.ObjectS<{
     command: z<string, string>;

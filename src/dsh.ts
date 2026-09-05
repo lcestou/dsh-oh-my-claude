@@ -335,6 +335,8 @@ export interface PluginContext {
   agents: AgentRegistry;
   approval: ApprovalService;
   userQuestions: UserQuestionService;
+  /** Optional-service lookup (cordis `ctx.get`); undefined when the provider is absent. */
+  get(name: "commands"): PluginContext["commands"];
   /** dsh-commands (`/name` in the composer); optional so a host without it still mounts the plugin. */
   commands?: {
     register(definition: {

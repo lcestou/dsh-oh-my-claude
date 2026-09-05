@@ -1797,4 +1797,28 @@ console.log("plan-review ok");
   assert.deepEqual(out, [], "init frame emits no chunk");
   assert.deepEqual(seen, [["compact", "verify"]]);
 }
+{
+  // bridgeCommands reads the optional service through ctx.get: cordis throws on `ctx.commands`
+  // unless "commands" is in `inject`, which took every turn down once (0.23.x).
+  const registered: string[] = [];
+  const commands = {
+    register: (d: { name: string }) => (registered.push(d.name), () => {}),
+    find: () => undefined,
+  };
+  const base = {
+    on() {},
+    logger: { info() {}, warn() {} },
+    get: (n: string) => (n === "commands" ? commands : undefined),
+  };
+  const guarded = new Proxy(base, {
+    get(t, p) {
+      if (p === "commands") throw new Error('cannot get property "commands" without inject');
+      return t[p as keyof typeof t];
+    },
+  });
+  const a = new ClaudeCodeAdapter(fakeCtx(guarded), Config({ commandBridge: true }));
+  a.bridgeCommands(["compact"], undefined);
+  assert.deepEqual(registered, ["compact"]);
+  assert.equal(a.bridged.size, 1);
+}
 console.log("command-bridge ok");
