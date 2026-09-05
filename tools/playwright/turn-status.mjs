@@ -8,8 +8,9 @@ const side = await p.locator("body").innerText();
 console.log("sidebar hits:", side.split("\n").filter((l) => /todo|queue/i.test(l)).slice(0, 5).join(" || "));
 // Workspaces start collapsed in a fresh profile: expand the one holding the session (arg 5, default someone).
 const ws = p.locator('[role="treeitem"]').filter({ hasText: new RegExp(`^${process.argv[5] ?? "someone"}$`) }).first();
-if (await ws.count()) { await ws.click({ force: true }); await p.waitForTimeout(1200); }
 const want = process.argv[4] ? new RegExp(process.argv[4], "i") : /Running|\bnow\b/;
+// Only expand when the target is not already visible: clicking an expanded workspace collapses it.
+if (await ws.count() && !(await p.locator('[role="treeitem"]').filter({ hasText: want }).count())) { await ws.click({ force: true }); await p.waitForTimeout(1200); }
 const cand = p.locator('[role="treeitem"]').filter({ hasText: want }).first();
 if (await cand.count()) await cand.click({ force: true });
 else await p.getByText(want).first().click({ force: true, timeout: 8000 }).catch((e) => console.log("click failed:", e.message.split("\n")[0]));

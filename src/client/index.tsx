@@ -1540,7 +1540,24 @@ const ensureTurnStatusStyle = () => {
   document.head.appendChild(styleEl);
 };
 
-const wireTurnStatus = (el: HTMLElement, verbs: string[], frames: readonly string[]) => {
+/** One verb per running turn: the row remounts on every tool step and dsh rewrites its text, so a
+ *  fresh pick each time reads as flicker. Keyed by session; forgotten after a short absence. */
+const turnVerbs = new Map<string, { verb: string; seen: number }>();
+const VERB_MEMORY_MS = 4000;
+const verbFor = (sessionId: string, verbs: string[]): string => {
+  const now = Date.now();
+  const kept = turnVerbs.get(sessionId);
+  const verb = kept && now - kept.seen < VERB_MEMORY_MS ? kept.verb : pickVerb(verbs, Math.random);
+  turnVerbs.set(sessionId, { verb, seen: now });
+  return verb;
+};
+
+const wireTurnStatus = (
+  el: HTMLElement,
+  sessionId: string,
+  verbs: string[],
+  frames: readonly string[],
+) => {
   ensureTurnStatusStyle();
   if (el.hasAttribute("data-dsh-oh-my-claude-turn")) return;
   el.setAttribute("data-dsh-oh-my-claude-turn", "1");
@@ -1560,6 +1577,8 @@ const wireTurnStatus = (el: HTMLElement, verbs: string[], frames: readonly strin
   let direction = 1; // 1 = forward, -1 = reverse
 
   const tick = () => {
+    const kept = turnVerbs.get(sessionId);
+    if (kept) kept.seen = Date.now(); // still running: keep this verb for the next remount
     if (reduced) {
       spinner.textContent = "✻";
       return;
@@ -1579,13 +1598,14 @@ const wireTurnStatus = (el: HTMLElement, verbs: string[], frames: readonly strin
   const interval = setInterval(tick, 120);
 
   // Pick a fresh verb once per element instance.
-  if (textNode) textNode.nodeValue = `${pickVerb(verbs, Math.random)}…`;
+  const verb = verbFor(sessionId, verbs);
+  if (textNode) textNode.nodeValue = `${verb}…`;
 
   // Re-apply on characterData mutations (dsh may reset the text node).
   const obs = new MutationObserver((records) => {
     for (const r of records) {
       if (r.type === "characterData" && textNode && r.target === textNode) {
-        textNode.nodeValue = `${pickVerb(verbs, Math.random)}…`;
+        if (textNode.nodeValue !== `${verb}…`) textNode.nodeValue = `${verb}…`;
       }
     }
   });
@@ -1630,7 +1650,7 @@ function watchTurnStatus(ctx: ClientCtx) {
     if (provider !== "claude-code") return;
     spinnerSettings ??= loadSpinnerSettings(); // once per page load
     const settings = await spinnerSettings;
-    if (el.isConnected) wireTurnStatus(el, settings.verbs, settings.frameSet);
+    if (el.isConnected) wireTurnStatus(el, activeId, settings.verbs, settings.frameSet);
   };
   const scan = (root: ParentNode) => {
     for (const el of root.querySelectorAll<HTMLElement>('[role="status"][aria-live="polite"]'))
