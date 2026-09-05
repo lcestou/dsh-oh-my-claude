@@ -746,6 +746,21 @@ function usageEvent(u: {
   return { type: "usage", usage };
 }
 
+export interface TurnRecord {
+  at: number;
+  costUsd: number;
+  durationMs: number;
+  apiMs: number;
+  turns: number;
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+}
+
+/** Per-session ring buffer (last 50 turns) keyed by dsh sessionId, on the adapter instance. */
+const TURN_RING = 50;
+
 /** `--resume` of a session Claude Code no longer has: a result whose errors name the missing conversation. */
 export function isStaleResume(event: ClaudeEvent): boolean {
   if (event?.type !== "result" || !event.is_error) return false;
@@ -932,6 +947,8 @@ export class Translator {
   onToolCall?: (callId: string, name: string, args: string) => number | undefined;
   /** Injected: append tool/result to the dsh session for a native Claude Code tool. */
   onToolResult?: (callId: string, text: string, isError: boolean, meta?: object) => void;
+  /** Injected: fire per-turn accounting summary from the result frame. */
+  onResult?: (summary: TurnRecord) => void;
   /** callId → original input JSON string, kept so Edit can build meta.diffs from it. */
   readonly callInputs = new Map<string, string>();
 
@@ -944,6 +961,7 @@ export class Translator {
     log,
     onToolCall,
     onToolResult,
+    onResult,
   }: {
     toolActivity?: boolean;
     toolTextLimit?: number;
@@ -953,6 +971,7 @@ export class Translator {
     log?: (level: string, msg: string) => void;
     onToolCall?: (callId: string, name: string, args: string) => number | undefined;
     onToolResult?: (callId: string, text: string, isError: boolean, meta?: object) => void;
+    onResult?: (summary: TurnRecord) => void;
   } = {}) {
     this.log = log ?? (() => {});
     this.unknownSeen = new Set(); // (where:type) already warned, so schema drift warns once, not per event
@@ -971,6 +990,7 @@ export class Translator {
     this.aborting = false; // dsh cancelled: the CLI's interrupt result finishes as aborted, not error
     this.onToolCall = onToolCall;
     this.onToolResult = onToolResult;
+    this.onResult = onResult;
   }
 
   deltaType(block: TranslatorBlock): "text-delta" | "reasoning-delta" {
@@ -1081,6 +1101,30 @@ export class Translator {
           );
         }
         if (event.usage) events.push(usageEvent(event.usage));
+        // Per-turn accounting: forward the summary to the adapter's ring buffer.
+        // SAFETY: these fields are emitted by the Claude Code CLI on the result frame; they may not be in every schema version
+        const e = event as {
+          total_cost_usd?: unknown;
+          duration_ms?: unknown;
+          duration_api_ms?: unknown;
+          num_turns?: unknown;
+        };
+        const totalCost = Number(e.total_cost_usd);
+        const durationMs = Number(e.duration_ms);
+        const apiMs = Number(e.duration_api_ms);
+        if (Number.isFinite(totalCost) || Number.isFinite(durationMs)) {
+          this.onResult?.({
+            at: Date.now(),
+            costUsd: Number.isFinite(totalCost) ? totalCost : 0,
+            durationMs: Number.isFinite(durationMs) ? durationMs : 0,
+            apiMs: Number.isFinite(apiMs) ? apiMs : 0,
+            turns: Number.isFinite(Number(e.num_turns)) ? Number(e.num_turns) : 0,
+            input: event.usage?.input_tokens ?? 0,
+            output: event.usage?.output_tokens ?? 0,
+            cacheRead: event.usage?.cache_read_input_tokens ?? 0,
+            cacheWrite: event.usage?.cache_creation_input_tokens ?? 0,
+          });
+        }
         events.push({
           type: "finish",
           reason: this.aborting
@@ -1343,6 +1387,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   warnedNoSeam = false;
   loggedVersion = false;
   sessionController?: SessionController;
+  /** Per-session turn accounting buffer (last 50 turns); keyed by dsh sessionId. */
+  readonly turnBuffer = new Map<string, TurnRecord[]>();
   claudeHome: string;
   providerId: string;
   displayName: string;
@@ -1848,6 +1894,13 @@ export class ClaudeCodeAdapter extends LlmAdapter {
               }
             }
           : undefined,
+      onResult: (summary: TurnRecord) => {
+        // ponytail: ring buffer capped at 50 entries per session; upgrade to a durable store if cost history beyond one page is needed.
+        const buf = this.turnBuffer.get(options.sessionId) ?? [];
+        buf.push(summary);
+        if (buf.length > TURN_RING) buf.shift();
+        this.turnBuffer.set(options.sessionId, buf);
+      },
       onToolResult:
         turnStep && this.config.toolActivity
           ? (callId, text, isError, meta) => {
@@ -2352,6 +2405,7 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       configDir: claudeHome,
       boxesPath: join(STATE_DIR, "boxes.json"),
       command: adapter.config.command,
+      turnRecords: adapter.turnBuffer,
     });
   }
 }

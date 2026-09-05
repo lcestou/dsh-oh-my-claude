@@ -272,6 +272,17 @@ export declare function buildInput(prompt: string, images: Array<{
     mediaType: string;
     data: string;
 }>): string;
+export interface TurnRecord {
+    at: number;
+    costUsd: number;
+    durationMs: number;
+    apiMs: number;
+    turns: number;
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+}
 /** `--resume` of a session Claude Code no longer has: a result whose errors name the missing conversation. */
 export declare function isStaleResume(event: ClaudeEvent): boolean;
 export declare function finishReason(result: {
@@ -339,9 +350,11 @@ export declare class Translator {
     onToolCall?: (callId: string, name: string, args: string) => number | undefined;
     /** Injected: append tool/result to the dsh session for a native Claude Code tool. */
     onToolResult?: (callId: string, text: string, isError: boolean, meta?: object) => void;
+    /** Injected: fire per-turn accounting summary from the result frame. */
+    onResult?: (summary: TurnRecord) => void;
     /** callId → original input JSON string, kept so Edit can build meta.diffs from it. */
     readonly callInputs: Map<string, string>;
-    constructor({ toolActivity, toolTextLimit, relay, dshIds, relayed, log, onToolCall, onToolResult, }?: {
+    constructor({ toolActivity, toolTextLimit, relay, dshIds, relayed, log, onToolCall, onToolResult, onResult, }?: {
         toolActivity?: boolean;
         toolTextLimit?: number;
         relay?: boolean;
@@ -350,6 +363,7 @@ export declare class Translator {
         log?: (level: string, msg: string) => void;
         onToolCall?: (callId: string, name: string, args: string) => number | undefined;
         onToolResult?: (callId: string, text: string, isError: boolean, meta?: object) => void;
+        onResult?: (summary: TurnRecord) => void;
     });
     deltaType(block: TranslatorBlock): "text-delta" | "reasoning-delta";
     /** Warn once when a CLI event/block type is neither handled nor knowingly ignored, so a Claude
@@ -399,6 +413,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     warnedNoSeam: boolean;
     loggedVersion: boolean;
     sessionController?: SessionController;
+    /** Per-session turn accounting buffer (last 50 turns); keyed by dsh sessionId. */
+    readonly turnBuffer: Map<string, TurnRecord[]>;
     claudeHome: string;
     providerId: string;
     displayName: string;

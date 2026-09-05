@@ -521,6 +521,8 @@ export interface SessionRouteOptions {
   configDir: string;
   boxesPath?: string;
   command?: string;
+  /** Per-session turn accounting buffer from the adapter. */
+  turnRecords?: Map<string, import("./adapter.js").TurnRecord[]>;
 }
 
 /** `projectDir(cwd)` → Claude Code project dir; `startedIds()` → ids the adapter started itself. */
@@ -536,6 +538,7 @@ export function registerSessionRoutes(
     configDir,
     boxesPath,
     command,
+    turnRecords,
   }: SessionRouteOptions,
 ): void {
   // Optional: stock dsh has it; without it archived sessions list but cannot be restored.
@@ -616,6 +619,30 @@ export function registerSessionRoutes(
               }
               if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/status`)
                 return json(res, 200, await runtimeStatus(configDir, command));
+              if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/turns`) {
+                const sid = url.searchParams.get("session");
+                if (!sid) return json(res, 400, { error: "session param required" });
+                const turns = turnRecords?.get(sid) ?? [];
+                const total = {
+                  costUsd: 0,
+                  durationMs: 0,
+                  input: 0,
+                  output: 0,
+                  cacheRead: 0,
+                  cacheWrite: 0,
+                  count: 0,
+                };
+                for (const t of turns) {
+                  total.costUsd += t.costUsd;
+                  total.durationMs += t.durationMs;
+                  total.input += t.input;
+                  total.output += t.output;
+                  total.cacheRead += t.cacheRead;
+                  total.cacheWrite += t.cacheWrite;
+                  total.count += 1;
+                }
+                return json(res, 200, { turns, total });
+              }
               if (boxesPath && url.pathname === `${ROUTE_PREFIX}/boxes`) {
                 if (req.method === "GET")
                   return json(res, 200, { boxes: await readBoxes(boxesPath) });

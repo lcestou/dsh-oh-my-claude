@@ -127,7 +127,9 @@ export interface SessionRouteOptions {
     configDir: string;
     boxesPath?: string;
     command?: string;
+    /** Per-session turn accounting buffer from the adapter. */
+    turnRecords?: Map<string, import("./adapter.js").TurnRecord[]>;
 }
 /** `projectDir(cwd)` → Claude Code project dir; `startedIds()` → ids the adapter started itself. */
-export declare function registerSessionRoutes(ctx: PluginContext, { log, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, command, }: SessionRouteOptions): void;
+export declare function registerSessionRoutes(ctx: PluginContext, { log, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, command, turnRecords, }: SessionRouteOptions): void;
 export {};

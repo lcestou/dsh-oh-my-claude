@@ -31,6 +31,7 @@ import {
   WAKE_TEXT,
   withoutNativeInstructions,
   finishReason,
+  TurnRecord,
   RESTART_TEXT,
   markBusy,
   takeInterrupted,
@@ -551,6 +552,44 @@ assert.ok(textDelta && "text" in textDelta);
 assert.ok((textDelta as { text?: string }).text?.includes("denied 1 tool call "));
 assert.equal(ended.at(-1).reason.kind, "stop");
 assert.equal(new Translator().translate({ type: "result", is_error: false })[0]?.type, "finish");
+
+// result frame with usage fields records a turn summary via onResult
+const recorded: TurnRecord[] = [];
+const trWithResult = new Translator({
+  onResult: (s: TurnRecord) => recorded.push(s),
+});
+// SAFETY: test fixture; these runtime fields are not in the ClaudeEvent type but exist on CLI output
+trWithResult.translate({
+  type: "result",
+  is_error: false,
+  stop_reason: "end_turn",
+  total_cost_usd: 0.42,
+  duration_ms: 34000,
+  duration_api_ms: 12000,
+  num_turns: 3,
+  usage: {
+    input_tokens: 100,
+    output_tokens: 50,
+    cache_read_input_tokens: 900,
+    cache_creation_input_tokens: 0,
+  },
+} as any);
+assert.equal(recorded.length, 1, "onResult fired once per result frame");
+// SAFETY: recorded.length is exactly 1 above
+assert.equal(recorded[0]!.costUsd, 0.42);
+assert.equal(recorded[0]!.durationMs, 34000);
+assert.equal(recorded[0]!.apiMs, 12000);
+assert.equal(recorded[0]!.turns, 3);
+assert.equal(recorded[0]!.input, 100);
+assert.equal(recorded[0]!.output, 50);
+assert.equal(recorded[0]!.cacheRead, 900);
+assert.equal(recorded[0]!.cacheWrite, 0);
+// missing fields default to 0
+const missing: TurnRecord[] = [];
+const trMissing = new Translator({ onResult: (s: TurnRecord) => missing.push(s) });
+trMissing.translate({ type: "result", is_error: false, stop_reason: "end_turn" });
+// no total_cost_usd or duration_ms → condition stays false, nothing recorded
+assert.equal(missing.length, 0);
 
 // forwarded subagent text renders as reasoning even while partials are on
 const ts2 = new Translator() as any;

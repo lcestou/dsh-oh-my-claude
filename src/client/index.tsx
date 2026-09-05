@@ -14,6 +14,32 @@ const ROUTE = "/dsh-oh-my-claude";
 /** Deep link another box's panel sends us to: `#claude-session=<id>&cwd=<path>`. */
 const HASH_KEY = "claude-session";
 
+/** Format a turn's cost in USD with two decimals. */
+export const fmtCost = (usd: number): string => `$${usd.toFixed(2)}`;
+/** Format duration ms into a human string: "34s" or "1m 35s". */
+export const fmtDuration = (ms: number): string => {
+  const s = Math.max(0, Math.round(ms / 1000));
+  const m = Math.floor(s / 60);
+  const sec = s % 60;
+  if (m === 0) return `${sec}s`;
+  if (sec === 0) return `${m}m`;
+  return `${m}m ${sec}s`;
+};
+/** Cache share = cacheRead / (input + cacheRead + cacheWrite), clamped to [0,1]. */
+export const cacheShare = ({
+  input,
+  cacheRead,
+  cacheWrite,
+}: {
+  input: number;
+  cacheRead: number;
+  cacheWrite: number;
+}): number => {
+  const denom = input + cacheRead + cacheWrite;
+  if (denom === 0) return 0;
+  return Math.max(0, Math.min(1, cacheRead / denom));
+};
+
 const ago = (ms: number): string => {
   const s = Math.max(0, (Date.now() - ms) / 1000);
   if (s < 3600) return `${Math.max(1, Math.round(s / 60))} min ago`;
@@ -1411,8 +1437,8 @@ function renderUsage(block: HTMLElement, reply: UsageReply) {
     // dsh draws for the context meter below, so the two sections read as one panel.
     const pct = Math.max(0, Math.min(100, w.usedPercent));
     const tone = pct >= 90 ? T.err : pct >= 70 ? T.warn : CLAUDE_ORANGE;
-    const row = document.createElement("div");
-    row.style.cssText =
+    const usageRow = document.createElement("div");
+    usageRow.style.cssText =
       "display:grid;grid-template-columns:1fr auto;align-items:baseline;column-gap:12px;row-gap:3px;padding:3px 0";
     const label = document.createElement("span");
     label.textContent = w.label;
@@ -1433,8 +1459,8 @@ function renderUsage(block: HTMLElement, reply: UsageReply) {
     const when = document.createElement("span");
     when.textContent = resetText(w.resetsAt);
     when.style.cssText = `grid-column:1 / -1;color:${T.faint};font-size:11px;line-height:16px`;
-    row.append(label, value, bar, when);
-    block.append(row);
+    usageRow.append(label, value, bar, when);
+    block.append(usageRow);
   }
   if (reply.windows.length === 0) {
     const p = document.createElement("div");
@@ -1455,10 +1481,24 @@ function renderUsage(block: HTMLElement, reply: UsageReply) {
 const isRingRoot = (el: HTMLElement | null) =>
   !!el?.querySelector(':scope > button[aria-haspopup="dialog"] circle + circle');
 
-function watchContextMeter() {
+/** The open session's provider when it is one of this plugin's mounts (`claude-code*`), else undefined. */
+const activeClaudeSession = (ctx: ClientCtx): string | undefined => {
+  const id = ctx.sessions.list.getSnapshot()?.current;
+  if (!id) return undefined;
+  try {
+    const provider = ctx.modelDirectories.directoryFor(id).store.getSnapshot().current?.provider;
+    return provider && provider.startsWith("claude-code") ? id : undefined;
+  } catch {
+    return undefined; // no scope or binding yet: not ours
+  }
+};
+
+function watchContextMeter(ctx: ClientCtx) {
   const MARK = "data-dsh-oh-my-claude-usage";
   const attach = (panel: HTMLElement) => {
     if (panel.hasAttribute(MARK)) return;
+    // Only sessions on a Claude mount: a local-model session's meter stays dsh's own.
+    if (!activeClaudeSession(ctx)) return;
     panel.setAttribute(MARK, "1");
     const block = document.createElement("div");
     block.style.cssText = `border-bottom:1px solid ${T.border};margin-bottom:10px;padding-bottom:8px;font-size:13px;line-height:20px`;
@@ -1496,6 +1536,7 @@ function watchContextMeter() {
   // The hover bubble (`role=tooltip`, a sibling of the ring button) gets one compact line on top.
   const bubble = (tip: HTMLElement) => {
     if (tip.hasAttribute(MARK)) return;
+    if (!activeClaudeSession(ctx)) return;
     tip.setAttribute(MARK, "1");
     const line = document.createElement("div");
     // Above dsh's own sentence, like the panel rows, with a hairline between.
@@ -1533,7 +1574,6 @@ function watchContextMeter() {
   }).observe(document.body, { childList: true, subtree: true });
   scan(document.body);
 }
-
 
 /** Fetch Claude Code's settings.json text and extract spinnerVerbs if present. */
 let spinnerSettings: Promise<{ verbs: string[]; frameSet: typeof DEFAULT_FRAMES }> | undefined;
@@ -1674,15 +1714,8 @@ function watchTurnStatus(ctx: ClientCtx) {
   const attach = async (el: HTMLElement) => {
     // Only act on [role="status"][aria-live="polite"] (dsh's turn-status element).
     if (el.getAttribute("role") !== "status" || el.getAttribute("aria-live") !== "polite") return;
-    const activeId = ctx.sessions.list.getSnapshot()?.current;
+    const activeId = activeClaudeSession(ctx);
     if (!activeId) return;
-    let provider: string | undefined;
-    try {
-      provider = ctx.modelDirectories.directoryFor(activeId).store.getSnapshot().current?.provider;
-    } catch {
-      return; // no scope or binding for this session yet: not ours to restyle
-    }
-    if (!provider || !provider.startsWith("claude-code")) return;
     spinnerSettings ??= loadSpinnerSettings(); // once per page load
     const settings = await spinnerSettings;
     if (el.isConnected) wireTurnStatus(el, activeId, settings.verbs, settings.frameSet);
@@ -1696,6 +1729,100 @@ function watchTurnStatus(ctx: ClientCtx) {
       for (const n of r.addedNodes) if (n instanceof HTMLElement) scan(n.parentElement ?? n);
   }).observe(document.body, { childList: true, subtree: true });
   scan(document.body);
+}
+
+interface TurnRecord {
+  at: number;
+  costUsd: number;
+  durationMs: number;
+  apiMs: number;
+  turns: number;
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+}
+interface TurnsReply {
+  turns: TurnRecord[];
+  total: {
+    costUsd: number;
+    durationMs: number;
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    count: number;
+  };
+}
+
+/** Small chip in the session header showing last-turn cost/duration/cache share, with total on hover. */
+function TurnAccountingChip({ sessionId }: { sessionId: string }) {
+  const [turns, setTurns] = useState<TurnRecord[]>([]);
+  const visibleRef = useRef(true);
+
+  useEffect(() => {
+    let alive = true;
+    const fetchTurns = async () => {
+      try {
+        const r = await fetch(`${ROUTE}/turns?session=${encodeURIComponent(sessionId)}`);
+        if (!r.ok) return;
+        // SAFETY: the body is our own JSON route; the union type names both shapes the caller checks
+        const body = (await r.json()) as TurnsReply | { error: string };
+        if ("error" in body) return;
+        if (alive) setTurns(body.turns ?? []);
+      } catch {
+        // network error: keep previous turns
+      }
+    };
+    fetchTurns();
+    const interval = setInterval(() => {
+      if (visibleRef.current) fetchTurns();
+    }, 10_000);
+    const onVisibility = () => {
+      visibleRef.current = document.visibilityState === "visible";
+      if (visibleRef.current) fetchTurns();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      alive = false;
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [sessionId]);
+
+  if (turns.length === 0) return null;
+  const last = turns[turns.length - 1];
+  // SAFETY: turns.length > 0 guarantees the last index exists
+  if (!last) return null;
+  const parts: string[] = [];
+  if (last.costUsd > 0) parts.push(`${CLAUDE_MARK} ${fmtCost(last.costUsd)}`);
+  if (last.durationMs > 0) parts.push(fmtDuration(last.durationMs));
+  const share = cacheShare({
+    input: last.input,
+    cacheRead: last.cacheRead,
+    cacheWrite: last.cacheWrite,
+  });
+  if (share > 0) parts.push(`cache ${Math.round(share * 100)}%`);
+  const label = parts.length > 0 ? parts.join(" · ") : CLAUDE_MARK;
+
+  const totalParts: string[] = [`${turns.length} turn${turns.length === 1 ? "" : "s"}`];
+  const durTotal = turns.reduce((s, r) => s + r.durationMs, 0);
+  const costTotal = turns.reduce((s, r) => s + r.costUsd, 0);
+  const inputTotal = turns.reduce((s, r) => s + r.input, 0);
+  const outputTotal = turns.reduce((s, r) => s + r.output, 0);
+  if (costTotal > 0) totalParts.push(fmtCost(costTotal));
+  totalParts.push(fmtDuration(durTotal));
+  totalParts.push(`${inputTotal}in/${outputTotal}out`);
+
+  return (
+    <button
+      type="button"
+      title={totalParts.join(" · ")}
+      style={{ ...chip(false, false), fontSize: 11, padding: "2px 8px" }}
+    >
+      <span style={{ color: T.muted }}>{label}</span>
+    </button>
+  );
 }
 
 interface RestoreButtonProps {
@@ -1884,7 +2011,7 @@ interface ClientCtx {
 }
 export function apply(ctx: ClientCtx) {
   followDeepLink(ctx);
-  watchContextMeter();
+  watchContextMeter(ctx);
   watchTurnStatus(ctx);
 
   function Section() {
@@ -1932,6 +2059,15 @@ export function apply(ctx: ClientCtx) {
         inject: () => ({}),
       },
       Section,
+    );
+    return null;
+  });
+
+  // Turn accounting chip in the session header.
+  ctx.slots.inject("conversation.session.header.actions", () => {
+    ctx.slots.register(
+      { name: "conversation.session.header.actions", id: "claude-turn-accounting", order: 30 },
+      (props) => (props.sessionId ? <TurnAccountingChip sessionId={props.sessionId} /> : null),
     );
     return null;
   });
