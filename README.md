@@ -32,6 +32,16 @@ Plugin settings live under Settings → Claude Code, or as `config:` on the bund
 
 Install from a checkout instead: `dsh plugin --profile web add link:/path/to/dsh-oh-my-claude-code`. The source is strict TypeScript under `src/`; dsh loads the compiled output in `lib/`, so run `bun run build` after every edit and restart (the patch layer hot-reloads, plugin code does not). `lib/server` comes from `tsc`, `lib/client.js` from `bun build` of `src/client/index.tsx`; both are committed, so a plain install has them. `bun run check` runs lint (oxlint with the anti-slop rules in `tools/oxlint`), format check, typecheck, tests and the build.
 
+Lint contract, read before writing code (the anti-slop rules in `.oxlintrc.json` fail the build and cost a worker 25 check runs on 2026-09-05):
+
+- Every `as` assertion needs a `// SAFETY: <the invariant that makes it true>` comment on the line directly above it. Prefer a type guard or a narrower type so no assertion is needed. No `as X as Y` chains, no `as unknown as`.
+- No `typeof x === "string"` style runtime checks in `src/adapter.ts` and `src/client/index.tsx` (test files and the listed server modules are exempt). Use the existing narrowing helpers (`isJsonObject`, `textOf`, schema parsing) or a typed field.
+- No conditional empty-object spread (`...(cond ? { a } : {})`). Assign the property in a separate statement when present.
+- No `unknown` parameters, returns or type aliases in `src/adapter.ts`; name the shape.
+- Do not widen a known literal (`const x: string = "bash"`); let inference keep the literal.
+- No `_prefixed` identifiers (`no-underscore-dangle`), no shadowed names (`no-shadow`), no unused variables.
+- Run `bun run check` after each edit, not once at the end: the first run tells you which rule you are fighting, and `oxfmt src/` fixes formatting in place.
+
 ## Configuration
 
 All keys are optional.
@@ -47,7 +57,7 @@ All keys are optional.
 | `maxTurns` | unset | `--max-turns` cap per request. |
 | `maxBudgetUsd` | unset | `--max-budget-usd` cap per request. |
 | `titleModel` | `haiku` | Model used for dsh's session-title requests. |
-| `toolActivity` | `true` | Show Claude Code tool calls and results as reasoning blocks. |
+| `toolActivity` | `true` | Show Claude Code tool calls and results as native tool rows. |
 | `resume` | `true` | Keep one Claude Code session per dsh session. |
 | `idleTimeoutMs` | `1800000` | Kill the child when no stream event arrives for this long; surfaces as `IDLE_TIMEOUT`. |
 | `toolTextLimit` | `600` | Characters of tool arguments and results shown in activity blocks. |

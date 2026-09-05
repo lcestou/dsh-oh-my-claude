@@ -324,13 +324,21 @@ export declare class Translator {
     denied: number;
     toolPending: boolean;
     aborting: boolean;
-    constructor({ toolActivity, toolTextLimit, relay, dshIds, relayed, log, }?: {
+    /** Injected: append tool/call to the dsh session for a native Claude Code tool. */
+    onToolCall?: (callId: string, name: string, args: string) => number | undefined;
+    /** Injected: append tool/result to the dsh session for a native Claude Code tool. */
+    onToolResult?: (callId: string, text: string, isError: boolean, meta?: object) => void;
+    /** callId → original input JSON string, kept so Edit can build meta.diffs from it. */
+    readonly callInputs: Map<string, string>;
+    constructor({ toolActivity, toolTextLimit, relay, dshIds, relayed, log, onToolCall, onToolResult, }?: {
         toolActivity?: boolean;
         toolTextLimit?: number;
         relay?: boolean;
         dshIds?: Set<string>;
         relayed?: Set<string>;
         log?: (level: string, msg: string) => void;
+        onToolCall?: (callId: string, name: string, args: string) => number | undefined;
+        onToolResult?: (callId: string, text: string, isError: boolean, meta?: object) => void;
     });
     deltaType(block: TranslatorBlock): "text-delta" | "reasoning-delta";
     /** Warn once when a CLI event/block type is neither handled nor knowingly ignored, so a Claude
@@ -349,6 +357,11 @@ export declare class Translator {
     wholeBlock(blockType: string, text: string): StreamChunk[];
     translate(event: ClaudeEvent): StreamChunk[];
     partial(ev: ClaudeStreamPartial): StreamChunk[];
+    /** Tracks content_block metadata for native-tool blocks whose input we collect via deltas. */
+    readonly cbMeta: Map<number, {
+        id?: string;
+        name?: string;
+    }>;
     openBlock(apiIndex: number, cb: {
         type?: string;
         id?: string;

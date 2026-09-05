@@ -14,6 +14,7 @@ import {
   type LlmResolvedModelInfo,
   type StreamChunk,
   boundContextSummary,
+  createToolResultMessage,
   createUserMessage,
 } from "@deepseek-ai/dsh-llm";
 import z from "@deepseek-ai/schemastery";
@@ -179,7 +180,7 @@ export const Config = z.object({
   toolActivity: z
     .boolean()
     .default(true)
-    .description("Show Claude Code tool calls and results as reasoning blocks"),
+    .description("Show Claude Code tool calls and results as native tool rows"),
   resume: z
     .boolean()
     .default(true)
@@ -674,6 +675,21 @@ export function buildInput(
 
 const clip = (s: string, n = TOOL_TEXT_LIMIT): string => (s.length > n ? `${s.slice(0, n)}…` : s);
 const DENIED_RE = /requires? approval|permission (was )?denied|not allowed/i;
+// Claude Code tool names → dsh tool name that the client-ui-tool presenter recognises.
+// Unknown names fall through to the generic "others" row.
+const NATIVE_TOOL_MAP = {
+  Bash: "bash",
+  Read: "read",
+  Edit: "edit",
+  Write: "write",
+  Grep: "grep",
+  Glob: "glob",
+  WebFetch: "web_fetch",
+  WebSearch: "web_search",
+} as const;
+/** Every Claude Code tool except the dsh MCP relay gets a session row: mapped names pick the
+ *  client's bash/read/edit presenters, the rest (TodoWrite, ToolSearch, Skill, mcp__*) the generic one. */
+const isNativeTool = (toolName: string) => toolName !== "" && !toolName.startsWith("mcp__dsh__");
 
 function usageEvent(u: {
   input_tokens?: number;
@@ -878,6 +894,12 @@ export class Translator {
   denied: number; // tool calls Claude Code refused because a non-interactive run cannot ask
   toolPending: boolean; // a tool_use block closed and its result has not arrived yet
   aborting: boolean; // dsh cancelled: the CLI's interrupt result finishes as aborted, not error
+  /** Injected: append tool/call to the dsh session for a native Claude Code tool. */
+  onToolCall?: (callId: string, name: string, args: string) => number | undefined;
+  /** Injected: append tool/result to the dsh session for a native Claude Code tool. */
+  onToolResult?: (callId: string, text: string, isError: boolean, meta?: object) => void;
+  /** callId → original input JSON string, kept so Edit can build meta.diffs from it. */
+  readonly callInputs = new Map<string, string>();
 
   constructor({
     toolActivity = true,
@@ -886,6 +908,8 @@ export class Translator {
     dshIds,
     relayed,
     log,
+    onToolCall,
+    onToolResult,
   }: {
     toolActivity?: boolean;
     toolTextLimit?: number;
@@ -893,6 +917,8 @@ export class Translator {
     dshIds?: Set<string>;
     relayed?: Set<string>;
     log?: (level: string, msg: string) => void;
+    onToolCall?: (callId: string, name: string, args: string) => number | undefined;
+    onToolResult?: (callId: string, text: string, isError: boolean, meta?: object) => void;
   } = {}) {
     this.log = log ?? (() => {});
     this.unknownSeen = new Set(); // (where:type) already warned, so schema drift warns once, not per event
@@ -909,6 +935,8 @@ export class Translator {
     this.denied = 0; // tool calls Claude Code refused because a non-interactive run cannot ask
     this.toolPending = false; // a tool_use block closed and its result has not arrived yet
     this.aborting = false; // dsh cancelled: the CLI's interrupt result finishes as aborted, not error
+    this.onToolCall = onToolCall;
+    this.onToolResult = onToolResult;
   }
 
   deltaType(block: TranslatorBlock): "text-delta" | "reasoning-delta" {
@@ -1063,6 +1091,17 @@ export class Translator {
         return this.openBlock(ev.index ?? -1, ev.content_block ?? {});
       case "content_block_delta": {
         const block = this.open.get(ev.index ?? -1);
+        // Hidden native-tool blocks still need their input JSON accumulated.
+        const apiIndex = ev.index ?? -1;
+        const cbMeta = this.cbMeta.get(apiIndex);
+        if (cbMeta && ev.delta?.partial_json !== undefined) {
+          const partial = ev.delta?.partial_json ?? "";
+          // Store accumulated input on the meta so content_block_stop can emit tool/call.
+          if (!cbMeta.id) return [];
+          const existing = this.callInputs.get(cbMeta.id);
+          this.callInputs.set(cbMeta.id, (existing ?? "") + partial);
+          return [];
+        }
         if (!block || block.index < 0) return [];
         const d = ev.delta ?? {};
         const text = d.text ?? d.thinking ?? d.partial_json ?? "";
@@ -1071,7 +1110,24 @@ export class Translator {
       case "content_block_stop": {
         const block = this.open.get(ev.index ?? -1);
         if (!block) return [];
-        this.open.delete(ev.index ?? -1);
+        const apiIndex = ev.index ?? -1;
+        // For native tools, emit tool/call now that the input is complete.
+        const cbMeta = this.cbMeta.get(apiIndex);
+        if (cbMeta?.id && this.onToolCall) {
+          this.cbMeta.delete(apiIndex);
+          // Hidden blocks accumulate input via callInputs in the delta handler; live blocks use block.text.
+          const input = this.callInputs.get(cbMeta.id) ?? block.text;
+          if (input) {
+            // SAFETY: NATIVE_TOOL_MAP is a closed literal type; keyof narrows index access to known keys
+            const mapped =
+              NATIVE_TOOL_MAP[(cbMeta.name ?? "") as keyof typeof NATIVE_TOOL_MAP] ??
+              cbMeta.name ??
+              "";
+            const dshSeq = this.onToolCall(cbMeta.id, mapped, input);
+            if (dshSeq !== undefined) this.callInputs.set(cbMeta.id, input);
+          }
+        }
+        this.open.delete(apiIndex);
         // A finished tool_use block means the CLI is now running that tool: no stream events until
         // its result arrives, however long it takes. Callers read this to pause their idle timer.
         this.toolPending = block.tool === true;
@@ -1083,6 +1139,9 @@ export class Translator {
     }
   }
 
+  /** Tracks content_block metadata for native-tool blocks whose input we collect via deltas. */
+  readonly cbMeta = new Map<number, { id?: string; name?: string }>();
+
   openBlock(apiIndex: number, cb: { type?: string; id?: string; name?: string }) {
     let opened: { block: TranslatorBlock; events: StreamChunk[] };
     if (cb.type === "text") opened = this.startBlock("text");
@@ -1093,6 +1152,18 @@ export class Translator {
       if (dsh && cb.id) {
         this.dshIds.add(cb.id);
         this.dshNames.set(cb.id, toolName.slice("mcp__dsh__".length));
+      }
+      // Native tools get a dsh session row; hide the reasoning-lane block entirely.
+      if (isNativeTool(toolName) && this.onToolCall && cb.id) {
+        this.cbMeta.set(apiIndex, { id: cb.id, name: toolName });
+        this.open.set(apiIndex, {
+          index: -1,
+          blockType: "hidden",
+          text: "",
+          started: false,
+          tool: true,
+        });
+        return [];
       }
       if (!this.toolActivity || (dsh && this.relay)) {
         this.open.set(apiIndex, {
@@ -1135,6 +1206,15 @@ export class Translator {
           this.dshIds.add(b.id);
           this.dshNames.set(b.id, toolName.slice("mcp__dsh__".length));
         }
+        // Native tools render as session rows; skip the reasoning-lane block.
+        if (isNativeTool(toolName) && this.onToolCall && b.id) {
+          const args = JSON.stringify(b.input ?? {});
+          // SAFETY: NATIVE_TOOL_MAP is a closed literal type; keyof narrows index access to known keys
+          const mapped = NATIVE_TOOL_MAP[toolName as keyof typeof NATIVE_TOOL_MAP] ?? toolName;
+          const dshSeq = this.onToolCall(b.id, mapped, args);
+          if (dshSeq !== undefined) this.callInputs.set(b.id, args);
+          continue;
+        }
         if (!this.toolActivity || (dsh && this.relay)) continue;
         const [kind, lead] = this.toolLead(b);
         events.push(
@@ -1169,6 +1249,37 @@ export class Translator {
       const toolUseId = b.tool_use_id ?? "";
       const dsh = this.dshIds.delete(toolUseId);
       if (dsh && this.relayed.delete(toolUseId)) continue; // dsh drew the native call and result
+      // Native tool result: append a dsh session row, skip reasoning text.
+      if (this.onToolResult && !this.callInputs.has(toolUseId)) {
+        // Not a native tool we tracked — fall through to old behaviour.
+      } else if (this.onToolResult && this.callInputs.has(toolUseId)) {
+        const argsJson = this.callInputs.get(toolUseId)!;
+        let meta: object | undefined;
+        try {
+          // SAFETY: argsJson was produced by Claude's tool_use input and stored verbatim; the shape is trusted here
+          interface EditCallInput {
+            file_path: string;
+            old_string: string;
+            new_string: string;
+          }
+          // SAFETY: JSON.parse output cast to EditCallInput; fields validated below with truthiness checks
+          const inp = JSON.parse(argsJson) as EditCallInput;
+          if (inp.file_path && inp.old_string && inp.new_string) {
+            meta = {
+              diffs: [{ path: inp.file_path, oldText: inp.old_string, newText: inp.new_string }],
+            };
+          }
+        } catch {
+          // ignore malformed input JSON
+        }
+        try {
+          this.onToolResult(toolUseId, raw, b.is_error ?? false, meta);
+        } catch (err) {
+          this.log("warn", `native tool result append failed: ${err}`);
+          // fall through to render reasoning text as before
+        }
+        continue;
+      }
       const toolName = this.dshNames.get(toolUseId);
       this.dshNames.delete(toolUseId);
       // A dsh call that could not be relayed ran inside the bridge: show it as one compact row.
@@ -1613,6 +1724,28 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       // open (a todo/write outside an open turn is rejected by dsh's todo invariant).
       this.restoreTodos(options.sessionId);
     }
+    // Compute turn/step once per stream from the open session; used by native tool callbacks.
+    let turnStep: { turn: number; step: number } | undefined;
+    const callSeqs = new Map<string, number>(); // callId → tool/call seq the result must cite
+    try {
+      const session = this.ctx?.sessions?.get?.(asSessionId(options.sessionId));
+      if (session) {
+        // Inline scan to avoid type assertions; TypeScript narrows e.data after the type guard.
+        let turn: number | undefined;
+        let step: number | undefined;
+        for (const e of session.snapshotEvents()) {
+          if (e.type === "turn/start")
+            // SAFETY: turn/start events carry turn as a number in data at runtime
+            turn = e.data.turn as number | undefined;
+          else if (e.type === "step/start")
+            // SAFETY: step/start events carry step as a number in data at runtime
+            step = e.data.step as number | undefined;
+        }
+        if (turn !== undefined && step !== undefined) turnStep = { turn, step };
+      }
+    } catch {
+      // session unavailable; native rows will fall back to old reasoning blocks
+    }
     const tr = new Translator({
       toolActivity: this.config.toolActivity,
       toolTextLimit: this.config.toolTextLimit,
@@ -1620,6 +1753,61 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       dshIds: proc.dshIds,
       relayed: proc.relayed,
       log: this.log.bind(this),
+      onToolCall:
+        turnStep && this.config.toolActivity
+          ? (callId: string, toolName: string, args: string) => {
+              // SAFETY: NATIVE_TOOL_MAP is a readonly const object; keyof typeof narrows to known keys only
+              const mapped = NATIVE_TOOL_MAP[toolName as keyof typeof NATIVE_TOOL_MAP] ?? toolName;
+              try {
+                const session = this.ctx?.sessions?.get?.(asSessionId(options.sessionId));
+                // SAFETY: append accepts plain-object data; seq is a number at runtime even though SessionSeq is branded
+                const seq = session?.append("tool/call", {
+                  turn: turnStep!.turn,
+                  step: turnStep!.step,
+                  callId,
+                  name: mapped,
+                  arguments: args,
+                } as any)?.seq;
+                if (seq !== undefined) callSeqs.set(callId, seq);
+                return seq;
+              } catch (err) {
+                this.log("warn", `native tool call append failed: ${err}`);
+                return undefined;
+              }
+            }
+          : undefined,
+      onToolResult:
+        turnStep && this.config.toolActivity
+          ? (callId, text, isError, meta) => {
+              try {
+                const session = this.ctx?.sessions?.get?.(asSessionId(options.sessionId));
+                if (!session) return;
+                const callSeq = callSeqs.get(callId);
+                callSeqs.delete(callId);
+                // SAFETY: createToolResultMessage returns a user-role message; session.append validates shape at runtime
+                const message = createToolResultMessage({
+                  callId: callId as any,
+                  content: [{ type: "text" as const, text }],
+                  isError,
+                });
+                // SAFETY: message is ToolResultMessage (a user-role Message); session.append validates JSON at runtime
+                const resultData = { turn: turnStep!.turn, step: turnStep!.step, message };
+                if (meta) Object.assign(resultData, { meta });
+                // SAFETY: resultData has the shape expected by session.append for tool/result; fields validated at runtime
+                session.append(
+                  "tool/result",
+                  resultData as any,
+                  // SAFETY: sourceEventSeqs is optional when no call was recorded; invariant allows TOOL_NOT_STARTED as fallback
+                  {
+                    surfaceOp: "append",
+                    sourceEventSeqs: callSeq !== undefined ? [callSeq] : [],
+                  } as any,
+                );
+              } catch (err) {
+                this.log("warn", `native tool result append failed: ${err}`);
+              }
+            }
+          : undefined,
     });
     const pending = new Map(); // control request id → AbortController
     let outcome: Outcome = "ended"; // ended | finished | relayed | parked | retry

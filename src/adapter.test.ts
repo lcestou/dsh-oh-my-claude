@@ -1429,3 +1429,93 @@ console.log("schema-guard ok");
   assert.deepEqual(woke, [["dead", undefined, RESTART_TEXT]]);
   assert.deepEqual(await takeInterrupted(file), ["live"], "live session stays tracked");
 }
+// --- native tool rows: onToolCall / onToolResult callbacks fire for Bash and Edit ---
+{
+  const calls: Array<{ callId: string; name: string; args: string }> = [];
+  const results: Array<{ callId: string; text: string; isError: boolean; meta?: object }> = [];
+  const tr = new Translator({
+    onToolCall: (callId, name, args) => {
+      calls.push({ callId, name, args });
+      return 42; // fake seq
+    },
+    onToolResult: (callId, text, isError, meta) => {
+      results.push({ callId, text, isError, meta });
+    },
+  }) as any;
+  // stream-json partial path: content_block_start → input_json_delta → content_block_stop
+  tr.translate({ type: "stream_event", event: { type: "message_start" } });
+  tr.translate({
+    type: "stream_event",
+    event: {
+      type: "content_block_start",
+      index: 0,
+      content_block: { type: "tool_use", id: "tu1", name: "Bash" },
+    },
+  });
+  tr.translate({
+    type: "stream_event",
+    event: {
+      type: "content_block_delta",
+      index: 0,
+      delta: {
+        type: "input_json_delta",
+        partial_json: '{"command":"ls","description":"List files"}',
+      },
+    },
+  });
+  const stop = tr.translate({
+    type: "stream_event",
+    event: { type: "content_block_stop", index: 0 },
+  });
+  // no reasoning chunk emitted for the native tool call
+  assert.deepEqual(stop, [], "native tool_use block emits no chunk");
+  assert.equal(calls.length, 1, "onToolCall fired once");
+  assert.equal(calls[0]!.name, "bash", "Bash mapped to lowercase bash");
+  assert.ok(calls[0]!.args.includes('"description":"List files"'), "arguments contain description");
+  // tool_result path
+  const res = tr.translate({
+    type: "user",
+    message: { content: [{ type: "tool_result", tool_use_id: "tu1", content: "file1\nfile2" }] },
+  });
+  assert.deepEqual(res, [], "native tool_result emits no chunk");
+  assert.equal(results.length, 1, "onToolResult fired once");
+  assert.equal(results[0]!.callId, "tu1", "result references the same callId");
+  assert.equal(results[0]!.text, "file1\nfile2", "result text preserved");
+}
+{
+  const results: Array<{ callId: string; meta?: object }> = [];
+  const tr = new Translator({
+    onToolCall: (callId, _name, args) => {
+      // pretend we stored the args so the result handler can build meta
+      (tr as any).callInputs.set(callId, args);
+      return 99;
+    },
+    onToolResult: (_callId, _text, _isError, meta) => {
+      results.push({ callId: "", meta });
+    },
+  }) as any;
+  // feed a whole-assistant-message Edit (no partials)
+  tr.translate({
+    type: "assistant",
+    message: {
+      content: [
+        {
+          type: "tool_use",
+          id: "e1",
+          name: "Edit",
+          input: { file_path: "/x/y.ts", old_string: "old", new_string: "new" },
+        },
+      ],
+    },
+  });
+  assert.equal(results.length, 0, "onToolResult not called yet — no result arrived");
+  tr.translate({
+    type: "user",
+    message: { content: [{ type: "tool_result", tool_use_id: "e1", content: "edited" }] },
+  });
+  assert.equal(results.length, 1, "onToolResult fired after Edit result");
+  assert.ok(
+    (results[0]!.meta as any)?.diffs?.[0]?.path === "/x/y.ts",
+    "Edit meta carries diffs[0].path from the call input",
+  );
+}
