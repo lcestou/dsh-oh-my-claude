@@ -46,7 +46,14 @@ import type {
   SessionId,
   SubprocessRuntime,
 } from "./dsh.js";
-import { ADAPTER_CURRENT, RESUME_TIMER, PROCESS_REGISTRY, asSessionId } from "./dsh.js";
+import {
+  ADAPTER_CURRENT,
+  COMMAND_CATALOG,
+  RESUME_TIMER,
+  PROCESS_REGISTRY,
+  TURN_RECORDS,
+  asSessionId,
+} from "./dsh.js";
 import {
   authHeaders,
   auxCwd,
@@ -1442,8 +1449,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   sessionController?: SessionController;
   /** Masks secret env values in tool results; undefined when `redactSecrets` is off. */
   readonly redact: ((s: string) => string) | undefined;
-  /** Per-session turn accounting buffer (last 50 turns); keyed by dsh sessionId. */
-  readonly turnBuffer = new Map<string, TurnRecord[]>();
+  /** Per-session turn accounting buffer (last 50 turns); keyed by dsh sessionId. Lives on
+   *  globalThis so the route registered at boot reads what a hot-reloaded adapter fills. */
+  readonly turnBuffer: Map<string, TurnRecord[]>;
   claudeHome: string;
   providerId: string;
   displayName: string;
@@ -1476,8 +1484,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // SAFETY: the registry symbol is this plugin's own key on globalThis, typed here once
     const registry = globalThis as typeof globalThis & {
       [PROCESS_REGISTRY]?: Map<string, ClaudeProcess>;
+      [TURN_RECORDS]?: Map<string, TurnRecord[]>;
     };
     this.processes = registry[PROCESS_REGISTRY] ??= new Map(); // providerId:sessionId → ClaudeProcess
+    this.turnBuffer = registry[TURN_RECORDS] ??= new Map();
     // Adopted processes still point their idle-reply callback at the previous (now dead) adapter.
     for (const [key, proc] of this.processes) {
       if (!key.startsWith(`${this.providerId}:`)) continue; // another mount's process, not ours
@@ -1681,6 +1691,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // Optional service: cordis rejects `ctx.commands` unless it is in `inject`; `get` does not.
     const commands = this.ctx?.get("commands");
     if (!this.config.commandBridge || this.providerId !== "claude-code" || !commands) return;
+    // SAFETY: a plain slot on globalThis, written only here
+    (globalThis as { [COMMAND_CATALOG]?: string[] })[COMMAND_CATALOG] = names;
     const failed: string[] = [];
     for (const cmd of names) {
       if (this.bridged.has(cmd)) continue;
@@ -2546,8 +2558,12 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
   const g = globalThis as typeof globalThis & {
     [ADAPTER_CURRENT]?: Map<string, ClaudeCodeAdapter>;
     [RESUME_TIMER]?: ReturnType<typeof setTimeout>;
+    [COMMAND_CATALOG]?: string[];
   };
   (g[ADAPTER_CURRENT] ??= new Map()).set(adapter.providerId, adapter);
+  // A hot reload disposes the previous instance's command registrations with its scope and
+  // brings no new init frame; re-bridge from the catalog the last one saw.
+  if (g[COMMAND_CATALOG]) adapter.bridgeCommands(g[COMMAND_CATALOG], undefined);
   if (!g[RESUME_TIMER]) {
     g[RESUME_TIMER] = setTimeout(() => {
       // Resume every mounted instance over its own busy file.

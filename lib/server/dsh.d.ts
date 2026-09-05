@@ -5,6 +5,10 @@ export declare const ADAPTER_CURRENT: unique symbol;
 export declare const RESUME_TIMER: unique symbol;
 /** Symbol for the Claude process registry on globalThis (adopted processes across hot reloads). */
 export declare const PROCESS_REGISTRY: unique symbol;
+/** Per-session turn accounting on globalThis: the route registered at boot must read the buffer a hot-reloaded adapter fills. */
+export declare const TURN_RECORDS: unique symbol;
+/** The CLI's last slash-command catalog, so a hot-reloaded adapter re-registers the bridge without a new init frame. */
+export declare const COMMAND_CATALOG: unique symbol;
 /** The same brand dsh-llm puts on GenerateOptions.sessionId, so ids flow through without casts. */
 export type SessionId = NonNullable<GenerateOptions["sessionId"]>;
 /** Any JSON document; what MCP tool arguments and relay payloads are made of. */

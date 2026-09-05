@@ -10,6 +10,10 @@ export const ADAPTER_CURRENT = Symbol.for("dsh-oh-my-claude.adapter");
 export const RESUME_TIMER = Symbol.for("dsh-oh-my-claude.resume-timer");
 /** Symbol for the Claude process registry on globalThis (adopted processes across hot reloads). */
 export const PROCESS_REGISTRY = Symbol.for("dsh-oh-my-claude.processes");
+/** Per-session turn accounting on globalThis: the route registered at boot must read the buffer a hot-reloaded adapter fills. */
+export const TURN_RECORDS = Symbol.for("dsh-oh-my-claude.turns");
+/** The CLI's last slash-command catalog, so a hot-reloaded adapter re-registers the bridge without a new init frame. */
+export const COMMAND_CATALOG = Symbol.for("dsh-oh-my-claude.commands");
 
 /** The same brand dsh-llm puts on GenerateOptions.sessionId, so ids flow through without casts. */
 export type SessionId = NonNullable<GenerateOptions["sessionId"]>;

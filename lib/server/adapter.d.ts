@@ -424,7 +424,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     sessionController?: SessionController;
     /** Masks secret env values in tool results; undefined when `redactSecrets` is off. */
     readonly redact: ((s: string) => string) | undefined;
-    /** Per-session turn accounting buffer (last 50 turns); keyed by dsh sessionId. */
+    /** Per-session turn accounting buffer (last 50 turns); keyed by dsh sessionId. Lives on
+     *  globalThis so the route registered at boot reads what a hot-reloaded adapter fills. */
     readonly turnBuffer: Map<string, TurnRecord[]>;
     claudeHome: string;
     providerId: string;
