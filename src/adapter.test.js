@@ -1219,5 +1219,5 @@ console.log("schema-guard ok");
   a.wake = async (id, proc, text) => woke.push([id, proc, text]);
   await a.resumeInterrupted(file);
   assert.deepEqual(woke, [["dead", undefined, RESTART_TEXT]]);
-  assert.deepEqual(await takeInterrupted(file), [], "cleared after the nudge");
+  assert.deepEqual(await takeInterrupted(file), ["live"], "live session stays tracked");
 }

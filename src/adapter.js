@@ -1,7 +1,7 @@
 // dsh LLM adapter that drives the Claude Code CLI (`claude -p --input-format stream-json --output-format stream-json`).
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { homedir, hostname } from "node:os";
 import { join } from "node:path";
@@ -683,6 +683,17 @@ export function stepContextFor(messages) {
 
 /** Cross-reload registry of live Claude processes (see ClaudeCodeAdapter constructor). */
 export const PROCESS_REGISTRY = Symbol.for("dsh-llm-claude.processes");
+/** Process-wide: the newest adapter instance and the one boot timer that nudges interrupted sessions. */
+const ADAPTER_CURRENT = Symbol.for("dsh-llm-claude.adapter");
+const RESUME_TIMER = Symbol.for("dsh-llm-claude.resume-timer");
+/** Plugin info logs never reach dsh's web.log; the resume path keeps its own trace file. */
+const RESUME_LOG = join(STATE_DIR, "resume.log");
+async function trace(line) {
+  try {
+    await mkdir(STATE_DIR, { recursive: true });
+    await appendFile(RESUME_LOG, `${new Date().toISOString()} ${line}\n`);
+  } catch {}
+}
 
 /** How long to wait for the rest of a parallel dsh tool-call batch after the first one arrives. */
 const RELAY_BATCH_MS = 1500;
@@ -1204,10 +1215,23 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    */
   async resumeInterrupted(path) {
     const ids = await takeInterrupted(path);
+    await trace(
+      `boot: interrupted=${JSON.stringify(ids)} live=${JSON.stringify([...this.processes.keys()])}`,
+    );
     for (const id of ids) {
-      if (this.processes.has(id)) continue;
-      this.log("info", `resume after restart: session ${id}`);
-      await this.wake(id, undefined, RESTART_TEXT);
+      const proc = this.processes.get(id);
+      if (proc) {
+        // A hot reload, or the user already typed since boot: the turn is live, keep it tracked.
+        if (proc.busy) await markBusy(id, true, path);
+        await trace(`skip ${id}: process live (busy=${proc.busy})`);
+        continue;
+      }
+      try {
+        await this.wake(id, undefined, RESTART_TEXT);
+        await trace(`nudged ${id}`);
+      } catch (e) {
+        await trace(`nudge ${id} failed: ${e?.message ?? e}`);
+      }
     }
     return ids;
   }
@@ -1544,6 +1568,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    *  instead of riding on top of the user's next prompt. */
   async wake(sessionId, proc, text = WAKE_TEXT) {
     if (proc?.busy) return;
+    if (text === RESTART_TEXT) await trace(`wake ${sessionId}: start`);
     let agent;
     try {
       agent = this.ctx?.agents?.get?.(sessionId);
@@ -1566,8 +1591,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     }
     if (typeof agent?.followup !== "function") {
       this.log("warn", `wake: no agent for session ${sessionId}; reply waits for the next prompt`);
+      if (text === RESTART_TEXT) await trace(`wake ${sessionId}: no agent (${how})`);
       return;
     }
+    if (text === RESTART_TEXT) await trace(`wake ${sessionId}: agent ${how}, sending followup`);
     try {
       this.log("info", `wake: idle reply in session ${sessionId} (agent ${how})`);
       agent.followup(
@@ -1755,13 +1782,19 @@ export function apply(ctx, config) {
   ctx.inject(["sessionController"], (host) => {
     adapter.sessionController = host.sessionController;
   });
-  const resume = setTimeout(() => {
-    adapter
-      .resumeInterrupted()
-      .catch((e) => adapter.log("warn", `resume after restart failed: ${e?.message ?? e}`));
-  }, RESUME_DELAY_MS);
-  resume.unref?.();
-  ctx.effect(() => () => clearTimeout(resume), "dsh-llm-claude resume timer");
+  // One timer per dsh process, never tied to this cordis scope: dsh re-instantiates the plugin
+  // when settings apply at boot, and a scope-bound timer was disposed before it fired.
+  globalThis[ADAPTER_CURRENT] = adapter;
+  if (!globalThis[RESUME_TIMER]) {
+    globalThis[RESUME_TIMER] = setTimeout(() => {
+      const current = globalThis[ADAPTER_CURRENT];
+      current
+        .resumeInterrupted()
+        .catch((e) => trace(`resume after restart failed: ${e?.message ?? e}`));
+    }, RESUME_DELAY_MS);
+    globalThis[RESUME_TIMER].unref?.();
+    void trace("timer armed");
+  }
   // Optional: the subprocess seam (stock dsh mounts a local provider; a remote subprocess provider a remote one).
   ctx.inject(["subprocess"], (host) => {
     adapter.subprocess = host.subprocess;
