@@ -1689,6 +1689,17 @@ console.log("boot ok");
     hasPendingNotice([{ type: "agent/inbox/spliced", data: null }], "dsh-oh-my-claude"),
     false,
   );
+  const userNotice = {
+    type: "agent/inbox/spliced",
+    data: {
+      target: "next-turn",
+      start: 0,
+      removedCount: 0,
+      inserted: [{ source: { kind: "user" }, content: [{ type: "text", text: "RESTART" }] }],
+    },
+  };
+  assert.equal(hasPendingNotice([userNotice], "dsh-oh-my-claude", ["RESTART"]), true);
+  assert.equal(hasPendingNotice([userNotice], "dsh-oh-my-claude"), false);
 }
 console.log("pending-notice ok");
 

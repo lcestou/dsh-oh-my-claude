@@ -46,7 +46,7 @@ interface LooseEvent {
  * from the log on resume, so nudging again would queue a duplicate notice (14 of them on
  * 2026-09-05 after a crash loop).
  */
-export declare function hasPendingNotice(events: Iterable<LooseEvent>, plugin: string): boolean;
+export declare function hasPendingNotice(events: Iterable<LooseEvent>, plugin: string, texts?: readonly string[]): boolean;
 /**
  * A replacer that masks the values of secret-looking environment variables (`*KEY`, `*TOKEN`,
  * `*SECRET`, `*PASSWORD`, `*CREDENTIAL`, eight characters or longer) as `[redacted:NAME]`.

@@ -2373,8 +2373,18 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         );
       }
       if (outcome === "retry" || outcome === "ended") {
-        proc.kill();
-        this.processes.delete(registryKey(this.providerId, options.sessionId));
+        // A dsh shutdown ends the stream with a "disposed" abort; in keeper mode the process must
+        // outlive it (that is the point of the keeper), so leave it for the next boot to adopt.
+        const disposing = abortKind(options.signal) === "disposed";
+        if (this.config.spawn === "keeper" && disposing) {
+          void trace(
+            join(this.stateDir, "resume.log"),
+            `kept keeper process for ${options.sessionId}: dsh disposing`,
+          );
+        } else {
+          proc.kill();
+          this.processes.delete(registryKey(this.providerId, options.sessionId));
+        }
       }
     }
     if (outcome === "retry") yield* this.turn(options, true);
@@ -2434,7 +2444,13 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       // A notice from a previous boot may still sit in the durable inbox: do not stack another.
       try {
         const session = this.ctx?.sessions?.get?.(asSessionId(sessionId));
-        if (session && hasPendingNotice(session.snapshotEvents(), "dsh-oh-my-claude")) {
+        if (
+          session &&
+          hasPendingNotice(session.snapshotEvents(), "dsh-oh-my-claude", [
+            RESTART_TEXT,
+            RECONNECT_TEXT,
+          ])
+        ) {
           await trace(`wake ${sessionId}: restart notice already pending, not stacking another`);
           return;
         }
@@ -2445,15 +2461,21 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     }
     try {
       this.log("info", `wake: idle reply in session ${sessionId} (agent ${how})`);
+      // Restart and reconnect notices stand in for the owner who configured hands-free resume, so
+      // they carry the user source: dsh accepts goal resume only from a direct human turn, and
+      // the notice asks the model to rearm its goal.
+      const onBehalfOfUser = text === RESTART_TEXT || text === RECONNECT_TEXT;
       agent.followup(
         createUserMessage({
           content: [{ type: "text", text }],
-          source: {
-            kind: "plugin",
-            plugin: "dsh-oh-my-claude",
-            form: "notice",
-            summary: boundContextSummary(text),
-          },
+          source: onBehalfOfUser
+            ? { kind: "user" }
+            : {
+                kind: "plugin",
+                plugin: "dsh-oh-my-claude",
+                form: "notice",
+                summary: boundContextSummary(text),
+              },
         }),
       );
     } catch (error) {

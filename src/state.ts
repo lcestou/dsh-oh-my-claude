@@ -182,7 +182,11 @@ interface LooseEvent {
  * from the log on resume, so nudging again would queue a duplicate notice (14 of them on
  * 2026-09-05 after a crash loop).
  */
-export function hasPendingNotice(events: Iterable<LooseEvent>, plugin: string): boolean {
+export function hasPendingNotice(
+  events: Iterable<LooseEvent>,
+  plugin: string,
+  texts: readonly string[] = [],
+): boolean {
   let pending = false;
   for (const e of events) {
     if (e.type === "turn/start") {
@@ -196,10 +200,16 @@ export function hasPendingNotice(events: Iterable<LooseEvent>, plugin: string): 
     const target = "target" in d ? d.target : undefined;
     if (target !== "next-turn") continue;
     for (const m of d.inserted) {
-      if (typeof m !== "object" || m === null || !("source" in m)) continue;
-      const src = m.source;
+      if (typeof m !== "object" || m === null) continue;
+      const src = "source" in m ? m.source : undefined;
       if (typeof src === "object" && src !== null && "plugin" in src && src.plugin === plugin)
         pending = true;
+      // Notices sent on the owner's behalf carry the user source; match them by their text.
+      const content = "content" in m && Array.isArray(m.content) ? m.content : [];
+      for (const block of content) {
+        if (typeof block !== "object" || block === null || !("text" in block)) continue;
+        if (typeof block.text === "string" && texts.includes(block.text)) pending = true;
+      }
     }
   }
   return pending;
