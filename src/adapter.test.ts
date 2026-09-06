@@ -40,6 +40,8 @@ import {
   mergeCatalog,
   setCliModels,
   interruptOnAbort,
+  noticeSource,
+  RECONNECT_TEXT,
 } from "./adapter.js";
 import {
   CHILD_ENV,
@@ -2232,6 +2234,15 @@ console.log("keeper-mode ok");
   assert.equal(proc.key, JSON.stringify(opus), "key unchanged after a refusal");
   console.log("retarget ok");
 }
+
+// Wake notices: user-sourced only when a restart notice must rearm an active goal; otherwise the
+// plugin notice form, which dsh draws as a collapsed context row.
+assert.deepEqual(noticeSource(RESTART_TEXT, true), { kind: "user" });
+assert.equal(noticeSource(RECONNECT_TEXT, true).kind, "user");
+assert.equal(noticeSource(RECONNECT_TEXT, false).kind, "plugin");
+assert.equal((noticeSource(RECONNECT_TEXT, false) as { form?: string }).form, "notice");
+assert.equal(noticeSource("wake", true).kind, "plugin", "a plain wake never claims the user");
+console.log("notice-source ok");
 
 // A dsh shutdown under a keeper leaves Claude's turn running; every other abort interrupts it.
 assert.equal(interruptOnAbort("disposed", "keeper"), false);

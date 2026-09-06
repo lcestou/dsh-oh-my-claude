@@ -957,6 +957,18 @@ export function finishReason(result: {
  * Tool calls and results are shown as reasoning blocks: the CLI runs its own tools, dsh only watches.
  */
 /** The `kind` dsh's loop puts on an abort reason ("disposed" on shutdown), else undefined. */
+/** The source a wake notice carries: user only when a restart notice must rearm an active goal. */
+export function noticeSource(text: string, goalActive: boolean) {
+  const restart = text === RESTART_TEXT || text === RECONNECT_TEXT;
+  return restart && goalActive
+    ? ({ kind: "user" } as const)
+    : ({
+        kind: "plugin",
+        plugin: "dsh-oh-my-claude",
+        form: "notice",
+        summary: boundContextSummary(text),
+      } as const);
+}
 /** Whether an aborted stream should interrupt Claude: always, except a dsh shutdown under a keeper. */
 export function interruptOnAbort(kind: string | undefined, spawn: string): boolean {
   return !(kind === "disposed" && spawn === "keeper");
@@ -3028,20 +3040,24 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     try {
       this.log("info", `wake: idle reply in session ${sessionId} (agent ${how})`);
       // Restart and reconnect notices stand in for the owner who configured hands-free resume, so
-      // they carry the user source: dsh accepts goal resume only from a direct human turn, and
-      // the notice asks the model to rearm its goal.
-      const onBehalfOfUser = text === RESTART_TEXT || text === RECONNECT_TEXT;
+      // when the session has an active goal they carry the user source: dsh accepts goal resume
+      // only from a direct human turn, and the notice asks the model to rearm its goal. With no
+      // goal there is nothing to rearm, and the plugin `notice` form draws as a collapsed context
+      // row instead of a user bubble (owner, 2026-09-06).
+      let goalActive = false;
+      try {
+        // SAFETY: `goals` is dsh's optional goal service; read defensively, absent in some profiles
+        const goals = (
+          this.ctx as { goals?: { get?: (a: Agent) => { phase?: string } | undefined } }
+        ).goals;
+        goalActive = goals?.get?.(agent)?.phase === "active";
+      } catch {
+        // no goal service or inactive scope: plain notice
+      }
       agent.followup(
         createUserMessage({
           content: [{ type: "text", text }],
-          source: onBehalfOfUser
-            ? { kind: "user" }
-            : {
-                kind: "plugin",
-                plugin: "dsh-oh-my-claude",
-                form: "notice",
-                summary: boundContextSummary(text),
-              },
+          source: noticeSource(text, goalActive),
         }),
       );
     } catch (error) {

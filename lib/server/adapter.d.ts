@@ -385,6 +385,18 @@ export declare function finishReason(result: {
  * Tool calls and results are shown as reasoning blocks: the CLI runs its own tools, dsh only watches.
  */
 /** The `kind` dsh's loop puts on an abort reason ("disposed" on shutdown), else undefined. */
+/** The source a wake notice carries: user only when a restart notice must rearm an active goal. */
+export declare function noticeSource(text: string, goalActive: boolean): {
+    readonly kind: "user";
+    readonly plugin?: undefined;
+    readonly form?: undefined;
+    readonly summary?: undefined;
+} | {
+    readonly kind: "plugin";
+    readonly plugin: "dsh-oh-my-claude";
+    readonly form: "notice";
+    readonly summary: string;
+};
 /** Whether an aborted stream should interrupt Claude: always, except a dsh shutdown under a keeper. */
 export declare function interruptOnAbort(kind: string | undefined, spawn: string): boolean;
 /** dsh's tool-result for a relayed call, searched from the newest message back. */
