@@ -1773,8 +1773,12 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   spawnerFor(sessionId: string | undefined, spec: ClaudeProcessSpec): Spawner {
     if (this.config.spawn !== "keeper" || !sessionId) return this.spawner();
     return (command, args, cwd) => {
-      const dir = this.keeperDir(sessionId);
-      const unit = `omc-keeper-${basename(dir)}-${Date.now().toString(36)}`;
+      // One directory per spawn: a respawn must never share a socket, keeper.json or keeper.log
+      // with the keeper it replaces (2026-09-06: a shared directory let a dying keeper answer the
+      // new attach, and a boot read the wrong keeper.json and dropped the live one).
+      const stamp = Date.now().toString(36);
+      const dir = `${this.keeperDir(sessionId)}-${stamp}`;
+      const unit = `omc-keeper-${basename(dir)}`;
       return lazyHandle(
         spawnKeeper(
           dir,
@@ -1799,6 +1803,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     } catch {
       return;
     }
+    // Newest keeper first, so when a session has more than one alive (a respawn raced a
+    // shutdown) the current one is adopted and the older one is retired below.
+    dirs.sort((a, b) => (readKeeperInfo(b)?.startedAt ?? 0) - (readKeeperInfo(a)?.startedAt ?? 0));
     for (const dir of dirs) {
       const info = readKeeperInfo(dir);
       const spec = readKeeperSpec(dir);
@@ -1840,7 +1847,18 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       }
       const procSpec = spec.procSpec;
       const key2 = registryKey(this.providerId, spec.sessionId);
-      if (this.processes.has(key2)) continue;
+      if (this.processes.has(key2)) {
+        // An older keeper for a session already adopted: nobody will attach to it again.
+        try {
+          process.kill(info.claudePid, "SIGKILL");
+        } catch {}
+        await trace(
+          join(this.stateDir, "resume.log"),
+          `retiring older keeper ${basename(dir)} for ${spec.sessionId} (claude pid ${info.claudePid} killed)`,
+        );
+        await rm(dir, { recursive: true, force: true }).catch(() => {});
+        continue;
+      }
       const proc = new ClaudeProcess({
         args: spec.args,
         cwd: spec.cwd,
