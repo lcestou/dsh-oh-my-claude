@@ -5,7 +5,7 @@ import { access, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promise
 import { dirname } from "node:path";
 import { hostname } from "node:os";
 import { basename, join } from "node:path";
-import type { Spawner } from "./process.js";
+import type { Spawner, ContextUsage } from "./process.js";
 import {
   LlmAdapter,
   LlmError,
@@ -36,6 +36,7 @@ import {
   interruptLine,
   controlRequestLine,
   decodeRewindResult,
+  decodeContextUsage,
   toJsonValue,
   nodeSpawner,
   seamSpawner,
@@ -323,6 +324,10 @@ export interface RewindReply extends Partial<RewindResult> {
   ok: boolean;
   dryRun: boolean;
 }
+/** What the context route reports: the CLI's own context breakdown for a live session. */
+export type ContextUsageReply =
+  | ({ ok: true; error?: undefined } & ContextUsage)
+  | { ok: false; error: string };
 /** What the permission-mode route reports: the mode in force and the stored override. */
 export interface PermissionModeInfo {
   mode: string;
@@ -2059,6 +2064,22 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   }
 
   /**
+   * The CLI's own context breakdown (`/context` in the TUI) for a session with a live process;
+   * answered between turns as well as inside one. 5 s: the CLI replies at once when it reads stdin.
+   */
+  async contextUsage(sessionId: string): Promise<ContextUsageReply> {
+    const proc = this.processes.get(registryKey(this.providerId, sessionId));
+    if (!proc?.alive) return { ok: false, error: "no live Claude process for this session" };
+    const reply = await this.control(
+      proc,
+      { subtype: "get_context_usage", detail: "summary" },
+      5000,
+    );
+    if (!reply.ok) return { ok: false, error: reply.error };
+    return { ok: true, ...decodeContextUsage(reply.response) };
+  }
+
+  /**
    * `/temporary`: toggle "keep no Claude transcript" for the current dsh session. Registered here,
    * from the first init frame, because at apply() the commands service is not up yet and the
    * optional lookup returns nothing. The next process for the session starts with
@@ -3157,6 +3178,7 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
         info: (sessionId: string) => adapter.permissionModeInfo(sessionId),
         set: (sessionId: string, mode: string | null) => adapter.setPermissionMode(sessionId, mode),
       },
+      contextUsage: (sessionId: string) => adapter.contextUsage(sessionId),
       rewind: (sessionId: string, uuid: string, dryRun: boolean) =>
         adapter.rewind(sessionId, uuid, dryRun),
     });

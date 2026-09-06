@@ -19,6 +19,7 @@ import type {
   PermissionModeReply,
   RewindPrompt,
   RewindReply,
+  ContextUsageReply,
 } from "./adapter.js";
 
 const ROUTE_PREFIX = "/dsh-oh-my-claude";
@@ -546,6 +547,8 @@ export interface SessionRouteOptions {
   };
   /** Rewind a session's files (and, unless a dry run, Claude's conversation) to a user prompt. */
   rewind?: (sessionId: string, uuid: string, dryRun: boolean) => Promise<RewindReply>;
+  /** The CLI's own context breakdown for a session with a live process. */
+  contextUsage?: (sessionId: string) => Promise<ContextUsageReply>;
 }
 
 /** The transcript file of a dsh session: under its Claude id (sessions the adapter started) or
@@ -585,6 +588,7 @@ export function registerSessionRoutes(
     idle,
     permissionModes,
     rewind,
+    contextUsage,
   }: SessionRouteOptions,
 ): void {
   // Optional: stock dsh has it; without it archived sessions list but cannot be restored.
@@ -722,6 +726,13 @@ export function registerSessionRoutes(
                   total.count += 1;
                 }
                 return json(res, 200, { turns, total });
+              }
+              if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/context`) {
+                const sid = url.searchParams.get("session");
+                if (!sid) return json(res, 400, { error: "session param required" });
+                if (!contextUsage) return json(res, 404, { error: "context usage not available" });
+                const reply = await contextUsage(sid);
+                return json(res, reply.ok ? 200 : 409, reply);
               }
               if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/idle`) {
                 const sid = url.searchParams.get("session");

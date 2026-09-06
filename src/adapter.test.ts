@@ -2220,3 +2220,58 @@ console.log("keeper-mode ok");
   assert.equal(proc.key, JSON.stringify(opus), "key unchanged after a refusal");
   console.log("retarget ok");
 }
+
+// contextUsage: decodes the CLI's get_context_usage answer; no live process is a plain error.
+{
+  const adapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  const proc: any = {
+    alive: true,
+    busy: false,
+    controlListener: undefined,
+    write(line: string) {
+      const req = JSON.parse(line);
+      assert.equal(req.request.subtype, "get_context_usage");
+      setTimeout(() => {
+        proc.controlListener({
+          type: "control_response",
+          request_id: req.request_id,
+          response: {
+            subtype: "success",
+            request_id: req.request_id,
+            response: {
+              categories: [
+                { name: "System prompt", tokens: 1499, color: "x" },
+                { name: "MCP tools (deferred)", tokens: 19540, isDeferred: true },
+                { name: "Messages", tokens: 3830 },
+                { name: "bogus" },
+              ],
+              totalTokens: 19753,
+              maxTokens: 200000,
+              percentage: 10,
+              autocompactSource: "auto",
+              gridRows: [[]],
+            },
+          },
+        });
+      }, 0);
+      return true;
+    },
+  };
+  adapter.processes.set(registryKey(adapter.providerId, "cu"), proc);
+  const got = await adapter.contextUsage("cu");
+  assert.equal(got.ok, true);
+  if (got.ok) {
+    assert.deepEqual(got.categories, [
+      { name: "System prompt", tokens: 1499, deferred: false },
+      { name: "MCP tools (deferred)", tokens: 19540, deferred: true },
+      { name: "Messages", tokens: 3830, deferred: false },
+    ]);
+    assert.equal(got.totalTokens, 19753);
+    assert.equal(got.maxTokens, 200000);
+    assert.equal(got.percentage, 10);
+    assert.equal(got.autocompact, "auto");
+  }
+  const none = await adapter.contextUsage("nope");
+  assert.equal(none.ok, false);
+  console.log("context-usage ok");
+}

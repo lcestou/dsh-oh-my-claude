@@ -292,6 +292,35 @@ export function decodeRewindResult(v: JsonValue | undefined): RewindResult {
   return out;
 }
 
+/** The slice of a `get_context_usage` answer this plugin reports: the CLI's own token count per category. */
+export interface ContextUsage {
+  categories: Array<{ name: string; tokens: number; deferred: boolean }>;
+  totalTokens: number;
+  maxTokens: number;
+  percentage: number;
+  model?: string;
+  autocompact?: string;
+}
+export function decodeContextUsage(v: JsonValue | undefined): ContextUsage {
+  const r = typeof v === "object" && v !== null && !Array.isArray(v) ? v : {};
+  const categories: ContextUsage["categories"] = [];
+  if (Array.isArray(r.categories))
+    for (const c of r.categories) {
+      if (typeof c !== "object" || c === null || Array.isArray(c)) continue;
+      if (typeof c.name !== "string" || typeof c.tokens !== "number") continue;
+      categories.push({ name: c.name, tokens: c.tokens, deferred: c.isDeferred === true });
+    }
+  const out: ContextUsage = {
+    categories,
+    totalTokens: typeof r.totalTokens === "number" ? r.totalTokens : 0,
+    maxTokens: typeof r.maxTokens === "number" ? r.maxTokens : 0,
+    percentage: typeof r.percentage === "number" ? r.percentage : 0,
+  };
+  if (typeof r.model === "string") out.model = r.model;
+  if (typeof r.autocompactSource === "string") out.autocompact = r.autocompactSource;
+  return out;
+}
+
 /** stdin line for any control request this plugin sends; the CLI answers with a `control_response`. */
 export function controlRequestLine(requestId: string, request: Record<string, JsonValue>): string {
   return `${JSON.stringify({ type: "control_request", request_id: requestId, request })}\n`;

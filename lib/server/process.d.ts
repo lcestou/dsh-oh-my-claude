@@ -238,6 +238,20 @@ export interface RewindResult {
     deletions?: number;
 }
 export declare function decodeRewindResult(v: JsonValue | undefined): RewindResult;
+/** The slice of a `get_context_usage` answer this plugin reports: the CLI's own token count per category. */
+export interface ContextUsage {
+    categories: Array<{
+        name: string;
+        tokens: number;
+        deferred: boolean;
+    }>;
+    totalTokens: number;
+    maxTokens: number;
+    percentage: number;
+    model?: string;
+    autocompact?: string;
+}
+export declare function decodeContextUsage(v: JsonValue | undefined): ContextUsage;
 /** stdin line for any control request this plugin sends; the CLI answers with a `control_response`. */
 export declare function controlRequestLine(requestId: string, request: Record<string, JsonValue>): string;
 /**

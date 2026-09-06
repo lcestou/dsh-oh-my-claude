@@ -1,4 +1,4 @@
-import type { Spawner } from "./process.js";
+import type { Spawner, ContextUsage } from "./process.js";
 import { LlmAdapter, type ContentBlock, type GenerateOptions, type LlmModelInfo, type LlmResolvedModelInfo, type StreamChunk } from "@deepseek-ai/dsh-llm";
 import z from "@deepseek-ai/schemastery";
 import { type ClaudeEvent, ClaudeProcess } from "./process.js";
@@ -153,6 +153,14 @@ export interface RewindReply extends Partial<RewindResult> {
     ok: boolean;
     dryRun: boolean;
 }
+/** What the context route reports: the CLI's own context breakdown for a live session. */
+export type ContextUsageReply = ({
+    ok: true;
+    error?: undefined;
+} & ContextUsage) | {
+    ok: false;
+    error: string;
+};
 /** What the permission-mode route reports: the mode in force and the stored override. */
 export interface PermissionModeInfo {
     mode: string;
@@ -573,6 +581,11 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * dsh's own transcript is not touched.
      */
     rewind(sessionId: string, uuid: string, dryRun: boolean): Promise<RewindReply>;
+    /**
+     * The CLI's own context breakdown (`/context` in the TUI) for a session with a live process;
+     * answered between turns as well as inside one. 5 s: the CLI replies at once when it reads stdin.
+     */
+    contextUsage(sessionId: string): Promise<ContextUsageReply>;
     /**
      * `/temporary`: toggle "keep no Claude transcript" for the current dsh session. Registered here,
      * from the first init frame, because at apply() the commands service is not up yet and the

@@ -1423,6 +1423,55 @@ const loadUsage = async (): Promise<UsageReply> => {
 };
 
 /** Fill a block with the usage rows, styled like the meter's own legend rows. */
+type ContextReply =
+  | {
+      ok: true;
+      categories: Array<{ name: string; tokens: number; deferred: boolean }>;
+      totalTokens: number;
+      maxTokens: number;
+      percentage: number;
+    }
+  | { ok: false; error: string };
+const loadContext = async (sessionId: string): Promise<ContextReply> => {
+  try {
+    const r = await fetch(`${ROUTE}/context?session=${encodeURIComponent(sessionId)}`);
+    // SAFETY: the body is our own JSON route; both shapes carry `ok`
+    return (await r.json()) as ContextReply;
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+};
+const kTokens = (n: number) =>
+  n >= 1000 ? `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k` : String(n);
+function renderContext(el: HTMLElement, reply: ContextReply) {
+  el.replaceChildren();
+  if (!reply.ok) {
+    el.textContent = `Context breakdown: ${reply.error}`;
+    return;
+  }
+  const head = document.createElement("div");
+  head.style.cssText = `display:flex;justify-content:space-between;color:${T.text};font-weight:500`;
+  const headLabel = document.createElement("span");
+  headLabel.textContent = "Context breakdown (Claude's count)";
+  const headValue = document.createElement("span");
+  headValue.style.cssText = "font-variant-numeric:tabular-nums";
+  headValue.textContent = `${kTokens(reply.totalTokens)} / ${kTokens(reply.maxTokens)} · ${Math.round(reply.percentage)}%`;
+  head.append(headLabel, headValue);
+  el.append(head);
+  for (const c of reply.categories) {
+    if (c.deferred || c.tokens <= 0 || c.name === "Free space") continue;
+    const line = document.createElement("div");
+    line.style.cssText = "display:flex;justify-content:space-between;gap:12px";
+    const label = document.createElement("span");
+    label.textContent = c.name;
+    const val = document.createElement("span");
+    val.style.cssText = "font-variant-numeric:tabular-nums";
+    val.textContent = kTokens(c.tokens);
+    line.append(label, val);
+    el.append(line);
+  }
+}
+
 function renderUsage(block: HTMLElement, reply: UsageReply) {
   block.replaceChildren();
   if (!reply.ok) {
@@ -1517,8 +1566,15 @@ function watchContextMeter(ctx: ClientCtx) {
     const rows = document.createElement("div");
     rows.textContent = "Loading…";
     rows.style.color = T.faint;
-    block.append(title, caption, rows);
+    // Below the plan bars: the CLI's own context breakdown for this session (item 30), one row
+    // per category that holds tokens, deferred tool schemas folded out since they are not in context.
+    const breakdown = document.createElement("div");
+    breakdown.style.cssText = `margin-top:6px;padding-top:6px;border-top:1px solid ${T.border};color:${T.faint};font-size:12px;line-height:18px`;
+    breakdown.textContent = "Context breakdown…";
+    block.append(title, caption, rows, breakdown);
     panel.prepend(block);
+    const sid = activeClaudeSession(ctx);
+    if (sid) loadContext(sid).then((reply) => renderContext(breakdown, reply));
     loadUsage().then(
       (reply) => {
         const who = whose(reply);
