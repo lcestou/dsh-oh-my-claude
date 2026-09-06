@@ -82,11 +82,13 @@ import {
   loadStarted,
   isPermissionMode,
   loadPermissionModes,
+  loadTurnRecords,
   markBusy,
   noteBoot,
   rememberStarted,
   resolveClaudeHome,
   savePermissionMode,
+  saveTurnRecords,
   STATE_DIR,
   stateDir,
   takeInterrupted,
@@ -1126,6 +1128,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         this.permissionModes = modes;
       })
       .catch(() => {}); // state is an optimization only
+    loadTurnRecords(this.stateDir)
+      .then((saved) => {
+        for (const [id, list] of saved) if (!this.turnBuffer.has(id)) this.turnBuffer.set(id, list);
+      })
+      .catch(() => {}); // state is an optimization only
     this.warnedNoSeam = false;
     this.loggedVersion = false;
     // Kept on globalThis so a hot reload of this plugin adopts the running Claude processes
@@ -2162,11 +2169,13 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       redact: this.redact,
       onInit: (names) => this.bridgeCommands(names, this.ctx?.agents?.get?.(options.sessionId)),
       onResult: (summary: TurnRecord) => {
-        // ponytail: ring buffer capped at 50 entries per session; upgrade to a durable store if cost history beyond one page is needed.
+        // ponytail: ring buffer capped at 50 entries per session; now also persisted to disk so it
+        // survives a dsh restart — upgrade only if per-turn granularity beyond 50 is needed.
         const buf = this.turnBuffer.get(options.sessionId) ?? [];
         buf.push(summary);
         if (buf.length > TURN_RING) buf.shift();
         this.turnBuffer.set(options.sessionId, buf);
+        void saveTurnRecords(this.stateDir, options.sessionId, buf);
       },
       onToolResult:
         turnStep && this.config.toolActivity

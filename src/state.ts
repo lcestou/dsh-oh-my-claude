@@ -5,6 +5,7 @@
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import type { TurnRecord } from "./adapter.js";
 
 /** Claude Code's config dir: transcripts, settings.json. Honors CLAUDE_CONFIG_DIR like the CLI. */
 export const CLAUDE_HOME = process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude");
@@ -232,6 +233,10 @@ export const isPermissionMode = (v: string): v is PermissionMode =>
 export const PERMISSION_MODES_FILE = (d: string) => join(d, "permission-modes.json");
 let permissionModesChain = Promise.resolve();
 
+/** Per-session turn cost records; keyed by dsh session id; value is a ring buffer of last 50. */
+export const TURNS_FILE = (d: string) => join(d, "turns.json");
+let turnsChain = Promise.resolve();
+
 /** Load the per-session permission mode overrides from disk. */
 export async function loadPermissionModes(dir: string): Promise<Map<string, string | null>> {
   const file = PERMISSION_MODES_FILE(dir);
@@ -269,6 +274,85 @@ export function savePermissionMode(
   });
   // The caller sees a failed write; the chain itself carries on for the next save.
   permissionModesChain = run.catch(() => {});
+  return run;
+}
+
+/** Load the per-session turn cost records from disk. Drops entries with missing or non-numeric fields; missing apiMs/turns default to 0 for backward compat. */
+export async function loadTurnRecords(dir: string): Promise<Map<string, TurnRecord[]>> {
+  const file = TURNS_FILE(dir);
+  try {
+    const parsed: unknown = JSON.parse(await readFile(file, "utf8"));
+    const map = new Map<string, TurnRecord[]>();
+    if (typeof parsed === "object" && parsed !== null) {
+      for (const [k, v] of Object.entries(parsed)) {
+        if (!Array.isArray(v)) continue;
+        const records: TurnRecord[] = [];
+        for (const entry of v) {
+          if (typeof entry !== "object" || entry === null) continue;
+          // SAFETY: a non-null object; every field is re-checked as a number below
+          const r = entry as Record<string, unknown>;
+          const num = (key: string): number | undefined =>
+            typeof r[key] === "number" ? r[key] : undefined;
+          const at = num("at");
+          const costUsd = num("costUsd");
+          const durationMs = num("durationMs");
+          const input = num("input");
+          const output = num("output");
+          const cacheRead = num("cacheRead");
+          const cacheWrite = num("cacheWrite");
+          if (
+            at === undefined ||
+            costUsd === undefined ||
+            durationMs === undefined ||
+            input === undefined ||
+            output === undefined ||
+            cacheRead === undefined ||
+            cacheWrite === undefined
+          )
+            continue;
+          // apiMs and turns were not always written; older files read as 0.
+          records.push({
+            at,
+            costUsd,
+            durationMs,
+            input,
+            output,
+            cacheRead,
+            cacheWrite,
+            apiMs: num("apiMs") ?? 0,
+            turns: num("turns") ?? 0,
+          });
+        }
+        if (records.length > 0) map.set(k, records);
+      }
+    }
+    return map;
+  } catch {
+    return new Map();
+  }
+}
+
+/** Save a session's turn cost records (already capped at 50); serialized read-modify-write. */
+export function saveTurnRecords(
+  dir: string,
+  sessionId: string,
+  records: TurnRecord[],
+): Promise<void> {
+  const run = turnsChain.then(async () => {
+    const file = TURNS_FILE(dir);
+    let obj: Record<string, unknown[]> = {};
+    try {
+      const parsed: unknown = JSON.parse(await readFile(file, "utf8"));
+      if (typeof parsed === "object" && parsed !== null) {
+        // SAFETY: top-level JSON object with string keys maps to a record of arrays.
+        obj = parsed as Record<string, unknown[]>;
+      }
+    } catch {}
+    obj[sessionId] = records;
+    await mkdir(dirname(file), { recursive: true });
+    await writeFile(file, JSON.stringify(obj));
+  });
+  turnsChain = run.catch(() => {});
   return run;
 }
 

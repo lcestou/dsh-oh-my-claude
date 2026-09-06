@@ -1,3 +1,4 @@
+import type { TurnRecord } from "./adapter.js";
 /** Claude Code's config dir: transcripts, settings.json. Honors CLAUDE_CONFIG_DIR like the CLI. */
 export declare const CLAUDE_HOME: string;
 /** Resolve a raw configDir value to an absolute path for this plugin instance.
@@ -48,10 +49,16 @@ export type PermissionMode = (typeof PERMISSION_MODES)[number];
 export declare const isPermissionMode: (v: string) => v is PermissionMode;
 /** Per-session permission mode overrides. Keyed by dsh session id; null means unset. */
 export declare const PERMISSION_MODES_FILE: (d: string) => string;
+/** Per-session turn cost records; keyed by dsh session id; value is a ring buffer of last 50. */
+export declare const TURNS_FILE: (d: string) => string;
 /** Load the per-session permission mode overrides from disk. */
 export declare function loadPermissionModes(dir: string): Promise<Map<string, string | null>>;
 /** Save a session's permission mode override (or clear it with null); serialized read-modify-write. */
 export declare function savePermissionMode(dir: string, sessionId: string, mode: string | null): Promise<void>;
+/** Load the per-session turn cost records from disk. Drops entries with missing or non-numeric fields; missing apiMs/turns default to 0 for backward compat. */
+export declare function loadTurnRecords(dir: string): Promise<Map<string, TurnRecord[]>>;
+/** Save a session's turn cost records (already capped at 50); serialized read-modify-write. */
+export declare function saveTurnRecords(dir: string, sessionId: string, records: TurnRecord[]): Promise<void>;
 /**
  * A replacer that masks the values of secret-looking environment variables (`*KEY`, `*TOKEN`,
  * `*SECRET`, `*PASSWORD`, `*CREDENTIAL`, eight characters or longer) as `[redacted:NAME]`.
