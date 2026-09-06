@@ -941,6 +941,8 @@ export function noticeSource(text: string, goalActive: boolean) {
         summary: boundContextSummary(text),
       } as const);
 }
+/** After an interrupt, kill a process that did not finish in time: only when no keeper owns it. */
+export const killAfterGrace = (spawn: string): boolean => spawn !== "keeper";
 /** Whether an aborted stream should interrupt Claude: always, except a dsh shutdown under a keeper. */
 export function interruptOnAbort(kind: string | undefined, spawn: string): boolean {
   return !(kind === "disposed" && spawn === "keeper");
@@ -2295,6 +2297,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       // if it does not.
       tr.aborting = true;
       if (!proc.write(interruptLine(`interrupt-${randomUUID()}`))) return proc.kill();
+      // A process that ignores the interrupt is killed after a grace period, except under a keeper:
+      // there the idle watchdog already ends a hung process, and a kill here cost a respawn on
+      // every model switch (2026-09-06 21:08: abort kind=none, kill at +5 s, "claude exited 143").
+      if (!killAfterGrace(this.config.spawn)) return;
       const fallback = setTimeout(() => {
         if (!tr.finished) proc.kill();
       }, INTERRUPT_GRACE_MS);

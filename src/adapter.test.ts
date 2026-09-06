@@ -41,6 +41,7 @@ import {
   interruptOnAbort,
   noticeSource,
   RECONNECT_TEXT,
+  killAfterGrace,
 } from "./adapter.js";
 import { PERMISSION_MODES } from "./state.js";
 import {
@@ -2278,6 +2279,8 @@ assert.equal(interruptOnAbort("disposed", "keeper"), false);
 assert.equal(interruptOnAbort("disposed", "node"), true);
 assert.equal(interruptOnAbort("cancelled", "keeper"), true);
 assert.equal(interruptOnAbort(undefined, "keeper"), true);
+assert.equal(killAfterGrace("keeper"), false, "keeper: the idle watchdog owns hung processes");
+assert.equal(killAfterGrace("node"), true);
 console.log("interrupt-on-abort ok");
 
 // contextUsage: decodes the CLI's get_context_usage answer; no live process is a plain error.

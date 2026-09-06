@@ -725,7 +725,10 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
   const anchorRef = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
-    if (activeClaudeSession(ctx) !== sessionId) return;
+    // Not a Claude session right now: stay dormant, but keep watching, since the model picker can
+    // switch a session's provider without a remount (owner, 2026-09-06: the rows stayed after a
+    // model change).
+    const mine = () => activeClaudeSession(ctx) === sessionId;
 
     const build = () => {
       // Find dsh's trigger by aria-label prefix, fallback to the first matching text button.
@@ -1027,20 +1030,22 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
       stop = start(found);
       return true;
     };
-    if (!attempt()) {
+    if (mine() && !attempt()) {
       let attempts = 0;
       timer = setInterval(() => {
         attempts++;
-        if (attempt() || attempts >= 40) clearInterval(timer);
+        if (!mine() || attempt() || attempts >= 40) clearInterval(timer);
       }, 500);
     }
-    // dsh may re-render its trigger (a new node); when the one we hid leaves the document, tear
-    // down and attach to the replacement.
+    // Every second: leave when the session stops being Claude's, come back when it is again, and
+    // re-attach when dsh re-rendered its trigger (the node we hooked left the document).
     const watchdog = setInterval(() => {
-      if (!stop || hidden?.isConnected) return;
-      stop();
-      stop = undefined;
-      attempt();
+      const claude = mine();
+      if (stop && (!claude || !hidden?.isConnected)) {
+        stop();
+        stop = undefined;
+      }
+      if (!stop && claude) attempt();
     }, 1000);
     return () => {
       if (timer) clearInterval(timer);

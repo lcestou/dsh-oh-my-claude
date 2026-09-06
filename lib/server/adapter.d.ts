@@ -402,6 +402,8 @@ export declare function noticeSource(text: string, goalActive: boolean): {
     readonly form: "notice";
     readonly summary: string;
 };
+/** After an interrupt, kill a process that did not finish in time: only when no keeper owns it. */
+export declare const killAfterGrace: (spawn: string) => boolean;
 /** Whether an aborted stream should interrupt Claude: always, except a dsh shutdown under a keeper. */
 export declare function interruptOnAbort(kind: string | undefined, spawn: string): boolean;
 /** dsh's tool-result for a relayed call, searched from the newest message back. */
