@@ -98,6 +98,7 @@ All keys are optional.
 | `commandBridge` | `true` | Register Claude Code's slash commands (skills, custom commands, from the CLI's init frame) as dsh `/commands` that hand the line to Claude. dsh's own command of the same name wins. |
 | `redactSecrets` | `true` | Mask values of env vars named `*KEY`, `*TOKEN`, `*SECRET`, `*PASSWORD` or `*CREDENTIAL` (8+ chars) in Claude's tool results as `[redacted:NAME]` before dsh sees them. |
 | `persistTodos` | `true` | Re-append the last todo list at each turn start so dsh's panel keeps it. |
+| `continueAfterLimit` | `true` | When a usage limit ends a turn, wait for the reset and continue the task on its own, as the CLI does. |
 | `configDir` | `` | Claude Code config dir for this plugin instance (exported as `CLAUDE_CONFIG_DIR` to every spawned CLI process); empty = the env var or `~/.claude`. Moves transcripts, `settings.json` and `.credentials.json` together — groundwork for multi-account mounts. |
 | `providerId` | `claude-code` | Provider id in the model picker. The default is `claude-code`; anything starting with `claude-code-` (e.g. `claude-code-work`) mounts a second independent instance with its own login, state and process registry. |
 | `providerName` | `` | Display name in the model picker. Empty = "Oh My Claude" for the default id, else "Oh My Claude (\<suffix\>)" where suffix is the part after `claude-code-`. |
@@ -161,7 +162,7 @@ With `spawn: node` or `dsh`, a dsh restart kills every Claude Code child. Sessio
 
 **Auxiliary calls.** dsh's session-title and compaction requests run as one turn with no tools and no session of their own, from a scratch directory so they never show up in a workspace's session list.
 
-**Errors.** Abort from the UI kills the child. Non-zero exits surface with the last stderr; a real rate limit surfaces as `RATE_LIMIT` with the provider's reset time as retry-after.
+**Errors.** Abort from the UI kills the child. Non-zero exits surface with the last stderr; a real usage limit surfaces as `RATE_LIMIT` with the provider's reset time as retry-after, worded like the CLI ("You've hit your usage limit · continuing automatically at 7pm (America/New_York)"). While the CLI retries a 429 or 5xx by itself, each attempt is one reasoning line with the wait and the attempt count, so the turn never looks busy for nothing. With `continueAfterLimit` on, the plugin arms a timer for the reset (kept in `limit-waits.json`, so a restart re-arms it) and then drops a continue notice through the same path a restart uses; any prompt sent before then cancels the wait.
 
 **Surviving Claude Code updates.** Claude Code updates itself. On first use per process the adapter reads `claude --help` and `--version`; any flag the installed CLI does not list is left out (`--effort`, `--append-system-prompt`, `--include-partial-messages`, `--max-budget-usd`, session flags). Without `--input-format` the prompt goes positionally and images are skipped. Whole-message fallback covers a CLI that stops sending partial events. Started session ids are kept in `~/.local/state/dsh-oh-my-claude/sessions.json`; a `--resume` the CLI rejects is retried once as a fresh run. Model ids and effort levels come from the Models API, so new models need no code change. The version in use is logged at first request.
 

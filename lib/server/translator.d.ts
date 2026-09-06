@@ -14,6 +14,10 @@ export declare class Translator {
     log: (level: string, msg: string) => void;
     unknownSeen: Set<string>;
     toolActivity: boolean;
+    /** Word the limit failure as "continuing automatically at …": the adapter arms the wait. */
+    continueAfterLimit: boolean;
+    /** Set when a usage limit ended the turn with a reset time in the future (ms since epoch). */
+    limitResetAt: number | undefined;
     relay: boolean;
     dshIds: Set<string>;
     dshNames: Map<string, string>;
@@ -46,8 +50,9 @@ export declare class Translator {
      * one callId, which throws in ConversationNodeAssembler and stalls the whole event feed.
      */
     private fireToolCall;
-    constructor({ toolActivity, toolTextLimit, relay, dshIds, relayed, log, onToolCall, onToolResult, onResult, redact, onInit, }?: {
+    constructor({ toolActivity, continueAfterLimit, toolTextLimit, relay, dshIds, relayed, log, onToolCall, onToolResult, onResult, redact, onInit, }?: {
         toolActivity?: boolean;
+        continueAfterLimit?: boolean;
         toolTextLimit?: number;
         relay?: boolean;
         dshIds?: Set<string>;

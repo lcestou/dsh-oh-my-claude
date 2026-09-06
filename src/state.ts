@@ -75,6 +75,33 @@ export async function takeInterrupted(path = BUSY_FILE): Promise<string[]> {
   return Array.isArray(ids) ? ids.filter((x): x is string => typeof x === "string") : [];
 }
 
+/** Sessions waiting for a usage limit to reset: session id to reset instant (ms since epoch). */
+const LIMIT_WAITS_FILE = (dir: string) => join(dir, "limit-waits.json");
+let limitChain: Promise<void> = Promise.resolve();
+
+export async function loadLimitWaits(dir: string): Promise<Map<string, number>> {
+  const map = new Map<string, number>();
+  try {
+    const parsed: unknown = JSON.parse(await readFile(LIMIT_WAITS_FILE(dir), "utf8"));
+    if (typeof parsed === "object" && parsed !== null)
+      for (const [k, v] of Object.entries(parsed)) if (typeof v === "number") map.set(k, v);
+  } catch {}
+  return map;
+}
+
+/** Record (or with `resetAt` undefined, forget) a session's wait; saves serialize. */
+export function saveLimitWait(dir: string, sessionId: string, resetAt: number | undefined) {
+  const run = limitChain.then(async () => {
+    const map = await loadLimitWaits(dir);
+    if (resetAt === undefined) map.delete(sessionId);
+    else map.set(sessionId, resetAt);
+    await mkdir(dir, { recursive: true });
+    await writeFile(LIMIT_WAITS_FILE(dir), JSON.stringify(Object.fromEntries(map)));
+  });
+  limitChain = run.catch(() => {});
+  return run;
+}
+
 const AUX_DIR = join(STATE_DIR, "aux");
 let auxReady: Promise<string> | undefined;
 /** Scratch cwd for title and compaction one-shots, so their transcripts stay out of workspaces. */

@@ -76,6 +76,10 @@ export class Translator {
   log: (level: string, msg: string) => void;
   unknownSeen: Set<string>; // (where:type) already warned, so schema drift warns once, not per event
   toolActivity: boolean;
+  /** Word the limit failure as "continuing automatically at …": the adapter arms the wait. */
+  continueAfterLimit: boolean;
+  /** Set when a usage limit ended the turn with a reset time in the future (ms since epoch). */
+  limitResetAt: number | undefined;
   relay: boolean; // dsh tool calls are relayed to dsh's own loop: hide Claude's view of them
   dshIds: Set<string>; // tool_use ids of dsh tools called over the MCP bridge
   dshNames: Map<string, string>; // dsh tool_use id → tool name, for a fallback row
@@ -121,6 +125,7 @@ export class Translator {
 
   constructor({
     toolActivity = true,
+    continueAfterLimit = false,
     toolTextLimit = TOOL_TEXT_LIMIT,
     relay = false,
     dshIds,
@@ -133,6 +138,7 @@ export class Translator {
     onInit,
   }: {
     toolActivity?: boolean;
+    continueAfterLimit?: boolean;
     toolTextLimit?: number;
     relay?: boolean;
     dshIds?: Set<string>;
@@ -147,6 +153,8 @@ export class Translator {
     this.log = log ?? (() => {});
     this.unknownSeen = new Set(); // (where:type) already warned, so schema drift warns once, not per event
     this.toolActivity = toolActivity;
+    this.continueAfterLimit = continueAfterLimit;
+    this.limitResetAt = undefined;
     this.relay = relay; // dsh tool calls are relayed to dsh's own loop: hide Claude's view of them
     this.dshIds = dshIds ?? new Set(); // tool_use ids of dsh tools called over the MCP bridge
     this.dshNames = new Map(); // dsh tool_use id → tool name, for a fallback row
@@ -382,11 +390,19 @@ export class Translator {
         const status = info.status ?? "allowed";
         if (status !== "rejected") return [];
         this.finished = true;
-        const resetMs = Number.isFinite(info.resetsAt)
-          ? (info.resetsAt ?? 0) * 1000 - Date.now()
-          : 0;
+        const resetAt = Number.isFinite(info.resetsAt) ? (info.resetsAt ?? 0) * 1000 : 0;
+        const resetMs = resetAt - Date.now();
+        if (resetMs > 0) this.limitResetAt = resetAt;
+        // Same words as the CLI's own banner. With the wait armed the row says so, as the CLI's
+        // "Continuing automatically when your limit resets" does.
+        const tail =
+          resetMs > 0
+            ? this.continueAfterLimit
+              ? `continuing automatically at ${resetClock(resetAt)}`
+              : `resets ${resetClock(resetAt)}`
+            : "rejected";
         const failure: LlmFailure & { providerRetryAfterMs?: number } = {
-          message: `Rate limited (${status})`,
+          message: `You've hit your usage limit · ${tail}`,
           code: "RATE_LIMIT",
         };
         if (resetMs > 0) failure.providerRetryAfterMs = resetMs;

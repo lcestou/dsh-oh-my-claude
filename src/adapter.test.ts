@@ -41,6 +41,7 @@ import {
   interruptOnAbort,
   noticeSource,
   RECONNECT_TEXT,
+  LIMIT_TEXT,
   killAfterGrace,
 } from "./adapter.js";
 import { PERMISSION_MODES } from "./state.js";
@@ -576,6 +577,31 @@ assert.ok(
   rl[0].reason.failure.providerRetryAfterMs > 100_000 &&
     rl[0].reason.failure.providerRetryAfterMs <= 120_000,
 );
+assert.equal(
+  rl[0].reason.failure.message,
+  `You've hit your usage limit · resets ${resetClock(soon * 1000)}`,
+);
+{
+  // With the wait on, the row says the task continues by itself and the translator reports the
+  // reset instant for the adapter to arm; a reset already in the past arms nothing.
+  const t = new Translator({ continueAfterLimit: true }) as any;
+  const out = t.translate({
+    type: "rate_limit_event",
+    rate_limit_info: { status: "rejected", resetsAt: soon },
+  });
+  assert.equal(
+    out[0].reason.failure.message,
+    `You've hit your usage limit · continuing automatically at ${resetClock(soon * 1000)}`,
+  );
+  assert.equal(t.limitResetAt, soon * 1000);
+  const past = new Translator({ continueAfterLimit: true }) as any;
+  past.translate({
+    type: "rate_limit_event",
+    rate_limit_info: { status: "rejected", resetsAt: 1 },
+  });
+  assert.equal(past.limitResetAt, undefined);
+  console.log("limit-wait ok");
+}
 
 // stale --resume detection
 assert.equal(
@@ -2317,6 +2343,8 @@ assert.deepEqual(noticeSource(RESTART_TEXT, true), { kind: "user" });
 assert.equal(noticeSource(RECONNECT_TEXT, true).kind, "user");
 assert.equal(noticeSource(RECONNECT_TEXT, false).kind, "plugin");
 assert.equal((noticeSource(RECONNECT_TEXT, false) as { form?: string }).form, "notice");
+assert.equal(noticeSource(LIMIT_TEXT, true).kind, "user", "a limit continue rearms a goal too");
+assert.equal(noticeSource(LIMIT_TEXT, false).kind, "plugin");
 assert.equal(noticeSource("wake", true).kind, "plugin", "a plain wake never claims the user");
 console.log("notice-source ok");
 

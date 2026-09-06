@@ -11,6 +11,8 @@ import {
   loadTurnRecords,
   saveTurnRecords,
   TURNS_FILE,
+  loadLimitWaits,
+  saveLimitWait,
 } from "./state.js";
 
 const dir = await mkdtemp(join(tmpdir(), "omc-state-"));
@@ -146,4 +148,11 @@ assert.deepEqual(modesUpTo("acceptEdits"), ["default", "acceptEdits", "plan"]);
 assert.equal(modesUpTo("bypassPermissions").length, 6);
 
 console.log("turns-state ok");
+
+// Limit waits: set two, forget one, reload; concurrent saves serialize.
+assert.deepEqual(await loadLimitWaits(dir), new Map());
+await Promise.all([saveLimitWait(dir, "s1", 1_000), saveLimitWait(dir, "s2", 2_000)]);
+await saveLimitWait(dir, "s1", undefined);
+assert.deepEqual(await loadLimitWaits(dir), new Map([["s2", 2_000]]));
+console.log("limit-waits ok");
 console.log("state.test: ok");

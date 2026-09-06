@@ -83,7 +83,9 @@ import {
   isPermissionMode,
   loadPermissionModes,
   type PermissionMode,
+  loadLimitWaits,
   loadTurnRecords,
+  saveLimitWait,
   markBusy,
   modesUpTo,
   noteBoot,
@@ -272,6 +274,12 @@ export const Config = z.object({
     .default(true)
     .description(
       "Keep the todo list on screen across messages and resume (dsh clears it each turn by default)",
+    ),
+  continueAfterLimit: z
+    .boolean()
+    .default(true)
+    .description(
+      "When a usage limit ends a turn, wait for the reset and continue the task on its own, as the CLI does",
     ),
   debug: z.boolean().default(false).description("Log spawn arguments (minus the prompt) per call"),
   approvals: z
@@ -931,7 +939,7 @@ export function finishReason(result: {
 /** The `kind` dsh's loop puts on an abort reason ("disposed" on shutdown), else undefined. */
 /** The source a wake notice carries: user only when a restart notice must rearm an active goal. */
 export function noticeSource(text: string, goalActive: boolean) {
-  const restart = text === RESTART_TEXT || text === RECONNECT_TEXT;
+  const restart = text === RESTART_TEXT || text === RECONNECT_TEXT || text === LIMIT_TEXT;
   return restart && goalActive
     ? ({ kind: "user" } as const)
     : ({
@@ -988,10 +996,15 @@ export const WAKE_TEXT = "Claude Code finished a background task and replied.";
 /** Sent when a restarted dsh reattaches to a Claude process that kept running meanwhile. */
 export const RECONNECT_TEXT =
   "[Oh My Claude] dsh restarted and reattached to your still-running Claude Code process; what you did meanwhile is shown above. Continue where you are.";
+/** Sent when a usage limit that ended a turn has reset, so Claude picks the task back up. */
+export const LIMIT_TEXT =
+  "[Oh My Claude] your usage limit has reset. Continue the task where the limit stopped you.";
 export const RESTART_TEXT =
   "[Oh My Claude] dsh restarted while this turn was in progress and the Claude Code process was replaced. Pick up where the transcript stops and finish the task. If this session has an active goal, dsh disarmed it on resume: call get_goal, then update_goal with action resume, so the goal rounds keep driving the work without anyone typing.";
 /** How long after boot to nudge interrupted sessions; dsh needs its sessions and agents loaded. */
 const RESUME_DELAY_MS = 10_000;
+/** Slack after a usage limit's reset instant before the continue notice goes out. */
+const LIMIT_GRACE_MS = 5_000;
 const isWake = (m: LooseMessage) =>
   m.role === "user" &&
   m.source?.kind === "plugin" &&
@@ -1083,6 +1096,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   /** dsh's permission preset service, when mounted: the shield's current preset per session. */
   permissionPresets?: { current: (session: object) => string };
   processes: Map<string, ClaudeProcess>;
+  /** Per session, the timer that continues the task once its usage limit resets. */
+  limitTimers: Map<string, ReturnType<typeof setTimeout>>;
   mcp?: { base: string; key: string };
   warnedNoSeam = false;
   loggedVersion = false;
@@ -1146,6 +1161,13 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         for (const [id, list] of saved) if (!this.turnBuffer.has(id)) this.turnBuffer.set(id, list);
       })
       .catch(() => {}); // state is an optimization only
+    this.limitTimers = new Map();
+    // Waits armed before a restart: re-arm them, no earlier than the boot resume nudge.
+    loadLimitWaits(this.stateDir)
+      .then((waits) => {
+        for (const [id, at] of waits) this.armLimitWait(id, at, RESUME_DELAY_MS + LIMIT_GRACE_MS);
+      })
+      .catch(() => {});
     this.warnedNoSeam = false;
     this.loggedVersion = false;
     // Kept on globalThis so a hot reload of this plugin adopts the running Claude processes
@@ -2223,6 +2245,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     }
     const tr = new Translator({
       toolActivity: this.config.toolActivity,
+      continueAfterLimit: this.config.continueAfterLimit,
       toolTextLimit: this.config.toolTextLimit,
       relay: this.mcp !== undefined && this.config.dshTools,
       dshIds: proc.dshIds,
@@ -2327,6 +2350,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     options.signal?.addEventListener("abort", onAbort, { once: true });
     proc.busy = true;
     proc.lastUsed = Date.now();
+    this.clearLimitWait(options.sessionId); // a prompt (or our own notice) supersedes the wait
     markBusy(options.sessionId, true, join(this.stateDir, "busy.json")).catch((e) =>
       this.log("warn", `busy.json: ${errorText(e)}`),
     );
@@ -2437,6 +2461,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         outcome = what;
         break;
       }
+      if (tr.limitResetAt !== undefined && this.config.continueAfterLimit)
+        this.armLimitWait(options.sessionId, tr.limitResetAt);
       if (outcome === "relayed") yield { type: "finish", reason: { kind: "tool-calls" } };
       else if (outcome === "parked") yield { type: "finish", reason: { kind: "stop" } };
       else if (outcome === "retry") {
@@ -2495,6 +2521,40 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     } catch (error) {
       this.log("warn", `todo restore: ${errorText(error)}`);
     }
+  }
+
+  /** A usage limit ended the session's turn: once it resets (plus a grace), drop the continue
+   *  notice through the same path a restart uses. Persisted so a restart re-arms it. */
+  armLimitWait(sessionId: string, resetAt: number, atLeastMs = 0) {
+    const log = join(this.stateDir, "resume.log");
+    const delay = Math.max(resetAt - Date.now() + LIMIT_GRACE_MS, atLeastMs, 0);
+    const old = this.limitTimers.get(sessionId);
+    if (old) clearTimeout(old);
+    const timer = setTimeout(() => {
+      this.limitTimers.delete(sessionId);
+      saveLimitWait(this.stateDir, sessionId, undefined).catch(() => {});
+      const proc = this.processes.get(registryKey(this.providerId, sessionId));
+      this.wake(sessionId, proc, LIMIT_TEXT)
+        .then((sent) =>
+          trace(log, `limit wait ${sessionId}: fired, notice ${sent ? "sent" : "not sent"}`),
+        )
+        .catch((e) => trace(log, `limit wait ${sessionId}: ${errorText(e)}`));
+    }, delay);
+    timer.unref?.();
+    this.limitTimers.set(sessionId, timer);
+    saveLimitWait(this.stateDir, sessionId, resetAt).catch(() => {});
+    void trace(
+      log,
+      `limit wait ${sessionId}: armed for ${new Date(resetAt).toISOString()} (+${Math.round(delay / 1000)}s)`,
+    );
+  }
+
+  clearLimitWait(sessionId: string) {
+    const timer = this.limitTimers.get(sessionId);
+    if (!timer) return;
+    clearTimeout(timer);
+    this.limitTimers.delete(sessionId);
+    saveLimitWait(this.stateDir, sessionId, undefined).catch(() => {});
   }
 
   /** Claude finished a turn of its own (a background task it launched completed) while dsh was

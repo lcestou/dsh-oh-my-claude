@@ -98,6 +98,7 @@ export declare const Config: z<Schemastery.ObjectS<{
     commandBridge: z<boolean, boolean>;
     redactSecrets: z<boolean, boolean>;
     persistTodos: z<boolean, boolean>;
+    continueAfterLimit: z<boolean, boolean>;
     debug: z<boolean, boolean>;
     approvals: z<boolean, boolean>;
     processIdleMs: z<number, number>;
@@ -125,6 +126,7 @@ export declare const Config: z<Schemastery.ObjectS<{
     commandBridge: z<boolean, boolean>;
     redactSecrets: z<boolean, boolean>;
     persistTodos: z<boolean, boolean>;
+    continueAfterLimit: z<boolean, boolean>;
     debug: z<boolean, boolean>;
     approvals: z<boolean, boolean>;
     processIdleMs: z<number, number>;
@@ -418,6 +420,8 @@ export declare const WAKE_TEXT = "Claude Code finished a background task and rep
 /** Sent as a real prompt after dsh restarts mid-turn: the process is gone, Claude must carry on. */
 /** Sent when a restarted dsh reattaches to a Claude process that kept running meanwhile. */
 export declare const RECONNECT_TEXT = "[Oh My Claude] dsh restarted and reattached to your still-running Claude Code process; what you did meanwhile is shown above. Continue where you are.";
+/** Sent when a usage limit that ended a turn has reset, so Claude picks the task back up. */
+export declare const LIMIT_TEXT = "[Oh My Claude] your usage limit has reset. Continue the task where the limit stopped you.";
 export declare const RESTART_TEXT = "[Oh My Claude] dsh restarted while this turn was in progress and the Claude Code process was replaced. Pick up where the transcript stops and finish the task. If this session has an active goal, dsh disarmed it on resume: call get_goal, then update_goal with action resume, so the goal rounds keep driving the work without anyone typing.";
 /** A turn opened by our own wake notice, with no user prompt to send: only drain what Claude
  *  already wrote. A user prompt in the same batch takes precedence and is sent normally. */
@@ -442,6 +446,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
         current: (session: object) => string;
     };
     processes: Map<string, ClaudeProcess>;
+    /** Per session, the timer that continues the task once its usage limit resets. */
+    limitTimers: Map<string, ReturnType<typeof setTimeout>>;
     mcp?: {
         base: string;
         key: string;
@@ -658,6 +664,10 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      *  session events, across a restart too. Source-agnostic: works for dsh's own todo tool.
      *  ponytail: O(n) scan of session events per turn; cache the last list if long sessions lag. */
     restoreTodos(sessionId: string): void;
+    /** A usage limit ended the session's turn: once it resets (plus a grace), drop the continue
+     *  notice through the same path a restart uses. Persisted so a restart re-arms it. */
+    armLimitWait(sessionId: string, resetAt: number, atLeastMs?: number): void;
+    clearLimitWait(sessionId: string): void;
     /** Claude finished a turn of its own (a background task it launched completed) while dsh was
      *  idle. Drop a notice into the session's inbox so dsh opens a turn now and the reply shows,
      *  instead of riding on top of the user's next prompt. */
