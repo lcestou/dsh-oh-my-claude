@@ -2685,7 +2685,7 @@ function McpButton({ sessionId, ctx }: RestoreButtonProps) {
   useDismiss(open, () => setOpen(false), rootRef);
 
   const load = () =>
-    fetch(`${ROUTE}/mcp?session=${encodeURIComponent(sessionId)}`)
+    fetch(`${ROUTE}/mcp-servers?session=${encodeURIComponent(sessionId)}`)
       .then((r) => readJson<McpReply>(r))
       .then(setReply)
       .catch((e: Error) => setReply({ ok: false, error: e.message }));
@@ -2703,7 +2703,7 @@ function McpButton({ sessionId, ctx }: RestoreButtonProps) {
     setNote("");
     try {
       const r = await readJson<{ ok: boolean; error?: string }>(
-        await fetch(`${ROUTE}/mcp/reconnect`, {
+        await fetch(`${ROUTE}/mcp-servers/reconnect`, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ session: sessionId, name: serverName }),

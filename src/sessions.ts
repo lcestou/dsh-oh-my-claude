@@ -753,7 +753,7 @@ export function registerSessionRoutes(
                 const reply = await workspaceDiff(sid);
                 return json(res, reply.ok ? 200 : 409, reply);
               }
-              if (mcp && req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/mcp`) {
+              if (mcp && req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/mcp-servers`) {
                 const sid = url.searchParams.get("session");
                 if (!sid) return json(res, 400, { error: "session param required" });
                 const reply = await mcp.status(sid);
@@ -762,7 +762,7 @@ export function registerSessionRoutes(
               if (
                 mcp &&
                 req.method === "POST" &&
-                url.pathname === `${ROUTE_PREFIX}/mcp/reconnect`
+                url.pathname === `${ROUTE_PREFIX}/mcp-servers/reconnect`
               ) {
                 const { session, name } = await readBody(req);
                 if (typeof session !== "string" || typeof name !== "string")
