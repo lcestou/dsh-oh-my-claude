@@ -2402,3 +2402,34 @@ console.log("keeper-mode ok");
   assert.equal((await adapter.workspaceDiff("nope")).ok, false);
   console.log("workspace-diff ok");
 }
+
+// reconnectBridge: with the bridge mounted, a reattached process is told mcp_reconnect for the
+// `dsh` server; without a bridge nothing is sent.
+{
+  const adapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  const written: string[] = [];
+  const proc: any = {
+    alive: true,
+    busy: false,
+    controlListener: undefined,
+    write(line: string) {
+      written.push(line);
+      const req = JSON.parse(line);
+      setTimeout(() => {
+        proc.controlListener({
+          type: "control_response",
+          request_id: req.request_id,
+          response: { subtype: "success", request_id: req.request_id, response: {} },
+        });
+      }, 0);
+      return true;
+    },
+  };
+  assert.equal(await adapter.reconnectBridge(proc, "s"), false, "no bridge: nothing sent");
+  assert.equal(written.length, 0);
+  (adapter as any).mcp = { url: "http://x", key: "k" };
+  assert.equal(await adapter.reconnectBridge(proc, "s"), true);
+  const req = JSON.parse(written[0]!).request;
+  assert.deepEqual(req, { subtype: "mcp_reconnect", serverName: "dsh" });
+  console.log("mcp-reconnect ok");
+}

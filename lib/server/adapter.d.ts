@@ -632,6 +632,14 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * drain turn so what Claude did during the gap shows up without anyone typing.
      */
     adoptKeepers(): Promise<void>;
+    /**
+     * After a reattach, the surviving Claude still holds an MCP session against the previous dsh's
+     * bridge. `mcp_reconnect` for the `dsh` server makes it open a fresh one; without it the first
+     * dsh tool call after a restart can fail once. No bridge mounted (non-default instance, or the
+     * bridge not up yet) means nothing to reconnect to. ponytail: one attempt 1.5 s after adopt; if
+     * the bridge comes up later than that, the CLI's own retry on the next tool call still applies.
+     */
+    reconnectBridge(proc: ClaudeProcess, sessionId: string): Promise<boolean>;
     spawner(): Spawner;
     stream(options: GenerateOptions): AsyncGenerator<StreamChunk>;
     /** Reuse the session's process when its spec still matches; otherwise replace it. */

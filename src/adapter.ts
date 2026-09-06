@@ -2280,12 +2280,31 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         `adopted keeper ${basename(dir)} for ${spec.sessionId} (claude pid ${info.claudePid})`,
       );
       // Anything Claude wrote while dsh was away sits in the keeper's buffer and now in our queue;
-      // a wake opens a dsh turn that reads it out.
+      // a wake opens a dsh turn that reads it out. The bridge's MCP client session died with the
+      // old dsh, so ask the CLI to reconnect its `dsh` server against the new one first.
       setTimeout(() => {
+        void this.reconnectBridge(proc, spec.sessionId);
         if (proc.alive && !proc.busy && proc.queue.size > 0)
           void this.wake(spec.sessionId, proc, RECONNECT_TEXT);
       }, 1500).unref();
     }
+  }
+
+  /**
+   * After a reattach, the surviving Claude still holds an MCP session against the previous dsh's
+   * bridge. `mcp_reconnect` for the `dsh` server makes it open a fresh one; without it the first
+   * dsh tool call after a restart can fail once. No bridge mounted (non-default instance, or the
+   * bridge not up yet) means nothing to reconnect to. ponytail: one attempt 1.5 s after adopt; if
+   * the bridge comes up later than that, the CLI's own retry on the next tool call still applies.
+   */
+  async reconnectBridge(proc: ClaudeProcess, sessionId: string): Promise<boolean> {
+    if (!this.mcp || !proc.alive) return false;
+    const reply = await this.control(proc, { subtype: "mcp_reconnect", serverName: "dsh" }, 10_000);
+    await trace(
+      join(this.stateDir, "resume.log"),
+      `mcp_reconnect dsh for ${sessionId}: ${reply.ok ? "ok" : reply.error}`,
+    );
+    return reply.ok;
   }
 
   spawner() {
