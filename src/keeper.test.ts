@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { spawn } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
@@ -63,4 +63,57 @@ const exit = await h2.done;
 assert.equal(exit.exitCode, 3, "exit code reaches the attached client");
 await wait(100);
 assert.equal(readKeeperInfo(dir)?.exit?.code, 3, "exit recorded in keeper.json");
-console.log("keeper ok");
+// keeper.log records startup, attach/detach, kill, and child exit for post-mortem evidence
+const logDir = mkdtempSync(join(tmpdir(), "omc-keeper-log-"));
+await spawnKeeper(
+  logDir,
+  {
+    command: process.execPath,
+    args: ["-e", fake],
+    cwd: logDir,
+    env: { PATH: process.env.PATH ?? "" },
+    sessionId: "s-log",
+  },
+  (argv) => {
+    const c = spawn(argv[0]!, argv.slice(1), { detached: true, stdio: "ignore" });
+    c.unref();
+  },
+);
+await wait(100);
+// Attach with a raw socket so we can explicitly close it and trigger the detach log.
+const net = await import("node:net");
+const sock = new net.Socket();
+await new Promise<void>((resolve) => {
+  sock.connect(join(logDir, "keeper.sock"), () => resolve());
+});
+sock.write(`${JSON.stringify({ t: "hello" })}\n`);
+await wait(50);
+sock.end();
+await wait(100);
+const logContent = readFileSync(join(logDir, "keeper.log"), "utf8");
+assert.ok(logContent.includes("start pid="), "keeper.log has start line");
+assert.ok(logContent.includes("attach buffered="), "keeper.log has attach line");
+assert.ok(logContent.includes("detach buffered="), "keeper.log has detach line");
+// Send kill to set endedBy=client, then check keeper.json.
+const logDir2 = mkdtempSync(join(tmpdir(), "omc-keeper-log2-"));
+const h4 = await spawnKeeper(
+  logDir2,
+  {
+    command: process.execPath,
+    args: ["-e", fake],
+    cwd: logDir2,
+    env: { PATH: process.env.PATH ?? "" },
+    sessionId: "s-log2",
+  },
+  (argv) => {
+    const c = spawn(argv[0]!, argv.slice(1), { detached: true, stdio: "ignore" });
+    c.unref();
+  },
+);
+await wait(50);
+h4.terminate();
+await h4.done;
+await wait(100);
+const info4 = readKeeperInfo(logDir2);
+assert.equal(info4?.endedBy, "client", "endedBy is client after kill message");
+console.log("keeper-log ok");

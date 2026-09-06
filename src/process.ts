@@ -699,8 +699,8 @@ export interface KeeperInfo {
     code: number | null;
     signal: string | null;
   } | null;
-  /** Who ended Claude: a kill message from dsh, or Claude itself; null while it runs. */
-  endedBy: "client" | "child" | null;
+  /** Who ended Claude: a kill message from dsh, Claude itself, or the keeper crashing; null while it runs. */
+  endedBy: "client" | "child" | "keeper-crash" | null;
 }
 
 export function readKeeperInfo(dir: string): KeeperInfo | undefined {
@@ -716,7 +716,10 @@ export function readKeeperInfo(dir: string): KeeperInfo | undefined {
       sessionId: p.sessionId,
       startedAt: typeof p.startedAt === "number" ? p.startedAt : 0,
       exit: p.exit ?? null,
-      endedBy: p.endedBy === "client" || p.endedBy === "child" ? p.endedBy : null,
+      endedBy:
+        p.endedBy === "client" || p.endedBy === "child" || p.endedBy === "keeper-crash"
+          ? p.endedBy
+          : null,
     };
   } catch {
     return undefined;

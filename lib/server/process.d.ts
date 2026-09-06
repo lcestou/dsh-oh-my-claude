@@ -391,8 +391,8 @@ export interface KeeperInfo {
         code: number | null;
         signal: string | null;
     } | null;
-    /** Who ended Claude: a kill message from dsh, or Claude itself; null while it runs. */
-    endedBy: "client" | "child" | null;
+    /** Who ended Claude: a kill message from dsh, Claude itself, or the keeper crashing; null while it runs. */
+    endedBy: "client" | "child" | "keeper-crash" | null;
 }
 export declare function readKeeperInfo(dir: string): KeeperInfo | undefined;
 /** True when a pid is alive (signal 0). */

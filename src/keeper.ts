@@ -9,7 +9,14 @@
  *   keeper → client: { t: "out", line } | { t: "err", line } | { t: "exit", code, signal } | { t: "hello", pid, claudePid, buffered }
  */
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { createServer, type Socket } from "node:net";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
@@ -34,6 +41,29 @@ function main(dir: string) {
   process.on("SIGHUP", () => {}); // the launching terminal or service may hang up; we stay
   process.on("SIGTERM", () => {}); // only an explicit kill message ends Claude
 
+  const logPath = join(dir, "keeper.log");
+  const log = (line: string) => {
+    try {
+      appendFileSync(logPath, `${new Date().toISOString()} ${line}\n`);
+    } catch {}
+  };
+
+  let endedBy: "client" | "child" | "keeper-crash" | null = null;
+
+  process.on("uncaughtException", (e) => {
+    log(`uncaughtException: ${e?.stack ?? e}`);
+    endedBy = "keeper-crash";
+    try {
+      writeInfo();
+    } catch {
+      // the log line above is the record; never let the crash handler itself throw
+    }
+    process.exit(70);
+  });
+  process.on("unhandledRejection", (r) => {
+    log(`unhandledRejection: ${r instanceof Error ? r.stack : String(r)}`);
+  });
+
   const child = spawn(spec.command, spec.args, {
     cwd: spec.cwd,
     env: spec.env,
@@ -44,7 +74,6 @@ function main(dir: string) {
   const buffer: string[] = [];
   let dropped = 0;
   let exit: { code: number | null; signal: string | null } | undefined;
-  let endedBy: "client" | "child" | null = null;
 
   const send = (msg: object) => {
     const line = `${JSON.stringify(msg)}\n`;
@@ -72,6 +101,7 @@ function main(dir: string) {
         endedBy,
       }),
     );
+  log(`start pid=${process.pid} claudePid=${child.pid}`);
   writeInfo();
 
   createInterface({ input: child.stdout, crlfDelay: Infinity }).on("line", (line) =>
@@ -83,6 +113,7 @@ function main(dir: string) {
   child.on("exit", (code, signal) => {
     exit = { code, signal };
     endedBy ??= "child";
+    log(`childExit code=${code} signal=${signal}`);
     writeInfo();
     send({ t: "exit", code, signal });
     // Give an attached client time to read the exit, then leave.
@@ -94,8 +125,12 @@ function main(dir: string) {
     if (client && !client.destroyed) client.destroy();
     client = sock;
     sock.on("error", () => {});
+    log(`attach buffered=${buffer.length} dropped=${dropped}`);
     sock.on("close", () => {
-      if (client === sock) client = undefined;
+      if (client === sock) {
+        client = undefined;
+        log(`detach buffered=${buffer.length} dropped=${dropped}`);
+      }
     });
     createInterface({ input: sock, crlfDelay: Infinity }).on("line", (raw) => {
       let msg: { t?: string; line?: string };
@@ -120,6 +155,7 @@ function main(dir: string) {
       } else if (msg.t === "in" && typeof msg.line === "string") {
         if (!exit) child.stdin.write(msg.line);
       } else if (msg.t === "kill") {
+        log(`kill`);
         if (!exit) {
           endedBy = "client";
           child.kill("SIGTERM");
@@ -128,7 +164,8 @@ function main(dir: string) {
     });
   });
   server.listen(sockPath);
-  process.on("exit", () => {
+  process.on("exit", (code) => {
+    log(`exit code=${code} claudeExit=${JSON.stringify(exit ?? null)} endedBy=${endedBy}`);
     try {
       unlinkSync(sockPath);
     } catch {}
