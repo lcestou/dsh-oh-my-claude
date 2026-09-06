@@ -40,7 +40,15 @@ import {
   mergeCatalog,
   setCliModels,
 } from "./adapter.js";
-import { CHILD_ENV, ClaudeProcess, LineQueue, TIMEOUT, seamSpawner } from "./process.js";
+import {
+  CHILD_ENV,
+  ClaudeProcess,
+  LineQueue,
+  TIMEOUT,
+  seamSpawner,
+  elicitationQuestions,
+  elicitationResult,
+} from "./process.js";
 import {
   buildRedactor,
   CLAUDE_HOME,
@@ -2569,4 +2577,59 @@ console.log("keeper-mode ok");
   assert.equal(resolved.context?.contextWindow, 1_000_000);
   setCliModels([]);
   console.log("cli-models ok");
+}
+
+// elicitation: schema properties become dsh questions; answers become the accept content.
+{
+  const request = {
+    mcp_server_name: "srv",
+    display_name: "Server",
+    message: "Tell me about it",
+    mode: "form",
+    requested_schema: {
+      type: "object",
+      properties: {
+        name: { type: "string", title: "Your name" },
+        size: { type: "string", enum: ["s", "m", "l"] },
+        ok: { type: "boolean", description: "Proceed?" },
+        count: { type: "integer" },
+      },
+    },
+  };
+  const qs = elicitationQuestions(request, "r1")!;
+  assert.equal(qs.length, 4);
+  assert.deepEqual(qs[0], {
+    id: "r1:name",
+    header: "Server",
+    question: "Your name",
+    options: [],
+    multiSelect: false,
+    detail: "Tell me about it",
+  });
+  assert.deepEqual(qs[1]!.options, [{ label: "s" }, { label: "m" }, { label: "l" }]);
+  assert.deepEqual(qs[2]!.options, [{ label: "Yes" }, { label: "No" }]);
+  assert.equal(qs[3]!.question, "count");
+  const result = elicitationResult(
+    request,
+    {
+      answers: [
+        { id: "r1:name", custom: "Ada" },
+        { id: "r1:size", selected: ["m"] },
+        { id: "r1:ok", selected: ["No"] },
+        { id: "r1:count", custom: "3" },
+      ],
+    },
+    "r1",
+  );
+  assert.deepEqual(result, {
+    action: "accept",
+    content: { name: "Ada", size: "m", ok: false, count: 3 },
+  });
+  assert.deepEqual(elicitationResult(request, { answers: [] }, "r1"), { action: "cancel" });
+  assert.equal(
+    elicitationQuestions({ ...request, mode: "url", url: "https://x" }, "r2"),
+    undefined,
+  );
+  assert.equal(elicitationQuestions({ mcp_server_name: "srv" }, "r3"), undefined, "no schema");
+  console.log("elicitation ok");
 }

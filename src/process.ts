@@ -112,6 +112,14 @@ export type ClaudeEvent =
         tool_use_id?: string;
         title?: string;
         description?: string;
+        // subtype "elicitation": an MCP server asks the user for structured input.
+        mcp_server_name?: string;
+        display_name?: string;
+        message?: string;
+        mode?: string;
+        url?: string;
+        elicitation_id?: string;
+        requested_schema?: JsonValue;
       };
     }
   | { type: "control_cancel_request"; request_id: string }
@@ -431,6 +439,88 @@ export function decodeCliModels(v: JsonValue | undefined): CliModel[] {
       });
     }
   return out;
+}
+
+/** The request fields of an `elicitation` control request this plugin reads. */
+export interface ElicitationRequest {
+  mcp_server_name?: string;
+  display_name?: string;
+  message?: string;
+  mode?: string;
+  url?: string;
+  requested_schema?: JsonValue;
+}
+type SchemaProp = {
+  key: string;
+  type: string;
+  enum?: string[];
+  title?: string;
+  description?: string;
+};
+function schemaProps(schema: JsonValue | undefined): SchemaProp[] | undefined {
+  const s = isRecord(schema) ? schema : {};
+  const props = isRecord(s.properties) ? s.properties : undefined;
+  if (!props) return undefined;
+  const out: SchemaProp[] = [];
+  for (const [key, def] of Object.entries(props)) {
+    if (!isRecord(def)) return undefined;
+    const type = typeof def.type === "string" ? def.type : "string";
+    const prop: SchemaProp = { key, type };
+    if (Array.isArray(def.enum)) prop.enum = def.enum.map((e) => String(e));
+    if (typeof def.title === "string") prop.title = def.title;
+    if (typeof def.description === "string") prop.description = def.description;
+    out.push(prop);
+  }
+  return out.length > 0 && out.length <= 20 ? out : undefined;
+}
+/**
+ * An MCP elicitation as dsh questions: one per top-level schema property. Enum and boolean
+ * properties become choices, strings and numbers a custom answer. Undefined when the schema has
+ * no usable properties, or the mode is not a form.
+ */
+export function elicitationQuestions(
+  request: ElicitationRequest,
+  requestId: string,
+): AskUserQuestionItem[] | undefined {
+  if (request.mode === "url") return undefined;
+  const props = schemaProps(request.requested_schema);
+  if (!props) return undefined;
+  const header = request.display_name ?? request.mcp_server_name ?? "MCP server";
+  return props.map((p, index) => {
+    const item: AskUserQuestionItem = {
+      id: `${requestId}:${p.key}`,
+      header,
+      question: p.title ?? p.description ?? p.key,
+      options:
+        p.type === "boolean"
+          ? [{ label: "Yes" }, { label: "No" }]
+          : (p.enum ?? []).map((label) => ({ label })),
+      multiSelect: false,
+    };
+    if (index === 0 && request.message) item.detail = request.message;
+    return item;
+  });
+}
+/** dsh's answers → the elicitation result the CLI relays: accept with content, or cancel. */
+export function elicitationResult(
+  request: ElicitationRequest,
+  response: { answers?: Array<{ id: string; custom?: string; selected?: string[] }> },
+  requestId: string,
+): Record<string, JsonValue> {
+  const props = schemaProps(request.requested_schema) ?? [];
+  const byId = new Map((response?.answers ?? []).map((a) => [a.id, a]));
+  const content: Record<string, JsonValue> = {};
+  for (const p of props) {
+    const a = byId.get(`${requestId}:${p.key}`);
+    const raw = (typeof a?.custom === "string" && a.custom) || a?.selected?.[0] || "";
+    if (raw === "") continue;
+    if (p.type === "boolean") content[p.key] = raw === "Yes";
+    else if (p.type === "number" || p.type === "integer") {
+      const n = Number(raw);
+      if (Number.isFinite(n)) content[p.key] = n;
+    } else content[p.key] = raw;
+  }
+  return Object.keys(content).length > 0 ? { action: "accept", content } : { action: "cancel" };
 }
 
 /** stdin line for any control request this plugin sends; the CLI answers with a `control_response`. */

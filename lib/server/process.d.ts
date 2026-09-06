@@ -95,6 +95,13 @@ export type ClaudeEvent = {
         tool_use_id?: string;
         title?: string;
         description?: string;
+        mcp_server_name?: string;
+        display_name?: string;
+        message?: string;
+        mode?: string;
+        url?: string;
+        elicitation_id?: string;
+        requested_schema?: JsonValue;
     };
 } | {
     type: "control_cancel_request";
@@ -288,6 +295,29 @@ export interface CliModel {
     efforts: string[];
 }
 export declare function decodeCliModels(v: JsonValue | undefined): CliModel[];
+/** The request fields of an `elicitation` control request this plugin reads. */
+export interface ElicitationRequest {
+    mcp_server_name?: string;
+    display_name?: string;
+    message?: string;
+    mode?: string;
+    url?: string;
+    requested_schema?: JsonValue;
+}
+/**
+ * An MCP elicitation as dsh questions: one per top-level schema property. Enum and boolean
+ * properties become choices, strings and numbers a custom answer. Undefined when the schema has
+ * no usable properties, or the mode is not a form.
+ */
+export declare function elicitationQuestions(request: ElicitationRequest, requestId: string): AskUserQuestionItem[] | undefined;
+/** dsh's answers → the elicitation result the CLI relays: accept with content, or cancel. */
+export declare function elicitationResult(request: ElicitationRequest, response: {
+    answers?: Array<{
+        id: string;
+        custom?: string;
+        selected?: string[];
+    }>;
+}, requestId: string): Record<string, JsonValue>;
 /** stdin line for any control request this plugin sends; the CLI answers with a `control_response`. */
 export declare function controlRequestLine(requestId: string, request: Record<string, JsonValue>): string;
 /**

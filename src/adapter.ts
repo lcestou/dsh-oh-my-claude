@@ -40,6 +40,8 @@ import {
   decodeWorkspaceDiff,
   decodeMcpStatus,
   decodeCliModels,
+  elicitationQuestions,
+  elicitationResult,
   decodeTitle,
   toJsonValue,
   nodeSpawner,
@@ -3049,6 +3051,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   ) {
     const request = event.request ?? {};
     const requestId = event.request_id;
+    if (request.subtype === "elicitation") {
+      yield* this.elicit(request, requestId, options, proc, pending, tr);
+      return;
+    }
     if (request.subtype !== "can_use_tool") {
       proc.write(
         controlErrorLine(
@@ -3077,6 +3083,57 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     this.decide({ toolName, input, request, toolUseId, agent, signal, accessMode: prep.accessMode })
       .then((result) => reply(controlResponseLine(requestId, result)))
       .catch((error) => reply(controlErrorLine(requestId, errorText(error))))
+      .finally(() => pending.delete(requestId));
+  }
+
+  /**
+   * An MCP server's elicitation, shown through dsh's question UI: one question per top-level
+   * schema property, the answers sent back as the accept content. A `url` mode (the server wants
+   * a browser) and a schema dsh cannot present are declined with a reasoning line saying so.
+   */
+  async *elicit(
+    request: NonNullable<ControlRequestEvent["request"]>,
+    requestId: string,
+    options: SessionOptions,
+    proc: ClaudeProcess,
+    pending: Map<string, AbortController>,
+    tr: Translator,
+  ) {
+    const who = request.display_name ?? request.mcp_server_name ?? "MCP server";
+    const reply = (line: string) => {
+      if (!proc.write(line))
+        this.log("warn", `elicitation response for ${who} dropped: claude process already exited`);
+    };
+    if (request.mode === "url") {
+      yield* tr.wholeBlock(
+        "reasoning",
+        `❓ ${who} wants a browser step: ${request.url ?? "(no url)"} — declined`,
+      );
+      reply(controlResponseLine(requestId, { action: "decline" }));
+      return;
+    }
+    const questions = elicitationQuestions(request, requestId);
+    const ask = this.ctx?.userQuestions?.ask;
+    if (!questions || !ask) {
+      yield* tr.wholeBlock("reasoning", `❓ ${who} asked for input dsh cannot present — declined`);
+      reply(controlResponseLine(requestId, { action: "decline" }));
+      return;
+    }
+    yield* tr.wholeBlock(
+      "reasoning",
+      `❓ ${who} asks: ${request.message ?? questions[0]?.question ?? ""}`,
+    );
+    const controller = new AbortController();
+    pending.set(requestId, controller);
+    const signal = options.signal
+      ? AbortSignal.any([options.signal, controller.signal])
+      : controller.signal;
+    const agent = this.ctx?.agents?.get?.(options.sessionId);
+    ask({ questions, agent, signal })
+      .then((response) =>
+        reply(controlResponseLine(requestId, elicitationResult(request, response, requestId))),
+      )
+      .catch(() => reply(controlResponseLine(requestId, { action: "cancel" })))
       .finally(() => pending.delete(requestId));
   }
 

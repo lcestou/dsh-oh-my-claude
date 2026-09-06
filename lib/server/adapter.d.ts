@@ -721,6 +721,12 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     relay(sessionId: string, toolName: string, args: Record<string, JsonValue>, signal: AbortSignal): Promise<RelayResult> | undefined;
     /** Answer a CLI control request. Permission prompts and questions become dsh dialogs; the answer is written back on stdin. */
     handleControl(event: ControlRequestEvent, options: SessionOptions, prep: TurnPrep, proc: ClaudeProcess, pending: Map<string, AbortController>, tr: Translator): AsyncGenerator<StreamChunk, void, unknown>;
+    /**
+     * An MCP server's elicitation, shown through dsh's question UI: one question per top-level
+     * schema property, the answers sent back as the accept content. A `url` mode (the server wants
+     * a browser) and a schema dsh cannot present are declined with a reasoning line saying so.
+     */
+    elicit(request: NonNullable<ControlRequestEvent["request"]>, requestId: string, options: SessionOptions, proc: ClaudeProcess, pending: Map<string, AbortController>, tr: Translator): AsyncGenerator<StreamChunk, void, unknown>;
     decide({ toolName, input, request, toolUseId, agent, signal, accessMode }: Decision): Promise<{
         behavior: "allow";
         updatedInput: unknown;
