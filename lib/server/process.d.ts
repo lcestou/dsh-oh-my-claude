@@ -96,6 +96,9 @@ export type ClaudeEvent = {
     rate_limit_info?: {
         status?: string;
         resetsAt?: number;
+        overageStatus?: string;
+        overageResetsAt?: number;
+        isUsingOverage?: boolean;
     };
 } | {
     type: "control_request";

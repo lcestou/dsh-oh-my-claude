@@ -33,7 +33,15 @@ export interface UsageWindow {
 
 /** What the route answers: the windows in display order, or why there are none. */
 export type UsageReply =
-  | { ok: true; fetchedAt: number; windows: UsageWindow[]; host?: string; email?: string | null }
+  | {
+      ok: true;
+      fetchedAt: number;
+      windows: UsageWindow[];
+      /** Paid extra usage is on and its own cap not reached: a full window does not block. */
+      extraUsage?: boolean;
+      host?: string;
+      email?: string | null;
+    }
   | {
       ok: false;
       error: string;
@@ -105,6 +113,13 @@ export function usageWindows(payload: unknown): UsageWindow[] {
   return out;
 }
 
+/** `extra_usage` in the payload: on, not user-disabled, spend cap not reached. */
+export function extraUsageOn(payload: unknown): boolean {
+  const row = isRec(payload) ? payload : {};
+  const extra = isRec(row.extra_usage) ? row.extra_usage : {};
+  return extra.is_enabled === true && extra.spend_limit_reached !== true;
+}
+
 /** The subset of fetch the reader uses, so tests can hand in a fake. */
 export type UsageFetch = (
   url: string,
@@ -132,7 +147,13 @@ export async function readUsage(fetchImpl: UsageFetch = fetch, home?: string): P
         retryAfterMs: retryAfterMs(r.headers?.get("retry-after")),
       };
     if (r.status !== 200) return { ok: false, error: `HTTP ${r.status}` };
-    return { ok: true, fetchedAt: Date.now(), windows: usageWindows(await r.json()) };
+    const payload: unknown = await r.json();
+    return {
+      ok: true,
+      fetchedAt: Date.now(),
+      windows: usageWindows(payload),
+      extraUsage: extraUsageOn(payload),
+    };
   } catch (e) {
     return { ok: false, error: errorText(e).slice(0, 200) };
   }
@@ -141,7 +162,8 @@ export async function readUsage(fetchImpl: UsageFetch = fetch, home?: string): P
 /** The reset instant of a window still at its cap, or undefined when nothing blocks a request.
  *  A reply that could not be read answers undefined too: the wake then finds out by trying. */
 export function stillLimitedUntil(reply: UsageReply, now = Date.now()): number | undefined {
-  const resets = (reply.ok ? reply.windows : []).flatMap((w) =>
+  if (!reply.ok || reply.extraUsage) return undefined;
+  const resets = reply.windows.flatMap((w) =>
     w.usedPercent >= 100 && w.resetsAt !== null && w.resetsAt > now ? [w.resetsAt] : [],
   );
   return resets.length > 0 ? Math.max(...resets) : undefined;

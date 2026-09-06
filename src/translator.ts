@@ -394,8 +394,20 @@ export class Translator {
         const info = event.rate_limit_info ?? {};
         const status = info.status ?? "allowed";
         if (status !== "rejected") return [];
+        // Extra usage on and not itself exhausted: the request went through on credits. The CLI
+        // shows no limit here, so neither does the turn.
+        const covered =
+          info.isUsingOverage === true ||
+          info.overageStatus === "allowed" ||
+          info.overageStatus === "allowed_warning";
+        if (covered) return [];
         this.finished = true;
-        const resetAt = Number.isFinite(info.resetsAt) ? (info.resetsAt ?? 0) * 1000 : 0;
+        // Credits exhausted too: their own reset is the one that matters.
+        const resetsAt =
+          info.overageStatus === "rejected" && Number.isFinite(info.overageResetsAt)
+            ? info.overageResetsAt
+            : info.resetsAt;
+        const resetAt = Number.isFinite(resetsAt) ? (resetsAt ?? 0) * 1000 : 0;
         const resetMs = resetAt - Date.now();
         if (resetMs > 0) this.limitResetAt = resetAt;
         // Same words as the CLI's own banner. With the wait armed the row says so, as the CLI's

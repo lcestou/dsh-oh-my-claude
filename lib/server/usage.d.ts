@@ -11,6 +11,8 @@ export type UsageReply = {
     ok: true;
     fetchedAt: number;
     windows: UsageWindow[];
+    /** Paid extra usage is on and its own cap not reached: a full window does not block. */
+    extraUsage?: boolean;
     host?: string;
     email?: string | null;
 } | {
@@ -28,6 +30,8 @@ export type UsageReply = {
  * objects with `utilization`. All read; unknown kinds keep their API name as the label.
  */
 export declare function usageWindows(payload: unknown): UsageWindow[];
+/** `extra_usage` in the payload: on, not user-disabled, spend cap not reached. */
+export declare function extraUsageOn(payload: unknown): boolean;
 /** The subset of fetch the reader uses, so tests can hand in a fake. */
 export type UsageFetch = (url: string, init: {
     headers: Record<string, string>;

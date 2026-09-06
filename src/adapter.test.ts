@@ -1381,9 +1381,9 @@ console.log("ok");
 }
 {
   // continueAfterLimit: a rerouted session drops the notice, a window still at its cap re-arms,
-  // otherwise the continue notice goes through wake.
+  // otherwise (including extra usage on) the continue notice goes through wake.
   const dir = await mkdtemp(joinPath(tmpdir(), "dsh-oh-my-claude-limit-"));
-  const run = async (provider: string | undefined, windows: any[]) => {
+  const run = async (provider: string | undefined, windows: any[], extraUsage = false) => {
     const calls: string[] = [];
     const stub = {
       stateDir: dir,
@@ -1398,18 +1398,18 @@ console.log("ok");
         return true;
       },
     };
-    const probe = async () => ({ ok: true as const, fetchedAt: 0, windows });
+    const probe = async () => ({ ok: true as const, fetchedAt: 0, windows, extraUsage });
     await ClaudeCodeAdapter.prototype.continueAfterLimit.call(stub, "s", probe);
     return calls;
   };
   const later = Date.now() + 60_000;
+  const full = [{ label: "w", usedPercent: 100, resetsAt: later }];
   assert.deepEqual(await run("llama-local", []), [], "rerouted: nothing");
-  assert.deepEqual(await run("claude-code", [{ label: "w", usedPercent: 100, resetsAt: later }]), [
-    `arm s ${later}`,
-  ]);
+  assert.deepEqual(await run("claude-code", full), [`arm s ${later}`]);
   assert.deepEqual(await run(undefined, [{ label: "w", usedPercent: 40, resetsAt: later }]), [
     "wake s limit",
   ]);
+  assert.deepEqual(await run(undefined, full, true), ["wake s limit"], "extra usage on: continue");
   console.log("continue-after-limit ok");
 }
 {

@@ -112,7 +112,18 @@ export type ClaudeEvent =
         cache_creation_input_tokens?: number;
       };
     }
-  | { type: "rate_limit_event"; rate_limit_info?: { status?: string; resetsAt?: number } }
+  | {
+      type: "rate_limit_event";
+      // status "rejected" with overageStatus "allowed" means paid extra usage covers the overflow:
+      // the CLI's own banner shows no limit then (its isUsingOverage), and the turn goes on.
+      rate_limit_info?: {
+        status?: string;
+        resetsAt?: number;
+        overageStatus?: string;
+        overageResetsAt?: number;
+        isUsingOverage?: boolean;
+      };
+    }
   | {
       type: "control_request";
       request_id: string;

@@ -675,7 +675,9 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     /** The wait fired. Two things may have changed meanwhile: the session may have been rerouted
      *  to another provider (then the notice would reach a model the limit never touched), and the
      *  account may still be capped (another window, another login, a moved reset). Check both
-     *  before the notice goes out; a probe that cannot answer lets the wake try. */
+     *  before the notice goes out; a probe that cannot answer lets the wake try. Extra usage turned
+     *  on meanwhile needs no detection: a prompt cancels the wait, and once Claude runs, its own
+     *  rate_limit_event says whether credits cover the overflow. */
     continueAfterLimit(sessionId: string, probe?: typeof readUsage): Promise<void>;
     /** The provider a session last selected, from its own log; undefined when it never picked one
      *  (dsh's default applies) or the session cannot be read. */

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readUsage, stillLimitedUntil, usageWindows } from "./usage.js";
+import { extraUsageOn, readUsage, stillLimitedUntil, usageWindows } from "./usage.js";
 
 // limits shape: session + weekly + one active scoped model, one inactive scoped model skipped
 const w = usageWindows({
@@ -70,6 +70,20 @@ assert.equal(noHeader.ok === false && noHeader.retryAfterMs, 60_000);
   assert.equal(stillLimitedUntil(ok([win(100, now - 1)]), now), undefined);
   assert.equal(stillLimitedUntil(ok([win(100, null)]), now), undefined);
   assert.equal(stillLimitedUntil({ ok: false, error: "x" }, now), undefined);
+  assert.equal(
+    stillLimitedUntil({ ...ok([win(100, now + 5_000)]), extraUsage: true }, now),
+    undefined,
+  );
+  assert.equal(
+    extraUsageOn({ extra_usage: { is_enabled: true, spend_limit_reached: false } }),
+    true,
+  );
+  assert.equal(
+    extraUsageOn({ extra_usage: { is_enabled: true, spend_limit_reached: true } }),
+    false,
+  );
+  assert.equal(extraUsageOn({ extra_usage: { is_enabled: false, user_disabled: true } }), false);
+  assert.equal(extraUsageOn({}), false);
   console.log("still-limited ok");
 }
 console.log("usage ok");
