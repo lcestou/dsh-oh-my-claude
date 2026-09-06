@@ -718,9 +718,8 @@ const modeLabel = (m: string): string =>
   MODE_LABELS[m as keyof typeof MODE_LABELS];
 
 /**
- * Imperative lookalike for dsh's composer access-mode trigger in Claude sessions. Hides the
- * real trigger and builds a menu with dsh presets first, then Claude permission modes under a
- * divider. The component only mounts a hidden span; all DOM work happens inside useEffect.
+ * Imperative rework: relabels dsh's own trigger and injects Claude-mode rows into its menu.
+ * The component only mounts a hidden span; all DOM work happens inside useEffect.
  */
 export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   const anchorRef = useRef<HTMLSpanElement>(null);
@@ -746,230 +745,274 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
 
     // Everything below hangs off dsh's trigger: hide it, mirror it, and hand back one cleanup.
     const start = (trigger: HTMLButtonElement): (() => void) => {
-      trigger.style.display = "none";
-      const ours = document.createElement("button");
-      ours.type = "button";
-      ours.className = trigger.className;
-      ours.innerHTML = trigger.innerHTML;
-      ours.setAttribute(
-        "aria-label",
-        `${trigger.getAttribute("aria-label") ?? "Access mode"} (Claude)`,
-      );
-      ours.setAttribute("aria-haspopup", "menu");
-      trigger.insertAdjacentElement("afterend", ours);
+      let currentMode = "";
+      const labelSpan = (): HTMLElement | null => {
+        for (const child of Array.from(trigger.children))
+          if (child instanceof HTMLElement && child.className.includes("Label")) return child;
+        return trigger.children[1] instanceof HTMLElement ? trigger.children[1] : null;
+      };
+      // dsh's own label and aria-label, kept for the cleanup; refreshed whenever dsh rewrites them.
+      let lastDshLabelText = labelSpan()?.textContent ?? "";
+      let lastDshAriaLabel = trigger.getAttribute("aria-label") ?? "";
 
-      // Keep the lookalike in sync whenever dsh updates label or icon.
-      const observer = new MutationObserver(() => {
-        // SAFETY: trigger is guaranteed non-null by the guard above; closure scope prevents TS from narrowing.
-        ours.innerHTML = trigger!.innerHTML;
-        ours.setAttribute(
-          "aria-label",
-          `${trigger!.getAttribute("aria-label") ?? "Access mode"} (Claude)`,
-        );
-        // Update our label span to reflect the current Claude mode.
-        const labelChild = Array.from(ours.children).find((c) => c.className.includes("Label"));
-        if (labelChild instanceof HTMLElement) {
-          labelChild.textContent = modeLabel(currentMode) ?? currentMode;
-        } else {
-          const secondSpan = ours.querySelector<HTMLSpanElement>("span:nth-child(2)");
-          if (secondSpan) secondSpan.textContent = modeLabel(currentMode) ?? currentMode;
+      // Apply our Claude-mode label to the trigger's label span and aria-label. Compares against
+      // the DOM, so our own write is a no-op and a rewrite by dsh is overwritten again.
+      const reapplyLabel = () => {
+        if (!trigger.isConnected || !currentMode) return;
+        const text = modeLabel(currentMode) ?? currentMode;
+        const target = labelSpan();
+        if (target && target.textContent !== text) {
+          lastDshLabelText = target.textContent ?? "";
+          target.textContent = text;
         }
+        const newAria = `Claude permission: ${text}`;
+        const aria = trigger.getAttribute("aria-label") ?? "";
+        if (aria !== newAria) {
+          lastDshAriaLabel = aria;
+          trigger.setAttribute("aria-label", newAria);
+        }
+      };
+
+      // Observe dsh rewriting the trigger so we re-apply our label whenever it does.
+      const labelObserver = new MutationObserver(() => {
+        if (trigger.isConnected) reapplyLabel();
       });
-      observer.observe(trigger!, {
+      // SAFETY: DOM MutationObserverInit.attributes accepts boolean; TS 7 lib narrows the
+      // modern string[] variant to boolean only. We observe all attributes (true) rather than
+      // filtering to aria-label alone because the narrower form is not expressible in this TS lib.
+      labelObserver.observe(trigger, {
         childList: true,
         subtree: true,
         characterData: true,
         attributes: true,
       });
 
-      // Imperative menu: built on click, torn down on close.
-      let menuEl: HTMLDivElement | null = null;
-      let stateSnapshot: PermissionModeState | null = null;
-      let currentMode = "";
+      // Fetch the current mode on start so the trigger label is correct immediately.
+      const fetchMode = (): Promise<PermissionModeState | null> =>
+        fetch(`${ROUTE}/permission-mode?session=${encodeURIComponent(sessionId)}`)
+          .then((r) => readJson<PermissionModeState>(r))
+          .catch(() => null);
 
-      const updateTriggerLabel = (mode: string) => {
-        currentMode = mode;
-        ours.setAttribute("aria-label", `Claude permission: ${modeLabel(mode) ?? mode}`);
-        const labelChild = Array.from(ours.children).find((c) => c.className.includes("Label"));
-        if (labelChild instanceof HTMLElement) {
-          labelChild.textContent = modeLabel(mode) ?? mode;
-        } else {
-          const secondSpan = ours.querySelector<HTMLSpanElement>("span:nth-child(2)");
-          if (secondSpan) secondSpan.textContent = modeLabel(mode) ?? mode;
+      fetchMode().then((snap) => {
+        if (snap) {
+          currentMode = snap.mode;
+          reapplyLabel();
         }
-      };
-
-      // Fetch the current mode on mount so the trigger label is correct immediately.
-      fetch(`${ROUTE}/permission-mode?session=${encodeURIComponent(sessionId)}`)
-        .then((r) => readJson<PermissionModeState>(r))
-        .then((snap) => {
-          if (snap) updateTriggerLabel(snap.mode);
-        })
-        .catch(() => {
-          // Ignore; openMenu will re-fetch.
-        });
-
-      const closeMenu = () => {
-        menuEl?.remove();
-        menuEl = null;
-        document.removeEventListener("mousedown", onDocDown);
-        document.removeEventListener("keydown", onDocKey);
-      };
-
-      // SAFETY: MouseEvent.target is always a Node per the DOM spec.
-      const onDocDown = (e: MouseEvent) => {
-        if (menuEl && !menuEl.contains(e.target as Node) && e.target !== ours) closeMenu();
-      };
-      const onDocKey = (e: KeyboardEvent) => {
-        if (e.key === "Escape") closeMenu();
-      };
-
-      const openMenu = async () => {
-        if (menuEl) {
-          closeMenu();
-          return;
-        }
-        // Fetch allowed Claude modes for this session.
-        try {
-          stateSnapshot = await readJson<PermissionModeState>(
-            await fetch(`${ROUTE}/permission-mode?session=${encodeURIComponent(sessionId)}`),
-          );
-        } catch {
-          stateSnapshot = null;
-        }
-        if (!stateSnapshot) return;
-        updateTriggerLabel(stateSnapshot.mode);
-
-        // SAFETY: trigger is guaranteed non-null by the guard above; closure scope prevents TS from narrowing.
-        const parent = trigger!.parentElement;
-        if (!parent) return;
-
-        menuEl = document.createElement("div");
-        menuEl.setAttribute("role", "menu");
-        // SAFETY: popover is CSSProperties and the added properties are valid CSSProperties keys.
-        Object.assign(menuEl.style, {
-          ...popover,
-          width: 260,
-          padding: 6,
-        } as CSSProperties);
-
-        const rowStyle: CSSProperties = {
-          ...btn,
-          display: "flex",
-          width: "100%",
-          gap: 8,
-          alignItems: "center",
-          textAlign: "left" as const,
-        };
-        const iconSize = 16;
-
-        // Six Claude mode rows in MODE_LABELS key order.
-        for (const m of Object.keys(MODE_LABELS)) {
-          const active = stateSnapshot.mode === m;
-          const modeRow = document.createElement("button");
-          modeRow.setAttribute("role", "menuitem");
-          Object.assign(modeRow.style, rowStyle);
-          if (active) {
-            Object.assign(modeRow.style, { color: T.text, fontWeight: 600 });
-            modeRow.setAttribute("aria-checked", "true");
-          } else {
-            modeRow.style.color = T.faint;
-          }
-          // Clone the trigger's icon svg.
-          // SAFETY: trigger is guaranteed non-null by the guard above; closure scope prevents TS from narrowing.
-          const svgEl = trigger!.querySelector<SVGSVGElement>("svg");
-          if (svgEl) {
-            // SAFETY: cloneNode on an SVGSVGElement returns an SVG element tree.
-            const clone = svgEl.cloneNode(true) as SVGSVGElement;
-            Object.assign(clone.style, {
-              width: `${iconSize}px`,
-              height: `${iconSize}px`,
-              flexShrink: 0,
-            });
-            modeRow.appendChild(clone);
-          }
-          modeRow.textContent = modeLabel(m);
-          modeRow.addEventListener("click", () => {
-            closeMenu();
-            const need = presetForMode(m);
-            const have = stateSnapshot!.accessMode;
-            const doSet = () => {
-              const clearDefault =
-                (need === "read-only" && m === "plan") ||
-                (need === "workspace-write" && m === "acceptEdits") ||
-                (need === "danger-full-access" && m === "bypassPermissions");
-              fetch(`${ROUTE}/permission-mode`, {
-                method: "PUT",
-                headers: { "content-type": "application/json" },
-                body: JSON.stringify({ session: sessionId, mode: clearDefault ? "" : m }),
-              })
-                .then((r) => readJson<PermissionModeState>(r))
-                .then((reply) => {
-                  if (reply.error) {
-                    const errLine = menuEl?.querySelector("[data-err]");
-                    if (errLine) errLine.textContent = reply.error;
-                  } else {
-                    openMenu();
-                  }
-                })
-                .catch((e) => {
-                  const errLine = menuEl?.querySelector("[data-err]");
-                  if (errLine) errLine.textContent = e instanceof Error ? e.message : String(e);
-                });
-            };
-            if (need !== have) {
-              const live = ctx.sessions.binding?.(sessionId)?.session;
-              if (!live) {
-                const errLine = menuEl?.querySelector("[data-err]");
-                if (errLine) errLine.textContent = "this session is not materialized yet";
-                return;
-              }
-              live
-                .command(`/permission ${need}`)
-                .then((reply) => {
-                  if (!reply || !reply.ok) {
-                    const errLine = menuEl?.querySelector("[data-err]");
-                    if (errLine) errLine.textContent = reply?.error?.message ?? "command failed";
-                  } else {
-                    setTimeout(doSet, 700);
-                  }
-                })
-                .catch((e) => {
-                  const errLine = menuEl?.querySelector("[data-err]");
-                  if (errLine) errLine.textContent = e instanceof Error ? e.message : String(e);
-                });
-            } else {
-              doSet();
-            }
-          });
-          menuEl.appendChild(modeRow);
-        }
-
-        // Error line placeholder at the bottom.
-        const errLine = document.createElement("span");
-        errLine.setAttribute("data-err", "1");
-        Object.assign(errLine.style, {
-          color: T.err,
-          fontSize: 12,
-          display: "block",
-          minHeight: 16,
-        });
-        menuEl.appendChild(errLine);
-
-        parent.appendChild(menuEl);
-        document.addEventListener("mousedown", onDocDown);
-        document.addEventListener("keydown", onDocKey);
-      };
-
-      ours.addEventListener("click", () => {
-        openMenu();
       });
 
+      const parent = trigger.parentElement;
+      if (!parent)
+        return () => {
+          labelObserver.disconnect();
+        };
+
+      // Watch for dsh's menu to appear and inject our rows into its viewport.
+      const menuObserver = new MutationObserver(() => {
+        if (!parent.isConnected) return;
+        const menus = Array.from(parent.querySelectorAll<HTMLElement>('[role="menu"]'));
+        for (const dshMenu of menus) {
+          if (dshMenu.getAttribute("data-dsh-oh-my-claude")) continue;
+          const menuItems = Array.from(dshMenu.querySelectorAll<HTMLElement>('[role="menuitem"]'));
+          const hasPreset = menuItems.some((el) => PRESETS.some((p) => el.textContent === p.label));
+          if (!hasPreset) continue;
+
+          dshMenu.setAttribute("data-dsh-oh-my-claude", "1");
+
+          // Take template from the first itemWrap (parent of the first menuitem).
+          const firstItemWrap = menuItems[0]?.parentElement;
+          if (!firstItemWrap) continue;
+
+          // Find the token containing "selected" across all three original menuitems.
+          let selectedToken = "";
+          // dsh marks the selected row with a class token and a trailing check svg; both are copied
+          // onto our selected clone only.
+          let checkMark: Element | null = null;
+          for (const el of menuItems) {
+            const tokens = el.className.split(" ");
+            const found = tokens.find((t) => t.includes("selected"));
+            if (found) {
+              selectedToken = found;
+              checkMark = el.querySelector(":scope > svg");
+              break;
+            }
+          }
+          // SAFETY: firstItemWrap exists only when menuItems[0] exists; checked above.
+          const baseClass = selectedToken
+            ? menuItems[0]!.className
+                .split(" ")
+                .filter((t) => t !== selectedToken)
+                .join(" ")
+            : menuItems[0]!.className;
+
+          // Record each original row's icon svg keyed by preset id via labels.
+          const svgByPresetId: Record<string, string> = {};
+          for (const el of menuItems) {
+            const svgEl = el.querySelector<SVGSVGElement>("svg");
+            if (!svgEl) continue;
+            // SAFETY: PRESETS has exactly the three dsh preset labels as label values.
+            const presetId = PRESETS.find((p) => p.label === el.textContent)?.id;
+            if (presetId) svgByPresetId[presetId] = svgEl.outerHTML;
+          }
+
+          // Hide the three original wraps.
+          for (const wrap of dshMenu.querySelectorAll<HTMLElement>("[class*='itemWrap']")) {
+            wrap.style.display = "none";
+          }
+
+          // Find the viewport to append our rows into.
+          const viewport = dshMenu.querySelector<HTMLElement>('[role="presentation"]') ?? dshMenu;
+
+          // Capture stateSnapshot for click handlers.
+          let stateSnapshot: PermissionModeState | null = null;
+          fetch(`${ROUTE}/permission-mode?session=${encodeURIComponent(sessionId)}`)
+            .then((r) => readJson<PermissionModeState>(r))
+            .then((snap) => {
+              stateSnapshot = snap;
+            })
+            .catch(() => {
+              /* ignore */
+            });
+
+          // Append six new wraps in MODE_LABELS key order.
+          // SAFETY: Object.keys on a const object with string keys returns string[].
+          const modeKeys = Object.keys(MODE_LABELS) as string[];
+          for (const m of modeKeys) {
+            // SAFETY: cloneNode on a HTMLElement returns a Node tree rooted at that element.
+            const wrap = firstItemWrap.cloneNode(true) as HTMLElement;
+            wrap.style.display = ""; // the template was hidden before cloning
+            const menuitem = wrap.querySelector<HTMLElement>("button[role='menuitem']");
+            if (!menuitem) continue;
+
+            menuitem.className =
+              m === currentMode && selectedToken ? `${baseClass} ${selectedToken}` : baseClass;
+            menuitem.setAttribute("aria-checked", m === currentMode ? "true" : "false");
+            for (const inherited of menuitem.querySelectorAll(":scope > svg")) inherited.remove();
+            if (m === currentMode && checkMark) menuitem.append(checkMark.cloneNode(true));
+
+            // SAFETY: PRESET_FOR_MODE has exactly the six Claude modes as keys.
+            const presetId = PRESET_FOR_MODE[m as keyof typeof PRESET_FOR_MODE];
+            const iconSpan = menuitem.querySelector<HTMLElement>("span[class*='Icon']");
+            if (iconSpan && svgByPresetId[presetId]) {
+              iconSpan.innerHTML = svgByPresetId[presetId];
+            }
+
+            // Replace the label text node or span with MODE_LABELS[m].
+            const labelChild = Array.from(menuitem.children).find(
+              (c) => c instanceof HTMLElement && c.className.includes("Label"),
+            );
+            if (labelChild instanceof HTMLElement) {
+              labelChild.textContent = modeLabel(m);
+            } else {
+              const textNode = Array.from(menuitem.childNodes).find(
+                (n) => n.nodeType === Node.TEXT_NODE && n.textContent?.trim(),
+              );
+              if (textNode instanceof Text) textNode.textContent = modeLabel(m);
+            }
+
+            menuitem.setAttribute("data-mode", m);
+            menuitem.addEventListener("click", () => {
+              // The snapshot fetched at open may still be in flight on a fast click: fetch then.
+              (stateSnapshot ? Promise.resolve(stateSnapshot) : fetchMode()).then((snap) => {
+                if (!snap) return;
+                stateSnapshot = snap;
+                pick(snap);
+              });
+            });
+            const pick = (snap: PermissionModeState) => {
+              const need = presetForMode(m);
+              const have = snap.accessMode;
+              const doSet = () => {
+                const clearDefault =
+                  (need === "read-only" && m === "plan") ||
+                  (need === "workspace-write" && m === "acceptEdits") ||
+                  (need === "danger-full-access" && m === "bypassPermissions");
+                fetch(`${ROUTE}/permission-mode`, {
+                  method: "PUT",
+                  headers: { "content-type": "application/json" },
+                  body: JSON.stringify({ session: sessionId, mode: clearDefault ? null : m }),
+                })
+                  .then((r) => readJson<PermissionModeState>(r))
+                  .then((reply) => {
+                    if (reply.error) {
+                      const errEl = parent.querySelector<HTMLElement>("[data-err]");
+                      if (errEl) errEl.textContent = reply.error;
+                    } else {
+                      fetchMode().then((next) => {
+                        if (next) currentMode = next.mode;
+                        reapplyLabel();
+                      });
+                    }
+                  })
+                  .catch((e) => {
+                    const errEl = parent.querySelector<HTMLElement>("[data-err]");
+                    if (errEl) errEl.textContent = e instanceof Error ? e.message : String(e);
+                  });
+              };
+              if (need !== have) {
+                const live = ctx.sessions.binding?.(sessionId)?.session;
+                if (!live) {
+                  const errEl = parent.querySelector<HTMLElement>("[data-err]");
+                  if (errEl) errEl.textContent = "this session is not materialized yet";
+                  return;
+                }
+                live
+                  .command(`/permission ${need}`)
+                  .then((reply) => {
+                    if (!reply || !reply.ok) {
+                      const errEl = parent.querySelector<HTMLElement>("[data-err]");
+                      if (errEl) errEl.textContent = reply?.error?.message ?? "command failed";
+                    } else {
+                      setTimeout(doSet, 700);
+                    }
+                  })
+                  .catch((e) => {
+                    const errEl = parent.querySelector<HTMLElement>("[data-err]");
+                    if (errEl) errEl.textContent = e instanceof Error ? e.message : String(e);
+                  });
+              } else {
+                doSet();
+              }
+              document.dispatchEvent(
+                new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+              );
+            };
+
+            viewport.appendChild(wrap);
+          }
+
+          // Error wrap at the bottom.
+          const errWrap = document.createElement("div");
+          errWrap.setAttribute("data-err", "1");
+          Object.assign(errWrap.style, { ...meta, color: T.err, padding: "8px 10px" });
+          viewport.appendChild(errWrap);
+        }
+      });
+      menuObserver.observe(parent, { childList: true, subtree: true });
+
       return () => {
-        observer.disconnect();
-        ours.remove();
-        menuEl?.remove();
-        trigger.style.display = "";
+        labelObserver.disconnect();
+        menuObserver.disconnect();
+        // Restore trigger's label text and aria-label to what dsh last rendered.
+        // Give dsh back its own label and aria-label.
+        const restoreTarget = labelSpan();
+        if (restoreTarget && lastDshLabelText) restoreTarget.textContent = lastDshLabelText;
+        if (lastDshAriaLabel) trigger.setAttribute("aria-label", lastDshAriaLabel);
+        // If a marked menu is currently open, unhide original wraps and remove ours.
+        const markedMenu = parent.querySelector<HTMLElement>(
+          '[role="menu"][data-dsh-oh-my-claude]',
+        );
+        if (markedMenu) {
+          const vp = markedMenu.querySelector<HTMLElement>('[role="presentation"]') ?? markedMenu;
+          for (const wrap of vp.querySelectorAll<HTMLElement>("[class*='itemWrap']")) {
+            if (wrap.hasAttribute("data-mode")) {
+              wrap.remove();
+            } else {
+              wrap.style.display = "";
+            }
+          }
+          const errEl = vp.querySelector<HTMLElement>("[data-err]");
+          if (errEl) errEl.remove();
+        }
       };
     };
 
