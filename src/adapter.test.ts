@@ -1166,6 +1166,49 @@ console.log("ok");
     assert.deepEqual(t.translate({ type: "system", ...frame }), [], frame.subtype);
 }
 {
+  // Task frames: a started task and a notification each render one reasoning line; progress and the
+  // background-changed list are silent. The two branches sit between hook_response and compact_boundary
+  // in the system-case of src/adapter.ts.
+  const t = new Translator() as any;
+  const started = t.translate({
+    type: "system",
+    subtype: "task_started",
+    task_id: "t1",
+    description: "run tests",
+    subagent_type: "Explore",
+    is_backgrounded: true,
+  });
+  assert.equal(started.at(-1).block.type, "reasoning");
+  assert.equal(started.at(-1).block.text, "▶ Task (background): run tests [Explore]");
+  const startedPlain = t.translate({
+    type: "system",
+    subtype: "task_started",
+    task_id: "t2",
+    description: "lint",
+  });
+  assert.equal(startedPlain.at(-1).block.text, "▶ Task: lint");
+  const notified = t.translate({
+    type: "system",
+    subtype: "task_notification",
+    task_id: "t1",
+    status: "completed",
+    summary: "all green",
+  });
+  assert.equal(notified.at(-1).block.type, "reasoning");
+  assert.equal(notified.at(-1).block.text, "■ Task completed: all green");
+  assert.deepEqual(
+    t.translate({ type: "system", subtype: "task_progress", task_id: "t1", summary: "x" }),
+    [],
+    "task_progress",
+  );
+  assert.deepEqual(
+    t.translate({ type: "system", subtype: "background_tasks_changed", tasks: [] }),
+    [],
+    "background_tasks_changed",
+  );
+  console.log("task-frames ok");
+}
+{
   // The compaction start frame (status:"compacting") is announced at once, so the silent summarize
   // stretch has a visible anchor and does not arrive delayed as the boundary line alone.
   const t = new Translator() as any;

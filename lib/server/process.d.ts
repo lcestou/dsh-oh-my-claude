@@ -47,6 +47,11 @@ export type ClaudeEvent = {
     stderr?: string;
     exit_code?: number;
     outcome?: string;
+    task_id?: string;
+    description?: string;
+    subagent_type?: string;
+    is_backgrounded?: boolean;
+    summary?: string;
 } | {
     type: "stream_event";
     event?: ClaudeStreamPartial;

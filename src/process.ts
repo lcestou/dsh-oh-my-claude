@@ -72,6 +72,12 @@ export type ClaudeEvent =
       stderr?: string;
       exit_code?: number;
       outcome?: string;
+      // subtype "task_started" / "task_notification": subagent task lifecycle frames emitted by the CLI.
+      task_id?: string;
+      description?: string;
+      subagent_type?: string;
+      is_backgrounded?: boolean;
+      summary?: string;
     }
   | { type: "stream_event"; event?: ClaudeStreamPartial }
   | { type: "assistant"; message?: ClaudeAssistantMessage; parent_tool_use_id?: string | null }

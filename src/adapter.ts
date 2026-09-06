@@ -1264,6 +1264,22 @@ export class Translator {
             `⚠ Hook ${event.hook_name ?? "?"} (${event.hook_event ?? "?"}) ${tail}${out ? `: ${clip(out)}` : ""}`,
           );
         }
+        // Task frames from the CLI's built-in subagent runner. A start and a notification each get one
+        // reasoning line so a native background Bash or a stray native Agent run is visible; progress and
+        // the list churn are silent.
+        if (event.subtype === "task_started") {
+          return this.wholeBlock(
+            "reasoning",
+            `▶ Task${event.is_backgrounded ? " (background)" : ""}: ${event.description ?? event.task_id ?? "?"}${event.subagent_type ? ` [${event.subagent_type}]` : ""}`,
+          );
+        }
+        if (event.subtype === "task_notification") {
+          const summary = (event.summary ?? "").trim();
+          return this.wholeBlock(
+            "reasoning",
+            `■ Task ${event.status ?? "done"}: ${summary ? clip(summary) : (event.task_id ?? "?")}`,
+          );
+        }
         // Claude Code compacted its own context (auto or /compact). One line so the user knows
         // why the model may have lost detail; every other system subtype is handshake noise.
         if (event.subtype !== "compact_boundary") return [];
