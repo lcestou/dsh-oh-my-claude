@@ -328,6 +328,63 @@ export function decodeTitle(v: JsonValue | undefined): string | undefined {
   return title.length > 0 ? title : undefined;
 }
 
+/** The slice of a `get_workspace_diff` answer this plugin reports. */
+export interface WorkspaceDiff {
+  filesCount: number;
+  linesAdded: number;
+  linesRemoved: number;
+  files: Array<{
+    path: string;
+    added: number;
+    removed: number;
+    binary: boolean;
+    untracked: boolean;
+    hunks: Array<{ oldStart: number; newStart: number; lines: string[] }>;
+  }>;
+}
+const isRecord = (v: JsonValue | undefined): v is Record<string, JsonValue> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+const num = (x: JsonValue | undefined) => (typeof x === "number" ? x : 0);
+export function decodeWorkspaceDiff(v: JsonValue | undefined): WorkspaceDiff {
+  const outer = isRecord(v) ? v : {};
+  const d = isRecord(outer.diff) ? outer.diff : outer;
+  const stats = isRecord(d.stats) ? d.stats : {};
+  const hunksByPath = new Map<string, WorkspaceDiff["files"][number]["hunks"]>();
+  if (Array.isArray(d.hunks))
+    for (const entry of d.hunks) {
+      if (!isRecord(entry) || typeof entry.path !== "string" || !Array.isArray(entry.hunks))
+        continue;
+      const list: WorkspaceDiff["files"][number]["hunks"] = [];
+      for (const h of entry.hunks) {
+        if (!isRecord(h)) continue;
+        const lines = Array.isArray(h.lines)
+          ? h.lines.filter((l): l is string => typeof l === "string")
+          : [];
+        list.push({ oldStart: num(h.oldStart), newStart: num(h.newStart), lines });
+      }
+      hunksByPath.set(entry.path, list);
+    }
+  const files: WorkspaceDiff["files"] = [];
+  if (Array.isArray(d.perFileStats))
+    for (const f of d.perFileStats) {
+      if (!isRecord(f) || typeof f.path !== "string") continue;
+      files.push({
+        path: f.path,
+        added: num(f.added),
+        removed: num(f.removed),
+        binary: f.isBinary === true,
+        untracked: f.isUntracked === true,
+        hunks: hunksByPath.get(f.path) ?? [],
+      });
+    }
+  return {
+    filesCount: num(stats.filesCount),
+    linesAdded: num(stats.linesAdded),
+    linesRemoved: num(stats.linesRemoved),
+    files,
+  };
+}
+
 /** stdin line for any control request this plugin sends; the CLI answers with a `control_response`. */
 export function controlRequestLine(requestId: string, request: Record<string, JsonValue>): string {
   return `${JSON.stringify({ type: "control_request", request_id: requestId, request })}\n`;

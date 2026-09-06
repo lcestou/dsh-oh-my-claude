@@ -20,6 +20,7 @@ import type {
   RewindPrompt,
   RewindReply,
   ContextUsageReply,
+  WorkspaceDiffReply,
 } from "./adapter.js";
 
 const ROUTE_PREFIX = "/dsh-oh-my-claude";
@@ -549,6 +550,8 @@ export interface SessionRouteOptions {
   rewind?: (sessionId: string, uuid: string, dryRun: boolean) => Promise<RewindReply>;
   /** The CLI's own context breakdown for a session with a live process. */
   contextUsage?: (sessionId: string) => Promise<ContextUsageReply>;
+  /** The CLI's working-tree diff for a session with a live process. */
+  workspaceDiff?: (sessionId: string) => Promise<WorkspaceDiffReply>;
 }
 
 /** The transcript file of a dsh session: under its Claude id (sessions the adapter started) or
@@ -589,6 +592,7 @@ export function registerSessionRoutes(
     permissionModes,
     rewind,
     contextUsage,
+    workspaceDiff,
   }: SessionRouteOptions,
 ): void {
   // Optional: stock dsh has it; without it archived sessions list but cannot be restored.
@@ -732,6 +736,14 @@ export function registerSessionRoutes(
                 if (!sid) return json(res, 400, { error: "session param required" });
                 if (!contextUsage) return json(res, 404, { error: "context usage not available" });
                 const reply = await contextUsage(sid);
+                return json(res, reply.ok ? 200 : 409, reply);
+              }
+              if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/diff`) {
+                const sid = url.searchParams.get("session");
+                if (!sid) return json(res, 400, { error: "session param required" });
+                if (!workspaceDiff)
+                  return json(res, 404, { error: "workspace diff not available" });
+                const reply = await workspaceDiff(sid);
                 return json(res, reply.ok ? 200 : 409, reply);
               }
               if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/idle`) {

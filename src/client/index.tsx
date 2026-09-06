@@ -2510,6 +2510,160 @@ function RewindButton({ sessionId, ctx }: RestoreButtonProps) {
   );
 }
 
+interface DiffFile {
+  path: string;
+  added: number;
+  removed: number;
+  binary: boolean;
+  untracked: boolean;
+  hunks: Array<{ oldStart: number; newStart: number; lines: string[] }>;
+}
+type DiffReply =
+  | { ok: true; filesCount: number; linesAdded: number; linesRemoved: number; files: DiffFile[] }
+  | { ok: false; error: string };
+
+/**
+ * "Changes" control in `conversation.input.left` on Claude sessions: the CLI's own working-tree
+ * diff (`get_workspace_diff`), one row per file with its line counts, a row unfolds its hunks.
+ */
+function ChangesButton({ sessionId, ctx }: RestoreButtonProps) {
+  const isClaude = activeClaudeSession(ctx) === sessionId;
+  const [open, setOpen] = useState(false);
+  const [reply, setReply] = useState<DiffReply | null>(null);
+  const [shown, setShown] = useState<string | null>(null);
+  const rootRef = useRef<HTMLSpanElement>(null);
+  useDismiss(open, () => setOpen(false), rootRef);
+
+  useEffect(() => {
+    if (!open) return;
+    let live = true;
+    setReply(null);
+    setShown(null);
+    fetch(`${ROUTE}/diff?session=${encodeURIComponent(sessionId)}`)
+      .then((r) => readJson<DiffReply>(r))
+      .then((b) => live && setReply(b))
+      .catch((e: Error) => live && setReply({ ok: false, error: e.message }));
+    return () => {
+      live = false;
+    };
+  }, [open, sessionId]);
+
+  if (!isClaude) return null;
+  const files = reply?.ok ? reply.files : [];
+  const current = files.find((f) => f.path === shown);
+  return (
+    <span ref={rootRef} style={{ position: "relative", display: "inline-flex" }}>
+      <button
+        type="button"
+        style={btn}
+        title="Working-tree changes as Claude Code sees them"
+        onClick={() => setOpen((v) => !v)}
+      >
+        Changes
+      </button>
+      {open && (
+        <div role="dialog" aria-label="Changes" style={{ ...popover, width: 560, maxHeight: 400 }}>
+          {reply === null ? (
+            <span style={{ ...meta, padding: "2px 4px" }}>Loading…</span>
+          ) : !reply.ok ? (
+            <span style={{ color: T.err, fontSize: 12 }}>{reply.error}</span>
+          ) : current ? (
+            <>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", padding: "2px 4px" }}>
+                <button type="button" style={btn} onClick={() => setShown(null)}>
+                  ‹ Back
+                </button>
+                <span style={{ fontSize: 13, fontFamily: "monospace" }}>{current.path}</span>
+                <span style={{ ...meta, marginLeft: "auto" }}>
+                  +{current.added} −{current.removed}
+                </span>
+              </div>
+              {current.hunks.length === 0 ? (
+                <span style={{ ...meta, padding: "2px 4px" }}>
+                  {current.binary
+                    ? "Binary file"
+                    : current.untracked
+                      ? "Untracked file"
+                      : "No hunks"}
+                </span>
+              ) : (
+                current.hunks.map((h, i) => (
+                  <pre
+                    key={i}
+                    style={{
+                      margin: "2px 4px",
+                      padding: 6,
+                      fontSize: 12,
+                      lineHeight: "16px",
+                      overflow: "auto",
+                      background: T.field,
+                      border: `1px solid ${T.border}`,
+                      borderRadius: 4,
+                    }}
+                  >
+                    <span style={{ color: T.faint }}>
+                      @@ -{h.oldStart} +{h.newStart} @@{"\n"}
+                    </span>
+                    {h.lines.map((l, j) => (
+                      <span
+                        key={j}
+                        style={{
+                          color: l.startsWith("+") ? T.ok : l.startsWith("-") ? T.err : T.text,
+                        }}
+                      >
+                        {l}
+                        {"\n"}
+                      </span>
+                    ))}
+                  </pre>
+                ))
+              )}
+            </>
+          ) : (
+            <>
+              <span style={{ ...meta, padding: "2px 4px" }}>
+                {reply.filesCount === 0
+                  ? "Working tree clean"
+                  : `${reply.filesCount} files, +${reply.linesAdded} −${reply.linesRemoved}`}
+              </span>
+              {files.map((f) => (
+                <button
+                  key={f.path}
+                  type="button"
+                  style={{
+                    ...btn,
+                    display: "flex",
+                    width: "100%",
+                    textAlign: "left",
+                    padding: "5px 10px",
+                    fontFamily: "monospace",
+                  }}
+                  onClick={() => setShown(f.path)}
+                >
+                  <span
+                    style={{
+                      flex: 1,
+                      minWidth: 0,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {f.path}
+                  </span>
+                  <span style={{ ...meta, flex: "none", marginLeft: 8 }}>
+                    {f.untracked ? "new" : f.binary ? "binary" : `+${f.added} −${f.removed}`}
+                  </span>
+                </button>
+              ))}
+            </>
+          )}
+        </div>
+      )}
+    </span>
+  );
+}
+
 /**
  * Registers the Claude Code panel in dsh settings: runtime line, one session list across boxes,
  * then the saved boxes and Claude Code's settings.json as collapsed cards.
@@ -2642,6 +2796,10 @@ export function apply(ctx: ClientCtx) {
     ctx.slots.register(
       { name: "conversation.input.left", id: "claude-rewind", order: 52 },
       (props) => (props.sessionId ? <RewindButton sessionId={props.sessionId} ctx={ctx} /> : null),
+    );
+    ctx.slots.register(
+      { name: "conversation.input.left", id: "claude-changes", order: 53 },
+      (props) => (props.sessionId ? <ChangesButton sessionId={props.sessionId} ctx={ctx} /> : null),
     );
     return null;
   });

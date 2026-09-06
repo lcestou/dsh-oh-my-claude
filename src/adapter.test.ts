@@ -2337,3 +2337,68 @@ console.log("keeper-mode ok");
   assert.equal(JSON.parse(written.at(-1)!).request.subtype, "generate_session_title");
   console.log("session-title ok");
 }
+
+// workspaceDiff: decodes the CLI's get_workspace_diff answer (shape probed on 2.1.261).
+{
+  const adapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  const proc: any = {
+    alive: true,
+    busy: false,
+    controlListener: undefined,
+    write(line: string) {
+      const req = JSON.parse(line);
+      assert.equal(req.request.subtype, "get_workspace_diff");
+      setTimeout(() => {
+        proc.controlListener({
+          type: "control_response",
+          request_id: req.request_id,
+          response: {
+            subtype: "success",
+            request_id: req.request_id,
+            response: {
+              diff: {
+                stats: { filesCount: 2, linesAdded: 1, linesRemoved: 0 },
+                perFileStats: [
+                  { path: "a.txt", added: 1, removed: 0, isBinary: false, isUntracked: false },
+                  { path: "b.txt", added: 0, removed: 0, isBinary: false, isUntracked: true },
+                  { nope: true },
+                ],
+                hunks: [
+                  {
+                    path: "a.txt",
+                    hunks: [
+                      { oldStart: 1, oldLines: 1, newStart: 1, newLines: 2, lines: [" x", "+y"] },
+                    ],
+                  },
+                ],
+                skippedLarge: [],
+                source: { kind: "working-tree" },
+              },
+            },
+          },
+        });
+      }, 0);
+      return true;
+    },
+  };
+  adapter.processes.set(registryKey(adapter.providerId, "wd"), proc);
+  const got = await adapter.workspaceDiff("wd");
+  assert.equal(got.ok, true);
+  if (got.ok) {
+    assert.equal(got.filesCount, 2);
+    assert.equal(got.linesAdded, 1);
+    assert.deepEqual(got.files, [
+      {
+        path: "a.txt",
+        added: 1,
+        removed: 0,
+        binary: false,
+        untracked: false,
+        hunks: [{ oldStart: 1, newStart: 1, lines: [" x", "+y"] }],
+      },
+      { path: "b.txt", added: 0, removed: 0, binary: false, untracked: true, hunks: [] },
+    ]);
+  }
+  assert.equal((await adapter.workspaceDiff("nope")).ok, false);
+  console.log("workspace-diff ok");
+}

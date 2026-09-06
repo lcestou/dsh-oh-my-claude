@@ -1,7 +1,7 @@
 import type { IncomingMessage } from "node:http";
 import type { TranscriptListItem } from "./transcript.js";
 import type { JsonValue, PluginContext } from "./dsh.js";
-import type { PermissionModeInfo, PermissionModeReply, RewindReply, ContextUsageReply } from "./adapter.js";
+import type { PermissionModeInfo, PermissionModeReply, RewindReply, ContextUsageReply, WorkspaceDiffReply } from "./adapter.js";
 /** Any JSON object, as a request body or a stored file decodes to. */
 type JsonObject = Record<string, JsonValue>;
 /** Parse a JSON request body, capped at `limit` bytes. A non-object body reads as an empty object. */
@@ -145,7 +145,9 @@ export interface SessionRouteOptions {
     rewind?: (sessionId: string, uuid: string, dryRun: boolean) => Promise<RewindReply>;
     /** The CLI's own context breakdown for a session with a live process. */
     contextUsage?: (sessionId: string) => Promise<ContextUsageReply>;
+    /** The CLI's working-tree diff for a session with a live process. */
+    workspaceDiff?: (sessionId: string) => Promise<WorkspaceDiffReply>;
 }
 /** `projectDir(cwd)` → Claude Code project dir; `startedIds()` → ids the adapter started itself. */
-export declare function registerSessionRoutes(ctx: PluginContext, { log, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, command, turnRecords, idle, permissionModes, rewind, contextUsage, }: SessionRouteOptions): void;
+export declare function registerSessionRoutes(ctx: PluginContext, { log, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, command, turnRecords, idle, permissionModes, rewind, contextUsage, workspaceDiff, }: SessionRouteOptions): void;
 export {};

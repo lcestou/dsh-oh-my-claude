@@ -1,4 +1,4 @@
-import type { Spawner, ContextUsage } from "./process.js";
+import type { Spawner, ContextUsage, WorkspaceDiff } from "./process.js";
 import { LlmAdapter, type ContentBlock, type GenerateOptions, type LlmModelInfo, type LlmResolvedModelInfo, type StreamChunk } from "@deepseek-ai/dsh-llm";
 import z from "@deepseek-ai/schemastery";
 import { type ClaudeEvent, ClaudeProcess } from "./process.js";
@@ -158,6 +158,14 @@ export type ContextUsageReply = ({
     ok: true;
     error?: undefined;
 } & ContextUsage) | {
+    ok: false;
+    error: string;
+};
+/** What the diff route reports: the CLI's working-tree diff for a live session. */
+export type WorkspaceDiffReply = ({
+    ok: true;
+    error?: undefined;
+} & WorkspaceDiff) | {
     ok: false;
     error: string;
 };
@@ -589,6 +597,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * the one-shot path.
      */
     titleFromCli(sessionId: string, description: string): Promise<string | undefined>;
+    /** The CLI's working-tree diff (`get_workspace_diff`) for a session with a live process. */
+    workspaceDiff(sessionId: string): Promise<WorkspaceDiffReply>;
     /**
      * The CLI's own context breakdown (`/context` in the TUI) for a session with a live process;
      * answered between turns as well as inside one. 5 s: the CLI replies at once when it reads stdin.

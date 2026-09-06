@@ -254,6 +254,25 @@ export interface ContextUsage {
 export declare function decodeContextUsage(v: JsonValue | undefined): ContextUsage;
 /** The `title` of a `generate_session_title` answer, trimmed; undefined when absent or empty. */
 export declare function decodeTitle(v: JsonValue | undefined): string | undefined;
+/** The slice of a `get_workspace_diff` answer this plugin reports. */
+export interface WorkspaceDiff {
+    filesCount: number;
+    linesAdded: number;
+    linesRemoved: number;
+    files: Array<{
+        path: string;
+        added: number;
+        removed: number;
+        binary: boolean;
+        untracked: boolean;
+        hunks: Array<{
+            oldStart: number;
+            newStart: number;
+            lines: string[];
+        }>;
+    }>;
+}
+export declare function decodeWorkspaceDiff(v: JsonValue | undefined): WorkspaceDiff;
 /** stdin line for any control request this plugin sends; the CLI answers with a `control_response`. */
 export declare function controlRequestLine(requestId: string, request: Record<string, JsonValue>): string;
 /**

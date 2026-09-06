@@ -5,7 +5,7 @@ import { access, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promise
 import { dirname } from "node:path";
 import { hostname } from "node:os";
 import { basename, join } from "node:path";
-import type { Spawner, ContextUsage } from "./process.js";
+import type { Spawner, ContextUsage, WorkspaceDiff } from "./process.js";
 import {
   LlmAdapter,
   LlmError,
@@ -37,6 +37,7 @@ import {
   controlRequestLine,
   decodeRewindResult,
   decodeContextUsage,
+  decodeWorkspaceDiff,
   decodeTitle,
   toJsonValue,
   nodeSpawner,
@@ -335,6 +336,10 @@ export interface RewindReply extends Partial<RewindResult> {
 /** What the context route reports: the CLI's own context breakdown for a live session. */
 export type ContextUsageReply =
   | ({ ok: true; error?: undefined } & ContextUsage)
+  | { ok: false; error: string };
+/** What the diff route reports: the CLI's working-tree diff for a live session. */
+export type WorkspaceDiffReply =
+  | ({ ok: true; error?: undefined } & WorkspaceDiff)
   | { ok: false; error: string };
 /** What the permission-mode route reports: the mode in force and the stored override. */
 export interface PermissionModeInfo {
@@ -2096,6 +2101,15 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     return decodeTitle(reply.response);
   }
 
+  /** The CLI's working-tree diff (`get_workspace_diff`) for a session with a live process. */
+  async workspaceDiff(sessionId: string): Promise<WorkspaceDiffReply> {
+    const proc = this.processes.get(registryKey(this.providerId, sessionId));
+    if (!proc?.alive) return { ok: false, error: "no live Claude process for this session" };
+    const reply = await this.control(proc, { subtype: "get_workspace_diff" }, 10_000);
+    if (!reply.ok) return { ok: false, error: reply.error };
+    return { ok: true, ...decodeWorkspaceDiff(reply.response) };
+  }
+
   /**
    * The CLI's own context breakdown (`/context` in the TUI) for a session with a live process;
    * answered between turns as well as inside one. 5 s: the CLI replies at once when it reads stdin.
@@ -3220,6 +3234,7 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
         set: (sessionId: string, mode: string | null) => adapter.setPermissionMode(sessionId, mode),
       },
       contextUsage: (sessionId: string) => adapter.contextUsage(sessionId),
+      workspaceDiff: (sessionId: string) => adapter.workspaceDiff(sessionId),
       rewind: (sessionId: string, uuid: string, dryRun: boolean) =>
         adapter.rewind(sessionId, uuid, dryRun),
     });
