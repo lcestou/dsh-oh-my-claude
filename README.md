@@ -2,6 +2,26 @@
 
 Claude Code CLI as an LLM provider for [dsh](https://github.com/deepseek-ai/dsh). Every request drives `claude -p` with stream-json in and out, so it uses whatever login, hooks, CLAUDE.md files, MCP servers and rate limits Claude Code already has. No API key needed. The plugin speaks the CLI's own protocol (the one the Agent SDK wraps) directly, so it has no runtime dependencies.
 
+## Tour
+
+<p><img src="docs/media/shield-menu.png" width="640" alt="dsh's access shield in a Claude session: Plan, Ask, Accept edits, Auto, Don't ask and Bypass rows with dsh's own icons"></p>
+
+The shield is dsh's own control; in a Claude session its rows become Claude's six permission modes, each labelled with the dsh access level it sets underneath.
+
+<p><img src="docs/media/panel-tabs.gif" width="640" alt="the Oh My Claude panel switching between its Memory, Rewind, Changes and MCP tabs"></p>
+
+One `✻` button beside the composer opens a panel with Restore, Memory, Rewind, Changes and MCP tabs.
+
+<p><img src="docs/media/panel-changes.png" width="640" alt="the Changes tab listing the working tree diff with per-file line counts"> <img src="docs/media/panel-mcp.png" width="640" alt="the MCP tab listing Claude's MCP servers with their status and a Reconnect button"></p>
+
+<p><img src="docs/media/cost-row.png" width="640" alt="dsh's footer stats row ending with the Claude session cost"></p>
+
+Cost, the one figure dsh cannot compute, joins dsh's footer stats row and its phone bubble.
+
+<p><img src="docs/media/context-usage.png" width="300" alt="dsh's context ring popover with Claude plan windows and the CLI's own context breakdown"> <img src="docs/media/phone-panel.png" width="300" alt="the panel as a phone sheet above the composer"> <img src="docs/media/phone-cost-bubble.png" width="300" alt="the phone stats bubble ending with the session cost"></p>
+
+Plan usage and the CLI's own context breakdown live in dsh's context ring popover; on a phone the panel becomes a sheet and the cost rides the stats bubble. Captured by `tools/playwright/tour.mjs`.
+
 ## Install
 
 Needs the Claude Code CLI on `PATH` and already logged in (`claude --version` works, `claude` opens without asking you to sign in). Nothing else: no API key, no Node build step.
@@ -121,9 +141,9 @@ With `spawn: node` or `dsh`, a dsh restart kills every Claude Code child. Sessio
 
 **Memory.** Claude Code's auto-memory lives under `<project dir>/memory/` as one Markdown file per fact with `MEMORY.md` as the index it loads each session. The Memory tab shows the count in its label and lists the files (index first, then newest first, with each file's frontmatter description and age); picking one opens an editor with Save (Ctrl or Cmd plus Enter) and Delete. Deleting a file also drops its line from `MEMORY.md`. When Claude saves or recalls memories during a turn (the CLI's `memory_saved` and `memory_recall` frames) one reasoning line says so, and the button's count follows within half a minute. The routes (`GET`, `PUT`, `DELETE /dsh-oh-my-claude/memory`) resolve the directory through the instance's `configDir`, so each mounted instance sees its own memories.
 
-**Permission mode per session.** The session header of a Claude session carries a select over the CLI's permission modes (`default`, `acceptEdits`, `plan`, `auto`, `dontAsk`, `bypassPermissions`); the first entry, `config`, means no override and shows the mode the plugin config resolves to. A choice is stored per session under the instance state dir (`permission-modes.json`) and used for `--permission-mode` at the next spawn or resume; a live process is switched at once with the CLI's `set_permission_mode` control request, and a rejection from the CLI shows beside the select.
+**Permission mode per session.** dsh's access shield by the composer is the control, in a Claude session with Claude's rows: Plan (read-only), Ask and Accept edits (workspace write), Auto, Don't ask and Bypass (full access). A pick first switches dsh's preset through its own `/permission` command when the mode needs another one, then stores the Claude override per session under the instance state dir (`permission-modes.json`), used for `--permission-mode` at the next spawn or resume and pushed to a live process with the CLI's `set_permission_mode` control request. The override can only be as loose as dsh's preset maps to (`plan`, `acceptEdits`, `bypassPermissions`); the server refuses a looser one. dsh's trigger and menu are kept and relabelled, so other providers see dsh's shield unchanged. Routes: `GET`/`PUT /dsh-oh-my-claude/permission-mode`.
 
-**Rewind.** A `Rewind` button beside the composer on Claude sessions lists the session's user prompts from Claude's transcript. Picking one dry-runs the CLI's `rewind_files` control request and shows how many files would go back with the insertion and deletion counts; confirming runs the real file rewind and then `rewind_conversation`, so Claude's context ends at that prompt. dsh's own transcript is left as it is, so the conversation view still shows what happened. Needs the session's Claude process alive (it is, after any prompt in this dsh session), and control responses are read as they arrive, so this and the live permission switch work between turns too. Stream-json runs leave file checkpointing off, so every Claude child is started with `CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING=1`; prompts from before this version have no checkpoint and answer "No file checkpoint found". Routes: `GET /dsh-oh-my-claude/rewind?session=&cwd=` and `POST /rewind`.
+**Rewind.** The Rewind tab lists the session's user prompts from Claude's transcript. Picking one dry-runs the CLI's `rewind_files` control request and shows how many files would go back with the insertion and deletion counts; confirming runs the real file rewind and then `rewind_conversation`, so Claude's context ends at that prompt. dsh's own transcript is left as it is, so the conversation view still shows what happened. Needs the session's Claude process alive (it is, after any prompt in this dsh session), and control responses are read as they arrive, so this and the live permission switch work between turns too. Stream-json runs leave file checkpointing off, so every Claude child is started with `CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING=1`; prompts from before this version have no checkpoint and answer "No file checkpoint found". Routes: `GET /dsh-oh-my-claude/rewind?session=&cwd=` and `POST /rewind`.
 
 **Idle watchdog.** `idleTimeoutMs` still stops a process that produces nothing for that long, but no longer silently: half a timeout before the stop (60 s when the timeout is two minutes or more) a reasoning row announces the countdown, and the session header shows `stopping in Ns` with an Extend button that pushes the deadline out by a full timeout. A tool call in flight pauses the watchdog, as before. `GET /dsh-oh-my-claude/idle?session=` and `POST /idle/extend` are the routes behind the chip.
 
@@ -191,4 +211,4 @@ Lint, format check, typecheck, the offline self-checks (`src/adapter.test.ts`, `
 
 ## Roadmap
 
-`docs/queue.md` is the owner-ranked list of what comes next, with enough detail to start each item cold; `docs/research/` holds the 2026-09-05 surveys it was ranked from; `docs/landscape.md` places the plugin against the other dsh Claude providers. The package stays private for now.
+`docs/queue.md` is the owner-ranked list of what comes next, with enough detail to start each item cold; `docs/research/` holds the 2026-09-05 and 2026-09-06 surveys it was ranked from; `docs/landscape.md` places the plugin against the other dsh Claude providers. The package stays private for now.
