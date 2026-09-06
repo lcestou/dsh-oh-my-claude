@@ -2357,11 +2357,21 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       // Anything Claude wrote while dsh was away sits in the keeper's buffer and now in our queue;
       // a wake opens a dsh turn that reads it out. The bridge's MCP client session died with the
       // old dsh, so ask the CLI to reconnect its `dsh` server against the new one first.
-      setTimeout(() => {
-        void this.reconnectBridge(proc, spec.sessionId);
-        if (proc.alive && !proc.busy && proc.queue.size > 0)
-          void this.wake(spec.sessionId, proc, RECONNECT_TEXT);
-      }, 1500).unref();
+      setTimeout(() => void this.reconnectBridge(proc, spec.sessionId), 1500).unref();
+      // The first look at 1.5 s found dsh's agent scope still inactive (2026-09-05 23:53: the
+      // reply Claude wrote during the restart sat in the queue until the next typed prompt), so
+      // keep looking for a minute and stop at the first wake that opened a turn.
+      void this.drainAdopted(proc, spec.sessionId);
+    }
+  }
+
+  /** Every 2 s for a minute: a reply waiting in an adopted process's queue opens a dsh turn. */
+  async drainAdopted(proc: ClaudeProcess, sessionId: string, everyMs = 2000, tries = 30) {
+    for (let i = 0; i < tries && proc.alive; i++) {
+      await new Promise((r) => setTimeout(r, everyMs));
+      if (proc.busy) return; // a prompt got there first; the turn drains the queue itself
+      if (proc.queue.size === 0) continue;
+      if (await this.wake(sessionId, proc, RECONNECT_TEXT)) return;
     }
   }
 
@@ -2954,17 +2964,24 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   /** Claude finished a turn of its own (a background task it launched completed) while dsh was
    *  idle. Drop a notice into the session's inbox so dsh opens a turn now and the reply shows,
    *  instead of riding on top of the user's next prompt. */
-  async wake(sessionId: string, proc: ClaudeProcess | undefined, text = WAKE_TEXT) {
-    if (proc?.busy) return;
+  async wake(
+    sessionId: string,
+    proc: ClaudeProcess | undefined,
+    text = WAKE_TEXT,
+  ): Promise<boolean> {
+    if (proc?.busy) return false;
+    const note = (line: string) =>
+      trace(join(this.stateDir, "resume.log"), `wake ${sessionId}: ${line}`);
     if (text === RESTART_TEXT) await trace(`wake ${sessionId}: start`);
     let agent;
     try {
       agent = this.ctx?.agents?.get?.(asSessionId(sessionId));
     } catch (error) {
-      // This adapter's cordis scope is gone (plugin hot-reloaded); the new instance re-adopts
-      // the process in its constructor, so the next idle reply will wake through it.
+      // This adapter's cordis scope is gone (plugin hot-reloaded) or not active yet (boot); the
+      // caller retries or the next idle reply wakes through the next instance.
       this.log("warn", `wake: adapter scope inactive (${errorText(error)}); skipped`);
-      return;
+      await note(`scope inactive: ${errorText(error)}`);
+      return false;
     }
     let how = "live";
     if (agent === undefined && this.sessionController) {
@@ -2974,13 +2991,14 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         how = "resumed";
       } catch (error) {
         this.log("warn", `wake: could not resume session ${sessionId}: ${errorText(error)}`);
-        return;
+        await note(`resume failed: ${errorText(error)}`);
+        return false;
       }
     }
     if (!agent) {
       this.log("warn", `wake: no agent for session ${sessionId}; reply waits for the next prompt`);
-      if (text === RESTART_TEXT) await trace(`wake ${sessionId}: no agent (${how})`);
-      return;
+      await note(`no agent (${how}, controller ${this.sessionController ? "up" : "missing"})`);
+      return false;
     }
     if (text === RESTART_TEXT) {
       // A notice from a previous boot may still sit in the durable inbox: do not stack another.
@@ -2994,7 +3012,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
           ])
         ) {
           await trace(`wake ${sessionId}: restart notice already pending, not stacking another`);
-          return;
+          return true;
         }
       } catch (error) {
         this.log("warn", `wake: pending-notice check failed: ${errorText(error)}`);
@@ -3022,7 +3040,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       );
     } catch (error) {
       this.log("warn", `wake after idle reply failed: ${errorText(error)}`);
+      await note(`followup failed: ${errorText(error)}`);
+      return false;
     }
+    await note(`followup sent (agent ${how})`);
     if (text === RESTART_TEXT) {
       // 2026-09-05: with no browser attached, the restart notice was spliced but no turn started
       // until the next typed prompt. Record the agent's phase after the followup so the next
@@ -3046,6 +3067,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         }, delayMs);
       }
     }
+    return true;
   }
 
   /** Offer a dsh tool call from the MCP bridge to the session's live turn. Undefined when no turn

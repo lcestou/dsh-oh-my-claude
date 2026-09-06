@@ -665,6 +665,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * drain turn so what Claude did during the gap shows up without anyone typing.
      */
     adoptKeepers(): Promise<void>;
+    /** Every 2 s for a minute: a reply waiting in an adopted process's queue opens a dsh turn. */
+    drainAdopted(proc: ClaudeProcess, sessionId: string, everyMs?: number, tries?: number): Promise<void>;
     /**
      * After a reattach, the surviving Claude still holds an MCP session against the previous dsh's
      * bridge. `mcp_reconnect` for the `dsh` server makes it open a fresh one; without it the first
@@ -723,7 +725,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     /** Claude finished a turn of its own (a background task it launched completed) while dsh was
      *  idle. Drop a notice into the session's inbox so dsh opens a turn now and the reply shows,
      *  instead of riding on top of the user's next prompt. */
-    wake(sessionId: string, proc: ClaudeProcess | undefined, text?: string): Promise<void>;
+    wake(sessionId: string, proc: ClaudeProcess | undefined, text?: string): Promise<boolean>;
     /** Offer a dsh tool call from the MCP bridge to the session's live turn. Undefined when no turn
      *  can take it (idle process, a relay already pending); the bridge then executes it directly. */
     relay(sessionId: string, toolName: string, args: Record<string, JsonValue>, signal: AbortSignal): Promise<RelayResult> | undefined;

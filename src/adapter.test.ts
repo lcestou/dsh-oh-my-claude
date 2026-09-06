@@ -1643,6 +1643,7 @@ console.log("schema-guard ok");
   const woke: [string, ClaudeProcess | undefined, string | undefined][] = [];
   a.wake = async (id, proc, text) => {
     woke.push([id, proc, text]);
+    return true;
   };
   await a.resumeInterrupted(file);
   assert.deepEqual(woke, [["dead", undefined, RESTART_TEXT]]);
@@ -2419,6 +2420,31 @@ console.log("interrupt-on-abort ok");
   }
   assert.equal((await adapter.workspaceDiff("nope")).ok, false);
   console.log("workspace-diff ok");
+}
+
+// drainAdopted: an adopted process with a reply waiting keeps asking for a wake until one opens a
+// turn; a busy process (a prompt arrived) ends the loop; an empty queue never wakes.
+{
+  const adapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  const calls: string[] = [];
+  let answers = [false, false, true];
+  adapter.wake = async (id) => {
+    calls.push(id);
+    return answers.shift() ?? true;
+  };
+  const proc: any = { alive: true, busy: false, queue: { size: 1 } };
+  await adapter.drainAdopted(proc, "d", 1, 10);
+  assert.equal(calls.length, 3, "retries until a wake opens a turn");
+  calls.length = 0;
+  answers = [false, false];
+  proc.queue.size = 0;
+  await adapter.drainAdopted(proc, "d", 1, 5);
+  assert.equal(calls.length, 0, "nothing queued: no wake");
+  proc.queue.size = 1;
+  proc.busy = true;
+  await adapter.drainAdopted(proc, "d", 1, 5);
+  assert.equal(calls.length, 0, "busy: a turn is already draining");
+  console.log("drain-adopted ok");
 }
 
 // reconnectBridge: with the bridge mounted, a reattached process is told mcp_reconnect for the
