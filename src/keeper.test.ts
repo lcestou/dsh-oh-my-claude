@@ -65,7 +65,7 @@ await wait(100);
 assert.equal(readKeeperInfo(dir)?.exit?.code, 3, "exit recorded in keeper.json");
 // keeper.log records startup, attach/detach, kill, and child exit for post-mortem evidence
 const logDir = mkdtempSync(join(tmpdir(), "omc-keeper-log-"));
-await spawnKeeper(
+const hLog = await spawnKeeper(
   logDir,
   {
     command: process.execPath,
@@ -117,3 +117,46 @@ await wait(100);
 const info4 = readKeeperInfo(logDir2);
 assert.equal(info4?.endedBy, "client", "endedBy is client after kill message");
 console.log("keeper-log ok");
+
+// A respawn into the same directory must attach to the new keeper, not the old one still
+// listening for its last 3 s (the model-switch race of 2026-09-06).
+const raceDir = mkdtempSync(join(tmpdir(), "omc-keeper-race-"));
+const spawnInto = (d: string) =>
+  spawnKeeper(
+    d,
+    {
+      command: process.execPath,
+      args: ["-e", fake],
+      cwd: d,
+      env: { PATH: process.env.PATH ?? "" },
+      sessionId: "s-race",
+    },
+    (argv) => {
+      const c = spawn(argv[0]!, argv.slice(1), { detached: true, stdio: "ignore" });
+      c.unref();
+    },
+  );
+const old = await spawnInto(raceDir);
+const oldPid = readKeeperInfo(raceDir)?.pid;
+old.terminate(); // the old keeper keeps listening for ~3 s after its child exits
+const fresh = await spawnInto(raceDir);
+const freshOut = lines(fresh.stdout);
+fresh.stdin.write("c\n");
+await wait(500);
+const freshPid = readKeeperInfo(raceDir)?.pid;
+assert.ok(freshPid && freshPid !== oldPid, `new keeper has its own pid (${oldPid} → ${freshPid})`);
+assert.ok(
+  freshOut.includes("echo:c"),
+  `new handle talks to the new keeper: ${JSON.stringify(freshOut)}`,
+);
+fresh.terminate();
+await fresh.done;
+console.log("keeper-respawn ok");
+
+// Leave no keeper behind: every handle above is ended here.
+for (const h of [h1, h2, hLog]) {
+  try {
+    h.terminate();
+  } catch {}
+}
+await Promise.race([h1.done, wait(3000)]);
