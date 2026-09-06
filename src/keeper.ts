@@ -44,6 +44,7 @@ function main(dir: string) {
   const buffer: string[] = [];
   let dropped = 0;
   let exit: { code: number | null; signal: string | null } | undefined;
+  let endedBy: "client" | "child" | null = null;
 
   const send = (msg: object) => {
     const line = `${JSON.stringify(msg)}\n`;
@@ -66,6 +67,9 @@ function main(dir: string) {
         sessionId: spec.sessionId,
         startedAt: Date.now(),
         exit: exit ?? null,
+        // Why Claude ended, for the boot that finds this keeper dead: "client" means a kill
+        // message from dsh, "child" means Claude exited on its own.
+        endedBy,
       }),
     );
   writeInfo();
@@ -78,6 +82,7 @@ function main(dir: string) {
   );
   child.on("exit", (code, signal) => {
     exit = { code, signal };
+    endedBy ??= "child";
     writeInfo();
     send({ t: "exit", code, signal });
     // Give an attached client time to read the exit, then leave.
@@ -115,7 +120,10 @@ function main(dir: string) {
       } else if (msg.t === "in" && typeof msg.line === "string") {
         if (!exit) child.stdin.write(msg.line);
       } else if (msg.t === "kill") {
-        if (!exit) child.kill("SIGTERM");
+        if (!exit) {
+          endedBy = "client";
+          child.kill("SIGTERM");
+        }
       }
     });
   });

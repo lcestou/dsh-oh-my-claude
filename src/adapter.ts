@@ -2330,6 +2330,12 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         !pidAlive(info.claudePid) ||
         !spec.procSpec
       ) {
+        // Say why before the evidence goes: the 2026-09-06 00:00 restart lost a keeper that had
+        // survived four, and nothing recorded whether Claude exited, was killed, or the keeper died.
+        await trace(
+          join(this.stateDir, "resume.log"),
+          `dropping keeper ${basename(dir)} for ${info?.sessionId ?? "?"}: exit=${JSON.stringify(info?.exit ?? null)} endedBy=${info?.endedBy ?? "?"} keeperAlive=${info ? pidAlive(info.pid) : "?"} claudeAlive=${info ? pidAlive(info.claudePid) : "?"} spec=${spec ? "ok" : "missing"}`,
+        );
         await rm(dir, { recursive: true, force: true }).catch(() => {});
         continue;
       }
