@@ -314,16 +314,6 @@ export declare function probeCli(exec?: ExecLike, command?: string): any;
 export declare const supports: (flags: Set<string> | null | undefined, flag: string) => boolean;
 /** Text mode when the CLI lacks --input-format: prompt goes positional, images are dropped. */
 export declare const usesStdin: (flags: Set<string> | null | undefined) => boolean;
-/**
- * Constructs command-line arguments for spawning a Claude Code process.
- * Handles model, effort, permissions, MCP config, and other flags.
- */
-/**
- * Appended to the system prompt whenever dsh tools are bridged. Claude Code's own Agent tool
- * spawns children dsh cannot see (no card, no header count, no notice), so subagents must go
- * through the bridged tools. Routes are box-specific, hence the pointer to list_subagent_models.
- */
-export declare const DSH_TOOLS_GUIDANCE: string;
 export declare function buildArgs({ model, reasoningEffort, system, purpose, config, session, accessMode, flags, promptText, mcp, temporary, permissionMode, }: Pick<GenerateOptions, "reasoningEffort" | "system" | "purpose"> & {
     model: string | undefined;
     config: Schemastery.TypeT<typeof Config>;
@@ -350,8 +340,6 @@ export declare function buildInput(prompt: string, images: Array<{
 }>): string;
 /** Names from the CLI's init frame that dsh's command grammar accepts (lowercase, `[a-z0-9_-]`), deduped. */
 export declare function commandNames(value: JsonValue | undefined): string[];
-/** Bridged Claude commands are registered as `/claude-<name>` in dsh. */
-export declare const BRIDGE_PREFIX = "claude-";
 export interface TurnRecord {
     at: number;
     costUsd: number;
@@ -683,8 +671,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * After a reattach, the surviving Claude still holds an MCP session against the previous dsh's
      * bridge. `mcp_reconnect` for the `dsh` server makes it open a fresh one; without it the first
      * dsh tool call after a restart can fail once. No bridge mounted (non-default instance, or the
-     * bridge not up yet) means nothing to reconnect to. ponytail: one attempt 1.5 s after adopt; if
-     * the bridge comes up later than that, the CLI's own retry on the next tool call still applies.
+     * bridge not up yet) means nothing to reconnect to. Retries every retryMs for attempts tries, since the web server listens several seconds after adoption.
      */
     reconnectBridge(proc: ClaudeProcess, sessionId: string, retryMs?: number, attempts?: number): Promise<boolean>;
     spawner(): Spawner;

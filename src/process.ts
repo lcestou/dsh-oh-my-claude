@@ -162,20 +162,6 @@ export type ClaudeContentBlock =
   | { type: "tool_use"; id: string; name?: string; input?: Record<string, unknown> }
   | { type: "tool_result"; tool_use_id?: string; content?: unknown; is_error?: boolean };
 
-/** Decoded control_request event from Claude Code stream-json output. */
-export interface ClaudeControlRequest {
-  type: "control_request";
-  request_id: string;
-  request?: {
-    subtype?: string;
-    tool_name?: string;
-    input?: unknown;
-    tool_use_id?: string;
-    title?: string;
-    description?: string;
-  };
-}
-
 /** One Anthropic streaming event as Claude Code forwards it. Untyped past `type`: only the three
  *  content-block events carry fields the translator reads, and unknown types are logged once. */
 export interface ClaudeStreamPartial {
@@ -183,27 +169,6 @@ export interface ClaudeStreamPartial {
   index?: number;
   content_block?: { type?: string; id?: string; name?: string };
   delta?: { text?: string; thinking?: string; partial_json?: string; signature?: string };
-}
-
-export interface TranslatedBlock {
-  index: number;
-  blockType: string;
-  text?: string;
-  started?: boolean;
-  tool?: boolean;
-}
-
-export interface TranslatedEvent {
-  type: string;
-  index?: number;
-  blockType?: string;
-  text?: string;
-  block?: Record<string, unknown>;
-  usage?: Record<string, unknown>;
-  reason?: Record<string, unknown>;
-  id?: string;
-  name?: string;
-  argumentsDelta?: string;
 }
 
 /**
@@ -717,7 +682,7 @@ export interface KeeperPaths {
   spec: string;
   info: string;
 }
-export const keeperPaths = (dir: string): KeeperPaths => ({
+const keeperPaths = (dir: string): KeeperPaths => ({
   dir,
   sock: join(dir, "keeper.sock"),
   spec: join(dir, "spec.json"),

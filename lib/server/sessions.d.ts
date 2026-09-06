@@ -1,5 +1,4 @@
 import type { IncomingMessage } from "node:http";
-import type { TranscriptListItem } from "./transcript.js";
 import type { JsonValue, PluginContext } from "./dsh.js";
 import type { PermissionModeInfo, PermissionModeReply, RewindReply, ContextUsageReply, WorkspaceDiffReply, McpStatusReply } from "./adapter.js";
 /** Any JSON object, as a request body or a stored file decodes to. */
@@ -48,11 +47,6 @@ export interface RuntimeStatus {
     authMethod: string | null;
     email?: string | null;
     projectsDirectory?: string | null;
-}
-/** A box's `/sessions?all=1` answer. */
-export interface BoxSessions {
-    host: string;
-    sessions: TranscriptListItem[];
 }
 /** One probe's outcome: the decoded body, or why the box could not be reached. */
 export type Probe<T> = {

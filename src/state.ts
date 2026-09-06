@@ -20,16 +20,16 @@ export function resolveClaudeHome(dir: string): string {
 // Session state: which Claude sessions this plugin started, so resume does not depend on guessing
 // where Claude Code keeps its transcripts. A wrong guess still degrades to a fresh full-transcript run.
 export const STATE_DIR = join(homedir(), ".local", "state", "dsh-oh-my-claude");
-export const STATE_FILE = join(STATE_DIR, "sessions.json");
+const STATE_FILE = join(STATE_DIR, "sessions.json");
 /** Derive per-instance state dir from a provider id; default id uses the shared top-level path. */
 export function stateDir(providerId: string): string {
   return providerId === "claude-code" ? STATE_DIR : join(STATE_DIR, providerId);
 }
 
 /** Sessions with a turn in flight. Survives a dsh restart so those sessions can be nudged back. */
-export const BUSY_FILE = join(STATE_DIR, "busy.json");
+const BUSY_FILE = join(STATE_DIR, "busy.json");
 /** Plugin info logs never reach dsh's web.log; the resume path keeps its own trace file. */
-export const RESUME_LOG = join(STATE_DIR, "resume.log");
+const RESUME_LOG = join(STATE_DIR, "resume.log");
 let busyChain = Promise.resolve();
 
 /** Append one line to the resume trace; best effort, never throws. */

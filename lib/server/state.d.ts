@@ -4,13 +4,8 @@ export declare const CLAUDE_HOME: string;
  * Non-empty → expanded absolute path; empty → falls through to CLAUDE_HOME. */
 export declare function resolveClaudeHome(dir: string): string;
 export declare const STATE_DIR: string;
-export declare const STATE_FILE: string;
 /** Derive per-instance state dir from a provider id; default id uses the shared top-level path. */
 export declare function stateDir(providerId: string): string;
-/** Sessions with a turn in flight. Survives a dsh restart so those sessions can be nudged back. */
-export declare const BUSY_FILE: string;
-/** Plugin info logs never reach dsh's web.log; the resume path keeps its own trace file. */
-export declare const RESUME_LOG: string;
 /** Append one line to the resume trace; best effort, never throws. */
 export declare function trace(fileOrLine: string, maybeLine?: string): Promise<void>;
 /** Record (or clear) that a session's turn is running; serialized read-modify-write. */

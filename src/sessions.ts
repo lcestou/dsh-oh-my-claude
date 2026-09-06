@@ -187,7 +187,7 @@ export interface RuntimeStatus {
 }
 
 /** A box's `/sessions?all=1` answer. */
-export interface BoxSessions {
+interface BoxSessions {
   host: string;
   sessions: TranscriptListItem[];
 }

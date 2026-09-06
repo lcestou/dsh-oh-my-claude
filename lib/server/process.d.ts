@@ -161,19 +161,6 @@ export type ClaudeContentBlock = {
     content?: unknown;
     is_error?: boolean;
 };
-/** Decoded control_request event from Claude Code stream-json output. */
-export interface ClaudeControlRequest {
-    type: "control_request";
-    request_id: string;
-    request?: {
-        subtype?: string;
-        tool_name?: string;
-        input?: unknown;
-        tool_use_id?: string;
-        title?: string;
-        description?: string;
-    };
-}
 /** One Anthropic streaming event as Claude Code forwards it. Untyped past `type`: only the three
  *  content-block events carry fields the translator reads, and unknown types are logged once. */
 export interface ClaudeStreamPartial {
@@ -190,25 +177,6 @@ export interface ClaudeStreamPartial {
         partial_json?: string;
         signature?: string;
     };
-}
-export interface TranslatedBlock {
-    index: number;
-    blockType: string;
-    text?: string;
-    started?: boolean;
-    tool?: boolean;
-}
-export interface TranslatedEvent {
-    type: string;
-    index?: number;
-    blockType?: string;
-    text?: string;
-    block?: Record<string, unknown>;
-    usage?: Record<string, unknown>;
-    reason?: Record<string, unknown>;
-    id?: string;
-    name?: string;
-    argumentsDelta?: string;
 }
 /**
  * Node's own spawn, shaped like a dsh `SubprocessHandle` so the process code has one shape to
@@ -413,7 +381,6 @@ export interface KeeperPaths {
     spec: string;
     info: string;
 }
-export declare const keeperPaths: (dir: string) => KeeperPaths;
 /** What `keeper.json` says about a keeper; `exit` is set once Claude has left. */
 export interface KeeperInfo {
     pid: number;
