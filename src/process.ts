@@ -488,6 +488,24 @@ export function elicitationResult(
   return Object.keys(content).length > 0 ? { action: "accept", content } : { action: "cancel" };
 }
 
+/**
+ * A `result` line that arrived while no turn was reading, and that is worth a wake: a completed
+ * reply. An error result is not: on a rate limit the CLI retries on its own and emits one error
+ * result per attempt, and waking on each opened a rejected turn every 73 s until the limit reset
+ * (2026-09-06 22:51 to 23:00, eight turns).
+ */
+export function isIdleReply(line: string): boolean {
+  try {
+    const parsed: unknown = JSON.parse(line);
+    if (typeof parsed !== "object" || parsed === null) return false;
+    // SAFETY: a non-null object; each field is compared to a literal, never trusted as typed
+    const r = parsed as { type?: unknown; is_error?: unknown; subtype?: unknown };
+    return r.type === "result" && r.is_error !== true && r.subtype !== "error_during_execution";
+  } catch {
+    return false; // not JSON: nextEvent() files it under `stray`
+  }
+}
+
 /** stdin line for any control request this plugin sends; the CLI answers with a `control_response`. */
 export function controlRequestLine(requestId: string, request: Record<string, JsonValue>): string {
   return `${JSON.stringify({ type: "control_request", request_id: requestId, request })}\n`;
@@ -1052,13 +1070,7 @@ export class ClaudeProcess {
    *  adapter (`onIdleResult`) so it can open a dsh turn and show the reply now. */
   noteIdleResult(line: string) {
     if (this.busy || !this.onIdleResult || !line.includes('"result"')) return;
-    let isResult = false;
-    try {
-      isResult = JSON.parse(line).type === "result";
-    } catch {
-      // not JSON: nextEvent() files it under `stray`
-    }
-    if (!isResult) return;
+    if (!isIdleReply(line)) return;
     try {
       // A throw here is inside readline's data handler: it would take the whole host down.
       // The adapter behind the callback may have been hot-reloaded away (dead cordis scope).

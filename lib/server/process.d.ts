@@ -286,6 +286,13 @@ export declare function elicitationResult(request: ElicitationRequest, response:
         selected?: string[];
     }>;
 }, requestId: string): Record<string, JsonValue>;
+/**
+ * A `result` line that arrived while no turn was reading, and that is worth a wake: a completed
+ * reply. An error result is not: on a rate limit the CLI retries on its own and emits one error
+ * result per attempt, and waking on each opened a rejected turn every 73 s until the limit reset
+ * (2026-09-06 22:51 to 23:00, eight turns).
+ */
+export declare function isIdleReply(line: string): boolean;
 /** stdin line for any control request this plugin sends; the CLI answers with a `control_response`. */
 export declare function controlRequestLine(requestId: string, request: Record<string, JsonValue>): string;
 /**

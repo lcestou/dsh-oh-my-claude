@@ -52,6 +52,7 @@ import {
   seamSpawner,
   elicitationQuestions,
   elicitationResult,
+  isIdleReply,
 } from "./process.js";
 import {
   buildRedactor,
@@ -2273,6 +2274,23 @@ assert.equal(noticeSource(RECONNECT_TEXT, false).kind, "plugin");
 assert.equal((noticeSource(RECONNECT_TEXT, false) as { form?: string }).form, "notice");
 assert.equal(noticeSource("wake", true).kind, "plugin", "a plain wake never claims the user");
 console.log("notice-source ok");
+
+// An idle result wakes a turn only when it is a real reply, never an error or a rate-limit retry.
+assert.equal(
+  isIdleReply(JSON.stringify({ type: "result", subtype: "success", result: "hi" })),
+  true,
+);
+assert.equal(
+  isIdleReply(JSON.stringify({ type: "result", is_error: true, subtype: "error" })),
+  false,
+);
+assert.equal(
+  isIdleReply(JSON.stringify({ type: "result", subtype: "error_during_execution" })),
+  false,
+);
+assert.equal(isIdleReply(JSON.stringify({ type: "assistant" })), false);
+assert.equal(isIdleReply("not json"), false);
+console.log("idle-reply ok");
 
 // A dsh shutdown under a keeper leaves Claude's turn running; every other abort interrupts it.
 assert.equal(interruptOnAbort("disposed", "keeper"), false);
