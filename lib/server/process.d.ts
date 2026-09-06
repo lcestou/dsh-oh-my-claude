@@ -252,6 +252,8 @@ export interface ContextUsage {
     autocompact?: string;
 }
 export declare function decodeContextUsage(v: JsonValue | undefined): ContextUsage;
+/** The `title` of a `generate_session_title` answer, trimmed; undefined when absent or empty. */
+export declare function decodeTitle(v: JsonValue | undefined): string | undefined;
 /** stdin line for any control request this plugin sends; the CLI answers with a `control_response`. */
 export declare function controlRequestLine(requestId: string, request: Record<string, JsonValue>): string;
 /**

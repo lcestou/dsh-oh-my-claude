@@ -2275,3 +2275,65 @@ console.log("keeper-mode ok");
   assert.equal(none.ok, false);
   console.log("context-usage ok");
 }
+
+// session title: a live process answers generate_session_title and stream() yields the title as
+// one text block; no live process or a declined request returns undefined so one-shot runs.
+{
+  const adapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  const written: string[] = [];
+  let decline = false;
+  const proc: any = {
+    alive: true,
+    busy: false,
+    controlListener: undefined,
+    write(line: string) {
+      written.push(line);
+      const req = JSON.parse(line);
+      setTimeout(() => {
+        proc.controlListener({
+          type: "control_response",
+          request_id: req.request_id,
+          response: decline
+            ? { subtype: "error", request_id: req.request_id, error: "unsupported" }
+            : {
+                subtype: "success",
+                request_id: req.request_id,
+                response: { title: "  Fix login redirect  " },
+              },
+        });
+      }, 0);
+      return true;
+    },
+  };
+  adapter.processes.set(registryKey(adapter.providerId, "tt"), proc);
+  const chunks: any[] = [];
+  for await (const c of adapter.stream({
+    purpose: "session-title",
+    sessionId: "tt",
+    messages: messageList([
+      {
+        role: "user",
+        content: [{ type: "text", text: "<conversation>login broke</conversation>" }],
+      },
+    ]),
+    signal: new AbortController().signal,
+  } as any))
+    chunks.push(c);
+  const req = JSON.parse(written[0]!).request;
+  assert.equal(req.subtype, "generate_session_title");
+  assert.equal(req.persist, true);
+  assert.match(req.description, /login broke/);
+  const text = chunks
+    .filter((c) => c.type === "text-delta")
+    .map((c) => c.text)
+    .join("");
+  assert.equal(chunks.find((c) => c.type === "block-start")?.blockType, "text");
+  assert.equal(text, "Fix login redirect");
+  assert.deepEqual(chunks.at(-1), { type: "finish", reason: { kind: "stop" } });
+  assert.equal(await adapter.titleFromCli("nope", "x"), undefined, "no process: undefined");
+  assert.equal(await adapter.titleFromCli("tt", ""), undefined, "empty input: undefined");
+  decline = true;
+  assert.equal(await adapter.titleFromCli("tt", "x"), undefined, "declined: undefined");
+  assert.equal(JSON.parse(written.at(-1)!).request.subtype, "generate_session_title");
+  console.log("session-title ok");
+}

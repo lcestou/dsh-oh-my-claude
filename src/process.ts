@@ -321,6 +321,13 @@ export function decodeContextUsage(v: JsonValue | undefined): ContextUsage {
   return out;
 }
 
+/** The `title` of a `generate_session_title` answer, trimmed; undefined when absent or empty. */
+export function decodeTitle(v: JsonValue | undefined): string | undefined {
+  const r = typeof v === "object" && v !== null && !Array.isArray(v) ? v : {};
+  const title = typeof r.title === "string" ? r.title.trim() : "";
+  return title.length > 0 ? title : undefined;
+}
+
 /** stdin line for any control request this plugin sends; the CLI answers with a `control_response`. */
 export function controlRequestLine(requestId: string, request: Record<string, JsonValue>): string {
   return `${JSON.stringify({ type: "control_request", request_id: requestId, request })}\n`;

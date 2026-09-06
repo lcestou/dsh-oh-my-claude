@@ -37,6 +37,7 @@ import {
   controlRequestLine,
   decodeRewindResult,
   decodeContextUsage,
+  decodeTitle,
   toJsonValue,
   nodeSpawner,
   seamSpawner,
@@ -308,6 +309,13 @@ export const Config = z.object({
     ),
 });
 
+/** The text dsh's title provider sends: its one framed user message, joined when there are more. */
+function titleInput(messages: GenerateOptions["messages"]): string {
+  const parts: string[] = [];
+  for (const m of messages)
+    for (const b of m.content) if (b.type === "text" && b.text) parts.push(b.text);
+  return parts.join("\n").trim();
+}
 /** Keys the shared process registry by instance so two mounts never see each other's processes. */
 /** Outcome of a control request this plugin sent to the CLI; `response` is the CLI's payload. */
 export type ControlReply =
@@ -2064,6 +2072,31 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   }
 
   /**
+   * dsh's session-title request, served by the session's live Claude process through the
+   * `generate_session_title` control request instead of a second one-shot spawn on `titleModel`.
+   * `persist: true` also names Claude's own session, so `claude --resume` shows the same title.
+   * Undefined when there is no live process or the CLI declines; the caller then falls back to
+   * the one-shot path.
+   */
+  async titleFromCli(sessionId: string, description: string): Promise<string | undefined> {
+    const proc = this.processes.get(registryKey(this.providerId, sessionId));
+    if (!proc?.alive || !description) return undefined;
+    const reply = await this.control(
+      proc,
+      { subtype: "generate_session_title", description, persist: true },
+      10_000,
+    );
+    if (!reply.ok) {
+      this.log(
+        "info",
+        `generate_session_title declined: ${reply.error}; using ${this.config.titleModel}`,
+      );
+      return undefined;
+    }
+    return decodeTitle(reply.response);
+  }
+
+  /**
    * The CLI's own context breakdown (`/context` in the TUI) for a session with a live process;
    * answered between turns as well as inside one. 5 s: the CLI replies at once when it reads stdin.
    */
@@ -2253,7 +2286,15 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     return (command: string, args: string[], cwd: string) => base(command, args, cwd, envOverride);
   }
 
-  async *stream(options: GenerateOptions) {
+  async *stream(options: GenerateOptions): AsyncGenerator<StreamChunk> {
+    if (options.purpose === "session-title" && options.sessionId) {
+      const title = await this.titleFromCli(options.sessionId, titleInput(options.messages));
+      if (title) {
+        yield* new Translator({ toolActivity: false }).wholeBlock("text", title);
+        yield { type: "finish", reason: { kind: "stop" } };
+        return;
+      }
+    }
     if (options.purpose || !options.sessionId || !this.config.resume) {
       yield* this.oneShot(options);
       return;

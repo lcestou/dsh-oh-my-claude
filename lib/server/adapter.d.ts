@@ -582,6 +582,14 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      */
     rewind(sessionId: string, uuid: string, dryRun: boolean): Promise<RewindReply>;
     /**
+     * dsh's session-title request, served by the session's live Claude process through the
+     * `generate_session_title` control request instead of a second one-shot spawn on `titleModel`.
+     * `persist: true` also names Claude's own session, so `claude --resume` shows the same title.
+     * Undefined when there is no live process or the CLI declines; the caller then falls back to
+     * the one-shot path.
+     */
+    titleFromCli(sessionId: string, description: string): Promise<string | undefined>;
+    /**
      * The CLI's own context breakdown (`/context` in the TUI) for a session with a live process;
      * answered between turns as well as inside one. 5 s: the CLI replies at once when it reads stdin.
      */
@@ -615,7 +623,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      */
     adoptKeepers(): Promise<void>;
     spawner(): Spawner;
-    stream(options: GenerateOptions): AsyncGenerator<StreamChunk, void, any>;
+    stream(options: GenerateOptions): AsyncGenerator<StreamChunk>;
     /** Reuse the session's process when its spec still matches; otherwise replace it. */
     acquire(options: SessionOptions, forceFresh?: boolean): Promise<{
         prep: TurnPrep;
