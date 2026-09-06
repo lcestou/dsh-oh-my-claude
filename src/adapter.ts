@@ -957,6 +957,10 @@ export function finishReason(result: {
  * Tool calls and results are shown as reasoning blocks: the CLI runs its own tools, dsh only watches.
  */
 /** The `kind` dsh's loop puts on an abort reason ("disposed" on shutdown), else undefined. */
+/** Whether an aborted stream should interrupt Claude: always, except a dsh shutdown under a keeper. */
+export function interruptOnAbort(kind: string | undefined, spawn: string): boolean {
+  return !(kind === "disposed" && spawn === "keeper");
+}
 function abortKind(signal: AbortSignal | undefined): string | undefined {
   if (!signal?.aborted) return undefined;
   const reason: unknown = signal.reason;
@@ -2368,14 +2372,37 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    * bridge not up yet) means nothing to reconnect to. ponytail: one attempt 1.5 s after adopt; if
    * the bridge comes up later than that, the CLI's own retry on the next tool call still applies.
    */
-  async reconnectBridge(proc: ClaudeProcess, sessionId: string): Promise<boolean> {
+  async reconnectBridge(
+    proc: ClaudeProcess,
+    sessionId: string,
+    retryMs = 5000,
+    attempts = 12,
+  ): Promise<boolean> {
     if (!this.mcp || !proc.alive) return false;
-    const reply = await this.control(proc, { subtype: "mcp_reconnect", serverName: "dsh" }, 10_000);
+    // The web server listens several seconds after adoption (2026-09-05: 40:47 adopt, 40:56 up),
+    // so the first tries answer "MCP endpoint not found"; keep asking for about a minute.
+    let last = "";
+    for (let i = 0; i < attempts && proc.alive; i++) {
+      const reply = await this.control(
+        proc,
+        { subtype: "mcp_reconnect", serverName: "dsh" },
+        10_000,
+      );
+      if (reply.ok) {
+        await trace(
+          join(this.stateDir, "resume.log"),
+          `mcp_reconnect dsh for ${sessionId}: ok (try ${i + 1})`,
+        );
+        return true;
+      }
+      last = reply.error;
+      await new Promise((r) => setTimeout(r, retryMs));
+    }
     await trace(
       join(this.stateDir, "resume.log"),
-      `mcp_reconnect dsh for ${sessionId}: ${reply.ok ? "ok" : reply.error}`,
+      `mcp_reconnect dsh for ${sessionId}: gave up: ${last}`,
     );
-    return reply.ok;
+    return false;
   }
 
   spawner() {
@@ -2738,6 +2765,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     let outcome: Outcome = "ended"; // ended | finished | relayed | parked | retry
     const wakeOnly = cont.mode === "prompt" && wakeOnlyTurn(options.messages);
     const onAbort = () => {
+      // A dsh shutdown in keeper mode: leave Claude alone. It finishes the turn into the keeper's
+      // buffer and the next boot drains it (2026-09-05: the interrupt here cancelled the reply that
+      // followed a restart command, so the drain had nothing to show).
+      if (!interruptOnAbort(abortKind(options.signal), this.config.spawn)) return;
       // Ask the CLI to stop; it answers with a result and stays alive for the next turn. Kill only
       // if it does not.
       tr.aborting = true;

@@ -379,6 +379,14 @@ export declare function finishReason(result: {
     api_error_status?: number;
     subtype?: string;
 }): FinishReason;
+/**
+ * Incremental translator from Claude Code stream-json lines to dsh StreamChunks.
+ * Prefers partial `stream_event`s; falls back to whole `assistant` messages when no partials arrived.
+ * Tool calls and results are shown as reasoning blocks: the CLI runs its own tools, dsh only watches.
+ */
+/** The `kind` dsh's loop puts on an abort reason ("disposed" on shutdown), else undefined. */
+/** Whether an aborted stream should interrupt Claude: always, except a dsh shutdown under a keeper. */
+export declare function interruptOnAbort(kind: string | undefined, spawn: string): boolean;
 /** dsh's tool-result for a relayed call, searched from the newest message back. */
 export declare function toolResultFor(messages: LooseMessage[] | undefined, id: string): {
     text: string;
@@ -664,7 +672,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * bridge not up yet) means nothing to reconnect to. ponytail: one attempt 1.5 s after adopt; if
      * the bridge comes up later than that, the CLI's own retry on the next tool call still applies.
      */
-    reconnectBridge(proc: ClaudeProcess, sessionId: string): Promise<boolean>;
+    reconnectBridge(proc: ClaudeProcess, sessionId: string, retryMs?: number, attempts?: number): Promise<boolean>;
     spawner(): Spawner;
     stream(options: GenerateOptions): AsyncGenerator<StreamChunk>;
     /** Reuse the session's process when its spec still matches; otherwise replace it. */

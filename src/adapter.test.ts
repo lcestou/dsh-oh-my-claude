@@ -39,6 +39,7 @@ import {
   registryKey,
   mergeCatalog,
   setCliModels,
+  interruptOnAbort,
 } from "./adapter.js";
 import {
   CHILD_ENV,
@@ -2231,6 +2232,13 @@ console.log("keeper-mode ok");
   console.log("retarget ok");
 }
 
+// A dsh shutdown under a keeper leaves Claude's turn running; every other abort interrupts it.
+assert.equal(interruptOnAbort("disposed", "keeper"), false);
+assert.equal(interruptOnAbort("disposed", "node"), true);
+assert.equal(interruptOnAbort("cancelled", "keeper"), true);
+assert.equal(interruptOnAbort(undefined, "keeper"), true);
+console.log("interrupt-on-abort ok");
+
 // contextUsage: decodes the CLI's get_context_usage answer; no live process is a plain error.
 {
   const adapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
@@ -2441,6 +2449,30 @@ console.log("keeper-mode ok");
   assert.equal(await adapter.reconnectBridge(proc, "s"), true);
   const req = JSON.parse(written[0]!).request;
   assert.deepEqual(req, { subtype: "mcp_reconnect", serverName: "dsh" });
+  // The bridge is not listening yet for the first two tries: keep asking, succeed on the third.
+  let failures = 2;
+  proc.write = (line: string) => {
+    written.push(line);
+    const r = JSON.parse(line);
+    const fail = failures-- > 0;
+    setTimeout(() => {
+      proc.controlListener({
+        type: "control_response",
+        request_id: r.request_id,
+        response: fail
+          ? { subtype: "error", request_id: r.request_id, error: "MCP endpoint not found" }
+          : { subtype: "success", request_id: r.request_id, response: {} },
+      });
+    }, 0);
+    return true;
+  };
+  written.length = 0;
+  assert.equal(await adapter.reconnectBridge(proc, "s", 1, 5), true, "third try succeeds");
+  assert.equal(written.length, 3);
+  failures = 99;
+  written.length = 0;
+  assert.equal(await adapter.reconnectBridge(proc, "s", 1, 2), false, "gives up after attempts");
+  assert.equal(written.length, 2);
   console.log("mcp-reconnect ok");
 }
 
