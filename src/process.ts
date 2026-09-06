@@ -63,6 +63,15 @@ export type ClaudeEvent =
       written_paths?: string[];
       verb?: string;
       memories?: Array<{ path?: string; scope?: string }>;
+      // subtype "hook_started" / "hook_response": hook lifecycle events, only emitted when
+      // the process runs with --include-hook-events (SessionStart and Setup always emit).
+      hook_name?: string;
+      hook_event?: string;
+      output?: string;
+      stdout?: string;
+      stderr?: string;
+      exit_code?: number;
+      outcome?: string;
     }
   | { type: "stream_event"; event?: ClaudeStreamPartial }
   | { type: "assistant"; message?: ClaudeAssistantMessage; parent_tool_use_id?: string | null }

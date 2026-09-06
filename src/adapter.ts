@@ -162,6 +162,7 @@ export type Config = {
   maxBudgetUsd?: number;
   titleModel: string;
   toolActivity: boolean;
+  hookRows: boolean;
   resume: boolean;
   idleTimeoutMs: number;
   toolTextLimit: number;
@@ -215,6 +216,12 @@ export const Config = z.object({
     .boolean()
     .default(true)
     .description("Show Claude Code tool calls and results as native tool rows"),
+  hookRows: z
+    .boolean()
+    .default(true)
+    .description(
+      "Show Claude Code hook starts and results as reasoning lines (adds --include-hook-events)",
+    ),
   resume: z
     .boolean()
     .default(true)
@@ -726,6 +733,8 @@ export function buildArgs({
   args.push("--output-format", "stream-json", "--verbose");
   if (supports(flags, "--include-partial-messages")) args.push("--include-partial-messages");
   if (supports(flags, "--forward-subagent-text")) args.push("--forward-subagent-text");
+  if (config.hookRows && supports(flags, "--include-hook-events"))
+    args.push("--include-hook-events");
   if (model) args.push("--model", model);
   if (reasoningEffort && supports(flags, "--effort")) args.push("--effort", reasoningEffort);
   // In -p mode /fast only works in a session launched with fast mode in --settings (fast-mode docs).
@@ -1238,6 +1247,22 @@ export class Translator {
           return n > 0
             ? this.wholeBlock("reasoning", `Recalled ${n} ${n === 1 ? "memory" : "memories"}`)
             : [];
+        }
+        // Hook lifecycle: this box runs dozens of hooks per tool call, so only a hook that failed,
+        // was cancelled or exited non-zero gets a reasoning line; a clean run and hook_started are
+        // silent. Outcome literals in the CLI are "success", "error" and "cancelled".
+        if (event.subtype === "hook_response") {
+          const exitCode = event.exit_code;
+          const failed =
+            (event.outcome !== undefined && event.outcome !== "success") ||
+            (Number.isFinite(exitCode) && exitCode !== 0);
+          if (!failed) return [];
+          const out = (event.output || event.stdout || event.stderr || "").trim();
+          const tail = Number.isFinite(exitCode) ? `exit ${exitCode}` : (event.outcome ?? "failed");
+          return this.wholeBlock(
+            "reasoning",
+            `⚠ Hook ${event.hook_name ?? "?"} (${event.hook_event ?? "?"}) ${tail}${out ? `: ${clip(out)}` : ""}`,
+          );
         }
         // Claude Code compacted its own context (auto or /compact). One line so the user knows
         // why the model may have lost detail; every other system subtype is handshake noise.

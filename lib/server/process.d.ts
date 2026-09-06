@@ -40,6 +40,13 @@ export type ClaudeEvent = {
         path?: string;
         scope?: string;
     }>;
+    hook_name?: string;
+    hook_event?: string;
+    output?: string;
+    stdout?: string;
+    stderr?: string;
+    exit_code?: number;
+    outcome?: string;
 } | {
     type: "stream_event";
     event?: ClaudeStreamPartial;

@@ -1129,6 +1129,43 @@ console.log("ok");
   assert.deepEqual(t.translate({ type: "system", subtype: "memory_recall", memories: [] }), []);
 }
 {
+  // Hook frames: a failed or cancelled hook_response renders one reasoning line; a clean one,
+  // hook_started and hook_progress are silent (dozens of hooks per tool call on a busy box).
+  const t = new Translator() as any;
+  const failed = t.translate({
+    type: "system",
+    subtype: "hook_response",
+    hook_name: "ctx-route",
+    hook_event: "PreToolUse",
+    exit_code: 2,
+    stderr: "boom\n",
+    outcome: "error",
+  });
+  assert.equal(failed.at(-1).block.type, "reasoning");
+  assert.equal(failed.at(-1).block.text, "⚠ Hook ctx-route (PreToolUse) exit 2: boom");
+  const cancelled = t.translate({
+    type: "system",
+    subtype: "hook_response",
+    hook_name: "slow",
+    hook_event: "Stop",
+    outcome: "cancelled",
+  });
+  assert.equal(cancelled.at(-1).block.text, "⚠ Hook slow (Stop) cancelled");
+  for (const frame of [
+    {
+      subtype: "hook_response",
+      hook_name: "ok",
+      hook_event: "PreToolUse",
+      exit_code: 0,
+      stdout: "fine",
+      outcome: "success",
+    },
+    { subtype: "hook_started", hook_name: "ok", hook_event: "PreToolUse" },
+    { subtype: "hook_progress", hook_name: "ok", hook_event: "PreToolUse", stdout: "x" },
+  ])
+    assert.deepEqual(t.translate({ type: "system", ...frame }), [], frame.subtype);
+}
+{
   // The compaction start frame (status:"compacting") is announced at once, so the silent summarize
   // stretch has a visible anchor and does not arrive delayed as the boundary line alone.
   const t = new Translator() as any;
@@ -1966,6 +2003,27 @@ console.log("fast-mode ok");
   assert.ok(!buildArgs({ ...base } as any).includes("--no-session-persistence"));
 }
 console.log("temporary ok");
+
+// hookRows: buildArgs adds --include-hook-events only when config.hookRows is true and the CLI lists it.
+{
+  const flags = new Set(["--include-hook-events"]);
+  const base = {
+    model: "opus",
+    reasoningEffort: null,
+    system: "",
+    purpose: undefined,
+    config: Config({}),
+    flags,
+    mcp: null,
+  };
+  assert.ok(buildArgs({ ...base } as any).includes("--include-hook-events"));
+  assert.ok(
+    !buildArgs({ ...base, config: Config({ hookRows: false }) } as any).includes(
+      "--include-hook-events",
+    ),
+  );
+}
+console.log("hook-rows ok");
 
 // keeper mode: the default spawn, one keeper dir per provider id and dsh session, stable across calls.
 {
