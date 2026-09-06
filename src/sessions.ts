@@ -88,9 +88,13 @@ export function parseSettingsText(text: unknown): ParsedSettings {
 }
 
 /** Output of a probe command, or "" plus the failure text so the panel can show why. */
-const run = (cmd: string, args: string[]): Promise<{ out: string; error?: string }> =>
+const run = (
+  cmd: string,
+  args: string[],
+  env?: NodeJS.ProcessEnv,
+): Promise<{ out: string; error?: string }> =>
   new Promise((resolve) =>
-    execFile(cmd, args, { timeout: 8000, windowsHide: true }, (e, out, err) =>
+    execFile(cmd, args, { timeout: 8000, windowsHide: true, env }, (e, out, err) =>
       resolve(
         e
           ? {
@@ -310,12 +314,19 @@ export interface AccountIdentity {
   host: string;
   email: string | null;
 }
-let identityCache: { at: number; value: AccountIdentity } | undefined;
-export async function accountIdentity(command = "claude"): Promise<AccountIdentity> {
-  if (identityCache && Date.now() - identityCache.at < 10 * 60_000) return identityCache.value;
-  const status = await run(command, ["auth", "status"]);
+/** Per config dir: a second plugin instance has its own login, so its own answer. */
+const identityCache = new Map<string, { at: number; value: AccountIdentity }>();
+export async function accountIdentity(
+  command = "claude",
+  configDir?: string,
+): Promise<AccountIdentity> {
+  const key = configDir ?? "";
+  const hit = identityCache.get(key);
+  if (hit && Date.now() - hit.at < 10 * 60_000) return hit.value;
+  const env = configDir ? { ...process.env, CLAUDE_CONFIG_DIR: configDir } : undefined;
+  const status = await run(command, ["auth", "status"], env);
   const value = { host: hostname(), email: authFromStatus(status.out).email ?? null };
-  identityCache = { at: Date.now(), value };
+  identityCache.set(key, { at: Date.now(), value });
   return value;
 }
 

@@ -239,8 +239,7 @@ export declare function mergeCatalog(cli: CliModel[], base: ReturnType<typeof M>
     contextWindow: number;
     efforts: readonly string[];
 }[];
-export declare function setCliModels(models: CliModel[]): void;
-export declare function getCatalog(fetchImpl?: typeof fetch): Promise<{
+export declare function getCatalog(fetchImpl?: typeof fetch, cli?: CliModel[]): Promise<{
     provider: string;
     id: string;
     name: string;
@@ -461,6 +460,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     accessModes: Map<string, string | undefined>;
     /** Callers waiting for the CLI's `control_response` to a request this plugin sent, by request id. */
     controlWaiters: Map<string, (reply: ControlReply) => void>;
+    cliModels: CliModel[];
     claudeHome: string;
     providerId: string;
     displayName: string;

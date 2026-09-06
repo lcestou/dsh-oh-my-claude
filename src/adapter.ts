@@ -429,7 +429,6 @@ export function modelFromApi(m: {
  * `[1m]` variants included. API and known models it does not already cover follow, so older
  * ids stored in dsh sessions keep resolving.
  */
-let cliModels: CliModel[] = [];
 const strip = (id: string) => (id.endsWith("[1m]") ? id.slice(0, -4) : id);
 export function mergeCatalog(cli: CliModel[], base: ReturnType<typeof M>[]) {
   if (cli.length === 0) return base;
@@ -443,11 +442,8 @@ export function mergeCatalog(cli: CliModel[], base: ReturnType<typeof M>[]) {
   });
   return [...fromCli, ...base.filter((b) => !covered(b.id))];
 }
-export function setCliModels(models: CliModel[]) {
-  cliModels = models;
-}
-export async function getCatalog(fetchImpl = fetch) {
-  if (Date.now() - catalog.at < CATALOG_TTL_MS) return mergeCatalog(cliModels, catalog.models);
+export async function getCatalog(fetchImpl = fetch, cli: CliModel[] = []) {
+  if (Date.now() - catalog.at < CATALOG_TTL_MS) return mergeCatalog(cli, catalog.models);
   const headers = await authHeaders(CLAUDE_HOME);
   if (headers) {
     try {
@@ -461,14 +457,14 @@ export async function getCatalog(fetchImpl = fetch) {
       if (res.ok) {
         const data = (await res.json()).data ?? [];
         if (data.length > 0) catalog = { at: Date.now(), models: data.map(modelFromApi) };
-        return mergeCatalog(cliModels, catalog.models);
+        return mergeCatalog(cli, catalog.models);
       }
     } catch {
       /* offline or rejected: keep previous catalog */
     }
   }
   catalog = { at: Date.now(), models: catalog.models }; // retry no sooner than the TTL
-  return mergeCatalog(cliModels, catalog.models);
+  return mergeCatalog(cli, catalog.models);
 }
 
 /**
@@ -1096,6 +1092,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   accessModes: Map<string, string | undefined>;
   /** Callers waiting for the CLI's `control_response` to a request this plugin sent, by request id. */
   controlWaiters: Map<string, (reply: ControlReply) => void>;
+  cliModels: CliModel[] = [];
   claudeHome: string;
   providerId: string;
   displayName: string;
@@ -1178,11 +1175,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   }
 
   override async listModels(provider: string) {
-    return (await getCatalog()).map((m) => modelInfo(provider, m));
+    return (await getCatalog(undefined, this.cliModels)).map((m) => modelInfo(provider, m));
   }
 
   override async resolveModel(provider: string, model: string, _signal?: AbortSignal) {
-    return resolveModelInfo(provider, model, await getCatalog());
+    return resolveModelInfo(provider, model, await getCatalog(undefined, this.cliModels));
   }
 
   /** Get the effective permission mode for a session, checking for an override first. */
@@ -1580,7 +1577,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     }
     const models = decodeCliModels(reply.response);
     if (models.length === 0) return false;
-    setCliModels(models);
+    this.cliModels = models;
     return true;
   }
 
@@ -2843,11 +2840,14 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       },
       (e) => adapter.log("warn", `mcp bridge unavailable: ${errorText(e)}`),
     );
+    // Build a provider→home lookup from the registry so the usage route can resolve other instances.
+    const homeFor = (providerId: string): string | undefined =>
+      g[ADAPTER_CURRENT]?.get(providerId)?.claudeHome;
     registerUsageRoute(
       ctx,
       (level, msg) => adapter.log(level, msg),
-      () => accountIdentity(adapter.config.command),
-      claudeHome,
+      (home?: string) => accountIdentity(adapter.config.command, home),
+      { home: claudeHome, homeFor },
     );
     registerSessionRoutes(ctx, {
       log: (level: string, msg: string) => adapter.log(level, msg),

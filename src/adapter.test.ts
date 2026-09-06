@@ -38,7 +38,6 @@ import {
   takeInterrupted,
   registryKey,
   mergeCatalog,
-  setCliModels,
   interruptOnAbort,
   noticeSource,
   RECONNECT_TEXT,
@@ -2644,7 +2643,6 @@ console.log("interrupt-on-abort ok");
   assert.equal(first?.id, "opus[1m]");
   const resolved = await adapter.resolveModel("claude-code", "opus[1m]");
   assert.equal(resolved.context?.contextWindow, 1_000_000);
-  setCliModels([]);
   console.log("cli-models ok");
 }
 

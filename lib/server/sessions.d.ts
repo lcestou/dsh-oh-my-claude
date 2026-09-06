@@ -92,7 +92,7 @@ export interface AccountIdentity {
     host: string;
     email: string | null;
 }
-export declare function accountIdentity(command?: string): Promise<AccountIdentity>;
+export declare function accountIdentity(command?: string, configDir?: string): Promise<AccountIdentity>;
 /** A dsh session a transcript belongs to, and whether it is archived. */
 export interface OwnedSession {
     id: string;

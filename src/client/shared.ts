@@ -216,6 +216,17 @@ export const activeClaudeSession = (ctx: ClientCtx): string | undefined => {
     return undefined; // no scope or binding yet: not ours
   }
 };
+/** The open Claude session's own provider id (e.g. `claude-code` or `claude-code-prod`), else undefined. */
+export const activeClaudeProvider = (ctx: ClientCtx): string | undefined => {
+  const id = ctx.sessions.list.getSnapshot()?.current;
+  if (!id) return undefined;
+  try {
+    const provider = ctx.modelDirectories.directoryFor(id).store.getSnapshot().current?.provider;
+    return provider && provider.startsWith("claude-code") ? provider : undefined;
+  } catch {
+    return undefined; // no scope or binding yet: not ours
+  }
+};
 
 interface RestoreButtonProps {
   sessionId: string;

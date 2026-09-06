@@ -31,6 +31,7 @@ import {
   SessionData,
   isOwnedActive,
   activeClaudeSession,
+  activeClaudeProvider,
   type ClientCtx,
   openHere,
 } from "./shared.js";
@@ -1257,11 +1258,17 @@ const resetText = (at: number | null): string => {
   return `resets ${new Date(at).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })}`;
 };
 
-let usageCache: { at: number; reply: UsageReply } | undefined;
-const loadUsage = async (): Promise<UsageReply> => {
-  if (usageCache && Date.now() - usageCache.at < 60_000) return usageCache.reply;
-  const reply = await readJson<UsageReply>(await fetch(`${ROUTE}/usage?force=1`));
-  usageCache = { at: Date.now(), reply };
+// Per provider: two plugin instances are two accounts, so two answers.
+const usageCache = new Map<string, { at: number; reply: UsageReply }>();
+const loadUsage = async (provider?: string): Promise<UsageReply> => {
+  const key = provider ?? "";
+  const hit = usageCache.get(key);
+  if (hit && Date.now() - hit.at < 60_000) return hit.reply;
+  const url = provider
+    ? `${ROUTE}/usage?force=1&provider=${encodeURIComponent(provider)}`
+    : `${ROUTE}/usage?force=1`;
+  const reply = await readJson<UsageReply>(await fetch(url));
+  usageCache.set(key, { at: Date.now(), reply });
   return reply;
 };
 
@@ -1401,8 +1408,9 @@ function watchContextMeter(ctx: ClientCtx) {
     block.append(title, caption, rows, breakdown);
     panel.prepend(block);
     const sid = activeClaudeSession(ctx);
+    const provider = activeClaudeProvider(ctx);
     if (sid) loadContext(sid).then((reply) => renderContext(breakdown, reply));
-    loadUsage().then(
+    loadUsage(provider).then(
       (reply) => {
         const who = whose(reply);
         if (who) {
@@ -1433,7 +1441,7 @@ function watchContextMeter(ctx: ClientCtx) {
     text.textContent = "Claude usage…";
     line.append(mark, text);
     tip.prepend(line);
-    loadUsage().then(
+    loadUsage(activeClaudeProvider(ctx)).then(
       (reply) => {
         const who = reply.host ? ` (${reply.host})` : "";
         text.textContent = reply.ok
@@ -1730,12 +1738,13 @@ function PermissionChip({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx 
   );
 }
 
-/** Small chip in the session header showing last-turn cost/duration/cache share, with total on hover. */
-function TurnAccountingChip({ sessionId }: { sessionId: string }) {
+/** Cost readout in dsh's footer stats row: only when the open session is a Claude mount. */
+function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   const [turns, setTurns] = useState<TurnRecord[]>([]);
   const visibleRef = useRef(true);
 
   useEffect(() => {
+    if (activeClaudeSession(ctx) !== sessionId) return;
     let alive = true;
     const fetchTurns = async () => {
       try {
@@ -1763,42 +1772,74 @@ function TurnAccountingChip({ sessionId }: { sessionId: string }) {
       clearInterval(interval);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [sessionId]);
+  }, [ctx, sessionId]);
 
-  if (turns.length === 0) return null;
+  const mine = activeClaudeSession(ctx) === sessionId;
+  const total = turns.reduce((s, r) => s + r.costUsd, 0);
   const last = turns[turns.length - 1];
-  // SAFETY: turns.length > 0 guarantees the last index exists
-  if (!last) return null;
-  const parts: string[] = [];
-  if (last.costUsd > 0) parts.push(`${CLAUDE_MARK} ${fmtCost(last.costUsd)}`);
-  if (last.durationMs > 0) parts.push(fmtDuration(last.durationMs));
-  const share = cacheShare({
-    input: last.input,
-    cacheRead: last.cacheRead,
-    cacheWrite: last.cacheWrite,
-  });
-  if (share > 0) parts.push(`cache ${Math.round(share * 100)}%`);
-  const label = parts.length > 0 ? parts.join(" · ") : CLAUDE_MARK;
-
-  const totalParts: string[] = [`${turns.length} turn${turns.length === 1 ? "" : "s"}`];
-  const durTotal = turns.reduce((s, r) => s + r.durationMs, 0);
-  const costTotal = turns.reduce((s, r) => s + r.costUsd, 0);
-  const inputTotal = turns.reduce((s, r) => s + r.input, 0);
-  const outputTotal = turns.reduce((s, r) => s + r.output, 0);
-  if (costTotal > 0) totalParts.push(fmtCost(costTotal));
-  totalParts.push(fmtDuration(durTotal));
-  totalParts.push(`${inputTotal}in/${outputTotal}out`);
-
+  const text = mine && total > 0 && last ? costText(total, last.costUsd) : "";
+  const title =
+    mine && total > 0 && last
+      ? `Claude cost: ${fmtCost(total)} this session, ${fmtCost(last.costUsd)} last turn (${turns.length} turn${turns.length === 1 ? "" : "s"})`
+      : "";
+  // dsh's stats row is one div of groups; a slot entry can only be its sibling and lands on its
+  // own line. Append into that div instead, the way the context meter hooks its popover.
+  // ponytail: structural lookup of the row by its "N turns · N steps" text; swap for a slot the
+  // day dsh's stats line grows one.
+  const anchorRef = useRef<HTMLSpanElement>(null);
+  const [hooked, setHooked] = useState(false);
+  useEffect(() => {
+    if (!text) {
+      setHooked(false);
+      return;
+    }
+    let inline: HTMLSpanElement | undefined;
+    // The row appears with the first settled step and is one of dsh's own divs anywhere in the
+    // document; look for it until found (one conversation is on screen at a time).
+    const tryHook = () => {
+      if (inline || !anchorRef.current?.isConnected) return;
+      const statsRow = [...document.querySelectorAll<HTMLDivElement>("div")]
+        .filter(
+          (el) => el.children.length > 1 && /\d+ turns · \d+ steps/.test(el.textContent ?? ""),
+        )
+        .at(-1);
+      if (!statsRow) return;
+      inline = document.createElement("span");
+      inline.title = title;
+      inline.style.whiteSpace = "nowrap";
+      const sep = document.createElement("span");
+      sep.setAttribute("aria-hidden", "true");
+      sep.textContent = "|";
+      const body = document.createElement("span");
+      body.textContent = ` ${text}`;
+      inline.append(" ", sep, body);
+      statsRow.append(inline);
+      setHooked(true);
+    };
+    tryHook();
+    const timer = setInterval(tryHook, 1000);
+    return () => {
+      clearInterval(timer);
+      inline?.remove();
+      setHooked(false);
+    };
+  }, [text, title]);
+  if (!text) return <span ref={anchorRef} hidden />;
   return (
-    <button
-      type="button"
-      title={totalParts.join(" · ")}
-      style={{ ...chip(false, false), fontSize: 11, padding: "2px 8px" }}
-    >
-      <span style={{ color: T.muted }}>{label}</span>
-    </button>
+    <span ref={anchorRef} style={hooked ? { display: "none" } : undefined}>
+      <span
+        title={title}
+        style={{ display: "inline", fontSize: 14, color: T.faint, whiteSpace: "nowrap" }}
+      >
+        <span aria-hidden="true">|</span> {text}
+      </span>
+    </span>
   );
 }
+
+/** `✻ $18.21 · $0.42 last`: the session total and the newest turn. */
+const costText = (total: number, last: number) =>
+  `${CLAUDE_MARK} ${fmtCost(total)} · ${fmtCost(last)} last`;
 
 interface IdleReply {
   deadline: number | null;
@@ -1920,16 +1961,21 @@ export function apply(ctx: ClientCtx) {
     return null;
   });
 
-  // Turn accounting chip in the session header.
+  // Cost readout in dsh's footer stats row.
+  ctx.slots.inject("conversation.composer.dock", () => {
+    ctx.slots.register(
+      { name: "conversation.composer.dock", id: "claude-cost", order: 10 },
+      (props) => (props.sessionId ? <CostLine sessionId={props.sessionId} ctx={ctx} /> : null),
+    );
+    return null;
+  });
+
+  // Header chips in the session header.
   ctx.slots.inject("conversation.session.header.actions", () => {
     ctx.slots.register(
       { name: "conversation.session.header.actions", id: "claude-permission-mode", order: 32 },
       (props) =>
         props.sessionId ? <PermissionChip sessionId={props.sessionId} ctx={ctx} /> : null,
-    );
-    ctx.slots.register(
-      { name: "conversation.session.header.actions", id: "claude-turn-accounting", order: 30 },
-      (props) => (props.sessionId ? <TurnAccountingChip sessionId={props.sessionId} /> : null),
     );
     ctx.slots.register(
       { name: "conversation.session.header.actions", id: "claude-idle-warn", order: 31 },

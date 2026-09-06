@@ -142,29 +142,46 @@ export async function readUsage(fetchImpl: UsageFetch = fetch, home?: string): P
 export function registerUsageRoute(
   ctx: PluginContext,
   log: (level: string, msg: string) => void,
-  identity: () => Promise<{ host: string; email: string | null }>,
-  home?: string,
+  identity: (home?: string) => Promise<{ host: string; email: string | null }>,
+  options?: { home?: string; homeFor?: (providerId: string) => string | undefined },
 ) {
-  let cached: { at: number; reply: UsageReply } | undefined;
-  let inFlight: Promise<UsageReply> | undefined;
+  const defaultHome = options?.home;
+  const homeFor = options?.homeFor;
+  // Per-home caches so different instances keep their own answers.
+  const cached = new Map<string, { at: number; reply: UsageReply }>();
+  const inFlight = new Map<string, Promise<UsageReply>>();
   // A 429 backs the endpoint off until here, even when the client keeps forcing; serve cache meanwhile.
-  let rateLimitedUntil = 0;
-  const rateLimited = (): UsageReply =>
-    cached?.reply.ok ? cached.reply : { ok: false, error: "usage endpoint rate limited" };
-  const read = (force: boolean): Promise<UsageReply> => {
-    if (Date.now() < rateLimitedUntil) return Promise.resolve(rateLimited());
-    const age = cached ? Date.now() - cached.at : Infinity;
-    if (cached && age < (force ? FORCE_MIN_AGE_MS : CACHE_MS)) return Promise.resolve(cached.reply);
-    inFlight ??= readUsage(undefined, home).then((reply) => {
-      if (!reply.ok && reply.retryAfterMs)
-        rateLimitedUntil = Date.now() + Math.max(reply.retryAfterMs, RATE_LIMIT_FLOOR_MS);
-      // One transient failure keeps the last good answer for its remaining cache life; the
-      // fetch time is not refreshed, so a failure that persists surfaces once that life is over.
-      if (reply.ok || !cached?.reply.ok || age >= CACHE_MS) cached = { at: Date.now(), reply };
-      inFlight = undefined;
-      return cached.reply;
-    });
-    return inFlight;
+  // Per home: a 429 on one login must not silence another instance's reads.
+  const rateLimitedUntil = new Map<string, number>();
+  // Only this home's last good answer: another instance's numbers are another account's.
+  const rateLimited = (home: string): UsageReply =>
+    cached.get(home)?.reply.ok
+      ? cached.get(home)!.reply
+      : { ok: false, error: "usage endpoint rate limited" };
+  const read = (force: boolean, home: string): Promise<UsageReply> => {
+    if (Date.now() < (rateLimitedUntil.get(home) ?? 0)) return Promise.resolve(rateLimited(home));
+    const entry = cached.get(home);
+    const age = entry ? Date.now() - entry.at : Infinity;
+    if (entry && age < (force ? FORCE_MIN_AGE_MS : CACHE_MS)) return Promise.resolve(entry.reply);
+    if (!inFlight.has(home)) {
+      inFlight.set(
+        home,
+        readUsage(undefined, home).then((reply) => {
+          if (!reply.ok && reply.retryAfterMs)
+            rateLimitedUntil.set(
+              home,
+              Date.now() + Math.max(reply.retryAfterMs, RATE_LIMIT_FLOOR_MS),
+            );
+          // One transient failure keeps the last good answer for its remaining cache life; the
+          // fetch time is not refreshed, so a failure that persists surfaces once that life is over.
+          if (reply.ok || !entry?.reply.ok || age >= CACHE_MS)
+            cached.set(home, { at: Date.now(), reply });
+          inFlight.delete(home);
+          return cached.get(home)!.reply;
+        }),
+      );
+    }
+    return inFlight.get(home)!;
   };
   ctx.inject?.(["webServer", "connection"], (host) => {
     const { webServer, connection } = host;
@@ -186,9 +203,14 @@ export function registerUsageRoute(
             if (rejection !== undefined) return send(rejection, { error: "forbidden" });
             if (req.method !== "GET") return send(405, { error: "GET only" });
             try {
-              const force = new URL(req.url ?? "/", "http://dsh").searchParams.get("force") === "1";
+              const url = new URL(req.url ?? "/", "http://dsh");
+              const force = url.searchParams.get("force") === "1";
+              // Resolve the home for the requested provider; fall back to the default instance.
+              const provider = url.searchParams.get("provider");
+              // An unknown provider id (instance gone after a reload) reads the default instance.
+              const home = (provider && homeFor?.(provider)) || defaultHome;
               // The usage belongs to this box's login; say so, the browser hops between boxes.
-              const [reply, who] = await Promise.all([read(force), identity()]);
+              const [reply, who] = await Promise.all([read(force, home ?? ""), identity(home)]);
               return send(200, { ...reply, ...who });
             } catch (e) {
               log("warn", `usage route failed: ${errorText(e)}`);
