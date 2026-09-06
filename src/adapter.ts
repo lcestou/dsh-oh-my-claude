@@ -1959,6 +1959,30 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     return reply.ok ? { ...info, live: true } : { ...info, live: true, error: reply.error };
   }
 
+  /**
+   * A spec that differs from the live process only by model is switched in place with a
+   * `set_model` control request, so a model flip keeps the process and its MCP bridge instead of
+   * a kill and `--resume`. Anything else (cwd, effort, mode, session flags) still respawns: the CLI
+   * has no live seam for `--effort`. On success the process carries the new spec and key.
+   * ponytail: the keeper's spec.json keeps the old model; a reattach after a dsh restart sees a key
+   * mismatch and respawns with --model, which is correct, only one spawn later than ideal.
+   */
+  async retarget(proc: ClaudeProcess, spec: ClaudeProcessSpec): Promise<boolean> {
+    if (specKey({ ...proc.spec, model: spec.model }) !== specKey(spec)) return false;
+    const reply = await this.control(
+      proc,
+      { subtype: "set_model", model: spec.model ?? null },
+      5000,
+    );
+    if (!reply.ok) {
+      this.log("warn", `set_model ${spec.model ?? "default"} refused: ${reply.error}; respawning`);
+      return false;
+    }
+    proc.spec = spec;
+    proc.key = specKey(spec);
+    return true;
+  }
+
   /** Hand a `control_response` to whoever sent the request; true when someone was waiting. */
   resolveControl(event: ClaudeEvent): boolean {
     if (event.type !== "control_response") return false;
@@ -2227,6 +2251,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const key = specKey(prep.spec);
     const key2 = registryKey(this.providerId, options.sessionId);
     let proc = this.processes.get(key2);
+    if (proc?.alive && !proc.busy && proc.key !== key) await this.retarget(proc, prep.spec);
     if (proc && (!proc.alive || proc.key !== key || proc.busy)) {
       proc.kill();
       proc = undefined;

@@ -551,6 +551,15 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * stdin during a turn; between turns the line is queued and answered when the next turn opens.
      */
     setPermissionMode(sessionId: string, mode: string | null): Promise<PermissionModeReply>;
+    /**
+     * A spec that differs from the live process only by model is switched in place with a
+     * `set_model` control request, so a model flip keeps the process and its MCP bridge instead of
+     * a kill and `--resume`. Anything else (cwd, effort, mode, session flags) still respawns: the CLI
+     * has no live seam for `--effort`. On success the process carries the new spec and key.
+     * ponytail: the keeper's spec.json keeps the old model; a reattach after a dsh restart sees a key
+     * mismatch and respawns with --model, which is correct, only one spawn later than ideal.
+     */
+    retarget(proc: ClaudeProcess, spec: ClaudeProcessSpec): Promise<boolean>;
     /** Hand a `control_response` to whoever sent the request; true when someone was waiting. */
     resolveControl(event: ClaudeEvent): boolean;
     /**

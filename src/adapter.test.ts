@@ -2174,3 +2174,49 @@ console.log("keeper-mode ok");
   assert.match(none.error ?? "", /no live Claude process/);
   console.log("control ok");
 }
+
+// retarget: a model-only spec change switches the live process with set_model and keeps it; any
+// other change, or a refused request, leaves the process untouched so acquire() respawns.
+{
+  const adapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  const spec: ClaudeProcessSpec = { ...emptySpec, cwd: "/w", model: "sonnet", mode: "default" };
+  const written: string[] = [];
+  let answer: "success" | "error" = "success";
+  const proc: any = {
+    alive: true,
+    busy: false,
+    spec,
+    key: JSON.stringify(spec),
+    controlListener: undefined,
+    write(line: string) {
+      written.push(line);
+      const req = JSON.parse(line);
+      setTimeout(() => {
+        proc.controlListener({
+          type: "control_response",
+          request_id: req.request_id,
+          response: {
+            subtype: answer,
+            request_id: req.request_id,
+            ...(answer === "error" ? { error: "nope" } : { response: {} }),
+          },
+        });
+      }, 0);
+      return true;
+    },
+  };
+  const opus = { ...spec, model: "opus" };
+  assert.equal(await adapter.retarget(proc, opus), true, "model-only change is live");
+  assert.equal(JSON.parse(written[0]!).request.subtype, "set_model");
+  assert.equal(JSON.parse(written[0]!).request.model, "opus");
+  assert.equal(proc.key, JSON.stringify(opus), "key follows the new spec");
+  assert.equal(proc.spec.model, "opus");
+  const moved = { ...opus, cwd: "/elsewhere" };
+  assert.equal(await adapter.retarget(proc, moved), false, "cwd change is not live");
+  assert.equal(written.length, 1, "no request sent for a non-model change");
+  answer = "error";
+  const haiku = { ...opus, model: "haiku" };
+  assert.equal(await adapter.retarget(proc, haiku), false, "refused request reports false");
+  assert.equal(proc.key, JSON.stringify(opus), "key unchanged after a refusal");
+  console.log("retarget ok");
+}
