@@ -3,7 +3,7 @@
 // open here or jump to the box), and two collapsed cards: the saved boxes and Claude Code's own
 // settings.json. Built into lib/client.js by `bun run build`.
 import type { CSSProperties, ReactNode } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 /** Plugin name identifier. */
 export const name = "dsh-oh-my-claude-client";
@@ -2063,6 +2063,9 @@ const popover: CSSProperties = {
   boxShadow: "0 8px 24px rgba(0,0,0,.18)",
 };
 
+/** Body of one Oh My Claude tab: plain flow inside the host panel, which owns position and size. */
+const bodyFlow: CSSProperties = { display: "flex", flexDirection: "column", gap: 4 };
+
 /** Close an open popover on an outside click or Escape. */
 function useDismiss(open: boolean, close: () => void, root: { current: HTMLElement | null }) {
   useEffect(() => {
@@ -2132,15 +2135,34 @@ function TranscriptRow({
 export const isOwnedActive = (s: { dsh?: { id?: string; archived?: boolean } }): boolean =>
   !!s.dsh?.id && !s.dsh.archived;
 
-/** "Restore Claude session" button rendered in `conversation.input.left` on blank sessions. */
-function RestoreButton({ sessionId, ctx }: RestoreButtonProps) {
+// Module-level variable so reopening lands on the last picked tab.
+let lastTab = "Memory";
+
+/** Return true when the viewport is narrow enough to need fixed positioning for panels. */
+function useNarrow(): boolean {
+  const [narrow, setNarrow] = useState(() => window.matchMedia("(max-width: 640px)").matches);
+  useEffect(() => {
+    const mql = window.matchMedia("(max-width: 640px)");
+    const onChange = (e: MediaQueryListEvent) => setNarrow(e.matches);
+    mql.addEventListener("change", onChange);
+    return () => mql.removeEventListener("change", onChange);
+  }, []);
+  return narrow;
+}
+
+/** "Restore Claude session" body rendered inside the Oh My Claude dialog. */
+function RestoreBody({
+  sessionId,
+  ctx,
+  onClose,
+}: {
+  sessionId: string;
+  ctx: ClientCtx;
+  onClose: () => void;
+}) {
   const entry = ctx.sessions.list.getSnapshot()?.byId[sessionId];
   const cwd = entry?.cwd;
   const [transcripts, setTranscripts] = useState<SessionData[]>([]);
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLSpanElement>(null);
-
-  useDismiss(open, () => setOpen(false), rootRef);
 
   useEffect(() => {
     if (!cwd) return;
@@ -2161,23 +2183,16 @@ function RestoreButton({ sessionId, ctx }: RestoreButtonProps) {
   if (rest.length === 0) return null;
 
   return (
-    <span ref={rootRef} style={{ position: "relative", display: "inline-flex" }}>
-      <button type="button" style={btn} onClick={() => setOpen((v) => !v)}>
-        Restore Claude session
-      </button>
-      {open && (
-        <div role="menu" style={popover}>
-          {rest.map((s) => (
-            <TranscriptRow key={s.id} s={s} cwd={cwd} ctx={ctx} onClose={() => setOpen(false)} />
-          ))}
-          {owned.length > 0 && (
-            <span style={{ fontSize: 11, color: T.faint, padding: "2px 4px" }}>
-              {owned.length} already open
-            </span>
-          )}
-        </div>
+    <div style={bodyFlow}>
+      {rest.map((s) => (
+        <TranscriptRow key={s.id} s={s} cwd={cwd} ctx={ctx} onClose={onClose} />
+      ))}
+      {owned.length > 0 && (
+        <span style={{ fontSize: 11, color: T.faint, padding: "2px 4px" }}>
+          {owned.length} already open
+        </span>
       )}
-    </span>
+    </div>
   );
 }
 
@@ -2190,35 +2205,43 @@ interface MemoryFile {
 }
 
 /**
- * "Memory" control in `conversation.input.left`: lists the workspace's Claude auto-memory files
- * (`<project dir>/memory/*.md`, MEMORY.md first) and edits or deletes one in place.
+ * "Memory" body rendered inside the Oh My Claude dialog: lists the workspace's Claude auto-memory
+ * files (`<project dir>/memory/*.md`, MEMORY.md first) and edits or deletes one in place.
  */
-function MemoryButton({ sessionId, ctx }: RestoreButtonProps) {
+function MemoryBody({
+  sessionId,
+  ctx,
+  onCount,
+}: {
+  sessionId: string;
+  ctx: ClientCtx;
+  onCount?: (n: number) => void;
+}) {
   const cwd = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.cwd;
   const [files, setFiles] = useState<MemoryFile[]>([]);
-  const [open, setOpen] = useState(false);
   const [file, setFile] = useState<string | null>(null);
   const [text, setText] = useState("");
   const [saved, setSaved] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const rootRef = useRef<HTMLSpanElement>(null);
-  useDismiss(open, () => setOpen(false), rootRef);
 
   const q = cwd ? `cwd=${encodeURIComponent(cwd)}` : "";
   const refresh = () => {
     if (!cwd) return;
     fetch(`${ROUTE}/memory?${q}`)
       .then((r) => readJson<{ files?: MemoryFile[] }>(r))
-      .then((b) => setFiles(b.files ?? []))
+      .then((b) => {
+        setFiles(b.files ?? []);
+        onCount?.(b.files?.length ?? 0);
+      })
       .catch((e: Error) => setError(e.message));
   };
-  // Re-list when the popover opens and every half minute: Claude writes memories mid-turn.
+  // Re-list every half minute: Claude writes memories mid-turn.
   useEffect(() => {
     refresh();
     const timer = setInterval(refresh, 30_000);
     return () => clearInterval(timer);
-  }, [cwd, open]);
+  }, [cwd, onCount]);
 
   const openFile = async (n: string) => {
     setError("");
@@ -2270,90 +2293,74 @@ function MemoryButton({ sessionId, ctx }: RestoreButtonProps) {
     }
   };
 
-  if (!cwd || (files.length === 0 && !open)) return null;
+  if (!cwd || files.length === 0) return null;
   const dirty = text !== saved;
   return (
-    <span ref={rootRef} style={{ position: "relative", display: "inline-flex" }}>
-      <button
-        type="button"
-        style={btn}
-        title="Claude's auto-memory for this workspace"
-        onClick={() => setOpen((v) => !v)}
-      >
-        Memory · {files.length}
-      </button>
-      {open && (
-        <div
-          role="dialog"
-          aria-label="Claude memory"
-          style={{ ...popover, width: 560, maxHeight: 420 }}
-        >
-          {file === null ? (
-            files.map((f) => (
-              <button
-                key={f.name}
-                type="button"
-                style={{
-                  ...btn,
-                  display: "flex",
-                  width: "100%",
-                  textAlign: "left",
-                  padding: "5px 10px",
-                }}
-                onClick={() => openFile(f.name)}
-              >
-                <span style={{ flex: "none", fontFamily: T.mono, fontSize: 12 }}>{f.name}</span>
-                <span
-                  style={{
-                    flex: 1,
-                    minWidth: 0,
-                    marginLeft: 10,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                    color: T.muted,
-                  }}
-                >
-                  {f.summary}
-                </span>
-                <span style={{ ...meta, flex: "none", marginLeft: 8 }}>{ago(f.mtime)}</span>
-              </button>
-            ))
-          ) : (
-            <>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <button type="button" style={btn} onClick={() => setFile(null)} disabled={busy}>
-                  ‹ Back
-                </button>
-                <span style={{ flex: 1, fontFamily: T.mono, fontSize: 12 }}>{file}</span>
-                <button type="button" style={btn} onClick={remove} disabled={busy}>
-                  Delete
-                </button>
-                <button
-                  type="button"
-                  style={dirty ? btnPrimary : btn}
-                  onClick={save}
-                  disabled={busy || !dirty}
-                >
-                  Save
-                </button>
-              </div>
-              <textarea
-                value={text}
-                spellCheck={false}
-                autoFocus
-                onChange={(e) => setText(e.target.value)}
-                onKeyDown={(e) => {
-                  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") save();
-                }}
-                style={{ ...code, minHeight: 300, resize: "vertical", whiteSpace: "pre-wrap" }}
-              />
-            </>
-          )}
-          {error && <span style={{ color: T.err, fontSize: 12 }}>{error}</span>}
-        </div>
+    <div style={bodyFlow}>
+      {file === null ? (
+        files.map((f) => (
+          <button
+            key={f.name}
+            type="button"
+            style={{
+              ...btn,
+              display: "flex",
+              width: "100%",
+              textAlign: "left",
+              padding: "5px 10px",
+            }}
+            onClick={() => openFile(f.name)}
+          >
+            <span style={{ flex: "none", fontFamily: T.mono, fontSize: 12 }}>{f.name}</span>
+            <span
+              style={{
+                flex: 1,
+                minWidth: 0,
+                marginLeft: 10,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                color: T.muted,
+              }}
+            >
+              {f.summary}
+            </span>
+            <span style={{ ...meta, flex: "none", marginLeft: 8 }}>{ago(f.mtime)}</span>
+          </button>
+        ))
+      ) : (
+        <>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <button type="button" style={btn} onClick={() => setFile(null)} disabled={busy}>
+              ‹ Back
+            </button>
+            <span style={{ flex: 1, fontFamily: T.mono, fontSize: 12 }}>{file}</span>
+            <button type="button" style={btn} onClick={remove} disabled={busy}>
+              Delete
+            </button>
+            <button
+              type="button"
+              style={dirty ? btnPrimary : btn}
+              onClick={save}
+              disabled={busy || !dirty}
+            >
+              Save
+            </button>
+          </div>
+          <textarea
+            value={text}
+            spellCheck={false}
+            autoFocus
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if ((e.metaKey || e.ctrlKey) && e.key === "Enter") save();
+            }}
+            style={{ ...code, minHeight: 300, resize: "vertical", whiteSpace: "pre-wrap" }}
+          />
+        </>
       )}
-    </span>
+      {error && <span style={{ color: T.err, fontSize: 12 }}>{error}</span>}
+    </div>
   );
 }
 
@@ -2378,24 +2385,29 @@ const rewindSummary = (r: RewindReply) =>
     : `${r.filesChanged?.length ?? 0} files, +${r.insertions ?? 0} −${r.deletions ?? 0}`;
 
 /**
- * "Rewind" control in `conversation.input.left` on Claude sessions: lists the session's user
- * prompts, dry-runs the file rewind for the picked one, and on confirm rewinds files and Claude's
+ * "Rewind" body rendered inside the Oh My Claude dialog: lists the session's user prompts,
+ * dry-runs the file rewind for the picked one, and on confirm rewinds files and Claude's
  * conversation. dsh's own transcript stays as it is.
  */
-function RewindButton({ sessionId, ctx }: RestoreButtonProps) {
+function RewindBody({
+  sessionId,
+  ctx,
+  onClose,
+}: {
+  sessionId: string;
+  ctx: ClientCtx;
+  onClose: () => void;
+}) {
   const cwd = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.cwd;
   const isClaude = activeClaudeSession(ctx) === sessionId;
-  const [open, setOpen] = useState(false);
   const [prompts, setPrompts] = useState<RewindPrompt[]>([]);
   const [picked, setPicked] = useState<RewindPrompt | null>(null);
   const [preview, setPreview] = useState<RewindReply | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const rootRef = useRef<HTMLSpanElement>(null);
-  useDismiss(open, () => setOpen(false), rootRef);
 
   useEffect(() => {
-    if (!open || !cwd) return;
+    if (!cwd) return;
     let live = true;
     setPicked(null);
     setPreview(null);
@@ -2407,7 +2419,7 @@ function RewindButton({ sessionId, ctx }: RestoreButtonProps) {
     return () => {
       live = false;
     };
-  }, [open, cwd, sessionId]);
+  }, [cwd, sessionId]);
 
   if (!isClaude || !cwd) return null;
   const run = async (uuid: string, dryRun: boolean) => {
@@ -2422,7 +2434,7 @@ function RewindButton({ sessionId, ctx }: RestoreButtonProps) {
         }),
       );
       setPreview(reply);
-      if (!dryRun && reply.ok) setOpen(false);
+      if (!dryRun && reply.ok) onClose();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -2435,78 +2447,66 @@ function RewindButton({ sessionId, ctx }: RestoreButtonProps) {
     run(p.id, true);
   };
   return (
-    <span ref={rootRef} style={{ position: "relative", display: "inline-flex" }}>
-      <button
-        type="button"
-        style={btn}
-        title="Put files and Claude's context back to an earlier prompt"
-        onClick={() => setOpen((v) => !v)}
-      >
-        Rewind
-      </button>
-      {open && (
-        <div role="dialog" aria-label="Rewind" style={{ ...popover, width: 520, maxHeight: 360 }}>
-          {picked === null ? (
-            prompts.length === 0 ? (
-              <span style={{ ...meta, padding: "2px 4px" }}>No completed prompts yet</span>
-            ) : (
-              prompts.map((p) => (
-                <button
-                  key={p.id}
-                  type="button"
-                  style={{
-                    ...btn,
-                    display: "flex",
-                    width: "100%",
-                    textAlign: "left",
-                    padding: "5px 10px",
-                  }}
-                  onClick={() => pick(p)}
-                >
-                  <span
-                    style={{
-                      flex: 1,
-                      minWidth: 0,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {p.text}
-                  </span>
-                  <span style={{ ...meta, flex: "none", marginLeft: 8 }}>{ago(p.time)}</span>
-                </button>
-              ))
-            )
-          ) : (
-            <>
-              <span style={{ fontSize: 13, padding: "2px 4px" }}>Rewind to: {picked.text}</span>
-              <span style={{ ...meta, padding: "2px 4px" }}>
-                {busy && !preview ? "Checking…" : preview ? rewindSummary(preview) : ""}
+    <div style={bodyFlow}>
+      {picked === null ? (
+        prompts.length === 0 ? (
+          <span style={{ ...meta, padding: "2px 4px" }}>No completed prompts yet</span>
+        ) : (
+          prompts.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              style={{
+                ...btn,
+                display: "flex",
+                width: "100%",
+                textAlign: "left",
+                padding: "5px 10px",
+              }}
+              onClick={() => pick(p)}
+            >
+              <span
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {p.text}
               </span>
-              <span style={{ ...meta, padding: "2px 4px" }}>
-                Files go back and Claude forgets everything after this prompt. This dsh transcript
-                keeps showing what happened.
-              </span>
-              <div style={{ display: "flex", gap: 8, padding: "2px 4px" }}>
-                <button type="button" style={btn} disabled={busy} onClick={() => setPicked(null)}>
-                  ‹ Back
-                </button>
-                <button
-                  type="button"
-                  style={btnPrimary}
-                  disabled={busy || !preview?.ok}
-                  onClick={() => run(picked.id, false)}
-                >
-                  Rewind
-                </button>
-              </div>
-            </>
-          )}
-          {error && <span style={{ color: T.err, fontSize: 12 }}>{error}</span>}
-        </div>
+              <span style={{ ...meta, flex: "none", marginLeft: 8 }}>{ago(p.time)}</span>
+            </button>
+          ))
+        )
+      ) : (
+        <>
+          <span style={{ fontSize: 13, padding: "2px 4px" }}>Rewind to: {picked.text}</span>
+          <span style={{ ...meta, padding: "2px 4px" }}>
+            {busy && !preview ? "Checking…" : preview ? rewindSummary(preview) : ""}
+          </span>
+          <span style={{ ...meta, padding: "2px 4px" }}>
+            Files go back and Claude forgets everything after this prompt. This dsh transcript keeps
+            showing what happened.
+          </span>
+          <div style={{ display: "flex", gap: 8, padding: "2px 4px" }}>
+            <button type="button" style={btn} disabled={busy} onClick={() => setPicked(null)}>
+              ‹ Back
+            </button>
+            <button
+              type="button"
+              style={btnPrimary}
+              disabled={busy || !preview?.ok}
+              onClick={() => run(picked.id, false)}
+            >
+              Rewind
+            </button>
+          </div>
+        </>
       )}
-    </span>
+      {error && <span style={{ color: T.err, fontSize: 12 }}>{error}</span>}
+    </div>
   );
 }
 
@@ -2523,19 +2523,15 @@ type DiffReply =
   | { ok: false; error: string };
 
 /**
- * "Changes" control in `conversation.input.left` on Claude sessions: the CLI's own working-tree
+ * "Changes" body rendered inside the Oh My Claude dialog: the CLI's own working-tree
  * diff (`get_workspace_diff`), one row per file with its line counts, a row unfolds its hunks.
  */
-function ChangesButton({ sessionId, ctx }: RestoreButtonProps) {
+function ChangesBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   const isClaude = activeClaudeSession(ctx) === sessionId;
-  const [open, setOpen] = useState(false);
   const [reply, setReply] = useState<DiffReply | null>(null);
   const [shown, setShown] = useState<string | null>(null);
-  const rootRef = useRef<HTMLSpanElement>(null);
-  useDismiss(open, () => setOpen(false), rootRef);
 
   useEffect(() => {
-    if (!open) return;
     let live = true;
     setReply(null);
     setShown(null);
@@ -2546,121 +2542,105 @@ function ChangesButton({ sessionId, ctx }: RestoreButtonProps) {
     return () => {
       live = false;
     };
-  }, [open, sessionId]);
+  }, [sessionId]);
 
   if (!isClaude) return null;
   const files = reply?.ok ? reply.files : [];
   const current = files.find((f) => f.path === shown);
   return (
-    <span ref={rootRef} style={{ position: "relative", display: "inline-flex" }}>
-      <button
-        type="button"
-        style={btn}
-        title="Working-tree changes as Claude Code sees them"
-        onClick={() => setOpen((v) => !v)}
-      >
-        Changes
-      </button>
-      {open && (
-        <div role="dialog" aria-label="Changes" style={{ ...popover, width: 560, maxHeight: 400 }}>
-          {reply === null ? (
-            <span style={{ ...meta, padding: "2px 4px" }}>Loading…</span>
-          ) : !reply.ok ? (
-            <span style={{ color: T.err, fontSize: 12 }}>{reply.error}</span>
-          ) : current ? (
-            <>
-              <div style={{ display: "flex", gap: 8, alignItems: "center", padding: "2px 4px" }}>
-                <button type="button" style={btn} onClick={() => setShown(null)}>
-                  ‹ Back
-                </button>
-                <span style={{ fontSize: 13, fontFamily: "monospace" }}>{current.path}</span>
-                <span style={{ ...meta, marginLeft: "auto" }}>
-                  +{current.added} −{current.removed}
-                </span>
-              </div>
-              {current.hunks.length === 0 ? (
-                <span style={{ ...meta, padding: "2px 4px" }}>
-                  {current.binary
-                    ? "Binary file"
-                    : current.untracked
-                      ? "Untracked file"
-                      : "No hunks"}
-                </span>
-              ) : (
-                current.hunks.map((h, i) => (
-                  <pre
-                    key={i}
-                    style={{
-                      margin: "2px 4px",
-                      padding: 6,
-                      fontSize: 12,
-                      lineHeight: "16px",
-                      overflow: "auto",
-                      background: T.field,
-                      border: `1px solid ${T.border}`,
-                      borderRadius: 4,
-                    }}
-                  >
-                    <span style={{ color: T.faint }}>
-                      @@ -{h.oldStart} +{h.newStart} @@{"\n"}
-                    </span>
-                    {h.lines.map((l, j) => (
-                      <span
-                        key={j}
-                        style={{
-                          color: l.startsWith("+") ? T.ok : l.startsWith("-") ? T.err : T.text,
-                        }}
-                      >
-                        {l}
-                        {"\n"}
-                      </span>
-                    ))}
-                  </pre>
-                ))
-              )}
-            </>
+    <div style={bodyFlow}>
+      {reply === null ? (
+        <span style={{ ...meta, padding: "2px 4px" }}>Loading…</span>
+      ) : !reply.ok ? (
+        <span style={{ color: T.err, fontSize: 12 }}>{reply.error}</span>
+      ) : current ? (
+        <>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", padding: "2px 4px" }}>
+            <button type="button" style={btn} onClick={() => setShown(null)}>
+              ‹ Back
+            </button>
+            <span style={{ fontSize: 13, fontFamily: "monospace" }}>{current.path}</span>
+            <span style={{ ...meta, marginLeft: "auto" }}>
+              +{current.added} −{current.removed}
+            </span>
+          </div>
+          {current.hunks.length === 0 ? (
+            <span style={{ ...meta, padding: "2px 4px" }}>
+              {current.binary ? "Binary file" : current.untracked ? "Untracked file" : "No hunks"}
+            </span>
           ) : (
-            <>
-              <span style={{ ...meta, padding: "2px 4px" }}>
-                {reply.filesCount === 0
-                  ? "Working tree clean"
-                  : `${reply.filesCount} files, +${reply.linesAdded} −${reply.linesRemoved}`}
-              </span>
-              {files.map((f) => (
-                <button
-                  key={f.path}
-                  type="button"
-                  style={{
-                    ...btn,
-                    display: "flex",
-                    width: "100%",
-                    textAlign: "left",
-                    padding: "5px 10px",
-                    fontFamily: "monospace",
-                  }}
-                  onClick={() => setShown(f.path)}
-                >
+            current.hunks.map((h, i) => (
+              <pre
+                key={i}
+                style={{
+                  margin: "2px 4px",
+                  padding: 6,
+                  fontSize: 12,
+                  lineHeight: "16px",
+                  overflow: "auto",
+                  background: T.field,
+                  border: `1px solid ${T.border}`,
+                  borderRadius: 4,
+                }}
+              >
+                <span style={{ color: T.faint }}>
+                  @@ -{h.oldStart} +{h.newStart} @@{"\n"}
+                </span>
+                {h.lines.map((l, j) => (
                   <span
+                    key={j}
                     style={{
-                      flex: 1,
-                      minWidth: 0,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
+                      color: l.startsWith("+") ? T.ok : l.startsWith("-") ? T.err : T.text,
                     }}
                   >
-                    {f.path}
+                    {l}
+                    {"\n"}
                   </span>
-                  <span style={{ ...meta, flex: "none", marginLeft: 8 }}>
-                    {f.untracked ? "new" : f.binary ? "binary" : `+${f.added} −${f.removed}`}
-                  </span>
-                </button>
-              ))}
-            </>
+                ))}
+              </pre>
+            ))
           )}
-        </div>
+        </>
+      ) : (
+        <>
+          <span style={{ ...meta, padding: "2px 4px" }}>
+            {reply.filesCount === 0
+              ? "Working tree clean"
+              : `${reply.filesCount} files, +${reply.linesAdded} −${reply.linesRemoved}`}
+          </span>
+          {files.map((f) => (
+            <button
+              key={f.path}
+              type="button"
+              style={{
+                ...btn,
+                display: "flex",
+                width: "100%",
+                textAlign: "left",
+                padding: "5px 10px",
+                fontFamily: "monospace",
+              }}
+              onClick={() => setShown(f.path)}
+            >
+              <span
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {f.path}
+              </span>
+              <span style={{ ...meta, flex: "none", marginLeft: 8 }}>
+                {f.untracked ? "new" : f.binary ? "binary" : `+${f.added} −${f.removed}`}
+              </span>
+            </button>
+          ))}
+        </>
       )}
-    </span>
+    </div>
   );
 }
 
@@ -2672,17 +2652,14 @@ interface McpServer {
 type McpReply = { ok: true; servers: McpServer[] } | { ok: false; error: string };
 
 /**
- * "MCP" control in `conversation.input.left` on Claude sessions: the servers Claude's process
+ * "MCP" body rendered inside the Oh My Claude dialog: the servers Claude's process
  * has, with their connection status, and a Reconnect per row (`mcp_reconnect`).
  */
-function McpButton({ sessionId, ctx }: RestoreButtonProps) {
+function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClose: () => void }) {
   const isClaude = activeClaudeSession(ctx) === sessionId;
-  const [open, setOpen] = useState(false);
   const [reply, setReply] = useState<McpReply | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState("");
-  const rootRef = useRef<HTMLSpanElement>(null);
-  useDismiss(open, () => setOpen(false), rootRef);
 
   const load = () =>
     fetch(`${ROUTE}/mcp-servers?session=${encodeURIComponent(sessionId)}`)
@@ -2690,12 +2667,11 @@ function McpButton({ sessionId, ctx }: RestoreButtonProps) {
       .then(setReply)
       .catch((e: Error) => setReply({ ok: false, error: e.message }));
   useEffect(() => {
-    if (!open) return;
     setReply(null);
     setNote("");
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- load closes over sessionId only
-  }, [open, sessionId]);
+  }, [sessionId]);
 
   if (!isClaude) return null;
   const reconnect = async (serverName: string) => {
@@ -2719,71 +2695,181 @@ function McpButton({ sessionId, ctx }: RestoreButtonProps) {
   };
   const servers = reply?.ok ? reply.servers : [];
   return (
+    <div style={bodyFlow}>
+      {reply === null ? (
+        <span style={{ ...meta, padding: "2px 4px" }}>Loading…</span>
+      ) : !reply.ok ? (
+        <span style={{ color: T.err, fontSize: 12 }}>{reply.error}</span>
+      ) : servers.length === 0 ? (
+        <span style={{ ...meta, padding: "2px 4px" }}>No MCP servers</span>
+      ) : (
+        servers.map((s) => (
+          <div
+            key={s.name}
+            style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 6px" }}
+          >
+            <span
+              aria-hidden="true"
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: 4,
+                flex: "none",
+                background:
+                  s.status === "connected" ? T.ok : s.status === "pending" ? T.warn : T.err,
+              }}
+            />
+            <span
+              style={{
+                flex: 1,
+                minWidth: 0,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                fontSize: 13,
+              }}
+              title={s.name}
+            >
+              {s.name}
+              {s.version ? <span style={meta}> {s.version}</span> : null}
+            </span>
+            <span style={{ ...meta, flex: "none" }}>{s.status}</span>
+            <button
+              type="button"
+              style={btn}
+              disabled={busy !== null}
+              onClick={() => reconnect(s.name)}
+            >
+              {busy === s.name ? "…" : "Reconnect"}
+            </button>
+          </div>
+        ))
+      )}
+      {note && <span style={{ ...meta, padding: "2px 4px" }}>{note}</span>}
+    </div>
+  );
+}
+
+/**
+ * Single consolidated trigger for the Oh My Claude panel. One button replaces the five legacy
+ * composer-slot buttons (Restore, Memory, Rewind, Changes, MCP). Clicking it opens a tabbed
+ * dialog whose body is each legacy control's dialog content, moved verbatim into a body component.
+ */
+function OhMyClaudeControl({ sessionId, ctx }: RestoreButtonProps) {
+  const isMine = activeClaudeSession(ctx) === sessionId;
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLSpanElement>(null);
+  const narrow = useNarrow();
+  const [tab, setTab] = useState(lastTab);
+  const [memoryCount, setMemoryCount] = useState<number | null>(null);
+  // Stable callback: a fresh arrow each render would re-run MemoryBody's fetch effect every time.
+  const onCount = useCallback((n: number) => setMemoryCount(n), []);
+  // Phone sheet: fixed, above the control, wherever the composer sits (a blank session centres it).
+  const [above, setAbove] = useState(0);
+
+  useDismiss(open, () => setOpen(false), rootRef);
+
+  if (!isMine) return null;
+  // Restore only fits a blank session; the Restore body hides itself for the same reason.
+  const blank = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.blank !== false;
+
+  const panelStyle: CSSProperties = narrow
+    ? {
+        position: "fixed",
+        left: 12,
+        right: 12,
+        bottom: above,
+        width: "auto",
+        maxHeight: "60vh",
+        zIndex: 40,
+        display: "flex",
+        flexDirection: "column",
+        padding: 6,
+        background: T.card,
+        border: `1px solid ${T.border}`,
+        borderRadius: 8,
+        boxShadow: "0 8px 24px rgba(0,0,0,.18)",
+        overflow: "hidden",
+      }
+    : { ...popover, width: "min(560px, calc(100vw - 24px))", maxHeight: 400 };
+
+  const tabs = [
+    ...(blank ? [{ key: "Restore", label: "Restore" }] : []),
+    { key: "Memory", label: `Memory${memoryCount !== null ? ` · ${memoryCount}` : ""}` },
+    { key: "Rewind", label: "Rewind" },
+    { key: "Changes", label: "Changes" },
+    { key: "MCP", label: "MCP" },
+  ] as const;
+
+  return (
     <span ref={rootRef} style={{ position: "relative", display: "inline-flex" }}>
       <button
         type="button"
-        style={btn}
-        title="MCP servers Claude Code has in this session"
-        onClick={() => setOpen((v) => !v)}
+        style={{ ...btn, color: CLAUDE_ORANGE }}
+        aria-label="Oh My Claude"
+        title="Oh My Claude: memory, rewind, changes, MCP"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        onClick={() => {
+          setTab(lastTab === "Restore" && !blank ? "Memory" : lastTab);
+          const rect = rootRef.current?.getBoundingClientRect();
+          if (rect) setAbove(Math.max(12, window.innerHeight - rect.top + 8));
+          setOpen((v) => !v);
+        }}
       >
-        MCP
+        {CLAUDE_MARK}
       </button>
       {open && (
-        <div
-          role="dialog"
-          aria-label="MCP servers"
-          style={{ ...popover, width: 460, maxHeight: 320 }}
-        >
-          {reply === null ? (
-            <span style={{ ...meta, padding: "2px 4px" }}>Loading…</span>
-          ) : !reply.ok ? (
-            <span style={{ color: T.err, fontSize: 12 }}>{reply.error}</span>
-          ) : servers.length === 0 ? (
-            <span style={{ ...meta, padding: "2px 4px" }}>No MCP servers</span>
-          ) : (
-            servers.map((s) => (
-              <div
-                key={s.name}
-                style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 6px" }}
+        <div role="dialog" aria-label="Oh My Claude" style={panelStyle}>
+          <div
+            role="tablist"
+            style={{
+              display: "flex",
+              borderBottom: `1px solid ${T.border}`,
+              paddingBottom: 6,
+              overflowX: "auto",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {tabs.map((t) => (
+              <button
+                key={t.key}
+                role="tab"
+                aria-selected={tab === t.key}
+                style={{
+                  ...btn,
+                  fontSize: 12,
+                  borderBottom:
+                    tab === t.key ? `2px solid ${CLAUDE_ORANGE}` : "2px solid transparent",
+                  color: tab === t.key ? T.text : T.faint,
+                  marginBottom: -1,
+                  paddingBottom: 4,
+                }}
+                onClick={() => {
+                  lastTab = t.key;
+                  setTab(t.key);
+                }}
               >
-                <span
-                  aria-hidden="true"
-                  style={{
-                    width: 8,
-                    height: 8,
-                    borderRadius: 4,
-                    flex: "none",
-                    background:
-                      s.status === "connected" ? T.ok : s.status === "pending" ? T.warn : T.err,
-                  }}
-                />
-                <span
-                  style={{
-                    flex: 1,
-                    minWidth: 0,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                    fontSize: 13,
-                  }}
-                  title={s.name}
-                >
-                  {s.name}
-                  {s.version ? <span style={meta}> {s.version}</span> : null}
-                </span>
-                <span style={{ ...meta, flex: "none" }}>{s.status}</span>
-                <button
-                  type="button"
-                  style={btn}
-                  disabled={busy !== null}
-                  onClick={() => reconnect(s.name)}
-                >
-                  {busy === s.name ? "…" : "Reconnect"}
-                </button>
-              </div>
-            ))
-          )}
-          {note && <span style={{ ...meta, padding: "2px 4px" }}>{note}</span>}
+                {t.label}
+              </button>
+            ))}
+          </div>
+          <div
+            role="tabpanel"
+            style={{ flex: "1 1 auto", minHeight: 0, overflow: "auto", padding: "4px 0" }}
+          >
+            {tab === "Restore" && (
+              <RestoreBody sessionId={sessionId} ctx={ctx} onClose={() => setOpen(false)} />
+            )}
+            {tab === "Memory" && <MemoryBody sessionId={sessionId} ctx={ctx} onCount={onCount} />}
+            {tab === "Rewind" && (
+              <RewindBody sessionId={sessionId} ctx={ctx} onClose={() => setOpen(false)} />
+            )}
+            {tab === "Changes" && <ChangesBody sessionId={sessionId} ctx={ctx} />}
+            {tab === "MCP" && (
+              <McpBody sessionId={sessionId} ctx={ctx} onClose={() => setOpen(false)} />
+            )}
+          </div>
         </div>
       )}
     </span>
@@ -2908,27 +2994,14 @@ export function apply(ctx: ClientCtx) {
     return null;
   });
 
-  // Restore button placed next to the composer input on blank sessions.
+  // One Oh My Claude control in the composer's left group replaces the five separate buttons.
+  // The slot must be declared through `inject` before anything registers into it.
   ctx.slots.inject("conversation.input.left", () => {
     ctx.slots.register(
-      { name: "conversation.input.left", id: "restore-claude-session", order: 50 },
+      { name: "conversation.input.left", id: "oh-my-claude", order: 50 },
       // Session-scoped slots receive `sessionId` (dsh-client-ui-jobs reads it the same way).
-      (props) => (props.sessionId ? <RestoreButton sessionId={props.sessionId} ctx={ctx} /> : null),
-    );
-    ctx.slots.register(
-      { name: "conversation.input.left", id: "claude-memory", order: 51 },
-      (props) => (props.sessionId ? <MemoryButton sessionId={props.sessionId} ctx={ctx} /> : null),
-    );
-    ctx.slots.register(
-      { name: "conversation.input.left", id: "claude-rewind", order: 52 },
-      (props) => (props.sessionId ? <RewindButton sessionId={props.sessionId} ctx={ctx} /> : null),
-    );
-    ctx.slots.register(
-      { name: "conversation.input.left", id: "claude-changes", order: 53 },
-      (props) => (props.sessionId ? <ChangesButton sessionId={props.sessionId} ctx={ctx} /> : null),
-    );
-    ctx.slots.register({ name: "conversation.input.left", id: "claude-mcp", order: 54 }, (props) =>
-      props.sessionId ? <McpButton sessionId={props.sessionId} ctx={ctx} /> : null,
+      (props) =>
+        props.sessionId ? <OhMyClaudeControl sessionId={props.sessionId} ctx={ctx} /> : null,
     );
     return null;
   });
