@@ -1648,6 +1648,14 @@ console.log("schema-guard ok");
     },
   });
   assert.equal(calls.length, 1, "same callId does not fire onToolCall a second time");
+  // the result closes the call: both per-call maps drop the entry, so a long turn stays bounded
+  tr.onToolResult = () => {};
+  tr.translate({
+    type: "user",
+    message: { content: [{ type: "tool_result", tool_use_id: "dup1", content: "ok" }] },
+  });
+  assert.equal(tr.firedCalls.size, 0, "firedCalls emptied after tool_result");
+  assert.equal(tr.callInputs.size, 0, "callInputs emptied after tool_result");
 }
 {
   const results: Array<{ callId: string; meta?: object }> = [];

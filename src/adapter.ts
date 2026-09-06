@@ -1496,6 +1496,9 @@ export class Translator {
         // Not a native tool we tracked — fall through to old behaviour.
       } else if (this.onToolResult && this.callInputs.has(toolUseId)) {
         const argsJson = this.callInputs.get(toolUseId)!;
+        // Result closes the call: both maps only need the entry until here (fire dedupe, Edit diff).
+        this.callInputs.delete(toolUseId);
+        this.firedCalls.delete(toolUseId);
         let meta: object | undefined;
         try {
           // SAFETY: argsJson was produced by Claude's tool_use input and stored verbatim; the shape is trusted here
