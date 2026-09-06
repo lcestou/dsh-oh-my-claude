@@ -229,6 +229,20 @@ export type PermissionMode = (typeof PERMISSION_MODES)[number];
 export const isPermissionMode = (v: string): v is PermissionMode =>
   PERMISSION_MODES.some((m) => m === v);
 
+/** Rank by loosening: plan (strictest) through bypassPermissions (loosest). */
+const PERMISSION_RANK = {
+  plan: 0,
+  default: 1,
+  acceptEdits: 2,
+  auto: 3,
+  dontAsk: 3,
+  bypassPermissions: 4,
+} as const satisfies Record<PermissionMode, number>;
+
+/** Modes at or below the given ceiling, in table order. */
+export const modesUpTo = (ceiling: PermissionMode): PermissionMode[] =>
+  PERMISSION_MODES.filter((m) => PERMISSION_RANK[m] <= PERMISSION_RANK[ceiling]);
+
 /** Per-session permission mode overrides. Keyed by dsh session id; null means unset. */
 export const PERMISSION_MODES_FILE = (d: string) => join(d, "permission-modes.json");
 let permissionModesChain = Promise.resolve();

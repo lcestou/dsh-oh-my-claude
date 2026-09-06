@@ -42,6 +42,7 @@ import {
   noticeSource,
   RECONNECT_TEXT,
 } from "./adapter.js";
+import { PERMISSION_MODES } from "./state.js";
 import {
   CHILD_ENV,
   ClaudeProcess,
@@ -503,6 +504,28 @@ assert.equal(
 );
 const switched = buildArgs({ model: "m", config, accessMode: "danger-full-access" } as any);
 assert.ok(switched.join(" ").includes("--permission-mode bypassPermissions"));
+
+// Ceiling: permissionModeInfo reports allowed modes; setPermissionMode rejects loosening
+{
+  const a = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  a.accessModes.set("s", "read-only");
+  const infoRo = a.permissionModeInfo("s");
+  assert.equal(infoRo.accessMode, "read-only");
+  assert.equal(infoRo.ceiling, "plan");
+  assert.deepEqual(infoRo.allowed, ["plan"]);
+
+  {
+    const r = await a.setPermissionMode("s", "bypassPermissions");
+    assert.equal(r.live, false);
+    assert.match(r.error!, /looser than/);
+  }
+
+  a.accessModes.set("s2", "danger-full-access");
+  const infoDfa = a.permissionModeInfo("s2");
+  assert.deepEqual(infoDfa.allowed, PERMISSION_MODES);
+  const rPlan = await a.setPermissionMode("s2", "plan");
+  assert.equal(rPlan.override, "plan");
+}
 
 // CLI flag probe: missing flags are left out; missing --input-format switches to positional prompt
 assert.equal(supports(null, "--anything"), true);

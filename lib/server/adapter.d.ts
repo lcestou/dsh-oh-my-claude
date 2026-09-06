@@ -184,6 +184,12 @@ export type McpStatusReply = {
 export interface PermissionModeInfo {
     mode: string;
     override: string | null;
+    /** The session's dsh access mode as last seen, or null when unknown. */
+    accessMode: string | null;
+    /** The Claude permission mode that maps from the access mode, via `permissionModeFor`. */
+    ceiling: string;
+    /** Permission modes the client may pick (at or below the ceiling). */
+    allowed: readonly string[];
 }
 export interface PermissionModeReply extends PermissionModeInfo {
     /** A live process was told; false when the override only applies at the next spawn. */

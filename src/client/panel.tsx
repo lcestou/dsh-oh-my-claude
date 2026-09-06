@@ -677,6 +677,8 @@ interface PermissionModeState {
   mode: string;
   override: string | null;
   modes: string[];
+  accessMode: string | null;
+  ceiling: string;
   live?: boolean;
   error?: string;
 }
@@ -726,33 +728,38 @@ function PermissionsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
   return (
     <div style={bodyFlow}>
       <span style={{ color: T.faint, fontSize: 12 }}>
-        dsh access mode maps to {state.mode} unless overridden
+        dsh access {state.accessMode ?? "unknown"} → Claude {state.ceiling}
       </span>
-      <select
-        aria-label="Claude permission mode"
-        value={state.override ?? ""}
-        disabled={busy}
-        onChange={(e) => change(e.currentTarget.value)}
-        title={
-          state.override
-            ? `Permission mode ${state.mode}, set for this session`
-            : `Permission mode ${state.mode}, from the plugin config`
-        }
-        style={{
-          ...select,
-          fontSize: 13,
-          padding: "5px 8px",
-          color: state.override ? CLAUDE_ORANGE : T.text,
-        }}
-      >
-        <option value="">config · {state.mode}</option>
-        {state.modes.map((m) => (
-          <option key={m} value={m}>
-            {m}
-          </option>
-        ))}
-      </select>
-      {state.override && (
+      <span style={{ color: T.faint, fontSize: 12 }}>
+        Override can only be stricter than the shield.
+      </span>
+      {state.modes.length > 1 && (
+        <select
+          aria-label="Claude permission mode"
+          value={state.override ?? ""}
+          disabled={busy}
+          onChange={(e) => change(e.currentTarget.value)}
+          title={
+            state.override
+              ? `Permission mode ${state.mode}, set for this session`
+              : `Permission mode ${state.mode}, from the plugin config`
+          }
+          style={{
+            ...select,
+            fontSize: 13,
+            padding: "5px 8px",
+            color: state.override ? CLAUDE_ORANGE : T.text,
+          }}
+        >
+          <option value="">config · {state.mode}</option>
+          {state.modes.map((m) => (
+            <option key={m} value={m}>
+              {m}
+            </option>
+          ))}
+        </select>
+      )}
+      {(state.override || state.modes.length <= 1) && (
         <button type="button" style={btn} onClick={() => change("")}>
           Use config
         </button>

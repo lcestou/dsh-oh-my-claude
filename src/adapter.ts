@@ -84,7 +84,9 @@ import {
   loadPermissionModes,
   loadTurnRecords,
   markBusy,
+  modesUpTo,
   noteBoot,
+  PERMISSION_MODES,
   rememberStarted,
   resolveClaudeHome,
   savePermissionMode,
@@ -348,6 +350,12 @@ export type McpStatusReply =
 export interface PermissionModeInfo {
   mode: string;
   override: string | null;
+  /** The session's dsh access mode as last seen, or null when unknown. */
+  accessMode: string | null;
+  /** The Claude permission mode that maps from the access mode, via `permissionModeFor`. */
+  ceiling: string;
+  /** Permission modes the client may pick (at or below the ceiling). */
+  allowed: readonly string[];
 }
 export interface PermissionModeReply extends PermissionModeInfo {
   /** A live process was told; false when the override only applies at the next spawn. */
@@ -1411,9 +1419,17 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   /** The effective mode for a session and the stored override, for the header chip. */
   permissionModeInfo(sessionId: string): PermissionModeInfo {
     const override = this.permissionModes.get(sessionId) ?? null;
+    const accessMode = this.accessModes.get(sessionId) ?? null;
+    // The shield's mapping is the ceiling; before the first prompt names an access mode the
+    // config's own default applies, never the loosest mode.
+    const ceiling = permissionModeFor(this.config, accessMode ?? undefined);
+    const allowed = isPermissionMode(ceiling) ? modesUpTo(ceiling) : PERMISSION_MODES;
     return {
-      mode: this.getPermissionMode(sessionId, this.accessModes.get(sessionId)),
+      mode: this.getPermissionMode(sessionId, accessMode ?? undefined),
       override,
+      accessMode,
+      ceiling,
+      allowed,
     };
   }
 
@@ -1423,16 +1439,19 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    * stdin during a turn; between turns the line is queued and answered when the next turn opens.
    */
   async setPermissionMode(sessionId: string, mode: string | null): Promise<PermissionModeReply> {
+    let info = this.permissionModeInfo(sessionId);
     if (mode !== null && !isPermissionMode(mode))
+      return { ...info, live: false, error: `unknown mode "${mode}"` };
+    if (mode !== null && !info.allowed.includes(mode))
       return {
-        ...this.permissionModeInfo(sessionId),
+        ...info,
         live: false,
-        error: `unknown mode "${mode}"`,
+        error: `${mode} is looser than dsh's ${info.accessMode ?? "current"} access (${info.ceiling}); change the shield first`,
       };
     await savePermissionMode(this.stateDir, sessionId, mode);
     if (mode === null) this.permissionModes.delete(sessionId);
     else this.permissionModes.set(sessionId, mode);
-    const info = this.permissionModeInfo(sessionId);
+    info = this.permissionModeInfo(sessionId);
     const proc = this.processes.get(registryKey(this.providerId, sessionId));
     if (!proc?.alive) return { ...info, live: false };
     // 5 s: the CLI answers at once when it reads stdin; a longer wait would only stall the chip.

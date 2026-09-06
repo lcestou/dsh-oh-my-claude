@@ -47,6 +47,8 @@ export declare function hasPendingNotice(events: Iterable<LooseEvent>, plugin: s
 export declare const PERMISSION_MODES: readonly ["default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"];
 export type PermissionMode = (typeof PERMISSION_MODES)[number];
 export declare const isPermissionMode: (v: string) => v is PermissionMode;
+/** Modes at or below the given ceiling, in table order. */
+export declare const modesUpTo: (ceiling: PermissionMode) => PermissionMode[];
 /** Per-session permission mode overrides. Keyed by dsh session id; null means unset. */
 export declare const PERMISSION_MODES_FILE: (d: string) => string;
 /** Per-session turn cost records; keyed by dsh session id; value is a ring buffer of last 50. */

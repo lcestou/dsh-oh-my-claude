@@ -6,6 +6,7 @@ import { join } from "node:path";
 import {
   loadPermissionModes,
   savePermissionMode,
+  modesUpTo,
   PERMISSION_MODES_FILE,
   loadTurnRecords,
   saveTurnRecords,
@@ -139,6 +140,10 @@ assert.deepEqual(dropped.get("ts2"), [
     turns: 3,
   },
 ]);
+
+assert.deepEqual(modesUpTo("plan"), ["plan"]);
+assert.deepEqual(modesUpTo("acceptEdits"), ["default", "acceptEdits", "plan"]);
+assert.equal(modesUpTo("bypassPermissions").length, 6);
 
 console.log("turns-state ok");
 console.log("state.test: ok");
