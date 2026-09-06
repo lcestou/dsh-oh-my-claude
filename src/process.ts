@@ -385,6 +385,29 @@ export function decodeWorkspaceDiff(v: JsonValue | undefined): WorkspaceDiff {
   };
 }
 
+/** One MCP server as `mcp_status` reports it. */
+export interface McpServerStatus {
+  name: string;
+  status: string;
+  version?: string;
+}
+export function decodeMcpStatus(v: JsonValue | undefined): McpServerStatus[] {
+  const r = isRecord(v) ? v : {};
+  const out: McpServerStatus[] = [];
+  if (Array.isArray(r.mcpServers))
+    for (const m of r.mcpServers) {
+      if (!isRecord(m) || typeof m.name !== "string") continue;
+      const entry: McpServerStatus = {
+        name: m.name,
+        status: typeof m.status === "string" ? m.status : "unknown",
+      };
+      const info = isRecord(m.serverInfo) ? m.serverInfo : {};
+      if (typeof info.version === "string") entry.version = info.version;
+      out.push(entry);
+    }
+  return out;
+}
+
 /** stdin line for any control request this plugin sends; the CLI answers with a `control_response`. */
 export function controlRequestLine(requestId: string, request: Record<string, JsonValue>): string {
   return `${JSON.stringify({ type: "control_request", request_id: requestId, request })}\n`;

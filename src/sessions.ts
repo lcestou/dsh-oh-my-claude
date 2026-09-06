@@ -21,6 +21,7 @@ import type {
   RewindReply,
   ContextUsageReply,
   WorkspaceDiffReply,
+  McpStatusReply,
 } from "./adapter.js";
 
 const ROUTE_PREFIX = "/dsh-oh-my-claude";
@@ -552,6 +553,11 @@ export interface SessionRouteOptions {
   contextUsage?: (sessionId: string) => Promise<ContextUsageReply>;
   /** The CLI's working-tree diff for a session with a live process. */
   workspaceDiff?: (sessionId: string) => Promise<WorkspaceDiffReply>;
+  /** MCP servers of a session's live process, and a reconnect for one of them. */
+  mcp?: {
+    status: (sessionId: string) => Promise<McpStatusReply>;
+    reconnect: (sessionId: string, name: string) => Promise<{ ok: boolean; error?: string }>;
+  };
 }
 
 /** The transcript file of a dsh session: under its Claude id (sessions the adapter started) or
@@ -593,6 +599,7 @@ export function registerSessionRoutes(
     rewind,
     contextUsage,
     workspaceDiff,
+    mcp,
   }: SessionRouteOptions,
 ): void {
   // Optional: stock dsh has it; without it archived sessions list but cannot be restored.
@@ -744,6 +751,23 @@ export function registerSessionRoutes(
                 if (!workspaceDiff)
                   return json(res, 404, { error: "workspace diff not available" });
                 const reply = await workspaceDiff(sid);
+                return json(res, reply.ok ? 200 : 409, reply);
+              }
+              if (mcp && req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/mcp`) {
+                const sid = url.searchParams.get("session");
+                if (!sid) return json(res, 400, { error: "session param required" });
+                const reply = await mcp.status(sid);
+                return json(res, reply.ok ? 200 : 409, reply);
+              }
+              if (
+                mcp &&
+                req.method === "POST" &&
+                url.pathname === `${ROUTE_PREFIX}/mcp/reconnect`
+              ) {
+                const { session, name } = await readBody(req);
+                if (typeof session !== "string" || typeof name !== "string")
+                  return json(res, 400, { error: "session and name required" });
+                const reply = await mcp.reconnect(session, name);
                 return json(res, reply.ok ? 200 : 409, reply);
               }
               if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/idle`) {

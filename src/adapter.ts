@@ -5,7 +5,7 @@ import { access, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promise
 import { dirname } from "node:path";
 import { hostname } from "node:os";
 import { basename, join } from "node:path";
-import type { Spawner, ContextUsage, WorkspaceDiff } from "./process.js";
+import type { Spawner, ContextUsage, WorkspaceDiff, McpServerStatus } from "./process.js";
 import {
   LlmAdapter,
   LlmError,
@@ -38,6 +38,7 @@ import {
   decodeRewindResult,
   decodeContextUsage,
   decodeWorkspaceDiff,
+  decodeMcpStatus,
   decodeTitle,
   toJsonValue,
   nodeSpawner,
@@ -340,6 +341,10 @@ export type ContextUsageReply =
 /** What the diff route reports: the CLI's working-tree diff for a live session. */
 export type WorkspaceDiffReply =
   | ({ ok: true; error?: undefined } & WorkspaceDiff)
+  | { ok: false; error: string };
+/** What the MCP route reports: the servers Claude's process has, as `mcp_status` lists them. */
+export type McpStatusReply =
+  | { ok: true; error?: undefined; servers: McpServerStatus[] }
   | { ok: false; error: string };
 /** What the permission-mode route reports: the mode in force and the stored override. */
 export interface PermissionModeInfo {
@@ -2101,6 +2106,26 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     return decodeTitle(reply.response);
   }
 
+  /** The MCP servers of a session's live process (`mcp_status`). */
+  async mcpStatus(sessionId: string): Promise<McpStatusReply> {
+    const proc = this.processes.get(registryKey(this.providerId, sessionId));
+    if (!proc?.alive) return { ok: false, error: "no live Claude process for this session" };
+    const reply = await this.control(proc, { subtype: "mcp_status" }, 10_000);
+    if (!reply.ok) return { ok: false, error: reply.error };
+    return { ok: true, servers: decodeMcpStatus(reply.response) };
+  }
+
+  /** Ask a session's live process to reconnect one MCP server (`mcp_reconnect`). */
+  async mcpReconnect(
+    sessionId: string,
+    serverName: string,
+  ): Promise<{ ok: boolean; error?: string }> {
+    const proc = this.processes.get(registryKey(this.providerId, sessionId));
+    if (!proc?.alive) return { ok: false, error: "no live Claude process for this session" };
+    const reply = await this.control(proc, { subtype: "mcp_reconnect", serverName }, 15_000);
+    return reply.ok ? { ok: true } : { ok: false, error: reply.error };
+  }
+
   /** The CLI's working-tree diff (`get_workspace_diff`) for a session with a live process. */
   async workspaceDiff(sessionId: string): Promise<WorkspaceDiffReply> {
     const proc = this.processes.get(registryKey(this.providerId, sessionId));
@@ -3254,6 +3279,11 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       },
       contextUsage: (sessionId: string) => adapter.contextUsage(sessionId),
       workspaceDiff: (sessionId: string) => adapter.workspaceDiff(sessionId),
+      mcp: {
+        status: (sessionId: string) => adapter.mcpStatus(sessionId),
+        reconnect: (sessionId: string, serverName: string) =>
+          adapter.mcpReconnect(sessionId, serverName),
+      },
       rewind: (sessionId: string, uuid: string, dryRun: boolean) =>
         adapter.rewind(sessionId, uuid, dryRun),
     });

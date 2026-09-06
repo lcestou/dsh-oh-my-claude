@@ -2433,3 +2433,60 @@ console.log("keeper-mode ok");
   assert.deepEqual(req, { subtype: "mcp_reconnect", serverName: "dsh" });
   console.log("mcp-reconnect ok");
 }
+
+// mcpStatus and mcpReconnect: decode the server list; reconnect names the server.
+{
+  const adapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  const written: string[] = [];
+  const proc: any = {
+    alive: true,
+    busy: false,
+    controlListener: undefined,
+    write(line: string) {
+      written.push(line);
+      const req = JSON.parse(line);
+      setTimeout(() => {
+        proc.controlListener({
+          type: "control_response",
+          request_id: req.request_id,
+          response: {
+            subtype: "success",
+            request_id: req.request_id,
+            response:
+              req.request.subtype === "mcp_status"
+                ? {
+                    mcpServers: [
+                      {
+                        name: "dsh",
+                        status: "connected",
+                        serverInfo: { name: "dsh", version: "0.9.0" },
+                        config: { type: "http" },
+                      },
+                      { name: "plugin:x", status: "failed" },
+                      { nope: 1 },
+                    ],
+                  }
+                : {},
+          },
+        });
+      }, 0);
+      return true;
+    },
+  };
+  adapter.processes.set(registryKey(adapter.providerId, "ms"), proc);
+  const st = await adapter.mcpStatus("ms");
+  assert.deepEqual(st, {
+    ok: true,
+    servers: [
+      { name: "dsh", status: "connected", version: "0.9.0" },
+      { name: "plugin:x", status: "failed" },
+    ],
+  });
+  assert.deepEqual(await adapter.mcpReconnect("ms", "dsh"), { ok: true });
+  assert.deepEqual(JSON.parse(written.at(-1)!).request, {
+    subtype: "mcp_reconnect",
+    serverName: "dsh",
+  });
+  assert.equal((await adapter.mcpStatus("nope")).ok, false);
+  console.log("mcp-status ok");
+}

@@ -273,6 +273,13 @@ export interface WorkspaceDiff {
     }>;
 }
 export declare function decodeWorkspaceDiff(v: JsonValue | undefined): WorkspaceDiff;
+/** One MCP server as `mcp_status` reports it. */
+export interface McpServerStatus {
+    name: string;
+    status: string;
+    version?: string;
+}
+export declare function decodeMcpStatus(v: JsonValue | undefined): McpServerStatus[];
 /** stdin line for any control request this plugin sends; the CLI answers with a `control_response`. */
 export declare function controlRequestLine(requestId: string, request: Record<string, JsonValue>): string;
 /**

@@ -2664,6 +2664,132 @@ function ChangesButton({ sessionId, ctx }: RestoreButtonProps) {
   );
 }
 
+interface McpServer {
+  name: string;
+  status: string;
+  version?: string;
+}
+type McpReply = { ok: true; servers: McpServer[] } | { ok: false; error: string };
+
+/**
+ * "MCP" control in `conversation.input.left` on Claude sessions: the servers Claude's process
+ * has, with their connection status, and a Reconnect per row (`mcp_reconnect`).
+ */
+function McpButton({ sessionId, ctx }: RestoreButtonProps) {
+  const isClaude = activeClaudeSession(ctx) === sessionId;
+  const [open, setOpen] = useState(false);
+  const [reply, setReply] = useState<McpReply | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [note, setNote] = useState("");
+  const rootRef = useRef<HTMLSpanElement>(null);
+  useDismiss(open, () => setOpen(false), rootRef);
+
+  const load = () =>
+    fetch(`${ROUTE}/mcp?session=${encodeURIComponent(sessionId)}`)
+      .then((r) => readJson<McpReply>(r))
+      .then(setReply)
+      .catch((e: Error) => setReply({ ok: false, error: e.message }));
+  useEffect(() => {
+    if (!open) return;
+    setReply(null);
+    setNote("");
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- load closes over sessionId only
+  }, [open, sessionId]);
+
+  if (!isClaude) return null;
+  const reconnect = async (serverName: string) => {
+    setBusy(serverName);
+    setNote("");
+    try {
+      const r = await readJson<{ ok: boolean; error?: string }>(
+        await fetch(`${ROUTE}/mcp/reconnect`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ session: sessionId, name: serverName }),
+        }),
+      );
+      setNote(r.ok ? `${serverName}: reconnected` : `${serverName}: ${r.error ?? "failed"}`);
+      await load();
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+  const servers = reply?.ok ? reply.servers : [];
+  return (
+    <span ref={rootRef} style={{ position: "relative", display: "inline-flex" }}>
+      <button
+        type="button"
+        style={btn}
+        title="MCP servers Claude Code has in this session"
+        onClick={() => setOpen((v) => !v)}
+      >
+        MCP
+      </button>
+      {open && (
+        <div
+          role="dialog"
+          aria-label="MCP servers"
+          style={{ ...popover, width: 460, maxHeight: 320 }}
+        >
+          {reply === null ? (
+            <span style={{ ...meta, padding: "2px 4px" }}>Loading…</span>
+          ) : !reply.ok ? (
+            <span style={{ color: T.err, fontSize: 12 }}>{reply.error}</span>
+          ) : servers.length === 0 ? (
+            <span style={{ ...meta, padding: "2px 4px" }}>No MCP servers</span>
+          ) : (
+            servers.map((s) => (
+              <div
+                key={s.name}
+                style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 6px" }}
+              >
+                <span
+                  aria-hidden="true"
+                  style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: 4,
+                    flex: "none",
+                    background:
+                      s.status === "connected" ? T.ok : s.status === "pending" ? T.warn : T.err,
+                  }}
+                />
+                <span
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    fontSize: 13,
+                  }}
+                  title={s.name}
+                >
+                  {s.name}
+                  {s.version ? <span style={meta}> {s.version}</span> : null}
+                </span>
+                <span style={{ ...meta, flex: "none" }}>{s.status}</span>
+                <button
+                  type="button"
+                  style={btn}
+                  disabled={busy !== null}
+                  onClick={() => reconnect(s.name)}
+                >
+                  {busy === s.name ? "…" : "Reconnect"}
+                </button>
+              </div>
+            ))
+          )}
+          {note && <span style={{ ...meta, padding: "2px 4px" }}>{note}</span>}
+        </div>
+      )}
+    </span>
+  );
+}
+
 /**
  * Registers the Claude Code panel in dsh settings: runtime line, one session list across boxes,
  * then the saved boxes and Claude Code's settings.json as collapsed cards.
@@ -2800,6 +2926,9 @@ export function apply(ctx: ClientCtx) {
     ctx.slots.register(
       { name: "conversation.input.left", id: "claude-changes", order: 53 },
       (props) => (props.sessionId ? <ChangesButton sessionId={props.sessionId} ctx={ctx} /> : null),
+    );
+    ctx.slots.register({ name: "conversation.input.left", id: "claude-mcp", order: 54 }, (props) =>
+      props.sessionId ? <McpButton sessionId={props.sessionId} ctx={ctx} /> : null,
     );
     return null;
   });

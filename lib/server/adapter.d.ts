@@ -1,4 +1,4 @@
-import type { Spawner, ContextUsage, WorkspaceDiff } from "./process.js";
+import type { Spawner, ContextUsage, WorkspaceDiff, McpServerStatus } from "./process.js";
 import { LlmAdapter, type ContentBlock, type GenerateOptions, type LlmModelInfo, type LlmResolvedModelInfo, type StreamChunk } from "@deepseek-ai/dsh-llm";
 import z from "@deepseek-ai/schemastery";
 import { type ClaudeEvent, ClaudeProcess } from "./process.js";
@@ -166,6 +166,15 @@ export type WorkspaceDiffReply = ({
     ok: true;
     error?: undefined;
 } & WorkspaceDiff) | {
+    ok: false;
+    error: string;
+};
+/** What the MCP route reports: the servers Claude's process has, as `mcp_status` lists them. */
+export type McpStatusReply = {
+    ok: true;
+    error?: undefined;
+    servers: McpServerStatus[];
+} | {
     ok: false;
     error: string;
 };
@@ -597,6 +606,13 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * the one-shot path.
      */
     titleFromCli(sessionId: string, description: string): Promise<string | undefined>;
+    /** The MCP servers of a session's live process (`mcp_status`). */
+    mcpStatus(sessionId: string): Promise<McpStatusReply>;
+    /** Ask a session's live process to reconnect one MCP server (`mcp_reconnect`). */
+    mcpReconnect(sessionId: string, serverName: string): Promise<{
+        ok: boolean;
+        error?: string;
+    }>;
     /** The CLI's working-tree diff (`get_workspace_diff`) for a session with a live process. */
     workspaceDiff(sessionId: string): Promise<WorkspaceDiffReply>;
     /**
