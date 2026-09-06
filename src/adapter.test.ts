@@ -1610,6 +1610,45 @@ console.log("schema-guard ok");
   assert.equal(results[0]!.callId, "tu1", "result references the same callId");
   assert.equal(results[0]!.text, "file1\nfile2", "result text preserved");
 }
+// --- a tool_use block reaching both the streaming and whole-message paths fires onToolCall once ---
+// Regression: two `tool/call` appends for one callId gave the client "received more than one start",
+// which threw in ConversationNodeAssembler and stalled the event feed (no history, stuck spinner).
+{
+  const calls: string[] = [];
+  const tr = new Translator({
+    onToolCall: (callId) => {
+      calls.push(callId);
+      return calls.length; // fake, distinct seq
+    },
+  }) as any;
+  // streaming path: content_block_start → input_json_delta → content_block_stop fires once
+  tr.translate({
+    type: "stream_event",
+    event: {
+      type: "content_block_start",
+      index: 0,
+      content_block: { type: "tool_use", id: "dup1", name: "Bash" },
+    },
+  });
+  tr.translate({
+    type: "stream_event",
+    event: {
+      type: "content_block_delta",
+      index: 0,
+      delta: { type: "input_json_delta", partial_json: '{"command":"ls"}' },
+    },
+  });
+  tr.translate({ type: "stream_event", event: { type: "content_block_stop", index: 0 } });
+  assert.equal(calls.length, 1, "streaming path fired onToolCall once");
+  // whole-message path replays the same tool_use (resume / non-partial); must not fire again
+  tr.translate({
+    type: "assistant",
+    message: {
+      content: [{ type: "tool_use", id: "dup1", name: "Bash", input: { command: "ls" } }],
+    },
+  });
+  assert.equal(calls.length, 1, "same callId does not fire onToolCall a second time");
+}
 {
   const results: Array<{ callId: string; meta?: object }> = [];
   const tr = new Translator({

@@ -1072,6 +1072,24 @@ export class Translator {
   onInit?: (commands: string[]) => void;
   /** callId → original input JSON string, kept so Edit can build meta.diffs from it. */
   readonly callInputs = new Map<string, string>();
+  /** callId → the seq onToolCall returned, so a re-fired block never appends `tool/call` twice. */
+  readonly firedCalls = new Map<string, number>();
+
+  /**
+   * Fires onToolCall at most once per callId. The streaming and whole-message paths can both
+   * reach the same tool_use block; a second append gives the client two `tool/call` starts for
+   * one callId, which throws in ConversationNodeAssembler and stalls the whole event feed.
+   */
+  private fireToolCall(callId: string, toolName: string, input: string): number | undefined {
+    const seen = this.firedCalls.get(callId);
+    if (seen !== undefined) return seen;
+    const seq = this.onToolCall?.(callId, toolName, input);
+    if (seq !== undefined) {
+      this.firedCalls.set(callId, seq);
+      this.callInputs.set(callId, input);
+    }
+    return seq;
+  }
 
   constructor({
     toolActivity = true,
@@ -1348,8 +1366,7 @@ export class Translator {
               NATIVE_TOOL_MAP[(cbMeta.name ?? "") as keyof typeof NATIVE_TOOL_MAP] ??
               cbMeta.name ??
               "";
-            const dshSeq = this.onToolCall(cbMeta.id, mapped, input);
-            if (dshSeq !== undefined) this.callInputs.set(cbMeta.id, input);
+            this.fireToolCall(cbMeta.id, mapped, input);
           }
         }
         this.open.delete(apiIndex);
@@ -1436,8 +1453,7 @@ export class Translator {
           const args = JSON.stringify(b.input ?? {});
           // SAFETY: NATIVE_TOOL_MAP is a closed literal type; keyof narrows index access to known keys
           const mapped = NATIVE_TOOL_MAP[toolName as keyof typeof NATIVE_TOOL_MAP] ?? toolName;
-          const dshSeq = this.onToolCall(b.id, mapped, args);
-          if (dshSeq !== undefined) this.callInputs.set(b.id, args);
+          this.fireToolCall(b.id, mapped, args);
           continue;
         }
         if (!this.toolActivity || (dsh && this.relay)) continue;

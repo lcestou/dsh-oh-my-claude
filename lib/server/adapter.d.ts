@@ -411,6 +411,14 @@ export declare class Translator {
     onInit?: (commands: string[]) => void;
     /** callId → original input JSON string, kept so Edit can build meta.diffs from it. */
     readonly callInputs: Map<string, string>;
+    /** callId → the seq onToolCall returned, so a re-fired block never appends `tool/call` twice. */
+    readonly firedCalls: Map<string, number>;
+    /**
+     * Fires onToolCall at most once per callId. The streaming and whole-message paths can both
+     * reach the same tool_use block; a second append gives the client two `tool/call` starts for
+     * one callId, which throws in ConversationNodeAssembler and stalls the whole event feed.
+     */
+    private fireToolCall;
     constructor({ toolActivity, toolTextLimit, relay, dshIds, relayed, log, onToolCall, onToolResult, onResult, redact, onInit, }?: {
         toolActivity?: boolean;
         toolTextLimit?: number;
