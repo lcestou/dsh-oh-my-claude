@@ -2805,7 +2805,23 @@ function OhMyClaudeControl({ sessionId, ctx }: RestoreButtonProps) {
     <span ref={rootRef} style={{ position: "relative", display: "inline-flex" }}>
       <button
         type="button"
-        style={{ ...btn, color: CLAUDE_ORANGE }}
+        // Same box as dsh's own composer icons (22 px, no border, 6 px radius); the mark at 18 px
+        // reads at the size of their 14 px strokes.
+        style={{
+          width: 22,
+          height: 22,
+          padding: 0,
+          border: "none",
+          borderRadius: 6,
+          background: open ? T.hover : "transparent",
+          color: CLAUDE_ORANGE,
+          fontSize: 18,
+          lineHeight: 1,
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          cursor: "pointer",
+        }}
         aria-label="Oh My Claude"
         title="Oh My Claude: memory, rewind, changes, MCP"
         aria-haspopup="dialog"
