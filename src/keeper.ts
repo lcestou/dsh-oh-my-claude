@@ -49,16 +49,23 @@ function main(dir: string) {
   };
 
   let endedBy: "client" | "child" | "keeper-crash" | null = null;
+  let exit: { code: number | null; signal: string | null } | undefined;
 
+  // A keeper that dies takes Claude with it: the next boot cannot reattach to a child whose
+  // pipes belonged to a dead keeper, so it kills the orphan and the session loses its process
+  // (2026-09-06 23:43: `read ECONNRESET` from the socket dsh dropped mid-restart, exit 70,
+  // healthy Claude killed as an orphan). So: log, and stay up as long as the child is up.
   process.on("uncaughtException", (e) => {
     log(`uncaughtException: ${e?.stack ?? e}`);
-    endedBy = "keeper-crash";
-    try {
-      writeInfo();
-    } catch {
-      // the log line above is the record; never let the crash handler itself throw
+    if (exit) {
+      endedBy = "keeper-crash";
+      try {
+        writeInfo();
+      } catch {
+        // the log line above is the record; never let the crash handler itself throw
+      }
+      process.exit(70);
     }
-    process.exit(70);
   });
   process.on("unhandledRejection", (r) => {
     log(`unhandledRejection: ${r instanceof Error ? r.stack : String(r)}`);
@@ -70,10 +77,11 @@ function main(dir: string) {
     stdio: ["pipe", "pipe", "pipe"],
   });
   child.stdin.on("error", () => {});
+  child.stdout.on("error", (e) => log(`stdout error: ${e.message}`));
+  child.stderr.on("error", (e) => log(`stderr error: ${e.message}`));
   let client: Socket | undefined;
   const buffer: string[] = [];
   let dropped = 0;
-  let exit: { code: number | null; signal: string | null } | undefined;
 
   const send = (msg: object) => {
     const line = `${JSON.stringify(msg)}\n`;
@@ -163,6 +171,7 @@ function main(dir: string) {
       }
     });
   });
+  server.on("error", (e) => log(`server error: ${e.message}`));
   server.listen(sockPath);
   process.on("exit", (code) => {
     log(`exit code=${code} claudeExit=${JSON.stringify(exit ?? null)} endedBy=${endedBy}`);
