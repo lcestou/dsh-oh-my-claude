@@ -8,6 +8,8 @@ export interface TranslatorBlock {
     started: boolean;
     tool?: boolean;
 }
+/** A reset instant as the CLI's banner shows it: `7pm` or `7:30pm`, then the box's zone. */
+export declare function resetClock(ms: number, zone?: string): string;
 export declare class Translator {
     log: (level: string, msg: string) => void;
     unknownSeen: Set<string>;

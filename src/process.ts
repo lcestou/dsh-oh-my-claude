@@ -78,6 +78,17 @@ export type ClaudeEvent =
       subagent_type?: string;
       is_backgrounded?: boolean;
       summary?: string;
+      // subtype "api_retry": the CLI is retrying a failed API call (a 429 while a limit holds, a
+      // 5xx, a dropped connection). `error.rate_limits` is set only for a quota 429.
+      attempt?: number;
+      max_retries?: number;
+      retry_delay_ms?: number;
+      error?: {
+        message?: string;
+        status?: number;
+        formatted?: string;
+        rate_limits?: { resets_at?: number; rate_limit_type?: string } | null;
+      };
     }
   | { type: "stream_event"; event?: ClaudeStreamPartial }
   | { type: "assistant"; message?: ClaudeAssistantMessage; parent_tool_use_id?: string | null }

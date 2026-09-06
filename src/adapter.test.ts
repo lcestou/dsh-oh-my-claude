@@ -64,6 +64,7 @@ import {
 } from "./state.js";
 import type { ClaudeEvent, ClaudeProcessSpec, SubprocessHandle } from "./process.js";
 import type { LooseMessage } from "./adapter.js";
+import { resetClock } from "./translator.js";
 import type { FinishReason, LlmFailure, Message, StreamChunk } from "@deepseek-ai/dsh-llm";
 import type { Agent, PluginContext, SubprocessSpawnSpec } from "./dsh.js";
 import type { SubprocessHandle as SeamHandle } from "./dsh.js";
@@ -1171,6 +1172,50 @@ console.log("ok");
   });
   assert.equal(recalled.at(-1).block.text, "Recalled 1 memory");
   assert.deepEqual(t.translate({ type: "system", subtype: "memory_recall", memories: [] }), []);
+}
+{
+  // api_retry: one reasoning line per retry, worded like the CLI's banner, with the reset clock
+  // for a quota 429 and without it for any other error.
+  const t = new Translator() as any;
+  const quota = t.translate({
+    type: "system",
+    subtype: "api_retry",
+    attempt: 2,
+    max_retries: 10,
+    retry_delay_ms: 4200,
+    error_status: 429,
+    error: {
+      message: "rate limit",
+      status: 429,
+      formatted: "You've hit your session limit",
+      rate_limits: { resets_at: 1_757_199_600, rate_limit_type: "five_hour" },
+    },
+  });
+  assert.equal(quota.at(-1).block.type, "reasoning");
+  assert.equal(
+    quota.at(-1).block.text,
+    `⚠ You've hit your session limit · Retrying in 4s (resets ${resetClock(1_757_199_600_000)}) · attempt 2/10`,
+  );
+  assert.equal(resetClock(1_757_199_600_000, "America/New_York"), "7pm (America/New_York)");
+  assert.equal(resetClock(1_757_201_400_000, "America/New_York"), "7:30pm (America/New_York)");
+  const server = t.translate({
+    type: "system",
+    subtype: "api_retry",
+    attempt: 1,
+    max_retries: 10,
+    retry_delay_ms: 1000,
+    error: {
+      message: "overloaded",
+      status: 529,
+      formatted: "API Error (529 overloaded)",
+      rate_limits: null,
+    },
+  });
+  assert.equal(
+    server.at(-1).block.text,
+    "⚠ API Error (529 overloaded) · Retrying in 1s · attempt 1/10",
+  );
+  console.log("api-retry ok");
 }
 {
   // Hook frames: a failed or cancelled hook_response renders one reasoning line; a clean one,

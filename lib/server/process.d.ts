@@ -52,6 +52,18 @@ export type ClaudeEvent = {
     subagent_type?: string;
     is_backgrounded?: boolean;
     summary?: string;
+    attempt?: number;
+    max_retries?: number;
+    retry_delay_ms?: number;
+    error?: {
+        message?: string;
+        status?: number;
+        formatted?: string;
+        rate_limits?: {
+            resets_at?: number;
+            rate_limit_type?: string;
+        } | null;
+    };
 } | {
     type: "stream_event";
     event?: ClaudeStreamPartial;
