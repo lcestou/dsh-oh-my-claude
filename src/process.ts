@@ -408,6 +408,31 @@ export function decodeMcpStatus(v: JsonValue | undefined): McpServerStatus[] {
   return out;
 }
 
+/** One entry of the CLI's own model picker, as `list_models` reports it. */
+export interface CliModel {
+  value: string;
+  resolvedModel: string;
+  displayName: string;
+  efforts: string[];
+}
+export function decodeCliModels(v: JsonValue | undefined): CliModel[] {
+  const r = isRecord(v) ? v : {};
+  const out: CliModel[] = [];
+  if (Array.isArray(r.models))
+    for (const m of r.models) {
+      if (!isRecord(m) || typeof m.value !== "string") continue;
+      out.push({
+        value: m.value,
+        resolvedModel: typeof m.resolvedModel === "string" ? m.resolvedModel : m.value,
+        displayName: typeof m.displayName === "string" ? m.displayName : m.value,
+        efforts: Array.isArray(m.supportedEffortLevels)
+          ? m.supportedEffortLevels.filter((e): e is string => typeof e === "string")
+          : [],
+      });
+    }
+  return out;
+}
+
 /** stdin line for any control request this plugin sends; the CLI answers with a `control_response`. */
 export function controlRequestLine(requestId: string, request: Record<string, JsonValue>): string {
   return `${JSON.stringify({ type: "control_request", request_id: requestId, request })}\n`;

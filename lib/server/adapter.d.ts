@@ -1,4 +1,4 @@
-import type { Spawner, ContextUsage, WorkspaceDiff, McpServerStatus } from "./process.js";
+import type { Spawner, ContextUsage, WorkspaceDiff, McpServerStatus, CliModel } from "./process.js";
 import { LlmAdapter, type ContentBlock, type GenerateOptions, type LlmModelInfo, type LlmResolvedModelInfo, type StreamChunk } from "@deepseek-ai/dsh-llm";
 import z from "@deepseek-ai/schemastery";
 import { type ClaudeEvent, ClaudeProcess } from "./process.js";
@@ -230,12 +230,14 @@ export declare function modelFromApi(m: {
         effort?: EffortCaps;
     };
 }): LlmModelInfo;
-/**
- * Fetches or returns cached model catalog from Anthropic Models API.
- * Falls back to KNOWN_MODELS if the API is unreachable.
- * @param {Function} fetchImpl - Fetch implementation to use (default: global fetch)
- * @returns {Promise<Array>} Array of available models
- */
+export declare function mergeCatalog(cli: CliModel[], base: ReturnType<typeof M>[]): {
+    provider: string;
+    id: string;
+    name: string;
+    contextWindow: number;
+    efforts: readonly string[];
+}[];
+export declare function setCliModels(models: CliModel[]): void;
 export declare function getCatalog(fetchImpl?: typeof fetch): Promise<{
     provider: string;
     id: string;
@@ -606,6 +608,13 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * the one-shot path.
      */
     titleFromCli(sessionId: string, description: string): Promise<string | undefined>;
+    /**
+     * Ask a freshly spawned process for the CLI's model picker once per boot and hand it to the
+     * catalog; the answer arrives before the first prompt is even read. A failure leaves the API
+     * and known models in place.
+     */
+    cliModelsAt: number;
+    refreshCliModels(proc: ClaudeProcess): Promise<boolean>;
     /** The MCP servers of a session's live process (`mcp_status`). */
     mcpStatus(sessionId: string): Promise<McpStatusReply>;
     /** Ask a session's live process to reconnect one MCP server (`mcp_reconnect`). */

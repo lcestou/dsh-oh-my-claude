@@ -37,6 +37,8 @@ import {
   markBusy,
   takeInterrupted,
   registryKey,
+  mergeCatalog,
+  setCliModels,
 } from "./adapter.js";
 import { CHILD_ENV, ClaudeProcess, LineQueue, TIMEOUT, seamSpawner } from "./process.js";
 import {
@@ -2489,4 +2491,82 @@ console.log("keeper-mode ok");
   });
   assert.equal((await adapter.mcpStatus("nope")).ok, false);
   console.log("mcp-status ok");
+}
+
+// CLI model picker: list_models entries lead the catalog, known models they cover drop out,
+// the rest follow so ids stored in older dsh sessions still resolve.
+{
+  const cli = [
+    {
+      value: "default",
+      resolvedModel: "claude-opus-5[1m]",
+      displayName: "Default",
+      efforts: ["low", "high"],
+    },
+    { value: "sonnet", resolvedModel: "claude-sonnet-5", displayName: "Sonnet", efforts: [] },
+    {
+      value: "haiku",
+      resolvedModel: "claude-haiku-4-5-20251001",
+      displayName: "Haiku",
+      efforts: [],
+    },
+  ];
+  const merged = mergeCatalog(cli, KNOWN_MODELS);
+  assert.deepEqual(
+    merged.slice(0, 3).map((m) => [m.id, m.name, m.contextWindow, m.efforts]),
+    [
+      ["default", "Default", 1_000_000, ["low", "high"]],
+      ["sonnet", "Sonnet", 1_000_000, []],
+      ["haiku", "Haiku", 200_000, []],
+    ],
+  );
+  const rest = merged.slice(3).map((m) => m.id);
+  assert.ok(!rest.includes("claude-opus-5"), "covered by default");
+  assert.ok(!rest.includes("claude-sonnet-5"), "covered by sonnet");
+  assert.ok(!rest.includes("claude-haiku-4-5"), "covered by haiku (dated id)");
+  assert.ok(rest.includes("claude-fable-5-1"), "uncovered known model stays");
+  assert.deepEqual(mergeCatalog([], KNOWN_MODELS), KNOWN_MODELS, "no CLI list: unchanged");
+
+  const adapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  let asked = 0;
+  const proc: any = {
+    alive: true,
+    busy: false,
+    controlListener: undefined,
+    write(line: string) {
+      const req = JSON.parse(line);
+      assert.equal(req.request.subtype, "list_models");
+      asked++;
+      setTimeout(() => {
+        proc.controlListener({
+          type: "control_response",
+          request_id: req.request_id,
+          response: {
+            subtype: "success",
+            request_id: req.request_id,
+            response: {
+              models: [
+                {
+                  value: "opus[1m]",
+                  resolvedModel: "claude-opus-5[1m]",
+                  displayName: "Opus (1M)",
+                  supportedEffortLevels: ["max"],
+                },
+              ],
+            },
+          },
+        });
+      }, 0);
+      return true;
+    },
+  };
+  assert.equal(await adapter.refreshCliModels(proc), true);
+  assert.equal(await adapter.refreshCliModels(proc), false, "once per TTL");
+  assert.equal(asked, 1);
+  const first = (await adapter.listModels("claude-code"))[0];
+  assert.equal(first?.id, "opus[1m]");
+  const resolved = await adapter.resolveModel("claude-code", "opus[1m]");
+  assert.equal(resolved.context?.contextWindow, 1_000_000);
+  setCliModels([]);
+  console.log("cli-models ok");
 }

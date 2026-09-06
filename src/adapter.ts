@@ -5,7 +5,7 @@ import { access, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promise
 import { dirname } from "node:path";
 import { hostname } from "node:os";
 import { basename, join } from "node:path";
-import type { Spawner, ContextUsage, WorkspaceDiff, McpServerStatus } from "./process.js";
+import type { Spawner, ContextUsage, WorkspaceDiff, McpServerStatus, CliModel } from "./process.js";
 import {
   LlmAdapter,
   LlmError,
@@ -39,6 +39,7 @@ import {
   decodeContextUsage,
   decodeWorkspaceDiff,
   decodeMcpStatus,
+  decodeCliModels,
   decodeTitle,
   toJsonValue,
   nodeSpawner,
@@ -429,8 +430,31 @@ export function modelFromApi(m: {
  * @param {Function} fetchImpl - Fetch implementation to use (default: global fetch)
  * @returns {Promise<Array>} Array of available models
  */
+/**
+ * The CLI's own picker (`list_models`, asked of the first live process each boot) goes first:
+ * its values are what `claude --model` accepts for this login, aliases such as `default` and the
+ * `[1m]` variants included. API and known models it does not already cover follow, so older
+ * ids stored in dsh sessions keep resolving.
+ */
+let cliModels: CliModel[] = [];
+const strip = (id: string) => (id.endsWith("[1m]") ? id.slice(0, -4) : id);
+export function mergeCatalog(cli: CliModel[], base: ReturnType<typeof M>[]) {
+  if (cli.length === 0) return base;
+  const covered = (id: string) =>
+    cli.some((c) => strip(c.resolvedModel).startsWith(id) || strip(c.value) === id);
+  const fromCli = cli.map((c) => {
+    const bare = strip(c.resolvedModel);
+    const known = base.find((b) => bare === b.id || bare.startsWith(b.id));
+    const window = c.resolvedModel.endsWith("[1m]") ? 1_000_000 : (known?.contextWindow ?? 200_000);
+    return M(c.value, c.displayName, window, c.efforts);
+  });
+  return [...fromCli, ...base.filter((b) => !covered(b.id))];
+}
+export function setCliModels(models: CliModel[]) {
+  cliModels = models;
+}
 export async function getCatalog(fetchImpl = fetch) {
-  if (Date.now() - catalog.at < CATALOG_TTL_MS) return catalog.models;
+  if (Date.now() - catalog.at < CATALOG_TTL_MS) return mergeCatalog(cliModels, catalog.models);
   const headers = await authHeaders(CLAUDE_HOME);
   if (headers) {
     try {
@@ -444,14 +468,14 @@ export async function getCatalog(fetchImpl = fetch) {
       if (res.ok) {
         const data = (await res.json()).data ?? [];
         if (data.length > 0) catalog = { at: Date.now(), models: data.map(modelFromApi) };
-        return catalog.models;
+        return mergeCatalog(cliModels, catalog.models);
       }
     } catch {
       /* offline or rejected: keep previous catalog */
     }
   }
   catalog = { at: Date.now(), models: catalog.models }; // retry no sooner than the TTL
-  return catalog.models;
+  return mergeCatalog(cliModels, catalog.models);
 }
 
 /**
@@ -2106,6 +2130,26 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     return decodeTitle(reply.response);
   }
 
+  /**
+   * Ask a freshly spawned process for the CLI's model picker once per boot and hand it to the
+   * catalog; the answer arrives before the first prompt is even read. A failure leaves the API
+   * and known models in place.
+   */
+  cliModelsAt = 0;
+  async refreshCliModels(proc: ClaudeProcess): Promise<boolean> {
+    if (Date.now() - this.cliModelsAt < CATALOG_TTL_MS) return false;
+    this.cliModelsAt = Date.now();
+    const reply = await this.control(proc, { subtype: "list_models" }, 10_000);
+    if (!reply.ok) {
+      this.log("info", `list_models declined: ${reply.error}`);
+      return false;
+    }
+    const models = decodeCliModels(reply.response);
+    if (models.length === 0) return false;
+    setCliModels(models);
+    return true;
+  }
+
   /** The MCP servers of a session's live process (`mcp_status`). */
   async mcpStatus(sessionId: string): Promise<McpStatusReply> {
     const proc = this.processes.get(registryKey(this.providerId, sessionId));
@@ -2395,6 +2439,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       if (this.config.debug) {
         this.log("info", `spawn cwd=${prep.cwd} claude ${prep.args.join(" ")}`);
       }
+      void this.refreshCliModels(proc);
     }
     return { prep, proc };
   }

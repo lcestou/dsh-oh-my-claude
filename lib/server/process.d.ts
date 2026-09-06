@@ -280,6 +280,14 @@ export interface McpServerStatus {
     version?: string;
 }
 export declare function decodeMcpStatus(v: JsonValue | undefined): McpServerStatus[];
+/** One entry of the CLI's own model picker, as `list_models` reports it. */
+export interface CliModel {
+    value: string;
+    resolvedModel: string;
+    displayName: string;
+    efforts: string[];
+}
+export declare function decodeCliModels(v: JsonValue | undefined): CliModel[];
 /** stdin line for any control request this plugin sends; the CLI answers with a `control_response`. */
 export declare function controlRequestLine(requestId: string, request: Record<string, JsonValue>): string;
 /**
