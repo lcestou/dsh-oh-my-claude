@@ -4,6 +4,7 @@ import {
   btn,
   btnPrimary,
   bodyFlow,
+  select,
   meta,
   T,
   readJson,
@@ -671,6 +672,96 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
   );
 }
 
+/** What `GET /permission-mode` reports. */
+interface PermissionModeState {
+  mode: string;
+  override: string | null;
+  modes: string[];
+  live?: boolean;
+  error?: string;
+}
+
+/**
+ * "Permissions" body rendered inside the Oh My Claude dialog: a select over Claude's permission
+ * modes, with "config" meaning no override. A change is stored per session and pushed to a live process.
+ */
+function PermissionsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
+  const [state, setState] = useState<PermissionModeState | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const isClaude = activeClaudeSession(ctx) === sessionId;
+
+  useEffect(() => {
+    if (!isClaude) return;
+    let alive = true;
+    fetch(`${ROUTE}/permission-mode?session=${encodeURIComponent(sessionId)}`)
+      .then((r) => readJson<PermissionModeState>(r))
+      .then((b) => alive && setState(b))
+      .catch(() => alive && setState(null));
+    return () => {
+      alive = false;
+    };
+  }, [sessionId, isClaude]);
+
+  if (!isClaude || !state) return null;
+  const change = async (value: string) => {
+    setBusy(true);
+    setError("");
+    try {
+      const reply = await readJson<PermissionModeState>(
+        await fetch(`${ROUTE}/permission-mode`, {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ session: sessionId, mode: value || null }),
+        }),
+      );
+      setState({ ...state, ...reply });
+      if (reply.error) setError(reply.error);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div style={bodyFlow}>
+      <span style={{ color: T.faint, fontSize: 12 }}>
+        dsh access mode maps to {state.mode} unless overridden
+      </span>
+      <select
+        aria-label="Claude permission mode"
+        value={state.override ?? ""}
+        disabled={busy}
+        onChange={(e) => change(e.currentTarget.value)}
+        title={
+          state.override
+            ? `Permission mode ${state.mode}, set for this session`
+            : `Permission mode ${state.mode}, from the plugin config`
+        }
+        style={{
+          ...select,
+          fontSize: 13,
+          padding: "5px 8px",
+          color: state.override ? CLAUDE_ORANGE : T.text,
+        }}
+      >
+        <option value="">config · {state.mode}</option>
+        {state.modes.map((m) => (
+          <option key={m} value={m}>
+            {m}
+          </option>
+        ))}
+      </select>
+      {state.override && (
+        <button type="button" style={btn} onClick={() => change("")}>
+          Use config
+        </button>
+      )}
+      {error && <span style={{ color: T.err, fontSize: 11 }}>{error}</span>}
+    </div>
+  );
+}
+
 /**
  * Single consolidated trigger for the Oh My Claude panel. One button replaces the five legacy
  * composer-slot buttons (Restore, Memory, Rewind, Changes, MCP). Clicking it opens a tabbed
@@ -702,7 +793,7 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
         bottom: above,
         width: "auto",
         maxHeight: "60vh",
-        zIndex: 40,
+        zIndex: 60,
         display: "flex",
         flexDirection: "column",
         padding: 6,
@@ -720,6 +811,7 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
     { key: "Rewind", label: "Rewind" },
     { key: "Changes", label: "Changes" },
     { key: "MCP", label: "MCP" },
+    { key: "Permissions", label: "Permissions" },
   ] as const;
 
   return (
@@ -806,6 +898,7 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
             {tab === "MCP" && (
               <McpBody sessionId={sessionId} ctx={ctx} onClose={() => setOpen(false)} />
             )}
+            {tab === "Permissions" && <PermissionsBody sessionId={sessionId} ctx={ctx} />}
           </div>
         </div>
       )}

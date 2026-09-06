@@ -1656,88 +1656,6 @@ interface TurnsReply {
   };
 }
 
-/** What `GET /permission-mode` reports. */
-interface PermissionModeState {
-  mode: string;
-  override: string | null;
-  modes: string[];
-  live?: boolean;
-  error?: string;
-}
-
-/**
- * Permission mode chip in the session header of Claude sessions: a select over the CLI's modes,
- * with "config" meaning no override. A change is stored per session and pushed to a live process.
- */
-function PermissionChip({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
-  const [state, setState] = useState<PermissionModeState | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const isClaude = activeClaudeSession(ctx) === sessionId;
-
-  useEffect(() => {
-    if (!isClaude) return;
-    let alive = true;
-    fetch(`${ROUTE}/permission-mode?session=${encodeURIComponent(sessionId)}`)
-      .then((r) => readJson<PermissionModeState>(r))
-      .then((b) => alive && setState(b))
-      .catch(() => alive && setState(null));
-    return () => {
-      alive = false;
-    };
-  }, [sessionId, isClaude]);
-
-  if (!isClaude || !state) return null;
-  const change = async (value: string) => {
-    setBusy(true);
-    setError("");
-    try {
-      const reply = await readJson<PermissionModeState>(
-        await fetch(`${ROUTE}/permission-mode`, {
-          method: "PUT",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ session: sessionId, mode: value || null }),
-        }),
-      );
-      setState({ ...state, ...reply });
-      if (reply.error) setError(reply.error);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-      <select
-        aria-label="Claude permission mode"
-        value={state.override ?? ""}
-        disabled={busy}
-        onChange={(e) => change(e.currentTarget.value)}
-        title={
-          state.override
-            ? `Permission mode ${state.mode}, set for this session`
-            : `Permission mode ${state.mode}, from the plugin config`
-        }
-        style={{
-          ...select,
-          fontSize: 12,
-          padding: "3px 8px",
-          color: state.override ? CLAUDE_ORANGE : T.text,
-        }}
-      >
-        <option value="">config · {state.mode}</option>
-        {state.modes.map((m) => (
-          <option key={m} value={m}>
-            {m}
-          </option>
-        ))}
-      </select>
-      {error && <span style={{ color: T.err, fontSize: 11 }}>{error}</span>}
-    </span>
-  );
-}
-
 /** Cost readout in dsh's footer stats row: only when the open session is a Claude mount. */
 function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   const [turns, setTurns] = useState<TurnRecord[]>([]);
@@ -1794,6 +1712,7 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
       return;
     }
     let inline: HTMLSpanElement | undefined;
+    let rowLead = "";
     // The row appears with the first settled step and is one of dsh's own divs anywhere in the
     // document; look for it until found (one conversation is on screen at a time).
     const tryHook = () => {
@@ -1813,13 +1732,33 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
       const body = document.createElement("span");
       body.textContent = ` ${text}`;
       inline.append(" ", sep, body);
+      // The row's first group ("52 turns · 77 steps" in any locale) identifies its bubble.
+      rowLead = (statsRow.firstElementChild?.textContent ?? "").replace(/\s+/g, "");
       statsRow.append(inline);
       setHooked(true);
     };
     tryHook();
     const timer = setInterval(tryHook, 1000);
+    // On a phone the row truncates and dsh shows its full line in a hover bubble built from its
+    // own text; append the cost to that bubble as it appears, the way the usage ring's is hooked.
+    const MARK = "data-dsh-oh-my-claude-cost";
+    const tipObserver = new MutationObserver((records) => {
+      for (const rec of records)
+        for (const node of rec.addedNodes) {
+          if (!(node instanceof HTMLElement)) continue;
+          const tip = node.matches('[role="tooltip"]')
+            ? node
+            : node.querySelector<HTMLElement>('[role="tooltip"]');
+          if (!tip || tip.hasAttribute(MARK) || !rowLead) continue;
+          if (!(tip.textContent ?? "").replace(/\s+/g, "").startsWith(rowLead)) continue;
+          tip.setAttribute(MARK, "1");
+          tip.append(` | ${text}`);
+        }
+    });
+    tipObserver.observe(document.body, { childList: true, subtree: true });
     return () => {
       clearInterval(timer);
+      tipObserver.disconnect();
       inline?.remove();
       setHooked(false);
     };
@@ -1972,11 +1911,6 @@ export function apply(ctx: ClientCtx) {
 
   // Header chips in the session header.
   ctx.slots.inject("conversation.session.header.actions", () => {
-    ctx.slots.register(
-      { name: "conversation.session.header.actions", id: "claude-permission-mode", order: 32 },
-      (props) =>
-        props.sessionId ? <PermissionChip sessionId={props.sessionId} ctx={ctx} /> : null,
-    );
     ctx.slots.register(
       { name: "conversation.session.header.actions", id: "claude-idle-warn", order: 31 },
       (props) => (props.sessionId ? <IdleChip sessionId={props.sessionId} /> : null),
