@@ -4,7 +4,6 @@ import {
   btn,
   btnPrimary,
   bodyFlow,
-  select,
   meta,
   T,
   readJson,
@@ -683,90 +682,333 @@ interface PermissionModeState {
   error?: string;
 }
 
+// The three dsh presets in strict id→label order.
+const PRESETS = [
+  { id: "read-only", label: "Read Only" },
+  { id: "workspace-write", label: "Workspace Write" },
+  { id: "danger-full-access", label: "Full access" },
+] as const;
+
 /**
- * "Permissions" body rendered inside the Oh My Claude dialog: a select over Claude's permission
- * modes, with "config" meaning no override. A change is stored per session and pushed to a live process.
+ * Imperative lookalike for dsh's composer access-mode trigger in Claude sessions. Hides the
+ * real trigger and builds a menu with dsh presets first, then Claude permission modes under a
+ * divider. The component only mounts a hidden span; all DOM work happens inside useEffect.
  */
-function PermissionsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
-  const [state, setState] = useState<PermissionModeState | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const isClaude = activeClaudeSession(ctx) === sessionId;
+export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
+  const anchorRef = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
-    if (!isClaude) return;
-    let alive = true;
-    fetch(`${ROUTE}/permission-mode?session=${encodeURIComponent(sessionId)}`)
-      .then((r) => readJson<PermissionModeState>(r))
-      .then((b) => alive && setState(b))
-      .catch(() => alive && setState(null));
-    return () => {
-      alive = false;
-    };
-  }, [sessionId, isClaude]);
+    if (activeClaudeSession(ctx) !== sessionId) return;
 
-  if (!isClaude || !state) return null;
-  const change = async (value: string) => {
-    setBusy(true);
-    setError("");
-    try {
-      const reply = await readJson<PermissionModeState>(
-        await fetch(`${ROUTE}/permission-mode`, {
-          method: "PUT",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ session: sessionId, mode: value || null }),
-        }),
+    const build = () => {
+      // Find dsh's trigger by aria-label prefix, fallback to the first matching text button.
+      const form = anchorRef.current?.closest("form");
+      // SAFETY: querySelectorAll returns NodeList; we cast because the selector is exact.
+      const found = Array.from(
+        (form ?? document).querySelectorAll<HTMLButtonElement>('button[aria-label^="Access mode"]'),
       );
-      setState({ ...state, ...reply });
-      if (reply.error) setError(reply.error);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <div style={bodyFlow}>
-      <span style={{ color: T.faint, fontSize: 12 }}>
-        dsh access {state.accessMode ?? "unknown"} → Claude {state.ceiling}
-      </span>
-      <span style={{ color: T.faint, fontSize: 12 }}>
-        Override can only be stricter than the shield.
-      </span>
-      {state.modes.length > 1 && (
-        <select
-          aria-label="Claude permission mode"
-          value={state.override ?? ""}
-          disabled={busy}
-          onChange={(e) => change(e.currentTarget.value)}
-          title={
-            state.override
-              ? `Permission mode ${state.mode}, set for this session`
-              : `Permission mode ${state.mode}, from the plugin config`
+      const trigger =
+        found[0] ??
+        Array.from((form ?? document).querySelectorAll<HTMLButtonElement>("button")).find((b) =>
+          PRESETS.some((p) => b.textContent === p.label),
+        );
+      if (!trigger) return null;
+      return trigger;
+    };
+
+    // Everything below hangs off dsh's trigger: hide it, mirror it, and hand back one cleanup.
+    const start = (trigger: HTMLButtonElement): (() => void) => {
+      trigger.style.display = "none";
+      const ours = document.createElement("button");
+      ours.type = "button";
+      ours.className = trigger.className;
+      ours.innerHTML = trigger.innerHTML;
+      ours.setAttribute(
+        "aria-label",
+        `${trigger.getAttribute("aria-label") ?? "Access mode"} (Claude)`,
+      );
+      ours.setAttribute("aria-haspopup", "menu");
+      trigger.insertAdjacentElement("afterend", ours);
+
+      // Keep the lookalike in sync whenever dsh updates label or icon.
+      const observer = new MutationObserver(() => {
+        // SAFETY: trigger is guaranteed non-null by the guard above; closure scope prevents TS from narrowing.
+        ours.innerHTML = trigger!.innerHTML;
+        ours.setAttribute(
+          "aria-label",
+          `${trigger!.getAttribute("aria-label") ?? "Access mode"} (Claude)`,
+        );
+      });
+      observer.observe(trigger!, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+        attributes: true,
+      });
+
+      // Imperative menu: built on click, torn down on close.
+      let menuEl: HTMLDivElement | null = null;
+      let stateSnapshot: PermissionModeState | null = null;
+
+      const closeMenu = () => {
+        menuEl?.remove();
+        menuEl = null;
+        document.removeEventListener("mousedown", onDocDown);
+        document.removeEventListener("keydown", onDocKey);
+      };
+
+      // SAFETY: MouseEvent.target is always a Node per the DOM spec.
+      const onDocDown = (e: MouseEvent) => {
+        if (menuEl && !menuEl.contains(e.target as Node) && e.target !== ours) closeMenu();
+      };
+      const onDocKey = (e: KeyboardEvent) => {
+        if (e.key === "Escape") closeMenu();
+      };
+
+      const openMenu = async () => {
+        if (menuEl) {
+          closeMenu();
+          return;
+        }
+        // Fetch allowed Claude modes for this session.
+        try {
+          stateSnapshot = await readJson<PermissionModeState>(
+            await fetch(`${ROUTE}/permission-mode?session=${encodeURIComponent(sessionId)}`),
+          );
+        } catch {
+          stateSnapshot = null;
+        }
+        if (!stateSnapshot) return;
+
+        // SAFETY: trigger is guaranteed non-null by the guard above; closure scope prevents TS from narrowing.
+        const parent = trigger!.parentElement;
+        if (!parent) return;
+
+        menuEl = document.createElement("div");
+        menuEl.setAttribute("role", "menu");
+        // SAFETY: popover is CSSProperties and the added properties are valid CSSProperties keys.
+        Object.assign(menuEl.style, {
+          ...popover,
+          width: 260,
+          padding: 6,
+        } as CSSProperties);
+
+        const rowStyle: CSSProperties = {
+          ...btn,
+          display: "flex",
+          width: "100%",
+          gap: 8,
+          alignItems: "center",
+          textAlign: "left" as const,
+        };
+        const iconSize = 16;
+
+        // dsh presets first.
+        for (const preset of PRESETS) {
+          // SAFETY: trigger is guaranteed non-null by the guard above; closure scope prevents TS from narrowing.
+          const active = trigger!.textContent === preset.label;
+          const row = document.createElement("button");
+          row.setAttribute("role", "menuitem");
+          Object.assign(row.style, rowStyle);
+          if (active) {
+            Object.assign(row.style, { color: T.text, fontWeight: 600 });
+            row.setAttribute("aria-checked", "true");
+          } else {
+            row.style.color = T.faint;
           }
-          style={{
-            ...select,
-            fontSize: 13,
-            padding: "5px 8px",
-            color: state.override ? CLAUDE_ORANGE : T.text,
-          }}
-        >
-          <option value="">config · {state.mode}</option>
-          {state.modes.map((m) => (
-            <option key={m} value={m}>
-              {m}
-            </option>
-          ))}
-        </select>
-      )}
-      {(state.override || state.modes.length <= 1) && (
-        <button type="button" style={btn} onClick={() => change("")}>
-          Use config
-        </button>
-      )}
-      {error && <span style={{ color: T.err, fontSize: 11 }}>{error}</span>}
-    </div>
-  );
+          // Clone the trigger's icon svg.
+          // SAFETY: trigger is guaranteed non-null by the guard above; closure scope prevents TS from narrowing.
+          const svgEl = trigger!.querySelector<SVGSVGElement>("svg");
+          if (svgEl) {
+            // SAFETY: cloneNode on an SVGSVGElement returns an SVG element tree.
+            const clone = svgEl.cloneNode(true) as SVGSVGElement;
+            Object.assign(clone.style, {
+              width: `${iconSize}px`,
+              height: `${iconSize}px`,
+              flexShrink: 0,
+            });
+            row.appendChild(clone);
+          }
+          const textNode = document.createTextNode(preset.label);
+          row.appendChild(textNode);
+          row.addEventListener("click", () => {
+            closeMenu();
+            const live = ctx.sessions.binding?.(sessionId)?.session;
+            if (!live) {
+              const errLine = menuEl?.querySelector("[data-err]");
+              if (errLine) errLine.textContent = "this session is not materialized yet";
+              return;
+            }
+            live
+              .command(`/permission ${preset.id}`)
+              .then((reply) => {
+                if (!reply || !reply.ok) {
+                  // Show error inline.
+                  const errLine = menuEl?.querySelector("[data-err]");
+                  if (errLine) errLine.textContent = reply?.error?.message ?? "command failed";
+                } else {
+                  // dsh applies the preset asynchronously; rebuild once the ceiling has moved.
+                  setTimeout(openMenu, 600);
+                }
+              })
+              .catch((e) => {
+                const errLine = menuEl?.querySelector("[data-err]");
+                if (errLine) errLine.textContent = e instanceof Error ? e.message : String(e);
+              });
+          });
+          menuEl.appendChild(row);
+        }
+
+        // Divider + Claude modes caption.
+        const divider = document.createElement("div");
+        Object.assign(divider.style, {
+          height: 1,
+          background: T.border,
+          margin: "6px 0",
+        });
+        menuEl.appendChild(divider);
+
+        const caption = document.createElement("span");
+        caption.textContent = "Claude mode";
+        Object.assign(caption.style, meta);
+        menuEl.appendChild(caption);
+
+        // Follow-shield row (empty override).
+        {
+          const active = stateSnapshot.override === null;
+          const followRow = document.createElement("button");
+          followRow.setAttribute("role", "menuitem");
+          Object.assign(followRow.style, rowStyle);
+          if (active) {
+            Object.assign(followRow.style, { color: T.text, fontWeight: 600 });
+            followRow.setAttribute("aria-checked", "true");
+          } else {
+            followRow.style.color = T.faint;
+          }
+          followRow.textContent = `Follow shield (${stateSnapshot.ceiling})`;
+          followRow.addEventListener("click", () => {
+            closeMenu();
+            fetch(`${ROUTE}/permission-mode`, {
+              method: "PUT",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ session: sessionId, mode: null }),
+            })
+              .then((r) => readJson<PermissionModeState>(r))
+              .then((reply) => {
+                if (reply.error) {
+                  const errLine = menuEl?.querySelector("[data-err]");
+                  if (errLine) errLine.textContent = reply.error;
+                } else {
+                  openMenu();
+                }
+              })
+              .catch((e) => {
+                const errLine = menuEl?.querySelector("[data-err]");
+                if (errLine) errLine.textContent = e instanceof Error ? e.message : String(e);
+              });
+          });
+          menuEl.appendChild(followRow);
+        }
+
+        // One row per allowed Claude mode.
+        for (const mode of stateSnapshot.modes) {
+          const active = stateSnapshot.override === mode;
+          const modeRow = document.createElement("button");
+          modeRow.setAttribute("role", "menuitem");
+          Object.assign(modeRow.style, rowStyle);
+          if (active) {
+            Object.assign(modeRow.style, { color: T.text, fontWeight: 600 });
+            modeRow.setAttribute("aria-checked", "true");
+          } else {
+            modeRow.style.color = T.faint;
+          }
+          modeRow.textContent = mode;
+          modeRow.addEventListener("click", () => {
+            closeMenu();
+            fetch(`${ROUTE}/permission-mode`, {
+              method: "PUT",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ session: sessionId, mode }),
+            })
+              .then((r) => readJson<PermissionModeState>(r))
+              .then((reply) => {
+                if (reply.error) {
+                  const errLine = menuEl?.querySelector("[data-err]");
+                  if (errLine) errLine.textContent = reply.error;
+                } else {
+                  openMenu();
+                }
+              })
+              .catch((e) => {
+                const errLine = menuEl?.querySelector("[data-err]");
+                if (errLine) errLine.textContent = e instanceof Error ? e.message : String(e);
+              });
+          });
+          menuEl.appendChild(modeRow);
+        }
+
+        // Error line placeholder at the bottom.
+        const errLine = document.createElement("span");
+        errLine.setAttribute("data-err", "1");
+        Object.assign(errLine.style, {
+          color: T.err,
+          fontSize: 12,
+          display: "block",
+          minHeight: 16,
+        });
+        menuEl.appendChild(errLine);
+
+        parent.appendChild(menuEl);
+        document.addEventListener("mousedown", onDocDown);
+        document.addEventListener("keydown", onDocKey);
+      };
+
+      ours.addEventListener("click", () => {
+        openMenu();
+      });
+
+      return () => {
+        observer.disconnect();
+        ours.remove();
+        menuEl?.remove();
+        trigger.style.display = "";
+      };
+    };
+
+    // The composer may render after us: try now, then every 500 ms for 20 s.
+    let stop: (() => void) | undefined;
+    let hidden: HTMLButtonElement | undefined;
+    let timer: ReturnType<typeof setInterval> | undefined;
+    const attempt = () => {
+      const found = build();
+      if (!found) return false;
+      hidden = found;
+      stop = start(found);
+      return true;
+    };
+    if (!attempt()) {
+      let attempts = 0;
+      timer = setInterval(() => {
+        attempts++;
+        if (attempt() || attempts >= 40) clearInterval(timer);
+      }, 500);
+    }
+    // dsh may re-render its trigger (a new node); when the one we hid leaves the document, tear
+    // down and attach to the replacement.
+    const watchdog = setInterval(() => {
+      if (!stop || hidden?.isConnected) return;
+      stop();
+      stop = undefined;
+      attempt();
+    }, 1000);
+    return () => {
+      if (timer) clearInterval(timer);
+      clearInterval(watchdog);
+      stop?.();
+    };
+  }, [sessionId, ctx]);
+
+  return <span ref={anchorRef} hidden />;
 }
 
 /**
@@ -818,8 +1060,10 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
     { key: "Rewind", label: "Rewind" },
     { key: "Changes", label: "Changes" },
     { key: "MCP", label: "MCP" },
-    { key: "Permissions", label: "Permissions" },
   ] as const;
+  // Fall back when an earlier session stored a tab no longer present (e.g. removed Permissions).
+  // SAFETY: tabs is const-as, so t.key is a literal string; the map produces string[].
+  if (!(tabs.map((t) => t.key) as readonly string[]).includes(lastTab)) lastTab = "Memory";
 
   return (
     <span ref={rootRef} style={{ position: "relative", display: "inline-flex" }}>
@@ -905,7 +1149,6 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
             {tab === "MCP" && (
               <McpBody sessionId={sessionId} ctx={ctx} onClose={() => setOpen(false)} />
             )}
-            {tab === "Permissions" && <PermissionsBody sessionId={sessionId} ctx={ctx} />}
           </div>
         </div>
       )}

@@ -35,7 +35,7 @@ import {
   type ClientCtx,
   openHere,
 } from "./shared.js";
-import { OhMyClaudeControl } from "./panel.js";
+import { AccessShield, OhMyClaudeControl } from "./panel.js";
 export { type SessionData, isOwnedActive, fmtCost, fmtDuration, cacheShare };
 
 /** Deep link another box's panel sends us to: `#claude-session=<id>&cwd=<path>`. */
@@ -1921,6 +1921,11 @@ export function apply(ctx: ClientCtx) {
   // One Oh My Claude control in the composer's left group replaces the five separate buttons.
   // The slot must be declared through `inject` before anything registers into it.
   ctx.slots.inject("conversation.input.left", () => {
+    // Lookalike shield replaces dsh's trigger inside Claude sessions only.
+    ctx.slots.register(
+      { name: "conversation.input.left", id: "claude-access", order: 40 },
+      (props) => (props.sessionId ? <AccessShield sessionId={props.sessionId} ctx={ctx} /> : null),
+    );
     ctx.slots.register(
       { name: "conversation.input.left", id: "oh-my-claude", order: 50 },
       // Session-scoped slots receive `sessionId` (dsh-client-ui-jobs reads it the same way).

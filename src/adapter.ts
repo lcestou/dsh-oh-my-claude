@@ -82,6 +82,7 @@ import {
   loadStarted,
   isPermissionMode,
   loadPermissionModes,
+  type PermissionMode,
   loadTurnRecords,
   markBusy,
   modesUpTo,
@@ -1077,6 +1078,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   ctx: PluginContext;
   config: Schemastery.TypeT<typeof Config>;
   subprocess?: Pick<SubprocessRuntime, "spawn">;
+  /** dsh's permission preset service, when mounted: the shield's current preset per session. */
+  permissionPresets?: { current: (session: object) => string };
   processes: Map<string, ClaudeProcess>;
   mcp?: { base: string; key: string };
   warnedNoSeam = false;
@@ -1200,7 +1203,16 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   /** Get the effective permission mode for a session, checking for an override first. */
   getPermissionMode(sessionId: string, accessMode: string | undefined): string {
     const override = this.permissionModes.get(sessionId);
-    if (override !== undefined && override !== null) return override;
+    if (override !== undefined && override !== null) {
+      // An override that is no longer allowed under the current ceiling must not win.
+      const ceiling = permissionModeFor(this.config, accessMode);
+      // SAFETY: permissionModeFor returns a known PermissionMode value from its mapping table.
+      const allowed = isPermissionMode(ceiling)
+        ? modesUpTo(ceiling as PermissionMode)
+        : PERMISSION_MODES;
+      // SAFETY: override came from the adapter's own permissionModes map which only stores valid modes.
+      if (allowed.includes(override as PermissionMode)) return override;
+    }
     return permissionModeFor(this.config, accessMode);
   }
 
@@ -1417,9 +1429,24 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   }
 
   /** The effective mode for a session and the stored override, for the header chip. */
+  /**
+   * The session's dsh access mode right now: the shield's current preset from dsh's own service
+   * when it is mounted (a pick there is live at once), else the last runtime-context snapshot.
+   */
+  currentAccessMode(sessionId: string): string | null {
+    try {
+      const session = this.ctx.sessions.get(asSessionId(sessionId));
+      const preset = session ? this.permissionPresets?.current(session) : undefined;
+      if (preset && modeForAccess(preset) !== undefined) return preset;
+    } catch {
+      // no session yet, or the service is not mounted: fall through
+    }
+    return this.accessModes.get(sessionId) ?? null;
+  }
+
   permissionModeInfo(sessionId: string): PermissionModeInfo {
     const override = this.permissionModes.get(sessionId) ?? null;
-    const accessMode = this.accessModes.get(sessionId) ?? null;
+    const accessMode = this.currentAccessMode(sessionId);
     // The shield's mapping is the ceiling; before the first prompt names an access mode the
     // config's own default applies, never the loosest mode.
     const ceiling = permissionModeFor(this.config, accessMode ?? undefined);
@@ -2877,6 +2904,12 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
   ctx.inject?.(["subprocess"], (host) => {
     // SAFETY: cordis hands services untyped; dsh's subprocess seam is what this key holds
     adapter.subprocess = host.subprocess as Pick<SubprocessRuntime, "spawn"> | undefined;
+  });
+  ctx.inject?.(["permissionPresets"], (host) => {
+    // SAFETY: cordis hands services untyped and the host type lacks this optional one;
+    // dsh-permission-presets exposes current(session) returning the preset name
+    const services = host as { permissionPresets?: { current: (session: object) => string } };
+    adapter.permissionPresets = services.permissionPresets;
   });
   // Routes, MCP bridge, usage route and the client panel are registered once per process: only
   // the default instance owns them. A non-default mount logs an info line and skips registration.

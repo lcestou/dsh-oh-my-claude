@@ -435,6 +435,10 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     ctx: PluginContext;
     config: Schemastery.TypeT<typeof Config>;
     subprocess?: Pick<SubprocessRuntime, "spawn">;
+    /** dsh's permission preset service, when mounted: the shield's current preset per session. */
+    permissionPresets?: {
+        current: (session: object) => string;
+    };
     processes: Map<string, ClaudeProcess>;
     mcp?: {
         base: string;
@@ -505,6 +509,11 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      */
     bridgeCommands(names: string[], agent: Agent | undefined): void;
     /** The effective mode for a session and the stored override, for the header chip. */
+    /**
+     * The session's dsh access mode right now: the shield's current preset from dsh's own service
+     * when it is mounted (a pick there is live at once), else the last runtime-context snapshot.
+     */
+    currentAccessMode(sessionId: string): string | null;
     permissionModeInfo(sessionId: string): PermissionModeInfo;
     /**
      * Store a session's permission mode override (null clears it) and, when that session's Claude

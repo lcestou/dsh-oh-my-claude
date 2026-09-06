@@ -525,6 +525,13 @@ assert.ok(switched.join(" ").includes("--permission-mode bypassPermissions"));
   assert.deepEqual(infoDfa.allowed, PERMISSION_MODES);
   const rPlan = await a.setPermissionMode("s2", "plan");
   assert.equal(rPlan.override, "plan");
+
+  // Override must not win when the shield tightens after the fact.
+  await a.setPermissionMode("s3", "bypassPermissions");
+  a.accessModes.set("s3", "danger-full-access");
+  assert.equal(a.getPermissionMode("s3", "danger-full-access"), "bypassPermissions");
+  a.accessModes.set("s3", "read-only");
+  assert.equal(a.getPermissionMode("s3", "read-only"), "plan");
 }
 
 // CLI flag probe: missing flags are left out; missing --input-format switches to positional prompt

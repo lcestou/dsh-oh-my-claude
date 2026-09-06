@@ -319,6 +319,16 @@ export interface ClientCtx {
     };
     open: (id: string) => void;
     create: (opts: { sessionId: string; workspaceId?: string }) => Promise<void>;
+    // When present, the host can forward dsh-style commands to a session's underlying CLI.
+    binding?: (id: string) => {
+      session?: {
+        command: (line: string) => Promise<{
+          ok: boolean;
+          value?: { matched?: boolean };
+          error?: { code?: string; message?: string };
+        }>;
+      };
+    };
   };
   workspaces: {
     list: { getSnapshot: () => { items: Array<{ path: string; workspaceId: string }> } };
