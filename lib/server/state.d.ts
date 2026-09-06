@@ -13,6 +13,11 @@ export declare function trace(fileOrLine: string, maybeLine?: string): Promise<v
 export declare function markBusy(id: string, on: boolean, path?: string): Promise<void>;
 /** Sessions whose turn the previous dsh process left unfinished; cleared on read. */
 export declare function takeInterrupted(path?: string): Promise<string[]>;
+/** The provider of the last `model/selection` event in a session log, if any. */
+export declare function lastSelectedProvider(events: Iterable<{
+    type: string;
+    data?: unknown;
+}>): string | undefined;
 export declare function loadLimitWaits(dir: string): Promise<Map<string, number>>;
 /** Record (or with `resetAt` undefined, forget) a session's wait; saves serialize. */
 export declare function saveLimitWait(dir: string, sessionId: string, resetAt: number | undefined): Promise<void>;

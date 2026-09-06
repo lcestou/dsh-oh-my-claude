@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readUsage, usageWindows } from "./usage.js";
+import { readUsage, stillLimitedUntil, usageWindows } from "./usage.js";
 
 // limits shape: session + weekly + one active scoped model, one inactive scoped model skipped
 const w = usageWindows({
@@ -52,4 +52,24 @@ assert.equal(limited.ok === false && limited.retryAfterMs, 120_000);
 // a 429 with no header still backs off at the floor (60s), never 0
 const noHeader = await readUsage(async () => ({ status: 429, json: async () => ({}) }));
 assert.equal(noHeader.ok === false && noHeader.retryAfterMs, 60_000);
+
+// still at the cap: the latest reset among full windows; nothing when all have room, expired, or unreadable
+{
+  const now = 1_000_000;
+  const win = (usedPercent: number, resetsAt: number | null) => ({
+    label: "w",
+    usedPercent,
+    resetsAt,
+  });
+  const ok = (windows: any[]) => ({ ok: true as const, fetchedAt: now, windows });
+  assert.equal(
+    stillLimitedUntil(ok([win(100, now + 5_000), win(100, now + 9_000)]), now),
+    now + 9_000,
+  );
+  assert.equal(stillLimitedUntil(ok([win(99, now + 5_000)]), now), undefined);
+  assert.equal(stillLimitedUntil(ok([win(100, now - 1)]), now), undefined);
+  assert.equal(stillLimitedUntil(ok([win(100, null)]), now), undefined);
+  assert.equal(stillLimitedUntil({ ok: false, error: "x" }, now), undefined);
+  console.log("still-limited ok");
+}
 console.log("usage ok");

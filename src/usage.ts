@@ -138,6 +138,15 @@ export async function readUsage(fetchImpl: UsageFetch = fetch, home?: string): P
   }
 }
 
+/** The reset instant of a window still at its cap, or undefined when nothing blocks a request.
+ *  A reply that could not be read answers undefined too: the wake then finds out by trying. */
+export function stillLimitedUntil(reply: UsageReply, now = Date.now()): number | undefined {
+  const resets = (reply.ok ? reply.windows : []).flatMap((w) =>
+    w.usedPercent >= 100 && w.resetsAt !== null && w.resetsAt > now ? [w.resetsAt] : [],
+  );
+  return resets.length > 0 ? Math.max(...resets) : undefined;
+}
+
 /** Serve `/dsh-oh-my-claude/usage` (`?force=1` refreshes sooner) from a small cache. */
 export function registerUsageRoute(
   ctx: PluginContext,

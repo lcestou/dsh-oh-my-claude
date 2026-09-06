@@ -42,6 +42,7 @@ import {
   noticeSource,
   RECONNECT_TEXT,
   LIMIT_TEXT,
+  clientTimeZone,
   killAfterGrace,
 } from "./adapter.js";
 import { PERMISSION_MODES } from "./state.js";
@@ -600,6 +601,23 @@ assert.equal(
     rate_limit_info: { status: "rejected", resetsAt: 1 },
   });
   assert.equal(past.limitResetAt, undefined);
+  // Reset clocks follow the browser's zone when dsh stamped one on a prompt.
+  const tokyo = new Translator({ timeZone: "Asia/Tokyo" }) as any;
+  const tz = tokyo.translate({
+    type: "rate_limit_event",
+    rate_limit_info: { status: "rejected", resetsAt: soon },
+  });
+  assert.match(tz[0].reason.failure.message, /\(Asia\/Tokyo\)$/);
+  assert.equal(
+    clientTimeZone([
+      { role: "user", source: { kind: "user", clientTimeZone: "Europe/Lisbon" } },
+      { role: "assistant" },
+      { role: "user", source: { kind: "user", clientTimeZone: "America/New_York" } },
+      { role: "user", source: { kind: "plugin", plugin: "x" } },
+    ]),
+    "America/New_York",
+  );
+  assert.equal(clientTimeZone([{ role: "user" }]), undefined);
   console.log("limit-wait ok");
 }
 
@@ -1344,6 +1362,55 @@ console.log("ok");
     compact_error: "Not enough messages to compact.",
   });
   assert.match(failed.at(-1).block.text, /Compaction failed: Not enough messages to compact\./);
+}
+{
+  // sessionProvider reads the last model/selection from the session log: the limit wait must not
+  // wake a session that was rerouted to another provider meanwhile.
+  const events = [
+    { type: "model/selection", data: { provider: "claude-code", model: "claude-opus-5" } },
+    { type: "todo/write", data: { todos: [] } },
+    { type: "model/selection", data: { provider: "llama-local", model: "kat" } },
+  ];
+  const stub = { ctx: { sessions: { get: () => ({ snapshotEvents: () => events }) } } };
+  assert.equal(ClaudeCodeAdapter.prototype.sessionProvider.call(stub, "s"), "llama-local");
+  const none = { ctx: { sessions: { get: () => ({ snapshotEvents: () => [] }) } } };
+  assert.equal(ClaudeCodeAdapter.prototype.sessionProvider.call(none, "s"), undefined);
+  const gone = { ctx: { sessions: { get: () => undefined } } };
+  assert.equal(ClaudeCodeAdapter.prototype.sessionProvider.call(gone, "s"), undefined);
+  console.log("session-provider ok");
+}
+{
+  // continueAfterLimit: a rerouted session drops the notice, a window still at its cap re-arms,
+  // otherwise the continue notice goes through wake.
+  const dir = await mkdtemp(joinPath(tmpdir(), "dsh-oh-my-claude-limit-"));
+  const run = async (provider: string | undefined, windows: any[]) => {
+    const calls: string[] = [];
+    const stub = {
+      stateDir: dir,
+      providerId: "claude-code",
+      config: {},
+      claudeHome: "/nowhere",
+      processes: new Map(),
+      sessionProvider: () => provider,
+      armLimitWait: (id: string, at: number) => calls.push(`arm ${id} ${at}`),
+      wake: async (id: string, _proc: unknown, text: string) => {
+        calls.push(`wake ${id} ${text === LIMIT_TEXT ? "limit" : "?"}`);
+        return true;
+      },
+    };
+    const probe = async () => ({ ok: true as const, fetchedAt: 0, windows });
+    await ClaudeCodeAdapter.prototype.continueAfterLimit.call(stub, "s", probe);
+    return calls;
+  };
+  const later = Date.now() + 60_000;
+  assert.deepEqual(await run("llama-local", []), [], "rerouted: nothing");
+  assert.deepEqual(await run("claude-code", [{ label: "w", usedPercent: 100, resetsAt: later }]), [
+    `arm s ${later}`,
+  ]);
+  assert.deepEqual(await run(undefined, [{ label: "w", usedPercent: 40, resetsAt: later }]), [
+    "wake s limit",
+  ]);
+  console.log("continue-after-limit ok");
 }
 {
   // restoreTodos re-appends the last todo/write so the panel survives dsh's per-turn reset.

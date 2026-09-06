@@ -1,6 +1,7 @@
 import type { Spawner, ContextUsage, WorkspaceDiff, McpServerStatus, CliModel } from "./process.js";
 import { LlmAdapter, type ContentBlock, type GenerateOptions, type LlmModelInfo, type LlmResolvedModelInfo, type StreamChunk } from "@deepseek-ai/dsh-llm";
 import z from "@deepseek-ai/schemastery";
+import { readUsage } from "./usage.js";
 import { type ClaudeEvent, ClaudeProcess } from "./process.js";
 import type { Agent, ImageAttachmentRef, JsonValue, PluginContext, SessionController, SessionId, SubprocessRuntime } from "./dsh.js";
 import { ADAPTER_CURRENT, RESUME_TIMER, PROCESS_REGISTRY } from "./dsh.js";
@@ -268,9 +269,13 @@ export type LooseMessage = {
         kind?: string;
         plugin?: string;
         rpcId?: string;
+        clientTimeZone?: string;
     };
     content?: string | ContentBlock[];
 };
+/** The browser's IANA zone as dsh stamped it on the latest user prompt; undefined when no
+ *  prompt carried one (an API caller, an old log), so clocks fall back to the box's zone. */
+export declare function clientTimeZone(messages: readonly LooseMessage[]): string | undefined;
 /**
  * Pick the messages that go into this call. Resuming: only what came after the last assistant turn
  * (the new prompt plus dsh's context injections). Fresh: the whole transcript, since `claude -p` is stateless.
@@ -667,6 +672,14 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     /** A usage limit ended the session's turn: once it resets (plus a grace), drop the continue
      *  notice through the same path a restart uses. Persisted so a restart re-arms it. */
     armLimitWait(sessionId: string, resetAt: number, atLeastMs?: number): void;
+    /** The wait fired. Two things may have changed meanwhile: the session may have been rerouted
+     *  to another provider (then the notice would reach a model the limit never touched), and the
+     *  account may still be capped (another window, another login, a moved reset). Check both
+     *  before the notice goes out; a probe that cannot answer lets the wake try. */
+    continueAfterLimit(sessionId: string, probe?: typeof readUsage): Promise<void>;
+    /** The provider a session last selected, from its own log; undefined when it never picked one
+     *  (dsh's default applies) or the session cannot be read. */
+    sessionProvider(sessionId: string): string | undefined;
     clearLimitWait(sessionId: string): void;
     /** Claude finished a turn of its own (a background task it launched completed) while dsh was
      *  idle. Drop a notice into the session's inbox so dsh opens a turn now and the reply shows,

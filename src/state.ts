@@ -75,6 +75,20 @@ export async function takeInterrupted(path = BUSY_FILE): Promise<string[]> {
   return Array.isArray(ids) ? ids.filter((x): x is string => typeof x === "string") : [];
 }
 
+/** The provider of the last `model/selection` event in a session log, if any. */
+export function lastSelectedProvider(
+  events: Iterable<{ type: string; data?: unknown }>,
+): string | undefined {
+  let provider: string | undefined;
+  for (const e of events) {
+    if (e.type !== "model/selection" || typeof e.data !== "object" || e.data === null) continue;
+    // SAFETY: a non-null object; the one field read is checked for string before use
+    const p = (e.data as { provider?: unknown }).provider;
+    if (typeof p === "string") provider = p;
+  }
+  return provider;
+}
+
 /** Sessions waiting for a usage limit to reset: session id to reset instant (ms since epoch). */
 const LIMIT_WAITS_FILE = (dir: string) => join(dir, "limit-waits.json");
 let limitChain: Promise<void> = Promise.resolve();

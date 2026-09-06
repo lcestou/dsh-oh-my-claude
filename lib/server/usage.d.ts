@@ -41,6 +41,9 @@ export type UsageFetch = (url: string, init: {
 }>;
 /** Read usage with the stored login; never throws, the panel shows the reason instead. */
 export declare function readUsage(fetchImpl?: UsageFetch, home?: string): Promise<UsageReply>;
+/** The reset instant of a window still at its cap, or undefined when nothing blocks a request.
+ *  A reply that could not be read answers undefined too: the wake then finds out by trying. */
+export declare function stillLimitedUntil(reply: UsageReply, now?: number): number | undefined;
 /** Serve `/dsh-oh-my-claude/usage` (`?force=1` refreshes sooner) from a small cache. */
 export declare function registerUsageRoute(ctx: PluginContext, log: (level: string, msg: string) => void, identity: (home?: string) => Promise<{
     host: string;

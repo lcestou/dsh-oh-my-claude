@@ -20,7 +20,7 @@ import {
 } from "@deepseek-ai/dsh-llm";
 import z from "@deepseek-ai/schemastery";
 import { accountIdentity, registerSessionRoutes } from "./sessions.js";
-import { registerUsageRoute } from "./usage.js";
+import { readUsage, registerUsageRoute, stillLimitedUntil } from "./usage.js";
 import { KEY_HEADER, MCP_PATH, registerMcpBridge } from "./mcp.js";
 import {
   type ClaudeEvent,
@@ -83,6 +83,7 @@ import {
   isPermissionMode,
   loadPermissionModes,
   type PermissionMode,
+  lastSelectedProvider,
   loadLimitWaits,
   loadTurnRecords,
   saveLimitWait,
@@ -557,9 +558,19 @@ async function claudeSessionExists(home: string, cwd: string, id: string): Promi
 /** The slice of a dsh message this adapter reads; exported for test fixtures. */
 export type LooseMessage = {
   role?: string;
-  source?: { kind?: string; plugin?: string; rpcId?: string };
+  source?: { kind?: string; plugin?: string; rpcId?: string; clientTimeZone?: string };
   content?: string | ContentBlock[];
 };
+
+/** The browser's IANA zone as dsh stamped it on the latest user prompt; undefined when no
+ *  prompt carried one (an API caller, an old log), so clocks fall back to the box's zone. */
+export function clientTimeZone(messages: readonly LooseMessage[]): string | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const zone = messages[i]?.source?.clientTimeZone;
+    if (zone) return zone;
+  }
+  return undefined;
+}
 
 const textOf = (content: LooseMessage["content"]): string => {
   if (!Array.isArray(content)) return content ?? "";
@@ -2246,6 +2257,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const tr = new Translator({
       toolActivity: this.config.toolActivity,
       continueAfterLimit: this.config.continueAfterLimit,
+      timeZone: clientTimeZone(options.messages),
       toolTextLimit: this.config.toolTextLimit,
       relay: this.mcp !== undefined && this.config.dshTools,
       dshIds: proc.dshIds,
@@ -2533,12 +2545,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const timer = setTimeout(() => {
       this.limitTimers.delete(sessionId);
       saveLimitWait(this.stateDir, sessionId, undefined).catch(() => {});
-      const proc = this.processes.get(registryKey(this.providerId, sessionId));
-      this.wake(sessionId, proc, LIMIT_TEXT)
-        .then((sent) =>
-          trace(log, `limit wait ${sessionId}: fired, notice ${sent ? "sent" : "not sent"}`),
-        )
-        .catch((e) => trace(log, `limit wait ${sessionId}: ${errorText(e)}`));
+      this.continueAfterLimit(sessionId).catch((e) =>
+        trace(log, `limit wait ${sessionId}: ${errorText(e)}`),
+      );
     }, delay);
     timer.unref?.();
     this.limitTimers.set(sessionId, timer);
@@ -2547,6 +2556,40 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       log,
       `limit wait ${sessionId}: armed for ${new Date(resetAt).toISOString()} (+${Math.round(delay / 1000)}s)`,
     );
+  }
+
+  /** The wait fired. Two things may have changed meanwhile: the session may have been rerouted
+   *  to another provider (then the notice would reach a model the limit never touched), and the
+   *  account may still be capped (another window, another login, a moved reset). Check both
+   *  before the notice goes out; a probe that cannot answer lets the wake try. */
+  async continueAfterLimit(sessionId: string, probe = readUsage) {
+    const log = join(this.stateDir, "resume.log");
+    const provider = this.sessionProvider(sessionId);
+    if (provider !== undefined && provider !== this.providerId) {
+      await trace(log, `limit wait ${sessionId}: session now on ${provider}, notice dropped`);
+      return;
+    }
+    const reply = await probe(fetch, this.config.configDir ? this.claudeHome : undefined);
+    const until = stillLimitedUntil(reply);
+    if (until !== undefined) {
+      await trace(log, `limit wait ${sessionId}: still at the cap, re-armed`);
+      this.armLimitWait(sessionId, until);
+      return;
+    }
+    const proc = this.processes.get(registryKey(this.providerId, sessionId));
+    const sent = await this.wake(sessionId, proc, LIMIT_TEXT);
+    await trace(log, `limit wait ${sessionId}: fired, notice ${sent ? "sent" : "not sent"}`);
+  }
+
+  /** The provider a session last selected, from its own log; undefined when it never picked one
+   *  (dsh's default applies) or the session cannot be read. */
+  sessionProvider(sessionId: string): string | undefined {
+    try {
+      const session = this.ctx?.sessions?.get?.(asSessionId(sessionId));
+      return session ? lastSelectedProvider(session.snapshotEvents()) : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   clearLimitWait(sessionId: string) {
@@ -2898,6 +2941,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     }
     const tr = new Translator({
       toolActivity: false,
+      timeZone: clientTimeZone(options.messages),
       toolTextLimit: this.config.toolTextLimit,
       log: this.log.bind(this),
     });

@@ -18,6 +18,8 @@ export declare class Translator {
     continueAfterLimit: boolean;
     /** Set when a usage limit ended the turn with a reset time in the future (ms since epoch). */
     limitResetAt: number | undefined;
+    /** IANA zone for reset clocks: the browser's when dsh stamped one, else the box's. */
+    timeZone: string | undefined;
     relay: boolean;
     dshIds: Set<string>;
     dshNames: Map<string, string>;
@@ -50,9 +52,10 @@ export declare class Translator {
      * one callId, which throws in ConversationNodeAssembler and stalls the whole event feed.
      */
     private fireToolCall;
-    constructor({ toolActivity, continueAfterLimit, toolTextLimit, relay, dshIds, relayed, log, onToolCall, onToolResult, onResult, redact, onInit, }?: {
+    constructor({ toolActivity, continueAfterLimit, timeZone, toolTextLimit, relay, dshIds, relayed, log, onToolCall, onToolResult, onResult, redact, onInit, }?: {
         toolActivity?: boolean;
         continueAfterLimit?: boolean;
+        timeZone?: string;
         toolTextLimit?: number;
         relay?: boolean;
         dshIds?: Set<string>;

@@ -80,6 +80,8 @@ export class Translator {
   continueAfterLimit: boolean;
   /** Set when a usage limit ended the turn with a reset time in the future (ms since epoch). */
   limitResetAt: number | undefined;
+  /** IANA zone for reset clocks: the browser's when dsh stamped one, else the box's. */
+  timeZone: string | undefined;
   relay: boolean; // dsh tool calls are relayed to dsh's own loop: hide Claude's view of them
   dshIds: Set<string>; // tool_use ids of dsh tools called over the MCP bridge
   dshNames: Map<string, string>; // dsh tool_use id → tool name, for a fallback row
@@ -126,6 +128,7 @@ export class Translator {
   constructor({
     toolActivity = true,
     continueAfterLimit = false,
+    timeZone,
     toolTextLimit = TOOL_TEXT_LIMIT,
     relay = false,
     dshIds,
@@ -139,6 +142,7 @@ export class Translator {
   }: {
     toolActivity?: boolean;
     continueAfterLimit?: boolean;
+    timeZone?: string;
     toolTextLimit?: number;
     relay?: boolean;
     dshIds?: Set<string>;
@@ -155,6 +159,7 @@ export class Translator {
     this.toolActivity = toolActivity;
     this.continueAfterLimit = continueAfterLimit;
     this.limitResetAt = undefined;
+    this.timeZone = timeZone;
     this.relay = relay; // dsh tool calls are relayed to dsh's own loop: hide Claude's view of them
     this.dshIds = dshIds ?? new Set(); // tool_use ids of dsh tools called over the MCP bridge
     this.dshNames = new Map(); // dsh tool_use id → tool name, for a fallback row
@@ -316,7 +321,7 @@ export class Translator {
           const wait = Math.round((event.retry_delay_ms ?? 0) / 1000);
           const resetsAt = err.rate_limits?.resets_at;
           const reset = Number.isFinite(resetsAt)
-            ? ` (resets ${resetClock((resetsAt ?? 0) * 1000)})`
+            ? ` (resets ${resetClock((resetsAt ?? 0) * 1000, this.timeZone)})`
             : "";
           return this.wholeBlock(
             "reasoning",
@@ -398,8 +403,8 @@ export class Translator {
         const tail =
           resetMs > 0
             ? this.continueAfterLimit
-              ? `continuing automatically at ${resetClock(resetAt)}`
-              : `resets ${resetClock(resetAt)}`
+              ? `continuing automatically at ${resetClock(resetAt, this.timeZone)}`
+              : `resets ${resetClock(resetAt, this.timeZone)}`
             : "rejected";
         const failure: LlmFailure & { providerRetryAfterMs?: number } = {
           message: `You've hit your usage limit · ${tail}`,
