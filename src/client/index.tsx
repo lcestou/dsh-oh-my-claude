@@ -561,6 +561,10 @@ function Sessions({ ctx, boxes }: SessionsProps) {
       });
     for (const b of boxes) {
       const r = remote.find((x) => x.url === b.url);
+      // A box whose URL loops back to this same dsh (e.g. a NAS reverse proxy pointing at self)
+      // reports the local hostname and returns the same transcripts already in the local group.
+      // Skip it so nothing is listed twice; when unreachable we cannot tell, so it still shows.
+      if (local?.host && r?.host && r.host === local.host) continue;
       out.push({
         key: b.url,
         name: b.name,
@@ -1926,8 +1930,19 @@ function watchTurnStatus(ctx: ClientCtx) {
 const spinnerRowTitle = (dot: Element): string | null =>
   dot.closest("span")?.nextElementSibling?.textContent?.trim() ?? null;
 
+// The composer's primary send/stop button shares the local CSS-module class `_primary` with one
+// button in a settings view, so class alone is not enough. The real one shares an ancestor with the
+// message box (a contenteditable). Walk up until an ancestor holds one; null means it is not the
+// composer button. Structural, so no hashed class is needed.
+const inComposer = (node: Element): boolean => {
+  for (let p = node.parentElement; p && p !== document.body; p = p.parentElement)
+    if (p.querySelector("[contenteditable]")) return true;
+  return false;
+};
+
 function watchSessionSpinners(ctx: ClientCtx) {
   const MARK = "data-omc-spinner";
+  const SEND_MARK = "data-omc-send";
   // displayTitles of the sessions that are both running and on a Claude mount, this instant.
   const claudeRunningTitles = (): Set<string> => {
     const set = new Set<string>();
@@ -1958,6 +1973,21 @@ function watchSessionSpinners(ctx: ClientCtx) {
       } else if (dot.hasAttribute(MARK)) {
         dot.style.color = "";
         dot.removeAttribute(MARK);
+      }
+    }
+    // The composer's send/stop button (one button, aria-label toggles). dsh fills it from
+    // `--dsw-alias-button-info-*`; overriding those two vars on the button recolours both the base
+    // and hover states in one place, and clearing them hands it back to dsh's blue on the next pass.
+    for (const sendBtn of document.querySelectorAll<HTMLElement>('button[class*="_primary"]')) {
+      const sendWant = openIsClaude && inComposer(sendBtn);
+      if (sendWant) {
+        sendBtn.style.setProperty("--dsw-alias-button-info-fill", CLAUDE_ORANGE);
+        sendBtn.style.setProperty("--dsw-alias-button-info-hover", CLAUDE_SHIMMER);
+        sendBtn.setAttribute(SEND_MARK, "1");
+      } else if (sendBtn.hasAttribute(SEND_MARK)) {
+        sendBtn.style.removeProperty("--dsw-alias-button-info-fill");
+        sendBtn.style.removeProperty("--dsw-alias-button-info-hover");
+        sendBtn.removeAttribute(SEND_MARK);
       }
     }
   };

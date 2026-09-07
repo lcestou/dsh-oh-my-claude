@@ -2196,10 +2196,18 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
             viewport.appendChild(note);
           }
 
-          // Error wrap at the bottom.
+          // Error wrap at the bottom. Padding lives in a class so an empty slot collapses via
+          // `:empty` (no leftover space under the last row) and returns the instant an error lands.
+          if (!document.getElementById("omc-access-err-style")) {
+            const st = document.createElement("style");
+            st.id = "omc-access-err-style";
+            st.textContent = ".omc-access-err{padding:8px 10px}.omc-access-err:empty{padding:0}";
+            document.head.appendChild(st);
+          }
           const errWrap = document.createElement("div");
           errWrap.setAttribute("data-err", "1");
-          Object.assign(errWrap.style, { ...meta, color: T.err, padding: "8px 10px" });
+          errWrap.className = "omc-access-err";
+          Object.assign(errWrap.style, { ...meta, color: T.err });
           viewport.appendChild(errWrap);
         }
       });
