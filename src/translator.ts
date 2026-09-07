@@ -61,6 +61,25 @@ const BENIGN_EVENTS = new Set([
 // stream_event sub-types with no renderable delta (SSE bookkeeping).
 const BENIGN_PARTIALS = new Set(["message_delta", "message_stop", "ping"]);
 
+/** The elapsed marks a long tool call reports at, in seconds; past the last one it repeats every
+ *  five minutes. A 30-second call is already the first heartbeat the CLI sends, so a call that
+ *  finishes quickly never draws a line at all. */
+const HEARTBEAT_STEPS = [30, 60, 120, 300, 600];
+const HEARTBEAT_REPEAT = 300;
+const nextHeartbeat = (elapsed: number): number =>
+  HEARTBEAT_STEPS.find((s) => s > elapsed) ??
+  (Math.floor(elapsed / HEARTBEAT_REPEAT) + 1) * HEARTBEAT_REPEAT;
+
+/** `45s`, `4m30s`, `1h2m`: how long a call has been running, in the shortest form that stays exact. */
+export function elapsedText(seconds: number): string {
+  const s = Math.max(0, Math.round(seconds));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return s % 60 ? `${m}m${s % 60}s` : `${m}m`;
+  const h = Math.floor(m / 60);
+  return m % 60 ? `${h}h${m % 60}m` : `${h}h`;
+}
+
 /** A reset instant as the CLI's error reference prints it: `3:45pm` later today, `Mon 12am`
  *  within the week, `Sep 8, 1pm` beyond it, then the zone. Minutes only when they are not zero.
  *  No year: a plan window reopens within a week, so the nearest future date is the only reading. */
@@ -122,6 +141,9 @@ export class Translator {
     string,
     { block: TranslatorBlock; lastSummary?: string; lastToolName?: string }
   >();
+  /** tool_use_id → { block, nextAt } tracks the block a long-running call reports its elapsed
+   *  time into, and the next elapsed mark worth a line. */
+  readonly heartbeatBlocks = new Map<string, { block: TranslatorBlock; nextAt: number }>();
   /** Injected: append tool/call to the dsh session for a native Claude Code tool. */
   onToolCall?: (callId: string, name: string, args: string) => number | undefined;
   /** Injected: append tool/result to the dsh session for a native Claude Code tool. */
@@ -410,6 +432,8 @@ export class Translator {
         const size = Number.isFinite(meta.pre_tokens) ? `, ${meta.pre_tokens} tokens before` : "";
         return this.wholeBlock("reasoning", `✓ Context compacted by Claude Code (${how}${size})`);
       }
+      case "tool_progress":
+        return this.toolProgress(event);
       case "stream_event":
         return this.partial(event.event ?? { type: "" });
       case "assistant":
@@ -424,6 +448,9 @@ export class Translator {
           events.push(...this.endBlock(entry.block));
         }
         this.taskBlocks.clear();
+        // Same for a call that never reported a result: its block would otherwise stay open.
+        for (const [, entry] of this.heartbeatBlocks) events.push(...this.endBlock(entry.block));
+        this.heartbeatBlocks.clear();
         if (this.denied > 0 && !event.is_error) {
           const n = this.denied;
           events.push(
@@ -690,6 +717,57 @@ export class Translator {
     return ["reasoning", `▶ ${cb.name} `];
   }
 
+  /** The CLI's per-call progress frame. Two variants reach a headless run: a 30-second heartbeat
+   *  carrying the live elapsed time, and a subagent retrying an API failure. A call that finishes
+   *  inside 30 seconds never sends one, so a block here means "this one is genuinely slow" —
+   *  without it a ten-minute Bash call is indistinguishable from a hung process. */
+  toolProgress(event: Extract<ClaudeEvent, { type: "tool_progress" }>): StreamChunk[] {
+    if (!this.toolActivity) return [];
+    const name = clip(event.tool_name || "tool");
+    const retry = event.subagent_retry;
+    if (retry) {
+      // Not a heartbeat and not on a clock: the only signal that a subagent is quietly retrying.
+      const attempt = retry.attempt ?? 0;
+      const max = retry.max_retries ?? 0;
+      const count = attempt && max ? ` ${attempt}/${max}` : attempt ? ` ${attempt}` : "";
+      const why = retry.error_category || (retry.error_status ? `HTTP ${retry.error_status}` : "");
+      const wait = retry.retry_delay_ms
+        ? `, retrying in ${Math.round(retry.retry_delay_ms / 1000)}s`
+        : "";
+      const who = event.subagent_type ? `${name} [${event.subagent_type}]` : name;
+      return this.wholeBlock(
+        "reasoning",
+        `↻ ${who} attempt${count} failed${why ? `: ${why}` : ""}${wait}`,
+      );
+    }
+    const id = event.tool_use_id;
+    if (!event.heartbeat || !id) return [];
+    const elapsed = event.elapsed_time_seconds ?? 0;
+    const entry = this.heartbeatBlocks.get(id);
+    if (!entry) {
+      const tag = event.parent_tool_use_id ? "↳ " : "";
+      const { block, events } = this.startBlock(
+        "reasoning",
+        `${tag}⏱ ${name} running · ${elapsedText(elapsed)}`,
+      );
+      this.heartbeatBlocks.set(id, { block, nextAt: nextHeartbeat(elapsed) });
+      return events;
+    }
+    // Every heartbeat after the first only writes when it passes the next mark, so a long call
+    // grows a handful of lines rather than one every 30 seconds.
+    if (elapsed < entry.nextAt) return [];
+    entry.nextAt = nextHeartbeat(elapsed);
+    return this.delta(entry.block, `\n⏱ ${elapsedText(elapsed)}`);
+  }
+
+  /** Close the elapsed-time block a slow call opened, whichever way its result is drawn. */
+  endHeartbeat(toolUseId: string): StreamChunk[] {
+    const entry = this.heartbeatBlocks.get(toolUseId);
+    if (!entry) return [];
+    this.heartbeatBlocks.delete(toolUseId);
+    return this.endBlock(entry.block);
+  }
+
   toolResults(content: ClaudeContentBlock[], parentToolUseId: string | null | undefined) {
     this.toolPending = false;
     if (!this.toolActivity) return [];
@@ -702,6 +780,7 @@ export class Translator {
       const body = clip(raw || "(empty)", this.limit);
       const tag = parentToolUseId ? "↳ " : "";
       const toolUseId = b.tool_use_id ?? "";
+      events.push(...this.endHeartbeat(toolUseId));
       const dsh = this.dshIds.delete(toolUseId);
       if (dsh && this.relayed.delete(toolUseId)) continue; // dsh drew the native call and result
       // Native tool result: append a dsh session row, skip reasoning text.

@@ -81,6 +81,25 @@ export type ClaudeEvent = {
         } | null;
     };
 } | {
+    /** Top-level frame, not a `system` subtype: the CLI emits one per running tool call every 30
+     *  seconds with `heartbeat: true`, and one without it when a subagent retries an API failure. */
+    type: "tool_progress";
+    tool_use_id?: string;
+    tool_name?: string;
+    parent_tool_use_id?: string | null;
+    elapsed_time_seconds?: number;
+    heartbeat?: boolean;
+    task_id?: string;
+    subagent_type?: string;
+    subagent_retry?: {
+        agent_id?: string;
+        attempt?: number;
+        max_retries?: number;
+        retry_delay_ms?: number;
+        error_status?: number;
+        error_category?: string;
+    };
+} | {
     type: "stream_event";
     event?: ClaudeStreamPartial;
 } | {

@@ -71,7 +71,7 @@ import {
 } from "./state.js";
 import type { ClaudeEvent, ClaudeProcessSpec, SubprocessHandle } from "./process.js";
 import type { LooseMessage } from "./adapter.js";
-import { resetClock } from "./translator.js";
+import { elapsedText, resetClock } from "./translator.js";
 import type { FinishReason, LlmFailure, Message, StreamChunk } from "@deepseek-ai/dsh-llm";
 import type { Agent, PluginContext, SubprocessSpawnSpec } from "./dsh.js";
 import type { SubprocessHandle as SeamHandle } from "./dsh.js";
@@ -1573,6 +1573,109 @@ console.log("ok");
     "background_tasks_changed",
   );
   console.log("task-frames ok");
+}
+{
+  // tool_progress: the CLI heartbeats every 30s per running call. The first one opens a block, the
+  // ones after it only write when they pass the next elapsed mark, the tool result closes the block,
+  // and the retry variant is its own line.
+  const t = new Translator() as any;
+  const first = t.translate({
+    type: "tool_progress",
+    tool_use_id: "call1",
+    tool_name: "Bash",
+    elapsed_time_seconds: 30,
+    heartbeat: true,
+  });
+  assert.equal(first.at(-1).text, "⏱ Bash running · 30s", "the first heartbeat opens the block");
+  assert.equal(t.heartbeatBlocks.size, 1);
+  // Between marks: nothing. The next mark after 30s is 60s.
+  assert.deepEqual(
+    t.translate({
+      type: "tool_progress",
+      tool_use_id: "call1",
+      tool_name: "Bash",
+      elapsed_time_seconds: 45,
+      heartbeat: true,
+    }),
+    [],
+    "a heartbeat short of the next mark is silent",
+  );
+  const later = t.translate({
+    type: "tool_progress",
+    tool_use_id: "call1",
+    tool_name: "Bash",
+    elapsed_time_seconds: 270,
+    heartbeat: true,
+  });
+  assert.equal(
+    later.at(-1).text,
+    "\n⏱ 4m30s",
+    "a heartbeat past the mark appends the elapsed time",
+  );
+  // The result closes the block, in the same batch as the result row.
+  const done = t.translate({
+    type: "user",
+    message: { content: [{ type: "tool_result", tool_use_id: "call1", content: "ok" }] },
+  });
+  assert.equal(done[0].type, "block-end", "the tool result closes the elapsed block first");
+  assert.equal(t.heartbeatBlocks.size, 0, "the closed call leaves the map");
+
+  // A call still running when the turn ends has its block closed by the result frame.
+  const t2 = new Translator() as any;
+  t2.translate({
+    type: "tool_progress",
+    tool_use_id: "call2",
+    tool_name: "WebFetch",
+    elapsed_time_seconds: 30,
+    heartbeat: true,
+  });
+  const end = t2.translate({ type: "result", subtype: "success", usage: {} });
+  assert(
+    end.some((e: any) => e.type === "block-end"),
+    "the result frame closes an open elapsed block",
+  );
+  assert.equal(t2.heartbeatBlocks.size, 0);
+
+  // The retry variant carries no heartbeat and gets one closed line of its own.
+  const t3 = new Translator() as any;
+  const retry = t3.translate({
+    type: "tool_progress",
+    tool_use_id: "call3",
+    tool_name: "Task",
+    elapsed_time_seconds: 0,
+    subagent_type: "Explore",
+    subagent_retry: {
+      attempt: 2,
+      max_retries: 5,
+      retry_delay_ms: 4000,
+      error_category: "overloaded",
+    },
+  });
+  assert.equal(
+    retry.at(-1).block.text,
+    "↻ Task [Explore] attempt 2/5 failed: overloaded, retrying in 4s",
+  );
+  assert.equal(t3.heartbeatBlocks.size, 0, "a retry opens no elapsed block");
+  // toolActivity off means no heartbeat rows at all.
+  const quiet = new Translator({ toolActivity: false }) as any;
+  assert.deepEqual(
+    quiet.translate({
+      type: "tool_progress",
+      tool_use_id: "call4",
+      tool_name: "Bash",
+      elapsed_time_seconds: 30,
+      heartbeat: true,
+    }),
+    [],
+    "toolActivity off",
+  );
+  // elapsedText: seconds, minutes with and without a remainder, then hours.
+  assert.equal(elapsedText(0), "0s");
+  assert.equal(elapsedText(59), "59s");
+  assert.equal(elapsedText(60), "1m");
+  assert.equal(elapsedText(3600), "1h");
+  assert.equal(elapsedText(3720), "1h2m");
+  console.log("tool-progress ok");
 }
 {
   // The compaction start frame (status:"compacting") is announced at once, so the silent summarize

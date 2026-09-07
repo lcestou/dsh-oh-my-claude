@@ -8,6 +8,8 @@ export interface TranslatorBlock {
     started: boolean;
     tool?: boolean;
 }
+/** `45s`, `4m30s`, `1h2m`: how long a call has been running, in the shortest form that stays exact. */
+export declare function elapsedText(seconds: number): string;
 /** A reset instant as the CLI's error reference prints it: `3:45pm` later today, `Mon 12am`
  *  within the week, `Sep 8, 1pm` beyond it, then the zone. Minutes only when they are not zero.
  *  No year: a plan window reopens within a week, so the nearest future date is the only reading. */
@@ -43,6 +45,12 @@ export declare class Translator {
         block: TranslatorBlock;
         lastSummary?: string;
         lastToolName?: string;
+    }>;
+    /** tool_use_id → { block, nextAt } tracks the block a long-running call reports its elapsed
+     *  time into, and the next elapsed mark worth a line. */
+    readonly heartbeatBlocks: Map<string, {
+        block: TranslatorBlock;
+        nextAt: number;
     }>;
     /** Injected: append tool/call to the dsh session for a native Claude Code tool. */
     onToolCall?: (callId: string, name: string, args: string) => number | undefined;
@@ -113,5 +121,14 @@ export declare class Translator {
         id?: string;
         name?: string;
     }): [string, string];
+    /** The CLI's per-call progress frame. Two variants reach a headless run: a 30-second heartbeat
+     *  carrying the live elapsed time, and a subagent retrying an API failure. A call that finishes
+     *  inside 30 seconds never sends one, so a block here means "this one is genuinely slow" —
+     *  without it a ten-minute Bash call is indistinguishable from a hung process. */
+    toolProgress(event: Extract<ClaudeEvent, {
+        type: "tool_progress";
+    }>): StreamChunk[];
+    /** Close the elapsed-time block a slow call opened, whichever way its result is drawn. */
+    endHeartbeat(toolUseId: string): StreamChunk[];
     toolResults(content: ClaudeContentBlock[], parentToolUseId: string | null | undefined): StreamChunk[];
 }
