@@ -8,8 +8,9 @@ export interface TranslatorBlock {
     started: boolean;
     tool?: boolean;
 }
-/** A reset instant as the CLI prints it: `1pm` within a day, `Sep 8, 1pm` beyond one, then the
- *  zone. Minutes only when they are not zero, the year only when it differs from this one. */
+/** A reset instant as the CLI's error reference prints it: `3:45pm` later today, `Mon 12am`
+ *  within the week, `Sep 8, 1pm` beyond it, then the zone. Minutes only when they are not zero.
+ *  No year: a plan window reopens within a week, so the nearest future date is the only reading. */
 export declare function resetClock(ms: number, zone?: string): string;
 export declare class Translator {
     log: (level: string, msg: string) => void;

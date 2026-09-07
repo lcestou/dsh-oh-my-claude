@@ -618,10 +618,17 @@ const soon = Math.floor(Date.now() / 1000) + 120;
   );
 }
 {
-  // Beyond a day the clock carries the date, as the CLI's own formatter does.
+  // The CLI's error reference prints a time today, a weekday inside the week, a date beyond it.
+  const day = 24 * 60 * 60 * 1000;
   assert.match(
-    resetClock(Date.now() + 40 * 60 * 60 * 1000, "America/New_York"),
+    resetClock(Date.now() + (40 * day) / 24, "America/New_York"),
+    /^[A-Z][a-z]{2} \d{1,2}(:\d{2})?[ap]m \(America\/New_York\)$/,
+    "inside the week: weekday and time",
+  );
+  assert.match(
+    resetClock(Date.now() + 9 * day, "America/New_York"),
     /^[A-Z][a-z]{2} \d{1,2}, \d{1,2}(:\d{2})?[ap]m \(America\/New_York\)$/,
+    "beyond the week: date and time",
   );
   assert.equal(resetClock(1_757_199_600_000, "America/New_York"), "7pm (America/New_York)");
   assert.equal(resetClock(1_757_201_400_000, "America/New_York"), "7:30pm (America/New_York)");
