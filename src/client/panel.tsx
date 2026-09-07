@@ -1899,10 +1899,16 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
   // overflow hidden so the body is the only scroller and the tab strip cannot scroll out of it.
   const panelStyle: CSSProperties = {
     position: "fixed",
-    left: "50%",
+    // Centred by a left/right inset and auto margins rather than 50% plus a translate: `100vw`
+    // counts the page's scrollbar, so any width measured from it can sit a few pixels past the
+    // right edge and give the whole page a horizontal scrollbar. An inset cannot.
+    left: 12,
+    right: 12,
+    marginInline: "auto",
     bottom: above,
-    width: narrow ? "calc(100vw - 24px)" : "min(560px, calc(100vw - 24px))",
-    maxHeight: narrow ? "60vh" : 400,
+    width: narrow ? "auto" : "min(560px, 100%)",
+    // dvh, not vh: on a phone the browser chrome slides away and vh keeps measuring the tall value.
+    maxHeight: narrow ? "60dvh" : "min(400px, 80dvh)",
     zIndex: 200,
     display: "flex",
     flexDirection: "column",
@@ -1913,8 +1919,8 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
     boxShadow: "0 8px 24px rgba(0,0,0,.18)",
     overflow: "hidden",
     opacity: shown ? 1 : 0,
-    // The centring translate has to stay in the same transform, so the rise rides along with it.
-    transform: shown ? "translateX(-50%)" : "translateX(-50%) translateY(6px)",
+    // Insets do the centring now, so the transform carries the rise alone.
+    transform: shown ? "none" : "translateY(6px)",
     transition: `opacity ${easeMs()}ms ease, transform ${easeMs()}ms ease`,
   };
 
@@ -1996,8 +2002,10 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
               flex: "0 0 auto",
               borderTop: `1px solid ${T.border}`,
               paddingTop: 6,
-              overflowX: "auto",
-              whiteSpace: "nowrap",
+              // Wrap rather than scroll sideways: a strip that scrolls hides the tab that did not
+              // fit, and the panel is anchored to its bottom edge, so a second row grows upward.
+              flexWrap: "wrap",
+              rowGap: 4,
             }}
           >
             {tabs.map((t) => (
