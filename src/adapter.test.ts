@@ -20,6 +20,7 @@ import {
   claudeSessionId,
   getCatalog,
   modelFromApi,
+  stableModelId,
   projectDirName,
   resolveModelInfo,
   selectTurns,
@@ -491,6 +492,23 @@ const failing = await getCatalog(async () => {
   throw new Error("offline");
 });
 assert.equal(failing, KNOWN_MODELS);
+
+// A dated id for a model we know is advertised the way the fallback list spells it, so the lineup
+// reads the same whether the API answered or not; one we do not know keeps the API's spelling.
+assert.equal(stableModelId("claude-haiku-4-5-20251001"), "claude-haiku-4-5");
+assert.equal(stableModelId("claude-sonnet-4-5-20250929"), "claude-sonnet-4-5");
+assert.equal(stableModelId("claude-opus-5"), "claude-opus-5", "undated ids are left alone");
+assert.equal(
+  stableModelId("claude-opus-9-20261231"),
+  "claude-opus-9-20261231",
+  "a model the fallback list does not name keeps its date",
+);
+assert.equal(modelFromApi({ id: "claude-haiku-4-5-20251001" }).id, "claude-haiku-4-5");
+assert.equal(
+  resolveModelInfo("claude-code", "claude-haiku-4-5-20251001").context?.contextWindow,
+  200_000,
+  "a session stored under the dated id still resolves",
+);
 
 // access-mode switch from the dsh UI → Claude Code permission mode, unless config pins one
 const policy = (mode: string): LooseMessage => ({

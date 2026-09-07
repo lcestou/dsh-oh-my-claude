@@ -225,6 +225,15 @@ export declare const KNOWN_MODELS: {
     efforts: readonly string[];
 }[];
 /**
+ * The Models API dates some ids (`claude-haiku-4-5-20251001`) and leaves others alone
+ * (`claude-opus-5`), while the list above and the CLI's own picker use the undated form. The CLI
+ * takes either, but dsh keys a model by its id: a lineup that spells the same model one way from
+ * the API and another from this list retires the enabled one and offers a fresh unselected copy
+ * every time the source changes. So an API id whose undated form is one we know is advertised
+ * undated, and an id we do not know keeps whatever the API called it.
+ */
+export declare const stableModelId: (id: string) => string;
+/**
  * Retrieves authentication headers for the Anthropic API, checking
  * environment variables and stored credentials.
  * @returns {Promise<object|null>} API auth headers or null if unavailable

@@ -414,6 +414,19 @@ export const KNOWN_MODELS = [
   M("claude-haiku-4-5", "Claude Haiku 4.5", 200_000, []),
 ];
 
+/**
+ * The Models API dates some ids (`claude-haiku-4-5-20251001`) and leaves others alone
+ * (`claude-opus-5`), while the list above and the CLI's own picker use the undated form. The CLI
+ * takes either, but dsh keys a model by its id: a lineup that spells the same model one way from
+ * the API and another from this list retires the enabled one and offers a fresh unselected copy
+ * every time the source changes. So an API id whose undated form is one we know is advertised
+ * undated, and an id we do not know keeps whatever the API called it.
+ */
+export const stableModelId = (id: string): string => {
+  const bare = id.replace(/-\d{8}$/, "");
+  return bare !== id && KNOWN_MODELS.some((m) => m.id === bare) ? bare : id;
+};
+
 // No default effort is advertised: `--effort` is only sent when dsh picks one, so the CLI's own default rules.
 const MAX_IMAGES = 20;
 /** How many recent approval requests the Tune tab offers as rules. */
@@ -442,7 +455,8 @@ export function modelFromApi(m: {
 }): LlmModelInfo {
   const eff = m.capabilities?.effort;
   const efforts: string[] = eff?.supported ? EFFORTS_ALL.filter((l) => eff[l]?.supported) : [];
-  return M(m.id ?? "", m.display_name ?? m.id ?? "", m.max_input_tokens ?? 200_000, efforts);
+  const id = stableModelId(m.id ?? "");
+  return M(id, m.display_name ?? id, m.max_input_tokens ?? 200_000, efforts);
 }
 
 /**
@@ -524,7 +538,10 @@ export async function getCatalog(fetchImpl = fetch, cli: CliModel[] = [], picker
       });
       if (res.ok) {
         const data = (await res.json()).data ?? [];
-        if (data.length > 0) catalog = { at: Date.now(), models: data.map(modelFromApi) };
+        // Two dated ids can land on one undated id; the first the API lists wins.
+        const mapped: ReturnType<typeof M>[] = data.map(modelFromApi);
+        const models = [...new Map(mapped.map((m) => [m.id, m])).values()];
+        if (models.length > 0) catalog = { at: Date.now(), models };
         return mergeCatalog(cli, catalog.models, picker);
       }
     } catch {
@@ -557,7 +574,11 @@ export function resolveModelInfo(
   models: ReturnType<typeof M>[] = catalog.models,
 ): LlmResolvedModelInfo {
   const pool = [...models, ...KNOWN_MODELS];
-  const found = pool.find((m) => m.id === modelId) ?? pool.find((m) => m.id.startsWith(modelId));
+  // A session stored before the ids settled asks for the dated one; it still names a model we know.
+  const found =
+    pool.find((m) => m.id === modelId) ??
+    pool.find((m) => m.id.startsWith(modelId)) ??
+    pool.find((m) => m.id === stableModelId(modelId));
   const info: LlmResolvedModelInfo = {
     ...modelInfo(provider, { id: modelId, name: found?.name ?? modelId }),
   };
