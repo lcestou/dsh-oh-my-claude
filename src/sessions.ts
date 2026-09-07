@@ -397,6 +397,51 @@ async function readSettings(path: string): Promise<SettingsFile> {
   }
 }
 
+/** One `modelPicker.options` row, down to what a picker row shows. */
+interface PickerOption {
+  model: string;
+  label?: string;
+}
+
+/** The two settings.json keys that shape Claude Code's own `/model` picker. */
+export interface PickerSettings {
+  /** Allowlist entries: a family alias, a version prefix or a full id. Absent means no allowlist. */
+  availableModels?: string[];
+  /** Extra rows, in the order the CLI shows them after its built-in lineup. */
+  options: PickerOption[];
+  /** The CLI keeps only the Default row and those extra rows. */
+  replaceBuiltInOptions: boolean;
+}
+
+/**
+ * Read what settings.json says about the picker. Anything the CLI would ignore is dropped here,
+ * and a file that is missing, unreadable or silent on both keys reads as undefined, so a settings
+ * file someone is halfway through editing can never empty the picker.
+ */
+export async function readPickerSettings(path: string): Promise<PickerSettings | undefined> {
+  const file = await readSettings(path).catch(() => undefined);
+  if (!file?.exists) return undefined;
+  const { value } = parseSettingsText(file.text);
+  if (!value) return undefined;
+  const picker = value.modelPicker;
+  const allowed = value.availableModels;
+  if (!Array.isArray(allowed) && !isJsonObject(picker)) return undefined;
+  const out: PickerSettings = { options: [], replaceBuiltInOptions: false };
+  if (Array.isArray(allowed))
+    out.availableModels = allowed.filter((m): m is string => typeof m === "string");
+  if (isJsonObject(picker)) {
+    out.replaceBuiltInOptions = picker.replaceBuiltInOptions === true;
+    if (Array.isArray(picker.options))
+      for (const row of picker.options) {
+        if (!isJsonObject(row) || typeof row.model !== "string") continue;
+        const option: PickerOption = { model: row.model };
+        if (typeof row.label === "string") option.label = row.label;
+        out.options.push(option);
+      }
+  }
+  return out;
+}
+
 /** Keep the previous copy as .bak, write to a temp file, rename over: never a half-written file. */
 async function writeSettings(
   path: string,

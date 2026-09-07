@@ -31,6 +31,20 @@ export interface UsageWindow {
   resetsAt: number | null;
 }
 
+/** Usage credits ("extra usage") as the panel shows them; the money is already display text. */
+export interface UsageCredits {
+  enabled: boolean;
+  /** The spend cap is reached, so credits no longer cover a full window. */
+  capped: boolean;
+  /** Spent so far; absent when the payload stated no amount. */
+  used?: string;
+  /** The monthly limit or the cap, whichever the payload set. */
+  limit?: string;
+  canPurchase: boolean;
+  /** The API's own disclaimer, markdown with at most one link, relayed verbatim. */
+  note?: string;
+}
+
 /** What the route answers: the windows in display order, or why there are none. */
 export type UsageReply =
   | {
@@ -39,6 +53,7 @@ export type UsageReply =
       windows: UsageWindow[];
       /** Paid extra usage is on and its own cap not reached: a full window does not block. */
       extraUsage?: boolean;
+      credits?: UsageCredits;
       host?: string;
       email?: string | null;
     }
@@ -113,11 +128,69 @@ export function usageWindows(payload: unknown): UsageWindow[] {
   return out;
 }
 
-/** `extra_usage` in the payload: on, not user-disabled, spend cap not reached. */
-export function extraUsageOn(payload: unknown): boolean {
+/** An amount and the text the panel shows for it. */
+interface Money {
+  value: number;
+  text: string;
+}
+
+/**
+ * A money object in the payload (`{amount_minor, currency, exponent}`) read into both. The locale
+ * is fixed because the string is built here, on the box, beside English panel copy; the unit the
+ * user cares about is the payload's own currency, which is what varies.
+ */
+const money = (v: unknown): Money | undefined => {
+  if (!isRec(v)) return undefined;
+  const minor = v.amount_minor;
+  if (typeof minor !== "number" || !Number.isFinite(minor)) return undefined;
+  // Intl throws on a fraction count past 20 and on a code that is not three letters, and this
+  // payload is undocumented enough that either could arrive.
+  const exponent =
+    typeof v.exponent === "number" && v.exponent >= 0 && v.exponent <= 20 ? v.exponent : 2;
+  const currency =
+    typeof v.currency === "string" && /^[A-Za-z]{3}$/.test(v.currency) ? v.currency : "USD";
+  const value = minor / 10 ** exponent;
+  const text = new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency,
+    minimumFractionDigits: exponent,
+    maximumFractionDigits: exponent,
+  }).format(value);
+  return { value, text };
+};
+
+/**
+ * The payload states credits twice: `spend` is the modern block, `extra_usage` the older parallel
+ * one, so `spend` leads and `extra_usage` answers for a payload that predates it. Only `spend`
+ * carries amounts as money objects; the scale of the legacy `used_credits` is not documented and
+ * guessing it would print a wrong price, so a legacy-only payload shows its state without one.
+ */
+export function usageCredits(payload: unknown): UsageCredits {
   const row = isRec(payload) ? payload : {};
   const extra = isRec(row.extra_usage) ? row.extra_usage : {};
-  return extra.is_enabled === true && extra.spend_limit_reached !== true;
+  const spend = isRec(row.spend) ? row.spend : undefined;
+  const used = money(spend?.used);
+  const limit = money(spend?.limit) ?? money(spend?.cap);
+  // Only the legacy block says "reached" outright; a spend that has met its own limit is the
+  // same state said in numbers.
+  const capped =
+    extra.spend_limit_reached === true ||
+    (used !== undefined && limit !== undefined && limit.value > 0 && used.value >= limit.value);
+  const enabled = spend ? spend.enabled === true : extra.is_enabled === true;
+  const out: UsageCredits = { enabled, capped, canPurchase: spend?.can_purchase_credits === true };
+  // Credits that are off spend nothing, and the endpoint says so with a zero rather than a blank;
+  // a constant $0.00 in the row would be noise.
+  if (enabled && used) out.used = used.text;
+  if (enabled && limit) out.limit = limit.text;
+  const note = spend?.disclaimer;
+  if (typeof note === "string" && note.trim()) out.note = note;
+  return out;
+}
+
+/** Credits are on and their own cap not reached: a full plan window does not block a request. */
+export function extraUsageOn(payload: unknown): boolean {
+  const credits = usageCredits(payload);
+  return credits.enabled && !credits.capped;
 }
 
 /** The subset of fetch the reader uses, so tests can hand in a fake. */
@@ -153,6 +226,7 @@ export async function readUsage(fetchImpl: UsageFetch = fetch, home?: string): P
       fetchedAt: Date.now(),
       windows: usageWindows(payload),
       extraUsage: extraUsageOn(payload),
+      credits: usageCredits(payload),
     };
   } catch (e) {
     return { ok: false, error: errorText(e).slice(0, 200) };

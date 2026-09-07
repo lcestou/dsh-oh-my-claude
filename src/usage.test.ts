@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { extraUsageOn, readUsage, stillLimitedUntil, usageWindows } from "./usage.js";
+import type { UsageCredits } from "./usage.js";
+import { extraUsageOn, readUsage, stillLimitedUntil, usageCredits, usageWindows } from "./usage.js";
 
 // limits shape: session + weekly + one active scoped model, one inactive scoped model skipped
 const w = usageWindows({
@@ -85,5 +86,111 @@ assert.equal(noHeader.ok === false && noHeader.retryAfterMs, 60_000);
   assert.equal(extraUsageOn({ extra_usage: { is_enabled: false, user_disabled: true } }), false);
   assert.equal(extraUsageOn({}), false);
   console.log("still-limited ok");
+}
+
+// credits, as the ✻ popover row reads them
+{
+  const disclaimer =
+    "Usage credits cover you when you hit your plan limits. [Learn more](https://support.claude.com/articles/12429409)";
+  // the live payload with credits off: zero spent, no limit, purchase not offered
+  const off: UsageCredits = usageCredits({
+    extra_usage: {
+      is_enabled: false,
+      monthly_limit: null,
+      used_credits: null,
+      user_disabled: true,
+      spend_limit_reached: false,
+      credits_ever_enabled: true,
+    },
+    spend: {
+      used: { amount_minor: 0, currency: "USD", exponent: 2 },
+      limit: null,
+      percent: 0,
+      severity: "normal",
+      enabled: false,
+      cap: null,
+      disclaimer,
+      can_purchase_credits: false,
+      can_toggle: false,
+    },
+  });
+  assert.deepEqual(off, { enabled: false, capped: false, canPurchase: false, note: disclaimer });
+
+  // on with a cap: both amounts formatted from the payload's own currency and exponent
+  const on = usageCredits({
+    spend: {
+      enabled: true,
+      used: { amount_minor: 120, currency: "USD", exponent: 2 },
+      limit: { amount_minor: 2500, currency: "USD", exponent: 2 },
+      disclaimer,
+      can_purchase_credits: true,
+    },
+  });
+  assert.deepEqual(on, {
+    enabled: true,
+    capped: false,
+    used: "$1.20",
+    limit: "$25.00",
+    canPurchase: true,
+    note: disclaimer,
+  });
+
+  // `cap` stands in when no `limit` is set, and a currency other than the dollar keeps its symbol
+  assert.equal(
+    usageCredits({
+      spend: {
+        enabled: true,
+        used: { amount_minor: 5, currency: "EUR", exponent: 2 },
+        cap: {
+          amount_minor: 1000,
+          currency: "EUR",
+          exponent: 2,
+        },
+      },
+    }).limit,
+    "€10.00",
+  );
+
+  // the cap reached, from the legacy flag and from the numbers alone
+  assert.equal(usageCredits({ extra_usage: { spend_limit_reached: true } }).capped, true);
+  assert.equal(
+    usageCredits({
+      spend: {
+        enabled: true,
+        used: { amount_minor: 2500, currency: "USD", exponent: 2 },
+        limit: { amount_minor: 2500, currency: "USD", exponent: 2 },
+      },
+    }).capped,
+    true,
+  );
+
+  // a payload old enough to carry only `extra_usage`: state without amounts
+  assert.deepEqual(
+    usageCredits({ extra_usage: { is_enabled: true, spend_limit_reached: false } }),
+    {
+      enabled: true,
+      capped: false,
+      canPurchase: false,
+    },
+  );
+  assert.deepEqual(usageCredits(null), { enabled: false, capped: false, canPurchase: false });
+
+  // the consequence: credits covering a full window still stop the limit wait from arming, and a
+  // reached cap still arms it, whichever block the payload states them in
+  const now = 2_000_000;
+  const full = [{ label: "5-hour", usedPercent: 100, resetsAt: now + 7_000 }];
+  const reply = (payload: unknown) => ({
+    ok: true as const,
+    fetchedAt: now,
+    windows: full,
+    extraUsage: extraUsageOn(payload),
+  });
+  assert.equal(stillLimitedUntil(reply({ spend: { enabled: true } }), now), undefined);
+  assert.equal(stillLimitedUntil(reply({ spend: { enabled: false } }), now), now + 7_000);
+  assert.equal(
+    stillLimitedUntil(reply({ extra_usage: { is_enabled: true, spend_limit_reached: true } }), now),
+    now + 7_000,
+  );
+  console.log("credits ok");
 }
 console.log("usage ok");

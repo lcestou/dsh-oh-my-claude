@@ -1,6 +1,7 @@
 import type { Spawner, ContextUsage, WorkspaceDiff, McpServerStatus, CliModel } from "./process.js";
 import { LlmAdapter, type ContentBlock, type GenerateOptions, type LlmModelInfo, type LlmResolvedModelInfo, type StreamChunk } from "@deepseek-ai/dsh-llm";
 import z from "@deepseek-ai/schemastery";
+import { type PickerSettings } from "./sessions.js";
 import { readUsage } from "./usage.js";
 import { type ClaudeEvent, ClaudeProcess } from "./process.js";
 import type { Agent, ImageAttachmentRef, JsonValue, PluginContext, SessionController, SessionId, SubprocessRuntime } from "./dsh.js";
@@ -241,14 +242,14 @@ export declare function modelFromApi(m: {
         effort?: EffortCaps;
     };
 }): LlmModelInfo;
-export declare function mergeCatalog(cli: CliModel[], base: ReturnType<typeof M>[]): {
+export declare function mergeCatalog(cli: CliModel[], base: ReturnType<typeof M>[], picker?: PickerSettings): {
     provider: string;
     id: string;
     name: string;
     contextWindow: number;
     efforts: readonly string[];
 }[];
-export declare function getCatalog(fetchImpl?: typeof fetch, cli?: CliModel[]): Promise<{
+export declare function getCatalog(fetchImpl?: typeof fetch, cli?: CliModel[], picker?: PickerSettings): Promise<{
     provider: string;
     id: string;
     name: string;
@@ -494,12 +495,16 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
         id: string;
         name: string;
     };
+    /** Read on every listing rather than cached: an edit to settings.json takes effect at once. */
+    private pickerSettings;
     listModels(provider: string): Promise<{
         provider: string;
         id: string;
         name: string;
         inputModalities: readonly ["text", "image"];
     }[]>;
+    /** No picker filter here: the allowlist curates what the picker offers, and the CLI keeps a
+     *  session's own model when the allowlist excludes it rather than failing to resolve it. */
     resolveModel(provider: string, model: string, _signal?: AbortSignal): Promise<LlmResolvedModelInfo>;
     /** Get the effective permission mode for a session, checking for an override first. */
     getPermissionMode(sessionId: string, accessMode: string | undefined): string;

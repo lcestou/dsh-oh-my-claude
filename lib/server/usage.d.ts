@@ -6,6 +6,19 @@ export interface UsageWindow {
     /** Epoch ms, or null when the API did not say. */
     resetsAt: number | null;
 }
+/** Usage credits ("extra usage") as the panel shows them; the money is already display text. */
+export interface UsageCredits {
+    enabled: boolean;
+    /** The spend cap is reached, so credits no longer cover a full window. */
+    capped: boolean;
+    /** Spent so far; absent when the payload stated no amount. */
+    used?: string;
+    /** The monthly limit or the cap, whichever the payload set. */
+    limit?: string;
+    canPurchase: boolean;
+    /** The API's own disclaimer, markdown with at most one link, relayed verbatim. */
+    note?: string;
+}
 /** What the route answers: the windows in display order, or why there are none. */
 export type UsageReply = {
     ok: true;
@@ -13,6 +26,7 @@ export type UsageReply = {
     windows: UsageWindow[];
     /** Paid extra usage is on and its own cap not reached: a full window does not block. */
     extraUsage?: boolean;
+    credits?: UsageCredits;
     host?: string;
     email?: string | null;
 } | {
@@ -30,7 +44,14 @@ export type UsageReply = {
  * objects with `utilization`. All read; unknown kinds keep their API name as the label.
  */
 export declare function usageWindows(payload: unknown): UsageWindow[];
-/** `extra_usage` in the payload: on, not user-disabled, spend cap not reached. */
+/**
+ * The payload states credits twice: `spend` is the modern block, `extra_usage` the older parallel
+ * one, so `spend` leads and `extra_usage` answers for a payload that predates it. Only `spend`
+ * carries amounts as money objects; the scale of the legacy `used_credits` is not documented and
+ * guessing it would print a wrong price, so a legacy-only payload shows its state without one.
+ */
+export declare function usageCredits(payload: unknown): UsageCredits;
+/** Credits are on and their own cap not reached: a full plan window does not block a request. */
 export declare function extraUsageOn(payload: unknown): boolean;
 /** The subset of fetch the reader uses, so tests can hand in a fake. */
 export type UsageFetch = (url: string, init: {

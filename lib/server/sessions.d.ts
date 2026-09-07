@@ -93,6 +93,26 @@ export interface AccountIdentity {
     email: string | null;
 }
 export declare function accountIdentity(command?: string, configDir?: string): Promise<AccountIdentity>;
+/** One `modelPicker.options` row, down to what a picker row shows. */
+interface PickerOption {
+    model: string;
+    label?: string;
+}
+/** The two settings.json keys that shape Claude Code's own `/model` picker. */
+export interface PickerSettings {
+    /** Allowlist entries: a family alias, a version prefix or a full id. Absent means no allowlist. */
+    availableModels?: string[];
+    /** Extra rows, in the order the CLI shows them after its built-in lineup. */
+    options: PickerOption[];
+    /** The CLI keeps only the Default row and those extra rows. */
+    replaceBuiltInOptions: boolean;
+}
+/**
+ * Read what settings.json says about the picker. Anything the CLI would ignore is dropped here,
+ * and a file that is missing, unreadable or silent on both keys reads as undefined, so a settings
+ * file someone is halfway through editing can never empty the picker.
+ */
+export declare function readPickerSettings(path: string): Promise<PickerSettings | undefined>;
 /** A dsh session a transcript belongs to, and whether it is archived. */
 export interface OwnedSession {
     id: string;

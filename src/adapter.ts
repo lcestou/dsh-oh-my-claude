@@ -19,7 +19,12 @@ import {
   createUserMessage,
 } from "@deepseek-ai/dsh-llm";
 import z from "@deepseek-ai/schemastery";
-import { accountIdentity, registerSessionRoutes } from "./sessions.js";
+import {
+  accountIdentity,
+  type PickerSettings,
+  readPickerSettings,
+  registerSessionRoutes,
+} from "./sessions.js";
 import { readUsage, registerUsageRoute, stillLimitedUntil } from "./usage.js";
 import { KEY_HEADER, MCP_PATH, registerMcpBridge } from "./mcp.js";
 import {
@@ -448,22 +453,62 @@ export function modelFromApi(m: {
  * its values are what `claude --model` accepts for this login, aliases such as `default` and the
  * `[1m]` variants included. API and known models it does not already cover follow, so older
  * ids stored in dsh sessions keep resolving.
+ *
+ * Then settings.json gets the say the terminal gives it, in the CLI's own order: `modelPicker`
+ * rows are appended after that lineup, `replaceBuiltInOptions` cuts the lineup back to Default,
+ * and `availableModels` filters whatever is left. Default always survives, an absent allowlist
+ * filters nothing and an empty one leaves Default alone.
  */
 const strip = (id: string) => (id.endsWith("[1m]") ? id.slice(0, -4) : id);
-export function mergeCatalog(cli: CliModel[], base: ReturnType<typeof M>[]) {
-  if (cli.length === 0) return base;
+/** An allowlist entry and a model id meet in one shape: no `claude-` prefix, no `[1m]` suffix. */
+const bareId = (id: string) => {
+  const s = strip(id);
+  return s.startsWith("claude-") ? s.slice("claude-".length) : s;
+};
+/** The three forms an entry takes: a family alias, a version prefix, or the whole id. */
+const allows = (entry: string, id: string) => {
+  const want = bareId(entry);
+  const have = bareId(id);
+  return have === want || have.startsWith(`${want}-`);
+};
+export function mergeCatalog(
+  cli: CliModel[],
+  base: ReturnType<typeof M>[],
+  picker?: PickerSettings,
+) {
+  if (cli.length === 0 && !picker) return base;
   const covered = (id: string) =>
     cli.some((c) => strip(c.resolvedModel).startsWith(id) || strip(c.value) === id);
+  // A CLI row is keyed by an alias (`opus`, `default`), so each row carries the id the allowlist reads.
   const fromCli = cli.map((c) => {
     const bare = strip(c.resolvedModel);
     const known = base.find((b) => bare === b.id || bare.startsWith(b.id));
     const window = c.resolvedModel.endsWith("[1m]") ? 1_000_000 : (known?.contextWindow ?? 200_000);
-    return M(c.value, c.displayName, window, c.efforts);
+    return { row: M(c.value, c.displayName, window, c.efforts), match: c.resolvedModel };
   });
-  return [...fromCli, ...base.filter((b) => !covered(b.id))];
+  let rows = [
+    ...fromCli,
+    ...base.filter((b) => !covered(b.id)).map((b) => ({ row: b, match: b.id })),
+  ];
+  if (picker) {
+    const extra = picker.options.map((o) => {
+      const known = base.find((b) => allows(o.model, b.id) || allows(b.id, o.model));
+      const label = o.label ?? known?.name ?? o.model;
+      return {
+        row: M(o.model, label, known?.contextWindow ?? 200_000, known?.efforts ?? []),
+        match: o.model,
+      };
+    });
+    if (picker.replaceBuiltInOptions) rows = rows.filter((r) => r.row.id === "default");
+    rows = [...rows, ...extra];
+    const allow = picker.availableModels;
+    if (allow)
+      rows = rows.filter((r) => r.row.id === "default" || allow.some((e) => allows(e, r.match)));
+  }
+  return rows.map((r) => r.row);
 }
-export async function getCatalog(fetchImpl = fetch, cli: CliModel[] = []) {
-  if (Date.now() - catalog.at < CATALOG_TTL_MS) return mergeCatalog(cli, catalog.models);
+export async function getCatalog(fetchImpl = fetch, cli: CliModel[] = [], picker?: PickerSettings) {
+  if (Date.now() - catalog.at < CATALOG_TTL_MS) return mergeCatalog(cli, catalog.models, picker);
   const headers = await authHeaders(CLAUDE_HOME);
   if (headers) {
     try {
@@ -477,14 +522,14 @@ export async function getCatalog(fetchImpl = fetch, cli: CliModel[] = []) {
       if (res.ok) {
         const data = (await res.json()).data ?? [];
         if (data.length > 0) catalog = { at: Date.now(), models: data.map(modelFromApi) };
-        return mergeCatalog(cli, catalog.models);
+        return mergeCatalog(cli, catalog.models, picker);
       }
     } catch {
       /* offline or rejected: keep previous catalog */
     }
   }
   catalog = { at: Date.now(), models: catalog.models }; // retry no sooner than the TTL
-  return mergeCatalog(cli, catalog.models);
+  return mergeCatalog(cli, catalog.models, picker);
 }
 
 /**
@@ -1227,12 +1272,21 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     return { id: provider, name: this.displayName };
   }
 
-  override async listModels(provider: string) {
-    return (await getCatalog(undefined, this.cliModels)).map((m) => modelInfo(provider, m));
+  /** Read on every listing rather than cached: an edit to settings.json takes effect at once. */
+  private pickerSettings() {
+    return readPickerSettings(join(this.claudeHome, "settings.json"));
   }
 
+  override async listModels(provider: string) {
+    const models = await getCatalog(undefined, this.cliModels, await this.pickerSettings());
+    return models.map((m) => modelInfo(provider, m));
+  }
+
+  /** No picker filter here: the allowlist curates what the picker offers, and the CLI keeps a
+   *  session's own model when the allowlist excludes it rather than failing to resolve it. */
   override async resolveModel(provider: string, model: string, _signal?: AbortSignal) {
-    return resolveModelInfo(provider, model, await getCatalog(undefined, this.cliModels));
+    const models = await getCatalog(undefined, this.cliModels);
+    return resolveModelInfo(provider, model, models);
   }
 
   /** Get the effective permission mode for a session, checking for an override first. */

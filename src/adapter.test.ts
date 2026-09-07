@@ -2884,6 +2884,64 @@ console.log("interrupt-on-abort ok");
   assert.ok(!rest.includes("claude-haiku-4-5"), "covered by haiku (dated id)");
   assert.ok(rest.includes("claude-fable-5-1"), "uncovered known model stays");
   assert.deepEqual(mergeCatalog([], KNOWN_MODELS), KNOWN_MODELS, "no CLI list: unchanged");
+  assert.deepEqual(
+    mergeCatalog(cli, KNOWN_MODELS, undefined),
+    merged,
+    "no settings: the merge alone",
+  );
+
+  // settings.json's availableModels is an allowlist over everything, but never over Default.
+  const ids = (picker: Parameters<typeof mergeCatalog>[2]) =>
+    mergeCatalog(cli, KNOWN_MODELS, picker).map((m) => m.id);
+  const noRows = { options: [], replaceBuiltInOptions: false };
+  assert.deepEqual(
+    ids({ ...noRows, availableModels: ["haiku"] }),
+    ["default", "haiku"],
+    "family alias keeps its versions and Default, drops the rest",
+  );
+  const oneVersion = ids({ ...noRows, availableModels: ["opus-4-5"] });
+  assert.ok(oneVersion.includes("claude-opus-4-5"), "version prefix keeps that version");
+  assert.ok(!oneVersion.includes("claude-opus-4-6"), "version prefix is not a family alias");
+  assert.deepEqual(
+    ids({ ...noRows, availableModels: ["claude-sonnet-4-5"] }),
+    ["default", "claude-sonnet-4-5"],
+    "a full id matches itself",
+  );
+  assert.deepEqual(
+    ids({ ...noRows, availableModels: [] }),
+    ["default"],
+    "empty list: Default only",
+  );
+
+  // modelPicker rows follow the built-in lineup, or replace it apart from Default.
+  const rows = { options: [{ model: "opus-4-5", label: "Cheap Opus" }] };
+  const appended = mergeCatalog(cli, KNOWN_MODELS, { ...rows, replaceBuiltInOptions: false });
+  assert.deepEqual(
+    appended.at(-1),
+    {
+      provider: "claude-code",
+      id: "opus-4-5",
+      name: "Cheap Opus",
+      contextWindow: 200_000,
+      efforts: ["low", "medium", "high"],
+    },
+    "the row lands last, under its own label",
+  );
+  assert.ok(appended.length > 1, "the built-in lineup is still there");
+  assert.deepEqual(
+    mergeCatalog(cli, KNOWN_MODELS, { ...rows, replaceBuiltInOptions: true }).map((m) => m.id),
+    ["default", "opus-4-5"],
+    "replaceBuiltInOptions: Default and the rows, nothing else",
+  );
+  assert.deepEqual(
+    ids({
+      options: [{ model: "opus-4-5" }, { model: "sonnet-4-5" }],
+      replaceBuiltInOptions: true,
+      availableModels: ["opus"],
+    }),
+    ["default", "opus-4-5"],
+    "the allowlist prunes a picker row too",
+  );
 
   const adapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
   let asked = 0;

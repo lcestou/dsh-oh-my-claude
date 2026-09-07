@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { probeBox, registerSessionRoutes } from "./sessions.js";
+import { probeBox, readPickerSettings, registerSessionRoutes } from "./sessions.js";
 
 // probeBox forwards init.method and init.body, plus content-type when body is set. Fake fetch, no network.
 {
@@ -226,6 +226,39 @@ import { probeBox, registerSessionRoutes } from "./sessions.js";
     JSON.stringify({ session: "sid1", uuid: "nope" }),
   );
   assert.equal(r.error, "session and uuid required");
+}
+
+// readPickerSettings: the two picker keys out of settings.json, and undefined for anything else.
+{
+  const tmp = await mkdtemp(join(tmpdir(), "dsh-picker-test-"));
+  const path = join(tmp, "settings.json");
+  await writeFile(
+    path,
+    JSON.stringify({
+      model: "opus",
+      availableModels: ["opus", "haiku", 7],
+      modelPicker: {
+        replaceBuiltInOptions: true,
+        options: [
+          { model: "opus-4-5", label: "Cheap Opus", description: "ignored here" },
+          { label: "no model" },
+        ],
+      },
+    }),
+  );
+  assert.deepEqual(await readPickerSettings(path), {
+    availableModels: ["opus", "haiku"],
+    options: [{ model: "opus-4-5", label: "Cheap Opus" }],
+    replaceBuiltInOptions: true,
+  });
+
+  await writeFile(path, JSON.stringify({ model: "opus" }));
+  assert.equal(await readPickerSettings(path), undefined, "neither key: no picker settings");
+
+  await writeFile(path, "{ not json");
+  assert.equal(await readPickerSettings(path), undefined, "broken JSON never empties the picker");
+
+  assert.equal(await readPickerSettings(join(tmp, "gone.json")), undefined, "missing file");
 }
 
 console.log("sessions ok");

@@ -1232,8 +1232,23 @@ interface UsageWindow {
   usedPercent: number;
   resetsAt: number | null;
 }
+interface UsageCredits {
+  enabled: boolean;
+  capped: boolean;
+  used?: string;
+  limit?: string;
+  canPurchase: boolean;
+  note?: string;
+}
 type UsageReply =
-  | { ok: true; fetchedAt: number; windows: UsageWindow[]; host?: string; email?: string | null }
+  | {
+      ok: true;
+      fetchedAt: number;
+      windows: UsageWindow[];
+      credits?: UsageCredits;
+      host?: string;
+      email?: string | null;
+    }
   | { ok: false; error: string; windows?: undefined; host?: string; email?: string | null };
 /** "m*****@gmail.com": first letter, stars, domain; the panel is shared on screen. */
 const maskEmail = (email: string): string => {
@@ -1322,6 +1337,62 @@ function renderContext(el: HTMLElement, reply: ContextReply) {
   }
 }
 
+const extLink = (text: string, href: string): HTMLAnchorElement => {
+  const a = document.createElement("a");
+  a.textContent = text;
+  a.href = href;
+  a.target = "_blank";
+  a.rel = "noreferrer noopener";
+  a.style.color = T.brand;
+  return a;
+};
+
+/** The disclaimer is Claude's markdown, at most one `[text](url)`: the link becomes an anchor and
+ *  the rest stays text. A href the payload writes is followed only when it is an https URL. */
+const appendNote = (el: HTMLElement, note: string) => {
+  const m = /\[([^\]]+)\]\(([^)]+)\)/.exec(note);
+  const [whole, text, href] = m ?? [];
+  if (!m || !whole || !text || !href) {
+    el.append(note);
+    return;
+  }
+  el.append(note.slice(0, m.index));
+  el.append(href.startsWith("https://") ? extLink(text, href) : text);
+  el.append(note.slice(m.index + whole.length));
+};
+
+/**
+ * Credits sit under the plan windows in the same grammar, but with no bar and no reset: they are a
+ * balance, not a window, and a percent here would imply a clock they do not have. The caption is
+ * the API's own sentence about them, so the panel never invents its own account of what they cover.
+ */
+function creditsRow(c: UsageCredits): HTMLElement {
+  const creditsLine = document.createElement("div");
+  creditsLine.style.cssText =
+    "display:grid;grid-template-columns:1fr auto;align-items:baseline;column-gap:12px;row-gap:3px;padding:3px 0";
+  const label = document.createElement("span");
+  label.textContent = "Extra usage";
+  label.style.cssText = `color:${T.text};font-weight:500`;
+  const capped = c.enabled && c.capped;
+  const amount = c.used ? ` · ${c.used}${c.limit ? ` / ${c.limit}` : ""}` : "";
+  const value = document.createElement("span");
+  value.textContent = `${capped ? "Limit reached" : c.enabled ? "On" : "Off"}${amount}`;
+  value.style.cssText = `font-variant-numeric:tabular-nums;font-weight:600;color:${capped ? T.err : T.text}`;
+  creditsLine.append(label, value);
+  // No caption at all when the API neither explains credits nor lets this account buy them.
+  if (c.note || c.canPurchase) {
+    const caption = document.createElement("span");
+    caption.style.cssText = `grid-column:1 / -1;color:${T.faint};font-size:11px;line-height:16px`;
+    if (c.note) appendNote(caption, c.note);
+    if (c.canPurchase) {
+      if (c.note) caption.append(" ");
+      caption.append(extLink("Buy credits", "https://claude.ai/settings/usage"));
+    }
+    creditsLine.append(caption);
+  }
+  return creditsLine;
+}
+
 function renderUsage(block: HTMLElement, reply: UsageReply) {
   block.replaceChildren();
   if (!reply.ok) {
@@ -1367,6 +1438,8 @@ function renderUsage(block: HTMLElement, reply: UsageReply) {
     p.style.color = T.faint;
     block.append(p);
   }
+  // Last, whether or not any window was reported: a user with no limits still plans around credits.
+  if (reply.credits) block.append(creditsRow(reply.credits));
 }
 
 /**
