@@ -11,6 +11,7 @@ import { listTranscripts, readTranscript, toSessionEvents } from "./transcript.j
 import type { TranscriptListItem } from "./transcript.js";
 import { deleteMemory, isMemoryName, listMemory } from "./memory.js";
 import { asSessionId } from "./dsh.js";
+import { buildAddServer, isMcpName, scopeNeedsCwd } from "./mcp-add-remove.js";
 import type { JsonValue, PluginContext, SessionPersistence, WorkspaceRegistry } from "./dsh.js";
 import { errorText } from "./process.js";
 import { PERMISSION_MODES, isPermissionMode } from "./state.js";
@@ -92,9 +93,10 @@ const run = (
   cmd: string,
   args: string[],
   env?: NodeJS.ProcessEnv,
+  cwd?: string,
 ): Promise<{ out: string; error?: string }> =>
   new Promise((resolve) =>
-    execFile(cmd, args, { timeout: 8000, windowsHide: true, env }, (e, out, err) =>
+    execFile(cmd, args, { timeout: 8000, windowsHide: true, env, cwd }, (e, out, err) =>
       resolve(
         e
           ? {
@@ -864,6 +866,45 @@ export function registerSessionRoutes(
                 const reply = await mcp.reconnect(session, name);
                 return json(res, reply.ok ? 200 : 409, reply);
               }
+              // Add a server: `claude mcp add-json`, run in the session's own directory so a
+              // `local` or `project` scope writes into the project on screen and nowhere else.
+              if (req.method === "POST" && url.pathname === `${ROUTE_PREFIX}/mcp-servers/add`) {
+                const body = await readBody(req);
+                const built = buildAddServer(body);
+                if ("error" in built) return json(res, 400, { error: built.error });
+                const cwd = await sessionCwd(body.session, sessionPersistence);
+                if (scopeNeedsCwd(built.scope) && cwd === null)
+                  return json(res, 400, {
+                    error: `${built.scope} scope needs a session open in a directory`,
+                  });
+                const result = await run(
+                  command || "claude",
+                  ["mcp", "add-json", built.name, JSON.stringify(built.json), "-s", built.scope],
+                  { ...process.env, CLAUDE_CONFIG_DIR: configDir },
+                  cwd ?? undefined,
+                );
+                if (result.error) return json(res, 400, { error: result.error });
+                log("info", `mcp server ${built.name} added (${built.scope})`);
+                return json(res, 200, { ok: true });
+              }
+              // Remove a server. Without `-s` the CLI takes it out of whichever scope has it, and
+              // the session's directory is what decides which project that is.
+              if (req.method === "POST" && url.pathname === `${ROUTE_PREFIX}/mcp-servers/remove`) {
+                const body = await readBody(req);
+                if (!isMcpName(body.name)) return json(res, 400, { error: "name required" });
+                const cwd = await sessionCwd(body.session, sessionPersistence);
+                if (cwd === null)
+                  return json(res, 400, { error: "no session open in a directory" });
+                const result = await run(
+                  command || "claude",
+                  ["mcp", "remove", body.name],
+                  { ...process.env, CLAUDE_CONFIG_DIR: configDir },
+                  cwd,
+                );
+                if (result.error) return json(res, 400, { error: result.error });
+                log("info", `mcp server ${body.name} removed`);
+                return json(res, 200, { ok: true });
+              }
               if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/idle`) {
                 const sid = url.searchParams.get("session");
                 if (!sid) return json(res, 400, { error: "session param required" });
@@ -1068,4 +1109,17 @@ async function knownCwd(
   if (!validCwd(cwd)) return null;
   const headers = await sessions.list().catch(() => []);
   return headers.some((h) => h.cwd === cwd) ? cwd : null;
+}
+
+/**
+ * The directory a session is open in, from dsh's own record of it. The browser names the session,
+ * never the directory, so nothing it posts can point the CLI at a project it has no session in.
+ */
+async function sessionCwd(
+  session: JsonValue | undefined,
+  sessions: SessionPersistence,
+): Promise<string | null> {
+  if (typeof session !== "string" || !session) return null;
+  const headers = await sessions.list().catch(() => []);
+  return headers.find((h) => h.id === session)?.cwd ?? null;
 }

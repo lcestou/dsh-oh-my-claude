@@ -578,14 +578,15 @@ type McpReply = { ok: true; servers: McpServer[] } | { ok: false; error: string 
 
 /**
  * "MCP" body rendered inside the Oh My Claude dialog: the servers Claude's process
- * has, with their connection status, the tools each one contributes, and a Reconnect
- * per row (`mcp_reconnect`).
+ * has, with their connection status, the tools each one contributes, a Reconnect
+ * and Remove per row, and an Add form below.
  */
 function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClose: () => void }) {
   const isClaude = activeClaudeSession(ctx) === sessionId;
   const [reply, setReply] = useState<McpReply | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState("");
+  const [showAdd, setShowAdd] = useState(false);
 
   const load = () =>
     fetch(`${ROUTE}/mcp-servers?session=${encodeURIComponent(sessionId)}`)
@@ -612,6 +613,28 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
         }),
       );
       setNote(r.ok ? `${serverName}: reconnected` : `${serverName}: ${r.error ?? "failed"}`);
+      await load();
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const remove = async (serverName: string) => {
+    setBusy(serverName);
+    setNote("");
+    try {
+      const r = await readJson<{ ok: boolean; error?: string }>(
+        await fetch(`${ROUTE}/mcp-servers/remove`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ session: sessionId, name: serverName }),
+        }),
+      );
+      setNote(
+        r.ok ? `${serverName} removed. ${SPAWN_NOTE}` : `${serverName}: ${r.error ?? "failed"}`,
+      );
       await load();
     } catch (e) {
       setNote(e instanceof Error ? e.message : String(e));
@@ -668,6 +691,14 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
                   {busy === s.name ? "…" : "Reconnect"}
                 </button>
               )}
+              <button
+                type="button"
+                style={btn}
+                disabled={busy !== null}
+                onClick={() => remove(s.name)}
+              >
+                {busy === s.name ? "…" : "Remove"}
+              </button>
             </div>
             {s.status !== "connected" && (s.error || s.status === "needs-auth") ? (
               // A server that is down explains itself here; `needs-auth` always says something,
@@ -685,7 +716,152 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
           </div>
         ))
       )}
-      {note && <span style={{ ...meta, padding: "2px 4px" }}>{note}</span>}
+      <button type="button" style={{ ...btn, marginTop: 8 }} onClick={() => setShowAdd(!showAdd)}>
+        {showAdd ? "Cancel" : "Add server"}
+      </button>
+      {showAdd && <McpAddForm sessionId={sessionId} onAdded={() => setNote(SPAWN_NOTE)} />}
+      {note && <span style={{ ...meta, padding: "2px 4px", marginTop: 8 }}>{note}</span>}
+    </div>
+  );
+}
+
+/**
+ * A server the config gains or loses is not a server this process has: the CLI reads its MCP
+ * config at spawn, so the list on screen only catches up on the next one.
+ */
+const SPAWN_NOTE = "Saved. Claude picks it up the next time it starts.";
+
+/** The Add form under the server list: name, where it goes, and the fields its transport needs. */
+function McpAddForm({ sessionId, onAdded }: { sessionId: string; onAdded: () => void }) {
+  const [name, setName] = useState("");
+  const [scope, setScope] = useState("local");
+  const [transport, setTransport] = useState("stdio");
+  const [command, setCommand] = useState("");
+  const [args, setArgs] = useState("");
+  const [env, setEnv] = useState("");
+  const [url, setUrl] = useState("");
+  const [headers, setHeaders] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const submit = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      const r = await readJson<{ ok: boolean; error?: string }>(
+        await fetch(`${ROUTE}/mcp-servers/add`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          // The server reads the directory from the session, so `local` and `project` land in the
+          // project this session is open in rather than wherever dsh itself was started.
+          body: JSON.stringify({
+            session: sessionId,
+            name,
+            scope,
+            transport,
+            command,
+            args,
+            env,
+            url,
+            headers,
+          }),
+        }),
+      );
+      if (!r.ok) return setError(r.error ?? "failed to add server");
+      setName("");
+      setCommand("");
+      setArgs("");
+      setEnv("");
+      setUrl("");
+      setHeaders("");
+      onAdded();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ padding: "6px", marginTop: 8, border: `1px solid ${T.border}`, borderRadius: 4 }}>
+      <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+        <input
+          type="text"
+          placeholder="server name"
+          value={name}
+          onChange={(e) => setName(e.currentTarget.value)}
+          disabled={busy}
+          style={{ flex: 1, padding: 4, fontSize: 12 }}
+        />
+        <select
+          value={scope}
+          onChange={(e) => setScope(e.currentTarget.value)}
+          disabled={busy}
+          style={{ padding: 4, fontSize: 12 }}
+        >
+          <option value="local">Local</option>
+          <option value="user">User</option>
+          <option value="project">Project</option>
+        </select>
+        <select
+          value={transport}
+          onChange={(e) => setTransport(e.currentTarget.value)}
+          disabled={busy}
+          style={{ padding: 4, fontSize: 12 }}
+        >
+          <option value="stdio">Stdio</option>
+          <option value="sse">SSE</option>
+          <option value="http">HTTP</option>
+        </select>
+      </div>
+      {transport === "stdio" ? (
+        <>
+          <input
+            type="text"
+            placeholder="command, e.g. npx"
+            value={command}
+            onChange={(e) => setCommand(e.currentTarget.value)}
+            disabled={busy}
+            style={{ width: "100%", padding: 4, fontSize: 12, marginBottom: 4 }}
+          />
+          <textarea
+            placeholder="args, one per line"
+            value={args}
+            onChange={(e) => setArgs(e.currentTarget.value)}
+            disabled={busy}
+            style={{ width: "100%", height: 50, padding: 4, fontSize: 12, marginBottom: 4 }}
+          />
+          <textarea
+            placeholder="env vars: KEY=value, one per line"
+            value={env}
+            onChange={(e) => setEnv(e.currentTarget.value)}
+            disabled={busy}
+            style={{ width: "100%", height: 50, padding: 4, fontSize: 12, marginBottom: 4 }}
+          />
+        </>
+      ) : (
+        <>
+          <input
+            type="text"
+            placeholder="url, http:// or https://"
+            value={url}
+            onChange={(e) => setUrl(e.currentTarget.value)}
+            disabled={busy}
+            style={{ width: "100%", padding: 4, fontSize: 12, marginBottom: 4 }}
+          />
+          <textarea
+            placeholder="headers: Name: value, one per line"
+            value={headers}
+            onChange={(e) => setHeaders(e.currentTarget.value)}
+            disabled={busy}
+            style={{ width: "100%", height: 50, padding: 4, fontSize: 12, marginBottom: 4 }}
+          />
+        </>
+      )}
+      <button type="button" style={btnPrimary} disabled={busy || !name} onClick={submit}>
+        {busy ? "Adding…" : "Add"}
+      </button>
+      {error && <span style={{ ...meta, display: "block", marginTop: 4 }}>{error}</span>}
     </div>
   );
 }
