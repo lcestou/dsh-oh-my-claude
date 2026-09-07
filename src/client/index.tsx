@@ -1717,7 +1717,14 @@ const ensureTurnStatusStyle = () => {
   // The frames differ in advance width in a proportional font; a fixed cell keeps the verb still.
   // `body[data-omc-claude]` is set while the open session is a Claude mount, so the row is orange
   // from its first paint; the watcher then swaps the text and adds the spinner a frame later.
-  styleEl.textContent = `body[data-omc-claude] [role="status"][aria-live="polite"],[data-dsh-oh-my-claude-turn]{background-image:linear-gradient(90deg,${CLAUDE_ORANGE} 0%,${CLAUDE_ORANGE} 40%,${CLAUDE_SHIMMER} 50%,${CLAUDE_ORANGE} 60%,${CLAUDE_ORANGE} 100%)}[data-dsh-oh-my-claude-turn]>span[aria-hidden]{display:inline-block;width:1.3em;text-align:center;flex:none}`;
+  //
+  // The last two rules recolour the conversation's selected view tab (Chat / Trajectory), which dsh
+  // paints from its blue `--dsw-alias-state-business-primary` — the label and its underline draw
+  // from the same token but as `color` and `background`, so both are overridden. Gated on the same
+  // body attribute, so a session that switches off a Claude mount hands the tab straight back to
+  // dsh's blue on the next paint. ponytail: `[role=tablist] > [role=tab]` catches any dsh view-tab
+  // switcher; if a non-conversation one should stay blue, narrow it the day one appears.
+  styleEl.textContent = `body[data-omc-claude] [role="status"][aria-live="polite"],[data-dsh-oh-my-claude-turn]{background-image:linear-gradient(90deg,${CLAUDE_ORANGE} 0%,${CLAUDE_ORANGE} 40%,${CLAUDE_SHIMMER} 50%,${CLAUDE_ORANGE} 60%,${CLAUDE_ORANGE} 100%)}[data-dsh-oh-my-claude-turn]>span[aria-hidden]{display:inline-block;width:1.3em;text-align:center;flex:none}body[data-omc-claude] [role="tablist"]>[role="tab"][aria-selected="true"]{color:${CLAUDE_ORANGE}}body[data-omc-claude] [role="tablist"]>[role="tab"][aria-selected="true"]::after{background:${CLAUDE_ORANGE}}`;
   document.head.appendChild(styleEl);
 };
 
@@ -1902,8 +1909,9 @@ function watchTurnStatus(ctx: ClientCtx) {
 }
 
 /**
- * Tint the sidebar's running indicator (dsh's state-dot matrix) Claude-orange for Claude sessions,
- * leaving every other provider dsh's own colour. dsh colours the `ongoing` dot from the
+ * Tint dsh's running indicator (its state-dot matrix) Claude-orange for Claude sessions, both the
+ * sidebar row dot and the job/subagent/plan dots inside the open conversation, leaving every other
+ * provider dsh's own colour. dsh colours the `ongoing` dot from the
  * `--dsh-state-ongoing` custom property; an inline `color` on the svg overrides it, and clearing it
  * hands the row straight back to dsh — so a session that switches off a Claude mount reverts on the
  * next pass.
@@ -1931,10 +1939,20 @@ function watchSessionSpinners(ctx: ClientCtx) {
   };
   const scan = () => {
     const claude = claudeRunningTitles();
+    // Every other ongoing matrix square — the job-list dot in the session header, and the same dot
+    // dsh shows for subagents, plans and schedules — renders inside the open conversation, so it
+    // belongs to whichever session is open. Tint those when that session is a Claude mount.
+    const openIsClaude = activeClaudeSession(ctx) !== undefined;
     for (const dot of document.querySelectorAll<SVGElement>('svg[data-state="ongoing"]')) {
-      if (!dot.closest('[role="treeitem"]')) continue; // a sidebar session row, not a dot elsewhere
-      const title = spinnerRowTitle(dot);
-      if (title !== null && claude.has(title)) {
+      const inRow = dot.closest('[role="treeitem"]'); // a sidebar session row vs a dot elsewhere
+      let want: boolean;
+      if (inRow) {
+        const title = spinnerRowTitle(dot);
+        want = title !== null && claude.has(title);
+      } else {
+        want = openIsClaude;
+      }
+      if (want) {
         dot.style.color = CLAUDE_ORANGE;
         dot.setAttribute(MARK, "1");
       } else if (dot.hasAttribute(MARK)) {
@@ -2290,16 +2308,21 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
   return (
     <div
       style={{
-        // Sit like dsh's todo/goal dock cards: composer width (a touch narrower than the chat),
-        // centered above the composer, stacked, rather than spanning the whole pane.
+        // Match dsh's own dock card (its QueueDock `_7yHdaG_dock`) to the pixel, so the aside sits at
+        // the same width and the same vertical spacing as the queue/todo/goal cards instead of
+        // spanning the pane: composer-card width less one dock inset each side, centred, and the same
+        // negative bottom margin every dsh dock card uses to hug the stack gap below it.
         boxSizing: "border-box",
-        width: "100%",
-        maxWidth: "calc(var(--dsh-composer-card-max-width) - 4 * var(--dsh-composer-dock-inset))",
-        margin: "0 auto",
+        width:
+          "calc(100% - var(--dsh-composer-side-clearance) - var(--dsh-composer-side-clearance) - var(--dsh-composer-dock-inset) - var(--dsh-composer-dock-inset))",
+        maxWidth:
+          "calc(var(--dsh-composer-card-max-width) - var(--dsh-composer-dock-inset) - var(--dsh-composer-dock-inset))",
+        margin: "0 auto calc(0px - var(--dsh-composer-stack-gap) - 3px)",
+        padding: "0 var(--dsh-composer-dock-inset)",
+        flex: "none",
         display: "flex",
         flexDirection: "column",
         gap: 6,
-        marginTop: 10,
       }}
     >
       {shown.map((it) => {

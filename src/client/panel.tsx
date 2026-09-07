@@ -174,15 +174,7 @@ interface MemoryFile {
  * "Memory" body rendered inside the Oh My Claude dialog: lists the workspace's Claude auto-memory
  * files (`<project dir>/memory/*.md`, MEMORY.md first) and edits or deletes one in place.
  */
-function MemoryBody({
-  sessionId,
-  ctx,
-  onCount,
-}: {
-  sessionId: string;
-  ctx: ClientCtx;
-  onCount?: (n: number) => void;
-}) {
+function MemoryBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   const cwd = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.cwd;
   const [files, setFiles] = useState<MemoryFile[]>([]);
   const [file, setFile] = useState<string | null>(null);
@@ -196,10 +188,7 @@ function MemoryBody({
     if (!cwd) return;
     fetch(`${ROUTE}/memory?${q}`)
       .then((r) => readJson<{ files?: MemoryFile[] }>(r))
-      .then((b) => {
-        setFiles(b.files ?? []);
-        onCount?.(b.files?.length ?? 0);
-      })
+      .then((b) => setFiles(b.files ?? []))
       .catch((e: Error) => setError(e.message));
   };
   // Re-list every half minute: Claude writes memories mid-turn.
@@ -207,7 +196,7 @@ function MemoryBody({
     refresh();
     const timer = setInterval(refresh, 30_000);
     return () => clearInterval(timer);
-  }, [cwd, onCount]);
+  }, [cwd]);
 
   const openFile = async (n: string) => {
     setError("");
@@ -2293,9 +2282,6 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
   const rootRef = useRef<HTMLSpanElement>(null);
   const narrow = useNarrow();
   const [tab, setTab] = useState(lastTab);
-  const [memoryCount, setMemoryCount] = useState<number | null>(null);
-  // Stable callback: a fresh arrow each render would re-run MemoryBody's fetch effect every time.
-  const onCount = useCallback((n: number) => setMemoryCount(n), []);
   // Phone sheet: fixed, above the control, wherever the composer sits (a blank session centres it).
   const [above, setAbove] = useState(0);
 
@@ -2363,7 +2349,7 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
 
   const tabs = [
     ...(blank ? [{ key: "Restore", label: "Restore" }] : []),
-    { key: "Memory", label: `Memory${memoryCount !== null ? ` · ${memoryCount}` : ""}` },
+    { key: "Memory", label: "Memory" },
     { key: "Instructions", label: "Instructions" },
     { key: "Rewind", label: "Rewind" },
     { key: "Changes", label: "Changes" },
@@ -2431,7 +2417,7 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
             }}
           >
             {tab === "Restore" && <RestoreBody sessionId={sessionId} ctx={ctx} onClose={close} />}
-            {tab === "Memory" && <MemoryBody sessionId={sessionId} ctx={ctx} onCount={onCount} />}
+            {tab === "Memory" && <MemoryBody sessionId={sessionId} ctx={ctx} />}
             {tab === "Instructions" && <InstructionsBody sessionId={sessionId} ctx={ctx} />}
             {tab === "Rewind" && <RewindBody sessionId={sessionId} ctx={ctx} onClose={close} />}
             {tab === "Changes" && <ChangesBody sessionId={sessionId} ctx={ctx} />}
