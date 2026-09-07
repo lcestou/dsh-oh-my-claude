@@ -399,7 +399,9 @@ const M = (id: string, label: string, contextWindow: number, efforts: readonly s
   efforts,
 });
 
-// Fallback catalog when the Models API is unreachable. Ids are what `claude --model` accepts.
+// The floor a brand-new box falls back to when the Models API is unreachable and no catalog has
+// ever been cached to disk yet. Once a fetch succeeds its result is persisted and seeds later boots,
+// so this list only matters on the first offline boot. Ids are what `claude --model` accepts.
 export const KNOWN_MODELS = [
   M("claude-fable-5-1", "Claude Fable 5.1", 1_000_000, EFFORTS_ALL),
   M("claude-fable-5", "Claude Fable 5", 1_000_000, EFFORTS_ALL),
@@ -436,6 +438,54 @@ const ASK_SUGGESTIONS = 10;
 
 const CATALOG_TTL_MS = 10 * 60 * 1000;
 let catalog = { at: 0, models: KNOWN_MODELS };
+
+/** Where the last catalog the API gave us is kept, so a boot with the API down still lists the real
+ *  models instead of the baked-in floor. Written on every successful fetch, read once per process. */
+const CATALOG_CACHE = join(STATE_DIR, "models.json");
+let diskSeeded = false;
+/** The shape a cached row must still hold. The cache is our own write, but a truncated or hand-edited
+ *  file must never slip a malformed row into the catalog dsh validates, so it is re-parsed on read. */
+const CachedCatalog = z.array(
+  z.object({
+    provider: z.const("claude-code"),
+    id: z.string(),
+    name: z.string(),
+    contextWindow: z.number(),
+    efforts: z.array(z.string()),
+  }),
+);
+/** Parse a persisted catalog file. Anything malformed reads as empty, so the caller falls back. */
+export function parseCatalogCache(text: string): ReturnType<typeof M>[] {
+  try {
+    return CachedCatalog(JSON.parse(text))
+      .filter((r) => r.id.length > 0 && r.name.length > 0)
+      .map((r) => M(r.id, r.name, r.contextWindow, r.efforts));
+  } catch {
+    return [];
+  }
+}
+/** Seed the in-memory catalog from disk once, unless a live fetch has already replaced it. `at`
+ *  stays 0 so the next `getCatalog` still tries the API; the disk copy only survives a failed fetch. */
+async function seedFromDisk() {
+  if (diskSeeded) return;
+  diskSeeded = true;
+  if (catalog.at !== 0) return;
+  try {
+    const rows = parseCatalogCache(await readFile(CATALOG_CACHE, "utf8"));
+    if (rows.length > 0 && catalog.at === 0) catalog = { at: 0, models: rows };
+  } catch {
+    /* no cache yet or unreadable: the KNOWN_MODELS floor stays */
+  }
+}
+/** Persist a fetched catalog for later boots. Best effort: a write that fails just misses the seed. */
+async function persistCatalog(models: ReturnType<typeof M>[]) {
+  try {
+    await mkdir(dirname(CATALOG_CACHE), { recursive: true });
+    await writeFile(CATALOG_CACHE, JSON.stringify(models));
+  } catch {
+    /* read-only state dir or full disk: fall through, the fetch still served this boot */
+  }
+}
 
 /**
  * Retrieves authentication headers for the Anthropic API, checking
@@ -525,6 +575,7 @@ export function mergeCatalog(
   return rows.map((r) => r.row);
 }
 export async function getCatalog(fetchImpl = fetch, cli: CliModel[] = [], picker?: PickerSettings) {
+  await seedFromDisk();
   if (Date.now() - catalog.at < CATALOG_TTL_MS) return mergeCatalog(cli, catalog.models, picker);
   const headers = await authHeaders(CLAUDE_HOME);
   if (headers) {
@@ -541,7 +592,10 @@ export async function getCatalog(fetchImpl = fetch, cli: CliModel[] = [], picker
         // Two dated ids can land on one undated id; the first the API lists wins.
         const mapped: ReturnType<typeof M>[] = data.map(modelFromApi);
         const models = [...new Map(mapped.map((m) => [m.id, m])).values()];
-        if (models.length > 0) catalog = { at: Date.now(), models };
+        if (models.length > 0) {
+          catalog = { at: Date.now(), models };
+          void persistCatalog(models);
+        }
         return mergeCatalog(cli, catalog.models, picker);
       }
     } catch {

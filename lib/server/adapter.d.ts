@@ -233,6 +233,8 @@ export declare const KNOWN_MODELS: {
  * undated, and an id we do not know keeps whatever the API called it.
  */
 export declare const stableModelId: (id: string) => string;
+/** Parse a persisted catalog file. Anything malformed reads as empty, so the caller falls back. */
+export declare function parseCatalogCache(text: string): ReturnType<typeof M>[];
 /**
  * Retrieves authentication headers for the Anthropic API, checking
  * environment variables and stored credentials.

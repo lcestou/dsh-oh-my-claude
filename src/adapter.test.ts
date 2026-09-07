@@ -42,6 +42,7 @@ import {
   takeInterrupted,
   registryKey,
   mergeCatalog,
+  parseCatalogCache,
   interruptOnAbort,
   noticeSource,
   RECONNECT_TEXT,
@@ -506,6 +507,23 @@ assert.equal(
   "a model the fallback list does not name keeps its date",
 );
 assert.equal(modelFromApi({ id: "claude-haiku-4-5-20251001" }).id, "claude-haiku-4-5");
+
+// The persisted catalog round-trips, and any corruption reads as empty so the caller falls back to
+// the floor or a fresh fetch rather than feeding a malformed row into the catalog dsh validates.
+{
+  const good = [modelFromApi({ id: "claude-haiku-4-5-20251001", display_name: "Haiku" })];
+  assert.deepEqual(parseCatalogCache(JSON.stringify(good)), good, "clean cache round-trips");
+  assert.deepEqual(parseCatalogCache("not json"), [], "garbage reads empty");
+  assert.deepEqual(parseCatalogCache(JSON.stringify({ models: [] })), [], "non-array reads empty");
+  const wrongProvider = JSON.stringify([
+    { provider: "other", id: "x", name: "X", contextWindow: 1, efforts: [] },
+  ]);
+  assert.deepEqual(parseCatalogCache(wrongProvider), [], "a bad row voids the whole cache");
+  const badTypes = JSON.stringify([
+    { provider: "claude-code", id: "y", name: "Y", contextWindow: "big", efforts: [] },
+  ]);
+  assert.deepEqual(parseCatalogCache(badTypes), [], "a mistyped field voids the whole cache");
+}
 assert.equal(
   resolveModelInfo("claude-code", "claude-haiku-4-5-20251001").context?.contextWindow,
   200_000,
