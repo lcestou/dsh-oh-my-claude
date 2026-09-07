@@ -27,6 +27,32 @@ export interface PluginRoster {
   marketplaces: MarketplaceRow[];
 }
 
+/** The scopes `claude plugin` writes to; same set the MCP tab uses, named for this surface. */
+export const PLUGIN_SCOPES = ["user", "project", "local"] as const;
+export type PluginScope = (typeof PLUGIN_SCOPES)[number];
+
+export const isPluginScope = (value: unknown): value is PluginScope =>
+  PLUGIN_SCOPES.some((scope) => scope === value);
+
+/** `user` is global; `project` and `local` write into the session's directory. */
+export const pluginScopeNeedsCwd = (scope: PluginScope): boolean => scope !== "user";
+
+/**
+ * A plugin id as the roster keys it (`name` or `name@marketplace`). The CLI takes it as one argv
+ * word, so a leading dash would read as a flag and a space would be two words; the characters
+ * allowed are what a plugin and marketplace id are spelled from.
+ */
+export const isPluginId = (value: unknown): value is string =>
+  typeof value === "string" && /^[\w][\w.@/-]*$/.test(value);
+
+/**
+ * A marketplace source for `marketplace add`: a URL, a path, or a GitHub `owner/repo`. The CLI
+ * resolves and validates it (a path that does not exist is refused there); this only stops a value
+ * the shell would read as a flag or an empty one.
+ */
+export const isMarketplaceSource = (value: unknown): value is string =>
+  typeof value === "string" && value.trim().length > 0 && !value.trim().startsWith("-");
+
 const object = (value: JsonValue | undefined): Record<string, JsonValue> | null => {
   if (!(value instanceof Object) || Array.isArray(value)) return null;
   // SAFETY: the guard above leaves only the object arm of JsonValue, whose values are JsonValue.

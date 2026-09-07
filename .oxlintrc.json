@@ -60,6 +60,7 @@
         "src/transcript.ts",
         "src/mcp.ts",
         "src/mcp-add-remove.ts",
+        "src/plugins.ts",
         "src/sessions.ts",
         "src/scheduled-tasks.ts",
         "src/state.ts",

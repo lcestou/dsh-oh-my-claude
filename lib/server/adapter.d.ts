@@ -55,6 +55,8 @@ export type Config = {
     allowedTools: string[];
     disallowedTools: string[];
     addDirs: string[];
+    pluginDirs: string[];
+    pluginUrls: string[];
     maxTurns?: number;
     maxBudgetUsd?: number;
     titleModel: string;
@@ -87,6 +89,8 @@ export declare const Config: z<Schemastery.ObjectS<{
     allowedTools: z<string[], string[]>;
     disallowedTools: z<string[], string[]>;
     addDirs: z<string[], string[]>;
+    pluginDirs: z<string[], string[]>;
+    pluginUrls: z<string[], string[]>;
     maxTurns: z<number, number>;
     maxBudgetUsd: z<number, number>;
     titleModel: z<string, string>;
@@ -115,6 +119,8 @@ export declare const Config: z<Schemastery.ObjectS<{
     allowedTools: z<string[], string[]>;
     disallowedTools: z<string[], string[]>;
     addDirs: z<string[], string[]>;
+    pluginDirs: z<string[], string[]>;
+    pluginUrls: z<string[], string[]>;
     maxTurns: z<number, number>;
     maxBudgetUsd: z<number, number>;
     titleModel: z<string, string>;
@@ -400,6 +406,8 @@ export interface TurnRecord {
     cacheRead: number;
     cacheWrite: number;
     denials?: string[];
+    /** Wall-clock ms from the prompt write to the first stream chunk; absent when not measured. */
+    ttftMs?: number;
 }
 /** The slice of a Claude process the idle watchdog needs. */
 export interface IdleTarget {

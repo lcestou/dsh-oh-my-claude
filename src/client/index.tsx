@@ -1553,6 +1553,37 @@ function renderUsage(block: HTMLElement, reply: UsageReply) {
  * its dialog: a `[role=dialog]` whose parent holds a `button[aria-haspopup=dialog]` with the ring.
  * ponytail: DOM hook on a structural selector; swap for a slot the day the meter grows one.
  */
+/**
+ * One shared `document.body` observer for every feature that reacts to nodes dsh adds. dsh appends
+ * a message chunk many times a second during a turn, so a per-feature observer that ran a
+ * `querySelectorAll` per mutation multiplied that load by the feature count and janked mobile
+ * (Firefox worst). Here every mutation burst is coalesced into a single pass on the next animation
+ * frame: added elements are collected, then each registered handler sees each one once. Handlers
+ * get an element that was added under `document.body`; they do their own scoping and idempotency.
+ */
+type AddedNodeHandler = (node: HTMLElement) => void;
+const addedNodeHandlers = new Set<AddedNodeHandler>();
+let bodyObserver: MutationObserver | undefined;
+let pendingNodes: HTMLElement[] | undefined;
+let scanFrame = 0;
+const flushAddedNodes = () => {
+  scanFrame = 0;
+  const nodes = pendingNodes;
+  pendingNodes = undefined;
+  if (!nodes) return;
+  for (const handler of addedNodeHandlers) for (const node of nodes) handler(node);
+};
+const onAddedNodes = (handler: AddedNodeHandler) => {
+  addedNodeHandlers.add(handler);
+  if (bodyObserver) return;
+  bodyObserver = new MutationObserver((records) => {
+    for (const r of records)
+      for (const n of r.addedNodes) if (n instanceof HTMLElement) (pendingNodes ??= []).push(n);
+    if (pendingNodes && scanFrame === 0) scanFrame = requestAnimationFrame(flushAddedNodes);
+  });
+  bodyObserver.observe(document.body, { childList: true, subtree: true });
+};
+
 function watchContextMeter(ctx: ClientCtx) {
   const MARK = "data-dsh-oh-my-claude-usage";
   // The mark goes on the node we inject, never on dsh's node: React owns these children and drops
@@ -1647,9 +1678,7 @@ function watchContextMeter(ctx: ClientCtx) {
       if (tip && isRingRoot(tip.parentElement)) bubble(tip);
     }
   };
-  new MutationObserver((records) => {
-    for (const r of records) for (const n of r.addedNodes) if (n instanceof HTMLElement) scan(n);
-  }).observe(document.body, { childList: true, subtree: true });
+  onAddedNodes((n) => scan(n));
   scan(document.body);
 }
 
@@ -1867,14 +1896,67 @@ function watchTurnStatus(ctx: ClientCtx) {
     for (const el of root.querySelectorAll<HTMLElement>('[role="status"][aria-live="polite"]'))
       attach(el);
   };
-  new MutationObserver((records) => {
-    // Every message dsh appends lands here, so the cheapest check comes first: on a session that is
-    // not a Claude mount there is nothing to attach, and the querySelectorAll per added node would
-    // be work stacked on top of dsh's own render.
+  // Every message dsh appends reaches this handler, so the cheapest check comes first: on a session
+  // that is not a Claude mount there is nothing to attach, and the querySelectorAll per node would
+  // be work stacked on top of dsh's own render.
+  onAddedNodes((n) => {
     if (!activeClaudeSession(ctx)) return;
-    for (const r of records) for (const n of r.addedNodes) if (n instanceof HTMLElement) scan(n);
-  }).observe(document.body, { childList: true, subtree: true });
+    scan(n);
+  });
   scan(document.body);
+}
+
+/**
+ * Tint the sidebar's running indicator (dsh's state-dot matrix) Claude-orange for Claude sessions,
+ * leaving every other provider dsh's own colour. dsh colours the `ongoing` dot from the
+ * `--dsh-state-ongoing` custom property; an inline `color` on the svg overrides it, and clearing it
+ * hands the row straight back to dsh — so a session that switches off a Claude mount reverts on the
+ * next pass.
+ *
+ * The row carries no session id in the DOM, so a running dot is matched to a session by the title
+ * text beside it (dsh renders `displayTitle` there, the same string the list store holds).
+ * ponytail: title match, not id; two running sessions with the same title share a tint. Swap for a
+ * per-row id the day dsh puts one on the row.
+ */
+// The title span sits next to the slot that holds the dot; the dot's nearest span ancestor is that
+// slot, so its next sibling is the title. Structural, so no hashed class name is needed.
+const spinnerRowTitle = (dot: Element): string | null =>
+  dot.closest("span")?.nextElementSibling?.textContent?.trim() ?? null;
+
+function watchSessionSpinners(ctx: ClientCtx) {
+  const MARK = "data-omc-spinner";
+  // displayTitles of the sessions that are both running and on a Claude mount, this instant.
+  const claudeRunningTitles = (): Set<string> => {
+    const set = new Set<string>();
+    const snap = ctx.sessions.list.getSnapshot();
+    if (!snap) return set;
+    for (const [id, s] of Object.entries(snap.byId))
+      if (s.running && s.displayTitle && isClaudeSession(ctx, id)) set.add(s.displayTitle.trim());
+    return set;
+  };
+  const scan = () => {
+    const claude = claudeRunningTitles();
+    for (const dot of document.querySelectorAll<SVGElement>('svg[data-state="ongoing"]')) {
+      if (!dot.closest('[role="treeitem"]')) continue; // a sidebar session row, not a dot elsewhere
+      const title = spinnerRowTitle(dot);
+      if (title !== null && claude.has(title)) {
+        dot.style.color = CLAUDE_ORANGE;
+        dot.setAttribute(MARK, "1");
+      } else if (dot.hasAttribute(MARK)) {
+        dot.style.color = "";
+        dot.removeAttribute(MARK);
+      }
+    }
+  };
+  scan();
+  // A dot going from idle to running is an attribute flip (`data-state`), not an added node, and a
+  // new session row can appear at any time; a 1s poll catches both with one scan a second. A
+  // body-subtree MutationObserver used to sit here too, but it re-ran the whole-document scan on
+  // every mutation dsh made, so a streaming turn (hundreds of chunk appends a second) became
+  // hundreds of full-page scans and janked mobile. The poll alone is enough for a sidebar dot's
+  // colour. ponytail: if a newly-running row ever needs to tint faster than 1s, observe the sidebar
+  // container only and coalesce with requestAnimationFrame, never document.body per mutation.
+  setInterval(scan, 1000);
 }
 
 interface TurnRecord {
@@ -1887,6 +1969,7 @@ interface TurnRecord {
   output: number;
   cacheRead: number;
   cacheWrite: number;
+  ttftMs?: number;
 }
 interface TurnsReply {
   turns: TurnRecord[];
@@ -1964,7 +2047,7 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   const text = mine && total > 0 && last ? costText(total, last.costUsd, totalCacheRead) : "";
   const title =
     mine && total > 0 && last
-      ? `Claude cost: ${fmtCost(total)} this session, ${fmtCost(last.costUsd)} last turn (${turns.length} turn${turns.length === 1 ? "" : "s"})`
+      ? `Claude cost: ${fmtCost(total)} this session, ${fmtCost(last.costUsd)} last turn (${turns.length} turn${turns.length === 1 ? "" : "s"})${fmtTtft(last.ttftMs)}`
       : "";
   // dsh's stats row is one div of groups; a slot entry can only be its sibling and lands on its
   // own line. Append into that div instead, the way the context meter hooks its popover.
@@ -2124,6 +2207,13 @@ export const formatCacheRead = (tokens: number): string => {
   return `${scaled.toFixed(1).replace(/\.0$/, "")}${unit}`;
 };
 
+/** `, 840ms to first token` for the tooltip; nothing when the turn was not measured. */
+const fmtTtft = (ms?: number): string => {
+  if (ms === undefined || ms <= 0) return "";
+  const shown = ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`;
+  return `, ${shown} to first token`;
+};
+
 /** `✻ $18.21 · $0.42 last`: the session total, newest turn, and cached tokens. */
 const costText = (total: number, last: number, cacheRead: number = 0) => {
   let text = `${CLAUDE_MARK} ${fmtCost(total)} · ${fmtCost(last)} last`;
@@ -2203,11 +2293,11 @@ export function apply(ctx: ClientCtx) {
   watchContextMeter(ctx);
   watchTurnStatus(ctx);
   watchSessionNotices(ctx);
+  watchSessionSpinners(ctx);
 
   function Section() {
     const [boxes, setBoxes] = useState<BoxData[]>([]);
     const [openBoxes, setOpenBoxes] = useState(false);
-    const [openSettings, setOpenSettings] = useState(false);
     const [error, setError] = useState("");
     useEffect(() => {
       fetch(`${ROUTE}/boxes`)
@@ -2234,7 +2324,6 @@ export function apply(ctx: ClientCtx) {
             onToggle={() => setOpenBoxes((v) => !v)}
           />
         )}
-        <SettingsEditor open={openSettings} onToggle={() => setOpenSettings((v) => !v)} ctx={ctx} />
       </div>
     );
   }

@@ -1,6 +1,12 @@
 // Offline self-check: bun src/plugins.test.ts. No CLI, no network.
 import assert from "node:assert/strict";
-import { pluginRoster } from "./plugins.js";
+import {
+  isMarketplaceSource,
+  isPluginId,
+  isPluginScope,
+  pluginRoster,
+  pluginScopeNeedsCwd,
+} from "./plugins.js";
 
 const scopes = (files: Record<string, unknown>) =>
   Object.entries(files).map(([scope, value]) => ({ scope, text: JSON.stringify(value) }));
@@ -107,6 +113,28 @@ const scopes = (files: Record<string, unknown>) =>
     }),
   );
   assert.deepEqual(out.marketplaces, [{ name: "team", source: "skills-dir", scope: "managed" }]);
+}
+
+// The manager validators: what the mutation routes accept before shelling out to the CLI.
+{
+  assert.ok(isPluginId("formatter@tools"));
+  assert.ok(isPluginId("linter"));
+  assert.ok(isPluginId("scope/name@market.place"));
+  assert.ok(!isPluginId("-rf"), "a leading dash reads as a flag");
+  assert.ok(!isPluginId("has space"));
+  assert.ok(!isPluginId(""));
+  assert.ok(!isPluginId(42));
+
+  assert.ok(isPluginScope("user") && isPluginScope("project") && isPluginScope("local"));
+  assert.ok(!isPluginScope("managed"), "managed is not a plugin scope");
+  assert.ok(!pluginScopeNeedsCwd("user"));
+  assert.ok(pluginScopeNeedsCwd("project") && pluginScopeNeedsCwd("local"));
+
+  assert.ok(isMarketplaceSource("acme/plugins"));
+  assert.ok(isMarketplaceSource("https://example.com/m.json"));
+  assert.ok(isMarketplaceSource("/home/me/.claude/mkt"));
+  assert.ok(!isMarketplaceSource("  "), "empty after trim");
+  assert.ok(!isMarketplaceSource("--flag"));
 }
 
 console.log("plugins ok");

@@ -24,7 +24,13 @@ import { buildAddServer, isMcpName, scopeNeedsCwd } from "./mcp-add-remove.js";
 import type { JsonValue, PluginContext, SessionPersistence, WorkspaceRegistry } from "./dsh.js";
 import { errorText } from "./process.js";
 import { featureSwitches } from "./switches.js";
-import { pluginRoster } from "./plugins.js";
+import {
+  isMarketplaceSource,
+  isPluginId,
+  isPluginScope,
+  pluginRoster,
+  pluginScopeNeedsCwd,
+} from "./plugins.js";
 import { PERMISSION_MODES, isPermissionMode } from "./state.js";
 import type {
   PermissionModeInfo,
@@ -105,9 +111,10 @@ const run = (
   args: string[],
   env?: NodeJS.ProcessEnv,
   cwd?: string,
+  timeout = 8000,
 ): Promise<{ out: string; error?: string }> =>
   new Promise((resolve) =>
-    execFile(cmd, args, { timeout: 8000, windowsHide: true, env, cwd }, (e, out, err) =>
+    execFile(cmd, args, { timeout, windowsHide: true, env, cwd }, (e, out, err) =>
       resolve(
         e
           ? {
@@ -709,6 +716,18 @@ export function registerSessionRoutes(
     const { webServer, connection, sessions, sessionPersistence } = host;
     if (!webServer || !connection || !sessionPersistence) return;
     const routeHost: RouteHost = { webServer, connection, sessions, sessionPersistence };
+    // Shared by the plugin-manager routes: check the scope and resolve the session's directory,
+    // which is where a `project` or `local` write lands (a `user` write goes to configDir).
+    const pluginScopeCwd = async (
+      scope: unknown,
+      session: JsonValue | undefined,
+    ): Promise<{ cwd: string | undefined } | { error: string }> => {
+      if (!isPluginScope(scope)) return { error: "scope is user, project or local" };
+      const cwd = await sessionCwd(session, sessionPersistence);
+      if (pluginScopeNeedsCwd(scope) && cwd === null)
+        return { error: `${scope} scope needs a session open in a directory` };
+      return { cwd: cwd ?? undefined };
+    };
     host.effect?.(
       () =>
         webServer.register({
@@ -894,6 +913,92 @@ export function registerSessionRoutes(
                   ok: true,
                   ...pluginRoster(await settingsTexts(settingsPath, cwd)),
                 });
+              }
+              // Turn the roster into a manager. The CLI owns the mutation end to end (it resolves
+              // the marketplace, writes both the settings key and the install lock, and validates
+              // the plugin), the same way the MCP tab shells out per session cwd with a scope. Each
+              // write targets the scope the roster row named. The change lands at the next spawn.
+              if (req.method === "POST" && url.pathname === `${ROUTE_PREFIX}/plugins/toggle`) {
+                const body = await readBody(req);
+                if (!isPluginId(body.key)) return json(res, 400, { error: "plugin id required" });
+                const target = await pluginScopeCwd(body.scope, body.session);
+                if ("error" in target) return json(res, 400, { error: target.error });
+                const verb = body.enable === false ? "disable" : "enable";
+                const result = await run(
+                  command || "claude",
+                  ["plugin", verb, body.key, "--scope", String(body.scope)],
+                  { ...process.env, CLAUDE_CONFIG_DIR: configDir },
+                  target.cwd,
+                );
+                if (result.error) return json(res, 400, { error: result.error });
+                log("info", `plugin ${body.key} ${verb}d (${String(body.scope)})`);
+                return json(res, 200, { ok: true });
+              }
+              if (req.method === "POST" && url.pathname === `${ROUTE_PREFIX}/plugins/uninstall`) {
+                const body = await readBody(req);
+                if (!isPluginId(body.key)) return json(res, 400, { error: "plugin id required" });
+                const target = await pluginScopeCwd(body.scope, body.session);
+                if ("error" in target) return json(res, 400, { error: target.error });
+                // -y is required when stdout is not a TTY, which it never is here.
+                const result = await run(
+                  command || "claude",
+                  ["plugin", "uninstall", body.key, "--scope", String(body.scope), "-y"],
+                  { ...process.env, CLAUDE_CONFIG_DIR: configDir },
+                  target.cwd,
+                );
+                if (result.error) return json(res, 400, { error: result.error });
+                log("info", `plugin ${body.key} uninstalled (${String(body.scope)})`);
+                return json(res, 200, { ok: true });
+              }
+              // Marketplace add resolves a URL, path or GitHub repo, which can clone over the
+              // network, so it gets a longer timeout than the local settings writes.
+              if (
+                req.method === "POST" &&
+                url.pathname === `${ROUTE_PREFIX}/plugins/marketplace/add`
+              ) {
+                const body = await readBody(req);
+                if (!isMarketplaceSource(body.source))
+                  return json(res, 400, {
+                    error: "a source is a URL, a path or a GitHub owner/repo",
+                  });
+                const target = await pluginScopeCwd(body.scope, body.session);
+                if ("error" in target) return json(res, 400, { error: target.error });
+                const result = await run(
+                  command || "claude",
+                  [
+                    "plugin",
+                    "marketplace",
+                    "add",
+                    body.source.trim(),
+                    "--scope",
+                    String(body.scope),
+                  ],
+                  { ...process.env, CLAUDE_CONFIG_DIR: configDir },
+                  target.cwd,
+                  60000,
+                );
+                if (result.error) return json(res, 400, { error: result.error });
+                log("info", `marketplace added (${String(body.scope)})`);
+                return json(res, 200, { ok: true });
+              }
+              if (
+                req.method === "POST" &&
+                url.pathname === `${ROUTE_PREFIX}/plugins/marketplace/remove`
+              ) {
+                const body = await readBody(req);
+                if (!isPluginId(body.name))
+                  return json(res, 400, { error: "marketplace name required" });
+                const target = await pluginScopeCwd(body.scope, body.session);
+                if ("error" in target) return json(res, 400, { error: target.error });
+                const result = await run(
+                  command || "claude",
+                  ["plugin", "marketplace", "remove", body.name, "--scope", String(body.scope)],
+                  { ...process.env, CLAUDE_CONFIG_DIR: configDir },
+                  target.cwd,
+                );
+                if (result.error) return json(res, 400, { error: result.error });
+                log("info", `marketplace ${body.name} removed (${String(body.scope)})`);
+                return json(res, 200, { ok: true });
               }
               // The settings and environment that turn off something the panel offers. Its own
               // route rather than a field on diagnostics: the shield and Rewind ask for it on

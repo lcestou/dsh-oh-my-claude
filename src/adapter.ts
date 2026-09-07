@@ -172,6 +172,8 @@ export type Config = {
   allowedTools: string[];
   disallowedTools: string[];
   addDirs: string[];
+  pluginDirs: string[];
+  pluginUrls: string[];
   maxTurns?: number;
   maxBudgetUsd?: number;
   titleModel: string;
@@ -219,6 +221,18 @@ export const Config = z.object({
   allowedTools: z.array(z.string()).default([]).description("Extra --allowedTools entries"),
   disallowedTools: z.array(z.string()).default([]).description("--disallowedTools entries"),
   addDirs: z.array(z.string()).default([]).description("Extra --add-dir directories"),
+  pluginDirs: z
+    .array(z.string())
+    .default([])
+    .description(
+      "Load an uninstalled local plugin for this session only: each becomes --plugin-dir <path> (a directory or a .zip). A path the CLI's LocalPluginDirsAllowedByPolicy blocks is refused by the CLI at spawn",
+    ),
+  pluginUrls: z
+    .array(z.string())
+    .default([])
+    .description(
+      "Fetch a plugin .zip from a URL for this session only: each becomes --plugin-url <url>",
+    ),
   maxTurns: z
     .number()
     .step(1)
@@ -441,7 +455,9 @@ let catalog = { at: 0, models: KNOWN_MODELS };
 
 /** Where the last catalog the API gave us is kept, so a boot with the API down still lists the real
  *  models instead of the baked-in floor. Written on every successful fetch, read once per process. */
-const CATALOG_CACHE = join(STATE_DIR, "models.json");
+/** Path to the on-disk catalog cache. Honors DSH_OMC_STATE_DIR so a test can aim it at an empty
+ *  dir and exercise the offline floor without depending on whatever this box has cached. */
+const catalogCachePath = () => join(process.env.DSH_OMC_STATE_DIR ?? STATE_DIR, "models.json");
 let diskSeeded = false;
 /** The shape a cached row must still hold. The cache is our own write, but a truncated or hand-edited
  *  file must never slip a malformed row into the catalog dsh validates, so it is re-parsed on read. */
@@ -471,7 +487,7 @@ async function seedFromDisk() {
   diskSeeded = true;
   if (catalog.at !== 0) return;
   try {
-    const rows = parseCatalogCache(await readFile(CATALOG_CACHE, "utf8"));
+    const rows = parseCatalogCache(await readFile(catalogCachePath(), "utf8"));
     if (rows.length > 0 && catalog.at === 0) catalog = { at: 0, models: rows };
   } catch {
     /* no cache yet or unreadable: the KNOWN_MODELS floor stays */
@@ -480,8 +496,9 @@ async function seedFromDisk() {
 /** Persist a fetched catalog for later boots. Best effort: a write that fails just misses the seed. */
 async function persistCatalog(models: ReturnType<typeof M>[]) {
   try {
-    await mkdir(dirname(CATALOG_CACHE), { recursive: true });
-    await writeFile(CATALOG_CACHE, JSON.stringify(models));
+    const path = catalogCachePath();
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, JSON.stringify(models));
   } catch {
     /* read-only state dir or full disk: fall through, the fetch still served this boot */
   }
@@ -954,6 +971,11 @@ export function buildArgs({
   if (config.allowedTools.length > 0) args.push("--allowedTools", ...config.allowedTools);
   if (config.disallowedTools.length > 0) args.push("--disallowedTools", ...config.disallowedTools);
   for (const d of config.addDirs) args.push("--add-dir", d);
+  // Session-only plugins: a per-spawn flag, not a settings write, so they never touch the roster.
+  if (supports(flags, "--plugin-dir"))
+    for (const d of config.pluginDirs) args.push("--plugin-dir", d);
+  if (supports(flags, "--plugin-url"))
+    for (const u of config.pluginUrls) args.push("--plugin-url", u);
   if (config.maxTurns) args.push("--max-turns", String(config.maxTurns));
   if (config.maxBudgetUsd && supports(flags, "--max-budget-usd")) {
     args.push("--max-budget-usd", String(config.maxBudgetUsd));
@@ -1087,6 +1109,8 @@ export interface TurnRecord {
   cacheRead: number;
   cacheWrite: number;
   denials?: string[];
+  /** Wall-clock ms from the prompt write to the first stream chunk; absent when not measured. */
+  ttftMs?: number;
 }
 
 /** The slice of a Claude process the idle watchdog needs. */
@@ -2375,6 +2399,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     }
     if (prep.input === null || !proc.write(prep.input))
       throw new LlmError("claude process is not running", "PROVIDER_ERROR");
+    proc.promptSentAt = Date.now();
   }
 
   /**
@@ -2480,6 +2505,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     }
     // Compute turn/step once per stream from the open session; used by native tool callbacks.
     let turnStep: { turn: number; step: number } | undefined;
+    let firstChunkAt = 0; // when the first stream chunk landed, for time-to-first-token
     const callSeqs = new Map<string, number>(); // callId → tool/call seq the result must cite
     try {
       const session = this.ctx?.sessions?.get?.(asSessionId(options.sessionId));
@@ -2543,6 +2569,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       onResult: (summary: TurnRecord) => {
         // ponytail: ring buffer capped at 50 entries per session; now also persisted to disk so it
         // survives a dsh restart — upgrade only if per-turn granularity beyond 50 is needed.
+        // Time-to-first-token: prompt write to first chunk. Guard against a wake-only turn (no
+        // prompt sent) and a clock that ran backwards; reset so the next turn measures its own.
+        if (firstChunkAt > 0 && proc.promptSentAt > 0 && firstChunkAt >= proc.promptSentAt)
+          summary.ttftMs = firstChunkAt - proc.promptSentAt;
+        proc.promptSentAt = 0;
         const buf = this.turnBuffer.get(options.sessionId) ?? [];
         buf.push(summary);
         if (buf.length > TURN_RING) buf.shift();
@@ -2656,6 +2687,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         yield* tr.wholeBlock("text", "\n\n---\n\n");
         return "continue";
       }
+      if (firstChunkAt === 0 && (event.type === "stream_event" || event.type === "assistant"))
+        firstChunkAt = Date.now();
       yield* tr.translate(event);
       if (tr.toolPending) clearIdle(options.sessionId); // tool running: silence is expected
       if (tr.finished) return "finished";

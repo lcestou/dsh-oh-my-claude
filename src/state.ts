@@ -366,7 +366,7 @@ export async function loadTurnRecords(dir: string): Promise<Map<string, TurnReco
           )
             continue;
           // apiMs and turns were not always written; older files read as 0.
-          records.push({
+          const record: TurnRecord = {
             at,
             costUsd,
             durationMs,
@@ -376,7 +376,11 @@ export async function loadTurnRecords(dir: string): Promise<Map<string, TurnReco
             cacheWrite,
             apiMs: num("apiMs") ?? 0,
             turns: num("turns") ?? 0,
-          });
+          };
+          // ttftMs is optional and absent from older files; carry it only when it was written.
+          const ttftMs = num("ttftMs");
+          if (ttftMs !== undefined) record.ttftMs = ttftMs;
+          records.push(record);
         }
         if (records.length > 0) map.set(k, records);
       }

@@ -311,6 +311,25 @@ assert.ok(
     custom.join(" ").includes("--add-dir /x") &&
     custom.join(" ").includes("--max-turns 3"),
 );
+// session-only plugins map to repeated --plugin-dir/--plugin-url, gated on flag support
+const withPlugins = buildArgs({
+  model: "m",
+  config: new Config({ pluginDirs: ["/a", "/b.zip"], pluginUrls: ["https://x/p.zip"] }),
+  flags: new Set(["--plugin-dir", "--plugin-url"]),
+} as any);
+assert.ok(
+  withPlugins.join(" ").includes("--plugin-dir /a --plugin-dir /b.zip") &&
+    withPlugins.includes("--plugin-url") &&
+    withPlugins.includes("https://x/p.zip"),
+);
+// A probe that answered but did not list the flag (empty-but-present set): left out. A null/absent
+// probe means "assume supported", so it is not the no-support case.
+const noFlag = buildArgs({
+  model: "m",
+  config: new Config({ pluginDirs: ["/a"] }),
+  flags: new Set<string>(),
+} as any);
+assert.ok(!noFlag.includes("--plugin-dir"), "older CLI without the flag: left out");
 
 // input line: text first, then images
 const line = JSON.parse(buildInput("hi", [{ mediaType: "image/png", data: "AAA" }]));
@@ -491,10 +510,13 @@ assert.deepEqual(api, {
   contextWindow: 500,
   efforts: ["low"],
 });
+// Aim the cache at an empty dir so this exercises the offline floor, not whatever this box cached.
+process.env.DSH_OMC_STATE_DIR = joinPath(tmpdir(), `omc-catalog-${process.pid}`);
 const failing = await getCatalog(async () => {
   throw new Error("offline");
 });
 assert.equal(failing, KNOWN_MODELS);
+delete process.env.DSH_OMC_STATE_DIR;
 
 // A dated id for a model we know is advertised the way the fallback list spells it, so the lineup
 // reads the same whether the API answered or not; one we do not know keeps the API's spelling.

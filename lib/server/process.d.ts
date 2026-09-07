@@ -538,6 +538,8 @@ export declare class ClaudeProcess {
     /** Set by the idle watchdog when it kills the process. */
     idleKilled: boolean;
     staleResults: number;
+    /** When this turn's prompt was written, for time-to-first-token; 0 once a result has read it. */
+    promptSentAt: number;
     prep?: TurnPrep;
     /** Sees every `control_response` line as it arrives, even between turns; true means consumed. */
     controlListener?: (event: ClaudeEvent) => boolean;

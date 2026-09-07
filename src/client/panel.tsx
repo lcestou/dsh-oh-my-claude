@@ -16,6 +16,8 @@ import {
   useNarrow,
   useDismiss,
   code,
+  select,
+  inputStyle,
   openHere,
   CLAUDE_ORANGE,
   CLAUDE_MARK,
@@ -348,12 +350,107 @@ const shortPath = (path: string, cwd: string): string =>
  * the session loaded (managed, user, project, local files plus @imports), and opens each in
  * an editor. Managed files open read-only. Same save/delete routes as Memory, path-checked.
  */
+/** The one plugin scope not `user`-global reads and writes into a directory. */
+const PLUGIN_SCOPE_OPTS = [
+  { value: "user", label: "User" },
+  { value: "project", label: "Project" },
+  { value: "local", label: "Local" },
+] as const;
+
+/** The Add-marketplace form under the roster: a source and the scope to declare it in. */
+function MarketplaceAddForm({ act, busy }: { act: Act; busy: string }) {
+  const [source, setSource] = useState("");
+  const [scope, setScope] = useState("user");
+  const submit = async () => {
+    if (await act("/plugins/marketplace/add", { source, scope }, "mkt-add")) setSource("");
+  };
+  return (
+    <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+      <input
+        type="text"
+        placeholder="marketplace: URL, path or owner/repo"
+        value={source}
+        onChange={(e) => setSource(e.currentTarget.value)}
+        disabled={busy !== ""}
+        style={{ ...inputStyle, fontSize: 12 }}
+      />
+      <select
+        value={scope}
+        onChange={(e) => setScope(e.currentTarget.value)}
+        disabled={busy !== ""}
+        style={{ ...select, fontSize: 12 }}
+      >
+        {PLUGIN_SCOPE_OPTS.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+      <button
+        type="button"
+        style={btn}
+        disabled={busy !== "" || source.trim() === ""}
+        onClick={submit}
+      >
+        {busy === "mkt-add" ? "…" : "Add"}
+      </button>
+    </div>
+  );
+}
+
+/** The fields a plugin/marketplace mutation route reads, on top of the session the poster adds. */
+interface PluginMutationBody {
+  scope: string;
+  key?: string;
+  enable?: boolean;
+  source?: string;
+  name?: string;
+}
+
+/** Post one mutation; returns whether it succeeded so a form can clear itself. */
+type Act = (path: string, body: PluginMutationBody, id: string) => Promise<boolean>;
+
 /**
  * The plugins and marketplaces the session's settings turn on, under the CLAUDE.md files: the same
- * question, a different set of files. Read-only on purpose - a toggle here would need the process
- * respawned before it meant anything, and the scope on each row says which file to edit.
+ * question, a different set of files. Each row acts on its own scope through `claude plugin`; a
+ * change lands at the next spawn, which the note says, since the running process read its plugins
+ * at launch.
  */
-function PluginRosterBlock({ roster }: { roster: PluginRoster | null }) {
+function PluginManagerBlock({
+  roster,
+  sessionId,
+  onChanged,
+}: {
+  roster: PluginRoster | null;
+  sessionId: string;
+  onChanged: () => void;
+}) {
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+  const act: Act = async (path, body, id) => {
+    setBusy(id);
+    setError("");
+    try {
+      const r = await readJson<{ ok: boolean; error?: string }>(
+        await fetch(`${ROUTE}${path}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ session: sessionId, ...body }),
+        }),
+      );
+      if (!r.ok) {
+        setError(r.error ?? "failed");
+        return false;
+      }
+      onChanged();
+      return true;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      return false;
+    } finally {
+      setBusy("");
+    }
+  };
   if (roster === null) return null;
   const { plugins, marketplaces } = roster;
   const line: CSSProperties = {
@@ -364,41 +461,72 @@ function PluginRosterBlock({ roster }: { roster: PluginRoster | null }) {
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
   };
+  const small: CSSProperties = { ...btn, flex: "none", padding: "0 6px", fontSize: 11 };
   return (
     <>
       <span style={{ ...meta, padding: "2px 4px", display: "block", marginTop: 8 }}>
         Plugins and marketplaces
       </span>
-      {plugins.length === 0 && marketplaces.length === 0 ? (
-        <span style={{ ...meta, padding: "2px 10px", fontSize: 12 }}>
-          No settings file names a plugin (enabledPlugins) or a marketplace.
+      <div style={{ padding: "2px 10px", fontSize: 12, lineHeight: "1.7" }}>
+        {plugins.length === 0 && marketplaces.length === 0 && (
+          <span style={{ ...meta, fontSize: 12 }}>
+            No settings file names a plugin (enabledPlugins) or a marketplace.
+          </span>
+        )}
+        {plugins.map((p) => (
+          <div key={p.key} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <button
+              type="button"
+              style={{ ...small, width: 34, color: p.enabled ? undefined : T.faint }}
+              disabled={busy !== ""}
+              onClick={() =>
+                act("/plugins/toggle", { key: p.key, scope: p.scope, enable: !p.enabled }, p.key)
+              }
+              title={p.enabled ? "disable" : "enable"}
+            >
+              {busy === p.key ? "…" : p.enabled ? "on" : "off"}
+            </button>
+            <span style={line}>
+              {p.key}
+              {p.detail !== undefined && ` (${p.detail})`}
+            </span>
+            <span style={{ ...meta, flex: "none" }}>{p.scope}</span>
+            <button
+              type="button"
+              style={small}
+              disabled={busy !== ""}
+              onClick={() => act("/plugins/uninstall", { key: p.key, scope: p.scope }, p.key)}
+            >
+              Remove
+            </button>
+          </div>
+        ))}
+        {marketplaces.map((m) => (
+          <div key={m.name} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <span style={{ ...meta, flex: "none" }}>market</span>
+            <span style={line}>
+              {m.name} · {m.source}
+              {m.alias === true && " (written as additionalMarketplaces)"}
+            </span>
+            <span style={{ ...meta, flex: "none" }}>{m.scope}</span>
+            <button
+              type="button"
+              style={small}
+              disabled={busy !== ""}
+              onClick={() =>
+                act("/plugins/marketplace/remove", { name: m.name, scope: m.scope }, m.name)
+              }
+            >
+              Remove
+            </button>
+          </div>
+        ))}
+        <MarketplaceAddForm act={act} busy={busy} />
+        {error !== "" && <span style={{ ...meta, display: "block", marginTop: 4 }}>{error}</span>}
+        <span style={{ ...meta, display: "block", marginTop: 4 }}>
+          A change takes effect at the next spawn.
         </span>
-      ) : (
-        <div style={{ padding: "2px 10px", fontSize: 12, lineHeight: "1.5" }}>
-          {plugins.map((p) => (
-            <div key={p.key} style={{ display: "flex", gap: 8 }}>
-              <span style={{ flex: "none", color: p.enabled ? undefined : T.faint }}>
-                {p.enabled ? "on" : "off"}
-              </span>
-              <span style={line}>
-                {p.key}
-                {p.detail !== undefined && ` (${p.detail})`}
-              </span>
-              <span style={{ ...meta, flex: "none" }}>{p.scope}</span>
-            </div>
-          ))}
-          {marketplaces.map((m) => (
-            <div key={m.name} style={{ display: "flex", gap: 8 }}>
-              <span style={{ ...meta, flex: "none" }}>market</span>
-              <span style={line}>
-                {m.name} · {m.source}
-                {m.alias === true && " (written as additionalMarketplaces)"}
-              </span>
-              <span style={{ ...meta, flex: "none" }}>{m.scope}</span>
-            </div>
-          ))}
-        </div>
-      )}
+      </div>
     </>
   );
 }
@@ -414,28 +542,31 @@ function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCt
   const [roster, setRoster] = useState<PluginRoster | null>(null);
 
   const q = cwd ? `cwd=${encodeURIComponent(cwd)}` : "";
+  // A fetch in flight when the tab closes must not set state on the unmounted component (React
+  // warns, and the stale result would flash if the tab reopened). Both loaders check this first.
+  const mounted = useRef(true);
+  useEffect(() => () => void (mounted.current = false), []);
   const refresh = () => {
     if (!cwd) return;
     fetch(`${ROUTE}/instructions?${q}`)
       .then((r) => readJson<{ files?: InstructionFile[] }>(r))
-      .then((b) => setFiles(b.files ?? []))
-      .catch((e: Error) => setError(e.message));
+      .then((b) => mounted.current && setFiles(b.files ?? []))
+      .catch((e: Error) => mounted.current && setError(e.message));
   };
   useEffect(() => {
     refresh();
   }, [cwd]);
-  useEffect(() => {
+  const refreshRoster = useCallback(() => {
     if (!cwd) return;
-    let live = true;
     fetch(`${ROUTE}/plugins?${q}`)
       .then((r) => readJson<PluginRoster>(r))
       // A roster that will not load is not an instructions error: the file list is still good.
-      .then((b) => live && setRoster(b))
+      .then((b) => mounted.current && setRoster(b))
       .catch(() => {});
-    return () => {
-      live = false;
-    };
-  }, [cwd]);
+  }, [cwd, q]);
+  useEffect(() => {
+    refreshRoster();
+  }, [refreshRoster]);
 
   const openFile = async (f: InstructionFile) => {
     setError("");
@@ -558,7 +689,9 @@ function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCt
           />
         </>
       )}
-      {file === null && <PluginRosterBlock roster={roster} />}
+      {file === null && (
+        <PluginManagerBlock roster={roster} sessionId={sessionId} onChanged={refreshRoster} />
+      )}
       {error && <span style={{ color: T.err, fontSize: 12 }}>{error}</span>}
     </div>
   );
@@ -1556,6 +1689,26 @@ function TasksBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   );
 }
 
+/**
+ * Common remote MCP connectors, to pre-fill the Add form. A preset is just name, transport and URL
+ * feeding the path that already works; the user finishes OAuth in a terminal, which the needs-auth
+ * row already instructs. URLs verified against code.claude.com/docs/en/mcp (2026-09-07).
+ */
+const CONNECTORS: readonly { label: string; name: string; transport: string; url: string }[] = [
+  { label: "GitHub", name: "github", transport: "http", url: "https://api.githubcopilot.com/mcp/" },
+  { label: "Notion", name: "notion", transport: "http", url: "https://mcp.notion.com/mcp" },
+  { label: "Sentry", name: "sentry", transport: "http", url: "https://mcp.sentry.dev/mcp" },
+  { label: "Slack", name: "slack", transport: "http", url: "https://mcp.slack.com/mcp" },
+  { label: "Stripe", name: "stripe", transport: "http", url: "https://mcp.stripe.com" },
+  { label: "Asana", name: "asana", transport: "sse", url: "https://mcp.asana.com/sse" },
+  {
+    label: "HubSpot",
+    name: "hubspot",
+    transport: "http",
+    url: "https://mcp.hubspot.com/anthropic",
+  },
+];
+
 /** The Add form under the server list: name, where it goes, and the fields its transport needs. */
 function McpAddForm({ sessionId, onAdded }: { sessionId: string; onAdded: () => void }) {
   const [name, setName] = useState("");
@@ -1568,6 +1721,7 @@ function McpAddForm({ sessionId, onAdded }: { sessionId: string; onAdded: () => 
   const [headers, setHeaders] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [connector, setConnector] = useState("");
 
   const submit = async () => {
     setBusy(true);
@@ -1599,6 +1753,7 @@ function McpAddForm({ sessionId, onAdded }: { sessionId: string; onAdded: () => 
       setEnv("");
       setUrl("");
       setHeaders("");
+      setConnector("");
       onAdded();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -1607,8 +1762,30 @@ function McpAddForm({ sessionId, onAdded }: { sessionId: string; onAdded: () => 
     }
   };
 
+  const fillFromConnector = (picked: string) => {
+    setConnector(picked);
+    const c = CONNECTORS.find((x) => x.name === picked);
+    if (!c) return;
+    setName(c.name);
+    setTransport(c.transport);
+    setUrl(c.url);
+  };
+
   return (
     <div style={{ padding: "6px", marginTop: 8, border: `1px solid ${T.border}`, borderRadius: 4 }}>
+      <select
+        value={connector}
+        onChange={(e) => fillFromConnector(e.currentTarget.value)}
+        disabled={busy}
+        style={{ width: "100%", padding: 4, fontSize: 12, marginBottom: 8 }}
+      >
+        <option value="">Common connector…</option>
+        {CONNECTORS.map((c) => (
+          <option key={c.name} value={c.name}>
+            {c.label}
+          </option>
+        ))}
+      </select>
       <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
         <input
           type="text"
@@ -2159,7 +2336,12 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
     right: 12,
     marginInline: "auto",
     bottom: above,
-    width: narrow ? "auto" : "min(560px, 100%)",
+    // Size to the tab strip: fit-content resolves to the widest child, and the body below is width:0
+    // + minWidth:100% so it contributes nothing, leaving the one-row tab strip to set the width. It
+    // stays on one line until the viewport can no longer hold it, then the strip wraps. The phone
+    // layout stays auto-width.
+    width: narrow ? "auto" : "fit-content",
+    maxWidth: narrow ? undefined : "calc(100vw - 24px)",
     // dvh, not vh: on a phone the browser chrome slides away and vh keeps measuring the tall value.
     maxHeight: narrow ? "60dvh" : "min(400px, 80dvh)",
     zIndex: 200,
@@ -2234,7 +2416,17 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
         <div role="dialog" aria-label="Oh My Claude" style={panelStyle}>
           <div
             role="tabpanel"
-            style={{ flex: "1 1 auto", minHeight: 0, overflow: "auto", padding: "4px 0" }}
+            // width:0 + minWidth:100% keeps the body from contributing to the panel's fit-content
+            // width: it fills whatever the tab strip sets, and its own long lines scroll rather than
+            // widen the panel past the tabs.
+            style={{
+              flex: "1 1 auto",
+              minHeight: 0,
+              overflow: "auto",
+              padding: "4px 0",
+              width: narrow ? undefined : 0,
+              minWidth: narrow ? undefined : "100%",
+            }}
           >
             {tab === "Restore" && <RestoreBody sessionId={sessionId} ctx={ctx} onClose={close} />}
             {tab === "Memory" && <MemoryBody sessionId={sessionId} ctx={ctx} onCount={onCount} />}
