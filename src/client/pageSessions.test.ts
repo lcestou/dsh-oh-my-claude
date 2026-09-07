@@ -22,7 +22,7 @@ const many = group(
   Array.from({ length: 25 }, (_, i) => sess(`s${i}`, i)),
 );
 
-// Default cap = 10, newest first, 15 hidden, matched = 25.
+// "all" merges every box under one key, newest first: default cap 10, 15 hidden, matched 25.
 {
   const { list, hidden, matched } = pageSessions([many], {
     box: "all",
@@ -33,8 +33,8 @@ const many = group(
   assert.equal(list.length, 10);
   assert.equal(list[0]?.s.id, "s24", "newest first");
   assert.equal(list[9]?.s.id, "s15");
-  assert.equal(hidden.local, 15);
-  assert.equal(matched.local, 25);
+  assert.equal(hidden.all, 15);
+  assert.equal(matched.all, 25);
 }
 
 // One "Load more" press → cap 20, hidden 5.
@@ -43,10 +43,10 @@ const many = group(
     box: "all",
     cwd: "all",
     origin: "all",
-    shown: { local: 20 },
+    shown: { all: 20 },
   });
   assert.equal(list.length, 20);
-  assert.equal(hidden.local, 5);
+  assert.equal(hidden.all, 5);
 }
 
 // Cap past total → no hidden key.
@@ -55,10 +55,28 @@ const many = group(
     box: "all",
     cwd: "all",
     origin: "all",
-    shown: { local: 100 },
+    shown: { all: 100 },
   });
   assert.equal(list.length, 25);
-  assert.equal(hidden.local, undefined);
+  assert.equal(hidden.all, undefined);
+}
+
+// "all" is one timeline across boxes, not per-box sections: rows interleave by modifiedAt.
+{
+  const a = group("local", [sess("a", 3)]);
+  const b = group("box2", [sess("hi", 5), sess("lo", 1)]);
+  const { list, matched } = pageSessions([a, b], {
+    box: "all",
+    cwd: "all",
+    origin: "all",
+    shown: {},
+  });
+  assert.deepEqual(
+    list.map((r) => r.s.id),
+    ["hi", "a", "lo"],
+    "merged newest-first across boxes",
+  );
+  assert.equal(matched.all, 3);
 }
 
 // box filter drops other boxes entirely.
@@ -82,7 +100,7 @@ const many = group(
     sess("c", 1, { cwd: "/p/app", dsh: { archived: true } }),
   ]);
   const byCwd = pageSessions([g], { box: "all", cwd: "/p/app", origin: "all", shown: {} });
-  assert.equal(byCwd.matched.local, 2);
+  assert.equal(byCwd.matched.all, 2);
   assert.deepEqual(
     byCwd.list.map((r) => r.s.id),
     ["a", "c"],

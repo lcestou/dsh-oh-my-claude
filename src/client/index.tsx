@@ -486,31 +486,40 @@ export interface GroupInfo {
 const PAGE = 10;
 
 /**
- * Rows in box order, newest first within each box, each box capped to `shown[key]` (default PAGE).
- * `hidden[key]` is how many more that box has past the cap; `matched[key]` its filtered total, for
- * the "Load all" label. Pure so the paging math is checked without a DOM.
+ * The rows to show, newest first, capped to `shown[key]` (default PAGE). With a box selected the
+ * key is that box; with "all" every box is merged into one recency-sorted stream keyed `"all"`, so
+ * the list reads as one timeline rather than per-box sections. `hidden[key]` is how many more sit
+ * past the cap and `matched[key]` the filtered total, for the "Load more"/"Load all" labels. Pure,
+ * so the paging math is checked without a DOM.
  */
 export function pageSessions(
   groups: GroupInfo[],
   filters: { box: string; cwd: string; origin: string; shown: Record<string, number> },
 ) {
   const { box, cwd, origin, shown } = filters;
-  const list: Array<{ g: GroupInfo; s: SessionData }> = [];
   const hidden: Record<string, number> = {};
   const matched: Record<string, number> = {};
-  for (const g of groups) {
-    if (box !== "all" && g.key !== box) continue;
-    const gs = g.sessions
-      .filter(
-        (s) => (cwd === "all" || s.cwd === cwd) && (origin === "all" || originOf(s) === origin),
-      )
-      .toSorted((a, b) => b.modifiedAt - a.modifiedAt);
-    matched[g.key] = gs.length;
-    const cap = shown[g.key] ?? PAGE;
-    if (gs.length > cap) hidden[g.key] = gs.length - cap;
-    for (const s of gs.slice(0, cap)) list.push({ g, s });
+  const keep = (s: SessionData) =>
+    (cwd === "all" || s.cwd === cwd) && (origin === "all" || originOf(s) === origin);
+  const cappedList = (pairs: Array<{ g: GroupInfo; s: SessionData }>, key: string) => {
+    const sorted = pairs.toSorted((a, b) => b.s.modifiedAt - a.s.modifiedAt);
+    matched[key] = sorted.length;
+    const cap = shown[key] ?? PAGE;
+    if (sorted.length > cap) hidden[key] = sorted.length - cap;
+    return sorted.slice(0, cap);
+  };
+
+  // One box selected: that box alone, keyed by its own url/"local".
+  if (box !== "all") {
+    const g = groups.find((x) => x.key === box);
+    const pairs = g ? g.sessions.filter(keep).map((s) => ({ g, s })) : [];
+    return { list: cappedList(pairs, box), hidden, matched };
   }
-  return { list, hidden, matched };
+
+  // All boxes: one timeline across every box, capped once under "all". Session ids are unique per
+  // box and the self-proxy box is dropped upstream, so no row appears twice.
+  const pairs = groups.flatMap((g) => g.sessions.filter(keep).map((s) => ({ g, s })));
+  return { list: cappedList(pairs, "all"), hidden, matched };
 }
 
 /**
@@ -553,8 +562,10 @@ function Sessions({ ctx, boxes }: SessionsProps) {
     const out: GroupInfo[] = [];
     if (local)
       out.push({
+        // Name is the host, not a fixed "This box": the plugin runs on whatever box, so the label
+        // must read as that box's name. A "· here" marker in the chip says which one is local.
         key: "local",
-        name: "This box",
+        name: local.host ?? "This box",
         host: local.host,
         ok: true,
         sessions: local.sessions ?? [],
@@ -625,7 +636,12 @@ function Sessions({ ctx, boxes }: SessionsProps) {
 
   const known = ctx.sessions.list.getSnapshot()?.byId ?? {};
   const total = groups.reduce((n, g) => n + g.sessions.length, 0);
-  let lastGroup: { key: string } | null = null;
+  // One box (local only, or a self-proxy dropped) needs no per-row origin pill. The merged "all"
+  // view and any specific-box view page under one key, so the footer is a single control.
+  const multiBox = groups.length > 1;
+  const moreKey = box === "all" ? "all" : box;
+  const more = paged.hidden[moreKey] ?? 0;
+  const grown = (shown[moreKey] ?? PAGE) > PAGE;
   return (
     <section id="dsh-oh-my-claude-sessions-card" style={card}>
       <div style={cardHead}>
@@ -657,6 +673,7 @@ function Sessions({ ctx, boxes }: SessionsProps) {
             onClick={() => setBox(g.key)}
           >
             {g.name}
+            {g.key === "local" ? " · here" : ""}
             {g.ok ? ` · ${g.sessions.length}` : " · offline"}
           </button>
         ))}
@@ -699,29 +716,7 @@ function Sessions({ ctx, boxes }: SessionsProps) {
         </p>
       )}
       <div id="dsh-oh-my-claude-sessions" style={{ marginTop: 6 }}>
-        {rows.map((r, i) => {
-          const header =
-            box === "all" && r.g !== lastGroup ? (
-              <div
-                key={`h-${r.g.key}`}
-                style={{
-                  ...meta,
-                  display: "flex",
-                  gap: 8,
-                  alignItems: "center",
-                  padding: "10px 0 4px",
-                  fontWeight: 600,
-                  color: T.muted,
-                }}
-              >
-                <span>{r.g.name}</span>
-                {r.g.host && <span style={pill(T.faint)}>{r.g.host}</span>}
-              </div>
-            ) : null;
-          lastGroup = r.g;
-          const lastOfGroup = i === rows.length - 1 || rows[i + 1]?.g.key !== r.g.key;
-          const more = paged.hidden[r.g.key] ?? 0;
-          const grown = (shown[r.g.key] ?? PAGE) > PAGE;
+        {rows.map((r) => {
           const isLocal = r.g.key === "local";
           const opened = isLocal && Boolean(known[r.s.dsh?.id ?? r.s.id]) && !r.s.dsh?.archived;
           const busy = busyId === r.s.id;
@@ -734,8 +729,7 @@ function Sessions({ ctx, boxes }: SessionsProps) {
                 : r.s.dsh?.archived
                   ? "Restore"
                   : "Open";
-          return [
-            header,
+          return (
             <div
               key={`${r.g.key}-${r.s.id}`}
               data-testid="dsh-oh-my-claude-session-row"
@@ -756,6 +750,11 @@ function Sessions({ ctx, boxes }: SessionsProps) {
                 <div
                   style={{ ...meta, marginTop: 3, display: "flex", gap: 8, alignItems: "center" }}
                 >
+                  {multiBox && (
+                    <span style={pill(T.faint)} title={r.g.host}>
+                      {r.g.host ?? r.g.name}
+                    </span>
+                  )}
                   <Origin s={r.s} />
                   {r.s.cwd && (
                     <span title={r.s.cwd} style={{ fontFamily: T.mono }}>
@@ -778,37 +777,34 @@ function Sessions({ ctx, boxes }: SessionsProps) {
               >
                 {label}
               </button>
-            </div>,
-            lastOfGroup && more > 0 ? (
-              <div
-                key={`more-${r.g.key}`}
-                data-testid="dsh-oh-my-claude-load-more"
-                style={{ display: "flex", gap: 8, padding: "6px 0 2px" }}
-              >
-                <button
-                  type="button"
-                  style={btn}
-                  onClick={() =>
-                    setShown((m) => ({ ...m, [r.g.key]: (m[r.g.key] ?? PAGE) + PAGE }))
-                  }
-                >
-                  Load {Math.min(PAGE, more)} more
-                </button>
-                {grown && (
-                  <button
-                    type="button"
-                    style={btn}
-                    onClick={() =>
-                      setShown((m) => ({ ...m, [r.g.key]: paged.matched[r.g.key] ?? PAGE }))
-                    }
-                  >
-                    Load all {paged.matched[r.g.key] ?? ""}
-                  </button>
-                )}
-              </div>
-            ) : null,
-          ];
+            </div>
+          );
         })}
+        {more > 0 && (
+          <div
+            data-testid="dsh-oh-my-claude-load-more"
+            style={{ display: "flex", gap: 8, padding: "6px 0 2px" }}
+          >
+            <button
+              type="button"
+              style={btn}
+              onClick={() => setShown((m) => ({ ...m, [moreKey]: (m[moreKey] ?? PAGE) + PAGE }))}
+            >
+              Load {Math.min(PAGE, more)} more
+            </button>
+            {grown && (
+              <button
+                type="button"
+                style={btn}
+                onClick={() =>
+                  setShown((m) => ({ ...m, [moreKey]: paged.matched[moreKey] ?? PAGE }))
+                }
+              >
+                Load all {paged.matched[moreKey] ?? ""}
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </section>
   );
