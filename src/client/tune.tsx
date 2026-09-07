@@ -16,8 +16,9 @@ interface UsageReply {
 /** A Fable model, which is the family whose advisor bills to usage credits. */
 export const isFable = (value: SettingsValue) => String(value ?? "").startsWith("claude-fable");
 
-/** The settings.json keys this tab owns. Everything else in the file is left untouched. */
-interface Tunables {
+/** The settings.json keys this tab owns. Everything else in the file is left untouched. The three
+ *  attribution fields are nested under one object in the file and flat here, one row each. */
+export interface Tunables {
   outputStyle?: string;
   alwaysThinkingEnabled?: boolean;
   showThinkingSummaries?: boolean;
@@ -25,15 +26,35 @@ interface Tunables {
   promptCacheTtl?: string;
   subagentPromptCacheTtl?: string;
   advisorModel?: string;
+  fallbackModel?: string;
+  askUserQuestionTimeout?: string;
+  dialogExpiry?: string;
+  bashOutputMaxChars?: number;
+  taskOutputMaxChars?: number;
+  "attribution.commit"?: string;
+  "attribution.pr"?: string;
+  "attribution.sessionUrl"?: boolean;
 }
 type TuneKey = keyof Tunables;
-/** A settings document as this tab handles it: every key open, since it edits six and keeps the rest. */
-type SettingsValue = string | number | boolean | null | undefined;
+/** A settings document as this tab handles it: every key open, since it edits a dozen and keeps
+ *  the rest. `attribution` is the one nested object, so a value may be a settings object itself. */
+type SettingsValue = string | number | boolean | null | undefined | Settings;
 type Settings = { [key: string]: SettingsValue };
 /** The CLI's own pair of cache TTLs; anything else is not a value its resolver understands. */
 const cacheTtl = (value: SettingsValue) => (value === "5m" || value === "1h" ? value : undefined);
 const isCacheTtlKey = (key: TuneKey) =>
   key === "promptCacheTtl" || key === "subagentPromptCacheTtl";
+
+/** The CLI's deadline enum, shared by both waiting rows. `never` is a value, not an absent key. */
+const DEADLINES = ["60s", "5m", "10m", "never"] as const;
+const isDeadline = (value: SettingsValue) => DEADLINES.some((d) => d === value);
+const isDeadlineKey = (key: TuneKey) => key === "askUserQuestionTimeout" || key === "dialogExpiry";
+
+/** What the CLI clamps the two output sizes to; a value outside it is silently pulled back in,
+ *  so the row refuses it here instead of showing a number the model will never see. */
+const OUTPUT_MIN = 4000;
+const OUTPUT_MAX = 128_000;
+const isOutputKey = (key: TuneKey) => key === "bashOutputMaxChars" || key === "taskOutputMaxChars";
 
 /** Set a key, or drop it when the control returns to the CLI's own default (an absent key). */
 export function updateSettings(
@@ -49,6 +70,14 @@ export function updateSettings(
     return { error: "auto-compact must be a positive whole number of tokens" };
   if (isCacheTtlKey(key) && value !== undefined && cacheTtl(value) === undefined)
     return { error: "cache TTL must be 5m or 1h" };
+  if (isDeadlineKey(key) && value !== undefined && !isDeadline(value))
+    return { error: "deadline must be 60s, 5m, 10m or never" };
+  if (
+    isOutputKey(key) &&
+    value !== undefined &&
+    !(Number.isInteger(value) && Number(value) >= OUTPUT_MIN && Number(value) <= OUTPUT_MAX)
+  )
+    return { error: `output limit must be a whole number between ${OUTPUT_MIN} and ${OUTPUT_MAX}` };
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
@@ -59,8 +88,20 @@ export function updateSettings(
     return { error: "settings.json must be a JSON object" };
   // SAFETY: the value parsed as a plain object, which is the shape the route also enforces.
   const obj = parsed as Settings;
-  if (value === undefined) delete obj[key];
-  else obj[key] = value;
+  const [outer, inner] = key.split(".");
+  if (inner === undefined) {
+    if (value === undefined) delete obj[key];
+    else obj[key] = value;
+  } else {
+    // An empty string is what hides a trailer, so only an absent value removes the field, and the
+    // `attribution` object goes with its last field rather than being left behind empty.
+    const held = obj[outer ?? ""];
+    const nested: Settings = held instanceof Object && !Array.isArray(held) ? { ...held } : {};
+    if (value === undefined) delete nested[inner];
+    else nested[inner] = value;
+    if (Object.keys(nested).length === 0) delete obj[outer ?? ""];
+    else obj[outer ?? ""] = nested;
+  }
   // Two spaces and a trailing newline: how Claude Code writes the file itself.
   return { text: `${JSON.stringify(obj, null, 2)}\n` };
 }
@@ -97,8 +138,41 @@ export function readTunables(text: string): Tunables {
     advisor !== false
   )
     out.advisorModel = String(advisor);
+  const fallback = obj.fallbackModel;
+  if (
+    fallback !== null &&
+    fallback !== undefined &&
+    fallback !== "" &&
+    fallback !== true &&
+    fallback !== false
+  )
+    out.fallbackModel = String(fallback);
+  if (isDeadline(obj.askUserQuestionTimeout))
+    out.askUserQuestionTimeout = String(obj.askUserQuestionTimeout);
+  if (isDeadline(obj.dialogExpiry)) out.dialogExpiry = String(obj.dialogExpiry);
+  if (Number.isInteger(obj.bashOutputMaxChars))
+    out.bashOutputMaxChars = Number(obj.bashOutputMaxChars);
+  if (Number.isInteger(obj.taskOutputMaxChars))
+    out.taskOutputMaxChars = Number(obj.taskOutputMaxChars);
+  // An empty string is a set value here: it is how the CLI is told to write no trailer at all.
+  const attribution = obj.attribution;
+  if (attribution instanceof Object && !Array.isArray(attribution)) {
+    const commit = attribution.commit;
+    const pr = attribution.pr;
+    if (String(commit) === commit) out["attribution.commit"] = commit;
+    if (String(pr) === pr) out["attribution.pr"] = pr;
+    if (attribution.sessionUrl === true || attribution.sessionUrl === false)
+      out["attribution.sessionUrl"] = attribution.sessionUrl;
+  }
   return out;
 }
+
+/** Whether the three attribution fields are all set to say nothing: no commit trailer, no PR
+ *  text, no session link. The switch that writes all three reads back from this. */
+export const noTrailers = (t: Tunables): boolean =>
+  t["attribution.commit"] === "" &&
+  t["attribution.pr"] === "" &&
+  t["attribution.sessionUrl"] === false;
 
 /** settings.json as the route reports it. */
 interface SettingsFile {
@@ -135,6 +209,9 @@ export function TuneBody({ sessionId }: { sessionId: string }): React.ReactEleme
   // licence to write an advisor whose first spawn the CLI would refuse.
   const [extraUsage, setExtraUsage] = useState<boolean | null>(null);
   const [creditsError, setCreditsError] = useState("");
+  // The custom trailer texts stay behind a disclosure: the switch answers what almost everyone
+  // came for, and the inputs are for the person who wants their own wording instead of none.
+  const [showTrailers, setShowTrailers] = useState(false);
 
   useEffect(() => {
     let live = true;
@@ -192,6 +269,20 @@ export function TuneBody({ sessionId }: { sessionId: string }): React.ReactEleme
     } finally {
       setBusy(false);
     }
+  };
+
+  /** Several keys in one edit: one read, one mtime check, one write. Three sequential writes would
+   *  each re-read the file and the second would see its own change as someone else's. */
+  const writeAll = async (edits: Array<[TuneKey, string | number | boolean | undefined]>) => {
+    const failure = await apply((text) => {
+      let out: { text: string; error?: undefined } | { error: string } = { text };
+      for (const [key, value] of edits) {
+        if (out.error !== undefined) return out;
+        out = updateSettings(out.text, key, value);
+      }
+      return out;
+    });
+    if (failure) setError(failure);
   };
 
   const write = async (key: TuneKey, value: string | number | boolean | undefined) => {
@@ -428,6 +519,230 @@ export function TuneBody({ sessionId }: { sessionId: string }): React.ReactEleme
         An advisor weaker than the main model is not used for the main conversation, though
         subagents may still use it.
       </span>
+
+      <div style={rowStyle}>
+        <span style={labelStyle}>Fallback model</span>
+        <div style={controlStyle}>
+          <select
+            value={settings.fallbackModel ?? ""}
+            disabled={busy || models === null}
+            aria-label="Fallback model"
+            onChange={(e) => void write("fallbackModel", e.target.value || undefined)}
+            style={{
+              ...select,
+              flex: narrow ? "1 1 auto" : "0 0 auto",
+              minWidth: narrow ? 0 : 160,
+            }}
+          >
+            <option value="">Off</option>
+            {models?.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <span style={sourceStyle}>{source(settings.fallbackModel !== undefined)}</span>
+      </div>
+      <span style={{ ...meta, padding: "0 6px 2px", whiteSpace: "normal" }}>
+        Where the CLI goes when the main model is overloaded. With none set, an overload ends the
+        turn; the swap itself is reported in the reasoning lane when it happens.
+      </span>
+
+      <div style={rowStyle}>
+        <span style={labelStyle}>Question deadline</span>
+        <div style={controlStyle}>
+          <select
+            value={settings.askUserQuestionTimeout ?? ""}
+            disabled={busy}
+            aria-label="Idle time before Claude's questions auto-continue"
+            onChange={(e) => void write("askUserQuestionTimeout", e.target.value || undefined)}
+            style={{
+              ...select,
+              flex: narrow ? "1 1 auto" : "0 0 auto",
+              minWidth: narrow ? 0 : 160,
+            }}
+          >
+            <option value="">Default (never)</option>
+            <option value="60s">1 minute</option>
+            <option value="5m">5 minutes</option>
+            <option value="10m">10 minutes</option>
+            <option value="never">Never</option>
+          </select>
+        </div>
+        <span style={sourceStyle}>{source(settings.askUserQuestionTimeout !== undefined)}</span>
+      </div>
+
+      <div style={rowStyle}>
+        <span style={labelStyle}>Approval deadline</span>
+        <div style={controlStyle}>
+          <select
+            value={settings.dialogExpiry ?? ""}
+            disabled={busy}
+            aria-label="How long a parked permission prompt waits for an answer"
+            onChange={(e) => void write("dialogExpiry", e.target.value || undefined)}
+            style={{
+              ...select,
+              flex: narrow ? "1 1 auto" : "0 0 auto",
+              minWidth: narrow ? 0 : 160,
+            }}
+          >
+            <option value="">Default (5 minutes)</option>
+            <option value="60s">1 minute</option>
+            <option value="5m">5 minutes</option>
+            <option value="10m">10 minutes</option>
+            <option value="never">Never</option>
+          </select>
+        </div>
+        <span style={sourceStyle}>{source(settings.dialogExpiry !== undefined)}</span>
+      </div>
+      <span style={{ ...meta, padding: "0 6px 2px", whiteSpace: "normal" }}>
+        A question left unanswered continues with whatever is selected so far; a permission prompt
+        left unanswered is cancelled. At the question default, an unattended session waits forever.
+      </span>
+
+      <div style={rowStyle}>
+        <span style={labelStyle}>Bash output</span>
+        <div style={controlStyle}>
+          <input
+            key={file.mtime}
+            type="number"
+            min={OUTPUT_MIN}
+            max={OUTPUT_MAX}
+            step="1000"
+            defaultValue={settings.bashOutputMaxChars ?? ""}
+            disabled={busy}
+            placeholder="Claude Code default"
+            aria-label="Characters of bash output Claude receives"
+            onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+            onBlur={(e) => {
+              const typed = e.target.value.trim();
+              const next = typed === "" ? undefined : Number(typed);
+              if (next !== settings.bashOutputMaxChars) void write("bashOutputMaxChars", next);
+            }}
+            style={{ ...inputStyle, maxWidth: narrow ? "100%" : 140 }}
+          />
+          <span style={{ ...meta }}>characters</span>
+        </div>
+        <span style={sourceStyle}>{source(settings.bashOutputMaxChars !== undefined)}</span>
+      </div>
+
+      <div style={rowStyle}>
+        <span style={labelStyle}>Task output</span>
+        <div style={controlStyle}>
+          <input
+            key={file.mtime}
+            type="number"
+            min={OUTPUT_MIN}
+            max={OUTPUT_MAX}
+            step="1000"
+            defaultValue={settings.taskOutputMaxChars ?? ""}
+            disabled={busy}
+            placeholder="Claude Code default"
+            aria-label="Characters of subagent output Claude receives"
+            onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+            onBlur={(e) => {
+              const typed = e.target.value.trim();
+              const next = typed === "" ? undefined : Number(typed);
+              if (next !== settings.taskOutputMaxChars) void write("taskOutputMaxChars", next);
+            }}
+            style={{ ...inputStyle, maxWidth: narrow ? "100%" : 140 }}
+          />
+          <span style={{ ...meta }}>characters</span>
+        </div>
+        <span style={sourceStyle}>{source(settings.taskOutputMaxChars !== undefined)}</span>
+      </div>
+      <span style={{ ...meta, padding: "0 6px 2px", whiteSpace: "normal" }}>
+        These two size what Claude receives, between {OUTPUT_MIN} and {OUTPUT_MAX} characters. The
+        plugin's own tool text limit sizes only what this panel draws.
+      </span>
+
+      <div style={rowStyle}>
+        <span style={labelStyle}>Attribution</span>
+        <div style={controlStyle}>
+          <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: check(!busy) }}>
+            <input
+              type="checkbox"
+              checked={noTrailers(settings)}
+              disabled={busy}
+              onChange={(e) =>
+                void writeAll(
+                  e.target.checked
+                    ? [
+                        ["attribution.commit", ""],
+                        ["attribution.pr", ""],
+                        ["attribution.sessionUrl", false],
+                      ]
+                    : [
+                        ["attribution.commit", undefined],
+                        ["attribution.pr", undefined],
+                        ["attribution.sessionUrl", undefined],
+                      ],
+                )
+              }
+              style={{ cursor: check(!busy) }}
+            />
+            <span style={{ fontSize: 12 }}>No AI trailers</span>
+          </label>
+          <button
+            type="button"
+            onClick={() => setShowTrailers(!showTrailers)}
+            aria-expanded={showTrailers}
+            style={{
+              ...meta,
+              background: "none",
+              border: "none",
+              padding: 0,
+              cursor: "pointer",
+              textDecoration: "underline",
+            }}
+          >
+            {showTrailers ? "Hide custom text" : "Custom text"}
+          </button>
+        </div>
+        <span style={sourceStyle}>
+          {source(
+            settings["attribution.commit"] !== undefined ||
+              settings["attribution.pr"] !== undefined ||
+              settings["attribution.sessionUrl"] !== undefined,
+          )}
+        </span>
+      </div>
+      {showTrailers ? (
+        <>
+          {(
+            [
+              ["attribution.commit", "Commit trailer", "Text Claude adds to commits it writes"],
+              ["attribution.pr", "PR text", "Text Claude adds to pull request descriptions"],
+            ] as const
+          ).map(([key, label, hint]) => (
+            <div key={key} style={rowStyle}>
+              <span style={labelStyle}>{label}</span>
+              <div style={{ ...controlStyle, flex: "1 1 auto" }}>
+                <input
+                  key={`${key}-${file.mtime}`}
+                  type="text"
+                  defaultValue={settings[key] ?? ""}
+                  disabled={busy}
+                  placeholder="Claude Code default"
+                  aria-label={hint}
+                  onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+                  onBlur={(e) => {
+                    const typed = e.target.value;
+                    if (typed !== (settings[key] ?? "")) void write(key, typed);
+                  }}
+                  style={{ ...inputStyle, flex: "1 1 auto", minWidth: 0 }}
+                />
+              </div>
+              <span style={sourceStyle}>{source(settings[key] !== undefined)}</span>
+            </div>
+          ))}
+          <span style={{ ...meta, padding: "0 6px 2px", whiteSpace: "normal" }}>
+            An empty box writes an empty string, which is how the CLI is told to add nothing. Clear
+            the switch above to hand both back to Claude Code's own wording.
+          </span>
+        </>
+      ) : null}
 
       <PermissionsBlock
         file={file}

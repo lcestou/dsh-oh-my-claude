@@ -1,7 +1,7 @@
 // Offline checks for the Tune tab's settings edits: the file keeps every key it already had,
 // a control at its default removes its key, and a bad auto-compact value never reaches the file.
 import assert from "node:assert/strict";
-import { isFable, readTunables, updateSettings } from "./tune.js";
+import { isFable, noTrailers, readTunables, updateSettings } from "./tune.js";
 
 // A key the file does not have yet is added.
 {
@@ -171,3 +171,108 @@ import { isFable, readTunables, updateSettings } from "./tune.js";
 }
 
 console.log("tune ok");
+
+/** The written document, or the refusal as a thrown error: every block below expects a write. */
+const written = (r: ReturnType<typeof updateSettings>) => {
+  if (r.error !== undefined) throw new Error(r.error);
+  return JSON.parse(r.text);
+};
+
+// The two deadlines take the CLI's enum and nothing else; "never" is a value, not an absent key.
+{
+  assert.equal(written(updateSettings("{}", "dialogExpiry", "10m")).dialogExpiry, "10m");
+  assert.equal(
+    written(updateSettings("{}", "askUserQuestionTimeout", "never")).askUserQuestionTimeout,
+    "never",
+  );
+  assert.match(String(updateSettings("{}", "dialogExpiry", "2h").error), /60s, 5m, 10m or never/);
+  assert.equal(
+    "dialogExpiry" in written(updateSettings('{"dialogExpiry":"5m"}', "dialogExpiry", undefined)),
+    false,
+    "back to the default removes the key",
+  );
+  assert.deepEqual(readTunables('{"dialogExpiry":"10m","askUserQuestionTimeout":"60s"}'), {
+    dialogExpiry: "10m",
+    askUserQuestionTimeout: "60s",
+  });
+  assert.deepEqual(
+    readTunables('{"dialogExpiry":"2h"}'),
+    {},
+    "a value off the enum reads as unset",
+  );
+}
+
+// The output sizes are refused outside the range the CLI clamps to, rather than written and clamped.
+{
+  assert.equal(written(updateSettings("{}", "bashOutputMaxChars", 8000)).bashOutputMaxChars, 8000);
+  assert.match(
+    String(updateSettings("{}", "bashOutputMaxChars", 100).error),
+    /between 4000 and 128000/,
+  );
+  assert.match(
+    String(updateSettings("{}", "taskOutputMaxChars", 200_000).error),
+    /between 4000 and 128000/,
+  );
+  assert.match(String(updateSettings("{}", "taskOutputMaxChars", 8000.5).error), /whole number/);
+  assert.deepEqual(readTunables('{"bashOutputMaxChars":30000,"taskOutputMaxChars":32000}'), {
+    bashOutputMaxChars: 30000,
+    taskOutputMaxChars: 32000,
+  });
+}
+
+// Attribution is nested in the file and flat in the tab. An empty string is a written value, since
+// that is how the CLI is told to add nothing; only an absent value removes the field.
+{
+  const one = updateSettings('{"model":"opus"}', "attribution.commit", "");
+  if (one.error !== undefined) throw new Error(one.error);
+  assert.deepEqual(JSON.parse(one.text), { model: "opus", attribution: { commit: "" } });
+  const two = updateSettings(one.text, "attribution.sessionUrl", false);
+  if (two.error !== undefined) throw new Error(two.error);
+  assert.deepEqual(JSON.parse(two.text).attribution, { commit: "", sessionUrl: false });
+  const back = updateSettings(two.text, "attribution.commit", undefined);
+  if (back.error !== undefined) throw new Error(back.error);
+  assert.deepEqual(JSON.parse(back.text).attribution, { sessionUrl: false }, "one field goes");
+  const empty = updateSettings(back.text, "attribution.sessionUrl", undefined);
+  assert.deepEqual(written(empty), { model: "opus" }, "the object goes with its last field");
+
+  const read = readTunables('{"attribution":{"commit":"","pr":"mine","sessionUrl":false}}');
+  assert.equal(read["attribution.commit"], "", "an empty string reads as set, not as absent");
+  assert.equal(read["attribution.pr"], "mine");
+  assert.equal(read["attribution.sessionUrl"], false);
+  assert.deepEqual(
+    readTunables('{"attribution":{"commit":7,"pr":true}}'),
+    {},
+    "wrong types read as unset",
+  );
+  assert.deepEqual(
+    readTunables('{"attribution":"none"}'),
+    {},
+    "a non-object attribution reads as unset",
+  );
+
+  assert.equal(noTrailers(read), false, "a custom PR text is still a trailer");
+  assert.equal(
+    noTrailers(readTunables('{"attribution":{"commit":"","pr":"","sessionUrl":false}}')),
+    true,
+  );
+  assert.equal(
+    noTrailers({ "attribution.commit": "", "attribution.pr": "" }),
+    false,
+    "all three or nothing",
+  );
+  assert.equal(noTrailers({}), false);
+}
+
+// The fallback model reads like the advisor: an absent, empty or boolean value is no model id.
+{
+  assert.equal(
+    written(updateSettings("{}", "fallbackModel", "claude-sonnet-5")).fallbackModel,
+    "claude-sonnet-5",
+  );
+  assert.equal(
+    readTunables('{"fallbackModel":"claude-sonnet-5"}').fallbackModel,
+    "claude-sonnet-5",
+  );
+  assert.equal(readTunables('{"fallbackModel":""}').fallbackModel, undefined);
+  assert.equal(readTunables('{"fallbackModel":true}').fallbackModel, undefined);
+}
