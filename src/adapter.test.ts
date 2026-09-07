@@ -578,18 +578,37 @@ assert.ok(
   rl[0].reason.failure.providerRetryAfterMs > 100_000 &&
     rl[0].reason.failure.providerRetryAfterMs <= 120_000,
 );
-assert.equal(rl[0].reason.failure.message, "Usage limit reached");
+assert.equal(
+  rl[0].reason.failure.message,
+  `You've hit your usage limit · resets ${resetClock(soon * 1000)}`,
+  "no rateLimitType: the CLI's generic wording",
+);
+{
+  // The CLI names the limit from rateLimitType; the same table is used here.
+  const named = (new Translator() as any).translate({
+    type: "rate_limit_event",
+    rate_limit_info: {
+      status: "rejected",
+      resetsAt: soon,
+      rateLimitType: "seven_day_overage_included",
+    },
+  });
+  assert.equal(
+    named[0].reason.failure.message,
+    `You've hit your Fable limit · resets ${resetClock(soon * 1000)}`,
+  );
+}
 {
   // With the wait on, the row says the task continues by itself and the translator reports the
   // reset instant for the adapter to arm; a reset already in the past arms nothing.
   const t = new Translator({ continueAfterLimit: true }) as any;
   const out = t.translate({
     type: "rate_limit_event",
-    rate_limit_info: { status: "rejected", resetsAt: soon },
+    rate_limit_info: { status: "rejected", resetsAt: soon, rateLimitType: "five_hour" },
   });
   assert.equal(
     out[0].reason.failure.message,
-    "Usage limit reached · continuing automatically when it resets",
+    `You've hit your session limit · resets ${resetClock(soon * 1000)} · continuing automatically when it resets`,
   );
   assert.equal(t.limitResetAt, soon * 1000);
   const past = new Translator({ continueAfterLimit: true }) as any;

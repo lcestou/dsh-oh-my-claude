@@ -72,6 +72,16 @@ export function resetClock(
   return `${clock} (${zone})`;
 }
 
+/** What the CLI calls each limit in its own banner (its `rateLimitType` table). */
+const LIMIT_NAMES = new Map([
+  ["five_hour", "session limit"],
+  ["seven_day", "weekly limit"],
+  ["seven_day_opus", "Opus limit"],
+  ["seven_day_sonnet", "Sonnet limit"],
+  ["seven_day_overage_included", "Fable limit"],
+  ["overage", "usage credit limit"],
+]);
+
 export class Translator {
   log: (level: string, msg: string) => void;
   unknownSeen: Set<string>; // (where:type) already warned, so schema drift warns once, not per event
@@ -410,16 +420,17 @@ export class Translator {
         const resetAt = Number.isFinite(resetsAt) ? (resetsAt ?? 0) * 1000 : 0;
         const resetMs = resetAt - Date.now();
         if (resetMs > 0) this.limitResetAt = resetAt;
-        // The CLI's own words ("You've hit your session limit · resets 7pm (…)") arrive as an
-        // assistant text block just before this frame and are relayed as they are; this row only
-        // adds whether the wait is on, as the CLI's "Continuing automatically when your limit
-        // resets" does. No second clock.
-        const tail =
+        // The CLI composes its banner locally from these fields and streams no text for it, so
+        // the same sentence is built here from the same table: which limit, and when it resets.
+        // The wait, when armed, is the CLI's "Continuing automatically when your limit resets".
+        const name = LIMIT_NAMES.get(info.rateLimitType ?? "") ?? "usage limit";
+        const clock = resetMs > 0 ? ` · resets ${resetClock(resetAt, this.timeZone)}` : "";
+        const waiting =
           resetMs > 0 && this.continueAfterLimit
             ? " · continuing automatically when it resets"
             : "";
         const failure: LlmFailure & { providerRetryAfterMs?: number } = {
-          message: `Usage limit reached${tail}`,
+          message: `You've hit your ${name}${clock}${waiting}`,
           code: "RATE_LIMIT",
         };
         if (resetMs > 0) failure.providerRetryAfterMs = resetMs;
