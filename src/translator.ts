@@ -410,16 +410,16 @@ export class Translator {
         const resetAt = Number.isFinite(resetsAt) ? (resetsAt ?? 0) * 1000 : 0;
         const resetMs = resetAt - Date.now();
         if (resetMs > 0) this.limitResetAt = resetAt;
-        // Same words as the CLI's own banner. With the wait armed the row says so, as the CLI's
-        // "Continuing automatically when your limit resets" does.
+        // The CLI's own words ("You've hit your session limit · resets 7pm (…)") arrive as an
+        // assistant text block just before this frame and are relayed as they are; this row only
+        // adds whether the wait is on, as the CLI's "Continuing automatically when your limit
+        // resets" does. No second clock.
         const tail =
-          resetMs > 0
-            ? this.continueAfterLimit
-              ? `continuing automatically at ${resetClock(resetAt, this.timeZone)}`
-              : `resets ${resetClock(resetAt, this.timeZone)}`
-            : "rejected";
+          resetMs > 0 && this.continueAfterLimit
+            ? " · continuing automatically when it resets"
+            : "";
         const failure: LlmFailure & { providerRetryAfterMs?: number } = {
-          message: `You've hit your usage limit · ${tail}`,
+          message: `Usage limit reached${tail}`,
           code: "RATE_LIMIT",
         };
         if (resetMs > 0) failure.providerRetryAfterMs = resetMs;

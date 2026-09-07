@@ -578,10 +578,7 @@ assert.ok(
   rl[0].reason.failure.providerRetryAfterMs > 100_000 &&
     rl[0].reason.failure.providerRetryAfterMs <= 120_000,
 );
-assert.equal(
-  rl[0].reason.failure.message,
-  `You've hit your usage limit · resets ${resetClock(soon * 1000)}`,
-);
+assert.equal(rl[0].reason.failure.message, "Usage limit reached");
 {
   // With the wait on, the row says the task continues by itself and the translator reports the
   // reset instant for the adapter to arm; a reset already in the past arms nothing.
@@ -592,7 +589,7 @@ assert.equal(
   });
   assert.equal(
     out[0].reason.failure.message,
-    `You've hit your usage limit · continuing automatically at ${resetClock(soon * 1000)}`,
+    "Usage limit reached · continuing automatically when it resets",
   );
   assert.equal(t.limitResetAt, soon * 1000);
   const past = new Translator({ continueAfterLimit: true }) as any;
@@ -601,13 +598,17 @@ assert.equal(
     rate_limit_info: { status: "rejected", resetsAt: 1 },
   });
   assert.equal(past.limitResetAt, undefined);
-  // Reset clocks follow the browser's zone when dsh stamped one on a prompt.
+  // Retry banners take the browser's zone when dsh stamped one on a prompt.
   const tokyo = new Translator({ timeZone: "Asia/Tokyo" }) as any;
   const tz = tokyo.translate({
-    type: "rate_limit_event",
-    rate_limit_info: { status: "rejected", resetsAt: soon },
+    type: "system",
+    subtype: "api_retry",
+    attempt: 1,
+    max_retries: 10,
+    retry_delay_ms: 1000,
+    error: { formatted: "x", rate_limits: { resets_at: soon } },
   });
-  assert.match(tz[0].reason.failure.message, /\(Asia\/Tokyo\)$/);
+  assert.match(tz.at(-1).block.text, /\(Asia\/Tokyo\)\)/);
   assert.equal(
     clientTimeZone([
       { role: "user", source: { kind: "user", clientTimeZone: "Europe/Lisbon" } },
