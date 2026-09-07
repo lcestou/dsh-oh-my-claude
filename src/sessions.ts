@@ -23,6 +23,7 @@ import { asSessionId } from "./dsh.js";
 import { buildAddServer, isMcpName, scopeNeedsCwd } from "./mcp-add-remove.js";
 import type { JsonValue, PluginContext, SessionPersistence, WorkspaceRegistry } from "./dsh.js";
 import { errorText } from "./process.js";
+import { featureSwitches } from "./switches.js";
 import { PERMISSION_MODES, isPermissionMode } from "./state.js";
 import type {
   PermissionModeInfo,
@@ -631,6 +632,8 @@ export interface SessionRouteOptions {
   permissionAsks?: Map<string, string[]>;
   /** The model catalog for advisor model selection. */
   models?: () => Promise<Array<{ id: string; name: string }>>;
+  /** Whether this plugin waits out a usage limit and continues the turn itself. */
+  continueAfterLimit?: boolean;
 }
 
 /** The transcript file of a dsh session: under its Claude id (sessions the adapter started) or
@@ -675,6 +678,7 @@ export function registerSessionRoutes(
     mcp,
     permissionAsks,
     models,
+    continueAfterLimit,
   }: SessionRouteOptions,
 ): void {
   // Optional: stock dsh has it; without it archived sessions list but cannot be restored.
@@ -861,6 +865,27 @@ export function registerSessionRoutes(
                   scopes.push({ ...file, scope, readOnly: scope === "managed" });
                 }
                 return json(res, 200, { scopes });
+              }
+              // The settings and environment that turn off something the panel offers. Its own
+              // route rather than a field on diagnostics: the shield and Rewind ask for it on
+              // every open, and diagnostics runs the binary.
+              if (settingsPath && url.pathname === `${ROUTE_PREFIX}/feature-switches`) {
+                if (req.method !== "GET") return json(res, 405, { error: "method not allowed" });
+                const cwd = await knownCwd(url.searchParams.get("cwd"), sessionPersistence);
+                const texts: Array<{ scope: string; text: string }> = [];
+                for (const scope of SETTINGS_SCOPES) {
+                  const path = settingsScopePath(scope, settingsPath, cwd);
+                  if (path === undefined) continue;
+                  const file = await readSettings(path).catch(() => null);
+                  if (file?.exists === true) texts.push({ scope, text: file.text });
+                }
+                // The child inherits dsh's environment, so dsh's is where the disable would be.
+                // An absent option means an adapter that did not pass one, so read the config
+                // default rather than reporting the feature off.
+                return json(res, 200, {
+                  ok: true,
+                  ...featureSwitches(texts, process.env, continueAfterLimit ?? true),
+                });
               }
               if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/status`)
                 return json(res, 200, await runtimeStatus(configDir, command));

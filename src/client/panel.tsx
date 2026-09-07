@@ -22,6 +22,7 @@ import {
   maskEmail,
 } from "./shared.js";
 import { TuneBody } from "./tune.js";
+import type { FeatureSwitches } from "../switches.js";
 
 // Module-level variable so reopening lands on the last picked tab.
 let lastTab = "Memory";
@@ -79,6 +80,34 @@ function TranscriptRow({
   );
 }
 
+/**
+ * The settings and environment that switch off something this panel offers, as
+ * `GET /feature-switches` reports them. Null until the first answer; a failed read stays null,
+ * since a warning nobody could read is not worth an error line over a feature that still works.
+ */
+function useFeatureSwitches(cwd: string | undefined): FeatureSwitches | null {
+  const [switches, setSwitches] = useState<FeatureSwitches | null>(null);
+  useEffect(() => {
+    if (!cwd) return;
+    let live = true;
+    fetch(`${ROUTE}/feature-switches?cwd=${encodeURIComponent(cwd)}`)
+      .then((r) => readJson<FeatureSwitches>(r))
+      .then((b) => live && setSwitches(b))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [cwd]);
+  return switches;
+}
+
+/** How a transcript list says what will empty it. Same sentence wherever transcripts are listed. */
+const retentionNote = (s: FeatureSwitches | null): string =>
+  s === null
+    ? ""
+    : `Claude Code deletes transcripts older than ${s.retention.days} days` +
+      `${s.retention.scope === null ? " (cleanupPeriodDays, its default)" : ` (cleanupPeriodDays in ${s.retention.scope} settings)`}.`;
+
 /** "Restore Claude session" body rendered inside the Oh My Claude dialog. */
 function RestoreBody({
   sessionId,
@@ -92,6 +121,7 @@ function RestoreBody({
   const entry = ctx.sessions.list.getSnapshot()?.byId[sessionId];
   const cwd = entry?.cwd;
   const [transcripts, setTranscripts] = useState<SessionData[]>([]);
+  const switches = useFeatureSwitches(cwd);
 
   useEffect(() => {
     if (!cwd) return;
@@ -121,6 +151,9 @@ function RestoreBody({
           {owned.length} already open
         </span>
       )}
+      <span style={{ ...meta, padding: "2px 4px", whiteSpace: "normal" }}>
+        {retentionNote(switches)}
+      </span>
     </div>
   );
 }
@@ -498,6 +531,7 @@ function RewindBody({
   const [preview, setPreview] = useState<RewindReply | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const switches = useFeatureSwitches(cwd);
 
   useEffect(() => {
     if (!cwd) return;
@@ -539,8 +573,17 @@ function RewindBody({
     setPreview(null);
     run(p.id, true);
   };
+  // The file half of a rewind needs checkpoints; without them the button still moves the
+  // conversation, so say which half is missing before it is pressed rather than after.
+  const noFiles = switches?.checkpointingDisabled === true;
   return (
     <div style={bodyFlow}>
+      {noFiles && (
+        <span style={{ ...meta, color: T.err, padding: "2px 4px", whiteSpace: "normal" }}>
+          CLAUDE_CODE_DISABLE_FILE_CHECKPOINTING is set in dsh's environment, so Claude keeps no
+          file checkpoints: a rewind moves the conversation back and leaves your files as they are.
+        </span>
+      )}
       {picked === null ? (
         prompts.length === 0 ? (
           <span style={{ ...meta, padding: "2px 4px" }}>No completed prompts yet</span>
@@ -597,6 +640,11 @@ function RewindBody({
             </button>
           </div>
         </>
+      )}
+      {picked === null && prompts.length > 0 && (
+        <span style={{ ...meta, padding: "2px 4px", whiteSpace: "normal" }}>
+          {retentionNote(switches)} A prompt older than that is no longer here to rewind to.
+        </span>
       )}
       {error && <span style={{ color: T.err, fontSize: 12 }}>{error}</span>}
     </div>
@@ -957,6 +1005,7 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
   const [doctorOutput, setDoctorOutput] = useState<string | null>(null);
   const [doctorError, setDoctorError] = useState("");
   const [doctorBusy, setDoctorBusy] = useState(false);
+  const switches = useFeatureSwitches(cwd);
 
   const loadMcp = useCallback(
     () =>
@@ -1097,6 +1146,52 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
                 {f.parseError && <div style={{ fontSize: 11 }}>{f.parseError}</div>}
               </div>
             ))
+          )}
+
+          {/* The three settings that switch a tab off underneath it */}
+          <span style={{ ...meta, padding: "2px 4px", display: "block", marginTop: 8 }}>
+            Feature switches
+          </span>
+          {switches === null ? (
+            <span style={{ ...meta, padding: "2px 4px", fontSize: 12 }}>Loading…</span>
+          ) : (
+            <div style={{ padding: "4px 10px", fontSize: 12, lineHeight: "1.5" }}>
+              <div>
+                Transcript retention: {switches.retention.days} days
+                {switches.retention.scope === null
+                  ? " (cleanupPeriodDays unset, so the CLI's default)"
+                  : ` (cleanupPeriodDays in ${switches.retention.scope} settings)`}
+                . Empties Rewind, Restore and the session browser as it sweeps.
+              </div>
+              <div style={{ color: switches.bypassDisabled ? T.err : undefined }}>
+                Bypass permissions:{" "}
+                {switches.bypassDisabled
+                  ? `refused by permissions.disableBypassPermissionsMode in ${switches.bypassDisabled.scope} settings, so Full access does not take`
+                  : "allowed"}
+                .
+              </div>
+              <div style={{ color: switches.checkpointingDisabled ? T.err : undefined }}>
+                File checkpoints:{" "}
+                {switches.checkpointingDisabled
+                  ? "off, CLAUDE_CODE_DISABLE_FILE_CHECKPOINTING is set in dsh's environment, so a rewind cannot put files back"
+                  : "on, so Rewind can put files back"}
+                .
+              </div>
+              <div>
+                At a usage limit:{" "}
+                {switches.usageLimit.plugin
+                  ? "this plugin waits for the reset and continues the turn"
+                  : "nothing continues the turn, its Continue after limit is off"}
+                . Claude Code's own autoContinueAtUsageLimit is{" "}
+                {switches.usageLimit.cli === null
+                  ? "unset"
+                  : switches.usageLimit.cli
+                    ? "on"
+                    : "off"}
+                , and does not act here: it drives the interactive limit dialog, which a headless
+                run has no way to show.
+              </div>
+            </div>
           )}
 
           {/* MCP servers that did not come up */}
@@ -1539,6 +1634,9 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
     // Everything below hangs off dsh's trigger: hide it, mirror it, and hand back one cleanup.
     const start = (trigger: HTMLButtonElement): (() => void) => {
       let currentMode = "";
+      // A settings file can refuse bypass mode while this trigger still reads "Full access". The
+      // scope it is refused in, once known, marks the label and the menu row.
+      let bypassRefusedIn = "";
       const labelSpan = (): HTMLElement | null => {
         for (const child of Array.from(trigger.children))
           if (child instanceof HTMLElement && child.className.includes("Label")) return child;
@@ -1552,13 +1650,14 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
       // the DOM, so our own write is a no-op and a rewrite by dsh is overwritten again.
       const reapplyLabel = () => {
         if (!trigger.isConnected || !currentMode) return;
-        const text = modeLabel(currentMode) ?? currentMode;
+        const refused = bypassRefusedIn !== "" && currentMode === "bypassPermissions";
+        const text = `${modeLabel(currentMode) ?? currentMode}${refused ? " ⚠" : ""}`;
         const target = labelSpan();
         if (target && target.textContent !== text) {
           lastDshLabelText = target.textContent ?? "";
           target.textContent = text;
         }
-        const newAria = `Claude permission: ${text}`;
+        const newAria = `Claude permission: ${text}${refused ? ", refused by settings" : ""}`;
         const aria = trigger.getAttribute("aria-label") ?? "";
         if (aria !== newAria) {
           lastDshAriaLabel = aria;
@@ -1592,6 +1691,16 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
           reapplyLabel();
         }
       });
+
+      // Which settings file, if any, refuses bypass mode. A failed read leaves the label alone.
+      const cwd = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.cwd;
+      fetch(`${ROUTE}/feature-switches${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ""}`)
+        .then((r) => readJson<FeatureSwitches>(r))
+        .then((s) => {
+          bypassRefusedIn = s.bypassDisabled?.scope ?? "";
+          reapplyLabel();
+        })
+        .catch(() => {});
 
       const parent = trigger.parentElement;
       if (!parent)
@@ -1771,6 +1880,14 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
             };
 
             viewport.appendChild(wrap);
+          }
+
+          // Why the Full access row will not take, on the menu that offers it.
+          if (bypassRefusedIn !== "") {
+            const note = document.createElement("div");
+            Object.assign(note.style, { ...meta, color: T.err, padding: "8px 10px" });
+            note.textContent = `Full access is refused by permissions.disableBypassPermissionsMode in ${bypassRefusedIn} settings.`;
+            viewport.appendChild(note);
           }
 
           // Error wrap at the bottom.

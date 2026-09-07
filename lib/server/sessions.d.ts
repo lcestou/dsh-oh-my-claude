@@ -183,9 +183,11 @@ export interface SessionRouteOptions {
         id: string;
         name: string;
     }>>;
+    /** Whether this plugin waits out a usage limit and continues the turn itself. */
+    continueAfterLimit?: boolean;
 }
 /** `projectDir(cwd)` → Claude Code project dir; `startedIds()` → ids the adapter started itself. */
-export declare function registerSessionRoutes(ctx: PluginContext, { log, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, command, turnRecords, idle, permissionModes, rewind, contextUsage, workspaceDiff, mcp, permissionAsks, models, }: SessionRouteOptions): void;
+export declare function registerSessionRoutes(ctx: PluginContext, { log, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, command, turnRecords, idle, permissionModes, rewind, contextUsage, workspaceDiff, mcp, permissionAsks, models, continueAfterLimit, }: SessionRouteOptions): void;
 export declare const SETTINGS_SCOPES: readonly ["managed", "local", "project", "user"];
 /** One of the four settings files. The CLI's own layer names, minus the `--settings` flag layer. */
 export type SettingsScope = (typeof SETTINGS_SCOPES)[number];

@@ -3309,6 +3309,7 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
         adapter.rewind(sessionId, uuid, dryRun),
       permissionAsks: adapter.permissionAsks,
       models: () => adapter.getAdvisorModels(),
+      continueAfterLimit: adapter.config.continueAfterLimit,
     });
   }
 }

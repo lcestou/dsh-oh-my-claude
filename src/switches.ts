@@ -1,0 +1,103 @@
+// Settings and environment that switch off a feature this panel offers. Pure: the caller reads the
+// files and the environment, this works out what the CLI would do with them.
+import type { JsonValue } from "./dsh.js";
+
+/** One scope's text, in the order the CLI merges them: highest precedence first. */
+export interface ScopeText {
+  scope: string;
+  text: string;
+}
+
+/** The CLI's own retention when nothing sets one, from `cleanupPeriodDays`' schema. */
+export const DEFAULT_RETENTION_DAYS = 30;
+
+/**
+ * What the panel would otherwise claim wrongly.
+ *
+ * - Retention is the CLI's transcript sweep. Rewind, Restore and the session browser all read
+ *   those transcripts, so it empties them on a schedule without anything saying so. It runs on the
+ *   30-day default too, so this is reported whether or not a file sets `cleanupPeriodDays`.
+ * - `permissions.disableBypassPermissionsMode` makes a spawn refuse bypass mode while the shield
+ *   still reads "Full access".
+ * - `CLAUDE_CODE_DISABLE_FILE_CHECKPOINTING` beats the plugin's own
+ *   `CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING`, leaving the file half of Rewind nothing to undo.
+ */
+export interface FeatureSwitches {
+  /** `scope` is the file the number came from, or null when it is the CLI's default. */
+  retention: { days: number; scope: string | null };
+  bypassDisabled?: { scope: string };
+  checkpointingDisabled: boolean;
+  /**
+   * Who continues a turn a usage limit ended. `plugin` is this plugin's `continueAfterLimit`, the
+   * one that acts here. `cli` is Claude Code's `autoContinueAtUsageLimit`, null when no file sets
+   * it: it is a settings row on the interactive path ("Continue automatically at usage limit",
+   * whose own description offers the wait "as a choice" in the limit dialog), and the headless
+   * stream this plugin runs has no dialog to offer it in.
+   */
+  usageLimit: { plugin: boolean; cli: boolean | null };
+}
+
+/** Only these two layers provide a retention: the CLI reads it from policy and user settings. */
+const RETENTION_SCOPES = ["managed", "user"];
+
+const parse = (text: string): Record<string, JsonValue> => {
+  try {
+    const value: JsonValue = JSON.parse(text);
+    // SAFETY: JSON.parse answers a JsonValue; the guard leaves only the object arm of that union.
+    return value instanceof Object && !Array.isArray(value)
+      ? (value as Record<string, JsonValue>)
+      : {};
+  } catch {
+    // A file the CLI would refuse to start on says nothing about these keys; Diagnostics reports
+    // the parse error separately.
+    return {};
+  }
+};
+
+/**
+ * Read the three switches out of the merged scopes and the environment a Claude child inherits.
+ * Precedence is per key and first-wins, which is how the CLI resolves one of these scalars: the
+ * highest scope that names the key decides it, and a lower file naming it changes nothing.
+ */
+export function featureSwitches(
+  scopes: readonly ScopeText[],
+  env: { CLAUDE_CODE_DISABLE_FILE_CHECKPOINTING?: string },
+  continueAfterLimit = true,
+): FeatureSwitches {
+  const out: FeatureSwitches = {
+    retention: { days: DEFAULT_RETENTION_DAYS, scope: null },
+    // Any non-empty value is truthy to the CLI's own check, including "0" and "false".
+    checkpointingDisabled: (env.CLAUDE_CODE_DISABLE_FILE_CHECKPOINTING ?? "") !== "",
+    usageLimit: { plugin: continueAfterLimit, cli: null },
+  };
+  let retentionSet = false;
+  for (const { scope, text } of scopes) {
+    const settings = parse(text);
+    const days = settings.cleanupPeriodDays;
+    // The schema is a positive integer; anything else the CLI rejects, and the sweep falls back.
+    if (
+      !retentionSet &&
+      RETENTION_SCOPES.some((s) => s === scope) &&
+      Number(days) === days &&
+      Number.isInteger(days) &&
+      days > 0
+    ) {
+      out.retention = { days, scope };
+      retentionSet = true;
+    }
+    const permissions = settings.permissions;
+    if (
+      out.bypassDisabled === undefined &&
+      permissions instanceof Object &&
+      !Array.isArray(permissions)
+    ) {
+      const disabled = permissions.disableBypassPermissionsMode;
+      // The CLI's own check is `=== "disable"`, but a hand-written `true` means the same thing to
+      // whoever wrote it, and warning on it costs nothing.
+      if (disabled === "disable" || disabled === true) out.bypassDisabled = { scope };
+    }
+    const auto = settings.autoContinueAtUsageLimit;
+    if (out.usageLimit.cli === null && (auto === true || auto === false)) out.usageLimit.cli = auto;
+  }
+  return out;
+}
