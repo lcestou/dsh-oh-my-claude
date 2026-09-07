@@ -1912,78 +1912,131 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   // day dsh's stats line grows one.
   const anchorRef = useRef<HTMLSpanElement>(null);
   const [hooked, setHooked] = useState(false);
+  // What the injected nodes say, held in a ref: a new cost arriving mid-hover used to tear the
+  // whole hook down and build it again, which is the blink the row was reported to have. The
+  // nodes now stay where they are and only their text is rewritten.
+  const textRef = useRef(text);
+  const titleRef = useRef(title);
+  textRef.current = text;
+  titleRef.current = title;
+  const syncRef = useRef<() => void>(() => {});
+  useEffect(() => syncRef.current(), [text, title]);
   useEffect(() => {
-    if (!text) {
-      setHooked(false);
-      return;
-    }
     let inline: HTMLSpanElement | undefined;
+    let body: HTMLSpanElement | undefined;
     let rowLead = "";
     // The row appears with the first settled step and is one of dsh's own divs anywhere in the
     // document; look for it until found (one conversation is on screen at a time).
     // `inline?.isConnected`, not `inline`: dsh re-renders this row on every step and React drops
     // the span we appended. Holding the detached node as proof it is hooked left the cost gone for
     // good — the row has to be hooked again each time it loses ours.
+    const MARK = "data-dsh-oh-my-claude-cost";
+    // `localStorage.setItem("omc-debug", "1")` prints every hook, drop and repaint to the console;
+    // the row lives in someone else's DOM, so this is the only way to watch what removed it.
+    const debug = (...args: unknown[]) => {
+      try {
+        if (localStorage.getItem("omc-debug") === "1")
+          console.debug("[oh-my-claude cost]", ...args);
+      } catch {
+        // a browser that refuses localStorage simply has no debug output
+      }
+    };
+
     const tryHook = () => {
-      if (inline?.isConnected || !anchorRef.current?.isConnected) return;
+      if (!anchorRef.current?.isConnected) return;
+      if (inline?.isConnected) {
+        // Already in the row: rewrite what it says instead of building it again.
+        inline.title = titleRef.current;
+        if (body) body.textContent = ` ${textRef.current}`;
+        return;
+      }
+      if (inline) debug("row dropped our span; hooking again");
       const statsRow = [...document.querySelectorAll<HTMLDivElement>("div")]
         .filter(
           (el) => el.children.length > 1 && /\d+ turns · \d+ steps/.test(el.textContent ?? ""),
         )
         .at(-1);
-      if (!statsRow) return;
+      if (!statsRow) {
+        debug("no stats row on screen");
+        return;
+      }
       inline = document.createElement("span");
-      inline.title = title;
+      inline.title = titleRef.current;
       inline.style.whiteSpace = "nowrap";
       const sep = document.createElement("span");
       sep.setAttribute("aria-hidden", "true");
       sep.textContent = "|";
-      const body = document.createElement("span");
-      body.textContent = ` ${text}`;
+      body = document.createElement("span");
+      body.textContent = ` ${textRef.current}`;
       inline.append(" ", sep, body);
       // The row's first group ("52 turns · 77 steps" in any locale) identifies its bubble.
       rowLead = (statsRow.firstElementChild?.textContent ?? "").replace(/\s+/g, "");
       statsRow.append(inline);
-      // Watch the row we just hooked, and its parent: React either drops our span from the row or
-      // swaps the row itself, and both are a childList change one level apart.
-      rowObserver.observe(statsRow, { childList: true });
-      if (statsRow.parentElement) rowObserver.observe(statsRow.parentElement, { childList: true });
+      debug("hooked the stats row", { rowLead, text: textRef.current });
       setHooked(true);
     };
-    // A second's blink is a second too many while the row is under the pointer: re-hook as soon
-    // as the row's children change, with the poll left as the fallback for a replaced row.
-    const rowObserver = new MutationObserver(() => tryHook());
-    tryHook();
-    const timer = setInterval(tryHook, 1000);
-    // On a phone the row truncates and dsh shows its full line in a hover bubble built from its
-    // own text; append the cost to that bubble as it appears, the way the usage ring's is hooked.
-    const MARK = "data-dsh-oh-my-claude-cost";
-    const tipObserver = new MutationObserver((records) => {
-      for (const rec of records)
-        for (const node of rec.addedNodes) {
-          if (!(node instanceof HTMLElement)) continue;
-          const tip = node.matches('[role="tooltip"]')
-            ? node
-            : (node.querySelector<HTMLElement>('[role="tooltip"]') ??
-              node.closest<HTMLElement>('[role="tooltip"]'));
-          // The mark rides the appended span, so a re-render that drops it asks for it again.
-          if (!tip || tip.querySelector(`:scope > [${MARK}]`) || !rowLead) continue;
-          if (!(tip.textContent ?? "").replace(/\s+/g, "").startsWith(rowLead)) continue;
-          const part = document.createElement("span");
-          part.setAttribute(MARK, "1");
-          part.textContent = ` | ${text}`;
-          tip.append(part);
+
+    // The row truncates and dsh shows its full line in a hover bubble built from its own text;
+    // append the cost to that bubble. Every open bubble is checked on each pass, not only the ones
+    // a mutation just added: dsh rewrites an open bubble's text in place while the pointer is on
+    // it, which drops our span without ever adding an element for an observer to notice.
+    const hookTips = () => {
+      if (!rowLead) return;
+      for (const tip of document.querySelectorAll<HTMLElement>('[role="tooltip"]')) {
+        if (!(tip.textContent ?? "").replace(/\s+/g, "").startsWith(rowLead)) continue;
+        // The mark rides the appended span, so a re-render that drops it asks for it again.
+        const part = tip.querySelector<HTMLElement>(`:scope > [${MARK}]`);
+        if (part) {
+          part.textContent = ` | ${textRef.current}`;
+          continue;
         }
-    });
-    tipObserver.observe(document.body, { childList: true, subtree: true });
-    return () => {
-      clearInterval(timer);
-      rowObserver.disconnect();
-      tipObserver.disconnect();
+        const fresh = document.createElement("span");
+        fresh.setAttribute(MARK, "1");
+        fresh.textContent = ` | ${textRef.current}`;
+        tip.append(fresh);
+        debug("hooked a bubble");
+      }
+    };
+
+    const drop = () => {
       inline?.remove();
+      inline = undefined;
+      body = undefined;
+      for (const part of document.querySelectorAll(`[${MARK}]`)) part.remove();
       setHooked(false);
     };
-  }, [text, title]);
+
+    // One pass per frame however many mutations dsh made: the observer watches the whole body, and
+    // a streaming turn changes it many times a frame.
+    let queued = false;
+    const sync = () => {
+      queued = false;
+      if (!textRef.current) {
+        if (inline) debug("no cost to show; dropping the row");
+        drop();
+        return;
+      }
+      tryHook();
+      hookTips();
+    };
+    syncRef.current = () => {
+      if (!queued) {
+        queued = true;
+        requestAnimationFrame(sync);
+      }
+    };
+    const observer = new MutationObserver(syncRef.current);
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+    sync();
+    // Fallback for a change no mutation reports at all (a row moved by CSS, a bubble reused).
+    const timer = setInterval(sync, 1000);
+    return () => {
+      clearInterval(timer);
+      observer.disconnect();
+      syncRef.current = () => {};
+      drop();
+    };
+  }, []);
   if (!text) return <span ref={anchorRef} hidden />;
   return (
     <span ref={anchorRef} style={hooked ? { display: "none" } : undefined}>

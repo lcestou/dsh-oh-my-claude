@@ -15,7 +15,6 @@ import {
   type SessionData,
   useNarrow,
   useDismiss,
-  popover,
   code,
   openHere,
   CLAUDE_ORANGE,
@@ -1721,26 +1720,29 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
   // Restore only fits a blank session; the Restore body hides itself for the same reason.
   const blank = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.blank !== false;
 
-  const panelStyle: CSSProperties = narrow
-    ? {
-        position: "fixed",
-        left: 12,
-        right: 12,
-        bottom: above,
-        width: "auto",
-        maxHeight: "60vh",
-        zIndex: 60,
-        display: "flex",
-        flexDirection: "column",
-        padding: 6,
-        background: T.card,
-        border: `1px solid ${T.border}`,
-        borderRadius: 8,
-        boxShadow: "0 8px 24px rgba(0,0,0,.18)",
-        overflow: "hidden",
-      }
-    : // overflow hidden so the body is the only scroller and the tab strip cannot scroll out of it.
-      { ...popover, width: "min(560px, calc(100vw - 24px))", maxHeight: 400, overflow: "hidden" };
+  // Centred in the viewport, not hung off the button: the trigger sits at the right end of the
+  // composer, so a panel anchored to it runs past the right edge and grows a horizontal scrollbar
+  // on the whole page. Fixed also lifts it out of the composer's own scrolling box.
+  // z-index above dsh's menus and hover cards (100, 101) and below its modals (1000), so a dsh
+  // dialog still covers the panel while the chat-history resize handle no longer draws over it.
+  // overflow hidden so the body is the only scroller and the tab strip cannot scroll out of it.
+  const panelStyle: CSSProperties = {
+    position: "fixed",
+    left: "50%",
+    transform: "translateX(-50%)",
+    bottom: above,
+    width: narrow ? "calc(100vw - 24px)" : "min(560px, calc(100vw - 24px))",
+    maxHeight: narrow ? "60vh" : 400,
+    zIndex: 200,
+    display: "flex",
+    flexDirection: "column",
+    padding: 6,
+    background: T.card,
+    border: `1px solid ${T.border}`,
+    borderRadius: 8,
+    boxShadow: "0 8px 24px rgba(0,0,0,.18)",
+    overflow: "hidden",
+  };
 
   const tabs = [
     ...(blank ? [{ key: "Restore", label: "Restore" }] : []),
