@@ -653,6 +653,15 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
         ok: boolean;
         error?: string;
     }>;
+    /** Ask a session's live process to re-read plugins, commands, agents and their MCP servers from
+     *  disk (`reload_plugins`), so an enable, uninstall or marketplace change the CLI just wrote to
+     *  settings takes effect now instead of at the next spawn. No live process is not a failure: the
+     *  write landed and the next spawn will read it, so `live` is false and there is nothing to say. */
+    reloadPlugins(sessionId: string): Promise<{
+        ok: boolean;
+        live: boolean;
+        error?: string;
+    }>;
     /** The CLI's working-tree diff (`get_workspace_diff`) for a session with a live process. */
     workspaceDiff(sessionId: string): Promise<WorkspaceDiffReply>;
     /**

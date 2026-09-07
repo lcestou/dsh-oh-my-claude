@@ -197,11 +197,18 @@ export interface SessionRouteOptions {
         id: string;
         name: string;
     }>>;
+    /** Re-read plugins into a session's live process after a plugin/marketplace mutation, so the
+     *  change applies now instead of at the next spawn. `live` is false when there is no process. */
+    reloadPlugins?: (sessionId: string) => Promise<{
+        ok: boolean;
+        live: boolean;
+        error?: string;
+    }>;
     /** Whether this plugin waits out a usage limit and continues the turn itself. */
     continueAfterLimit?: boolean;
 }
 /** `projectDir(cwd)` → Claude Code project dir; `startedIds()` → ids the adapter started itself. */
-export declare function registerSessionRoutes(ctx: PluginContext, { log, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, command, turnRecords, idle, permissionModes, thinking, rewind, contextUsage, workspaceDiff, mcp, permissionAsks, sideQuestions, models, continueAfterLimit, }: SessionRouteOptions): void;
+export declare function registerSessionRoutes(ctx: PluginContext, { log, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, command, turnRecords, idle, permissionModes, thinking, rewind, contextUsage, workspaceDiff, mcp, permissionAsks, sideQuestions, models, reloadPlugins, continueAfterLimit, }: SessionRouteOptions): void;
 export declare const SETTINGS_SCOPES: readonly ["managed", "local", "project", "user"];
 /** One of the four settings files. The CLI's own layer names, minus the `--settings` flag layer. */
 export type SettingsScope = (typeof SETTINGS_SCOPES)[number];

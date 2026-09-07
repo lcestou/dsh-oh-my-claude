@@ -2015,6 +2015,17 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     return reply.ok ? { ok: true } : { ok: false, error: reply.error };
   }
 
+  /** Ask a session's live process to re-read plugins, commands, agents and their MCP servers from
+   *  disk (`reload_plugins`), so an enable, uninstall or marketplace change the CLI just wrote to
+   *  settings takes effect now instead of at the next spawn. No live process is not a failure: the
+   *  write landed and the next spawn will read it, so `live` is false and there is nothing to say. */
+  async reloadPlugins(sessionId: string): Promise<{ ok: boolean; live: boolean; error?: string }> {
+    const proc = this.processes.get(registryKey(this.providerId, sessionId));
+    if (!proc?.alive) return { ok: true, live: false };
+    const reply = await this.control(proc, { subtype: "reload_plugins" }, 15_000);
+    return reply.ok ? { ok: true, live: true } : { ok: false, live: true, error: reply.error };
+  }
+
   /** The CLI's working-tree diff (`get_workspace_diff`) for a session with a live process. */
   async workspaceDiff(sessionId: string): Promise<WorkspaceDiffReply> {
     const proc = this.processes.get(registryKey(this.providerId, sessionId));
@@ -3561,6 +3572,7 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
           adapter.setThinkingBudget(sessionId, tokens),
       },
       models: () => adapter.getAdvisorModels(),
+      reloadPlugins: (sessionId: string) => adapter.reloadPlugins(sessionId),
       continueAfterLimit: adapter.config.continueAfterLimit,
     });
   }

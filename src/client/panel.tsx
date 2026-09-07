@@ -401,9 +401,9 @@ type Act = (path: string, body: PluginMutationBody, id: string) => Promise<boole
 
 /**
  * The plugins and marketplaces the session's settings turn on, under the CLAUDE.md files: the same
- * question, a different set of files. Each row acts on its own scope through `claude plugin`; a
- * change lands at the next spawn, which the note says, since the running process read its plugins
- * at launch.
+ * question, a different set of files. Each row acts on its own scope through `claude plugin`, then
+ * the running process is asked to re-read plugins (`reload_plugins`) so the change applies now; with
+ * no process up it lands at the next spawn instead, which the note reflects from the reply.
  */
 function PluginManagerBlock({
   roster,
@@ -416,11 +416,12 @@ function PluginManagerBlock({
 }) {
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
+  const [applied, setApplied] = useState("");
   const act: Act = async (path, body, id) => {
     setBusy(id);
     setError("");
     try {
-      const r = await readJson<{ ok: boolean; error?: string }>(
+      const r = await readJson<{ ok: boolean; error?: string; live?: boolean }>(
         await fetch(`${ROUTE}${path}`, {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -431,6 +432,7 @@ function PluginManagerBlock({
         setError(r.error ?? "failed");
         return false;
       }
+      setApplied(r.live === true ? "Applied to this session." : "Takes effect at the next spawn.");
       onChanged();
       return true;
     } catch (e) {
@@ -513,7 +515,8 @@ function PluginManagerBlock({
         <MarketplaceAddForm act={act} busy={busy} />
         {error !== "" && <span style={{ ...meta, display: "block", marginTop: 4 }}>{error}</span>}
         <span style={{ ...meta, display: "block", marginTop: 4 }}>
-          A change takes effect at the next spawn.
+          {applied ||
+            "A change applies to the running session now, or at the next spawn if none is up."}
         </span>
       </div>
     </>

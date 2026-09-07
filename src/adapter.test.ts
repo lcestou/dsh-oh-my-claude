@@ -617,6 +617,15 @@ assert.ok(switched.join(" ").includes("--permission-mode bypassPermissions"));
   assert.equal(a.thinkingInfo("s").tokens, undefined);
 }
 
+// reload_plugins is best-effort: with no live process it is not an error, it just did not apply live
+{
+  const a = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  const r = await a.reloadPlugins("s");
+  assert.equal(r.ok, true);
+  assert.equal(r.live, false);
+  assert.equal(r.error, undefined);
+}
+
 // CLI flag probe: missing flags are left out; missing --input-format switches to positional prompt
 assert.equal(supports(null, "--anything"), true);
 const oldCli = new Set(["--print", "--output-format", "--model", "--permission-mode"]);

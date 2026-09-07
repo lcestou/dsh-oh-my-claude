@@ -669,6 +669,9 @@ export interface SessionRouteOptions {
   };
   /** The model catalog for advisor model selection. */
   models?: () => Promise<Array<{ id: string; name: string }>>;
+  /** Re-read plugins into a session's live process after a plugin/marketplace mutation, so the
+   *  change applies now instead of at the next spawn. `live` is false when there is no process. */
+  reloadPlugins?: (sessionId: string) => Promise<{ ok: boolean; live: boolean; error?: string }>;
   /** Whether this plugin waits out a usage limit and continues the turn itself. */
   continueAfterLimit?: boolean;
 }
@@ -717,6 +720,7 @@ export function registerSessionRoutes(
     permissionAsks,
     sideQuestions,
     models,
+    reloadPlugins,
     continueAfterLimit,
   }: SessionRouteOptions,
 ): void {
@@ -740,6 +744,12 @@ export function registerSessionRoutes(
       if (pluginScopeNeedsCwd(scope) && cwd === null)
         return { error: `${scope} scope needs a session open in a directory` };
       return { cwd: cwd ?? undefined };
+    };
+    // The CLI wrote the plugin change to settings; ask this session's live process to re-read it so
+    // it applies now. Returns whether a live process took it — false (next spawn) when none is up.
+    const applyReload = async (session: JsonValue | undefined): Promise<boolean> => {
+      if (!reloadPlugins || typeof session !== "string") return false;
+      return (await reloadPlugins(session)).live;
     };
     host.effect?.(
       () =>
@@ -930,7 +940,8 @@ export function registerSessionRoutes(
               // Turn the roster into a manager. The CLI owns the mutation end to end (it resolves
               // the marketplace, writes both the settings key and the install lock, and validates
               // the plugin), the same way the MCP tab shells out per session cwd with a scope. Each
-              // write targets the scope the roster row named. The change lands at the next spawn.
+              // write targets the scope the roster row named, then `applyReload` asks the session's
+              // live process to re-read plugins so the change applies now instead of at next spawn.
               if (req.method === "POST" && url.pathname === `${ROUTE_PREFIX}/plugins/toggle`) {
                 const body = await readBody(req);
                 if (!isPluginId(body.key)) return json(res, 400, { error: "plugin id required" });
@@ -945,7 +956,7 @@ export function registerSessionRoutes(
                 );
                 if (result.error) return json(res, 400, { error: result.error });
                 log("info", `plugin ${body.key} ${verb}d (${String(body.scope)})`);
-                return json(res, 200, { ok: true });
+                return json(res, 200, { ok: true, live: await applyReload(body.session) });
               }
               if (req.method === "POST" && url.pathname === `${ROUTE_PREFIX}/plugins/uninstall`) {
                 const body = await readBody(req);
@@ -961,7 +972,7 @@ export function registerSessionRoutes(
                 );
                 if (result.error) return json(res, 400, { error: result.error });
                 log("info", `plugin ${body.key} uninstalled (${String(body.scope)})`);
-                return json(res, 200, { ok: true });
+                return json(res, 200, { ok: true, live: await applyReload(body.session) });
               }
               // Marketplace add resolves a URL, path or GitHub repo, which can clone over the
               // network, so it gets a longer timeout than the local settings writes.
@@ -992,7 +1003,7 @@ export function registerSessionRoutes(
                 );
                 if (result.error) return json(res, 400, { error: result.error });
                 log("info", `marketplace added (${String(body.scope)})`);
-                return json(res, 200, { ok: true });
+                return json(res, 200, { ok: true, live: await applyReload(body.session) });
               }
               if (
                 req.method === "POST" &&
@@ -1011,7 +1022,7 @@ export function registerSessionRoutes(
                 );
                 if (result.error) return json(res, 400, { error: result.error });
                 log("info", `marketplace ${body.name} removed (${String(body.scope)})`);
-                return json(res, 200, { ok: true });
+                return json(res, 200, { ok: true, live: await applyReload(body.session) });
               }
               // The settings and environment that turn off something the panel offers. Its own
               // route rather than a field on diagnostics: the shield and Rewind ask for it on
