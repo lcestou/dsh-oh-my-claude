@@ -1766,6 +1766,109 @@ console.log("ok");
   console.log("permission-denied ok");
 }
 {
+  // commands_changed re-sends the catalog alone: the bridge is refreshed, nothing is drawn, and an
+  // empty list is ignored rather than clearing what init established.
+  const t = new Translator() as any;
+  let seen: { names: string[]; tools: string[] } | undefined;
+  t.onInit = (names: string[], tools: string[]) => {
+    seen = { names, tools };
+  };
+  assert.deepEqual(
+    t.translate({
+      type: "system",
+      subtype: "commands_changed",
+      commands: ["review", "ship"],
+    }),
+    [],
+    "commands_changed draws nothing",
+  );
+  assert.deepEqual(seen?.names, ["review", "ship"]);
+  assert.deepEqual(seen?.tools, [], "no tool list is sent with a catalog refresh");
+  seen = undefined;
+  t.translate({ type: "system", subtype: "commands_changed", commands: [] });
+  assert.equal(seen, undefined, "an empty catalog is not forwarded");
+
+  // model_fallback: the CLI's own wording when it sends one, the models and trigger otherwise.
+  const t2 = new Translator() as any;
+  const said = t2.translate({
+    type: "system",
+    subtype: "model_fallback",
+    content: "Claude Opus 5 is overloaded, falling back to Sonnet 5",
+    trigger: "overloaded",
+    original_model: "claude-opus-5",
+    fallback_model: "claude-sonnet-5",
+  });
+  assert.equal(said.at(-1).block.text, "⚠ Claude Opus 5 is overloaded, falling back to Sonnet 5");
+  const bare = t2.translate({
+    type: "system",
+    subtype: "model_fallback",
+    trigger: "server_error",
+    original_model: "claude-opus-5",
+    fallback_model: "claude-sonnet-5",
+  });
+  assert.equal(
+    bare.at(-1).block.text,
+    "⚠ Model fallback: claude-opus-5 → claude-sonnet-5 (server_error)",
+  );
+
+  // informational: info is silent, suggestion and warning are drawn, and anything that stopped the
+  // turn is drawn whatever its level.
+  const t3 = new Translator() as any;
+  assert.deepEqual(
+    t3.translate({ type: "system", subtype: "informational", content: "hook ran", level: "info" }),
+    [],
+    "info is transcript-only",
+  );
+  const warn = t3.translate({
+    type: "system",
+    subtype: "informational",
+    content: "Consider splitting this file",
+    level: "suggestion",
+  });
+  assert.equal(warn.at(-1).block.text, "⚠ Consider splitting this file");
+  const stopped = t3.translate({
+    type: "system",
+    subtype: "informational",
+    content: "Stop hook denied continuation",
+    level: "info",
+    prevent_continuation: true,
+  });
+  assert.equal(stopped.at(-1).block.text, "⛔ Stop hook denied continuation");
+  assert.deepEqual(
+    t3.translate({ type: "system", subtype: "informational", content: "", level: "warning" }),
+    [],
+    "an empty banner",
+  );
+
+  // api_error is the retry line without the retry framing, and it alone reports a dead connection.
+  const t4 = new Translator() as any;
+  const netDown = t4.translate({
+    type: "system",
+    subtype: "api_error",
+    error: { message: "fetch failed", is_network_down: true },
+  });
+  assert.equal(netDown.at(-1).block.text, "⚠ fetch failed · network is down");
+  const retrying = t4.translate({
+    type: "system",
+    subtype: "api_error",
+    error: { message: "overloaded" },
+    retry_delay_ms: 2000,
+    attempt: 1,
+    max_retries: 5,
+  });
+  assert.equal(retrying.at(-1).block.text, "⚠ overloaded · Retrying in 2s · attempt 1/5");
+
+  // keep_alive has no payload and the schema says to ignore it: no unknown-event warning.
+  const t5 = new Translator() as any;
+  let warned = 0;
+  t5.log = (level: string) => {
+    if (level === "warn") warned++;
+  };
+  assert.deepEqual(t5.translate({ type: "keep_alive" }), []);
+  assert.equal(warned, 0, "keep_alive is benign");
+  console.log("frame-catchup ok");
+}
+{
   // The compaction start frame (status:"compacting") is announced at once, so the silent summarize
   // stretch has a visible anchor and does not arrive delayed as the boundary line alone.
   const t = new Translator() as any;

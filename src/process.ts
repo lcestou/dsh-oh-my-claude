@@ -110,6 +110,18 @@ export type ClaudeEvent =
         end_time?: number;
         is_backgrounded?: boolean;
       };
+      // subtype "commands_changed": the whole slash-command catalog again, after a skill or custom
+      // command appeared mid-session. Same shape as init's `slash_commands`.
+      commands?: JsonValue;
+      // subtype "model_fallback": the CLI dropped to a weaker model. `content` is display-ready.
+      content?: string;
+      level?: string;
+      trigger?: string;
+      original_model?: string;
+      fallback_model?: string;
+      // subtype "informational": a loop banner. `prevent_continuation` marks the ones that ended
+      // the turn early (a Stop hook denying continuation).
+      prevent_continuation?: boolean;
       // subtype "permission_denied": the tool the CLI refused, and why, at the moment of refusal.
       tool_name?: string;
       message?: string;
@@ -127,6 +139,9 @@ export type ClaudeEvent =
         status?: number;
         formatted?: string;
         rate_limits?: { resets_at?: number; rate_limit_type?: string } | null;
+        /** subtype "api_error": set when the failure was the connection itself, not a response. */
+        connection?: string;
+        is_network_down?: boolean;
       };
     }
   | {

@@ -57,6 +57,7 @@ const BENIGN_EVENTS = new Set([
   "control_response",
   "timeout",
   "dsh_relay",
+  "keep_alive",
 ]);
 // stream_event sub-types with no renderable delta (SSE bookkeeping).
 const BENIGN_PARTIALS = new Set(["message_delta", "message_stop", "ping"]);
@@ -430,6 +431,36 @@ export class Translator {
           this.taskBlocks.delete(event.task_id ?? "");
           return events;
         }
+        // The CLI re-sends the whole command catalog when a skill or custom command appears
+        // mid-session; the bridge's copy is otherwise stale until the next spawn. Correctness, not
+        // display, so it draws nothing.
+        if (event.subtype === "commands_changed") {
+          const names = commandNames(event.commands);
+          if (names.length > 0) this.onInit?.(names, []);
+          return [];
+        }
+        // A silent switch to a weaker model during a long unattended run is invisible otherwise.
+        if (event.subtype === "model_fallback") {
+          const from = event.original_model ?? "";
+          const to = event.fallback_model ?? "";
+          const pair = from && to ? `: ${from} → ${to}` : from || to ? `: ${from || to}` : "";
+          const why = event.trigger ? ` (${event.trigger})` : "";
+          const said = (event.content ?? "").trim();
+          return this.wholeBlock(
+            "reasoning",
+            said ? `⚠ ${clip(said)}` : `⚠ Model fallback${pair}${why}`,
+          );
+        }
+        // The loop's own banner. This box runs many hooks and `info` is documented as transcript
+        // only, so only a suggestion or worse is drawn — plus anything that ended the turn early,
+        // whatever its level, since a turn stopping without explanation is the confusing case.
+        if (event.subtype === "informational") {
+          const said = (event.content ?? "").trim();
+          const loud = event.level === "suggestion" || event.level === "warning";
+          if (!said || (!loud && !event.prevent_continuation)) return [];
+          const stopped = event.prevent_continuation ? "⛔ " : "⚠ ";
+          return this.wholeBlock("reasoning", `${stopped}${clip(said)}`);
+        }
         // A denial as it happens, with the reason. The result frame still reports the count at the
         // end of the turn; this is the only place the CLI says which rule refused and why.
         if (event.subtype === "permission_denied") {
@@ -448,17 +479,26 @@ export class Translator {
         // line here the turn looks like it is working while nothing happens: dsh only sees silence
         // and keeps the spinner verb. Worded like the CLI's own retry banner: the error, the wait,
         // the reset time when a usage limit is the cause, and the attempt count.
-        if (event.subtype === "api_retry") {
+        if (event.subtype === "api_retry" || event.subtype === "api_error") {
           const err = event.error ?? {};
           const wait = Math.round((event.retry_delay_ms ?? 0) / 1000);
           const resetsAt = err.rate_limits?.resets_at;
           const reset = Number.isFinite(resetsAt)
             ? ` (resets ${resetClock((resetsAt ?? 0) * 1000, this.timeZone)})`
             : "";
-          return this.wholeBlock(
-            "reasoning",
-            `⚠ ${err.formatted ?? err.message ?? `API error ${err.status ?? ""}`.trim()} · Retrying in ${wait}s${reset} · attempt ${event.attempt ?? "?"}/${event.max_retries ?? "?"}`,
-          );
+          // api_error is the same failure without the retry framing, and it alone says whether the
+          // connection itself is down — worth naming, since that reads as the model hanging.
+          const down = err.is_network_down
+            ? " · network is down"
+            : err.connection
+              ? ` · ${err.connection}`
+              : "";
+          const head = err.formatted ?? err.message ?? `API error ${err.status ?? ""}`.trim();
+          const retrying = event.subtype === "api_retry" || event.retry_delay_ms !== undefined;
+          const tail = retrying
+            ? ` · Retrying in ${wait}s${reset} · attempt ${event.attempt ?? "?"}/${event.max_retries ?? "?"}`
+            : reset;
+          return this.wholeBlock("reasoning", `⚠ ${head}${down}${tail}`);
         }
         // Claude Code compacted its own context (auto or /compact). One line so the user knows
         // why the model may have lost detail; every other system subtype is handshake noise.

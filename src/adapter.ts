@@ -1017,6 +1017,9 @@ export const NATIVE_TOOL_MAP = {
   Glob: "glob",
   WebFetch: "web_fetch",
   WebSearch: "web_search",
+  // Same presenter as Edit: the client draws both from a diff, and the input shape only differs in
+  // carrying several edits.
+  MultiEdit: "edit",
 } as const;
 
 export interface TurnRecord {
@@ -2477,7 +2480,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
           : undefined,
       redact: this.redact,
       onInit: (names, tools) => {
-        if (options.sessionId) this.sessionTools.set(options.sessionId, tools);
+        // commands_changed re-sends the command catalog alone, so an empty tool list means "not
+        // told", not "no tools": overwriting would drop what the init frame established.
+        if (options.sessionId && tools.length > 0) this.sessionTools.set(options.sessionId, tools);
         if (names.length > 0)
           this.bridgeCommands(names, this.ctx?.agents?.get?.(options.sessionId));
       },

@@ -73,6 +73,13 @@ export type ClaudeEvent = {
         end_time?: number;
         is_backgrounded?: boolean;
     };
+    commands?: JsonValue;
+    content?: string;
+    level?: string;
+    trigger?: string;
+    original_model?: string;
+    fallback_model?: string;
+    prevent_continuation?: boolean;
     tool_name?: string;
     message?: string;
     decision_reason?: unknown;
@@ -89,6 +96,9 @@ export type ClaudeEvent = {
             resets_at?: number;
             rate_limit_type?: string;
         } | null;
+        /** subtype "api_error": set when the failure was the connection itself, not a response. */
+        connection?: string;
+        is_network_down?: boolean;
     };
 } | {
     /** Top-level frame, not a `system` subtype: the CLI emits one per running tool call every 30

@@ -385,6 +385,7 @@ export declare const NATIVE_TOOL_MAP: {
     readonly Glob: "glob";
     readonly WebFetch: "web_fetch";
     readonly WebSearch: "web_search";
+    readonly MultiEdit: "edit";
 };
 export interface TurnRecord {
     at: number;
