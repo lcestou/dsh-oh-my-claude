@@ -2213,6 +2213,7 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
   const [items, setItems] = useState<AsideItem[]>([]);
   const [dismissed, setDismissed] = useState<Set<string>>(() => new Set());
   const [copied, setCopied] = useState<string | null>(null);
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
   const visibleRef = useRef(true);
 
   useEffect(() => {
@@ -2269,92 +2270,146 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
     });
   };
 
+  const toggle = (id: string) =>
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const iconBtn = {
+    background: "none",
+    border: "none",
+    cursor: "pointer",
+    padding: "0 2px",
+    lineHeight: 1,
+    flex: "0 0 auto",
+  } as const;
+
   return (
     <div
       style={{
-        // Match dsh's todo/goal dock cards: composer width, centered, so the bubble latches on above
-        // the composer at the same width instead of spanning the full pane.
+        // Sit like dsh's todo/goal dock cards: composer width (a touch narrower than the chat),
+        // centered above the composer, stacked, rather than spanning the whole pane.
         boxSizing: "border-box",
         width: "100%",
         maxWidth: "calc(var(--dsh-composer-card-max-width) - 4 * var(--dsh-composer-dock-inset))",
         margin: "0 auto",
         display: "flex",
         flexDirection: "column",
-        gap: 8,
+        gap: 6,
         marginTop: 10,
       }}
     >
-      {shown.map((it) => (
-        <div
-          key={it.id}
-          style={{
-            background: "rgba(217,119,87,.12)",
-            border: `1px solid ${CLAUDE_ORANGE}`,
-            borderRadius: 12,
-            padding: "10px 12px",
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
-            <span style={{ color: CLAUDE_ORANGE, fontSize: 13 }} aria-hidden="true">
-              {CLAUDE_MARK}
-            </span>
-            <span style={{ color: CLAUDE_ORANGE, fontWeight: 600, fontSize: 12 }}>
-              Side question
-            </span>
-            <span style={{ color: T.faint, fontSize: 11 }}>{ago(it.at)}</span>
-            <button
-              type="button"
-              onClick={() => copy(it)}
-              aria-label="Copy side question"
-              style={{
-                marginLeft: "auto",
-                background: "none",
-                border: "none",
-                color: copied === it.id ? CLAUDE_ORANGE : T.muted,
-                cursor: "pointer",
-                fontSize: 11,
-                lineHeight: 1,
-              }}
-            >
-              {copied === it.id ? "Copied" : "Copy"}
-            </button>
-            <button
-              type="button"
-              onClick={() => dismissAside(it.id)}
-              aria-label="Dismiss side question"
-              style={{
-                background: "none",
-                border: "none",
-                color: T.muted,
-                cursor: "pointer",
-                fontSize: 14,
-                lineHeight: 1,
-              }}
-            >
-              ✕
-            </button>
-          </div>
+      {shown.map((it) => {
+        const open = !collapsed.has(it.id);
+        return (
           <div
+            key={it.id}
             style={{
-              color: T.text,
-              fontSize: 13,
-              fontWeight: 500,
-              marginBottom: it.pending || it.answer || it.error ? 6 : 0,
+              // Neutral theme tokens (not a solid-orange bubble) so it reads as a native dock card;
+              // the orange lives only on the ✻ mark and label. Fallbacks cover a theme without them.
+              boxSizing: "border-box",
+              background: "var(--dsw-specific-tip, var(--dsw-alias-bg-base, transparent))",
+              border: "0.5px solid var(--dsw-alias-border-l1, rgba(217,119,87,.4))",
+              borderRadius: 12,
+              overflow: "hidden",
             }}
           >
-            {it.question}
-          </div>
-          {it.pending ? (
-            <div style={{ color: CLAUDE_ORANGE, fontSize: 12, fontStyle: "italic" }}>
-              Claude is thinking…
+            {/* Header is the collapse toggle; the copy/dismiss controls sit beside it and stop the
+                click so they do not also fold the card. A div (not a button) avoids nesting buttons. */}
+            <div
+              role="button"
+              tabIndex={0}
+              aria-expanded={open}
+              onClick={() => toggle(it.id)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  toggle(it.id);
+                }
+              }}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "6px 8px",
+                cursor: "pointer",
+              }}
+            >
+              <span style={{ color: T.faint, fontSize: 10, width: 8, flex: "0 0 auto" }} aria-hidden="true">
+                {open ? "▾" : "▸"}
+              </span>
+              <span style={{ color: CLAUDE_ORANGE, fontSize: 13, flex: "0 0 auto" }} aria-hidden="true">
+                {CLAUDE_MARK}
+              </span>
+              <span
+                style={{
+                  color: CLAUDE_ORANGE,
+                  fontWeight: 600,
+                  fontSize: 12,
+                  flex: "0 0 auto",
+                }}
+              >
+                Side question
+              </span>
+              {/* Question rides the bar, truncated, so a collapsed card still says what it asked. */}
+              <span
+                style={{
+                  color: T.muted,
+                  fontSize: 12,
+                  flex: "1 1 auto",
+                  minWidth: 0,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {it.question}
+              </span>
+              <span style={{ color: T.faint, fontSize: 11, flex: "0 0 auto" }}>{ago(it.at)}</span>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  copy(it);
+                }}
+                aria-label="Copy side question"
+                style={{ ...iconBtn, color: copied === it.id ? CLAUDE_ORANGE : T.muted, fontSize: 11 }}
+              >
+                {copied === it.id ? "Copied" : "Copy"}
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  dismissAside(it.id);
+                }}
+                aria-label="Dismiss side question"
+                style={{ ...iconBtn, color: T.muted, fontSize: 14 }}
+              >
+                ✕
+              </button>
             </div>
-          ) : it.error ? (
-            <div style={{ color: T.err, fontSize: 12 }}>{it.error}</div>
-          ) : (
-            <div style={{ color: T.text, fontSize: 13, whiteSpace: "pre-wrap" }}>{it.answer}</div>
-          )}
-        </div>
-      ))}
+            {open ? (
+              <div style={{ padding: "0 10px 8px 24px" }}>
+                {it.pending ? (
+                  <div style={{ color: CLAUDE_ORANGE, fontSize: 12, fontStyle: "italic" }}>
+                    Claude is thinking…
+                  </div>
+                ) : it.error ? (
+                  <div style={{ color: T.err, fontSize: 12 }}>{it.error}</div>
+                ) : (
+                  <div style={{ color: T.text, fontSize: 13, whiteSpace: "pre-wrap" }}>
+                    {it.answer}
+                  </div>
+                )}
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
     </div>
   );
 }
