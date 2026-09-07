@@ -1557,29 +1557,26 @@ function renderUsage(block: HTMLElement, reply: UsageReply) {
  * One shared `document.body` observer for every feature that reacts to nodes dsh adds. dsh appends
  * a message chunk many times a second during a turn, so a per-feature observer that ran a
  * `querySelectorAll` per mutation multiplied that load by the feature count and janked mobile
- * (Firefox worst). Here every mutation burst is coalesced into a single pass on the next animation
- * frame: added elements are collected, then each registered handler sees each one once. Handlers
- * get an element that was added under `document.body`; they do their own scoping and idempotency.
+ * (Firefox worst). Here any mutation burst just marks the frame dirty; on the next animation frame
+ * each registered scan runs once against `document.body`. The feature selectors are rare attributes
+ * ([role=dialog/tooltip/status]), so one body-wide scan per frame is far cheaper than scanning each
+ * of the hundreds of nodes a streaming turn appends. Scans do their own scoping and idempotency.
  */
-type AddedNodeHandler = (node: HTMLElement) => void;
-const addedNodeHandlers = new Set<AddedNodeHandler>();
+type FrameScan = () => void;
+const frameScans = new Set<FrameScan>();
 let bodyObserver: MutationObserver | undefined;
-let pendingNodes: HTMLElement[] | undefined;
-let scanFrame = 0;
-const flushAddedNodes = () => {
-  scanFrame = 0;
-  const nodes = pendingNodes;
-  pendingNodes = undefined;
-  if (!nodes) return;
-  for (const handler of addedNodeHandlers) for (const node of nodes) handler(node);
+let scanQueued = false;
+const flushScans = () => {
+  scanQueued = false;
+  for (const scan of frameScans) scan();
 };
-const onAddedNodes = (handler: AddedNodeHandler) => {
-  addedNodeHandlers.add(handler);
+const onBodyMutation = (scan: FrameScan) => {
+  frameScans.add(scan);
   if (bodyObserver) return;
-  bodyObserver = new MutationObserver((records) => {
-    for (const r of records)
-      for (const n of r.addedNodes) if (n instanceof HTMLElement) (pendingNodes ??= []).push(n);
-    if (pendingNodes && scanFrame === 0) scanFrame = requestAnimationFrame(flushAddedNodes);
+  bodyObserver = new MutationObserver(() => {
+    if (scanQueued) return;
+    scanQueued = true;
+    requestAnimationFrame(flushScans);
   });
   bodyObserver.observe(document.body, { childList: true, subtree: true });
 };
@@ -1678,7 +1675,7 @@ function watchContextMeter(ctx: ClientCtx) {
       if (tip && isRingRoot(tip.parentElement)) bubble(tip);
     }
   };
-  onAddedNodes((n) => scan(n));
+  onBodyMutation(() => scan(document.body));
   scan(document.body);
 }
 
@@ -1890,18 +1887,16 @@ function watchTurnStatus(ctx: ClientCtx) {
     if (el.isConnected) wireTurnStatus(el, activeId, settings.verbs, settings.frameSet);
   };
   const scan = (root: HTMLElement) => {
-    // The node itself, then its descendants: dsh appends the status row as its own node, and
-    // scanning the parent instead swept every sibling message on the page for each append.
     attach(root);
     for (const el of root.querySelectorAll<HTMLElement>('[role="status"][aria-live="polite"]'))
       attach(el);
   };
-  // Every message dsh appends reaches this handler, so the cheapest check comes first: on a session
-  // that is not a Claude mount there is nothing to attach, and the querySelectorAll per node would
-  // be work stacked on top of dsh's own render.
-  onAddedNodes((n) => {
+  // Once per dirty frame, and the cheapest check comes first: on a session that is not a Claude
+  // mount there is nothing to attach, so bail before the querySelectorAll. attach is idempotent
+  // (the status row carries a data-attr once wired), so re-scanning the body each frame is safe.
+  onBodyMutation(() => {
     if (!activeClaudeSession(ctx)) return;
-    scan(n);
+    scan(document.body);
   });
   scan(document.body);
 }
