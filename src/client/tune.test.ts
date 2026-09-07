@@ -47,6 +47,40 @@ import { readTunables, updateSettings } from "./tune.js";
   );
 }
 
+// Either cache TTL key takes the CLI's own two values, and nothing else reaches the file.
+{
+  const r = updateSettings("{}", "promptCacheTtl", "1h");
+  assert.equal(r.error, undefined);
+  assert.equal(JSON.parse(r.text).promptCacheTtl, "1h");
+  const s = updateSettings("{}", "subagentPromptCacheTtl", "5m");
+  assert.equal(s.error, undefined);
+  assert.equal(JSON.parse(s.text).subagentPromptCacheTtl, "5m");
+  assert.match(String(updateSettings("{}", "promptCacheTtl", "30m").error), /5m or 1h/);
+  assert.match(String(updateSettings("{}", "subagentPromptCacheTtl", 3600).error), /5m or 1h/);
+}
+
+// Switching a set TTL keeps every other key, and their order, exactly as the file had them.
+{
+  const before = JSON.stringify({ a: 1, promptCacheTtl: "5m", model: "opus" });
+  const r = updateSettings(before, "promptCacheTtl", "1h");
+  assert.equal(r.error, undefined);
+  const after = JSON.parse(r.text);
+  assert.equal(after.promptCacheTtl, "1h");
+  assert.deepEqual(Object.keys(after), ["a", "promptCacheTtl", "model"]);
+}
+
+// Default on a TTL row: the key goes away, so the CLI picks the TTL for itself again.
+{
+  const r = updateSettings(
+    JSON.stringify({ subagentPromptCacheTtl: "1h", other: 1 }),
+    "subagentPromptCacheTtl",
+    undefined,
+  );
+  assert.equal(r.error, undefined);
+  assert.ok(!("subagentPromptCacheTtl" in JSON.parse(r.text)), "key removed, not nulled");
+  assert.equal(JSON.parse(r.text).other, 1);
+}
+
 // A file that is not JSON, or not an object, is reported rather than overwritten.
 {
   assert.ok(updateSettings("{oops", "outputStyle", "Learning").error);
@@ -80,6 +114,14 @@ import { readTunables, updateSettings } from "./tune.js";
     ),
     {},
     "wrong types read as unset",
+  );
+  assert.deepEqual(readTunables(JSON.stringify({ promptCacheTtl: "1h" })), {
+    promptCacheTtl: "1h",
+  });
+  assert.deepEqual(
+    readTunables(JSON.stringify({ promptCacheTtl: 3600, subagentPromptCacheTtl: "forever" })),
+    {},
+    "a TTL that is not 5m or 1h reads as unset",
   );
 }
 

@@ -8,10 +8,17 @@ interface Tunables {
   alwaysThinkingEnabled?: boolean;
   showThinkingSummaries?: boolean;
   autoCompactWindow?: number;
+  promptCacheTtl?: string;
+  subagentPromptCacheTtl?: string;
 }
 type TuneKey = keyof Tunables;
-/** A settings document as this tab handles it: every key open, since it edits four and keeps the rest. */
-type Settings = { [key: string]: string | number | boolean | null | undefined };
+/** A settings document as this tab handles it: every key open, since it edits six and keeps the rest. */
+type SettingsValue = string | number | boolean | null | undefined;
+type Settings = { [key: string]: SettingsValue };
+/** The CLI's own pair of cache TTLs; anything else is not a value its resolver understands. */
+const cacheTtl = (value: SettingsValue) => (value === "5m" || value === "1h" ? value : undefined);
+const isCacheTtlKey = (key: TuneKey) =>
+  key === "promptCacheTtl" || key === "subagentPromptCacheTtl";
 
 /** Set a key, or drop it when the control returns to the CLI's own default (an absent key). */
 export function updateSettings(
@@ -25,6 +32,8 @@ export function updateSettings(
     !(Number.isInteger(value) && Number(value) > 0)
   )
     return { error: "auto-compact must be a positive whole number of tokens" };
+  if (isCacheTtlKey(key) && value !== undefined && cacheTtl(value) === undefined)
+    return { error: "cache TTL must be 5m or 1h" };
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
@@ -41,7 +50,7 @@ export function updateSettings(
   return { text: `${JSON.stringify(obj, null, 2)}\n` };
 }
 
-/** Read the four keys out of the file; anything of the wrong type reads as unset. */
+/** Read the six keys out of the file; anything of the wrong type reads as unset. */
 export function readTunables(text: string): Tunables {
   let parsed: unknown;
   try {
@@ -59,6 +68,10 @@ export function readTunables(text: string): Tunables {
   if (obj.showThinkingSummaries === true) out.showThinkingSummaries = true;
   if (Number.isInteger(obj.autoCompactWindow))
     out.autoCompactWindow = Number(obj.autoCompactWindow);
+  const ttl = cacheTtl(obj.promptCacheTtl);
+  if (ttl !== undefined) out.promptCacheTtl = ttl;
+  const subagentTtl = cacheTtl(obj.subagentPromptCacheTtl);
+  if (subagentTtl !== undefined) out.subagentPromptCacheTtl = subagentTtl;
   return out;
 }
 
@@ -259,6 +272,54 @@ export function TuneBody(): React.ReactElement {
         </div>
         <span style={sourceStyle}>{source(settings.autoCompactWindow !== undefined)}</span>
       </div>
+
+      <div style={rowStyle}>
+        <span style={labelStyle}>Cache TTL</span>
+        <div style={controlStyle}>
+          <select
+            value={settings.promptCacheTtl ?? ""}
+            disabled={busy}
+            aria-label="Prompt cache TTL"
+            onChange={(e) => void write("promptCacheTtl", e.target.value || undefined)}
+            style={{
+              ...select,
+              flex: narrow ? "1 1 auto" : "0 0 auto",
+              minWidth: narrow ? 0 : 160,
+            }}
+          >
+            <option value="">Default</option>
+            <option value="5m">5 minutes</option>
+            <option value="1h">1 hour</option>
+          </select>
+        </div>
+        <span style={sourceStyle}>{source(settings.promptCacheTtl !== undefined)}</span>
+      </div>
+
+      <div style={rowStyle}>
+        <span style={labelStyle}>Subagent cache TTL</span>
+        <div style={controlStyle}>
+          <select
+            value={settings.subagentPromptCacheTtl ?? ""}
+            disabled={busy}
+            aria-label="Subagent prompt cache TTL"
+            onChange={(e) => void write("subagentPromptCacheTtl", e.target.value || undefined)}
+            style={{
+              ...select,
+              flex: narrow ? "1 1 auto" : "0 0 auto",
+              minWidth: narrow ? 0 : 160,
+            }}
+          >
+            <option value="">Default</option>
+            <option value="5m">5 minutes</option>
+            <option value="1h">1 hour</option>
+          </select>
+        </div>
+        <span style={sourceStyle}>{source(settings.subagentPromptCacheTtl !== undefined)}</span>
+      </div>
+      <span style={{ ...meta, padding: "0 6px 2px", whiteSpace: "normal" }}>
+        An hour keeps the cache warm across longer breaks, and hour-long cache writes are billed at
+        a higher rate.
+      </span>
     </div>
   );
 }
