@@ -1646,8 +1646,7 @@ function watchContextMeter(ctx: ClientCtx) {
     }
   };
   new MutationObserver((records) => {
-    for (const r of records)
-      for (const n of r.addedNodes) if (n instanceof HTMLElement) scan(n.parentElement ?? n);
+    for (const r of records) for (const n of r.addedNodes) if (n instanceof HTMLElement) scan(n);
   }).observe(document.body, { childList: true, subtree: true });
   scan(document.body);
 }
@@ -1748,8 +1747,18 @@ const wireTurnStatus = (
       direction = 1;
     }
   };
+  const interval = setInterval(() => {
+    // The 120ms beat doubles as the teardown check: React unmounts this row by removing an
+    // ancestor, so watching for `el` itself in a removal record missed it and left one
+    // whole-document observer plus one interval alive per row dsh ever drew.
+    if (!el.isConnected) {
+      clearInterval(interval);
+      obs.disconnect();
+      return;
+    }
+    tick();
+  }, 120);
   tick();
-  const interval = setInterval(tick, 120);
 
   // Pick a fresh verb once per element instance.
   const verb = verbFor(sessionId, verbs);
@@ -1769,19 +1778,6 @@ const wireTurnStatus = (
     characterData: true,
     characterDataOldValue: false,
   });
-
-  // Clear when the element is removed from the DOM.
-  const remObs = new MutationObserver((records) => {
-    for (const r of records)
-      for (const n of r.removedNodes)
-        if (n === el) {
-          clearInterval(interval);
-          obs.disconnect();
-          remObs.disconnect();
-          return;
-        }
-  });
-  remObs.observe(document.body, { childList: true, subtree: true });
 };
 
 /**
@@ -1811,7 +1807,10 @@ function watchTurnStatus(ctx: ClientCtx) {
     const settings = await spinnerSettings;
     if (el.isConnected) wireTurnStatus(el, activeId, settings.verbs, settings.frameSet);
   };
-  const scan = (root: ParentNode) => {
+  const scan = (root: HTMLElement) => {
+    // The node itself, then its descendants: dsh appends the status row as its own node, and
+    // scanning the parent instead swept every sibling message on the page for each append.
+    attach(root);
     for (const el of root.querySelectorAll<HTMLElement>('[role="status"][aria-live="polite"]'))
       attach(el);
   };
@@ -1820,8 +1819,7 @@ function watchTurnStatus(ctx: ClientCtx) {
     // not a Claude mount there is nothing to attach, and the querySelectorAll per added node would
     // be work stacked on top of dsh's own render.
     if (!activeClaudeSession(ctx)) return;
-    for (const r of records)
-      for (const n of r.addedNodes) if (n instanceof HTMLElement) scan(n.parentElement ?? n);
+    for (const r of records) for (const n of r.addedNodes) if (n instanceof HTMLElement) scan(n);
   }).observe(document.body, { childList: true, subtree: true });
   scan(document.body);
 }
@@ -1849,6 +1847,10 @@ interface TurnsReply {
     count: number;
   };
 }
+
+/** dsh's own "N turns · N steps" row, the div the cost line is appended to. */
+const isStatsRow = (el: HTMLElement): boolean =>
+  el.isConnected && el.children.length > 1 && /\d+ turns · \d+ steps/.test(el.textContent ?? "");
 
 /** Cost readout in dsh's footer stats row: only when the open session is a Claude mount. */
 function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
@@ -1930,6 +1932,7 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
     let inline: HTMLSpanElement | undefined;
     let body: HTMLSpanElement | undefined;
     let rowLead = "";
+    let lastRow: HTMLElement | undefined;
     // The row appears with the first settled step and is one of dsh's own divs anywhere in the
     // document; look for it until found (one conversation is on screen at a time).
     // `inline?.isConnected`, not `inline`: dsh re-renders this row on every step and React drops
@@ -1956,11 +1959,14 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
         return;
       }
       if (inline) debug("row dropped our span; hooking again");
-      const statsRow = [...document.querySelectorAll<HTMLDivElement>("div")]
-        .filter(
-          (el) => el.children.length > 1 && /\d+ turns · \d+ steps/.test(el.textContent ?? ""),
-        )
-        .at(-1);
+      // The row dsh re-rendered is usually the same element with new children, so the one it was
+      // last found in is tried first: the fallback walks every div in the document, and that walk
+      // ran on each of the many steps in a turn.
+      const statsRow =
+        lastRow && isStatsRow(lastRow)
+          ? lastRow
+          : [...document.querySelectorAll<HTMLDivElement>("div")].filter(isStatsRow).at(-1);
+      lastRow = statsRow;
       if (!statsRow) {
         debug("no stats row on screen");
         return;
@@ -2007,6 +2013,7 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
       inline?.remove();
       inline = undefined;
       body = undefined;
+      lastRow = undefined; // a fresh hook looks the row up again rather than trusting an old pane
       for (const part of document.querySelectorAll(`[${MARK}]`)) part.remove();
       setHooked(false);
     };
