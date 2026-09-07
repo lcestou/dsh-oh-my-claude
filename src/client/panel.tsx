@@ -895,6 +895,288 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
  */
 const SPAWN_NOTE = "Saved. Claude picks it up the next time it starts.";
 
+/** Runtime status, config files, and doctor output. */
+interface DiagnosticsReply {
+  ok: true;
+  runtime: {
+    host: string;
+    binary: string | null;
+    version: string | null;
+    loggedIn: boolean;
+    email: string | null;
+    configDir: string;
+    plugin: string;
+    error?: string;
+  };
+  configFiles: Array<{ scope: string; path: string; exists: boolean; parseError?: string }>;
+}
+type DiagnosticsError = { ok: false; error: string };
+/** The slice of a turn record this tab reads: when the turn ran, and the calls a rule refused. */
+interface DeniedTurn {
+  at: number;
+  denials?: string[];
+}
+
+/**
+ * "Diagnostics" body in the Oh My Claude dialog: runtime status, config file parse errors,
+ * MCP servers that are not connected with their errors, and a doctor output button.
+ */
+function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
+  const cwd = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.cwd;
+  const running = activeClaudeSession(ctx) === sessionId;
+  const [data, setData] = useState<DiagnosticsReply | DiagnosticsError | null>(null);
+  const [mcp, setMcp] = useState<McpReply | null>(null);
+  const [reconnecting, setReconnecting] = useState<string | null>(null);
+  const [audit, setAudit] = useState<DeniedTurn[] | null>(null);
+  const [auditError, setAuditError] = useState("");
+  const [doctorOutput, setDoctorOutput] = useState<string | null>(null);
+  const [doctorError, setDoctorError] = useState("");
+  const [doctorBusy, setDoctorBusy] = useState(false);
+
+  const loadMcp = useCallback(
+    () =>
+      fetch(`${ROUTE}/mcp-servers?session=${encodeURIComponent(sessionId)}`)
+        .then((r) => readJson<McpReply>(r))
+        .then(setMcp)
+        .catch((e: Error) => setMcp({ ok: false, error: e.message })),
+    [sessionId],
+  );
+
+  useEffect(() => {
+    // The route asks the running process; with none there is nothing to be not-connected about.
+    if (!running) return;
+    void loadMcp();
+  }, [running, loadMcp]);
+
+  useEffect(() => {
+    let live = true;
+    fetch(`${ROUTE}/turns?session=${encodeURIComponent(sessionId)}`)
+      .then((r) => readJson<{ turns?: DeniedTurn[] }>(r))
+      .then((b) => {
+        // Newest first, and only the turns that had a call refused.
+        if (live) setAudit((b.turns ?? []).filter((t) => t.denials?.length).toReversed());
+      })
+      // An error is not an empty audit: say which one it was.
+      .catch((e: Error) => live && setAuditError(e.message));
+    return () => {
+      live = false;
+    };
+  }, [sessionId]);
+
+  const reconnect = async (serverName: string) => {
+    setReconnecting(serverName);
+    try {
+      await fetch(`${ROUTE}/mcp-servers/reconnect`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ session: sessionId, name: serverName }),
+      });
+      await loadMcp();
+    } finally {
+      setReconnecting(null);
+    }
+  };
+
+  useEffect(() => {
+    if (!cwd) return;
+    let live = true;
+    fetch(`${ROUTE}/diagnostics?cwd=${encodeURIComponent(cwd)}`)
+      .then((r) => readJson<DiagnosticsReply | DiagnosticsError>(r))
+      .then((b) => live && setData(b))
+      .catch((e: Error) => live && setData({ ok: false, error: e.message }));
+    return () => {
+      live = false;
+    };
+  }, [cwd]);
+
+  const runDoctor = async () => {
+    setDoctorBusy(true);
+    setDoctorError("");
+    try {
+      const r = await readJson<{ out?: string; error?: string }>(
+        await fetch(`${ROUTE}/diagnostics/doctor`, { method: "POST" }),
+      );
+      if (r.error) {
+        setDoctorError(r.error);
+      } else {
+        setDoctorOutput(r.out ?? "");
+      }
+    } catch (e) {
+      setDoctorError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDoctorBusy(false);
+    }
+  };
+
+  if (!cwd) return null;
+  return (
+    <div style={bodyFlow}>
+      {data === null ? (
+        <span style={{ ...meta, padding: "2px 4px" }}>Loading…</span>
+      ) : !data.ok ? (
+        <span style={{ color: T.err, fontSize: 12 }}>{data.error}</span>
+      ) : (
+        <>
+          {/* Runtime */}
+          <span style={{ ...meta, padding: "2px 4px", display: "block" }}>Runtime</span>
+          <div style={{ padding: "4px 10px", fontSize: 12, lineHeight: "1.5" }}>
+            <div>
+              Binary:{" "}
+              <span style={{ fontFamily: T.mono }}>{data.runtime.binary || "(not found)"}</span>
+            </div>
+            <div>Version: {data.runtime.version || "(unknown)"}</div>
+            <div>
+              Login:{" "}
+              {data.runtime.loggedIn ? (
+                <span style={{ color: T.ok }}>
+                  {data.runtime.email || "logged in"} · {data.runtime.host}
+                </span>
+              ) : (
+                <span style={{ color: T.err }}>not logged in · run `claude auth login`</span>
+              )}
+            </div>
+            <div>
+              Config dir: <span style={{ fontFamily: T.mono }}>{data.runtime.configDir}</span>
+            </div>
+            {data.runtime.error && <div style={{ color: T.err }}>{data.runtime.error}</div>}
+          </div>
+
+          {/* Config files */}
+          <span style={{ ...meta, padding: "2px 4px", display: "block", marginTop: 8 }}>
+            Config files
+          </span>
+          {data.configFiles.length === 0 ? (
+            <span style={{ ...meta, padding: "2px 4px", fontSize: 12 }}>No config files</span>
+          ) : (
+            data.configFiles.map((f) => (
+              <div
+                key={f.scope}
+                style={{
+                  padding: "4px 10px",
+                  fontSize: 12,
+                  borderLeft: f.parseError ? `2px solid ${T.err}` : "2px solid transparent",
+                  color: f.parseError ? T.err : undefined,
+                }}
+              >
+                <div style={{ ...meta, marginBottom: 2 }}>{f.scope}</div>
+                <div style={{ fontFamily: T.mono, fontSize: 11, marginBottom: 2 }}>{f.path}</div>
+                {!f.exists && <div style={{ ...meta, fontSize: 11 }}>not found</div>}
+                {f.parseError && <div style={{ fontSize: 11 }}>{f.parseError}</div>}
+              </div>
+            ))
+          )}
+
+          {/* MCP servers that did not come up */}
+          <span style={{ ...meta, padding: "2px 4px", display: "block", marginTop: 8 }}>
+            MCP servers
+          </span>
+          {!running ? (
+            <span style={{ ...meta, padding: "2px 4px", fontSize: 12 }}>
+              Claude is not running for this session.
+            </span>
+          ) : mcp === null ? (
+            <span style={{ ...meta, padding: "2px 4px", fontSize: 12 }}>Loading…</span>
+          ) : !mcp.ok ? (
+            <span style={{ color: T.err, fontSize: 12, padding: "2px 4px" }}>{mcp.error}</span>
+          ) : mcp.servers.every((s) => s.status === "connected") ? (
+            <span style={{ ...meta, padding: "2px 4px", fontSize: 12 }}>
+              {mcp.servers.length === 0 ? "No MCP servers" : "All connected"}
+            </span>
+          ) : (
+            mcp.servers
+              .filter((s) => s.status !== "connected")
+              .map((s) => (
+                <div
+                  key={s.name}
+                  style={{
+                    display: "flex",
+                    alignItems: "baseline",
+                    gap: 8,
+                    padding: "4px 10px",
+                    fontSize: 12,
+                  }}
+                >
+                  <span style={{ flex: "1 1 auto", minWidth: 0 }}>
+                    <span style={{ fontFamily: T.mono }}>{s.name}</span>
+                    <span style={{ ...meta, marginLeft: 6 }}>{s.status}</span>
+                    {s.error && (
+                      <div style={{ color: T.err, fontSize: 11, marginTop: 2 }}>{s.error}</div>
+                    )}
+                  </span>
+                  <button
+                    type="button"
+                    style={{ ...btn, fontSize: 12, flex: "none" }}
+                    disabled={reconnecting === s.name}
+                    onClick={() => void reconnect(s.name)}
+                  >
+                    {reconnecting === s.name ? "…" : "Reconnect"}
+                  </button>
+                </div>
+              ))
+          )}
+
+          {/* Calls a permission rule refused. The frame names the call, never the rule. */}
+          <span style={{ ...meta, padding: "2px 4px", display: "block", marginTop: 8 }}>
+            Refused calls
+          </span>
+          {auditError ? (
+            <span style={{ color: T.err, fontSize: 12, padding: "2px 4px" }}>{auditError}</span>
+          ) : audit === null ? (
+            <span style={{ ...meta, padding: "2px 4px", fontSize: 12 }}>Loading…</span>
+          ) : audit.length === 0 ? (
+            <span style={{ ...meta, padding: "2px 4px", fontSize: 12 }}>
+              No calls were refused in the turns kept for this session.
+            </span>
+          ) : (
+            audit.map((t) => (
+              <div key={t.at} style={{ padding: "4px 10px", fontSize: 12 }}>
+                <div style={meta}>{ago(t.at)}</div>
+                {t.denials?.map((label) => (
+                  <div key={label} style={{ fontFamily: T.mono, fontSize: 11 }}>
+                    {label}
+                  </div>
+                ))}
+              </div>
+            ))
+          )}
+
+          {/* Doctor button */}
+          <div style={{ padding: "6px 10px", marginTop: 8, borderTop: `1px solid ${T.border}` }}>
+            <button
+              type="button"
+              style={doctorOutput ? btn : btnPrimary}
+              onClick={runDoctor}
+              disabled={doctorBusy}
+            >
+              {doctorBusy ? "Running…" : "Run doctor"}
+            </button>
+            {doctorError && (
+              <div style={{ color: T.err, fontSize: 12, marginTop: 4 }}>{doctorError}</div>
+            )}
+            {doctorOutput && (
+              <pre
+                style={{
+                  marginTop: 6,
+                  padding: 8,
+                  fontSize: 11,
+                  lineHeight: "1.4",
+                  background: T.field,
+                  border: `1px solid ${T.border}`,
+                  borderRadius: 4,
+                  overflow: "auto",
+                  maxHeight: 200,
+                }}
+              >
+                {doctorOutput}
+              </pre>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 /** The Add form under the server list: name, where it goes, and the fields its transport needs. */
 function McpAddForm({ sessionId, onAdded }: { sessionId: string; onAdded: () => void }) {
   const [name, setName] = useState("");
@@ -1467,6 +1749,7 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
     { key: "Rewind", label: "Rewind" },
     { key: "Changes", label: "Changes" },
     { key: "MCP", label: "MCP" },
+    { key: "Diagnostics", label: "Diagnostics" },
     { key: "Tune", label: "Tune" },
   ] as const;
   // Fall back when an earlier session stored a tab no longer present (e.g. removed Permissions).
@@ -1525,6 +1808,7 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
             {tab === "MCP" && (
               <McpBody sessionId={sessionId} ctx={ctx} onClose={() => setOpen(false)} />
             )}
+            {tab === "Diagnostics" && <DiagnosticsBody sessionId={sessionId} ctx={ctx} />}
             {tab === "Tune" && <TuneBody sessionId={sessionId} />}
           </div>
           {/* Under the body, not over it: the panel is anchored to its bottom edge, so a taller tab
@@ -1548,10 +1832,14 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
                 style={{
                   ...btn,
                   fontSize: 12,
-                  borderTop: tab === t.key ? `2px solid ${CLAUDE_ORANGE}` : "2px solid transparent",
+                  // The strip sits under the body, so the lit edge is the mirror of a top tab bar:
+                  // accent along the bottom, and the corners rounded on that side only.
+                  borderBottom:
+                    tab === t.key ? `2px solid ${CLAUDE_ORANGE}` : "2px solid transparent",
+                  borderRadius: "0 0 8px 8px",
                   color: tab === t.key ? T.text : T.faint,
-                  marginTop: -1,
-                  paddingTop: 4,
+                  marginBottom: -1,
+                  paddingBottom: 4,
                 }}
                 onClick={() => {
                   lastTab = t.key;

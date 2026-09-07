@@ -62,7 +62,8 @@
         "src/mcp-add-remove.ts",
         "src/sessions.ts",
         "src/state.ts",
-        "src/usage.ts"
+        "src/usage.ts",
+        "src/translator.ts"
       ],
       "rules": {
         "anti-slop/no-runtime-typeof": "off",

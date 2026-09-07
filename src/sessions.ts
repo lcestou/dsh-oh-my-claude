@@ -853,6 +853,39 @@ export function registerSessionRoutes(
               }
               if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/status`)
                 return json(res, 200, await runtimeStatus(configDir, command));
+              // Diagnostics: how this instance is running, and which of the files the CLI merges
+              // it would refuse to start on. The MCP servers and the denied calls are read from
+              // the routes that already serve them, so nothing is answered twice.
+              if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/diagnostics`) {
+                const cwd = await knownCwd(url.searchParams.get("cwd"), sessionPersistence);
+                const runtime = await runtimeStatus(configDir, command);
+                const configFiles: DiagnosticFile[] = [];
+                for (const scope of SETTINGS_SCOPES) {
+                  const path = settingsPath
+                    ? settingsScopePath(scope, settingsPath, cwd)
+                    : undefined;
+                  if (path === undefined) continue;
+                  // A file that cannot be read at all reads as absent, the way the scopes route
+                  // treats a root-owned managed file: the payload is a report, not a failure.
+                  const file = await readSettings(path).catch(() => null);
+                  const entry: DiagnosticFile = { scope, path, exists: file?.exists ?? false };
+                  const parsed = file?.exists === true ? parseSettingsText(file.text) : undefined;
+                  if (parsed?.error !== undefined) entry.parseError = parsed.error;
+                  configFiles.push(entry);
+                }
+                return json(res, 200, { runtime, configFiles });
+              }
+              // `claude doctor` runs a process and takes a second, so it is its own route and
+              // nothing runs it until the button is pressed.
+              if (req.method === "POST" && url.pathname === `${ROUTE_PREFIX}/diagnostics/doctor`)
+                return json(
+                  res,
+                  200,
+                  await run(command || "claude", ["doctor"], {
+                    ...process.env,
+                    CLAUDE_CONFIG_DIR: configDir,
+                  }),
+                );
               if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/turns`) {
                 const sid = url.searchParams.get("session");
                 if (!sid) return json(res, 400, { error: "session param required" });
@@ -1106,6 +1139,14 @@ export function registerSessionRoutes(
 }
 
 /** The settings files the CLI merges, highest precedence first. */
+/** One settings file as the Diagnostics tab reports it: where it is, and why the CLI refuses it. */
+interface DiagnosticFile {
+  scope: SettingsScope;
+  path: string;
+  exists: boolean;
+  parseError?: string;
+}
+
 export const SETTINGS_SCOPES = ["managed", "local", "project", "user"] as const;
 
 /** One of the four settings files. The CLI's own layer names, minus the `--settings` flag layer. */

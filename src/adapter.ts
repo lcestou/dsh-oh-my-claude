@@ -1029,6 +1029,7 @@ export interface TurnRecord {
   output: number;
   cacheRead: number;
   cacheWrite: number;
+  denials?: string[];
 }
 
 /** The slice of a Claude process the idle watchdog needs. */

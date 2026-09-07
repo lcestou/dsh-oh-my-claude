@@ -801,6 +801,41 @@ trMissing.translate({ type: "result", is_error: false, stop_reason: "end_turn" }
 // no total_cost_usd or duration_ms → condition stays false, nothing recorded
 assert.equal(missing.length, 0);
 
+// permission_denials converts tool calls to rule labels, deduped and in insertion order
+const deniedTurns: TurnRecord[] = [];
+const trDenied = new Translator({ onResult: (s: TurnRecord) => deniedTurns.push(s) });
+// SAFETY: test fixture; permission_denials is not in the ClaudeEvent type but exists on CLI output
+trDenied.translate({
+  type: "result",
+  is_error: false,
+  stop_reason: "end_turn",
+  total_cost_usd: 0,
+  duration_ms: 0,
+  permission_denials: [
+    { tool_name: "Bash", tool_input: { command: "git status --short" } },
+    { tool_name: "Read", tool_input: { file_path: "/home/user/.zshrc" } },
+    { tool_name: "Bash", tool_input: { command: "git status --short" } }, // duplicate
+  ],
+} as any);
+assert.equal(deniedTurns.length, 1, "onResult fired once");
+// SAFETY: deniedTurns.length is exactly 1 above
+assert.deepEqual(deniedTurns[0]!.denials, ["Bash(git status:*)", "Read(/home/user/.zshrc)"]);
+
+// no permission_denials → record has no denials field
+const nodenialsRecords: TurnRecord[] = [];
+const trNoDenials = new Translator({ onResult: (s: TurnRecord) => nodenialsRecords.push(s) });
+// SAFETY: test fixture; total_cost_usd and duration_ms are not in the ClaudeEvent type but exist on CLI output
+trNoDenials.translate({
+  type: "result",
+  is_error: false,
+  stop_reason: "end_turn",
+  total_cost_usd: 0,
+  duration_ms: 0,
+} as any);
+assert.equal(nodenialsRecords.length, 1);
+// SAFETY: nodenialsRecords.length is exactly 1 above
+assert.equal(nodenialsRecords[0]!.denials, undefined);
+
 // forwarded subagent text renders as reasoning even while partials are on
 const ts2 = new Translator() as any;
 ts2.translate({ type: "stream_event", event: { type: "message_start" } });
