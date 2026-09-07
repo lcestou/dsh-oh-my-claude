@@ -25,6 +25,13 @@ import { TuneBody } from "./tune.js";
 // Module-level variable so reopening lands on the last picked tab.
 let lastTab = "Memory";
 
+/**
+ * How long the panel fades and the Add form collapses. Short enough to stay out of the way of a
+ * second click, and zero for a reader who asked the platform for no motion.
+ */
+const easeMs = () =>
+  globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? 0 : 140;
+
 /** One-row transcript pick inside the compact restore list. */
 function TranscriptRow({
   s,
@@ -808,6 +815,28 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
   const servers = reply?.ok ? reply.servers : [];
   return (
     <div style={bodyFlow}>
+      {/* The form is what this tab is opened to reach, so it sits above the list rather than
+          under however many servers happen to be configured. */}
+      <button
+        type="button"
+        style={{ ...btn, marginBottom: 8 }}
+        onClick={() => setShowAdd(!showAdd)}
+      >
+        {showAdd ? "Cancel" : "Add server"}
+      </button>
+      {/* Collapsed by row height rather than unmounted: 0fr to 1fr is the one way a grid row
+          animates to a height nobody measured, so Cancel slides shut instead of cutting. */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateRows: showAdd ? "1fr" : "0fr",
+          transition: `grid-template-rows ${easeMs()}ms ease`,
+        }}
+      >
+        <div style={{ overflow: "hidden", minHeight: 0 }}>
+          <McpAddForm sessionId={sessionId} onAdded={() => setNote(SPAWN_NOTE)} />
+        </div>
+      </div>
       {reply === null ? (
         <span style={{ ...meta, padding: "2px 4px" }}>Loading…</span>
       ) : !reply.ok ? (
@@ -879,10 +908,6 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
           </div>
         ))
       )}
-      <button type="button" style={{ ...btn, marginTop: 8 }} onClick={() => setShowAdd(!showAdd)}>
-        {showAdd ? "Cancel" : "Add server"}
-      </button>
-      {showAdd && <McpAddForm sessionId={sessionId} onAdded={() => setNote(SPAWN_NOTE)} />}
       {note && <span style={{ ...meta, padding: "2px 4px", marginTop: 8 }}>{note}</span>}
     </div>
   );
@@ -1704,7 +1729,11 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
  */
 export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").RestoreButtonProps) {
   const isMine = activeClaudeSession(ctx) === sessionId;
+  // `open` is what is mounted, `shown` is what the transition draws. A close flips `shown` first
+  // and unmounts a duration later, so the panel fades out instead of blinking away.
   const [open, setOpen] = useState(false);
+  const [shown, setShown] = useState(false);
+  const closeTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const rootRef = useRef<HTMLSpanElement>(null);
   const narrow = useNarrow();
   const [tab, setTab] = useState(lastTab);
@@ -1714,7 +1743,25 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
   // Phone sheet: fixed, above the control, wherever the composer sits (a blank session centres it).
   const [above, setAbove] = useState(0);
 
-  useDismiss(open, () => setOpen(false), rootRef);
+  useEffect(() => {
+    if (!open) return;
+    // One frame after mount, so the browser has a closed style to transition away from.
+    const frame = requestAnimationFrame(() => setShown(true));
+    return () => cancelAnimationFrame(frame);
+  }, [open]);
+  const close = useCallback(() => {
+    setShown(false);
+    closeTimer.current = setTimeout(() => setOpen(false), easeMs());
+  }, []);
+  // A pending close must not unmount a panel the next click just reopened.
+  const openPanel = useCallback(() => {
+    clearTimeout(closeTimer.current);
+    setOpen(true);
+    setShown(false);
+  }, []);
+  useEffect(() => () => clearTimeout(closeTimer.current), []);
+
+  useDismiss(open, close, rootRef);
 
   if (!isMine) return null;
   // Restore only fits a blank session; the Restore body hides itself for the same reason.
@@ -1729,7 +1776,6 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
   const panelStyle: CSSProperties = {
     position: "fixed",
     left: "50%",
-    transform: "translateX(-50%)",
     bottom: above,
     width: narrow ? "calc(100vw - 24px)" : "min(560px, calc(100vw - 24px))",
     maxHeight: narrow ? "60vh" : 400,
@@ -1742,6 +1788,10 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
     borderRadius: 8,
     boxShadow: "0 8px 24px rgba(0,0,0,.18)",
     overflow: "hidden",
+    opacity: shown ? 1 : 0,
+    // The centring translate has to stay in the same transform, so the rise rides along with it.
+    transform: shown ? "translateX(-50%)" : "translateX(-50%) translateY(6px)",
+    transition: `opacity ${easeMs()}ms ease, transform ${easeMs()}ms ease`,
   };
 
   const tabs = [
@@ -1784,10 +1834,14 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
         aria-haspopup="dialog"
         aria-expanded={open}
         onClick={() => {
+          if (open) {
+            close();
+            return;
+          }
           setTab(lastTab === "Restore" && !blank ? "Memory" : lastTab);
           const rect = rootRef.current?.getBoundingClientRect();
           if (rect) setAbove(Math.max(12, window.innerHeight - rect.top + 8));
-          setOpen((v) => !v);
+          openPanel();
         }}
       >
         {CLAUDE_MARK}
@@ -1798,18 +1852,12 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
             role="tabpanel"
             style={{ flex: "1 1 auto", minHeight: 0, overflow: "auto", padding: "4px 0" }}
           >
-            {tab === "Restore" && (
-              <RestoreBody sessionId={sessionId} ctx={ctx} onClose={() => setOpen(false)} />
-            )}
+            {tab === "Restore" && <RestoreBody sessionId={sessionId} ctx={ctx} onClose={close} />}
             {tab === "Memory" && <MemoryBody sessionId={sessionId} ctx={ctx} onCount={onCount} />}
             {tab === "Instructions" && <InstructionsBody sessionId={sessionId} ctx={ctx} />}
-            {tab === "Rewind" && (
-              <RewindBody sessionId={sessionId} ctx={ctx} onClose={() => setOpen(false)} />
-            )}
+            {tab === "Rewind" && <RewindBody sessionId={sessionId} ctx={ctx} onClose={close} />}
             {tab === "Changes" && <ChangesBody sessionId={sessionId} ctx={ctx} />}
-            {tab === "MCP" && (
-              <McpBody sessionId={sessionId} ctx={ctx} onClose={() => setOpen(false)} />
-            )}
+            {tab === "MCP" && <McpBody sessionId={sessionId} ctx={ctx} onClose={close} />}
             {tab === "Diagnostics" && <DiagnosticsBody sessionId={sessionId} ctx={ctx} />}
             {tab === "Tune" && <TuneBody sessionId={sessionId} />}
           </div>
