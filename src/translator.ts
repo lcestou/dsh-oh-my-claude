@@ -61,6 +61,9 @@ const BENIGN_EVENTS = new Set([
 // stream_event sub-types with no renderable delta (SSE bookkeeping).
 const BENIGN_PARTIALS = new Set(["message_delta", "message_stop", "ping"]);
 
+/** Task statuses that end a task: after one of these no further frame arrives for that task_id. */
+const TASK_TERMINAL = new Set(["completed", "failed", "killed"]);
+
 /** The elapsed marks a long tool call reports at, in seconds; past the last one it repeats every
  *  five minutes. A 30-second call is already the first heartbeat the CLI sends, so a call that
  *  finishes quickly never draws a line at all. */
@@ -139,7 +142,7 @@ export class Translator {
   /** task_id → { block, lastSummary, lastToolName } tracks open task blocks across progress frames. */
   readonly taskBlocks = new Map<
     string,
-    { block: TranslatorBlock; lastSummary?: string; lastToolName?: string }
+    { block: TranslatorBlock; lastSummary?: string; lastToolName?: string; lastStatus?: string }
   >();
   /** tool_use_id → { block, nextAt } tracks the block a long-running call reports its elapsed
    *  time into, and the next elapsed mark worth a line. */
@@ -404,6 +407,39 @@ export class Translator {
           events.push(...this.endBlock(entry.block));
           this.taskBlocks.delete(taskId);
           return events;
+        }
+        // task_updated carries the transitions a notification never sends: a task that dies, is
+        // killed or is paused. Without it a dead task's block stays open until the result frame
+        // force-closes it at the end of the turn.
+        if (event.subtype === "task_updated") {
+          const entry = this.taskBlocks.get(event.task_id ?? "");
+          const patch = event.patch ?? {};
+          const status = typeof patch.status === "string" ? patch.status : "";
+          if (!entry || !status || status === entry.lastStatus) return [];
+          entry.lastStatus = status;
+          if (!TASK_TERMINAL.has(status)) {
+            // Only a pause is worth a line: pending and running are the states it passes through.
+            return status === "paused" ? this.delta(entry.block, "\n… paused") : [];
+          }
+          const error = typeof patch.error === "string" ? patch.error.trim() : "";
+          const events = this.delta(
+            entry.block,
+            `\n■ Task ${status}${error ? `: ${clip(error)}` : ""}`,
+          );
+          events.push(...this.endBlock(entry.block));
+          this.taskBlocks.delete(event.task_id ?? "");
+          return events;
+        }
+        // A denial as it happens, with the reason. The result frame still reports the count at the
+        // end of the turn; this is the only place the CLI says which rule refused and why.
+        if (event.subtype === "permission_denied") {
+          const tool = clip(event.tool_name || "tool");
+          const reason =
+            typeof event.decision_reason === "string"
+              ? event.decision_reason
+              : (event.message ?? "");
+          const why = reason.trim();
+          return this.wholeBlock("reasoning", `⚠ Denied ${tool}${why ? `: ${clip(why)}` : ""}`);
         }
         if (event.subtype === "background_tasks_changed") {
           return [];

@@ -45,6 +45,7 @@ export declare class Translator {
         block: TranslatorBlock;
         lastSummary?: string;
         lastToolName?: string;
+        lastStatus?: string;
     }>;
     /** tool_use_id → { block, nextAt } tracks the block a long-running call reports its elapsed
      *  time into, and the next elapsed mark worth a line. */

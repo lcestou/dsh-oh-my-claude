@@ -67,6 +67,16 @@ export type ClaudeEvent = {
         cache_creation_input_tokens?: number;
     };
     workflow_progress?: unknown;
+    patch?: {
+        status?: string;
+        error?: string;
+        end_time?: number;
+        is_backgrounded?: boolean;
+    };
+    tool_name?: string;
+    message?: string;
+    decision_reason?: unknown;
+    decision_reason_type?: string;
     tasks?: unknown;
     attempt?: number;
     max_retries?: number;

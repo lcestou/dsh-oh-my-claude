@@ -101,6 +101,20 @@ export type ClaudeEvent =
         cache_creation_input_tokens?: number;
       };
       workflow_progress?: unknown;
+      // subtype "task_updated": the fields of a task that changed. `status` moves through pending,
+      // running, completed, failed, killed and paused; the terminal ones are what a task that dies
+      // without a notification reports.
+      patch?: {
+        status?: string;
+        error?: string;
+        end_time?: number;
+        is_backgrounded?: boolean;
+      };
+      // subtype "permission_denied": the tool the CLI refused, and why, at the moment of refusal.
+      tool_name?: string;
+      message?: string;
+      decision_reason?: unknown;
+      decision_reason_type?: string;
       // subtype "background_tasks_changed": list of running background tasks.
       tasks?: unknown;
       // subtype "api_retry": the CLI is retrying a failed API call (a 429 while a limit holds, a

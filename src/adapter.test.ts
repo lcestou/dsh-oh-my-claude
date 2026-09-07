@@ -1678,6 +1678,94 @@ console.log("ok");
   console.log("tool-progress ok");
 }
 {
+  // task_updated: a terminal status closes the task's block with the reason; a repeat of the same
+  // status is silent; a pause writes one line and keeps the block open; a task nobody opened is
+  // silent (a notification for one still reports itself, which is the other frame's job).
+  const t = new Translator() as any;
+  t.translate({ type: "system", subtype: "task_started", task_id: "t1", description: "run tests" });
+  assert.deepEqual(
+    t.translate({
+      type: "system",
+      subtype: "task_updated",
+      task_id: "t1",
+      patch: { status: "running" },
+    }),
+    [],
+    "running is a state it passes through",
+  );
+  const paused = t.translate({
+    type: "system",
+    subtype: "task_updated",
+    task_id: "t1",
+    patch: { status: "paused" },
+  });
+  assert.equal(paused.at(-1).text, "\n… paused");
+  assert.equal(t.taskBlocks.has("t1"), true, "a pause keeps the block open");
+  const killed = t.translate({
+    type: "system",
+    subtype: "task_updated",
+    task_id: "t1",
+    patch: { status: "failed", error: "worker crashed" },
+  });
+  assert.equal(killed.at(-1).type, "block-end");
+  assert.match(killed.at(-1).block.text, /■ Task failed: worker crashed$/);
+  assert.equal(t.taskBlocks.has("t1"), false, "a terminal status leaves the map");
+  // Same status twice, and a task nothing opened: both silent.
+  const t2 = new Translator() as any;
+  t2.translate({ type: "system", subtype: "task_started", task_id: "t2", description: "x" });
+  t2.translate({
+    type: "system",
+    subtype: "task_updated",
+    task_id: "t2",
+    patch: { status: "paused" },
+  });
+  assert.deepEqual(
+    t2.translate({
+      type: "system",
+      subtype: "task_updated",
+      task_id: "t2",
+      patch: { status: "paused" },
+    }),
+    [],
+    "the same status twice",
+  );
+  assert.deepEqual(
+    t2.translate({
+      type: "system",
+      subtype: "task_updated",
+      task_id: "gone",
+      patch: { status: "failed" },
+    }),
+    [],
+    "a task nothing opened",
+  );
+  console.log("task-updated ok");
+}
+{
+  // permission_denied: the reason at the moment of the denial. decision_reason wins over the
+  // model-facing message, and a reason that is not a string is ignored rather than stringified.
+  const t = new Translator() as any;
+  const denied = t.translate({
+    type: "system",
+    subtype: "permission_denied",
+    tool_name: "Bash",
+    decision_reason: "Bash(rm:*) is denied by a deny rule",
+    message: "I need permission to run this",
+  });
+  assert.equal(denied.at(-1).block.text, "⚠ Denied Bash: Bash(rm:*) is denied by a deny rule");
+  const fallback = t.translate({
+    type: "system",
+    subtype: "permission_denied",
+    tool_name: "Write",
+    decision_reason: { type: "rule" },
+    message: "not allowed here",
+  });
+  assert.equal(fallback.at(-1).block.text, "⚠ Denied Write: not allowed here");
+  const bare = t.translate({ type: "system", subtype: "permission_denied" });
+  assert.equal(bare.at(-1).block.text, "⚠ Denied tool");
+  console.log("permission-denied ok");
+}
+{
   // The compaction start frame (status:"compacting") is announced at once, so the silent summarize
   // stretch has a visible anchor and does not arrive delayed as the boundary line alone.
   const t = new Translator() as any;
