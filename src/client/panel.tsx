@@ -1117,7 +1117,8 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
         boxShadow: "0 8px 24px rgba(0,0,0,.18)",
         overflow: "hidden",
       }
-    : { ...popover, width: "min(560px, calc(100vw - 24px))", maxHeight: 400 };
+    : // overflow hidden so the body is the only scroller and the tab strip cannot scroll out of it.
+      { ...popover, width: "min(560px, calc(100vw - 24px))", maxHeight: 400, overflow: "hidden" };
 
   const tabs = [
     ...(blank ? [{ key: "Restore", label: "Restore" }] : []),
@@ -1168,39 +1169,6 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
       {open && (
         <div role="dialog" aria-label="Oh My Claude" style={panelStyle}>
           <div
-            role="tablist"
-            style={{
-              display: "flex",
-              borderBottom: `1px solid ${T.border}`,
-              paddingBottom: 6,
-              overflowX: "auto",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {tabs.map((t) => (
-              <button
-                key={t.key}
-                role="tab"
-                aria-selected={tab === t.key}
-                style={{
-                  ...btn,
-                  fontSize: 12,
-                  borderBottom:
-                    tab === t.key ? `2px solid ${CLAUDE_ORANGE}` : "2px solid transparent",
-                  color: tab === t.key ? T.text : T.faint,
-                  marginBottom: -1,
-                  paddingBottom: 4,
-                }}
-                onClick={() => {
-                  lastTab = t.key;
-                  setTab(t.key);
-                }}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
-          <div
             role="tabpanel"
             style={{ flex: "1 1 auto", minHeight: 0, overflow: "auto", padding: "4px 0" }}
           >
@@ -1216,6 +1184,41 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
               <McpBody sessionId={sessionId} ctx={ctx} onClose={() => setOpen(false)} />
             )}
             {tab === "Tune" && <TuneBody sessionId={sessionId} />}
+          </div>
+          {/* Under the body, not over it: the panel is anchored to its bottom edge, so a taller tab
+              pushes the top up and leaves the strip where the pointer left it. */}
+          <div
+            role="tablist"
+            style={{
+              display: "flex",
+              flex: "0 0 auto",
+              borderTop: `1px solid ${T.border}`,
+              paddingTop: 6,
+              overflowX: "auto",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {tabs.map((t) => (
+              <button
+                key={t.key}
+                role="tab"
+                aria-selected={tab === t.key}
+                style={{
+                  ...btn,
+                  fontSize: 12,
+                  borderTop: tab === t.key ? `2px solid ${CLAUDE_ORANGE}` : "2px solid transparent",
+                  color: tab === t.key ? T.text : T.faint,
+                  marginTop: -1,
+                  paddingTop: 4,
+                }}
+                onClick={() => {
+                  lastTab = t.key;
+                  setTab(t.key);
+                }}
+              >
+                {t.label}
+              </button>
+            ))}
           </div>
         </div>
       )}
