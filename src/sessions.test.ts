@@ -3,7 +3,14 @@ import assert from "node:assert/strict";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { probeBox, readPickerSettings, registerSessionRoutes } from "./sessions.js";
+import {
+  probeBox,
+  readPickerSettings,
+  registerSessionRoutes,
+  settingsScopePath,
+  isSettingsScope,
+  SETTINGS_SCOPES,
+} from "./sessions.js";
 
 // probeBox forwards init.method and init.body, plus content-type when body is set. Fake fetch, no network.
 {
@@ -259,6 +266,30 @@ import { probeBox, readPickerSettings, registerSessionRoutes } from "./sessions.
   assert.equal(await readPickerSettings(path), undefined, "broken JSON never empties the picker");
 
   assert.equal(await readPickerSettings(join(tmp, "gone.json")), undefined, "missing file");
+}
+
+// settingsScopePath names the file each scope writes, and only project and local need a directory.
+{
+  const user = "/home/user/.claude/settings.json";
+  const cwd = "/home/user/Projects/myapp";
+
+  assert.equal(settingsScopePath("user", user, cwd), user);
+  assert.equal(settingsScopePath("user", user, null), user, "the user file needs no directory");
+  assert.equal(settingsScopePath("managed", user, null), "/etc/claude-code/managed-settings.json");
+  assert.equal(settingsScopePath("project", user, cwd), `${cwd}/.claude/settings.json`);
+  assert.equal(settingsScopePath("local", user, cwd), `${cwd}/.claude/settings.local.json`);
+  assert.equal(settingsScopePath("project", user, null), undefined, "no directory, no path");
+  assert.equal(settingsScopePath("local", user, null), undefined, "no directory, no path");
+}
+
+// Only the four names the CLI merges are scopes; anything else a browser sends is rejected.
+{
+  for (const scope of SETTINGS_SCOPES) assert.ok(isSettingsScope(scope));
+  assert.equal(isSettingsScope("managed-settings"), false);
+  assert.equal(isSettingsScope(""), false);
+  assert.equal(isSettingsScope(undefined), false);
+  assert.equal(isSettingsScope(null), false);
+  assert.equal(isSettingsScope(7), false);
 }
 
 console.log("sessions ok");

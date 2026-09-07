@@ -6,12 +6,12 @@ import { execFile } from "node:child_process";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { hostname } from "node:os";
 import { readdir, readFile, writeFile, rename, copyFile, stat, mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { listTranscripts, readTranscript, toSessionEvents } from "./transcript.js";
 import type { TranscriptListItem } from "./transcript.js";
 import { deleteMemory, isMemoryName, listMemory } from "./memory.js";
 import { asSessionId } from "./dsh.js";
-import type { JsonValue, PluginContext, WorkspaceRegistry } from "./dsh.js";
+import type { JsonValue, PluginContext, SessionPersistence, WorkspaceRegistry } from "./dsh.js";
 import { errorText } from "./process.js";
 import { PERMISSION_MODES, isPermissionMode } from "./state.js";
 import type {
@@ -376,7 +376,7 @@ async function listAllTranscripts(
 }
 
 /** Claude Code's settings file as the editor reads it. */
-interface SettingsFile {
+export interface SettingsFile {
   path: string;
   exists: boolean;
   text: string;
@@ -447,6 +447,8 @@ async function writeSettings(
   path: string,
   text: string,
 ): Promise<{ path: string; backup: string; mtime: number }> {
+  // A project that has never had settings has no `.claude/` yet; the user file's dir always exists.
+  await mkdir(dirname(path), { recursive: true });
   const backup = `${path}.bak`;
   await copyFile(path, backup).catch((e: unknown) => {
     if (!isEnoent(e)) throw e;
@@ -759,14 +761,47 @@ export function registerSessionRoutes(
               if (settingsPath && url.pathname === `${ROUTE_PREFIX}/settings`) {
                 if (req.method === "GET") return json(res, 200, await readSettings(settingsPath));
                 if (req.method === "PUT") {
-                  const { text } = await readBody(req, 1024 * 1024);
+                  const body = await readBody(req, 1024 * 1024);
+                  const text = body.text;
+                  const scope = body.scope ?? "user";
+                  if (!isSettingsScope(scope))
+                    return json(res, 400, { error: "unknown settings scope" });
+                  if (scope === "managed")
+                    return json(res, 400, { error: "managed settings are read-only" });
+                  const cwd = await knownCwd(body.cwd, sessionPersistence);
+                  const path = settingsScopePath(scope, settingsPath, cwd);
+                  if (path === undefined)
+                    return json(res, 400, {
+                      error: "project and local settings need a directory a dsh session is open in",
+                    });
                   const parsed = parseSettingsText(text);
                   if (parsed.error !== undefined) return json(res, 400, { error: parsed.error });
-                  const body = typeof text === "string" ? text : "";
-                  const written = await writeSettings(settingsPath, body);
-                  log("info", `settings.json saved (${body.length} chars)`);
+                  const settingsText = typeof text === "string" ? text : "";
+                  const written = await writeSettings(path, settingsText);
+                  log("info", `${scope} settings saved (${settingsText.length} chars)`);
                   return json(res, 200, written);
                 }
+              }
+              // Every scope the CLI merges, in one payload: the editor picks which to show and
+              // works out from the rest which keys a higher-precedence file overrides.
+              if (settingsPath && url.pathname === `${ROUTE_PREFIX}/settings/scopes`) {
+                if (req.method !== "GET") return json(res, 405, { error: "method not allowed" });
+                const cwd = await knownCwd(url.searchParams.get("cwd"), sessionPersistence);
+                const scopes: SettingsScopeInfo[] = [];
+                for (const scope of SETTINGS_SCOPES) {
+                  const path = settingsScopePath(scope, settingsPath, cwd);
+                  if (path === undefined) continue;
+                  // An unreadable managed file (root-owned, or a directory) reads as absent
+                  // rather than failing the whole payload.
+                  const file = await readSettings(path).catch(() => ({
+                    path,
+                    exists: false,
+                    text: "{}\n",
+                    mtime: 0,
+                  }));
+                  scopes.push({ ...file, scope, readOnly: scope === "managed" });
+                }
+                return json(res, 200, { scopes });
               }
               if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/status`)
                 return json(res, 200, await runtimeStatus(configDir, command));
@@ -975,4 +1010,53 @@ export function registerSessionRoutes(
       "dsh-oh-my-claude session routes",
     );
   });
+}
+
+/** The settings files the CLI merges, highest precedence first. */
+export const SETTINGS_SCOPES = ["managed", "local", "project", "user"] as const;
+
+/** One of the four settings files. The CLI's own layer names, minus the `--settings` flag layer. */
+export type SettingsScope = (typeof SETTINGS_SCOPES)[number];
+
+/** One scope's file in the `GET /settings/scopes` payload. */
+export interface SettingsScopeInfo extends SettingsFile {
+  scope: SettingsScope;
+  readOnly: boolean;
+}
+
+export function isSettingsScope(value: JsonValue | undefined): value is SettingsScope {
+  // SAFETY: the includes() call narrows nothing on its own; the signature is the narrowing.
+  return SETTINGS_SCOPES.includes(value as SettingsScope);
+}
+
+/** Where the CLI's policy layer lives on Linux; the plugin never writes it. */
+const MANAGED_SETTINGS_PATH = "/etc/claude-code/managed-settings.json";
+
+/**
+ * The file a scope names. Paths are derived here and never taken from the client: the request
+ * carries a scope and a directory, not a path. Project and local have no file without a
+ * directory, and answer undefined so the caller can refuse the request.
+ */
+export function settingsScopePath(
+  scope: SettingsScope,
+  userPath: string,
+  cwd: string | null,
+): string | undefined {
+  if (scope === "user") return userPath;
+  if (scope === "managed") return MANAGED_SETTINGS_PATH;
+  if (cwd === null) return undefined;
+  return join(cwd, ".claude", scope === "local" ? "settings.local.json" : "settings.json");
+}
+
+/**
+ * A directory only counts when a dsh session is open in it. Without this a browser could name
+ * any directory on the box and have `.claude/settings.json` written into it.
+ */
+async function knownCwd(
+  cwd: JsonValue | undefined | null,
+  sessions: SessionPersistence,
+): Promise<string | null> {
+  if (!validCwd(cwd)) return null;
+  const headers = await sessions.list().catch(() => []);
+  return headers.some((h) => h.cwd === cwd) ? cwd : null;
 }

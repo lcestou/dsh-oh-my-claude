@@ -36,6 +36,8 @@ import {
   openHere,
 } from "./shared.js";
 import { AccessShield, OhMyClaudeControl } from "./panel.js";
+import { SETTINGS_SCOPES, SCOPE_LABELS, overrideNote } from "./settings.js";
+import type { SettingsScope, SettingsScopeInfo } from "./settings.js";
 export { type SessionData, isOwnedActive, fmtCost, fmtDuration, cacheShare };
 
 /** Deep link another box's panel sends us to: `#claude-session=<id>&cwd=<path>`. */
@@ -813,14 +815,30 @@ interface SettingsFile {
   backup?: string;
 }
 
+/** The body `PUT /settings` takes: a scope names the file, and the server resolves it. */
+interface SettingsWrite {
+  text: string;
+  scope?: SettingsScope;
+  cwd?: string;
+}
+
 interface SettingsEditorProps {
   open: boolean;
   onToggle: () => void;
   box?: BoxData;
+  ctx?: ClientCtx;
 }
 
-/** `~/.claude/settings.json`: read-only until Edit, then live JSON check, Save, Cancel. */
-function SettingsEditor({ open, onToggle, box }: SettingsEditorProps) {
+/**
+ * Claude Code's settings, one scope at a time: `~/.claude/settings.json`, a project's own file,
+ * its local file, and the managed file, which is shown read-only. Read-only until Edit, then a
+ * live JSON check, Save and Cancel. A box's settings stay user-scope: a remote box has no
+ * directory here to resolve a project against.
+ */
+function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
+  const [scope, setScope] = useState<SettingsScope>("user");
+  const [cwd, setCwd] = useState<string | null>(null);
+  const [scopes, setScopes] = useState<SettingsScopeInfo[]>([]);
   const [file, setFile] = useState<SettingsFile | null>(null);
   const [text, setText] = useState("");
   const [editing, setEditing] = useState(false);
@@ -828,25 +846,50 @@ function SettingsEditor({ open, onToggle, box }: SettingsEditorProps) {
   const [error, setError] = useState("");
   const [saved, setSaved] = useState("");
 
+  // Directories a dsh session is open in; the server accepts no others, so offering more would
+  // only produce a rejected save. Read every render: the snapshot fills in as sessions load, and
+  // this store has no subscribe to wait on.
+  const byId = ctx?.sessions.list.getSnapshot()?.byId ?? {};
+  const cwdOptions = [
+    ...new Set(Object.values(byId).flatMap((s) => (s.cwd ? [s.cwd] : []))),
+  ].toSorted();
+  const projectCwd = cwd ?? cwdOptions[0] ?? null;
+
   const settingsUrl = box
     ? `${ROUTE}/boxes/settings?url=${encodeURIComponent(box.url)}`
     : `${ROUTE}/settings`;
+  const scopesUrl = projectCwd
+    ? `${ROUTE}/settings/scopes?cwd=${encodeURIComponent(projectCwd)}`
+    : `${ROUTE}/settings/scopes`;
+
+  const show = (loaded: SettingsFile) => {
+    setFile(loaded);
+    setText(loaded.text);
+    setEditing(false);
+    setSaved("");
+  };
 
   const load = () => {
     setBusy(true);
     setError("");
-    fetch(settingsUrl)
-      .then((r) => readJson<SettingsFile>(r))
-      .then((b) => {
-        setFile(b);
-        setText(b.text);
-        setEditing(false);
-        setSaved("");
-      })
-      .catch((e: Error) => setError(e.message))
-      .finally(() => setBusy(false));
+    // A box answers one file and knows nothing of scopes; everything else reads every scope at
+    // once, so the editor can show one and say which keys another file overrides.
+    const done = box
+      ? fetch(settingsUrl)
+          .then((r) => readJson<SettingsFile>(r))
+          .then(show)
+      : fetch(scopesUrl)
+          .then((r) => readJson<{ scopes?: SettingsScopeInfo[] }>(r))
+          .then((b) => {
+            const all = b.scopes ?? [];
+            setScopes(all);
+            const wanted =
+              all.find((s) => s.scope === scope) ?? all.find((s) => s.scope === "user");
+            if (wanted) show(wanted);
+          });
+    done.catch((e: Error) => setError(e.message)).finally(() => setBusy(false));
   };
-  useEffect(load, [settingsUrl]);
+  useEffect(load, [settingsUrl, scopesUrl, scope]);
 
   const parsed = useMemo<{ value?: JsonObject; error?: string }>(() => {
     try {
@@ -864,10 +907,12 @@ function SettingsEditor({ open, onToggle, box }: SettingsEditorProps) {
     if (!canSave) return;
     setBusy(true);
     setError("");
+    const body: SettingsWrite = box ? { text } : { text, scope };
+    if (!box && projectCwd !== null) body.cwd = projectCwd;
     fetch(settingsUrl, {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify(body),
     })
       .then((r) => readJson<{ mtime?: number | string; backup?: string }>(r))
       .then((b) => {
@@ -886,6 +931,9 @@ function SettingsEditor({ open, onToggle, box }: SettingsEditorProps) {
       save();
     }
   };
+
+  const override = box ? "" : overrideNote(scopes, scope);
+  const readOnly = !box && scope === "managed";
 
   const facts = summarize(parsed.value);
   const summary = file
@@ -928,7 +976,7 @@ function SettingsEditor({ open, onToggle, box }: SettingsEditorProps) {
         id="dsh-oh-my-claude-settings-edit"
         type="button"
         style={btn}
-        disabled={busy || file === null}
+        disabled={busy || file === null || readOnly}
         onClick={() => {
           setSaved("");
           setEditing(true);
@@ -955,6 +1003,63 @@ function SettingsEditor({ open, onToggle, box }: SettingsEditorProps) {
         Claude Code's own settings: hooks, permissions, model, env. Read by every Claude Code
         process on this box, in dsh or in a terminal. dsh's own hooks and settings are separate.
       </p>
+      {!box && (
+        <>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 12 }}>
+            <label style={{ fontSize: 13, fontWeight: 500 }} htmlFor="dsh-oh-my-claude-scope">
+              Scope
+            </label>
+            <select
+              id="dsh-oh-my-claude-scope"
+              value={scope}
+              onChange={(e) => {
+                // SAFETY: the options are the scope names themselves, so the value is one of them.
+                setScope(e.target.value as SettingsScope);
+              }}
+              disabled={busy || editing}
+              style={{
+                ...inputStyle,
+                padding: "4px 6px",
+                fontSize: 12,
+                textTransform: "capitalize",
+              }}
+            >
+              {SETTINGS_SCOPES.toReversed().map((s) => (
+                <option
+                  key={s}
+                  value={s}
+                  disabled={cwdOptions.length === 0 && (s === "project" || s === "local")}
+                >
+                  {s}
+                </option>
+              ))}
+            </select>
+            {(scope === "project" || scope === "local") &&
+              (cwdOptions.length > 0 ? (
+                <select
+                  value={projectCwd ?? ""}
+                  onChange={(e) => setCwd(e.target.value)}
+                  disabled={busy || editing}
+                  style={{ ...inputStyle, padding: "4px 6px", fontSize: 12, flex: 1 }}
+                >
+                  {cwdOptions.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <span style={{ fontSize: 12, color: T.muted }}>no session open in a directory</span>
+              ))}
+          </div>
+          {(readOnly || override) && (
+            <div style={{ fontSize: 12, color: T.muted, marginBottom: 12 }}>
+              {readOnly ? `${SCOPE_LABELS.managed} is read-only. ` : ""}
+              {override}
+            </div>
+          )}
+        </>
+      )}
       {editing ? (
         <textarea
           id="dsh-oh-my-claude-settings-text"
@@ -1968,7 +2073,7 @@ export function apply(ctx: ClientCtx) {
             onToggle={() => setOpenBoxes((v) => !v)}
           />
         )}
-        <SettingsEditor open={openSettings} onToggle={() => setOpenSettings((v) => !v)} />
+        <SettingsEditor open={openSettings} onToggle={() => setOpenSettings((v) => !v)} ctx={ctx} />
       </div>
     );
   }

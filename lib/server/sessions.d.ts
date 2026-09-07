@@ -93,6 +93,13 @@ export interface AccountIdentity {
     email: string | null;
 }
 export declare function accountIdentity(command?: string, configDir?: string): Promise<AccountIdentity>;
+/** Claude Code's settings file as the editor reads it. */
+export interface SettingsFile {
+    path: string;
+    exists: boolean;
+    text: string;
+    mtime: number;
+}
 /** One `modelPicker.options` row, down to what a picker row shows. */
 interface PickerOption {
     model: string;
@@ -172,4 +179,20 @@ export interface SessionRouteOptions {
 }
 /** `projectDir(cwd)` → Claude Code project dir; `startedIds()` → ids the adapter started itself. */
 export declare function registerSessionRoutes(ctx: PluginContext, { log, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, command, turnRecords, idle, permissionModes, rewind, contextUsage, workspaceDiff, mcp, }: SessionRouteOptions): void;
+/** The settings files the CLI merges, highest precedence first. */
+export declare const SETTINGS_SCOPES: readonly ["managed", "local", "project", "user"];
+/** One of the four settings files. The CLI's own layer names, minus the `--settings` flag layer. */
+export type SettingsScope = (typeof SETTINGS_SCOPES)[number];
+/** One scope's file in the `GET /settings/scopes` payload. */
+export interface SettingsScopeInfo extends SettingsFile {
+    scope: SettingsScope;
+    readOnly: boolean;
+}
+export declare function isSettingsScope(value: JsonValue | undefined): value is SettingsScope;
+/**
+ * The file a scope names. Paths are derived here and never taken from the client: the request
+ * carries a scope and a directory, not a path. Project and local have no file without a
+ * directory, and answer undefined so the caller can refuse the request.
+ */
+export declare function settingsScopePath(scope: SettingsScope, userPath: string, cwd: string | null): string | undefined;
 export {};
