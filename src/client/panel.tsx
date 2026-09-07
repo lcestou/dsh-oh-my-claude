@@ -19,6 +19,7 @@ import {
   openHere,
   CLAUDE_ORANGE,
   CLAUDE_MARK,
+  maskEmail,
 } from "./shared.js";
 import { TuneBody } from "./tune.js";
 
@@ -1061,7 +1062,7 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
               Login:{" "}
               {data.runtime.loggedIn ? (
                 <span style={{ color: T.ok }}>
-                  {data.runtime.email || "logged in"} · {data.runtime.host}
+                  {maskEmail(data.runtime.email || "logged in")} · {data.runtime.host}
                 </span>
               ) : (
                 <span style={{ color: T.err }}>not logged in · run `claude auth login`</span>

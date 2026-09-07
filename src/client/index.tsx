@@ -34,6 +34,7 @@ import {
   activeClaudeProvider,
   type ClientCtx,
   openHere,
+  maskEmail,
 } from "./shared.js";
 import { AccessShield, OhMyClaudeControl } from "./panel.js";
 import { SETTINGS_SCOPES, SCOPE_LABELS, overrideNote } from "./settings.js";
@@ -1224,7 +1225,9 @@ function Boxes({ boxes, setBoxes, open, onToggle }: BoxesProps) {
                       {st.status.binary ? `claude ${st.status.version ?? ""}`.trim() : "no claude"}
                     </span>
                     <span style={pill(st.status.loggedIn ? T.ok : T.err)}>
-                      {st.status.loggedIn ? (st.status.email ?? "logged in") : "not logged in"}
+                      {st.status.loggedIn
+                        ? maskEmail(st.status.email ?? "logged in")
+                        : "not logged in"}
                     </span>
                     <span style={pill(skew ? T.warn : T.faint)}>
                       plugin {st.status.plugin ?? "?"}
@@ -1355,12 +1358,6 @@ type UsageReply =
       email?: string | null;
     }
   | { ok: false; error: string; windows?: undefined; host?: string; email?: string | null };
-/** "m*****@gmail.com": first letter, stars, domain; the panel is shared on screen. */
-const maskEmail = (email: string): string => {
-  const at = email.indexOf("@");
-  if (at < 1) return email;
-  return `${email[0]}${"*".repeat(Math.max(3, at - 1))}${email.slice(at)}`;
-};
 /** "m*****@example.com on <host>" or whichever half is known; the usage is this box's login. */
 const whose = (r: UsageReply): string =>
   [r.email ? maskEmail(r.email) : null, r.host].filter((x): x is string => !!x).join(" on ");

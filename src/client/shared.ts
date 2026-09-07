@@ -2,6 +2,13 @@ import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useState } from "react";
 
 export const ROUTE = "/dsh-oh-my-claude";
+/** "m*****@gmail.com": first letter, stars, then the domain. Every surface that shows the login
+ *  masks it — the panel and the diagnostics rows get screen-shared. */
+export const maskEmail = (email: string): string => {
+  const at = email.indexOf("@");
+  if (at < 1) return email;
+  return `${email[0]}${"*".repeat(Math.max(3, at - 1))}${email.slice(at)}`;
+};
 /** Format a turn's cost in USD with two decimals. */
 export const fmtCost = (usd: number): string => `$${usd.toFixed(2)}`;
 /** Format duration ms into a human string: "34s" or "1m 35s". */
