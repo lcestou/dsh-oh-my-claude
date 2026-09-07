@@ -59,17 +59,23 @@ const BENIGN_EVENTS = new Set([
 // stream_event sub-types with no renderable delta (SSE bookkeeping).
 const BENIGN_PARTIALS = new Set(["message_delta", "message_stop", "ping"]);
 
-/** A reset instant as the CLI's banner shows it: `7pm` or `7:30pm`, then the box's zone. */
+/** A reset instant as the CLI prints it: `1pm` within a day, `Sep 8, 1pm` beyond one, then the
+ *  zone. Minutes only when they are not zero, the year only when it differs from this one. */
 export function resetClock(
   ms: number,
   zone = Intl.DateTimeFormat().resolvedOptions().timeZone,
 ): string {
-  const clock = new Date(ms)
-    .toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: zone })
-    .toLowerCase()
+  const at = new Date(ms);
+  const far = ms - Date.now() > 24 * 60 * 60 * 1000;
+  const opts: Intl.DateTimeFormatOptions = far
+    ? { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: zone }
+    : { hour: "numeric", minute: "2-digit", timeZone: zone };
+  if (far && at.getFullYear() !== new Date().getFullYear()) opts.year = "numeric";
+  const text = at
+    .toLocaleString("en-US", opts)
     .replace(":00", "")
-    .replace(" ", "");
-  return `${clock} (${zone})`;
+    .replace(/\s([AP]M)/i, (_, half: string) => half.toLowerCase());
+  return `${text} (${zone})`;
 }
 
 /** What the CLI calls each limit in its own banner (its `rateLimitType` table). */
@@ -90,6 +96,8 @@ export class Translator {
   continueAfterLimit: boolean;
   /** Set when a usage limit ended the turn with a reset time in the future (ms since epoch). */
   limitResetAt: number | undefined;
+  /** A limit's failure, held back until the CLI's own message and result frame have gone by. */
+  limitFailure: (LlmFailure & { providerRetryAfterMs?: number }) | undefined;
   /** IANA zone for reset clocks: the browser's when dsh stamped one, else the box's. */
   timeZone: string | undefined;
   relay: boolean; // dsh tool calls are relayed to dsh's own loop: hide Claude's view of them
@@ -169,6 +177,7 @@ export class Translator {
     this.toolActivity = toolActivity;
     this.continueAfterLimit = continueAfterLimit;
     this.limitResetAt = undefined;
+    this.limitFailure = undefined;
     this.timeZone = timeZone;
     this.relay = relay; // dsh tool calls are relayed to dsh's own loop: hide Claude's view of them
     this.dshIds = dshIds ?? new Set(); // tool_use ids of dsh tools called over the MCP bridge
@@ -393,7 +402,9 @@ export class Translator {
           type: "finish",
           reason: this.aborting
             ? { kind: "aborted", failure: { message: "aborted", code: "ABORTED" } }
-            : finishReason(event),
+            : this.limitFailure
+              ? { kind: "error", failure: this.limitFailure }
+              : finishReason(event),
         });
         return events;
       }
@@ -411,7 +422,6 @@ export class Translator {
           info.overageStatus === "allowed" ||
           info.overageStatus === "allowed_warning";
         if (covered) return [];
-        this.finished = true;
         // Credits exhausted too: their own reset is the one that matters.
         const resetsAt =
           info.overageStatus === "rejected" && Number.isFinite(info.overageResetsAt)
@@ -420,9 +430,12 @@ export class Translator {
         const resetAt = Number.isFinite(resetsAt) ? (resetsAt ?? 0) * 1000 : 0;
         const resetMs = resetAt - Date.now();
         if (resetMs > 0) this.limitResetAt = resetAt;
-        // The CLI composes its banner locally from these fields and streams no text for it, so
-        // the same sentence is built here from the same table: which limit, and when it resets.
-        // The wait, when armed, is the CLI's "Continuing automatically when your limit resets".
+        // Right after this frame the CLI sends its own sentence as a synthetic assistant message
+        // ("You've reached your Fable limit. Switch to another model, or manage usage credits at
+        // …"), then the result frame. That message is the only authority on what went wrong, so
+        // the turn does not end here: it is relayed as text, and this failure rides the result
+        // frame. Whatever the cause — a cap, an org setting, an outage — the user reads the CLI's
+        // own words, and this row adds only which window it was and when it reopens.
         const name = LIMIT_NAMES.get(info.rateLimitType ?? "") ?? "usage limit";
         const clock = resetMs > 0 ? ` · resets ${resetClock(resetAt, this.timeZone)}` : "";
         const waiting =
@@ -434,7 +447,8 @@ export class Translator {
           code: "RATE_LIMIT",
         };
         if (resetMs > 0) failure.providerRetryAfterMs = resetMs;
-        return [{ type: "finish", reason: { kind: "error", failure } }];
+        this.limitFailure = failure;
+        return [];
       }
       default:
         if (!BENIGN_EVENTS.has(event?.type)) this.noteUnknown("event", event?.type);

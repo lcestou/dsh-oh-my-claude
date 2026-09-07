@@ -1,4 +1,4 @@
-import type { StreamChunk } from "@deepseek-ai/dsh-llm";
+import type { StreamChunk, LlmFailure } from "@deepseek-ai/dsh-llm";
 import { type ClaudeEvent, type ClaudeStreamPartial, type ClaudeContentBlock } from "./process.js";
 import { TurnRecord } from "./adapter.js";
 export interface TranslatorBlock {
@@ -8,7 +8,8 @@ export interface TranslatorBlock {
     started: boolean;
     tool?: boolean;
 }
-/** A reset instant as the CLI's banner shows it: `7pm` or `7:30pm`, then the box's zone. */
+/** A reset instant as the CLI prints it: `1pm` within a day, `Sep 8, 1pm` beyond one, then the
+ *  zone. Minutes only when they are not zero, the year only when it differs from this one. */
 export declare function resetClock(ms: number, zone?: string): string;
 export declare class Translator {
     log: (level: string, msg: string) => void;
@@ -18,6 +19,10 @@ export declare class Translator {
     continueAfterLimit: boolean;
     /** Set when a usage limit ended the turn with a reset time in the future (ms since epoch). */
     limitResetAt: number | undefined;
+    /** A limit's failure, held back until the CLI's own message and result frame have gone by. */
+    limitFailure: (LlmFailure & {
+        providerRetryAfterMs?: number;
+    }) | undefined;
     /** IANA zone for reset clocks: the browser's when dsh stamped one, else the box's. */
     timeZone: string | undefined;
     relay: boolean;

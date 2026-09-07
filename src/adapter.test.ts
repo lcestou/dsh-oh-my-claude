@@ -450,12 +450,15 @@ assert.deepEqual(
   [],
 );
 assert.equal(warned.finished, false, "allowed_warning does not end the turn");
-const limited = new Translator().translate({
-  type: "rate_limit_event",
-  rate_limit_info: { status: "rejected" },
-});
-// SAFETY: rate_limit_event always produces a finish chunk with error reason
-const limitedFirst = limited[0];
+const limitedTr = new Translator();
+assert.deepEqual(
+  limitedTr.translate({ type: "rate_limit_event", rate_limit_info: { status: "rejected" } }),
+  [],
+  "the CLI's own message follows, so the turn does not end on this frame",
+);
+const limited = limitedTr.translate({ type: "result", is_error: false });
+// SAFETY: a held limit failure always produces a finish chunk with error reason
+const limitedFirst = limited.at(-1);
 assert.ok(limitedFirst && "reason" in limitedFirst && limitedFirst.reason.kind === "error");
 assert.equal(failureOf(chunkOf(limitedFirst, "finish").reason).code, "RATE_LIMIT");
 // SAFETY: result error always produces a finish chunk with error reason
@@ -568,24 +571,40 @@ const probed = await probeCli((cmd, args, opts, cb) =>
 assert.equal(probed.version, "9.9.9 (Claude Code)");
 assert.ok(probed.flags.has("--effort") && probed.flags.has("--input-format"));
 
-// rate limit carries the provider reset time as retry-after
 const soon = Math.floor(Date.now() / 1000) + 120;
-const rl = (new Translator() as any).translate({
-  type: "rate_limit_event",
-  rate_limit_info: { status: "rejected", resetsAt: soon },
-});
-assert.ok(
-  rl[0].reason.failure.providerRetryAfterMs > 100_000 &&
-    rl[0].reason.failure.providerRetryAfterMs <= 120_000,
-);
-assert.equal(
-  rl[0].reason.failure.message,
-  `You've hit your usage limit · resets ${resetClock(soon * 1000)}`,
-  "no rateLimitType: the CLI's generic wording",
-);
+{
+  // A rejected limit does not end the turn: the CLI's own synthetic message follows and is
+  // relayed, then the result frame carries the failure and its retry-after.
+  const t = new Translator() as any;
+  assert.deepEqual(
+    t.translate({
+      type: "rate_limit_event",
+      rate_limit_info: { status: "rejected", resetsAt: soon },
+    }),
+    [],
+  );
+  assert.equal(t.finished, false);
+  const said = t.translate({
+    type: "assistant",
+    message: { content: [{ type: "text", text: "You've reached your Fable limit." }] },
+  });
+  assert.equal(said.at(-1).block.text, "You've reached your Fable limit.", "the CLI's own words");
+  const fin = t.translate({ type: "result", is_error: false }).at(-1);
+  assert.equal(fin.reason.failure.code, "RATE_LIMIT");
+  assert.equal(
+    fin.reason.failure.message,
+    `You've hit your usage limit · resets ${resetClock(soon * 1000)}`,
+    "no rateLimitType: the CLI's generic wording",
+  );
+  assert.ok(
+    fin.reason.failure.providerRetryAfterMs > 100_000 &&
+      fin.reason.failure.providerRetryAfterMs <= 120_000,
+  );
+}
 {
   // The CLI names the limit from rateLimitType; the same table is used here.
-  const named = (new Translator() as any).translate({
+  const t = new Translator() as any;
+  t.translate({
     type: "rate_limit_event",
     rate_limit_info: {
       status: "rejected",
@@ -594,20 +613,29 @@ assert.equal(
     },
   });
   assert.equal(
-    named[0].reason.failure.message,
+    t.translate({ type: "result", is_error: false }).at(-1).reason.failure.message,
     `You've hit your Fable limit · resets ${resetClock(soon * 1000)}`,
   );
 }
 {
-  // With the wait on, the row says the task continues by itself and the translator reports the
-  // reset instant for the adapter to arm; a reset already in the past arms nothing.
+  // Beyond a day the clock carries the date, as the CLI's own formatter does.
+  assert.match(
+    resetClock(Date.now() + 40 * 60 * 60 * 1000, "America/New_York"),
+    /^[A-Z][a-z]{2} \d{1,2}, \d{1,2}(:\d{2})?[ap]m \(America\/New_York\)$/,
+  );
+  assert.equal(resetClock(1_757_199_600_000, "America/New_York"), "7pm (America/New_York)");
+  assert.equal(resetClock(1_757_201_400_000, "America/New_York"), "7:30pm (America/New_York)");
+}
+{
+  // With the wait armed the row says the task continues by itself, and the translator reports the
+  // reset instant for the adapter to arm; a reset already past arms nothing.
   const t = new Translator({ continueAfterLimit: true }) as any;
-  const out = t.translate({
+  t.translate({
     type: "rate_limit_event",
     rate_limit_info: { status: "rejected", resetsAt: soon, rateLimitType: "five_hour" },
   });
   assert.equal(
-    out[0].reason.failure.message,
+    t.translate({ type: "result", is_error: false }).at(-1).reason.failure.message,
     `You've hit your session limit · resets ${resetClock(soon * 1000)} · continuing automatically when it resets`,
   );
   assert.equal(t.limitResetAt, soon * 1000);
@@ -617,6 +645,36 @@ assert.equal(
     rate_limit_info: { status: "rejected", resetsAt: 1 },
   });
   assert.equal(past.limitResetAt, undefined);
+  // Extra usage covering the overflow: the CLI shows no limit, neither does the turn.
+  const covered = new Translator() as any;
+  assert.deepEqual(
+    covered.translate({
+      type: "rate_limit_event",
+      rate_limit_info: {
+        status: "rejected",
+        resetsAt: soon,
+        overageStatus: "allowed",
+        isUsingOverage: true,
+      },
+    }),
+    [],
+  );
+  assert.equal(covered.limitFailure, undefined);
+  // Credits exhausted as well: their reset is the one that drives the wait.
+  const drained = new Translator() as any;
+  drained.translate({
+    type: "rate_limit_event",
+    rate_limit_info: {
+      status: "rejected",
+      resetsAt: soon,
+      overageStatus: "rejected",
+      overageResetsAt: soon + 3600,
+    },
+  });
+  assert.ok(
+    drained.translate({ type: "result", is_error: false }).at(-1).reason.failure
+      .providerRetryAfterMs > 3_600_000,
+  );
   // Retry banners take the browser's zone when dsh stamped one on a prompt.
   const tokyo = new Translator({ timeZone: "Asia/Tokyo" }) as any;
   const tz = tokyo.translate({
