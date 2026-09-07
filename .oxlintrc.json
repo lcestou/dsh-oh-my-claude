@@ -61,6 +61,7 @@
         "src/mcp.ts",
         "src/mcp-add-remove.ts",
         "src/sessions.ts",
+        "src/scheduled-tasks.ts",
         "src/state.ts",
         "src/usage.ts",
         "src/translator.ts"

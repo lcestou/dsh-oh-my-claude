@@ -11,6 +11,14 @@ import { listTranscripts, readTranscript, toSessionEvents } from "./transcript.j
 import type { TranscriptListItem } from "./transcript.js";
 import { deleteMemory, isMemoryName, listMemory } from "./memory.js";
 import { listInstructions } from "./instructions.js";
+import {
+  durableTasksPath,
+  goalFrom,
+  readDurableTasks,
+  sessionTasksFrom,
+  type ScheduledTasksReply,
+  type ScheduledTasksError,
+} from "./scheduled-tasks.js";
 import { asSessionId } from "./dsh.js";
 import { buildAddServer, isMcpName, scopeNeedsCwd } from "./mcp-add-remove.js";
 import type { JsonValue, PluginContext, SessionPersistence, WorkspaceRegistry } from "./dsh.js";
@@ -1137,6 +1145,30 @@ export function registerSessionRoutes(
                   return json(res, 200, p.status);
                 }
                 return json(res, 405, { error: "method not allowed" });
+              }
+              if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/scheduled-tasks`) {
+                const sid = url.searchParams.get("session");
+                if (!sid) return json(res, 400, { error: "session param required" });
+                const cwd = await sessionCwd(sid, sessionPersistence);
+                if (!cwd) return json(res, 404, { error: "session not found" });
+                try {
+                  // The durable file and the transcript answer different halves: the file holds
+                  // what survives a restart, the transcript is the only record of the rest.
+                  const durable = await readDurableTasks(cwd);
+                  const path = await transcriptPathFor(projectDir(cwd), sid, claudeIdOf);
+                  const folded = path ? await readTranscript(path) : undefined;
+                  const reply: ScheduledTasksReply = {
+                    ok: true,
+                    durable,
+                    session: folded ? sessionTasksFrom(folded) : [],
+                    goal: folded ? goalFrom(folded) : null,
+                    path: durableTasksPath(cwd),
+                  };
+                  return json(res, 200, reply);
+                } catch (e) {
+                  const reply: ScheduledTasksError = { ok: false, error: errorText(e) };
+                  return json(res, 500, reply);
+                }
               }
               return json(res, 404, { error: "not found" });
             } catch (e) {

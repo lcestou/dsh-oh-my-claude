@@ -1201,6 +1201,122 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
   );
 }
 
+/** One task from the durable file or the session transcript. */
+interface Task {
+  name: string;
+  description?: string;
+  schedule?: string;
+  nextRunAt?: number;
+  durable?: boolean;
+}
+
+/** Reply from GET /scheduled-tasks. */
+interface ScheduledTasksReply {
+  ok: true;
+  durable: Task[];
+  session: Task[];
+  goal: { text: string; at: number } | null;
+  path: string;
+}
+
+/** Error from GET /scheduled-tasks. */
+interface ScheduledTasksError {
+  ok: false;
+  error: string;
+}
+
+/** One scheduled task, the same row whether it survives a restart or not. */
+function TaskRow({ task }: { task: Task }) {
+  return (
+    <div style={{ padding: "4px 10px", fontSize: 12, borderLeft: `2px solid ${T.border}` }}>
+      <div style={{ fontWeight: "bold" }}>{task.name}</div>
+      {task.description ? <div style={{ ...meta, fontSize: 11 }}>{task.description}</div> : null}
+      {task.schedule ? (
+        <div style={{ ...meta, fontSize: 11 }}>Schedule: {task.schedule}</div>
+      ) : null}
+      {task.nextRunAt === undefined ? null : (
+        <div style={{ ...meta, fontSize: 11 }}>
+          Next run: {new Date(task.nextRunAt).toLocaleString()}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Scheduled tasks and the goal the CLI is holding. Read-only: it shows what the CLI decided. */
+function TasksBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
+  const running = activeClaudeSession(ctx) === sessionId;
+  const [data, setData] = useState<ScheduledTasksReply | ScheduledTasksError | null>(null);
+
+  useEffect(() => {
+    // The route reads the running session's transcript; with none there is nothing to list.
+    if (!running) return;
+    let live = true;
+    fetch(`${ROUTE}/scheduled-tasks?session=${encodeURIComponent(sessionId)}`)
+      .then((r) => readJson<ScheduledTasksReply | ScheduledTasksError>(r))
+      .then((b) => live && setData(b))
+      .catch((e: Error) => live && setData({ ok: false, error: e.message }));
+    return () => {
+      live = false;
+    };
+  }, [running, sessionId]);
+
+  if (!running) return null;
+
+  return (
+    <div style={bodyFlow}>
+      {data === null ? (
+        <span style={{ ...meta, padding: "2px 4px" }}>Loading…</span>
+      ) : !data.ok ? (
+        <span style={{ color: T.err, fontSize: 12 }}>{data.error}</span>
+      ) : (
+        <>
+          <span style={{ ...meta, padding: "2px 4px", display: "block" }}>Goal</span>
+          {data.goal ? (
+            <div style={{ padding: "4px 10px", fontSize: 12, lineHeight: "1.5" }}>
+              <div style={{ marginBottom: 4 }}>{data.goal.text}</div>
+              <div style={{ ...meta, fontSize: 11 }}>Proposed {ago(data.goal.at)}</div>
+            </div>
+          ) : (
+            <div style={{ ...meta, padding: "4px 10px", fontSize: 12 }}>
+              No CLI goal in this session.
+            </div>
+          )}
+
+          <span style={{ ...meta, padding: "2px 4px", display: "block", marginTop: 8 }}>
+            Durable tasks
+          </span>
+          {data.durable.length === 0 ? (
+            <div style={{ ...meta, padding: "4px 10px", fontSize: 12 }}>
+              <div>Nothing scheduled.</div>
+              <div style={{ fontSize: 11, marginTop: 4, fontFamily: T.mono }}>{data.path}</div>
+            </div>
+          ) : (
+            data.durable.map((t) => <TaskRow key={t.name} task={t} />)
+          )}
+
+          {data.session.length > 0 ? (
+            <>
+              <span style={{ ...meta, padding: "2px 4px", display: "block", marginTop: 8 }}>
+                Session-only — reconstructed from this session's transcript; these die when Claude
+                exits.
+              </span>
+              {data.session.map((t) => (
+                <TaskRow key={t.name} task={t} />
+              ))}
+            </>
+          ) : null}
+
+          <div style={{ ...meta, padding: "2px 4px", marginTop: 8, fontSize: 11 }}>
+            Read-only in this release. dsh keeps its own goal, which it does not expose to a plugin
+            to read, so only the CLI's side is shown here.
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 /** The Add form under the server list: name, where it goes, and the fields its transport needs. */
 function McpAddForm({ sessionId, onAdded }: { sessionId: string; onAdded: () => void }) {
   const [name, setName] = useState("");
@@ -1802,6 +1918,7 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
     { key: "Changes", label: "Changes" },
     { key: "MCP", label: "MCP" },
     { key: "Diagnostics", label: "Diagnostics" },
+    { key: "Tasks", label: "Tasks" },
     { key: "Tune", label: "Tune" },
   ] as const;
   // Fall back when an earlier session stored a tab no longer present (e.g. removed Permissions).
@@ -1859,6 +1976,7 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
             {tab === "Changes" && <ChangesBody sessionId={sessionId} ctx={ctx} />}
             {tab === "MCP" && <McpBody sessionId={sessionId} ctx={ctx} onClose={close} />}
             {tab === "Diagnostics" && <DiagnosticsBody sessionId={sessionId} ctx={ctx} />}
+            {tab === "Tasks" && <TasksBody sessionId={sessionId} ctx={ctx} />}
             {tab === "Tune" && <TuneBody sessionId={sessionId} />}
           </div>
           {/* Under the body, not over it: the panel is anchored to its bottom edge, so a taller tab
