@@ -1830,6 +1830,12 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     return true;
   }
 
+  /** Get the current model catalog for advisor selection. */
+  async getAdvisorModels(): Promise<Array<{ id: string; name: string }>> {
+    const models = await getCatalog(fetch, this.cliModels);
+    return models.map((m) => ({ id: m.id, name: m.name }));
+  }
+
   /** The MCP servers of a session's live process (`mcp_status`). */
   async mcpStatus(sessionId: string): Promise<McpStatusReply> {
     const proc = this.processes.get(registryKey(this.providerId, sessionId));
@@ -3283,6 +3289,7 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       rewind: (sessionId: string, uuid: string, dryRun: boolean) =>
         adapter.rewind(sessionId, uuid, dryRun),
       permissionAsks: adapter.permissionAsks,
+      models: () => adapter.getAdvisorModels(),
     });
   }
 }

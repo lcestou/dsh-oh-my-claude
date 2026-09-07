@@ -621,6 +621,8 @@ export interface SessionRouteOptions {
   };
   /** The rules recent approval requests suggest, per session; the Tune tab offers them as chips. */
   permissionAsks?: Map<string, string[]>;
+  /** The model catalog for advisor model selection. */
+  models?: () => Promise<Array<{ id: string; name: string }>>;
 }
 
 /** The transcript file of a dsh session: under its Claude id (sessions the adapter started) or
@@ -664,6 +666,7 @@ export function registerSessionRoutes(
     workspaceDiff,
     mcp,
     permissionAsks,
+    models,
   }: SessionRouteOptions,
 ): void {
   // Optional: stock dsh has it; without it archived sessions list but cannot be restored.
@@ -853,6 +856,15 @@ export function registerSessionRoutes(
               }
               if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/status`)
                 return json(res, 200, await runtimeStatus(configDir, command));
+              if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/models`) {
+                if (!models) return json(res, 404, { error: "models not available" });
+                try {
+                  const modelList = await models();
+                  return json(res, 200, { models: modelList });
+                } catch (e) {
+                  return json(res, 500, { error: errorText(e) });
+                }
+              }
               // Diagnostics: how this instance is running, and which of the files the CLI merges
               // it would refuse to start on. The MCP servers and the denied calls are read from
               // the routes that already serve them, so nothing is answered twice.

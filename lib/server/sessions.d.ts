@@ -178,9 +178,14 @@ export interface SessionRouteOptions {
     };
     /** The rules recent approval requests suggest, per session; the Tune tab offers them as chips. */
     permissionAsks?: Map<string, string[]>;
+    /** The model catalog for advisor model selection. */
+    models?: () => Promise<Array<{
+        id: string;
+        name: string;
+    }>>;
 }
 /** `projectDir(cwd)` → Claude Code project dir; `startedIds()` → ids the adapter started itself. */
-export declare function registerSessionRoutes(ctx: PluginContext, { log, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, command, turnRecords, idle, permissionModes, rewind, contextUsage, workspaceDiff, mcp, permissionAsks, }: SessionRouteOptions): void;
+export declare function registerSessionRoutes(ctx: PluginContext, { log, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, command, turnRecords, idle, permissionModes, rewind, contextUsage, workspaceDiff, mcp, permissionAsks, models, }: SessionRouteOptions): void;
 export declare const SETTINGS_SCOPES: readonly ["managed", "local", "project", "user"];
 /** One of the four settings files. The CLI's own layer names, minus the `--settings` flag layer. */
 export type SettingsScope = (typeof SETTINGS_SCOPES)[number];

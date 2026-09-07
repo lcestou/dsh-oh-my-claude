@@ -1,7 +1,7 @@
 // Offline checks for the Tune tab's settings edits: the file keeps every key it already had,
 // a control at its default removes its key, and a bad auto-compact value never reaches the file.
 import assert from "node:assert/strict";
-import { readTunables, updateSettings } from "./tune.js";
+import { isFable, readTunables, updateSettings } from "./tune.js";
 
 // A key the file does not have yet is added.
 {
@@ -123,6 +123,51 @@ import { readTunables, updateSettings } from "./tune.js";
     {},
     "a TTL that is not 5m or 1h reads as unset",
   );
+}
+
+// Advisor model is set when it is a non-empty string.
+{
+  const r = updateSettings("{}", "advisorModel", "claude-opus-5");
+  assert.equal(r.error, undefined);
+  assert.equal(JSON.parse(r.text).advisorModel, "claude-opus-5");
+}
+
+// Advisor model reads as unset when it is empty.
+{
+  assert.deepEqual(readTunables(JSON.stringify({ advisorModel: "claude-opus-5" })), {
+    advisorModel: "claude-opus-5",
+  });
+  assert.deepEqual(
+    readTunables(JSON.stringify({ advisorModel: "", outputStyle: "Learning" })),
+    { outputStyle: "Learning" },
+    "empty advisor reads as unset",
+  );
+  // A non-string advisor (after JSON parsing) is treated as unset, same as outputStyle does.
+  assert.deepEqual(
+    readTunables('{"advisorModel": null, "outputStyle": "Explanatory"}'),
+    { outputStyle: "Explanatory" },
+    "null advisor reads as unset",
+  );
+}
+
+// Back to Off: the key goes away, so the CLI picks its own default.
+{
+  const r = updateSettings(
+    JSON.stringify({ advisorModel: "claude-opus-5", other: 1 }),
+    "advisorModel",
+    undefined,
+  );
+  assert.equal(r.error, undefined);
+  assert.ok(!("advisorModel" in JSON.parse(r.text)), "key removed, not nulled");
+  assert.equal(JSON.parse(r.text).other, 1);
+}
+
+// The Fable family is what the credits guard keys on; nothing else may match it.
+{
+  assert.equal(isFable("claude-fable-5-1"), true);
+  assert.equal(isFable("claude-opus-5"), false);
+  assert.equal(isFable(undefined), false, "Off is not a Fable advisor");
+  assert.equal(isFable(true), false, "a boolean is no model id");
 }
 
 console.log("tune ok");

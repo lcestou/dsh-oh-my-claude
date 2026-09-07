@@ -8,6 +8,14 @@ import {
   type PermissionKind,
 } from "../permissions.js";
 
+/** What the usage route answers about extra usage. */
+interface UsageReply {
+  extraUsage?: boolean;
+}
+
+/** A Fable model, which is the family whose advisor bills to usage credits. */
+export const isFable = (value: SettingsValue) => String(value ?? "").startsWith("claude-fable");
+
 /** The settings.json keys this tab owns. Everything else in the file is left untouched. */
 interface Tunables {
   outputStyle?: string;
@@ -16,6 +24,7 @@ interface Tunables {
   autoCompactWindow?: number;
   promptCacheTtl?: string;
   subagentPromptCacheTtl?: string;
+  advisorModel?: string;
 }
 type TuneKey = keyof Tunables;
 /** A settings document as this tab handles it: every key open, since it edits six and keeps the rest. */
@@ -56,7 +65,7 @@ export function updateSettings(
   return { text: `${JSON.stringify(obj, null, 2)}\n` };
 }
 
-/** Read the six keys out of the file; anything of the wrong type reads as unset. */
+/** Read the seven keys out of the file; anything of the wrong type reads as unset. */
 export function readTunables(text: string): Tunables {
   let parsed: unknown;
   try {
@@ -78,6 +87,16 @@ export function readTunables(text: string): Tunables {
   if (ttl !== undefined) out.promptCacheTtl = ttl;
   const subagentTtl = cacheTtl(obj.subagentPromptCacheTtl);
   if (subagentTtl !== undefined) out.subagentPromptCacheTtl = subagentTtl;
+  // A model id, so the same reading as outputStyle: an absent, empty or boolean value is no id.
+  const advisor = obj.advisorModel;
+  if (
+    advisor !== null &&
+    advisor !== undefined &&
+    advisor !== "" &&
+    advisor !== true &&
+    advisor !== false
+  )
+    out.advisorModel = String(advisor);
   return out;
 }
 
@@ -110,6 +129,12 @@ export function TuneBody({ sessionId }: { sessionId: string }): React.ReactEleme
   const [file, setFile] = useState<SettingsFile | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [models, setModels] = useState<Array<{ id: string; name: string }> | null>(null);
+  const [modelsError, setModelsError] = useState("");
+  // Three states, and the unknown one counts as off: a credit state nobody could read is not a
+  // licence to write an advisor whose first spawn the CLI would refuse.
+  const [extraUsage, setExtraUsage] = useState<boolean | null>(null);
+  const [creditsError, setCreditsError] = useState("");
 
   useEffect(() => {
     let live = true;
@@ -117,6 +142,14 @@ export function TuneBody({ sessionId }: { sessionId: string }): React.ReactEleme
       (f) => live && setFile(f),
       (e: Error) => live && setError(e.message),
     );
+    fetch(`${ROUTE}/models`)
+      .then((r) => readJson<{ models?: Array<{ id: string; name: string }> }>(r))
+      .then((b) => live && setModels(b.models ?? []))
+      .catch((e: Error) => live && setModelsError(e.message));
+    fetch(`${ROUTE}/usage`)
+      .then((r) => readJson<UsageReply>(r))
+      .then((b) => live && setExtraUsage(b.extraUsage === true))
+      .catch((e: Error) => live && setCreditsError(e.message));
     return () => {
       live = false;
     };
@@ -162,6 +195,17 @@ export function TuneBody({ sessionId }: { sessionId: string }): React.ReactEleme
   };
 
   const write = async (key: TuneKey, value: string | number | boolean | undefined) => {
+    // The guard is here, not only on the disabled option: a Fable advisor bills to usage credits,
+    // and with them off the CLI refuses to start at all, which would take the next spawn down with
+    // it. A credit state that could not be read is treated as off for the same reason.
+    if (key === "advisorModel" && isFable(value) && extraUsage !== true) {
+      setError(
+        creditsError
+          ? `Cannot set a Fable advisor: the usage credit state could not be read (${creditsError}).`
+          : "A Fable advisor bills to usage credits. Enable them from a terminal with /model fable first.",
+      );
+      return;
+    }
     const failure = await apply((text) => updateSettings(text, key, value));
     if (failure) setError(failure);
   };
@@ -333,6 +377,56 @@ export function TuneBody({ sessionId }: { sessionId: string }): React.ReactEleme
       <span style={{ ...meta, padding: "0 6px 2px", whiteSpace: "normal" }}>
         An hour keeps the cache warm across longer breaks, and hour-long cache writes are billed at
         a higher rate.
+      </span>
+
+      <div style={rowStyle}>
+        <span style={labelStyle}>Advisor</span>
+        <div style={controlStyle}>
+          <select
+            value={settings.advisorModel ?? ""}
+            disabled={busy || models === null}
+            aria-label="Advisor model"
+            onChange={(e) => void write("advisorModel", e.target.value || undefined)}
+            style={{
+              ...select,
+              flex: narrow ? "1 1 auto" : "0 0 auto",
+              minWidth: narrow ? 0 : 160,
+            }}
+          >
+            <option value="">Off</option>
+            {models?.map((m) => {
+              const blocked = isFable(m.id) && extraUsage !== true;
+              return (
+                <option key={m.id} value={m.id} disabled={blocked}>
+                  {m.name}
+                  {blocked ? " (needs usage credits)" : ""}
+                </option>
+              );
+            })}
+          </select>
+        </div>
+        <span style={sourceStyle}>{source(settings.advisorModel !== undefined)}</span>
+      </div>
+      {modelsError && (
+        <span style={{ color: T.err, fontSize: 12, padding: "0 4px" }}>
+          Could not read the model list: {modelsError}
+        </span>
+      )}
+      {creditsError ? (
+        <span style={{ ...meta, padding: "0 6px 2px", whiteSpace: "normal" }}>
+          The usage credit state could not be read ({creditsError}), so a Fable advisor stays off
+          the list: with credits disabled the CLI refuses to start at all.
+        </span>
+      ) : extraUsage === false ? (
+        <span style={{ ...meta, padding: "0 6px 2px", whiteSpace: "normal" }}>
+          A Fable advisor bills to usage credits, which have to be enabled first. Open a terminal
+          and run <code style={{ background: T.card, padding: "2px 4px" }}>/model fable</code> to
+          review and enable them.
+        </span>
+      ) : null}
+      <span style={{ ...meta, padding: "0 6px 2px", whiteSpace: "normal" }}>
+        An advisor weaker than the main model is not used for the main conversation, though
+        subagents may still use it.
       </span>
 
       <PermissionsBlock

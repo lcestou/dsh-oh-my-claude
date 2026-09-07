@@ -602,6 +602,11 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      */
     cliModelsAt: number;
     refreshCliModels(proc: ClaudeProcess): Promise<boolean>;
+    /** Get the current model catalog for advisor selection. */
+    getAdvisorModels(): Promise<Array<{
+        id: string;
+        name: string;
+    }>>;
     /** The MCP servers of a session's live process (`mcp_status`). */
     mcpStatus(sessionId: string): Promise<McpStatusReply>;
     /** Ask a session's live process to reconnect one MCP server (`mcp_reconnect`). */
