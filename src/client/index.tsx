@@ -2336,7 +2336,9 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
               boxSizing: "border-box",
               background: "var(--dsw-specific-tip, var(--dsw-alias-bg-base, transparent))",
               border: "0.5px solid var(--dsw-alias-border-l1, rgba(217,119,87,.4))",
-              borderRadius: 12,
+              // Square bottom, rounded top: it is always the first card above the composer, so it
+              // docks onto the message box like a tab (dsh's own QueueDock uses this same radius).
+              borderRadius: "12px 12px 0 0",
               overflow: "hidden",
             }}
           >
@@ -2361,12 +2363,6 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
                 cursor: "pointer",
               }}
             >
-              <span
-                style={{ color: T.faint, fontSize: 10, width: 8, flex: "0 0 auto" }}
-                aria-hidden="true"
-              >
-                {open ? "▾" : "▸"}
-              </span>
               <span
                 style={{ color: CLAUDE_ORANGE, fontSize: 13, flex: "0 0 auto" }}
                 aria-hidden="true"
@@ -2413,6 +2409,29 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
               >
                 {copied === it.id ? "Copied" : "Copy"}
               </button>
+              {/* Collapse chevron, sized to match dsh's own todo/queue chevron (14px, tertiary).
+                  Up when collapsed, down when open — same convention as the queue dock. */}
+              <span
+                style={{
+                  width: 14,
+                  height: 14,
+                  color: "var(--dsw-alias-label-tertiary, " + T.faint + ")",
+                  flex: "0 0 auto",
+                  display: "grid",
+                  placeItems: "center",
+                }}
+                aria-hidden="true"
+              >
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                  <polyline
+                    points={open ? "3.5,5.5 7,9 10.5,5.5" : "3.5,8.5 7,5 10.5,8.5"}
+                    stroke="currentColor"
+                    strokeWidth="1.25"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </span>
               <button
                 type="button"
                 onClick={(e) => {
@@ -2420,7 +2439,7 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
                   dismissAside(it.id);
                 }}
                 aria-label="Dismiss side question"
-                style={{ ...iconBtn, color: T.muted, fontSize: 14 }}
+                style={{ ...iconBtn, color: T.muted, fontSize: 12 }}
               >
                 ✕
               </button>
