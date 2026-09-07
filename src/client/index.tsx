@@ -1848,6 +1848,9 @@ interface TurnsReply {
 /** Cost readout in dsh's footer stats row: only when the open session is a Claude mount. */
 function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   const [turns, setTurns] = useState<TurnRecord[]>([]);
+  // What the poll compares against without listing `turns` as a dependency of its effect.
+  const turnsRef = useRef<TurnRecord[]>([]);
+  turnsRef.current = turns;
   const visibleRef = useRef(true);
 
   useEffect(() => {
@@ -1860,7 +1863,11 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
         // SAFETY: the body is our own JSON route; the union type names both shapes the caller checks
         const body = (await r.json()) as TurnsReply | { error: string };
         if ("error" in body) return;
-        if (alive) setTurns(body.turns ?? []);
+        // An empty answer is "no records to hand out right now", not "this session cost nothing":
+        // the route reads an in-memory map that is empty for a moment after dsh restarts, and
+        // zeroing the total took the cost off the row under the pointer. Only records replace records.
+        const next = body.turns ?? [];
+        if (alive && (next.length > 0 || turnsRef.current.length === 0)) setTurns(next);
       } catch {
         // network error: keep previous turns
       }
@@ -1937,8 +1944,10 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
       // The row's first group ("52 turns · 77 steps" in any locale) identifies its bubble.
       rowLead = (statsRow.firstElementChild?.textContent ?? "").replace(/\s+/g, "");
       statsRow.append(inline);
-      // Watch the row we just hooked: React dropping our span is a childList change on it.
+      // Watch the row we just hooked, and its parent: React either drops our span from the row or
+      // swaps the row itself, and both are a childList change one level apart.
       rowObserver.observe(statsRow, { childList: true });
+      if (statsRow.parentElement) rowObserver.observe(statsRow.parentElement, { childList: true });
       setHooked(true);
     };
     // A second's blink is a second too many while the row is under the pointer: re-hook as soon
