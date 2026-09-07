@@ -38,6 +38,17 @@ export const CHILD_ENV = {
   CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: "1",
 };
 
+/** The environment a Claude child runs with: dsh's own, then the plugin's additions, then whatever
+ *  the caller passes. CHILD_ENV beats the inherited value on purpose — an `MCP_TOOL_TIMEOUT` that
+ *  happens to be in dsh's environment would otherwise cut relayed dsh tools short in one spawn mode
+ *  and not the other. A caller that means to override still wins, which is the escape hatch. */
+export function childEnv(base: NodeJS.ProcessEnv, override?: Record<string, string>) {
+  const env: Record<string, string> = {};
+  for (const [k, v] of Object.entries(base)) if (v !== undefined) env[k] = v;
+  Object.assign(env, CHILD_ENV, override ?? {});
+  return env;
+}
+
 export interface SubprocessHandle {
   stdin: import("node:stream").Writable;
   stdout: import("node:stream").Readable;
@@ -222,7 +233,7 @@ export function nodeSpawner(
   const child = spawn(command, args, {
     cwd,
     stdio: ["pipe", "pipe", "pipe"],
-    env: { ...CHILD_ENV, ...process.env, ...envOverride },
+    env: childEnv(process.env, envOverride),
   });
   return {
     stdin: child.stdin,

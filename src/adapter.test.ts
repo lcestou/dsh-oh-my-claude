@@ -52,6 +52,7 @@ import {
 import { PERMISSION_MODES } from "./state.js";
 import {
   CHILD_ENV,
+  childEnv,
   ClaudeProcess,
   LineQueue,
   TIMEOUT,
@@ -2492,6 +2493,18 @@ console.log("hook-rows ok");
   assert.notEqual(a1, workAdapter.keeperDir("s1"), "per provider id");
   assert.ok(a1.includes("/keepers/"));
   assert.equal(defaultAdapter.keeperEnv().MCP_TOOL_TIMEOUT, "3600000");
+  // Both spawn paths compose the child env through one helper, and the plugin's own values beat an
+  // inherited one: a shell that exports MCP_TOOL_TIMEOUT used to cut relayed dsh tools short under
+  // `spawn: node` while keeper mode ignored it, so the same config behaved two ways.
+  const composed = childEnv({ MCP_TOOL_TIMEOUT: "5000", PATH: "/bin", EMPTY: undefined });
+  assert.equal(composed.MCP_TOOL_TIMEOUT, "3600000", "plugin value wins over the inherited one");
+  assert.equal(composed.PATH, "/bin", "the rest of the environment is carried through");
+  assert.equal("EMPTY" in composed, false, "unset variables are dropped, not passed as undefined");
+  assert.equal(
+    childEnv({}, { MCP_TOOL_TIMEOUT: "1" }).MCP_TOOL_TIMEOUT,
+    "1",
+    "an explicit override still wins",
+  );
 }
 console.log("keeper-mode ok");
 

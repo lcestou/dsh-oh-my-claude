@@ -15,6 +15,11 @@ export declare const CHILD_ENV: {
     MCP_TOOL_TIMEOUT: string;
     CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: string;
 };
+/** The environment a Claude child runs with: dsh's own, then the plugin's additions, then whatever
+ *  the caller passes. CHILD_ENV beats the inherited value on purpose — an `MCP_TOOL_TIMEOUT` that
+ *  happens to be in dsh's environment would otherwise cut relayed dsh tools short in one spawn mode
+ *  and not the other. A caller that means to override still wins, which is the escape hatch. */
+export declare function childEnv(base: NodeJS.ProcessEnv, override?: Record<string, string>): Record<string, string>;
 export interface SubprocessHandle {
     stdin: import("node:stream").Writable;
     stdout: import("node:stream").Readable;

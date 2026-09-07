@@ -106,7 +106,7 @@ import {
   trace,
 } from "./state.js";
 import { suggestRule } from "./permissions.js";
-import { CHILD_ENV, errorText } from "./process.js";
+import { childEnv, errorText } from "./process.js";
 import type { RewindResult } from "./process.js";
 import { forkTranscriptText } from "./transcript.js";
 export { markBusy, takeInterrupted } from "./state.js";
@@ -1985,11 +1985,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
 
   /** The child env a keeper hands Claude: dsh's environment plus the plugin's additions. */
   keeperEnv() {
-    const env: Record<string, string> = {};
-    for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v;
-    Object.assign(env, CHILD_ENV);
-    if (this.config.configDir) env.CLAUDE_CONFIG_DIR = this.claudeHome;
-    return env;
+    return childEnv(
+      process.env,
+      this.config.configDir ? { CLAUDE_CONFIG_DIR: this.claudeHome } : undefined,
+    );
   }
 
   /** Spawner for one session: keeper mode needs the session to place and name the keeper. */
