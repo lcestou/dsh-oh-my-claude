@@ -7,6 +7,7 @@ import {
   commandNames,
   renameTitle,
   mcpToolsByServer,
+  hasPendingTodo,
   ClaudeCodeAdapter,
   accessModeOf,
   buildArgs,
@@ -3138,4 +3139,14 @@ console.log("interrupt-on-abort ok");
   assert.deepEqual([...mcpToolsByServer([], []).keys()], [], "no servers, no entries");
   assert.deepEqual(mcpToolsByServer(["dsh"], []).get("dsh"), [], "a server with no tools is empty");
   console.log("mcp-tools-by-server ok");
+}
+
+// A finished list is not restored onto a new message; anything still open, or of a shape the log
+// did not promise, is.
+{
+  assert.equal(hasPendingTodo([{ status: "completed" }, { status: "completed" }]), false);
+  assert.equal(hasPendingTodo([{ status: "completed" }, { status: "in_progress" }]), true);
+  assert.equal(hasPendingTodo([{ status: "pending" }]), true);
+  assert.equal(hasPendingTodo(["a string is not a todo we can read"]), true);
+  assert.equal(hasPendingTodo([]), false, "an empty list has nothing outstanding");
 }

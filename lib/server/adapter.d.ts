@@ -465,6 +465,9 @@ export { PROCESS_REGISTRY, ADAPTER_CURRENT, RESUME_TIMER };
 export declare function userPromptCount(messages: LooseMessage[] | undefined): number;
 /** The stream chunks that make one relayed dsh tool call a native tool-call block. */
 export declare function relayBlocks(tr: Translator, call: RelayEvent): IterableIterator<StreamChunk>;
+/** Whether a todo list still has work on it. A list of nothing but completed items is finished,
+ *  and a finished list is not worth painting over a fresh message. */
+export declare function hasPendingTodo(todos: JsonValue[]): boolean;
 export declare class ClaudeCodeAdapter extends LlmAdapter {
     ctx: PluginContext;
     config: Schemastery.TypeT<typeof Config>;

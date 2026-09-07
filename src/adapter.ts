@@ -1229,6 +1229,17 @@ export function* relayBlocks(tr: Translator, call: RelayEvent): IterableIterator
 
 const specKey = (spec: ClaudeProcessSpec) => JSON.stringify(spec);
 
+/** Whether a todo list still has work on it. A list of nothing but completed items is finished,
+ *  and a finished list is not worth painting over a fresh message. */
+export function hasPendingTodo(todos: JsonValue[]): boolean {
+  return todos.some((todo) => {
+    // The list is off dsh's event log, so an item of another shape counts as unfinished rather
+    // than being read as done and dropped.
+    if (todo === null || !(todo instanceof Object) || Array.isArray(todo)) return true;
+    return todo.status !== "completed";
+  });
+}
+
 export class ClaudeCodeAdapter extends LlmAdapter {
   ctx: PluginContext;
   config: Schemastery.TypeT<typeof Config>;
@@ -2712,6 +2723,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       let todos: JsonValue | undefined;
       for (const e of session.snapshotEvents()) if (e.type === "todo/write") todos = e.data.todos;
       if (!Array.isArray(todos) || todos.length === 0) return;
+      // A list whose every item is done is, to the person reading the panel, no list at all:
+      // re-appending it painted a finished plan onto each new message and dsh cleared it again a
+      // moment later, which is the flicker. Only work still outstanding is worth restoring.
+      if (!hasPendingTodo(todos)) return;
       session.append("todo/write", { todos });
     } catch (error) {
       this.log("warn", `todo restore: ${errorText(error)}`);
