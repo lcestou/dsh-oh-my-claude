@@ -117,6 +117,11 @@ export class Translator {
   denied: number; // tool calls Claude Code refused because a non-interactive run cannot ask
   toolPending: boolean; // a tool_use block closed and its result has not arrived yet
   aborting: boolean; // dsh cancelled: the CLI's interrupt result finishes as aborted, not error
+  /** task_id → { block, lastSummary, lastToolName } tracks open task blocks across progress frames. */
+  readonly taskBlocks = new Map<
+    string,
+    { block: TranslatorBlock; lastSummary?: string; lastToolName?: string }
+  >();
   /** Injected: append tool/call to the dsh session for a native Claude Code tool. */
   onToolCall?: (callId: string, name: string, args: string) => number | undefined;
   /** Injected: append tool/result to the dsh session for a native Claude Code tool. */
@@ -323,21 +328,63 @@ export class Translator {
             `⚠ Hook ${event.hook_name ?? "?"} (${event.hook_event ?? "?"}) ${tail}${out ? `: ${clip(out)}` : ""}`,
           );
         }
-        // Task frames from the CLI's built-in subagent runner. A start and a notification each get one
-        // reasoning line so a native background Bash or a stray native Agent run is visible; progress and
-        // the list churn are silent.
+        // Task frames from the CLI's built-in subagent runner. Each task_started opens a block (if it
+        // has a task_id) so task_progress can append to it; task_started with no task_id emits the
+        // closed one-line form. task_progress appends short lines when something changes (last_tool_name
+        // or summary different from the last appended line). task_notification appends completion and
+        // closes the block. background_tasks_changed is silent (list churn). On result, every open
+        // task block is closed.
         if (event.subtype === "task_started") {
-          return this.wholeBlock(
-            "reasoning",
-            `▶ Task${event.is_backgrounded ? " (background)" : ""}: ${event.description ?? event.task_id ?? "?"}${event.subagent_type ? ` [${event.subagent_type}]` : ""}`,
-          );
+          const taskId = event.task_id;
+          const startLine = `▶ Task${event.is_backgrounded ? " (background)" : ""}: ${event.description ?? taskId ?? "?"}${event.subagent_type ? ` [${event.subagent_type}]` : ""}`;
+          if (!taskId) {
+            return this.wholeBlock("reasoning", startLine);
+          }
+          const { block, events } = this.startBlock("reasoning", startLine);
+          this.taskBlocks.set(taskId, { block, lastSummary: undefined, lastToolName: undefined });
+          return events;
+        }
+        if (event.subtype === "task_progress") {
+          const taskId = event.task_id ?? "";
+          const entry = this.taskBlocks.get(taskId);
+          if (!entry) return [];
+          const summary = (event.summary ?? "").trim();
+          const toolName = event.last_tool_name ?? "";
+          const summaryChanged = summary && summary !== entry.lastSummary;
+          const toolNameChanged = toolName && toolName !== entry.lastToolName;
+          if (!summaryChanged && !toolNameChanged) return [];
+          const usage = event.usage ?? {};
+          const input = usage.input_tokens ?? 0;
+          const output = usage.output_tokens ?? 0;
+          let progressLine = "";
+          if (toolNameChanged) {
+            progressLine += `▶ ${clip(toolName)}`;
+            if (input > 0 || output > 0) progressLine += ` · ${input}→${output}t`;
+            entry.lastToolName = toolName;
+          }
+          if (summaryChanged) {
+            if (progressLine) progressLine += "\n";
+            progressLine += `${clip(summary)}`;
+            entry.lastSummary = summary;
+          }
+          return this.delta(entry.block, progressLine ? `\n${progressLine}` : "");
         }
         if (event.subtype === "task_notification") {
+          const taskId = event.task_id ?? "";
+          const entry = this.taskBlocks.get(taskId);
           const summary = (event.summary ?? "").trim();
-          return this.wholeBlock(
-            "reasoning",
-            `■ Task ${event.status ?? "done"}: ${summary ? clip(summary) : (event.task_id ?? "?")}`,
-          );
+          const completionLine = `■ Task ${event.status ?? "done"}: ${summary ? clip(summary) : taskId || "?"}`;
+          if (!entry) {
+            return this.wholeBlock("reasoning", completionLine);
+          }
+          const events: StreamChunk[] = [];
+          events.push(...this.delta(entry.block, `\n${completionLine}`));
+          events.push(...this.endBlock(entry.block));
+          this.taskBlocks.delete(taskId);
+          return events;
+        }
+        if (event.subtype === "background_tasks_changed") {
+          return [];
         }
         // The CLI retries a failed API call by itself (up to max_retries, backing off). Without a
         // line here the turn looks like it is working while nothing happens: dsh only sees silence
@@ -372,6 +419,11 @@ export class Translator {
       case "result": {
         this.finished = true;
         const events: StreamChunk[] = [];
+        // Close any open task blocks that were never notified (process killed, turn cancelled).
+        for (const [, entry] of this.taskBlocks) {
+          events.push(...this.endBlock(entry.block));
+        }
+        this.taskBlocks.clear();
         if (this.denied > 0 && !event.is_error) {
           const n = this.denied;
           events.push(

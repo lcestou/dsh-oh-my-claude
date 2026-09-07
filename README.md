@@ -130,6 +130,8 @@ With `spawn: node` or `dsh`, a dsh restart kills every Claude Code child. Sessio
 
 **Compaction.** The CLI announces compaction with a `compacting` frame, goes silent while it summarises, then emits the boundary; both ends show in the reasoning lane, and a failed compaction is reported.
 
+**Task progress.** The CLI's subagent runner emits `task_started` when a task begins, `task_progress` frames as the task runs (carrying `last_tool_name`, `usage` token counts, `summary`), and `task_notification` when the task finishes or fails. The plugin keeps one reasoning block open per running task so dsh renders each as a single collapsible row with the start line, progress updates as they arrive (tool name and token counts), and the final status. Identical progress frames append nothing so a chatty task does not fill its row with repeats. A task without a `task_id` renders as a single closed line. `background_tasks_changed` is silent (it is list churn). Source: `src/translator.ts` and tested in `src/adapter.test.ts`.
+
 **Todo panel.** dsh clears its todo projection at every turn start; the adapter re-appends the last `todo/write` inside the open turn (`persistTodos`), so the panel keeps the list across messages and restarts.
 
 **Images.** Image attachments in the user turn are read from dsh's attachment store and sent inline as base64.

@@ -1440,11 +1440,12 @@ console.log("ok");
     assert.deepEqual(t.translate({ type: "system", ...frame }), [], frame.subtype);
 }
 {
-  // Task frames: a started task and a notification each render one reasoning line; progress and the
-  // background-changed list are silent. The two branches sit between hook_response and compact_boundary
-  // in the system-case of src/adapter.ts.
+  // Task frames: task_started with a task_id opens a block to hold progress updates; without one
+  // emits a closed line. task_progress appends when summary or last_tool_name changes. task_notification
+  // appends completion and closes. background_tasks_changed is silent. A result frame closes any open
+  // task blocks.
   const t = new Translator() as any;
-  const started = t.translate({
+  t.translate({
     type: "system",
     subtype: "task_started",
     task_id: "t1",
@@ -1452,31 +1453,121 @@ console.log("ok");
     subagent_type: "Explore",
     is_backgrounded: true,
   });
-  assert.equal(started.at(-1).block.type, "reasoning");
-  assert.equal(started.at(-1).block.text, "▶ Task (background): run tests [Explore]");
-  const startedPlain = t.translate({
+  // First progress with a tool name and usage.
+  const prog1 = t.translate({
+    type: "system",
+    subtype: "task_progress",
+    task_id: "t1",
+    last_tool_name: "Explore",
+    usage: { input_tokens: 100, output_tokens: 50 },
+  });
+  assert(prog1.length > 0, "progress with new tool name appends");
+  // Identical progress frame appends nothing.
+  const prog1Dup = t.translate({
+    type: "system",
+    subtype: "task_progress",
+    task_id: "t1",
+    last_tool_name: "Explore",
+    usage: { input_tokens: 100, output_tokens: 50 },
+  });
+  assert.deepEqual(prog1Dup, [], "identical progress frame appends nothing");
+  // Progress with a new summary appends.
+  const prog2 = t.translate({
+    type: "system",
+    subtype: "task_progress",
+    task_id: "t1",
+    summary: "testing framework",
+  });
+  assert(prog2.length > 0, "progress with new summary appends");
+  // Progress for unknown task_id emits nothing.
+  const unknownProg = t.translate({
+    type: "system",
+    subtype: "task_progress",
+    task_id: "t_unknown",
+    summary: "x",
+  });
+  assert.deepEqual(unknownProg, [], "progress for unknown task emits nothing");
+  // Start with no task_id emits closed one-line form.
+  const startNoId = t.translate({
+    type: "system",
+    subtype: "task_started",
+    description: "no id task",
+  });
+  assert.equal(startNoId.length, 3); // block-start, delta, block-end
+  assert.equal(startNoId[0].type, "block-start");
+  assert.equal(startNoId[2].type, "block-end");
+  // Two concurrent tasks keep distinct block indices.
+  const t2 = new Translator() as any;
+  const s1 = t2.translate({
+    type: "system",
+    subtype: "task_started",
+    task_id: "t1",
+    description: "task 1",
+  });
+  const idx1 = s1[0].index;
+  const s2 = t2.translate({
     type: "system",
     subtype: "task_started",
     task_id: "t2",
-    description: "lint",
+    description: "task 2",
   });
-  assert.equal(startedPlain.at(-1).block.text, "▶ Task: lint");
-  const notified = t.translate({
+  const idx2 = s2[0].index;
+  assert.notEqual(idx1, idx2, "concurrent tasks have distinct indices");
+  // Progress on t1 goes to idx1.
+  const p1 = t2.translate({
+    type: "system",
+    subtype: "task_progress",
+    task_id: "t1",
+    summary: "progress 1",
+  });
+  assert.equal(p1[0].index, idx1);
+  // Progress on t2 goes to idx2.
+  const p2 = t2.translate({
+    type: "system",
+    subtype: "task_progress",
+    task_id: "t2",
+    summary: "progress 2",
+  });
+  assert.equal(p2[0].index, idx2);
+  // Result closes all open task blocks exactly once.
+  const t3 = new Translator() as any;
+  const s = t3.translate({
+    type: "system",
+    subtype: "task_started",
+    task_id: "open",
+    description: "never notified",
+  });
+  const openIdx = s[0].index;
+  const result = t3.translate({ type: "result" });
+  const endCount = result.filter((e: any) => e.type === "block-end" && e.index === openIdx).length;
+  assert.equal(endCount, 1, "result closes each open task block exactly once");
+  assert.equal(t3.taskBlocks.size, 0, "taskBlocks cleared after result");
+  // Notification appends the completion line to the task's own block and closes it, so the row is
+  // one block from start to finish rather than a second, unrelated line.
+  const done = t.translate({
     type: "system",
     subtype: "task_notification",
     task_id: "t1",
     status: "completed",
     summary: "all green",
   });
-  assert.equal(notified.at(-1).block.type, "reasoning");
-  assert.equal(notified.at(-1).block.text, "■ Task completed: all green");
+  assert.equal(done.at(-1).type, "block-end", "notification closes the task block");
+  assert.match(done.at(-1).block.text, /■ Task completed: all green$/);
+  assert.equal(t.taskBlocks.has("t1"), false, "the closed task leaves the map");
+  // A notification for a task nothing opened still reports itself, as its own closed line.
+  const orphan = t.translate({
+    type: "system",
+    subtype: "task_notification",
+    task_id: "gone",
+    status: "failed",
+    summary: "boom",
+  });
+  assert.equal(orphan.at(-1).type, "block-end");
+  assert.equal(orphan.at(-1).block.text, "■ Task failed: boom");
+  // background_tasks_changed is silent.
+  const t4 = new Translator() as any;
   assert.deepEqual(
-    t.translate({ type: "system", subtype: "task_progress", task_id: "t1", summary: "x" }),
-    [],
-    "task_progress",
-  );
-  assert.deepEqual(
-    t.translate({ type: "system", subtype: "background_tasks_changed", tasks: [] }),
+    t4.translate({ type: "system", subtype: "background_tasks_changed", tasks: [] }),
     [],
     "background_tasks_changed",
   );

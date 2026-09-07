@@ -54,6 +54,15 @@ export type ClaudeEvent = {
     subagent_type?: string;
     is_backgrounded?: boolean;
     summary?: string;
+    last_tool_name?: string;
+    usage?: {
+        input_tokens?: number;
+        output_tokens?: number;
+        cache_read_input_tokens?: number;
+        cache_creation_input_tokens?: number;
+    };
+    workflow_progress?: unknown;
+    tasks?: unknown;
     attempt?: number;
     max_retries?: number;
     retry_delay_ms?: number;

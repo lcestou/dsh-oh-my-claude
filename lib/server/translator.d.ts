@@ -38,6 +38,12 @@ export declare class Translator {
     denied: number;
     toolPending: boolean;
     aborting: boolean;
+    /** task_id → { block, lastSummary, lastToolName } tracks open task blocks across progress frames. */
+    readonly taskBlocks: Map<string, {
+        block: TranslatorBlock;
+        lastSummary?: string;
+        lastToolName?: string;
+    }>;
     /** Injected: append tool/call to the dsh session for a native Claude Code tool. */
     onToolCall?: (callId: string, name: string, args: string) => number | undefined;
     /** Injected: append tool/result to the dsh session for a native Claude Code tool. */

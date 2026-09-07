@@ -80,6 +80,18 @@ export type ClaudeEvent =
       subagent_type?: string;
       is_backgrounded?: boolean;
       summary?: string;
+      // subtype "task_progress": progress update for a running task, carries usage, last_tool_name, summary and workflow_progress.
+      // subtype "task_notification": carries status.
+      last_tool_name?: string;
+      usage?: {
+        input_tokens?: number;
+        output_tokens?: number;
+        cache_read_input_tokens?: number;
+        cache_creation_input_tokens?: number;
+      };
+      workflow_progress?: unknown;
+      // subtype "background_tasks_changed": list of running background tasks.
+      tasks?: unknown;
       // subtype "api_retry": the CLI is retrying a failed API call (a 429 while a limit holds, a
       // 5xx, a dropped connection). `error.rate_limits` is set only for a quota 429.
       attempt?: number;
