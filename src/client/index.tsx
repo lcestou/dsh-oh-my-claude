@@ -1556,12 +1556,16 @@ function renderUsage(block: HTMLElement, reply: UsageReply) {
  */
 function watchContextMeter(ctx: ClientCtx) {
   const MARK = "data-dsh-oh-my-claude-usage";
+  // The mark goes on the node we inject, never on dsh's node: React owns these children and drops
+  // ours whenever it re-renders the panel, and a mark on the host would say "done" forever while
+  // the row it names is gone.
+  const missing = (host: HTMLElement) => host.querySelector(`:scope > [${MARK}]`) === null;
   const attach = (panel: HTMLElement) => {
-    if (panel.hasAttribute(MARK)) return;
+    if (!missing(panel)) return;
     // Only sessions on a Claude mount: a local-model session's meter stays dsh's own.
     if (!activeClaudeSession(ctx)) return;
-    panel.setAttribute(MARK, "1");
     const block = document.createElement("div");
+    block.setAttribute(MARK, "1");
     block.style.cssText = `border-bottom:1px solid ${T.border};margin-bottom:10px;padding-bottom:8px;font-size:13px;line-height:20px`;
     const title = document.createElement("div");
     title.style.cssText = `display:flex;align-items:center;gap:6px;color:${T.text};font-weight:600`;
@@ -1604,10 +1608,10 @@ function watchContextMeter(ctx: ClientCtx) {
   // dialog is matched through its parent rather than as the button's next sibling.
   // The hover bubble (`role=tooltip`, a sibling of the ring button) gets one compact line on top.
   const bubble = (tip: HTMLElement) => {
-    if (tip.hasAttribute(MARK)) return;
+    if (!missing(tip)) return;
     if (!activeClaudeSession(ctx)) return;
-    tip.setAttribute(MARK, "1");
     const line = document.createElement("div");
+    line.setAttribute(MARK, "1");
     // Above dsh's own sentence, like the panel rows, with a hairline between.
     line.style.cssText =
       "border-bottom:1px solid rgba(255,255,255,.25);margin-bottom:4px;padding-bottom:4px;display:flex;gap:6px;align-items:baseline";
@@ -1636,6 +1640,13 @@ function watchContextMeter(ctx: ClientCtx) {
       if (isRingRoot(el.parentElement)) attach(el);
     for (const el of root.querySelectorAll<HTMLElement>('[role="tooltip"]'))
       if (isRingRoot(el.parentElement)) bubble(el);
+    // A re-render adds nodes inside the dialog, not the dialog itself, so climb to it as well.
+    if (root instanceof Element) {
+      const dialog = root.closest<HTMLElement>('[role="dialog"]');
+      if (dialog && isRingRoot(dialog.parentElement)) attach(dialog);
+      const tip = root.closest<HTMLElement>('[role="tooltip"]');
+      if (tip && isRingRoot(tip.parentElement)) bubble(tip);
+    }
   };
   new MutationObserver((records) => {
     for (const r of records)
@@ -1894,8 +1905,11 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
     let rowLead = "";
     // The row appears with the first settled step and is one of dsh's own divs anywhere in the
     // document; look for it until found (one conversation is on screen at a time).
+    // `inline?.isConnected`, not `inline`: dsh re-renders this row on every step and React drops
+    // the span we appended. Holding the detached node as proof it is hooked left the cost gone for
+    // good — the row has to be hooked again each time it loses ours.
     const tryHook = () => {
-      if (inline || !anchorRef.current?.isConnected) return;
+      if (inline?.isConnected || !anchorRef.current?.isConnected) return;
       const statsRow = [...document.querySelectorAll<HTMLDivElement>("div")]
         .filter(
           (el) => el.children.length > 1 && /\d+ turns · \d+ steps/.test(el.textContent ?? ""),
@@ -1914,8 +1928,13 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
       // The row's first group ("52 turns · 77 steps" in any locale) identifies its bubble.
       rowLead = (statsRow.firstElementChild?.textContent ?? "").replace(/\s+/g, "");
       statsRow.append(inline);
+      // Watch the row we just hooked: React dropping our span is a childList change on it.
+      rowObserver.observe(statsRow, { childList: true });
       setHooked(true);
     };
+    // A second's blink is a second too many while the row is under the pointer: re-hook as soon
+    // as the row's children change, with the poll left as the fallback for a replaced row.
+    const rowObserver = new MutationObserver(() => tryHook());
     tryHook();
     const timer = setInterval(tryHook, 1000);
     // On a phone the row truncates and dsh shows its full line in a hover bubble built from its
@@ -1927,16 +1946,21 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
           if (!(node instanceof HTMLElement)) continue;
           const tip = node.matches('[role="tooltip"]')
             ? node
-            : node.querySelector<HTMLElement>('[role="tooltip"]');
-          if (!tip || tip.hasAttribute(MARK) || !rowLead) continue;
+            : (node.querySelector<HTMLElement>('[role="tooltip"]') ??
+              node.closest<HTMLElement>('[role="tooltip"]'));
+          // The mark rides the appended span, so a re-render that drops it asks for it again.
+          if (!tip || tip.querySelector(`:scope > [${MARK}]`) || !rowLead) continue;
           if (!(tip.textContent ?? "").replace(/\s+/g, "").startsWith(rowLead)) continue;
-          tip.setAttribute(MARK, "1");
-          tip.append(` | ${text}`);
+          const part = document.createElement("span");
+          part.setAttribute(MARK, "1");
+          part.textContent = ` | ${text}`;
+          tip.append(part);
         }
     });
     tipObserver.observe(document.body, { childList: true, subtree: true });
     return () => {
       clearInterval(timer);
+      rowObserver.disconnect();
       tipObserver.disconnect();
       inline?.remove();
       setHooked(false);
