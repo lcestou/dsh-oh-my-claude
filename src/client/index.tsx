@@ -1795,9 +1795,13 @@ function watchTurnStatus(ctx: ClientCtx) {
   ensureTurnStatusStyle(); // a hot reload drops the old module's style tag but keeps marked elements
   // Keep a body flag in step with the open session so the first-paint colour rule applies before
   // the observer runs (the flash of dsh's blue the owner saw on first load).
+  // Written only when it changes: this runs every second, and an attribute write invalidates the
+  // style of everything the rule can match whether or not the value moved.
   const markBody = () => {
-    if (activeClaudeSession(ctx)) document.body.setAttribute("data-omc-claude", "1");
-    else document.body.removeAttribute("data-omc-claude");
+    const want = activeClaudeSession(ctx) ? "1" : null;
+    if (document.body.getAttribute("data-omc-claude") === want) return;
+    if (want === null) document.body.removeAttribute("data-omc-claude");
+    else document.body.setAttribute("data-omc-claude", want);
   };
   markBody();
   setInterval(markBody, 1000);
@@ -1815,6 +1819,10 @@ function watchTurnStatus(ctx: ClientCtx) {
       attach(el);
   };
   new MutationObserver((records) => {
+    // Every message dsh appends lands here, so the cheapest check comes first: on a session that is
+    // not a Claude mount there is nothing to attach, and the querySelectorAll per added node would
+    // be work stacked on top of dsh's own render.
+    if (!activeClaudeSession(ctx)) return;
     for (const r of records)
       for (const n of r.addedNodes) if (n instanceof HTMLElement) scan(n.parentElement ?? n);
   }).observe(document.body, { childList: true, subtree: true });
