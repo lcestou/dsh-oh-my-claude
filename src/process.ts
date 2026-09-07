@@ -386,6 +386,7 @@ export interface McpServerStatus {
   name: string;
   status: string;
   version?: string;
+  error?: string;
 }
 export function decodeMcpStatus(v: JsonValue | undefined): McpServerStatus[] {
   const r = isRecord(v) ? v : {};
@@ -399,6 +400,12 @@ export function decodeMcpStatus(v: JsonValue | undefined): McpServerStatus[] {
       };
       const info = isRecord(m.serverInfo) ? m.serverInfo : {};
       if (typeof info.version === "string") entry.version = info.version;
+      // SAFETY: defensive typeof checks match I/O boundary style; keep error or message if present
+      if (typeof m.error === "string") {
+        entry.error = m.error;
+      } else if (typeof m.message === "string") {
+        entry.error = m.message;
+      }
       out.push(entry);
     }
   return out;

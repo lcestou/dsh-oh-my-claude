@@ -269,6 +269,7 @@ export interface McpServerStatus {
     name: string;
     status: string;
     version?: string;
+    error?: string;
 }
 export declare function decodeMcpStatus(v: JsonValue | undefined): McpServerStatus[];
 /** One entry of the CLI's own model picker, as `list_models` reports it. */

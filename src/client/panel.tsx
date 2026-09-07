@@ -569,6 +569,7 @@ interface McpServer {
   name: string;
   status: string;
   version?: string;
+  error?: string;
 }
 type McpReply = { ok: true; servers: McpServer[] } | { ok: false; error: string };
 
@@ -625,44 +626,53 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
         <span style={{ ...meta, padding: "2px 4px" }}>No MCP servers</span>
       ) : (
         servers.map((s) => (
-          <div
-            key={s.name}
-            style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 6px" }}
-          >
-            <span
-              aria-hidden="true"
-              style={{
-                width: 8,
-                height: 8,
-                borderRadius: 4,
-                flex: "none",
-                background:
-                  s.status === "connected" ? T.ok : s.status === "pending" ? T.warn : T.err,
-              }}
-            />
-            <span
-              style={{
-                flex: 1,
-                minWidth: 0,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-                fontSize: 13,
-              }}
-              title={s.name}
-            >
-              {s.name}
-              {s.version ? <span style={meta}> {s.version}</span> : null}
-            </span>
-            <span style={{ ...meta, flex: "none" }}>{s.status}</span>
-            <button
-              type="button"
-              style={btn}
-              disabled={busy !== null}
-              onClick={() => reconnect(s.name)}
-            >
-              {busy === s.name ? "…" : "Reconnect"}
-            </button>
+          <div key={s.name}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 6px" }}>
+              <span
+                aria-hidden="true"
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: 4,
+                  flex: "none",
+                  background:
+                    s.status === "connected" ? T.ok : s.status === "pending" ? T.warn : T.err,
+                }}
+              />
+              <span
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                  fontSize: 13,
+                }}
+                title={s.name}
+              >
+                {s.name}
+                {s.version ? <span style={meta}> {s.version}</span> : null}
+              </span>
+              <span style={{ ...meta, flex: "none" }}>{s.status}</span>
+              {s.status !== "needs-auth" && (
+                <button
+                  type="button"
+                  style={btn}
+                  disabled={busy !== null}
+                  onClick={() => reconnect(s.name)}
+                >
+                  {busy === s.name ? "…" : "Reconnect"}
+                </button>
+              )}
+            </div>
+            {s.status !== "connected" && (s.error || s.status === "needs-auth") ? (
+              // A server that is down explains itself here; `needs-auth` always says something,
+              // because its row carries no Reconnect and would otherwise be a dead end.
+              <div style={{ padding: "0 6px 4px 22px", color: T.muted, fontSize: 12 }}>
+                {s.error ??
+                  "Needs authentication. Run /mcp in a Claude Code terminal on this box to authenticate this server."}
+              </div>
+            ) : null}
           </div>
         ))
       )}

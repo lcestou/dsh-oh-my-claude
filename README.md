@@ -14,9 +14,9 @@ One `✻` button beside the composer opens a panel with Restore, Memory, Rewind,
 
 <p><img src="docs/media/panel-changes.png" width="640" alt="the Changes tab listing the working tree diff with per-file line counts"> <img src="docs/media/panel-mcp.png" width="640" alt="the MCP tab listing Claude's MCP servers with their status and a Reconnect button"></p>
 
-<p><img src="docs/media/cost-row.png" width="640" alt="dsh's footer stats row ending with the Claude session cost"></p>
+<p><img src="docs/media/cost-row.png" width="640" alt="dsh's footer stats row ending with the Claude session cost and cached token count"></p>
 
-Cost, the one figure dsh cannot compute, joins dsh's footer stats row and its phone bubble.
+Cost and cached token count, figures dsh cannot compute, join dsh's footer stats row and its phone bubble.
 
 <p><img src="docs/media/context-usage.png" width="300" alt="dsh's context ring popover with Claude plan windows and the CLI's own context breakdown"> <img src="docs/media/phone-panel.png" width="300" alt="the panel as a phone sheet above the composer"> <img src="docs/media/phone-cost-bubble.png" width="300" alt="the phone stats bubble ending with the session cost"></p>
 

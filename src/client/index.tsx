@@ -1694,8 +1694,9 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
 
   const mine = activeClaudeSession(ctx) === sessionId;
   const total = turns.reduce((s, r) => s + r.costUsd, 0);
+  const totalCacheRead = turns.reduce((s, r) => s + r.cacheRead, 0);
   const last = turns[turns.length - 1];
-  const text = mine && total > 0 && last ? costText(total, last.costUsd) : "";
+  const text = mine && total > 0 && last ? costText(total, last.costUsd, totalCacheRead) : "";
   const title =
     mine && total > 0 && last
       ? `Claude cost: ${fmtCost(total)} this session, ${fmtCost(last.costUsd)} last turn (${turns.length} turn${turns.length === 1 ? "" : "s"})`
@@ -1776,9 +1777,22 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   );
 }
 
-/** `✻ $18.21 · $0.42 last`: the session total and the newest turn. */
-const costText = (total: number, last: number) =>
-  `${CLAUDE_MARK} ${fmtCost(total)} · ${fmtCost(last)} last`;
+/** Cached tokens for the readout: `999`, `12.3K`, `2.1M`, and nothing at all for none. */
+export const formatCacheRead = (tokens: number): string => {
+  if (tokens <= 0) return "";
+  if (tokens < 1000) return String(Math.round(tokens));
+  const scaled = tokens < 1_000_000 ? tokens / 1000 : tokens / 1_000_000;
+  const unit = tokens < 1_000_000 ? "K" : "M";
+  return `${scaled.toFixed(1).replace(/\.0$/, "")}${unit}`;
+};
+
+/** `✻ $18.21 · $0.42 last`: the session total, newest turn, and cached tokens. */
+const costText = (total: number, last: number, cacheRead: number = 0) => {
+  let text = `${CLAUDE_MARK} ${fmtCost(total)} · ${fmtCost(last)} last`;
+  const cached = formatCacheRead(cacheRead);
+  if (cached) text += ` · ${cached} cached`;
+  return text;
+};
 
 interface IdleReply {
   deadline: number | null;

@@ -2816,7 +2816,12 @@ console.log("interrupt-on-abort ok");
                         serverInfo: { name: "dsh", version: "0.9.0" },
                         config: { type: "http" },
                       },
-                      { name: "plugin:x", status: "failed" },
+                      { name: "plugin:x", status: "failed", error: "Connection timeout" },
+                      {
+                        name: "plugin:y",
+                        status: "needs-auth",
+                        message: "Please log in to your account",
+                      },
                       { nope: 1 },
                     ],
                   }
@@ -2833,7 +2838,8 @@ console.log("interrupt-on-abort ok");
     ok: true,
     servers: [
       { name: "dsh", status: "connected", version: "0.9.0" },
-      { name: "plugin:x", status: "failed" },
+      { name: "plugin:x", status: "failed", error: "Connection timeout" },
+      { name: "plugin:y", status: "needs-auth", error: "Please log in to your account" },
     ],
   });
   assert.deepEqual(await adapter.mcpReconnect("ms", "dsh"), { ok: true });
