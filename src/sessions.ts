@@ -10,6 +10,7 @@ import { dirname, join } from "node:path";
 import { listTranscripts, readTranscript, toSessionEvents } from "./transcript.js";
 import type { TranscriptListItem } from "./transcript.js";
 import { deleteMemory, isMemoryName, listMemory } from "./memory.js";
+import { listInstructions } from "./instructions.js";
 import { asSessionId } from "./dsh.js";
 import { buildAddServer, isMcpName, scopeNeedsCwd } from "./mcp-add-remove.js";
 import type { JsonValue, PluginContext, SessionPersistence, WorkspaceRegistry } from "./dsh.js";
@@ -445,11 +446,11 @@ export async function readPickerSettings(path: string): Promise<PickerSettings |
 }
 
 /** Keep the previous copy as .bak, write to a temp file, rename over: never a half-written file. */
-async function writeSettings(
+async function writeWithBackup(
   path: string,
   text: string,
 ): Promise<{ path: string; backup: string; mtime: number }> {
-  // A project that has never had settings has no `.claude/` yet; the user file's dir always exists.
+  // A project that has never had settings has no `.claude/` yet; every other target dir exists.
   await mkdir(dirname(path), { recursive: true });
   const backup = `${path}.bak`;
   await copyFile(path, backup).catch((e: unknown) => {
@@ -763,6 +764,48 @@ export function registerSessionRoutes(
                 }
                 return json(res, 405, { error: "method not allowed" });
               }
+              // Instructions: the CLAUDE.md files the CLI loads for this workspace. The list is
+              // recomputed per request and is the allowlist: a path it does not name is refused,
+              // so the browser cannot read or write a file outside the hierarchy.
+              if (
+                url.pathname === `${ROUTE_PREFIX}/instructions` ||
+                url.pathname === `${ROUTE_PREFIX}/instructions/file`
+              ) {
+                const body = req.method === "GET" ? {} : await readBody(req);
+                const cwd = await knownCwd(
+                  url.searchParams.get("cwd") ?? body.cwd,
+                  sessionPersistence,
+                );
+                if (cwd === null)
+                  return json(res, 400, {
+                    error: "cwd must be a directory a dsh session is open in",
+                  });
+                const files = await listInstructions(cwd, configDir);
+                if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/instructions`)
+                  return json(res, 200, { files });
+
+                const path = req.method === "GET" ? url.searchParams.get("path") : body.path;
+                const file = files.find((f) => f.path === path);
+                if (file === undefined)
+                  return json(res, 400, { error: "not a loaded instructions file" });
+
+                if (req.method === "GET") {
+                  const text = await readFile(file.path, "utf8").catch(() => null);
+                  return text === null
+                    ? json(res, 404, { error: "not found" })
+                    : json(res, 200, { path: file.path, text });
+                }
+                if (req.method === "PUT") {
+                  if (file.kind === "Managed")
+                    return json(res, 403, { error: "the managed file is read-only" });
+                  if (typeof body.text !== "string")
+                    return json(res, 400, { error: "text required" });
+                  const written = await writeWithBackup(file.path, body.text);
+                  log("info", `instructions ${file.path} saved (${body.text.length} chars)`);
+                  return json(res, 200, written);
+                }
+                return json(res, 405, { error: "method not allowed" });
+              }
               if (settingsPath && url.pathname === `${ROUTE_PREFIX}/settings`) {
                 if (req.method === "GET") return json(res, 200, await readSettings(settingsPath));
                 if (req.method === "PUT") {
@@ -782,7 +825,7 @@ export function registerSessionRoutes(
                   const parsed = parseSettingsText(text);
                   if (parsed.error !== undefined) return json(res, 400, { error: parsed.error });
                   const settingsText = typeof text === "string" ? text : "";
-                  const written = await writeSettings(path, settingsText);
+                  const written = await writeWithBackup(path, settingsText);
                   log("info", `${scope} settings saved (${settingsText.length} chars)`);
                   return json(res, 200, written);
                 }
