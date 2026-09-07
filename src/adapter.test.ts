@@ -49,6 +49,7 @@ import {
   LIMIT_TEXT,
   clientTimeZone,
   killAfterGrace,
+  asideAnswerText,
 } from "./adapter.js";
 import { PERMISSION_MODES } from "./state.js";
 import {
@@ -2742,10 +2743,10 @@ console.log("plan-review ok");
   a.bridgeCommands(["compact"], undefined);
   assert.deepEqual(
     registered,
-    ["claude-compact", "temporary"],
-    "the prefixed catalog plus /temporary",
+    ["claude-compact", "temporary", "btw"],
+    "the prefixed catalog plus /temporary and /btw",
   );
-  assert.equal(a.bridged.size, 2, "compact and temporary");
+  assert.equal(a.bridged.size, 3, "compact, temporary and btw");
 }
 console.log("command-bridge ok");
 
@@ -3644,4 +3645,19 @@ console.log("interrupt-on-abort ok");
   assert.equal(tokensText(4640), "4.6k");
   assert.equal(tokensText(23_400), "23k", "no decimal above 10k");
   console.log("thinking-tokens ok");
+}
+
+// side_question answer decoding: both shapes the CLI returns, and the blank/absent cases.
+{
+  assert.equal(
+    asideAnswerText({ response: "  the answer  " }),
+    "the answer",
+    "wrapped shape, trimmed",
+  );
+  assert.equal(asideAnswerText("bare string"), "bare string", "bare string shape");
+  assert.equal(asideAnswerText({ response: "   " }), undefined, "blank answer is none");
+  assert.equal(asideAnswerText({ response: null }), undefined, "declined answer is none");
+  assert.equal(asideAnswerText(undefined), undefined, "no response is none");
+  assert.equal(asideAnswerText({ other: "x" }), undefined, "missing response field is none");
+  console.log("aside-answer-text ok");
 }

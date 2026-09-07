@@ -353,6 +353,20 @@ function titleInput(messages: GenerateOptions["messages"]): string {
 export type ControlReply =
   | { ok: true; error?: undefined; response?: JsonValue }
   | { ok: false; error: string; response?: undefined };
+/**
+ * One `/btw` side question and its answer. The CLI answers a `side_question` control request out of
+ * band, off the transcript, so the answer lands here and the client draws it in a floating bubble
+ * rather than in the stream. `pending` is true from the moment the question is asked until the
+ * control response (or an error) arrives.
+ */
+export interface AsideEntry {
+  id: string;
+  question: string;
+  answer?: string;
+  error?: string;
+  pending: boolean;
+  at: number;
+}
 /** One user prompt of a session's transcript, as the Rewind list shows it. */
 export interface RewindPrompt {
   id: string;
@@ -447,6 +461,41 @@ export const stableModelId = (id: string): string => {
 const MAX_IMAGES = 20;
 /** How many recent approval requests the Tune tab offers as rules. */
 const ASK_SUGGESTIONS = 10;
+/** How many `/btw` asides a session keeps; older ones drop off the ring. */
+const ASIDE_KEEP = 10;
+/** A side question is a full model turn, so it gets a longer wait than a control ping. */
+const ASIDE_TIMEOUT_MS = 120_000;
+/** Cap on how many sessions keep asides in memory; the oldest session drops when a new one arrives.
+ *  The adapter has no per-session teardown hook, so this bounds the map the way the ring bounds a session. */
+const ASIDE_MAX_SESSIONS = 200;
+
+/** The two shapes a `side_question` control response can carry its answer in. */
+const AsideWrapped = z.object({ response: z.string() });
+const AsideBare = z.string();
+/**
+ * Pull the answer text out of a `side_question` control response. The CLI answers with
+ * `{ response: string }` (or a bare string on some paths, or null when it declined), so both shapes
+ * are parsed at this I/O boundary and blank or absent answers report as none.
+ */
+export function asideAnswerText(response: JsonValue | undefined): string | undefined {
+  // Schemastery passes null and undefined through rather than throwing, so `?? ""` turns a declined
+  // answer (`{ response: null }`) or a missing field into the empty string, which reports as none.
+  let text: string;
+  try {
+    // SAFETY: schemastery validates at runtime and throws on a wrong concrete type; the cast only
+    //   widens the static input type so an arbitrary control-response value reaches the validator.
+    text = AsideWrapped(response as Parameters<typeof AsideWrapped>[0]).response ?? "";
+  } catch {
+    try {
+      // SAFETY: same as above, for the bare-string shape.
+      text = AsideBare(response as Parameters<typeof AsideBare>[0]) ?? "";
+    } catch {
+      return undefined;
+    }
+  }
+  const trimmed = text.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
 // ---------------------------------------------------------------------------
 // Model catalog
 
@@ -1356,6 +1405,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   controlWaiters: Map<string, (reply: ControlReply) => void>;
   /** The rules recent approval requests suggest, newest last, per session. */
   readonly permissionAsks = new Map<string, string[]>();
+  /** `/btw` side questions and their answers, newest last, per session; kept in memory only. */
+  readonly sideQuestions = new Map<string, AsideEntry[]>();
   cliModels: CliModel[] = [];
   claudeHome: string;
   providerId: string;
@@ -1714,6 +1765,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         `command bridge: ${failed.length} of ${names.length} not registered (first: ${failed[0]})`,
       );
     this.registerTemporaryCommand(commands);
+    this.registerAsideCommand(commands);
   }
 
   /** The effective mode for a session and the stored override, for the header chip. */
@@ -2013,6 +2065,73 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       this.bridged.set("temporary", dispose);
     } catch (error) {
       this.log("warn", `/temporary not registered: ${errorText(error)}`);
+    }
+  }
+
+  /**
+   * `/btw <question>` asks Claude a side question over the `side_question` control request, which is
+   * answered off the transcript. The pending entry lands in the ring at once so the client bubble
+   * can show the question with a spinner; the answer or error fills in when the control response
+   * arrives. Fire and forget: the command returns before Claude answers.
+   */
+  askSideQuestion(sessionId: string, question: string) {
+    const q = question.trim();
+    const entry: AsideEntry = {
+      id: `omc-${randomUUID()}`,
+      question: q,
+      pending: true,
+      at: Date.now(),
+    };
+    const ring = this.sideQuestions.get(sessionId) ?? [];
+    ring.push(entry);
+    if (!this.sideQuestions.has(sessionId) && this.sideQuestions.size >= ASIDE_MAX_SESSIONS) {
+      // Map keeps insertion order, so the first key is the oldest session; evict it.
+      const oldest = this.sideQuestions.keys().next().value;
+      if (oldest !== undefined) this.sideQuestions.delete(oldest);
+    }
+    this.sideQuestions.set(sessionId, ring.slice(-ASIDE_KEEP));
+    const proc = this.processes.get(registryKey(this.providerId, sessionId));
+    if (!proc?.alive) {
+      entry.pending = false;
+      entry.error = "no live Claude process for this session; send a prompt first";
+      return;
+    }
+    void this.control(
+      proc,
+      { subtype: "side_question", question: q, history: [] },
+      ASIDE_TIMEOUT_MS,
+    ).then((reply) => {
+      entry.pending = false;
+      if (!reply.ok) {
+        entry.error = reply.error;
+        return;
+      }
+      const text = asideAnswerText(reply.response);
+      if (text === undefined) entry.error = "Claude gave no answer to the side question";
+      else entry.answer = text;
+    });
+  }
+
+  registerAsideCommand(commands: NonNullable<PluginContext["commands"]>) {
+    if (this.bridged.has("btw")) return;
+    try {
+      const dispose = commands.register({
+        name: "btw",
+        description: "Oh My Claude: ask Claude a quick side question without interrupting the turn",
+        input: { hint: "<your question>" },
+        handler: ({ agent, rawInput }) => {
+          const question = rawInput.trim();
+          if (!question) return { kind: "error", text: "Usage: /btw <your question>" };
+          this.askSideQuestion(String(agent.id), question);
+          return {
+            kind: "success",
+            text: "Side question sent — the answer opens in the ✻ aside bubble.",
+          };
+        },
+      });
+      this.bridged.set("btw", dispose);
+    } catch (error) {
+      this.log("warn", `/btw not registered: ${errorText(error)}`);
     }
   }
 
@@ -3395,6 +3514,7 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       rewind: (sessionId: string, uuid: string, dryRun: boolean) =>
         adapter.rewind(sessionId, uuid, dryRun),
       permissionAsks: adapter.permissionAsks,
+      sideQuestions: adapter.sideQuestions,
       models: () => adapter.getAdvisorModels(),
       continueAfterLimit: adapter.config.continueAfterLimit,
     });

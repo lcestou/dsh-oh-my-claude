@@ -2193,6 +2193,172 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   );
 }
 
+/** One `/btw` side question as the client bubble draws it (mirrors the adapter's `AsideEntry`). */
+interface AsideItem {
+  id: string;
+  question: string;
+  answer?: string;
+  error?: string;
+  pending: boolean;
+  at: number;
+}
+
+/**
+ * The `/btw` aside bubble: a Claude-orange card docked above the composer, in the same slot and at
+ * the same width as dsh's todo and goal panels, that shows each side question and the answer the
+ * CLI returns off the transcript. Pending cards read as thinking; each is dismissed on its own. The
+ * server keeps only the last few per session, so the list stays short.
+ */
+function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
+  const [items, setItems] = useState<AsideItem[]>([]);
+  const [dismissed, setDismissed] = useState<Set<string>>(() => new Set());
+  const [copied, setCopied] = useState<string | null>(null);
+  const visibleRef = useRef(true);
+
+  useEffect(() => {
+    if (activeClaudeSession(ctx) !== sessionId) return;
+    let alive = true;
+    const fetchItems = async () => {
+      try {
+        const r = await fetch(`${ROUTE}/side-questions?session=${encodeURIComponent(sessionId)}`);
+        if (!r.ok) return;
+        // SAFETY: our own JSON route; the union names both shapes the caller checks.
+        const body = (await r.json()) as { items: AsideItem[] } | { error: string };
+        if ("error" in body) return;
+        if (alive) setItems(body.items ?? []);
+      } catch {
+        // network error: keep the last items on screen
+      }
+    };
+    fetchItems();
+    // ponytail: a 3s poll, since a server command cannot push to the client; swap for an event
+    // channel the day dsh gives a plugin one.
+    const interval = setInterval(() => {
+      if (visibleRef.current) fetchItems();
+    }, 3000);
+    const onVisibility = () => {
+      visibleRef.current = document.visibilityState === "visible";
+      if (visibleRef.current) fetchItems();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      alive = false;
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [ctx, sessionId]);
+
+  const shown = items.filter((it) => !dismissed.has(it.id));
+  if (activeClaudeSession(ctx) !== sessionId || shown.length === 0) return null;
+
+  const dismissAside = (id: string) => {
+    // Hide now, but tell the server to drop it so the next poll (or a remount) does not bring it back.
+    setDismissed((prev) => new Set(prev).add(id));
+    void fetch(`${ROUTE}/side-questions/dismiss`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ session: sessionId, id }),
+    }).catch(() => {});
+  };
+
+  const copy = (it: AsideItem) => {
+    const text = it.answer ?? it.error ?? it.question;
+    void navigator.clipboard?.writeText(text).then(() => {
+      setCopied(it.id);
+      setTimeout(() => setCopied((cur) => (cur === it.id ? null : cur)), 1200);
+    });
+  };
+
+  return (
+    <div
+      style={{
+        // Match dsh's todo/goal dock cards: composer width, centered, so the bubble latches on above
+        // the composer at the same width instead of spanning the full pane.
+        boxSizing: "border-box",
+        width: "100%",
+        maxWidth: "calc(var(--dsh-composer-card-max-width) - 4 * var(--dsh-composer-dock-inset))",
+        margin: "0 auto",
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+        marginTop: 10,
+      }}
+    >
+      {shown.map((it) => (
+        <div
+          key={it.id}
+          style={{
+            background: "rgba(217,119,87,.12)",
+            border: `1px solid ${CLAUDE_ORANGE}`,
+            borderRadius: 12,
+            padding: "10px 12px",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+            <span style={{ color: CLAUDE_ORANGE, fontSize: 13 }} aria-hidden="true">
+              {CLAUDE_MARK}
+            </span>
+            <span style={{ color: CLAUDE_ORANGE, fontWeight: 600, fontSize: 12 }}>
+              Side question
+            </span>
+            <span style={{ color: T.faint, fontSize: 11 }}>{ago(it.at)}</span>
+            <button
+              type="button"
+              onClick={() => copy(it)}
+              aria-label="Copy side question"
+              style={{
+                marginLeft: "auto",
+                background: "none",
+                border: "none",
+                color: copied === it.id ? CLAUDE_ORANGE : T.muted,
+                cursor: "pointer",
+                fontSize: 11,
+                lineHeight: 1,
+              }}
+            >
+              {copied === it.id ? "Copied" : "Copy"}
+            </button>
+            <button
+              type="button"
+              onClick={() => dismissAside(it.id)}
+              aria-label="Dismiss side question"
+              style={{
+                background: "none",
+                border: "none",
+                color: T.muted,
+                cursor: "pointer",
+                fontSize: 14,
+                lineHeight: 1,
+              }}
+            >
+              ✕
+            </button>
+          </div>
+          <div
+            style={{
+              color: T.text,
+              fontSize: 13,
+              fontWeight: 500,
+              marginBottom: it.pending || it.answer || it.error ? 6 : 0,
+            }}
+          >
+            {it.question}
+          </div>
+          {it.pending ? (
+            <div style={{ color: CLAUDE_ORANGE, fontSize: 12, fontStyle: "italic" }}>
+              Claude is thinking…
+            </div>
+          ) : it.error ? (
+            <div style={{ color: T.err, fontSize: 12 }}>{it.error}</div>
+          ) : (
+            <div style={{ color: T.text, fontSize: 13, whiteSpace: "pre-wrap" }}>{it.answer}</div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /** Cached tokens for the readout: `999`, `12.3K`, `2.1M`, and nothing at all for none. */
 export const formatCacheRead = (tokens: number): string => {
   if (tokens <= 0) return "";
@@ -2342,6 +2508,15 @@ export function apply(ctx: ClientCtx) {
     ctx.slots.register(
       { name: "conversation.composer.dock", id: "claude-cost", order: 10 },
       (props) => (props.sessionId ? <CostLine sessionId={props.sessionId} ctx={ctx} /> : null),
+    );
+    return null;
+  });
+
+  // `/btw` answers dock above the composer beside dsh's todo and goal panels, at their width.
+  ctx.slots.inject("conversation.input.dock", () => {
+    ctx.slots.register(
+      { name: "conversation.input.dock", id: "claude-aside", order: 45 },
+      (props) => (props.sessionId ? <AsideBubble sessionId={props.sessionId} ctx={ctx} /> : null),
     );
     return null;
   });

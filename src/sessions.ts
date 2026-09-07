@@ -40,6 +40,7 @@ import type {
   ContextUsageReply,
   WorkspaceDiffReply,
   McpStatusReply,
+  AsideEntry,
 } from "./adapter.js";
 
 const ROUTE_PREFIX = "/dsh-oh-my-claude";
@@ -656,6 +657,8 @@ export interface SessionRouteOptions {
   };
   /** The rules recent approval requests suggest, per session; the Tune tab offers them as chips. */
   permissionAsks?: Map<string, string[]>;
+  /** `/btw` side questions and their answers, per session; the client bubble reads them. */
+  sideQuestions?: Map<string, AsideEntry[]>;
   /** The model catalog for advisor model selection. */
   models?: () => Promise<Array<{ id: string; name: string }>>;
   /** Whether this plugin waits out a usage limit and continues the turn itself. */
@@ -703,6 +706,7 @@ export function registerSessionRoutes(
     workspaceDiff,
     mcp,
     permissionAsks,
+    sideQuestions,
     models,
     continueAfterLimit,
   }: SessionRouteOptions,
@@ -1084,6 +1088,30 @@ export function registerSessionRoutes(
                   total.count += 1;
                 }
                 return json(res, 200, { turns, total });
+              }
+              if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/side-questions`) {
+                const sid = url.searchParams.get("session");
+                if (!sid) return json(res, 400, { error: "session param required" });
+                const items: AsideEntry[] = sideQuestions?.get(sid) ?? [];
+                return json(res, 200, { items });
+              }
+              // Dismiss is server-side so a closed card stays closed: a client-only hide is lost on the
+              // next remount and the entry, still in the ring, would poll back into view.
+              if (
+                req.method === "POST" &&
+                url.pathname === `${ROUTE_PREFIX}/side-questions/dismiss`
+              ) {
+                const body = await readBody(req);
+                const sid = String(body.session ?? "");
+                const id = String(body.id ?? "");
+                if (!sid || !id) return json(res, 400, { error: "session and id required" });
+                const ring = sideQuestions?.get(sid);
+                if (ring) {
+                  const kept = ring.filter((e) => e.id !== id);
+                  if (kept.length > 0) sideQuestions?.set(sid, kept);
+                  else sideQuestions?.delete(sid);
+                }
+                return json(res, 200, { ok: true });
               }
               if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/context`) {
                 const sid = url.searchParams.get("session");

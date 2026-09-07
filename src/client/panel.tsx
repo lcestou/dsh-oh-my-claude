@@ -1786,14 +1786,16 @@ function McpAddForm({ sessionId, onAdded }: { sessionId: string; onAdded: () => 
           </option>
         ))}
       </select>
-      <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
         <input
           type="text"
           placeholder="server name"
           value={name}
           onChange={(e) => setName(e.currentTarget.value)}
           disabled={busy}
-          style={{ flex: 1, padding: 4, fontSize: 12 }}
+          // minWidth:0 lets the input shrink below its content so the two selects stay on the row
+          // instead of overflowing the panel's narrow column; flexWrap drops them under it when tight.
+          style={{ flex: 1, minWidth: 120, padding: 4, fontSize: 12 }}
         />
         <select
           value={scope}

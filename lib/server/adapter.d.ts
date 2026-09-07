@@ -154,6 +154,20 @@ export type ControlReply = {
     error: string;
     response?: undefined;
 };
+/**
+ * One `/btw` side question and its answer. The CLI answers a `side_question` control request out of
+ * band, off the transcript, so the answer lands here and the client draws it in a floating bubble
+ * rather than in the stream. `pending` is true from the moment the question is asked until the
+ * control response (or an error) arrives.
+ */
+export interface AsideEntry {
+    id: string;
+    question: string;
+    answer?: string;
+    error?: string;
+    pending: boolean;
+    at: number;
+}
 /** One user prompt of a session's transcript, as the Rewind list shows it. */
 export interface RewindPrompt {
     id: string;
@@ -239,6 +253,12 @@ export declare const KNOWN_MODELS: {
  * undated, and an id we do not know keeps whatever the API called it.
  */
 export declare const stableModelId: (id: string) => string;
+/**
+ * Pull the answer text out of a `side_question` control response. The CLI answers with
+ * `{ response: string }` (or a bare string on some paths, or null when it declined), so both shapes
+ * are parsed at this I/O boundary and blank or absent answers report as none.
+ */
+export declare function asideAnswerText(response: JsonValue | undefined): string | undefined;
 /** Parse a persisted catalog file. Anything malformed reads as empty, so the caller falls back. */
 export declare function parseCatalogCache(text: string): ReturnType<typeof M>[];
 /**
@@ -522,6 +542,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     controlWaiters: Map<string, (reply: ControlReply) => void>;
     /** The rules recent approval requests suggest, newest last, per session. */
     readonly permissionAsks: Map<string, string[]>;
+    /** `/btw` side questions and their answers, newest last, per session; kept in memory only. */
+    readonly sideQuestions: Map<string, AsideEntry[]>;
     cliModels: CliModel[];
     claudeHome: string;
     providerId: string;
@@ -642,6 +664,14 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * --no-session-persistence; a live one is replaced by the spec change.
      */
     registerTemporaryCommand(commands: NonNullable<PluginContext["commands"]>): void;
+    /**
+     * `/btw <question>` asks Claude a side question over the `side_question` control request, which is
+     * answered off the transcript. The pending entry lands in the ring at once so the client bubble
+     * can show the question with a spinner; the answer or error fills in when the control response
+     * arrives. Fire and forget: the command returns before Claude answers.
+     */
+    askSideQuestion(sessionId: string, question: string): void;
+    registerAsideCommand(commands: NonNullable<PluginContext["commands"]>): void;
     /** Two boots closer than this are a crash loop, not a restart. */
     static readonly BOOT_BACKOFF_MS = 60000;
     /**

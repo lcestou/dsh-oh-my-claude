@@ -1,6 +1,6 @@
 import type { IncomingMessage } from "node:http";
 import type { JsonValue, PluginContext } from "./dsh.js";
-import type { PermissionModeInfo, PermissionModeReply, RewindReply, ContextUsageReply, WorkspaceDiffReply, McpStatusReply } from "./adapter.js";
+import type { PermissionModeInfo, PermissionModeReply, RewindReply, ContextUsageReply, WorkspaceDiffReply, McpStatusReply, AsideEntry } from "./adapter.js";
 /** Any JSON object, as a request body or a stored file decodes to. */
 type JsonObject = Record<string, JsonValue>;
 /** Parse a JSON request body, capped at `limit` bytes. A non-object body reads as an empty object. */
@@ -178,6 +178,8 @@ export interface SessionRouteOptions {
     };
     /** The rules recent approval requests suggest, per session; the Tune tab offers them as chips. */
     permissionAsks?: Map<string, string[]>;
+    /** `/btw` side questions and their answers, per session; the client bubble reads them. */
+    sideQuestions?: Map<string, AsideEntry[]>;
     /** The model catalog for advisor model selection. */
     models?: () => Promise<Array<{
         id: string;
@@ -187,7 +189,7 @@ export interface SessionRouteOptions {
     continueAfterLimit?: boolean;
 }
 /** `projectDir(cwd)` → Claude Code project dir; `startedIds()` → ids the adapter started itself. */
-export declare function registerSessionRoutes(ctx: PluginContext, { log, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, command, turnRecords, idle, permissionModes, rewind, contextUsage, workspaceDiff, mcp, permissionAsks, models, continueAfterLimit, }: SessionRouteOptions): void;
+export declare function registerSessionRoutes(ctx: PluginContext, { log, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, command, turnRecords, idle, permissionModes, rewind, contextUsage, workspaceDiff, mcp, permissionAsks, sideQuestions, models, continueAfterLimit, }: SessionRouteOptions): void;
 export declare const SETTINGS_SCOPES: readonly ["managed", "local", "project", "user"];
 /** One of the four settings files. The CLI's own layer names, minus the `--settings` flag layer. */
 export type SettingsScope = (typeof SETTINGS_SCOPES)[number];
