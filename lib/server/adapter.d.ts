@@ -496,6 +496,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     accessModes: Map<string, string | undefined>;
     /** Callers waiting for the CLI's `control_response` to a request this plugin sent, by request id. */
     controlWaiters: Map<string, (reply: ControlReply) => void>;
+    /** The rules recent approval requests suggest, newest last, per session. */
+    readonly permissionAsks: Map<string, string[]>;
     cliModels: CliModel[];
     claudeHome: string;
     providerId: string;

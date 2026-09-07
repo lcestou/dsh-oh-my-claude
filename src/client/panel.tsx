@@ -1215,7 +1215,7 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
             {tab === "MCP" && (
               <McpBody sessionId={sessionId} ctx={ctx} onClose={() => setOpen(false)} />
             )}
-            {tab === "Tune" && <TuneBody />}
+            {tab === "Tune" && <TuneBody sessionId={sessionId} />}
           </div>
         </div>
       )}

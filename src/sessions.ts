@@ -616,6 +616,8 @@ export interface SessionRouteOptions {
     status: (sessionId: string) => Promise<McpStatusReply>;
     reconnect: (sessionId: string, name: string) => Promise<{ ok: boolean; error?: string }>;
   };
+  /** The rules recent approval requests suggest, per session; the Tune tab offers them as chips. */
+  permissionAsks?: Map<string, string[]>;
 }
 
 /** The transcript file of a dsh session: under its Claude id (sessions the adapter started) or
@@ -658,6 +660,7 @@ export function registerSessionRoutes(
     contextUsage,
     workspaceDiff,
     mcp,
+    permissionAsks,
   }: SessionRouteOptions,
 ): void {
   // Optional: stock dsh has it; without it archived sessions list but cannot be restored.
@@ -928,6 +931,12 @@ export function registerSessionRoutes(
                   return json(res, 200, await permissionModes.set(sid, mode));
                 }
                 return json(res, 405, { error: "method not allowed" });
+              }
+              if (url.pathname === `${ROUTE_PREFIX}/permission-asks`) {
+                if (req.method !== "GET") return json(res, 405, { error: "method not allowed" });
+                const session = url.searchParams.get("session");
+                if (!session) return json(res, 400, { error: "session required" });
+                return json(res, 200, { asks: permissionAsks?.get(session) ?? [] });
               }
               if (boxesPath && url.pathname === `${ROUTE_PREFIX}/boxes`) {
                 if (req.method === "GET")

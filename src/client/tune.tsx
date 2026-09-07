@@ -1,6 +1,12 @@
 import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 import { bodyFlow, meta, T, readJson, ROUTE, inputStyle, select, useNarrow } from "./shared.js";
+import {
+  PERMISSION_KINDS,
+  readPermissionRules,
+  setPermissionRule,
+  type PermissionKind,
+} from "../permissions.js";
 
 /** The settings.json keys this tab owns. Everything else in the file is left untouched. */
 interface Tunables {
@@ -94,7 +100,12 @@ const check = (on: boolean) => (on ? "pointer" : "not-allowed");
  * surface that already shows the answer. Each row is label, control, and where the value comes
  * from; a change lands in settings.json and takes effect the next time Claude spawns.
  */
-export function TuneBody(): React.ReactElement {
+/** Edit the file through one mtime-checked read, write and refresh. Answers an error, or nothing. */
+type Apply = (
+  mutate: (text: string) => { text: string; error?: undefined } | { error: string },
+) => Promise<string | undefined>;
+
+export function TuneBody({ sessionId }: { sessionId: string }): React.ReactElement {
   const narrow = useNarrow();
   const [file, setFile] = useState<SettingsFile | null>(null);
   const [error, setError] = useState("");
@@ -120,22 +131,19 @@ export function TuneBody(): React.ReactElement {
 
   const settings = readTunables(file.text);
 
-  const write = async (key: TuneKey, value: string | number | boolean | undefined) => {
+  // Every write re-reads first: another tab, the CLI or an editor may have written since this
+  // render, and a whole-file PUT would put their keys back the way this tab last saw them.
+  const apply: Apply = async (mutate) => {
     setBusy(true);
     setError("");
     try {
-      // Re-read first: another tab, the CLI or an editor may have written since this render.
       const fresh = await read();
       if (fresh.mtime !== file.mtime) {
         setFile(fresh);
-        setError("settings.json changed on disk; the tab now shows the new values, try again");
-        return;
+        return "settings.json changed on disk; the tab now shows the new values, try again";
       }
-      const next = updateSettings(fresh.text, key, value);
-      if (next.error !== undefined) {
-        setError(next.error);
-        return;
-      }
+      const next = mutate(fresh.text);
+      if (next.error !== undefined) return next.error;
       setFile(
         await readJson<SettingsFile>(
           await fetch(`${ROUTE}/settings`, {
@@ -145,11 +153,17 @@ export function TuneBody(): React.ReactElement {
           }),
         ),
       );
+      return undefined;
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      return e instanceof Error ? e.message : String(e);
     } finally {
       setBusy(false);
     }
+  };
+
+  const write = async (key: TuneKey, value: string | number | boolean | undefined) => {
+    const failure = await apply((text) => updateSettings(text, key, value));
+    if (failure) setError(failure);
   };
 
   const rowStyle: CSSProperties = {
@@ -320,6 +334,192 @@ export function TuneBody(): React.ReactElement {
         An hour keeps the cache warm across longer breaks, and hour-long cache writes are billed at
         a higher rate.
       </span>
+
+      <PermissionsBlock
+        file={file}
+        apply={apply}
+        sessionId={sessionId}
+        narrow={narrow}
+        busy={busy}
+      />
+    </div>
+  );
+}
+
+/**
+ * Permission rules at the bottom of the Tune tab: the three lists as they stand, a row per rule
+ * with a remove button, and an add form. The chips are the tool calls this session stopped to ask
+ * about, already written as the rule that would have answered them, so promoting an approval to a
+ * rule is a click and an edit rather than remembering the syntax.
+ */
+function PermissionsBlock({
+  file,
+  apply,
+  sessionId,
+  narrow,
+  busy,
+}: {
+  file: SettingsFile;
+  apply: Apply;
+  sessionId: string;
+  narrow: boolean;
+  busy: boolean;
+}) {
+  const [kind, setKind] = useState<PermissionKind>("allow");
+  const [draft, setDraft] = useState("");
+  const [error, setError] = useState("");
+  const [asks, setAsks] = useState<string[]>([]);
+  const rules = readPermissionRules(file.text);
+
+  useEffect(() => {
+    // Suggestions are a convenience: a session that has asked about nothing, or a server too old
+    // for the route, leaves the chips out rather than showing an error over the rules.
+    let live = true;
+    fetch(`${ROUTE}/permission-asks?session=${encodeURIComponent(sessionId)}`)
+      .then((r) => readJson<{ asks?: string[] }>(r))
+      .then((body) => {
+        if (live) setAsks(body.asks ?? []);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [sessionId]);
+
+  const change = async (action: "add" | "remove", ruleKind: PermissionKind, rule: string) => {
+    setError("");
+    const failure = await apply((text) => setPermissionRule(text, ruleKind, rule, action));
+    if (failure) setError(failure);
+    else if (action === "add") setDraft("");
+  };
+
+  const known = new Set([...rules.allow, ...rules.deny, ...rules.ask]);
+  const unused = asks.filter((rule) => !known.has(rule));
+
+  const heading: CSSProperties = { ...meta, marginBottom: 4, textTransform: "capitalize" };
+  const ruleRow: CSSProperties = {
+    display: "flex",
+    gap: 8,
+    alignItems: "center",
+    padding: "4px 4px",
+    fontSize: 13,
+    color: T.text,
+  };
+  const small: CSSProperties = {
+    padding: "2px 8px",
+    fontSize: 12,
+    background: "transparent",
+    color: T.text,
+    border: `1px solid ${T.border}`,
+    borderRadius: 3,
+    cursor: busy ? "not-allowed" : "pointer",
+    opacity: busy ? 0.6 : 1,
+  };
+
+  return (
+    <div style={{ borderTop: `1px solid ${T.border}`, marginTop: 16, paddingTop: 12 }}>
+      <div style={{ fontSize: 13, fontWeight: 600, color: T.text, marginBottom: 4 }}>
+        Permissions
+      </div>
+      <span style={{ ...meta, padding: "0 4px 8px", whiteSpace: "normal" }}>
+        Rules Claude Code answers a tool request with instead of asking. They apply wherever this
+        settings.json is read, in dsh or in a terminal.
+      </span>
+      {error ? (
+        <span style={{ color: T.err, fontSize: 12, padding: "0 4px", display: "block" }}>
+          {error}
+        </span>
+      ) : null}
+
+      {PERMISSION_KINDS.filter((k) => rules[k].length > 0).map((k) => (
+        <div key={k} style={{ marginBottom: 8 }}>
+          <div style={heading}>{k}</div>
+          {rules[k].map((rule) => (
+            <div key={rule} style={ruleRow}>
+              <span style={{ flex: 1, wordBreak: "break-all", fontFamily: T.mono }}>{rule}</span>
+              <button
+                type="button"
+                aria-label={`Remove ${rule}`}
+                onClick={() => void change("remove", k, rule)}
+                disabled={busy}
+                style={small}
+              >
+                Remove
+              </button>
+            </div>
+          ))}
+        </div>
+      ))}
+
+      {unused.length > 0 ? (
+        <div style={{ marginBottom: 8 }}>
+          <div style={heading}>Asked about this session</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {unused.map((rule) => (
+              <button
+                type="button"
+                key={rule}
+                onClick={() => {
+                  setDraft(rule);
+                  setError("");
+                }}
+                disabled={busy}
+                style={{ ...small, fontFamily: T.mono }}
+                title={rule}
+              >
+                {rule}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      <div
+        style={{
+          display: "flex",
+          gap: 8,
+          alignItems: "center",
+          marginTop: 8,
+          flexWrap: narrow ? "wrap" : "nowrap",
+        }}
+      >
+        <select
+          value={kind}
+          aria-label="Rule kind"
+          onChange={(e) => {
+            // SAFETY: the options are the three kinds, so the value is one of them.
+            setKind(e.target.value as PermissionKind);
+          }}
+          disabled={busy}
+          style={{ ...select, flex: "0 0 auto", minWidth: 90, textTransform: "capitalize" }}
+        >
+          {PERMISSION_KINDS.map((k) => (
+            <option key={k} value={k}>
+              {k}
+            </option>
+          ))}
+        </select>
+        <input
+          type="text"
+          value={draft}
+          aria-label="Rule"
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && draft.trim()) void change("add", kind, draft);
+          }}
+          placeholder="Bash(npm run:*)"
+          disabled={busy}
+          style={{ ...inputStyle, flex: 1, minWidth: narrow ? 0 : 200, fontFamily: T.mono }}
+        />
+        <button
+          type="button"
+          onClick={() => void change("add", kind, draft)}
+          disabled={busy || draft.trim() === ""}
+          style={{ ...small, padding: "6px 12px", opacity: busy || !draft.trim() ? 0.6 : 1 }}
+        >
+          Add
+        </button>
+      </div>
     </div>
   );
 }

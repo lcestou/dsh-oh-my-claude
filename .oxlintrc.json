@@ -47,6 +47,14 @@
     },
     {
       "files": [
+        "src/permissions.ts"
+      ],
+      "rules": {
+        "anti-slop/no-runtime-typeof": "off"
+      }
+    },
+    {
+      "files": [
         "src/process.ts",
         "src/keeper.ts",
         "src/transcript.ts",

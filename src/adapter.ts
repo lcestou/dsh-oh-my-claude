@@ -105,6 +105,7 @@ import {
   takeInterrupted,
   trace,
 } from "./state.js";
+import { suggestRule } from "./permissions.js";
 import { CHILD_ENV, errorText } from "./process.js";
 import type { RewindResult } from "./process.js";
 import { forkTranscriptText } from "./transcript.js";
@@ -415,6 +416,8 @@ export const KNOWN_MODELS = [
 
 // No default effort is advertised: `--effort` is only sent when dsh picks one, so the CLI's own default rules.
 const MAX_IMAGES = 20;
+/** How many recent approval requests the Tune tab offers as rules. */
+const ASK_SUGGESTIONS = 10;
 // ---------------------------------------------------------------------------
 // Model catalog
 
@@ -1237,6 +1240,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   accessModes: Map<string, string | undefined>;
   /** Callers waiting for the CLI's `control_response` to a request this plugin sent, by request id. */
   controlWaiters: Map<string, (reply: ControlReply) => void>;
+  /** The rules recent approval requests suggest, newest last, per session. */
+  readonly permissionAsks = new Map<string, string[]>();
   cliModels: CliModel[] = [];
   claudeHome: string;
   providerId: string;
@@ -3056,6 +3061,15 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     } catch (error) {
       return denyResult(toolUseId, `approval failed: ${errorText(error)}`);
     }
+    // What this request would have taken as a rule, for the Tune tab's chips. Kept in memory only:
+    // it is a prompt, not a record, and a restart is allowed to forget it.
+    const sessionId = agent.session?.id;
+    if (sessionId !== undefined) {
+      const rule = suggestRule(toolName, input);
+      const asks = this.permissionAsks.get(sessionId)?.filter((r) => r !== rule) ?? [];
+      asks.push(rule);
+      this.permissionAsks.set(sessionId, asks.slice(-ASK_SUGGESTIONS));
+    }
     if (outcome === "allowed-once") return allowResult(toolUseId, input);
     return denyResult(
       toolUseId,
@@ -3246,6 +3260,7 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       },
       rewind: (sessionId: string, uuid: string, dryRun: boolean) =>
         adapter.rewind(sessionId, uuid, dryRun),
+      permissionAsks: adapter.permissionAsks,
     });
   }
 }
