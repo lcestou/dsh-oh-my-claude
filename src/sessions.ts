@@ -893,7 +893,9 @@ export function registerSessionRoutes(
                   if (parsed?.error !== undefined) entry.parseError = parsed.error;
                   configFiles.push(entry);
                 }
-                return json(res, 200, { runtime, configFiles });
+                // `ok` is what the tab keys its render on; without it the reply reads as the
+                // failure shape and the tab draws an empty error line instead of the report.
+                return json(res, 200, { ok: true, runtime, configFiles });
               }
               // `claude doctor` runs a process and takes a second, so it is its own route and
               // nothing runs it until the button is pressed.

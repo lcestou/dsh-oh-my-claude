@@ -187,6 +187,13 @@ import {
   r = await respond("GET", `${mem}&name=a.md`);
   assert.equal(r.error, "not found");
 
+  // Diagnostics: the tab renders on `ok`, so a reply without it reads as the failure shape and
+  // draws an empty error line. Assert the flag is there, not only that the fields are.
+  r = await respond("GET", `/dsh-oh-my-claude/diagnostics?cwd=${encodeURIComponent(cwd)}`);
+  assert.equal(r.ok, true, "diagnostics reply must carry ok");
+  assert.ok(r.runtime, "diagnostics reply carries a runtime block");
+  assert.ok(Array.isArray(r.configFiles), "diagnostics reply carries the config file list");
+
   // Rewind prompt list: user prompts of the session's transcript, newest first, by uuid.
   const rw = `/dsh-oh-my-claude/rewind?session=sid1&cwd=${encodeURIComponent(cwd)}`;
   r = await respond("GET", rw);

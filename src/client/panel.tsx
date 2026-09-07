@@ -1002,7 +1002,12 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
   };
 
   useEffect(() => {
-    if (!cwd) return;
+    // A session dsh reports no directory for has nothing to read settings from; say that rather
+    // than leaving the tab on "Loading…" for a fetch that will never be made.
+    if (!cwd) {
+      setData({ ok: false, error: "This session has no working directory to inspect." });
+      return;
+    }
     let live = true;
     fetch(`${ROUTE}/diagnostics?cwd=${encodeURIComponent(cwd)}`)
       .then((r) => readJson<DiagnosticsReply | DiagnosticsError>(r))
@@ -1038,7 +1043,10 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
       {data === null ? (
         <span style={{ ...meta, padding: "2px 4px" }}>Loading…</span>
       ) : !data.ok ? (
-        <span style={{ color: T.err, fontSize: 12 }}>{data.error}</span>
+        // A reply of the wrong shape carries no message; an empty red line says nothing at all.
+        <span style={{ color: T.err, fontSize: 12 }}>
+          {data.error || "Diagnostics could not be read."}
+        </span>
       ) : (
         <>
           {/* Runtime */}
