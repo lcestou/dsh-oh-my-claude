@@ -30,6 +30,8 @@ export type ClaudeEvent = {
     subtype?: string;
     /** subtype "init": the CLI's slash-command catalog (skills, custom commands, built-ins). */
     slash_commands?: JsonValue;
+    /** subtype "init": every tool name the session has; MCP ones read `mcp__<server>__<tool>`. */
+    tools?: JsonValue;
     compact_metadata?: Record<string, unknown>;
     status?: string | null;
     compact_result?: string;
@@ -270,6 +272,9 @@ export interface McpServerStatus {
     status: string;
     version?: string;
     error?: string;
+    /** Bare tool names this server contributes. Filled from the init frame by the adapter, not by
+     *  `mcp_status`, which does not report tools; absent when no init frame has been seen. */
+    tools?: string[];
 }
 export declare function decodeMcpStatus(v: JsonValue | undefined): McpServerStatus[];
 /** One entry of the CLI's own model picker, as `list_models` reports it. */

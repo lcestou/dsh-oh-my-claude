@@ -6,6 +6,7 @@ import {
   Translator,
   commandNames,
   renameTitle,
+  mcpToolsByServer,
   ClaudeCodeAdapter,
   accessModeOf,
   buildArgs,
@@ -3051,4 +3052,37 @@ console.log("interrupt-on-abort ok");
   assert.equal(renameTitle("rename", "   "), undefined, "whitespace only is not a title");
   assert.equal(renameTitle("compact", " Ada"), undefined, "only rename sets dsh's title");
   console.log("renameTitle ok");
+}
+
+// mcpToolsByServer: the init frame's tool ids are split back onto the servers that contribute
+// them, matching a normalized form so a name the CLI could not put in an id still lands.
+{
+  const byServer = mcpToolsByServer(
+    ["dsh", "my server.v2", "svc:api", "gh", "gh_api", "İstanbul"],
+    [
+      "Bash",
+      "mcp__dsh__job_output",
+      "mcp__dsh__bash",
+      "mcp__my_server_v2__search",
+      "mcp__svc_api__list",
+      "mcp__gh__issue",
+      "mcp__gh_api__request",
+      "mcp__nobody__ghost",
+      "mcp___stanbul__weather",
+    ],
+  );
+  assert.deepEqual(byServer.get("dsh"), ["bash", "job_output"], "sorted, prefix stripped");
+  assert.deepEqual(byServer.get("my server.v2"), ["search"], "space and dot normalized");
+  assert.deepEqual(byServer.get("svc:api"), ["list"], "colon normalized");
+  assert.deepEqual(byServer.get("gh"), ["issue"], "shorter name keeps only its own tool");
+  assert.deepEqual(byServer.get("gh_api"), ["request"], "longest matching name wins");
+  assert.equal(byServer.has("nobody"), false, "an unknown server is dropped, not invented");
+  assert.deepEqual(
+    byServer.get("İstanbul"),
+    ["weather"],
+    "a name whose case fold changes length keeps the bare tool intact",
+  );
+  assert.deepEqual([...mcpToolsByServer([], []).keys()], [], "no servers, no entries");
+  assert.deepEqual(mcpToolsByServer(["dsh"], []).get("dsh"), [], "a server with no tools is empty");
+  console.log("mcp-tools-by-server ok");
 }

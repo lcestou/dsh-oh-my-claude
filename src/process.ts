@@ -52,6 +52,8 @@ export type ClaudeEvent =
       subtype?: string;
       /** subtype "init": the CLI's slash-command catalog (skills, custom commands, built-ins). */
       slash_commands?: JsonValue;
+      /** subtype "init": every tool name the session has; MCP ones read `mcp__<server>__<tool>`. */
+      tools?: JsonValue;
       compact_metadata?: Record<string, unknown>;
       // subtype "status": `status:"compacting"` opens the silent summarize stretch; a later frame
       // with `status:null` carries `compact_result` ("success"|"failed") and, on failure, `compact_error`.
@@ -387,6 +389,9 @@ export interface McpServerStatus {
   status: string;
   version?: string;
   error?: string;
+  /** Bare tool names this server contributes. Filled from the init frame by the adapter, not by
+   *  `mcp_status`, which does not report tools; absent when no init frame has been seen. */
+  tools?: string[];
 }
 export function decodeMcpStatus(v: JsonValue | undefined): McpServerStatus[] {
   const r = isRecord(v) ? v : {};

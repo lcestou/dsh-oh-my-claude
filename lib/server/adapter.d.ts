@@ -356,6 +356,12 @@ export declare function buildInput(prompt: string, images: Array<{
 /** Names from the CLI's init frame that dsh's command grammar accepts (lowercase, `[a-z0-9_-]`), deduped. */
 export declare function commandNames(value: JsonValue | undefined): string[];
 /**
+ * Bare tool names per MCP server, from the init frame's `mcp__<server>__<tool>` ids. Every known
+ * server gets an entry, empty when it contributes nothing; an id whose server is not in the list
+ * is dropped rather than guessed at.
+ */
+export declare function mcpToolsByServer(serverNames: readonly string[], toolIds: readonly string[]): Map<string, string[]>;
+/**
  * The dsh title a bridged command should set: the trimmed argument when this is Claude's rename
  * with one. An empty argument returns undefined so the line reaches Claude unchanged and the CLI
  * answers with its own usage message.
@@ -526,6 +532,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     }): Promise<TurnPrep>;
     /** Claude slash commands already registered as dsh commands, name → disposer. */
     readonly bridged: Map<string, () => void>;
+    /** dsh session id → the tool names its last init frame reported; absent until one arrives. */
+    readonly sessionTools: Map<string, string[]>;
     /**
      * Register Claude Code's slash commands (from the CLI's init frame) as dsh `/commands`. The
      * handler hands the line to Claude as the next prompt, where the CLI expands the skill or

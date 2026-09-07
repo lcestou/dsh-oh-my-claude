@@ -123,8 +123,8 @@ export class Translator {
   onResult?: (summary: TurnRecord) => void;
   /** Injected: mask secret values in tool results before they are shown or appended. */
   redact?: (s: string) => string;
-  /** Injected: the CLI's slash-command catalog from its init frame. */
-  onInit?: (commands: string[]) => void;
+  /** Injected: the CLI's slash-command catalog and tool names from its init frame. */
+  onInit?: (commands: string[], tools: string[]) => void;
   /** callId → original input JSON string, kept so Edit can build meta.diffs from it. */
   readonly callInputs = new Map<string, string>();
   /** callId → the seq onToolCall returned, so a re-fired block never appends `tool/call` twice. */
@@ -173,7 +173,7 @@ export class Translator {
     onToolResult?: (callId: string, text: string, isError: boolean, meta?: object) => void;
     onResult?: (summary: TurnRecord) => void;
     redact?: (s: string) => string;
-    onInit?: (commands: string[]) => void;
+    onInit?: (commands: string[], tools: string[]) => void;
   } = {}) {
     this.log = log ?? (() => {});
     this.unknownSeen = new Set(); // (where:type) already warned, so schema drift warns once, not per event
@@ -269,7 +269,10 @@ export class Translator {
       case "system": {
         if (event.subtype === "init") {
           const names = commandNames(event.slash_commands);
-          if (names.length > 0) this.onInit?.(names);
+          const tools: string[] = [];
+          if (Array.isArray(event.tools))
+            for (const t of event.tools) if (String(t) === t) tools.push(t);
+          if (names.length > 0 || tools.length > 0) this.onInit?.(names, tools);
           return [];
         }
         // Compaction opens with a `status:"compacting"` frame, then a long silent stretch while the

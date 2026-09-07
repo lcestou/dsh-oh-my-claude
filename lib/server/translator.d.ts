@@ -46,8 +46,8 @@ export declare class Translator {
     onResult?: (summary: TurnRecord) => void;
     /** Injected: mask secret values in tool results before they are shown or appended. */
     redact?: (s: string) => string;
-    /** Injected: the CLI's slash-command catalog from its init frame. */
-    onInit?: (commands: string[]) => void;
+    /** Injected: the CLI's slash-command catalog and tool names from its init frame. */
+    onInit?: (commands: string[], tools: string[]) => void;
     /** callId → original input JSON string, kept so Edit can build meta.diffs from it. */
     readonly callInputs: Map<string, string>;
     /** callId → the seq onToolCall returned, so a re-fired block never appends `tool/call` twice. */
@@ -71,7 +71,7 @@ export declare class Translator {
         onToolResult?: (callId: string, text: string, isError: boolean, meta?: object) => void;
         onResult?: (summary: TurnRecord) => void;
         redact?: (s: string) => string;
-        onInit?: (commands: string[]) => void;
+        onInit?: (commands: string[], tools: string[]) => void;
     });
     deltaType(block: TranslatorBlock): "text-delta" | "reasoning-delta";
     /** Warn once when a CLI event/block type is neither handled nor knowingly ignored, so a Claude

@@ -571,12 +571,15 @@ interface McpServer {
   status: string;
   version?: string;
   error?: string;
+  /** Bare tool names the server contributes; absent when the session has seen no init frame. */
+  tools?: string[];
 }
 type McpReply = { ok: true; servers: McpServer[] } | { ok: false; error: string };
 
 /**
  * "MCP" body rendered inside the Oh My Claude dialog: the servers Claude's process
- * has, with their connection status, and a Reconnect per row (`mcp_reconnect`).
+ * has, with their connection status, the tools each one contributes, and a Reconnect
+ * per row (`mcp_reconnect`).
  */
 function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClose: () => void }) {
   const isClaude = activeClaudeSession(ctx) === sessionId;
@@ -672,6 +675,11 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
               <div style={{ padding: "0 6px 4px 22px", color: T.muted, fontSize: 12 }}>
                 {s.error ??
                   "Needs authentication. Run /mcp in a Claude Code terminal on this box to authenticate this server."}
+              </div>
+            ) : null}
+            {s.tools && s.tools.length > 0 ? (
+              <div style={{ padding: "0 6px 4px 22px", color: T.muted, fontSize: 12 }}>
+                {s.tools.join(" · ")}
               </div>
             ) : null}
           </div>

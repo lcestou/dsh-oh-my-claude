@@ -919,6 +919,53 @@ export function commandNames(value: JsonValue | undefined): string[] {
   for (const v of value) if (String(v) === v && /^[a-z0-9][a-z0-9_-]*$/.test(v)) out.add(v);
   return [...out];
 }
+/**
+ * The CLI flattens a server name into a tool id, so the id never carries a space, a dot or a
+ * colon: compare a normalized form of both sides rather than the literal name.
+ */
+/** Replacing before lowercasing keeps this one code unit in, one code unit out: everything a
+ *  case fold could change the length of has already become an underscore. */
+function serverKey(text: string): string {
+  return text.replace(/[^A-Za-z0-9-]/g, "_").toLowerCase();
+}
+
+/**
+ * Bare tool names per MCP server, from the init frame's `mcp__<server>__<tool>` ids. Every known
+ * server gets an entry, empty when it contributes nothing; an id whose server is not in the list
+ * is dropped rather than guessed at.
+ */
+export function mcpToolsByServer(
+  serverNames: readonly string[],
+  toolIds: readonly string[],
+): Map<string, string[]> {
+  const keys = new Map<string, string>();
+  const out = new Map<string, string[]>();
+  for (const server of serverNames) {
+    keys.set(serverKey(server), server);
+    out.set(server, []);
+  }
+  for (const id of toolIds) {
+    if (!id.startsWith(MCP_TOOL_PREFIX)) continue;
+    const rest = id.slice(MCP_TOOL_PREFIX.length);
+    // Normalizing is character-for-character, so an offset into the normalized form is also an
+    // offset into `rest` and the bare name keeps its original case. Longest key wins: one server
+    // name can be a prefix of another, and the tool name itself may contain the separator.
+    const normalized = serverKey(rest);
+    let owner = "";
+    let ownerKey = "";
+    for (const [key, server] of keys)
+      if (normalized.startsWith(`${key}__`) && key.length > ownerKey.length) {
+        owner = server;
+        ownerKey = key;
+      }
+    if (ownerKey === "") continue;
+    out.get(owner)?.push(rest.slice(ownerKey.length + 2));
+  }
+  for (const bare of out.values()) bare.sort();
+  return out;
+}
+/** Every MCP-contributed tool id the CLI reports starts with this. */
+const MCP_TOOL_PREFIX = "mcp__";
 /** Bridged Claude commands are registered as `/claude-<name>` in dsh. */
 const BRIDGE_PREFIX = "claude-";
 /** Claude's rename command, and the alias its catalog also offers. */
@@ -1475,6 +1522,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
 
   /** Claude slash commands already registered as dsh commands, name → disposer. */
   readonly bridged = new Map<string, () => void>();
+  /** dsh session id → the tool names its last init frame reported; absent until one arrives. */
+  readonly sessionTools = new Map<string, string[]>();
 
   /**
    * Register Claude Code's slash commands (from the CLI's init frame) as dsh `/commands`. The
@@ -1760,7 +1809,19 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     if (!proc?.alive) return { ok: false, error: "no live Claude process for this session" };
     const reply = await this.control(proc, { subtype: "mcp_status" }, 10_000);
     if (!reply.ok) return { ok: false, error: reply.error };
-    return { ok: true, servers: decodeMcpStatus(reply.response) };
+    const servers = decodeMcpStatus(reply.response);
+    // `mcp_status` does not report tools; the init frame does. Without one the field stays absent,
+    // which the panel reads as "unknown" rather than as "this server contributes nothing".
+    const tools = this.sessionTools.get(sessionId);
+    if (tools === undefined) return { ok: true, servers };
+    const byServer = mcpToolsByServer(
+      servers.map((s) => s.name),
+      tools,
+    );
+    return {
+      ok: true,
+      servers: servers.map((s) => ({ ...s, tools: byServer.get(s.name) ?? [] })),
+    };
   }
 
   /** Ask a session's live process to reconnect one MCP server (`mcp_reconnect`). */
@@ -2372,7 +2433,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
             }
           : undefined,
       redact: this.redact,
-      onInit: (names) => this.bridgeCommands(names, this.ctx?.agents?.get?.(options.sessionId)),
+      onInit: (names, tools) => {
+        if (options.sessionId) this.sessionTools.set(options.sessionId, tools);
+        if (names.length > 0)
+          this.bridgeCommands(names, this.ctx?.agents?.get?.(options.sessionId));
+      },
       onResult: (summary: TurnRecord) => {
         // ponytail: ring buffer capped at 50 entries per session; now also persisted to disk so it
         // survives a dsh restart — upgrade only if per-turn granularity beyond 50 is needed.
