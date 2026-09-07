@@ -1881,7 +1881,16 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
     };
   }, [ctx, sessionId]);
 
-  const mine = activeClaudeSession(ctx) === sessionId;
+  // dsh's current session blinks: a child session takes the slot for a moment, and a model
+  // directory mid-rebind answers no provider at all. A blank answer used to read as "not mine" and
+  // took the cost off the row under the pointer, so only another session's id gives it up.
+  const mineRef = useRef(false);
+  if (activeClaudeSession(ctx) === sessionId) mineRef.current = true;
+  else {
+    const current = ctx.sessions.list.getSnapshot()?.current;
+    if (current && current !== sessionId) mineRef.current = false;
+  }
+  const mine = mineRef.current;
   const total = turns.reduce((s, r) => s + r.costUsd, 0);
   const totalCacheRead = turns.reduce((s, r) => s + r.cacheRead, 0);
   const last = turns[turns.length - 1];
