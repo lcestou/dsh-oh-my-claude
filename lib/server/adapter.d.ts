@@ -544,6 +544,9 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     readonly permissionAsks: Map<string, string[]>;
     /** `/btw` side questions and their answers, newest last, per session; kept in memory only. */
     readonly sideQuestions: Map<string, AsideEntry[]>;
+    /** The live thinking budget this plugin last set per session (null = session default, 0 = off);
+     *  memory only, since a respawn resets it and the CLI has no flag to carry it. */
+    readonly thinkingBudgets: Map<string, number | null>;
     cliModels: CliModel[];
     claudeHome: string;
     providerId: string;
@@ -671,6 +674,23 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * arrives. Fire and forget: the command returns before Claude answers.
      */
     askSideQuestion(sessionId: string, question: string): void;
+    /** What the /tune thinking selector shows: the budget this plugin last set for the session, or
+     *  `undefined` when it has set none and the session runs on its own default. */
+    thinkingInfo(sessionId: string): {
+        tokens: number | null | undefined;
+    };
+    /**
+     * Set a session's live thinking budget with a `set_max_thinking_tokens` control request: null keeps
+     * the session default, 0 turns extended thinking off, any positive integer caps it. The CLI reads
+     * stdin during a turn; between turns the line is queued and answered when the next turn opens. The
+     * value is stored only after the process accepts it, since a dead process cannot apply it.
+     */
+    setThinkingBudget(sessionId: string, tokens: number | null): Promise<{
+        ok: boolean;
+        tokens: number | null;
+        live: boolean;
+        error?: string;
+    }>;
     registerAsideCommand(commands: NonNullable<PluginContext["commands"]>): void;
     /** Two boots closer than this are a crash loop, not a restart. */
     static readonly BOOT_BACKOFF_MS = 60000;

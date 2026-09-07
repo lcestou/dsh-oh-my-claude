@@ -1407,6 +1407,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   readonly permissionAsks = new Map<string, string[]>();
   /** `/btw` side questions and their answers, newest last, per session; kept in memory only. */
   readonly sideQuestions = new Map<string, AsideEntry[]>();
+  /** The live thinking budget this plugin last set per session (null = session default, 0 = off);
+   *  memory only, since a respawn resets it and the CLI has no flag to carry it. */
+  readonly thinkingBudgets = new Map<string, number | null>();
   cliModels: CliModel[] = [];
   claudeHome: string;
   providerId: string;
@@ -2110,6 +2113,43 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       if (text === undefined) entry.error = "Claude gave no answer to the side question";
       else entry.answer = text;
     });
+  }
+
+  /** What the /tune thinking selector shows: the budget this plugin last set for the session, or
+   *  `undefined` when it has set none and the session runs on its own default. */
+  thinkingInfo(sessionId: string) {
+    return {
+      tokens: this.thinkingBudgets.has(sessionId) ? this.thinkingBudgets.get(sessionId) : undefined,
+    };
+  }
+
+  /**
+   * Set a session's live thinking budget with a `set_max_thinking_tokens` control request: null keeps
+   * the session default, 0 turns extended thinking off, any positive integer caps it. The CLI reads
+   * stdin during a turn; between turns the line is queued and answered when the next turn opens. The
+   * value is stored only after the process accepts it, since a dead process cannot apply it.
+   */
+  async setThinkingBudget(
+    sessionId: string,
+    tokens: number | null,
+  ): Promise<{ ok: boolean; tokens: number | null; live: boolean; error?: string }> {
+    const proc = this.processes.get(registryKey(this.providerId, sessionId));
+    if (!proc?.alive)
+      return {
+        ok: false,
+        tokens,
+        live: false,
+        error: "no live Claude process for this session; send a prompt first",
+      };
+    // 5 s: the CLI answers at once when it reads stdin; a longer wait would only stall the selector.
+    const reply = await this.control(
+      proc,
+      { subtype: "set_max_thinking_tokens", max_thinking_tokens: tokens },
+      5000,
+    );
+    if (!reply.ok) return { ok: false, tokens, live: true, error: reply.error };
+    this.thinkingBudgets.set(sessionId, tokens);
+    return { ok: true, tokens, live: true };
   }
 
   registerAsideCommand(commands: NonNullable<PluginContext["commands"]>) {
@@ -3515,6 +3555,11 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
         adapter.rewind(sessionId, uuid, dryRun),
       permissionAsks: adapter.permissionAsks,
       sideQuestions: adapter.sideQuestions,
+      thinking: {
+        info: (sessionId: string) => adapter.thinkingInfo(sessionId),
+        set: (sessionId: string, tokens: number | null) =>
+          adapter.setThinkingBudget(sessionId, tokens),
+      },
       models: () => adapter.getAdvisorModels(),
       continueAfterLimit: adapter.config.continueAfterLimit,
     });

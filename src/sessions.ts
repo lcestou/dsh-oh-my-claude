@@ -659,6 +659,14 @@ export interface SessionRouteOptions {
   permissionAsks?: Map<string, string[]>;
   /** `/btw` side questions and their answers, per session; the client bubble reads them. */
   sideQuestions?: Map<string, AsideEntry[]>;
+  /** The live thinking budget the Tune selector reads and sets per session. */
+  thinking?: {
+    info: (sessionId: string) => { tokens: number | null | undefined };
+    set: (
+      sessionId: string,
+      tokens: number | null,
+    ) => Promise<{ ok: boolean; tokens: number | null; live: boolean; error?: string }>;
+  };
   /** The model catalog for advisor model selection. */
   models?: () => Promise<Array<{ id: string; name: string }>>;
   /** Whether this plugin waits out a usage limit and continues the turn itself. */
@@ -701,6 +709,7 @@ export function registerSessionRoutes(
     turnRecords,
     idle,
     permissionModes,
+    thinking,
     rewind,
     contextUsage,
     workspaceDiff,
@@ -1249,6 +1258,27 @@ export function registerSessionRoutes(
                       error: `mode must be one of ${PERMISSION_MODES.join(", ")} or null`,
                     });
                   return json(res, 200, await permissionModes.set(sid, mode));
+                }
+                return json(res, 405, { error: "method not allowed" });
+              }
+              if (thinking && url.pathname === `${ROUTE_PREFIX}/thinking`) {
+                if (req.method === "GET") {
+                  const sid = url.searchParams.get("session");
+                  if (!sid) return json(res, 400, { error: "session param required" });
+                  return json(res, 200, thinking.info(sid));
+                }
+                if (req.method === "PUT") {
+                  const { session: sid, tokens } = await readBody(req);
+                  if (typeof sid !== "string" || !sid)
+                    return json(res, 400, { error: "session required" });
+                  if (
+                    tokens !== null &&
+                    (typeof tokens !== "number" || !Number.isInteger(tokens) || tokens < 0)
+                  )
+                    return json(res, 400, {
+                      error: "tokens must be a non-negative integer or null",
+                    });
+                  return json(res, 200, await thinking.set(sid, tokens));
                 }
                 return json(res, 405, { error: "method not allowed" });
               }

@@ -2338,10 +2338,16 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
                 cursor: "pointer",
               }}
             >
-              <span style={{ color: T.faint, fontSize: 10, width: 8, flex: "0 0 auto" }} aria-hidden="true">
+              <span
+                style={{ color: T.faint, fontSize: 10, width: 8, flex: "0 0 auto" }}
+                aria-hidden="true"
+              >
                 {open ? "▾" : "▸"}
               </span>
-              <span style={{ color: CLAUDE_ORANGE, fontSize: 13, flex: "0 0 auto" }} aria-hidden="true">
+              <span
+                style={{ color: CLAUDE_ORANGE, fontSize: 13, flex: "0 0 auto" }}
+                aria-hidden="true"
+              >
                 {CLAUDE_MARK}
               </span>
               <span
@@ -2376,7 +2382,11 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
                   copy(it);
                 }}
                 aria-label="Copy side question"
-                style={{ ...iconBtn, color: copied === it.id ? CLAUDE_ORANGE : T.muted, fontSize: 11 }}
+                style={{
+                  ...iconBtn,
+                  color: copied === it.id ? CLAUDE_ORANGE : T.muted,
+                  fontSize: 11,
+                }}
               >
                 {copied === it.id ? "Copied" : "Copy"}
               </button>

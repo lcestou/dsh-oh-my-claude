@@ -180,6 +180,18 @@ export interface SessionRouteOptions {
     permissionAsks?: Map<string, string[]>;
     /** `/btw` side questions and their answers, per session; the client bubble reads them. */
     sideQuestions?: Map<string, AsideEntry[]>;
+    /** The live thinking budget the Tune selector reads and sets per session. */
+    thinking?: {
+        info: (sessionId: string) => {
+            tokens: number | null | undefined;
+        };
+        set: (sessionId: string, tokens: number | null) => Promise<{
+            ok: boolean;
+            tokens: number | null;
+            live: boolean;
+            error?: string;
+        }>;
+    };
     /** The model catalog for advisor model selection. */
     models?: () => Promise<Array<{
         id: string;
@@ -189,7 +201,7 @@ export interface SessionRouteOptions {
     continueAfterLimit?: boolean;
 }
 /** `projectDir(cwd)` → Claude Code project dir; `startedIds()` → ids the adapter started itself. */
-export declare function registerSessionRoutes(ctx: PluginContext, { log, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, command, turnRecords, idle, permissionModes, rewind, contextUsage, workspaceDiff, mcp, permissionAsks, sideQuestions, models, continueAfterLimit, }: SessionRouteOptions): void;
+export declare function registerSessionRoutes(ctx: PluginContext, { log, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, command, turnRecords, idle, permissionModes, thinking, rewind, contextUsage, workspaceDiff, mcp, permissionAsks, sideQuestions, models, continueAfterLimit, }: SessionRouteOptions): void;
 export declare const SETTINGS_SCOPES: readonly ["managed", "local", "project", "user"];
 /** One of the four settings files. The CLI's own layer names, minus the `--settings` flag layer. */
 export type SettingsScope = (typeof SETTINGS_SCOPES)[number];

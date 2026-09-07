@@ -605,6 +605,18 @@ assert.ok(switched.join(" ").includes("--permission-mode bypassPermissions"));
   assert.equal(a.getPermissionMode("s3", "read-only"), "plan");
 }
 
+// Thinking budget: unknown until set, and set refuses without a live process to carry it
+{
+  const a = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  assert.equal(a.thinkingInfo("s").tokens, undefined);
+  const r = await a.setThinkingBudget("s", 10000);
+  assert.equal(r.ok, false);
+  assert.equal(r.live, false);
+  assert.match(r.error!, /no live Claude process/);
+  // A rejected set must not record a phantom budget.
+  assert.equal(a.thinkingInfo("s").tokens, undefined);
+}
+
 // CLI flag probe: missing flags are left out; missing --input-format switches to positional prompt
 assert.equal(supports(null, "--anything"), true);
 const oldCli = new Set(["--print", "--output-format", "--model", "--permission-mode"]);

@@ -198,6 +198,16 @@ type Apply = (
   mutate: (text: string) => { text: string; error?: undefined } | { error: string },
 ) => Promise<string | undefined>;
 
+/** Live thinking-budget tiers the selector offers, matching Claude Code's own keyword steps. null
+ *  keeps the session default; 0 turns extended thinking off. Set live, not saved to settings.json. */
+const THINKING_PRESETS: Array<{ label: string; tokens: number | null }> = [
+  { label: "Session default", tokens: null },
+  { label: "Off", tokens: 0 },
+  { label: "Think · 4k", tokens: 4000 },
+  { label: "Think hard · 10k", tokens: 10000 },
+  { label: "Ultrathink · 32k", tokens: 31999 },
+];
+
 export function TuneBody({ sessionId }: { sessionId: string }): React.ReactElement {
   const narrow = useNarrow();
   const [file, setFile] = useState<SettingsFile | null>(null);
@@ -212,6 +222,11 @@ export function TuneBody({ sessionId }: { sessionId: string }): React.ReactEleme
   // The custom trailer texts stay behind a disclosure: the switch answers what almost everyone
   // came for, and the inputs are for the person who wants their own wording instead of none.
   const [showTrailers, setShowTrailers] = useState(false);
+  // The live extended-thinking budget for THIS session, set over the control seam rather than
+  // settings.json: null keeps the session default, 0 turns thinking off. Undefined until we read it.
+  const [thinkBudget, setThinkBudget] = useState<number | null | undefined>(undefined);
+  const [thinkBusy, setThinkBusy] = useState(false);
+  const [thinkErr, setThinkErr] = useState("");
 
   useEffect(() => {
     let live = true;
@@ -227,10 +242,14 @@ export function TuneBody({ sessionId }: { sessionId: string }): React.ReactEleme
       .then((r) => readJson<UsageReply>(r))
       .then((b) => live && setExtraUsage(b.extraUsage === true))
       .catch((e: Error) => live && setCreditsError(e.message));
+    fetch(`${ROUTE}/thinking?session=${encodeURIComponent(sessionId)}`)
+      .then((r) => readJson<{ tokens: number | null | undefined }>(r))
+      .then((b) => live && setThinkBudget(b.tokens))
+      .catch(() => {});
     return () => {
       live = false;
     };
-  }, []);
+  }, [sessionId]);
 
   if (!file)
     return error ? (
@@ -299,6 +318,28 @@ export function TuneBody({ sessionId }: { sessionId: string }): React.ReactEleme
     }
     const failure = await apply((text) => updateSettings(text, key, value));
     if (failure) setError(failure);
+  };
+
+  /** Ride the control-request seam the CLI's own thinking hotkey uses: it lands on the running
+   *  session at once, so there is no file to re-read and no next-spawn wait. Needs a live process. */
+  const setThinking = async (tokens: number | null) => {
+    setThinkBusy(true);
+    setThinkErr("");
+    try {
+      const reply = await readJson<{ ok: boolean; tokens: number | null; error?: string }>(
+        await fetch(`${ROUTE}/thinking`, {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ session: sessionId, tokens }),
+        }),
+      );
+      if (reply.ok) setThinkBudget(reply.tokens);
+      else setThinkErr(reply.error ?? "could not set the thinking budget");
+    } catch (e) {
+      setThinkErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setThinkBusy(false);
+    }
   };
 
   const rowStyle: CSSProperties = {
@@ -390,6 +431,37 @@ export function TuneBody({ sessionId }: { sessionId: string }): React.ReactEleme
         </div>
         <span style={sourceStyle}>
           {source(thinking || settings.showThinkingSummaries === true)}
+        </span>
+      </div>
+
+      {/* A live control, not a saved setting: this rides the same control-request seam the CLI's
+          thinking hotkey uses, so it lands on the running session at once and resets on respawn.
+          Kept apart from the persisted "Thinking" row above, which is a next-spawn default. */}
+      <div style={rowStyle}>
+        <span style={labelStyle}>Thinking budget</span>
+        <div style={controlStyle}>
+          <select
+            value={thinkBudget == null ? "" : String(thinkBudget)}
+            disabled={thinkBusy}
+            aria-label="Thinking budget for this session"
+            onChange={(e) =>
+              void setThinking(e.target.value === "" ? null : Number(e.target.value))
+            }
+            style={{
+              ...select,
+              flex: narrow ? "1 1 auto" : "0 0 auto",
+              minWidth: narrow ? 0 : 160,
+            }}
+          >
+            {THINKING_PRESETS.map((p) => (
+              <option key={p.label} value={p.tokens == null ? "" : String(p.tokens)}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <span style={sourceStyle}>
+          {thinkErr ? <span style={{ color: T.err }}>{thinkErr}</span> : "live · this session"}
         </span>
       </div>
 
