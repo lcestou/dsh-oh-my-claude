@@ -24,6 +24,7 @@ import { buildAddServer, isMcpName, scopeNeedsCwd } from "./mcp-add-remove.js";
 import type { JsonValue, PluginContext, SessionPersistence, WorkspaceRegistry } from "./dsh.js";
 import { errorText } from "./process.js";
 import { featureSwitches } from "./switches.js";
+import { pluginRoster } from "./plugins.js";
 import { PERMISSION_MODES, isPermissionMode } from "./state.js";
 import type {
   PermissionModeInfo,
@@ -407,6 +408,24 @@ async function readSettings(path: string): Promise<SettingsFile> {
     if (isEnoent(e)) return { path, exists: false, text: "{}\n", mtime: 0 };
     throw e;
   }
+}
+
+/**
+ * Every settings file that exists for a cwd, highest precedence first, which is the order the
+ * per-key merges in `switches.ts` and `plugins.ts` expect.
+ */
+async function settingsTexts(
+  userPath: string,
+  cwd: string | null,
+): Promise<Array<{ scope: string; text: string }>> {
+  const texts: Array<{ scope: string; text: string }> = [];
+  for (const scope of SETTINGS_SCOPES) {
+    const path = settingsScopePath(scope, userPath, cwd);
+    if (path === undefined) continue;
+    const file = await readSettings(path).catch(() => null);
+    if (file?.exists === true) texts.push({ scope, text: file.text });
+  }
+  return texts;
 }
 
 /** One `modelPicker.options` row, down to what a picker row shows. */
@@ -866,19 +885,23 @@ export function registerSessionRoutes(
                 }
                 return json(res, 200, { scopes });
               }
+              // Which plugins and marketplaces the session's settings load. Beside Instructions in
+              // the panel: same question as the CLAUDE.md list, a different set of files.
+              if (settingsPath && url.pathname === `${ROUTE_PREFIX}/plugins`) {
+                if (req.method !== "GET") return json(res, 405, { error: "method not allowed" });
+                const cwd = await knownCwd(url.searchParams.get("cwd"), sessionPersistence);
+                return json(res, 200, {
+                  ok: true,
+                  ...pluginRoster(await settingsTexts(settingsPath, cwd)),
+                });
+              }
               // The settings and environment that turn off something the panel offers. Its own
               // route rather than a field on diagnostics: the shield and Rewind ask for it on
               // every open, and diagnostics runs the binary.
               if (settingsPath && url.pathname === `${ROUTE_PREFIX}/feature-switches`) {
                 if (req.method !== "GET") return json(res, 405, { error: "method not allowed" });
                 const cwd = await knownCwd(url.searchParams.get("cwd"), sessionPersistence);
-                const texts: Array<{ scope: string; text: string }> = [];
-                for (const scope of SETTINGS_SCOPES) {
-                  const path = settingsScopePath(scope, settingsPath, cwd);
-                  if (path === undefined) continue;
-                  const file = await readSettings(path).catch(() => null);
-                  if (file?.exists === true) texts.push({ scope, text: file.text });
-                }
+                const texts = await settingsTexts(settingsPath, cwd);
                 // The child inherits dsh's environment, so dsh's is where the disable would be.
                 // An absent option means an adapter that did not pass one, so read the config
                 // default rather than reporting the feature off.

@@ -1,3 +1,4 @@
+import type { JsonValue } from "./dsh.js";
 /** One scope's text, in the order the CLI merges them: highest precedence first. */
 export interface ScopeText {
     scope: string;
@@ -38,6 +39,8 @@ export interface FeatureSwitches {
         cli: boolean | null;
     };
 }
+/** One settings file read back as an object, or an empty one when it is not JSON. */
+export declare const parseSettings: (text: string) => Record<string, JsonValue>;
 /**
  * Read the three switches out of the merged scopes and the environment a Claude child inherits.
  * Precedence is per key and first-wins, which is how the CLI resolves one of these scalars: the

@@ -40,7 +40,8 @@ export interface FeatureSwitches {
 /** Only these two layers provide a retention: the CLI reads it from policy and user settings. */
 const RETENTION_SCOPES = ["managed", "user"];
 
-const parse = (text: string): Record<string, JsonValue> => {
+/** One settings file read back as an object, or an empty one when it is not JSON. */
+export const parseSettings = (text: string): Record<string, JsonValue> => {
   try {
     const value: JsonValue = JSON.parse(text);
     // SAFETY: JSON.parse answers a JsonValue; the guard leaves only the object arm of that union.
@@ -72,7 +73,7 @@ export function featureSwitches(
   };
   let retentionSet = false;
   for (const { scope, text } of scopes) {
-    const settings = parse(text);
+    const settings = parseSettings(text);
     const days = settings.cleanupPeriodDays;
     // The schema is a positive integer; anything else the CLI rejects, and the sweep falls back.
     if (

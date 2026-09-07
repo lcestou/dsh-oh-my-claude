@@ -31,12 +31,14 @@ import {
   SessionData,
   isOwnedActive,
   activeClaudeSession,
+  isClaudeSession,
   activeClaudeProvider,
   type ClientCtx,
   openHere,
   maskEmail,
 } from "./shared.js";
 import { AccessShield, OhMyClaudeControl } from "./panel.js";
+import { markTitle, newlyWaiting, noticesOn, type NoticeSnapshot } from "./notices.js";
 import { SETTINGS_SCOPES, SCOPE_LABELS, overrideNote } from "./settings.js";
 import type { SettingsScope, SettingsScopeInfo } from "./settings.js";
 export { type SessionData, isOwnedActive, fmtCost, fmtDuration, cacheShare };
@@ -1784,6 +1786,57 @@ const wireTurnStatus = (
  * Watch dsh's turn-status elements and restyle ones driven by claude-code sessions.
  * ponytail: DOM hook on a structural selector; swap for a slot the day the turn status grows one.
  */
+/**
+ * Say something when a Claude session the user is not on stops working. dsh has no notice of its
+ * own (nothing in its bundle calls `Notification`), so a turn that ends in another session, or in a
+ * tab behind this one, is silent.
+ *
+ * Two signals, both cheap: the OS notification when the browser has granted one, and a mark on the
+ * tab title while the page is hidden. The list store is polled rather than subscribed to, the same
+ * second-by-second read `watchTurnStatus` already does, so this holds whatever shape dsh's store
+ * has today.
+ */
+function watchSessionNotices(ctx: ClientCtx) {
+  let prev: NoticeSnapshot | null = null;
+  const waiting = new Set<string>();
+  const tick = () => {
+    const snap = ctx.sessions.list.getSnapshot();
+    if (!snap) return;
+    // Copy the compared fields into fresh rows: dsh's store may reuse row objects between calls, and
+    // a shared reference would make every field read `was === now`, so no transition would ever fire.
+    const byId: NoticeSnapshot["byId"] = {};
+    for (const [id, s] of Object.entries(snap.byId))
+      byId[id] = { running: s.running, completed: s.completed, displayTitle: s.displayTitle };
+    const next: NoticeSnapshot = { byId, current: snap.current };
+    for (const id of newlyWaiting(prev, next)) {
+      if (!isClaudeSession(ctx, id)) continue; // other providers are not this plugin's to announce
+      waiting.add(id);
+      notifyWaiting(ctx, id, snap.byId[id]?.displayTitle ?? id);
+    }
+    prev = next;
+    // Reading it clears it: the open session, and everything else once the tab is looked at again.
+    if (snap.current !== undefined) waiting.delete(snap.current);
+    if (!document.hidden) waiting.clear();
+    const wanted = markTitle(document.title, waiting.size);
+    if (wanted !== document.title) document.title = wanted;
+  };
+  tick(); // take the baseline now, so the first interval already has something to compare against
+  setInterval(tick, 1000);
+}
+
+function notifyWaiting(ctx: ClientCtx, id: string, title: string) {
+  // Permission is only ever asked for from the panel's own toggle, so an ungranted browser is the
+  // normal case here and the title mark carries it alone.
+  if (!noticesOn() || !("Notification" in window) || Notification.permission !== "granted") return;
+  // `tag` per session: a session that finishes twice replaces its own notice rather than stacking.
+  const note = new Notification(title, { body: "Claude is waiting.", tag: `omc-${id}` });
+  note.addEventListener("click", () => {
+    window.focus();
+    ctx.sessions.open(id);
+    note.close();
+  });
+}
+
 function watchTurnStatus(ctx: ClientCtx) {
   ensureTurnStatusStyle(); // a hot reload drops the old module's style tag but keeps marked elements
   // Keep a body flag in step with the open session so the first-paint colour rule applies before
@@ -2149,6 +2202,7 @@ export function apply(ctx: ClientCtx) {
   followDeepLink(ctx);
   watchContextMeter(ctx);
   watchTurnStatus(ctx);
+  watchSessionNotices(ctx);
 
   function Section() {
     const [boxes, setBoxes] = useState<BoxData[]>([]);

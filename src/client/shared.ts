@@ -212,16 +212,21 @@ export { openHere };
 export const isRingRoot = (el: HTMLElement | null) =>
   !!el?.querySelector(':scope > button[aria-haspopup="dialog"] circle + circle');
 
+/** Whether a session, open or not, runs on one of this plugin's mounts (`claude-code*`). */
+export const isClaudeSession = (ctx: ClientCtx, id: string): boolean => {
+  try {
+    const provider = ctx.modelDirectories.directoryFor(id).store.getSnapshot().current?.provider;
+    return provider !== undefined && provider.startsWith("claude-code");
+  } catch {
+    return false; // no scope or binding yet: not ours
+  }
+};
+
 /** The open session's provider when it is one of this plugin's mounts (`claude-code*`), else undefined. */
 export const activeClaudeSession = (ctx: ClientCtx): string | undefined => {
   const id = ctx.sessions.list.getSnapshot()?.current;
   if (!id) return undefined;
-  try {
-    const provider = ctx.modelDirectories.directoryFor(id).store.getSnapshot().current?.provider;
-    return provider && provider.startsWith("claude-code") ? id : undefined;
-  } catch {
-    return undefined; // no scope or binding yet: not ours
-  }
+  return isClaudeSession(ctx, id) ? id : undefined;
 };
 /** The open Claude session's own provider id (e.g. `claude-code` or `claude-code-prod`), else undefined. */
 export const activeClaudeProvider = (ctx: ClientCtx): string | undefined => {
@@ -315,11 +320,22 @@ type DshSlots = {
 export interface ClientCtx {
   slots: DshSlots;
   sessions: {
-    // `cwd` and `blank` come from SessionSummary (dsh-session-persistence);
-    // the snapshot stores one per live session keyed by sessionId.
+    // `cwd`, `blank`, `running`, `completed` and `displayTitle` come from SessionSummary
+    // (dsh-api-session-controller); the snapshot stores one per live session keyed by sessionId.
+    // `completed` is dsh's own "finished while not selected and not yet opened" bit.
     list: {
       getSnapshot: () => {
-        byId: Record<string, { id: string; cwd?: string; blank?: boolean }>;
+        byId: Record<
+          string,
+          {
+            id: string;
+            cwd?: string;
+            blank?: boolean;
+            running?: boolean;
+            completed?: boolean;
+            displayTitle?: string;
+          }
+        >;
         phase?: string;
         current?: string;
       };

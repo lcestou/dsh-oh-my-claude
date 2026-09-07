@@ -22,7 +22,9 @@ import {
   maskEmail,
 } from "./shared.js";
 import { TuneBody } from "./tune.js";
+import { noticesOn, setNoticesOn } from "./notices.js";
 import type { FeatureSwitches } from "../switches.js";
+import type { PluginRoster } from "../plugins.js";
 
 // Module-level variable so reopening lands on the last picked tab.
 let lastTab = "Memory";
@@ -346,6 +348,61 @@ const shortPath = (path: string, cwd: string): string =>
  * the session loaded (managed, user, project, local files plus @imports), and opens each in
  * an editor. Managed files open read-only. Same save/delete routes as Memory, path-checked.
  */
+/**
+ * The plugins and marketplaces the session's settings turn on, under the CLAUDE.md files: the same
+ * question, a different set of files. Read-only on purpose - a toggle here would need the process
+ * respawned before it meant anything, and the scope on each row says which file to edit.
+ */
+function PluginRosterBlock({ roster }: { roster: PluginRoster | null }) {
+  if (roster === null) return null;
+  const { plugins, marketplaces } = roster;
+  const line: CSSProperties = {
+    flex: 1,
+    minWidth: 0,
+    fontFamily: T.mono,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  };
+  return (
+    <>
+      <span style={{ ...meta, padding: "2px 4px", display: "block", marginTop: 8 }}>
+        Plugins and marketplaces
+      </span>
+      {plugins.length === 0 && marketplaces.length === 0 ? (
+        <span style={{ ...meta, padding: "2px 10px", fontSize: 12 }}>
+          No settings file names a plugin (enabledPlugins) or a marketplace.
+        </span>
+      ) : (
+        <div style={{ padding: "2px 10px", fontSize: 12, lineHeight: "1.5" }}>
+          {plugins.map((p) => (
+            <div key={p.key} style={{ display: "flex", gap: 8 }}>
+              <span style={{ flex: "none", color: p.enabled ? undefined : T.faint }}>
+                {p.enabled ? "on" : "off"}
+              </span>
+              <span style={line}>
+                {p.key}
+                {p.detail !== undefined && ` (${p.detail})`}
+              </span>
+              <span style={{ ...meta, flex: "none" }}>{p.scope}</span>
+            </div>
+          ))}
+          {marketplaces.map((m) => (
+            <div key={m.name} style={{ display: "flex", gap: 8 }}>
+              <span style={{ ...meta, flex: "none" }}>market</span>
+              <span style={line}>
+                {m.name} · {m.source}
+                {m.alias === true && " (written as additionalMarketplaces)"}
+              </span>
+              <span style={{ ...meta, flex: "none" }}>{m.scope}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
 function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   const cwd = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.cwd;
   const [files, setFiles] = useState<InstructionFile[]>([]);
@@ -354,6 +411,7 @@ function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCt
   const [saved, setSaved] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [roster, setRoster] = useState<PluginRoster | null>(null);
 
   const q = cwd ? `cwd=${encodeURIComponent(cwd)}` : "";
   const refresh = () => {
@@ -365,6 +423,18 @@ function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCt
   };
   useEffect(() => {
     refresh();
+  }, [cwd]);
+  useEffect(() => {
+    if (!cwd) return;
+    let live = true;
+    fetch(`${ROUTE}/plugins?${q}`)
+      .then((r) => readJson<PluginRoster>(r))
+      // A roster that will not load is not an instructions error: the file list is still good.
+      .then((b) => live && setRoster(b))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
   }, [cwd]);
 
   const openFile = async (f: InstructionFile) => {
@@ -401,8 +471,8 @@ function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCt
     }
   };
 
-  // An empty list is a workspace with no CLAUDE.md; a failed list is the error, not an empty one.
-  if (!cwd || files.length === 0)
+  // A session dsh reports no directory for has neither instructions nor settings to read.
+  if (!cwd)
     return (
       <span style={{ ...meta, padding: "4px 10px", color: error ? T.err : undefined }}>
         {error || "No instructions for this workspace."}
@@ -412,6 +482,9 @@ function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCt
 
   return (
     <div style={bodyFlow}>
+      {file === null && files.length === 0 && (
+        <span style={{ ...meta, padding: "4px 10px" }}>No instructions for this workspace.</span>
+      )}
       {file === null ? (
         files.map((f) => (
           <button
@@ -485,6 +558,7 @@ function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCt
           />
         </>
       )}
+      {file === null && <PluginRosterBlock roster={roster} />}
       {error && <span style={{ color: T.err, fontSize: 12 }}>{error}</span>}
     </div>
   );
@@ -991,6 +1065,65 @@ interface DeniedTurn {
 }
 
 /**
+ * The opt-in for the notice a finished session raises. It lives here rather than on Tune because
+ * Tune writes Claude Code's settings and this is the browser's own permission plus one local flag.
+ * The permission is asked for from this button and nowhere else: an unprompted prompt on page load
+ * is the one people deny for good.
+ */
+function SessionNotices() {
+  const [on, setOn] = useState(noticesOn);
+  const supported = "Notification" in window;
+  const [permission, setPermission] = useState(supported ? Notification.permission : "denied");
+  const write = (next: boolean) => {
+    setNoticesOn(next);
+    setOn(next);
+  };
+  const enable = () => {
+    if (!supported) return;
+    if (Notification.permission === "default")
+      void Notification.requestPermission().then((p) => {
+        setPermission(p);
+        write(p === "granted");
+      });
+    else write(true);
+  };
+  const state = !supported
+    ? "This browser has no notification API; the tab title carries the mark instead."
+    : permission === "denied"
+      ? "Blocked in the browser's site settings; the tab title still carries the mark."
+      : on
+        ? "On for sessions this tab is not showing."
+        : "Off. The tab title is marked while the page is hidden either way.";
+  return (
+    <>
+      <span style={{ ...meta, padding: "2px 4px", display: "block", marginTop: 8 }}>
+        Session notices
+      </span>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          padding: "4px 10px",
+          fontSize: 12,
+          lineHeight: "1.5",
+        }}
+      >
+        <button
+          type="button"
+          style={{ ...btn, fontSize: 12, flex: "0 0 auto" }}
+          disabled={!supported || permission === "denied"}
+          onClick={() => (on ? write(false) : enable())}
+        >
+          {on ? "Turn off" : "Turn on"}
+        </button>
+        <span>{state}</span>
+      </div>
+    </>
+  );
+}
+
+/**
  * "Diagnostics" body in the Oh My Claude dialog: runtime status, config file parse errors,
  * MCP servers that are not connected with their errors, and a doctor output button.
  */
@@ -1147,6 +1280,8 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
               </div>
             ))
           )}
+
+          <SessionNotices />
 
           {/* The three settings that switch a tab off underneath it */}
           <span style={{ ...meta, padding: "2px 4px", display: "block", marginTop: 8 }}>
