@@ -1,6 +1,6 @@
 // Offline self-check: bun src/state.test.ts. No CLI, no network.
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -38,7 +38,11 @@ assert.deepEqual(await loadPermissionModes(dir), new Map([["s1", "bypassPermissi
 assert.equal(await readFile(PERMISSION_MODES_FILE(dir), "utf8"), '{"s1":"bypassPermissions"}');
 
 // Turn records: write two sessions, read back, assert deep equality.
-const turnsDir = await mkdtemp(join(process.cwd(), ".cache/omc-turns-"));
+// Under the repo's own .cache so the records land on the same filesystem the plugin uses;
+// a fresh checkout has no .cache yet, so make it rather than fail on the first run.
+const cacheDir = join(process.cwd(), ".cache");
+await mkdir(cacheDir, { recursive: true });
+const turnsDir = await mkdtemp(join(cacheDir, "omc-turns-"));
 await saveTurnRecords(turnsDir, "ts1", [
   {
     at: 1000,

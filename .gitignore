@@ -1,4 +1,4 @@
-node_modules/
+node_modules
 .cache/
 # agent worktrees live here, never tracked
 .claude/worktrees/

@@ -21,6 +21,7 @@ import {
   CLAUDE_ORANGE,
   CLAUDE_MARK,
 } from "./shared.js";
+import { TuneBody } from "./tune.js";
 
 // Module-level variable so reopening lands on the last picked tab.
 let lastTab = "Memory";
@@ -1116,6 +1117,7 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
     { key: "Rewind", label: "Rewind" },
     { key: "Changes", label: "Changes" },
     { key: "MCP", label: "MCP" },
+    { key: "Tune", label: "Tune" },
   ] as const;
   // Fall back when an earlier session stored a tab no longer present (e.g. removed Permissions).
   // SAFETY: tabs is const-as, so t.key is a literal string; the map produces string[].
@@ -1205,6 +1207,7 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
             {tab === "MCP" && (
               <McpBody sessionId={sessionId} ctx={ctx} onClose={() => setOpen(false)} />
             )}
+            {tab === "Tune" && <TuneBody />}
           </div>
         </div>
       )}
