@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "dsh-llm-claude-code",
+      "name": "dsh-oh-my-claude",
       "devDependencies": {
         "@oxlint/plugins": "1.80.0",
         "@types/node": "^26.4.1",

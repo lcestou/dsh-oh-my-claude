@@ -27,7 +27,7 @@ Plan usage and the CLI's own context breakdown live in dsh's context ring popove
 Needs the Claude Code CLI on `PATH` and already logged in (`claude --version` works, `claude` opens without asking you to sign in). Nothing else: no API key, no Node build step.
 
 ```sh
-dsh plugin --profile web add github:lcestou/dsh-llm-claude
+dsh plugin --profile web add github:lcestou/oh-my-claude
 systemctl --user restart dsh-web.service   # or restart `dsh web` however you run it
 ```
 
