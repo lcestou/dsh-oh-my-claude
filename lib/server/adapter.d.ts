@@ -355,6 +355,12 @@ export declare function buildInput(prompt: string, images: Array<{
 }>): string;
 /** Names from the CLI's init frame that dsh's command grammar accepts (lowercase, `[a-z0-9_-]`), deduped. */
 export declare function commandNames(value: JsonValue | undefined): string[];
+/**
+ * The dsh title a bridged command should set: the trimmed argument when this is Claude's rename
+ * with one. An empty argument returns undefined so the line reaches Claude unchanged and the CLI
+ * answers with its own usage message.
+ */
+export declare function renameTitle(cmd: string, rawInput: string): string | undefined;
 export declare const NATIVE_TOOL_MAP: {
     readonly Bash: "bash";
     readonly Read: "read";

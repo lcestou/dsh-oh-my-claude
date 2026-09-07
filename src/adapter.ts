@@ -921,6 +921,18 @@ export function commandNames(value: JsonValue | undefined): string[] {
 }
 /** Bridged Claude commands are registered as `/claude-<name>` in dsh. */
 const BRIDGE_PREFIX = "claude-";
+/** Claude's rename command, and the alias its catalog also offers. */
+const RENAME_COMMANDS = new Set(["rename", "name"]);
+/**
+ * The dsh title a bridged command should set: the trimmed argument when this is Claude's rename
+ * with one. An empty argument returns undefined so the line reaches Claude unchanged and the CLI
+ * answers with its own usage message.
+ */
+export function renameTitle(cmd: string, rawInput: string): string | undefined {
+  if (!RENAME_COMMANDS.has(cmd)) return undefined;
+  const title = rawInput.trim();
+  return title.length > 0 ? title : undefined;
+}
 const PLAN_APPROVE = "Approve";
 const PLAN_KEEP = "Keep planning";
 // Claude Code tool names → dsh tool name that the client-ui-tool presenter recognises.
@@ -1490,6 +1502,20 @@ export class ClaudeCodeAdapter extends LlmAdapter {
           input: { hint: "<arguments>" },
           handler: ({ agent: target, rawInput }) => {
             const line = `/${cmd}${rawInput}`;
+            const title = renameTitle(cmd, rawInput);
+            // dsh's title goes first: sending the line and then failing would leave Claude renamed
+            // and dsh not, which is the disagreement this bridge exists to close. A host with no
+            // title service is not that failure, and refusing there would leave the user no way to
+            // rename the Claude side at all, so the line still goes and the reply says what it did.
+            const session = target.session;
+            const titles = this.ctx?.get("sessionTitle");
+            const renamed = title !== undefined && session !== undefined && titles !== undefined;
+            if (renamed)
+              try {
+                titles.rename(session, title);
+              } catch (error) {
+                return { kind: "error", text: `/${cmd}: ${errorText(error)}` };
+              }
             target.followup(
               createUserMessage({
                 content: [{ type: "text", text: line }],
@@ -1501,7 +1527,12 @@ export class ClaudeCodeAdapter extends LlmAdapter {
                 },
               }),
             );
-            return { kind: "success", text: `${line} sent to Claude Code` };
+            return {
+              kind: "success",
+              text: renamed
+                ? `${line} sent to Claude Code; dsh session renamed to ${title}`
+                : `${line} sent to Claude Code`,
+            };
           },
         });
         this.bridged.set(cmd, dispose);

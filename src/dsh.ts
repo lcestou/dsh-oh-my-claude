@@ -343,6 +343,7 @@ export interface PluginContext {
   userQuestions: UserQuestionService;
   /** Optional-service lookup (cordis `ctx.get`); undefined when the provider is absent. */
   get(name: "commands"): PluginContext["commands"];
+  get(name: "sessionTitle"): PluginContext["sessionTitle"];
   /** dsh-commands (`/name` in the composer); optional so a host without it still mounts the plugin. */
   commands?: {
     register(definition: {
@@ -357,6 +358,16 @@ export interface PluginContext {
       }) => { kind: "success"; text?: string } | { kind: "error"; text: string };
     }): () => void;
     find(agent: Agent, name: string): object | undefined;
+  };
+  /**
+   * Mirrors: @deepseek-ai/dsh-session-title/lib/types/index.d.ts. Optional so a host without the
+   * service still mounts the plugin. `rename` is synchronous, appends a `session/title` event with
+   * source `user` (which pins the title against automatic generation), and throws when the title
+   * normalizes to empty or the session is not live.
+   */
+  sessionTitle?: {
+    /** Upstream returns the accepted snapshot; the plugin ignores it, so the mirror says void. */
+    rename(session: Session, title: string): void;
   };
   workspaceRegistry: WorkspaceRegistry;
   subprocess?: SubprocessRuntime;

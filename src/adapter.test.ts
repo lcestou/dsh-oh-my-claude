@@ -5,6 +5,7 @@ import {
   KNOWN_MODELS,
   Translator,
   commandNames,
+  renameTitle,
   ClaudeCodeAdapter,
   accessModeOf,
   buildArgs,
@@ -3039,4 +3040,15 @@ console.log("interrupt-on-abort ok");
   );
   assert.equal(elicitationQuestions({ mcp_server_name: "srv" }, "r3"), undefined, "no schema");
   console.log("elicitation ok");
+}
+
+// The bridged rename decides dsh's title without a session: the handler builds `/${cmd}${rawInput}`,
+// so rawInput normally carries the leading space.
+{
+  assert.equal(renameTitle("rename", " Ada"), "Ada");
+  assert.equal(renameTitle("name", " Ada Lovelace "), "Ada Lovelace");
+  assert.equal(renameTitle("rename", ""), undefined, "empty goes to Claude unchanged");
+  assert.equal(renameTitle("rename", "   "), undefined, "whitespace only is not a title");
+  assert.equal(renameTitle("compact", " Ada"), undefined, "only rename sets dsh's title");
+  console.log("renameTitle ok");
 }
