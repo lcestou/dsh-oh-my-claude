@@ -84,6 +84,21 @@ export function elapsedText(seconds: number): string {
   return m % 60 ? `${h}h${m % 60}m` : `${h}h`;
 }
 
+/** The token marks a silent thinking stretch reports at; past the last one it repeats every 20k.
+ *  The CLI sends one estimate per thinking delta, so without marks this would be a line per word.
+ *  Nothing draws below the first mark: short thinking is over before a counter would help. */
+const THINK_FLOOR = 1000;
+const THINK_STEPS = [THINK_FLOOR, 2000, 5000, 10_000, 20_000];
+const THINK_REPEAT = 20_000;
+const nextThinkStep = (tokens: number): number =>
+  THINK_STEPS.find((s) => s > tokens) ?? (Math.floor(tokens / THINK_REPEAT) + 1) * THINK_REPEAT;
+
+/** `1k`, `4.6k`, `23k`: an estimate, so one decimal below 10k and none above it. */
+export function tokensText(tokens: number): string {
+  const k = Math.max(0, tokens) / 1000;
+  return `${k < 10 ? Math.round(k * 10) / 10 : Math.round(k)}k`;
+}
+
 /** A reset instant as the CLI's error reference prints it: `3:45pm` later today, `Mon 12am`
  *  within the week, `Sep 8, 1pm` beyond it, then the zone. Minutes only when they are not zero.
  *  No year: a plan window reopens within a week, so the nearest future date is the only reading. */
@@ -148,6 +163,10 @@ export class Translator {
   /** tool_use_id → { block, nextAt } tracks the block a long-running call reports its elapsed
    *  time into, and the next elapsed mark worth a line. */
   readonly heartbeatBlocks = new Map<string, { block: TranslatorBlock; nextAt: number }>();
+
+  /** The counter a silent thinking stretch draws into, and the thinking block it stands in for. */
+  thinking?: { block: TranslatorBlock; nextAt: number };
+  thinkingBlock?: TranslatorBlock;
   /** Injected: append tool/call to the dsh session for a native Claude Code tool. */
   onToolCall?: (callId: string, name: string, args: string) => number | undefined;
   /** Injected: append tool/result to the dsh session for a native Claude Code tool. */
@@ -308,6 +327,8 @@ export class Translator {
           if (names.length > 0 || tools.length > 0) this.onInit?.(names, tools);
           return [];
         }
+        if (event.subtype === "thinking_tokens")
+          return this.thinkingTokens(event.estimated_tokens ?? 0);
         // Compaction opens with a `status:"compacting"` frame, then a long silent stretch while the
         // CLI summarizes, then `compact_boundary` when done. Announce the start at once so the silence
         // is explained; the boundary line reports the result. A failed run gets neither boundary nor a
@@ -527,6 +548,8 @@ export class Translator {
         // Same for a call that never reported a result: its block would otherwise stay open.
         for (const [, entry] of this.heartbeatBlocks) events.push(...this.endBlock(entry.block));
         this.heartbeatBlocks.clear();
+        events.push(...this.endThinking());
+        this.thinkingBlock = undefined;
         if (this.denied > 0 && !event.is_error) {
           const n = this.denied;
           events.push(
@@ -641,11 +664,13 @@ export class Translator {
   // SAFETY: ev is ClaudeStreamPartial from Claude Code stream-json protocol
   partial(ev: ClaudeStreamPartial) {
     switch (ev.type) {
-      case "message_start":
+      case "message_start": {
         this.sawPartial = true;
         this.toolPending = false;
         this.open.clear();
-        return [];
+        this.thinkingBlock = undefined;
+        return this.endThinking();
+      }
       case "content_block_start":
         return this.openBlock(ev.index ?? -1, ev.content_block ?? {});
       case "content_block_delta": {
@@ -689,7 +714,13 @@ export class Translator {
         // A finished tool_use block means the CLI is now running that tool: no stream events until
         // its result arrives, however long it takes. Callers read this to pause their idle timer.
         this.toolPending = block.tool === true;
-        return block.index < 0 ? [] : this.endBlock(block);
+        // The estimate resets at the next content_block_start, so the counter ends with its block.
+        let done: StreamChunk[] = [];
+        if (block === this.thinkingBlock) {
+          done = this.endThinking();
+          this.thinkingBlock = undefined;
+        }
+        return block.index < 0 ? done : [...done, ...this.endBlock(block)];
       }
       default:
         if (!BENIGN_PARTIALS.has(ev?.type)) this.noteUnknown("stream event", ev?.type);
@@ -703,8 +734,10 @@ export class Translator {
   openBlock(apiIndex: number, cb: { type?: string; id?: string; name?: string }) {
     let opened: { block: TranslatorBlock; events: StreamChunk[] };
     if (cb.type === "text") opened = this.startBlock("text");
-    else if (cb.type === "thinking") opened = this.startBlock("reasoning");
-    else if (cb.type === "tool_use") {
+    else if (cb.type === "thinking") {
+      opened = this.startBlock("reasoning");
+      this.thinkingBlock = opened.block;
+    } else if (cb.type === "tool_use") {
       const toolName = cb.name ?? "";
       const dsh = toolName.startsWith("mcp__dsh__");
       if (dsh && cb.id) {
@@ -834,6 +867,36 @@ export class Translator {
     if (elapsed < entry.nextAt) return [];
     entry.nextAt = nextHeartbeat(elapsed);
     return this.delta(entry.block, `\n⏱ ${elapsedText(elapsed)}`);
+  }
+
+  /** A running estimate for the thinking block the model is in the middle of. Only the silent kind
+   *  draws: when the thinking text streams, the reasoning block itself is the progress, and a
+   *  counter beside it would say the same thing twice. Fable-class models return thinking blocks
+   *  that carry a signature and no text, and this is the only sign they are working. */
+  thinkingTokens(total: number): StreamChunk[] {
+    if (this.thinkingBlock?.started) return this.endThinking();
+    const entry = this.thinking;
+    if (!entry) {
+      if (total < THINK_FLOOR) return [];
+      const { block, events } = this.startBlock(
+        "reasoning",
+        `✻ Thinking · ~${tokensText(total)} tokens`,
+      );
+      this.thinking = { block, nextAt: nextThinkStep(total) };
+      return events;
+    }
+    // One frame per delta arrives, so only a crossed mark writes.
+    if (total < entry.nextAt) return [];
+    entry.nextAt = nextThinkStep(total);
+    return this.delta(entry.block, ` · ~${tokensText(total)}`);
+  }
+
+  /** Close the counter: the thinking block it stood in for is over, or the turn is. */
+  endThinking(): StreamChunk[] {
+    const entry = this.thinking;
+    if (!entry) return [];
+    this.thinking = undefined;
+    return this.endBlock(entry.block);
   }
 
   /** Close the elapsed-time block a slow call opened, whichever way its result is drawn. */

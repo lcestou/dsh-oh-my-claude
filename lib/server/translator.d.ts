@@ -10,6 +10,8 @@ export interface TranslatorBlock {
 }
 /** `45s`, `4m30s`, `1h2m`: how long a call has been running, in the shortest form that stays exact. */
 export declare function elapsedText(seconds: number): string;
+/** `1k`, `4.6k`, `23k`: an estimate, so one decimal below 10k and none above it. */
+export declare function tokensText(tokens: number): string;
 /** A reset instant as the CLI's error reference prints it: `3:45pm` later today, `Mon 12am`
  *  within the week, `Sep 8, 1pm` beyond it, then the zone. Minutes only when they are not zero.
  *  No year: a plan window reopens within a week, so the nearest future date is the only reading. */
@@ -53,6 +55,12 @@ export declare class Translator {
         block: TranslatorBlock;
         nextAt: number;
     }>;
+    /** The counter a silent thinking stretch draws into, and the thinking block it stands in for. */
+    thinking?: {
+        block: TranslatorBlock;
+        nextAt: number;
+    };
+    thinkingBlock?: TranslatorBlock;
     /** Injected: append tool/call to the dsh session for a native Claude Code tool. */
     onToolCall?: (callId: string, name: string, args: string) => number | undefined;
     /** Injected: append tool/result to the dsh session for a native Claude Code tool. */
@@ -129,6 +137,13 @@ export declare class Translator {
     toolProgress(event: Extract<ClaudeEvent, {
         type: "tool_progress";
     }>): StreamChunk[];
+    /** A running estimate for the thinking block the model is in the middle of. Only the silent kind
+     *  draws: when the thinking text streams, the reasoning block itself is the progress, and a
+     *  counter beside it would say the same thing twice. Fable-class models return thinking blocks
+     *  that carry a signature and no text, and this is the only sign they are working. */
+    thinkingTokens(total: number): StreamChunk[];
+    /** Close the counter: the thinking block it stood in for is over, or the turn is. */
+    endThinking(): StreamChunk[];
     /** Close the elapsed-time block a slow call opened, whichever way its result is drawn. */
     endHeartbeat(toolUseId: string): StreamChunk[];
     toolResults(content: ClaudeContentBlock[], parentToolUseId: string | null | undefined): StreamChunk[];

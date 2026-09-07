@@ -85,6 +85,8 @@ export type ClaudeEvent = {
     decision_reason?: unknown;
     decision_reason_type?: string;
     tasks?: unknown;
+    estimated_tokens?: number;
+    estimated_tokens_delta?: number;
     attempt?: number;
     max_retries?: number;
     retry_delay_ms?: number;

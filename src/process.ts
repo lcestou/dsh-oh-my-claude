@@ -129,6 +129,11 @@ export type ClaudeEvent =
       decision_reason_type?: string;
       // subtype "background_tasks_changed": list of running background tasks.
       tasks?: unknown;
+      // subtype "thinking_tokens": one frame per thinking delta, so the estimate is unthrottled.
+      // `estimated_tokens` is the running total for the *current* thinking block and resets at the
+      // next content_block_start; it is a spinner estimate, not the billed output_tokens.
+      estimated_tokens?: number;
+      estimated_tokens_delta?: number;
       // subtype "api_retry": the CLI is retrying a failed API call (a 429 while a limit holds, a
       // 5xx, a dropped connection). `error.rate_limits` is set only for a quota 429.
       attempt?: number;

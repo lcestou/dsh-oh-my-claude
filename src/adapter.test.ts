@@ -71,7 +71,7 @@ import {
 } from "./state.js";
 import type { ClaudeEvent, ClaudeProcessSpec, SubprocessHandle } from "./process.js";
 import type { LooseMessage } from "./adapter.js";
-import { elapsedText, resetClock } from "./translator.js";
+import { elapsedText, resetClock, tokensText } from "./translator.js";
 import type { FinishReason, LlmFailure, Message, StreamChunk } from "@deepseek-ai/dsh-llm";
 import type { Agent, PluginContext, SubprocessSpawnSpec } from "./dsh.js";
 import type { SubprocessHandle as SeamHandle } from "./dsh.js";
@@ -3547,4 +3547,61 @@ console.log("interrupt-on-abort ok");
   assert.equal(hasPendingTodo([{ status: "pending" }]), true);
   assert.equal(hasPendingTodo(["a string is not a todo we can read"]), true);
   assert.equal(hasPendingTodo([]), false, "an empty list has nothing outstanding");
+}
+
+// The token counter stands in for thinking that never shows a word. It opens at the first mark,
+// writes only at the marks after it, stays quiet while thinking text is streaming, and closes with
+// the block it stood in for.
+{
+  const think = (t: any, total: number) =>
+    t.translate({ type: "system", subtype: "thinking_tokens", estimated_tokens: total });
+  const t = new Translator() as any;
+  t.partial({ type: "message_start" });
+  t.partial({ type: "content_block_start", index: 0, content_block: { type: "thinking" } });
+  assert.deepEqual(think(t, 400), [], "below the first mark nothing draws");
+  const open = think(t, 1200);
+  assert.equal(open[0].type, "block-start");
+  assert.equal(open[0].blockType, "reasoning");
+  assert.equal(open[1].text, "✻ Thinking · ~1.2k tokens");
+  assert.deepEqual(think(t, 1900), [], "a frame short of the next mark is silent");
+  assert.equal(think(t, 2100)[0].text, " · ~2.1k", "the mark appends to the one line");
+  assert.deepEqual(think(t, 4999), []);
+  assert.equal(think(t, 26_000)[0].text, " · ~26k", "past the ladder it repeats every 20k");
+  const closed = t.partial({ type: "content_block_stop", index: 0 });
+  assert.equal(
+    closed.length,
+    1,
+    "the counter and the silent block it stood in for close once, not twice",
+  );
+  assert.equal(closed[0].type, "block-end", "the thinking block ending closes the counter");
+  assert.equal(closed[0].block.text, "✻ Thinking · ~1.2k tokens · ~2.1k · ~26k");
+  assert.equal(t.thinking, undefined);
+
+  // Thinking whose text is streaming needs no counter, and an open one closes.
+  const t2 = new Translator() as any;
+  t2.partial({ type: "message_start" });
+  t2.partial({ type: "content_block_start", index: 0, content_block: { type: "thinking" } });
+  think(t2, 1200);
+  t2.partial({ type: "content_block_delta", index: 0, delta: { thinking: "words" } });
+  const hushed = think(t2, 5000);
+  assert.equal(hushed[0].type, "block-end", "visible thinking closes the counter");
+  assert.deepEqual(think(t2, 9000), [], "and it does not reopen");
+
+  // A counter still open when the turn ends is closed by the result frame.
+  const t3 = new Translator() as any;
+  t3.partial({ type: "message_start" });
+  t3.partial({ type: "content_block_start", index: 0, content_block: { type: "thinking" } });
+  think(t3, 3000);
+  const ended = t3.translate({ type: "result", subtype: "success", usage: {} });
+  assert(
+    ended.some((e: any) => e.type === "block-end"),
+    "the result frame closes an open counter",
+  );
+  assert.equal(t3.thinking, undefined);
+
+  assert.equal(tokensText(0), "0k");
+  assert.equal(tokensText(1049), "1k", "one decimal below 10k, and a trailing .0 is dropped");
+  assert.equal(tokensText(4640), "4.6k");
+  assert.equal(tokensText(23_400), "23k", "no decimal above 10k");
+  console.log("thinking-tokens ok");
 }
