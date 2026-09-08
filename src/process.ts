@@ -344,17 +344,41 @@ export function sshArgs(host: string, script: string) {
   return [...SSH_OPTS, host, script];
 }
 
+/** A Unix socket path holds 108 bytes on Linux, and the last one is the terminator. */
+const SOCKET_PATH_MAX = 107;
+/** `%C` is a SHA-1 in hex, and ssh appends `.` plus 16 random characters while it builds the master. */
+const CONTROL_NAME = "cm-".length + 40 + ".XXXXXXXXXXXXXXXX".length;
+
 /**
- * Where the shared ssh connections live. Its own directory under the plugin's state dir: a unix
- * socket path is capped near 104 bytes and `%C` already spends 40 of them, so this stays short.
- * ssh does not create it, and a missing directory makes every connection fall back to its own.
+ * Where the multiplex sockets live, or nothing when no directory can hold one.
+ *
+ * The state dir is one byte too long for a `%C` socket (`~/.local/state/dsh-oh-my-claude/ssh/`
+ * plus the name is 108), so every connection through it failed with "too long for Unix domain
+ * socket" and the panel showed that instead of the box. The runtime dir is short, is on tmpfs and
+ * is cleared at logout, which is where a socket belongs; the state dir stays as the fallback for a
+ * session without one, and is skipped when it does not fit.
  */
-const SSH_CONTROL_DIR = join(STATE_DIR, "ssh");
-try {
-  mkdirSync(SSH_CONTROL_DIR, { recursive: true, mode: 0o700 });
-} catch {
-  // Unwritable state dir: ssh falls back to an unshared connection, which is how it worked before.
+export function controlSocketDir(
+  runtime: string | undefined,
+  state: string,
+  make: (dir: string) => void,
+): string | undefined {
+  const candidates =
+    runtime === undefined ? [join(state, "ssh")] : [join(runtime, "omc-ssh"), join(state, "ssh")];
+  for (const dir of candidates) {
+    if (dir.length + 1 + CONTROL_NAME > SOCKET_PATH_MAX) continue;
+    try {
+      make(dir);
+      return dir;
+    } catch {
+      // Unwritable: try the next one, and share nothing rather than fail every ssh.
+    }
+  }
+  return undefined;
 }
+const SSH_CONTROL_DIR = controlSocketDir(process.env.XDG_RUNTIME_DIR, STATE_DIR, (dir) =>
+  mkdirSync(dir, { recursive: true, mode: 0o700 }),
+);
 
 /**
  * The options every ssh in this plugin carries.
@@ -377,12 +401,16 @@ const SSH_OPTS = [
   "BatchMode=yes",
   "-o",
   "ConnectTimeout=10",
-  "-o",
-  "ControlMaster=auto",
-  "-o",
-  `ControlPath=${join(SSH_CONTROL_DIR, "cm-%C")}`,
-  "-o",
-  "ControlPersist=60",
+  ...(SSH_CONTROL_DIR === undefined
+    ? []
+    : [
+        "-o",
+        "ControlMaster=auto",
+        "-o",
+        `ControlPath=${join(SSH_CONTROL_DIR, "cm-%C")}`,
+        "-o",
+        "ControlPersist=60",
+      ]),
   "-o",
   "ServerAliveInterval=15",
   "-o",

@@ -274,6 +274,16 @@ export declare function shq(value: string): string;
  * unknown host fails fast instead of hanging on a prompt. */
 export declare function sshArgs(host: string, script: string): string[];
 /**
+ * Where the multiplex sockets live, or nothing when no directory can hold one.
+ *
+ * The state dir is one byte too long for a `%C` socket (`~/.local/state/dsh-oh-my-claude/ssh/`
+ * plus the name is 108), so every connection through it failed with "too long for Unix domain
+ * socket" and the panel showed that instead of the box. The runtime dir is short, is on tmpfs and
+ * is cleared at logout, which is where a socket belongs; the state dir stays as the fallback for a
+ * session without one, and is skipped when it does not fit.
+ */
+export declare function controlSocketDir(runtime: string | undefined, state: string, make: (dir: string) => void): string | undefined;
+/**
  * The local `ssh` argv that runs `command args` on `host` in `cwd`. The remote shell inherits none
  * of this box's environment or working directory, so the command carries both: `cd` into `cwd`, then
  * `exec env` with CHILD_ENV (file checkpointing for rewind, the long MCP timeout). `cwd` is this

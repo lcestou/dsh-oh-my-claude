@@ -1,6 +1,6 @@
 // Offline self-check: bun src/ssh.test.ts. No CLI, no file, no network.
 import assert from "node:assert/strict";
-import { shq, sshInvocation } from "./process.js";
+import { controlSocketDir, shq, sshInvocation } from "./process.js";
 import { sshBoxProviderId, validateRemoteWorkspaceInput, validateSshBoxes } from "./sessions.js";
 
 // shq wraps in single quotes and escapes embedded quotes.
@@ -35,7 +35,10 @@ import { sshBoxProviderId, validateRemoteWorkspaceInput, validateSshBoxes } from
   ])
     assert.match(opts, new RegExp(`-o ${opt.replace("=", "=")}`), `ssh carries ${opt}`);
   // One shared connection for every read of a box: the CLAUDE.md walk alone is ~25 of them.
-  assert.match(opts, /ControlPath=\S+cm-%C/);
+  const control = /ControlPath=(\S+)cm-%C/.exec(opts);
+  assert.ok(control, "ssh carries a ControlPath");
+  // ssh refuses the socket, and every read of the box with it, when the name runs past 107 bytes.
+  assert.ok(`${control[1]}cm-`.length + 40 + ".XXXXXXXXXXXXXXXX".length <= 107, "socket path fits");
   const script = inv.args.at(-1);
   assert.equal(
     script,
@@ -120,3 +123,33 @@ import { sshBoxProviderId, validateRemoteWorkspaceInput, validateSshBoxes } from
 }
 
 console.log("ok ssh");
+
+// The socket directory: short enough for a `%C` name, or nothing rather than a failing ssh.
+{
+  const made: string[] = [];
+  const make = (dir: string) => made.push(dir);
+  const state = "/home/someone/.local/state/dsh-oh-my-claude";
+  // The runtime dir wins: it is short, on tmpfs, and cleared at logout.
+  assert.equal(controlSocketDir("/run/user/1000", state, make), "/run/user/1000/omc-ssh");
+  // Without one, the state dir is one byte too long for the socket, so nothing is shared.
+  assert.equal(controlSocketDir(undefined, state, make), undefined);
+  // A shorter home fits, and is used.
+  assert.equal(
+    controlSocketDir(undefined, "/home/u/.local/state/omc", make),
+    "/home/u/.local/state/omc/ssh",
+  );
+  // An unwritable runtime dir falls through to the state dir instead of failing every ssh.
+  assert.equal(
+    controlSocketDir("/run/user/1000", "/home/u/.local/state/omc", (dir) => {
+      if (dir.startsWith("/run")) throw new Error("read-only");
+      made.push(dir);
+    }),
+    "/home/u/.local/state/omc/ssh",
+  );
+  assert.deepEqual(made, [
+    "/run/user/1000/omc-ssh",
+    "/home/u/.local/state/omc/ssh",
+    "/home/u/.local/state/omc/ssh",
+  ]);
+}
+console.log("ssh control socket ok");
