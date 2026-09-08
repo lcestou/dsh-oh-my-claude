@@ -9,6 +9,7 @@ import { readdir, readFile, writeFile, rename, copyFile, stat, mkdir, rm } from 
 import { dirname, join } from "node:path";
 import { listTranscripts, readTranscript, toSessionEvents } from "./transcript.js";
 import { shq, sshArgs } from "./process.js";
+import { homeAt, isEnoent, readAt, writeAt, type FsBox } from "./remote-fs.js";
 import type { TranscriptListItem } from "./transcript.js";
 import { deleteMemory, isMemoryName, listMemory } from "./memory.js";
 import { listInstructions } from "./instructions.js";
@@ -634,18 +635,12 @@ export interface SettingsFile {
   mtime: number;
 }
 
-const isEnoent = (e: unknown): boolean =>
-  typeof e === "object" && e !== null && "code" in e && e.code === "ENOENT";
-
-/** Read Claude Code's settings file; a missing file reads as an empty object. */
-async function readSettings(path: string): Promise<SettingsFile> {
-  try {
-    const [text, info] = await Promise.all([readFile(path, "utf8"), stat(path)]);
-    return { path, exists: true, text, mtime: info.mtimeMs };
-  } catch (e) {
-    if (isEnoent(e)) return { path, exists: false, text: "{}\n", mtime: 0 };
-    throw e;
-  }
+/** Read Claude Code's settings file on the session's own box; a missing file reads as an empty object. */
+async function readSettings(box: FsBox, path: string): Promise<SettingsFile> {
+  const file = await readAt(box, path);
+  return file === null
+    ? { path, exists: false, text: "{}\n", mtime: 0 }
+    : { path, exists: true, text: file.text, mtime: file.mtimeMs };
 }
 
 /**
@@ -653,6 +648,7 @@ async function readSettings(path: string): Promise<SettingsFile> {
  * per-key merges in `switches.ts` and `plugins.ts` expect.
  */
 async function settingsTexts(
+  box: FsBox,
   userPath: string,
   cwd: string | null,
 ): Promise<Array<{ scope: string; text: string }>> {
@@ -660,7 +656,7 @@ async function settingsTexts(
   for (const scope of SETTINGS_SCOPES) {
     const path = settingsScopePath(scope, userPath, cwd);
     if (path === undefined) continue;
-    const file = await readSettings(path).catch(() => null);
+    const file = await readSettings(box, path).catch(() => null);
     if (file?.exists === true) texts.push({ scope, text: file.text });
   }
   return texts;
@@ -688,7 +684,7 @@ export interface PickerSettings {
  * file someone is halfway through editing can never empty the picker.
  */
 export async function readPickerSettings(path: string): Promise<PickerSettings | undefined> {
-  const file = await readSettings(path).catch(() => undefined);
+  const file = await readSettings({}, path).catch(() => undefined);
   if (!file?.exists) return undefined;
   const { value } = parseSettingsText(file.text);
   if (!value) return undefined;
@@ -713,9 +709,13 @@ export async function readPickerSettings(path: string): Promise<PickerSettings |
 
 /** Keep the previous copy as .bak, write to a temp file, rename over: never a half-written file. */
 async function writeWithBackup(
+  box: FsBox,
   path: string,
   text: string,
 ): Promise<{ path: string; backup: string; mtime: number }> {
+  // A box's file is written by the same script that reads it, backup and temp file included, so a
+  // dropped connection cannot leave half a settings file behind.
+  if (box.sshHost) return { path, backup: `${path}.bak`, mtime: await writeAt(box, path, text) };
   // A project that has never had settings has no `.claude/` yet; every other target dir exists.
   await mkdir(dirname(path), { recursive: true });
   const backup = `${path}.bak`;
@@ -1005,6 +1005,13 @@ export function registerSessionRoutes(
   /** The box a request is about: the session's own mount when it named one, else this instance. */
   const boxOf = (url: URL): MountBox =>
     instanceFor?.(url.searchParams.get("provider")) ?? { configDir, command, sshHost };
+  /**
+   * Where that box keeps the user-scope settings file. A mount's `configDir` is resolved against
+   * this PC's home, so a remote box's path has to come from its own `$HOME` (asked once per host);
+   * the project and local scopes hang off the session's cwd, which is already the remote path.
+   */
+  const userSettingsPathOf = async (box: MountBox): Promise<string | undefined> =>
+    box.sshHost ? `${await homeAt(box)}/.claude/settings.json` : settingsPath;
   // Optional: stock dsh has it; without it archived sessions list but cannot be restored.
   let registry: WorkspaceRegistry | undefined;
   ctx.inject?.(["workspaceRegistry"], (host) => {
@@ -1162,14 +1169,19 @@ export function registerSessionRoutes(
                     return json(res, 403, { error: "the managed file is read-only" });
                   if (typeof body.text !== "string")
                     return json(res, 400, { error: "text required" });
-                  const written = await writeWithBackup(file.path, body.text);
+                  // Instructions still read and write this PC: the CLAUDE.md list is next in the
+                  // queue, and a write that crossed while the read did not would edit a file the
+                  // tab never showed.
+                  const written = await writeWithBackup({}, file.path, body.text);
                   log("info", `instructions ${file.path} saved (${body.text.length} chars)`);
                   return json(res, 200, written);
                 }
                 return json(res, 405, { error: "method not allowed" });
               }
               if (settingsPath && url.pathname === `${ROUTE_PREFIX}/settings`) {
-                if (req.method === "GET") return json(res, 200, await readSettings(settingsPath));
+                const box = boxOf(url);
+                const userPath = (await userSettingsPathOf(box)) ?? settingsPath;
+                if (req.method === "GET") return json(res, 200, await readSettings(box, userPath));
                 if (req.method === "PUT") {
                   const body = await readBody(req, 1024 * 1024);
                   const text = body.text;
@@ -1179,7 +1191,7 @@ export function registerSessionRoutes(
                   if (scope === "managed")
                     return json(res, 400, { error: "managed settings are read-only" });
                   const cwd = await knownCwd(body.cwd, sessionPersistence);
-                  const path = settingsScopePath(scope, settingsPath, cwd);
+                  const path = settingsScopePath(scope, userPath, cwd);
                   if (path === undefined)
                     return json(res, 400, {
                       error: "project and local settings need a directory a dsh session is open in",
@@ -1187,7 +1199,7 @@ export function registerSessionRoutes(
                   const parsed = parseSettingsText(text);
                   if (parsed.error !== undefined) return json(res, 400, { error: parsed.error });
                   const settingsText = typeof text === "string" ? text : "";
-                  const written = await writeWithBackup(path, settingsText);
+                  const written = await writeWithBackup(box, path, settingsText);
                   log("info", `${scope} settings saved (${settingsText.length} chars)`);
                   return json(res, 200, written);
                 }
@@ -1197,13 +1209,15 @@ export function registerSessionRoutes(
               if (settingsPath && url.pathname === `${ROUTE_PREFIX}/settings/scopes`) {
                 if (req.method !== "GET") return json(res, 405, { error: "method not allowed" });
                 const cwd = await knownCwd(url.searchParams.get("cwd"), sessionPersistence);
+                const box = boxOf(url);
+                const userPath = (await userSettingsPathOf(box)) ?? settingsPath;
                 const scopes: SettingsScopeInfo[] = [];
                 for (const scope of SETTINGS_SCOPES) {
-                  const path = settingsScopePath(scope, settingsPath, cwd);
+                  const path = settingsScopePath(scope, userPath, cwd);
                   if (path === undefined) continue;
                   // An unreadable managed file (root-owned, or a directory) reads as absent
                   // rather than failing the whole payload.
-                  const file = await readSettings(path).catch(() => ({
+                  const file = await readSettings(box, path).catch(() => ({
                     path,
                     exists: false,
                     text: "{}\n",
@@ -1218,9 +1232,12 @@ export function registerSessionRoutes(
               if (settingsPath && url.pathname === `${ROUTE_PREFIX}/plugins`) {
                 if (req.method !== "GET") return json(res, 405, { error: "method not allowed" });
                 const cwd = await knownCwd(url.searchParams.get("cwd"), sessionPersistence);
+                const box = boxOf(url);
                 return json(res, 200, {
                   ok: true,
-                  ...pluginRoster(await settingsTexts(settingsPath, cwd)),
+                  ...pluginRoster(
+                    await settingsTexts(box, (await userSettingsPathOf(box)) ?? settingsPath, cwd),
+                  ),
                 });
               }
               // Turn the roster into a manager. The CLI owns the mutation end to end (it resolves
@@ -1316,7 +1333,12 @@ export function registerSessionRoutes(
               if (settingsPath && url.pathname === `${ROUTE_PREFIX}/feature-switches`) {
                 if (req.method !== "GET") return json(res, 405, { error: "method not allowed" });
                 const cwd = await knownCwd(url.searchParams.get("cwd"), sessionPersistence);
-                const texts = await settingsTexts(settingsPath, cwd);
+                const box = boxOf(url);
+                const texts = await settingsTexts(
+                  box,
+                  (await userSettingsPathOf(box)) ?? settingsPath,
+                  cwd,
+                );
                 // The child inherits dsh's environment, so dsh's is where the disable would be.
                 // An absent option means an adapter that did not pass one, so read the config
                 // default rather than reporting the feature off.
@@ -1346,16 +1368,13 @@ export function registerSessionRoutes(
                 const box = boxOf(url);
                 const runtime = await runtimeStatus(box.configDir, box.command, box.sshHost);
                 const configFiles: DiagnosticFile[] = [];
-                // A remote box's settings files are on that box, and nothing here reads them yet.
-                // Listing this PC's instead would report a config the session never merges.
-                for (const scope of box.sshHost ? [] : SETTINGS_SCOPES) {
-                  const path = settingsPath
-                    ? settingsScopePath(scope, settingsPath, cwd)
-                    : undefined;
+                const userPath = await userSettingsPathOf(box);
+                for (const scope of SETTINGS_SCOPES) {
+                  const path = userPath ? settingsScopePath(scope, userPath, cwd) : undefined;
                   if (path === undefined) continue;
                   // A file that cannot be read at all reads as absent, the way the scopes route
                   // treats a root-owned managed file: the payload is a report, not a failure.
-                  const file = await readSettings(path).catch(() => null);
+                  const file = await readSettings(box, path).catch(() => null);
                   const entry: DiagnosticFile = { scope, path, exists: file?.exists ?? false };
                   const parsed = file?.exists === true ? parseSettingsText(file.text) : undefined;
                   if (parsed?.error !== undefined) entry.parseError = parsed.error;
@@ -1363,7 +1382,7 @@ export function registerSessionRoutes(
                 }
                 // `ok` is what the tab keys its render on; without it the reply reads as the
                 // failure shape and the tab draws an empty error line instead of the report.
-                return json(res, 200, { ok: true, runtime, configFiles, remote: box.sshHost });
+                return json(res, 200, { ok: true, runtime, configFiles });
               }
               // `claude doctor` runs a process and takes a second, so it is its own route and
               // nothing runs it until the button is pressed.

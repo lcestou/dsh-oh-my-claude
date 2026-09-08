@@ -2560,7 +2560,12 @@ const ensureFoldStyle = () => {
     // own text rather than back under the icon. `user-select` is off for a folding header, where a
     // drag is a mis-click on a control, but stays on for a flat one: `▤ Read \`path\`` is a whole step
     // and the path is the thing worth copying out of it.
-    `${head}{font-size:var(--dsh-content-font-size-secondary,13px);color:var(--dsw-alias-label-secondary);padding-left:calc(${box} + 6px);text-indent:calc(0px - ${box} - 6px)}`,
+    // The line has to clear the leading box: dsh's paragraph line-height is set from a 13px font, and
+    // a 16px icon sitting in it puts the glyph into the row above.
+    `${head}{font-size:var(--dsh-content-font-size-secondary,13px);line-height:calc(${box} + 4px);color:var(--dsw-alias-label-secondary);padding-left:calc(${box} + 6px);text-indent:calc(0px - ${box} - 6px);margin-bottom:4px}`,
+    // `text-indent` inherits, and dsh renders inline code as an inline-block — a block container, so
+    // the hanging indent applies a second time inside the chip and drags the path left over the verb.
+    `${head} *{text-indent:0}`,
     `${fold}{cursor:pointer;user-select:none}`,
     `${fold}:focus-visible{outline:1px solid var(--dsw-alias-label-tertiary);outline-offset:2px;border-radius:4px}`,
     `${head} ${lead}{position:relative;display:inline-block;width:${box};height:${box};margin-right:6px;color:var(--dsw-alias-label-tertiary);vertical-align:calc(.36em - ${half});vertical-align:calc(.5cap - ${half})}`,
@@ -2570,6 +2575,13 @@ const ensureFoldStyle = () => {
     `${fold}:hover ${lead}>[data-omc-part="icon"]{opacity:0}`,
     `${fold}:hover ${lead}>[data-omc-part="chevron"]{opacity:1}`,
     `${head}[${HEAD_MARK}="1"]+.md-code-block{display:none}`,
+    // Rows stack the way dsh's own tool rows do: one tight step between rows rather than a
+    // paragraph's worth, and an expanded block sits against the header it belongs to. The step has
+    // to be the header's own `margin-bottom`: dsh wraps each row in its own markdown container, so
+    // two rows are never siblings and a `+` rule between them can never match — that margin
+    // collapses through the wrapper and is the whole gap. Zero it and the rows sit flush.
+    `${head}+.md-code-block{margin-top:4px;margin-bottom:0}`,
+    `${head}+.md-code-block+${head}{margin-top:8px}`,
   ].join("");
   document.head.appendChild(el);
 };

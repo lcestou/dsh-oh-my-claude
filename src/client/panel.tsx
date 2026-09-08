@@ -1182,8 +1182,6 @@ interface DiagnosticsReply {
     error?: string;
   };
   configFiles: Array<{ scope: string; path: string; exists: boolean; parseError?: string }>;
-  /** Set when the session runs on an SSH box: its settings files are there, and unread from here. */
-  remote?: string;
 }
 type DiagnosticsError = { ok: false; error: string };
 /** The slice of a turn record this tab reads: when the turn ran, and the calls a rule refused. */
@@ -1394,11 +1392,7 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
           <span style={{ ...meta, padding: "2px 4px", display: "block", marginTop: 8 }}>
             Config files
           </span>
-          {data.remote ? (
-            <span style={{ ...meta, padding: "2px 4px", fontSize: 12 }}>
-              On {data.remote}; this panel does not read a box's settings files yet.
-            </span>
-          ) : data.configFiles.length === 0 ? (
+          {data.configFiles.length === 0 ? (
             <span style={{ ...meta, padding: "2px 4px", fontSize: 12 }}>No config files</span>
           ) : (
             data.configFiles.map((f) => (
@@ -2525,7 +2519,7 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
             {tab === "Asides" && <AsidesBody sessionId={sessionId} />}
             {tab === "Diagnostics" && <DiagnosticsBody sessionId={sessionId} ctx={ctx} />}
             {tab === "Tasks" && <TasksBody sessionId={sessionId} ctx={ctx} />}
-            {tab === "Tune" && <TuneBody sessionId={sessionId} />}
+            {tab === "Tune" && <TuneBody sessionId={sessionId} ctx={ctx} />}
           </div>
           {/* Under the body, not over it: the panel is anchored to its bottom edge, so a taller tab
               pushes the top up and leaves the strip where the pointer left it. */}

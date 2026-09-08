@@ -1,0 +1,184 @@
+/**
+ * File reads and writes for a session's own box.
+ *
+ * Every file-backed panel route used to read this box's disk whatever box the session ran on, so a
+ * session on an SSH mount was shown this PC's settings and wrote its edits here. A box that is this
+ * PC still goes straight to `node:fs`; a box with `sshHost` runs one short shell script over the
+ * same `ssh` the spawner and the status probe use. Key-based auth only, as everywhere else.
+ *
+ * The scripts are built by pure functions so they can be asserted without a host
+ * (`src/remote-fs.test.ts`). Every path is single-quoted through `shq`, so a space or a quote in a
+ * workspace path cannot break out of its argument.
+ *
+ * ponytail: a write carries its content base64-encoded inside the command line, which a settings or
+ * memory file fits in comfortably; swap for a piped stdin the day something megabyte-sized needs it.
+ */
+import { execFile } from "node:child_process";
+import { readFile, writeFile, mkdir, readdir, rm, stat } from "node:fs/promises";
+import { homedir } from "node:os";
+import { dirname } from "node:path";
+import { shq, sshArgs } from "./process.js";
+
+/** The part of a mount this module needs: an empty `sshHost` means this PC. */
+export interface FsBox {
+  sshHost?: string;
+}
+
+/** A file as the panel reads it: its text, and when it last changed. */
+export interface FileRead {
+  text: string;
+  mtimeMs: number;
+}
+
+/** Exit code the read script uses for "no such file", to tell an absent file from a dead connection. */
+export const ABSENT = 44;
+
+/** The local counterpart of `ABSENT`: the one `node:fs` failure that means the file is not there. */
+export const isEnoent = (e: unknown): boolean =>
+  typeof e === "object" && e !== null && "code" in e && e.code === "ENOENT";
+
+/**
+ * The modification time on its own first line, then the file verbatim. One round trip serves both
+ * the editor's conflict check and its text; GNU `stat` and the BSD one disagree on the flag, so try
+ * each and fall back to an unknown time rather than failing the read.
+ */
+export const readScript = (path: string): string =>
+  `if [ -e ${shq(path)} ]; then { stat -c %Y -- ${shq(path)} 2>/dev/null || ` +
+  `stat -f %m -- ${shq(path)} 2>/dev/null || echo 0; }; cat -- ${shq(path)}; else exit ${ABSENT}; fi`;
+
+/** One name per line, or nothing when the directory is absent — a missing dir lists empty, as locally. */
+export const listScript = (dir: string): string =>
+  `if [ -d ${shq(dir)} ]; then ls -A -- ${shq(dir)}; fi`;
+
+/**
+ * Back the file up the way a local write does, then replace it through a temp file so a dropped
+ * connection cannot leave a half-written settings file the CLI would refuse to start on.
+ * `base64 -d` is in coreutils and busybox alike. It answers the mtime it left behind, which the
+ * editor checks its next write against: reading it back in a second round trip would both cost a
+ * connection and report on a file that may have moved on since.
+ */
+export const writeScript = (path: string, base64: string): string =>
+  `mkdir -p ${shq(dirname(path))} && { [ -e ${shq(path)} ] && cp -- ${shq(path)} ${shq(`${path}.bak`)} || true; } && ` +
+  `printf %s ${shq(base64)} | base64 -d > ${shq(`${path}.tmp`)} && mv -- ${shq(`${path}.tmp`)} ${shq(path)} && ` +
+  `{ stat -c %Y -- ${shq(path)} 2>/dev/null || stat -f %m -- ${shq(path)} 2>/dev/null || echo 0; }`;
+
+/** Delete, and stay silent about a file that was already gone. */
+export const removeScript = (path: string): string => `rm -f -- ${shq(path)}`;
+
+/** What a remote command returned: `code` is the remote exit status when ssh itself connected. */
+interface Ran {
+  code: number;
+  out: string;
+  err: string;
+}
+
+const ssh = (host: string, script: string, timeout = 15_000): Promise<Ran> =>
+  new Promise((resolve) =>
+    execFile(
+      "ssh",
+      sshArgs(host, script),
+      { timeout, windowsHide: true, maxBuffer: 8 * 1024 * 1024 },
+      (e, out, err) =>
+        resolve({
+          // SAFETY: execFile's error carries the remote exit status; anything else (spawn failure,
+          // timeout) has no code and reads as 255, the status ssh itself uses for a failed connection.
+          code: e === null ? 0 : ((e as { code?: number }).code ?? 255),
+          out: String(out),
+          err: String(err).trim().slice(0, 300),
+        }),
+    ),
+  );
+
+/** ssh could not run the script at all (bad key, unknown host, timeout) rather than the file missing. */
+const transportError = (host: string, r: Ran): Error =>
+  new Error(`${host}: ${r.err || `ssh exited ${r.code}`}`);
+
+/** Split the read script's answer: the first line is the mtime in seconds, the rest is the file. */
+export function splitRead(out: string): FileRead {
+  const cut = out.indexOf("\n");
+  const head = cut === -1 ? out : out.slice(0, cut);
+  const seconds = Number(head.trim());
+  return {
+    text: cut === -1 ? "" : out.slice(cut + 1),
+    mtimeMs: Number.isFinite(seconds) ? seconds * 1000 : 0,
+  };
+}
+
+/** The file with its mtime, or null when it does not exist. Throws when the box cannot be reached. */
+export async function readAt(box: FsBox, path: string): Promise<FileRead | null> {
+  if (!box.sshHost) {
+    const read = await Promise.all([readFile(path, "utf8"), stat(path)]).catch((e: unknown) => {
+      // Only an absent file reads as null. A permission error or a broken mount is a fault worth
+      // surfacing, and answering null for it would show an unreadable file as one that is not there.
+      if (!isEnoent(e)) throw e;
+      return null;
+    });
+    return read === null ? null : { text: read[0], mtimeMs: read[1].mtimeMs };
+  }
+  const r = await ssh(box.sshHost, readScript(path));
+  if (r.code === ABSENT) return null;
+  if (r.code !== 0) throw transportError(box.sshHost, r);
+  return splitRead(r.out);
+}
+
+/** The file's text, or null when it does not exist. */
+export async function readTextAt(box: FsBox, path: string): Promise<string | null> {
+  return (await readAt(box, path))?.text ?? null;
+}
+
+/** The names in a directory; an absent directory lists empty, the way a local read does. */
+export async function listNamesAt(box: FsBox, dir: string): Promise<string[]> {
+  if (!box.sshHost) return await readdir(dir).catch(() => []);
+  const r = await ssh(box.sshHost, listScript(dir));
+  if (r.code !== 0) throw transportError(box.sshHost, r);
+  return r.out.split("\n").filter((n) => n !== "");
+}
+
+/**
+ * Write the file, creating its parent and keeping a `.bak` of what was there. Answers the mtime the
+ * file ended up with, which is what the editor checks its next write against.
+ */
+export async function writeAt(box: FsBox, path: string, text: string): Promise<number> {
+  const body = text.endsWith("\n") ? text : `${text}\n`;
+  if (!box.sshHost) {
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, body, "utf8");
+    return (await stat(path)).mtimeMs;
+  }
+  const r = await ssh(box.sshHost, writeScript(path, Buffer.from(body, "utf8").toString("base64")));
+  if (r.code !== 0) throw transportError(box.sshHost, r);
+  const seconds = Number(r.out.trim());
+  return Number.isFinite(seconds) ? seconds * 1000 : 0;
+}
+
+/** Remote home directories, keyed by host: a box's `$HOME` does not change while dsh runs. */
+const homes = new Map<string, string>();
+
+/**
+ * The box's home directory, which is where its `~/.claude` lives. A mount's `configDir` is resolved
+ * against *this* PC's home, so a remote box's user-scope settings path has to be asked for over ssh
+ * rather than assumed: the account there is often not the account here.
+ */
+export async function homeAt(box: FsBox): Promise<string> {
+  if (!box.sshHost) return homedir();
+  const cached = homes.get(box.sshHost);
+  if (cached !== undefined) return cached;
+  const r = await ssh(box.sshHost, 'printf %s "$HOME"');
+  if (r.code !== 0) throw transportError(box.sshHost, r);
+  const home = r.out.trim();
+  // An empty `$HOME` would build `/.claude/settings.json` and edit the wrong file, so it is a fault
+  // rather than a value to cache: the caller hears about the box instead of writing to the root.
+  if (home === "") throw new Error(`${box.sshHost}: no $HOME on the remote account`);
+  homes.set(box.sshHost, home);
+  return home;
+}
+
+/** Delete the file; a file that was already gone is not an error. */
+export async function removeAt(box: FsBox, path: string): Promise<void> {
+  if (!box.sshHost) {
+    await rm(path, { force: true });
+    return;
+  }
+  const r = await ssh(box.sshHost, removeScript(path));
+  if (r.code !== 0) throw transportError(box.sshHost, r);
+}

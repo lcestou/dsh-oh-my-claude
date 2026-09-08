@@ -1,6 +1,17 @@
 import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
-import { bodyFlow, meta, T, readJson, ROUTE, inputStyle, select, useNarrow } from "./shared.js";
+import {
+  bodyFlow,
+  meta,
+  T,
+  readJson,
+  ROUTE,
+  inputStyle,
+  select,
+  useNarrow,
+  claudeProviderOf,
+} from "./shared.js";
+import type { ClientCtx } from "./shared.js";
 import {
   PERMISSION_KINDS,
   readPermissionRules,
@@ -182,7 +193,11 @@ interface SettingsFile {
   mtime: number;
 }
 
-const read = () => fetch(`${ROUTE}/settings`).then((r) => readJson<SettingsFile>(r));
+/** Every settings call carries the session's own mount, so a session on a box edits that box's file. */
+const onBox = (provider: string | undefined) =>
+  provider === undefined ? "" : `?provider=${encodeURIComponent(provider)}`;
+const read = (provider: string | undefined) =>
+  fetch(`${ROUTE}/settings${onBox(provider)}`).then((r) => readJson<SettingsFile>(r));
 
 /** Where a row's value comes from: the file when a key is set, the CLI's own default when not. */
 const source = (set: boolean) => (set ? "settings.json" : "Claude Code default");
@@ -208,7 +223,14 @@ const THINKING_PRESETS: Array<{ label: string; tokens: number | null }> = [
   { label: "Ultrathink · 32k", tokens: 31999 },
 ];
 
-export function TuneBody({ sessionId }: { sessionId: string }): React.ReactElement {
+export function TuneBody({
+  sessionId,
+  ctx,
+}: {
+  sessionId: string;
+  ctx: ClientCtx;
+}): React.ReactElement {
+  const provider = claudeProviderOf(ctx, sessionId);
   const narrow = useNarrow();
   const [file, setFile] = useState<SettingsFile | null>(null);
   const [error, setError] = useState("");
@@ -230,7 +252,7 @@ export function TuneBody({ sessionId }: { sessionId: string }): React.ReactEleme
 
   useEffect(() => {
     let live = true;
-    read().then(
+    read(provider).then(
       (f) => live && setFile(f),
       (e: Error) => live && setError(e.message),
     );
@@ -266,7 +288,7 @@ export function TuneBody({ sessionId }: { sessionId: string }): React.ReactEleme
     setBusy(true);
     setError("");
     try {
-      const fresh = await read();
+      const fresh = await read(provider);
       if (fresh.mtime !== file.mtime) {
         setFile(fresh);
         return "settings.json changed on disk; the tab now shows the new values, try again";
@@ -275,7 +297,7 @@ export function TuneBody({ sessionId }: { sessionId: string }): React.ReactEleme
       if (next.error !== undefined) return next.error;
       setFile(
         await readJson<SettingsFile>(
-          await fetch(`${ROUTE}/settings`, {
+          await fetch(`${ROUTE}/settings${onBox(provider)}`, {
             method: "PUT",
             headers: { "content-type": "application/json" },
             body: JSON.stringify({ text: next.text }),
