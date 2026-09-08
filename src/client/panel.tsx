@@ -411,6 +411,57 @@ interface PluginMutationBody {
 type Act = (path: string, body: PluginMutationBody, id: string) => Promise<boolean>;
 
 /**
+ * A destructive button that asks before it acts. The first click arms it and the label becomes
+ * "Sure?"; the second click within five seconds runs `onAct`, and anything slower disarms it. No
+ * dialog: these rows are dense and a modal over a list of plugins costs more than the mistake it
+ * prevents — the point is only that Remove is never one stray click away from uninstalling.
+ */
+function ConfirmButton({
+  label,
+  onAct,
+  style,
+  disabled,
+  busyLabel,
+}: {
+  label: string;
+  onAct: () => void;
+  style: CSSProperties;
+  disabled: boolean;
+  busyLabel?: string;
+}) {
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    if (!armed) return;
+    const t = setTimeout(() => setArmed(false), 5000);
+    return () => clearTimeout(t);
+  }, [armed]);
+  if (busyLabel !== undefined)
+    return (
+      <button type="button" style={style} disabled>
+        {busyLabel}
+      </button>
+    );
+  return (
+    <button
+      type="button"
+      style={armed ? { ...style, color: T.err, borderColor: T.err } : style}
+      disabled={disabled}
+      aria-label={armed ? `Confirm ${label}` : label}
+      onClick={() => {
+        if (!armed) {
+          setArmed(true);
+          return;
+        }
+        setArmed(false);
+        onAct();
+      }}
+    >
+      {armed ? "Sure?" : label}
+    </button>
+  );
+}
+
+/**
  * The plugins and marketplaces the session's settings turn on, under the CLAUDE.md files: the same
  * question, a different set of files. Each row acts on its own scope through `claude plugin`, then
  * the running process is asked to re-read plugins (`reload_plugins`) so the change applies now; with
@@ -495,14 +546,13 @@ function PluginManagerBlock({
               {p.detail !== undefined && ` (${p.detail})`}
             </span>
             <span style={{ ...meta, flex: "none" }}>{p.scope}</span>
-            <button
-              type="button"
+            <ConfirmButton
+              label="Remove"
               style={small}
               disabled={busy !== ""}
-              onClick={() => act("/plugins/uninstall", { key: p.key, scope: p.scope }, p.key)}
-            >
-              Remove
-            </button>
+              busyLabel={busy === p.key ? "…" : undefined}
+              onAct={() => void act("/plugins/uninstall", { key: p.key, scope: p.scope }, p.key)}
+            />
           </div>
         ))}
         {marketplaces.map((m) => (
@@ -513,16 +563,15 @@ function PluginManagerBlock({
               {m.alias === true && " (written as additionalMarketplaces)"}
             </span>
             <span style={{ ...meta, flex: "none" }}>{m.scope}</span>
-            <button
-              type="button"
+            <ConfirmButton
+              label="Remove"
               style={small}
               disabled={busy !== ""}
-              onClick={() =>
-                act("/plugins/marketplace/remove", { name: m.name, scope: m.scope }, m.name)
+              busyLabel={busy === m.name ? "…" : undefined}
+              onAct={() =>
+                void act("/plugins/marketplace/remove", { name: m.name, scope: m.scope }, m.name)
               }
-            >
-              Remove
-            </button>
+            />
           </div>
         ))}
         <MarketplaceAddForm act={act} busy={busy} />
@@ -1155,14 +1204,13 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
                   {busy === s.name ? "…" : "Reconnect"}
                 </button>
               )}
-              <button
-                type="button"
+              <ConfirmButton
+                label="Remove"
                 style={btn}
                 disabled={busy !== null}
-                onClick={() => remove(s.name)}
-              >
-                {busy === s.name ? "…" : "Remove"}
-              </button>
+                busyLabel={busy === s.name ? "…" : undefined}
+                onAct={() => remove(s.name)}
+              />
             </div>
             {s.status !== "connected" && (s.error || s.status === "needs-auth") ? (
               // A server that is down explains itself here; `needs-auth` always says something,
