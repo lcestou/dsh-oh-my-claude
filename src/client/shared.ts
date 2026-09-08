@@ -242,13 +242,23 @@ export const isRingRoot = (el: HTMLElement | null) =>
  * `targetHost` cannot do. `SessionHeader` carries no provider and a remote cwd can equal a local
  * one, so this is also the only way to tell a box session from a local one.
  */
+const claudeMount = (provider: string | undefined): string | undefined =>
+  provider?.startsWith("claude-code") === true ? provider : undefined;
 export const claudeProviderOf = (ctx: ClientCtx, id: string): string | undefined => {
   try {
-    const provider = ctx.modelDirectories.directoryFor(id).store.getSnapshot().current?.provider;
-    return provider?.startsWith("claude-code") === true ? provider : undefined;
+    const live = claudeMount(
+      ctx.modelDirectories.directoryFor(id).store.getSnapshot().current?.provider,
+    );
+    if (live !== undefined) return live;
   } catch {
-    return undefined; // no scope or binding yet: not ours
+    // `directoryFor` needs a scope and a binding, and dsh only holds those for a session this tab
+    // has opened. A session running in the sidebar and never clicked throws here, which used to
+    // read as "not a Claude session" and left its row painted in dsh's blue until it was opened.
   }
+  // The cold summary answers for the rest: dsh keeps the last and next model selection in the list
+  // projection so a session can be described without being activated.
+  const sel = ctx.sessions.list.getSnapshot()?.byId[id]?.projections?.values?.modelSelection;
+  return claudeMount(sel?.next?.provider) ?? claudeMount(sel?.lastUsed?.provider);
 };
 
 /**
@@ -429,6 +439,18 @@ export interface ClientCtx {
             running?: boolean;
             completed?: boolean;
             displayTitle?: string;
+            // The cold-summary hints dsh persists so a session can be described without being
+            // activated (`SessionSummary.projections`, dsh-api-session-controller). The model
+            // selection is in there, which is the only provider a session that has never been
+            // opened in this tab can offer.
+            projections?: {
+              values?: {
+                modelSelection?: {
+                  lastUsed?: { provider?: string } | null;
+                  next?: { provider?: string } | null;
+                };
+              };
+            };
           }
         >;
         phase?: string;
