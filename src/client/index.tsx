@@ -46,6 +46,7 @@ import {
   type ClientCtx,
   openHere,
   maskEmail,
+  whenContextGone,
 } from "./shared.js";
 import { AccessShield, OhMyClaudeControl } from "./panel.js";
 import { markTitle, newlyWaiting, noticesOn, type NoticeSnapshot } from "./notices.js";
@@ -2042,6 +2043,14 @@ const observeBody = (observer: MutationObserver) => {
 const onBodyMutation = (scan: FrameScan, sync = false) => {
   (sync ? syncScans : frameScans).add(scan);
   if (bodyObserver) return;
+  // The new bundle registers its own scans; this one's would run on top of them against a context
+  // that no longer answers.
+  whenContextGone(() => {
+    bodyObserver?.disconnect();
+    bodyObserver = undefined;
+    frameScans.clear();
+    syncScans.clear();
+  });
   bodyObserver = new MutationObserver((_records, observer) => {
     if (syncScans.size > 0) {
       // A sync scan writes to the DOM, and those writes would call this back a second time for no
@@ -2332,7 +2341,8 @@ function watchSessionNotices(ctx: ClientCtx) {
     if (wanted !== document.title) document.title = wanted;
   };
   tick(); // take the baseline now, so the first interval already has something to compare against
-  setInterval(tick, 1000);
+  const beat = setInterval(tick, 1000);
+  whenContextGone(() => clearInterval(beat));
 }
 
 function notifyWaiting(ctx: ClientCtx, id: string, title: string) {
@@ -2361,7 +2371,8 @@ function watchTurnStatus(ctx: ClientCtx) {
     else document.body.setAttribute("data-omc-claude", want);
   };
   markBody();
-  setInterval(markBody, 1000);
+  const beat = setInterval(markBody, 1000);
+  whenContextGone(() => clearInterval(beat));
   const attach = async (el: HTMLElement) => {
     // Only act on [role="status"][aria-live="polite"] (dsh's turn-status element).
     if (el.getAttribute("role") !== "status" || el.getAttribute("aria-live") !== "polite") return;
@@ -2473,7 +2484,8 @@ function watchSessionSpinners(ctx: ClientCtx) {
   // hundreds of full-page scans and janked mobile. The poll alone is enough for a sidebar dot's
   // colour. ponytail: if a newly-running row ever needs to tint faster than 1s, observe the sidebar
   // container only and coalesce with requestAnimationFrame, never document.body per mutation.
-  setInterval(scan, 1000);
+  const beat = setInterval(scan, 1000);
+  whenContextGone(() => clearInterval(beat));
 }
 
 /** Fold a native-tool code block into a one-line disclosure. dsh renders a tool step as a `<p>` whose

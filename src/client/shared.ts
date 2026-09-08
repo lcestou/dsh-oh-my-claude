@@ -252,15 +252,41 @@ export const claudeProviderOf = (ctx: ClientCtx, id: string): string | undefined
 export const isClaudeSession = (ctx: ClientCtx, id: string): boolean =>
   claudeProviderOf(ctx, id) !== undefined;
 
+/**
+ * dsh disposes a plugin's context when it loads a new bundle, but this module's timers and body
+ * observer belong to the old bundle and keep running: every read of a disposed context throws
+ * `cannot get required service "sessions" in inactive context`, once a second, forever, and one
+ * more loop joins the flood with each reload. The first such throw retires this bundle instead —
+ * the reads answer undefined and the loops that registered here stop.
+ */
+let gone = false;
+const goneWatchers = new Set<() => void>();
+/** Run `fn` once the context this bundle holds is disposed; immediately if it already is. */
+export const whenContextGone = (fn: () => void): void => {
+  if (gone) fn();
+  else goneWatchers.add(fn);
+};
+const openSessionId = (ctx: ClientCtx): string | undefined => {
+  if (gone) return undefined;
+  try {
+    return ctx.sessions.list.getSnapshot()?.current;
+  } catch {
+    gone = true;
+    for (const fn of goneWatchers) fn();
+    goneWatchers.clear();
+    return undefined;
+  }
+};
+
 /** The open session's provider when it is one of this plugin's mounts (`claude-code*`), else undefined. */
 export const activeClaudeSession = (ctx: ClientCtx): string | undefined => {
-  const id = ctx.sessions.list.getSnapshot()?.current;
+  const id = openSessionId(ctx);
   if (!id) return undefined;
   return isClaudeSession(ctx, id) ? id : undefined;
 };
 /** The open Claude session's own provider id (e.g. `claude-code` or `claude-code-prod`), else undefined. */
 export const activeClaudeProvider = (ctx: ClientCtx): string | undefined => {
-  const id = ctx.sessions.list.getSnapshot()?.current;
+  const id = openSessionId(ctx);
   return id ? claudeProviderOf(ctx, id) : undefined;
 };
 
