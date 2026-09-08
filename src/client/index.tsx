@@ -3,8 +3,17 @@
 // here or jump to the box) and Boxes (this box as the first row, plus the ssh and linked-dsh
 // machines you add, each probed for claude version and login). Built into lib/client.js by
 // `bun run build`.
-import type { ReactNode } from "react";
+import type { FC, ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  IconApiOutline14,
+  IconBrowseOutline16,
+  IconChevronDownOutline14,
+  IconCodeOutline16,
+  IconEditOutline16,
+  IconSearchOutline16,
+  IconSparkle16,
+} from "@deepseek-ai/dsh-client-ui-primitives";
 import {
   ROUTE,
   fmtCost,
@@ -2451,28 +2460,81 @@ function watchSessionSpinners(ctx: ClientCtx) {
 /** Fold a native-tool code block into a one-line disclosure. dsh renders a tool step as a `<p>` whose
  *  text is an icon plus the tool's name (`❯ Bash`, `▤ Read` — set by the translator) followed by its
  *  `.md-code-block` fence, both children of `._markdown`. Collapsed, the fence hides; hovering the
- *  header swaps its icon for a chevron, and clicking toggles it. The marker is the leading glyph: only
- *  a header that starts with one of the translator's tool icons folds, so Claude's own prose code
+ *  header swaps its icon for dsh's chevron, and clicking toggles it. The marker is the leading glyph:
+ *  only a header that starts with one of the translator's tool icons folds, so Claude's own prose code
  *  blocks are left alone. Kept in sync with the translator's TOOL_ICON set. */
 const TOOL_ICONS = "❯▤✎⌕✳⤓◆";
 const FOLD_MARK = "data-omc-fold"; // on the fence: "tool" paired to a header · "skip" not a tool block
 const HEAD_MARK = "data-omc-tool"; // on the header <p>: "1" collapsed · "open" expanded
-const ICON_MARK = "data-omc-icon"; // on the header <p>: the leading glyph, lifted out of the text
+const LEAD_MARK = "data-omc-lead"; // on the span that replaces the glyph: the sprite key it carries
+const SPRITE_MARK = "data-omc-sprite"; // on each hidden sprite: its key
+
+/** The translator's glyph mapped to the dsh icon that stands for the same tool in its own tool cards
+ *  (`VARIANT_ICONS` in dsh-client-ui-tool). Reusing dsh's art keeps a Claude tool header and a dsh tool
+ *  row visually the same family instead of inventing a second icon set. `chevron` is the disclosure
+ *  marker; dsh's tool rows use the same one, unrotated. */
+const SPRITES = {
+  "❯": IconApiOutline14,
+  "▤": IconBrowseOutline16,
+  "✎": IconEditOutline16,
+  "⌕": IconSearchOutline16,
+  "✳": IconCodeOutline16,
+  "⤓": IconBrowseOutline16,
+  "◆": IconSparkle16,
+  chevron: IconChevronDownOutline14,
+} satisfies Record<string, FC<{ size?: number }>>;
+
+/** The hidden sprite sheet: one rendered copy of each dsh icon, cloned into the tool headers by the
+ *  fold scan. Rendering them as ordinary children of a mounted component is what lets this plugin use
+ *  dsh's React icons from plain DOM code — no react-dom import, no portal, and the sheet costs one
+ *  hidden div per session. */
+function ToolIconSprites() {
+  return (
+    <span hidden>
+      {Object.entries(SPRITES).map(([key, Icon]) => (
+        <span key={key} {...{ [SPRITE_MARK]: key }}>
+          <Icon size={14} />
+        </span>
+      ))}
+    </span>
+  );
+}
 
 const ensureFoldStyle = () => {
   if (document.getElementById("dsh-oh-my-claude-fold")) return;
   const el = document.createElement("style");
   el.id = "dsh-oh-my-claude-fold";
   // The header reads as dsh's muted tool text — a touch smaller and dimmed — and sits flush-left like
-  // any prose line. The icon itself is the ::before (the scan lifts it out of the text), so hovering
-  // swaps it for the chevron in place: one glyph, never two stacked. The two states declare different
-  // widths on purpose — `em` resolves against the pseudo-element's own font size, so the chevron's
-  // .815em at 1.35em is the icon's 1.1em at 1em and the row does not shift. The chevron stays as the
-  // open-state marker, rotated. The
-  // adjacent-sibling rule hides the fence while the header reads "1"; the two are always consecutive
-  // children of ._markdown.
-  el.textContent = `body[data-omc-claude] p[${HEAD_MARK}]{cursor:pointer;user-select:none;font-size:.9em;opacity:.68}body[data-omc-claude] p[${HEAD_MARK}]::before{content:attr(${ICON_MARK});display:inline-block;width:1.1em;line-height:1;transition:transform .12s ease}body[data-omc-claude] p[${HEAD_MARK}]:hover::before,body[data-omc-claude] p[${HEAD_MARK}="open"]::before{content:"\\203A";font-size:1.35em;color:${CLAUDE_ORANGE};width:.815em}body[data-omc-claude] p[${HEAD_MARK}="open"]::before{transform:rotate(90deg)}body[data-omc-claude] p[${HEAD_MARK}="1"]+.md-code-block{display:none}`;
+  // any prose line. The leading span is a fixed 16px box holding both glyphs stacked, so the row never
+  // shifts: the tool icon is the resting state and the chevron sits on top of it at opacity 0, the two
+  // cross-fading on hover. This is how dsh draws its own tool rows (`iconIdle`/`chevronHover` in
+  // dsh-client-ui-tool), down to the secondary label colour, and the chevron never rotates — expanding
+  // is shown by the fence appearing, not by the marker turning. The adjacent-sibling rule hides the
+  // fence while the header reads "1"; the two are always consecutive children of ._markdown.
+  const lead = `body[data-omc-claude] span[${LEAD_MARK}]`;
+  el.textContent = `body[data-omc-claude] p[${HEAD_MARK}]{cursor:pointer;user-select:none;font-size:.9em;opacity:.68}${lead}{position:relative;display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;vertical-align:-.2em;margin-right:.3em}${lead}>[data-omc-part]{display:inline-flex;align-items:center;justify-content:center;transition:opacity .1s}${lead}>[data-omc-part="chevron"]{position:absolute;inset:0;margin:auto;opacity:0;color:var(--dsw-alias-label-secondary)}body[data-omc-claude] p[${HEAD_MARK}]:hover ${lead}>[data-omc-part="icon"]{opacity:0}body[data-omc-claude] p[${HEAD_MARK}]:hover ${lead}>[data-omc-part="chevron"]{opacity:1}body[data-omc-claude] p[${HEAD_MARK}="1"]+.md-code-block{display:none}`;
   document.head.appendChild(el);
+};
+
+/** Build the leading span for a glyph: dsh's tool icon with its chevron stacked on top, both cloned
+ *  out of the sprite sheet. Returns null while the sheet has not rendered yet, or when the sheet has
+ *  no sprite for the glyph, so the caller can leave the header alone and retry on the next scan. */
+const leadFor = (glyph: string): HTMLElement | null => {
+  const svg = document.querySelector(`[${SPRITE_MARK}="${glyph}"] svg`);
+  const chevron = document.querySelector(`[${SPRITE_MARK}="chevron"] svg`);
+  if (svg === null || chevron === null) return null;
+  const span = document.createElement("span");
+  span.setAttribute(LEAD_MARK, glyph);
+  for (const [part, source] of [
+    ["icon", svg],
+    ["chevron", chevron],
+  ] as const) {
+    const holder = document.createElement("span");
+    holder.setAttribute("data-omc-part", part);
+    holder.appendChild(source.cloneNode(true));
+    span.appendChild(holder);
+  }
+  return span;
 };
 
 /** One delegated click listener toggles a header, bound once via a documentElement flag so a hot
@@ -2504,17 +2566,22 @@ function watchToolFolds() {
       block.setAttribute(FOLD_MARK, isTool ? "tool" : "skip");
       if (isTool && head instanceof HTMLElement) head.setAttribute(HEAD_MARK, "1");
     }
-    // Lift the icon out of the text into the ::before so hover can swap it for the chevron. Runs over
-    // every header, not just newly marked ones: a re-render of the same <p> restores the glyph in the
-    // text while the fence keeps its mark, which would leave the icon showing twice.
+    // Swap the text glyph for dsh's own icon plus the hover chevron. Runs over every header, not just
+    // newly marked ones: a re-render of the same <p> restores the glyph in the text while the fence
+    // keeps its mark, so the swap has to be repeatable — hence the removal of any span left from the
+    // previous pass. A header stays as it is while the sprite sheet has not mounted; the next mutation
+    // brings the scan back.
     for (const head of document.querySelectorAll<HTMLElement>(`p[${HEAD_MARK}]`)) {
       const node = head.firstChild;
       if (node?.nodeType !== Node.TEXT_NODE) continue;
       const text = node.nodeValue ?? "";
       const at = text.search(/\S/);
       if (at < 0 || !TOOL_ICONS.includes(text.charAt(at))) continue;
-      head.setAttribute(ICON_MARK, text.charAt(at));
+      const span = leadFor(text.charAt(at));
+      if (span === null) continue;
+      head.querySelector(`span[${LEAD_MARK}]`)?.remove();
       node.nodeValue = text.slice(at + 1).replace(/^ /, "");
+      head.insertBefore(span, node);
     }
   };
   scan();
@@ -3173,6 +3240,12 @@ export function apply(ctx: ClientCtx) {
     ctx.slots.register(
       { name: "conversation.input.dock", id: "claude-aside", order: 45 },
       (props) => (props.sessionId ? <AsideBubble sessionId={props.sessionId} ctx={ctx} /> : null),
+    );
+    // The tool headers' icons are cloned out of this hidden sheet; it rides along with the dock
+    // because that is mounted wherever a conversation is, which is the only place headers exist.
+    ctx.slots.register(
+      { name: "conversation.input.dock", id: "claude-tool-icons", order: 46 },
+      () => <ToolIconSprites />,
     );
     return null;
   });
