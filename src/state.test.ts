@@ -17,6 +17,8 @@ import {
   saveAsides,
   loadStarters,
   saveStarter,
+  loadStarted,
+  rememberStarted,
   ASIDES_FILE,
 } from "./state.js";
 
@@ -218,6 +220,16 @@ starters = await loadStarters(startersDir);
 assert.equal(starters.get("s1"), undefined);
 assert.equal(starters.get("default"), "what changed?");
 console.log("starters ok");
+// Started ids: what another writer put in the file between two of ours survives, which it did not
+// while the set was read once and cached for the life of the process.
+const startedFile = join(await mkdtemp(join(tmpdir(), "omc-started-")), "sessions.json");
+await rememberStarted("a", true, startedFile);
+await writeFile(startedFile, JSON.stringify(["a", "other-process"]));
+await rememberStarted("b", true, startedFile);
+assert.deepEqual([...(await loadStarted(startedFile))], ["a", "other-process", "b"]);
+await rememberStarted("a", false, startedFile);
+assert.deepEqual([...(await loadStarted(startedFile))], ["other-process", "b"]);
+console.log("started ids ok");
 // Every store lands through a temp file and a rename, so a crash mid-write cannot leave a half
 // file the next read would treat as empty and the next save would write back from. Nothing of that
 // is left behind afterwards.

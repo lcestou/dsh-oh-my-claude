@@ -71,7 +71,7 @@ import {
   resolveClaudeHome,
   stateDir,
 } from "./state.js";
-import type { ClaudeEvent, ClaudeProcessSpec, SubprocessHandle } from "./process.js";
+import type { ClaudeEvent, ClaudeProcessSpec, SubprocessHandle, TurnPrep } from "./process.js";
 import type { LooseMessage } from "./adapter.js";
 import { elapsedText, resetClock, tokensText } from "./translator.js";
 import type { FinishReason, LlmFailure, Message, StreamChunk } from "@deepseek-ai/dsh-llm";
@@ -1351,6 +1351,19 @@ console.log("ok");
   assert.equal(count(), 1, "only what is still queued counts");
 }
 {
+  // A child printing lines that are not JSON must not hold a timed call open: the deadline is
+  // fixed when the wait starts, so the junk is filed under `stray` and the call still times out.
+  const queue = new LineQueue();
+  const fake = { queue, stray: "" };
+  const noise = setInterval(() => queue.push("warning: not json"), 20);
+  const started = Date.now();
+  const event = await ClaudeProcess.prototype.nextEvent.call(fake, 120);
+  clearInterval(noise);
+  assert.deepEqual(event, { type: "timeout" }, "junk lines do not renew the deadline");
+  assert.ok(Date.now() - started < 600, "timed out on its own deadline");
+  assert.ok(fake.stray.includes("warning: not json"), "the junk is kept for the error message");
+}
+{
   // Idle result → wake callback; busy or non-result lines stay silent.
   let woke = 0;
   const fake = { busy: false, onIdleResult: () => woke++ };
@@ -2435,6 +2448,35 @@ console.log("schema-guard ok");
   assert.deepEqual(woke, [["dead", undefined, RESTART_TEXT]]);
   assert.deepEqual(await takeInterrupted(file), ["live"], "live session stays tracked");
 }
+// acquire(): a second prompt arriving while a turn runs is refused, not served by killing the
+// process the turn is running on. Mid-turn relays and steers never reach acquire.
+{
+  const a = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  let killed = 0;
+  const running = fakeProc({
+    alive: true,
+    busy: true,
+    key: "k",
+    kill: () => {
+      killed += 1;
+    },
+  });
+  a.processes.set(registryKey("claude-code", "s1"), running);
+  // SAFETY: acquire only reads what prepare returns; the spawn path is never reached here.
+  a.prepare = async () =>
+    ({ input: "{}", args: [], cwd: "/tmp", spec: emptySpec }) as unknown as TurnPrep;
+  await assert.rejects(
+    // SAFETY: acquire takes the session options shape; only sessionId is read before the refusal
+    async () =>
+      a.acquire({ sessionId: "s1", messages: [] } as unknown as Parameters<
+        ClaudeCodeAdapter["acquire"]
+      >[0]),
+    /already running/,
+    "the second caller is refused",
+  );
+  assert.equal(killed, 0, "the running turn's process is left alone");
+  assert.equal(a.processes.get(registryKey("claude-code", "s1")), running);
+}
 // --- native tool rows: onToolCall / onToolResult callbacks fire for Bash and Edit ---
 {
   const calls: Array<{ callId: string; name: string; args: string }> = [];
@@ -2898,6 +2940,7 @@ console.log("keeper-mode ok");
   let killed = 0;
   const proc = {
     idleKilled: false,
+    idleKilledAfterMs: undefined as number | undefined,
     kill: () => {
       killed += 1;
     },
@@ -2933,6 +2976,23 @@ console.log("keeper-mode ok");
   await wait(1100);
   assert.equal(killed, 1, "cleared watchdog does not kill");
   assert.equal(injected.length, 2, "aux stream queued no warning");
+
+  // A tool call arms a longer deadline rather than none, an extend keeps that longer one, and the
+  // kill records how long the silence was allowed so the error names the right number.
+  idleAdapter.armIdle("s2", proc, false, 2000);
+  const toolDeadline = idleAdapter.idleDeadlineMap.get("s2") ?? 0;
+  assert.ok(toolDeadline > Date.now() + 1500, "tool deadline is the longer one");
+  await wait(50);
+  assert.equal(idleAdapter.extendIdle("s2"), true);
+  assert.ok(
+    (idleAdapter.idleDeadlineMap.get("s2") ?? 0) > toolDeadline,
+    "extend kept the longer timeout, not the configured one",
+  );
+  idleAdapter.clearIdle("s2");
+  idleAdapter.armIdle("s3", proc, false, 200);
+  await wait(400);
+  assert.equal(killed, 2, "the longer deadline still kills");
+  assert.equal(proc.idleKilledAfterMs, 200, "the kill records the deadline it used");
   console.log("idle-watchdog ok");
 }
 

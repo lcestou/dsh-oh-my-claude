@@ -1201,6 +1201,8 @@ export class ClaudeProcess {
   parked: "steer" | undefined = undefined;
   /** Set by the idle watchdog when it kills the process. */
   idleKilled: boolean = false;
+  /** The silence it was allowed before that kill: longer while a tool call is out. */
+  idleKilledAfterMs?: number;
   staleResults: number = 0;
   /** When this turn's prompt was written, for time-to-first-token; 0 once a result has read it. */
   promptSentAt: number = 0;
@@ -1322,8 +1324,13 @@ export class ClaudeProcess {
   /** Next parsed JSON line; plain text lines are kept in `stray` for error messages. Null when the
    *  process ended, `{ type: "timeout" }` when `timeoutMs` passed first. */
   async nextEvent(timeoutMs?: number): Promise<ClaudeEvent | null> {
+    // The deadline is fixed when the wait starts, not renewed per line: a child printing text that
+    // is not JSON — a warning, a progress bar, a shell banner — would otherwise hand this loop a
+    // fresh timeout on every line and hold a call that is never going to answer open forever.
+    const deadline = timeoutMs === undefined ? undefined : Date.now() + timeoutMs;
     for (;;) {
-      const line = await this.queue.next(timeoutMs);
+      const left = deadline === undefined ? undefined : Math.max(0, deadline - Date.now());
+      const line = await this.queue.next(left);
       if (line === null) return null;
       if (line === TIMEOUT) return { type: "timeout" };
       if (typeof line === "object") return line; // injected by inject()

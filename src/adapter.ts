@@ -1229,9 +1229,18 @@ export interface TurnRecord {
 /** The slice of a Claude process the idle watchdog needs. */
 export interface IdleTarget {
   idleKilled: boolean;
+  /** How long the silence that killed it was allowed to run, so the error can name that number. */
+  idleKilledAfterMs?: number;
   kill(): void;
   inject(event: ClaudeEvent): void;
 }
+
+/**
+ * How much longer than the configured idle timeout a turn may be silent while a tool call is out.
+ * A `Bash` step running a test suite is legitimately quiet for a long time; a call that never comes
+ * back should still end rather than hold the session open until dsh restarts.
+ */
+const TOOL_IDLE_FACTOR = 2;
 
 /** Per-session ring buffer (last 50 turns) keyed by dsh sessionId, on the adapter instance. */
 const TURN_RING = 50;
@@ -1465,7 +1474,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   readonly idleKillTimers = new Map<string, ReturnType<typeof setTimeout>>();
   readonly idleWarnTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /** What each armed key watches, so a route can re-arm it. */
-  readonly idleTargets = new Map<string, { proc: IdleTarget; warn: boolean }>();
+  readonly idleTargets = new Map<string, { proc: IdleTarget; warn: boolean; timeoutMs: number }>();
   /** Per-session permission mode overrides; loaded from disk at init, saved on change. */
   permissionModes: Map<string, string | null>;
   /** dsh access mode seen on each session's last turn, so the effective mode can be reported. */
@@ -2596,8 +2605,14 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const key = specKey(prep.spec);
     const key2 = registryKey(this.providerId, options.sessionId);
     let proc = this.processes.get(key2);
-    if (proc?.alive && !proc.busy && proc.key !== key) await this.retarget(proc, prep.spec);
-    if (proc && (!proc.alive || proc.key !== key || proc.busy)) {
+    // A turn is in flight on this session and this caller is not its continuation — a mid-turn
+    // relay or steer arrives with `cont.proc` and never reaches here. Killing the process would
+    // end that running turn to make room for this one, so the second caller is refused instead;
+    // `busy` is cleared in the turn loop's `finally`, so a failed turn does not wedge the session.
+    if (proc?.alive && proc.busy)
+      throw new LlmError("a turn is already running in this session", "PROVIDER_BUSY");
+    if (proc?.alive && proc.key !== key) await this.retarget(proc, prep.spec);
+    if (proc && (!proc.alive || proc.key !== key)) {
       proc.kill();
       proc = undefined;
     }
@@ -2720,23 +2735,23 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   }
 
   /**
-   * Arm the idle watchdog for a stream: `proc` is killed after `idleTimeoutMs` of silence. Every
-   * event re-arms. Shortly before the kill (60 s, or half the timeout when it is under 120 s) a
-   * warning event is queued on the process so the turn loop draws a countdown row; `warn: false`
-   * skips that for the aux stream, whose loop has no reasoning lane.
+   * Arm the idle watchdog for a stream: `proc` is killed after `timeoutMs` of silence, which
+   * defaults to the configured one. Every event re-arms. Shortly before the kill (60 s, or half the
+   * timeout when it is under 120 s) a warning event is queued on the process so the turn loop draws
+   * a countdown row; `warn: false` skips that for the aux stream, whose loop has no reasoning lane.
    */
-  armIdle(key: string, proc: IdleTarget, warn = true): void {
-    const timeoutMs = this.config.idleTimeoutMs;
+  armIdle(key: string, proc: IdleTarget, warn = true, timeoutMs = this.config.idleTimeoutMs): void {
     const warnMs = timeoutMs < 120_000 ? Math.round(timeoutMs / 2) : 60_000;
     this.clearIdle(key);
     const deadline = Date.now() + timeoutMs;
     this.idleDeadlineMap.set(key, deadline);
-    this.idleTargets.set(key, { proc, warn });
+    this.idleTargets.set(key, { proc, warn, timeoutMs });
     this.idleKillTimers.set(
       key,
       setTimeout(() => {
         this.idleDeadlineMap.set(key, null);
         proc.idleKilled = true;
+        proc.idleKilledAfterMs = timeoutMs;
         proc.kill();
       }, timeoutMs),
     );
@@ -2767,7 +2782,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   extendIdle(key: string): boolean {
     const target = this.idleTargets.get(key);
     if (!target || !this.idleDeadlineMap.get(key)) return false;
-    this.armIdle(key, target.proc, target.warn);
+    this.armIdle(key, target.proc, target.warn, target.timeoutMs);
     return true;
   }
 
@@ -2780,7 +2795,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       return {
         kind: "error",
         failure: {
-          message: `claude produced no output for ${Math.round(this.config.idleTimeoutMs / 1000)}s and was stopped`,
+          message: `claude produced no output for ${Math.round((proc.idleKilledAfterMs ?? this.config.idleTimeoutMs) / 1000)}s and was stopped`,
           code: "IDLE_TIMEOUT",
         },
       };
@@ -2968,7 +2983,12 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       this.log("warn", `busy.json: ${errorText(e)}`),
     );
     const handleControl = this.handleControl.bind(this);
-    const clearIdle = this.clearIdle.bind(this);
+    // A tool call is silence the CLI owes us nothing during: a build, a test run or an MCP server
+    // that thinks about it for a while. Clearing the watchdog for it left a call that never returns
+    // with no deadline at all, so the turn sat there until someone noticed. It gets a longer
+    // deadline instead, re-armed by every event the way the base one is.
+    const armToolIdle = () =>
+      this.armIdle(options.sessionId, proc, true, this.config.idleTimeoutMs * TOOL_IDLE_FACTOR);
     const resolveControl = this.resolveControl.bind(this);
     /** One CLI event. Returns what the loop should do next. */
     const dispatch = async function* (event: ClaudeEvent) {
@@ -3008,7 +3028,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       if (firstChunkAt === 0 && (event.type === "stream_event" || event.type === "assistant"))
         firstChunkAt = Date.now();
       yield* tr.translate(event);
-      if (tr.toolPending) clearIdle(options.sessionId); // tool running: silence is expected
+      if (tr.toolPending) armToolIdle(); // tool running: silence is expected, but not forever
       if (tr.finished) return "finished";
       if (proc.steerPending && event.type === "user") {
         // Tool results are in; the CLI injects the forwarded steer next. End the dsh step here
@@ -3590,7 +3610,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
             kind: "error",
             failure: {
               message: proc.idleKilled
-                ? `claude produced no output for ${Math.round(this.config.idleTimeoutMs / 1000)}s and was stopped`
+                ? `claude produced no output for ${Math.round((proc.idleKilledAfterMs ?? this.config.idleTimeoutMs) / 1000)}s and was stopped`
                 : `claude exited ${proc.exitCode}: ${(proc.stderr || proc.stray).trim() || "no output"}`,
               code: proc.idleKilled ? "IDLE_TIMEOUT" : "PROVIDER_ERROR",
             },

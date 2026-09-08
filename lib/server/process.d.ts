@@ -561,6 +561,8 @@ export declare class ClaudeProcess {
     parked: "steer" | undefined;
     /** Set by the idle watchdog when it kills the process. */
     idleKilled: boolean;
+    /** The silence it was allowed before that kill: longer while a tool call is out. */
+    idleKilledAfterMs?: number;
     staleResults: number;
     /** When this turn's prompt was written, for time-to-first-token; 0 once a result has read it. */
     promptSentAt: number;

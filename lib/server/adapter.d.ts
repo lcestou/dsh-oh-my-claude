@@ -444,6 +444,8 @@ export interface TurnRecord {
 /** The slice of a Claude process the idle watchdog needs. */
 export interface IdleTarget {
     idleKilled: boolean;
+    /** How long the silence that killed it was allowed to run, so the error can name that number. */
+    idleKilledAfterMs?: number;
     kill(): void;
     inject(event: ClaudeEvent): void;
 }
@@ -545,6 +547,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     readonly idleTargets: Map<string, {
         proc: IdleTarget;
         warn: boolean;
+        timeoutMs: number;
     }>;
     /** Per-session permission mode overrides; loaded from disk at init, saved on change. */
     permissionModes: Map<string, string | null>;
@@ -785,12 +788,12 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     /** First write of a turn: relay results, unsent steers, or the prompt itself. */
     openTurn(cont: Continuation, proc: ClaudeProcess, prep: TurnPrep): void;
     /**
-     * Arm the idle watchdog for a stream: `proc` is killed after `idleTimeoutMs` of silence. Every
-     * event re-arms. Shortly before the kill (60 s, or half the timeout when it is under 120 s) a
-     * warning event is queued on the process so the turn loop draws a countdown row; `warn: false`
-     * skips that for the aux stream, whose loop has no reasoning lane.
+     * Arm the idle watchdog for a stream: `proc` is killed after `timeoutMs` of silence, which
+     * defaults to the configured one. Every event re-arms. Shortly before the kill (60 s, or half the
+     * timeout when it is under 120 s) a warning event is queued on the process so the turn loop draws
+     * a countdown row; `warn: false` skips that for the aux stream, whose loop has no reasoning lane.
      */
-    armIdle(key: string, proc: IdleTarget, warn?: boolean): void;
+    armIdle(key: string, proc: IdleTarget, warn?: boolean, timeoutMs?: number): void;
     /** Stop the watchdog for a stream: the turn ended, or a tool is running and silence is expected. */
     clearIdle(key: string): void;
     /** Push a stream's deadline out by one full timeout; false when nothing is armed under `key`. */

@@ -24,12 +24,19 @@ export declare function saveLimitWait(dir: string, sessionId: string, resetAt: n
 /** Scratch cwd for title and compaction one-shots, so their transcripts stay out of workspaces. */
 export declare const auxCwd: () => Promise<string>;
 /**
- * Loads the set of Claude session IDs that this plugin has started.
- * Cached after the first call; per-instance when a state file is given.
+ * The Claude session IDs this plugin has started.
+ *
+ * Read from disk every time rather than cached for the life of the process: the state directory is
+ * shared, so a second dsh over the same one — or a hand edit — is invisible to a cache that was
+ * filled at startup, and the sessions it started would stay hidden from this one's list until a
+ * restart. The file holds a few hundred ids at most and is read once per request.
  */
 export declare function loadStarted(stateFile?: string): Promise<Set<string>>;
 /**
  * Records or removes a Claude session ID from the known sessions list.
+ *
+ * The whole set is written back, so it is re-read inside the same serialized step: writing a set
+ * that was loaded earlier would erase every id another writer added in between.
  */
 export declare function rememberStarted(id: string, keep?: boolean, stateFile?: string): Promise<void>;
 /** Headers for the Anthropic Models API: an API key from the env, else Claude Code's stored OAuth token. */

@@ -138,46 +138,47 @@ let auxReady: Promise<string> | undefined;
 export const auxCwd = (): Promise<string> =>
   (auxReady ??= mkdir(AUX_DIR, { recursive: true }).then(() => AUX_DIR));
 
-const startedCache = new Map<string, Set<string>>(); // per-stateFile cache for known sessions
+let startedChain: Promise<void> = Promise.resolve();
 
 /**
- * Loads the set of Claude session IDs that this plugin has started.
- * Cached after the first call; per-instance when a state file is given.
+ * The Claude session IDs this plugin has started.
+ *
+ * Read from disk every time rather than cached for the life of the process: the state directory is
+ * shared, so a second dsh over the same one — or a hand edit — is invisible to a cache that was
+ * filled at startup, and the sessions it started would stay hidden from this one's list until a
+ * restart. The file holds a few hundred ids at most and is read once per request.
  */
 export async function loadStarted(stateFile = STATE_FILE): Promise<Set<string>> {
-  const cached = startedCache.get(stateFile);
-  if (cached) return cached;
   try {
     const ids: unknown = JSON.parse(await readFile(stateFile, "utf8"));
-    const set = new Set(
-      Array.isArray(ids) ? ids.filter((x): x is string => typeof x === "string") : [],
-    );
-    startedCache.set(stateFile, set);
-    return set;
+    return new Set(Array.isArray(ids) ? ids.filter((x): x is string => typeof x === "string") : []);
   } catch {
-    const empty = new Set<string>();
-    startedCache.set(stateFile, empty);
-    return empty;
+    return new Set<string>();
   }
 }
 
 /**
  * Records or removes a Claude session ID from the known sessions list.
+ *
+ * The whole set is written back, so it is re-read inside the same serialized step: writing a set
+ * that was loaded earlier would erase every id another writer added in between.
  */
-export async function rememberStarted(
-  id: string,
-  keep = true,
-  stateFile = STATE_FILE,
-): Promise<void> {
-  const set = await loadStarted(stateFile);
-  if (keep ? set.has(id) : !set.has(id)) return;
-  if (keep) set.add(id);
-  else set.delete(id);
-  try {
-    await writeJson(stateFile, [...set]);
-  } catch {
-    /* state is an optimization only */
-  }
+export function rememberStarted(id: string, keep = true, stateFile = STATE_FILE): Promise<void> {
+  startedChain = startedChain.then(
+    async () => {
+      const set = await loadStarted(stateFile);
+      if (keep ? set.has(id) : !set.has(id)) return;
+      if (keep) set.add(id);
+      else set.delete(id);
+      try {
+        await writeJson(stateFile, [...set]);
+      } catch {
+        /* state is an optimization only */
+      }
+    },
+    () => {},
+  );
+  return startedChain;
 }
 
 /** Headers for the Anthropic Models API: an API key from the env, else Claude Code's stored OAuth token. */
