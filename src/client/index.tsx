@@ -2537,8 +2537,13 @@ const ensureFoldStyle = () => {
   const glyphSize = "calc(14px + var(--dsh-content-font-delta,0px))";
   const half = "8px - var(--dsh-content-font-delta,0px)/2"; // half the leading box, for the baseline offset
   el.textContent = [
-    `${head}{user-select:none;font-size:var(--dsh-content-font-size-secondary,13px);color:var(--dsw-alias-label-secondary)}`,
-    `${fold}{cursor:pointer}`,
+    // The hanging indent keeps a wrapped header (a long URL, a long grep pattern) lined up under its
+    // own text rather than back under the icon. `user-select` is off for a folding header, where a
+    // drag is a mis-click on a control, but stays on for a flat one: `▤ Read \`path\`` is a whole step
+    // and the path is the thing worth copying out of it.
+    `${head}{font-size:var(--dsh-content-font-size-secondary,13px);color:var(--dsw-alias-label-secondary);padding-left:calc(${box} + 6px);text-indent:calc(0px - ${box} - 6px)}`,
+    `${fold}{cursor:pointer;user-select:none}`,
+    `${fold}:focus-visible{outline:1px solid var(--dsw-alias-label-tertiary);outline-offset:2px;border-radius:4px}`,
     `${head} ${lead}{position:relative;display:inline-block;width:${box};height:${box};margin-right:6px;color:var(--dsw-alias-label-tertiary);vertical-align:calc(.36em - ${half});vertical-align:calc(.5cap - ${half})}`,
     `${head} ${lead} svg{width:${glyphSize};height:${glyphSize}}`,
     `${head} ${lead}>[data-omc-part]{position:absolute;inset:0;display:inline-flex;align-items:center;justify-content:center;transition:opacity .1s}`,
@@ -2576,14 +2581,39 @@ const leadFor = (glyph: string): HTMLElement | null => {
 const bindFoldClicks = () => {
   if (document.documentElement.getAttribute("data-omc-fold-bound") === "1") return;
   document.documentElement.setAttribute("data-omc-fold-bound", "1");
-  document.addEventListener("click", (e) => {
-    const target = e.target;
-    if (!(target instanceof Element)) return;
+  const toggle = (target: EventTarget | null): boolean => {
+    if (!(target instanceof Element)) return false;
     const head = target.closest<HTMLElement>(`p[${HEAD_MARK}]`);
     const state = head?.getAttribute(HEAD_MARK);
-    if (head === null || state === "flat") return;
-    head?.setAttribute(HEAD_MARK, state === "1" ? "open" : "1");
+    if (head === null || state === "flat" || state === null) return false;
+    setFoldState(head, state === "1" ? "open" : "1");
+    return true;
+  };
+  document.addEventListener("click", (e) => {
+    toggle(e.target);
   });
+  // A header is a real control, so it answers the keys a button answers. Space would scroll the
+  // transcript otherwise, hence the preventDefault, and only when the header actually took the key.
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    if (toggle(e.target)) e.preventDefault();
+  });
+};
+
+/** Set a header's fold state and keep the announced state with it: a folding header is a button to a
+ *  screen reader, and `aria-expanded` is the only thing that tells one whether the fence below is
+ *  showing. A flat header is not a control, so it carries none of it. */
+const setFoldState = (head: HTMLElement, state: "1" | "open" | "flat") => {
+  head.setAttribute(HEAD_MARK, state);
+  if (state === "flat") {
+    head.removeAttribute("role");
+    head.removeAttribute("tabindex");
+    head.removeAttribute("aria-expanded");
+    return;
+  }
+  head.setAttribute("role", "button");
+  head.setAttribute("tabindex", "0");
+  head.setAttribute("aria-expanded", state === "open" ? "true" : "false");
 };
 
 /** The glyph a header leads with, wherever it currently lives: still in the text, already lifted into
@@ -2636,8 +2666,10 @@ function watchToolFolds() {
       }
       const foldable = head.nextElementSibling?.classList.contains("md-code-block") === true;
       const state = head.getAttribute(HEAD_MARK);
-      if (!foldable) head.setAttribute(HEAD_MARK, "flat");
-      else if (state !== "1" && state !== "open") head.setAttribute(HEAD_MARK, "1");
+      // A header can start flat and gain its fence a moment later while the step streams in, so the
+      // flat state is never sticky: only an already-folding header keeps the state the user set.
+      if (!foldable) setFoldState(head, "flat");
+      else if (state !== "1" && state !== "open") setFoldState(head, "1");
     }
   };
   scan();
