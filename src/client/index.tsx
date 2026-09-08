@@ -2464,8 +2464,7 @@ function watchSessionSpinners(ctx: ClientCtx) {
  *  only a header that starts with one of the translator's tool icons folds, so Claude's own prose code
  *  blocks are left alone. Kept in sync with the translator's TOOL_ICON set. */
 const TOOL_ICONS = "❯▤✎⌕✳⤓◆";
-const FOLD_MARK = "data-omc-fold"; // on the fence: "tool" paired to a header · "skip" not a tool block
-const HEAD_MARK = "data-omc-tool"; // on the header <p>: "1" collapsed · "open" expanded
+const HEAD_MARK = "data-omc-tool"; // on the header <p>: "1" collapsed · "open" expanded · "flat" no fence
 const LEAD_MARK = "data-omc-lead"; // on the span that replaces the glyph: the sprite key it carries
 const SPRITE_MARK = "data-omc-sprite"; // on each hidden sprite: its key
 
@@ -2501,18 +2500,36 @@ function ToolIconSprites() {
 }
 
 const ensureFoldStyle = () => {
-  if (document.getElementById("dsh-oh-my-claude-fold")) return;
-  const el = document.createElement("style");
+  // Reuse the element but always rewrite it. A hot reload drops a new bundle into a page that still
+  // carries the previous one's sheet, so returning early here left the old rules in force and the new
+  // build's markup styled by them — which looks like the feature half-shipped until the tab is
+  // reloaded by hand.
+  const existing = document.getElementById("dsh-oh-my-claude-fold");
+  const el = existing instanceof HTMLStyleElement ? existing : document.createElement("style");
   el.id = "dsh-oh-my-claude-fold";
   // The header reads as dsh's muted tool text — a touch smaller and dimmed — and sits flush-left like
   // any prose line. The leading span is a fixed 16px box holding both glyphs stacked, so the row never
   // shifts: the tool icon is the resting state and the chevron sits on top of it at opacity 0, the two
   // cross-fading on hover. This is how dsh draws its own tool rows (`iconIdle`/`chevronHover` in
   // dsh-client-ui-tool), down to the secondary label colour, and the chevron never rotates — expanding
-  // is shown by the fence appearing, not by the marker turning. The adjacent-sibling rule hides the
-  // fence while the header reads "1"; the two are always consecutive children of ._markdown.
-  const lead = `body[data-omc-claude] span[${LEAD_MARK}]`;
-  el.textContent = `body[data-omc-claude] p[${HEAD_MARK}]{cursor:pointer;user-select:none;font-size:.9em;opacity:.68}${lead}{position:relative;display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;vertical-align:-.2em;margin-right:.3em}${lead}>[data-omc-part]{display:inline-flex;align-items:center;justify-content:center;transition:opacity .1s}${lead}>[data-omc-part="chevron"]{position:absolute;inset:0;margin:auto;opacity:0;color:var(--dsw-alias-label-secondary)}body[data-omc-claude] p[${HEAD_MARK}]:hover ${lead}>[data-omc-part="icon"]{opacity:0}body[data-omc-claude] p[${HEAD_MARK}]:hover ${lead}>[data-omc-part="chevron"]{opacity:1}body[data-omc-claude] p[${HEAD_MARK}="1"]+.md-code-block{display:none}`;
+  // is shown by the fence appearing, not by the marker turning. A `flat` header has no fence under it
+  // (`▤ Read \`path\`` is the whole step), so it takes the muted type and the icon but neither the
+  // pointer nor the chevron: there is nothing to disclose. The `body` prefix stays out of `lead` on
+  // purpose — pasted into a descendant position it would read as a `body` inside a `p` and match
+  // nothing, which is what silently killed the hover swap.
+  const head = `body[data-omc-claude] p[${HEAD_MARK}]`;
+  const fold = `${head}:not([${HEAD_MARK}="flat"])`;
+  const lead = `span[${LEAD_MARK}]`;
+  el.textContent = [
+    `${head}{user-select:none;font-size:.9em;opacity:.68}`,
+    `${fold}{cursor:pointer}`,
+    `${head} ${lead}{position:relative;display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;vertical-align:-.2em;margin-right:.3em}`,
+    `${head} ${lead}>[data-omc-part]{display:inline-flex;align-items:center;justify-content:center;transition:opacity .1s}`,
+    `${head} ${lead}>[data-omc-part="chevron"]{position:absolute;inset:0;margin:auto;opacity:0;color:var(--dsw-alias-label-secondary)}`,
+    `${fold}:hover ${lead}>[data-omc-part="icon"]{opacity:0}`,
+    `${fold}:hover ${lead}>[data-omc-part="chevron"]{opacity:1}`,
+    `${head}[${HEAD_MARK}="1"]+.md-code-block{display:none}`,
+  ].join("");
   document.head.appendChild(el);
 };
 
@@ -2546,42 +2563,64 @@ const bindFoldClicks = () => {
     const target = e.target;
     if (!(target instanceof Element)) return;
     const head = target.closest<HTMLElement>(`p[${HEAD_MARK}]`);
-    if (head) head.setAttribute(HEAD_MARK, head.getAttribute(HEAD_MARK) === "1" ? "open" : "1");
+    const state = head?.getAttribute(HEAD_MARK);
+    if (head === null || state === "flat") return;
+    head?.setAttribute(HEAD_MARK, state === "1" ? "open" : "1");
   });
+};
+
+/** The glyph a header leads with, wherever it currently lives: still in the text, already lifted into
+ *  a leading span, or in the `data-omc-icon` attribute an older build left behind. */
+const glyphOf = (head: HTMLElement): string => {
+  const node = head.firstChild;
+  if (node?.nodeType === Node.TEXT_NODE) {
+    const text = node.nodeValue ?? "";
+    const at = text.search(/\S/);
+    if (at >= 0 && TOOL_ICONS.includes(text.charAt(at))) return text.charAt(at);
+  }
+  return (
+    head.querySelector(`span[${LEAD_MARK}]`)?.getAttribute(LEAD_MARK) ??
+    head.getAttribute("data-omc-icon") ??
+    ""
+  );
 };
 
 function watchToolFolds() {
   ensureFoldStyle();
   bindFoldClicks();
-  // A tool step arrives as one whole chunk, so the header <p> already sits before its fence the first
-  // time the fence is seen; process each fence once (:not([mark])). A fence is a tool block only when
-  // its previous sibling is a <p> whose text opens with one of the translator's tool icons.
+  // Every tool step is a `<p>` that opens with one of the translator's glyphs; only some are followed
+  // by a fence (`▤ Read \`path\`` is a whole step on its own). Both get the icon and the muted type;
+  // only the ones with a fence fold. Marking is driven off the header rather than the fence for that
+  // reason, and the pass is repeatable: a re-render restores the glyph in the text, so the swap has to
+  // survive being done twice. A header is left alone while the sprite sheet has not mounted, and the
+  // next mutation brings the scan back.
   const scan = () => {
-    for (const block of document.querySelectorAll<HTMLElement>(
-      `.md-code-block:not([${FOLD_MARK}])`,
-    )) {
-      const head = block.previousElementSibling;
-      const text = head?.tagName === "P" ? (head.textContent ?? "").trimStart() : "";
-      const isTool = text !== "" && TOOL_ICONS.includes(text.charAt(0));
-      block.setAttribute(FOLD_MARK, isTool ? "tool" : "skip");
-      if (isTool && head instanceof HTMLElement) head.setAttribute(HEAD_MARK, "1");
-    }
-    // Swap the text glyph for dsh's own icon plus the hover chevron. Runs over every header, not just
-    // newly marked ones: a re-render of the same <p> restores the glyph in the text while the fence
-    // keeps its mark, so the swap has to be repeatable — hence the removal of any span left from the
-    // previous pass. A header stays as it is while the sprite sheet has not mounted; the next mutation
-    // brings the scan back.
-    for (const head of document.querySelectorAll<HTMLElement>(`p[${HEAD_MARK}]`)) {
+    for (const head of document.querySelectorAll<HTMLElement>('[class*="_markdown"] p')) {
+      const glyph = glyphOf(head);
+      if (glyph === "") continue;
       const node = head.firstChild;
-      if (node?.nodeType !== Node.TEXT_NODE) continue;
-      const text = node.nodeValue ?? "";
-      const at = text.search(/\S/);
-      if (at < 0 || !TOOL_ICONS.includes(text.charAt(at))) continue;
-      const span = leadFor(text.charAt(at));
-      if (span === null) continue;
-      head.querySelector(`span[${LEAD_MARK}]`)?.remove();
-      node.nodeValue = text.slice(at + 1).replace(/^ /, "");
-      head.insertBefore(span, node);
+      if (
+        node?.nodeType === Node.TEXT_NODE &&
+        (node.nodeValue ?? "").trimStart().startsWith(glyph)
+      ) {
+        const span = leadFor(glyph);
+        if (span === null) continue;
+        const text = node.nodeValue ?? "";
+        head.querySelector(`span[${LEAD_MARK}]`)?.remove();
+        head.removeAttribute("data-omc-icon");
+        node.nodeValue = text.slice(text.indexOf(glyph) + 1).replace(/^ /, "");
+        head.insertBefore(span, node);
+      } else if (head.querySelector(`span[${LEAD_MARK}]`) === null) {
+        // An older build stripped the glyph into the attribute; adopt it from there.
+        const span = leadFor(glyph);
+        if (span === null) continue;
+        head.removeAttribute("data-omc-icon");
+        head.insertBefore(span, head.firstChild);
+      }
+      const foldable = head.nextElementSibling?.classList.contains("md-code-block") === true;
+      const state = head.getAttribute(HEAD_MARK);
+      if (!foldable) head.setAttribute(HEAD_MARK, "flat");
+      else if (state !== "1" && state !== "open") head.setAttribute(HEAD_MARK, "1");
     }
   };
   scan();
