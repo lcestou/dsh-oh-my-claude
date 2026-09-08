@@ -18,6 +18,7 @@ import {
   setPermissionRule,
   type PermissionKind,
 } from "../permissions.js";
+import { SCOPE_LABELS, type SettingsScopeInfo } from "./settings.js";
 
 /** What the usage route answers about extra usage. */
 interface UsageReply {
@@ -844,6 +845,8 @@ export function TuneBody({
         file={file}
         apply={apply}
         sessionId={sessionId}
+        cwd={ctx.sessions.list.getSnapshot()?.byId[sessionId]?.cwd ?? null}
+        provider={provider}
         narrow={narrow}
         busy={busy}
       />
@@ -856,17 +859,25 @@ export function TuneBody({
  * with a remove button, and an add form. The chips are the tool calls this session stopped to ask
  * about, already written as the rule that would have answered them, so promoting an approval to a
  * rule is a click and an edit rather than remembering the syntax.
+ *
+ * Only `~/.claude/settings.json` is written here, but the CLI merges four files, so the rules from
+ * the other three are listed under it without a Remove button. Showing one file alone read as the
+ * whole picture: 2 rules on screen while 15 were in force.
  */
 function PermissionsBlock({
   file,
   apply,
   sessionId,
+  cwd,
+  provider,
   narrow,
   busy,
 }: {
   file: SettingsFile;
   apply: Apply;
   sessionId: string;
+  cwd: string | null;
+  provider: string | undefined;
   narrow: boolean;
   busy: boolean;
 }) {
@@ -874,7 +885,27 @@ function PermissionsBlock({
   const [draft, setDraft] = useState("");
   const [error, setError] = useState("");
   const [asks, setAsks] = useState<string[]>([]);
+  const [others, setOthers] = useState<SettingsScopeInfo[]>([]);
   const rules = readPermissionRules(file.text);
+
+  useEffect(() => {
+    // The other scopes are context, not the edit surface: a box or a route that cannot answer
+    // leaves them out rather than putting an error over the rules this panel does own.
+    let live = true;
+    const query = new URLSearchParams();
+    if (cwd !== null) query.set("cwd", cwd);
+    if (provider !== undefined) query.set("provider", provider);
+    const q = query.toString();
+    fetch(`${ROUTE}/settings/scopes${q ? `?${q}` : ""}`)
+      .then((r) => readJson<{ scopes?: SettingsScopeInfo[] }>(r))
+      .then((body) => {
+        if (live) setOthers((body.scopes ?? []).filter((sc) => sc.path !== file.path));
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [cwd, provider, file.path]);
 
   useEffect(() => {
     // Suggestions are a convenience: a session that has asked about nothing, or a server too old
@@ -927,8 +958,9 @@ function PermissionsBlock({
         Permissions
       </div>
       <span style={{ ...meta, padding: "0 4px 8px", whiteSpace: "normal" }}>
-        Rules Claude Code answers a tool request with instead of asking. They apply wherever this
-        settings.json is read, in dsh or in a terminal.
+        Rules Claude Code answers a tool request with instead of asking. These are the ones in{" "}
+        {SCOPE_LABELS.user}, the file this panel writes; Claude Code also reads the files below it,
+        in dsh or in a terminal.
       </span>
       {error ? (
         <span style={{ color: T.err, fontSize: 12, padding: "0 4px", display: "block" }}>
@@ -955,6 +987,29 @@ function PermissionsBlock({
           ))}
         </div>
       ))}
+
+      {others.map((scope) => {
+        const theirs = readPermissionRules(scope.text);
+        const kinds = PERMISSION_KINDS.filter((k) => theirs[k].length > 0);
+        if (kinds.length === 0) return null;
+        return (
+          <div key={scope.scope} style={{ marginBottom: 8 }}>
+            <div style={{ ...heading, textTransform: "none" }}>
+              {SCOPE_LABELS[scope.scope]} · read-only here
+            </div>
+            {kinds.map((k) =>
+              theirs[k].map((rule) => (
+                <div key={`${k}:${rule}`} style={{ ...ruleRow, color: T.muted }}>
+                  <span style={{ flex: 1, wordBreak: "break-all", fontFamily: T.mono }}>
+                    {rule}
+                  </span>
+                  <span style={{ ...meta, textTransform: "capitalize" }}>{k}</span>
+                </div>
+              )),
+            )}
+          </div>
+        );
+      })}
 
       {unused.length > 0 ? (
         <div style={{ marginBottom: 8 }}>
