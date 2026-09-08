@@ -95,9 +95,21 @@ const TOOL_ICON = new Map<string, string>([
   ["web_search", "⌕"],
 ]);
 const cap = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
+
+/**
+ * The word joiner that follows the glyph on every tool header we write.
+ *
+ * The glyph alone is not proof of a header: a person who pastes a line starting with `◆` or `❯`,
+ * or asks about one of these characters, used to have it eaten by the icon swap and any code block
+ * under it folded away. This character is invisible, survives the markdown round trip, and is not
+ * something prose carries, so the client can require it before claiming a paragraph. Kept in sync
+ * with `FOLD_MARK` in the client.
+ */
+export const HEADER_MARK = "\u2060";
+
 /** Icon + a capitalized, human name for a tool header: `❯ Bash`, `▤ Read`, `⤓ Web fetch`. */
 const label = (name: string): string =>
-  `${TOOL_ICON.get(name) ?? "◆"} ${name.startsWith("web_") ? `Web ${name.slice(4)}` : cap(name)}`;
+  `${TOOL_ICON.get(name) ?? "◆"}${HEADER_MARK} ${name.startsWith("web_") ? `Web ${name.slice(4)}` : cap(name)}`;
 
 /** A native tool call as markdown: an icon-led plain header, arguments in the fence that suits the tool. */
 export function formatToolCall(name: string, inputJson: string): string {

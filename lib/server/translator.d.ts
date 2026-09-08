@@ -2,6 +2,16 @@ import type { StreamChunk, LlmFailure } from "@deepseek-ai/dsh-llm";
 import { type ClaudeEvent, type ClaudeStreamPartial, type ClaudeContentBlock } from "./process.js";
 import { TurnRecord } from "./adapter.js";
 export declare function capLines(body: string, max?: number): string;
+/**
+ * The word joiner that follows the glyph on every tool header we write.
+ *
+ * The glyph alone is not proof of a header: a person who pastes a line starting with `◆` or `❯`,
+ * or asks about one of these characters, used to have it eaten by the icon swap and any code block
+ * under it folded away. This character is invisible, survives the markdown round trip, and is not
+ * something prose carries, so the client can require it before claiming a paragraph. Kept in sync
+ * with `FOLD_MARK` in the client.
+ */
+export declare const HEADER_MARK = "\u2060";
 /** A native tool call as markdown: an icon-led plain header, arguments in the fence that suits the tool. */
 export declare function formatToolCall(name: string, inputJson: string): string;
 /** A native tool result as markdown: icon-led header + status, body fenced with a language when we can guess one. */

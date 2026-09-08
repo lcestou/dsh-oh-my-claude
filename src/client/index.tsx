@@ -2542,6 +2542,13 @@ function watchSessionSpinners(ctx: ClientCtx) {
  *  only a header that starts with one of the translator's tool icons folds, so Claude's own prose code
  *  blocks are left alone. Kept in sync with the translator's TOOL_ICON set. */
 const TOOL_ICONS = "❯▤✎⌕✳⤓◆";
+/** The invisible word joiner the translator writes after the glyph (`HEADER_MARK` there), stripped
+ *  with the glyph when it is there. It is not required to claim a header: a dsh process holds the
+ *  server half of this plugin in memory until it restarts, while `lib/client.js` reloads into the
+ *  open tab the moment it is built, so demanding the mark unfolded every header already on screen
+ *  and every header the running build was still writing. The glyph decides; the mark only rides
+ *  along for a future that can require it on both halves at once. */
+const FOLD_MARK = "\u2060";
 const HEAD_MARK = "data-omc-tool"; // on the header <p>: "1" collapsed · "open" expanded · "flat" no fence
 const LEAD_MARK = "data-omc-lead"; // on the span that replaces the glyph: the sprite key it carries
 const SPRITE_MARK = "data-omc-sprite"; // on each hidden sprite: its key
@@ -2707,7 +2714,8 @@ const setFoldState = (head: HTMLElement, state: "1" | "open" | "flat") => {
 };
 
 /** The glyph a header leads with, wherever it currently lives: still in the text, already lifted into
- *  a leading span, or in the `data-omc-icon` attribute an older build left behind. */
+ *  a leading span, or in the `data-omc-icon` attribute an older build left behind. The mark behind
+ *  the glyph is welcome but not demanded, so a header written by an older build still folds. */
 const glyphOf = (head: HTMLElement): string => {
   const node = head.firstChild;
   if (node?.nodeType === Node.TEXT_NODE) {
@@ -2769,7 +2777,11 @@ function watchToolFolds() {
         const text = node.nodeValue ?? "";
         head.querySelector(`span[${LEAD_MARK}]`)?.remove();
         head.removeAttribute("data-omc-icon");
-        node.nodeValue = text.slice(text.indexOf(glyph) + 1).replace(/^ /, "");
+        // The glyph goes, and the mark behind it when the writer put one there: the icon replaces
+        // both. A header from an older build has no mark and loses only the glyph.
+        const from = text.indexOf(glyph) + 1;
+        const cut = text.startsWith(FOLD_MARK, from) ? from + FOLD_MARK.length : from;
+        node.nodeValue = text.slice(cut).replace(/^ /, "");
         head.insertBefore(span, node);
       } else if (head.querySelector(`span[${LEAD_MARK}]`) === null) {
         // An older build stripped the glyph into the attribute; adopt it from there.
