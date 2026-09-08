@@ -16,6 +16,7 @@ export declare const HEADER_MARK = "\u2060";
 export declare function formatToolCall(name: string, inputJson: string): string;
 /** A native tool result as markdown: icon-led header + status, body fenced with a language when we can guess one. */
 export declare function formatToolResult(name: string, filePath: string, body: string, isError: boolean): string;
+/** One open lane of a turn: which kind it is, what has been written into it, and when it started. */
 export interface TranslatorBlock {
     index: number;
     blockType: string;
@@ -31,6 +32,7 @@ export declare function tokensText(tokens: number): string;
  *  within the week, `Sep 8, 1pm` beyond it, then the zone. Minutes only when they are not zero.
  *  No year: a plan window reopens within a week, so the nearest future date is the only reading. */
 export declare function resetClock(ms: number, zone?: string): string;
+/** Turns the CLI's stream-json events into the markdown and tool rows one dsh turn shows. */
 export declare class Translator {
     log: (level: string, msg: string) => void;
     unknownSeen: Set<string>;

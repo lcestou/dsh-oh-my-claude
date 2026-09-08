@@ -292,6 +292,11 @@ export interface SessionRouteOptions {
 }
 /** `projectDir(cwd)` → Claude Code project dir; `startedIds()` → ids the adapter started itself. */
 export declare function registerSessionRoutes(ctx: PluginContext, { log, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, sshBoxesPath, onSshBoxes, remoteWorkspacesPath, onRemoteWorkspaces, command, sshHost, turnRecords, idle, permissionModes, thinking, rewind, contextUsage, workspaceDiff, mcp, permissionAsks, sideQuestions, persistAsides, starters, setStarter, models, reloadPlugins, continueAfterLimit, instanceFor, }: SessionRouteOptions): void;
+/**
+ * The four files Claude Code merges for one session, highest precedence first. Duplicated in
+ * `src/client/settings.ts`: the browser half cannot import server code, and the order is the
+ * CLI's, not this plugin's, so both copies have to say the same thing.
+ */
 export declare const SETTINGS_SCOPES: readonly ["managed", "local", "project", "user"];
 /** One of the four settings files. The CLI's own layer names, minus the `--settings` flag layer. */
 export type SettingsScope = (typeof SETTINGS_SCOPES)[number];

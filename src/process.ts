@@ -50,6 +50,7 @@ export function childEnv(base: NodeJS.ProcessEnv, override?: Record<string, stri
   return env;
 }
 
+/** The child process seam this plugin uses: dsh's own spawner and the node one both answer it. */
 export interface SubprocessHandle {
   stdin: import("node:stream").Writable;
   stdout: import("node:stream").Readable;
@@ -58,6 +59,7 @@ export interface SubprocessHandle {
   terminate(): void;
 }
 
+/** One line of the CLI's stream-json stdout, in the shapes this plugin reads. */
 export type ClaudeEvent =
   | {
       type: "system";
@@ -252,6 +254,7 @@ export interface RelayEvent {
   reject: (e: Error) => void;
 }
 
+/** The `message` of an assistant event: the model that wrote it and its content blocks. */
 export interface ClaudeAssistantMessage {
   id?: string;
   model?: string;
@@ -259,6 +262,7 @@ export interface ClaudeAssistantMessage {
   content?: ClaudeContentBlock[];
 }
 
+/** One block of an assistant message; the translator draws a lane for each of these four. */
 export type ClaudeContentBlock =
   | { type: "text"; text: string }
   | { type: "thinking"; thinking: string }
@@ -462,12 +466,7 @@ export function userTurnLine(content: unknown): string {
   return `${JSON.stringify({ type: "user", session_id: "", message: { role: "user", content }, parent_tool_use_id: null })}\n`;
 }
 
-/**
- * Formats a successful control response as a stdin line for the Claude Code process.
- * @param {string} requestId - The request ID to respond to
- * @param {any} response - The response value
- * @returns {string} A JSON line ready for stdin
- */
+/** stdin line answering one of the CLI's control requests with a result. */
 export function controlResponseLine(requestId: string, response: unknown): string {
   return `${JSON.stringify({ type: "control_response", response: { subtype: "success", request_id: requestId, response } })}\n`;
 }
@@ -496,6 +495,7 @@ export interface RewindResult {
   insertions?: number;
   deletions?: number;
 }
+/** A `rewind_conversation` answer, keeping only the fields the panel shows. */
 export function decodeRewindResult(v: JsonValue | undefined): RewindResult {
   const r = typeof v === "object" && v !== null && !Array.isArray(v) ? v : {};
   const out: RewindResult = { canRewind: r.canRewind === true };
@@ -560,6 +560,7 @@ export interface WorkspaceDiff {
 const isRecord = (v: JsonValue | undefined): v is Record<string, JsonValue> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 const num = (x: JsonValue | undefined) => (typeof x === "number" ? x : 0);
+/** A `get_workspace_diff` answer as totals, per-file counts and hunks, skipping malformed entries. */
 export function decodeWorkspaceDiff(v: JsonValue | undefined): WorkspaceDiff {
   const outer = isRecord(v) ? v : {};
   const d = isRecord(outer.diff) ? outer.diff : outer;
@@ -610,6 +611,7 @@ export interface McpServerStatus {
    *  `mcp_status`, which does not report tools; absent when no init frame has been seen. */
   tools?: string[];
 }
+/** An `mcp_status` answer as one row per server, with its own error kept when it is not connected. */
 export function decodeMcpStatus(v: JsonValue | undefined): McpServerStatus[] {
   const r = isRecord(v) ? v : {};
   const out: McpServerStatus[] = [];
@@ -640,6 +642,7 @@ export interface CliModel {
   displayName: string;
   efforts: string[];
 }
+/** A `list_models` answer: what `claude --model` accepts for this login, aliases included. */
 export function decodeCliModels(v: JsonValue | undefined): CliModel[] {
   const r = isRecord(v) ? v : {};
   const out: CliModel[] = [];
@@ -763,23 +766,12 @@ export function controlRequestLine(requestId: string, request: Record<string, Js
   return `${JSON.stringify({ type: "control_request", request_id: requestId, request })}\n`;
 }
 
-/**
- * Formats a control response error as a stdin line for the Claude Code process.
- * @param {string} requestId - The request ID that caused the error
- * @param {any} error - The error value
- * @returns {string} A JSON line ready for stdin
- */
+/** stdin line answering one of the CLI's control requests with a failure. */
 export function controlErrorLine(requestId: string, error: unknown): string {
   return `${JSON.stringify({ type: "control_response", response: { subtype: "error", request_id: requestId, error } })}\n`;
 }
 
-/**
- * Creates an approval decision allowing a tool call to proceed with
- * optional input modifications.
- * @param {string} toolUseId - The tool call ID to approve
- * @param {any} input - The updated tool input
- * @returns {object} An approval decision object
- */
+/** Lets a tool call run, with the input dsh approved, which may differ from the one asked for. */
 export const allowResult = (toolUseId: string, input: unknown) => ({
   behavior: "allow" as const,
   updatedInput: input,
@@ -787,12 +779,7 @@ export const allowResult = (toolUseId: string, input: unknown) => ({
   decisionClassification: "user_temporary" as const,
 });
 
-/**
- * Creates an approval decision denying a tool call from proceeding.
- * @param {string} toolUseId - The tool call ID to deny
- * @param {string} message - The reason for denial
- * @returns {object} A denial decision object
- */
+/** Refuses a tool call and tells Claude why; the CLI reads this as the user rejecting it. */
 export const denyResult = (toolUseId: string, message: string) => ({
   behavior: "deny" as const,
   message,
@@ -931,6 +918,7 @@ export interface TurnPrep {
   input: string | null;
 }
 
+/** Everything a Claude process needs at spawn: where it runs, how it is reached, what it may do. */
 export interface ClaudeProcessSpec {
   cwd: string;
   model: string | undefined;
@@ -941,6 +929,7 @@ export interface ClaudeProcessSpec {
   temporary: boolean;
 }
 
+/** What the caller wants to know when a Claude process ends, live or after a restart. */
 export interface ClaudeProcessOnExit {
   (proc: ClaudeProcess): void;
 }
@@ -973,6 +962,7 @@ export interface KeeperInfo {
   endedBy: "client" | "child" | "keeper-crash" | null;
 }
 
+/** The keeper record in a spawn directory, or undefined when it is missing or damaged. */
 export function readKeeperInfo(dir: string): KeeperInfo | undefined {
   try {
     const parsed: unknown = JSON.parse(readFileSync(keeperPaths(dir).info, "utf8"));
@@ -1125,6 +1115,7 @@ export function lazyHandle(pending: Promise<SubprocessHandle>): SubprocessHandle
   };
 }
 
+/** The keeper's record of the process it babysits, written at spawn and read after a restart. */
 export interface KeeperSpec {
   command: string;
   args: string[];
@@ -1135,6 +1126,7 @@ export interface KeeperSpec {
   procSpec?: ClaudeProcessSpec;
 }
 
+/** The spawn arguments a keeper was started with, for adopting or respawning it after a restart. */
 export function readKeeperSpec(dir: string): KeeperSpec | undefined {
   try {
     const parsed: unknown = JSON.parse(readFileSync(keeperPaths(dir).spec, "utf8"));
@@ -1198,6 +1190,7 @@ export async function spawnKeeper(
   return attachKeeper(dir, 8000);
 }
 
+/** How a child is started: locally, or on a box over ssh. The adapter holds one per provider. */
 export type Spawner = (
   command: string,
   args: string[],

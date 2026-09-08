@@ -274,6 +274,7 @@ function usageEvent(u: {
   return { type: "usage", usage };
 }
 
+/** One open lane of a turn: which kind it is, what has been written into it, and when it started. */
 export interface TranslatorBlock {
   index: number;
   blockType: string;
@@ -364,6 +365,7 @@ const LIMIT_NAMES = new Map([
   ["overage", "usage credit limit"],
 ]);
 
+/** Turns the CLI's stream-json events into the markdown and tool rows one dsh turn shows. */
 export class Translator {
   log: (level: string, msg: string) => void;
   unknownSeen: Set<string>; // (where:type) already warned, so schema drift warns once, not per event

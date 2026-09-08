@@ -270,16 +270,7 @@ export declare const stableModelId: (id: string) => string;
 export declare function asideAnswerText(response: JsonValue | undefined): string | undefined;
 /** Parse a persisted catalog file. Anything malformed reads as empty, so the caller falls back. */
 export declare function parseCatalogCache(text: string): ReturnType<typeof M>[];
-/**
- * Retrieves authentication headers for the Anthropic API, checking
- * environment variables and stored credentials.
- * @returns {Promise<object|null>} API auth headers or null if unavailable
- */
-/**
- * Converts an Anthropic Models API response into the internal model format.
- * @param {object} m - Model metadata from the API
- * @returns {object} Internal model representation
- */
+/** One entry of the Anthropic Models API list, in the shape the picker uses. */
 export declare function modelFromApi(m: {
     id?: string;
     display_name?: string;
@@ -333,14 +324,13 @@ export declare function selectTurns(messages: LooseMessage[] | undefined, resumi
  *  bundle is one `<system-reminder>` with `Instructions from: <path>` headers; a block runs to
  *  the next header or the closing tag. Empty when nothing but the wrapper would remain. */
 export declare function withoutNativeInstructions(text: string): string;
-/** Text body sent as the user prompt. Assistant turns get role labels so history stays legible. */
-export declare function buildPrompt(turns: LooseMessage[]): string;
 /**
- * Extracts image attachment references from message turns.
- * Limits to the last MAX_IMAGES to avoid exceeding CLI limits.
- * @param {Array} turns - Message turns
- * @returns {Array} Image attachment references
+ * The turn's text as one stdin prompt. A turn with assistant text in it is labelled by role so the
+ * history stays legible; a plain user turn is sent as it was typed, with no label. A turn that
+ * carries only an image has no text to send, so it becomes `(see attached)` and the image rides
+ * along in `imageRefs`.
  */
+export declare function buildPrompt(turns: LooseMessage[]): string;
 /** An image loaded from dsh's attachment store, ready for the stdin line. */
 type LoadedImage = {
     mediaType: string;
@@ -349,24 +339,13 @@ type LoadedImage = {
 };
 /** dsh's access-mode switch arrives as text in the runtime-context injection; the last snapshot wins. */
 export declare function accessModeOf(messages: LooseMessage[] | undefined): string | undefined;
-/**
- * Resolves the Claude Code permission mode based on configuration and
- * dsh access mode.
- * @param {object} config - Plugin configuration
- * @param {string} accessMode - dsh access mode
- * @returns {string} Permission mode for Claude Code
- */
+/** The CLI's permission mode for a turn: the configured one, or the one dsh's access mode maps to. */
 export declare function permissionModeFor(config: Schemastery.TypeT<typeof Config>, accessMode: string | undefined): string;
-/**
- * Probes the Claude Code CLI to determine its version and supported flags.
- * Caches the result across multiple calls.
- * @param {Function} exec - execFile implementation (default: node's execFile)
- * @returns {Promise<object>} Object with flags Set and version string
- */
 /** The slice of node's execFile the probe uses; tests hand in a fake with this shape. */
 export type ExecLike = (cmd: string, args: string[], opts: {
     timeout: number;
 }, cb: (err: Error | null, stdout: string | Buffer) => void) => void;
+/** The target binary's version and the flags its `--help` lists, probed once per binary. */
 export declare function probeCli(exec?: ExecLike, command?: string, host?: string): Promise<{
     flags: Set<string> | null;
     version: string;
@@ -521,6 +500,11 @@ export declare function relayBlocks(tr: Translator, call: RelayEvent): IterableI
 /** Whether a todo list still has work on it. A list of nothing but completed items is finished,
  *  and a finished list is not worth painting over a fresh message. */
 export declare function hasPendingTodo(todos: JsonValue[]): boolean;
+/**
+ * The provider dsh talks to. It owns one Claude Code process per session, converts a dsh turn
+ * into stdin lines and the CLI's stream-json back into dsh events, and keeps the state — turn
+ * records, permission modes, keepers — that has to survive a restart.
+ */
 export declare class ClaudeCodeAdapter extends LlmAdapter {
     ctx: PluginContext;
     config: Schemastery.TypeT<typeof Config>;

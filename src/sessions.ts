@@ -2017,6 +2017,11 @@ interface DiagnosticFile {
   parseError?: string;
 }
 
+/**
+ * The four files Claude Code merges for one session, highest precedence first. Duplicated in
+ * `src/client/settings.ts`: the browser half cannot import server code, and the order is the
+ * CLI's, not this plugin's, so both copies have to say the same thing.
+ */
 export const SETTINGS_SCOPES = ["managed", "local", "project", "user"] as const;
 
 /** One of the four settings files. The CLI's own layer names, minus the `--settings` flag layer. */

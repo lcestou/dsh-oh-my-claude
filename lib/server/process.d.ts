@@ -20,6 +20,7 @@ export declare const CHILD_ENV: {
  *  happens to be in dsh's environment would otherwise cut relayed dsh tools short in one spawn mode
  *  and not the other. A caller that means to override still wins, which is the escape hatch. */
 export declare function childEnv(base: NodeJS.ProcessEnv, override?: Record<string, string>): Record<string, string>;
+/** The child process seam this plugin uses: dsh's own spawner and the node one both answer it. */
 export interface SubprocessHandle {
     stdin: import("node:stream").Writable;
     stdout: import("node:stream").Readable;
@@ -30,6 +31,7 @@ export interface SubprocessHandle {
     }>;
     terminate(): void;
 }
+/** One line of the CLI's stream-json stdout, in the shapes this plugin reads. */
 export type ClaudeEvent = {
     type: "system";
     subtype?: string;
@@ -211,12 +213,14 @@ export interface RelayEvent {
     resolve: (v: RelayResult) => void;
     reject: (e: Error) => void;
 }
+/** The `message` of an assistant event: the model that wrote it and its content blocks. */
 export interface ClaudeAssistantMessage {
     id?: string;
     model?: string;
     role?: string;
     content?: ClaudeContentBlock[];
 }
+/** One block of an assistant message; the translator draws a lane for each of these four. */
 export type ClaudeContentBlock = {
     type: "text";
     text: string;
@@ -304,12 +308,7 @@ export declare function sshInvocation(host: string, command: string, args: strin
 export declare const sshSpawner: (host: string, resolveCwd?: (cwd: string) => string, token?: string) => Spawner;
 /** stdin line for one user turn. `session_id` empty and `parent_tool_use_id` null match what the SDK writes. */
 export declare function userTurnLine(content: unknown): string;
-/**
- * Formats a successful control response as a stdin line for the Claude Code process.
- * @param {string} requestId - The request ID to respond to
- * @param {any} response - The response value
- * @returns {string} A JSON line ready for stdin
- */
+/** stdin line answering one of the CLI's control requests with a result. */
 export declare function controlResponseLine(requestId: string, response: unknown): string;
 /** stdin line asking the CLI to stop the current turn; it answers with a result and stays alive. */
 export declare function interruptLine(requestId: string): string;
@@ -323,6 +322,7 @@ export interface RewindResult {
     insertions?: number;
     deletions?: number;
 }
+/** A `rewind_conversation` answer, keeping only the fields the panel shows. */
 export declare function decodeRewindResult(v: JsonValue | undefined): RewindResult;
 /** The slice of a `get_context_usage` answer this plugin reports: the CLI's own token count per category. */
 export interface ContextUsage {
@@ -358,6 +358,7 @@ export interface WorkspaceDiff {
         }>;
     }>;
 }
+/** A `get_workspace_diff` answer as totals, per-file counts and hunks, skipping malformed entries. */
 export declare function decodeWorkspaceDiff(v: JsonValue | undefined): WorkspaceDiff;
 /** One MCP server as `mcp_status` reports it. */
 export interface McpServerStatus {
@@ -369,6 +370,7 @@ export interface McpServerStatus {
      *  `mcp_status`, which does not report tools; absent when no init frame has been seen. */
     tools?: string[];
 }
+/** An `mcp_status` answer as one row per server, with its own error kept when it is not connected. */
 export declare function decodeMcpStatus(v: JsonValue | undefined): McpServerStatus[];
 /** One entry of the CLI's own model picker, as `list_models` reports it. */
 export interface CliModel {
@@ -377,6 +379,7 @@ export interface CliModel {
     displayName: string;
     efforts: string[];
 }
+/** A `list_models` answer: what `claude --model` accepts for this login, aliases included. */
 export declare function decodeCliModels(v: JsonValue | undefined): CliModel[];
 /** The request fields of an `elicitation` control request this plugin reads. */
 export interface ElicitationRequest {
@@ -410,32 +413,16 @@ export declare function elicitationResult(request: ElicitationRequest, response:
 export declare function isIdleReply(line: string): boolean;
 /** stdin line for any control request this plugin sends; the CLI answers with a `control_response`. */
 export declare function controlRequestLine(requestId: string, request: Record<string, JsonValue>): string;
-/**
- * Formats a control response error as a stdin line for the Claude Code process.
- * @param {string} requestId - The request ID that caused the error
- * @param {any} error - The error value
- * @returns {string} A JSON line ready for stdin
- */
+/** stdin line answering one of the CLI's control requests with a failure. */
 export declare function controlErrorLine(requestId: string, error: unknown): string;
-/**
- * Creates an approval decision allowing a tool call to proceed with
- * optional input modifications.
- * @param {string} toolUseId - The tool call ID to approve
- * @param {any} input - The updated tool input
- * @returns {object} An approval decision object
- */
+/** Lets a tool call run, with the input dsh approved, which may differ from the one asked for. */
 export declare const allowResult: (toolUseId: string, input: unknown) => {
     behavior: "allow";
     updatedInput: unknown;
     toolUseID: string;
     decisionClassification: "user_temporary";
 };
-/**
- * Creates an approval decision denying a tool call from proceeding.
- * @param {string} toolUseId - The tool call ID to deny
- * @param {string} message - The reason for denial
- * @returns {object} A denial decision object
- */
+/** Refuses a tool call and tells Claude why; the CLI reads this as the user rejecting it. */
 export declare const denyResult: (toolUseId: string, message: string) => {
     behavior: "deny";
     message: string;
@@ -484,6 +471,7 @@ export interface TurnPrep {
     accessMode?: string;
     input: string | null;
 }
+/** Everything a Claude process needs at spawn: where it runs, how it is reached, what it may do. */
 export interface ClaudeProcessSpec {
     cwd: string;
     model: string | undefined;
@@ -493,6 +481,7 @@ export interface ClaudeProcessSpec {
     /** Launched with --no-session-persistence: Claude keeps no transcript for this session. */
     temporary: boolean;
 }
+/** What the caller wants to know when a Claude process ends, live or after a restart. */
 export interface ClaudeProcessOnExit {
     (proc: ClaudeProcess): void;
 }
@@ -516,6 +505,7 @@ export interface KeeperInfo {
     /** Who ended Claude: a kill message from dsh, Claude itself, or the keeper crashing; null while it runs. */
     endedBy: "client" | "child" | "keeper-crash" | null;
 }
+/** The keeper record in a spawn directory, or undefined when it is missing or damaged. */
 export declare function readKeeperInfo(dir: string): KeeperInfo | undefined;
 /** True when a pid is alive (signal 0). */
 export declare const pidAlive: (pid: number) => boolean;
@@ -530,6 +520,7 @@ export declare function attachKeeper(dir: string, timeoutMs?: number): Promise<S
  * writes queue until then, stdout/stderr are piped through, done and terminate follow the real one.
  */
 export declare function lazyHandle(pending: Promise<SubprocessHandle>): SubprocessHandle;
+/** The keeper's record of the process it babysits, written at spawn and read after a restart. */
 export interface KeeperSpec {
     command: string;
     args: string[];
@@ -539,6 +530,7 @@ export interface KeeperSpec {
     /** The adapter's process spec, so an adopted keeper matches the next request's spec. */
     procSpec?: ClaudeProcessSpec;
 }
+/** The spawn arguments a keeper was started with, for adopting or respawning it after a restart. */
 export declare function readKeeperSpec(dir: string): KeeperSpec | undefined;
 /** Launch the keeper in its own systemd user scope when possible (a service restart's cgroup kill
  *  then misses it), else as a detached process with its own group. */
@@ -548,6 +540,7 @@ export declare function launchKeeper(argv: string[], unit: string): void;
  * (plain detached spawn, or a systemd user scope so a service restart's cgroup kill misses it).
  */
 export declare function spawnKeeper(dir: string, spec: KeeperSpec, launch: (argv: string[]) => void): Promise<SubprocessHandle>;
+/** How a child is started: locally, or on a box over ssh. The adapter holds one per provider. */
 export type Spawner = (command: string, args: string[], cwd: string, envOverride?: Record<string, string>) => SubprocessHandle;
 /**
  * A running Claude Code process bound to one dsh session. `spec` is what the process was spawned

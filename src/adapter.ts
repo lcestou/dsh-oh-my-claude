@@ -599,16 +599,7 @@ async function persistCatalog(models: ReturnType<typeof M>[]) {
   }
 }
 
-/**
- * Retrieves authentication headers for the Anthropic API, checking
- * environment variables and stored credentials.
- * @returns {Promise<object|null>} API auth headers or null if unavailable
- */
-/**
- * Converts an Anthropic Models API response into the internal model format.
- * @param {object} m - Model metadata from the API
- * @returns {object} Internal model representation
- */
+/** One entry of the Anthropic Models API list, in the shape the picker uses. */
 export function modelFromApi(m: {
   id?: string;
   display_name?: string;
@@ -621,12 +612,6 @@ export function modelFromApi(m: {
   return M(id, m.display_name ?? id, m.max_input_tokens ?? 200_000, efforts);
 }
 
-/**
- * Fetches or returns cached model catalog from Anthropic Models API.
- * Falls back to KNOWN_MODELS if the API is unreachable.
- * @param {Function} fetchImpl - Fetch implementation to use (default: global fetch)
- * @returns {Promise<Array>} Array of available models
- */
 /**
  * The CLI's own picker (`list_models`, asked of the first live process each boot) goes first:
  * its values are what `claude --model` accepts for this login, aliases such as `default` and the
@@ -726,12 +711,7 @@ export async function getCatalog(fetchImpl = fetch, cli: CliModel[] = [], picker
   return mergeCatalog(cli, catalog.models, picker);
 }
 
-/**
- * Constructs base model information object with provider and modalities.
- * @param {string} provider - Provider identifier
- * @param {object} model - Model object with id and name
- * @returns {object} Model info with provider and inputModalities
- */
+/** The provider-scoped half of a model entry; every Claude model takes text and images. */
 function modelInfo(provider: string, model: { id?: string; name?: string }) {
   return {
     provider,
@@ -863,7 +843,12 @@ const promptTextOf = (m: LooseMessage): string =>
     ? withoutNativeInstructions(textOf(m.content))
     : textOf(m.content);
 
-/** Text body sent as the user prompt. Assistant turns get role labels so history stays legible. */
+/**
+ * The turn's text as one stdin prompt. A turn with assistant text in it is labelled by role so the
+ * history stays legible; a plain user turn is sent as it was typed, with no label. A turn that
+ * carries only an image has no text to send, so it becomes `(see attached)` and the image rides
+ * along in `imageRefs`.
+ */
 export function buildPrompt(turns: LooseMessage[]): string {
   const parts = turns
     .map((m) => ({ role: m.role, text: promptTextOf(m) }))
@@ -883,16 +868,11 @@ export function buildPrompt(turns: LooseMessage[]): string {
   return parts.map((t) => (multi ? `[${t.role}]\n${t.text}` : t.text)).join("\n\n");
 }
 
-/**
- * Extracts image attachment references from message turns.
- * Limits to the last MAX_IMAGES to avoid exceeding CLI limits.
- * @param {Array} turns - Message turns
- * @returns {Array} Image attachment references
- */
 // Lightweight image ref shape; full ImageAttachmentRef from dsh-attachment has attachmentId too.
 /** An image loaded from dsh's attachment store, ready for the stdin line. */
 type LoadedImage = { mediaType: string; data: string; attachmentId?: string };
 
+/** The images of a turn, newest MAX_IMAGES kept, for the stdin line that carries them. */
 function imageRefs(turns: LooseMessage[]): ImageAttachmentRef[] {
   const refs: ImageAttachmentRef[] = [];
   for (const m of turns) {
@@ -925,13 +905,7 @@ export function accessModeOf(messages: LooseMessage[] | undefined): string | und
   return mode;
 }
 
-/**
- * Resolves the Claude Code permission mode based on configuration and
- * dsh access mode.
- * @param {object} config - Plugin configuration
- * @param {string} accessMode - dsh access mode
- * @returns {string} Permission mode for Claude Code
- */
+/** The CLI's permission mode for a turn: the configured one, or the one dsh's access mode maps to. */
 export function permissionModeFor(
   config: Schemastery.TypeT<typeof Config>,
   accessMode: string | undefined,
@@ -945,12 +919,6 @@ export function permissionModeFor(
 // process and anything missing is left out. Unknown = assume supported (probe failed, older CLI).
 
 const cliProbes = new Map<string, Promise<{ flags: Set<string> | null; version: string }>>();
-/**
- * Probes the Claude Code CLI to determine its version and supported flags.
- * Caches the result across multiple calls.
- * @param {Function} exec - execFile implementation (default: node's execFile)
- * @returns {Promise<object>} Object with flags Set and version string
- */
 /** The slice of node's execFile the probe uses; tests hand in a fake with this shape. */
 export type ExecLike = (
   cmd: string,
@@ -959,6 +927,7 @@ export type ExecLike = (
   cb: (err: Error | null, stdout: string | Buffer) => void,
 ) => void;
 
+/** The target binary's version and the flags its `--help` lists, probed once per binary. */
 // SAFETY: execFile's overloads include exactly this call shape; the alias only narrows them
 export function probeCli(exec: ExecLike = execFile as ExecLike, command = "claude", host?: string) {
   // One probe per target binary: the local `claude`, or a box's `claude` reached over ssh. A single
@@ -1470,6 +1439,11 @@ export function hasPendingTodo(todos: JsonValue[]): boolean {
   });
 }
 
+/**
+ * The provider dsh talks to. It owns one Claude Code process per session, converts a dsh turn
+ * into stdin lines and the CLI's stream-json back into dsh events, and keeps the state — turn
+ * records, permission modes, keepers — that has to survive a restart.
+ */
 export class ClaudeCodeAdapter extends LlmAdapter {
   ctx: PluginContext;
   config: Schemastery.TypeT<typeof Config>;
