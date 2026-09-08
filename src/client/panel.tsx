@@ -2433,13 +2433,31 @@ function AsidesBody({ sessionId }: { sessionId: string }) {
     );
   }
 
+  // An accordion of native <details>: the question is the row, the answer opens under it, and only
+  // the newest starts open, so ten long answers cost ten lines until one is wanted.
   return (
     <div style={bodyFlow}>
-      {items.toReversed().map((it) => (
-        <div key={it.id} style={{ padding: "4px 10px", fontSize: 12, lineHeight: "1.5" }}>
-          <div style={{ color: T.text, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+      {items.toReversed().map((it, i) => (
+        <details
+          key={it.id}
+          open={i === 0}
+          style={{ padding: "4px 10px", fontSize: 12, lineHeight: "1.5" }}
+        >
+          <summary
+            style={{
+              cursor: "pointer",
+              color: T.text,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
+          >
             {it.question}
-          </div>
+            <span style={{ ...meta, fontSize: 11, marginLeft: 6 }}>
+              {ago(it.at)}
+              {it.dismissed === true ? " · dismissed" : ""}
+            </span>
+          </summary>
           <div
             style={{
               marginTop: 2,
@@ -2450,11 +2468,7 @@ function AsidesBody({ sessionId }: { sessionId: string }) {
           >
             {it.pending ? "Waiting for an answer…" : (it.answer ?? it.error ?? "")}
           </div>
-          <div style={{ ...meta, fontSize: 11, marginTop: 2 }}>
-            {ago(it.at)}
-            {it.dismissed === true ? " · dismissed" : ""}
-          </div>
-        </div>
+        </details>
       ))}
     </div>
   );

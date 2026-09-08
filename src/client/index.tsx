@@ -3484,7 +3484,9 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
   itemsRef.current = items;
   const [dismissed, setDismissed] = useState<Set<string>>(() => new Set());
   const [copied, setCopied] = useState<string | null>(null);
-  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+  // Only the newest card starts open; the rest fold to their header row, so a stack of answers costs
+  // the composer one line each rather than a screen. A click flips a card either way.
+  const [toggled, setToggled] = useState<Set<string>>(() => new Set());
   const visibleRef = useRef(true);
 
   useEffect(() => {
@@ -3556,12 +3558,13 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
   };
 
   const toggle = (id: string) =>
-    setCollapsed((prev) => {
+    setToggled((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
     });
+  const newest = shown[shown.length - 1]?.id;
 
   const iconBtn = {
     background: "none",
@@ -3575,7 +3578,7 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
   return (
     <div style={DOCK_CARD}>
       {shown.map((it) => {
-        const open = !collapsed.has(it.id);
+        const open = (it.id === newest) !== toggled.has(it.id);
         return (
           <div
             key={it.id}
@@ -3668,7 +3671,8 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
               </button>
             </div>
             {open ? (
-              <div style={{ padding: "0 10px 8px 24px" }}>
+              // A very tall answer scrolls inside the card rather than pushing the composer down.
+              <div style={{ padding: "0 10px 8px 24px", maxHeight: "40vh", overflow: "auto" }}>
                 {it.pending ? (
                   <div style={{ color: CLAUDE_ORANGE, fontSize: 12, fontStyle: "italic" }}>
                     Claude is thinking…
