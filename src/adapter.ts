@@ -1830,9 +1830,6 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     if (!this.config.commandBridge || this.providerId !== "claude-code" || !commands) return;
     // SAFETY: a plain slot on globalThis, written only here
     (globalThis as { [COMMAND_CATALOG]?: string[] })[COMMAND_CATALOG] = names;
-    // globalThis carries the catalog across a hot reload; the file carries it across a restart,
-    // which adopts the running Claude and so never sees a second init frame.
-    void saveCommandCatalog(this.stateDir, names);
     const failed: string[] = [];
     for (const cmd of names) {
       if (this.bridged.has(cmd)) continue;
@@ -1907,6 +1904,12 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         "warn",
         `command bridge: ${failed.length} of ${names.length} not registered (first: ${failed[0]})`,
       );
+    // globalThis carries the catalog across a hot reload; the file carries it across a restart,
+    // which adopts the running Claude and so never sees a second init frame. What is written is
+    // what is bridged, not the frame that just arrived: `commands_changed` re-sends the catalog
+    // mid-session and one such frame carrying a single name would otherwise leave the next boot
+    // with a menu of one, while the live registrations it never removes stayed up.
+    void saveCommandCatalog(this.stateDir, [...this.bridged.keys()]);
     this.registerTemporaryCommand(commands);
     this.registerAsideCommand(commands);
   }

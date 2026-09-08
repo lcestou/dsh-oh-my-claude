@@ -2919,6 +2919,32 @@ console.log("plan-review ok");
   assert.ok(registered.includes("claude-compact"), "fell back to the prefixed name");
   assert.equal(a.bridged.has("compact"), true, "and the command is bridged either way");
 }
+
+// A later frame naming fewer commands does not shrink what is saved: the registrations already made
+// are not removed, so the file follows them rather than the frame.
+{
+  const dir = await mkdtemp(joinPath(tmpdir(), "omc-catalog-shrink-"));
+  const commands = {
+    register: () => () => {},
+    find: () => undefined,
+  };
+  const base = {
+    on() {},
+    logger: { info() {}, warn() {} },
+    get: (n: string) => (n === "commands" ? commands : undefined),
+  };
+  const a = new ClaudeCodeAdapter(fakeCtx(base), Config({ commandBridge: true }));
+  a.stateDir = dir;
+  a.bridgeCommands(["llama", "mint"], undefined);
+  a.bridgeCommands(["compact"], undefined);
+  await new Promise((r) => setTimeout(r, 50));
+  assert.deepEqual(
+    (await loadCommandCatalog(dir)).filter((n) => ["llama", "mint", "compact"].includes(n)),
+    ["llama", "mint", "compact"],
+    "every bridged name, not the last frame",
+  );
+}
+console.log("command-catalog-live ok");
 console.log("command-bridge ok");
 
 // The catalog survives a restart. globalThis carries it across a hot reload, but a restart adopts
