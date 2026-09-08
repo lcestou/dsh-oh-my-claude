@@ -514,6 +514,8 @@ export const stableModelId = (id: string): string => {
 const MAX_IMAGES = 20;
 /** How many recent approval requests the Tune tab offers as rules. */
 const ASK_SUGGESTIONS = 10;
+/** How many asked rpcIds to remember, so the dedupe set cannot grow without bound. */
+const ASIDE_ASKED_KEEP = 200;
 /** How many `/btw` asides a session keeps; older ones drop off the ring. */
 const ASIDE_KEEP = 10;
 /** A side question is a full model turn, so it gets a longer wait than a control ping. */
@@ -1391,6 +1393,30 @@ export function stepContextFor(messages: LooseMessage[] | undefined): string {
     : `\n\n<user_messages_during_tool_call>\n${parts.join("\n\n")}\n</user_messages_during_tool_call>`;
 }
 
+/** A fresh user message that is nothing but `/btw <question>`, and the question it carries. */
+export interface SideQuestion {
+  message: LooseMessage;
+  question: string;
+}
+
+/**
+ * The `/btw` messages in a batch dsh is about to send as prose. The command works when it is typed
+ * between turns: dsh dispatches it to the handler. Typed while a turn runs, dsh's composer queues
+ * the raw text and delivers it as an ordinary message, the handler never runs, and the CLI answers
+ * "/btw isn't available in this environment". Catching them here routes both paths to the same
+ * place. Only a message that is the command and nothing else counts, so prose quoting `/btw` is
+ * still prose.
+ */
+export function sideQuestionsIn(messages: LooseMessage[] | undefined): SideQuestion[] {
+  const found: SideQuestion[] = [];
+  for (const m of afterLastAssistant(messages)) {
+    if (m.role !== "user" || m.source?.kind !== "user") continue;
+    const question = /^\/btw[ \t]+([\s\S]+)$/.exec(textOf(m.content).trim())?.[1]?.trim();
+    if (question) found.push({ message: m, question });
+  }
+  return found;
+}
+
 // Re-export symbols so tests that import from adapter.ts can access them too.
 export { PROCESS_REGISTRY, ADAPTER_CURRENT, RESUME_TIMER };
 /** How long to wait for the rest of a parallel dsh tool-call batch after the first one arrives. */
@@ -1486,6 +1512,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   controlWaiters: Map<string, (reply: ControlReply) => void>;
   /** The rules recent approval requests suggest, newest last, per session. */
   readonly permissionAsks = new Map<string, string[]>();
+  /** rpcIds of messages already routed to `askSideQuestion`, so a re-sent batch asks once. */
+  readonly asked = new Set<string>();
   /** `/btw` side questions and their answers, newest last, per session; kept in memory only. */
   readonly sideQuestions = new Map<string, AsideEntry[]>();
   /** Saved opening prompts: one per session id, plus `default` for the one a session without its own
@@ -2855,6 +2883,34 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   }
 
   async *turn(options: SessionOptions, forceFresh?: boolean): AsyncGenerator<StreamChunk> {
+    const asides = sideQuestionsIn(options.messages).filter(
+      (a) => a.message.source?.rpcId === undefined || !this.asked.has(a.message.source.rpcId),
+    );
+    if (asides.length > 0) {
+      const held = this.processes.get(registryKey(this.providerId, options.sessionId));
+      for (const aside of asides) {
+        const rpcId = aside.message.source?.rpcId;
+        // dsh re-sends the same batch on every step of a turn; one ask per message.
+        if (rpcId !== undefined) this.asked.add(rpcId);
+        this.askSideQuestion(options.sessionId, aside.question);
+      }
+      if (this.asked.size > ASIDE_ASKED_KEEP)
+        for (const id of [...this.asked].slice(0, this.asked.size - ASIDE_ASKED_KEEP))
+          this.asked.delete(id);
+      const taken = new Set(asides.map((a) => a.message));
+      const messages = (options.messages ?? []).filter((m) => !taken.has(m));
+      options = { ...options, messages };
+      // Nothing else was typed and no step is waiting on us: the aside is the whole turn.
+      const midTurn = held?.alive === true && (held.relays.size > 0 || held.parked !== undefined);
+      if (!midTurn && !afterLastAssistant(messages).some((m) => m.source?.kind === "user")) {
+        yield* new Translator({ toolActivity: false }).wholeBlock(
+          "text",
+          `Asked as a side question — the answer opens in the ✻ aside bubble.`,
+        );
+        yield { type: "finish", reason: { kind: "stop" } };
+        return;
+      }
+    }
     const cont = this.continuationFor(options, forceFresh);
     options = cont.options;
     if (cont.mode === "abandon") {

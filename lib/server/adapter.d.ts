@@ -494,6 +494,20 @@ export declare function dropSent<T extends LooseMessage>(messages: T[] | undefin
  *  the tool ran, subagent notices, other injections. Claude only sees the tool result, so they
  *  ride along with it. Empty when there is nothing. */
 export declare function stepContextFor(messages: LooseMessage[] | undefined): string;
+/** A fresh user message that is nothing but `/btw <question>`, and the question it carries. */
+export interface SideQuestion {
+    message: LooseMessage;
+    question: string;
+}
+/**
+ * The `/btw` messages in a batch dsh is about to send as prose. The command works when it is typed
+ * between turns: dsh dispatches it to the handler. Typed while a turn runs, dsh's composer queues
+ * the raw text and delivers it as an ordinary message, the handler never runs, and the CLI answers
+ * "/btw isn't available in this environment". Catching them here routes both paths to the same
+ * place. Only a message that is the command and nothing else counts, so prose quoting `/btw` is
+ * still prose.
+ */
+export declare function sideQuestionsIn(messages: LooseMessage[] | undefined): SideQuestion[];
 export { PROCESS_REGISTRY, ADAPTER_CURRENT, RESUME_TIMER };
 /** Count the human prompts dsh has in a transcript (context injections and tool results excluded). */
 export declare function userPromptCount(messages: LooseMessage[] | undefined): number;
@@ -551,6 +565,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     controlWaiters: Map<string, (reply: ControlReply) => void>;
     /** The rules recent approval requests suggest, newest last, per session. */
     readonly permissionAsks: Map<string, string[]>;
+    /** rpcIds of messages already routed to `askSideQuestion`, so a re-sent batch asks once. */
+    readonly asked: Set<string>;
     /** `/btw` side questions and their answers, newest last, per session; kept in memory only. */
     readonly sideQuestions: Map<string, AsideEntry[]>;
     /** Saved opening prompts: one per session id, plus `default` for the one a session without its own

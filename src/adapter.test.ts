@@ -27,6 +27,7 @@ import {
   selectTurns,
   relayBlocks,
   toolResultFor,
+  sideQuestionsIn,
   stepContextFor,
   forkTranscriptText,
   userPromptCount,
@@ -1231,6 +1232,26 @@ console.log("ok");
     /\bgo\b/,
     "the turn's original prompt is before the assistant step, not repeated",
   );
+  // Typed while the turn ran, `/btw` reaches the plugin as prose; the turn loop pulls it out and
+  // asks it as a side question instead of forwarding it to Claude, which does not know the command.
+  const withAside = messageList([
+    ...base,
+    {
+      role: "user",
+      source: { kind: "user", rpcId: "r9" },
+      content: [{ type: "text", text: " /btw  what is the cwd? " }],
+    },
+    {
+      role: "user",
+      source: { kind: "user" },
+      content: [{ type: "text", text: "the docs say to run /btw for a side question" }],
+    },
+  ]);
+  const asides = sideQuestionsIn(withAside);
+  assert.equal(asides.length, 1, "prose that merely mentions the command is still prose");
+  assert.equal(asides[0]?.question, "what is the cwd?");
+  assert.equal(asides[0]?.message.source?.rpcId, "r9", "the message is named so it can be dropped");
+  assert.deepEqual(sideQuestionsIn(base), [], "no /btw, nothing to ask");
 }
 {
   const msgs = messageList([
