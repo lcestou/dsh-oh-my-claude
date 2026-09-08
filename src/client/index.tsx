@@ -49,6 +49,7 @@ import {
   whenContextGone,
   guard,
 } from "./shared.js";
+import { Spark, sparkNode } from "./spark.js";
 import { AccessShield, OhMyClaudeControl } from "./panel.js";
 import { markTitle, newlyWaiting, noticesOn, type NoticeSnapshot } from "./notices.js";
 import { SETTINGS_SCOPES, SCOPE_LABELS, overrideNote } from "./settings.js";
@@ -2099,10 +2100,7 @@ function watchContextMeter(ctx: ClientCtx) {
     block.style.cssText = `border-bottom:1px solid ${T.border};margin-bottom:10px;padding-bottom:8px;font-size:13px;line-height:20px`;
     const title = document.createElement("div");
     title.style.cssText = `display:flex;align-items:center;gap:6px;color:${T.text};font-weight:600`;
-    const mark = document.createElement("span");
-    mark.textContent = CLAUDE_MARK;
-    mark.setAttribute("aria-hidden", "true");
-    mark.style.cssText = `color:${CLAUDE_ORANGE};font-size:14px;line-height:1`;
+    const mark = sparkNode(13);
     const titleText = document.createElement("span");
     titleText.textContent = "Claude usage";
     title.append(mark, titleText);
@@ -2143,11 +2141,10 @@ function watchContextMeter(ctx: ClientCtx) {
     const line = document.createElement("div");
     line.setAttribute(MARK, "1");
     // Above dsh's own sentence, like the panel rows, with a hairline between.
-    line.style.cssText = `border-bottom:1px solid ${T.border};margin-bottom:4px;padding-bottom:4px;display:flex;gap:6px;align-items:baseline`;
-    const mark = document.createElement("span");
-    mark.textContent = CLAUDE_MARK;
-    mark.setAttribute("aria-hidden", "true");
-    mark.style.color = CLAUDE_SHIMMER;
+    // The mark is a drawing, not a letter, so the row centres on it rather than sitting it on a
+    // baseline it does not have.
+    line.style.cssText = `border-bottom:1px solid ${T.border};margin-bottom:4px;padding-bottom:4px;display:flex;gap:6px;align-items:center`;
+    const mark = sparkNode(12, CLAUDE_SHIMMER);
     const text = document.createElement("span");
     text.textContent = "Claude usage…";
     line.append(mark, text);
@@ -3332,12 +3329,7 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
                 cursor: "pointer",
               }}
             >
-              <span
-                style={{ color: CLAUDE_ORANGE, fontSize: 13, flex: "0 0 auto" }}
-                aria-hidden="true"
-              >
-                {CLAUDE_MARK}
-              </span>
+              <Spark size={12} />
               <span
                 style={{
                   color: CLAUDE_ORANGE,
@@ -3529,7 +3521,7 @@ export function apply(ctx: ClientCtx) {
     return (
       <div>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-          <span style={{ color: CLAUDE_ORANGE, fontSize: 18, lineHeight: 1 }}>{CLAUDE_MARK}</span>
+          <Spark size={16} />
           <h2 id="dsh-oh-my-claude-heading" style={{ margin: 0, fontSize: 18 }}>
             Oh My Claude
           </h2>

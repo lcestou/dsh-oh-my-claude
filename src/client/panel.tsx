@@ -22,9 +22,9 @@ import {
   inputStyle,
   openHere,
   CLAUDE_ORANGE,
-  CLAUDE_MARK,
   maskEmail,
 } from "./shared.js";
+import { Spark } from "./spark.js";
 import { TuneBody } from "./tune.js";
 import { noticesOn, setNoticesOn } from "./notices.js";
 import type { FeatureSwitches } from "../switches.js";
@@ -2518,7 +2518,7 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
           openPanel();
         }}
       >
-        {CLAUDE_MARK}
+        <Spark size={15} />
       </button>
       {open && (
         <div role="dialog" aria-label="Oh My Claude" style={panelStyle}>
