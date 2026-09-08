@@ -5,7 +5,14 @@ import { access, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promise
 import { dirname } from "node:path";
 import { hostname } from "node:os";
 import { basename, join } from "node:path";
-import type { Spawner, ContextUsage, WorkspaceDiff, McpServerStatus, CliModel } from "./process.js";
+import type {
+  Spawner,
+  SubprocessHandle,
+  ContextUsage,
+  WorkspaceDiff,
+  McpServerStatus,
+  CliModel,
+} from "./process.js";
 import {
   LlmAdapter,
   LlmError,
@@ -122,6 +129,17 @@ import {
 import { suggestRule } from "./permissions.js";
 import { readSshToken } from "./ssh-login.js";
 import { childEnv, errorText } from "./process.js";
+import {
+  READY as READY_MARK,
+  asHoldRecord,
+  holdCleanScript,
+  holdHandle,
+  holdName,
+  holdStartScript,
+  sshRunner,
+  type HoldRecord,
+} from "./hold.js";
+import { dropHold, loadHolds, saveHold } from "./state.js";
 import type { RewindResult } from "./process.js";
 import { forkTranscriptText } from "./transcript.js";
 import { buildMirror } from "./claude-home.js";
@@ -248,7 +266,7 @@ export const Config = z.object({
     .string()
     .default("")
     .description(
-      "Run this instance's Claude Code on a remote host over SSH (e.g. 'user@box' or an ssh_config alias). Empty = local. This box's harness drives the far `claude` with `ssh -o BatchMode=yes`; nothing runs on the remote but the CLI, using the remote's own ~/.claude login. Needs a working SSH key to the host. Forces node-style spawn (no keeper); the dsh MCP bridge and the file-reading panel tabs do not reach the remote yet",
+      "Run this instance's Claude Code on a remote host over SSH (e.g. 'user@box' or an ssh_config alias). Empty = local. This box's harness drives the far `claude` with `ssh -o BatchMode=yes`; nothing runs on the remote but the CLI, using the remote's own ~/.claude login. Needs a working SSH key to the host. With spawn: keeper (the default) the far claude is held in a session of its own on the box, so a dsh restart here reattaches to it; the dsh MCP bridge does not reach the remote",
     ),
   permissionMode: z
     .union(["dsh", "acceptEdits", "bypassPermissions", "plan", "dontAsk", "auto", "manual"])
@@ -2465,12 +2483,16 @@ export class ClaudeCodeAdapter extends LlmAdapter {
 
   /** Spawner for one session: keeper mode needs the session to place and name the keeper. */
   spawnerFor(sessionId: string | undefined, spec: ClaudeProcessSpec): Spawner {
-    if (this.config.spawn !== "keeper" || !sessionId || this.config.sshHost) return this.spawner();
+    if (this.config.spawn !== "keeper" || !sessionId) return this.spawner();
+    const boxHost = this.config.sshHost;
+    if (boxHost)
+      return (command, args, cwd) =>
+        this.holdOn(boxHost, remoteCwdFor(boxHost, cwd), sessionId, spec, command, args);
     return (command, args, cwd) => {
-      // A remote-workspace session runs the far `claude` over SSH, so it skips the local keeper (a
-      // keeper would launch claude on this box in the empty placeholder dir). No keeper means no
-      // survive-a-restart, same as the dedicated SSH-box provider, which also bypasses the keeper.
-      if (remoteWorkspaceFor(cwd)) return this.spawner()(command, args, cwd);
+      // A remote-workspace session runs the far `claude` over SSH: held there, like an SSH box's,
+      // rather than under a local keeper that would launch claude in the empty placeholder dir.
+      const ws = remoteWorkspaceFor(cwd);
+      if (ws) return this.holdOn(ws.host, ws.remoteCwd, sessionId, spec, command, args);
       // One directory per spawn: a respawn must never share a socket, keeper.json or keeper.log
       // with the keeper it replaces (2026-09-06: a shared directory let a dying keeper answer the
       // new attach, and a boot read the wrong keeper.json and dropped the live one).
@@ -2485,6 +2507,120 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         ),
       );
     };
+  }
+
+  /**
+   * Start the far `claude` in a hold on `host` (see hold.ts) and attach to it. The record is what a
+   * restart reattaches from, so it is written before the first byte is read; a failed start ends the
+   * handle through its stderr and exit, as a local spawn error would.
+   */
+  holdOn(
+    host: string,
+    cwd: string,
+    sessionId: string,
+    spec: ClaudeProcessSpec,
+    command: string,
+    args: string[],
+  ): SubprocessHandle {
+    const holdId = holdName(this.providerId, sessionId);
+    const run = sshRunner(host);
+    const record: HoldRecord = {
+      sessionId,
+      host,
+      name: holdId,
+      command,
+      args,
+      cwd,
+      procSpec: spec,
+      offset: 0,
+      startedAt: Date.now(),
+    };
+    const started = new Promise<SubprocessHandle>((resolve, reject) => {
+      const s = run(holdStartScript(holdId, cwd, command, args, readSshToken(STATE_DIR, host)));
+      let out = "";
+      let err = "";
+      s.stdin.end();
+      s.stdout.on("data", (d) => (out += String(d)));
+      s.stderr.on("data", (d) => (err += String(d)));
+      void s.done.then((o) => {
+        if (o.exitCode !== 0 || !out.includes(READY_MARK))
+          return reject(
+            new Error(`hold start on ${host} failed (${o.exitCode}): ${err.trim() || out.trim()}`),
+          );
+        void saveHold(this.stateDir, sessionId, record);
+        resolve(this.attachHold(run, record));
+      });
+    });
+    return lazyHandle(started);
+  }
+
+  /** Attach to a hold and keep its record's offset current (at most once a second). */
+  attachHold(run: ReturnType<typeof sshRunner>, record: HoldRecord): SubprocessHandle {
+    let saveTimer: ReturnType<typeof setTimeout> | undefined;
+    return holdHandle(
+      run,
+      record.name,
+      record.offset,
+      (offset) => {
+        record.offset = offset;
+        if (saveTimer) return;
+        saveTimer = setTimeout(() => {
+          saveTimer = undefined;
+          void saveHold(this.stateDir, record.sessionId, record);
+        }, 1000);
+        saveTimer.unref();
+      },
+      () => {
+        if (saveTimer) clearTimeout(saveTimer);
+        void dropHold(this.stateDir, record.sessionId, record.name);
+        // Our own dir on the box, after the exit line: the log of a live cli is never touched.
+        const c = run(holdCleanScript(record.name));
+        c.stdin.end();
+        c.stdout.on("data", () => {});
+        c.stderr.on("data", () => {});
+      },
+    );
+  }
+
+  /**
+   * At boot, reattach to the holds this instance left on SSH boxes. A hold whose cli has ended
+   * delivers its exit line at once and drops itself; one still running is registered like an
+   * adopted keeper, with the same wake and bridge reconnect.
+   */
+  async adoptHolds() {
+    if (this.config.spawn !== "keeper") return;
+    const all = await loadHolds(this.stateDir);
+    for (const [sessionId, raw] of Object.entries(all)) {
+      const record = asHoldRecord(raw);
+      if (!record || record.sessionId !== sessionId) {
+        await trace(join(this.stateDir, "resume.log"), `dropping unreadable hold for ${sessionId}`);
+        void dropHold(this.stateDir, sessionId);
+        continue;
+      }
+      const key2 = registryKey(this.providerId, sessionId);
+      if (this.processes.has(key2)) continue; // a hot reload: the process is already ours
+      const run = sshRunner(record.host);
+      const proc = new ClaudeProcess({
+        args: record.args,
+        cwd: record.cwd,
+        spec: record.procSpec,
+        command: record.command,
+        spawner: () => this.attachHold(run, record),
+        onExit: (p) => {
+          if (this.processes.get(key2) === p) this.processes.delete(key2);
+        },
+      });
+      proc.key = specKey(record.procSpec);
+      proc.resuming = true;
+      proc.onIdleResult = () => this.wake(sessionId, proc);
+      this.processes.set(key2, proc);
+      await trace(
+        join(this.stateDir, "resume.log"),
+        `adopted hold ${record.name} for ${sessionId} on ${record.host} (offset ${record.offset})`,
+      );
+      setTimeout(() => void this.reconnectBridge(proc, sessionId), 1500).unref();
+      void this.drainAdopted(proc, sessionId);
+    }
   }
 
   /**
@@ -3826,7 +3962,8 @@ function reconcileSshBoxes(
       providerId,
       providerName: box.name,
       sshHost: box.host,
-      spawn: "node",
+      // Inherits `spawn`: with the default keeper mode the far claude is held on the box (hold.ts)
+      // and survives a restart here; `node` gives the plain ssh pipe.
       dshTools: false,
       configDir: "",
     });
@@ -3873,6 +4010,7 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
   };
   (g[ADAPTER_CURRENT] ??= new Map()).set(adapter.providerId, adapter);
   void adapter.adoptKeepers().catch((e) => adapter.log("warn", `keeper adoption: ${errorText(e)}`));
+  void adapter.adoptHolds().catch((e) => adapter.log("warn", `hold adoption: ${errorText(e)}`));
   // A hot reload disposes the previous instance's command registrations with its scope and
   // brings no new init frame; re-bridge from the catalog the last one saw.
   if (g[COMMAND_CATALOG]) adapter.bridgeCommands(g[COMMAND_CATALOG], undefined);

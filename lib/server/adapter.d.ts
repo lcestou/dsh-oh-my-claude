@@ -1,4 +1,4 @@
-import type { Spawner, ContextUsage, WorkspaceDiff, McpServerStatus, CliModel } from "./process.js";
+import type { Spawner, SubprocessHandle, ContextUsage, WorkspaceDiff, McpServerStatus, CliModel } from "./process.js";
 import { LlmAdapter, type ContentBlock, type GenerateOptions, type LlmModelInfo, type LlmResolvedModelInfo, type StreamChunk } from "@deepseek-ai/dsh-llm";
 import z from "@deepseek-ai/schemastery";
 import { type PickerSettings } from "./sessions.js";
@@ -6,6 +6,7 @@ import { readUsage } from "./usage.js";
 import { type ClaudeEvent, ClaudeProcess } from "./process.js";
 import type { Agent, ImageAttachmentRef, JsonValue, PluginContext, SessionController, SessionId, SubprocessRuntime } from "./dsh.js";
 import { ADAPTER_CURRENT, RESUME_TIMER, PROCESS_REGISTRY } from "./dsh.js";
+import { sshRunner, type HoldRecord } from "./hold.js";
 import type { RewindResult } from "./process.js";
 export { markBusy, takeInterrupted } from "./state.js";
 export { forkTranscriptText } from "./transcript.js";
@@ -766,6 +767,20 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     keeperEnv(): Record<string, string>;
     /** Spawner for one session: keeper mode needs the session to place and name the keeper. */
     spawnerFor(sessionId: string | undefined, spec: ClaudeProcessSpec): Spawner;
+    /**
+     * Start the far `claude` in a hold on `host` (see hold.ts) and attach to it. The record is what a
+     * restart reattaches from, so it is written before the first byte is read; a failed start ends the
+     * handle through its stderr and exit, as a local spawn error would.
+     */
+    holdOn(host: string, cwd: string, sessionId: string, spec: ClaudeProcessSpec, command: string, args: string[]): SubprocessHandle;
+    /** Attach to a hold and keep its record's offset current (at most once a second). */
+    attachHold(run: ReturnType<typeof sshRunner>, record: HoldRecord): SubprocessHandle;
+    /**
+     * At boot, reattach to the holds this instance left on SSH boxes. A hold whose cli has ended
+     * delivers its exit line at once and drops itself; one still running is registered like an
+     * adopted keeper, with the same wake and bridge reconnect.
+     */
+    adoptHolds(): Promise<void>;
     /**
      * At boot, reattach to keepers whose Claude process is still alive (a dsh restart left them
      * running) and register them as this instance's processes. One with output waiting gets a

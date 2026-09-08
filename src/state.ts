@@ -132,6 +132,57 @@ export function saveCommandCatalog(dir: string, names: string[]): Promise<void> 
   return writeJson(COMMANDS_FILE(dir), names).catch(() => {});
 }
 
+/**
+ * Holds: the Claude processes this instance left running on SSH boxes, keyed by dsh session id,
+ * with the log offset each was read to. A restart reattaches from here (see `hold.ts`). The shape
+ * is `hold.ts`'s `HoldRecord`; it is kept loose here so this module does not import the process one.
+ */
+const HOLDS_FILE = (dir: string) => join(dir, "holds.json");
+let holdsChain = Promise.resolve();
+
+export async function loadHolds(dir: string): Promise<Record<string, unknown>> {
+  try {
+    const parsed: unknown = JSON.parse(await readFile(HOLDS_FILE(dir), "utf8"));
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return {};
+    // SAFETY: a plain object read from this module's own file; callers validate each value
+    return parsed as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
+/** Set one session's hold; serialized read-modify-write. */
+export function saveHold(dir: string, sessionId: string, record: unknown): Promise<void> {
+  const run = holdsChain.then(async () => {
+    const all = await loadHolds(dir);
+    all[sessionId] = record;
+    await writeJson(HOLDS_FILE(dir), all);
+  });
+  holdsChain = run.catch(() => {});
+  return run;
+}
+
+/**
+ * Drop a session's hold, but only the one named: a respawn writes the new hold's record before the
+ * old hold's exit arrives, and that exit must not take the new record with it.
+ */
+export function dropHold(dir: string, sessionId: string, name?: string): Promise<void> {
+  const run = holdsChain.then(async () => {
+    const all = await loadHolds(dir);
+    const held = all[sessionId];
+    if (held === undefined) return;
+    if (name !== undefined) {
+      if (typeof held !== "object" || held === null) return;
+      // SAFETY: a non-null object from this module's own file; the one field read is checked
+      if ((held as { name?: unknown }).name !== name) return;
+    }
+    delete all[sessionId];
+    await writeJson(HOLDS_FILE(dir), all);
+  });
+  holdsChain = run.catch(() => {});
+  return run;
+}
+
 /** Sessions waiting for a usage limit to reset: session id to reset instant (ms since epoch). */
 const LIMIT_WAITS_FILE = (dir: string) => join(dir, "limit-waits.json");
 let limitChain: Promise<void> = Promise.resolve();

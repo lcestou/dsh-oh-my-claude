@@ -246,4 +246,17 @@ console.log("atomic writes ok");
 // a test rewrites the running plugin's files.
 if (process.env.DSH_OMC_STATE_DIR !== undefined)
   assert.equal(STATE_DIR, process.env.DSH_OMC_STATE_DIR, "STATE_DIR follows the env for tests");
+// Holds: a respawn writes the new record before the old hold's exit arrives, and that exit drops
+// only its own name.
+{
+  const { loadHolds, saveHold, dropHold } = await import("./state.js");
+  const dir = await mkdtemp(join(tmpdir(), "omc-holds-"));
+  await saveHold(dir, "s", { name: "old", offset: 1 });
+  await saveHold(dir, "s", { name: "new", offset: 0 });
+  await dropHold(dir, "s", "old");
+  assert.deepEqual(await loadHolds(dir), { s: { name: "new", offset: 0 } }, "old exit keeps new");
+  await dropHold(dir, "s", "new");
+  assert.deepEqual(await loadHolds(dir), {}, "the named hold drops");
+  await dropHold(dir, "missing", "x");
+}
 console.log("state.test: ok");

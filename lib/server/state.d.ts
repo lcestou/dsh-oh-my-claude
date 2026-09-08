@@ -21,6 +21,14 @@ export declare function lastSelectedProvider(events: Iterable<{
 export declare function loadCommandCatalog(dir: string): Promise<string[]>;
 /** Remember the catalog; a write that fails leaves the menu to the next init frame, not an error. */
 export declare function saveCommandCatalog(dir: string, names: string[]): Promise<void>;
+export declare function loadHolds(dir: string): Promise<Record<string, unknown>>;
+/** Set one session's hold; serialized read-modify-write. */
+export declare function saveHold(dir: string, sessionId: string, record: unknown): Promise<void>;
+/**
+ * Drop a session's hold, but only the one named: a respawn writes the new hold's record before the
+ * old hold's exit arrives, and that exit must not take the new record with it.
+ */
+export declare function dropHold(dir: string, sessionId: string, name?: string): Promise<void>;
 export declare function loadLimitWaits(dir: string): Promise<Map<string, number>>;
 /** Record (or with `resetAt` undefined, forget) a session's wait; saves serialize. */
 export declare function saveLimitWait(dir: string, sessionId: string, resetAt: number | undefined): Promise<void>;
