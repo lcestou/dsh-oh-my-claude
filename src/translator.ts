@@ -71,6 +71,11 @@ const fence = (body: string, lang = ""): string => {
 };
 
 const asStr = (v: unknown): string => (typeof v === "string" ? v : "");
+const isRec = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+
+/** The background shell a BashOutput or KillShell call names, under either of the CLI's two keys. */
+const shellId = (inp: Record<string, unknown>): string => asStr(inp.bash_id ?? inp.shell_id);
 
 /** Clamp a fenced body to its first `max` lines, with a count of what was elided. A tool-heavy turn
  *  floods the transcript with full read/bash/diff dumps; the head plus a tail count keeps each row
@@ -86,13 +91,21 @@ export function capLines(body: string, max = MAX_BODY_LINES): string {
  *  tool header (see TOOL_ICONS in the client), so the set here and there must stay in sync. */
 const TOOL_ICON = new Map<string, string>([
   ["bash", "❯"],
+  ["bash_output", "❯"],
+  ["kill_shell", "❯"],
   ["read", "▤"],
   ["write", "✎"],
   ["edit", "✎"],
+  ["notebook_edit", "✎"],
   ["grep", "⌕"],
   ["glob", "✳"],
   ["web_fetch", "⤓"],
   ["web_search", "⌕"],
+  ["todo_write", "☑"],
+  ["task", "⚙"],
+  ["exit_plan_mode", "☰"],
+  ["enter_plan_mode", "☰"],
+  ["slash_command", "⌘"],
 ]);
 const cap = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
 
@@ -107,9 +120,22 @@ const cap = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
  */
 export const HEADER_MARK = "\u2060";
 
+/** `todo_write` → "Todo write": the underscore names read as sentences, not as identifiers. */
+const words = (name: string): string => cap(name.replaceAll("_", " "));
+
+/** An MCP tool's own name: `mcp__dsh__subagent` is dsh's `subagent`, not a tool called `Mcp`. */
+const mcpName = (name: string): string | undefined => {
+  const parts = name.split("__");
+  return parts.length >= 3 && parts[0] === "mcp"
+    ? `${parts[1]} · ${parts.slice(2).join(" ")}`
+    : undefined;
+};
+
 /** Icon + a capitalized, human name for a tool header: `❯ Bash`, `▤ Read`, `⤓ Web fetch`. */
-const label = (name: string): string =>
-  `${TOOL_ICON.get(name) ?? "◆"}${HEADER_MARK} ${name.startsWith("web_") ? `Web ${name.slice(4)}` : cap(name)}`;
+const label = (name: string): string => {
+  const human = mcpName(name) ?? (name.startsWith("web_") ? `Web ${name.slice(4)}` : words(name));
+  return `${TOOL_ICON.get(name) ?? "◆"}${HEADER_MARK} ${human}`;
+};
 
 /** Every line of `text` under one diff marker, so an empty side still renders as a marker line. */
 const prefixed = (text: string, mark: "-" | "+"): string =>
@@ -159,6 +185,48 @@ export function formatToolCall(name: string, inputJson: string): string {
       return `${label("web_fetch")} ${asStr(inp.url)}`;
     case "web_search":
       return `${label("web_search")} \`${asStr(inp.query)}\``;
+    case "todo_write": {
+      // The list itself is the point: a JSON dump of it said nothing at a glance.
+      const todos = Array.isArray(inp.todos) ? inp.todos : [];
+      const rows = todos
+        .map((t) => {
+          const item = isRec(t) ? t : {};
+          const status = asStr(item.status);
+          const box = status === "completed" ? "x" : status === "in_progress" ? "~" : " ";
+          return `- [${box}] ${asStr(item.content)}`;
+        })
+        .join("\n");
+      return `${label("todo_write")} ${todos.length} item${todos.length === 1 ? "" : "s"}\n${fence(capLines(rows), "markdown")}`;
+    }
+    case "task": {
+      // Which subagent, and what it was told — the prompt is the whole brief, so it rides the cap.
+      const kind = asStr(inp.subagent_type);
+      const desc = asStr(inp.description);
+      const head = `${label("task")}${kind ? ` \`${kind}\`` : ""}${desc ? ` · ${desc}` : ""}`;
+      const prompt = asStr(inp.prompt);
+      return prompt ? `${head}\n${fence(capLines(prompt), "markdown")}` : head;
+    }
+    case "exit_plan_mode":
+    case "enter_plan_mode": {
+      const plan = asStr(inp.plan);
+      return plan ? `${label(name)}\n${fence(capLines(plan), "markdown")}` : label(name);
+    }
+    case "slash_command":
+      return `${label("slash_command")} \`${asStr(inp.command)}\``;
+    case "bash_output": {
+      // The CLI names the same handle two ways: BashOutput takes `bash_id`, KillShell `shell_id`.
+      // Both are read either way here so a rename on one side does not blank the header.
+      const filter = asStr(inp.filter);
+      return `${label("bash_output")} \`${shellId(inp)}\`${filter ? ` matching \`${filter}\`` : ""}`;
+    }
+    case "kill_shell":
+      return `${label("kill_shell")} \`${shellId(inp)}\``;
+    case "notebook_edit": {
+      const cell = asStr(inp.cell_id);
+      const head = `${label("notebook_edit")} \`${asStr(inp.notebook_path)}\`${cell ? ` cell \`${cell}\`` : ""}`;
+      const src = asStr(inp.new_source);
+      return src ? `${head}\n${fence(capLines(src), "python")}` : head;
+    }
     default: {
       // `capLines` caps at 18 lines and `JSON.stringify` writes one, so an unknown tool's header
       // used to print its whole input on a single line — a `Task` call's entire subagent prompt,

@@ -126,4 +126,76 @@ assert.equal(
   assert.ok(md.includes("\n… 2 more lines\n```"), md);
 }
 
+// todo_write: the list is the point — a JSON dump of it said nothing at a glance
+{
+  const md = formatToolCall(
+    "todo_write",
+    JSON.stringify({
+      todos: [
+        { content: "wire icons", status: "completed" },
+        { content: "add tests", status: "in_progress" },
+        { content: "open PR", status: "pending" },
+      ],
+    }),
+  );
+  assert.equal(
+    md,
+    "\u2611\u2060 Todo write 3 items\n```markdown\n- [x] wire icons\n- [~] add tests\n- [ ] open PR\n```",
+  );
+}
+
+// task: which subagent, what it was told
+assert.equal(
+  formatToolCall(
+    "task",
+    JSON.stringify({ subagent_type: "Explore", description: "find callers", prompt: "grep it" }),
+  ),
+  "\u2699\u2060 Task `Explore` · find callers\n```markdown\ngrep it\n```",
+);
+
+// plan modes fence the plan, and stand alone without one
+assert.equal(
+  formatToolCall("exit_plan_mode", JSON.stringify({ plan: "1. do it" })),
+  "\u2630\u2060 Exit plan mode\n```markdown\n1. do it\n```",
+);
+assert.equal(formatToolCall("enter_plan_mode", "{}"), "\u2630\u2060 Enter plan mode");
+
+// slash_command, bash_output, kill_shell: one-liners naming what they touched
+assert.equal(
+  formatToolCall("slash_command", JSON.stringify({ command: "/unslop" })),
+  "\u2318\u2060 Slash command `/unslop`",
+);
+assert.equal(
+  formatToolCall("bash_output", JSON.stringify({ bash_id: "b12", filter: "error" })),
+  "\u276f\u2060 Bash output `b12` matching `error`",
+);
+assert.equal(
+  formatToolCall("kill_shell", JSON.stringify({ shell_id: "b12" })),
+  "\u276f\u2060 Kill shell `b12`",
+);
+// the CLI names the handle `bash_id` on one tool and `shell_id` on the other; both read either
+assert.equal(
+  formatToolCall("bash_output", JSON.stringify({ shell_id: "b13" })),
+  "\u276f\u2060 Bash output `b13`",
+);
+assert.equal(
+  formatToolCall("kill_shell", JSON.stringify({ bash_id: "b13" })),
+  "\u276f\u2060 Kill shell `b13`",
+);
+
+// notebook_edit reads like an edit: path, cell, then the new source
+assert.equal(
+  formatToolCall(
+    "notebook_edit",
+    JSON.stringify({ notebook_path: "n.ipynb", cell_id: "c3", new_source: "print(1)" }),
+  ),
+  "\u270e\u2060 Notebook edit `n.ipynb` cell `c3`\n```python\nprint(1)\n```",
+);
+
+// an MCP tool is named by its own server and verb, not by a tool called "Mcp"
+{
+  const md = formatToolCall("mcp__dsh__subagent", "{}");
+  assert.ok(md.startsWith("\u25c6\u2060 dsh \u00b7 subagent"), md);
+}
+
 console.log("translator format ok");

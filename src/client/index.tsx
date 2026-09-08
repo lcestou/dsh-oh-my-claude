@@ -6,12 +6,16 @@
 import type { CSSProperties, FC, ReactNode } from "react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
+  IconAgentPresetOutline16,
   IconApiOutline14,
   IconBrowseOutline16,
+  IconChecklistOutline14,
   IconChevronDownOutline14,
   IconCodeOutline16,
   IconEditOutline16,
+  IconListPenOutline16,
   IconSearchOutline16,
+  IconSkillOutline16,
   IconSparkle16,
 } from "@deepseek-ai/dsh-client-ui-primitives";
 import {
@@ -2570,7 +2574,7 @@ function watchSessionSpinners(ctx: ClientCtx) {
  *  header swaps its icon for dsh's chevron, and clicking toggles it. The marker is the leading glyph:
  *  only a header that starts with one of the translator's tool icons folds, so Claude's own prose code
  *  blocks are left alone. Kept in sync with the translator's TOOL_ICON set. */
-const TOOL_ICONS = "❯▤✎⌕✳⤓◆";
+const TOOL_ICONS = "❯▤✎⌕✳⤓☑⚙☰⌘◆";
 /** The invisible word joiner the translator writes after the glyph (`HEADER_MARK` there), stripped
  *  with the glyph when it is there. It is not required to claim a header: a dsh process holds the
  *  server half of this plugin in memory until it restarts, while `lib/client.js` reloads into the
@@ -2593,6 +2597,10 @@ const SPRITES = {
   "⌕": IconSearchOutline16,
   "✳": IconCodeOutline16,
   "⤓": IconBrowseOutline16,
+  "☑": IconChecklistOutline14,
+  "⚙": IconAgentPresetOutline16,
+  "☰": IconListPenOutline16,
+  "⌘": IconSkillOutline16,
   "◆": IconSparkle16,
   chevron: IconChevronDownOutline14,
 } satisfies Record<string, FC<{ size?: number }>>;

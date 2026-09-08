@@ -426,6 +426,14 @@ export declare const NATIVE_TOOL_MAP: {
     readonly WebFetch: "web_fetch";
     readonly WebSearch: "web_search";
     readonly MultiEdit: "edit";
+    readonly TodoWrite: "todo_write";
+    readonly Task: "task";
+    readonly NotebookEdit: "notebook_edit";
+    readonly BashOutput: "bash_output";
+    readonly KillShell: "kill_shell";
+    readonly ExitPlanMode: "exit_plan_mode";
+    readonly EnterPlanMode: "enter_plan_mode";
+    readonly SlashCommand: "slash_command";
 };
 export interface TurnRecord {
     at: number;
