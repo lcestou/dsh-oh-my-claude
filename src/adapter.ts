@@ -23,8 +23,10 @@ import {
   accountIdentity,
   type PickerSettings,
   readPickerSettings,
+  readRemoteWorkspaces,
   readSshBoxes,
   registerSessionRoutes,
+  type RemoteWorkspace,
   type SshBox,
   sshBoxProviderId,
 } from "./sessions.js";
@@ -55,6 +57,8 @@ import {
   nodeSpawner,
   seamSpawner,
   sshSpawner,
+  sshArgs,
+  shq,
   attachKeeper,
   launchKeeper,
   lazyHandle,
@@ -88,6 +92,8 @@ import {
   buildRedactor,
   CLAUDE_HOME,
   hasPendingNotice,
+  loadAsides,
+  saveAsides,
   loadStarted,
   isPermissionMode,
   loadPermissionModes,
@@ -110,6 +116,7 @@ import {
   trace,
 } from "./state.js";
 import { suggestRule } from "./permissions.js";
+import { readSshToken } from "./ssh-login.js";
 import { childEnv, errorText } from "./process.js";
 import type { RewindResult } from "./process.js";
 import { forkTranscriptText } from "./transcript.js";
@@ -124,6 +131,20 @@ import type {
   ToolCallId,
 } from "@deepseek-ai/dsh-llm";
 import type { ClaudeProcessSpec, RelayEvent, RelayResult, TurnPrep } from "./process.js";
+
+/** Live placeholder→remote map for remote workspaces, shared by every box's ssh spawner. Loaded at
+ * boot and replaced whenever the panel edits the list, so a redirect applies without a dsh restart. */
+let remoteWorkspaces: RemoteWorkspace[] = [];
+/** The real remote path for a placeholder workspace on `host`, or `cwd` unchanged. */
+function remoteCwdFor(host: string, cwd: string): string {
+  return remoteWorkspaces.find((w) => w.host === host && w.path === cwd)?.remoteCwd ?? cwd;
+}
+/** The remote workspace whose local placeholder is `cwd`, if any. A session opened on this cwd must
+ * run over SSH on that box regardless of the provider chosen, so a local provider does not sit in the
+ * empty placeholder dir. */
+function remoteWorkspaceFor(cwd: string): RemoteWorkspace | undefined {
+  return remoteWorkspaces.find((w) => w.path === cwd);
+}
 
 /** A dsh request that belongs to a session; everything on the persistent path has one. */
 type SessionOptions = GenerateOptions & { sessionId: SessionId };
@@ -901,7 +922,7 @@ export function permissionModeFor(
 // CLI probe: Claude Code auto-updates itself, so flags are checked against `claude --help` once per
 // process and anything missing is left out. Unknown = assume supported (probe failed, older CLI).
 
-let cliProbe;
+const cliProbes = new Map<string, Promise<{ flags: Set<string> | null; version: string }>>();
 /**
  * Probes the Claude Code CLI to determine its version and supported flags.
  * Caches the result across multiple calls.
@@ -917,17 +938,29 @@ export type ExecLike = (
 ) => void;
 
 // SAFETY: execFile's overloads include exactly this call shape; the alias only narrows them
-export function probeCli(exec: ExecLike = execFile as ExecLike, command = "claude") {
-  cliProbe ??= (async () => {
-    const run = (args: string[]) =>
-      new Promise<string>((resolve) => {
-        exec(command, args, { timeout: 8000 }, (err, stdout) => resolve(err ? "" : String(stdout)));
-      });
-    const [help, version] = await Promise.all([run(["--help"]), run(["--version"])]);
-    const flags = new Set(help.match(/--[a-zA-Z-]+/g) ?? []);
-    return { flags: flags.size > 0 ? flags : null, version: version.trim() || "unknown" };
-  })();
-  return cliProbe;
+export function probeCli(exec: ExecLike = execFile as ExecLike, command = "claude", host?: string) {
+  // One probe per target binary: the local `claude`, or a box's `claude` reached over ssh. A single
+  // global cache used to let the first provider's flag set stand in for every box, so an older remote
+  // claude was handed flags it does not have (e.g. --forward-subagent-text) and exited 1.
+  const key = `${host ?? ""}::${command}`;
+  let probe = cliProbes.get(key);
+  if (!probe) {
+    probe = (async () => {
+      const run = (args: string[]) =>
+        new Promise<string>((resolve) => {
+          const cmd = host ? "ssh" : command;
+          const cmdArgs = host ? sshArgs(host, [command, ...args].map(shq).join(" ")) : args;
+          exec(cmd, cmdArgs, { timeout: host ? 15000 : 8000 }, (err, stdout) =>
+            resolve(err ? "" : String(stdout)),
+          );
+        });
+      const [help, version] = await Promise.all([run(["--help"]), run(["--version"])]);
+      const flags = new Set(help.match(/--[a-zA-Z-]+/g) ?? []);
+      return { flags: flags.size > 0 ? flags : null, version: version.trim() || "unknown" };
+    })();
+    cliProbes.set(key, probe);
+  }
+  return probe;
 }
 
 /**
@@ -1193,19 +1226,24 @@ export function isStaleResume(event: ClaudeEvent): boolean {
 const NOT_LOGGED_IN_RE =
   /not logged in|authentication_error|failed to authenticate|oauth .*invalid/i;
 
-export function finishReason(result: {
-  is_error?: boolean;
-  stop_reason?: string;
-  result?: unknown;
-  errors?: unknown[];
-  api_error_status?: number;
-  subtype?: string;
-}): FinishReason {
+export function finishReason(
+  result: {
+    is_error?: boolean;
+    stop_reason?: string;
+    result?: unknown;
+    errors?: unknown[];
+    api_error_status?: number;
+    subtype?: string;
+  },
+  hostLabel?: string,
+): FinishReason {
   if (result.is_error) {
     const errors = Array.isArray(result.errors) ? result.errors.join("; ") : "";
     let message = String(result.result ?? errors ?? result.subtype ?? "claude error");
+    // Name the box the turn actually ran on: an SSH box or a remote workspace runs the far claude, so
+    // the local hostname would point the user at the wrong machine to run `claude auth login` on.
     if (result.api_error_status === 401 || NOT_LOGGED_IN_RE.test(message))
-      message = `Claude Code is not logged in on ${hostname()}. Run \`claude auth login\` in a terminal there, then send your message again. (${message})`;
+      message = `Claude Code is not logged in on ${hostLabel ?? hostname()}. Run \`claude auth login\` in a terminal there, then send your message again. (${message})`;
     return { kind: "error", failure: { message, code: "PROVIDER_ERROR" } };
   }
   if (result.stop_reason === "max_tokens") return { kind: "max-tokens" };
@@ -1460,6 +1498,14 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         for (const [id, list] of saved) if (!this.turnBuffer.has(id)) this.turnBuffer.set(id, list);
       })
       .catch(() => {}); // state is an optimization only
+    // `/btw` asides are memory-only per instance, so a restart or a hot reload would lose them;
+    // reload the persisted ring so an answer survives to be re-read.
+    loadAsides(this.stateDir)
+      .then((saved) => {
+        for (const [id, list] of saved)
+          if (!this.sideQuestions.has(id)) this.sideQuestions.set(id, list);
+      })
+      .catch(() => {}); // state is an optimization only
     this.limitTimers = new Map();
     // Waits armed before a restart: re-arm them, no earlier than the boot resume nudge.
     loadLimitWaits(this.stateDir)
@@ -1636,16 +1682,21 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     options: GenerateOptions,
     { forceFresh = false }: { forceFresh?: boolean } = {},
   ): Promise<TurnPrep> {
-    const cli = await probeCli(execFile, this.config.command);
-    if (!this.loggedVersion) {
-      this.loggedVersion = true;
-      this.log("info", `claude ${cli.version}, stdin input ${usesStdin(cli.flags) ? "on" : "off"}`);
-    }
     // Title/compaction one-shots run from a scratch dir so their transcripts never show up in a
     // workspace's Claude Code session list.
     const cwd = options.purpose
       ? await auxCwd()
       : (options.sessionId && this.sessionCwd(options.sessionId)) || process.cwd();
+    // Probe the binary that will actually run: a box's own claude over ssh when this provider is an
+    // SSH box, or when a remote-workspace cwd routes this local provider's session to a box; the local
+    // claude otherwise. A one-shot (title/compaction) always runs locally, so it never probes remote.
+    const targetHost =
+      this.config.sshHost ?? (options.purpose ? undefined : remoteWorkspaceFor(cwd)?.host);
+    const cli = await probeCli(execFile, this.config.command, targetHost);
+    if (!this.loggedVersion) {
+      this.loggedVersion = true;
+      this.log("info", `claude ${cli.version}, stdin input ${usesStdin(cli.flags) ? "on" : "off"}`);
+    }
     let session;
     const temporary = Boolean(options.sessionId) && this.temporary.has(options.sessionId ?? "");
     if (!options.purpose && this.config.resume && options.sessionId && !temporary) {
@@ -2119,6 +2170,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     if (!proc?.alive) {
       entry.pending = false;
       entry.error = "no live Claude process for this session; send a prompt first";
+      this.persistAsides(sessionId);
       return;
     }
     void this.control(
@@ -2129,12 +2181,19 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       entry.pending = false;
       if (!reply.ok) {
         entry.error = reply.error;
-        return;
+      } else {
+        const text = asideAnswerText(reply.response);
+        if (text === undefined) entry.error = "Claude gave no answer to the side question";
+        else entry.answer = text;
       }
-      const text = asideAnswerText(reply.response);
-      if (text === undefined) entry.error = "Claude gave no answer to the side question";
-      else entry.answer = text;
+      this.persistAsides(sessionId);
     });
+  }
+
+  /** Persist a session's aside ring to disk so an answer survives a restart, eviction or hot reload. */
+  persistAsides(sessionId: string) {
+    const ring = this.sideQuestions.get(sessionId);
+    if (ring) void saveAsides(this.stateDir, sessionId, ring);
   }
 
   /** What the /tune thinking selector shows: the budget this plugin last set for the session, or
@@ -2257,6 +2316,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   spawnerFor(sessionId: string | undefined, spec: ClaudeProcessSpec): Spawner {
     if (this.config.spawn !== "keeper" || !sessionId || this.config.sshHost) return this.spawner();
     return (command, args, cwd) => {
+      // A remote-workspace session runs the far `claude` over SSH, so it skips the local keeper (a
+      // keeper would launch claude on this box in the empty placeholder dir). No keeper means no
+      // survive-a-restart, same as the dedicated SSH-box provider, which also bypasses the keeper.
+      if (remoteWorkspaceFor(cwd)) return this.spawner()(command, args, cwd);
       // One directory per spawn: a respawn must never share a socket, keeper.json or keeper.log
       // with the keeper it replaces (2026-09-06: a shared directory let a dying keeper answer the
       // new attach, and a boot read the wrong keeper.json and dropped the live one).
@@ -2421,18 +2484,44 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     return false;
   }
 
+  /** The box a session's turn runs on (an SSH box, or a remote workspace's host), or undefined for a
+   * local turn. Mirrors prepare()'s targetHost so a logged-out error names the right machine: a
+   * purpose one-shot (title/compaction) always runs on the local claude for the default provider. */
+  hostLabelFor(sessionId: string | undefined, purpose?: string): string | undefined {
+    if (this.config.sshHost) return this.config.sshHost;
+    if (purpose) return undefined;
+    const cwd = sessionId ? this.sessionCwd(sessionId) : undefined;
+    return cwd ? remoteWorkspaceFor(cwd)?.host : undefined;
+  }
+
   spawner() {
     // A remote instance drives the far `claude` over SSH; no keeper, no seam, its own remote login.
-    if (this.config.sshHost) return sshSpawner(this.config.sshHost);
+    // A remote-workspace cwd is a local placeholder here; redirect it to the box's real path.
+    if (this.config.sshHost) {
+      const host = this.config.sshHost;
+      return sshSpawner(host, (cwd) => remoteCwdFor(host, cwd), readSshToken(STATE_DIR, host));
+    }
     const base =
       this.config.spawn === "dsh" && this.subprocess ? seamSpawner(this.subprocess) : nodeSpawner;
     if (this.config.spawn === "dsh" && !this.subprocess && !this.warnedNoSeam) {
       this.warnedNoSeam = true;
       this.log("warn", "spawn: dsh requested but ctx.subprocess is not mounted; using node spawn");
     }
-    if (!this.config.configDir) return base;
-    const envOverride = { CLAUDE_CONFIG_DIR: this.claudeHome };
-    return (command: string, args: string[], cwd: string) => base(command, args, cwd, envOverride);
+    const local: Spawner = !this.config.configDir
+      ? base
+      : (command, args, cwd) => base(command, args, cwd, { CLAUDE_CONFIG_DIR: this.claudeHome });
+    // A remote-workspace cwd runs the far `claude` over SSH on its box, even when this provider is
+    // local: otherwise the session sits in the empty local placeholder dir.
+    return (command: string, args: string[], cwd: string) => {
+      const ws = remoteWorkspaceFor(cwd);
+      if (ws)
+        return sshSpawner(ws.host, () => ws.remoteCwd, readSshToken(STATE_DIR, ws.host))(
+          command,
+          args,
+          cwd,
+        );
+      return local(command, args, cwd);
+    };
   }
 
   /** Kill this instance's live processes and drop them from the shared registry: called when an SSH
@@ -2727,6 +2816,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       relay: this.mcp !== undefined && this.config.dshTools,
       dshIds: proc.dshIds,
       relayed: proc.relayed,
+      hostLabel: this.hostLabelFor(options.sessionId),
       log: this.log.bind(this),
       onToolCall:
         turnStep && this.config.toolActivity
@@ -3436,6 +3526,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       toolActivity: false,
       timeZone: clientTimeZone(options.messages),
       toolTextLimit: this.config.toolTextLimit,
+      hostLabel: this.hostLabelFor(options.sessionId, options.purpose),
       log: this.log.bind(this),
     });
     const onAbort = () => proc.kill();
@@ -3644,6 +3735,10 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
         reconcileSshBoxes(ctx, config, boxes, sshMounts, sshAdapters, (level, msg) =>
           adapter.log(level, msg),
         ),
+      remoteWorkspacesPath: join(STATE_DIR, "remote-workspaces.json"),
+      onRemoteWorkspaces: (workspaces) => {
+        remoteWorkspaces = workspaces;
+      },
       command: adapter.config.command,
       sshHost: adapter.config.sshHost,
       turnRecords: adapter.turnBuffer,
@@ -3667,6 +3762,7 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
         adapter.rewind(sessionId, uuid, dryRun),
       permissionAsks: adapter.permissionAsks,
       sideQuestions: adapter.sideQuestions,
+      persistAsides: (sessionId: string) => adapter.persistAsides(sessionId),
       thinking: {
         info: (sessionId: string) => adapter.thinkingInfo(sessionId),
         set: (sessionId: string, tokens: number | null) =>
@@ -3682,5 +3778,11 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
         reconcileSshBoxes(ctx, config, boxes, sshMounts, sshAdapters, (l, m) => adapter.log(l, m)),
       )
       .catch((e) => adapter.log("warn", `ssh boxes: ${errorText(e)}`));
+    // Load the remote-workspace redirects so a box session lands in its real remote path at boot.
+    void readRemoteWorkspaces(join(STATE_DIR, "remote-workspaces.json"))
+      .then((ws) => {
+        remoteWorkspaces = ws;
+      })
+      .catch((e) => adapter.log("warn", `remote workspaces: ${errorText(e)}`));
   }
 }

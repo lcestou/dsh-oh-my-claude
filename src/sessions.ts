@@ -5,7 +5,7 @@
 import { execFile } from "node:child_process";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { hostname } from "node:os";
-import { readdir, readFile, writeFile, rename, copyFile, stat, mkdir } from "node:fs/promises";
+import { readdir, readFile, writeFile, rename, copyFile, stat, mkdir, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { listTranscripts, readTranscript, toSessionEvents } from "./transcript.js";
 import { shq, sshArgs } from "./process.js";
@@ -22,7 +22,20 @@ import {
 } from "./scheduled-tasks.js";
 import { asSessionId } from "./dsh.js";
 import { buildAddServer, isMcpName, scopeNeedsCwd } from "./mcp-add-remove.js";
-import type { JsonValue, PluginContext, SessionPersistence, WorkspaceRegistry } from "./dsh.js";
+import {
+  deleteSshToken,
+  readSshToken,
+  startSshLogin,
+  submitSshLoginCode,
+  writeSshToken,
+} from "./ssh-login.js";
+import type {
+  JsonValue,
+  PluginContext,
+  SessionPersistence,
+  WorkspaceId,
+  WorkspaceRegistry,
+} from "./dsh.js";
 import { errorText } from "./process.js";
 import { featureSwitches } from "./switches.js";
 import {
@@ -257,6 +270,78 @@ export async function readSshBoxes(path: string): Promise<SshBox[]> {
   }
 }
 
+/** A dsh workspace this plugin points at a directory on an SSH box. dsh stores and stat-checks local
+ * paths only, so each remote workspace owns an empty local placeholder dir that dsh adopts as an
+ * ordinary workspace (`path`); at spawn the ssh spawner swaps `path` for `remoteCwd` on `host`, so the
+ * far `claude` runs in the real remote directory. No file mirror: the remote Claude reads the box's
+ * own files. Stored in the plugin's own state, added from the panel. */
+export interface RemoteWorkspace {
+  name: string;
+  host: string;
+  remoteCwd: string;
+  /** Canonical local placeholder path dsh stores as the workspace cwd; the spawner's match key. */
+  path: string;
+  workspaceId: string;
+}
+
+/** A slug safe as one path segment: lowercase alnum, other runs to one dash, bounded. */
+export const slugForDir = (s: string): string => {
+  const base =
+    s
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 48) || "x";
+  // Two long cwds sharing a 48-char prefix would collide onto one workspace dir; when the slug
+  // was actually truncated, suffix a hash of the full string so distinct inputs stay distinct.
+  if (base.length < 48) return base;
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193);
+  return `${base}-${(h >>> 0).toString(36)}`;
+};
+
+/** What the add form sends; cleaned or rejected before a placeholder or workspace is made. */
+export type ValidatedRemoteWorkspace =
+  | { value: { name: string; host: string; remoteCwd: string }; error?: undefined }
+  | { error: string; value?: undefined };
+
+export function validateRemoteWorkspaceInput(input: unknown): ValidatedRemoteWorkspace {
+  const b = isJsonObject(input) ? input : {};
+  const name = String(b.name ?? "").trim();
+  const host = String(b.host ?? "").trim();
+  const remoteCwd = String(b.remoteCwd ?? "").trim();
+  if (!name || name.length > 40) return { error: "name is required (1-40 chars)" };
+  if (!host || host.length > 200 || !/^[A-Za-z0-9._@:%+-]+$/.test(host))
+    return { error: "a valid ssh host is required" };
+  // remoteCwd is single-quoted into a remote `cd`, so a newline or NUL is the only break-out risk;
+  // require an absolute path since a quoted `~` does not expand.
+  if (!remoteCwd || remoteCwd.length > 4096) return { error: "remote path is required" };
+  if (/[\n\r\0]/.test(remoteCwd)) return { error: "remote path has invalid characters" };
+  if (!remoteCwd.startsWith("/")) return { error: "remote path must be absolute (start with /)" };
+  return { value: { name, host, remoteCwd } };
+}
+
+export async function readRemoteWorkspaces(path: string): Promise<RemoteWorkspace[]> {
+  try {
+    const raw = JSON.parse(await readFile(path, "utf8"));
+    if (!Array.isArray(raw)) return [];
+    const out: RemoteWorkspace[] = [];
+    for (const r of raw) {
+      const b = isJsonObject(r) ? r : {};
+      const name = String(b.name ?? "");
+      const host = String(b.host ?? "");
+      const remoteCwd = String(b.remoteCwd ?? "");
+      const p = String(b.path ?? "");
+      const workspaceId = String(b.workspaceId ?? "");
+      if (name && host && remoteCwd && p && workspaceId)
+        out.push({ name, host, remoteCwd, path: p, workspaceId });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
 /** What a box's `/status` reports; the panel shows these fields as pills. */
 export interface RuntimeStatus {
   host: string;
@@ -473,6 +558,74 @@ async function listAllTranscripts(
   return lists.flat();
 }
 
+// A self-contained lister that runs on an SSH box over `node -e`: walk `~/.claude/projects`, peek the
+// head of each transcript (bounded to 256 KB so only metadata crosses the wire, never a whole pasted
+// image) and emit `TranscriptListItem[]` as JSON — the same shape `listTranscripts` builds locally, so
+// a box's rows read like this box's. Double quotes only, so `shq` wraps it in single quotes without
+// escaping. Node is present wherever `claude` runs, so no extra install; a box without it just errors.
+const SSH_TRANSCRIPT_LISTER = `(function(){
+const fs=require("fs"),os=require("os"),p=require("path");
+const root=p.join(os.homedir(),".claude","projects");
+let dirs=[];try{dirs=fs.readdirSync(root)}catch(e){process.stdout.write("[]");return}
+const out=[];
+for(const d of dirs){
+ const dir=p.join(root,d);let names;
+ try{names=fs.readdirSync(dir)}catch(e){continue}
+ for(const n of names){
+  const m=/^([0-9a-f-]{36})\\.jsonl$/.exec(n);if(!m)continue;
+  const fp=p.join(dir,n);let st;
+  try{st=fs.statSync(fp)}catch(e){continue}
+  const cap=262144;const buf=Buffer.alloc(cap);let bytes=0,fd;
+  try{fd=fs.openSync(fp,"r");bytes=fs.readSync(fd,buf,0,cap,0);fs.closeSync(fd)}catch(e){continue}
+  const head=buf.slice(0,bytes).toString("utf8");
+  let cwd,summary,title="",turns=0;
+  for(const line of head.split("\\n")){
+   if(!line)continue;let r;
+   try{r=JSON.parse(line)}catch(e){continue}
+   if(cwd===undefined&&typeof r.cwd==="string")cwd=r.cwd;
+   if(r.type==="summary"&&typeof r.summary==="string")summary=r.summary;
+   if(r.type!=="user"||r.isSidechain||r.isMeta)continue;
+   const c=r.message&&r.message.content;let t="";
+   if(typeof c==="string")t=c;
+   else if(Array.isArray(c)){const a=[];for(const b of c){if(b&&b.type==="text"&&typeof b.text==="string")a.push(b.text)}t=a.join("\\n")}
+   if(!t)continue;
+   if(turns===0&&t.indexOf("Generate the session title")===0)break;
+   turns++;
+   if(!title&&!/^\\s*<(command-|local-command|system-reminder)/.test(t))
+    title=(t.replace(/<system-reminder>[\\s\\S]*?<\\/system-reminder>/g,"").trim().split("\\n")[0]||"").replace(/\\s+/g," ").slice(0,120);
+  }
+  if(turns===0)continue;
+  const item={id:m[1],title:summary||title,createdAt:st.mtimeMs,modifiedAt:st.mtimeMs,bytes:st.size,turns:turns,turnsPartial:bytes>=cap};
+  if(cwd)item.cwd=cwd;
+  out.push(item);
+ }
+}
+out.sort(function(a,b){return b.modifiedAt-a.modifiedAt});
+process.stdout.write(JSON.stringify(out));
+})();`;
+
+/** List an SSH box's Claude transcripts by running {@link SSH_TRANSCRIPT_LISTER} on it over ssh. */
+async function sshTranscripts(
+  host: string,
+): Promise<{ ok: true; sessions: TranscriptListItem[] } | { ok: false; error: string }> {
+  const r = await run(
+    "ssh",
+    sshArgs(host, `node -e ${shq(SSH_TRANSCRIPT_LISTER)}`),
+    undefined,
+    undefined,
+    15000,
+  );
+  if (r.error) return { ok: false, error: r.error };
+  try {
+    const parsed: unknown = JSON.parse(r.out);
+    if (!Array.isArray(parsed)) return { ok: false, error: "unexpected remote output" };
+    // SAFETY: our own lister prints TranscriptListItem[]; the client re-reads each field defensively.
+    return { ok: true, sessions: parsed as TranscriptListItem[] };
+  } catch {
+    return { ok: false, error: "unparseable remote output" };
+  }
+}
+
 /** Claude Code's settings file as the editor reads it. */
 export interface SettingsFile {
   path: string;
@@ -579,6 +732,8 @@ async function writeWithBackup(
 export interface OwnedSession {
   id: string;
   archived: boolean;
+  /** A dsh subagent run: it lives inside its parent conversation and cannot be opened standalone. */
+  subagent?: boolean;
 }
 
 /**
@@ -588,7 +743,7 @@ export interface OwnedSession {
  * without any archive plugin.
  */
 export function dshSessionsFor(
-  headers: readonly { id: string; cwd?: string }[],
+  headers: readonly { id: string; cwd?: string; origin?: string }[],
   cwd: string | null,
   claudeIdOf: (id: string) => string,
   archived: Set<string> = new Set(),
@@ -598,6 +753,7 @@ export function dshSessionsFor(
     if (cwd !== null && h.cwd !== cwd) continue;
     const id = String(h.id);
     const entry: OwnedSession = { id, archived: archived.has(id) };
+    if (h.origin === "subagent") entry.subagent = true;
     map.set(id, entry);
     map.set(claudeIdOf(id), entry);
   }
@@ -658,9 +814,13 @@ async function openTranscriptOnce(
   registry: WorkspaceRegistry | undefined,
 ): Promise<Opened> {
   if (ctx.sessions.get(asSessionId(id))) return { id, existed: true };
+  // Owned by id across every workspace, not just this `cwd`: an SSH-box session is stored under a
+  // local placeholder cwd, not the transcript's own path, so filtering by `cwd` would miss it and
+  // fall through to a local transcript read that ENOENTs (the body lives on the box). `cwd` is only
+  // needed for the non-owned read below, where the transcript really is on this box's disk.
   const owned = dshSessionsFor(
     await ctx.sessionPersistence.list(),
-    cwd,
+    null,
     claudeIdOf,
     new Set(registry?.archivedSessionIds ?? []),
   ).get(id);
@@ -711,6 +871,10 @@ export interface SessionRouteOptions {
   sshBoxesPath?: string;
   /** Mount or withdraw provider instances so they match the saved SSH-box list, without a restart. */
   onSshBoxes?: (boxes: SshBox[]) => Promise<void> | void;
+  /** State file mapping placeholder workspaces to their box + real remote path. */
+  remoteWorkspacesPath?: string;
+  /** Refresh the adapter's live placeholder→remote-cwd map after the list changes, without a restart. */
+  onRemoteWorkspaces?: (workspaces: RemoteWorkspace[]) => Promise<void> | void;
   command?: string;
   /** Non-empty when this instance drives Claude Code on a remote host over ssh; the status and
    * identity probes run there so the panel reports the remote box, not this one. */
@@ -743,6 +907,8 @@ export interface SessionRouteOptions {
   permissionAsks?: Map<string, string[]>;
   /** `/btw` side questions and their answers, per session; the client bubble reads them. */
   sideQuestions?: Map<string, AsideEntry[]>;
+  /** Persist a session's aside ring after the route mutates it (e.g. a dismiss), so the change survives a restart. */
+  persistAsides?: (sessionId: string) => void;
   /** The live thinking budget the Tune selector reads and sets per session. */
   thinking?: {
     info: (sessionId: string) => { tokens: number | null | undefined };
@@ -794,6 +960,8 @@ export function registerSessionRoutes(
     boxesPath,
     sshBoxesPath,
     onSshBoxes,
+    remoteWorkspacesPath,
+    onRemoteWorkspaces,
     command,
     sshHost,
     turnRecords,
@@ -806,6 +974,7 @@ export function registerSessionRoutes(
     mcp,
     permissionAsks,
     sideQuestions,
+    persistAsides,
     models,
     reloadPlugins,
     continueAfterLimit,
@@ -877,10 +1046,15 @@ export function registerSessionRoutes(
                   new Set(registry?.archivedSessionIds ?? []),
                 );
                 const hidden = new Set([...(await startedIds())].filter((id) => !owned.has(id)));
-                const items = (await listTranscripts(projectDir(cwd), hidden)).map((s) => {
-                  const d = owned.get(s.id);
-                  return d ? { ...s, dsh: d } : s;
-                });
+                const items = (await listTranscripts(projectDir(cwd), hidden))
+                  .map((s) => {
+                    const d = owned.get(s.id);
+                    return d ? { ...s, dsh: d } : s;
+                  })
+                  // A dsh subagent run lives inside its parent conversation; dsh refuses to open it
+                  // standalone ("subagent Sessions require their durable parent address"), so it has
+                  // no working row here.
+                  .filter((s) => !("dsh" in s && s.dsh?.subagent));
                 return json(res, 200, { sessions: items });
               }
               if (req.method === "POST" && url.pathname === `${ROUTE_PREFIX}/open`) {
@@ -1217,6 +1391,7 @@ export function registerSessionRoutes(
                   const kept = ring.filter((e) => e.id !== id);
                   if (kept.length > 0) sideQuestions?.set(sid, kept);
                   else sideQuestions?.delete(sid);
+                  persistAsides?.(sid);
                 }
                 return json(res, 200, { ok: true });
               }
@@ -1425,8 +1600,164 @@ export function registerSessionRoutes(
                 const probed = await Promise.all(
                   boxes.map((b) => runtimeStatus("", command, b.host)),
                 );
+                // A panel login stores a CLAUDE_CODE_OAUTH_TOKEN the plugin injects at spawn; the box's
+                // own `claude auth status` can't see it, so a stored token counts as logged in here.
                 return json(res, 200, {
-                  boxes: boxes.map((b, i) => ({ name: b.name, host: b.host, status: probed[i] })),
+                  boxes: boxes.map((b, i) => {
+                    const tokenLogin = !!readSshToken(dirname(sshBoxesPath), b.host);
+                    const status = tokenLogin ? { ...probed[i], loggedIn: true } : probed[i];
+                    return { name: b.name, host: b.host, status };
+                  }),
+                });
+              }
+              // A workspace pinned to a directory on an SSH box: dsh adopts a local placeholder, the
+              // ssh spawner runs the far claude in the real remote path (see sshSpawner).
+              if (remoteWorkspacesPath && url.pathname === `${ROUTE_PREFIX}/remote-workspaces`) {
+                if (req.method === "GET")
+                  return json(res, 200, {
+                    workspaces: await readRemoteWorkspaces(remoteWorkspacesPath),
+                  });
+                if (req.method === "POST") {
+                  if (!registry)
+                    return json(res, 501, {
+                      error: "workspaceRegistry is not available on this host",
+                    });
+                  const v = validateRemoteWorkspaceInput(await readBody(req));
+                  if (v.error !== undefined) return json(res, 400, { error: v.error });
+                  const { name, host: boxHost, remoteCwd } = v.value;
+                  // Empty local placeholder dsh stat-checks and adopts; the far claude never sees it.
+                  const base = join(dirname(remoteWorkspacesPath), "remote-workspaces");
+                  const dir = join(base, `${slugForDir(boxHost)}__${slugForDir(remoteCwd)}`);
+                  await mkdir(dir, { recursive: true });
+                  let ws: { id: WorkspaceId; path: string };
+                  try {
+                    ws = await registry.create(dir, `${name} · ${boxHost}`);
+                  } catch (e) {
+                    return json(res, 500, { error: `create workspace: ${errorText(e)}` });
+                  }
+                  const existing = await readRemoteWorkspaces(remoteWorkspacesPath);
+                  const entry: RemoteWorkspace = {
+                    name,
+                    host: boxHost,
+                    remoteCwd,
+                    path: ws.path,
+                    workspaceId: ws.id,
+                  };
+                  const next = [...existing.filter((w) => w.path !== ws.path), entry];
+                  await writeFile(
+                    remoteWorkspacesPath,
+                    `${JSON.stringify(next, null, 2)}\n`,
+                    "utf8",
+                  );
+                  await onRemoteWorkspaces?.(next);
+                  return json(res, 200, { workspace: entry });
+                }
+                if (req.method === "DELETE") {
+                  const target = String((await readBody(req)).path ?? "");
+                  const existing = await readRemoteWorkspaces(remoteWorkspacesPath);
+                  const entry = existing.find((w) => w.path === target);
+                  if (entry) {
+                    try {
+                      // SAFETY: workspaceId was returned by registry.create as a WorkspaceId and
+                      // stored verbatim; delete ignores an unknown id, so a stale value is harmless.
+                      await registry?.delete(entry.workspaceId as WorkspaceId);
+                    } catch (e) {
+                      log("warn", `remote-workspace delete: ${errorText(e)}`);
+                    }
+                    await rm(entry.path, { recursive: true, force: true }).catch(() => {});
+                  }
+                  const next = existing.filter((w) => w.path !== target);
+                  await writeFile(
+                    remoteWorkspacesPath,
+                    `${JSON.stringify(next, null, 2)}\n`,
+                    "utf8",
+                  );
+                  await onRemoteWorkspaces?.(next);
+                  return json(res, 200, { workspaces: next });
+                }
+              }
+              // Log an SSH box in from the panel: start relays `claude auth login` and returns the
+              // OAuth URL the box prints; code writes the pasted code back to the same process and
+              // re-probes auth status. The host must be a saved box, so this cannot ssh elsewhere.
+              if (
+                sshBoxesPath &&
+                req.method === "POST" &&
+                url.pathname === `${ROUTE_PREFIX}/ssh-boxes/login/start`
+              ) {
+                const loginHost = String((await readBody(req)).host ?? "");
+                const loginBoxes = await readSshBoxes(sshBoxesPath);
+                if (!loginBoxes.some((b) => b.host === loginHost))
+                  return json(res, 400, { error: "unknown box" });
+                return json(res, 200, await startSshLogin(loginHost));
+              }
+              if (
+                sshBoxesPath &&
+                req.method === "POST" &&
+                url.pathname === `${ROUTE_PREFIX}/ssh-boxes/login/code`
+              ) {
+                const body = await readBody(req);
+                const loginHost = String(body.host ?? "");
+                const loginBoxes = await readSshBoxes(sshBoxesPath);
+                if (!loginBoxes.some((b) => b.host === loginHost))
+                  return json(res, 400, { error: "unknown box" });
+                const submit = await submitSshLoginCode(loginHost, String(body.code ?? ""));
+                if (!submit.done || !submit.token)
+                  return json(res, 200, { done: false, error: submit.error });
+                writeSshToken(dirname(sshBoxesPath), loginHost, submit.token);
+                return json(res, 200, { done: true, loggedIn: true });
+              }
+              // Drop a box's stored login token. Local only: the plugin forgets the token so it stops
+              // injecting it; the token stays valid on Anthropic's side until revoked in the account.
+              if (
+                sshBoxesPath &&
+                req.method === "POST" &&
+                url.pathname === `${ROUTE_PREFIX}/ssh-boxes/login/logout`
+              ) {
+                const logoutHost = String((await readBody(req)).host ?? "");
+                const logoutBoxes = await readSshBoxes(sshBoxesPath);
+                if (!logoutBoxes.some((b) => b.host === logoutHost))
+                  return json(res, 400, { error: "unknown box" });
+                deleteSshToken(dirname(sshBoxesPath), logoutHost);
+                return json(res, 200, { loggedIn: false });
+              }
+              // SSH boxes list their transcripts over ssh, not HTTP: they run `claude` on their host
+              // and their `~/.claude/projects` never reaches this box's disk. One group per box so
+              // each appears as its own filter chip alongside the HTTP boxes.
+              if (
+                sshBoxesPath &&
+                req.method === "GET" &&
+                url.pathname === `${ROUTE_PREFIX}/boxes/ssh-sessions`
+              ) {
+                const boxes = await readSshBoxes(sshBoxesPath);
+                const listed = await Promise.all(boxes.map((b) => sshTranscripts(b.host)));
+                const owned = dshSessionsFor(
+                  await sessionPersistence.list(),
+                  null,
+                  claudeIdOf,
+                  new Set(registry?.archivedSessionIds ?? []),
+                );
+                return json(res, 200, {
+                  boxes: boxes.map((b, i) => {
+                    const r = listed[i];
+                    // The box's provider id lets the client bind a resumed transcript to this box's
+                    // model directory, so opening one runs it back on the box, not the local claude.
+                    const provider = sshBoxProviderId(b.name);
+                    if (!r || !r.ok)
+                      return {
+                        name: b.name,
+                        host: b.host,
+                        provider,
+                        ok: false,
+                        error: r?.error ?? "no reply",
+                      };
+                    const items = r.sessions
+                      .map((s) => {
+                        const d = owned.get(s.id);
+                        return d ? { ...s, dsh: d } : s;
+                      })
+                      .filter((s) => !("dsh" in s && s.dsh?.subagent));
+                    return { name: b.name, host: b.host, provider, ok: true, sessions: items };
+                  }),
                 });
               }
               if (

@@ -5,7 +5,7 @@
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import type { TurnRecord } from "./adapter.js";
+import type { AsideEntry, TurnRecord } from "./adapter.js";
 
 /** Claude Code's config dir: transcripts, settings.json. Honors CLAUDE_CONFIG_DIR like the CLI. */
 export const CLAUDE_HOME = process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude");
@@ -412,6 +412,65 @@ export function saveTurnRecords(
     await writeFile(file, JSON.stringify(obj));
   });
   turnsChain = run.catch(() => {});
+  return run;
+}
+
+/** Per-session `/btw` asides; keyed by dsh session id; value is the session's aside ring. */
+export const ASIDES_FILE = (d: string) => join(d, "asides.json");
+let asidesChain = Promise.resolve();
+
+/**
+ * Load the persisted `/btw` asides. Pending entries are dropped: a pending aside never got its
+ * answer, and the process that would have delivered it is gone after a restart, so restoring a
+ * forever-spinner would be a lie. Entries missing the required fields are skipped.
+ */
+export async function loadAsides(dir: string): Promise<Map<string, AsideEntry[]>> {
+  const file = ASIDES_FILE(dir);
+  try {
+    const parsed: unknown = JSON.parse(await readFile(file, "utf8"));
+    const map = new Map<string, AsideEntry[]>();
+    if (typeof parsed === "object" && parsed !== null) {
+      for (const [k, v] of Object.entries(parsed)) {
+        if (!Array.isArray(v)) continue;
+        const entries: AsideEntry[] = [];
+        for (const raw of v) {
+          if (typeof raw !== "object" || raw === null) continue;
+          // SAFETY: a non-null object; each field is checked for its type before use.
+          const r = raw as Record<string, unknown>;
+          if (typeof r.id !== "string" || typeof r.question !== "string") continue;
+          if (typeof r.at !== "number") continue;
+          if (r.pending === true) continue;
+          const entry: AsideEntry = { id: r.id, question: r.question, pending: false, at: r.at };
+          if (typeof r.answer === "string") entry.answer = r.answer;
+          if (typeof r.error === "string") entry.error = r.error;
+          entries.push(entry);
+        }
+        if (entries.length > 0) map.set(k, entries);
+      }
+    }
+    return map;
+  } catch {
+    return new Map();
+  }
+}
+
+/** Save one session's aside ring (already capped by the caller); serialized read-modify-write. */
+export function saveAsides(dir: string, sessionId: string, entries: AsideEntry[]): Promise<void> {
+  const run = asidesChain.then(async () => {
+    const file = ASIDES_FILE(dir);
+    let obj: Record<string, unknown[]> = {};
+    try {
+      const parsed: unknown = JSON.parse(await readFile(file, "utf8"));
+      if (typeof parsed === "object" && parsed !== null) {
+        // SAFETY: top-level JSON object with string keys maps to a record of arrays.
+        obj = parsed as Record<string, unknown[]>;
+      }
+    } catch {}
+    obj[sessionId] = entries;
+    await mkdir(dirname(file), { recursive: true });
+    await writeFile(file, JSON.stringify(obj));
+  });
+  asidesChain = run.catch(() => {});
   return run;
 }
 

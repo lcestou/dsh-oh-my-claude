@@ -4,9 +4,11 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  dshSessionsFor,
   probeBox,
   readPickerSettings,
   registerSessionRoutes,
+  slugForDir,
   settingsScopePath,
   isSettingsScope,
   SETTINGS_SCOPES,
@@ -297,6 +299,34 @@ import {
   assert.equal(isSettingsScope(undefined), false);
   assert.equal(isSettingsScope(null), false);
   assert.equal(isSettingsScope(7), false);
+}
+
+// dshSessionsFor flags a subagent-origin session so the archive can drop it: dsh cannot open one
+// standalone. Both the dsh id and the derived Claude id resolve to the same flagged entry.
+{
+  const claudeIdOf = (id: string) => `claude-${id}`;
+  const owned = dshSessionsFor(
+    [
+      { id: "top", cwd: "/w" },
+      { id: "sub", cwd: "/w", origin: "subagent" },
+    ],
+    "/w",
+    claudeIdOf,
+  );
+  assert.equal(owned.get("top")?.subagent, undefined);
+  assert.equal(owned.get("sub")?.subagent, true);
+  assert.equal(owned.get("claude-sub")?.subagent, true);
+}
+
+// slugForDir bounds to one path segment and disambiguates truncated slugs so two long cwds
+// sharing a 48-char prefix never collide onto one workspace dir.
+{
+  assert.equal(slugForDir("/home/me/app"), "home-me-app");
+  assert.equal(slugForDir(""), "x");
+  const a = "/home/me/projects/really-long-workspace-name-that-goes-past-forty-eight/alpha";
+  const b = "/home/me/projects/really-long-workspace-name-that-goes-past-forty-eight/beta";
+  assert.notEqual(slugForDir(a), slugForDir(b), "distinct long cwds get distinct slugs");
+  assert.equal(slugForDir(a), slugForDir(a), "same input is stable");
 }
 
 console.log("sessions ok");

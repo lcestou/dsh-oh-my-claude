@@ -1,4 +1,4 @@
-import type { TurnRecord } from "./adapter.js";
+import type { AsideEntry, TurnRecord } from "./adapter.js";
 /** Claude Code's config dir: transcripts, settings.json. Honors CLAUDE_CONFIG_DIR like the CLI. */
 export declare const CLAUDE_HOME: string;
 /** Resolve a raw configDir value to an absolute path for this plugin instance.
@@ -69,6 +69,16 @@ export declare function savePermissionMode(dir: string, sessionId: string, mode:
 export declare function loadTurnRecords(dir: string): Promise<Map<string, TurnRecord[]>>;
 /** Save a session's turn cost records (already capped at 50); serialized read-modify-write. */
 export declare function saveTurnRecords(dir: string, sessionId: string, records: TurnRecord[]): Promise<void>;
+/** Per-session `/btw` asides; keyed by dsh session id; value is the session's aside ring. */
+export declare const ASIDES_FILE: (d: string) => string;
+/**
+ * Load the persisted `/btw` asides. Pending entries are dropped: a pending aside never got its
+ * answer, and the process that would have delivered it is gone after a restart, so restoring a
+ * forever-spinner would be a lie. Entries missing the required fields are skipped.
+ */
+export declare function loadAsides(dir: string): Promise<Map<string, AsideEntry[]>>;
+/** Save one session's aside ring (already capped by the caller); serialized read-modify-write. */
+export declare function saveAsides(dir: string, sessionId: string, entries: AsideEntry[]): Promise<void>;
 /**
  * A replacer that masks the values of secret-looking environment variables (`*KEY`, `*TOKEN`,
  * `*SECRET`, `*PASSWORD`, `*CREDENTIAL`, eight characters or longer) as `[redacted:NAME]`.

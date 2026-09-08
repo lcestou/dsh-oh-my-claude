@@ -361,7 +361,10 @@ export declare function permissionModeFor(config: Schemastery.TypeT<typeof Confi
 export type ExecLike = (cmd: string, args: string[], opts: {
     timeout: number;
 }, cb: (err: Error | null, stdout: string | Buffer) => void) => void;
-export declare function probeCli(exec?: ExecLike, command?: string): any;
+export declare function probeCli(exec?: ExecLike, command?: string, host?: string): Promise<{
+    flags: Set<string> | null;
+    version: string;
+}>;
 /**
  * Checks if a CLI flag is supported. Returns true if flags are unknown
  * (probe failed) to assume support.
@@ -447,7 +450,7 @@ export declare function finishReason(result: {
     errors?: unknown[];
     api_error_status?: number;
     subtype?: string;
-}): FinishReason;
+}, hostLabel?: string): FinishReason;
 /**
  * Incremental translator from Claude Code stream-json lines to dsh StreamChunks.
  * Prefers partial `stream_event`s; falls back to whole `assistant` messages when no partials arrived.
@@ -686,6 +689,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * arrives. Fire and forget: the command returns before Claude answers.
      */
     askSideQuestion(sessionId: string, question: string): void;
+    /** Persist a session's aside ring to disk so an answer survives a restart, eviction or hot reload. */
+    persistAsides(sessionId: string): void;
     /** What the /tune thinking selector shows: the budget this plugin last set for the session, or
      *  `undefined` when it has set none and the session runs on its own default. */
     thinkingInfo(sessionId: string): {
@@ -734,6 +739,10 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * bridge not up yet) means nothing to reconnect to. Retries every retryMs for attempts tries, since the web server listens several seconds after adoption.
      */
     reconnectBridge(proc: ClaudeProcess, sessionId: string, retryMs?: number, attempts?: number): Promise<boolean>;
+    /** The box a session's turn runs on (an SSH box, or a remote workspace's host), or undefined for a
+     * local turn. Mirrors prepare()'s targetHost so a logged-out error names the right machine: a
+     * purpose one-shot (title/compaction) always runs on the local claude for the default provider. */
+    hostLabelFor(sessionId: string | undefined, purpose?: string): string | undefined;
     spawner(): Spawner;
     /** Kill this instance's live processes and drop them from the shared registry: called when an SSH
      * box is removed from the panel, so its remote `claude` sessions do not outlive the mount. */

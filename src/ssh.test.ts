@@ -1,7 +1,7 @@
 // Offline self-check: bun src/ssh.test.ts. No CLI, no file, no network.
 import assert from "node:assert/strict";
 import { shq, sshInvocation } from "./process.js";
-import { sshBoxProviderId, validateSshBoxes } from "./sessions.js";
+import { sshBoxProviderId, validateRemoteWorkspaceInput, validateSshBoxes } from "./sessions.js";
 
 // shq wraps in single quotes and escapes embedded quotes.
 {
@@ -83,6 +83,31 @@ import { sshBoxProviderId, validateSshBoxes } from "./sessions.js";
       { name: "two", host: "h" },
     ]).error ?? "",
     /duplicate host/,
+  );
+}
+
+// validateRemoteWorkspaceInput accepts a clean {name, host, absolute path} and rejects the bad ways.
+{
+  const ok = validateRemoteWorkspaceInput({ name: "Foo", host: "nova", remoteCwd: "/home/u/foo" });
+  assert.deepEqual(ok.value, { name: "Foo", host: "nova", remoteCwd: "/home/u/foo" });
+  assert.match(validateRemoteWorkspaceInput({ host: "h", remoteCwd: "/x" }).error ?? "", /name/);
+  assert.match(
+    validateRemoteWorkspaceInput({ name: "x", host: "bad host", remoteCwd: "/x" }).error ?? "",
+    /ssh host/,
+  );
+  // A relative path is refused: a quoted `cd` cannot resolve it and `~` never expands.
+  assert.match(
+    validateRemoteWorkspaceInput({ name: "x", host: "h", remoteCwd: "rel/path" }).error ?? "",
+    /absolute/,
+  );
+  assert.match(
+    validateRemoteWorkspaceInput({ name: "x", host: "h", remoteCwd: "~/foo" }).error ?? "",
+    /absolute/,
+  );
+  // A newline cannot break out of the single-quoted remote path.
+  assert.match(
+    validateRemoteWorkspaceInput({ name: "x", host: "h", remoteCwd: "/a\nrm -rf /" }).error ?? "",
+    /invalid/,
   );
 }
 

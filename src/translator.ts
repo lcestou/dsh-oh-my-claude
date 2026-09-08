@@ -143,6 +143,7 @@ export class Translator {
   limitFailure: (LlmFailure & { providerRetryAfterMs?: number }) | undefined;
   /** IANA zone for reset clocks: the browser's when dsh stamped one, else the box's. */
   timeZone: string | undefined;
+  hostLabel: string | undefined;
   relay: boolean; // dsh tool calls are relayed to dsh's own loop: hide Claude's view of them
   dshIds: Set<string>; // tool_use ids of dsh tools called over the MCP bridge
   dshNames: Map<string, string>; // dsh tool_use id → tool name, for a fallback row
@@ -212,6 +213,7 @@ export class Translator {
     onResult,
     redact,
     onInit,
+    hostLabel,
   }: {
     toolActivity?: boolean;
     continueAfterLimit?: boolean;
@@ -226,6 +228,8 @@ export class Translator {
     onResult?: (summary: TurnRecord) => void;
     redact?: (s: string) => string;
     onInit?: (commands: string[], tools: string[]) => void;
+    /** The box a remote turn runs on, so a logged-out error names it, not this local host. */
+    hostLabel?: string;
   } = {}) {
     this.log = log ?? (() => {});
     this.unknownSeen = new Set(); // (where:type) already warned, so schema drift warns once, not per event
@@ -234,6 +238,7 @@ export class Translator {
     this.limitResetAt = undefined;
     this.limitFailure = undefined;
     this.timeZone = timeZone;
+    this.hostLabel = hostLabel;
     this.relay = relay; // dsh tool calls are relayed to dsh's own loop: hide Claude's view of them
     this.dshIds = dshIds ?? new Set(); // tool_use ids of dsh tools called over the MCP bridge
     this.dshNames = new Map(); // dsh tool_use id → tool name, for a fallback row
@@ -609,7 +614,7 @@ export class Translator {
             ? { kind: "aborted", failure: { message: "aborted", code: "ABORTED" } }
             : this.limitFailure
               ? { kind: "error", failure: this.limitFailure }
-              : finishReason(event),
+              : finishReason(event, this.hostLabel),
         });
         return events;
       }

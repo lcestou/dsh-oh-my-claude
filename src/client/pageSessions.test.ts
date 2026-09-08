@@ -112,4 +112,24 @@ const many = group(
   );
 }
 
+// An SSH box is just another group keyed `ssh:<host>`, so the box filter selects it like any other.
+{
+  const nova: GroupInfo = {
+    key: "ssh:nova",
+    name: "Nova",
+    ok: true,
+    sshBox: true,
+    sessions: [sess("r", 9)],
+  };
+  const { list } = pageSessions([many, nova], {
+    box: "ssh:nova",
+    cwd: "all",
+    origin: "all",
+    shown: {},
+  });
+  assert.equal(list.length, 1);
+  assert.equal(list[0]?.s.id, "r");
+  assert.equal(list[0]?.g.sshBox, true);
+}
+
 console.log("pageSessions: ok");

@@ -13,6 +13,9 @@ import {
   TURNS_FILE,
   loadLimitWaits,
   saveLimitWait,
+  loadAsides,
+  saveAsides,
+  ASIDES_FILE,
 } from "./state.js";
 
 const dir = await mkdtemp(join(tmpdir(), "omc-state-"));
@@ -159,4 +162,38 @@ await Promise.all([saveLimitWait(dir, "s1", 1_000), saveLimitWait(dir, "s2", 2_0
 await saveLimitWait(dir, "s1", undefined);
 assert.deepEqual(await loadLimitWaits(dir), new Map([["s2", 2_000]]));
 console.log("limit-waits ok");
+
+// Asides: save a ring, reload; pending and malformed entries drop on load; concurrent saves serialize.
+const asidesDir = await mkdtemp(join(tmpdir(), "omc-asides-"));
+assert.deepEqual(await loadAsides(asidesDir), new Map());
+await Promise.all([
+  saveAsides(asidesDir, "a1", [
+    { id: "q1", question: "why?", answer: "because", pending: false, at: 100 },
+    { id: "q2", question: "how?", error: "no live process", pending: false, at: 200 },
+  ]),
+  saveAsides(asidesDir, "a2", [
+    { id: "q3", question: "when?", pending: true, at: 300 }, // still spinning; must not restore
+  ]),
+]);
+const asides = await loadAsides(asidesDir);
+assert.equal(asides.get("a1")?.length, 2);
+assert.equal(asides.get("a1")?.[0]?.answer, "because");
+assert.equal(asides.get("a1")?.[1]?.error, "no live process");
+assert.equal(asides.get("a2"), undefined); // the lone pending entry dropped, so no key survives
+
+// A file with junk entries keeps only the well-formed, resolved ones.
+await writeFile(
+  ASIDES_FILE(asidesDir),
+  JSON.stringify({
+    a3: [
+      { id: "ok", question: "q", pending: false, at: 1 },
+      { question: "no id", pending: false, at: 2 },
+      { id: "no-at", question: "q", pending: false },
+      "not-an-object",
+    ],
+  }),
+);
+const cleaned = await loadAsides(asidesDir);
+assert.deepEqual(cleaned.get("a3"), [{ id: "ok", question: "q", pending: false, at: 1 }]);
+console.log("asides ok");
 console.log("state.test: ok");

@@ -653,7 +653,29 @@ const probed = await probeCli((cmd, args, opts, cb) =>
   ),
 );
 assert.equal(probed.version, "9.9.9 (Claude Code)");
+assert(probed.flags);
 assert.ok(probed.flags.has("--effort") && probed.flags.has("--input-format"));
+
+// A remote target probes the box's own claude over ssh, so an older remote binary is handed only the
+// flags it actually has and never a flag it would exit 1 on (e.g. --forward-subagent-text).
+const remoteProbe = await probeCli(
+  (cmd, args, _opts, cb) => {
+    assert.equal(cmd, "ssh");
+    assert.equal(args[4], "nova");
+    cb(
+      null,
+      (args[5] ?? "").includes("--help")
+        ? "Usage: claude [options]\n  --input-format <f>\n"
+        : "1.0.0 (Claude Code)\n",
+    );
+  },
+  "claude",
+  "nova",
+);
+assert.equal(remoteProbe.version, "1.0.0 (Claude Code)");
+assert(remoteProbe.flags);
+assert.ok(remoteProbe.flags.has("--input-format"));
+assert.ok(!remoteProbe.flags.has("--forward-subagent-text"));
 
 const soon = Math.floor(Date.now() / 1000) + 120;
 {
@@ -2276,6 +2298,9 @@ console.log("schema-guard ok");
 {
   const notIn = finishReason({ is_error: true, result: "Not logged in · Please run /login" });
   assert.match(failureOf(notIn).message, /not logged in on .+claude auth login/);
+  // A remote turn names the box it ran on, not this local host, so the user logs in on the right one.
+  const remoteOut = finishReason({ is_error: true, result: "Not logged in" }, "nova");
+  assert.match(failureOf(remoteOut).message, /not logged in on nova\./);
   const expired = finishReason({
     is_error: true,
     api_error_status: 401,

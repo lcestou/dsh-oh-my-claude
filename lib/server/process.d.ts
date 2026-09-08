@@ -274,9 +274,10 @@ export declare function sshArgs(host: string, script: string): string[];
  * of this box's environment or working directory, so the command carries both: `cd` into `cwd`, then
  * `exec env` with CHILD_ENV (file checkpointing for rewind, the long MCP timeout). `cwd` is this
  * box's workspace path and usually does not exist on the remote, so fall back to the remote `$HOME`
- * rather than let `cd` fail the whole spawn.
+ * rather than let `cd` fail the whole spawn. A remote workspace redirects `cwd` to its real remote
+ * path before it reaches here (see `sshSpawner`), so that fallback is only for a plain local path.
  */
-export declare function sshInvocation(host: string, command: string, args: string[], cwd: string): {
+export declare function sshInvocation(host: string, command: string, args: string[], cwd: string, token?: string): {
     command: string;
     args: string[];
 };
@@ -286,7 +287,7 @@ export declare function sshInvocation(host: string, command: string, args: strin
  * the translator, approvals and control requests are untouched. The remote uses its own `~/.claude`
  * login; the dsh MCP bridge points at this box's port and does not reach it, so `dshTools` is best off.
  */
-export declare const sshSpawner: (host: string) => Spawner;
+export declare const sshSpawner: (host: string, resolveCwd?: (cwd: string) => string, token?: string) => Spawner;
 /** stdin line for one user turn. `session_id` empty and `parent_tool_use_id` null match what the SDK writes. */
 export declare function userTurnLine(content: unknown): string;
 /**

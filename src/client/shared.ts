@@ -207,6 +207,10 @@ async function openHere(
         ws ? { sessionId: id, workspaceId: ws.workspaceId } : { sessionId: id },
       );
     }
+    // Unarchiving/importing lands server-side; the client's session store learns of the session
+    // through its own subscription a beat later. Opening an id the store does not know yet is a
+    // no-op — the restored session would never come to the foreground — so wait briefly for it.
+    for (let i = 0; i < 40 && !known()[id]; i++) await new Promise((r) => setTimeout(r, 50));
   }
   ctx.sessions.open(id);
 }
@@ -323,7 +327,9 @@ type DshSlots = {
       label?: string;
       inject?: () => Record<string, never>;
     },
-    Component: (props: { sessionId?: string }) => ReactNode,
+    // `sessionId` on session-scoped slots; `close` on `settings.section` (dsh-client-ui-settings-general
+    // passes it so a section can dismiss the settings panel, e.g. after opening a restored session).
+    Component: (props: { sessionId?: string; close?: () => void }) => ReactNode,
   ) => void;
 };
 /** The dsh client services this panel uses, the ones `inject` names. */
@@ -371,8 +377,16 @@ export interface ClientCtx {
     directoryFor: (sessionId: string) => {
       store: {
         subscribe: (fn: () => void) => () => void;
-        getSnapshot: () => { current: { provider: string; model: string } | null };
+        getSnapshot: () => {
+          current: { provider: string; model: string } | null;
+          groups?: readonly { id: string; models: readonly { id: string }[] }[];
+        };
       };
+      // Bind a resumed session to a provider/model (dsh-client-ui-model-selection ModelDirectory).
+      load?: () => Promise<{
+        groups: readonly { id: string; models: readonly { id: string }[] }[];
+      }>;
+      select?: (sel: { provider: string; model: string }) => Promise<void>;
     };
   };
 }

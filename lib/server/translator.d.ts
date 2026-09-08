@@ -30,6 +30,7 @@ export declare class Translator {
     }) | undefined;
     /** IANA zone for reset clocks: the browser's when dsh stamped one, else the box's. */
     timeZone: string | undefined;
+    hostLabel: string | undefined;
     relay: boolean;
     dshIds: Set<string>;
     dshNames: Map<string, string>;
@@ -81,7 +82,7 @@ export declare class Translator {
      * one callId, which throws in ConversationNodeAssembler and stalls the whole event feed.
      */
     private fireToolCall;
-    constructor({ toolActivity, continueAfterLimit, timeZone, toolTextLimit, relay, dshIds, relayed, log, onToolCall, onToolResult, onResult, redact, onInit, }?: {
+    constructor({ toolActivity, continueAfterLimit, timeZone, toolTextLimit, relay, dshIds, relayed, log, onToolCall, onToolResult, onResult, redact, onInit, hostLabel, }?: {
         toolActivity?: boolean;
         continueAfterLimit?: boolean;
         timeZone?: string;
@@ -95,6 +96,8 @@ export declare class Translator {
         onResult?: (summary: TurnRecord) => void;
         redact?: (s: string) => string;
         onInit?: (commands: string[], tools: string[]) => void;
+        /** The box a remote turn runs on, so a logged-out error names it, not this local host. */
+        hostLabel?: string;
     });
     deltaType(block: TranslatorBlock): "text-delta" | "reasoning-delta";
     /** Warn once when a CLI event/block type is neither handled nor knowingly ignored, so a Claude

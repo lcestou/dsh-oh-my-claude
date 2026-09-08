@@ -21,7 +21,6 @@ import {
   h3,
   row,
   pill,
-  chip,
   select,
   inputStyle,
   ago,
@@ -40,6 +39,7 @@ import {
   maskEmail,
 } from "./shared.js";
 import { AccessShield, OhMyClaudeControl } from "./panel.js";
+import { atBottom, distanceFromBottom, type Geom, nextFollow } from "./tailFollow.js";
 import { markTitle, newlyWaiting, noticesOn, type NoticeSnapshot } from "./notices.js";
 import { SETTINGS_SCOPES, SCOPE_LABELS, overrideNote } from "./settings.js";
 import type { SettingsScope, SettingsScopeInfo } from "./settings.js";
@@ -288,6 +288,33 @@ interface CardProps {
   children: ReactNode;
 }
 
+/** Disclosure chevron, 14px to match dsh's own todo/queue: up when closed, down when open. */
+function Chevron({ open }: { open: boolean }) {
+  return (
+    <span
+      style={{
+        width: 14,
+        height: 14,
+        color: "var(--dsw-alias-label-tertiary, " + T.faint + ")",
+        flex: "0 0 auto",
+        display: "grid",
+        placeItems: "center",
+      }}
+      aria-hidden="true"
+    >
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+        <polyline
+          points={open ? "3.5,5.5 7,9 10.5,5.5" : "3.5,8.5 7,5 10.5,8.5"}
+          stroke="currentColor"
+          strokeWidth="1.25"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    </span>
+  );
+}
+
 /** Collapsible card: title, a one-line summary that stays visible when closed, optional actions. */
 function Card({ id, title, summary, actions, open, onToggle, children }: CardProps) {
   return (
@@ -307,7 +334,7 @@ function Card({ id, title, summary, actions, open, onToggle, children }: CardPro
             flex: 1,
           }}
         >
-          <span style={{ ...meta, width: 10, display: "inline-block" }}>{open ? "▾" : "▸"}</span>
+          <Chevron open={open} />
           <h3 style={h3}>{title}</h3>
           {summary && (
             <span style={{ ...meta, whiteSpace: "normal", overflow: "hidden" }}>{summary}</span>
@@ -401,9 +428,21 @@ interface BoxData {
   token?: string;
 }
 
+/** One SSH box's transcripts, from `/boxes/ssh-sessions` (listed over ssh, no HTTP endpoint). */
+interface SshSessionData {
+  name: string;
+  host?: string;
+  provider?: string;
+  ok?: boolean;
+  error?: string;
+  sessions?: SessionData[];
+}
+
 interface SessionsProps {
   ctx: ClientCtx;
   boxes: BoxData[];
+  /** Dismiss the settings panel, so a restored session lands in the foreground as if clicked. */
+  close?: () => void;
 }
 
 export interface GroupInfo {
@@ -414,6 +453,10 @@ export interface GroupInfo {
   error?: string;
   sessions: SessionData[];
   box?: BoxData;
+  /** An SSH box: transcripts live on its host, reachable only over ssh — no HTTP box to jump to. */
+  sshBox?: boolean;
+  /** The box's provider id (`claude-code-<slug>`), so a resumed transcript binds back to it. */
+  provider?: string;
 }
 
 /** Rows shown per box before "Load more"; each press adds another PAGE. */
@@ -461,9 +504,10 @@ export function pageSessions(
  * box. Filter by box, workspace and origin; sorted by box, newest first. Open acts here; a row
  * from another box jumps to that box with a deep link its panel understands.
  */
-function Sessions({ ctx, boxes }: SessionsProps) {
+function Sessions({ ctx, boxes, close }: SessionsProps) {
   const [local, setLocal] = useState<{ host?: string; sessions?: SessionData[] } | null>(null);
   const [remote, setRemote] = useState<RemoteSessionData[]>([]);
+  const [ssh, setSsh] = useState<SshSessionData[]>([]);
   const [loading, setLoading] = useState(true);
   const [remoteLoading, setRemoteLoading] = useState(false);
   const [error, setError] = useState("");
@@ -482,6 +526,11 @@ function Sessions({ ctx, boxes }: SessionsProps) {
       .then((body) => setLocal(body ?? null))
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
+    // SSH boxes list over ssh (own registry, no HTTP url); fetch regardless of the HTTP boxes above.
+    fetch(`${ROUTE}/boxes/ssh-sessions`)
+      .then((r) => readJson<{ boxes?: SshSessionData[] } | null>(r))
+      .then((body) => setSsh(body?.boxes ?? []))
+      .catch(() => setSsh([]));
     if (boxes.length === 0) return;
     setRemoteLoading(true);
     fetch(`${ROUTE}/boxes/sessions`)
@@ -520,8 +569,19 @@ function Sessions({ ctx, boxes }: SessionsProps) {
         box: b,
       });
     }
+    for (const s of ssh)
+      out.push({
+        key: `ssh:${s.host ?? s.name}`,
+        name: s.name,
+        host: s.host,
+        ok: s.ok === true,
+        error: s.ok ? undefined : (s.error ?? "unreachable"),
+        sessions: s.sessions ?? [],
+        sshBox: true,
+        provider: s.provider,
+      });
     return out;
-  }, [local, remote, boxes, remoteLoading]);
+  }, [local, remote, ssh, boxes, remoteLoading]);
 
   // Rows in box order, newest first within each box, capped to that box's `shown` count. `hidden`
   // and `matched` are per box so the footer can offer "Load more"/"Load all" and count the rest.
@@ -541,7 +601,53 @@ function Sessions({ ctx, boxes }: SessionsProps) {
     if (cwd !== "all" && !cwds.includes(cwd)) setCwd("all");
   }, [cwds.join("|")]);
 
-  const open = async (r: { g: { key: string; box?: BoxData; name: string }; s: SessionData }) => {
+  const open = async (r: {
+    g: { key: string; box?: BoxData; name: string; sshBox?: boolean; provider?: string };
+    s: SessionData;
+  }) => {
+    if (r.g.sshBox) {
+      // A dsh session that already ran on the box (archived or live): go through the same open path
+      // as local. For an owned session `/open` unarchives it via the registry without reading the
+      // transcript from this box's disk, then opens under its own durable provider binding. Calling
+      // `sessions.open` alone would leave an archived row archived — the "Restore" no-op just seen.
+      if (r.s.dsh?.id) {
+        setBusyId(r.s.id);
+        setError("");
+        try {
+          await openHere(ctx, r.s, r.s.cwd ?? "");
+          close?.();
+        } catch (e) {
+          setError(e instanceof Error ? e.message : String(e));
+        } finally {
+          setBusyId("");
+        }
+        return;
+      }
+      // A raw box transcript dsh never tracked: make a session for it, bind it to the box's provider
+      // (default model) so the resume runs back on the box, then open. If the model seam is gone we
+      // fall back to a clear message rather than resuming it against the local claude.
+      const provider = r.g.provider;
+      if (!provider) {
+        setError(`Pick ${r.g.name}'s model in the composer to open this session.`);
+        return;
+      }
+      setBusyId(r.s.id);
+      setError("");
+      try {
+        await ctx.sessions.create({ sessionId: r.s.id });
+        const dir = ctx.modelDirectories.directoryFor(r.s.id);
+        const state = await dir.load?.();
+        const model = state?.groups.find((g) => g.id === provider)?.models[0]?.id;
+        if (model && dir.select) await dir.select({ provider, model });
+        ctx.sessions.open(r.s.id);
+        close?.();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setBusyId("");
+      }
+      return;
+    }
     if (r.g.key !== "local") {
       if (!r.g.box) return;
       window.location.assign(jumpUrl(r.g.box, r.s));
@@ -561,6 +667,7 @@ function Sessions({ ctx, boxes }: SessionsProps) {
             ),
           };
         });
+      close?.();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -577,14 +684,13 @@ function Sessions({ ctx, boxes }: SessionsProps) {
   const more = paged.hidden[moreKey] ?? 0;
   const grown = (shown[moreKey] ?? PAGE) > PAGE;
   return (
-    <section id="dsh-oh-my-claude-sessions-card" style={card}>
-      <div style={cardHead}>
-        <div>
-          <h3 style={h3}>Sessions</h3>
-          <div style={{ ...meta, marginTop: 2 }}>
-            {loading ? "Loading…" : `${rows.length} shown · ${total} total`}
-            {remoteLoading ? " · checking boxes…" : ""}
-          </div>
+    <div>
+      <div
+        style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}
+      >
+        <div style={meta}>
+          {loading ? "Loading…" : `${rows.length} shown · ${total} total`}
+          {remoteLoading ? " · checking boxes…" : ""}
         </div>
         <button type="button" style={btn} disabled={loading} onClick={load}>
           Refresh
@@ -594,24 +700,22 @@ function Sessions({ ctx, boxes }: SessionsProps) {
         id="dsh-oh-my-claude-session-filters"
         style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", marginTop: 10 }}
       >
-        <button type="button" style={chip(box === "all", false)} onClick={() => setBox("all")}>
-          All boxes
-        </button>
-        {groups.map((g) => (
-          <button
-            key={g.key}
-            type="button"
-            style={chip(box === g.key, !g.ok)}
-            disabled={!g.ok}
-            title={g.ok ? g.host : g.error}
-            onClick={() => setBox(g.key)}
-          >
-            {g.name}
-            {g.key === "local" ? " · here" : ""}
-            {g.ok ? ` · ${g.sessions.length}` : " · offline"}
-          </button>
-        ))}
-        <span style={{ flex: 1 }} />
+        <select
+          id="dsh-oh-my-claude-box-filter"
+          style={select}
+          value={box}
+          onChange={(e) => setBox(e.target.value)}
+          title="Box"
+        >
+          <option value="all">All boxes</option>
+          {groups.map((g) => (
+            <option key={g.key} value={g.key} disabled={!g.ok} title={g.ok ? g.host : g.error}>
+              {g.name}
+              {g.key === "local" ? " · here" : ""}
+              {g.ok ? ` · ${g.sessions.length}` : " · offline"}
+            </option>
+          ))}
+        </select>
         <select
           id="dsh-oh-my-claude-cwd-filter"
           style={select}
@@ -652,11 +756,13 @@ function Sessions({ ctx, boxes }: SessionsProps) {
       <div id="dsh-oh-my-claude-sessions" style={{ marginTop: 6 }}>
         {rows.map((r) => {
           const isLocal = r.g.key === "local";
-          const opened = isLocal && Boolean(known[r.s.dsh?.id ?? r.s.id]) && !r.s.dsh?.archived;
+          const isSsh = r.g.sshBox === true;
+          const opened =
+            (isLocal || isSsh) && Boolean(known[r.s.dsh?.id ?? r.s.id]) && !r.s.dsh?.archived;
           const busy = busyId === r.s.id;
           const label = busy
             ? "Opening…"
-            : !isLocal
+            : !isLocal && !isSsh
               ? `Open on ${r.g.name}`
               : opened
                 ? "Show"
@@ -740,7 +846,7 @@ function Sessions({ ctx, boxes }: SessionsProps) {
           </div>
         )}
       </div>
-    </section>
+    </div>
   );
 }
 
@@ -1081,6 +1187,15 @@ function Boxes({ boxes, setBoxes, open, onToggle }: BoxesProps) {
   const [error, setError] = useState("");
   const [openSettingsUrl, setOpenSettingsUrl] = useState<string | null>(null);
   const [me, setMe] = useState<RuntimeStatus | null>(null);
+  const [rws, setRws] = useState<RemoteWs[]>([]);
+  const [wsDraft, setWsDraft] = useState({ name: "", host: "", remoteCwd: "" });
+  const [login, setLogin] = useState<{
+    host: string;
+    url?: string;
+    code: string;
+    error?: string;
+    busy?: boolean;
+  } | null>(null);
 
   useEffect(() => {
     fetch(`${ROUTE}/ssh-boxes`)
@@ -1090,6 +1205,10 @@ function Boxes({ boxes, setBoxes, open, onToggle }: BoxesProps) {
     fetch(`${ROUTE}/status`)
       .then((r) => readJson<RuntimeStatus | null>(r))
       .then(setMe)
+      .catch(() => {});
+    fetch(`${ROUTE}/remote-workspaces`)
+      .then((r) => readJson<{ workspaces?: RemoteWs[] }>(r))
+      .then((b) => setRws(b.workspaces ?? []))
       .catch(() => {});
   }, []);
 
@@ -1162,6 +1281,73 @@ function Boxes({ boxes, setBoxes, open, onToggle }: BoxesProps) {
   };
   const removeDsh = (url: string) => saveDsh(boxes.filter((b) => b.url !== url));
   const removeSsh = (host: string) => saveSsh(ssh.filter((b) => b.host !== host));
+
+  const startLogin = (host: string) => {
+    setLogin({ host, code: "", busy: true });
+    fetch(`${ROUTE}/ssh-boxes/login/start`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ host }),
+    })
+      .then((r) => readJson<{ url?: string; error?: string }>(r))
+      .then((b) => setLogin({ host, code: "", url: b.url, error: b.error }))
+      .catch((e: Error) => setLogin({ host, code: "", error: e.message }));
+  };
+  const submitLogin = () => {
+    if (!login) return;
+    const host = login.host;
+    setLogin({ ...login, busy: true, error: undefined });
+    fetch(`${ROUTE}/ssh-boxes/login/code`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ host, code: login.code }),
+    })
+      .then((r) => readJson<{ done?: boolean; loggedIn?: boolean; error?: string }>(r))
+      .then((b) => {
+        if (b.error) return setLogin({ host, code: "", error: b.error });
+        setLogin(null);
+        refresh();
+      })
+      .catch((e: Error) => setLogin({ host, code: "", error: e.message }));
+  };
+
+  const addRw = (ev: React.FormEvent) => {
+    ev.preventDefault();
+    const host = wsDraft.host || ssh[0]?.host || "";
+    if (!wsDraft.name.trim() || !host || !wsDraft.remoteCwd.trim()) return;
+    setBusy(true);
+    setError("");
+    fetch(`${ROUTE}/remote-workspaces`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name: wsDraft.name.trim(),
+        host,
+        remoteCwd: wsDraft.remoteCwd.trim(),
+      }),
+    })
+      .then((r) => readJson<{ workspace?: RemoteWs; error?: string }>(r))
+      .then((b) => {
+        if (b.error) return setError(b.error);
+        if (b.workspace) setRws([...rws, b.workspace]);
+        setWsDraft({ name: "", host: "", remoteCwd: "" });
+      })
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setBusy(false));
+  };
+  const removeRw = (path: string) => {
+    setBusy(true);
+    setError("");
+    fetch(`${ROUTE}/remote-workspaces`, {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path }),
+    })
+      .then((r) => readJson<{ workspaces?: RemoteWs[] }>(r))
+      .then((b) => setRws(b.workspaces ?? []))
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setBusy(false));
+  };
 
   const total = boxes.length + ssh.length;
   const reachable =
@@ -1270,9 +1456,60 @@ function Boxes({ boxes, setBoxes, open, onToggle }: BoxesProps) {
                     <span style={pill(st.loggedIn ? T.ok : T.err)}>
                       {st.loggedIn ? maskEmail(st.email ?? "logged in") : "not logged in"}
                     </span>
+                    {st.binary && !st.loggedIn && login?.host !== b.host && (
+                      <button
+                        type="button"
+                        style={btn}
+                        disabled={busy}
+                        onClick={() => startLogin(b.host)}
+                      >
+                        Log in
+                      </button>
+                    )}
                   </>
                 )}
               </div>
+              {login?.host === b.host && (
+                <div style={{ ...meta, marginTop: 6, whiteSpace: "normal" }}>
+                  {login.busy && !login.url && <span>starting login…</span>}
+                  {login.url && (
+                    <>
+                      <div>
+                        1. Open this URL, sign in, copy the code:{" "}
+                        <a
+                          href={login.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          style={{ color: T.brand }}
+                        >
+                          {login.url}
+                        </a>
+                      </div>
+                      <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+                        <input
+                          style={inputStyle}
+                          placeholder="paste code"
+                          value={login.code}
+                          disabled={login.busy}
+                          onChange={(e) => setLogin({ ...login, code: e.target.value })}
+                        />
+                        <button
+                          type="button"
+                          style={btn}
+                          disabled={login.busy || !login.code.trim()}
+                          onClick={submitLogin}
+                        >
+                          {login.busy ? "…" : "Submit"}
+                        </button>
+                        <button type="button" style={btn} onClick={() => setLogin(null)}>
+                          Cancel
+                        </button>
+                      </div>
+                    </>
+                  )}
+                  {login.error && <div style={{ color: T.err, marginTop: 4 }}>{login.error}</div>}
+                </div>
+              )}
             </div>
             <button type="button" style={btn} disabled={busy} onClick={() => removeSsh(b.host)}>
               Remove
@@ -1417,6 +1654,83 @@ function Boxes({ boxes, setBoxes, open, onToggle }: BoxesProps) {
           </>
         )}
       </div>
+      <div
+        style={{
+          borderTop: `1px solid ${T.border}`,
+          marginTop: 12,
+          paddingTop: 12,
+        }}
+      >
+        <h3 style={h3}>Remote workspaces</h3>
+        <p style={{ margin: "0 0 8px", color: T.muted, fontSize: 13 }}>
+          Pin a directory on an SSH box as a workspace. It shows in the left sidebar like any
+          workspace; pick the box's Claude in the model picker and the session runs in that remote
+          folder. No files are copied — the box's Claude reads them there.
+        </p>
+        {rws.map((w) => (
+          <div key={`rw:${w.path}`} data-testid="dsh-oh-my-claude-remote-ws-row" style={row}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ color: T.text, fontWeight: 600 }}>{w.name}</div>
+              <div
+                style={{
+                  ...meta,
+                  marginTop: 3,
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: 6,
+                  alignItems: "center",
+                  whiteSpace: "normal",
+                }}
+              >
+                <span style={pill(T.faint)}>ssh</span>
+                <span style={{ fontFamily: T.mono }}>{w.host}</span>
+                <span style={{ fontFamily: T.mono }}>{w.remoteCwd}</span>
+              </div>
+            </div>
+            <button type="button" style={btn} disabled={busy} onClick={() => removeRw(w.path)}>
+              Remove
+            </button>
+          </div>
+        ))}
+        {ssh.length === 0 ? (
+          <p style={{ ...meta, whiteSpace: "normal", marginTop: 4 }}>
+            Add an SSH box above first, then pin a folder on it here.
+          </p>
+        ) : (
+          <form onSubmit={addRw} style={{ ...row, flexWrap: "wrap", paddingTop: 4 }}>
+            <select
+              style={{ ...select, flex: "0 1 140px" }}
+              value={wsDraft.host || ssh[0]?.host || ""}
+              onChange={(e) => setWsDraft({ ...wsDraft, host: e.target.value })}
+            >
+              {ssh.map((b) => (
+                <option key={b.host} value={b.host}>
+                  {b.name}
+                </option>
+              ))}
+            </select>
+            <input
+              style={{ ...inputStyle, flex: "0 1 140px" }}
+              placeholder="Name"
+              value={wsDraft.name}
+              onChange={(e) => setWsDraft({ ...wsDraft, name: e.target.value })}
+            />
+            <input
+              style={{ ...inputStyle, flex: "1 1 220px" }}
+              placeholder="/absolute/path/on/box"
+              value={wsDraft.remoteCwd}
+              onChange={(e) => setWsDraft({ ...wsDraft, remoteCwd: e.target.value })}
+            />
+            <button
+              type="submit"
+              style={btn}
+              disabled={busy || !wsDraft.name.trim() || !wsDraft.remoteCwd.trim()}
+            >
+              Add
+            </button>
+          </form>
+        )}
+      </div>
     </Card>
   );
 }
@@ -1436,6 +1750,15 @@ interface SshProbeEntry {
     email?: string;
     error?: string;
   };
+}
+
+/** A workspace pinned to a directory on an SSH box; mirrors the server's RemoteWorkspace. */
+interface RemoteWs {
+  name: string;
+  host: string;
+  remoteCwd: string;
+  path: string;
+  workspaceId: string;
 }
 
 /** A deep link from another box's panel: open that session here once dsh is ready. */
@@ -1983,6 +2306,72 @@ function watchSessionNotices(ctx: ClientCtx) {
   };
   tick(); // take the baseline now, so the first interval already has something to compare against
   setInterval(tick, 1000);
+}
+
+/**
+ * Keep the conversation glued to the newest content while a Claude turn streams. dsh streams a turn
+ * as two tracks — prose as live chunks, this plugin's native tool rows as separate `session.append`
+ * events — and when the prose stream pauses for a running tool dsh stops following the tail, so the
+ * tool rows and the next text land below the fold unseen until the next message forces a re-render.
+ * The on-disk log is correctly ordered (verified); this only nudges scrollTop, no core change.
+ *
+ * Riding the shared body observer, each frame a Claude turn is live it re-pins the scroll container
+ * to the bottom — unless the reader has scrolled up, which disarms following until they return. A
+ * pin only ever increases scrollTop, so a scroll that moves up and is not at the bottom is
+ * unambiguously the reader: that one 'scroll' listener covers wheel, touch and keyboard alike.
+ * ponytail: structural `[data-conversation-scroll]` hook; swap for a dsh scroll API if one appears.
+ */
+const geomOf = (el: HTMLElement): Geom => ({
+  scrollTop: el.scrollTop,
+  scrollHeight: el.scrollHeight,
+  clientHeight: el.clientHeight,
+});
+
+function watchTailFollow(ctx: ClientCtx) {
+  const SLACK_PX = 120; // within this of the bottom counts as "at the bottom"
+  const ZERO: Geom = { scrollTop: 0, scrollHeight: 0, clientHeight: 0 };
+  let follow = true;
+  let prevRunning = false;
+  let lastTop = 0;
+  const wired = new WeakSet<HTMLElement>();
+  const wire = (el: HTMLElement) => {
+    if (wired.has(el)) return;
+    wired.add(el);
+    el.addEventListener(
+      "scroll",
+      () => {
+        const g = geomOf(el);
+        // A pin only moves the bottom edge down; a scrollTop that dropped and is not at the bottom
+        // is the reader climbing up-thread, so stop following until they come back down.
+        const signal = g.scrollTop < lastTop - 1 && !atBottom(g, SLACK_PX) ? "user-up" : "scroll";
+        follow = nextFollow(follow, signal, g, SLACK_PX);
+        lastTop = g.scrollTop;
+      },
+      { passive: true },
+    );
+  };
+  const scan = () => {
+    const id = activeClaudeSession(ctx);
+    if (!id) {
+      prevRunning = false; // not our session: a later Claude turn starts armed
+      return;
+    }
+    const running = ctx.sessions.list.getSnapshot()?.byId?.[id]?.running === true;
+    if (running && !prevRunning) follow = nextFollow(follow, "turn-start", ZERO, SLACK_PX);
+    prevRunning = running;
+    if (!running) return; // idle: leave the reader's scroll where it is
+    const el = document.querySelector<HTMLElement>("[data-conversation-scroll]");
+    if (!el) return;
+    wire(el);
+    // Only write when actually off the bottom: max scrollTop is scrollHeight - clientHeight, so a
+    // gap of >1px means content grew below the fold. Skips a redundant write once already pinned.
+    if (follow && distanceFromBottom(geomOf(el)) > 1) {
+      el.scrollTop = el.scrollHeight; // clamps to the max; stay pinned to the streaming tail
+      lastTop = el.scrollTop;
+    }
+  };
+  onBodyMutation(scan);
+  scan();
 }
 
 function notifyWaiting(ctx: ClientCtx, id: string, title: string) {
@@ -2563,29 +2952,8 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
               >
                 {copied === it.id ? "Copied" : "Copy"}
               </button>
-              {/* Collapse chevron, sized to match dsh's own todo/queue chevron (14px, tertiary).
-                  Up when collapsed, down when open — same convention as the queue dock. */}
-              <span
-                style={{
-                  width: 14,
-                  height: 14,
-                  color: "var(--dsw-alias-label-tertiary, " + T.faint + ")",
-                  flex: "0 0 auto",
-                  display: "grid",
-                  placeItems: "center",
-                }}
-                aria-hidden="true"
-              >
-                <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                  <polyline
-                    points={open ? "3.5,5.5 7,9 10.5,5.5" : "3.5,8.5 7,5 10.5,8.5"}
-                    stroke="currentColor"
-                    strokeWidth="1.25"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              </span>
+              {/* Up when collapsed, down when open — same convention as the queue dock. */}
+              <Chevron open={open} />
               <button
                 type="button"
                 onClick={(e) => {
@@ -2716,8 +3084,9 @@ export function apply(ctx: ClientCtx) {
   watchTurnStatus(ctx);
   watchSessionNotices(ctx);
   watchSessionSpinners(ctx);
+  watchTailFollow(ctx);
 
-  function Section() {
+  function Section(props: { close?: () => void }) {
     const [boxes, setBoxes] = useState<BoxData[]>([]);
     const [openBoxes, setOpenBoxes] = useState(true);
     const [openSessions, setOpenSessions] = useState(false);
@@ -2743,11 +3112,11 @@ export function apply(ctx: ClientCtx) {
         {boxes !== null && (
           <Card
             id="dsh-oh-my-claude-sessions-card"
-            title="Sessions"
+            title="Archived Sessions"
             open={openSessions}
             onToggle={() => setOpenSessions((v) => !v)}
           >
-            <Sessions ctx={ctx} boxes={boxes} />
+            <Sessions ctx={ctx} boxes={boxes} close={props.close} />
           </Card>
         )}
         {boxes !== null && (

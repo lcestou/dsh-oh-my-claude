@@ -333,12 +333,23 @@ export function sshArgs(host: string, script: string) {
  * of this box's environment or working directory, so the command carries both: `cd` into `cwd`, then
  * `exec env` with CHILD_ENV (file checkpointing for rewind, the long MCP timeout). `cwd` is this
  * box's workspace path and usually does not exist on the remote, so fall back to the remote `$HOME`
- * rather than let `cd` fail the whole spawn.
+ * rather than let `cd` fail the whole spawn. A remote workspace redirects `cwd` to its real remote
+ * path before it reaches here (see `sshSpawner`), so that fallback is only for a plain local path.
  */
-export function sshInvocation(host: string, command: string, args: string[], cwd: string) {
-  const env = Object.entries(CHILD_ENV)
-    .map(([key, val]) => `${key}=${shq(val)}`)
-    .join(" ");
+export function sshInvocation(
+  host: string,
+  command: string,
+  args: string[],
+  cwd: string,
+  token?: string,
+) {
+  // A fresh per-box token from `claude setup-token` is delivered as CLAUDE_CODE_OAUTH_TOKEN, not a
+  // stored login, so it must be handed to the far claude at spawn. ponytail: it rides in the remote
+  // env argv like the rest of CHILD_ENV, so it shows in the box's own `ps`; acceptable on a
+  // single-user box, tighten with a remote env file if a box is shared.
+  const envPairs = Object.entries(CHILD_ENV);
+  if (token) envPairs.push(["CLAUDE_CODE_OAUTH_TOKEN", token]);
+  const env = envPairs.map(([key, val]) => `${key}=${shq(val)}`).join(" ");
   const remote = [command, ...args].map(shq).join(" ");
   const script = `cd ${shq(cwd)} 2>/dev/null || cd "$HOME"; exec env ${env} ${remote}`;
   return { command: "ssh", args: sshArgs(host, script) };
@@ -351,9 +362,9 @@ export function sshInvocation(host: string, command: string, args: string[], cwd
  * login; the dsh MCP bridge points at this box's port and does not reach it, so `dshTools` is best off.
  */
 export const sshSpawner =
-  (host: string): Spawner =>
+  (host: string, resolveCwd: (cwd: string) => string = (c) => c, token?: string): Spawner =>
   (command, args, cwd) => {
-    const inv = sshInvocation(host, command, args, cwd);
+    const inv = sshInvocation(host, command, args, resolveCwd(cwd), token);
     return nodeSpawner(inv.command, inv.args, ".");
   };
 

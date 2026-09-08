@@ -55,6 +55,35 @@ export type ValidatedSshBoxes = {
 };
 export declare function validateSshBoxes(input: unknown): ValidatedSshBoxes;
 export declare function readSshBoxes(path: string): Promise<SshBox[]>;
+/** A dsh workspace this plugin points at a directory on an SSH box. dsh stores and stat-checks local
+ * paths only, so each remote workspace owns an empty local placeholder dir that dsh adopts as an
+ * ordinary workspace (`path`); at spawn the ssh spawner swaps `path` for `remoteCwd` on `host`, so the
+ * far `claude` runs in the real remote directory. No file mirror: the remote Claude reads the box's
+ * own files. Stored in the plugin's own state, added from the panel. */
+export interface RemoteWorkspace {
+    name: string;
+    host: string;
+    remoteCwd: string;
+    /** Canonical local placeholder path dsh stores as the workspace cwd; the spawner's match key. */
+    path: string;
+    workspaceId: string;
+}
+/** A slug safe as one path segment: lowercase alnum, other runs to one dash, bounded. */
+export declare const slugForDir: (s: string) => string;
+/** What the add form sends; cleaned or rejected before a placeholder or workspace is made. */
+export type ValidatedRemoteWorkspace = {
+    value: {
+        name: string;
+        host: string;
+        remoteCwd: string;
+    };
+    error?: undefined;
+} | {
+    error: string;
+    value?: undefined;
+};
+export declare function validateRemoteWorkspaceInput(input: unknown): ValidatedRemoteWorkspace;
+export declare function readRemoteWorkspaces(path: string): Promise<RemoteWorkspace[]>;
 /** What a box's `/status` reports; the panel shows these fields as pills. */
 export interface RuntimeStatus {
     host: string;
@@ -144,6 +173,8 @@ export declare function readPickerSettings(path: string): Promise<PickerSettings
 export interface OwnedSession {
     id: string;
     archived: boolean;
+    /** A dsh subagent run: it lives inside its parent conversation and cannot be opened standalone. */
+    subagent?: boolean;
 }
 /**
  * Claude transcript id → the dsh session it belongs to, for the dsh sessions of one workspace.
@@ -154,6 +185,7 @@ export interface OwnedSession {
 export declare function dshSessionsFor(headers: readonly {
     id: string;
     cwd?: string;
+    origin?: string;
 }[], cwd: string | null, claudeIdOf: (id: string) => string, archived?: Set<string>): Map<string, OwnedSession>;
 /** Everything the routes need from the adapter. */
 export interface SessionRouteOptions {
@@ -172,6 +204,10 @@ export interface SessionRouteOptions {
     sshBoxesPath?: string;
     /** Mount or withdraw provider instances so they match the saved SSH-box list, without a restart. */
     onSshBoxes?: (boxes: SshBox[]) => Promise<void> | void;
+    /** State file mapping placeholder workspaces to their box + real remote path. */
+    remoteWorkspacesPath?: string;
+    /** Refresh the adapter's live placeholder→remote-cwd map after the list changes, without a restart. */
+    onRemoteWorkspaces?: (workspaces: RemoteWorkspace[]) => Promise<void> | void;
     command?: string;
     /** Non-empty when this instance drives Claude Code on a remote host over ssh; the status and
      * identity probes run there so the panel reports the remote box, not this one. */
@@ -207,6 +243,8 @@ export interface SessionRouteOptions {
     permissionAsks?: Map<string, string[]>;
     /** `/btw` side questions and their answers, per session; the client bubble reads them. */
     sideQuestions?: Map<string, AsideEntry[]>;
+    /** Persist a session's aside ring after the route mutates it (e.g. a dismiss), so the change survives a restart. */
+    persistAsides?: (sessionId: string) => void;
     /** The live thinking budget the Tune selector reads and sets per session. */
     thinking?: {
         info: (sessionId: string) => {
@@ -235,7 +273,7 @@ export interface SessionRouteOptions {
     continueAfterLimit?: boolean;
 }
 /** `projectDir(cwd)` → Claude Code project dir; `startedIds()` → ids the adapter started itself. */
-export declare function registerSessionRoutes(ctx: PluginContext, { log, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, sshBoxesPath, onSshBoxes, command, sshHost, turnRecords, idle, permissionModes, thinking, rewind, contextUsage, workspaceDiff, mcp, permissionAsks, sideQuestions, models, reloadPlugins, continueAfterLimit, }: SessionRouteOptions): void;
+export declare function registerSessionRoutes(ctx: PluginContext, { log, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, sshBoxesPath, onSshBoxes, remoteWorkspacesPath, onRemoteWorkspaces, command, sshHost, turnRecords, idle, permissionModes, thinking, rewind, contextUsage, workspaceDiff, mcp, permissionAsks, sideQuestions, persistAsides, models, reloadPlugins, continueAfterLimit, }: SessionRouteOptions): void;
 export declare const SETTINGS_SCOPES: readonly ["managed", "local", "project", "user"];
 /** One of the four settings files. The CLI's own layer names, minus the `--settings` flag layer. */
 export type SettingsScope = (typeof SETTINGS_SCOPES)[number];
