@@ -125,6 +125,7 @@ All keys are optional.
 | `persistTodos` | `true` | Re-append the last todo list at each turn start so dsh's panel keeps it. |
 | `continueAfterLimit` | `true` | When a usage limit ends a turn, wait for the reset and continue the task on its own, as the CLI does. |
 | `configDir` | `` | Claude Code config dir for this plugin instance (exported as `CLAUDE_CONFIG_DIR` to every spawned CLI process); empty = the env var or `~/.claude`. Moves transcripts, `settings.json` and `.credentials.json` together, groundwork for multi-account mounts. |
+| `ownTranscripts` | `false` | Keep this instance's transcripts in the plugin's own state dir instead of `~/.claude/projects/`. The CLI runs against a mirror config dir whose login, settings, commands and skills are symlinks back to the real `~/.claude`, so only `projects/` diverges; the archive reads both, so a session started from a terminal is still listed. |
 | `providerId` | `claude-code` | Provider id in the model picker. The default is `claude-code`; anything starting with `claude-code-` (e.g. `claude-code-work`) mounts a second independent instance with its own login, state and process registry. |
 | `providerName` | `` | Display name in the model picker. Empty = "Oh My Claude" for the default id, else "Oh My Claude (\<suffix\>)" where suffix is the part after `claude-code-`. |
 | `dshTools` | `true` | Serve dsh tools (subagents, jobs, goals, skills, web search) to Claude Code over MCP. |

@@ -552,20 +552,14 @@ async function runtimeStatus(
 
 /** Every transcript under the Claude projects dir, each with the cwd its records name. */
 async function listAllTranscripts(
-  projectsDir: string,
+  projectsDirs: string[],
   hidden: Set<string>,
 ): Promise<TranscriptListItem[]> {
-  let dirs: string[] = [];
-  try {
-    dirs = (await readdir(projectsDir, { withFileTypes: true }))
-      .filter((d) => d.isDirectory())
-      .map((d) => d.name);
-  } catch {
-    return [];
-  }
-  const lists = await Promise.all(
-    dirs.map((name) => listTranscripts(join(projectsDir, name), hidden).catch(() => [])),
-  );
+  const dirs: string[] = [];
+  for (const root of projectsDirs)
+    for (const entry of await readdir(root, { withFileTypes: true }).catch(() => []))
+      if (entry.isDirectory()) dirs.push(join(root, entry.name));
+  const lists = await Promise.all(dirs.map((dir) => listTranscripts(dir, hidden).catch(() => [])));
   return lists.flat();
 }
 
@@ -828,17 +822,15 @@ export const idIn = (text: string): string | undefined =>
  */
 async function idTaken(
   live: (id: string) => boolean,
-  projectsDir: string,
+  projectsDirs: string[],
   importedDir: string,
   id: string,
 ): Promise<boolean> {
   if (live(id)) return true;
-  const here = [
-    importedDir,
-    ...(await readdir(projectsDir, { withFileTypes: true }).catch(() => []))
-      .filter((d) => d.isDirectory())
-      .map((d) => join(projectsDir, d.name)),
-  ];
+  const here = [importedDir];
+  for (const root of projectsDirs)
+    for (const entry of await readdir(root, { withFileTypes: true }).catch(() => []))
+      if (entry.isDirectory()) here.push(join(root, entry.name));
   for (const dir of here)
     if ((await stat(join(dir, `${id}.jsonl`)).catch(() => null)) !== null) return true;
   return false;
@@ -954,10 +946,14 @@ const projectDirAt = async (box: MountBox, cwd: string): Promise<string> =>
 /** Everything the routes need from the adapter. */
 export interface SessionRouteOptions {
   log: (level: string, msg: string) => void;
-  /** Claude Code project dir for a workspace path. */
-  projectDir: (cwd: string) => string;
-  /** The parent of every project dir. */
-  projectsDir: string;
+  /**
+   * Claude Code project dirs for a workspace path, in read order. Normally one; with the transcript
+   * switch on it is the plugin's own store first and the real `~/.claude` second, so a session
+   * started from a terminal is still listed and still opens.
+   */
+  projectDir: (cwd: string) => string[];
+  /** The parents of every project dir, same order. */
+  projectsDir: string[];
   /** Claude session ids the adapter started itself. */
   startedIds: () => Promise<Iterable<string>>;
   claudeIdOf: (id: string) => string;
@@ -1099,7 +1095,7 @@ export function registerSessionRoutes(
    * takes an id has to look in both.
    */
   const transcriptDirs = (cwd: string): string[] =>
-    importedDir === undefined ? [projectDir(cwd)] : [projectDir(cwd), importedDir];
+    importedDir === undefined ? projectDir(cwd) : [...projectDir(cwd), importedDir];
   /**
    * Where that box keeps the user-scope settings file. A mount's `configDir` is resolved against
    * this PC's home, so a remote box's path has to come from its own `$HOME` (asked once per host);
@@ -1191,7 +1187,11 @@ export function registerSessionRoutes(
                   new Set(registry?.archivedSessionIds ?? []),
                 );
                 const hidden = new Set([...(await startedIds())].filter((id) => !owned.has(id)));
-                const items = (await listTranscripts(projectDir(cwd), hidden))
+                const seen = await Promise.all(
+                  projectDir(cwd).map((dir) => listTranscripts(dir, hidden).catch(() => [])),
+                );
+                const items = seen
+                  .flat()
                   .map((s) => {
                     const d = owned.get(s.id);
                     return d ? { ...s, dsh: d } : s;

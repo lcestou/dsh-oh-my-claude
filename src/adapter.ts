@@ -124,6 +124,7 @@ import { readSshToken } from "./ssh-login.js";
 import { childEnv, errorText } from "./process.js";
 import type { RewindResult } from "./process.js";
 import { forkTranscriptText } from "./transcript.js";
+import { buildMirror } from "./claude-home.js";
 export { markBusy, takeInterrupted } from "./state.js";
 export { forkTranscriptText } from "./transcript.js";
 import { Translator } from "./translator.js";
@@ -369,6 +370,12 @@ export const Config = z.object({
     .default("")
     .description(
       "Claude Code config dir for this plugin instance (exported as CLAUDE_CONFIG_DIR); empty = CLAUDE_CONFIG_DIR env or ~/.claude",
+    ),
+  ownTranscripts: z
+    .boolean()
+    .default(false)
+    .description(
+      "Keep this instance's transcripts in the plugin's own state dir instead of ~/.claude/projects; the CLI runs against a config dir whose login, settings, commands and skills are symlinks back to the real one",
     ),
   providerId: z
     .string()
@@ -1489,6 +1496,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   readonly thinkingBudgets = new Map<string, number | null>();
   cliModels: CliModel[] = [];
   claudeHome: string;
+  /** `~/.claude` itself, which stays the box's login and settings even when transcripts move. */
+  realClaudeHome: string;
   providerId: string;
   displayName: string;
   settingsNs: string;
@@ -1504,7 +1513,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         `invalid providerId "${this.providerId}": must be 'claude-code' or start with 'claude-code-'`,
       );
     }
-    this.claudeHome = resolveClaudeHome(config.configDir);
+    this.realClaudeHome = resolveClaudeHome(config.configDir);
+    this.claudeHome = this.realClaudeHome;
     this.redact = config.redactSecrets ? buildRedactor(process.env) : undefined;
     this.displayName =
       config.providerName ||
@@ -1513,6 +1523,16 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         : `Oh My Claude (${this.providerId.slice("claude-code".length).slice(1)})`);
     this.settingsNs = `llm-${this.providerId}`;
     this.stateDir = stateDir(this.providerId);
+    // With the switch on the CLI runs against the mirror, so `claudeHome` — the path every read in
+    // this plugin resolves against — is the mirror too: its settings and login are the real files,
+    // read through their links, and only `projects/` is the plugin's own. It needs `stateDir`,
+    // which is why it lands here rather than beside `realClaudeHome`.
+    if (config.ownTranscripts)
+      this.claudeHome = buildMirror(
+        this.realClaudeHome,
+        join(this.stateDir, "claude-home"),
+        (level, msg) => this.log(level, msg),
+      );
     this.permissionModes = new Map(); // loaded async below; fire-and-forget
     this.accessModes = new Map();
     this.controlWaiters = new Map();
@@ -2375,7 +2395,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   keeperEnv() {
     return childEnv(
       process.env,
-      this.config.configDir ? { CLAUDE_CONFIG_DIR: this.claudeHome } : undefined,
+      this.config.configDir || this.config.ownTranscripts
+        ? { CLAUDE_CONFIG_DIR: this.claudeHome }
+        : undefined,
     );
   }
 
@@ -2574,9 +2596,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       this.warnedNoSeam = true;
       this.log("warn", "spawn: dsh requested but ctx.subprocess is not mounted; using node spawn");
     }
-    const local: Spawner = !this.config.configDir
-      ? base
-      : (command, args, cwd) => base(command, args, cwd, { CLAUDE_CONFIG_DIR: this.claudeHome });
+    const local: Spawner =
+      !this.config.configDir && !this.config.ownTranscripts
+        ? base
+        : (command, args, cwd) => base(command, args, cwd, { CLAUDE_CONFIG_DIR: this.claudeHome });
     // A remote-workspace cwd runs the far `claude` over SSH on its box, even when this provider is
     // local: otherwise the session sits in the empty local placeholder dir.
     return (command: string, args: string[], cwd: string) => {
@@ -3822,8 +3845,16 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
     );
     registerSessionRoutes(ctx, {
       log: (level: string, msg: string) => adapter.log(level, msg),
-      projectDir: (cwd: string) => join(claudeHome, "projects", projectDirName(cwd)),
-      projectsDir: join(claudeHome, "projects"),
+      // With the transcript switch on, `claudeHome` is the plugin's own mirror: its `projects/` is
+      // where dsh-started sessions land, and the real `~/.claude/projects` is read alongside it so
+      // a session started from a terminal is still listed and still opens.
+      projectDir: (cwd: string) =>
+        [...new Set([claudeHome, adapter.realClaudeHome])].map((home) =>
+          join(home, "projects", projectDirName(cwd)),
+        ),
+      projectsDir: [...new Set([claudeHome, adapter.realClaudeHome])].map((home) =>
+        join(home, "projects"),
+      ),
       startedIds: loadStarted,
       claudeIdOf: claudeSessionId,
       settingsPath: join(claudeHome, "settings.json"),

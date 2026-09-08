@@ -120,8 +120,8 @@ import type { InstructionFile } from "./instructions.js";
   } as any;
   registerSessionRoutes(ctx, {
     log: () => {},
-    projectDir: (cwd: string) => join(tmp, "claude", "projects", projectDirName(cwd)),
-    projectsDir: join(tmp, "claude", "projects"),
+    projectDir: (cwd: string) => [join(tmp, "claude", "projects", projectDirName(cwd))],
+    projectsDir: [join(tmp, "claude", "projects")],
     startedIds: async () => [],
     claudeIdOf: (id: string) => id,
     configDir: join(tmp, "claude"),

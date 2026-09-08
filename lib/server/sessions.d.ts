@@ -198,10 +198,14 @@ export interface MountBox {
 /** Everything the routes need from the adapter. */
 export interface SessionRouteOptions {
     log: (level: string, msg: string) => void;
-    /** Claude Code project dir for a workspace path. */
-    projectDir: (cwd: string) => string;
-    /** The parent of every project dir. */
-    projectsDir: string;
+    /**
+     * Claude Code project dirs for a workspace path, in read order. Normally one; with the transcript
+     * switch on it is the plugin's own store first and the real `~/.claude` second, so a session
+     * started from a terminal is still listed and still opens.
+     */
+    projectDir: (cwd: string) => string[];
+    /** The parents of every project dir, same order. */
+    projectsDir: string[];
     /** Claude session ids the adapter started itself. */
     startedIds: () => Promise<Iterable<string>>;
     claudeIdOf: (id: string) => string;

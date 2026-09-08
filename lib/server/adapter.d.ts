@@ -114,6 +114,7 @@ export declare const Config: z<Schemastery.ObjectS<{
     processIdleMs: z<number, number>;
     maxProcesses: z<number, number>;
     configDir: z<string, string>;
+    ownTranscripts: z<boolean, boolean>;
     providerId: z<string, string>;
     providerName: z<string, string>;
 }>, Schemastery.ObjectT<{
@@ -146,6 +147,7 @@ export declare const Config: z<Schemastery.ObjectS<{
     processIdleMs: z<number, number>;
     maxProcesses: z<number, number>;
     configDir: z<string, string>;
+    ownTranscripts: z<boolean, boolean>;
     providerId: z<string, string>;
     providerName: z<string, string>;
 }>>;
@@ -559,6 +561,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     readonly thinkingBudgets: Map<string, number | null>;
     cliModels: CliModel[];
     claudeHome: string;
+    /** `~/.claude` itself, which stays the box's login and settings even when transcripts move. */
+    realClaudeHome: string;
     providerId: string;
     displayName: string;
     settingsNs: string;
