@@ -3415,9 +3415,11 @@ console.log("interrupt-on-abort ok");
     merged.slice(0, 3).map((m) => [m.id, m.name, m.contextWindow, m.efforts]),
     [
       ["default", "Default", 1_000_000, ["low", "high"]],
-      ["sonnet", "Sonnet", 1_000_000, []],
-      ["haiku", "Haiku", 200_000, []],
+      ["claude-sonnet-5", "Sonnet", 1_000_000, []],
+      ["claude-haiku-4-5", "Haiku", 200_000, []],
     ],
+    "an alias landing on a known model takes that model's id, so the lineup is the same set " +
+      "whether or not the CLI has answered yet",
   );
   const rest = merged.slice(3).map((m) => m.id);
   assert.ok(!rest.includes("claude-opus-5"), "covered by default");
@@ -3437,9 +3439,15 @@ console.log("interrupt-on-abort ok");
   const noRows = { options: [], replaceBuiltInOptions: false };
   assert.deepEqual(
     ids({ ...noRows, availableModels: ["haiku"] }),
-    ["default", "haiku"],
+    ["default", "claude-haiku-4-5"],
     "family alias keeps its versions and Default, drops the rest",
   );
+  // The point of the stable id: a model allowlisted from one lineup is still offered by the other.
+  for (const id of ["claude-haiku-4-5", "claude-sonnet-5"])
+    assert.ok(
+      mergeCatalog([], KNOWN_MODELS).some((m) => m.id === id) && merged.some((m) => m.id === id),
+      `${id} is offered with and without the CLI list`,
+    );
   const oneVersion = ids({ ...noRows, availableModels: ["opus-4-5"] });
   assert.ok(oneVersion.includes("claude-opus-4-5"), "version prefix keeps that version");
   assert.ok(!oneVersion.includes("claude-opus-4-6"), "version prefix is not a family alias");

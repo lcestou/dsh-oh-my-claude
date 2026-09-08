@@ -661,7 +661,14 @@ export function mergeCatalog(
     const bare = strip(c.resolvedModel);
     const known = base.find((b) => bare === b.id || bare.startsWith(b.id));
     const window = c.resolvedModel.endsWith("[1m]") ? 1_000_000 : (known?.contextWindow ?? 200_000);
-    return { row: M(c.value, c.displayName, window, c.efforts), match: c.resolvedModel };
+    // The CLI is asked for its picker once a process is live, so before that answer the lineup
+    // spells a model `claude-haiku-4-5` and after it `haiku`. Anything holding an id across that
+    // moment — a dsh subagent allowlist, a stored session model — reads the other spelling as a
+    // model that is gone. A row landing on a model this catalog already knows takes that model's
+    // id, so both states offer the same ids; `default` and a `[1m]` variant have none to take.
+    const stable =
+      c.value === "default" || c.resolvedModel.endsWith("[1m]") ? undefined : known?.id;
+    return { row: M(stable ?? c.value, c.displayName, window, c.efforts), match: c.resolvedModel };
   });
   let rows = [
     ...fromCli,
@@ -682,7 +689,8 @@ export function mergeCatalog(
     if (allow)
       rows = rows.filter((r) => r.row.id === "default" || allow.some((e) => allows(e, r.match)));
   }
-  return rows.map((r) => r.row);
+  // Two aliases can resolve to one model, and they now share its id; the first listed wins.
+  return [...new Map(rows.map((r) => [r.row.id, r.row])).values()];
 }
 export async function getCatalog(fetchImpl = fetch, cli: CliModel[] = [], picker?: PickerSettings) {
   await seedFromDisk();
