@@ -257,7 +257,7 @@ export const claudeProviderOf = (ctx: ClientCtx, id: string): string | undefined
   }
   // The cold summary answers for the rest: dsh keeps the last and next model selection in the list
   // projection so a session can be described without being activated.
-  const sel = ctx.sessions.list.getSnapshot()?.byId[id]?.projections?.values?.modelSelection;
+  const sel = ctx.sessions.list.getSnapshot()?.byId[id]?.projectionValues?.modelSelection;
   return claudeMount(sel?.next?.provider) ?? claudeMount(sel?.lastUsed?.provider);
 };
 
@@ -440,15 +440,14 @@ export interface ClientCtx {
             completed?: boolean;
             displayTitle?: string;
             // The cold-summary hints dsh persists so a session can be described without being
-            // activated (`SessionSummary.projections`, dsh-api-session-controller). The model
-            // selection is in there, which is the only provider a session that has never been
-            // opened in this tab can offer.
-            projections?: {
-              values?: {
-                modelSelection?: {
-                  lastUsed?: { provider?: string } | null;
-                  next?: { provider?: string } | null;
-                };
+            // activated. `projectList` (dsh-api-session-controller) flattens the summary's
+            // projection block onto the row as `projectionValues`, keyed the same way
+            // `projections.faceOf(key)` is. The model selection is in there, which is the only
+            // provider a session that has never been opened in this tab can offer.
+            projectionValues?: {
+              modelSelection?: {
+                lastUsed?: { provider?: string } | null;
+                next?: { provider?: string } | null;
               };
             };
           }

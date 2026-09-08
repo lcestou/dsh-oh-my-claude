@@ -2269,6 +2269,8 @@ const verbFor = (sessionId: string, verbs: string[]): string => {
   return verb;
 };
 
+/** On dsh's status element once this bundle has wired it; read before the wiring path allocates. */
+const TURN_MARK = "data-dsh-oh-my-claude-turn";
 const wireTurnStatus = (
   el: HTMLElement,
   sessionId: string,
@@ -2276,8 +2278,8 @@ const wireTurnStatus = (
   frames: readonly string[],
 ) => {
   ensureTurnStatusStyle();
-  if (el.hasAttribute("data-dsh-oh-my-claude-turn")) return;
-  el.setAttribute("data-dsh-oh-my-claude-turn", "1");
+  if (el.hasAttribute(TURN_MARK)) return;
+  el.setAttribute(TURN_MARK, "1");
 
   // Build the leading spinner span.
   const spinner = document.createElement("span");
@@ -2332,7 +2334,7 @@ const wireTurnStatus = (
   // next bundle refuses to wire.
   whenContextGone(() => {
     stop();
-    el.removeAttribute("data-dsh-oh-my-claude-turn");
+    el.removeAttribute(TURN_MARK);
     spinner.remove();
   });
   tick();
@@ -2428,14 +2430,21 @@ function watchTurnStatus(ctx: ClientCtx) {
   markBody();
   const beat = setInterval(guard(markBody), 1000);
   whenContextGone(() => clearInterval(beat));
-  const attach = async (el: HTMLElement) => {
+  const attach = (el: HTMLElement) => {
     // Only act on [role="status"][aria-live="polite"] (dsh's turn-status element).
     if (el.getAttribute("role") !== "status" || el.getAttribute("aria-live") !== "polite") return;
+    // The wired mark is read here rather than inside `wireTurnStatus`: everything below allocates a
+    // promise, and this runs for every status element on every dirty frame of a running turn.
+    if (el.hasAttribute(TURN_MARK)) return;
     const activeId = activeClaudeSession(ctx);
     if (!activeId) return;
     spinnerSettings ??= loadSpinnerSettings(); // once per page load
-    const settings = await spinnerSettings;
-    if (el.isConnected) wireTurnStatus(el, activeId, settings.verbs, settings.frameSet);
+    // The settings load once and resolve for good, so this is a microtask after the first frame —
+    // but the await used to be unhandled, so a throw inside `wireTurnStatus` became a rejection
+    // `guard` never saw: the spinner simply never appeared, with nothing on the console to say why.
+    void spinnerSettings.then((settings) => {
+      if (el.isConnected) wireTurnStatus(el, activeId, settings.verbs, settings.frameSet);
+    }, console.error);
   };
   const scan = (root: HTMLElement) => {
     attach(root);

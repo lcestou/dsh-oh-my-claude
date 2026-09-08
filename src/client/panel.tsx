@@ -2055,6 +2055,10 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
       // Watch for dsh's menu to appear and inject our rows into its viewport.
       const menuObserver = new MutationObserver(() => {
         if (!parent.isConnected) return;
+        // The observer's parent is the composer, so this fires on every keystroke that changes the
+        // subtree — and a menu only exists while the picker is open, which the trigger says in one
+        // attribute read. Without this the subtree query ran per keystroke to find nothing.
+        if (trigger.getAttribute("aria-expanded") !== "true") return;
         const menus = Array.from(parent.querySelectorAll<HTMLElement>('[role="menu"]'));
         for (const dshMenu of menus) {
           // Our own rows, not the attribute, say whether this menu is done: dsh re-renders the menu
