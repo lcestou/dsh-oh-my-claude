@@ -2278,6 +2278,81 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
   return <span ref={anchorRef} hidden />;
 }
 
+/** One `/btw` aside as the route returns it (mirrors the adapter's `AsideEntry`). */
+interface AsideRow {
+  id: string;
+  question: string;
+  answer?: string;
+  error?: string;
+  pending: boolean;
+  at: number;
+  dismissed?: boolean;
+}
+
+/**
+ * The Asides tab: this session's `/btw` question-and-answer pairs, newest first. The docked bubble
+ * shows only what has not been closed, and a closed card is gone from the composer for good, so this
+ * is where an answer is re-read after it was dismissed or scrolled out of the dock. The list is the
+ * server's ring (the last ten per session, persisted under STATE_DIR), so it survives a restart but
+ * does not grow without bound.
+ */
+function AsidesBody({ sessionId }: { sessionId: string }) {
+  const [items, setItems] = useState<AsideRow[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    fetch(`${ROUTE}/side-questions?session=${encodeURIComponent(sessionId)}`)
+      .then((r) => readJson<{ items: AsideRow[] } | { error: string }>(r))
+      .then((b) => {
+        if (!live) return;
+        if ("error" in b) setError(b.error);
+        else setItems(b.items ?? []);
+      })
+      .catch((e: Error) => live && setError(e.message));
+    return () => {
+      live = false;
+    };
+  }, [sessionId]);
+
+  if (error !== null) return <span style={{ color: T.err, fontSize: 12 }}>{error}</span>;
+  if (items === null) return <span style={{ ...meta, padding: "2px 4px" }}>Loading…</span>;
+  if (items.length === 0) {
+    return (
+      <div style={{ ...meta, padding: "4px 10px", fontSize: 12, whiteSpace: "normal" }}>
+        No asides in this session. Ask one with <code style={code}>/btw</code> — the answer docks
+        above the composer instead of joining the transcript, and lands here.
+      </div>
+    );
+  }
+
+  return (
+    <div style={bodyFlow}>
+      {items.toReversed().map((it) => (
+        <div key={it.id} style={{ padding: "4px 10px", fontSize: 12, lineHeight: "1.5" }}>
+          <div style={{ color: T.text, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+            {it.question}
+          </div>
+          <div
+            style={{
+              marginTop: 2,
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+              color: it.error !== undefined ? T.err : T.faint,
+            }}
+          >
+            {it.pending ? "Waiting for an answer…" : (it.answer ?? it.error ?? "")}
+          </div>
+          <div style={{ ...meta, fontSize: 11, marginTop: 2 }}>
+            {ago(it.at)}
+            {it.dismissed === true ? " · dismissed" : ""}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /**
  * Single consolidated trigger for the Oh My Claude panel. One button replaces the five legacy
  * composer-slot buttons (Restore, Memory, Rewind, Changes, MCP). Clicking it opens a tabbed
@@ -2365,6 +2440,7 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
     { key: "Rewind", label: "Rewind" },
     { key: "Changes", label: "Changes" },
     { key: "MCP", label: "MCP" },
+    { key: "Asides", label: "Asides" },
     { key: "Diagnostics", label: "Diagnostics" },
     { key: "Tasks", label: "Tasks" },
     { key: "Tune", label: "Tune" },
@@ -2433,6 +2509,7 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
             {tab === "Rewind" && <RewindBody sessionId={sessionId} ctx={ctx} onClose={close} />}
             {tab === "Changes" && <ChangesBody sessionId={sessionId} ctx={ctx} />}
             {tab === "MCP" && <McpBody sessionId={sessionId} ctx={ctx} onClose={close} />}
+            {tab === "Asides" && <AsidesBody sessionId={sessionId} />}
             {tab === "Diagnostics" && <DiagnosticsBody sessionId={sessionId} ctx={ctx} />}
             {tab === "Tasks" && <TasksBody sessionId={sessionId} ctx={ctx} />}
             {tab === "Tune" && <TuneBody sessionId={sessionId} />}

@@ -173,6 +173,9 @@ export interface AsideEntry {
     error?: string;
     pending: boolean;
     at: number;
+    /** Set when the user closes the card. The entry stays in the ring so the panel's Asides tab can
+     *  still show the answer; only the docked bubble filters these out. */
+    dismissed?: boolean;
 }
 /** One user prompt of a session's transcript, as the Rewind list shows it. */
 export interface RewindPrompt {

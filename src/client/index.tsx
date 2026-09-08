@@ -2524,17 +2524,25 @@ const ensureFoldStyle = () => {
   // it, a 6px gap to the title, and both sizes carrying `--dsh-content-font-delta` so the header grows
   // with the user's content font size the way a dsh tool row does. Fixed pixels made ours read a hair
   // small for anyone who raised that setting. Colour comes from the same tokens: tertiary for the
-  // icon, secondary for the text and the chevron. The box is `vertical-align:middle`, not a hand-tuned
-  // offset: a fixed em nudge only centres at one font size and sat below the baseline at others.
+  // icon, secondary for the text and the chevron.
+  //
+  // Vertical centring is the fiddly part. `vertical-align:middle` centres on the baseline plus half
+  // the x-height, which sits about a pixel below the middle of the capitals, so the icon read low next
+  // to the title. The box is centred on cap height instead: both glyphs are absolutely positioned, so
+  // the box has no in-flow content and its baseline is its own bottom edge, and a length
+  // `vertical-align` then places that edge exactly. `cap` is the right unit for it; the `em`
+  // approximation above it is the fallback for a browser without `cap` units, where the whole
+  // declaration would otherwise be dropped and the icon would sit on the baseline.
   const box = "calc(16px + var(--dsh-content-font-delta,0px))";
   const glyphSize = "calc(14px + var(--dsh-content-font-delta,0px))";
+  const half = "8px - var(--dsh-content-font-delta,0px)/2"; // half the leading box, for the baseline offset
   el.textContent = [
     `${head}{user-select:none;font-size:var(--dsh-content-font-size-secondary,13px);color:var(--dsw-alias-label-secondary)}`,
     `${fold}{cursor:pointer}`,
-    `${head} ${lead}{position:relative;display:inline-flex;align-items:center;justify-content:center;width:${box};height:${box};vertical-align:middle;margin-right:6px;color:var(--dsw-alias-label-tertiary)}`,
+    `${head} ${lead}{position:relative;display:inline-block;width:${box};height:${box};margin-right:6px;color:var(--dsw-alias-label-tertiary);vertical-align:calc(.36em - ${half});vertical-align:calc(.5cap - ${half})}`,
     `${head} ${lead} svg{width:${glyphSize};height:${glyphSize}}`,
-    `${head} ${lead}>[data-omc-part]{display:inline-flex;align-items:center;justify-content:center;transition:opacity .1s}`,
-    `${head} ${lead}>[data-omc-part="chevron"]{position:absolute;inset:0;margin:auto;opacity:0;color:var(--dsw-alias-label-secondary)}`,
+    `${head} ${lead}>[data-omc-part]{position:absolute;inset:0;display:inline-flex;align-items:center;justify-content:center;transition:opacity .1s}`,
+    `${head} ${lead}>[data-omc-part="chevron"]{opacity:0;color:var(--dsw-alias-label-secondary)}`,
     `${fold}:hover ${lead}>[data-omc-part="icon"]{opacity:0}`,
     `${fold}:hover ${lead}>[data-omc-part="chevron"]{opacity:1}`,
     `${head}[${HEAD_MARK}="1"]+.md-code-block{display:none}`,
@@ -2883,6 +2891,7 @@ interface AsideItem {
   error?: string;
   pending: boolean;
   at: number;
+  dismissed?: boolean;
 }
 
 /**
@@ -2936,7 +2945,10 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
     };
   }, [ctx, sessionId]);
 
-  const shown = items.filter((it) => !dismissed.has(it.id));
+  // Server-side `dismissed` (a closed card, which the route marks and keeps) and the local set (this
+  // click, before the next poll confirms it) both hide a card here. The entry itself stays in the ring
+  // for the panel's Asides tab.
+  const shown = items.filter((it) => !it.dismissed && !dismissed.has(it.id));
   // No `activeClaudeSession` gate here either: the card shows this session's own persisted asides,
   // which only exist for a Claude session, so an empty list is the only reason to hide it. Reading
   // the provider binding at render blinked the card out whenever the binding reloaded.

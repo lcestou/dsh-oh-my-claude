@@ -174,12 +174,17 @@ await Promise.all([
   saveAsides(asidesDir, "a2", [
     { id: "q3", question: "when?", pending: true, at: 300 }, // still spinning; must not restore
   ]),
+  saveAsides(asidesDir, "a4", [
+    // A closed card: dismissed, not deleted, so the Asides tab can still show the answer.
+    { id: "q4", question: "where?", answer: "here", pending: false, at: 400, dismissed: true },
+  ]),
 ]);
 const asides = await loadAsides(asidesDir);
 assert.equal(asides.get("a1")?.length, 2);
 assert.equal(asides.get("a1")?.[0]?.answer, "because");
 assert.equal(asides.get("a1")?.[1]?.error, "no live process");
 assert.equal(asides.get("a2"), undefined); // the lone pending entry dropped, so no key survives
+assert.equal(asides.get("a4")?.[0]?.dismissed, true); // the dismissed flag survives a reload
 
 // A file with junk entries keeps only the well-formed, resolved ones.
 await writeFile(

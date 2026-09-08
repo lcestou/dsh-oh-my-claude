@@ -443,6 +443,7 @@ export async function loadAsides(dir: string): Promise<Map<string, AsideEntry[]>
           const entry: AsideEntry = { id: r.id, question: r.question, pending: false, at: r.at };
           if (typeof r.answer === "string") entry.answer = r.answer;
           if (typeof r.error === "string") entry.error = r.error;
+          if (r.dismissed === true) entry.dismissed = true;
           entries.push(entry);
         }
         if (entries.length > 0) map.set(k, entries);

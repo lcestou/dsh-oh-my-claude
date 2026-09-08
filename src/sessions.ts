@@ -1377,7 +1377,10 @@ export function registerSessionRoutes(
                 return json(res, 200, { items });
               }
               // Dismiss is server-side so a closed card stays closed: a client-only hide is lost on the
-              // next remount and the entry, still in the ring, would poll back into view.
+              // next remount and the entry, still in the ring, would poll back into view. It marks
+              // rather than deletes — the answer stays readable in the panel's Asides tab, which is
+              // the point of persisting asides at all; the bubble is what the user closed, not the
+              // record.
               if (
                 req.method === "POST" &&
                 url.pathname === `${ROUTE_PREFIX}/side-questions/dismiss`
@@ -1386,11 +1389,9 @@ export function registerSessionRoutes(
                 const sid = String(body.session ?? "");
                 const id = String(body.id ?? "");
                 if (!sid || !id) return json(res, 400, { error: "session and id required" });
-                const ring = sideQuestions?.get(sid);
-                if (ring) {
-                  const kept = ring.filter((e) => e.id !== id);
-                  if (kept.length > 0) sideQuestions?.set(sid, kept);
-                  else sideQuestions?.delete(sid);
+                const entry = sideQuestions?.get(sid)?.find((e) => e.id === id);
+                if (entry) {
+                  entry.dismissed = true;
                   persistAsides?.(sid);
                 }
                 return json(res, 200, { ok: true });
