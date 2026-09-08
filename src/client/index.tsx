@@ -2199,9 +2199,13 @@ const flushScans = () => {
 const observeBody = (observer: MutationObserver) => {
   observer.observe(document.body, { childList: true, subtree: true });
 };
-const onBodyMutation = (scan: FrameScan, sync = false) => {
-  (sync ? syncScans : frameScans).add(guard(scan));
-  if (bodyObserver) return;
+/** Register a scan; the returned function removes it again (a React effect's cleanup needs that). */
+const onBodyMutation = (scan: FrameScan, sync = false): (() => void) => {
+  const set = sync ? syncScans : frameScans;
+  const wrapped = guard(scan);
+  set.add(wrapped);
+  const off = () => set.delete(wrapped);
+  if (bodyObserver) return off;
   // The new bundle registers its own scans; this one's would run on top of them against a context
   // that no longer answers.
   whenContextGone(() => {
@@ -2222,6 +2226,7 @@ const onBodyMutation = (scan: FrameScan, sync = false) => {
     requestAnimationFrame(flushScans);
   });
   observeBody(bodyObserver);
+  return off;
 };
 
 function watchContextMeter(ctx: ClientCtx) {
@@ -3268,18 +3273,16 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
         requestAnimationFrame(sync);
       }
     };
-    const observer = new MutationObserver(syncRef.current);
-    // `childList` only. The callback reads the live DOM and ignores the records, and dsh mutates
-    // text hundreds of times a second while a turn streams — each one allocating a record for a
-    // pass that would have run anyway. A text-only change that drops our span still shows up as a
-    // removal, and the one-second fallback below covers anything neither reports.
-    observer.observe(document.body, { childList: true, subtree: true });
+    // The one shared body observer, not a second one of its own: every observer on `document.body`
+    // is handed its own copy of each mutation record, and a streaming turn makes hundreds a second.
+    // The shared one already coalesces to one pass per frame, which is what `sync` wanted.
+    const off = onBodyMutation(() => syncRef.current());
     sync();
     // Fallback for a change no mutation reports at all (a row moved by CSS, a bubble reused).
     const timer = setInterval(sync, 1000);
     return () => {
       clearInterval(timer);
-      observer.disconnect();
+      off();
       syncRef.current = () => {};
       drop();
     };
