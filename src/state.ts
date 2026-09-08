@@ -2,7 +2,8 @@
 // sessions with a turn in flight, the resume trace, the aux scratch dir, and the stored OAuth
 // token for the Models API. This is an I/O boundary: JSON from disk is decoded here and typed
 // values leave.
-import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { AsideEntry, TurnRecord } from "./adapter.js";
@@ -43,6 +44,23 @@ export async function trace(fileOrLine: string, maybeLine?: string): Promise<voi
   } catch {}
 }
 
+/**
+ * Write JSON so a crash mid-write cannot leave half a file behind: into a temp name in the same
+ * directory, then rename over, which is atomic on one filesystem.
+ *
+ * Every store in this module is read-modify-write, and every reader treats an unparseable file as
+ * empty. A truncated write is therefore not the loss of one entry but of the whole ledger: the next
+ * save reads nothing and writes the map back from nothing. The temp name carries a uuid because two
+ * writers to one path would otherwise share it, and the loser's rename would find the file the
+ * winner already moved.
+ */
+async function writeJson(file: string, value: unknown): Promise<void> {
+  await mkdir(dirname(file), { recursive: true });
+  const tmp = `${file}.tmp-${randomUUID()}`;
+  await writeFile(tmp, JSON.stringify(value));
+  await rename(tmp, file);
+}
+
 /** Record (or clear) that a session's turn is running; serialized read-modify-write. */
 export function markBusy(id: string, on: boolean, path = BUSY_FILE): Promise<void> {
   busyChain = busyChain.then(
@@ -55,8 +73,7 @@ export function markBusy(id: string, on: boolean, path = BUSY_FILE): Promise<voi
       if (on ? set.has(id) : !set.has(id)) return;
       if (on) set.add(id);
       else set.delete(id);
-      await mkdir(dirname(path), { recursive: true });
-      await writeFile(path, JSON.stringify([...set]));
+      await writeJson(path, [...set]);
     },
     () => {},
   );
@@ -71,7 +88,7 @@ export async function takeInterrupted(path = BUSY_FILE): Promise<string[]> {
   } catch {
     return [];
   }
-  await writeFile(path, "[]").catch(() => {});
+  await writeJson(path, []).catch(() => {});
   return Array.isArray(ids) ? ids.filter((x): x is string => typeof x === "string") : [];
 }
 
@@ -109,8 +126,7 @@ export function saveLimitWait(dir: string, sessionId: string, resetAt: number | 
     const map = await loadLimitWaits(dir);
     if (resetAt === undefined) map.delete(sessionId);
     else map.set(sessionId, resetAt);
-    await mkdir(dir, { recursive: true });
-    await writeFile(LIMIT_WAITS_FILE(dir), JSON.stringify(Object.fromEntries(map)));
+    await writeJson(LIMIT_WAITS_FILE(dir), Object.fromEntries(map));
   });
   limitChain = run.catch(() => {});
   return run;
@@ -158,8 +174,7 @@ export async function rememberStarted(
   if (keep) set.add(id);
   else set.delete(id);
   try {
-    await mkdir(dirname(stateFile), { recursive: true });
-    await writeFile(stateFile, JSON.stringify([...set]));
+    await writeJson(stateFile, [...set]);
   } catch {
     /* state is an optimization only */
   }
@@ -206,8 +221,7 @@ export async function noteBoot(file: string, now = Date.now()): Promise<number |
       previous = parsed.at;
   } catch {}
   try {
-    await mkdir(dirname(file), { recursive: true });
-    await writeFile(file, JSON.stringify({ at: now }));
+    await writeJson(file, { at: now });
   } catch {}
   return previous === undefined ? undefined : now - previous;
 }
@@ -324,8 +338,7 @@ export function savePermissionMode(
     else map.set(sessionId, mode);
     const obj: Record<string, string | null> = {};
     for (const [k, v] of map) obj[k] = v;
-    await mkdir(dirname(file), { recursive: true });
-    await writeFile(file, JSON.stringify(obj));
+    await writeJson(file, obj);
   });
   // The caller sees a failed write; the chain itself carries on for the next save.
   permissionModesChain = run.catch(() => {});
@@ -408,8 +421,7 @@ export function saveTurnRecords(
       }
     } catch {}
     obj[sessionId] = records;
-    await mkdir(dirname(file), { recursive: true });
-    await writeFile(file, JSON.stringify(obj));
+    await writeJson(file, obj);
   });
   turnsChain = run.catch(() => {});
   return run;
@@ -468,8 +480,7 @@ export function saveAsides(dir: string, sessionId: string, entries: AsideEntry[]
       }
     } catch {}
     obj[sessionId] = entries;
-    await mkdir(dirname(file), { recursive: true });
-    await writeFile(file, JSON.stringify(obj));
+    await writeJson(file, obj);
   });
   asidesChain = run.catch(() => {});
   return run;
@@ -511,8 +522,7 @@ export function saveStarter(dir: string, key: string, text: string | undefined):
     } catch {}
     if (text === undefined || text.trim() === "") delete obj[key];
     else obj[key] = text;
-    await mkdir(dirname(file), { recursive: true });
-    await writeFile(file, JSON.stringify(obj));
+    await writeJson(file, obj);
   });
   startersChain = run.catch(() => {});
   return run;

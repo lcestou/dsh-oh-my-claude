@@ -1,6 +1,6 @@
 // Offline self-check: bun src/state.test.ts. No CLI, no network.
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -218,4 +218,15 @@ starters = await loadStarters(startersDir);
 assert.equal(starters.get("s1"), undefined);
 assert.equal(starters.get("default"), "what changed?");
 console.log("starters ok");
+// Every store lands through a temp file and a rename, so a crash mid-write cannot leave a half
+// file the next read would treat as empty and the next save would write back from. Nothing of that
+// is left behind afterwards.
+for (const d of [dir, startersDir, asidesDir])
+  assert.deepEqual(
+    (await readdir(d)).filter((n) => n.includes(".tmp-")),
+    [],
+    "no temp file survives a save",
+  );
+console.log("atomic writes ok");
+
 console.log("state.test: ok");
