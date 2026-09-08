@@ -613,6 +613,14 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     }): Promise<TurnPrep>;
     /** Claude slash commands already registered as dsh commands, name → disposer. */
     readonly bridged: Map<string, () => void>;
+    /**
+     * This plugin's own commands, which share the `bridged` map so one disposer list covers all of
+     * them. They are never Claude's, so the bridge must not register them as passthroughs and the
+     * catalog file must not carry them: the catalog is the union of what it held and what was
+     * bridged, so once they slipped in, every later boot bridged `/btw` to Claude first and the real
+     * handler saw the name taken and stood down (2026-09-08: "/btw isn't available in this environment").
+     */
+    static readonly OWN_COMMANDS: Set<string>;
     /** dsh session id → the tool names its last init frame reported; absent until one arrives. */
     readonly sessionTools: Map<string, string[]>;
     /**

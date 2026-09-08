@@ -1838,6 +1838,14 @@ export class ClaudeCodeAdapter extends LlmAdapter {
 
   /** Claude slash commands already registered as dsh commands, name → disposer. */
   readonly bridged = new Map<string, () => void>();
+  /**
+   * This plugin's own commands, which share the `bridged` map so one disposer list covers all of
+   * them. They are never Claude's, so the bridge must not register them as passthroughs and the
+   * catalog file must not carry them: the catalog is the union of what it held and what was
+   * bridged, so once they slipped in, every later boot bridged `/btw` to Claude first and the real
+   * handler saw the name taken and stood down (2026-09-08: "/btw isn't available in this environment").
+   */
+  static readonly OWN_COMMANDS = new Set(["temporary", "btw"]);
   /** dsh session id → the tool names its last init frame reported; absent until one arrives. */
   readonly sessionTools = new Map<string, string[]>();
 
@@ -1854,7 +1862,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     (globalThis as { [COMMAND_CATALOG]?: string[] })[COMMAND_CATALOG] = names;
     const failed: string[] = [];
     for (const cmd of names) {
-      if (this.bridged.has(cmd)) continue;
+      if (ClaudeCodeAdapter.OWN_COMMANDS.has(cmd) || this.bridged.has(cmd)) continue;
       // Claude's own name where dsh has no answer for it: `/llama` reads as the command it is,
       // where `/claude-llama` read as some other command entirely. The prefix is the fallback.
       //
@@ -1935,7 +1943,12 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // and dsh re-instantiates this plugin at boot, so a second instance starts with an empty
     // `bridged` map. Both wrote a menu of one over a menu of 152.
     void loadCommandCatalog(this.stateDir).then((saved) =>
-      saveCommandCatalog(this.stateDir, [...new Set([...saved, ...this.bridged.keys()])]),
+      saveCommandCatalog(
+        this.stateDir,
+        [...new Set([...saved, ...this.bridged.keys()])].filter(
+          (cmd) => !ClaudeCodeAdapter.OWN_COMMANDS.has(cmd),
+        ),
+      ),
     );
     this.registerTemporaryCommand(commands);
     this.registerAsideCommand(commands);

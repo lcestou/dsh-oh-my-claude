@@ -2916,6 +2916,16 @@ console.log("plan-review ok");
     "Claude's own names, prefixed only where dsh's client half owns one, plus /temporary and /btw",
   );
   assert.equal(a.bridged.size, 4, "compact, model, temporary and btw");
+  // A catalog that already carries the plugin's own names (every catalog saved before 2026-09-08
+  // did) must not bridge them to Claude: the real handler would then find the name taken.
+  const again = new ClaudeCodeAdapter(fakeCtx(guarded), Config({ commandBridge: true }));
+  registered.length = 0;
+  again.bridgeCommands(["btw", "temporary", "verify"], undefined);
+  assert.deepEqual(
+    registered,
+    ["verify", "temporary", "btw"],
+    "own names skipped by the bridge, registered by their own handlers",
+  );
 }
 
 // A name dsh already owns throws on the bare registration; the prefixed name is the fallback, so
@@ -2972,6 +2982,10 @@ console.log("plan-review ok");
   await new Promise((r) => setTimeout(r, 50));
   const after = await loadCommandCatalog(dir);
   assert.ok(after.includes("llama") && after.includes("mint"), `kept the earlier names: ${after}`);
+  assert.ok(
+    !after.includes("btw") && !after.includes("temporary"),
+    `the plugin's own commands stay out of the catalog: ${after}`,
+  );
 }
 console.log("command-catalog-live ok");
 console.log("command-bridge ok");
