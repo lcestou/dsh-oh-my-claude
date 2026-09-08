@@ -2943,6 +2943,14 @@ console.log("plan-review ok");
     ["llama", "mint", "compact"],
     "every bridged name, not the last frame",
   );
+  // And a second instance over the same state dir — dsh re-instantiates the plugin when settings
+  // apply at boot — adds to the file rather than replacing it with its own short catalog.
+  const b = new ClaudeCodeAdapter(fakeCtx(base), Config({ commandBridge: true }));
+  b.stateDir = dir;
+  b.bridgeCommands(["compact"], undefined);
+  await new Promise((r) => setTimeout(r, 50));
+  const after = await loadCommandCatalog(dir);
+  assert.ok(after.includes("llama") && after.includes("mint"), `kept the earlier names: ${after}`);
 }
 console.log("command-catalog-live ok");
 console.log("command-bridge ok");
