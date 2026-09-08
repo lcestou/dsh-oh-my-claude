@@ -1,3 +1,4 @@
+import { type FsBox } from "./remote-fs.js";
 import type { FoldedTranscript } from "./transcript.js";
 /** One scheduled task, from either the durable file or the session transcript. */
 export interface ScheduledTask {
@@ -26,11 +27,12 @@ export interface ScheduledTasksError {
 /** The name of the file the CLI persists durable tasks to, for a project directory. */
 export declare const durableTasksPath: (cwd: string) => string;
 /**
- * The durable tasks of a project. A missing file is no tasks, which is the ordinary case; a file
- * that exists and does not parse is an error the tab must show, because silently reading it as
- * empty would say "nothing is scheduled" about a file nobody could read.
+ * The durable tasks of a project, read from the box the session runs on. A missing file is no
+ * tasks, which is the ordinary case; a file that exists and does not parse is an error the tab must
+ * show, because silently reading it as empty would say "nothing is scheduled" about a file nobody
+ * could read — and a box that cannot be reached throws for the same reason.
  */
-export declare function readDurableTasks(cwd: string): Promise<ScheduledTask[]>;
+export declare function readDurableTasks(box: FsBox, cwd: string): Promise<ScheduledTask[]>;
 /**
  * The session-only tasks a transcript shows, which is the only place they appear: `durable: false`
  * is the CLI's default and those jobs live in the process's memory until it exits. A later

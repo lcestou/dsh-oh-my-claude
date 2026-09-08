@@ -1,3 +1,4 @@
+import { type FsBox } from "./remote-fs.js";
 export interface MemoryFile {
     name: string;
     size: number;
@@ -9,7 +10,14 @@ export interface MemoryFile {
 export declare const isMemoryName: (name: string) => boolean;
 /** The `description:` line of the frontmatter, else "". */
 export declare function memorySummary(text: string): string;
-export declare function listMemory(dir: string): Promise<MemoryFile[]>;
+/**
+ * The memory files with their size, age and summary.
+ *
+ * ponytail: one read per file, which on a box is one ssh round trip each — they share a control
+ * socket and run at once, and a memory dir holds tens of files, not thousands. Fold them into a
+ * single remote script the day a directory is big enough to feel it.
+ */
+export declare function listMemory(box: FsBox, dir: string): Promise<MemoryFile[]>;
 /** Drops every index line that links `name`, so the index stays in step after a delete. */
 export declare function dropIndexLine(index: string, name: string): string;
-export declare function deleteMemory(dir: string, name: string): Promise<void>;
+export declare function deleteMemory(box: FsBox, dir: string, name: string): Promise<void>;

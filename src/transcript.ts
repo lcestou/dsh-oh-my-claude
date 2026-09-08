@@ -2,7 +2,8 @@
 // session started in the terminal can be opened in dsh with its history and resumed from there.
 // This is an I/O boundary: transcript lines are decoded here and typed shapes leave.
 import { createReadStream } from "node:fs";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
+import { readAt, type FsBox } from "./remote-fs.js";
 import { createInterface } from "node:readline";
 import { join } from "node:path";
 import type { JsonValue } from "./dsh.js";
@@ -513,9 +514,18 @@ export function toSessionEvents(folded: FoldedTranscript): SeedEvent[] {
 export const subagentsDir = (path: string): string =>
   join(path.endsWith(".jsonl") ? path.slice(0, -".jsonl".length) : path, "subagents");
 
-/** Reads and parses a Claude Code transcript file into folded turns, subagents included. */
-export async function readTranscript(path: string): Promise<FoldedTranscript> {
-  const folded = foldTranscript(await readFile(path, "utf8"));
+/**
+ * Reads and parses a Claude Code transcript into folded turns, subagents included, from the box the
+ * session runs on. Answers undefined when there is no such file; a box that cannot be reached
+ * throws, rather than reading as a session with no history.
+ */
+export async function readTranscript(
+  box: FsBox,
+  path: string,
+): Promise<FoldedTranscript | undefined> {
+  const file = await readAt(box, path);
+  if (file === null) return undefined;
+  const folded = foldTranscript(file.text);
   if (folded.agents.size === 0) return folded;
   const dir = subagentsDir(path);
   const texts = new Map<string, string>();
@@ -523,8 +533,8 @@ export async function readTranscript(path: string): Promise<FoldedTranscript> {
     [...folded.agents].map(async ([callId, agentId]) => {
       // A subagent file that is not there is normal: the directory is a 2.1 addition, and a run the
       // CLI never finished writing has none. The Task call resumes without its text either way.
-      const text = await readFile(join(dir, `agent-${agentId}.jsonl`), "utf8").catch(() => null);
-      if (text !== null) texts.set(callId, text);
+      const text = await readAt(box, join(dir, `agent-${agentId}.jsonl`)).catch(() => null);
+      if (text !== null) texts.set(callId, text.text);
     }),
   );
   attachSubagents(folded, texts);

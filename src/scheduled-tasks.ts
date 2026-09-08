@@ -2,8 +2,8 @@
 // project's own `.claude/scheduled_tasks.json`; session-only ones are never written anywhere, so
 // the only trace of them is the CronCreate call in the transcript. This is an I/O boundary: the
 // file and the folded transcript are decoded here, and every field is defaulted.
-import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { readTextAt, type FsBox } from "./remote-fs.js";
 import type { FoldedTranscript } from "./transcript.js";
 import type { JsonValue } from "./dsh.js";
 
@@ -75,17 +75,14 @@ const taskFrom = (raw: unknown, durable: boolean): ScheduledTask | undefined => 
 };
 
 /**
- * The durable tasks of a project. A missing file is no tasks, which is the ordinary case; a file
- * that exists and does not parse is an error the tab must show, because silently reading it as
- * empty would say "nothing is scheduled" about a file nobody could read.
+ * The durable tasks of a project, read from the box the session runs on. A missing file is no
+ * tasks, which is the ordinary case; a file that exists and does not parse is an error the tab must
+ * show, because silently reading it as empty would say "nothing is scheduled" about a file nobody
+ * could read — and a box that cannot be reached throws for the same reason.
  */
-export async function readDurableTasks(cwd: string): Promise<ScheduledTask[]> {
-  let text: string;
-  try {
-    text = await readFile(durableTasksPath(cwd), "utf8");
-  } catch {
-    return [];
-  }
+export async function readDurableTasks(box: FsBox, cwd: string): Promise<ScheduledTask[]> {
+  const text = await readTextAt(box, durableTasksPath(cwd));
+  if (text === null) return [];
   let parsed: JsonValue;
   try {
     // SAFETY: the value is used only through taskFrom, which checks every field it reads.

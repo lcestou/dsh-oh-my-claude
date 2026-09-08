@@ -75,16 +75,16 @@ const transcript = (calls: Array<{ name: string; input: Record<string, unknown> 
 // A missing file is no tasks; a file that does not parse is an error rather than a quiet empty list.
 {
   const dir = await mkdtemp(join(tmpdir(), "omc-tasks-"));
-  assert.deepEqual(await readDurableTasks(dir), []);
+  assert.deepEqual(await readDurableTasks({}, dir), []);
   await mkdir(join(dir, ".claude"), { recursive: true });
   const path = join(dir, ".claude", "scheduled_tasks.json");
   await writeFile(path, "{ not json");
-  await assert.rejects(() => readDurableTasks(dir), /scheduled_tasks\.json/);
+  await assert.rejects(() => readDurableTasks({}, dir), /scheduled_tasks\.json/);
   await writeFile(
     path,
     JSON.stringify({ tasks: [{ id: "digest", cron: "0 8 * * *", nextRun: 1_757_212_800_000 }] }),
   );
-  const tasks = await readDurableTasks(dir);
+  const tasks = await readDurableTasks({}, dir);
   assert.deepEqual(tasks, [
     {
       name: "digest",
@@ -95,7 +95,7 @@ const transcript = (calls: Array<{ name: string; input: Record<string, unknown> 
     },
   ]);
   await writeFile(path, JSON.stringify([{ name: "bare list", schedule: "@daily" }]));
-  assert.equal((await readDurableTasks(dir))[0]?.name, "bare list");
+  assert.equal((await readDurableTasks({}, dir))[0]?.name, "bare list");
 }
 
 console.log("scheduled-tasks: ok");

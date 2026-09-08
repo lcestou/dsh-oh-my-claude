@@ -1,7 +1,10 @@
 // Claude Code's auto-memory for a workspace: `<project dir>/memory/*.md`, one fact per file,
 // with `MEMORY.md` as the one-line index Claude loads each session.
-import { readdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
+//
+// Every read and write goes through `remote-fs`, so a session running on an SSH box lists and edits
+// that box's memories rather than this PC's. A box that is this PC still lands on `node:fs`.
 import { join } from "node:path";
+import { listNamesAt, readAt, readTextAt, removeAt, writeAt, type FsBox } from "./remote-fs.js";
 
 export interface MemoryFile {
   name: string;
@@ -20,19 +23,36 @@ export function memorySummary(text: string): string {
   return m?.[1]?.trim() ?? "";
 }
 
-export async function listMemory(dir: string): Promise<MemoryFile[]> {
-  const names = (await readdir(dir).catch((): string[] => [])).filter(isMemoryName);
+/**
+ * The memory files with their size, age and summary.
+ *
+ * ponytail: one read per file, which on a box is one ssh round trip each — they share a control
+ * socket and run at once, and a memory dir holds tens of files, not thousands. Fold them into a
+ * single remote script the day a directory is big enough to feel it.
+ */
+export async function listMemory(box: FsBox, dir: string): Promise<MemoryFile[]> {
+  const names = (await listNamesAt(box, dir).catch((): string[] => [])).filter(isMemoryName);
   const files = await Promise.all(
     names.map(async (name) => {
-      const path = join(dir, name);
-      const [s, text] = await Promise.all([stat(path), readFile(path, "utf8")]);
-      return { name, size: s.size, mtime: s.mtimeMs, summary: memorySummary(text) };
+      // A file listed a moment ago can be gone by the time it is read; it drops out of the list
+      // rather than failing the whole tab.
+      const read = await readAt(box, join(dir, name));
+      return read === null
+        ? null
+        : {
+            name,
+            size: Buffer.byteLength(read.text, "utf8"),
+            mtime: read.mtimeMs,
+            summary: memorySummary(read.text),
+          };
     }),
   );
   // Index first, then newest first.
-  return files.toSorted((a, b) =>
-    a.name === "MEMORY.md" ? -1 : b.name === "MEMORY.md" ? 1 : b.mtime - a.mtime,
-  );
+  return files
+    .filter((f): f is MemoryFile => f !== null)
+    .toSorted((a, b) =>
+      a.name === "MEMORY.md" ? -1 : b.name === "MEMORY.md" ? 1 : b.mtime - a.mtime,
+    );
 }
 
 /** Drops every index line that links `name`, so the index stays in step after a delete. */
@@ -43,12 +63,12 @@ export function dropIndexLine(index: string, name: string): string {
     .join("\n");
 }
 
-export async function deleteMemory(dir: string, name: string): Promise<void> {
-  await unlink(join(dir, name));
+export async function deleteMemory(box: FsBox, dir: string, name: string): Promise<void> {
+  await removeAt(box, join(dir, name));
   if (name === "MEMORY.md") return;
   const indexPath = join(dir, "MEMORY.md");
-  const index = await readFile(indexPath, "utf8").catch(() => null);
+  const index = await readTextAt(box, indexPath);
   if (index === null) return;
   const next = dropIndexLine(index, name);
-  if (next !== index) await writeFile(indexPath, next, "utf8");
+  if (next !== index) await writeAt(box, indexPath, next);
 }

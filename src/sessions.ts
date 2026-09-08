@@ -8,7 +8,12 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { hostname } from "node:os";
 import { readdir, readFile, writeFile, rename, copyFile, stat, mkdir, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { listTranscripts, readTranscript, toSessionEvents } from "./transcript.js";
+import {
+  listTranscripts,
+  readTranscript,
+  toSessionEvents,
+  type FoldedTranscript,
+} from "./transcript.js";
 import { shq, sshArgs } from "./process.js";
 import { homeAt, isEnoent, readAt, writeAt, type FsBox } from "./remote-fs.js";
 import type { TranscriptListItem } from "./transcript.js";
@@ -48,6 +53,7 @@ import {
   pluginScopeNeedsCwd,
 } from "./plugins.js";
 import { PERMISSION_MODES, isPermissionMode } from "./state.js";
+import { projectDirName } from "./adapter.js";
 import type {
   PermissionModeInfo,
   PermissionModeReply,
@@ -863,7 +869,9 @@ async function openTranscriptOnce(
       });
     return { id: owned.id, existed: true };
   }
-  const folded = await readTranscript(join(projectDir(cwd), `${id}.jsonl`));
+  // This PC: the archive lists only local transcripts, so an opened one is always here.
+  const folded = await readTranscript({}, join(projectDir(cwd), `${id}.jsonl`));
+  if (folded === undefined) throw new Error("transcript not found");
   if (folded.turns.length === 0) throw new Error("transcript has no completed turn");
   const seed = toSessionEvents(folded);
   const session = ctx.sessions.prepare(asSessionId(id), {
@@ -894,6 +902,14 @@ export interface MountBox {
  */
 const claudeHomeOf = async (box: MountBox): Promise<string> =>
   box.sshHost ? `${await homeAt(box)}/.claude` : box.configDir;
+
+/**
+ * Where that box keeps a workspace's transcripts and its auto-memory. The same directory the
+ * adapter's own `projectDir` names for this PC, resolved against the box's `~/.claude` instead —
+ * the cwd is already the remote path, since it is the directory the session runs in.
+ */
+const projectDirAt = async (box: MountBox, cwd: string): Promise<string> =>
+  join(await claudeHomeOf(box), "projects", projectDirName(cwd));
 
 /** Everything the routes need from the adapter. */
 export interface SessionRouteOptions {
@@ -979,22 +995,17 @@ export interface SessionRouteOptions {
   continueAfterLimit?: boolean;
 }
 
-/** The transcript file of a dsh session: under its Claude id (sessions the adapter started) or
- *  its own id (sessions restored from a transcript), whichever exists. */
-async function transcriptPathFor(
+/** The transcript of a dsh session, read from the box it runs on: under its Claude id (sessions the
+ *  adapter started) or its own id (sessions restored from a transcript), whichever exists. */
+async function sessionTranscript(
+  box: MountBox,
   dir: string,
   sessionId: string,
   claudeIdOf: (id: string) => string,
-): Promise<string | undefined> {
+): Promise<FoldedTranscript | undefined> {
   for (const id of [claudeIdOf(sessionId), sessionId]) {
-    const path = join(dir, `${id}.jsonl`);
-    if (
-      await stat(path).then(
-        () => true,
-        () => false,
-      )
-    )
-      return path;
+    const folded = await readTranscript(box, join(dir, `${id}.jsonl`));
+    if (folded !== undefined) return folded;
   }
   return undefined;
 }
@@ -1151,29 +1162,31 @@ export function registerSessionRoutes(
                   return json(res, 400, {
                     error: "cwd must be a directory a dsh session is open in",
                   });
-                const dir = join(projectDir(cwd), "memory");
+                const box = boxOf(url);
+                const dir = join(await projectDirAt(box, cwd), "memory");
                 const name = url.searchParams.get("name") ?? body.name;
                 if (req.method === "GET" && name === undefined)
-                  return json(res, 200, { dir, files: await listMemory(dir) });
+                  return json(res, 200, { dir, files: await listMemory(box, dir) });
                 if (!validMemoryName(name))
                   return json(res, 400, { error: "name must be a .md file" });
                 const path = join(dir, name);
                 if (req.method === "GET") {
-                  const text = await readFile(path, "utf8").catch(() => null);
-                  return text === null
+                  // No catch: a box that cannot be reached is a 500 the tab shows, not a 404 that
+                  // opens the memory blank for the next Save to write over.
+                  const read = await readAt(box, path);
+                  return read === null
                     ? json(res, 404, { error: "not found" })
-                    : json(res, 200, { text });
+                    : json(res, 200, { text: read.text });
                 }
                 if (req.method === "PUT") {
                   if (typeof body.text !== "string")
                     return json(res, 400, { error: "text required" });
-                  await mkdir(dir, { recursive: true });
-                  await writeFile(path, body.text, "utf8");
+                  await writeAt(box, path, body.text);
                   log("info", `memory ${name} saved (${body.text.length} chars)`);
                   return json(res, 200, { ok: true });
                 }
                 if (req.method === "DELETE") {
-                  await deleteMemory(dir, name);
+                  await deleteMemory(box, dir, name);
                   log("info", `memory ${name} deleted`);
                   return json(res, 200, { ok: true });
                 }
@@ -1642,9 +1655,14 @@ export function registerSessionRoutes(
                 const cwd = url.searchParams.get("cwd") ?? "";
                 if (!sid || !validCwd(cwd))
                   return json(res, 400, { error: "session and an absolute cwd required" });
-                const path = await transcriptPathFor(projectDir(cwd), sid, claudeIdOf);
-                if (!path) return json(res, 200, { prompts: [] });
-                const folded = await readTranscript(path);
+                const box = boxOf(url);
+                const folded = await sessionTranscript(
+                  box,
+                  await projectDirAt(box, cwd),
+                  sid,
+                  claudeIdOf,
+                );
+                if (folded === undefined) return json(res, 200, { prompts: [] });
                 const prompts: RewindPrompt[] = folded.turns
                   .map((t) => ({
                     id: t.id,
@@ -1980,9 +1998,14 @@ export function registerSessionRoutes(
                 try {
                   // The durable file and the transcript answer different halves: the file holds
                   // what survives a restart, the transcript is the only record of the rest.
-                  const durable = await readDurableTasks(cwd);
-                  const path = await transcriptPathFor(projectDir(cwd), sid, claudeIdOf);
-                  const folded = path ? await readTranscript(path) : undefined;
+                  const box = boxOf(url);
+                  const durable = await readDurableTasks(box, cwd);
+                  const folded = await sessionTranscript(
+                    box,
+                    await projectDirAt(box, cwd),
+                    sid,
+                    claudeIdOf,
+                  );
                   const reply: ScheduledTasksReply = {
                     ok: true,
                     durable,

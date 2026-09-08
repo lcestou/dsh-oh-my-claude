@@ -1,3 +1,4 @@
+import { type FsBox } from "./remote-fs.js";
 import type { JsonValue } from "./dsh.js";
 /** Truncate to a byte budget without splitting a character. */
 export declare function truncateBytes(text: string, max: number): string;
@@ -109,8 +110,12 @@ export interface SeedEvent {
 export declare function toSessionEvents(folded: FoldedTranscript): SeedEvent[];
 /** Where 2.1 keeps a session's subagent transcripts: a directory beside the session's own file. */
 export declare const subagentsDir: (path: string) => string;
-/** Reads and parses a Claude Code transcript file into folded turns, subagents included. */
-export declare function readTranscript(path: string): Promise<FoldedTranscript>;
+/**
+ * Reads and parses a Claude Code transcript into folded turns, subagents included, from the box the
+ * session runs on. Answers undefined when there is no such file; a box that cannot be reached
+ * throws, rather than reading as a session with no history.
+ */
+export declare function readTranscript(box: FsBox, path: string): Promise<FoldedTranscript | undefined>;
 /** A Claude Code transcript copied under a new id, cut before the (keep+1)-th human prompt so a
  *  dsh fork at an earlier turn rewinds Claude too. keep <= 0 keeps everything. */
 export declare function forkTranscriptText(text: string, fromId: string, toId: string, keep: number): string;

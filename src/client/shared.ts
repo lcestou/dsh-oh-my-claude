@@ -271,6 +271,9 @@ export const boxQuery = (ctx: ClientCtx, id: string): string => {
   return provider === undefined ? "" : `?provider=${encodeURIComponent(provider)}`;
 };
 
+/** The same box, for a URL that already carries a query string. */
+export const boxParam = (ctx: ClientCtx, id: string): string => boxQuery(ctx, id).replace("?", "&");
+
 /** Whether a session, open or not, runs on one of this plugin's mounts (`claude-code*`). */
 export const isClaudeSession = (ctx: ClientCtx, id: string): boolean =>
   claudeProviderOf(ctx, id) !== undefined;

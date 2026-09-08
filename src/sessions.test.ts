@@ -13,6 +13,7 @@ import {
   isSettingsScope,
   SETTINGS_SCOPES,
 } from "./sessions.js";
+import { projectDirName } from "./adapter.js";
 import type { InstructionFile } from "./instructions.js";
 
 // probeBox forwards init.method and init.body, plus content-type when body is set. Fake fetch, no network.
@@ -119,8 +120,8 @@ import type { InstructionFile } from "./instructions.js";
   } as any;
   registerSessionRoutes(ctx, {
     log: () => {},
-    projectDir: (cwd: string) => join(tmp, "projects", cwd),
-    projectsDir: join(tmp, "projects"),
+    projectDir: (cwd: string) => join(tmp, "claude", "projects", projectDirName(cwd)),
+    projectsDir: join(tmp, "claude", "projects"),
     startedIds: async () => [],
     claudeIdOf: (id: string) => id,
     configDir: join(tmp, "claude"),
@@ -199,11 +200,33 @@ import type { InstructionFile } from "./instructions.js";
   assert.equal(r.files[0].name, "a.md");
   assert.equal(r.files[0].summary, "fact a");
   r = await respond("GET", `${mem}&name=a.md`);
-  assert.equal(r.text, "---\ndescription: fact a\n---\nA");
+  // Writes go through `remote-fs`, which ends every file it writes with a newline.
+  assert.equal(r.text, "---\ndescription: fact a\n---\nA\n");
   r = await respond("DELETE", `${mem}&name=a.md`);
   assert.equal(r.ok, true);
   r = await respond("GET", `${mem}&name=a.md`);
   assert.equal(r.error, "not found");
+
+  // Memory follows the session's own mount: a save from a session on another box lands in that
+  // box's project dir, and this box's list never shows it.
+  r = await respond(
+    "PUT",
+    "/dsh-oh-my-claude/memory?provider=claude-code-other",
+    JSON.stringify({ cwd, name: "b.md", text: "---\ndescription: fact b\n---\nB\n" }),
+  );
+  assert.equal(r.ok, true);
+  r = await respond("GET", `${mem}&provider=claude-code-other`);
+  assert.deepEqual(
+    (r.files as { name: string }[]).map((f) => f.name),
+    ["b.md"],
+    "the other box lists its own memories",
+  );
+  assert.equal(
+    await readFile(join(tmp, "other", "projects", projectDirName(cwd), "memory", "b.md"), "utf8"),
+    "---\ndescription: fact b\n---\nB\n",
+  );
+  r = await respond("GET", mem);
+  assert.deepEqual(r.files, [], "this box did not gain the other box's memory");
 
   // Diagnostics: the tab renders on `ok`, so a reply without it reads as the failure shape and
   // draws an empty error line. Assert the flag is there, not only that the fields are.
@@ -277,12 +300,13 @@ import type { InstructionFile } from "./instructions.js";
     assert.equal(r.error, `${what} do not reach an SSH box yet`, `${path} refuses an ssh box`);
   }
   // Rewind prompt list: user prompts of the session's transcript, newest first, by uuid.
+  await mkdir(join(tmp, "claude", "projects", projectDirName(cwd)), { recursive: true });
   const rw = `/dsh-oh-my-claude/rewind?session=sid1&cwd=${encodeURIComponent(cwd)}`;
   r = await respond("GET", rw);
   assert.deepEqual(r.prompts, [], "no transcript: empty list");
   const line = (o: object) => JSON.stringify(o) + "\n";
   await writeFile(
-    join(tmp, "projects", cwd, "sid1.jsonl"),
+    join(tmp, "claude", "projects", projectDirName(cwd), "sid1.jsonl"),
     line({
       type: "user",
       uuid: "u-1",

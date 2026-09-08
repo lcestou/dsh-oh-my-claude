@@ -13,6 +13,7 @@ import {
   activeClaudeSession,
   claudeProviderOf,
   boxQuery,
+  boxParam,
   type ClientCtx,
   type SessionData,
   useNarrow,
@@ -185,7 +186,15 @@ function MemoryBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  const q = cwd ? `cwd=${encodeURIComponent(cwd)}` : "";
+  // Every call names the session's own mount, so a session on a box lists and edits that box's
+  // memories rather than this PC's.
+  const provider = claudeProviderOf(ctx, sessionId);
+  const q = [
+    cwd ? `cwd=${encodeURIComponent(cwd)}` : "",
+    provider === undefined ? "" : `provider=${encodeURIComponent(provider)}`,
+  ]
+    .filter((p) => p !== "")
+    .join("&");
   const refresh = (signal?: AbortSignal) => {
     if (!cwd) return;
     fetch(`${ROUTE}/memory?${q}`, { signal })
@@ -207,7 +216,7 @@ function MemoryBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
       clearInterval(timer);
       stop.abort();
     };
-  }, [cwd]);
+  }, [q]);
 
   const openFile = async (n: string) => {
     setError("");
@@ -228,7 +237,7 @@ function MemoryBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
     setError("");
     try {
       await readJson(
-        await fetch(`${ROUTE}/memory`, {
+        await fetch(`${ROUTE}/memory?${q}`, {
           method: "PUT",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ cwd, name: file, text }),
@@ -811,7 +820,9 @@ function RewindBody({
     setPicked(null);
     setPreview(null);
     setError("");
-    fetch(`${ROUTE}/rewind?session=${encodeURIComponent(sessionId)}&cwd=${encodeURIComponent(cwd)}`)
+    fetch(
+      `${ROUTE}/rewind?session=${encodeURIComponent(sessionId)}&cwd=${encodeURIComponent(cwd)}${boxParam(ctx, sessionId)}`,
+    )
       .then((r) => readJson<{ prompts?: RewindPrompt[] }>(r))
       .then((b) => live && setPrompts(b.prompts ?? []))
       .catch((e: Error) => live && setError(e.message));
@@ -1694,7 +1705,9 @@ function TasksBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
     // The route reads the running session's transcript; with none there is nothing to list.
     if (!running) return;
     let live = true;
-    fetch(`${ROUTE}/scheduled-tasks?session=${encodeURIComponent(sessionId)}`)
+    fetch(
+      `${ROUTE}/scheduled-tasks?session=${encodeURIComponent(sessionId)}${boxParam(ctx, sessionId)}`,
+    )
       .then((r) => readJson<ScheduledTasksReply | ScheduledTasksError>(r))
       .then((b) => live && setData(b))
       .catch((e: Error) => live && setData({ ok: false, error: e.message }));
