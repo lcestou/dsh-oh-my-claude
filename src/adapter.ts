@@ -2632,7 +2632,19 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       join(this.stateDir, "resume.log"),
       `mcp_reconnect dsh for ${sessionId}: gave up: ${last}`,
     );
+    // The usual reason: the session is not open in any tab, so dsh has no live agent for it and the
+    // bridge answers "no live agent". A turn is the moment there is one.
+    proc.bridgeStale = true;
     return false;
+  }
+
+  /** A stale bridge gets one more reconnect, at a turn boundary, when dsh does have the agent. */
+  async reconnectIfStale(proc: ClaudeProcess, sessionId: string): Promise<void> {
+    if (!proc.bridgeStale) return;
+    proc.bridgeStale = false;
+    // One try, no wait: the web server is up (this request came through it) and a miss now is a
+    // real miss, not the boot race the post-adoption retries cover.
+    await this.reconnectBridge(proc, sessionId, 0, 1);
   }
 
   /** The box a session's turn runs on (an SSH box, or a remote workspace's host), or undefined for a
@@ -3219,6 +3231,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         yield { type: "finish", reason: { kind: "stop" } };
         return;
       }
+      // Before the prompt, never inside a turn: a reconnect is a control request on the same stdin.
+      if (cont.mode === "prompt" && !wakeOnly) await this.reconnectIfStale(proc, options.sessionId);
       if (!wakeOnly) this.openTurn(cont, proc, prep);
       this.armIdle(options.sessionId, proc);
       for (;;) {

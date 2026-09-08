@@ -566,6 +566,10 @@ export declare class ClaudeProcess {
     relayed?: Set<string>;
     steerPending: boolean;
     parked: "steer" | undefined;
+    /** The CLI's `dsh` MCP session belongs to a dsh that is gone (adopted after a restart) and the
+     *  reconnect after adoption gave up, because dsh had no live agent for the session yet. The next
+     *  turn, which implies one, asks once more before its prompt goes out. */
+    bridgeStale: boolean;
     /** Set by the idle watchdog when it kills the process. */
     idleKilled: boolean;
     /** The silence it was allowed before that kill: longer while a tool call is out. */

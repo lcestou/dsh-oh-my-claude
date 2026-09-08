@@ -781,6 +781,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * bridge not up yet) means nothing to reconnect to. Retries every retryMs for attempts tries, since the web server listens several seconds after adoption.
      */
     reconnectBridge(proc: ClaudeProcess, sessionId: string, retryMs?: number, attempts?: number): Promise<boolean>;
+    /** A stale bridge gets one more reconnect, at a turn boundary, when dsh does have the agent. */
+    reconnectIfStale(proc: ClaudeProcess, sessionId: string): Promise<void>;
     /** The box a session's turn runs on (an SSH box, or a remote workspace's host), or undefined for a
      * local turn. Mirrors prepare()'s targetHost so a logged-out error names the right machine: a
      * purpose one-shot (title/compaction) always runs on the local claude for the default provider. */

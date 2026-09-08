@@ -3589,6 +3589,15 @@ console.log("interrupt-on-abort ok");
   written.length = 0;
   assert.equal(await adapter.reconnectBridge(proc, "s", 1, 2), false, "gives up after attempts");
   assert.equal(written.length, 2);
+  // Giving up marks the bridge stale; the next turn boundary asks once more, and once only.
+  assert.equal(proc.bridgeStale, true, "a failed reconnect is remembered on the process");
+  failures = 0;
+  written.length = 0;
+  await adapter.reconnectIfStale(proc, "s");
+  assert.equal(written.length, 1, "one reconnect at the turn boundary");
+  assert.equal(proc.bridgeStale, false, "and the mark is cleared");
+  await adapter.reconnectIfStale(proc, "s");
+  assert.equal(written.length, 1, "a bridge that is not stale is left alone");
   console.log("mcp-reconnect ok");
 }
 
