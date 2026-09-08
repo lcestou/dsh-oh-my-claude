@@ -524,7 +524,7 @@ export class Translator {
         // task block is closed.
         if (event.subtype === "task_started") {
           const taskId = event.task_id;
-          const startLine = `▶ Task${event.is_backgrounded ? " (background)" : ""}: ${event.description ?? taskId ?? "?"}${event.subagent_type ? ` [${event.subagent_type}]` : ""}`;
+          const startLine = `Task${event.is_backgrounded ? " (background)" : ""}: ${event.description ?? taskId ?? "?"}${event.subagent_type ? ` [${event.subagent_type}]` : ""}`;
           if (!taskId) {
             return this.wholeBlock("reasoning", startLine);
           }
@@ -546,7 +546,7 @@ export class Translator {
           const output = usage.output_tokens ?? 0;
           let progressLine = "";
           if (toolNameChanged) {
-            progressLine += `▶ ${clip(toolName)}`;
+            progressLine += `${clip(toolName)}`;
             if (input > 0 || output > 0) progressLine += ` · ${input}→${output}t`;
             entry.lastToolName = toolName;
           }
@@ -561,7 +561,7 @@ export class Translator {
           const taskId = event.task_id ?? "";
           const entry = this.taskBlocks.get(taskId);
           const summary = (event.summary ?? "").trim();
-          const completionLine = `■ Task ${event.status ?? "done"}: ${summary ? clip(summary) : taskId || "?"}`;
+          const completionLine = `Task ${event.status ?? "done"}: ${summary ? clip(summary) : taskId || "?"}`;
           if (!entry) {
             return this.wholeBlock("reasoning", completionLine);
           }
@@ -587,7 +587,7 @@ export class Translator {
           const error = typeof patch.error === "string" ? patch.error.trim() : "";
           const events = this.delta(
             entry.block,
-            `\n■ Task ${status}${error ? `: ${clip(error)}` : ""}`,
+            `\nTask ${status}${error ? `: ${clip(error)}` : ""}`,
           );
           events.push(...this.endBlock(entry.block));
           this.taskBlocks.delete(event.task_id ?? "");
@@ -979,7 +979,7 @@ export class Translator {
       if (cb.id) this.dshIds.add(cb.id);
       return ["text", `⤷ ${toolName.slice("mcp__dsh__".length)} `];
     }
-    return ["reasoning", `▶ ${cb.name} `];
+    return ["reasoning", `${cb.name} `];
   }
 
   /** The CLI's per-call progress frame. Two variants reach a headless run: a 30-second heartbeat

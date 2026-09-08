@@ -375,7 +375,7 @@ se({
   index: 1,
   delta: { type: "input_json_delta", partial_json: '{"a":1}' },
 });
-assert.equal(se({ type: "content_block_stop", index: 1 })[0].block.text, '▶ Read {"a":1}');
+assert.equal(se({ type: "content_block_stop", index: 1 })[0].block.text, 'Read {"a":1}');
 assert.deepEqual(
   tr.translate({ type: "assistant", message: { content: [{ type: "text", text: "dup" }] } }),
   [],
@@ -1637,7 +1637,7 @@ console.log("ok");
     summary: "all green",
   });
   assert.equal(done.at(-1).type, "block-end", "notification closes the task block");
-  assert.match(done.at(-1).block.text, /■ Task completed: all green$/);
+  assert.match(done.at(-1).block.text, /Task completed: all green$/);
   assert.equal(t.taskBlocks.has("t1"), false, "the closed task leaves the map");
   // A notification for a task nothing opened still reports itself, as its own closed line.
   const orphan = t.translate({
@@ -1648,7 +1648,7 @@ console.log("ok");
     summary: "boom",
   });
   assert.equal(orphan.at(-1).type, "block-end");
-  assert.equal(orphan.at(-1).block.text, "■ Task failed: boom");
+  assert.equal(orphan.at(-1).block.text, "Task failed: boom");
   // background_tasks_changed is silent.
   const t4 = new Translator() as any;
   assert.deepEqual(
@@ -1792,7 +1792,7 @@ console.log("ok");
     patch: { status: "failed", error: "worker crashed" },
   });
   assert.equal(killed.at(-1).type, "block-end");
-  assert.match(killed.at(-1).block.text, /■ Task failed: worker crashed$/);
+  assert.match(killed.at(-1).block.text, /Task failed: worker crashed$/);
   assert.equal(t.taskBlocks.has("t1"), false, "a terminal status leaves the map");
   // Same status twice, and a task nothing opened: both silent.
   const t2 = new Translator() as any;

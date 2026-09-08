@@ -2714,7 +2714,12 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   const visibleRef = useRef(true);
 
   useEffect(() => {
-    if (activeClaudeSession(ctx) !== sessionId) return;
+    // No `activeClaudeSession` gate here. It reads the session's provider binding, which is briefly
+    // undefined during a restart or a rebind; an effect that ran in that window returned before
+    // installing the interval and, with `[ctx, sessionId]` stable, never ran again — so the cost never
+    // appeared for that tab until it was reloaded. This is the same fault the `/btw` card had (#210).
+    // The route is per-session and the render below decides whether to draw, so polling unconditionally
+    // costs one request per ten seconds and removes the dead window.
     let alive = true;
     const fetchTurns = async () => {
       try {
