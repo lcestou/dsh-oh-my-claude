@@ -1183,6 +1183,15 @@ export function mcpToolsByServer(
 const MCP_TOOL_PREFIX = "mcp__";
 /** Bridged Claude commands are registered as `/claude-<name>` in dsh. */
 const BRIDGE_PREFIX = "claude-";
+/**
+ * Names dsh's own client half owns, which the host registry cannot answer for. A host command of
+ * one of these makes dsh's menu throw where it merges the two lists ("contribution /X collides with
+ * a host command"), and the menu goes blank rather than losing one row. Read out of dsh's client
+ * bundles, where a contribution is a `commandUi.register({ name })`; a host command dsh registers
+ * normally needs no entry here, since its own registry throws on the duplicate and the bridge falls
+ * back to the prefixed name.
+ */
+const CLIENT_COMMANDS = new Set(["model"]);
 /** Claude's rename command, and the alias its catalog also offers. */
 const RENAME_COMMANDS = new Set(["rename", "name"]);
 /**
@@ -1827,14 +1836,19 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const failed: string[] = [];
     for (const cmd of names) {
       if (this.bridged.has(cmd)) continue;
-      // Prefixed on the dsh side: dsh's command menu throws when a host command name collides
-      // with a client-side contribution, and Claude's catalog is 200 names long (2026-09-05, the
-      // whole menu went blank). The line handed to Claude keeps the bare name.
-      const dshName = `${BRIDGE_PREFIX}${cmd}`;
+      // Claude's own name where dsh has no answer for it: `/llama` reads as the command it is,
+      // where `/claude-llama` read as some other command entirely. The prefix is the fallback.
+      //
+      // Two ways a taken name hurts, so both are guarded. dsh's registry throws when a second host
+      // owns a name, which the catch below turns into the prefixed registration. Its menu throws —
+      // and blanks, all 200 names at once (2026-09-05) — when a host command shadows a client
+      // contribution the registry cannot see, so those names never take the bare form at all.
+      const prefixed = `${BRIDGE_PREFIX}${cmd}`;
+      const dshName = CLIENT_COMMANDS.has(cmd) ? prefixed : cmd;
       if (agent && commands.find(agent, dshName) !== undefined) continue;
-      try {
-        const dispose = commands.register({
-          name: dshName,
+      const define = (dshCommand: string) =>
+        commands.register({
+          name: dshCommand,
           description: `Claude Code /${cmd}`,
           input: { hint: "<arguments>" },
           handler: ({ agent: target, rawInput }) => {
@@ -1872,9 +1886,20 @@ export class ClaudeCodeAdapter extends LlmAdapter {
             };
           },
         });
-        this.bridged.set(cmd, dispose);
+      try {
+        this.bridged.set(cmd, define(dshName));
       } catch (error) {
-        failed.push(`/${cmd}: ${errorText(error)}`);
+        // The bare name was already someone's. The prefixed one is still worth having: it is what
+        // this bridge shipped as, and it cannot collide with a name dsh registered under its own.
+        if (dshName === prefixed) {
+          failed.push(`/${cmd}: ${errorText(error)}`);
+          continue;
+        }
+        try {
+          this.bridged.set(cmd, define(prefixed));
+        } catch (second) {
+          failed.push(`/${cmd}: ${errorText(second)}`);
+        }
       }
     }
     if (failed.length > 0)

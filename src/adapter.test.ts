@@ -2888,13 +2888,36 @@ console.log("plan-review ok");
     },
   });
   const a = new ClaudeCodeAdapter(fakeCtx(guarded), Config({ commandBridge: true }));
-  a.bridgeCommands(["compact"], undefined);
+  a.bridgeCommands(["compact", "model"], undefined);
   assert.deepEqual(
     registered,
-    ["claude-compact", "temporary", "btw"],
-    "the prefixed catalog plus /temporary and /btw",
+    ["compact", "claude-model", "temporary", "btw"],
+    "Claude's own names, prefixed only where dsh's client half owns one, plus /temporary and /btw",
   );
-  assert.equal(a.bridged.size, 3, "compact, temporary and btw");
+  assert.equal(a.bridged.size, 4, "compact, model, temporary and btw");
+}
+
+// A name dsh already owns throws on the bare registration; the prefixed name is the fallback, so
+// the command still reaches the menu instead of dropping out of the catalog.
+{
+  const registered: string[] = [];
+  const commands = {
+    register: (d: { name: string }) => {
+      if (d.name === "compact") throw new Error('command "compact" is already registered');
+      registered.push(d.name);
+      return () => {};
+    },
+    find: () => undefined,
+  };
+  const base = {
+    on() {},
+    logger: { info() {}, warn() {} },
+    get: (n: string) => (n === "commands" ? commands : undefined),
+  };
+  const a = new ClaudeCodeAdapter(fakeCtx(base), Config({ commandBridge: true }));
+  a.bridgeCommands(["compact"], undefined);
+  assert.ok(registered.includes("claude-compact"), "fell back to the prefixed name");
+  assert.equal(a.bridged.has("compact"), true, "and the command is bridged either way");
 }
 console.log("command-bridge ok");
 
