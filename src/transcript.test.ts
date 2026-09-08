@@ -3,7 +3,15 @@ import assert from "node:assert/strict";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { foldTranscript, listTranscripts, toSessionEvents, truncateBytes } from "./transcript.js";
+import {
+  attachSubagents,
+  foldTranscript,
+  listTranscripts,
+  subagentText,
+  subagentsDir,
+  toSessionEvents,
+  truncateBytes,
+} from "./transcript.js";
 import {
   authFromStatus,
   dshSessionsFor,
@@ -392,6 +400,134 @@ assert.ok(validateBoxes("nope").error);
     fakeFetch as unknown as typeof fetch,
   );
   assert.match((deadResult as { ok: false; error: string }).error, /ECONNREFUSED/);
+}
+
+// Subagents: a Task result names the subagent that answered it, and that subagent's own text lives
+// in `<session>/subagents/agent-<id>.jsonl`. Resumed, it belongs behind the Task call, which is
+// where the live run showed it — otherwise a Task resumes as a call and a result with nothing in
+// between, and the work the subagent did is missing from the session for good.
+{
+  const withTask = [
+    line({
+      type: "user",
+      uuid: "s1",
+      timestamp: T,
+      message: { role: "user", content: [{ type: "text", text: "delegate this" }] },
+    }),
+    line({
+      type: "assistant",
+      uuid: "s2",
+      timestamp: T,
+      message: {
+        id: "m1",
+        role: "assistant",
+        model: "claude-opus-4-8",
+        content: [
+          { type: "text", text: "handing off" },
+          { type: "tool_use", id: "toolu_1", name: "Task", input: { prompt: "go" } },
+        ],
+      },
+    }),
+    line({
+      type: "user",
+      uuid: "s3",
+      timestamp: T,
+      toolUseResult: { status: "completed", agentId: "a1f2", description: "scout" },
+      message: {
+        role: "user",
+        content: [{ type: "tool_result", tool_use_id: "toolu_1", content: "done" }],
+      },
+    }),
+  ].join("\n");
+
+  const folded = foldTranscript(withTask);
+  assert.deepEqual([...folded.agents], [["toolu_1", "a1f2"]]);
+
+  const agentFile = [
+    line({ type: "user", isSidechain: true, message: { role: "user", content: "go" } }),
+    line({
+      type: "assistant",
+      isSidechain: true,
+      message: {
+        role: "assistant",
+        content: [
+          { type: "text", text: "read the file" },
+          { type: "tool_use", id: "toolu_x", name: "Read", input: {} },
+        ],
+      },
+    }),
+    line({
+      type: "assistant",
+      isSidechain: true,
+      message: { role: "assistant", content: [{ type: "text", text: "found it" }] },
+    }),
+  ].join("\n");
+  // The subagent's tool calls stay out: the live row folds its text only.
+  assert.equal(subagentText(agentFile), "read the file\nfound it");
+  assert.equal(subagentText(agentFile, 4), "read");
+
+  attachSubagents(folded, new Map([["toolu_1", agentFile]]));
+  const step = folded.turns[0]?.steps[0];
+  assert.ok(step);
+  assert.deepEqual(
+    step.content.map((b) => b.type),
+    ["text", "tool-call", "reasoning"],
+  );
+  const said = step.content[2];
+  assert.equal(
+    said?.type === "reasoning" ? said.text : "",
+    "\u21b3 subagent\nread the file\nfound it",
+  );
+
+  // A call whose subagent file could not be read keeps the shape it has today.
+  const bare = foldTranscript(withTask);
+  attachSubagents(bare, new Map());
+  assert.deepEqual(
+    bare.turns[0]?.steps[0]?.content.map((b) => b.type),
+    ["text", "tool-call"],
+  );
+
+  // Two results in one record leave the agent unclaimed rather than pinning it to the wrong call.
+  const twoResults = foldTranscript(
+    [
+      line({
+        type: "user",
+        uuid: "s1",
+        timestamp: T,
+        message: { role: "user", content: [{ type: "text", text: "two" }] },
+      }),
+      line({
+        type: "assistant",
+        uuid: "s2",
+        timestamp: T,
+        message: {
+          id: "m1",
+          role: "assistant",
+          content: [
+            { type: "tool_use", id: "toolu_1", name: "Task", input: {} },
+            { type: "tool_use", id: "toolu_2", name: "Task", input: {} },
+          ],
+        },
+      }),
+      line({
+        type: "user",
+        uuid: "s3",
+        timestamp: T,
+        toolUseResult: { agentId: "a1f2" },
+        message: {
+          role: "user",
+          content: [
+            { type: "tool_result", tool_use_id: "toolu_1", content: "a" },
+            { type: "tool_result", tool_use_id: "toolu_2", content: "b" },
+          ],
+        },
+      }),
+    ].join("\n"),
+  );
+  assert.equal(twoResults.agents.size, 0);
+
+  // The subagents directory hangs off the session's id, beside the transcript file itself.
+  assert.equal(subagentsDir("/p/x/1234.jsonl"), join("/p/x/1234", "subagents"));
 }
 
 console.log("transcript ok");

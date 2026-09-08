@@ -30,6 +30,21 @@ export type SeedBlock = {
     name: string;
     arguments: string;
 };
+/**
+ * What a subagent said, from its own transcript: its assistant text, its tool calls left out.
+ *
+ * This is what the live view shows — the CLI forwards a subagent's messages as whole assistant
+ * messages and the translator folds them into one reasoning row each (`↳ subagent`) — so a resumed
+ * Task reads the way the same run did while it was running instead of a call with nothing between
+ * it and its result.
+ */
+export declare function subagentText(text: string, limit?: number): string;
+/**
+ * Fold each subagent's own text into the step that called it, right behind the Task call, which is
+ * where the live run put it. `texts` is keyed by Task call id; a subagent whose file could not be
+ * read is simply not there, and its call resumes the way it does today.
+ */
+export declare function attachSubagents(folded: FoldedTranscript, texts: Map<string, string>): void;
 /** One tool call's outcome inside a folded step. */
 export interface FoldedResult {
     content: Array<{
@@ -67,11 +82,18 @@ export interface FoldedTranscript {
     turns: FoldedTurn[];
     title: string | undefined;
     createdAt: number;
+    /** Task call id to the subagent that answered it, for the records kept in a file of their own. */
+    agents: Map<string, string>;
 }
 /**
  * Fold a transcript into turns: one user prompt, then assistant steps (one per Claude message id)
- * with their tool calls and results. Sidechains (Claude's own subagents) and unfinished trailing
- * prompts are dropped; the seed must end on a completed turn.
+ * with their tool calls and results. Unfinished trailing prompts are dropped; the seed must end on
+ * a completed turn.
+ *
+ * A subagent's own records are not folded here. On 2.1 they are not in this file at all — they live
+ * in `<session>/subagents/agent-<id>.jsonl` and are attached by `attachSubagents` — and the inline
+ * `isSidechain` records older transcripts carry are skipped, because the turn they belong to is the
+ * Task call that spawned them rather than a prompt of the user's own.
  */
 export declare function foldTranscript(text: string): FoldedTranscript;
 /** One dsh session event as the seed writes it: the shapes dsh persists itself. */
@@ -85,7 +107,9 @@ export interface SeedEvent {
 }
 /** dsh session events for folded turns. Shapes follow what dsh writes itself; seqs are contiguous from 0. */
 export declare function toSessionEvents(folded: FoldedTranscript): SeedEvent[];
-/** Reads and parses a Claude Code transcript file into folded turns. */
+/** Where 2.1 keeps a session's subagent transcripts: a directory beside the session's own file. */
+export declare const subagentsDir: (path: string) => string;
+/** Reads and parses a Claude Code transcript file into folded turns, subagents included. */
 export declare function readTranscript(path: string): Promise<FoldedTranscript>;
 /** A Claude Code transcript copied under a new id, cut before the (keep+1)-th human prompt so a
  *  dsh fork at an earlier turn rewinds Claude too. keep <= 0 keeps everything. */

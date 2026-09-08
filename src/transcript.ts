@@ -10,6 +10,8 @@ import { NATIVE_TOOL_MAP } from "./adapter.js";
 
 const UUID_FILE = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/;
 const RESULT_TEXT_LIMIT = 4000;
+/** A subagent can talk for pages; the resumed step shows the same amount a tool result gets. */
+const SUBAGENT_TEXT_LIMIT = 4000;
 const TITLE_BYTES = 80;
 
 /** A decoded transcript line: any JSON object. Fields are read with narrowing, never assumed. */
@@ -200,6 +202,51 @@ const resultBlocks = (content: unknown): Array<{ type: "text"; text: string }> =
   return text ? [{ type: "text", text: truncateBytes(text, RESULT_TEXT_LIMIT) }] : [];
 };
 
+/** The subagent a Task result names, from the `toolUseResult` the CLI writes beside the result. */
+const agentIdOf = (result: unknown): string | undefined => {
+  if (!isRec(result)) return undefined;
+  return typeof result.agentId === "string" && result.agentId ? result.agentId : undefined;
+};
+
+/**
+ * What a subagent said, from its own transcript: its assistant text, its tool calls left out.
+ *
+ * This is what the live view shows — the CLI forwards a subagent's messages as whole assistant
+ * messages and the translator folds them into one reasoning row each (`↳ subagent`) — so a resumed
+ * Task reads the way the same run did while it was running instead of a call with nothing between
+ * it and its result.
+ */
+export function subagentText(text: string, limit = SUBAGENT_TEXT_LIMIT): string {
+  const said: string[] = [];
+  for (const line of stripBom(text).split("\n")) {
+    const rec = parseLine(line);
+    if (rec?.type !== "assistant") continue;
+    const msg = isRec(rec.message) ? rec.message : undefined;
+    for (const b of textBlocks(msg?.content)) said.push(b.text);
+  }
+  return truncateBytes(said.join("\n").trim(), limit);
+}
+
+/**
+ * Fold each subagent's own text into the step that called it, right behind the Task call, which is
+ * where the live run put it. `texts` is keyed by Task call id; a subagent whose file could not be
+ * read is simply not there, and its call resumes the way it does today.
+ */
+export function attachSubagents(folded: FoldedTranscript, texts: Map<string, string>): void {
+  if (texts.size === 0) return;
+  for (const turn of folded.turns)
+    for (const step of turn.steps)
+      // Backwards, so an insert cannot shift a block this loop has not looked at yet.
+      for (let i = step.content.length - 1; i >= 0; i--) {
+        const block = step.content[i];
+        if (block?.type !== "tool-call") continue;
+        const file = texts.get(block.id);
+        if (file === undefined) continue;
+        const said = subagentText(file);
+        if (said) step.content.splice(i + 1, 0, { type: "reasoning", text: `↳ subagent\n${said}` });
+      }
+}
+
 /** One tool call's outcome inside a folded step. */
 export interface FoldedResult {
   content: Array<{ type: "text"; text: string }>;
@@ -230,18 +277,26 @@ export interface FoldedTranscript {
   turns: FoldedTurn[];
   title: string | undefined;
   createdAt: number;
+  /** Task call id to the subagent that answered it, for the records kept in a file of their own. */
+  agents: Map<string, string>;
 }
 
 /**
  * Fold a transcript into turns: one user prompt, then assistant steps (one per Claude message id)
- * with their tool calls and results. Sidechains (Claude's own subagents) and unfinished trailing
- * prompts are dropped; the seed must end on a completed turn.
+ * with their tool calls and results. Unfinished trailing prompts are dropped; the seed must end on
+ * a completed turn.
+ *
+ * A subagent's own records are not folded here. On 2.1 they are not in this file at all — they live
+ * in `<session>/subagents/agent-<id>.jsonl` and are attached by `attachSubagents` — and the inline
+ * `isSidechain` records older transcripts carry are skipped, because the turn they belong to is the
+ * Task call that spawned them rather than a prompt of the user's own.
  */
 export function foldTranscript(text: string): FoldedTranscript {
   const turns: FoldedTurn[] = [];
   let cur: FoldedTurn | undefined;
   let title: string | undefined;
   let createdAt: number | undefined;
+  const agents = new Map<string, string>();
   const close = () => {
     if (cur?.steps.length) turns.push(cur);
     cur = undefined;
@@ -260,15 +315,19 @@ export function foldTranscript(text: string): FoldedTranscript {
       if (results.length) {
         const step = cur?.steps.at(-1);
         if (!step) continue;
-        for (const r of results)
-          step.results.set(
-            typeof r.tool_use_id === "string" ? r.tool_use_id : String(r.tool_use_id),
-            {
-              content: resultBlocks(r.content),
-              isError: r.is_error === true,
-              time: timeOf(rec, step.time),
-            },
-          );
+        // A Task's result carries the id of the subagent that ran it, and the record holds one
+        // result, so the id belongs to that call. Two results in a record leave it unclaimed rather
+        // than guessing which call the subagent answered.
+        const agent = agentIdOf(rec.toolUseResult);
+        for (const r of results) {
+          const id = typeof r.tool_use_id === "string" ? r.tool_use_id : String(r.tool_use_id);
+          if (agent !== undefined && results.length === 1) agents.set(id, agent);
+          step.results.set(id, {
+            content: resultBlocks(r.content),
+            isError: r.is_error === true,
+            time: timeOf(rec, step.time),
+          });
+        }
         continue;
       }
       if (rec.isMeta) continue;
@@ -332,7 +391,7 @@ export function foldTranscript(text: string): FoldedTranscript {
     }
   }
   close();
-  return { turns, title, createdAt: createdAt ?? Date.now() };
+  return { turns, title, createdAt: createdAt ?? Date.now(), agents };
 }
 
 /** A tool result as the seed writes it into a user message. */
@@ -450,9 +509,26 @@ export function toSessionEvents(folded: FoldedTranscript): SeedEvent[] {
   return events;
 }
 
-/** Reads and parses a Claude Code transcript file into folded turns. */
+/** Where 2.1 keeps a session's subagent transcripts: a directory beside the session's own file. */
+export const subagentsDir = (path: string): string =>
+  join(path.endsWith(".jsonl") ? path.slice(0, -".jsonl".length) : path, "subagents");
+
+/** Reads and parses a Claude Code transcript file into folded turns, subagents included. */
 export async function readTranscript(path: string): Promise<FoldedTranscript> {
-  return foldTranscript(await readFile(path, "utf8"));
+  const folded = foldTranscript(await readFile(path, "utf8"));
+  if (folded.agents.size === 0) return folded;
+  const dir = subagentsDir(path);
+  const texts = new Map<string, string>();
+  await Promise.all(
+    [...folded.agents].map(async ([callId, agentId]) => {
+      // A subagent file that is not there is normal: the directory is a 2.1 addition, and a run the
+      // CLI never finished writing has none. The Task call resumes without its text either way.
+      const text = await readFile(join(dir, `agent-${agentId}.jsonl`), "utf8").catch(() => null);
+      if (text !== null) texts.set(callId, text);
+    }),
+  );
+  attachSubagents(folded, texts);
+  return folded;
 }
 
 /** A Claude Code transcript copied under a new id, cut before the (keep+1)-th human prompt so a
