@@ -188,14 +188,25 @@ const orphan = foldTranscript(
   ].join("\n"),
 );
 const orphanEvents = toSessionEvents(orphan);
-// SAFETY: orphan transcript produces exactly one tool/result event with empty content
+// SAFETY: orphan transcript produces exactly one tool/result event, seeded as the error below
 const orphanResult = orphanEvents.find((e) => e.type === "tool/result");
 assert.ok(orphanResult);
-const orphanContent = (orphanResult.data.message as { content: Array<{ content?: unknown }> })
-  .content[0];
+const orphanContent = (
+  orphanResult.data.message as {
+    content: Array<{ content?: Array<{ text?: string }>; isError?: boolean }>;
+  }
+).content[0];
 assert.ok(orphanContent);
-assert.deepEqual(orphanContent.content, []);
+// A call the session died inside resumes as an error, not as a tool that returned nothing: the
+// empty success seeded here before erased the one fact the file still had.
+assert.equal(orphanContent.isError, true);
+assert.match(orphanContent.content?.[0]?.text ?? "", /session ended here/);
 assert.equal(orphan.title, "run it");
+
+// Claude's PascalCase tool name is mapped to the name dsh's presenter table is keyed by, so a
+// resumed Bash call draws the same row it draws live.
+const orphanCall = orphanEvents.find((e) => e.type === "tool/call");
+assert.equal(orphanCall?.data.name, "bash");
 
 assert.equal(truncateBytes("héllo", 3), "hé");
 

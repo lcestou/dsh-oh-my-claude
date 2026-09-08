@@ -6,6 +6,7 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { join } from "node:path";
 import type { JsonValue } from "./dsh.js";
+import { NATIVE_TOOL_MAP } from "./adapter.js";
 
 const UUID_FILE = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/;
 const RESULT_TEXT_LIMIT = 4000;
@@ -15,6 +16,22 @@ const TITLE_BYTES = 80;
 type Rec = Record<string, unknown>;
 
 const isRec = (v: unknown): v is Rec => typeof v === "object" && v !== null && !Array.isArray(v);
+
+/**
+ * Claude's own tool name as dsh's presenter table keys it. Live, the translator maps `Bash` to
+ * `bash` before the row is written, but a resumed transcript carries Claude's PascalCase verbatim —
+ * and dsh's `TOOL_VARIANTS` is lowercase-keyed, so every native tool degraded to a generic sparkle
+ * row on resume while the same tool rendered properly live.
+ */
+const toolNameOf = (name: unknown): string => {
+  const raw = String(name ?? "tool");
+  // SAFETY: NATIVE_TOOL_MAP is a closed literal type; keyof narrows the index to its known keys,
+  // and an unlisted name reads as undefined, which falls back to Claude's own spelling.
+  return NATIVE_TOOL_MAP[raw as keyof typeof NATIVE_TOOL_MAP] ?? raw;
+};
+
+/** A leading byte-order mark, dropped: with it the first line is not JSON and the record is lost. */
+const stripBom = (text: string): string => (text.charCodeAt(0) === 0xfe_ff ? text.slice(1) : text);
 
 const parseLine = (line: string): Rec | undefined => {
   try {
@@ -229,7 +246,7 @@ export function foldTranscript(text: string): FoldedTranscript {
     if (cur?.steps.length) turns.push(cur);
     cur = undefined;
   };
-  for (const line of text.split("\n")) {
+  for (const line of stripBom(text).split("\n")) {
     const rec = parseLine(line);
     if (!rec || rec.isSidechain) continue;
     if (rec.type === "summary" && typeof rec.summary === "string") {
@@ -257,11 +274,16 @@ export function foldTranscript(text: string): FoldedTranscript {
       if (rec.isMeta) continue;
       const prompt = textBlocks(msg?.content);
       if (prompt.length === 0) continue;
+      const plain = promptText(msg?.content);
+      // Slash-command echoes, hook stdout and system reminders are stored as user lines, but they
+      // are injections, not prompts: live they never render as a turn of their own, and copying
+      // them in gave a resumed session user bubbles full of `<command-message>` markup. Checked
+      // before `close()`, so an injection between a prompt and its answer does not end the turn.
+      if (isNoise(plain)) continue;
       close();
       const time = timeOf(rec, Date.now());
       createdAt ??= time;
-      const plain = promptText(msg?.content);
-      if (!title && !isNoise(plain)) title = titleFrom(plain);
+      if (!title) title = titleFrom(plain);
       cur = {
         id: typeof rec.uuid === "string" ? rec.uuid : `u${turns.length}`,
         time,
@@ -296,14 +318,15 @@ export function foldTranscript(text: string): FoldedTranscript {
         else if (b.type === "tool_use" && typeof b.id === "string") {
           // SAFETY: a tool_use input is the JSON object Claude sent; any JSON object is a JsonValue map
           const args = isRec(b.input) ? (b.input as Record<string, JsonValue>) : {};
+          const name = toolNameOf(b.name);
           // dsh keeps tool-call arguments as a JSON string (its token meter reads `.length`).
           step.content.push({
             type: "tool-call",
             id: b.id,
-            name: String(b.name ?? "tool"),
+            name,
             arguments: JSON.stringify(args),
           });
-          step.calls.push({ id: b.id, name: String(b.name ?? "tool"), arguments: args });
+          step.calls.push({ id: b.id, name, arguments: args });
         }
       }
     }
@@ -333,13 +356,19 @@ export interface SeedEvent {
 /** dsh session events for folded turns. Shapes follow what dsh writes itself; seqs are contiguous from 0. */
 export function toSessionEvents(folded: FoldedTranscript): SeedEvent[] {
   const events: SeedEvent[] = [];
+  // Record times are copied from the transcript, where a tool result can be stamped later than the
+  // `turn/end` that follows it (Claude writes the result when it arrives, not when the turn closed).
+  // dsh reads these events in order, so a time that goes backwards puts a step after the end of its
+  // own turn. Each event is stamped at least as late as the one before it.
+  let last = 0;
   const push = (
     type: string,
     time: number,
     data: Record<string, JsonValue>,
     extra?: { surfaceOp?: "append"; sourceEventSeqs?: number[] },
   ): number => {
-    events.push({ type, seq: events.length, time, data, ...extra });
+    last = Math.max(last, time);
+    events.push({ type, seq: events.length, time: last, data, ...extra });
     return events.length - 1;
   };
   folded.turns.forEach((t, i) => {
@@ -378,7 +407,14 @@ export function toSessionEvents(folded: FoldedTranscript): SeedEvent[] {
           name: c.name,
           arguments: JSON.stringify(c.arguments),
         });
-        const r = s.results.get(c.id) ?? { content: [], isError: false, time: s.time };
+        // A call with no result in the file never returned — the session was killed mid-tool, or
+        // the transcript was cut. dsh needs a result for every call, but seeding a settled empty
+        // one erased the single fact worth keeping: that this is where the session died.
+        const r = s.results.get(c.id) ?? {
+          content: [{ type: "text" as const, text: "No result recorded: the session ended here." }],
+          isError: true,
+          time: s.time,
+        };
         const block: ToolResultSeed = {
           type: "tool-result",
           toolCallId: c.id,
@@ -429,7 +465,7 @@ export function forkTranscriptText(
 ): string {
   const out: string[] = [];
   let prompts = 0;
-  for (const line of text.split("\n")) {
+  for (const line of stripBom(text).split("\n")) {
     if (!line) continue;
     if (keep > 0) {
       const entry = parseLine(line);
