@@ -20,6 +20,7 @@ import {
   loadStarted,
   rememberStarted,
   ASIDES_FILE,
+  STATE_DIR,
 } from "./state.js";
 
 const dir = await mkdtemp(join(tmpdir(), "omc-state-"));
@@ -241,4 +242,8 @@ for (const d of [dir, startersDir, asidesDir])
   );
 console.log("atomic writes ok");
 
+// The suite runs under DSH_OMC_STATE_DIR (package.json sets it): every store must be under it, or
+// a test rewrites the running plugin's files.
+if (process.env.DSH_OMC_STATE_DIR !== undefined)
+  assert.equal(STATE_DIR, process.env.DSH_OMC_STATE_DIR, "STATE_DIR follows the env for tests");
 console.log("state.test: ok");

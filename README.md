@@ -83,6 +83,7 @@ Lint contract, read before writing code (the anti-slop rules in `.oxlintrc.json`
 - Do not widen a known literal (`const x: string = "bash"`); let inference keep the literal.
 - No `_prefixed` identifiers (`no-underscore-dangle`), no shadowed names (`no-shadow`), no unused variables.
 - Run `bun run check` after each edit, not once at the end: the first run tells you which rule you are fighting, and `oxfmt src/` fixes formatting in place.
+- The suite runs under a fresh `DSH_OMC_STATE_DIR` (the `test` script sets it), and `STATE_DIR` follows it, so a test never rewrites the running plugin's files under `~/.local/state/dsh-oh-my-claude`. Any new store must build its path from `STATE_DIR`, never from `homedir()` on its own.
 
 Client bundle safety: dsh hot-reloads `lib/client.js` the moment `bun run build` writes it, into every open tab. A wrong service name in `export const inject` leaves the plugin `pending (waiting for service: …)` and every panel it owns disappears (2026-09-05: `models` instead of `modelDirectories`). After any client build, run the headless check and read its first line:
 

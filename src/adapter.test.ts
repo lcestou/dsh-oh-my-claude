@@ -176,11 +176,16 @@ const autoWorkAdapter = new ClaudeCodeAdapter(
 );
 assert.equal(autoWorkAdapter.displayName, "Oh My Claude (work)");
 assert.equal(workAdapter.settingsNs, "llm-claude-code-work");
-// state dir for non-default id nests under STATE_DIR/<providerId>
-assert.equal(stateDir("claude-code"), joinPath(homedir(), ".local", "state", "dsh-oh-my-claude"));
-assert.ok(
-  stateDir("claude-code-work").includes("/claude-code-work"),
-  "non-default state dir contains the provider id segment",
+// state dir for non-default id nests under STATE_DIR/<providerId>; STATE_DIR itself is the
+// suite's tmp dir when DSH_OMC_STATE_DIR is set, the home path otherwise.
+assert.equal(
+  stateDir("claude-code"),
+  process.env.DSH_OMC_STATE_DIR || joinPath(homedir(), ".local", "state", "dsh-oh-my-claude"),
+);
+assert.equal(
+  stateDir("claude-code-work"),
+  joinPath(stateDir("claude-code"), "claude-code-work"),
+  "non-default state dir nests under the shared one",
 );
 
 // resolveModelInfo echoes the requested id and only borrows the display name
