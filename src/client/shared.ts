@@ -81,6 +81,93 @@ export const cardHead: CSSProperties = {
 };
 export const h3: CSSProperties = { margin: 0, fontSize: 15, fontWeight: 600, color: T.text };
 export const meta: CSSProperties = { color: T.faint, fontSize: 12, whiteSpace: "nowrap" };
+/** One voice for a failure inside a tab: small, the error colour, wrapping, never a raw red line. */
+export const errText: CSSProperties = {
+  color: T.err,
+  fontSize: 12,
+  padding: "2px 4px",
+  whiteSpace: "normal",
+  wordBreak: "break-word",
+};
+/** One voice for "Loading…" and empty states: the meta colour, the same inset as a row. */
+export const stateText: CSSProperties = { ...meta, padding: "2px 4px", whiteSpace: "normal" };
+
+/**
+ * The panel's own surface: dsh's layer colour warmed with a few percent of Claude's orange, so the
+ * panel reads as Claude's and stands off the dark chrome instead of vanishing into it. The edge
+ * carries more of the hue than the fill (a tint the eye reads as a border, not as a coloured box)
+ * and the shadow gains a faint warm ring so the float reads on both themes. `color-mix` keeps every
+ * value derived from the theme token rather than a picked hex, so light and dark both hold.
+ */
+export const PANEL_ATTR = "data-omc-panel";
+export const DOCK_ATTR = "data-omc-dock";
+export const panelSurface: CSSProperties = {
+  background: `color-mix(in srgb, ${CLAUDE_ORANGE} 7%, ${T.card})`,
+  border: `1px solid color-mix(in srgb, ${CLAUDE_ORANGE} 34%, ${T.border})`,
+  boxShadow: `0 10px 28px rgba(0,0,0,.26), 0 0 0 1px color-mix(in srgb, ${CLAUDE_ORANGE} 10%, transparent)`,
+};
+/** A tab in the strip under the body: text only, the accent as a 2px rule on the open one. */
+export const tabStyle = (selected: boolean): CSSProperties => ({
+  padding: "6px 10px 5px",
+  cursor: "pointer",
+  border: "none",
+  borderBottom: `2px solid ${selected ? CLAUDE_ORANGE : "transparent"}`,
+  borderRadius: "0 0 8px 8px",
+  background: "transparent",
+  color: selected ? T.text : T.muted,
+  fontSize: 13,
+  fontWeight: selected ? 600 : 400,
+  whiteSpace: "nowrap",
+  marginBottom: -1,
+});
+
+const PANEL_STYLE_ID = "dsh-oh-my-claude-panel";
+/**
+ * The one stylesheet for everything interactive the plugin draws in the panel and the aside dock.
+ * Inline styles cannot say `:hover`, `:focus-visible` or `:active`, and a hover written as React
+ * state per button does not scale past the few that had it. Every control under the two scopes
+ * answers the pointer the same way: an orange wash over whatever it is filled with (so a primary
+ * button warms and a ghost one lights), the edge takes the hue, and keyboard focus gets the same
+ * ring. Rewritten on every call, as the fold sheet is, so a hot reload never leaves old rules.
+ */
+export function ensurePanelStyle(): void {
+  const existing = document.getElementById(PANEL_STYLE_ID);
+  const el = existing instanceof HTMLStyleElement ? existing : document.createElement("style");
+  el.id = PANEL_STYLE_ID;
+  const scope = `[${PANEL_ATTR}], [${DOCK_ATTR}]`;
+  const controls = `:is(button, select, input, textarea, summary, [role="tab"])`;
+  // `!important` throughout: every control carries its base look as an inline style (the shared
+  // `btn`, `select` and `tabStyle` objects), and an inline `background` shorthand outranks any
+  // sheet rule and resets `background-image` besides. The sheet owns only the transient states.
+  const inScope = (sel: string) => `[${PANEL_ATTR}] ${sel}, [${DOCK_ATTR}] ${sel}`;
+  el.textContent = [
+    `${scope} {`,
+    `  --omc-accent: ${CLAUDE_ORANGE};`,
+    `  --omc-wash: color-mix(in srgb, var(--omc-accent) 10%, transparent);`,
+    `  --omc-wash-strong: color-mix(in srgb, var(--omc-accent) 18%, transparent);`,
+    `  --omc-edge: color-mix(in srgb, var(--omc-accent) 45%, ${T.border});`,
+    `  --omc-ring: color-mix(in srgb, var(--omc-accent) 70%, transparent);`,
+    `}`,
+    `${inScope(controls)} { transition: background-color .15s ease, background-image .15s ease, border-color .15s ease, color .15s ease, box-shadow .15s ease, opacity .15s ease; }`,
+    // The wash is a background-image so it lays over any fill: transparent ghost, brand primary,
+    // the field colour. One rule, every button.
+    `${inScope("button:not(:disabled):hover")} { background-image: linear-gradient(var(--omc-wash), var(--omc-wash)) !important; border-color: var(--omc-edge) !important; }`,
+    `${inScope("button:not(:disabled):active")} { background-image: linear-gradient(var(--omc-wash-strong), var(--omc-wash-strong)) !important; }`,
+    `${inScope("button:disabled")} { opacity: .5 !important; cursor: not-allowed !important; }`,
+    `${inScope(":is(select, input, textarea):not(:disabled):hover")} { border-color: var(--omc-edge) !important; }`,
+    `${inScope('[role="tab"]:not([aria-selected="true"]):hover')} { background-image: linear-gradient(var(--omc-wash), var(--omc-wash)) !important; color: ${T.text} !important; }`,
+    `${inScope("summary")} { cursor: pointer; border-radius: 6px; }`,
+    `${inScope("summary::marker")} { color: var(--omc-accent); }`,
+    `${inScope("summary:hover")} { background-image: linear-gradient(var(--omc-wash), var(--omc-wash)) !important; color: ${T.text} !important; }`,
+    `${inScope(`${controls}:focus-visible`)} { outline: 2px solid var(--omc-ring); outline-offset: 2px; }`,
+    `${inScope('[role="tab"]:focus-visible')} { outline-offset: -2px; }`,
+    // The trigger in the composer: the same wash, so it answers like everything it opens.
+    `button[aria-label="Oh My Claude"]:hover { background: color-mix(in srgb, ${CLAUDE_ORANGE} 16%, transparent) !important; }`,
+    `button[aria-label="Oh My Claude"]:focus-visible { outline: 2px solid color-mix(in srgb, ${CLAUDE_ORANGE} 70%, transparent); outline-offset: 2px; }`,
+    `@media (prefers-reduced-motion: reduce) { ${inScope(controls)} { transition: none; } }`,
+  ].join("\n");
+  if (!existing) document.head.appendChild(el);
+}
 export const row: CSSProperties = {
   display: "flex",
   gap: 12,

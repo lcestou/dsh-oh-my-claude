@@ -38,6 +38,8 @@ import {
   inputStyle,
   ago,
   btnPrimary,
+  DOCK_ATTR,
+  ensurePanelStyle,
   CLAUDE_ORANGE,
   CLAUDE_SHIMMER,
   CLAUDE_MARK,
@@ -2917,6 +2919,7 @@ export const glyphOf = (head: HTMLElement): string => {
 
 function watchToolFolds() {
   ensureFoldStyle();
+  ensurePanelStyle(); // the aside dock shares the panel's hover and focus rules
   bindFoldClicks();
   // Every tool step is a `<p>` that opens with one of the translator's glyphs; only some are followed
   // by a fence (`▤ Read \`path\`` is a whole step on its own). Both get the icon and the muted type;
@@ -3395,7 +3398,7 @@ function StarterCard({
   };
 
   return (
-    <div style={DOCK_CARD}>
+    <div {...{ [DOCK_ATTR]: "1" }} style={DOCK_CARD}>
       <div
         style={{
           display: "flex",
@@ -3579,7 +3582,7 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
   } as const;
 
   return (
-    <div style={DOCK_CARD}>
+    <div {...{ [DOCK_ATTR]: "1" }} style={DOCK_CARD}>
       {shown.map((it) => {
         const open = (it.id === newest) !== toggled.has(it.id);
         return (

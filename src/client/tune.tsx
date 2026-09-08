@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 import {
+  errText,
   bodyFlow,
   meta,
   T,
@@ -276,7 +277,7 @@ export function TuneBody({
 
   if (!file)
     return error ? (
-      <span style={{ color: T.err, fontSize: 12 }}>{error}</span>
+      <span style={errText}>{error}</span>
     ) : (
       <span style={{ ...meta, padding: "2px 4px" }}>Loading…</span>
     );
@@ -396,7 +397,7 @@ export function TuneBody({
       <span style={{ ...meta, padding: "2px 4px", whiteSpace: "normal" }}>
         Saved to Claude Code's settings.json; each takes effect the next time Claude spawns.
       </span>
-      {error ? <span style={{ color: T.err, fontSize: 12, padding: "0 4px" }}>{error}</span> : null}
+      {error ? <span style={errText}>{error}</span> : null}
 
       <div style={rowStyle}>
         <span style={labelStyle}>Output style</span>
@@ -595,11 +596,7 @@ export function TuneBody({
         </div>
         <span style={sourceStyle}>{source(settings.advisorModel !== undefined)}</span>
       </div>
-      {modelsError && (
-        <span style={{ color: T.err, fontSize: 12, padding: "0 4px" }}>
-          Could not read the model list: {modelsError}
-        </span>
-      )}
+      {modelsError && <span style={errText}>Could not read the model list: {modelsError}</span>}
       {creditsError ? (
         <span style={{ ...meta, padding: "0 6px 2px", whiteSpace: "normal" }}>
           The usage credit state could not be read ({creditsError}), so a Fable advisor stays off
@@ -962,11 +959,7 @@ function PermissionsBlock({
         {SCOPE_LABELS.user}, the file this panel writes; Claude Code also reads the files below it,
         in dsh or in a terminal.
       </span>
-      {error ? (
-        <span style={{ color: T.err, fontSize: 12, padding: "0 4px", display: "block" }}>
-          {error}
-        </span>
-      ) : null}
+      {error ? <span style={{ ...errText, display: "block" }}>{error}</span> : null}
 
       {PERMISSION_KINDS.filter((k) => rules[k].length > 0).map((k) => (
         <div key={k} style={{ marginBottom: 8 }}>

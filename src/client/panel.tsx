@@ -3,6 +3,12 @@ import type { CSSProperties } from "react";
 import {
   btn,
   btnPrimary,
+  errText,
+  stateText,
+  PANEL_ATTR,
+  panelSurface,
+  tabStyle,
+  ensurePanelStyle,
   bodyFlow,
   meta,
   T,
@@ -268,7 +274,13 @@ function MemoryBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
     }
   };
 
-  if (!cwd || files.length === 0) return null;
+  if (!cwd) return <span style={stateText}>Open a workspace to see its memory files.</span>;
+  if (files.length === 0)
+    return (
+      <span style={stateText}>
+        No memory files for this workspace yet. Claude writes them as it learns the project.
+      </span>
+    );
   const dirty = text !== saved;
   return (
     <div style={bodyFlow}>
@@ -334,7 +346,7 @@ function MemoryBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
           />
         </>
       )}
-      {error && <span style={{ color: T.err, fontSize: 12 }}>{error}</span>}
+      {error && <span style={errText}>{error}</span>}
     </div>
   );
 }
@@ -766,7 +778,7 @@ function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCt
           onChanged={refreshRoster}
         />
       )}
-      {error && <span style={{ color: T.err, fontSize: 12 }}>{error}</span>}
+      {error && <span style={errText}>{error}</span>}
     </div>
   );
 }
@@ -862,7 +874,7 @@ function RewindBody({
   return (
     <div style={bodyFlow}>
       {noFiles && (
-        <span style={{ ...meta, color: T.err, padding: "2px 4px", whiteSpace: "normal" }}>
+        <span style={errText}>
           CLAUDE_CODE_DISABLE_FILE_CHECKPOINTING is set in dsh's environment, so Claude keeps no
           file checkpoints: a rewind moves the conversation back and leaves your files as they are.
         </span>
@@ -929,7 +941,7 @@ function RewindBody({
           {retentionNote(switches)} A prompt older than that is no longer here to rewind to.
         </span>
       )}
-      {error && <span style={{ color: T.err, fontSize: 12 }}>{error}</span>}
+      {error && <span style={errText}>{error}</span>}
     </div>
   );
 }
@@ -974,9 +986,9 @@ function ChangesBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
   return (
     <div style={bodyFlow}>
       {reply === null ? (
-        <span style={{ ...meta, padding: "2px 4px" }}>Loading…</span>
+        <span style={stateText}>Loading…</span>
       ) : !reply.ok ? (
-        <span style={{ color: T.err, fontSize: 12 }}>{reply.error}</span>
+        <span style={errText}>{reply.error}</span>
       ) : current ? (
         <>
           <div style={{ display: "flex", gap: 8, alignItems: "center", padding: "2px 4px" }}>
@@ -1170,9 +1182,9 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
         </div>
       </div>
       {reply === null ? (
-        <span style={{ ...meta, padding: "2px 4px" }}>Loading…</span>
+        <span style={stateText}>Loading…</span>
       ) : !reply.ok ? (
-        <span style={{ color: T.err, fontSize: 12 }}>{reply.error}</span>
+        <span style={errText}>{reply.error}</span>
       ) : servers.length === 0 ? (
         <span style={{ ...meta, padding: "2px 4px" }}>No MCP servers</span>
       ) : (
@@ -1438,12 +1450,10 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
   return (
     <div style={bodyFlow}>
       {data === null ? (
-        <span style={{ ...meta, padding: "2px 4px" }}>Loading…</span>
+        <span style={stateText}>Loading…</span>
       ) : !data.ok ? (
         // A reply of the wrong shape carries no message; an empty red line says nothing at all.
-        <span style={{ color: T.err, fontSize: 12 }}>
-          {data.error || "Diagnostics could not be read."}
-        </span>
+        <span style={errText}>{data.error || "Diagnostics could not be read."}</span>
       ) : (
         <>
           {/* Runtime */}
@@ -1502,7 +1512,7 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
             Feature switches
           </span>
           {switches === null ? (
-            <span style={{ ...meta, padding: "2px 4px", fontSize: 12 }}>Loading…</span>
+            <span style={stateText}>Loading…</span>
           ) : (
             <div style={{ padding: "4px 10px", fontSize: 12, lineHeight: "1.5" }}>
               <div>
@@ -1552,9 +1562,9 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
               Claude is not running for this session.
             </span>
           ) : mcp === null ? (
-            <span style={{ ...meta, padding: "2px 4px", fontSize: 12 }}>Loading…</span>
+            <span style={stateText}>Loading…</span>
           ) : !mcp.ok ? (
-            <span style={{ color: T.err, fontSize: 12, padding: "2px 4px" }}>{mcp.error}</span>
+            <span style={errText}>{mcp.error}</span>
           ) : mcp.servers.every((s) => s.status === "connected") ? (
             <span style={{ ...meta, padding: "2px 4px", fontSize: 12 }}>
               {mcp.servers.length === 0 ? "No MCP servers" : "All connected"}
@@ -1597,9 +1607,9 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
             Refused calls
           </span>
           {auditError ? (
-            <span style={{ color: T.err, fontSize: 12, padding: "2px 4px" }}>{auditError}</span>
+            <span style={errText}>{auditError}</span>
           ) : audit === null ? (
-            <span style={{ ...meta, padding: "2px 4px", fontSize: 12 }}>Loading…</span>
+            <span style={stateText}>Loading…</span>
           ) : audit.length === 0 ? (
             <span style={{ ...meta, padding: "2px 4px", fontSize: 12 }}>
               No calls were refused in the turns kept for this session.
@@ -1721,9 +1731,9 @@ function TasksBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   return (
     <div style={bodyFlow}>
       {data === null ? (
-        <span style={{ ...meta, padding: "2px 4px" }}>Loading…</span>
+        <span style={stateText}>Loading…</span>
       ) : !data.ok ? (
-        <span style={{ color: T.err, fontSize: 12 }}>{data.error}</span>
+        <span style={errText}>{data.error}</span>
       ) : (
         <>
           <span style={{ ...meta, padding: "2px 4px", display: "block" }}>Goal</span>
@@ -2422,8 +2432,8 @@ function AsidesBody({ sessionId }: { sessionId: string }) {
     };
   }, [sessionId]);
 
-  if (error !== null) return <span style={{ color: T.err, fontSize: 12 }}>{error}</span>;
-  if (items === null) return <span style={{ ...meta, padding: "2px 4px" }}>Loading…</span>;
+  if (error !== null) return <span style={errText}>{error}</span>;
+  if (items === null) return <span style={stateText}>Loading…</span>;
   if (items.length === 0) {
     return (
       <div style={{ ...meta, padding: "4px 10px", fontSize: 12, whiteSpace: "normal" }}>
@@ -2494,6 +2504,7 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
 
   useEffect(() => {
     if (!open) return;
+    ensurePanelStyle(); // hover, focus and active rules for everything inside; idempotent
     // One frame after mount, so the browser has a closed style to transition away from.
     const frame = requestAnimationFrame(() => setShown(true));
     return () => cancelAnimationFrame(frame);
@@ -2543,10 +2554,8 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
     display: "flex",
     flexDirection: "column",
     padding: 6,
-    background: T.card,
-    border: `1px solid ${T.border}`,
-    borderRadius: 8,
-    boxShadow: "0 8px 24px rgba(0,0,0,.18)",
+    ...panelSurface,
+    borderRadius: 10,
     overflow: "hidden",
     opacity: shown ? 1 : 0,
     // Insets do the centring now, so the transform carries the rise alone.
@@ -2609,7 +2618,7 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
         <Spark size={15} />
       </button>
       {open && (
-        <div role="dialog" aria-label="Oh My Claude" style={panelStyle}>
+        <div role="dialog" aria-label="Oh My Claude" {...{ [PANEL_ATTR]: "1" }} style={panelStyle}>
           <div
             role="tabpanel"
             // width:0 + minWidth:100% keeps the body from contributing to the panel's fit-content
@@ -2642,8 +2651,9 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
             style={{
               display: "flex",
               flex: "0 0 auto",
-              borderTop: `1px solid ${T.border}`,
-              paddingTop: 6,
+              borderTop: `1px solid color-mix(in srgb, ${CLAUDE_ORANGE} 18%, ${T.border})`,
+              paddingTop: 4,
+              gap: 2,
               // Wrap rather than scroll sideways: a strip that scrolls hides the tab that did not
               // fit, and the panel is anchored to its bottom edge, so a second row grows upward.
               flexWrap: "wrap",
@@ -2655,18 +2665,10 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
                 key={t.key}
                 role="tab"
                 aria-selected={tab === t.key}
-                style={{
-                  ...btn,
-                  fontSize: 12,
-                  // The strip sits under the body, so the lit edge is the mirror of a top tab bar:
-                  // accent along the bottom, and the corners rounded on that side only.
-                  borderBottom:
-                    tab === t.key ? `2px solid ${CLAUDE_ORANGE}` : "2px solid transparent",
-                  borderRadius: "0 0 8px 8px",
-                  color: tab === t.key ? T.text : T.faint,
-                  marginBottom: -1,
-                  paddingBottom: 4,
-                }}
+                // The strip sits under the body, so the lit edge is the mirror of a top tab bar:
+                // accent along the bottom, corners rounded on that side only, no box around each
+                // tab (nine bordered boxes read as buttons, not as tabs). Hover is in the sheet.
+                style={tabStyle(tab === t.key)}
                 onClick={() => {
                   lastTab = t.key;
                   setTab(t.key);
