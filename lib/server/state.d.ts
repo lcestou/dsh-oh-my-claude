@@ -18,6 +18,9 @@ export declare function lastSelectedProvider(events: Iterable<{
     type: string;
     data?: unknown;
 }>): string | undefined;
+export declare function loadCommandCatalog(dir: string): Promise<string[]>;
+/** Remember the catalog; a write that fails leaves the menu to the next init frame, not an error. */
+export declare function saveCommandCatalog(dir: string, names: string[]): Promise<void>;
 export declare function loadLimitWaits(dir: string): Promise<Map<string, number>>;
 /** Record (or with `resetAt` undefined, forget) a session's wait; saves serialize. */
 export declare function saveLimitWait(dir: string, sessionId: string, resetAt: number | undefined): Promise<void>;

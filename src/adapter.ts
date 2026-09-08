@@ -108,8 +108,10 @@ import {
   modesUpTo,
   noteBoot,
   PERMISSION_MODES,
+  loadCommandCatalog,
   rememberStarted,
   resolveClaudeHome,
+  saveCommandCatalog,
   savePermissionMode,
   saveTurnRecords,
   STATE_DIR,
@@ -1819,6 +1821,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     if (!this.config.commandBridge || this.providerId !== "claude-code" || !commands) return;
     // SAFETY: a plain slot on globalThis, written only here
     (globalThis as { [COMMAND_CATALOG]?: string[] })[COMMAND_CATALOG] = names;
+    // globalThis carries the catalog across a hot reload; the file carries it across a restart,
+    // which adopts the running Claude and so never sees a second init frame.
+    void saveCommandCatalog(this.stateDir, names);
     const failed: string[] = [];
     for (const cmd of names) {
       if (this.bridged.has(cmd)) continue;
@@ -3735,6 +3740,12 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
   // A hot reload disposes the previous instance's command registrations with its scope and
   // brings no new init frame; re-bridge from the catalog the last one saw.
   if (g[COMMAND_CATALOG]) adapter.bridgeCommands(g[COMMAND_CATALOG], undefined);
+  // A restart has no globalThis to read and adopts the keeper it finds, so no init frame follows:
+  // the last catalog on disk is the only thing that puts the bridged commands back in the menu.
+  else
+    void loadCommandCatalog(adapter.stateDir).then((names) => {
+      if (names.length > 0) adapter.bridgeCommands(names, undefined);
+    });
   if (!g[RESUME_TIMER]) {
     g[RESUME_TIMER] = setTimeout(() => {
       // Resume every mounted instance over its own busy file.

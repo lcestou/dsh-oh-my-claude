@@ -67,8 +67,10 @@ import {
   buildRedactor,
   CLAUDE_HOME,
   hasPendingNotice,
+  loadCommandCatalog,
   noteBoot,
   resolveClaudeHome,
+  saveCommandCatalog,
   stateDir,
 } from "./state.js";
 import type { ClaudeEvent, ClaudeProcessSpec, SubprocessHandle, TurnPrep } from "./process.js";
@@ -119,7 +121,7 @@ const blockTextOf = (c: StreamChunk | undefined): string => {
 import { PassThrough } from "node:stream";
 import { tmpdir } from "node:os";
 import { homedir } from "node:os";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { join as joinPath } from "node:path";
 
 declare module "./adapter.js" {
@@ -2895,6 +2897,19 @@ console.log("plan-review ok");
   assert.equal(a.bridged.size, 3, "compact, temporary and btw");
 }
 console.log("command-bridge ok");
+
+// The catalog survives a restart. globalThis carries it across a hot reload, but a restart adopts
+// the running Claude and never sees a second init frame, so the bridged commands used to leave the
+// menu until the next cold start.
+{
+  const dir = await mkdtemp(joinPath(tmpdir(), "omc-commands-"));
+  assert.deepEqual(await loadCommandCatalog(dir), [], "no file reads as no catalog");
+  await saveCommandCatalog(dir, ["compact", "llama"]);
+  assert.deepEqual(await loadCommandCatalog(dir), ["compact", "llama"]);
+  await writeFile(joinPath(dir, "commands.json"), "{ not json", "utf8");
+  assert.deepEqual(await loadCommandCatalog(dir), [], "a damaged file reads as no catalog");
+}
+console.log("command-catalog ok");
 
 // fastMode: off by default; on, the process is launched with --settings {"fastMode":true} when the CLI lists --settings.
 {

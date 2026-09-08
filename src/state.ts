@@ -106,6 +106,28 @@ export function lastSelectedProvider(
   return provider;
 }
 
+/**
+ * The Claude Code slash commands the CLI's last init frame named, kept so a dsh restart can put
+ * them back. The catalog arrives once per spawned process, and a restart adopts the running Claude
+ * rather than spawning a new one — so without this file every bridged command (`/claude-llama` and
+ * the rest) vanished from the menu until the next cold start.
+ */
+const COMMANDS_FILE = (dir: string) => join(dir, "commands.json");
+
+export async function loadCommandCatalog(dir: string): Promise<string[]> {
+  try {
+    const parsed: unknown = JSON.parse(await readFile(COMMANDS_FILE(dir), "utf8"));
+    return Array.isArray(parsed) ? parsed.filter((n) => typeof n === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Remember the catalog; a write that fails leaves the menu to the next init frame, not an error. */
+export function saveCommandCatalog(dir: string, names: string[]): Promise<void> {
+  return writeJson(COMMANDS_FILE(dir), names).catch(() => {});
+}
+
 /** Sessions waiting for a usage limit to reset: session id to reset instant (ms since epoch). */
 const LIMIT_WAITS_FILE = (dir: string) => join(dir, "limit-waits.json");
 let limitChain: Promise<void> = Promise.resolve();
