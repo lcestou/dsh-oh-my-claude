@@ -186,18 +186,27 @@ function MemoryBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   const [error, setError] = useState("");
 
   const q = cwd ? `cwd=${encodeURIComponent(cwd)}` : "";
-  const refresh = () => {
+  const refresh = (signal?: AbortSignal) => {
     if (!cwd) return;
-    fetch(`${ROUTE}/memory?${q}`)
+    fetch(`${ROUTE}/memory?${q}`, { signal })
       .then((r) => readJson<{ files?: MemoryFile[] }>(r))
       .then((b) => setFiles(b.files ?? []))
-      .catch((e: Error) => setError(e.message));
+      // An in-flight list outlives the tab being closed, and its reply landed on a component that
+      // is gone: React drops the state write and the error branch painted an error nobody asked
+      // for. The abort is the teardown, and its own rejection is not a failure to report.
+      .catch((e: Error) => {
+        if (signal?.aborted !== true) setError(e.message);
+      });
   };
   // Re-list every half minute: Claude writes memories mid-turn.
   useEffect(() => {
-    refresh();
-    const timer = setInterval(refresh, 30_000);
-    return () => clearInterval(timer);
+    const stop = new AbortController();
+    refresh(stop.signal);
+    const timer = setInterval(() => refresh(stop.signal), 30_000);
+    return () => {
+      clearInterval(timer);
+      stop.abort();
+    };
   }, [cwd]);
 
   const openFile = async (n: string) => {

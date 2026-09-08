@@ -4,7 +4,7 @@
 // machines you add, each probed for claude version and login). Built into lib/client.js by
 // `bun run build`.
 import type { CSSProperties, FC, ReactNode } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   IconApiOutline14,
   IconBrowseOutline16,
@@ -2260,6 +2260,9 @@ const turnVerbs = new Map<string, { verb: string; seen: number }>();
 const VERB_MEMORY_MS = 4000;
 const verbFor = (sessionId: string, verbs: string[]): string => {
   const now = Date.now();
+  // Every session that ever ran a turn in this tab left an entry behind. They are small, but the
+  // map is only ever read for a turn that is running right now, so the stale ones are pure growth.
+  for (const [id, seen] of turnVerbs) if (now - seen.seen >= VERB_MEMORY_MS) turnVerbs.delete(id);
   const kept = turnVerbs.get(sessionId);
   const verb = kept && now - kept.seen < VERB_MEMORY_MS ? kept.verb : pickVerb(verbs, Math.random);
   turnVerbs.set(sessionId, { verb, seen: now });
@@ -2308,17 +2311,30 @@ const wireTurnStatus = (
       direction = 1;
     }
   };
+  const stop = () => {
+    clearInterval(interval);
+    obs.disconnect();
+  };
   const interval = setInterval(() => {
     // The 120ms beat doubles as the teardown check: React unmounts this row by removing an
     // ancestor, so watching for `el` itself in a removal record missed it and left one
     // whole-document observer plus one interval alive per row dsh ever drew.
     if (!el.isConnected) {
-      clearInterval(interval);
-      obs.disconnect();
+      stop();
       return;
     }
     tick();
   }, 120);
+  // The row can outlive the bundle that wired it — a rebuild disposes the context while the turn is
+  // still running — and a connected row never trips the check above, so each reload used to leave
+  // one more beat animating the same spinner. The wired mark and the spinner go back with it: both
+  // live on dsh's element, which outlives this bundle, and a row still wearing the mark is one the
+  // next bundle refuses to wire.
+  whenContextGone(() => {
+    stop();
+    el.removeAttribute("data-dsh-oh-my-claude-turn");
+    spinner.remove();
+  });
   tick();
 
   // Pick a fresh verb once per element instance.
@@ -2927,13 +2943,20 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   // dsh's current session blinks: a child session takes the slot for a moment, and a model
   // directory mid-rebind answers no provider at all. A blank answer used to read as "not mine" and
   // took the cost off the row under the pointer, so only another session's id gives it up.
+  // Derived during render, committed after it: React throws renders away, and one that never
+  // reached the screen used to latch this ref anyway — so a render for another session could leave
+  // the cost of this one on the row.
   const mineRef = useRef(false);
-  if (activeClaudeSession(ctx) === sessionId) mineRef.current = true;
-  else {
-    const current = ctx.sessions.list.getSnapshot()?.current;
-    if (current && current !== sessionId) mineRef.current = false;
-  }
-  const mine = mineRef.current;
+  const current = ctx.sessions.list.getSnapshot()?.current;
+  const mine =
+    activeClaudeSession(ctx) === sessionId
+      ? true
+      : current && current !== sessionId
+        ? false
+        : mineRef.current;
+  useLayoutEffect(() => {
+    mineRef.current = mine;
+  });
   const total = turns.reduce((s, r) => s + r.costUsd, 0);
   const totalCacheRead = turns.reduce((s, r) => s + r.cacheRead, 0);
   const last = turns[turns.length - 1];
@@ -2951,10 +2974,16 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   // What the injected nodes say, held in a ref: a new cost arriving mid-hover used to tear the
   // whole hook down and build it again, which is the blink the row was reported to have. The
   // nodes now stay where they are and only their text is rewritten.
+  // Same reason as `mineRef`: these feed nodes injected into dsh's own row, and `tryHook` writes
+  // `textRef.current` straight onto the screen. Written in a layout effect, so what lands there
+  // comes from a render React committed. Layout effects run before the passive effect below, so
+  // the sync still sees the new text.
   const textRef = useRef(text);
   const titleRef = useRef(title);
-  textRef.current = text;
-  titleRef.current = title;
+  useLayoutEffect(() => {
+    textRef.current = text;
+    titleRef.current = title;
+  });
   const syncRef = useRef<() => void>(() => {});
   useEffect(() => syncRef.current(), [text, title]);
   useEffect(() => {
@@ -2962,6 +2991,7 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
     let body: HTMLSpanElement | undefined;
     let rowLead = "";
     let lastRow: HTMLElement | undefined;
+    let lastHost: HTMLElement | undefined; // the footer the row hangs in; it outlives the row
     // The row appears with the first settled step and is one of dsh's own divs anywhere in the
     // document; look for it until found (one conversation is on screen at a time).
     // `inline?.isConnected`, not `inline`: dsh re-renders this row on every step and React drops
@@ -2988,14 +3018,19 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
         return;
       }
       if (inline) debug("row dropped our span; hooking again");
-      // The row dsh re-rendered is usually the same element with new children, so the one it was
-      // last found in is tried first: the fallback walks every div in the document, and that walk
-      // ran on each of the many steps in a turn.
+      // Three tries, cheapest first. The row dsh re-rendered is usually the same element with new
+      // children, so the one it was last found in is tried first. When dsh replaces the element —
+      // which it does on a settled step, and that is exactly when this runs — the footer it hangs
+      // in is still the same node, so the second try searches that instead of the document. Only a
+      // conversation that was never hooked, or a footer that went away, pays for the full walk.
+      const rowIn = (root: ParentNode) =>
+        [...root.querySelectorAll<HTMLDivElement>("div")].filter(isStatsRow).at(-1);
       const statsRow =
         lastRow && isStatsRow(lastRow)
           ? lastRow
-          : [...document.querySelectorAll<HTMLDivElement>("div")].filter(isStatsRow).at(-1);
+          : ((lastHost?.isConnected === true ? rowIn(lastHost) : undefined) ?? rowIn(document));
       lastRow = statsRow;
+      lastHost = statsRow?.parentElement ?? lastHost;
       if (!statsRow) {
         debug("no stats row on screen");
         return;
