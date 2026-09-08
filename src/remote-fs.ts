@@ -58,8 +58,10 @@ export const listScript = (dir: string): string =>
  * connection and report on a file that may have moved on since.
  */
 export const writeScript = (path: string, base64: string): string =>
+  // `$$` is the remote shell's pid: two writes to one path at once would otherwise share a temp
+  // name, and the second `mv` would find the file the first one already moved.
   `mkdir -p ${shq(dirname(path))} && { [ -e ${shq(path)} ] && cp -- ${shq(path)} ${shq(`${path}.bak`)} || true; } && ` +
-  `printf %s ${shq(base64)} | base64 -d > ${shq(`${path}.tmp`)} && mv -- ${shq(`${path}.tmp`)} ${shq(path)} && ` +
+  `t=${shq(`${path}.tmp`)}.$$ && printf %s ${shq(base64)} | base64 -d > "$t" && mv -- "$t" ${shq(path)} && ` +
   `{ stat -c %Y -- ${shq(path)} 2>/dev/null || stat -f %m -- ${shq(path)} 2>/dev/null || echo 0; }`;
 
 /** Delete, and stay silent about a file that was already gone. */

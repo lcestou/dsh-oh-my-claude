@@ -126,7 +126,11 @@ import type { InstructionFile } from "./instructions.js";
     configDir: join(tmp, "claude"),
     boxesPath,
     instanceFor: (provider) =>
-      provider === "claude-code-other" ? { configDir: join(tmp, "other") } : undefined,
+      provider === "claude-code-other"
+        ? { configDir: join(tmp, "other") }
+        : provider === "claude-code-box"
+          ? { configDir: join(tmp, "box"), sshHost: "box" }
+          : undefined,
     rewind: async (sid, uuid, dryRun) => ({ ok: true, dryRun, canRewind: true }),
   });
   assert.ok(handler);
@@ -169,7 +173,13 @@ import type { InstructionFile } from "./instructions.js";
   const cwd = "/work/app";
   const mem = `/dsh-oh-my-claude/memory?cwd=${encodeURIComponent(cwd)}`;
   r = await respond("GET", "/dsh-oh-my-claude/memory");
-  assert.equal(r.error, "cwd must be an absolute path");
+  assert.equal(r.error, "cwd must be a directory a dsh session is open in");
+  r = await respond("GET", "/dsh-oh-my-claude/memory?cwd=%2Fsomewhere%2Felse");
+  assert.equal(
+    r.error,
+    "cwd must be a directory a dsh session is open in",
+    "memory reads and writes are gated on an open session, like every other file route",
+  );
   r = await respond("GET", mem);
   assert.deepEqual(r.files, [], "no memory dir lists empty");
   r = await respond(
@@ -238,6 +248,33 @@ import type { InstructionFile } from "./instructions.js";
     "an unknown provider falls back to the registering instance",
   );
 
+  // A mutation names its box the same way a read does. The CLI verbs behind these routes run this
+  // instance's binary against this instance's config dir, so on an ssh box they would change this PC
+  // while the roster beside them still reported the box: refuse rather than write the wrong machine.
+  const onBox = "provider=claude-code-box";
+  for (const [path, body, what] of [
+    ["/plugins/toggle", { session: "sid1", scope: "user", key: "p@m" }, "plugin changes"],
+    ["/plugins/uninstall", { session: "sid1", scope: "user", key: "p@m" }, "plugin changes"],
+    [
+      "/plugins/marketplace/add",
+      { session: "sid1", scope: "user", source: "o/r" },
+      "plugin changes",
+    ],
+    [
+      "/plugins/marketplace/remove",
+      { session: "sid1", scope: "user", name: "m" },
+      "plugin changes",
+    ],
+    ["/mcp-servers/remove", { session: "sid1", name: "srv" }, "MCP server changes"],
+    [
+      "/mcp-servers/add",
+      { session: "sid1", name: "srv", scope: "user", transport: "stdio", command: "x" },
+      "MCP server changes",
+    ],
+  ] as const) {
+    r = await respond("POST", `/dsh-oh-my-claude${path}?${onBox}`, JSON.stringify(body));
+    assert.equal(r.error, `${what} do not reach an SSH box yet`, `${path} refuses an ssh box`);
+  }
   // Rewind prompt list: user prompts of the session's transcript, newest first, by uuid.
   const rw = `/dsh-oh-my-claude/rewind?session=sid1&cwd=${encodeURIComponent(cwd)}`;
   r = await respond("GET", rw);

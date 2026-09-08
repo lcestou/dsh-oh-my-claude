@@ -248,6 +248,16 @@ export const claudeProviderOf = (ctx: ClientCtx, id: string): string | undefined
   }
 };
 
+/**
+ * The `?provider=…` a request has to carry to be about the session's own box rather than this PC.
+ * A GET that omits it lists the wrong machine; a POST that omits it *changes* the wrong machine,
+ * so the mutating routes name the box too. Empty for a session on this PC, which is the default.
+ */
+export const boxQuery = (ctx: ClientCtx, id: string): string => {
+  const provider = claudeProviderOf(ctx, id);
+  return provider === undefined ? "" : `?provider=${encodeURIComponent(provider)}`;
+};
+
 /** Whether a session, open or not, runs on one of this plugin's mounts (`claude-code*`). */
 export const isClaudeSession = (ctx: ClientCtx, id: string): boolean =>
   claudeProviderOf(ctx, id) !== undefined;

@@ -3,6 +3,7 @@
 // Served under /dsh-oh-my-claude/*, guarded by dsh's own request policy (trusted host + login cookie).
 // This is an I/O boundary: HTTP bodies, probe output and JSON files are decoded here.
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { hostname } from "node:os";
 import { readdir, readFile, writeFile, rename, copyFile, stat, mkdir, rm } from "node:fs/promises";
@@ -12,7 +13,7 @@ import { shq, sshArgs } from "./process.js";
 import { homeAt, isEnoent, readAt, writeAt, type FsBox } from "./remote-fs.js";
 import type { TranscriptListItem } from "./transcript.js";
 import { deleteMemory, isMemoryName, listMemory } from "./memory.js";
-import { listInstructions } from "./instructions.js";
+import { isWritableInstructions, listInstructions } from "./instructions.js";
 import {
   durableTasksPath,
   goalFrom,
@@ -252,7 +253,7 @@ export function validateSshBoxes(input: unknown): ValidatedSshBoxes {
     if (id === "claude-code-") return { error: `"${name}": name needs a letter or digit` };
     if (ids.has(id)) return { error: `"${name}": another box already uses that name` };
     if (!host || host.length > 200) return { error: `"${name}": host is required (1-200 chars)` };
-    if (!/^[A-Za-z0-9._@:%+-]+$/.test(host))
+    if (!/^[A-Za-z0-9][A-Za-z0-9._@:%+-]*$/.test(host))
       return { error: `"${name}": host has invalid characters` };
     if (hosts.has(host)) return { error: `"${name}": duplicate host ${host}` };
     ids.add(id);
@@ -312,7 +313,7 @@ export function validateRemoteWorkspaceInput(input: unknown): ValidatedRemoteWor
   const host = String(b.host ?? "").trim();
   const remoteCwd = String(b.remoteCwd ?? "").trim();
   if (!name || name.length > 40) return { error: "name is required (1-40 chars)" };
-  if (!host || host.length > 200 || !/^[A-Za-z0-9._@:%+-]+$/.test(host))
+  if (!host || host.length > 200 || !/^[A-Za-z0-9][A-Za-z0-9._@:%+-]*$/.test(host))
     return { error: "a valid ssh host is required" };
   // remoteCwd is single-quoted into a remote `cd`, so a newline or NUL is the only break-out risk;
   // require an absolute path since a quoted `~` does not expand.
@@ -722,7 +723,9 @@ async function writeWithBackup(
   await copyFile(path, backup).catch((e: unknown) => {
     if (!isEnoent(e)) throw e;
   });
-  const tmp = `${path}.tmp-${process.pid}`;
+  // Two writes to one path race otherwise: both would use this name, the loser's rename finds it
+  // gone, and its backup copy can land after the winner's rename and overwrite the pre-edit copy.
+  const tmp = `${path}.tmp-${randomUUID()}`;
   await writeFile(tmp, text.endsWith("\n") ? text : `${text}\n`, "utf8");
   await rename(tmp, path);
   return { path, backup, mtime: (await stat(path)).mtimeMs };
@@ -1041,6 +1044,13 @@ export function registerSessionRoutes(
         return { error: `${scope} scope needs a session open in a directory` };
       return { cwd: cwd ?? undefined };
     };
+    // Every `claude plugin` and `claude mcp` mutation below runs this instance's binary against
+    // this instance's config dir, while the rosters they act on are read from the session's own
+    // box. On a session running over ssh that pairing writes this PC and leaves the box alone —
+    // the roster then re-reads remote and still shows the old state, so the panel reports nothing
+    // happened while the wrong machine changed. Refuse instead, until the verbs run over ssh.
+    const notOnBox = (url: URL, what: string): string | undefined =>
+      boxOf(url).sshHost ? `${what} do not reach an SSH box yet` : undefined;
     // The CLI wrote the plugin change to settings; ask this session's live process to re-read it so
     // it applies now. Returns whether a live process took it — false (next spawn) when none is up.
     const applyReload = async (session: JsonValue | undefined): Promise<boolean> => {
@@ -1110,9 +1120,14 @@ export function registerSessionRoutes(
               // Claude's auto-memory for a workspace: list, read, write, delete one file.
               if (url.pathname === `${ROUTE_PREFIX}/memory`) {
                 const body = req.method === "GET" ? {} : await readBody(req, 1024 * 1024);
-                const cwd = url.searchParams.get("cwd") ?? body.cwd;
-                if (!validCwd(cwd))
-                  return json(res, 400, { error: "cwd must be an absolute path" });
+                const cwd = await knownCwd(
+                  url.searchParams.get("cwd") ?? body.cwd,
+                  sessionPersistence,
+                );
+                if (cwd === null)
+                  return json(res, 400, {
+                    error: "cwd must be a directory a dsh session is open in",
+                  });
                 const dir = join(projectDir(cwd), "memory");
                 const name = url.searchParams.get("name") ?? body.name;
                 if (req.method === "GET" && name === undefined)
@@ -1176,6 +1191,10 @@ export function registerSessionRoutes(
                 if (req.method === "PUT") {
                   if (file.kind === "Managed")
                     return json(res, 403, { error: "the managed file is read-only" });
+                  if (!isWritableInstructions(file.path))
+                    return json(res, 403, {
+                      error: "only markdown instructions files are editable",
+                    });
                   if (typeof body.text !== "string")
                     return json(res, 400, { error: "text required" });
                   const written = await writeWithBackup(box, file.path, body.text);
@@ -1197,6 +1216,14 @@ export function registerSessionRoutes(
                   if (scope === "managed")
                     return json(res, 400, { error: "managed settings are read-only" });
                   const cwd = await knownCwd(body.cwd, sessionPersistence);
+                  // A remote workspace's dsh cwd is the local placeholder dir the spawner maps to
+                  // the real remote path, so a project or local write would create that local path
+                  // on the box instead of editing the project. User scope resolves from the box's
+                  // own $HOME and is fine.
+                  if (box.sshHost && scope !== "user")
+                    return json(res, 400, {
+                      error: "project and local settings do not reach an SSH box yet",
+                    });
                   const path = settingsScopePath(scope, userPath, cwd);
                   if (path === undefined)
                     return json(res, 400, {
@@ -1256,6 +1283,8 @@ export function registerSessionRoutes(
                 if (!isPluginId(body.key)) return json(res, 400, { error: "plugin id required" });
                 const target = await pluginScopeCwd(body.scope, body.session);
                 if ("error" in target) return json(res, 400, { error: target.error });
+                const remote = notOnBox(url, "plugin changes");
+                if (remote) return json(res, 400, { error: remote });
                 const verb = body.enable === false ? "disable" : "enable";
                 const result = await run(
                   command || "claude",
@@ -1272,6 +1301,8 @@ export function registerSessionRoutes(
                 if (!isPluginId(body.key)) return json(res, 400, { error: "plugin id required" });
                 const target = await pluginScopeCwd(body.scope, body.session);
                 if ("error" in target) return json(res, 400, { error: target.error });
+                const remote = notOnBox(url, "plugin changes");
+                if (remote) return json(res, 400, { error: remote });
                 // -y is required when stdout is not a TTY, which it never is here.
                 const result = await run(
                   command || "claude",
@@ -1296,6 +1327,8 @@ export function registerSessionRoutes(
                   });
                 const target = await pluginScopeCwd(body.scope, body.session);
                 if ("error" in target) return json(res, 400, { error: target.error });
+                const remote = notOnBox(url, "plugin changes");
+                if (remote) return json(res, 400, { error: remote });
                 const result = await run(
                   command || "claude",
                   [
@@ -1323,6 +1356,8 @@ export function registerSessionRoutes(
                   return json(res, 400, { error: "marketplace name required" });
                 const target = await pluginScopeCwd(body.scope, body.session);
                 if ("error" in target) return json(res, 400, { error: target.error });
+                const remote = notOnBox(url, "plugin changes");
+                if (remote) return json(res, 400, { error: remote });
                 const result = await run(
                   command || "claude",
                   ["plugin", "marketplace", "remove", body.name, "--scope", String(body.scope)],
@@ -1518,6 +1553,8 @@ export function registerSessionRoutes(
                 const body = await readBody(req);
                 const built = buildAddServer(body);
                 if ("error" in built) return json(res, 400, { error: built.error });
+                const remote = notOnBox(url, "MCP server changes");
+                if (remote) return json(res, 400, { error: remote });
                 const cwd = await sessionCwd(body.session, sessionPersistence);
                 if (scopeNeedsCwd(built.scope) && cwd === null)
                   return json(res, 400, {
@@ -1538,6 +1575,8 @@ export function registerSessionRoutes(
               if (req.method === "POST" && url.pathname === `${ROUTE_PREFIX}/mcp-servers/remove`) {
                 const body = await readBody(req);
                 if (!isMcpName(body.name)) return json(res, 400, { error: "name required" });
+                const remote = notOnBox(url, "MCP server changes");
+                if (remote) return json(res, 400, { error: remote });
                 const cwd = await sessionCwd(body.session, sessionPersistence);
                 if (cwd === null)
                   return json(res, 400, { error: "no session open in a directory" });

@@ -20,6 +20,13 @@ export interface InstructionFile {
  */
 export declare function importsIn(text: string): string[];
 /**
+ * Whether a listed file may be written back. The list doubles as the write allowlist, and a `@`
+ * line puts any absolute path a repo names on it — a cloned `CLAUDE.md` holding `@~/.ssh/authorized_keys`
+ * would otherwise offer that file as an editable row. The CLI loads instructions as markdown, so a
+ * path that is not a `.md` file is never one this panel should be rewriting.
+ */
+export declare const isWritableInstructions: (path: string) => boolean;
+/**
  * Every CLAUDE.md the CLI would load for this directory, in load order: the managed files, the
  * user's, then each ancestor of the workspace from the root down, ending at the workspace itself.
  * A file pulled in by `@` follows the file that imported it and keeps its scope. Files that are

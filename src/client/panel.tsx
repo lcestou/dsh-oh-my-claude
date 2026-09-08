@@ -12,6 +12,7 @@ import {
   isOwnedActive,
   activeClaudeSession,
   claudeProviderOf,
+  boxQuery,
   type ClientCtx,
   type SessionData,
   useNarrow,
@@ -409,10 +410,12 @@ type Act = (path: string, body: PluginMutationBody, id: string) => Promise<boole
 function PluginManagerBlock({
   roster,
   sessionId,
+  ctx,
   onChanged,
 }: {
   roster: PluginRoster | null;
   sessionId: string;
+  ctx: ClientCtx;
   onChanged: () => void;
 }) {
   const [busy, setBusy] = useState("");
@@ -423,7 +426,7 @@ function PluginManagerBlock({
     setError("");
     try {
       const r = await readJson<{ ok: boolean; error?: string; live?: boolean }>(
-        await fetch(`${ROUTE}${path}`, {
+        await fetch(`${ROUTE}${path}${boxQuery(ctx, sessionId)}`, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ session: sessionId, ...body }),
@@ -687,7 +690,12 @@ function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCt
         </>
       )}
       {file === null && (
-        <PluginManagerBlock roster={roster} sessionId={sessionId} onChanged={refreshRoster} />
+        <PluginManagerBlock
+          roster={roster}
+          sessionId={sessionId}
+          ctx={ctx}
+          onChanged={refreshRoster}
+        />
       )}
       {error && <span style={{ color: T.err, fontSize: 12 }}>{error}</span>}
     </div>
@@ -1049,7 +1057,7 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
     setNote("");
     try {
       const r = await readJson<{ ok: boolean; error?: string }>(
-        await fetch(`${ROUTE}/mcp-servers/remove`, {
+        await fetch(`${ROUTE}/mcp-servers/remove${boxQuery(ctx, sessionId)}`, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ session: sessionId, name: serverName }),
@@ -1087,7 +1095,7 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
         }}
       >
         <div style={{ overflow: "hidden", minHeight: 0 }}>
-          <McpAddForm sessionId={sessionId} onAdded={() => setNote(SPAWN_NOTE)} />
+          <McpAddForm sessionId={sessionId} ctx={ctx} onAdded={() => setNote(SPAWN_NOTE)} />
         </div>
       </div>
       {reply === null ? (
@@ -1713,7 +1721,15 @@ const CONNECTORS: readonly { label: string; name: string; transport: string; url
 ];
 
 /** The Add form under the server list: name, where it goes, and the fields its transport needs. */
-function McpAddForm({ sessionId, onAdded }: { sessionId: string; onAdded: () => void }) {
+function McpAddForm({
+  sessionId,
+  ctx,
+  onAdded,
+}: {
+  sessionId: string;
+  ctx: ClientCtx;
+  onAdded: () => void;
+}) {
   const [name, setName] = useState("");
   const [scope, setScope] = useState("local");
   const [transport, setTransport] = useState("stdio");
@@ -1731,7 +1747,7 @@ function McpAddForm({ sessionId, onAdded }: { sessionId: string; onAdded: () => 
     setError("");
     try {
       const r = await readJson<{ ok: boolean; error?: string }>(
-        await fetch(`${ROUTE}/mcp-servers/add`, {
+        await fetch(`${ROUTE}/mcp-servers/add${boxQuery(ctx, sessionId)}`, {
           method: "POST",
           headers: { "content-type": "application/json" },
           // The server reads the directory from the session, so `local` and `project` land in the
