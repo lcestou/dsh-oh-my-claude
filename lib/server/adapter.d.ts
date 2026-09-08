@@ -720,6 +720,14 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * can show the question with a spinner; the answer or error fills in when the control response
      * arrives. Fire and forget: the command returns before Claude answers.
      */
+    /**
+     * The live process behind a dsh session, whichever mount spawned it. The registry is shared by
+     * every instance and keyed by provider, and `/btw` is registered once, on the main mount: a
+     * session on an SSH box lives under that box's provider id, so the main mount's own key misses it.
+     */
+    /** The instance whose aside ring the route and the bubble read: the main mount, else this one. */
+    asideOwner(): ClaudeCodeAdapter;
+    processFor(sessionId: string): ClaudeProcess | undefined;
     askSideQuestion(sessionId: string, question: string): void;
     /** Save (or clear, when the text is blank) an opening prompt for a session or for `default`. */
     setStarter(key: string, text: string | undefined): void;

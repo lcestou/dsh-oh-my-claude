@@ -2337,6 +2337,39 @@ console.log("ok");
     "a reloaded adapter adopts running processes",
   );
   a.processes.delete(registryKey("claude-code", "shared"));
+  // `/btw` is registered once, on the main mount, so a session that runs on an SSH box (its own
+  // provider id in the shared registry) must still be found from there.
+  const box = new ClaudeCodeAdapter(
+    fakeCtx({ on() {} }),
+    Config({ providerId: "claude-code-box" }),
+  );
+  // Both persist asides, so neither may point at the real state dir.
+  a.stateDir = await mkdtemp(joinPath(tmpdir(), "omc-aside-box-"));
+  box.stateDir = a.stateDir;
+  const wrote: string[] = [];
+  box.processes.set(
+    registryKey("claude-code-box", "far"),
+    fakeProc({ alive: true, write: (line: string) => (wrote.push(line), true) }),
+  );
+  assert.equal(a.processFor("far")?.alive, true, "the main mount sees the box's process");
+  assert.equal(a.processFor("nowhere"), undefined);
+  a.askSideQuestion("far", "what box?");
+  assert.equal(
+    a.sideQuestions.get("far")?.[0]?.error,
+    undefined,
+    "asked over the box's process, not refused for want of a local one",
+  );
+  assert.match(wrote[0] ?? "", /side_question/, "the control request went to the box's process");
+  // Answer it, so the ring settles and no 120 s control timer keeps the test process alive.
+  const requestId = String(JSON.parse(wrote[0] ?? "{}").request_id);
+  a.resolveControl({
+    type: "control_response",
+    request_id: requestId,
+    response: { request_id: requestId, subtype: "success", response: { response: "a box" } },
+  });
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(a.sideQuestions.get("far")?.[0]?.answer, "a box", "the answer lands in the ring");
+  box.processes.delete(registryKey("claude-code-box", "far"));
 }
 {
   const tr = new Translator({ relay: true }) as any;

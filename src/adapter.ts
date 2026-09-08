@@ -2271,6 +2271,27 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    * can show the question with a spinner; the answer or error fills in when the control response
    * arrives. Fire and forget: the command returns before Claude answers.
    */
+  /**
+   * The live process behind a dsh session, whichever mount spawned it. The registry is shared by
+   * every instance and keyed by provider, and `/btw` is registered once, on the main mount: a
+   * session on an SSH box lives under that box's provider id, so the main mount's own key misses it.
+   */
+  /** The instance whose aside ring the route and the bubble read: the main mount, else this one. */
+  asideOwner(): ClaudeCodeAdapter {
+    // SAFETY: the registry symbol is this plugin's own key on globalThis, typed here once
+    const g = globalThis as typeof globalThis & {
+      [ADAPTER_CURRENT]?: Map<string, ClaudeCodeAdapter>;
+    };
+    return g[ADAPTER_CURRENT]?.get("claude-code") ?? this;
+  }
+
+  processFor(sessionId: string): ClaudeProcess | undefined {
+    const own = this.processes.get(registryKey(this.providerId, sessionId));
+    if (own !== undefined) return own;
+    for (const [key, proc] of this.processes) if (key.endsWith(`:${sessionId}`)) return proc;
+    return undefined;
+  }
+
   askSideQuestion(sessionId: string, question: string) {
     const q = question.trim();
     const entry: AsideEntry = {
@@ -2287,7 +2308,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       if (oldest !== undefined) this.sideQuestions.delete(oldest);
     }
     this.sideQuestions.set(sessionId, ring.slice(-ASIDE_KEEP));
-    const proc = this.processes.get(registryKey(this.providerId, sessionId));
+    const proc = this.processFor(sessionId);
     if (!proc?.alive) {
       entry.pending = false;
       entry.error = "no live Claude process for this session; send a prompt first";
@@ -2905,7 +2926,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         const rpcId = aside.message.source?.rpcId;
         // dsh re-sends the same batch on every step of a turn; one ask per message.
         if (rpcId !== undefined) this.asked.add(rpcId);
-        this.askSideQuestion(options.sessionId, aside.question);
+        // The main mount owns the ring the side-questions route reads, so an aside typed in a
+        // session on an SSH box is asked there too, not on this box's own instance.
+        this.asideOwner().askSideQuestion(options.sessionId, aside.question);
       }
       if (this.asked.size > ASIDE_ASKED_KEEP)
         for (const id of [...this.asked].slice(0, this.asked.size - ASIDE_ASKED_KEEP))
