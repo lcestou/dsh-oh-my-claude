@@ -661,10 +661,11 @@ assert.ok(probed.flags.has("--effort") && probed.flags.has("--input-format"));
 const remoteProbe = await probeCli(
   (cmd, args, _opts, cb) => {
     assert.equal(cmd, "ssh");
-    assert.equal(args[4], "nova");
+    // The host and the script are the last two words, whatever `-o` options precede them.
+    assert.equal(args.at(-2), "nova");
     cb(
       null,
-      (args[5] ?? "").includes("--help")
+      (args.at(-1) ?? "").includes("--help")
         ? "Usage: claude [options]\n  --input-format <f>\n"
         : "1.0.0 (Claude Code)\n",
     );

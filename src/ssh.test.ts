@@ -21,14 +21,22 @@ import { sshBoxProviderId, validateRemoteWorkspaceInput, validateSshBoxes } from
     "/home/u/w",
   );
   assert.equal(inv.command, "ssh");
-  assert.deepEqual(inv.args.slice(0, 5), [
-    "-o",
+  // Options first, then the host and the script. The set of options is asserted below rather than
+  // by index, so adding one does not move the two words that matter.
+  assert.equal(inv.args.at(-2), "nova");
+  const opts = inv.args.slice(0, -2).join(" ");
+  for (const opt of [
     "BatchMode=yes",
-    "-o",
     "ConnectTimeout=10",
-    "nova",
-  ]);
-  const script = inv.args[5];
+    "ControlMaster=auto",
+    "ControlPersist=60",
+    "ServerAliveInterval=15",
+    "ServerAliveCountMax=4",
+  ])
+    assert.match(opts, new RegExp(`-o ${opt.replace("=", "=")}`), `ssh carries ${opt}`);
+  // One shared connection for every read of a box: the CLAUDE.md walk alone is ~25 of them.
+  assert.match(opts, /ControlPath=\S+cm-%C/);
+  const script = inv.args.at(-1);
   assert.equal(
     script,
     "cd '/home/u/w' 2>/dev/null || cd \"$HOME\"; exec env MCP_TOOL_TIMEOUT='3600000' " +
@@ -40,7 +48,7 @@ import { sshBoxProviderId, validateRemoteWorkspaceInput, validateSshBoxes } from
 // A missing remote path falls back to $HOME instead of failing the spawn.
 {
   const inv = sshInvocation("u@h", "claude", ["--add-dir", "/a b/c'd"], "/tmp/a b");
-  const script = inv.args[5];
+  const script = inv.args.at(-1);
   assert.ok(script);
   assert.match(script, /^cd '\/tmp\/a b' 2>\/dev\/null \|\| cd "\$HOME"; /);
   assert.match(script, /'--add-dir' '\/a b\/c'\\''d'$/);

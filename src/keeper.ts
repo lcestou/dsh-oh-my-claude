@@ -71,10 +71,27 @@ function main(dir: string) {
     log(`unhandledRejection: ${r instanceof Error ? r.stack : String(r)}`);
   });
 
+  // Fixed at start: writeInfo runs again on crash and on child exit, and a `Date.now()` in there
+  // would date the *record*, not the keeper. Boot sorts keeper dirs by this field and kills the
+  // ones it does not adopt, so a keeper writing its exit could outrank a live one and get it killed.
+  const startedAt = Date.now();
   const child = spawn(spec.command, spec.args, {
     cwd: spec.cwd,
     env: spec.env,
     stdio: ["pipe", "pipe", "pipe"],
+  });
+  // A `claude` that is not on the box's PATH emits `error`, never `exit`. With no listener the
+  // throw would land in the uncaughtException handler above, which stays up while `exit` is unset —
+  // leaving a keeper with no child still listening on its socket, taking prompts nothing reads, and
+  // surviving every restart. Report it as the exit it is.
+  child.on("error", (e: Error) => {
+    if (exit) return; // `close` can follow `error`; the first one to land owns the record
+    exit = { code: -1, signal: null };
+    endedBy ??= "child";
+    log(`childSpawnError: ${e.message}`);
+    writeInfo();
+    send({ t: "exit", code: -1, signal: null });
+    setTimeout(() => process.exit(0), 3000).unref();
   });
   child.stdin.on("error", () => {});
   child.stdout.on("error", (e) => log(`stdout error: ${e.message}`));
@@ -102,7 +119,7 @@ function main(dir: string) {
         pid: process.pid,
         claudePid: child.pid,
         sessionId: spec.sessionId,
-        startedAt: Date.now(),
+        startedAt,
         exit: exit ?? null,
         // Why Claude ended, for the boot that finds this keeper dead: "client" means a kill
         // message from dsh, "child" means Claude exited on its own.
@@ -118,7 +135,11 @@ function main(dir: string) {
   createInterface({ input: child.stderr, crlfDelay: Infinity }).on("line", (line) =>
     send({ t: "err", line }),
   );
-  child.on("exit", (code, signal) => {
+  // `close`, not `exit`: `exit` fires before stdout and stderr are drained, and the reader above
+  // emits their remaining lines after it. dsh ends its stream on `t:"exit"`, so a turn whose final
+  // `result` frame is still in the pipe would lose it and end as "claude exited 0: no output".
+  child.on("close", (code, signal) => {
+    if (exit) return; // a spawn error already reported this child; do not report it twice
     exit = { code, signal };
     endedBy ??= "child";
     log(`childExit code=${code} signal=${signal}`);

@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { PassThrough, Writable } from "node:stream";
 import { createInterface } from "node:readline";
 import type { AskUserQuestionItem, JsonValue, SubprocessRuntime } from "./dsh.js";
+import { STATE_DIR } from "./state.js";
 export type { JsonValue } from "./dsh.js";
 
 /** Errors reach us as `unknown`; this is the one place they become text. */
@@ -293,10 +294,23 @@ export function nodeSpawner(
     stdin: child.stdin,
     stdout: child.stdout,
     stderr: child.stderr,
-    done: new Promise((resolve) =>
-      child.on("close", (exitCode, signal) => resolve({ exitCode, signal })),
-    ),
-    terminate: () => child.kill(),
+    done: new Promise((resolve) => {
+      // Node emits `error` on the child for ENOENT, EACCES and a failed fork, and an EventEmitter
+      // `error` with no listener throws — a `claude` that is not on PATH would take the whole dsh
+      // host down with it, every session, not just this one. It reads as an exit here instead.
+      child.on("error", (e: Error) => resolve({ exitCode: -1, signal: e.message }));
+      child.on("close", (exitCode, signal) => resolve({ exitCode, signal }));
+    }),
+    // SIGTERM, then SIGKILL if it is still there. A claude inside an uninterruptible tool, or one
+    // whose own child holds the process group, ignores the first and would otherwise outlive the
+    // session that owned it: an orphan holding the session file and the MCP connections, invisible
+    // to the panel. `unref` so the escalation never keeps this process alive on its own.
+    terminate: () => {
+      child.kill();
+      setTimeout(() => {
+        if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+      }, 5000).unref();
+    },
   };
 }
 
@@ -325,8 +339,53 @@ export function shq(value: string): string {
 /** The local `ssh` argv that runs `script` on `host`. BatchMode: key auth only, so a missing key or
  * unknown host fails fast instead of hanging on a prompt. */
 export function sshArgs(host: string, script: string) {
-  return ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", host, script];
+  return [...SSH_OPTS, host, script];
 }
+
+/**
+ * Where the shared ssh connections live. Its own directory under the plugin's state dir: a unix
+ * socket path is capped near 104 bytes and `%C` already spends 40 of them, so this stays short.
+ * ssh does not create it, and a missing directory makes every connection fall back to its own.
+ */
+const SSH_CONTROL_DIR = join(STATE_DIR, "ssh");
+try {
+  mkdirSync(SSH_CONTROL_DIR, { recursive: true, mode: 0o700 });
+} catch {
+  // Unwritable state dir: ssh falls back to an unshared connection, which is how it worked before.
+}
+
+/**
+ * The options every ssh in this plugin carries.
+ *
+ * BatchMode: key auth only, so a missing key or unknown host fails fast instead of hanging on a
+ * prompt. ConnectTimeout bounds the handshake.
+ *
+ * ControlMaster shares one connection between all of them. Opening the panel on a box costs about
+ * 33 remote reads — 25 of them the CLAUDE.md walk alone, one per ancestor directory probe — and
+ * without multiplexing each pays a full TCP connect, key exchange and auth: seconds of dead panel
+ * on a LAN, more over a WAN. With it the first read pays that once and the rest reuse the socket,
+ * which ControlPersist keeps for a minute after the last one closes.
+ *
+ * ServerAlive turns a dead network into an error. The session pipe is a long-lived ssh, and a
+ * suspend, a Wi-Fi switch or a NAT timeout leaves it blocked on a socket TCP will not give up on
+ * for hours; the session sits thinking with nothing to report because the child never exits.
+ */
+const SSH_OPTS = [
+  "-o",
+  "BatchMode=yes",
+  "-o",
+  "ConnectTimeout=10",
+  "-o",
+  "ControlMaster=auto",
+  "-o",
+  `ControlPath=${join(SSH_CONTROL_DIR, "cm-%C")}`,
+  "-o",
+  "ControlPersist=60",
+  "-o",
+  "ServerAliveInterval=15",
+  "-o",
+  "ServerAliveCountMax=4",
+];
 
 /**
  * The local `ssh` argv that runs `command args` on `host` in `cwd`. The remote shell inherits none
