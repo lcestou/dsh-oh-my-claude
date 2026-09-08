@@ -328,11 +328,11 @@ export interface PluginContext {
         settingsNs: string;
         settingsPath: string[];
       }>,
-    ) => void;
+    ) => import("@deepseek-ai/dsh-llm").DirectoryRegistrationHandle;
     registerAdapter: (
       providers: string[],
       adapter: import("@deepseek-ai/dsh-llm").LlmAdapter,
-    ) => void;
+    ) => import("@deepseek-ai/dsh-llm").AdapterRegistrationHandle;
   };
   logger: {
     [level: string]: ((msg: string) => void) | undefined;

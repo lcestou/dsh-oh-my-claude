@@ -23,7 +23,10 @@ import {
   accountIdentity,
   type PickerSettings,
   readPickerSettings,
+  readSshBoxes,
   registerSessionRoutes,
+  type SshBox,
+  sshBoxProviderId,
 } from "./sessions.js";
 import { readUsage, registerUsageRoute, stillLimitedUntil } from "./usage.js";
 import { KEY_HEADER, MCP_PATH, registerMcpBridge } from "./mcp.js";
@@ -51,6 +54,7 @@ import {
   toJsonValue,
   nodeSpawner,
   seamSpawner,
+  sshSpawner,
   attachKeeper,
   launchKeeper,
   lazyHandle,
@@ -160,6 +164,7 @@ function requirePrep(proc: ClaudeProcess): TurnPrep {
 export type Config = {
   command: string;
   spawn: "node" | "dsh";
+  sshHost: string;
   configDir: string;
   permissionMode:
     | "dsh"
@@ -211,6 +216,12 @@ export const Config = z.object({
     .default("keeper")
     .description(
       "How the Claude Code process is started. 'keeper' (default): under a small keeper outside dsh's process tree (its own systemd user scope when available), so a dsh restart leaves Claude running and the new dsh reattaches. 'node': directly, as dsh's child. 'dsh': through dsh's subprocess seam (ctx.subprocess); with a remote provider such as a remote subprocess provider mounted, a remote workspace then runs Claude Code on that machine. The seam scrubs credential-shaped env vars (KEY/TOKEN/SECRET/PASSWORD), so log in on the machine that runs it",
+    ),
+  sshHost: z
+    .string()
+    .default("")
+    .description(
+      "Run this instance's Claude Code on a remote host over SSH (e.g. 'user@box' or an ssh_config alias). Empty = local. This box's harness drives the far `claude` with `ssh -o BatchMode=yes`; nothing runs on the remote but the CLI, using the remote's own ~/.claude login. Needs a working SSH key to the host. Forces node-style spawn (no keeper); the dsh MCP bridge and the file-reading panel tabs do not reach the remote yet",
     ),
   permissionMode: z
     .union(["dsh", "acceptEdits", "bypassPermissions", "plan", "dontAsk", "auto", "manual"])
@@ -2244,7 +2255,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
 
   /** Spawner for one session: keeper mode needs the session to place and name the keeper. */
   spawnerFor(sessionId: string | undefined, spec: ClaudeProcessSpec): Spawner {
-    if (this.config.spawn !== "keeper" || !sessionId) return this.spawner();
+    if (this.config.spawn !== "keeper" || !sessionId || this.config.sshHost) return this.spawner();
     return (command, args, cwd) => {
       // One directory per spawn: a respawn must never share a socket, keeper.json or keeper.log
       // with the keeper it replaces (2026-09-06: a shared directory let a dying keeper answer the
@@ -2411,6 +2422,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   }
 
   spawner() {
+    // A remote instance drives the far `claude` over SSH; no keeper, no seam, its own remote login.
+    if (this.config.sshHost) return sshSpawner(this.config.sshHost);
     const base =
       this.config.spawn === "dsh" && this.subprocess ? seamSpawner(this.subprocess) : nodeSpawner;
     if (this.config.spawn === "dsh" && !this.subprocess && !this.warnedNoSeam) {
@@ -2420,6 +2433,16 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     if (!this.config.configDir) return base;
     const envOverride = { CLAUDE_CONFIG_DIR: this.claudeHome };
     return (command: string, args: string[], cwd: string) => base(command, args, cwd, envOverride);
+  }
+
+  /** Kill this instance's live processes and drop them from the shared registry: called when an SSH
+   * box is removed from the panel, so its remote `claude` sessions do not outlive the mount. */
+  disposeProcesses() {
+    for (const [key, proc] of this.processes) {
+      if (!key.startsWith(`${this.providerId}:`)) continue;
+      proc.kill();
+      this.processes.delete(key);
+    }
   }
 
   async *stream(options: GenerateOptions): AsyncGenerator<StreamChunk> {
@@ -3456,6 +3479,74 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   }
 }
 
+interface SshBoxMount {
+  adapter: ClaudeCodeAdapter;
+  disposeAdapter: () => void;
+  disposeDirectory: () => void;
+}
+
+/**
+ * Bring the mounted SSH-box instances in line with `boxes`: mount one per new box, withdraw the ones
+ * no longer listed (and kill their sessions). Each box becomes an independent `claude-code-<slug>`
+ * that drives `claude` on its host over ssh with its own remote login — the same shape a hand-written
+ * mount would have, but built from the plugin's own state file so the panel owns the list and no dsh
+ * config is edited. The provider registrations are live handles, so a box appears in or leaves the
+ * model picker without a dsh restart.
+ *
+ * `mounts` is scope-local, rebuilt on every `apply()`: cordis disposes a plugin scope's registrations
+ * on a hot reload, so trusting a cross-reload map would leave a box gone from the picker but recorded
+ * as present. `adapters` is the cross-process `ADAPTER_CURRENT` registry the resume timer walks.
+ */
+function reconcileSshBoxes(
+  ctx: PluginContext,
+  base: Schemastery.TypeT<typeof Config>,
+  boxes: SshBox[],
+  mounts: Map<string, SshBoxMount>,
+  adapters: Map<string, ClaudeCodeAdapter>,
+  log: (level: string, msg: string) => void,
+) {
+  const desired = new Map(boxes.map((b) => [sshBoxProviderId(b.name), b] as const));
+  for (const [providerId, mount] of mounts) {
+    if (desired.has(providerId)) continue;
+    mount.disposeAdapter();
+    mount.disposeDirectory();
+    mount.adapter.disposeProcesses();
+    mounts.delete(providerId);
+    adapters.delete(providerId);
+    log("info", `ssh box ${providerId} withdrawn`);
+  }
+  for (const [providerId, box] of desired) {
+    if (mounts.has(providerId)) continue;
+    // A hand-written mount or the default already owns this id: leave it, rather than throw
+    // DUPLICATE_ADAPTER on the registration.
+    if (adapters.has(providerId)) {
+      log("warn", `ssh box "${box.name}" -> ${providerId} already mounted; skipped`);
+      continue;
+    }
+    const adapter = new ClaudeCodeAdapter(ctx, {
+      ...base,
+      providerId,
+      providerName: box.name,
+      sshHost: box.host,
+      spawn: "node",
+      dshTools: false,
+      configDir: "",
+    });
+    const disposeDirectory = ctx.llm.registerConfigurableProviders([
+      {
+        provider: adapter.providerId,
+        displayName: adapter.displayName,
+        settingsNs: adapter.settingsNs,
+        settingsPath: [],
+      },
+    ]);
+    const disposeAdapter = ctx.llm.registerAdapter([adapter.providerId], adapter);
+    mounts.set(providerId, { adapter, disposeAdapter, disposeDirectory });
+    adapters.set(providerId, adapter);
+    log("info", `ssh box "${box.name}" mounted as ${providerId} -> ${box.host}`);
+  }
+}
+
 export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Config>) {
   const adapter = new ClaudeCodeAdapter(ctx, config);
   const claudeHome = adapter.claudeHome;
@@ -3514,6 +3605,10 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
   if (adapter.providerId !== "claude-code") {
     adapter.log("info", "panel/routes/usage belong to the default claude-code instance");
   } else {
+    // The SSH boxes the default instance mounts. `sshMounts` is scope-local (rebuilt each apply, since
+    // a hot reload disposes the registrations); `sshAdapters` is the shared registry the resume walks.
+    const sshMounts = new Map<string, SshBoxMount>();
+    const sshAdapters = (g[ADAPTER_CURRENT] ??= new Map());
     registerMcpBridge(ctx, {
       keyFile: join(STATE_DIR, "mcp.key"),
       log: (level, msg) => adapter.log(level, msg),
@@ -3532,7 +3627,7 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
     registerUsageRoute(
       ctx,
       (level, msg) => adapter.log(level, msg),
-      (home?: string) => accountIdentity(adapter.config.command, home),
+      (home?: string) => accountIdentity(adapter.config.command, home, adapter.config.sshHost),
       { home: claudeHome, homeFor },
     );
     registerSessionRoutes(ctx, {
@@ -3544,7 +3639,13 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       settingsPath: join(claudeHome, "settings.json"),
       configDir: claudeHome,
       boxesPath: join(STATE_DIR, "boxes.json"),
+      sshBoxesPath: join(STATE_DIR, "ssh-boxes.json"),
+      onSshBoxes: (boxes) =>
+        reconcileSshBoxes(ctx, config, boxes, sshMounts, sshAdapters, (level, msg) =>
+          adapter.log(level, msg),
+        ),
       command: adapter.config.command,
+      sshHost: adapter.config.sshHost,
       turnRecords: adapter.turnBuffer,
       idle: {
         deadlineFor: (session: string) => adapter.idleDeadlineMap.get(session) ?? null,
@@ -3575,5 +3676,11 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       reloadPlugins: (sessionId: string) => adapter.reloadPlugins(sessionId),
       continueAfterLimit: adapter.config.continueAfterLimit,
     });
+    // Mount the saved SSH boxes at boot; `sshMounts` is scope-local so a hot reload rebuilds them.
+    void readSshBoxes(join(STATE_DIR, "ssh-boxes.json"))
+      .then((boxes) =>
+        reconcileSshBoxes(ctx, config, boxes, sshMounts, sshAdapters, (l, m) => adapter.log(l, m)),
+      )
+      .catch((e) => adapter.log("warn", `ssh boxes: ${errorText(e)}`));
   }
 }

@@ -35,6 +35,26 @@ export type ValidatedBoxes = {
  * token, kept so a browser without its cookie can still open it (same trick as the NPM proxy).
  */
 export declare function validateBoxes(input: unknown): ValidatedBoxes;
+/** A remote host this plugin drives Claude Code on over SSH. `name` labels it in the picker; `host`
+ * is the ssh target (`[user@]host` or an `~/.ssh/config` alias). Stored in the plugin's own state,
+ * so a box is added from the panel, never by hand-editing dsh config. */
+export interface SshBox {
+    name: string;
+    host: string;
+}
+/** The provider id a box mounts under: `claude-code-<slug of name>`, so each box is an independent
+ * instance with its own login, state and process registry, the way a hand-written mount would be. */
+export declare function sshBoxProviderId(name: string): string;
+/** What validateSshBoxes hands back: the cleaned list, or why the input is not one. */
+export type ValidatedSshBoxes = {
+    boxes: SshBox[];
+    error?: undefined;
+} | {
+    error: string;
+    boxes?: undefined;
+};
+export declare function validateSshBoxes(input: unknown): ValidatedSshBoxes;
+export declare function readSshBoxes(path: string): Promise<SshBox[]>;
 /** What a box's `/status` reports; the panel shows these fields as pills. */
 export interface RuntimeStatus {
     host: string;
@@ -92,7 +112,7 @@ export interface AccountIdentity {
     host: string;
     email: string | null;
 }
-export declare function accountIdentity(command?: string, configDir?: string): Promise<AccountIdentity>;
+export declare function accountIdentity(command?: string, configDir?: string, sshHost?: string): Promise<AccountIdentity>;
 /** Claude Code's settings file as the editor reads it. */
 export interface SettingsFile {
     path: string;
@@ -148,7 +168,14 @@ export interface SessionRouteOptions {
     settingsPath?: string;
     configDir: string;
     boxesPath?: string;
+    /** State file holding the SSH boxes the panel manages; the adapter mounts one instance per box. */
+    sshBoxesPath?: string;
+    /** Mount or withdraw provider instances so they match the saved SSH-box list, without a restart. */
+    onSshBoxes?: (boxes: SshBox[]) => Promise<void> | void;
     command?: string;
+    /** Non-empty when this instance drives Claude Code on a remote host over ssh; the status and
+     * identity probes run there so the panel reports the remote box, not this one. */
+    sshHost?: string;
     /** Per-session turn accounting buffer from the adapter. */
     turnRecords?: Map<string, import("./adapter.js").TurnRecord[]>;
     /** Idle watchdog state from the adapter. */
@@ -208,7 +235,7 @@ export interface SessionRouteOptions {
     continueAfterLimit?: boolean;
 }
 /** `projectDir(cwd)` → Claude Code project dir; `startedIds()` → ids the adapter started itself. */
-export declare function registerSessionRoutes(ctx: PluginContext, { log, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, command, turnRecords, idle, permissionModes, thinking, rewind, contextUsage, workspaceDiff, mcp, permissionAsks, sideQuestions, models, reloadPlugins, continueAfterLimit, }: SessionRouteOptions): void;
+export declare function registerSessionRoutes(ctx: PluginContext, { log, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, sshBoxesPath, onSshBoxes, command, sshHost, turnRecords, idle, permissionModes, thinking, rewind, contextUsage, workspaceDiff, mcp, permissionAsks, sideQuestions, models, reloadPlugins, continueAfterLimit, }: SessionRouteOptions): void;
 export declare const SETTINGS_SCOPES: readonly ["managed", "local", "project", "user"];
 /** One of the four settings files. The CLI's own layer names, minus the `--settings` flag layer. */
 export type SettingsScope = (typeof SETTINGS_SCOPES)[number];

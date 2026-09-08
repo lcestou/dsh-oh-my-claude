@@ -1,7 +1,8 @@
-// Browser half: Settings → "Oh My Claude". A runtime line (which claude, which account, which
-// box), one session list across this box and every saved box (filter by box, workspace, origin;
-// open here or jump to the box), and two collapsed cards: the saved boxes and Claude Code's own
-// settings.json. Built into lib/client.js by `bun run build`.
+// Browser half: Settings → "Oh My Claude". A branded header, then two cards: Sessions (one
+// transcript list across this box and every saved box — filter by box, workspace, origin; open
+// here or jump to the box) and Boxes (this box as the first row, plus the ssh and linked-dsh
+// machines you add, each probed for claude version and login). Built into lib/client.js by
+// `bun run build`.
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -13,6 +14,7 @@ import {
   btn,
   meta,
   code,
+  codeInline,
   readJson,
   card,
   cardHead,
@@ -384,74 +386,6 @@ interface RuntimeStatus {
   error?: string;
 }
 
-interface RuntimeProps {
-  onStatus: (s: RuntimeStatus | null) => void;
-}
-
-/** One line answering "which claude, which account, which machine". */
-function Runtime({ onStatus }: RuntimeProps) {
-  const [st, setSt] = useState<RuntimeStatus | null>(null);
-  const [error, setError] = useState("");
-  useEffect(() => {
-    fetch(`${ROUTE}/status`)
-      .then((r) => readJson<RuntimeStatus | null>(r))
-      .then((status) => {
-        setSt(status);
-        onStatus?.(status);
-      })
-      .catch((e: Error) => setError(e.message));
-  }, []);
-  if (error)
-    return (
-      <p id="dsh-oh-my-claude-runtime" style={{ color: T.err, fontSize: 13, margin: "0 0 4px" }}>
-        {error}
-      </p>
-    );
-  if (!st)
-    return (
-      <p id="dsh-oh-my-claude-runtime" style={{ ...meta, margin: "0 0 4px" }}>
-        Checking claude…
-      </p>
-    );
-  const who = st.loggedIn
-    ? `logged in${st.email ? ` as ${maskEmail(st.email)}` : ""}${st.authMethod ? ` (${st.authMethod})` : ""}`
-    : "not logged in";
-  return (
-    <div
-      id="dsh-oh-my-claude-runtime"
-      style={{
-        display: "flex",
-        flexWrap: "wrap",
-        gap: 6,
-        alignItems: "center",
-        margin: "0 0 4px",
-        fontSize: 13,
-        color: T.muted,
-      }}
-    >
-      <span style={pill(st.binary ? T.ok : T.err)}>
-        {st.binary ? `claude ${st.version ?? ""}`.trim() : "claude not on PATH"}
-      </span>
-      <span style={pill(st.loggedIn ? T.ok : T.err)}>{who}</span>
-      <span style={pill(T.faint)}>{st.host}</span>
-      <span style={{ fontFamily: T.mono, fontSize: 12, color: T.faint }}>
-        {st.binary ?? ""} · {st.configDir}
-      </span>
-      {st.error && (
-        <span style={{ width: "100%", color: T.err, fontFamily: T.mono, fontSize: 12 }}>
-          {st.error}
-        </span>
-      )}
-      {!st.loggedIn && (
-        <span style={{ width: "100%", color: T.err }}>
-          Sign in on this machine first: run{" "}
-          <code style={{ fontFamily: T.mono }}>claude auth login</code> in a terminal, then reload
-          this page.
-        </span>
-      )}
-    </div>
-  );
-}
 interface RemoteSessionData extends SessionData {
   url: string;
   host?: string;
@@ -1125,35 +1059,67 @@ interface ProbeEntry {
   };
 }
 
+type BoxKind = "ssh" | "dsh";
+
 /**
- * Other dsh servers ("boxes"), each with its own Claude Code login. Same idea as another tool's
- * environments: the browser hops to the box, nothing is proxied. Saved on this dsh, probed
- * server-side so the row shows host, claude version, login and plugin version before you jump.
+ * Every machine, in one place. This box is the first row (auto-detected, not removable — it is the
+ * environment the plugin was installed on); the rest you add, in two kinds:
+ *  - **SSH** (`ssh`): this dsh drives Claude Code on the box over ssh; it becomes its own entry in
+ *    the model picker, nothing runs there but the CLI. Saved in the plugin's own state.
+ *  - **Link** (`dsh`): the box runs its own dsh with this plugin; its sessions show in the archive
+ *    and Open hops the browser there. Same idea as another tool's environments, nothing proxied.
+ * Every row is probed server-side so it shows host, claude version and login before you use it.
  */
 function Boxes({ boxes, setBoxes, open, onToggle }: BoxesProps) {
   const [probe, setProbe] = useState<Record<string, ProbeEntry>>({});
   const [self, setSelf] = useState<{ plugin?: string } | null>(null);
-  const [draft, setDraft] = useState({ name: "", url: "", token: "" });
+  const [ssh, setSsh] = useState<SshBoxData[]>([]);
+  const [sshProbe, setSshProbe] = useState<Record<string, SshProbeEntry>>({});
+  const [kind, setKind] = useState<BoxKind>("ssh");
+  const [draft, setDraft] = useState({ name: "", url: "", token: "", host: "" });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [openSettingsUrl, setOpenSettingsUrl] = useState<string | null>(null);
+  const [me, setMe] = useState<RuntimeStatus | null>(null);
+
+  useEffect(() => {
+    fetch(`${ROUTE}/ssh-boxes`)
+      .then((r) => readJson<{ boxes?: SshBoxData[] }>(r))
+      .then((b) => setSsh(b.boxes ?? []))
+      .catch((e: Error) => setError(e.message));
+    fetch(`${ROUTE}/status`)
+      .then((r) => readJson<RuntimeStatus | null>(r))
+      .then(setMe)
+      .catch(() => {});
+  }, []);
 
   const refresh = () => {
-    if (boxes.length === 0) return;
+    if (boxes.length === 0 && ssh.length === 0) return;
     setBusy(true);
     setError("");
-    fetch(`${ROUTE}/boxes/status`)
-      .then((r) => readJson<{ self?: { plugin?: string }; boxes?: ProbeEntry[] }>(r))
-      .then((b) => {
-        setSelf(b.self ?? null);
-        setProbe(Object.fromEntries((b.boxes ?? []).map((entry) => [entry.url, entry])));
-      })
+    const jobs: Promise<unknown>[] = [];
+    if (boxes.length)
+      jobs.push(
+        fetch(`${ROUTE}/boxes/status`)
+          .then((r) => readJson<{ self?: { plugin?: string }; boxes?: ProbeEntry[] }>(r))
+          .then((b) => {
+            setSelf(b.self ?? null);
+            setProbe(Object.fromEntries((b.boxes ?? []).map((entry) => [entry.url, entry])));
+          }),
+      );
+    if (ssh.length)
+      jobs.push(
+        fetch(`${ROUTE}/ssh-boxes/status`)
+          .then((r) => readJson<{ boxes?: SshProbeEntry[] }>(r))
+          .then((b) => setSshProbe(Object.fromEntries((b.boxes ?? []).map((e) => [e.host, e])))),
+      );
+    Promise.all(jobs)
       .catch((e: Error) => setError(e.message))
       .finally(() => setBusy(false));
   };
-  useEffect(refresh, [boxes.map((b) => b.url).join("|")]);
+  useEffect(refresh, [boxes.map((b) => b.url).join("|"), ssh.map((b) => b.host).join("|")]);
 
-  const save = (next: BoxData[]) => {
+  const saveDsh = (next: BoxData[]) => {
     setBusy(true);
     setError("");
     return fetch(`${ROUTE}/boxes`, {
@@ -1166,18 +1132,58 @@ function Boxes({ boxes, setBoxes, open, onToggle }: BoxesProps) {
       .catch((e: Error) => setError(e.message))
       .finally(() => setBusy(false));
   };
+  const saveSsh = (next: SshBoxData[]) => {
+    setBusy(true);
+    setError("");
+    return fetch(`${ROUTE}/ssh-boxes`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ boxes: next }),
+    })
+      .then((r) => readJson<{ boxes?: SshBoxData[] }>(r))
+      .then((b) => setSsh(b.boxes ?? []))
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setBusy(false));
+  };
+  const clear = () => setDraft({ name: "", url: "", token: "", host: "" });
   const add = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!draft.name.trim() || !draft.url.trim()) return;
-    save([...boxes, draft]).then(() => setDraft({ name: "", url: "", token: "" }));
+    if (!draft.name.trim()) return;
+    if (kind === "ssh") {
+      if (!draft.host.trim()) return;
+      saveSsh([...ssh, { name: draft.name.trim(), host: draft.host.trim() }]).then(clear);
+    } else {
+      if (!draft.url.trim()) return;
+      saveDsh([
+        ...boxes,
+        { name: draft.name.trim(), url: draft.url.trim(), token: draft.token },
+      ]).then(clear);
+    }
   };
-  const remove = (url: string) => save(boxes.filter((b) => b.url !== url));
+  const removeDsh = (url: string) => saveDsh(boxes.filter((b) => b.url !== url));
+  const removeSsh = (host: string) => saveSsh(ssh.filter((b) => b.host !== host));
 
-  const reachable = boxes.filter((b) => probe[b.url]?.ok).length;
+  const total = boxes.length + ssh.length;
+  const reachable =
+    boxes.filter((b) => probe[b.url]?.ok).length +
+    ssh.filter((b) => sshProbe[b.host]?.status?.binary).length;
   const summary =
-    boxes.length === 0
+    total === 0
       ? "none saved"
-      : `${boxes.length} saved · ${busy ? "checking…" : `${reachable} reachable`}`;
+      : `${total} saved · ${busy ? "checking…" : `${reachable} reachable`}`;
+  const seg = (k: BoxKind, label: string) => (
+    <button
+      type="button"
+      style={
+        kind === k
+          ? { ...btn, background: CLAUDE_ORANGE, color: T.onBrand, border: "1px solid transparent" }
+          : btn
+      }
+      onClick={() => setKind(k)}
+    >
+      {label}
+    </button>
+  );
   return (
     <Card
       id="dsh-oh-my-claude-boxes"
@@ -1185,7 +1191,7 @@ function Boxes({ boxes, setBoxes, open, onToggle }: BoxesProps) {
       summary={summary}
       actions={
         open ? (
-          <button type="button" style={btn} disabled={busy || boxes.length === 0} onClick={refresh}>
+          <button type="button" style={btn} disabled={busy || total === 0} onClick={refresh}>
             {busy ? "Checking…" : "Refresh"}
           </button>
         ) : null
@@ -1194,16 +1200,51 @@ function Boxes({ boxes, setBoxes, open, onToggle }: BoxesProps) {
       onToggle={onToggle}
     >
       <p style={{ margin: "0 0 4px", color: T.muted, fontSize: 13 }}>
-        Other machines running dsh with this plugin. Their sessions show in the list above; Open
-        jumps there. Each box keeps its own Claude Code login.
+        This box plus any you add. <b>SSH</b>: this dsh drives Claude Code on the box over ssh — it
+        shows up in the model picker, no dsh needed there. <b>Link</b>: it runs its own dsh with
+        this plugin — its sessions show in the archive and Open hops there. Each keeps its own
+        Claude Code login.
       </p>
       {error && <p style={{ color: T.err, fontSize: 13, margin: "4px 0" }}>{error}</p>}
-      {boxes.map((b) => {
-        const st = probe[b.url];
-        const ok = st?.ok;
-        const skew = ok && self && st.status?.plugin && st.status.plugin !== self.plugin;
+      {me && (
+        <div data-testid="dsh-oh-my-claude-self-box-row" style={row}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ color: T.text, fontWeight: 600 }}>This box</div>
+            <div
+              style={{
+                ...meta,
+                marginTop: 3,
+                display: "flex",
+                flexWrap: "wrap",
+                gap: 6,
+                alignItems: "center",
+                whiteSpace: "normal",
+              }}
+            >
+              <span style={pill(CLAUDE_ORANGE)}>this box</span>
+              {me.host && <span style={{ fontFamily: T.mono }}>{me.host}</span>}
+              <span style={pill(me.binary ? T.ok : T.err)}>
+                {me.binary ? `claude ${me.version ?? ""}`.trim() : "claude not on PATH"}
+              </span>
+              <span style={pill(me.loggedIn ? T.ok : T.err)}>
+                {me.loggedIn ? maskEmail(me.email ?? "logged in") : "not logged in"}
+              </span>
+              {!me.loggedIn && (
+                <span style={{ width: "100%", color: T.err, fontSize: 12 }}>
+                  Run <code style={codeInline}>claude auth login</code> in a terminal here, then
+                  refresh.
+                </span>
+              )}
+            </div>
+          </div>
+          <span style={{ ...meta, alignSelf: "center" }}>auto</span>
+        </div>
+      )}
+      {ssh.map((b) => {
+        const st = sshProbe[b.host]?.status;
+        const up = st && !st.error && st.binary;
         return (
-          <div key={b.url} data-testid="dsh-oh-my-claude-box-row" style={row}>
+          <div key={`ssh:${b.host}`} data-testid="dsh-oh-my-claude-ssh-box-row" style={row}>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ color: T.text, fontWeight: 600 }}>{b.name}</div>
               <div
@@ -1217,6 +1258,48 @@ function Boxes({ boxes, setBoxes, open, onToggle }: BoxesProps) {
                   whiteSpace: "normal",
                 }}
               >
+                <span style={pill(T.faint)}>ssh</span>
+                <span style={{ fontFamily: T.mono }}>{b.host}</span>
+                {!st && <span style={pill(T.faint)}>{busy ? "checking" : "unchecked"}</span>}
+                {st?.error && <span style={pill(T.err)}>{st.error}</span>}
+                {up && (
+                  <>
+                    <span style={pill(st.binary ? T.ok : T.err)}>
+                      {st.binary ? `claude ${st.version ?? ""}`.trim() : "no claude"}
+                    </span>
+                    <span style={pill(st.loggedIn ? T.ok : T.err)}>
+                      {st.loggedIn ? maskEmail(st.email ?? "logged in") : "not logged in"}
+                    </span>
+                  </>
+                )}
+              </div>
+            </div>
+            <button type="button" style={btn} disabled={busy} onClick={() => removeSsh(b.host)}>
+              Remove
+            </button>
+          </div>
+        );
+      })}
+      {boxes.map((b) => {
+        const st = probe[b.url];
+        const ok = st?.ok;
+        const skew = ok && self && st.status?.plugin && st.status.plugin !== self.plugin;
+        return (
+          <div key={`dsh:${b.url}`} data-testid="dsh-oh-my-claude-box-row" style={row}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ color: T.text, fontWeight: 600 }}>{b.name}</div>
+              <div
+                style={{
+                  ...meta,
+                  marginTop: 3,
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: 6,
+                  alignItems: "center",
+                  whiteSpace: "normal",
+                }}
+              >
+                <span style={pill(T.faint)}>link</span>
                 <span style={{ fontFamily: T.mono }}>{b.url}</span>
                 {!st && <span style={pill(T.faint)}>{busy ? "checking" : "unchecked"}</span>}
                 {st && !ok && <span style={pill(T.err)}>{st.error}</span>}
@@ -1247,7 +1330,7 @@ function Boxes({ boxes, setBoxes, open, onToggle }: BoxesProps) {
             >
               Edit settings
             </button>
-            <button type="button" style={btn} disabled={busy} onClick={() => remove(b.url)}>
+            <button type="button" style={btn} disabled={busy} onClick={() => removeDsh(b.url)}>
               Remove
             </button>
             <button type="button" style={btnPrimary} onClick={() => jump(b)}>
@@ -1269,45 +1352,90 @@ function Boxes({ boxes, setBoxes, open, onToggle }: BoxesProps) {
         onSubmit={add}
         style={{
           ...row,
-          borderTop: boxes.length ? `1px solid ${T.border}` : "none",
-          paddingTop: boxes.length ? 12 : 4,
+          borderTop: total ? `1px solid ${T.border}` : "none",
+          paddingTop: total ? 12 : 4,
           flexWrap: "wrap",
         }}
       >
+        <div style={{ display: "flex", gap: 6 }}>
+          {seg("ssh", "SSH")}
+          {seg("dsh", "Link")}
+        </div>
         <input
           style={{ ...inputStyle, flex: "0 1 140px" }}
           placeholder="Name"
           value={draft.name}
           onChange={(e) => setDraft({ ...draft, name: e.target.value })}
         />
-        <input
-          style={{ ...inputStyle, flex: "1 1 260px" }}
-          placeholder="https://dsh.other-box.lan"
-          value={draft.url}
-          onChange={(e) => setDraft({ ...draft, url: e.target.value })}
-        />
-        <input
-          style={{ ...inputStyle, flex: "1 1 200px" }}
-          type="password"
-          autoComplete="off"
-          placeholder="dsh token (optional)"
-          value={draft.token}
-          onChange={(e) => setDraft({ ...draft, token: e.target.value })}
-        />
+        {kind === "ssh" ? (
+          <input
+            style={{ ...inputStyle, flex: "1 1 240px" }}
+            placeholder="user@host or ssh alias"
+            value={draft.host}
+            onChange={(e) => setDraft({ ...draft, host: e.target.value })}
+          />
+        ) : (
+          <>
+            <input
+              style={{ ...inputStyle, flex: "1 1 260px" }}
+              placeholder="https://dsh.other-box.lan"
+              value={draft.url}
+              onChange={(e) => setDraft({ ...draft, url: e.target.value })}
+            />
+            <input
+              style={{ ...inputStyle, flex: "1 1 200px" }}
+              type="password"
+              autoComplete="off"
+              placeholder="dsh token (optional)"
+              value={draft.token}
+              onChange={(e) => setDraft({ ...draft, token: e.target.value })}
+            />
+          </>
+        )}
         <button
           type="submit"
           style={btn}
-          disabled={busy || !draft.name.trim() || !draft.url.trim()}
+          disabled={
+            busy || !draft.name.trim() || (kind === "ssh" ? !draft.host.trim() : !draft.url.trim())
+          }
         >
           Add
         </button>
       </form>
       <div style={{ ...meta, whiteSpace: "normal", marginTop: 4 }}>
-        Token: the box's dsh launch token (printed when dsh web starts, or already in its URL behind
-        a proxy). Needed only when this browser has never logged into that box.
+        {kind === "ssh" ? (
+          <>
+            Key-based ssh only. Not logged in there? Run{" "}
+            <code style={codeInline}>ssh &lt;host&gt;</code> then{" "}
+            <code style={codeInline}>claude auth login</code> on the box; it needs a browser. The
+            file-reading tabs still read this box, not the remote.
+          </>
+        ) : (
+          <>
+            Token: the box's dsh launch token (printed when dsh web starts, or already in its URL
+            behind a proxy). Needed only when this browser has never logged into that box.
+          </>
+        )}
       </div>
     </Card>
   );
+}
+
+interface SshBoxData {
+  name: string;
+  host: string;
+}
+interface SshProbeEntry {
+  name: string;
+  host: string;
+  status?: {
+    host?: string;
+    binary?: string;
+    version?: string;
+    loggedIn?: boolean;
+    email?: string;
+    error?: string;
+  };
 }
 
 /** A deep link from another box's panel: open that session here once dsh is ready. */
@@ -2591,7 +2719,8 @@ export function apply(ctx: ClientCtx) {
 
   function Section() {
     const [boxes, setBoxes] = useState<BoxData[]>([]);
-    const [openBoxes, setOpenBoxes] = useState(false);
+    const [openBoxes, setOpenBoxes] = useState(true);
+    const [openSessions, setOpenSessions] = useState(false);
     const [error, setError] = useState("");
     useEffect(() => {
       fetch(`${ROUTE}/boxes`)
@@ -2604,17 +2733,28 @@ export function apply(ctx: ClientCtx) {
     }, []);
     return (
       <div>
-        <h2 id="dsh-oh-my-claude-heading" style={{ marginTop: 0 }}>
-          Oh My Claude
-        </h2>
-        <Runtime onStatus={() => {}} />
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+          <span style={{ color: CLAUDE_ORANGE, fontSize: 18, lineHeight: 1 }}>{CLAUDE_MARK}</span>
+          <h2 id="dsh-oh-my-claude-heading" style={{ margin: 0, fontSize: 18 }}>
+            Oh My Claude
+          </h2>
+        </div>
         {error && <p style={{ color: T.err, fontSize: 13 }}>{error}</p>}
-        {boxes !== null && <Sessions ctx={ctx} boxes={boxes} />}
+        {boxes !== null && (
+          <Card
+            id="dsh-oh-my-claude-sessions-card"
+            title="Sessions"
+            open={openSessions}
+            onToggle={() => setOpenSessions((v) => !v)}
+          >
+            <Sessions ctx={ctx} boxes={boxes} />
+          </Card>
+        )}
         {boxes !== null && (
           <Boxes
             boxes={boxes}
             setBoxes={setBoxes}
-            open={openBoxes || boxes.length === 0}
+            open={openBoxes}
             onToggle={() => setOpenBoxes((v) => !v)}
           />
         )}

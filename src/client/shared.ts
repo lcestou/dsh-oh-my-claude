@@ -151,6 +151,16 @@ export const code: CSSProperties = {
   tabSize: 2,
   whiteSpace: "pre",
 };
+/** A word of code inside a sentence: sits on the text line, no block padding or full width. */
+export const codeInline: CSSProperties = {
+  fontFamily: T.mono,
+  fontSize: "0.9em",
+  padding: "1px 5px",
+  borderRadius: 5,
+  border: `1px solid ${T.border}`,
+  background: T.field,
+  whiteSpace: "nowrap",
+};
 
 /** Decode a reply from this plugin's own routes; a non-2xx status throws its `error` text. */
 export const readJson = async <T>(r: Response): Promise<T> => {

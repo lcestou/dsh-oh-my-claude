@@ -317,6 +317,46 @@ export const seamSpawner =
       stdio: { stdin: "pipe", stdout: "pipe", stderr: "pipe" },
     });
 
+/** POSIX single-quote a string for a remote shell: wrap in `'...'`, escaping any embedded quote. */
+export function shq(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+/** The local `ssh` argv that runs `script` on `host`. BatchMode: key auth only, so a missing key or
+ * unknown host fails fast instead of hanging on a prompt. */
+export function sshArgs(host: string, script: string) {
+  return ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", host, script];
+}
+
+/**
+ * The local `ssh` argv that runs `command args` on `host` in `cwd`. The remote shell inherits none
+ * of this box's environment or working directory, so the command carries both: `cd` into `cwd`, then
+ * `exec env` with CHILD_ENV (file checkpointing for rewind, the long MCP timeout). `cwd` is this
+ * box's workspace path and usually does not exist on the remote, so fall back to the remote `$HOME`
+ * rather than let `cd` fail the whole spawn.
+ */
+export function sshInvocation(host: string, command: string, args: string[], cwd: string) {
+  const env = Object.entries(CHILD_ENV)
+    .map(([key, val]) => `${key}=${shq(val)}`)
+    .join(" ");
+  const remote = [command, ...args].map(shq).join(" ");
+  const script = `cd ${shq(cwd)} 2>/dev/null || cd "$HOME"; exec env ${env} ${remote}`;
+  return { command: "ssh", args: sshArgs(host, script) };
+}
+
+/**
+ * Spawner that runs Claude Code on a remote host over SSH: this box's harness drives the far `claude`,
+ * nothing runs there but the CLI itself. The stream-json wire flows through the ssh pipe unchanged, so
+ * the translator, approvals and control requests are untouched. The remote uses its own `~/.claude`
+ * login; the dsh MCP bridge points at this box's port and does not reach it, so `dshTools` is best off.
+ */
+export const sshSpawner =
+  (host: string): Spawner =>
+  (command, args, cwd) => {
+    const inv = sshInvocation(host, command, args, cwd);
+    return nodeSpawner(inv.command, inv.args, ".");
+  };
+
 /** stdin line for one user turn. `session_id` empty and `parent_tool_use_id` null match what the SDK writes. */
 export function userTurnLine(content: unknown): string {
   return `${JSON.stringify({ type: "user", session_id: "", message: { role: "user", content }, parent_tool_use_id: null })}\n`;

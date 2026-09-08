@@ -8,6 +8,7 @@ import { hostname } from "node:os";
 import { readdir, readFile, writeFile, rename, copyFile, stat, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { listTranscripts, readTranscript, toSessionEvents } from "./transcript.js";
+import { shq, sshArgs } from "./process.js";
 import type { TranscriptListItem } from "./transcript.js";
 import { deleteMemory, isMemoryName, listMemory } from "./memory.js";
 import { listInstructions } from "./instructions.js";
@@ -197,6 +198,65 @@ async function readBoxes(path: string): Promise<Box[]> {
   }
 }
 
+/** A remote host this plugin drives Claude Code on over SSH. `name` labels it in the picker; `host`
+ * is the ssh target (`[user@]host` or an `~/.ssh/config` alias). Stored in the plugin's own state,
+ * so a box is added from the panel, never by hand-editing dsh config. */
+export interface SshBox {
+  name: string;
+  host: string;
+}
+
+/** The provider id a box mounts under: `claude-code-<slug of name>`, so each box is an independent
+ * instance with its own login, state and process registry, the way a hand-written mount would be. */
+export function sshBoxProviderId(name: string): string {
+  const slug = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return `claude-code-${slug}`;
+}
+
+/** What validateSshBoxes hands back: the cleaned list, or why the input is not one. */
+export type ValidatedSshBoxes =
+  | { boxes: SshBox[]; error?: undefined }
+  | { error: string; boxes?: undefined };
+
+export function validateSshBoxes(input: unknown): ValidatedSshBoxes {
+  if (!Array.isArray(input)) return { error: "ssh boxes must be an array" };
+  if (input.length > MAX_BOXES) return { error: `at most ${MAX_BOXES} ssh boxes` };
+  const boxes: SshBox[] = [];
+  const ids = new Set<string>();
+  const hosts = new Set<string>();
+  for (const raw of input) {
+    const b = isJsonObject(raw) ? raw : {};
+    const name = String(b.name ?? "").trim();
+    const host = String(b.host ?? "").trim();
+    if (!name || name.length > 40) return { error: "each ssh box needs a name (1-40 chars)" };
+    // The name has to slug to a non-empty, unique provider id, else two boxes would collide on one
+    // instance. `[user@]host[:port]` and config aliases only; no shell metacharacters near ssh.
+    const id = sshBoxProviderId(name);
+    if (id === "claude-code-") return { error: `"${name}": name needs a letter or digit` };
+    if (ids.has(id)) return { error: `"${name}": another box already uses that name` };
+    if (!host || host.length > 200) return { error: `"${name}": host is required (1-200 chars)` };
+    if (!/^[A-Za-z0-9._@:%+-]+$/.test(host))
+      return { error: `"${name}": host has invalid characters` };
+    if (hosts.has(host)) return { error: `"${name}": duplicate host ${host}` };
+    ids.add(id);
+    hosts.add(host);
+    boxes.push({ name, host });
+  }
+  return { boxes };
+}
+
+export async function readSshBoxes(path: string): Promise<SshBox[]> {
+  try {
+    const v = validateSshBoxes(JSON.parse(await readFile(path, "utf8")));
+    return v.boxes ?? [];
+  } catch {
+    return [];
+  }
+}
+
 /** What a box's `/status` reports; the panel shows these fields as pills. */
 export interface RuntimeStatus {
   host: string;
@@ -340,37 +400,54 @@ const identityCache = new Map<string, { at: number; value: AccountIdentity }>();
 export async function accountIdentity(
   command = "claude",
   configDir?: string,
+  sshHost = "",
 ): Promise<AccountIdentity> {
-  const key = configDir ?? "";
+  const key = `${sshHost}\0${configDir ?? ""}`;
   const hit = identityCache.get(key);
   if (hit && Date.now() - hit.at < 10 * 60_000) return hit.value;
-  const env = configDir ? { ...process.env, CLAUDE_CONFIG_DIR: configDir } : undefined;
-  const status = await run(command, ["auth", "status"], env);
-  const value = { host: hostname(), email: authFromStatus(status.out).email ?? null };
+  // A remote box reports its own login over ssh (its own `~/.claude`); a local configDir would be
+  // meaningless there, so it is never sent.
+  const status = sshHost
+    ? await run("ssh", sshArgs(sshHost, `${shq(command)} auth status`))
+    : await run(
+        command,
+        ["auth", "status"],
+        configDir ? { ...process.env, CLAUDE_CONFIG_DIR: configDir } : undefined,
+      );
+  const value = { host: sshHost || hostname(), email: authFromStatus(status.out).email ?? null };
   identityCache.set(key, { at: Date.now(), value });
   return value;
 }
 
 /**
  * What the panel needs to answer "is this the right machine and account": which `claude` dsh
- * spawns, its version, the config dir it will read, and who is logged in. Same-box by design:
- * the plugin runs Claude Code as a child process, never over ssh.
+ * spawns, its version, the config dir it will read, and who is logged in. When `sshHost` is set the
+ * instance drives Claude Code on that box, so every probe runs there over ssh and reports the remote
+ * binary, version and login rather than this box's.
  */
-async function runtimeStatus(configDir: string, command = "claude"): Promise<RuntimeStatus> {
+async function runtimeStatus(
+  configDir: string,
+  command = "claude",
+  sshHost = "",
+): Promise<RuntimeStatus> {
+  const remote = (args: string[]) =>
+    run("ssh", sshArgs(sshHost, `${shq(command)} ${args.map(shq).join(" ")}`));
   const [which, version, status] = await Promise.all([
-    run(
-      process.platform === "win32" ? "where" : "sh",
-      process.platform === "win32" ? [command] : ["-c", `command -v ${command}`],
-    ),
-    run(command, ["--version"]),
-    run(command, ["auth", "status"]),
+    sshHost
+      ? run("ssh", sshArgs(sshHost, `command -v ${shq(command)}`))
+      : run(
+          process.platform === "win32" ? "where" : "sh",
+          process.platform === "win32" ? [command] : ["-c", `command -v ${command}`],
+        ),
+    sshHost ? remote(["--version"]) : run(command, ["--version"]),
+    sshHost ? remote(["auth", "status"]) : run(command, ["auth", "status"]),
   ]);
   const out: RuntimeStatus = {
-    host: hostname(),
+    host: sshHost || hostname(),
     plugin: PLUGIN_VERSION,
     binary: which.out.trim().split(/\r?\n/)[0] || null,
     version: version.out.trim() || null,
-    configDir,
+    configDir: sshHost ? "(remote ~/.claude)" : configDir,
     ...authFromStatus(status.out),
   };
   if (version.error) out.error = version.error;
@@ -630,7 +707,14 @@ export interface SessionRouteOptions {
   settingsPath?: string;
   configDir: string;
   boxesPath?: string;
+  /** State file holding the SSH boxes the panel manages; the adapter mounts one instance per box. */
+  sshBoxesPath?: string;
+  /** Mount or withdraw provider instances so they match the saved SSH-box list, without a restart. */
+  onSshBoxes?: (boxes: SshBox[]) => Promise<void> | void;
   command?: string;
+  /** Non-empty when this instance drives Claude Code on a remote host over ssh; the status and
+   * identity probes run there so the panel reports the remote box, not this one. */
+  sshHost?: string;
   /** Per-session turn accounting buffer from the adapter. */
   turnRecords?: Map<string, import("./adapter.js").TurnRecord[]>;
   /** Idle watchdog state from the adapter. */
@@ -708,7 +792,10 @@ export function registerSessionRoutes(
     settingsPath,
     configDir,
     boxesPath,
+    sshBoxesPath,
+    onSshBoxes,
     command,
+    sshHost,
     turnRecords,
     idle,
     permissionModes,
@@ -1040,7 +1127,7 @@ export function registerSessionRoutes(
                 });
               }
               if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/status`)
-                return json(res, 200, await runtimeStatus(configDir, command));
+                return json(res, 200, await runtimeStatus(configDir, command, sshHost));
               if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/models`) {
                 if (!models) return json(res, 404, { error: "models not available" });
                 try {
@@ -1055,7 +1142,7 @@ export function registerSessionRoutes(
               // the routes that already serve them, so nothing is answered twice.
               if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/diagnostics`) {
                 const cwd = await knownCwd(url.searchParams.get("cwd"), sessionPersistence);
-                const runtime = await runtimeStatus(configDir, command);
+                const runtime = await runtimeStatus(configDir, command, sshHost);
                 const configFiles: DiagnosticFile[] = [];
                 for (const scope of SETTINGS_SCOPES) {
                   const path = settingsPath
@@ -1308,6 +1395,39 @@ export function registerSessionRoutes(
                   await writeFile(boxesPath, `${JSON.stringify(v.boxes, null, 2)}\n`, "utf8");
                   return json(res, 200, { boxes: v.boxes });
                 }
+              }
+              if (sshBoxesPath && url.pathname === `${ROUTE_PREFIX}/ssh-boxes`) {
+                if (req.method === "GET")
+                  return json(res, 200, { boxes: await readSshBoxes(sshBoxesPath) });
+                if (req.method === "PUT") {
+                  const v = validateSshBoxes((await readBody(req)).boxes);
+                  if (v.error !== undefined) return json(res, 400, { error: v.error });
+                  await writeFile(sshBoxesPath, `${JSON.stringify(v.boxes, null, 2)}\n`, "utf8");
+                  // Mount or withdraw the provider instances so the picker matches the saved list
+                  // without a dsh restart; a mount failure is reported, the file already saved.
+                  let live = true;
+                  try {
+                    await onSshBoxes?.(v.boxes);
+                  } catch (e) {
+                    live = false;
+                    log("warn", `ssh-boxes reconcile: ${errorText(e)}`);
+                  }
+                  return json(res, 200, { boxes: v.boxes, live });
+                }
+              }
+              // Probe each ssh box's `claude` over ssh so the panel shows its login without leaving.
+              if (
+                sshBoxesPath &&
+                req.method === "GET" &&
+                url.pathname === `${ROUTE_PREFIX}/ssh-boxes/status`
+              ) {
+                const boxes = await readSshBoxes(sshBoxesPath);
+                const probed = await Promise.all(
+                  boxes.map((b) => runtimeStatus("", command, b.host)),
+                );
+                return json(res, 200, {
+                  boxes: boxes.map((b, i) => ({ name: b.name, host: b.host, status: probed[i] })),
+                });
               }
               if (
                 boxesPath &&

@@ -101,6 +101,7 @@ All keys are optional.
 |---|---|---|
 | `command` | `claude` | Claude Code binary: a name on PATH or an absolute path. |
 | `spawn` | `keeper` | How the process starts. `keeper`: under a small keeper process outside dsh's process tree (its own systemd user scope when `systemd-run` exists, else a detached process), so a dsh restart leaves Claude running and the new dsh reattaches; see Restarts. `node`: directly, as dsh's child. `dsh`: through dsh's subprocess seam (`ctx.subprocess`). With a remote provider such as [a remote subprocess provider](https://example.com/remote-provider) mounted, a remote workspace then runs Claude Code on that machine; the seam scrubs credential-shaped env vars (KEY/TOKEN/SECRET/PASSWORD), so log in on the machine that runs it. |
+| `sshHost` | `` | Drive this instance's Claude Code on a remote host over SSH (`[user@]host`, or a `Host` alias from `~/.ssh/config`). This box's harness runs `claude` there, nothing else runs on the far side, and the stream flows through the ssh pipe. Uses the remote's own `~/.claude` login, so the status and diagnostics panels report that box; forces node-style spawn (no keeper survival yet). The dsh MCP bridge and the file-reading tabs (Browser, Memory, Settings, Rewind) do not reach the remote yet, so keep `dshTools` off. Key-based auth only (`BatchMode`); a missing key fails fast rather than prompting. See "A box over SSH". |
 | `permissionMode` | `dsh` | Claude Code permission mode for the tools it runs itself. `dsh` follows the session's access-mode switch in the dsh UI: read-only → `plan`, workspace-write → `acceptEdits`, danger-full-access → `bypassPermissions`. Any explicit value pins it. |
 | `allowedTools` | `[]` | Extra `--allowedTools` entries. |
 | `disallowedTools` | `[]` | `--disallowedTools` entries. |
@@ -231,9 +232,23 @@ Each mount gets its own `CLAUDE_CONFIG_DIR`, state files under `~/.local/state/d
 
 Same box, several clients (laptop, phone, another PC on the LAN): run `dsh web` where Claude Code is logged in and open that URL from anywhere.
 
-**Several boxes.** The plugin does not ssh itself: a wrapper named `claude` that did would run the model elsewhere while the panel still read local transcripts and settings. Instead, install dsh and this plugin on each machine that has Claude Code, and list the others under Settings → Claude Code → Boxes (name, URL, optional dsh token). Each row is probed from this dsh: host, `claude` version, who is logged in, plugin version (a mismatch is flagged). Open jumps the browser to that box; sessions and logins stay where they are. The token is that box's dsh launch token, needed only when this browser has never logged into it; a proxy that injects the token (the NPM setup in the docs) needs none. Saved in `~/.local/state/dsh-oh-my-claude/boxes.json`, routes `GET`/`PUT /dsh-oh-my-claude/boxes` and `GET /dsh-oh-my-claude/boxes/status`, behind dsh's login. Same shape as another tool's environments, minus the tunnel service.
+**Several boxes.** For the Boxes list the plugin does not ssh: a wrapper named `claude` that did would run the model elsewhere while the panel still read local transcripts and settings. Instead, install dsh and this plugin on each machine that has Claude Code, and list the others under Settings → Claude Code → Boxes (name, URL, optional dsh token). (To drive one remote `claude` directly, with no dsh on the far side, see "A box over SSH" — a different trade, its panels reach less far.) Each row is probed from this dsh: host, `claude` version, who is logged in, plugin version (a mismatch is flagged). Open jumps the browser to that box; sessions and logins stay where they are. The token is that box's dsh launch token, needed only when this browser has never logged into it; a proxy that injects the token (the NPM setup in the docs) needs none. Saved in `~/.local/state/dsh-oh-my-claude/boxes.json`, routes `GET`/`PUT /dsh-oh-my-claude/boxes` and `GET /dsh-oh-my-claude/boxes/status`, behind dsh's login. Same shape as another tool's environments, minus the tunnel service.
 
 **Remote through dsh's own seam.** dsh separates *what runs a process* from *who asks*: `ctx.subprocess` is a seam, and community providers such as `a remote subprocess provider` mount a remote one. With `spawn: dsh` this plugin starts `claude` through that seam instead of node's `spawn`, so a workspace that a remote subprocess provider routes to another machine runs Claude Code there, with that machine's login and transcripts, and no ssh code in this plugin. Caveats: the seam's environment is dsh's scrubbed one (credentials come from the remote login); the MCP bridge URL points at this dsh's port, which a remote process cannot reach unless forwarded, so `dshTools` is best off for such workspaces; the session browser and settings editor stay local. The seam contract is covered by `src/adapter.test.ts`; a live remote run needs a remote subprocess provider mounted.
+
+**A box over SSH.** When there is no dsh on the far machine and no `a remote subprocess provider` provider, `sshHost` drives its `claude` from here directly. Mount an instance the way "Several accounts" does, give it a `providerId` starting `claude-code-`, and set `sshHost` to the host (`[user@]host` or an `~/.ssh/config` alias):
+
+```yaml
+- name: dsh-oh-my-claude
+  id: claude-nova
+  config:
+    providerId: claude-code-nova
+    providerName: Nova
+    sshHost: nova
+    dshTools: false
+```
+
+Every turn runs `ssh <host> claude -p --input-format stream-json …`; the remote shell inherits none of this box's environment, so the invocation carries the workspace directory and the CLI's env with it, and the stream-json wire flows through the pipe untouched — translator, approvals and control requests all as if local. The far side uses its own `~/.claude`, so log in there (`ssh <host>`, then `claude auth login` in that terminal; it needs a browser); the status and diagnostics panels probe over the same ssh and report that box's binary, version and login, not this one's. What does not cross yet: keeper survival (an ssh instance always spawns node-style, so a dsh restart ends its turns and resumes them with `--resume` like `spawn: node`), the dsh MCP bridge (its URL is this box's port), and the file-reading tabs (Browser, Memory, Settings, Rewind, and the workspace diff read this box's disk). SSH auth is `BatchMode` only, so a working key or agent must already reach the host. `shq`, `sshArgs`, `sshInvocation` and `sshSpawner` are in `src/process.ts`, covered by `src/ssh.test.ts`.
 
 ## Not covered
 

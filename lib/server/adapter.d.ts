@@ -50,6 +50,7 @@ interface Decision {
 export type Config = {
     command: string;
     spawn: "node" | "dsh";
+    sshHost: string;
     configDir: string;
     permissionMode: "dsh" | "acceptEdits" | "bypassPermissions" | "plan" | "dontAsk" | "auto" | "manual";
     allowedTools: string[];
@@ -85,6 +86,7 @@ export declare const inject: string[];
 export declare const Config: z<Schemastery.ObjectS<{
     command: z<string, string>;
     spawn: z<"dsh" | "keeper" | "node", "dsh" | "keeper" | "node">;
+    sshHost: z<string, string>;
     permissionMode: z<"acceptEdits" | "auto" | "bypassPermissions" | "dontAsk" | "dsh" | "manual" | "plan", "acceptEdits" | "auto" | "bypassPermissions" | "dontAsk" | "dsh" | "manual" | "plan">;
     allowedTools: z<string[], string[]>;
     disallowedTools: z<string[], string[]>;
@@ -115,6 +117,7 @@ export declare const Config: z<Schemastery.ObjectS<{
 }>, Schemastery.ObjectT<{
     command: z<string, string>;
     spawn: z<"dsh" | "keeper" | "node", "dsh" | "keeper" | "node">;
+    sshHost: z<string, string>;
     permissionMode: z<"acceptEdits" | "auto" | "bypassPermissions" | "dontAsk" | "dsh" | "manual" | "plan", "acceptEdits" | "auto" | "bypassPermissions" | "dontAsk" | "dsh" | "manual" | "plan">;
     allowedTools: z<string[], string[]>;
     disallowedTools: z<string[], string[]>;
@@ -732,6 +735,9 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      */
     reconnectBridge(proc: ClaudeProcess, sessionId: string, retryMs?: number, attempts?: number): Promise<boolean>;
     spawner(): Spawner;
+    /** Kill this instance's live processes and drop them from the shared registry: called when an SSH
+     * box is removed from the panel, so its remote `claude` sessions do not outlive the mount. */
+    disposeProcesses(): void;
     stream(options: GenerateOptions): AsyncGenerator<StreamChunk>;
     /** Reuse the session's process when its spec still matches; otherwise replace it. */
     acquire(options: SessionOptions, forceFresh?: boolean): Promise<{
