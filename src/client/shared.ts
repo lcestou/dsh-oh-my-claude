@@ -115,6 +115,9 @@ export const pill = (color: string): CSSProperties => ({
   border: `1px solid ${color}`,
   opacity: 0.9,
   whiteSpace: "nowrap",
+  // A badge is the wrong thing to squeeze when a flex row runs out of width: it holds two words
+  // and squashing it hides them. The text beside it gives way instead.
+  flex: "0 0 auto",
 });
 export const chip = (active: boolean, disabled: boolean): CSSProperties => ({
   ...btn,

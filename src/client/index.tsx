@@ -799,7 +799,17 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
                   {r.s.title || r.s.id}
                 </div>
                 <div
-                  style={{ ...meta, marginTop: 3, display: "flex", gap: 8, alignItems: "center" }}
+                  style={{
+                    ...meta,
+                    marginTop: 3,
+                    display: "flex",
+                    gap: 8,
+                    alignItems: "center",
+                    // A flex item never shrinks past its own text, so without this the row's tail
+                    // ran out of the card and under the Open button. The workspace path gives way
+                    // first (below), and this clips whatever is still too wide on a narrow panel.
+                    overflow: "hidden",
+                  }}
                 >
                   {multiBox && (
                     <span style={pill(T.faint)} title={r.g.host}>
@@ -808,11 +818,19 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
                   )}
                   <Origin s={r.s} />
                   {r.s.cwd && (
-                    <span title={r.s.cwd} style={{ fontFamily: T.mono }}>
+                    <span
+                      title={r.s.cwd}
+                      style={{
+                        fontFamily: T.mono,
+                        minWidth: 0,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
                       {shortPath(r.s.cwd)}
                     </span>
                   )}
-                  <span>
+                  <span style={{ flex: "0 0 auto" }}>
                     {ago(r.s.modifiedAt)} · {r.s.turns}
                     {r.s.turnsPartial ? "+" : ""} prompts · {size(r.s.bytes)} ·{" "}
                     <span style={{ fontFamily: T.mono }}>{r.s.id.slice(0, 8)}</span>
@@ -2215,6 +2233,10 @@ const ensureTurnStatusStyle = () => {
   const styleEl = found instanceof HTMLStyleElement ? found : document.createElement("style");
   styleEl.id = "dsh-oh-my-claude-turn-status";
   // The frames differ in advance width in a proportional font; a fixed cell keeps the verb still.
+  // The glyph sits at the cell's start, not its middle, which is what the terminal does for free:
+  // there every frame is one monospace cell, so the wide asterisks all land on the same left edge
+  // and only the narrow `·` reads as movement. Centring here made the whole animation breathe out
+  // of both sides instead.
   // `body[data-omc-claude]` is set while the open session is a Claude mount, so the row is orange
   // from its first paint; the watcher then swaps the text and adds the spinner a frame later.
   //
@@ -2224,7 +2246,7 @@ const ensureTurnStatusStyle = () => {
   // body attribute, so a session that switches off a Claude mount hands the tab straight back to
   // dsh's blue on the next paint. ponytail: `[role=tablist] > [role=tab]` catches any dsh view-tab
   // switcher; if a non-conversation one should stay blue, narrow it the day one appears.
-  styleEl.textContent = `body[data-omc-claude] [role="status"][aria-live="polite"],[data-dsh-oh-my-claude-turn]{background-image:linear-gradient(90deg,${CLAUDE_ORANGE} 0%,${CLAUDE_ORANGE} 40%,${CLAUDE_SHIMMER} 50%,${CLAUDE_ORANGE} 60%,${CLAUDE_ORANGE} 100%)}[data-dsh-oh-my-claude-turn]>span[aria-hidden]{display:inline-block;width:1.3em;text-align:center;flex:none}body[data-omc-claude] [role="tablist"]>[role="tab"][aria-selected="true"]{color:${CLAUDE_ORANGE}}body[data-omc-claude] [role="tablist"]>[role="tab"][aria-selected="true"]::after{background:${CLAUDE_ORANGE}}`;
+  styleEl.textContent = `body[data-omc-claude] [role="status"][aria-live="polite"],[data-dsh-oh-my-claude-turn]{background-image:linear-gradient(90deg,${CLAUDE_ORANGE} 0%,${CLAUDE_ORANGE} 40%,${CLAUDE_SHIMMER} 50%,${CLAUDE_ORANGE} 60%,${CLAUDE_ORANGE} 100%)}[data-dsh-oh-my-claude-turn]>span[aria-hidden]{display:inline-block;width:1.3em;text-align:start;flex:none}body[data-omc-claude] [role="tablist"]>[role="tab"][aria-selected="true"]{color:${CLAUDE_ORANGE}}body[data-omc-claude] [role="tablist"]>[role="tab"][aria-selected="true"]::after{background:${CLAUDE_ORANGE}}`;
   document.head.appendChild(styleEl);
 };
 
