@@ -3636,9 +3636,10 @@ console.log("interrupt-on-abort ok");
   assert.equal(hasPendingTodo([]), false, "an empty list has nothing outstanding");
 }
 
-// The token counter stands in for thinking that never shows a word. It opens at the first mark,
-// writes only at the marks after it, stays quiet while thinking text is streaming, and closes with
-// the block it stood in for.
+// The token counter stands in for thinking that never shows a word. It opens at the first mark, adds a
+// fresh line at each mark after it (no arrow chain — dsh's Think summary follows the end, so the latest
+// line shows collapsed), stays quiet while thinking text is streaming, and closes with the block it
+// stood in for.
 {
   const think = (t: any, total: number) =>
     t.translate({ type: "system", subtype: "thinking_tokens", estimated_tokens: total });
@@ -3649,11 +3650,11 @@ console.log("interrupt-on-abort ok");
   const open = think(t, 1200);
   assert.equal(open[0].type, "block-start");
   assert.equal(open[0].blockType, "reasoning");
-  assert.equal(open[1].text, "✻ ~1.2k tokens");
+  assert.equal(open[1].text, "~1.2k tokens");
   assert.deepEqual(think(t, 1900), [], "a frame short of the next mark is silent");
-  assert.equal(think(t, 2100)[0].text, " → ~2.1k tokens", "the mark appends to the one line");
+  assert.equal(think(t, 2100)[0].text, "\n~2.1k tokens", "the mark adds a fresh line");
   assert.deepEqual(think(t, 4999), []);
-  assert.equal(think(t, 26_000)[0].text, " → ~26k tokens", "past the ladder it repeats every 20k");
+  assert.equal(think(t, 26_000)[0].text, "\n~26k tokens", "past the ladder it repeats every 20k");
   const closed = t.partial({ type: "content_block_stop", index: 0 });
   assert.equal(
     closed.length,
@@ -3661,7 +3662,7 @@ console.log("interrupt-on-abort ok");
     "the counter and the silent block it stood in for close once, not twice",
   );
   assert.equal(closed[0].type, "block-end", "the thinking block ending closes the counter");
-  assert.equal(closed[0].block.text, "✻ ~1.2k tokens → ~2.1k tokens → ~26k tokens");
+  assert.equal(closed[0].block.text, "~1.2k tokens\n~2.1k tokens\n~26k tokens");
   assert.equal(t.thinking, undefined);
 
   // Thinking whose text is streaming needs no counter, and an open one closes.

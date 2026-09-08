@@ -2,9 +2,9 @@ import type { StreamChunk, LlmFailure } from "@deepseek-ai/dsh-llm";
 import { type ClaudeEvent, type ClaudeStreamPartial, type ClaudeContentBlock } from "./process.js";
 import { TurnRecord } from "./adapter.js";
 export declare function capLines(body: string, max?: number): string;
-/** A native tool call as markdown: name in bold, arguments in the fence that suits the tool. */
+/** A native tool call as markdown: an icon-led plain header, arguments in the fence that suits the tool. */
 export declare function formatToolCall(name: string, inputJson: string): string;
-/** A native tool result as markdown: name + status, body fenced with a language when we can guess one. */
+/** A native tool result as markdown: icon-led header + status, body fenced with a language when we can guess one. */
 export declare function formatToolResult(name: string, filePath: string, body: string, isError: boolean): string;
 export interface TranslatorBlock {
     index: number;

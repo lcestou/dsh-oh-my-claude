@@ -2448,6 +2448,63 @@ function watchSessionSpinners(ctx: ClientCtx) {
   setInterval(scan, 1000);
 }
 
+/** Fold a native-tool code block into a one-line disclosure. dsh renders a tool step as a `<p>` whose
+ *  text is an icon plus the tool's name (`❯ Bash`, `▤ Read` — set by the translator) followed by its
+ *  `.md-code-block` fence, both children of `._markdown`. Collapsed, the fence hides and a chevron
+ *  hovers behind the icon; clicking the header toggles it. The marker is the leading glyph: only a
+ *  header that starts with one of the translator's tool icons folds, so Claude's own prose code blocks
+ *  are left alone. Kept in sync with the translator's TOOL_ICON set. */
+const TOOL_ICONS = "❯▤✎⌕✳⤓◆";
+const FOLD_MARK = "data-omc-fold"; // on the fence: "tool" paired to a header · "skip" not a tool block
+const HEAD_MARK = "data-omc-tool"; // on the header <p>: "1" collapsed · "open" expanded
+
+const ensureFoldStyle = () => {
+  if (document.getElementById("dsh-oh-my-claude-fold")) return;
+  const el = document.createElement("style");
+  el.id = "dsh-oh-my-claude-fold";
+  // The header reads as dsh's muted tool text — a touch smaller and dimmed — and sits flush-left like
+  // any prose line. The chevron is a zero-advance ::before (its width cancels its negative margin) so
+  // it draws behind the leading icon without indenting the row; it's invisible at rest and fades in on
+  // hover, staying as the open-state marker (rotated) while the row is open. The adjacent-sibling rule
+  // hides the fence while the header reads "1"; the two are always consecutive children of ._markdown.
+  el.textContent = `body[data-omc-claude] p[${HEAD_MARK}]{cursor:pointer;user-select:none;font-size:.9em;opacity:.68}body[data-omc-claude] p[${HEAD_MARK}]::before{content:"\\203A";display:inline-block;width:.8em;margin-right:-.8em;font-size:1.35em;line-height:1;color:${CLAUDE_ORANGE};opacity:0;transition:transform .12s ease,opacity .12s ease}body[data-omc-claude] p[${HEAD_MARK}]:hover::before,body[data-omc-claude] p[${HEAD_MARK}="open"]::before{opacity:1}body[data-omc-claude] p[${HEAD_MARK}="open"]::before{transform:rotate(90deg)}body[data-omc-claude] p[${HEAD_MARK}="1"]+.md-code-block{display:none}`;
+  document.head.appendChild(el);
+};
+
+/** One delegated click listener toggles a header, bound once via a documentElement flag so a hot
+ *  reload never stacks a second. Kept at module scope so it captures no per-call state. */
+const bindFoldClicks = () => {
+  if (document.documentElement.getAttribute("data-omc-fold-bound") === "1") return;
+  document.documentElement.setAttribute("data-omc-fold-bound", "1");
+  document.addEventListener("click", (e) => {
+    const target = e.target;
+    if (!(target instanceof Element)) return;
+    const head = target.closest<HTMLElement>(`p[${HEAD_MARK}]`);
+    if (head) head.setAttribute(HEAD_MARK, head.getAttribute(HEAD_MARK) === "1" ? "open" : "1");
+  });
+};
+
+function watchToolFolds() {
+  ensureFoldStyle();
+  bindFoldClicks();
+  // A tool step arrives as one whole chunk, so the header <p> already sits before its fence the first
+  // time the fence is seen; process each fence once (:not([mark])). A fence is a tool block only when
+  // its previous sibling is a <p> whose text opens with one of the translator's tool icons.
+  const scan = () => {
+    for (const block of document.querySelectorAll<HTMLElement>(
+      `.md-code-block:not([${FOLD_MARK}])`,
+    )) {
+      const head = block.previousElementSibling;
+      const text = head?.tagName === "P" ? (head.textContent ?? "").trimStart() : "";
+      const isTool = text !== "" && TOOL_ICONS.includes(text.charAt(0));
+      block.setAttribute(FOLD_MARK, isTool ? "tool" : "skip");
+      if (isTool && head instanceof HTMLElement) head.setAttribute(HEAD_MARK, "1");
+    }
+  };
+  scan();
+  onBodyMutation(scan);
+}
+
 interface TurnRecord {
   at: number;
   costUsd: number;
@@ -3017,6 +3074,7 @@ export function apply(ctx: ClientCtx) {
   watchTurnStatus(ctx);
   watchSessionNotices(ctx);
   watchSessionSpinners(ctx);
+  watchToolFolds();
 
   function Section(props: { close?: () => void }) {
     const [boxes, setBoxes] = useState<BoxData[]>([]);

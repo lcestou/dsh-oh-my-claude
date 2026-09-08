@@ -82,7 +82,24 @@ export function capLines(body: string, max = MAX_BODY_LINES): string {
   return `${lines.slice(0, max).join("\n")}\n… ${lines.length - max} more lines`;
 }
 
-/** A native tool call as markdown: name in bold, arguments in the fence that suits the tool. */
+/** The icon glyph that leads each tool header. The client's fold keys on this leading glyph to spot a
+ *  tool header (see TOOL_ICONS in the client), so the set here and there must stay in sync. */
+const TOOL_ICON = new Map<string, string>([
+  ["bash", "❯"],
+  ["read", "▤"],
+  ["write", "✎"],
+  ["edit", "✎"],
+  ["grep", "⌕"],
+  ["glob", "✳"],
+  ["web_fetch", "⤓"],
+  ["web_search", "⌕"],
+]);
+const cap = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
+/** Icon + a capitalized, human name for a tool header: `❯ Bash`, `▤ Read`, `⤓ Web fetch`. */
+const label = (name: string): string =>
+  `${TOOL_ICON.get(name) ?? "◆"} ${name.startsWith("web_") ? `Web ${name.slice(4)}` : cap(name)}`;
+
+/** A native tool call as markdown: an icon-led plain header, arguments in the fence that suits the tool. */
 export function formatToolCall(name: string, inputJson: string): string {
   let inp: Record<string, unknown> = {};
   try {
@@ -95,12 +112,12 @@ export function formatToolCall(name: string, inputJson: string): string {
   switch (name) {
     case "bash": {
       const desc = asStr(inp.description);
-      return `**bash**${desc ? ` — ${desc}` : ""}\n${fence(capLines(asStr(inp.command)), "bash")}`;
+      return `${label("bash")}${desc ? ` · ${desc}` : ""}\n${fence(capLines(asStr(inp.command)), "bash")}`;
     }
     case "read":
-      return `**read** \`${file}\``;
+      return `${label("read")} \`${file}\``;
     case "write":
-      return `**write** \`${file}\`\n${fence(capLines(asStr(inp.content)), langOf(file))}`;
+      return `${label("write")} \`${file}\`\n${fence(capLines(asStr(inp.content)), langOf(file))}`;
     case "edit": {
       const diff = `${asStr(inp.old_string)
         .split("\n")
@@ -109,29 +126,29 @@ export function formatToolCall(name: string, inputJson: string): string {
         .split("\n")
         .map((l) => `+ ${l}`)
         .join("\n")}`;
-      return `**edit** \`${file}\`\n${fence(capLines(diff), "diff")}`;
+      return `${label("edit")} \`${file}\`\n${fence(capLines(diff), "diff")}`;
     }
     case "grep":
-      return `**grep** \`${asStr(inp.pattern)}\`${inp.path ? ` in \`${asStr(inp.path)}\`` : ""}`;
+      return `${label("grep")} \`${asStr(inp.pattern)}\`${inp.path ? ` in \`${asStr(inp.path)}\`` : ""}`;
     case "glob":
-      return `**glob** \`${asStr(inp.pattern)}\``;
+      return `${label("glob")} \`${asStr(inp.pattern)}\``;
     case "web_fetch":
-      return `**web_fetch** ${asStr(inp.url)}`;
+      return `${label("web_fetch")} ${asStr(inp.url)}`;
     case "web_search":
-      return `**web_search** \`${asStr(inp.query)}\``;
+      return `${label("web_search")} \`${asStr(inp.query)}\``;
     default:
-      return `**${name}**\n${fence(capLines(inputJson), "json")}`;
+      return `${label(name)}\n${fence(capLines(inputJson), "json")}`;
   }
 }
 
-/** A native tool result as markdown: name + status, body fenced with a language when we can guess one. */
+/** A native tool result as markdown: icon-led header + status, body fenced with a language when we can guess one. */
 export function formatToolResult(
   name: string,
   filePath: string,
   body: string,
   isError: boolean,
 ): string {
-  const head = `**${name}** ${isError ? "error" : "result"}`;
+  const head = `${label(name)} ${isError ? "error" : "result"}`;
   if (isError) return `${head}\n${fence(capLines(body))}`;
   const lang = name === "read" ? langOf(filePath) : "";
   return `${head}\n${fence(capLines(body), lang)}`;
@@ -203,8 +220,7 @@ export function elapsedText(seconds: number): string {
 }
 
 /** The token marks a silent thinking stretch reports at; past the last one it repeats every 20k.
- *  The CLI sends one estimate per thinking delta, so without marks this would be a line per word.
- *  Nothing draws below the first mark: short thinking is over before a counter would help. */
+ *  The counter stays quiet below the floor: short thinking is over before it would help. */
 const THINK_FLOOR = 1000;
 const THINK_STEPS = [THINK_FLOOR, 2000, 5000, 10_000, 20_000];
 const THINK_REPEAT = 20_000;
@@ -1018,14 +1034,17 @@ export class Translator {
     const entry = this.thinking;
     if (!entry) {
       if (total < THINK_FLOOR) return [];
-      const { block, events } = this.startBlock("reasoning", `✻ ~${tokensText(total)} tokens`);
+      const { block, events } = this.startBlock("reasoning", `~${tokensText(total)} tokens`);
       this.thinking = { block, nextAt: nextThinkStep(total) };
       return events;
     }
     // One frame per delta arrives, so only a crossed mark writes.
     if (total < entry.nextAt) return [];
     entry.nextAt = nextThinkStep(total);
-    return this.delta(entry.block, ` → ~${tokensText(total)} tokens`);
+    // Each mark on its own line, no ` → ` chain: dsh's Think summary is a nowrap line that follows the
+    // end (data-follow-end), so the collapsed row shows the newest figure while the expanded block
+    // keeps the ladder.
+    return this.delta(entry.block, `\n~${tokensText(total)} tokens`);
   }
 
   /** Close the counter: the thinking block it stood in for is over, or the turn is. */

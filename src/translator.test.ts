@@ -1,17 +1,15 @@
 import { strict as assert } from "node:assert";
 import { capLines, formatToolCall, formatToolResult } from "./translator.js";
 
-// bash: command goes in a bash fence, description rides the header
+// bash: icon + capitalized name lead the header (plain, not bold), command in a bash fence, a middot
+// joins the description
 {
   const md = formatToolCall("bash", JSON.stringify({ command: "ls -la", description: "list" }));
-  assert.equal(md, "**bash** — list\n```bash\nls -la\n```");
+  assert.equal(md, "❯ Bash · list\n```bash\nls -la\n```");
 }
 
 // read: just the path, no fence
-assert.equal(
-  formatToolCall("read", JSON.stringify({ file_path: "/a/b.ts" })),
-  "**read** `/a/b.ts`",
-);
+assert.equal(formatToolCall("read", JSON.stringify({ file_path: "/a/b.ts" })), "▤ Read `/a/b.ts`");
 
 // edit: unified-ish diff with per-line +/- prefixes in a diff fence
 {
@@ -19,20 +17,26 @@ assert.equal(
     "edit",
     JSON.stringify({ file_path: "x.ts", old_string: "a\nb", new_string: "c" }),
   );
-  assert.equal(md, "**edit** `x.ts`\n```diff\n- a\n- b\n+ c\n```");
+  assert.equal(md, "✎ Edit `x.ts`\n```diff\n- a\n- b\n+ c\n```");
 }
 
 // grep with path
 assert.equal(
   formatToolCall("grep", JSON.stringify({ pattern: "foo", path: "src" })),
-  "**grep** `foo` in `src`",
+  "⌕ Grep `foo` in `src`",
 );
 
-// unknown tool falls back to a json fence of the raw input
-assert.equal(formatToolCall("todowrite", '{"x":1}'), '**todowrite**\n```json\n{"x":1}\n```');
+// web_search: the web_ prefix becomes a "Web " label
+assert.equal(
+  formatToolCall("web_search", JSON.stringify({ query: "cats" })),
+  "⌕ Web search `cats`",
+);
+
+// unknown tool falls back to a json fence of the raw input, name capitalized with a default icon
+assert.equal(formatToolCall("todowrite", '{"x":1}'), '◆ Todowrite\n```json\n{"x":1}\n```');
 
 // malformed input never throws
-assert.equal(formatToolCall("bash", "not json"), "**bash**\n```bash\n\n```");
+assert.equal(formatToolCall("bash", "not json"), "❯ Bash\n```bash\n\n```");
 
 // fence widens past a backtick run in the body so a Markdown fence never breaks
 {
@@ -43,12 +47,12 @@ assert.equal(formatToolCall("bash", "not json"), "**bash**\n```bash\n\n```");
 // read result highlights by file extension; bash result stays plain
 assert.equal(
   formatToolResult("read", "/a/b.py", "print(1)", false),
-  "**read** result\n```python\nprint(1)\n```",
+  "▤ Read result\n```python\nprint(1)\n```",
 );
-assert.equal(formatToolResult("bash", "", "done", false), "**bash** result\n```\ndone\n```");
+assert.equal(formatToolResult("bash", "", "done", false), "❯ Bash result\n```\ndone\n```");
 
 // error results are plain-fenced and labelled error
-assert.equal(formatToolResult("read", "/a/b.py", "nope", true), "**read** error\n```\nnope\n```");
+assert.equal(formatToolResult("read", "/a/b.py", "nope", true), "▤ Read error\n```\nnope\n```");
 
 // capLines: bodies at or under the cap pass through untouched
 {
