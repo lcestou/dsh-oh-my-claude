@@ -2905,9 +2905,26 @@ interface TurnsReply {
   };
 }
 
-/** dsh's own "N turns · N steps" row, the div the cost line is appended to. */
-const isStatsRow = (el: HTMLElement): boolean =>
-  el.isConnected && el.children.length > 1 && /\d+ turns · \d+ steps/.test(el.textContent ?? "");
+/** The hashed half of a CSS-module class changes with every dsh build, the suffix does not. */
+const MODULE_ROOT = /(?:^|\s)[\w-]*_root(?:\s|$)/;
+/** dsh's `StatsLine` separator: a direct child of the row, `aria-hidden`, and a literal bar. */
+const STATS_SEP = ':scope > span[aria-hidden="true"][class$="_sep"]';
+
+/**
+ * dsh's own stats row, the div the cost line is appended to. dsh builds it in `StatsLine` as a
+ * `_root` div of `<span>` groups joined by `_sep` bars, which is the handle used here: the groups
+ * themselves come from the `stats.counts` message and read differently in another locale. The
+ * English text stays as a last resort for a row that has one group and therefore no bar yet.
+ */
+export const isStatsRow = (el: HTMLElement): boolean => {
+  if (!el.isConnected || el.children.length < 2) return false;
+  if (MODULE_ROOT.test(el.className)) {
+    const sep = el.querySelector(STATS_SEP);
+    // Three other dsh components draw an empty `_sep` span inside a row; only this one is a bar.
+    if (sep?.textContent === "|") return true;
+  }
+  return /\d+ turns · \d+ steps/.test(el.textContent ?? "");
+};
 
 /** Cost readout in dsh's footer stats row: only when the open session is a Claude mount. */
 function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
@@ -2984,8 +3001,8 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
       : "";
   // dsh's stats row is one div of groups; a slot entry can only be its sibling and lands on its
   // own line. Append into that div instead, the way the context meter hooks its popover.
-  // ponytail: structural lookup of the row by its "N turns · N steps" text; swap for a slot the
-  // day dsh's stats line grows one.
+  // ponytail: the row is found by its shape, not by a slot dsh offers; swap for a slot the day
+  // dsh's stats line grows one.
   const anchorRef = useRef<HTMLSpanElement>(null);
   const [hooked, setHooked] = useState(false);
   // What the injected nodes say, held in a ref: a new cost arriving mid-hover used to tear the
