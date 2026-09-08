@@ -1,6 +1,6 @@
 // Offline self-check: node src/sessions.test.js. No CLI, no network.
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -13,6 +13,7 @@ import {
   isSettingsScope,
   SETTINGS_SCOPES,
 } from "./sessions.js";
+import type { InstructionFile } from "./instructions.js";
 
 // probeBox forwards init.method and init.body, plus content-type when body is set. Fake fetch, no network.
 {
@@ -109,7 +110,9 @@ import {
         },
         connection: { requestRejection: () => undefined },
         sessions: {},
-        sessionPersistence: { list: async () => [] },
+        // The instructions routes only answer for a directory a dsh session is open in, so the
+        // fake registry has to know the one the assertions below use.
+        sessionPersistence: { list: async () => [{ id: "sid1", cwd: "/work/app" }] },
         effect: (fn: () => void | (() => void)) => fn(),
       });
     },
@@ -211,6 +214,29 @@ import {
     `/dsh-oh-my-claude/diagnostics?cwd=${encodeURIComponent(cwd)}&provider=claude-code-gone`,
   );
   assert.equal(r.runtime.configDir, join(tmp, "claude"), "unknown provider falls back");
+
+  // The CLAUDE.md list follows the same mount: the user-scope file it names is the one in that
+  // box's config dir, so the tab never offers this PC's file for a session running elsewhere.
+  for (const dir of ["other", "claude"]) await mkdir(join(tmp, dir), { recursive: true });
+  await writeFile(join(tmp, "other", "CLAUDE.md"), "# other box\n");
+  await writeFile(join(tmp, "claude", "CLAUDE.md"), "# this box\n");
+  const userFiles = async (provider: string): Promise<string[]> => {
+    const reply = await respond(
+      "GET",
+      `/dsh-oh-my-claude/instructions?cwd=${encodeURIComponent(cwd)}&provider=${provider}`,
+    );
+    return (reply.files as InstructionFile[]).filter((f) => f.kind === "User").map((f) => f.path);
+  };
+  assert.deepEqual(
+    await userFiles("claude-code-other"),
+    [join(tmp, "other", "CLAUDE.md")],
+    "the instructions list reads the named box's user file",
+  );
+  assert.deepEqual(
+    await userFiles("claude-code-gone"),
+    [join(tmp, "claude", "CLAUDE.md")],
+    "an unknown provider falls back to the registering instance",
+  );
 
   // Rewind prompt list: user prompts of the session's transcript, newest first, by uuid.
   const rw = `/dsh-oh-my-claude/rewind?session=sid1&cwd=${encodeURIComponent(cwd)}`;

@@ -1,3 +1,4 @@
+import { type FsBox } from "./remote-fs.js";
 /** Where a file sits in the hierarchy, named as the CLI names its own layers. */
 export type InstructionKind = "Managed" | "User" | "Project" | "Local";
 /** One loaded file. `importedBy` is set when a `@` line in another file pulled it in. */
@@ -24,4 +25,4 @@ export declare function importsIn(text: string): string[];
  * A file pulled in by `@` follows the file that imported it and keeps its scope. Files that are
  * not there are skipped, and each path appears once however many times it is reached.
  */
-export declare function listInstructions(cwd: string, claudeHome: string): Promise<InstructionFile[]>;
+export declare function listInstructions(cwd: string, claudeHome: string, box?: FsBox): Promise<InstructionFile[]>;

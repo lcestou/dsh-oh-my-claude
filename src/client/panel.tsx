@@ -534,7 +534,11 @@ function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCt
   const [error, setError] = useState("");
   const [roster, setRoster] = useState<PluginRoster | null>(null);
 
-  const q = cwd ? `cwd=${encodeURIComponent(cwd)}` : "";
+  // Every call names the session's own mount, so a session on a box lists and edits that box's
+  // CLAUDE.md files rather than this PC's.
+  const provider = claudeProviderOf(ctx, sessionId);
+  const onBox = provider === undefined ? "" : `provider=${encodeURIComponent(provider)}`;
+  const q = [cwd ? `cwd=${encodeURIComponent(cwd)}` : "", onBox].filter((p) => p !== "").join("&");
   // A fetch in flight when the tab closes must not set state on the unmounted component (React
   // warns, and the stale result would flash if the tab reopened). Both loaders check this first.
   const mounted = useRef(true);
@@ -580,7 +584,7 @@ function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCt
     setError("");
     try {
       await readJson(
-        await fetch(`${ROUTE}/instructions/file`, {
+        await fetch(`${ROUTE}/instructions/file${onBox === "" ? "" : `?${onBox}`}`, {
           method: "PUT",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ cwd, path: file.path, text }),

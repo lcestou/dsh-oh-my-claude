@@ -861,6 +861,14 @@ export interface MountBox {
   sshHost?: string;
 }
 
+/**
+ * That box's `~/.claude`, where its user-scope CLAUDE.md and settings both live. A mount's
+ * `configDir` is resolved against this PC's home, so a remote box's path has to come from its own
+ * `$HOME`, which `homeAt` asks once per host.
+ */
+const claudeHomeOf = async (box: MountBox): Promise<string> =>
+  box.sshHost ? `${await homeAt(box)}/.claude` : box.configDir;
+
 /** Everything the routes need from the adapter. */
 export interface SessionRouteOptions {
   log: (level: string, msg: string) => void;
@@ -1011,7 +1019,7 @@ export function registerSessionRoutes(
    * the project and local scopes hang off the session's cwd, which is already the remote path.
    */
   const userSettingsPathOf = async (box: MountBox): Promise<string | undefined> =>
-    box.sshHost ? `${await homeAt(box)}/.claude/settings.json` : settingsPath;
+    box.sshHost ? `${await claudeHomeOf(box)}/settings.json` : settingsPath;
   // Optional: stock dsh has it; without it archived sessions list but cannot be restored.
   let registry: WorkspaceRegistry | undefined;
   ctx.inject?.(["workspaceRegistry"], (host) => {
@@ -1149,7 +1157,8 @@ export function registerSessionRoutes(
                   return json(res, 400, {
                     error: "cwd must be a directory a dsh session is open in",
                   });
-                const files = await listInstructions(cwd, configDir);
+                const box = boxOf(url);
+                const files = await listInstructions(cwd, await claudeHomeOf(box), box);
                 if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/instructions`)
                   return json(res, 200, { files });
 
@@ -1159,20 +1168,17 @@ export function registerSessionRoutes(
                   return json(res, 400, { error: "not a loaded instructions file" });
 
                 if (req.method === "GET") {
-                  const text = await readFile(file.path, "utf8").catch(() => null);
-                  return text === null
+                  const read = await readAt(box, file.path).catch(() => null);
+                  return read === null
                     ? json(res, 404, { error: "not found" })
-                    : json(res, 200, { path: file.path, text });
+                    : json(res, 200, { path: file.path, text: read.text });
                 }
                 if (req.method === "PUT") {
                   if (file.kind === "Managed")
                     return json(res, 403, { error: "the managed file is read-only" });
                   if (typeof body.text !== "string")
                     return json(res, 400, { error: "text required" });
-                  // Instructions still read and write this PC: the CLAUDE.md list is next in the
-                  // queue, and a write that crossed while the read did not would edit a file the
-                  // tab never showed.
-                  const written = await writeWithBackup({}, file.path, body.text);
+                  const written = await writeWithBackup(box, file.path, body.text);
                   log("info", `instructions ${file.path} saved (${body.text.length} chars)`);
                   return json(res, 200, written);
                 }
