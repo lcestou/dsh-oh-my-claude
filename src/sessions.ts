@@ -909,6 +909,9 @@ export interface SessionRouteOptions {
   sideQuestions?: Map<string, AsideEntry[]>;
   /** Persist a session's aside ring after the route mutates it (e.g. a dismiss), so the change survives a restart. */
   persistAsides?: (sessionId: string) => void;
+  /** Saved opening prompts, keyed by session id plus `default`, and the writer the starter card uses. */
+  starters?: Map<string, string>;
+  setStarter?: (key: string, text: string | undefined) => void;
   /** The live thinking budget the Tune selector reads and sets per session. */
   thinking?: {
     info: (sessionId: string) => { tokens: number | null | undefined };
@@ -975,6 +978,8 @@ export function registerSessionRoutes(
     permissionAsks,
     sideQuestions,
     persistAsides,
+    starters,
+    setStarter,
     models,
     reloadPlugins,
     continueAfterLimit,
@@ -1369,6 +1374,28 @@ export function registerSessionRoutes(
                   total.count += 1;
                 }
                 return json(res, 200, { turns, total });
+              }
+              // The starter card's store: a session's own opening prompt and the `default` one it
+              // falls back to. A POST with blank text clears the key, which is how the card's
+              // "forget" works.
+              if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/starter`) {
+                const sid = url.searchParams.get("session");
+                if (!sid) return json(res, 400, { error: "session param required" });
+                return json(res, 200, {
+                  session: starters?.get(sid) ?? "",
+                  fallback: starters?.get("default") ?? "",
+                });
+              }
+              if (req.method === "POST" && url.pathname === `${ROUTE_PREFIX}/starter`) {
+                const body = await readBody(req);
+                const sid = String(body.session ?? "");
+                if (!sid) return json(res, 400, { error: "session required" });
+                const text = String(body.text ?? "");
+                setStarter?.(sid, text);
+                // A saved opener is also the default for the next new session; that is what makes a
+                // brand-new tab, which has no key of its own yet, show anything at all.
+                if (body.asDefault !== false) setStarter?.("default", text);
+                return json(res, 200, { ok: true });
               }
               if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/side-questions`) {
                 const sid = url.searchParams.get("session");

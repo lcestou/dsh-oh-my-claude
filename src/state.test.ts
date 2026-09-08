@@ -15,6 +15,8 @@ import {
   saveLimitWait,
   loadAsides,
   saveAsides,
+  loadStarters,
+  saveStarter,
   ASIDES_FILE,
 } from "./state.js";
 
@@ -201,4 +203,19 @@ await writeFile(
 const cleaned = await loadAsides(asidesDir);
 assert.deepEqual(cleaned.get("a3"), [{ id: "ok", question: "q", pending: false, at: 1 }]);
 console.log("asides ok");
+// Starters: save per-session and default openers, reload, and clear one with a blank text.
+const startersDir = await mkdtemp(join(tmpdir(), "omc-starters-"));
+assert.deepEqual(await loadStarters(startersDir), new Map());
+await saveStarter(startersDir, "s1", "review the diff");
+await saveStarter(startersDir, "default", "what changed?");
+await saveStarter(startersDir, "s2", "   "); // blank never becomes an opener
+let starters = await loadStarters(startersDir);
+assert.equal(starters.get("s1"), "review the diff");
+assert.equal(starters.get("default"), "what changed?");
+assert.equal(starters.get("s2"), undefined);
+await saveStarter(startersDir, "s1", ""); // clearing drops the key
+starters = await loadStarters(startersDir);
+assert.equal(starters.get("s1"), undefined);
+assert.equal(starters.get("default"), "what changed?");
+console.log("starters ok");
 console.log("state.test: ok");

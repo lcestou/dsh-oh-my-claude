@@ -333,7 +333,17 @@ type DshSlots = {
     },
     // `sessionId` on session-scoped slots; `close` on `settings.section` (dsh-client-ui-settings-general
     // passes it so a section can dismiss the settings panel, e.g. after opening a restored session).
-    Component: (props: { sessionId?: string; close?: () => void }) => ReactNode,
+    // `inputActions` is the composer's own action face, handed to every entry of the session-scoped
+    // composer slots (`conversation.input.dock` among them): `setDraft` writes the composer without
+    // sending, which is what a prompt starter needs.
+    Component: (props: {
+      sessionId?: string;
+      close?: () => void;
+      inputActions?: { setDraft: (text: string) => void; submit?: () => void };
+      // The composer's published state, read through dsh's snapshot-selector hook; `draft` is the
+      // text in the box right now.
+      useInput?: <T>(select: (state: { draft: string }) => T) => T;
+    }) => ReactNode,
   ) => void;
 };
 /** The dsh client services this panel uses, the ones `inject` names. */

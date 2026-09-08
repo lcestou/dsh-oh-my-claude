@@ -94,6 +94,8 @@ import {
   hasPendingNotice,
   loadAsides,
   saveAsides,
+  loadStarters,
+  saveStarter,
   loadStarted,
   isPermissionMode,
   loadPermissionModes,
@@ -1466,6 +1468,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   readonly permissionAsks = new Map<string, string[]>();
   /** `/btw` side questions and their answers, newest last, per session; kept in memory only. */
   readonly sideQuestions = new Map<string, AsideEntry[]>();
+  /** Saved opening prompts: one per session id, plus `default` for the one a session without its own
+   *  is offered. Loaded from disk on construct and written through on every save. */
+  readonly starters = new Map<string, string>();
   /** The live thinking budget this plugin last set per session (null = session default, 0 = off);
    *  memory only, since a respawn resets it and the CLI has no flag to carry it. */
   readonly thinkingBudgets = new Map<string, number | null>();
@@ -1514,6 +1519,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       .then((saved) => {
         for (const [id, list] of saved)
           if (!this.sideQuestions.has(id)) this.sideQuestions.set(id, list);
+      })
+      .catch(() => {}); // state is an optimization only
+    loadStarters(this.stateDir)
+      .then((saved) => {
+        for (const [id, text] of saved) if (!this.starters.has(id)) this.starters.set(id, text);
       })
       .catch(() => {}); // state is an optimization only
     this.limitTimers = new Map();
@@ -2198,6 +2208,13 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       }
       this.persistAsides(sessionId);
     });
+  }
+
+  /** Save (or clear, when the text is blank) an opening prompt for a session or for `default`. */
+  setStarter(key: string, text: string | undefined) {
+    if (text === undefined || text.trim() === "") this.starters.delete(key);
+    else this.starters.set(key, text);
+    void saveStarter(this.stateDir, key, text);
   }
 
   /** Persist a session's aside ring to disk so an answer survives a restart, eviction or hot reload. */
@@ -3773,6 +3790,10 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       permissionAsks: adapter.permissionAsks,
       sideQuestions: adapter.sideQuestions,
       persistAsides: (sessionId: string) => adapter.persistAsides(sessionId),
+      starters: adapter.starters,
+      setStarter: (key: string, text: string | undefined) => {
+        adapter.setStarter(key, text);
+      },
       thinking: {
         info: (sessionId: string) => adapter.thinkingInfo(sessionId),
         set: (sessionId: string, tokens: number | null) =>

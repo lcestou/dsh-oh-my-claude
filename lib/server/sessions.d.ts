@@ -245,6 +245,9 @@ export interface SessionRouteOptions {
     sideQuestions?: Map<string, AsideEntry[]>;
     /** Persist a session's aside ring after the route mutates it (e.g. a dismiss), so the change survives a restart. */
     persistAsides?: (sessionId: string) => void;
+    /** Saved opening prompts, keyed by session id plus `default`, and the writer the starter card uses. */
+    starters?: Map<string, string>;
+    setStarter?: (key: string, text: string | undefined) => void;
     /** The live thinking budget the Tune selector reads and sets per session. */
     thinking?: {
         info: (sessionId: string) => {
@@ -273,7 +276,7 @@ export interface SessionRouteOptions {
     continueAfterLimit?: boolean;
 }
 /** `projectDir(cwd)` → Claude Code project dir; `startedIds()` → ids the adapter started itself. */
-export declare function registerSessionRoutes(ctx: PluginContext, { log, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, sshBoxesPath, onSshBoxes, remoteWorkspacesPath, onRemoteWorkspaces, command, sshHost, turnRecords, idle, permissionModes, thinking, rewind, contextUsage, workspaceDiff, mcp, permissionAsks, sideQuestions, persistAsides, models, reloadPlugins, continueAfterLimit, }: SessionRouteOptions): void;
+export declare function registerSessionRoutes(ctx: PluginContext, { log, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, sshBoxesPath, onSshBoxes, remoteWorkspacesPath, onRemoteWorkspaces, command, sshHost, turnRecords, idle, permissionModes, thinking, rewind, contextUsage, workspaceDiff, mcp, permissionAsks, sideQuestions, persistAsides, starters, setStarter, models, reloadPlugins, continueAfterLimit, }: SessionRouteOptions): void;
 export declare const SETTINGS_SCOPES: readonly ["managed", "local", "project", "user"];
 /** One of the four settings files. The CLI's own layer names, minus the `--settings` flag layer. */
 export type SettingsScope = (typeof SETTINGS_SCOPES)[number];

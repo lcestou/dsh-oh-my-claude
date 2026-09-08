@@ -79,6 +79,14 @@ export declare const ASIDES_FILE: (d: string) => string;
 export declare function loadAsides(dir: string): Promise<Map<string, AsideEntry[]>>;
 /** Save one session's aside ring (already capped by the caller); serialized read-modify-write. */
 export declare function saveAsides(dir: string, sessionId: string, entries: AsideEntry[]): Promise<void>;
+/** Per-session opening prompt, keyed by dsh session id, plus the shared `default` key the starter card
+ *  offers a session that has none of its own. */
+export declare const STARTERS_FILE: (d: string) => string;
+/** Load the saved openers. A non-string or blank value is skipped, so a hand-edited file cannot put a
+ *  card on screen with nothing in it. */
+export declare function loadStarters(dir: string): Promise<Map<string, string>>;
+/** Save one opener, or drop it when the text is blank; serialized read-modify-write. */
+export declare function saveStarter(dir: string, key: string, text: string | undefined): Promise<void>;
 /**
  * A replacer that masks the values of secret-looking environment variables (`*KEY`, `*TOKEN`,
  * `*SECRET`, `*PASSWORD`, `*CREDENTIAL`, eight characters or longer) as `[redacted:NAME]`.

@@ -475,6 +475,49 @@ export function saveAsides(dir: string, sessionId: string, entries: AsideEntry[]
   return run;
 }
 
+/** Per-session opening prompt, keyed by dsh session id, plus the shared `default` key the starter card
+ *  offers a session that has none of its own. */
+export const STARTERS_FILE = (d: string) => join(d, "starters.json");
+let startersChain = Promise.resolve();
+
+/** Load the saved openers. A non-string or blank value is skipped, so a hand-edited file cannot put a
+ *  card on screen with nothing in it. */
+export async function loadStarters(dir: string): Promise<Map<string, string>> {
+  try {
+    const parsed: unknown = JSON.parse(await readFile(STARTERS_FILE(dir), "utf8"));
+    const map = new Map<string, string>();
+    if (typeof parsed === "object" && parsed !== null) {
+      for (const [k, v] of Object.entries(parsed)) {
+        if (typeof v === "string" && v.trim() !== "") map.set(k, v);
+      }
+    }
+    return map;
+  } catch {
+    return new Map();
+  }
+}
+
+/** Save one opener, or drop it when the text is blank; serialized read-modify-write. */
+export function saveStarter(dir: string, key: string, text: string | undefined): Promise<void> {
+  const run = startersChain.then(async () => {
+    const file = STARTERS_FILE(dir);
+    let obj: Record<string, unknown> = {};
+    try {
+      const parsed: unknown = JSON.parse(await readFile(file, "utf8"));
+      if (typeof parsed === "object" && parsed !== null) {
+        // SAFETY: a top-level JSON object with string keys.
+        obj = parsed as Record<string, unknown>;
+      }
+    } catch {}
+    if (text === undefined || text.trim() === "") delete obj[key];
+    else obj[key] = text;
+    await mkdir(dirname(file), { recursive: true });
+    await writeFile(file, JSON.stringify(obj));
+  });
+  startersChain = run.catch(() => {});
+  return run;
+}
+
 /** Whole name segments only: `GH_TOKEN`, `DB_PASSWORD`, `API_KEY` match; `SECRETARY` does not. */
 const SECRET_NAME = /(^|_)(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?)(_|$)/i;
 

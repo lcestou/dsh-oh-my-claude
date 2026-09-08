@@ -3,7 +3,7 @@
 // here or jump to the box) and Boxes (this box as the first row, plus the ssh and linked-dsh
 // machines you add, each probed for claude version and login). Built into lib/client.js by
 // `bun run build`.
-import type { FC, ReactNode } from "react";
+import type { CSSProperties, FC, ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   IconApiOutline14,
@@ -2023,21 +2023,40 @@ function renderUsage(block: HTMLElement, reply: UsageReply) {
  */
 type FrameScan = () => void;
 const frameScans = new Set<FrameScan>();
+/**
+ * Scans that have to land before the browser paints. A frame scan is fine for anything that only
+ * adds to what dsh drew, but the tool fold *hides* a block dsh already laid out, and a frame late
+ * is a frame the full code block is on screen. Those run inside the observer callback instead,
+ * which is a microtask checkpoint: still before paint, still batched per mutation burst.
+ */
+const syncScans = new Set<FrameScan>();
 let bodyObserver: MutationObserver | undefined;
 let scanQueued = false;
 const flushScans = () => {
   scanQueued = false;
   for (const scan of frameScans) scan();
 };
-const onBodyMutation = (scan: FrameScan) => {
-  frameScans.add(scan);
+const observeBody = (observer: MutationObserver) => {
+  observer.observe(document.body, { childList: true, subtree: true });
+};
+const onBodyMutation = (scan: FrameScan, sync = false) => {
+  (sync ? syncScans : frameScans).add(scan);
   if (bodyObserver) return;
-  bodyObserver = new MutationObserver(() => {
-    if (scanQueued) return;
+  bodyObserver = new MutationObserver((_records, observer) => {
+    if (syncScans.size > 0) {
+      // A sync scan writes to the DOM, and those writes would call this back a second time for no
+      // gain. Detaching drops the records it queues; nothing else runs in a synchronous window, and
+      // every scan here reads the live DOM rather than the records, so a dropped record costs
+      // nothing: the next scan sees whatever it described.
+      observer.disconnect();
+      for (const run of syncScans) run();
+      observeBody(observer);
+    }
+    if (scanQueued || frameScans.size === 0) return;
     scanQueued = true;
     requestAnimationFrame(flushScans);
   });
-  bodyObserver.observe(document.body, { childList: true, subtree: true });
+  observeBody(bodyObserver);
 };
 
 function watchContextMeter(ctx: ClientCtx) {
@@ -2645,6 +2664,16 @@ function watchToolFolds() {
     for (const head of document.querySelectorAll<HTMLElement>('[class*="_markdown"] p')) {
       const glyph = glyphOf(head);
       if (glyph === "") continue;
+      // State first, icon second. The state attribute is what hides the fence, and a header that has
+      // to wait for the sprite sheet would otherwise sit unmarked with its whole block on screen.
+      // A header folded before its icon lands still opens on click or Enter — setFoldState is what
+      // gives it the role and the tab stop — so the only thing missing for that frame is the glyph.
+      const foldable = head.nextElementSibling?.classList.contains("md-code-block") === true;
+      const state = head.getAttribute(HEAD_MARK);
+      // A header can start flat and gain its fence a moment later while the step streams in, so the
+      // flat state is never sticky: only an already-folding header keeps the state the user set.
+      if (!foldable) setFoldState(head, "flat");
+      else if (state !== "1" && state !== "open") setFoldState(head, "1");
       const node = head.firstChild;
       if (
         node?.nodeType === Node.TEXT_NODE &&
@@ -2664,16 +2693,10 @@ function watchToolFolds() {
         head.removeAttribute("data-omc-icon");
         head.insertBefore(span, head.firstChild);
       }
-      const foldable = head.nextElementSibling?.classList.contains("md-code-block") === true;
-      const state = head.getAttribute(HEAD_MARK);
-      // A header can start flat and gain its fence a moment later while the step streams in, so the
-      // flat state is never sticky: only an already-folding header keeps the state the user set.
-      if (!foldable) setFoldState(head, "flat");
-      else if (state !== "1" && state !== "open") setFoldState(head, "1");
     }
   };
   scan();
-  onBodyMutation(scan);
+  onBodyMutation(scan, true);
 }
 
 interface TurnRecord {
@@ -2920,6 +2943,169 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   );
 }
 
+/** dsh's own dock-card box (its QueueDock `_7yHdaG_dock`), to the pixel: composer-card width less one
+ *  dock inset each side, centred, and the negative bottom margin every dsh dock card uses to hug the
+ *  stack gap below it. Both of this plugin's dock cards sit on it so they line up with the queue,
+ *  todo and goal panels instead of spanning the pane. */
+const DOCK_CARD: CSSProperties = {
+  boxSizing: "border-box",
+  width:
+    "calc(100% - var(--dsh-composer-side-clearance) - var(--dsh-composer-side-clearance) - var(--dsh-composer-dock-inset) - var(--dsh-composer-dock-inset))",
+  maxWidth:
+    "calc(var(--dsh-composer-card-max-width) - var(--dsh-composer-dock-inset) - var(--dsh-composer-dock-inset))",
+  margin: "0 auto calc(0px - var(--dsh-composer-stack-gap) - 3px)",
+  padding: "0 var(--dsh-composer-dock-inset)",
+  flex: "none",
+  display: "flex",
+  flexDirection: "column",
+  gap: 6,
+};
+
+/** What the starter route answers: this session's own saved opener and the shared fallback. */
+interface StarterReply {
+  session: string;
+  fallback: string;
+}
+
+/**
+ * The prompt starter: a card above the composer on a session that has not been used yet, offering the
+ * opening line saved for this session — or, on a brand-new tab, the last one saved anywhere — and
+ * writing it into the composer without sending it, so it can be edited first. The card also saves the
+ * current draft as the opener, and forgets it again. It hides the moment the session has a message or
+ * the composer has text, so it never sits between the user and a prompt they are already writing.
+ */
+function StarterCard({
+  sessionId,
+  ctx,
+  draft,
+  setDraft,
+}: {
+  sessionId: string;
+  ctx: ClientCtx;
+  draft: string;
+  setDraft: (text: string) => void;
+}) {
+  const [starter, setStarter] = useState<StarterReply | null>(null);
+  const [note, setNote] = useState("");
+
+  useEffect(() => {
+    let live = true;
+    fetch(`${ROUTE}/starter?session=${encodeURIComponent(sessionId)}`)
+      .then((r) => readJson<StarterReply>(r))
+      .then((b) => {
+        if (live) setStarter(b);
+      })
+      .catch(() => {}); // no store yet: the card simply does not appear
+    return () => {
+      live = false;
+    };
+  }, [sessionId]);
+
+  // The card says what the store did, not what the click did: a save that never reached the route
+  // has to say so, or the opener is quietly gone by the next tab.
+  const save = (text: string) => {
+    setStarter({ session: text, fallback: text });
+    setNote("Saving…");
+    void fetch(`${ROUTE}/starter`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ session: sessionId, text }),
+    })
+      .then((r) => {
+        setNote(r.ok ? "Saved" : "Save failed");
+      })
+      .catch(() => {
+        setNote("Save failed");
+      })
+      .finally(() => setTimeout(() => setNote(""), 1600));
+  };
+
+  // Only on an unused session: dsh's own `blank` bit, which is false as soon as the session has a
+  // message. `!== false` rather than `=== true` so a session missing from the snapshot (the moment a
+  // tab opens) still counts as blank.
+  const blank = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.blank !== false;
+  if (!blank || starter === null) return null;
+  const opener = starter.session || starter.fallback;
+  const busy = draft !== "" && draft !== opener; // they are writing something of their own
+
+  const chip: CSSProperties = {
+    ...btn,
+    fontSize: 12,
+    padding: "2px 8px",
+    borderRadius: 999,
+    border: `1px solid ${T.border}`,
+    background: "transparent",
+  };
+
+  return (
+    <div style={DOCK_CARD}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          flexWrap: "wrap",
+          fontSize: 12,
+          color: T.faint,
+        }}
+      >
+        {opener === "" || busy ? (
+          <span>Type a prompt to start. Save it here to open the next session with it.</span>
+        ) : (
+          <>
+            <button type="button" style={chip} onClick={() => setDraft(opener)} title={opener}>
+              {opener.length > 60 ? `${opener.slice(0, 60)}…` : opener}
+            </button>
+            <span>fills the composer; edit before sending.</span>
+          </>
+        )}
+        <span style={{ flex: "1 1 auto" }} />
+        {draft === "" ? null : (
+          <button
+            type="button"
+            style={chip}
+            onClick={() => save(draft)}
+            title="Save what is in the composer as this session's opening prompt"
+          >
+            {note === "" ? "Save draft" : note}
+          </button>
+        )}
+        {opener === "" ? null : (
+          <button type="button" style={chip} onClick={() => save("")} title="Forget this opener">
+            Forget
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Slot wrapper: reads the live draft through dsh's own input hook before handing the card its props.
+ *  The hook comes in as a prop, so the read has to happen in a component dsh renders, not in the
+ *  registration callback. */
+function StarterSlot({
+  sessionId,
+  ctx,
+  inputActions,
+  useInput,
+}: {
+  sessionId?: string;
+  ctx: ClientCtx;
+  inputActions?: { setDraft: (text: string) => void };
+  useInput?: <T>(select: (state: { draft: string }) => T) => T;
+}) {
+  const draft = useInput?.((state) => state.draft) ?? "";
+  if (sessionId === undefined || inputActions === undefined) return null;
+  return (
+    <StarterCard
+      sessionId={sessionId}
+      ctx={ctx}
+      draft={draft}
+      setDraft={(text) => inputActions.setDraft(text)}
+    />
+  );
+}
+
 /** One `/btw` side question as the client bubble draws it (mirrors the adapter's `AsideEntry`). */
 interface AsideItem {
   id: string;
@@ -3027,25 +3213,7 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
   } as const;
 
   return (
-    <div
-      style={{
-        // Match dsh's own dock card (its QueueDock `_7yHdaG_dock`) to the pixel, so the aside sits at
-        // the same width and the same vertical spacing as the queue/todo/goal cards instead of
-        // spanning the pane: composer-card width less one dock inset each side, centred, and the same
-        // negative bottom margin every dsh dock card uses to hug the stack gap below it.
-        boxSizing: "border-box",
-        width:
-          "calc(100% - var(--dsh-composer-side-clearance) - var(--dsh-composer-side-clearance) - var(--dsh-composer-dock-inset) - var(--dsh-composer-dock-inset))",
-        maxWidth:
-          "calc(var(--dsh-composer-card-max-width) - var(--dsh-composer-dock-inset) - var(--dsh-composer-dock-inset))",
-        margin: "0 auto calc(0px - var(--dsh-composer-stack-gap) - 3px)",
-        padding: "0 var(--dsh-composer-dock-inset)",
-        flex: "none",
-        display: "flex",
-        flexDirection: "column",
-        gap: 6,
-      }}
-    >
+    <div style={DOCK_CARD}>
       {shown.map((it) => {
         const open = !collapsed.has(it.id);
         return (
@@ -3337,6 +3505,13 @@ export function apply(ctx: ClientCtx) {
     ctx.slots.register(
       { name: "conversation.input.dock", id: "claude-aside", order: 45 },
       (props) => (props.sessionId ? <AsideBubble sessionId={props.sessionId} ctx={ctx} /> : null),
+    );
+    // Above the aside so a fresh tab reads top-down: what to type first, then anything that answered
+    // later. dsh hands composer-slot entries the composer's own `inputActions` and `useInput`, which
+    // is what lets the card fill the box without sending it.
+    ctx.slots.register(
+      { name: "conversation.input.dock", id: "claude-starter", order: 44 },
+      (props) => <StarterSlot {...props} ctx={ctx} />,
     );
     // The tool headers' icons are cloned out of this hidden sheet; it rides along with the dock
     // because that is mounted wherever a conversation is, which is the only place headers exist.

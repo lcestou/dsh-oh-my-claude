@@ -556,6 +556,9 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     readonly permissionAsks: Map<string, string[]>;
     /** `/btw` side questions and their answers, newest last, per session; kept in memory only. */
     readonly sideQuestions: Map<string, AsideEntry[]>;
+    /** Saved opening prompts: one per session id, plus `default` for the one a session without its own
+     *  is offered. Loaded from disk on construct and written through on every save. */
+    readonly starters: Map<string, string>;
     /** The live thinking budget this plugin last set per session (null = session default, 0 = off);
      *  memory only, since a respawn resets it and the CLI has no flag to carry it. */
     readonly thinkingBudgets: Map<string, number | null>;
@@ -695,6 +698,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * arrives. Fire and forget: the command returns before Claude answers.
      */
     askSideQuestion(sessionId: string, question: string): void;
+    /** Save (or clear, when the text is blank) an opening prompt for a session or for `default`. */
+    setStarter(key: string, text: string | undefined): void;
     /** Persist a session's aside ring to disk so an answer survives a restart, eviction or hot reload. */
     persistAsides(sessionId: string): void;
     /** What the /tune thinking selector shows: the budget this plugin last set for the session, or
