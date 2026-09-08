@@ -3979,6 +3979,11 @@ function reconcileSshBoxes(
     mounts.set(providerId, { adapter, disposeAdapter, disposeDirectory });
     adapters.set(providerId, adapter);
     log("info", `ssh box "${box.name}" mounted as ${providerId} -> ${box.host}`);
+    // The box's own holds: a restart mounts the box again from the file and must reattach to
+    // the far claudes it left running (2026-09-08: the first restart after holds shipped left the
+    // nova session's cli alive on the box with nothing attached, because only the main mount
+    // adopted). A hot reload finds the processes already in the shared registry and skips them.
+    void adapter.adoptHolds().catch((e) => log("warn", `hold adoption: ${errorText(e)}`));
   }
 }
 
