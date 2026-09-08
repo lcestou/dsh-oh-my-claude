@@ -2576,12 +2576,18 @@ function watchSessionSpinners(ctx: ClientCtx) {
  *  blocks are left alone. Kept in sync with the translator's TOOL_ICON set. */
 const TOOL_ICONS = "❯▤✎⌕✳⤓☑⚙☰⌘◆";
 /** The invisible word joiner the translator writes after the glyph (`HEADER_MARK` there), stripped
- *  with the glyph when it is there. It is not required to claim a header: a dsh process holds the
- *  server half of this plugin in memory until it restarts, while `lib/client.js` reloads into the
- *  open tab the moment it is built, so demanding the mark unfolded every header already on screen
- *  and every header the running build was still writing. The glyph decides; the mark only rides
- *  along for a future that can require it on both halves at once. */
+ *  with the glyph when it is there.
+ *
+ *  It cannot be demanded outright: a dsh process holds the server half of this plugin in memory
+ *  until it restarts, while `lib/client.js` reloads into the open tab the moment it is built, so a
+ *  client that required the mark unfolded every header the running build was still writing (#234).
+ *  So the page says which it is. Until a marked header has been seen, the glyph alone claims a
+ *  paragraph, exactly as before; from the first marked one on, the running server writes marks and
+ *  a bare glyph is prose \u2014 a pasted `\u276f npm test` keeps its glyph and the block under it stays open.
+ *  A header already claimed keeps its fold either way, so the switch never reopens what is on screen. */
 const FOLD_MARK = "\u2060";
+/** Whether this page has seen the mark, which is what tells the two halves apart. */
+let markedHeaders = false;
 const HEAD_MARK = "data-omc-tool"; // on the header <p>: "1" collapsed · "open" expanded · "flat" no fence
 const LEAD_MARK = "data-omc-lead"; // on the span that replaces the glyph: the sprite key it carries
 const SPRITE_MARK = "data-omc-sprite"; // on each hidden sprite: its key
@@ -2765,14 +2771,19 @@ const setFoldState = (head: HTMLElement, state: "1" | "open" | "flat") => {
 };
 
 /** The glyph a header leads with, wherever it currently lives: still in the text, already lifted into
- *  a leading span, or in the `data-omc-icon` attribute an older build left behind. The mark behind
- *  the glyph is welcome but not demanded, so a header written by an older build still folds. */
-const glyphOf = (head: HTMLElement): string => {
+ *  a leading span, or in the `data-omc-icon` attribute an older build left behind. A glyph with the
+ *  mark behind it is a header and says so for the rest of the page; a bare one is a header only
+ *  while no marked header has been seen, or when this paragraph is one already folding. */
+export const glyphOf = (head: HTMLElement): string => {
   const node = head.firstChild;
   if (node?.nodeType === Node.TEXT_NODE) {
     const text = node.nodeValue ?? "";
     const at = text.search(/\S/);
-    if (at >= 0 && TOOL_ICONS.includes(text.charAt(at))) return text.charAt(at);
+    if (at >= 0 && TOOL_ICONS.includes(text.charAt(at))) {
+      if (text.startsWith(FOLD_MARK, at + 1)) markedHeaders = true;
+      else if (markedHeaders && !head.hasAttribute(HEAD_MARK)) return "";
+      return text.charAt(at);
+    }
   }
   return (
     head.querySelector(`span[${LEAD_MARK}]`)?.getAttribute(LEAD_MARK) ??
