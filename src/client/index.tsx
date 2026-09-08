@@ -2450,24 +2450,28 @@ function watchSessionSpinners(ctx: ClientCtx) {
 
 /** Fold a native-tool code block into a one-line disclosure. dsh renders a tool step as a `<p>` whose
  *  text is an icon plus the tool's name (`❯ Bash`, `▤ Read` — set by the translator) followed by its
- *  `.md-code-block` fence, both children of `._markdown`. Collapsed, the fence hides and a chevron
- *  hovers behind the icon; clicking the header toggles it. The marker is the leading glyph: only a
- *  header that starts with one of the translator's tool icons folds, so Claude's own prose code blocks
- *  are left alone. Kept in sync with the translator's TOOL_ICON set. */
+ *  `.md-code-block` fence, both children of `._markdown`. Collapsed, the fence hides; hovering the
+ *  header swaps its icon for a chevron, and clicking toggles it. The marker is the leading glyph: only
+ *  a header that starts with one of the translator's tool icons folds, so Claude's own prose code
+ *  blocks are left alone. Kept in sync with the translator's TOOL_ICON set. */
 const TOOL_ICONS = "❯▤✎⌕✳⤓◆";
 const FOLD_MARK = "data-omc-fold"; // on the fence: "tool" paired to a header · "skip" not a tool block
 const HEAD_MARK = "data-omc-tool"; // on the header <p>: "1" collapsed · "open" expanded
+const ICON_MARK = "data-omc-icon"; // on the header <p>: the leading glyph, lifted out of the text
 
 const ensureFoldStyle = () => {
   if (document.getElementById("dsh-oh-my-claude-fold")) return;
   const el = document.createElement("style");
   el.id = "dsh-oh-my-claude-fold";
   // The header reads as dsh's muted tool text — a touch smaller and dimmed — and sits flush-left like
-  // any prose line. The chevron is a zero-advance ::before (its width cancels its negative margin) so
-  // it draws behind the leading icon without indenting the row; it's invisible at rest and fades in on
-  // hover, staying as the open-state marker (rotated) while the row is open. The adjacent-sibling rule
-  // hides the fence while the header reads "1"; the two are always consecutive children of ._markdown.
-  el.textContent = `body[data-omc-claude] p[${HEAD_MARK}]{cursor:pointer;user-select:none;font-size:.9em;opacity:.68}body[data-omc-claude] p[${HEAD_MARK}]::before{content:"\\203A";display:inline-block;width:.8em;margin-right:-.8em;font-size:1.35em;line-height:1;color:${CLAUDE_ORANGE};opacity:0;transition:transform .12s ease,opacity .12s ease}body[data-omc-claude] p[${HEAD_MARK}]:hover::before,body[data-omc-claude] p[${HEAD_MARK}="open"]::before{opacity:1}body[data-omc-claude] p[${HEAD_MARK}="open"]::before{transform:rotate(90deg)}body[data-omc-claude] p[${HEAD_MARK}="1"]+.md-code-block{display:none}`;
+  // any prose line. The icon itself is the ::before (the scan lifts it out of the text), so hovering
+  // swaps it for the chevron in place: one glyph, never two stacked. The two states declare different
+  // widths on purpose — `em` resolves against the pseudo-element's own font size, so the chevron's
+  // .815em at 1.35em is the icon's 1.1em at 1em and the row does not shift. The chevron stays as the
+  // open-state marker, rotated. The
+  // adjacent-sibling rule hides the fence while the header reads "1"; the two are always consecutive
+  // children of ._markdown.
+  el.textContent = `body[data-omc-claude] p[${HEAD_MARK}]{cursor:pointer;user-select:none;font-size:.9em;opacity:.68}body[data-omc-claude] p[${HEAD_MARK}]::before{content:attr(${ICON_MARK});display:inline-block;width:1.1em;line-height:1;transition:transform .12s ease}body[data-omc-claude] p[${HEAD_MARK}]:hover::before,body[data-omc-claude] p[${HEAD_MARK}="open"]::before{content:"\\203A";font-size:1.35em;color:${CLAUDE_ORANGE};width:.815em}body[data-omc-claude] p[${HEAD_MARK}="open"]::before{transform:rotate(90deg)}body[data-omc-claude] p[${HEAD_MARK}="1"]+.md-code-block{display:none}`;
   document.head.appendChild(el);
 };
 
@@ -2499,6 +2503,18 @@ function watchToolFolds() {
       const isTool = text !== "" && TOOL_ICONS.includes(text.charAt(0));
       block.setAttribute(FOLD_MARK, isTool ? "tool" : "skip");
       if (isTool && head instanceof HTMLElement) head.setAttribute(HEAD_MARK, "1");
+    }
+    // Lift the icon out of the text into the ::before so hover can swap it for the chevron. Runs over
+    // every header, not just newly marked ones: a re-render of the same <p> restores the glyph in the
+    // text while the fence keeps its mark, which would leave the icon showing twice.
+    for (const head of document.querySelectorAll<HTMLElement>(`p[${HEAD_MARK}]`)) {
+      const node = head.firstChild;
+      if (node?.nodeType !== Node.TEXT_NODE) continue;
+      const text = node.nodeValue ?? "";
+      const at = text.search(/\S/);
+      if (at < 0 || !TOOL_ICONS.includes(text.charAt(at))) continue;
+      head.setAttribute(ICON_MARK, text.charAt(at));
+      node.nodeValue = text.slice(at + 1).replace(/^ /, "");
     }
   };
   scan();
