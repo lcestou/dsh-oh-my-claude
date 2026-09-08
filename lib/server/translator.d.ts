@@ -54,6 +54,8 @@ export declare class Translator {
     index: number;
     open: Map<number, TranslatorBlock>;
     sawPartial: boolean;
+    /** `message.id` of the message currently streaming, so only its own echo is dropped. */
+    streamedId: string | undefined;
     finished: boolean;
     denied: number;
     toolPending: boolean;
@@ -143,7 +145,7 @@ export declare class Translator {
         id?: string;
         name?: string;
     }): StreamChunk[];
-    assistant(content: ClaudeContentBlock[], parentToolUseId: string | null | undefined): StreamChunk[];
+    assistant(content: ClaudeContentBlock[], parentToolUseId: string | null | undefined, id?: string): StreamChunk[];
     /** dsh tools reached over the MCP bridge (subagents, jobs...) render as visible text rows, the
      *  rest as collapsed reasoning. Returns [block kind, lead text]. */
     toolLead(cb: {

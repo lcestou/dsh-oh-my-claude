@@ -48,8 +48,39 @@ assert.equal(
   "⌕\u2060 Web search `cats`",
 );
 
-// unknown tool falls back to a json fence of the raw input, name capitalized with a default icon
-assert.equal(formatToolCall("todowrite", '{"x":1}'), '◆\u2060 Todowrite\n```json\n{"x":1}\n```');
+// unknown tool falls back to a json fence of its input, name capitalized with a default icon. The
+// input is pretty-printed: one line of JSON has nothing for the 18-line cap to cut, so a Task call
+// used to print its whole subagent prompt in the header.
+assert.equal(
+  formatToolCall("todowrite", '{"x":1}'),
+  '◆\u2060 Todowrite\n```json\n{\n  "x": 1\n}\n```',
+);
+
+// …and long values are clipped: a Task prompt is one JSON string, so the line cap alone never cut
+// it and the header printed the whole prompt.
+{
+  const md = formatToolCall(
+    "task",
+    JSON.stringify({ prompt: Array.from({ length: 40 }, (_, i) => `line ${i}`).join("\n") }),
+  );
+  assert.ok(md.includes("…"), md);
+  assert.ok(md.length < 500, md);
+}
+
+// MultiEdit maps to the edit presenter but carries `edits[]`; every pair reaches the diff.
+assert.equal(
+  formatToolCall(
+    "edit",
+    JSON.stringify({
+      file_path: "x.ts",
+      edits: [
+        { old_string: "a", new_string: "b" },
+        { old_string: "c", new_string: "d" },
+      ],
+    }),
+  ),
+  "✎\u2060 Edit `x.ts`\n```diff\n- a\n+ b\n- c\n+ d\n```",
+);
 
 // malformed input never throws
 assert.equal(formatToolCall("bash", "not json"), "❯\u2060 Bash\n```bash\n\n```");

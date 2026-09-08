@@ -270,6 +270,8 @@ export type ClaudeContentBlock =
 export interface ClaudeStreamPartial {
   type: string;
   index?: number;
+  /** `message_start` only: the message these deltas belong to. */
+  message?: { id?: string };
   content_block?: { type?: string; id?: string; name?: string };
   delta?: { text?: string; thinking?: string; partial_json?: string; signature?: string };
 }

@@ -1054,6 +1054,63 @@ assert.equal(tq.toolPending, true);
 
 console.log("ok");
 
+// --- a tool called with no arguments still fires its call, so its result is not an orphan ---
+{
+  const calls: { id: string; name: string; input: string }[] = [];
+  const tr = new Translator({
+    onToolCall: (id: string, name: string, input: string) => calls.push({ id, name, input }),
+  } as any) as any;
+  tr.translate({ type: "stream_event", event: { type: "message_start" } });
+  tr.translate({
+    type: "stream_event",
+    event: {
+      type: "content_block_start",
+      index: 0,
+      content_block: { type: "tool_use", id: "tu0", name: "ExitPlanMode" },
+    },
+  });
+  // The CLI streams one delta carrying the empty string for a `{}` input.
+  tr.translate({
+    type: "stream_event",
+    event: { type: "content_block_delta", index: 0, delta: { partial_json: "" } },
+  });
+  tr.translate({ type: "stream_event", event: { type: "content_block_stop", index: 0 } });
+  assert.equal(calls.length, 1, "the call fires on the id, not on having arguments");
+  assert.equal(calls[0]!.input, "{}");
+}
+
+// --- the whole-message echo is dropped, a message the CLI sends on its own is not ---
+{
+  const tr = new Translator() as any;
+  tr.translate({ type: "stream_event", event: { type: "message_start", message: { id: "m1" } } });
+  tr.translate({
+    type: "stream_event",
+    event: { type: "content_block_start", index: 0, content_block: { type: "text" } },
+  });
+  tr.translate({
+    type: "stream_event",
+    event: { type: "content_block_delta", index: 0, delta: { text: "hi" } },
+  });
+  tr.translate({ type: "stream_event", event: { type: "content_block_stop", index: 0 } });
+  assert.deepEqual(
+    tr.translate({
+      type: "assistant",
+      message: { id: "m1", content: [{ type: "text", text: "hi" }] },
+    }),
+    [],
+    "the echo of what just streamed is a duplicate",
+  );
+  // What the CLI sends after refusing a turn on a rate limit: its own message, never streamed.
+  const limit = tr.translate({
+    type: "assistant",
+    message: { id: "m2", content: [{ type: "text", text: "5-hour limit reached" }] },
+  });
+  assert.ok(
+    JSON.stringify(limit).includes("5-hour limit reached"),
+    "a message that never streamed is shown",
+  );
+}
+
 // --- native relay: Claude's view of a relayed dsh tool call stays hidden, dsh renders it ---
 {
   const tr = new Translator({ relay: true }) as any;

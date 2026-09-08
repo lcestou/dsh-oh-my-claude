@@ -111,6 +111,13 @@ export const HEADER_MARK = "\u2060";
 const label = (name: string): string =>
   `${TOOL_ICON.get(name) ?? "◆"}${HEADER_MARK} ${name.startsWith("web_") ? `Web ${name.slice(4)}` : cap(name)}`;
 
+/** Every line of `text` under one diff marker, so an empty side still renders as a marker line. */
+const prefixed = (text: string, mark: "-" | "+"): string =>
+  text
+    .split("\n")
+    .map((l) => `${mark} ${l}`)
+    .join("\n");
+
 /** A native tool call as markdown: an icon-led plain header, arguments in the fence that suits the tool. */
 export function formatToolCall(name: string, inputJson: string): string {
   let inp: Record<string, unknown> = {};
@@ -131,13 +138,17 @@ export function formatToolCall(name: string, inputJson: string): string {
     case "write":
       return `${label("write")} \`${file}\`\n${fence(capLines(asStr(inp.content)), langOf(file))}`;
     case "edit": {
-      const diff = `${asStr(inp.old_string)
-        .split("\n")
-        .map((l) => `- ${l}`)
-        .join("\n")}\n${asStr(inp.new_string)
-        .split("\n")
-        .map((l) => `+ ${l}`)
-        .join("\n")}`;
+      // Edit carries one `old_string`/`new_string` pair at the top level; MultiEdit maps to this
+      // same presenter but carries `edits[]` instead, and reading the top level for it produced a
+      // fence holding one bare `-` and one bare `+`.
+      // SAFETY: `edits` is Claude's own MultiEdit input; the array check is above and each entry's
+      // fields are read through `asStr`, which answers "" for anything that is not a string.
+      const edits = Array.isArray(inp.edits)
+        ? (inp.edits as Record<string, unknown>[])
+        : [{ old_string: inp.old_string, new_string: inp.new_string }];
+      const diff = edits
+        .map((e) => `${prefixed(asStr(e.old_string), "-")}\n${prefixed(asStr(e.new_string), "+")}`)
+        .join("\n");
       return `${label("edit")} \`${file}\`\n${fence(capLines(diff), "diff")}`;
     }
     case "grep":
@@ -148,8 +159,16 @@ export function formatToolCall(name: string, inputJson: string): string {
       return `${label("web_fetch")} ${asStr(inp.url)}`;
     case "web_search":
       return `${label("web_search")} \`${asStr(inp.query)}\``;
-    default:
-      return `${label(name)}\n${fence(capLines(inputJson), "json")}`;
+    default: {
+      // `capLines` caps at 18 lines and `JSON.stringify` writes one, so an unknown tool's header
+      // used to print its whole input on a single line — a `Task` call's entire subagent prompt,
+      // `ExitPlanMode`'s entire plan. Pretty-printing gives the line cap something to cut.
+      const pretty =
+        Object.keys(inp).length > 0
+          ? JSON.stringify(inp, (_k, v: unknown) => (typeof v === "string" ? clip(v, 300) : v), 2)
+          : inputJson;
+      return `${label(name)}\n${fence(capLines(pretty), "json")}`;
+    }
   }
 }
 
@@ -298,6 +317,8 @@ export class Translator {
   index: number;
   open: Map<number, TranslatorBlock>; // api block index → { index, blockType, text }
   sawPartial: boolean;
+  /** `message.id` of the message currently streaming, so only its own echo is dropped. */
+  streamedId: string | undefined;
   finished: boolean;
   denied: number; // tool calls Claude Code refused because a non-interactive run cannot ask
   toolPending: boolean; // a tool_use block closed and its result has not arrived yet
@@ -395,6 +416,7 @@ export class Translator {
     this.index = 0;
     this.open = new Map(); // api block index → { index, blockType, text }
     this.sawPartial = false;
+    this.streamedId = undefined;
     this.finished = false;
     this.denied = 0; // tool calls Claude Code refused because a non-interactive run cannot ask
     this.toolPending = false; // a tool_use block closed and its result has not arrived yet
@@ -687,7 +709,11 @@ export class Translator {
       case "stream_event":
         return this.partial(event.event ?? { type: "" });
       case "assistant":
-        return this.assistant(event.message?.content ?? [], event.parent_tool_use_id);
+        return this.assistant(
+          event.message?.content ?? [],
+          event.parent_tool_use_id,
+          event.message?.id,
+        );
       case "user":
         return this.toolResults(event.message?.content ?? [], event.parent_tool_use_id);
       case "result": {
@@ -819,6 +845,9 @@ export class Translator {
     switch (ev.type) {
       case "message_start": {
         this.sawPartial = true;
+        // Which message is being streamed, so the echo of *this* message can be dropped without
+        // dropping a different one. See `assistant`.
+        this.streamedId = ev.message?.id;
         this.toolPending = false;
         this.open.clear();
         this.thinkingBlock = undefined;
@@ -861,13 +890,18 @@ export class Translator {
             NATIVE_TOOL_MAP[(cbMeta.name ?? "") as keyof typeof NATIVE_TOOL_MAP] ??
             cbMeta.name ??
             "";
+          // Gate on the id, never on the input: a tool called with no arguments (`ExitPlanMode`,
+          // `ListMcpResources`, any MCP tool called with `{}`) streams one `input_json_delta`
+          // carrying `""`, and skipping the call for it left the result frame — which only looks
+          // the id up — firing alone. That orphan is what the assembler throws on.
+          const args = input || "{}";
           if (this.onToolCall) {
-            if (input) this.fireToolCall(cbMeta.id, mapped, input);
-          } else if (input) {
+            this.fireToolCall(cbMeta.id, mapped, args);
+          } else {
             // Inline: keep input+name so the result row can format itself, and draw the call now.
-            this.callInputs.set(cbMeta.id, input);
+            this.callInputs.set(cbMeta.id, args);
             this.callNames.set(cbMeta.id, mapped);
-            inlineCall = this.wholeBlock("text", formatToolCall(mapped, input));
+            inlineCall = this.wholeBlock("text", formatToolCall(mapped, args));
           }
         }
         this.open.delete(apiIndex);
@@ -938,7 +972,11 @@ export class Translator {
     return opened.events;
   }
 
-  assistant(content: ClaudeContentBlock[], parentToolUseId: string | null | undefined) {
+  assistant(
+    content: ClaudeContentBlock[],
+    parentToolUseId: string | null | undefined,
+    id?: string,
+  ) {
     // Claude Code subagent output (--forward-subagent-text) arrives as whole messages tagged with the
     // parent tool id; it never comes as partials, so it is always rendered, folded into reasoning.
     if (parentToolUseId) {
@@ -946,7 +984,12 @@ export class Translator {
       const text = content.flatMap((b) => (b.type === "text" && b.text ? [b.text] : [])).join("\n");
       return text ? this.wholeBlock("reasoning", `↳ subagent\n${clip(text, this.limit)}`) : [];
     }
-    if (this.sawPartial) return []; // already streamed as deltas
+    // The whole-message echo of what just streamed as deltas is a duplicate and is dropped. The
+    // guard used to be `sawPartial` alone, which latched on the first `message_start` and stayed
+    // set for the rest of the run — so it also swallowed the assistant message the CLI sends on its
+    // own after refusing a turn on a rate limit, the one text that names the cap that was hit and
+    // whether credits still apply. Only the id that was actually streamed is an echo.
+    if (this.sawPartial && (id === undefined || id === this.streamedId)) return [];
     const events: StreamChunk[] = [];
     for (const b of content) {
       if (b.type === "text" && b.text) events.push(...this.wholeBlock("text", b.text));
