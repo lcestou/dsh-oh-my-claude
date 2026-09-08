@@ -2768,7 +2768,12 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
   const visibleRef = useRef(true);
 
   useEffect(() => {
-    if (activeClaudeSession(ctx) !== sessionId) return;
+    // Poll this session's asides unconditionally — do NOT gate on `activeClaudeSession`. That reads
+    // the session's provider binding, which is briefly undefined during a restart/reattach; gating
+    // the poll on it here meant that if the effect ran in that window the interval never installed
+    // and, with deps `[ctx, sessionId]` stable, never retried, so the card died for good ("gone with
+    // no way to get it back"). The card only mounts for the open composer's session and its data is
+    // this session's own server-persisted asides, so an unconditional per-session poll is correct.
     let alive = true;
     const fetchItems = async () => {
       try {
@@ -2801,7 +2806,10 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
   }, [ctx, sessionId]);
 
   const shown = items.filter((it) => !dismissed.has(it.id));
-  if (activeClaudeSession(ctx) !== sessionId || shown.length === 0) return null;
+  // No `activeClaudeSession` gate here either: the card shows this session's own persisted asides,
+  // which only exist for a Claude session, so an empty list is the only reason to hide it. Reading
+  // the provider binding at render blinked the card out whenever the binding reloaded.
+  if (shown.length === 0) return null;
 
   const dismissAside = (id: string) => {
     // Hide now, but tell the server to drop it so the next poll (or a remount) does not bring it back.

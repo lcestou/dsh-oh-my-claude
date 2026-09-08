@@ -211,6 +211,10 @@ async function openHere(
     // through its own subscription a beat later. Opening an id the store does not know yet is a
     // no-op — the restored session would never come to the foreground — so wait briefly for it.
     for (let i = 0; i < 40 && !known()[id]; i++) await new Promise((r) => setTimeout(r, 50));
+    // If it never appeared (server-side open/import error), `open` below is a no-op and the row just
+    // does nothing; leave a breadcrumb so a stuck restore is diagnosable rather than silent.
+    if (!known()[id])
+      console.warn(`[oh-my-claude] session ${id} did not appear after open; not opened`);
   }
   ctx.sessions.open(id);
 }
