@@ -29,6 +29,8 @@ export declare const listScript: (dir: string) => string;
 export declare const writeScript: (path: string, base64: string) => string;
 /** Delete, and stay silent about a file that was already gone. */
 export declare const removeScript: (path: string) => string;
+/** The script's own output, or null when the marker never arrived and there is no answer to read. */
+export declare const afterMark: (out: string) => string | null;
 /** Split the read script's answer: the first line is the mtime in seconds, the rest is the file. */
 export declare function splitRead(out: string): FileRead;
 /** The file with its mtime, or null when it does not exist. Throws when the box cannot be reached. */

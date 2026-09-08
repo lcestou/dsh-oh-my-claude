@@ -1,6 +1,6 @@
 // Offline self-check: node src/sessions.test.js. No CLI, no network.
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -132,6 +132,7 @@ import type { InstructionFile } from "./instructions.js";
           ? { configDir: join(tmp, "box"), sshHost: "box" }
           : undefined,
     rewind: async (sid, uuid, dryRun) => ({ ok: true, dryRun, canRewind: true }),
+    settingsPath: join(tmp, "claude", "settings.json"),
   });
   assert.ok(handler);
 
@@ -321,6 +322,35 @@ import type { InstructionFile } from "./instructions.js";
     JSON.stringify({ session: "sid1", uuid: "nope" }),
   );
   assert.equal(r.error, "session and uuid required");
+
+  // A save carries the mtime the tab read. The CLI writes settings.json itself while a tab sits
+  // open, and a whole-file write that ignored that would put the file back without its change.
+  const userSettings = join(tmp, "claude", "settings.json");
+  r = await respond(
+    "PUT",
+    "/dsh-oh-my-claude/settings",
+    JSON.stringify({ text: '{"a":1}\n', scope: "user" }),
+  );
+  assert.ok(r.mtime > 0, "a save with no mtime is unchecked, as before");
+  r = await respond(
+    "PUT",
+    "/dsh-oh-my-claude/settings",
+    JSON.stringify({ text: '{"a":2}\n', scope: "user", mtime: 1 }),
+  );
+  assert.match(String(r.error), /changed since it was opened/, "a stale mtime is refused");
+  assert.equal(
+    JSON.parse(await readFile(userSettings, "utf8")).a,
+    1,
+    "the refused save left the file alone",
+  );
+  r = await respond("GET", "/dsh-oh-my-claude/settings");
+  r = await respond(
+    "PUT",
+    "/dsh-oh-my-claude/settings",
+    JSON.stringify({ text: '{"a":3}\n', scope: "user", mtime: r.mtime }),
+  );
+  assert.ok(r.mtime > 0, "the mtime the read answered is accepted");
+  assert.equal(JSON.parse(await readFile(userSettings, "utf8")).a, 3);
 }
 
 // readPickerSettings: the two picker keys out of settings.json, and undefined for anything else.

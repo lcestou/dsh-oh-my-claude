@@ -864,7 +864,7 @@ interface SettingsFile {
   text: string;
   path?: string;
   exists?: boolean;
-  mtime?: number | string;
+  mtime?: number;
   backup?: string;
 }
 
@@ -873,6 +873,8 @@ interface SettingsWrite {
   text: string;
   scope?: SettingsScope;
   cwd?: string;
+  /** The mtime this tab read. The server refuses the write when the file has moved on since. */
+  mtime?: number;
 }
 
 interface SettingsEditorProps {
@@ -962,12 +964,15 @@ function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
     setError("");
     const body: SettingsWrite = box ? { text } : { text, scope };
     if (!box && projectCwd !== null) body.cwd = projectCwd;
+    // The file as this tab last read it. The CLI writes settings.json itself — a plugin install, a
+    // /model pick — and a save that ignored that would put the whole file back without it.
+    if (file?.mtime !== undefined) body.mtime = file.mtime;
     fetch(settingsUrl, {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
     })
-      .then((r) => readJson<{ mtime?: number | string; backup?: string }>(r))
+      .then((r) => readJson<{ mtime?: number; backup?: string }>(r))
       .then((b) => {
         setFile((f) => ({ ...f, text, exists: true, mtime: b.mtime }));
         setEditing(false);

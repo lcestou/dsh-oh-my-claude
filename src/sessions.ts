@@ -657,7 +657,13 @@ async function settingsTexts(
   for (const scope of SETTINGS_SCOPES) {
     const path = settingsScopePath(scope, userPath, cwd);
     if (path === undefined) continue;
-    const file = await readSettings(box, path).catch(() => null);
+    // A file the box cannot answer for is a fault, not an empty one: reading it as empty shows
+    // every key it sets as unset, and the roster built from that says a plugin is off when it is
+    // on. Only the managed file, which is root-owned by design, is allowed to drop out of the merge.
+    const file = await readSettings(box, path).catch((e: unknown) => {
+      if (scope !== "managed") throw e;
+      return null;
+    });
     if (file?.exists === true) texts.push({ scope, text: file.text });
   }
   return texts;
@@ -708,12 +714,29 @@ export async function readPickerSettings(path: string): Promise<PickerSettings |
   return out;
 }
 
-/** Keep the previous copy as .bak, write to a temp file, rename over: never a half-written file. */
+/** The mtime an editor sends back with its save; a body without one asks for no conflict check. */
+const mtimeOf = (body: Record<string, unknown>): number | undefined =>
+  typeof body.mtime === "number" && Number.isFinite(body.mtime) ? body.mtime : undefined;
+
+/**
+ * Keep the previous copy as .bak, write to a temp file, rename over: never a half-written file.
+ * `expect` is the mtime the editor read, when it sent one: a file that has moved since is someone
+ * else's edit — the CLI rewriting settings.json while the tab sat open, or a second tab — and a
+ * whole-file write would put it back the way this tab last saw it.
+ */
 async function writeWithBackup(
   box: FsBox,
   path: string,
   text: string,
+  expect?: number,
 ): Promise<{ path: string; backup: string; mtime: number }> {
+  if (expect !== undefined) {
+    // Compared exactly: the value the editor sends is the one a read answered, and it survives
+    // JSON unchanged. Rounding it would only widen the window in which two writes look alike.
+    const now = (await readAt(box, path))?.mtimeMs ?? 0;
+    if (now !== expect)
+      throw new Error(`${path} changed since it was opened; reopen it and redo the edit`);
+  }
   // A box's file is written by the same script that reads it, backup and temp file included, so a
   // dropped connection cannot leave half a settings file behind.
   if (box.sshHost) return { path, backup: `${path}.bak`, mtime: await writeAt(box, path, text) };
@@ -1183,10 +1206,12 @@ export function registerSessionRoutes(
                   return json(res, 400, { error: "not a loaded instructions file" });
 
                 if (req.method === "GET") {
-                  const read = await readAt(box, file.path).catch(() => null);
+                  // No catch: a box that cannot be reached is a 500 the editor shows, not a 404
+                  // that opens the file blank for the next save to write over.
+                  const read = await readAt(box, file.path);
                   return read === null
                     ? json(res, 404, { error: "not found" })
-                    : json(res, 200, { path: file.path, text: read.text });
+                    : json(res, 200, { path: file.path, text: read.text, mtime: read.mtimeMs });
                 }
                 if (req.method === "PUT") {
                   if (file.kind === "Managed")
@@ -1197,7 +1222,7 @@ export function registerSessionRoutes(
                     });
                   if (typeof body.text !== "string")
                     return json(res, 400, { error: "text required" });
-                  const written = await writeWithBackup(box, file.path, body.text);
+                  const written = await writeWithBackup(box, file.path, body.text, mtimeOf(body));
                   log("info", `instructions ${file.path} saved (${body.text.length} chars)`);
                   return json(res, 200, written);
                 }
@@ -1232,7 +1257,7 @@ export function registerSessionRoutes(
                   const parsed = parseSettingsText(text);
                   if (parsed.error !== undefined) return json(res, 400, { error: parsed.error });
                   const settingsText = typeof text === "string" ? text : "";
-                  const written = await writeWithBackup(box, path, settingsText);
+                  const written = await writeWithBackup(box, path, settingsText, mtimeOf(body));
                   log("info", `${scope} settings saved (${settingsText.length} chars)`);
                   return json(res, 200, written);
                 }
@@ -1249,13 +1274,13 @@ export function registerSessionRoutes(
                   const path = settingsScopePath(scope, userPath, cwd);
                   if (path === undefined) continue;
                   // An unreadable managed file (root-owned, or a directory) reads as absent
-                  // rather than failing the whole payload.
-                  const file = await readSettings(box, path).catch(() => ({
-                    path,
-                    exists: false,
-                    text: "{}\n",
-                    mtime: 0,
-                  }));
+                  // rather than failing the whole payload. Every other scope answers with the
+                  // failure: an editor shown "not created yet" for a file that is merely out of
+                  // reach saves an empty object over it the moment the box comes back.
+                  const file = await readSettings(box, path).catch((e: unknown) => {
+                    if (scope !== "managed") throw e;
+                    return { path, exists: false, text: "{}\n", mtime: 0 };
+                  });
                   scopes.push({ ...file, scope, readOnly: scope === "managed" });
                 }
                 return json(res, 200, { scopes });
@@ -1933,12 +1958,14 @@ export function registerSessionRoutes(
                   return json(res, 200, p.status);
                 }
                 if (req.method === "PUT") {
-                  const { text } = await readBody(req, 1024 * 1024);
-                  const parsed = parseSettingsText(text);
+                  const body = await readBody(req, 1024 * 1024);
+                  const parsed = parseSettingsText(body.text);
                   if (parsed.error !== undefined) return json(res, 400, { error: parsed.error });
                   const p = await probeBox(box, fetch, "settings", {
                     method: "PUT",
-                    body: JSON.stringify({ text }),
+                    // The mtime rides along: the box's own route is what checks the file there has
+                    // not moved since this tab read it, and dropping it here would waive the check.
+                    body: JSON.stringify({ text: body.text, mtime: mtimeOf(body) }),
                   });
                   if (!p.ok) return json(res, 502, { error: p.error });
                   return json(res, 200, p.status);

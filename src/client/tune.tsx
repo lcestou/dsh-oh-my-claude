@@ -300,7 +300,9 @@ export function TuneBody({
           await fetch(`${ROUTE}/settings${onBox(provider)}`, {
             method: "PUT",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ text: next.text }),
+            // The mtime goes with the text: the check above is this tab's, and the file can still
+            // move between that read and this write.
+            body: JSON.stringify({ text: next.text, mtime: fresh.mtime }),
           }),
         ),
       );

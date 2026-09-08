@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   ABSENT,
+  afterMark,
   listNamesAt,
   listScript,
   readAt,
@@ -34,8 +35,11 @@ import {
   const write = writeScript("/w/.claude/settings.json", "e30K");
   assert.ok(write.startsWith("mkdir -p '/w/.claude'"), "the parent is created first");
   assert.ok(write.includes("cp -- '/w/.claude/settings.json' '/w/.claude/settings.json.bak'"));
-  assert.ok(write.includes("printf %s 'e30K' | base64 -d > '/w/.claude/settings.json.tmp'"));
-  assert.ok(write.includes("mv -- '/w/.claude/settings.json.tmp' '/w/.claude/settings.json'"));
+  // The temp name carries the remote shell's pid: two writes to one path at once would otherwise
+  // share it, and the second `mv` would find the file the first one already moved.
+  assert.ok(write.includes("t='/w/.claude/settings.json.tmp'.$$"));
+  assert.ok(write.includes("printf %s 'e30K' | base64 -d > \"$t\""));
+  assert.ok(write.includes("mv -- \"$t\" '/w/.claude/settings.json'"));
   // The write answers its own mtime: reading it back would cost a second connection and report on a
   // file that may have moved on since.
   assert.ok(write.endsWith("echo 0; }"), "the write ends by printing the mtime it left");
@@ -51,6 +55,17 @@ import {
   assert.deepEqual(splitRead("0\n"), { text: "", mtimeMs: 0 });
   // An mtime line the box could not produce reads as unknown rather than NaN.
   assert.equal(splitRead("\nbody").mtimeMs, 0);
+}
+
+// A login shell prints its rc files' chatter before our script gets a word in, and that noise used
+// to be read as the mtime, a file name or $HOME. Everything before the marker is the box talking.
+{
+  assert.equal(afterMark("Welcome to box!\n\u0001omc\u00011700000000\nhi\n"), "1700000000\nhi\n");
+  assert.equal(afterMark("\u0001omc\u0001"), "", "a script that printed nothing still answers");
+  // No marker at all: ssh never ran the script, so there is no answer to read and the caller hears
+  // about the box instead of reading a banner as an empty file.
+  assert.equal(afterMark("ssh: connect to host box port 22: No route to host\n"), null);
+  assert.equal(afterMark(""), null);
 }
 
 // The local branch: a box with no sshHost goes straight to the filesystem.

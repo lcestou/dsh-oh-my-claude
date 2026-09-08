@@ -74,26 +74,55 @@ interface Ran {
   err: string;
 }
 
+/** ssh could not run the script at all (bad key, unknown host, timeout) rather than the file missing. */
+const transportError = (host: string, r: Ran): Error =>
+  new Error(
+    `${host}: ${r.err || (r.code === 0 ? "the script printed no answer" : `ssh exited ${r.code}`)}`,
+  );
+
+/**
+ * The marker every script prints before its own output.
+ *
+ * A login shell on the far end runs its rc files before our script, and whatever they print lands
+ * on stdout ahead of the answer: an `echo` in someone's `.bashrc` used to be read as the first line
+ * of a file read — the mtime — and its banner as the start of `$HOME` or of a file name. The script
+ * says where its output begins rather than the reader trusting position, in a control byte no
+ * banner emits.
+ */
+const MARK = "\u0001omc\u0001";
+
+/** The script's own output, or null when the marker never arrived and there is no answer to read. */
+export const afterMark = (out: string): string | null => {
+  const at = out.indexOf(MARK);
+  return at === -1 ? null : out.slice(at + MARK.length);
+};
+
+/**
+ * Run `script` on `host` and answer what it printed, with the box's own chatter cut away. Rejects
+ * when the marker never arrived: the script did not get as far as its first statement, so `out` is
+ * the box talking to itself rather than an answer — and reading that as one is how an unreachable
+ * box shows up as an empty file that the next save then overwrites.
+ */
 const ssh = (host: string, script: string, timeout = 15_000): Promise<Ran> =>
-  new Promise((resolve) =>
+  new Promise((resolve, reject) =>
     execFile(
       "ssh",
-      sshArgs(host, script),
+      sshArgs(host, `printf ${shq(MARK)}; ${script}`),
       { timeout, windowsHide: true, maxBuffer: 8 * 1024 * 1024 },
-      (e, out, err) =>
-        resolve({
+      (e, out, err) => {
+        const said = afterMark(String(out));
+        const r: Ran = {
           // SAFETY: execFile's error carries the remote exit status; anything else (spawn failure,
           // timeout) has no code and reads as 255, the status ssh itself uses for a failed connection.
           code: e === null ? 0 : ((e as { code?: number }).code ?? 255),
-          out: String(out),
+          out: said ?? String(out),
           err: String(err).trim().slice(0, 300),
-        }),
+        };
+        if (said === null) reject(transportError(host, r));
+        else resolve(r);
+      },
     ),
   );
-
-/** ssh could not run the script at all (bad key, unknown host, timeout) rather than the file missing. */
-const transportError = (host: string, r: Ran): Error =>
-  new Error(`${host}: ${r.err || `ssh exited ${r.code}`}`);
 
 /** Split the read script's answer: the first line is the mtime in seconds, the rest is the file. */
 export function splitRead(out: string): FileRead {

@@ -571,10 +571,12 @@ function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCt
   const openFile = async (f: InstructionFile) => {
     setError("");
     try {
-      const body = await readJson<{ text: string }>(
+      const body = await readJson<{ text: string; mtime?: number }>(
         await fetch(`${ROUTE}/instructions/file?${q}&path=${encodeURIComponent(f.path)}`),
       );
-      setFile(f);
+      // The read's own mtime, not the list's: the list can be minutes old by the time a row opens,
+      // and the save sends this back for the server to check the file has not moved since.
+      setFile({ ...f, mtime: body.mtime ?? f.mtime });
       setText(body.text);
       setSaved(body.text);
     } catch (e) {
@@ -590,7 +592,7 @@ function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCt
         await fetch(`${ROUTE}/instructions/file${onBox === "" ? "" : `?${onBox}`}`, {
           method: "PUT",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ cwd, path: file.path, text }),
+          body: JSON.stringify({ cwd, path: file.path, text, mtime: file.mtime }),
         }),
       );
       setSaved(text);
