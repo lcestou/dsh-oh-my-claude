@@ -266,14 +266,34 @@ export const whenContextGone = (fn: () => void): void => {
   if (gone) fn();
   else goneWatchers.add(fn);
 };
+const retire = (): void => {
+  gone = true;
+  for (const fn of goneWatchers) fn();
+  goneWatchers.clear();
+};
+/**
+ * Wrap a loop body — an interval tick, a registered scan — so the first disposed-context throw
+ * retires this bundle instead of reaching the console. Any read of any service throws once the
+ * context is gone, so the catch belongs at the loop's edge rather than at each read: guarding one
+ * read only moves the flood to the next line. A throw that is not the context dying is rethrown.
+ */
+export const guard = <A extends unknown[]>(fn: (...args: A) => void): ((...args: A) => void) => {
+  return (...args) => {
+    if (gone) return;
+    try {
+      fn(...args);
+    } catch (e) {
+      if (!(e instanceof Error) || !e.message.includes("inactive context")) throw e;
+      retire();
+    }
+  };
+};
 const openSessionId = (ctx: ClientCtx): string | undefined => {
   if (gone) return undefined;
   try {
     return ctx.sessions.list.getSnapshot()?.current;
   } catch {
-    gone = true;
-    for (const fn of goneWatchers) fn();
-    goneWatchers.clear();
+    retire();
     return undefined;
   }
 };

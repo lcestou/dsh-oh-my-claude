@@ -3,3 +3,6 @@ node_modules
 # agent worktrees live here, never tracked
 .claude/worktrees/
 .serena/
+
+# dsh drops pasted files here per session
+.dsh-filess/

@@ -47,6 +47,7 @@ import {
   openHere,
   maskEmail,
   whenContextGone,
+  guard,
 } from "./shared.js";
 import { AccessShield, OhMyClaudeControl } from "./panel.js";
 import { markTitle, newlyWaiting, noticesOn, type NoticeSnapshot } from "./notices.js";
@@ -2041,7 +2042,7 @@ const observeBody = (observer: MutationObserver) => {
   observer.observe(document.body, { childList: true, subtree: true });
 };
 const onBodyMutation = (scan: FrameScan, sync = false) => {
-  (sync ? syncScans : frameScans).add(scan);
+  (sync ? syncScans : frameScans).add(guard(scan));
   if (bodyObserver) return;
   // The new bundle registers its own scans; this one's would run on top of them against a context
   // that no longer answers.
@@ -2341,7 +2342,7 @@ function watchSessionNotices(ctx: ClientCtx) {
     if (wanted !== document.title) document.title = wanted;
   };
   tick(); // take the baseline now, so the first interval already has something to compare against
-  const beat = setInterval(tick, 1000);
+  const beat = setInterval(guard(tick), 1000);
   whenContextGone(() => clearInterval(beat));
 }
 
@@ -2371,7 +2372,7 @@ function watchTurnStatus(ctx: ClientCtx) {
     else document.body.setAttribute("data-omc-claude", want);
   };
   markBody();
-  const beat = setInterval(markBody, 1000);
+  const beat = setInterval(guard(markBody), 1000);
   whenContextGone(() => clearInterval(beat));
   const attach = async (el: HTMLElement) => {
     // Only act on [role="status"][aria-live="polite"] (dsh's turn-status element).
@@ -2484,7 +2485,7 @@ function watchSessionSpinners(ctx: ClientCtx) {
   // hundreds of full-page scans and janked mobile. The poll alone is enough for a sidebar dot's
   // colour. ponytail: if a newly-running row ever needs to tint faster than 1s, observe the sidebar
   // container only and coalesce with requestAnimationFrame, never document.body per mutation.
-  const beat = setInterval(scan, 1000);
+  const beat = setInterval(guard(scan), 1000);
   whenContextGone(() => clearInterval(beat));
 }
 
