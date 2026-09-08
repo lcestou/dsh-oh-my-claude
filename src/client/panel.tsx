@@ -2046,7 +2046,11 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
         if (!parent.isConnected) return;
         const menus = Array.from(parent.querySelectorAll<HTMLElement>('[role="menu"]'));
         for (const dshMenu of menus) {
-          if (dshMenu.getAttribute("data-dsh-oh-my-claude")) continue;
+          // Our own rows, not the attribute, say whether this menu is done: dsh re-renders the menu
+          // through the same element, which drops the six rows we appended and unhides its three
+          // while leaving every attribute we set in place. Trusting the mark there left the menu
+          // showing dsh's presets with no way back to ours until it was closed and reopened.
+          if (dshMenu.querySelector("[data-mode]")) continue;
           const menuItems = Array.from(dshMenu.querySelectorAll<HTMLElement>('[role="menuitem"]'));
           const hasPreset = menuItems.some((el) => PRESETS.some((p) => el.textContent === p.label));
           if (!hasPreset) continue;

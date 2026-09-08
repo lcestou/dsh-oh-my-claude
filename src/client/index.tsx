@@ -1862,14 +1862,24 @@ type ContextReply =
       percentage: number;
     }
   | { ok: false; error: string };
-const loadContext = async (sessionId: string): Promise<ContextReply> => {
-  try {
-    const r = await fetch(`${ROUTE}/context?session=${encodeURIComponent(sessionId)}`);
-    // SAFETY: the body is our own JSON route; both shapes carry `ok`
-    return (await r.json()) as ContextReply;
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : String(e) };
-  }
+// The breakdown is re-read whenever dsh re-renders the meter's dialog, which is on every repaint of
+// the percentage while a turn runs. The promise is cached, not its answer, so the frames that arrive
+// before the first one lands share it instead of each opening a request of their own.
+const contextCache = new Map<string, { at: number; reply: Promise<ContextReply> }>();
+const loadContext = (sessionId: string): Promise<ContextReply> => {
+  const hit = contextCache.get(sessionId);
+  if (hit && Date.now() - hit.at < 10_000) return hit.reply;
+  const reply = (async (): Promise<ContextReply> => {
+    try {
+      const r = await fetch(`${ROUTE}/context?session=${encodeURIComponent(sessionId)}`);
+      // SAFETY: the body is our own JSON route; both shapes carry `ok`
+      return (await r.json()) as ContextReply;
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  })();
+  contextCache.set(sessionId, { at: Date.now(), reply });
+  return reply;
 };
 const kTokens = (n: number) =>
   n >= 1000 ? `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k` : String(n);
@@ -2128,8 +2138,7 @@ function watchContextMeter(ctx: ClientCtx) {
     const line = document.createElement("div");
     line.setAttribute(MARK, "1");
     // Above dsh's own sentence, like the panel rows, with a hairline between.
-    line.style.cssText =
-      "border-bottom:1px solid rgba(255,255,255,.25);margin-bottom:4px;padding-bottom:4px;display:flex;gap:6px;align-items:baseline";
+    line.style.cssText = `border-bottom:1px solid ${T.border};margin-bottom:4px;padding-bottom:4px;display:flex;gap:6px;align-items:baseline`;
     const mark = document.createElement("span");
     mark.textContent = CLAUDE_MARK;
     mark.setAttribute("aria-hidden", "true");
@@ -2196,11 +2205,12 @@ const loadSpinnerSettings = async (): Promise<{
 };
 
 /** Wire one turn-status element for a claude-code session: verb + ping-pong spinner + orange gradient. */
-/** Inject (or re-inject after a hot reload) the Claude-orange rule; idempotent by id. */
+/** Inject (or re-inject after a hot reload) the Claude-orange rule; idempotent by id. Reuses the
+ *  element but always rewrites it: a hot reload lands a new bundle in a page still carrying the last
+ *  one's sheet, and returning early here left the old rules in force until a hand reload. */
 const ensureTurnStatusStyle = () => {
-  let styleEl = document.getElementById("dsh-oh-my-claude-turn-status");
-  if (styleEl) return;
-  styleEl = document.createElement("style");
+  const found = document.getElementById("dsh-oh-my-claude-turn-status");
+  const styleEl = found instanceof HTMLStyleElement ? found : document.createElement("style");
   styleEl.id = "dsh-oh-my-claude-turn-status";
   // The frames differ in advance width in a proportional font; a fixed cell keeps the verb still.
   // `body[data-omc-claude]` is set while the open session is a Claude mount, so the row is orange
@@ -2421,8 +2431,12 @@ const spinnerRowTitle = (dot: Element): string | null =>
 // message box (a contenteditable). Walk up until an ancestor holds one; null means it is not the
 // composer button. Structural, so no hashed class is needed.
 const inComposer = (node: Element): boolean => {
+  // One subtree query for the message box, then `contains` per level: the walk used to run a fresh
+  // subtree query at every ancestor, which is the whole document by the time it reaches the top.
+  const box = document.querySelector("[contenteditable]");
+  if (box === null) return false;
   for (let p = node.parentElement; p && p !== document.body; p = p.parentElement)
-    if (p.querySelector("[contenteditable]")) return true;
+    if (p.contains(box)) return true;
   return false;
 };
 
@@ -2439,6 +2453,9 @@ function watchSessionSpinners(ctx: ClientCtx) {
     return set;
   };
   const scan = () => {
+    // A hidden tab is not being looked at, and this pass is two document-wide queries a second. The
+    // visibility listener below runs it once the moment the tab comes back.
+    if (document.hidden) return;
     const claude = claudeRunningTitles();
     // Every other ongoing matrix square — the job-list dot in the session header, and the same dot
     // dsh shows for subagents, plans and schedules — renders inside the open conversation, so it
@@ -2486,7 +2503,12 @@ function watchSessionSpinners(ctx: ClientCtx) {
   // colour. ponytail: if a newly-running row ever needs to tint faster than 1s, observe the sidebar
   // container only and coalesce with requestAnimationFrame, never document.body per mutation.
   const beat = setInterval(guard(scan), 1000);
-  whenContextGone(() => clearInterval(beat));
+  const wake = guard(scan);
+  document.addEventListener("visibilitychange", wake);
+  whenContextGone(() => {
+    clearInterval(beat);
+    document.removeEventListener("visibilitychange", wake);
+  });
 }
 
 /** Fold a native-tool code block into a one-line disclosure. dsh renders a tool step as a `<p>` whose
@@ -2688,7 +2710,18 @@ function watchToolFolds() {
   const scan = () => {
     for (const head of document.querySelectorAll<HTMLElement>('[class*="_markdown"] p')) {
       const glyph = glyphOf(head);
-      if (glyph === "") continue;
+      // React reuses a `<p>` node across renders: the paragraph that held a tool header one frame
+      // can hold prose the next. It rewrites the text (`textContent` on a node with our extra span
+      // takes the wipe-and-append path, so the lead span goes with it) but never touches our
+      // attributes — leaving a prose line wearing the header type, taking clicks, and hiding the
+      // fence under it for good. A paragraph that no longer leads with a glyph gives its marks back.
+      if (glyph === "") {
+        if (head.hasAttribute(HEAD_MARK)) {
+          setFoldState(head, "flat");
+          head.removeAttribute(HEAD_MARK);
+        }
+        continue;
+      }
       // State first, icon second. The state attribute is what hides the fence, and a header that has
       // to wait for the sprite sheet would otherwise sit unmarked with its whole block on screen.
       // A header folded before its icon lands still opens on click or Enter — setFoldState is what
@@ -2697,8 +2730,11 @@ function watchToolFolds() {
       const state = head.getAttribute(HEAD_MARK);
       // A header can start flat and gain its fence a moment later while the step streams in, so the
       // flat state is never sticky: only an already-folding header keeps the state the user set.
-      if (!foldable) setFoldState(head, "flat");
-      else if (state !== "1" && state !== "open") setFoldState(head, "1");
+      // Written only on a change: this runs on every mutation burst, and an attribute write on a
+      // node the fold rules can match invalidates style for all of them.
+      if (!foldable) {
+        if (state !== "flat") setFoldState(head, "flat");
+      } else if (state !== "1" && state !== "open") setFoldState(head, "1");
       const node = head.firstChild;
       if (
         node?.nodeType === Node.TEXT_NODE &&
@@ -2916,8 +2952,12 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
     };
 
     const drop = () => {
+      // Nothing was ever put on screen: the first turn of a session runs this on every frame with
+      // no cost to show yet, and the tooltip sweep below is a document-wide attribute query.
+      if (inline === undefined && rowLead === "") return;
       inline?.remove();
       inline = undefined;
+      rowLead = "";
       body = undefined;
       lastRow = undefined; // a fresh hook looks the row up again rather than trusting an old pane
       for (const part of document.querySelectorAll(`[${MARK}]`)) part.remove();
@@ -2944,7 +2984,11 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
       }
     };
     const observer = new MutationObserver(syncRef.current);
-    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+    // `childList` only. The callback reads the live DOM and ignores the records, and dsh mutates
+    // text hundreds of times a second while a turn streams — each one allocating a record for a
+    // pass that would have run anyway. A text-only change that drops our span still shows up as a
+    // removal, and the one-second fallback below covers anything neither reports.
+    observer.observe(document.body, { childList: true, subtree: true });
     sync();
     // Fallback for a change no mutation reports at all (a row moved by CSS, a bubble reused).
     const timer = setInterval(sync, 1000);
@@ -3150,6 +3194,9 @@ interface AsideItem {
  */
 function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   const [items, setItems] = useState<AsideItem[]>([]);
+  // What the poll compares its answer against, without listing `items` as a dependency of its effect.
+  const itemsRef = useRef<AsideItem[]>([]);
+  itemsRef.current = items;
   const [dismissed, setDismissed] = useState<Set<string>>(() => new Set());
   const [copied, setCopied] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
@@ -3170,7 +3217,10 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
         // SAFETY: our own JSON route; the union names both shapes the caller checks.
         const body = (await r.json()) as { items: AsideItem[] } | { error: string };
         if ("error" in body) return;
-        if (alive) setItems(body.items ?? []);
+        // A fresh array every three seconds re-rendered the dock in every conversation forever,
+        // answer or no answer; only a list that actually moved is worth a render.
+        const next = body.items ?? [];
+        if (alive && JSON.stringify(next) !== JSON.stringify(itemsRef.current)) setItems(next);
       } catch {
         // network error: keep the last items on screen
       }
