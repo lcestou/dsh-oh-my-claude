@@ -3649,7 +3649,7 @@ console.log("interrupt-on-abort ok");
   const open = think(t, 1200);
   assert.equal(open[0].type, "block-start");
   assert.equal(open[0].blockType, "reasoning");
-  assert.equal(open[1].text, "✻ Thinking · ~1.2k tokens");
+  assert.equal(open[1].text, "✻ ~1.2k tokens");
   assert.deepEqual(think(t, 1900), [], "a frame short of the next mark is silent");
   assert.equal(think(t, 2100)[0].text, " → ~2.1k tokens", "the mark appends to the one line");
   assert.deepEqual(think(t, 4999), []);
@@ -3661,7 +3661,7 @@ console.log("interrupt-on-abort ok");
     "the counter and the silent block it stood in for close once, not twice",
   );
   assert.equal(closed[0].type, "block-end", "the thinking block ending closes the counter");
-  assert.equal(closed[0].block.text, "✻ Thinking · ~1.2k tokens → ~2.1k tokens → ~26k tokens");
+  assert.equal(closed[0].block.text, "✻ ~1.2k tokens → ~2.1k tokens → ~26k tokens");
   assert.equal(t.thinking, undefined);
 
   // Thinking whose text is streaming needs no counter, and an open one closes.

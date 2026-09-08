@@ -72,6 +72,16 @@ const fence = (body: string, lang = ""): string => {
 
 const asStr = (v: unknown): string => (typeof v === "string" ? v : "");
 
+/** Clamp a fenced body to its first `max` lines, with a count of what was elided. A tool-heavy turn
+ *  floods the transcript with full read/bash/diff dumps; the head plus a tail count keeps each row
+ *  scannable without hiding that more exists. */
+const MAX_BODY_LINES = 18;
+export function capLines(body: string, max = MAX_BODY_LINES): string {
+  const lines = body.split("\n");
+  if (lines.length <= max) return body;
+  return `${lines.slice(0, max).join("\n")}\n… ${lines.length - max} more lines`;
+}
+
 /** A native tool call as markdown: name in bold, arguments in the fence that suits the tool. */
 export function formatToolCall(name: string, inputJson: string): string {
   let inp: Record<string, unknown> = {};
@@ -85,12 +95,12 @@ export function formatToolCall(name: string, inputJson: string): string {
   switch (name) {
     case "bash": {
       const desc = asStr(inp.description);
-      return `**bash**${desc ? ` — ${desc}` : ""}\n${fence(asStr(inp.command), "bash")}`;
+      return `**bash**${desc ? ` — ${desc}` : ""}\n${fence(capLines(asStr(inp.command)), "bash")}`;
     }
     case "read":
       return `**read** \`${file}\``;
     case "write":
-      return `**write** \`${file}\`\n${fence(asStr(inp.content), langOf(file))}`;
+      return `**write** \`${file}\`\n${fence(capLines(asStr(inp.content)), langOf(file))}`;
     case "edit": {
       const diff = `${asStr(inp.old_string)
         .split("\n")
@@ -99,7 +109,7 @@ export function formatToolCall(name: string, inputJson: string): string {
         .split("\n")
         .map((l) => `+ ${l}`)
         .join("\n")}`;
-      return `**edit** \`${file}\`\n${fence(diff, "diff")}`;
+      return `**edit** \`${file}\`\n${fence(capLines(diff), "diff")}`;
     }
     case "grep":
       return `**grep** \`${asStr(inp.pattern)}\`${inp.path ? ` in \`${asStr(inp.path)}\`` : ""}`;
@@ -110,7 +120,7 @@ export function formatToolCall(name: string, inputJson: string): string {
     case "web_search":
       return `**web_search** \`${asStr(inp.query)}\``;
     default:
-      return `**${name}**\n${fence(inputJson, "json")}`;
+      return `**${name}**\n${fence(capLines(inputJson), "json")}`;
   }
 }
 
@@ -122,9 +132,9 @@ export function formatToolResult(
   isError: boolean,
 ): string {
   const head = `**${name}** ${isError ? "error" : "result"}`;
-  if (isError) return `${head}\n${fence(body)}`;
+  if (isError) return `${head}\n${fence(capLines(body))}`;
   const lang = name === "read" ? langOf(filePath) : "";
-  return `${head}\n${fence(body, lang)}`;
+  return `${head}\n${fence(capLines(body), lang)}`;
 }
 
 function usageEvent(u: {
@@ -1008,10 +1018,7 @@ export class Translator {
     const entry = this.thinking;
     if (!entry) {
       if (total < THINK_FLOOR) return [];
-      const { block, events } = this.startBlock(
-        "reasoning",
-        `✻ Thinking · ~${tokensText(total)} tokens`,
-      );
+      const { block, events } = this.startBlock("reasoning", `✻ ~${tokensText(total)} tokens`);
       this.thinking = { block, nextAt: nextThinkStep(total) };
       return events;
     }

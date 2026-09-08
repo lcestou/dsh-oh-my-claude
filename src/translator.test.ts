@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import { formatToolCall, formatToolResult } from "./translator.js";
+import { capLines, formatToolCall, formatToolResult } from "./translator.js";
 
 // bash: command goes in a bash fence, description rides the header
 {
@@ -49,5 +49,27 @@ assert.equal(formatToolResult("bash", "", "done", false), "**bash** result\n```\
 
 // error results are plain-fenced and labelled error
 assert.equal(formatToolResult("read", "/a/b.py", "nope", true), "**read** error\n```\nnope\n```");
+
+// capLines: bodies at or under the cap pass through untouched
+{
+  const short = Array.from({ length: 18 }, (_, i) => `l${i}`).join("\n");
+  assert.equal(capLines(short), short);
+}
+
+// capLines: an over-cap body keeps its head and gains a tail count of the elided lines
+{
+  const long = Array.from({ length: 25 }, (_, i) => `l${i}`).join("\n");
+  const out = capLines(long);
+  assert.equal(out.split("\n").length, 19); // 18 head + 1 tail
+  assert.ok(out.startsWith("l0\n"), out);
+  assert.ok(out.endsWith("… 7 more lines"), out);
+}
+
+// capLines flows into a fenced tool result: the tail count rides inside the fence
+{
+  const body = Array.from({ length: 20 }, (_, i) => `r${i}`).join("\n");
+  const md = formatToolResult("bash", "", body, false);
+  assert.ok(md.includes("\n… 2 more lines\n```"), md);
+}
 
 console.log("translator format ok");
