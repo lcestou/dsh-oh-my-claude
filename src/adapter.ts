@@ -3742,6 +3742,17 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
     // Build a provider→home lookup from the registry so the usage route can resolve other instances.
     const homeFor = (providerId: string): string | undefined =>
       g[ADAPTER_CURRENT]?.get(providerId)?.claudeHome;
+    // The same registry answers the session routes: a request that names its session's mount reads
+    // that mount's box, so a session on an SSH box stops being reported as this one.
+    const instanceFor = (providerId: string | null) => {
+      const other = providerId === null ? undefined : g[ADAPTER_CURRENT]?.get(providerId);
+      if (other === undefined) return undefined;
+      return {
+        configDir: other.claudeHome,
+        command: other.config.command,
+        sshHost: other.config.sshHost,
+      };
+    };
     registerUsageRoute(
       ctx,
       (level, msg) => adapter.log(level, msg),
@@ -3768,6 +3779,7 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       },
       command: adapter.config.command,
       sshHost: adapter.config.sshHost,
+      instanceFor,
       turnRecords: adapter.turnBuffer,
       idle: {
         deadlineFor: (session: string) => adapter.idleDeadlineMap.get(session) ?? null,

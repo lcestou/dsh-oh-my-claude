@@ -854,6 +854,13 @@ async function openTranscriptOnce(
   return { id, existed: false, turns: folded.turns.length, events: seed.length };
 }
 
+/** One mount's own box: which `claude` to run, where its config lives, and whether it is remote. */
+export interface MountBox {
+  configDir: string;
+  command?: string;
+  sshHost?: string;
+}
+
 /** Everything the routes need from the adapter. */
 export interface SessionRouteOptions {
   log: (level: string, msg: string) => void;
@@ -879,6 +886,15 @@ export interface SessionRouteOptions {
   /** Non-empty when this instance drives Claude Code on a remote host over ssh; the status and
    * identity probes run there so the panel reports the remote box, not this one. */
   sshHost?: string;
+  /**
+   * The box behind a provider id, for a request that names the session's own mount. Routes register
+   * once, under whichever instance mounted first, so without this every session read the registering
+   * instance's box: pick a box's model in the picker and the panel still reported this PC. The
+   * client resolves the session's provider from dsh's model directory and sends it along; an id the
+   * registry does not know (an instance withdrawn since the tab loaded) falls back to the
+   * registering instance, which is what the request would have used anyway.
+   */
+  instanceFor?: (provider: string | null) => MountBox | undefined;
   /** Per-session turn accounting buffer from the adapter. */
   turnRecords?: Map<string, import("./adapter.js").TurnRecord[]>;
   /** Idle watchdog state from the adapter. */
@@ -983,8 +999,12 @@ export function registerSessionRoutes(
     models,
     reloadPlugins,
     continueAfterLimit,
+    instanceFor,
   }: SessionRouteOptions,
 ): void {
+  /** The box a request is about: the session's own mount when it named one, else this instance. */
+  const boxOf = (url: URL): MountBox =>
+    instanceFor?.(url.searchParams.get("provider")) ?? { configDir, command, sshHost };
   // Optional: stock dsh has it; without it archived sessions list but cannot be restored.
   let registry: WorkspaceRegistry | undefined;
   ctx.inject?.(["workspaceRegistry"], (host) => {
@@ -1305,8 +1325,10 @@ export function registerSessionRoutes(
                   ...featureSwitches(texts, process.env, continueAfterLimit ?? true),
                 });
               }
-              if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/status`)
-                return json(res, 200, await runtimeStatus(configDir, command, sshHost));
+              if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/status`) {
+                const box = boxOf(url);
+                return json(res, 200, await runtimeStatus(box.configDir, box.command, box.sshHost));
+              }
               if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/models`) {
                 if (!models) return json(res, 404, { error: "models not available" });
                 try {
@@ -1321,9 +1343,12 @@ export function registerSessionRoutes(
               // the routes that already serve them, so nothing is answered twice.
               if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/diagnostics`) {
                 const cwd = await knownCwd(url.searchParams.get("cwd"), sessionPersistence);
-                const runtime = await runtimeStatus(configDir, command, sshHost);
+                const box = boxOf(url);
+                const runtime = await runtimeStatus(box.configDir, box.command, box.sshHost);
                 const configFiles: DiagnosticFile[] = [];
-                for (const scope of SETTINGS_SCOPES) {
+                // A remote box's settings files are on that box, and nothing here reads them yet.
+                // Listing this PC's instead would report a config the session never merges.
+                for (const scope of box.sshHost ? [] : SETTINGS_SCOPES) {
                   const path = settingsPath
                     ? settingsScopePath(scope, settingsPath, cwd)
                     : undefined;
@@ -1338,19 +1363,26 @@ export function registerSessionRoutes(
                 }
                 // `ok` is what the tab keys its render on; without it the reply reads as the
                 // failure shape and the tab draws an empty error line instead of the report.
-                return json(res, 200, { ok: true, runtime, configFiles });
+                return json(res, 200, { ok: true, runtime, configFiles, remote: box.sshHost });
               }
               // `claude doctor` runs a process and takes a second, so it is its own route and
               // nothing runs it until the button is pressed.
-              if (req.method === "POST" && url.pathname === `${ROUTE_PREFIX}/diagnostics/doctor`)
+              if (req.method === "POST" && url.pathname === `${ROUTE_PREFIX}/diagnostics/doctor`) {
+                const box = boxOf(url);
+                const bin = box.command || "claude";
+                // The doctor belongs to the box the session runs on, the same as the status probe:
+                // this PC's answer says nothing about a remote box's install.
                 return json(
                   res,
                   200,
-                  await run(command || "claude", ["doctor"], {
-                    ...process.env,
-                    CLAUDE_CONFIG_DIR: configDir,
-                  }),
+                  box.sshHost
+                    ? await run("ssh", sshArgs(box.sshHost, `${shq(bin)} doctor`))
+                    : await run(bin, ["doctor"], {
+                        ...process.env,
+                        CLAUDE_CONFIG_DIR: box.configDir,
+                      }),
                 );
+              }
               if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/turns`) {
                 const sid = url.searchParams.get("session");
                 if (!sid) return json(res, 400, { error: "session param required" });

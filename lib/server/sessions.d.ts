@@ -187,6 +187,12 @@ export declare function dshSessionsFor(headers: readonly {
     cwd?: string;
     origin?: string;
 }[], cwd: string | null, claudeIdOf: (id: string) => string, archived?: Set<string>): Map<string, OwnedSession>;
+/** One mount's own box: which `claude` to run, where its config lives, and whether it is remote. */
+export interface MountBox {
+    configDir: string;
+    command?: string;
+    sshHost?: string;
+}
 /** Everything the routes need from the adapter. */
 export interface SessionRouteOptions {
     log: (level: string, msg: string) => void;
@@ -212,6 +218,15 @@ export interface SessionRouteOptions {
     /** Non-empty when this instance drives Claude Code on a remote host over ssh; the status and
      * identity probes run there so the panel reports the remote box, not this one. */
     sshHost?: string;
+    /**
+     * The box behind a provider id, for a request that names the session's own mount. Routes register
+     * once, under whichever instance mounted first, so without this every session read the registering
+     * instance's box: pick a box's model in the picker and the panel still reported this PC. The
+     * client resolves the session's provider from dsh's model directory and sends it along; an id the
+     * registry does not know (an instance withdrawn since the tab loaded) falls back to the
+     * registering instance, which is what the request would have used anyway.
+     */
+    instanceFor?: (provider: string | null) => MountBox | undefined;
     /** Per-session turn accounting buffer from the adapter. */
     turnRecords?: Map<string, import("./adapter.js").TurnRecord[]>;
     /** Idle watchdog state from the adapter. */
@@ -276,7 +291,7 @@ export interface SessionRouteOptions {
     continueAfterLimit?: boolean;
 }
 /** `projectDir(cwd)` → Claude Code project dir; `startedIds()` → ids the adapter started itself. */
-export declare function registerSessionRoutes(ctx: PluginContext, { log, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, sshBoxesPath, onSshBoxes, remoteWorkspacesPath, onRemoteWorkspaces, command, sshHost, turnRecords, idle, permissionModes, thinking, rewind, contextUsage, workspaceDiff, mcp, permissionAsks, sideQuestions, persistAsides, starters, setStarter, models, reloadPlugins, continueAfterLimit, }: SessionRouteOptions): void;
+export declare function registerSessionRoutes(ctx: PluginContext, { log, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, sshBoxesPath, onSshBoxes, remoteWorkspacesPath, onRemoteWorkspaces, command, sshHost, turnRecords, idle, permissionModes, thinking, rewind, contextUsage, workspaceDiff, mcp, permissionAsks, sideQuestions, persistAsides, starters, setStarter, models, reloadPlugins, continueAfterLimit, instanceFor, }: SessionRouteOptions): void;
 export declare const SETTINGS_SCOPES: readonly ["managed", "local", "project", "user"];
 /** One of the four settings files. The CLI's own layer names, minus the `--settings` flag layer. */
 export type SettingsScope = (typeof SETTINGS_SCOPES)[number];

@@ -122,6 +122,8 @@ import {
     claudeIdOf: (id: string) => id,
     configDir: join(tmp, "claude"),
     boxesPath,
+    instanceFor: (provider) =>
+      provider === "claude-code-other" ? { configDir: join(tmp, "other") } : undefined,
     rewind: async (sid, uuid, dryRun) => ({ ok: true, dryRun, canRewind: true }),
   });
   assert.ok(handler);
@@ -195,6 +197,20 @@ import {
   assert.equal(r.ok, true, "diagnostics reply must carry ok");
   assert.ok(r.runtime, "diagnostics reply carries a runtime block");
   assert.ok(Array.isArray(r.configFiles), "diagnostics reply carries the config file list");
+
+  // The box a read is about follows the session's own mount, not whichever instance registered the
+  // routes: a request naming another provider reads that provider's config dir, and one naming a
+  // provider the registry has no adapter for falls back to the registering instance.
+  r = await respond(
+    "GET",
+    `/dsh-oh-my-claude/diagnostics?cwd=${encodeURIComponent(cwd)}&provider=claude-code-other`,
+  );
+  assert.equal(r.runtime.configDir, join(tmp, "other"), "provider picks its own box");
+  r = await respond(
+    "GET",
+    `/dsh-oh-my-claude/diagnostics?cwd=${encodeURIComponent(cwd)}&provider=claude-code-gone`,
+  );
+  assert.equal(r.runtime.configDir, join(tmp, "claude"), "unknown provider falls back");
 
   // Rewind prompt list: user prompts of the session's transcript, newest first, by uuid.
   const rw = `/dsh-oh-my-claude/rewind?session=sid1&cwd=${encodeURIComponent(cwd)}`;

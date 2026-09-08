@@ -230,15 +230,27 @@ export { openHere };
 export const isRingRoot = (el: HTMLElement | null) =>
   !!el?.querySelector(':scope > button[aria-haspopup="dialog"] circle + circle');
 
-/** Whether a session, open or not, runs on one of this plugin's mounts (`claude-code*`). */
-export const isClaudeSession = (ctx: ClientCtx, id: string): boolean => {
+/**
+ * The mount a session runs on (`claude-code`, `claude-code-nova`, …), else undefined.
+ *
+ * This is the one session→box primitive every box-aware read keys off. dsh's model directory holds
+ * the session's selection from the moment the session exists — the picker writes it, no turn is
+ * needed — so a brand-new tab on a box's model already resolves to that box, which the spawn-time
+ * `targetHost` cannot do. `SessionHeader` carries no provider and a remote cwd can equal a local
+ * one, so this is also the only way to tell a box session from a local one.
+ */
+export const claudeProviderOf = (ctx: ClientCtx, id: string): string | undefined => {
   try {
     const provider = ctx.modelDirectories.directoryFor(id).store.getSnapshot().current?.provider;
-    return provider !== undefined && provider.startsWith("claude-code");
+    return provider?.startsWith("claude-code") === true ? provider : undefined;
   } catch {
-    return false; // no scope or binding yet: not ours
+    return undefined; // no scope or binding yet: not ours
   }
 };
+
+/** Whether a session, open or not, runs on one of this plugin's mounts (`claude-code*`). */
+export const isClaudeSession = (ctx: ClientCtx, id: string): boolean =>
+  claudeProviderOf(ctx, id) !== undefined;
 
 /** The open session's provider when it is one of this plugin's mounts (`claude-code*`), else undefined. */
 export const activeClaudeSession = (ctx: ClientCtx): string | undefined => {
@@ -249,13 +261,7 @@ export const activeClaudeSession = (ctx: ClientCtx): string | undefined => {
 /** The open Claude session's own provider id (e.g. `claude-code` or `claude-code-prod`), else undefined. */
 export const activeClaudeProvider = (ctx: ClientCtx): string | undefined => {
   const id = ctx.sessions.list.getSnapshot()?.current;
-  if (!id) return undefined;
-  try {
-    const provider = ctx.modelDirectories.directoryFor(id).store.getSnapshot().current?.provider;
-    return provider && provider.startsWith("claude-code") ? provider : undefined;
-  } catch {
-    return undefined; // no scope or binding yet: not ours
-  }
+  return id ? claudeProviderOf(ctx, id) : undefined;
 };
 
 interface RestoreButtonProps {

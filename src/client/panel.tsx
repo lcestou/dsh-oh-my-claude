@@ -11,6 +11,7 @@ import {
   ago,
   isOwnedActive,
   activeClaudeSession,
+  claudeProviderOf,
   type ClientCtx,
   type SessionData,
   useNarrow,
@@ -1181,6 +1182,8 @@ interface DiagnosticsReply {
     error?: string;
   };
   configFiles: Array<{ scope: string; path: string; exists: boolean; parseError?: string }>;
+  /** Set when the session runs on an SSH box: its settings files are there, and unread from here. */
+  remote?: string;
 }
 type DiagnosticsError = { ok: false; error: string };
 /** The slice of a turn record this tab reads: when the turn ran, and the calls a rule refused. */
@@ -1317,21 +1320,27 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
       return;
     }
     let live = true;
-    fetch(`${ROUTE}/diagnostics?cwd=${encodeURIComponent(cwd)}`)
+    // The session's own mount, so a session on a box is diagnosed on that box, not on this one.
+    const provider = claudeProviderOf(ctx, sessionId);
+    const on = provider ? `&provider=${encodeURIComponent(provider)}` : "";
+    fetch(`${ROUTE}/diagnostics?cwd=${encodeURIComponent(cwd)}${on}`)
       .then((r) => readJson<DiagnosticsReply | DiagnosticsError>(r))
       .then((b) => live && setData(b))
       .catch((e: Error) => live && setData({ ok: false, error: e.message }));
     return () => {
       live = false;
     };
-  }, [cwd]);
+  }, [cwd, ctx, sessionId]);
+
+  const doctorProvider = claudeProviderOf(ctx, sessionId);
+  const doctorQuery = doctorProvider ? `?provider=${encodeURIComponent(doctorProvider)}` : "";
 
   const runDoctor = async () => {
     setDoctorBusy(true);
     setDoctorError("");
     try {
       const r = await readJson<{ out?: string; error?: string }>(
-        await fetch(`${ROUTE}/diagnostics/doctor`, { method: "POST" }),
+        await fetch(`${ROUTE}/diagnostics/doctor${doctorQuery}`, { method: "POST" }),
       );
       if (r.error) {
         setDoctorError(r.error);
@@ -1385,7 +1394,11 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
           <span style={{ ...meta, padding: "2px 4px", display: "block", marginTop: 8 }}>
             Config files
           </span>
-          {data.configFiles.length === 0 ? (
+          {data.remote ? (
+            <span style={{ ...meta, padding: "2px 4px", fontSize: 12 }}>
+              On {data.remote}; this panel does not read a box's settings files yet.
+            </span>
+          ) : data.configFiles.length === 0 ? (
             <span style={{ ...meta, padding: "2px 4px", fontSize: 12 }}>No config files</span>
           ) : (
             data.configFiles.map((f) => (
