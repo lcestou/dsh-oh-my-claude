@@ -63,6 +63,17 @@ export { type SessionData, isOwnedActive, fmtCost, fmtDuration, cacheShare };
 /** Deep link another box's panel sends us to: `#claude-session=<id>&cwd=<path>`. */
 const HASH_KEY = "claude-session";
 /** Format byte sizes for session rows. */
+/** A row's identity in the list: the same transcript id can sit on two boxes. */
+const rowKey = (r: { g: { key: string }; s: { id: string } }): string => `${r.g.key}-${r.s.id}`;
+
+/** A file name a person can read back later; the id keeps it unique. */
+const slugFile = (title: string): string =>
+  title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 40) || "claude";
+
 const size = (bytes: number): string =>
   bytes < 1_000_000 ? `${Math.round(bytes / 1000)} KB` : `${(bytes / 1_000_000).toFixed(1)} MB`;
 /** `/home/me/Projects/app` → `Projects/app`; keeps the full path for the title attribute. */
@@ -363,7 +374,8 @@ function Card({ id, title, summary, actions, open, onToggle, children }: CardPro
 }
 
 /** Where a transcript lives: terminal only, a live dsh session, or an archived one. */
-function Origin({ s }: { s: { dsh?: { archived?: boolean; id?: string } } }) {
+function Origin({ s }: { s: { dsh?: { archived?: boolean; id?: string }; imported?: boolean } }) {
+  if (s.imported) return <span style={pill(T.brand)}>imported</span>;
   if (!s.dsh) return <span style={pill(T.faint)}>terminal</span>;
   if (s.dsh.archived) return <span style={pill(T.warn)}>archived</span>;
   return <span style={pill(T.brand)}>dsh</span>;
@@ -532,6 +544,10 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
   const [busyId, setBusyId] = useState("");
   // How many rows each box shows; every box starts at PAGE and grows by "Load more".
   const [shown, setShown] = useState<Record<string, number>>({});
+  // Rows ticked for download, by their row key: the same id can sit on two boxes.
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [moving, setMoving] = useState("");
+  const fileInput = useRef<HTMLInputElement>(null);
 
   const load = () => {
     setLoading(true);
@@ -690,6 +706,60 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
     }
   };
 
+  // Export is a plain file save: the transcript byte for byte, so importing it back is a no-op.
+  // ponytail: one file per ticked row rather than a zip — no archive dependency, and a browser
+  // saves a handful of sequential downloads without a prompt. Zip it if people tick dozens.
+  const download = async () => {
+    const wanted = rows.filter((r) => picked.has(rowKey(r)));
+    setMoving(`Downloading ${wanted.length}…`);
+    setError("");
+    try {
+      for (const r of wanted) {
+        const q = new URLSearchParams({ id: r.s.id });
+        if (r.s.cwd) q.set("cwd", r.s.cwd);
+        if (r.g.provider) q.set("provider", r.g.provider);
+        const reply = await fetch(`${ROUTE}/transcript?${q.toString()}`);
+        if (!reply.ok) throw new Error(`${r.s.id.slice(0, 8)}: ${reply.status}`);
+        const url = URL.createObjectURL(await reply.blob());
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `${r.s.title ? slugFile(r.s.title) : "claude"}-${r.s.id.slice(0, 8)}.jsonl`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 30_000);
+      }
+      setPicked(new Set());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setMoving("");
+    }
+  };
+
+  const importFiles = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    setMoving(`Importing ${files.length}…`);
+    setError("");
+    try {
+      for (const f of Array.from(files)) {
+        const body = await readJson<{ id?: string; error?: string }>(
+          await fetch(`${ROUTE}/import`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ text: await f.text() }),
+          }),
+        );
+        if (!body.id) throw new Error(`${f.name}: ${body.error ?? "import failed"}`);
+      }
+      load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setMoving("");
+    }
+  };
+
   const known = ctx.sessions.list.getSnapshot()?.byId ?? {};
   const total = groups.reduce((n, g) => n + g.sessions.length, 0);
   // One box (local only, or a self-proxy dropped) needs no per-row origin pill. The merged "all"
@@ -707,9 +777,44 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
           {loading ? "Loading…" : `${rows.length} shown · ${total} total`}
           {remoteLoading ? " · checking boxes…" : ""}
         </div>
-        <button type="button" style={btn} disabled={loading} onClick={load}>
-          Refresh
-        </button>
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          {moving && <span style={meta}>{moving}</span>}
+          {picked.size > 0 && (
+            <button
+              id="dsh-oh-my-claude-download"
+              type="button"
+              style={btnPrimary}
+              disabled={moving !== ""}
+              onClick={() => void download()}
+            >
+              Download {picked.size}
+            </button>
+          )}
+          <input
+            ref={fileInput}
+            type="file"
+            accept=".jsonl,application/x-ndjson"
+            multiple
+            style={{ display: "none" }}
+            onChange={(e) => {
+              void importFiles(e.target.files);
+              e.target.value = "";
+            }}
+          />
+          <button
+            id="dsh-oh-my-claude-import"
+            type="button"
+            style={btn}
+            disabled={moving !== ""}
+            title="Add a .jsonl transcript from another box; it lands in this plugin's own store."
+            onClick={() => fileInput.current?.click()}
+          >
+            Import
+          </button>
+          <button type="button" style={btn} disabled={loading} onClick={load}>
+            Refresh
+          </button>
+        </div>
       </div>
       <div
         id="dsh-oh-my-claude-session-filters"
@@ -785,11 +890,24 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
                   ? "Restore"
                   : "Open";
           return (
-            <div
-              key={`${r.g.key}-${r.s.id}`}
-              data-testid="dsh-oh-my-claude-session-row"
-              style={row}
-            >
+            <div key={rowKey(r)} data-testid="dsh-oh-my-claude-session-row" style={row}>
+              {/* Only a row this box can read is downloadable: an HTTP box's transcript is on that
+                  box's disk, and its own panel is where it downloads from. */}
+              <input
+                type="checkbox"
+                aria-label={`Select ${r.s.title || r.s.id}`}
+                disabled={!isLocal && !isSsh}
+                checked={picked.has(rowKey(r))}
+                onChange={(e) =>
+                  setPicked((set) => {
+                    const next = new Set(set);
+                    if (e.target.checked) next.add(rowKey(r));
+                    else next.delete(rowKey(r));
+                    return next;
+                  })
+                }
+                style={{ marginRight: 8, flex: "0 0 auto" }}
+              />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div
                   style={{

@@ -9,6 +9,7 @@ import { hostname } from "node:os";
 import { readdir, readFile, writeFile, rename, copyFile, stat, mkdir, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
+  foldTranscript,
   listTranscripts,
   readTranscript,
   toSessionEvents,
@@ -67,6 +68,8 @@ import type {
 
 const ROUTE_PREFIX = "/dsh-oh-my-claude";
 const BODY_LIMIT = 64 * 1024;
+/** An imported transcript is a whole conversation, not a form field: megabytes, not kilobytes. */
+const IMPORT_LIMIT = 32 * 1024 * 1024;
 
 const json = (res: ServerResponse, status: number, value: unknown) => {
   res.writeHead(status, {
@@ -814,10 +817,46 @@ type RouteHost = Required<
  */
 const opening = new Map<string, Promise<Opened>>();
 
+/** The id the transcript's own records carry, which is what the CLI knew the session by. */
+export const idIn = (text: string): string | undefined =>
+  /"sessionId"\s*:\s*"([0-9a-f-]{36})"/.exec(text.slice(0, 8192))?.[1];
+
+/**
+ * Whether that id is already in use here — a live dsh session, a transcript under any project dir,
+ * or an earlier import. An import that reused one would shadow the real conversation, so it takes a
+ * fresh id instead; the original still sits inside the file's own records.
+ */
+async function idTaken(
+  live: (id: string) => boolean,
+  projectsDir: string,
+  importedDir: string,
+  id: string,
+): Promise<boolean> {
+  if (live(id)) return true;
+  const here = [
+    importedDir,
+    ...(await readdir(projectsDir, { withFileTypes: true }).catch(() => []))
+      .filter((d) => d.isDirectory())
+      .map((d) => join(projectsDir, d.name)),
+  ];
+  for (const dir of here)
+    if ((await stat(join(dir, `${id}.jsonl`)).catch(() => null)) !== null) return true;
+  return false;
+}
+
+/** The transcript for `id` from the first of `dirs` that holds it, folded ready to seed a session. */
+async function firstTranscript(dirs: string[], id: string): Promise<FoldedTranscript | undefined> {
+  for (const dir of dirs) {
+    const folded = await readTranscript({}, join(dir, `${id}.jsonl`));
+    if (folded !== undefined) return folded;
+  }
+  return undefined;
+}
+
 /** Same id opened twice at once (double click, two tabs) shares one creation. */
 function openTranscript(
   ctx: RouteHost,
-  projectDir: (cwd: string) => string,
+  dirs: string[],
   cwd: string,
   id: string,
   claudeIdOf: (id: string) => string,
@@ -825,7 +864,7 @@ function openTranscript(
 ): Promise<Opened> {
   let job = opening.get(id);
   if (!job) {
-    job = openTranscriptOnce(ctx, projectDir, cwd, id, claudeIdOf, registry).finally(() =>
+    job = openTranscriptOnce(ctx, dirs, cwd, id, claudeIdOf, registry).finally(() =>
       opening.delete(id),
     );
     opening.set(id, job);
@@ -839,7 +878,7 @@ function openTranscript(
  */
 async function openTranscriptOnce(
   ctx: RouteHost,
-  projectDir: (cwd: string) => string,
+  dirs: string[],
   cwd: string,
   id: string,
   claudeIdOf: (id: string) => string,
@@ -869,8 +908,9 @@ async function openTranscriptOnce(
       });
     return { id: owned.id, existed: true };
   }
-  // This PC: the archive lists only local transcripts, so an opened one is always here.
-  const folded = await readTranscript({}, join(projectDir(cwd), `${id}.jsonl`));
+  // This PC: the archive lists only local transcripts, so an opened one is always here. An
+  // imported one is not under `projects/` at all, which is why the caller passes both dirs.
+  const folded = await firstTranscript(dirs, id);
   if (folded === undefined) throw new Error("transcript not found");
   if (folded.turns.length === 0) throw new Error("transcript has no completed turn");
   const seed = toSessionEvents(folded);
@@ -924,6 +964,8 @@ export interface SessionRouteOptions {
   settingsPath?: string;
   configDir: string;
   boxesPath?: string;
+  /** Where an imported transcript is kept: the plugin's own state dir, never Claude's `projects/`. */
+  importedDir?: string;
   /** State file holding the SSH boxes the panel manages; the adapter mounts one instance per box. */
   sshBoxesPath?: string;
   /** Mount or withdraw provider instances so they match the saved SSH-box list, without a restart. */
@@ -1022,6 +1064,7 @@ export function registerSessionRoutes(
     settingsPath,
     configDir,
     boxesPath,
+    importedDir,
     sshBoxesPath,
     onSshBoxes,
     remoteWorkspacesPath,
@@ -1050,6 +1093,13 @@ export function registerSessionRoutes(
   /** The box a request is about: the session's own mount when it named one, else this instance. */
   const boxOf = (url: URL): MountBox =>
     instanceFor?.(url.searchParams.get("provider")) ?? { configDir, command, sshHost };
+  /**
+   * Where a transcript for this workspace can be: Claude's own project dir, then the plugin's
+   * import dir. An imported file is deliberately not written into `projects/`, so every read that
+   * takes an id has to look in both.
+   */
+  const transcriptDirs = (cwd: string): string[] =>
+    importedDir === undefined ? [projectDir(cwd)] : [projectDir(cwd), importedDir];
   /**
    * Where that box keeps the user-scope settings file. A mount's `configDir` is resolved against
    * this PC's home, so a remote box's path has to come from its own `$HOME` (asked once per host);
@@ -1114,7 +1164,18 @@ export function registerSessionRoutes(
                     new Set(registry?.archivedSessionIds ?? []),
                   );
                   const hidden = new Set([...(await startedIds())].filter((id) => !owned.has(id)));
-                  const items = (await listAllTranscripts(projectsDir, hidden)).map((s) => {
+                  const found = [
+                    ...(await listAllTranscripts(projectsDir, hidden)),
+                    // Imported ones live outside `projects/`, and say so, so a row that came from
+                    // another box is not mistaken for one this CLI ran.
+                    ...(importedDir
+                      ? (await listTranscripts(importedDir, hidden)).map((s) => ({
+                          ...s,
+                          imported: true,
+                        }))
+                      : []),
+                  ];
+                  const items = found.map((s) => {
                     const d = owned.get(s.id);
                     return d ? { ...s, dsh: d } : s;
                   });
@@ -1148,8 +1209,70 @@ export function registerSessionRoutes(
                 return json(
                   res,
                   200,
-                  await openTranscript(routeHost, projectDir, cwd, id, claudeIdOf, registry),
+                  await openTranscript(
+                    routeHost,
+                    transcriptDirs(cwd),
+                    cwd,
+                    id,
+                    claudeIdOf,
+                    registry,
+                  ),
                 );
+              }
+              // Export: the transcript exactly as it sits on disk, so a re-import is byte-identical.
+              // It follows the session's own box, which is how a row from an SSH box downloads.
+              if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/transcript`) {
+                const id = url.searchParams.get("id");
+                const cwd = url.searchParams.get("cwd") ?? "";
+                if (!validId(id)) return json(res, 400, { error: "id required" });
+                const box = boxOf(url);
+                const dirs = box.sshHost
+                  ? [join(await projectDirAt(box, cwd), `${id}.jsonl`)]
+                  : transcriptDirs(cwd).map((d) => join(d, `${id}.jsonl`));
+                for (const path of dirs) {
+                  const read = await readAt(box, path);
+                  if (read === null) continue;
+                  res.writeHead(200, {
+                    "content-type": "application/x-ndjson; charset=utf-8",
+                    "content-disposition": `attachment; filename="${id}.jsonl"`,
+                    "cache-control": "no-store",
+                  });
+                  res.end(read.text);
+                  return;
+                }
+                return json(res, 404, { error: "transcript not found" });
+              }
+              // Import: a transcript file from anywhere lands in the plugin's own state dir under a
+              // free id, and the merged list picks it up. `projects/` is left alone on purpose —
+              // the CLI owns that directory, and a foreign session has no cwd it ever ran in.
+              if (
+                importedDir &&
+                req.method === "POST" &&
+                url.pathname === `${ROUTE_PREFIX}/import`
+              ) {
+                const body = await readBody(req, IMPORT_LIMIT);
+                if (typeof body.text !== "string" || body.text.trim() === "")
+                  return json(res, 400, { error: "text required" });
+                const folded = foldTranscript(body.text);
+                if (folded.turns.length === 0)
+                  return json(res, 400, { error: "not a Claude Code transcript" });
+                // An id that is already here would overwrite a live session's record, so a clash
+                // takes a fresh one; the transcript's own records keep the original inside.
+                const wanted = validId(body.id) ? body.id : idIn(body.text);
+                const free =
+                  wanted !== undefined &&
+                  !(await idTaken(
+                    (x) => routeHost.sessions.get(asSessionId(x)) !== undefined,
+                    projectsDir,
+                    importedDir,
+                    wanted,
+                  ))
+                    ? wanted
+                    : randomUUID();
+                await mkdir(importedDir, { recursive: true });
+                await writeFile(join(importedDir, `${free}.jsonl`), body.text, "utf8");
+                log("info", `imported transcript ${free} (${folded.turns.length} turns)`);
+                return json(res, 200, { ok: true, id: free, turns: folded.turns.length });
               }
               // Claude's auto-memory for a workspace: list, read, write, delete one file.
               if (url.pathname === `${ROUTE_PREFIX}/memory`) {

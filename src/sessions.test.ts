@@ -110,7 +110,7 @@ import type { InstructionFile } from "./instructions.js";
           },
         },
         connection: { requestRejection: () => undefined },
-        sessions: {},
+        sessions: { get: () => undefined },
         // The instructions routes only answer for a directory a dsh session is open in, so the
         // fake registry has to know the one the assertions below use.
         sessionPersistence: { list: async () => [{ id: "sid1", cwd: "/work/app" }] },
@@ -126,6 +126,7 @@ import type { InstructionFile } from "./instructions.js";
     claudeIdOf: (id: string) => id,
     configDir: join(tmp, "claude"),
     boxesPath,
+    importedDir: join(tmp, "imported"),
     instanceFor: (provider) =>
       provider === "claude-code-other"
         ? { configDir: join(tmp, "other") }
@@ -137,7 +138,7 @@ import type { InstructionFile } from "./instructions.js";
   });
   assert.ok(handler);
 
-  const respond = async (method: string, url: string, body?: string) => {
+  const respond = async (method: string, url: string, body?: string, raw = false) => {
     let respBody = "";
     const resChunks: Buffer[] = [];
     // SAFETY: partial fake for tests
@@ -160,7 +161,7 @@ import type { InstructionFile } from "./instructions.js";
     } as any;
     await handler!(fakeReq, fakeRes);
     respBody = Buffer.concat(resChunks).toString("utf8");
-    return JSON.parse(respBody);
+    return raw ? respBody : JSON.parse(respBody);
   };
 
   // 400: missing url param
@@ -299,6 +300,51 @@ import type { InstructionFile } from "./instructions.js";
     r = await respond("POST", `/dsh-oh-my-claude${path}?${onBox}`, JSON.stringify(body));
     assert.equal(r.error, `${what} do not reach an SSH box yet`, `${path} refuses an ssh box`);
   }
+  // Export and import. An imported transcript lands in the plugin's own store, keeps the id its
+  // records carry while that is free, and downloads back byte for byte.
+  const transcript =
+    JSON.stringify({
+      type: "user",
+      uuid: "i-1",
+      sessionId: "11111111-2222-3333-4444-555555555555",
+      cwd,
+      timestamp: "2026-09-06T10:00:00Z",
+      message: { role: "user", content: [{ type: "text", text: "imported prompt" }] },
+    }) +
+    "\n" +
+    JSON.stringify({
+      type: "assistant",
+      uuid: "i-2",
+      timestamp: "2026-09-06T10:00:01Z",
+      message: { id: "m9", role: "assistant", content: [{ type: "text", text: "imported reply" }] },
+    }) +
+    "\n";
+  r = await respond("POST", "/dsh-oh-my-claude/import", JSON.stringify({ text: "not jsonl" }));
+  assert.equal(r.error, "not a Claude Code transcript", "a file with no turn is refused");
+  r = await respond("POST", "/dsh-oh-my-claude/import", JSON.stringify({ text: transcript }));
+  assert.equal(r.id, "11111111-2222-3333-4444-555555555555", "a free id is kept");
+  assert.equal(r.turns, 1);
+  const again = await respond(
+    "POST",
+    "/dsh-oh-my-claude/import",
+    JSON.stringify({ text: transcript }),
+  );
+  assert.notEqual(again.id, r.id, "a second copy takes a fresh id rather than overwriting");
+  r = await respond("GET", "/dsh-oh-my-claude/sessions?all=1");
+  const row = (r.sessions as { id: string; imported?: boolean }[]).find(
+    (x) => x.id === "11111111-2222-3333-4444-555555555555",
+  );
+  assert.equal(row?.imported, true, "the merged list shows it, marked as imported");
+  const file = await respond(
+    "GET",
+    "/dsh-oh-my-claude/transcript?id=11111111-2222-3333-4444-555555555555",
+    undefined,
+    true,
+  );
+  assert.equal(file, transcript, "the download is the file as it sits on disk");
+  r = await respond("GET", "/dsh-oh-my-claude/transcript?id=00000000-0000-0000-0000-000000000000");
+  assert.equal(r.error, "transcript not found");
+
   // Rewind prompt list: user prompts of the session's transcript, newest first, by uuid.
   await mkdir(join(tmp, "claude", "projects", projectDirName(cwd)), { recursive: true });
   const rw = `/dsh-oh-my-claude/rewind?session=sid1&cwd=${encodeURIComponent(cwd)}`;

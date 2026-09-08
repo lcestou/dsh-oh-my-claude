@@ -182,6 +182,8 @@ export interface SessionData {
   turnsPartial?: boolean;
   bytes: number;
   dsh?: { archived?: boolean; id?: string };
+  /** Brought in through Import: it lives in the plugin's state dir, not Claude's `projects/`. */
+  imported?: boolean;
 }
 
 /** A transcript already tracked by a live (not archived) dsh session: it is in the sidebar, skip it. */

@@ -12,6 +12,8 @@ export interface TranscriptListItem {
     turns: number;
     turnsPartial: boolean;
     cwd?: string;
+    /** Brought in from a file rather than written by a CLI run on this box. */
+    imported?: boolean;
 }
 /**
  * Transcripts in one project dir, newest first. `exclude` holds Claude session ids that already

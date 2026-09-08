@@ -3829,6 +3829,7 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       settingsPath: join(claudeHome, "settings.json"),
       configDir: claudeHome,
       boxesPath: join(STATE_DIR, "boxes.json"),
+      importedDir: join(STATE_DIR, "imported"),
       sshBoxesPath: join(STATE_DIR, "ssh-boxes.json"),
       onSshBoxes: (boxes) =>
         reconcileSshBoxes(ctx, config, boxes, sshMounts, sshAdapters, (level, msg) =>

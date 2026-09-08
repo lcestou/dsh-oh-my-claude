@@ -187,6 +187,8 @@ export declare function dshSessionsFor(headers: readonly {
     cwd?: string;
     origin?: string;
 }[], cwd: string | null, claudeIdOf: (id: string) => string, archived?: Set<string>): Map<string, OwnedSession>;
+/** The id the transcript's own records carry, which is what the CLI knew the session by. */
+export declare const idIn: (text: string) => string | undefined;
 /** One mount's own box: which `claude` to run, where its config lives, and whether it is remote. */
 export interface MountBox {
     configDir: string;
@@ -206,6 +208,8 @@ export interface SessionRouteOptions {
     settingsPath?: string;
     configDir: string;
     boxesPath?: string;
+    /** Where an imported transcript is kept: the plugin's own state dir, never Claude's `projects/`. */
+    importedDir?: string;
     /** State file holding the SSH boxes the panel manages; the adapter mounts one instance per box. */
     sshBoxesPath?: string;
     /** Mount or withdraw provider instances so they match the saved SSH-box list, without a restart. */
@@ -291,7 +295,7 @@ export interface SessionRouteOptions {
     continueAfterLimit?: boolean;
 }
 /** `projectDir(cwd)` → Claude Code project dir; `startedIds()` → ids the adapter started itself. */
-export declare function registerSessionRoutes(ctx: PluginContext, { log, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, sshBoxesPath, onSshBoxes, remoteWorkspacesPath, onRemoteWorkspaces, command, sshHost, turnRecords, idle, permissionModes, thinking, rewind, contextUsage, workspaceDiff, mcp, permissionAsks, sideQuestions, persistAsides, starters, setStarter, models, reloadPlugins, continueAfterLimit, instanceFor, }: SessionRouteOptions): void;
+export declare function registerSessionRoutes(ctx: PluginContext, { log, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, importedDir, sshBoxesPath, onSshBoxes, remoteWorkspacesPath, onRemoteWorkspaces, command, sshHost, turnRecords, idle, permissionModes, thinking, rewind, contextUsage, workspaceDiff, mcp, permissionAsks, sideQuestions, persistAsides, starters, setStarter, models, reloadPlugins, continueAfterLimit, instanceFor, }: SessionRouteOptions): void;
 /**
  * The four files Claude Code merges for one session, highest precedence first. Duplicated in
  * `src/client/settings.ts`: the browser half cannot import server code, and the order is the
