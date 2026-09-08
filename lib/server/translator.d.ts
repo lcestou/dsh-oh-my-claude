@@ -1,6 +1,10 @@
 import type { StreamChunk, LlmFailure } from "@deepseek-ai/dsh-llm";
 import { type ClaudeEvent, type ClaudeStreamPartial, type ClaudeContentBlock } from "./process.js";
 import { TurnRecord } from "./adapter.js";
+/** A native tool call as markdown: name in bold, arguments in the fence that suits the tool. */
+export declare function formatToolCall(name: string, inputJson: string): string;
+/** A native tool result as markdown: name + status, body fenced with a language when we can guess one. */
+export declare function formatToolResult(name: string, filePath: string, body: string, isError: boolean): string;
 export interface TranslatorBlock {
     index: number;
     blockType: string;
@@ -76,6 +80,8 @@ export declare class Translator {
     readonly callInputs: Map<string, string>;
     /** callId → the seq onToolCall returned, so a re-fired block never appends `tool/call` twice. */
     readonly firedCalls: Map<string, number>;
+    /** callId → mapped tool name, so an inline result row knows which tool (and file) it belongs to. */
+    readonly callNames: Map<string, string>;
     /**
      * Fires onToolCall at most once per callId. The streaming and whole-message paths can both
      * reach the same tool_use block; a second append gives the client two `tool/call` starts for

@@ -204,6 +204,7 @@ export type Config = {
   maxBudgetUsd?: number;
   titleModel: string;
   toolActivity: boolean;
+  toolsInline: boolean;
   hookRows: boolean;
   resume: boolean;
   idleTimeoutMs: number;
@@ -276,6 +277,12 @@ export const Config = z.object({
     .boolean()
     .default(true)
     .description("Show Claude Code tool calls and results as native tool rows"),
+  toolsInline: z
+    .boolean()
+    .default(true)
+    .description(
+      "Render tool calls inline in the reasoning stream (keeps live order); off = rich native rows that can render out of order until the next message",
+    ),
   hookRows: z
     .boolean()
     .default(true)
@@ -2819,7 +2826,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       hostLabel: this.hostLabelFor(options.sessionId),
       log: this.log.bind(this),
       onToolCall:
-        turnStep && this.config.toolActivity
+        turnStep && this.config.toolActivity && !this.config.toolsInline
           ? (callId: string, toolName: string, args: string) => {
               // SAFETY: NATIVE_TOOL_MAP is a readonly const object; keyof typeof narrows to known keys only
               const mapped = NATIVE_TOOL_MAP[toolName as keyof typeof NATIVE_TOOL_MAP] ?? toolName;
@@ -2864,7 +2871,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         void saveTurnRecords(this.stateDir, options.sessionId, buf);
       },
       onToolResult:
-        turnStep && this.config.toolActivity
+        turnStep && this.config.toolActivity && !this.config.toolsInline
           ? (callId, text, isError, meta) => {
               try {
                 const session = this.ctx?.sessions?.get?.(asSessionId(options.sessionId));

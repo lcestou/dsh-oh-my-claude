@@ -39,7 +39,6 @@ import {
   maskEmail,
 } from "./shared.js";
 import { AccessShield, OhMyClaudeControl } from "./panel.js";
-import { atBottom, distanceFromBottom, type Geom, nextFollow } from "./tailFollow.js";
 import { markTitle, newlyWaiting, noticesOn, type NoticeSnapshot } from "./notices.js";
 import { SETTINGS_SCOPES, SCOPE_LABELS, overrideNote } from "./settings.js";
 import type { SettingsScope, SettingsScopeInfo } from "./settings.js";
@@ -2308,72 +2307,6 @@ function watchSessionNotices(ctx: ClientCtx) {
   setInterval(tick, 1000);
 }
 
-/**
- * Keep the conversation glued to the newest content while a Claude turn streams. dsh streams a turn
- * as two tracks — prose as live chunks, this plugin's native tool rows as separate `session.append`
- * events — and when the prose stream pauses for a running tool dsh stops following the tail, so the
- * tool rows and the next text land below the fold unseen until the next message forces a re-render.
- * The on-disk log is correctly ordered (verified); this only nudges scrollTop, no core change.
- *
- * Riding the shared body observer, each frame a Claude turn is live it re-pins the scroll container
- * to the bottom — unless the reader has scrolled up, which disarms following until they return. A
- * pin only ever increases scrollTop, so a scroll that moves up and is not at the bottom is
- * unambiguously the reader: that one 'scroll' listener covers wheel, touch and keyboard alike.
- * ponytail: structural `[data-conversation-scroll]` hook; swap for a dsh scroll API if one appears.
- */
-const geomOf = (el: HTMLElement): Geom => ({
-  scrollTop: el.scrollTop,
-  scrollHeight: el.scrollHeight,
-  clientHeight: el.clientHeight,
-});
-
-function watchTailFollow(ctx: ClientCtx) {
-  const SLACK_PX = 120; // within this of the bottom counts as "at the bottom"
-  const ZERO: Geom = { scrollTop: 0, scrollHeight: 0, clientHeight: 0 };
-  let follow = true;
-  let prevRunning = false;
-  let lastTop = 0;
-  const wired = new WeakSet<HTMLElement>();
-  const wire = (el: HTMLElement) => {
-    if (wired.has(el)) return;
-    wired.add(el);
-    el.addEventListener(
-      "scroll",
-      () => {
-        const g = geomOf(el);
-        // A pin only moves the bottom edge down; a scrollTop that dropped and is not at the bottom
-        // is the reader climbing up-thread, so stop following until they come back down.
-        const signal = g.scrollTop < lastTop - 1 && !atBottom(g, SLACK_PX) ? "user-up" : "scroll";
-        follow = nextFollow(follow, signal, g, SLACK_PX);
-        lastTop = g.scrollTop;
-      },
-      { passive: true },
-    );
-  };
-  const scan = () => {
-    const id = activeClaudeSession(ctx);
-    if (!id) {
-      prevRunning = false; // not our session: a later Claude turn starts armed
-      return;
-    }
-    const running = ctx.sessions.list.getSnapshot()?.byId?.[id]?.running === true;
-    if (running && !prevRunning) follow = nextFollow(follow, "turn-start", ZERO, SLACK_PX);
-    prevRunning = running;
-    if (!running) return; // idle: leave the reader's scroll where it is
-    const el = document.querySelector<HTMLElement>("[data-conversation-scroll]");
-    if (!el) return;
-    wire(el);
-    // Only write when actually off the bottom: max scrollTop is scrollHeight - clientHeight, so a
-    // gap of >1px means content grew below the fold. Skips a redundant write once already pinned.
-    if (follow && distanceFromBottom(geomOf(el)) > 1) {
-      el.scrollTop = el.scrollHeight; // clamps to the max; stay pinned to the streaming tail
-      lastTop = el.scrollTop;
-    }
-  };
-  onBodyMutation(scan);
-  scan();
-}
-
 function notifyWaiting(ctx: ClientCtx, id: string, title: string) {
   // Permission is only ever asked for from the panel's own toggle, so an ungranted browser is the
   // normal case here and the title mark carries it alone.
@@ -3084,7 +3017,6 @@ export function apply(ctx: ClientCtx) {
   watchTurnStatus(ctx);
   watchSessionNotices(ctx);
   watchSessionSpinners(ctx);
-  watchTailFollow(ctx);
 
   function Section(props: { close?: () => void }) {
     const [boxes, setBoxes] = useState<BoxData[]>([]);

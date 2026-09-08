@@ -19,6 +19,114 @@ const DENIED_RE = /requires? approval|permission (was )?denied|not allowed/i;
  *  client's bash/read/edit presenters, the rest (TodoWrite, ToolSearch, Skill, mcp__*) the generic one. */
 const isNativeTool = (toolName: string) => toolName !== "" && !toolName.startsWith("mcp__dsh__");
 
+// --- inline tool rendering: format a native call/result as text-lane markdown so dsh's
+// MarkdownText highlights it, instead of the grey unformatted reasoning lane. -----------
+
+/** File extension → markdown fence language, so a Read result highlights by file type. */
+const EXT_LANG = {
+  ts: "ts",
+  tsx: "tsx",
+  js: "js",
+  jsx: "jsx",
+  mjs: "js",
+  cjs: "js",
+  json: "json",
+  md: "md",
+  py: "python",
+  rs: "rust",
+  go: "go",
+  sh: "bash",
+  bash: "bash",
+  zsh: "bash",
+  yml: "yaml",
+  yaml: "yaml",
+  toml: "toml",
+  css: "css",
+  scss: "scss",
+  html: "html",
+  xml: "xml",
+  sql: "sql",
+  c: "c",
+  h: "c",
+  cpp: "cpp",
+  java: "java",
+  rb: "ruby",
+  php: "php",
+  swift: "swift",
+  kt: "kotlin",
+} satisfies Record<string, string>;
+
+const langOf = (path: string): string => {
+  const m = /\.([a-z0-9]+)$/i.exec(path);
+  const ext = m?.[1]?.toLowerCase() ?? "";
+  // SAFETY: `ext in EXT_LANG` proves ext is a key, so the keyof assertion holds
+  return ext in EXT_LANG ? (EXT_LANG[ext as keyof typeof EXT_LANG] ?? "") : "";
+};
+
+/** Wrap body in a fence long enough to survive any backtick run inside it. */
+const fence = (body: string, lang = ""): string => {
+  let ticks = "```";
+  while (body.includes(ticks)) ticks += "`";
+  return `${ticks}${lang}\n${body}\n${ticks}`;
+};
+
+const asStr = (v: unknown): string => (typeof v === "string" ? v : "");
+
+/** A native tool call as markdown: name in bold, arguments in the fence that suits the tool. */
+export function formatToolCall(name: string, inputJson: string): string {
+  let inp: Record<string, unknown> = {};
+  try {
+    // SAFETY: inputJson is Claude's own tool_use input, stored verbatim; shape read defensively below
+    inp = JSON.parse(inputJson) as Record<string, unknown>;
+  } catch {
+    inp = {};
+  }
+  const file = asStr(inp.file_path);
+  switch (name) {
+    case "bash": {
+      const desc = asStr(inp.description);
+      return `**bash**${desc ? ` — ${desc}` : ""}\n${fence(asStr(inp.command), "bash")}`;
+    }
+    case "read":
+      return `**read** \`${file}\``;
+    case "write":
+      return `**write** \`${file}\`\n${fence(asStr(inp.content), langOf(file))}`;
+    case "edit": {
+      const diff = `${asStr(inp.old_string)
+        .split("\n")
+        .map((l) => `- ${l}`)
+        .join("\n")}\n${asStr(inp.new_string)
+        .split("\n")
+        .map((l) => `+ ${l}`)
+        .join("\n")}`;
+      return `**edit** \`${file}\`\n${fence(diff, "diff")}`;
+    }
+    case "grep":
+      return `**grep** \`${asStr(inp.pattern)}\`${inp.path ? ` in \`${asStr(inp.path)}\`` : ""}`;
+    case "glob":
+      return `**glob** \`${asStr(inp.pattern)}\``;
+    case "web_fetch":
+      return `**web_fetch** ${asStr(inp.url)}`;
+    case "web_search":
+      return `**web_search** \`${asStr(inp.query)}\``;
+    default:
+      return `**${name}**\n${fence(inputJson, "json")}`;
+  }
+}
+
+/** A native tool result as markdown: name + status, body fenced with a language when we can guess one. */
+export function formatToolResult(
+  name: string,
+  filePath: string,
+  body: string,
+  isError: boolean,
+): string {
+  const head = `**${name}** ${isError ? "error" : "result"}`;
+  if (isError) return `${head}\n${fence(body)}`;
+  const lang = name === "read" ? langOf(filePath) : "";
+  return `${head}\n${fence(body, lang)}`;
+}
+
 function usageEvent(u: {
   input_tokens?: number;
   output_tokens?: number;
@@ -182,6 +290,8 @@ export class Translator {
   readonly callInputs = new Map<string, string>();
   /** callId → the seq onToolCall returned, so a re-fired block never appends `tool/call` twice. */
   readonly firedCalls = new Map<string, number>();
+  /** callId → mapped tool name, so an inline result row knows which tool (and file) it belongs to. */
+  readonly callNames = new Map<string, string>();
 
   /**
    * Fires onToolCall at most once per callId. The streaming and whole-message paths can both
@@ -700,19 +810,26 @@ export class Translator {
         const block = this.open.get(ev.index ?? -1);
         if (!block) return [];
         const apiIndex = ev.index ?? -1;
-        // For native tools, emit tool/call now that the input is complete.
+        // Native tool: its input is now complete. Either hand it to the dsh session (onToolCall)
+        // or draw it inline as a formatted markdown block that rides this turn's ordered stream.
         const cbMeta = this.cbMeta.get(apiIndex);
-        if (cbMeta?.id && this.onToolCall) {
+        let inlineCall: StreamChunk[] = [];
+        if (cbMeta?.id) {
           this.cbMeta.delete(apiIndex);
           // Hidden blocks accumulate input via callInputs in the delta handler; live blocks use block.text.
           const input = this.callInputs.get(cbMeta.id) ?? block.text;
-          if (input) {
-            // SAFETY: NATIVE_TOOL_MAP is a closed literal type; keyof narrows index access to known keys
-            const mapped =
-              NATIVE_TOOL_MAP[(cbMeta.name ?? "") as keyof typeof NATIVE_TOOL_MAP] ??
-              cbMeta.name ??
-              "";
-            this.fireToolCall(cbMeta.id, mapped, input);
+          // SAFETY: NATIVE_TOOL_MAP is a closed literal type; keyof narrows index access to known keys
+          const mapped =
+            NATIVE_TOOL_MAP[(cbMeta.name ?? "") as keyof typeof NATIVE_TOOL_MAP] ??
+            cbMeta.name ??
+            "";
+          if (this.onToolCall) {
+            if (input) this.fireToolCall(cbMeta.id, mapped, input);
+          } else if (input) {
+            // Inline: keep input+name so the result row can format itself, and draw the call now.
+            this.callInputs.set(cbMeta.id, input);
+            this.callNames.set(cbMeta.id, mapped);
+            inlineCall = this.wholeBlock("text", formatToolCall(mapped, input));
           }
         }
         this.open.delete(apiIndex);
@@ -725,7 +842,8 @@ export class Translator {
           done = this.endThinking();
           this.thinkingBlock = undefined;
         }
-        return block.index < 0 ? done : [...done, ...this.endBlock(block)];
+        const tail = block.index < 0 ? done : [...done, ...this.endBlock(block)];
+        return [...tail, ...inlineCall];
       }
       default:
         if (!BENIGN_PARTIALS.has(ev?.type)) this.noteUnknown("stream event", ev?.type);
@@ -749,8 +867,9 @@ export class Translator {
         this.dshIds.add(cb.id);
         this.dshNames.set(cb.id, toolName.slice("mcp__dsh__".length));
       }
-      // Native tools get a dsh session row; hide the reasoning-lane block entirely.
-      if (isNativeTool(toolName) && this.onToolCall && cb.id) {
+      // Native tools: hide the raw block and accumulate input; content_block_stop draws the row
+      // (a dsh session row when onToolCall is wired, else a formatted inline markdown block).
+      if (isNativeTool(toolName) && cb.id && (this.onToolCall || this.toolActivity)) {
         this.cbMeta.set(apiIndex, { id: cb.id, name: toolName });
         this.open.set(apiIndex, {
           index: -1,
@@ -802,12 +921,18 @@ export class Translator {
           this.dshIds.add(b.id);
           this.dshNames.set(b.id, toolName.slice("mcp__dsh__".length));
         }
-        // Native tools render as session rows; skip the reasoning-lane block.
-        if (isNativeTool(toolName) && this.onToolCall && b.id) {
+        // Native tools render as session rows (onToolCall) or an inline markdown block.
+        if (isNativeTool(toolName) && b.id) {
           const args = JSON.stringify(b.input ?? {});
           // SAFETY: NATIVE_TOOL_MAP is a closed literal type; keyof narrows index access to known keys
           const mapped = NATIVE_TOOL_MAP[toolName as keyof typeof NATIVE_TOOL_MAP] ?? toolName;
-          this.fireToolCall(b.id, mapped, args);
+          if (this.onToolCall) {
+            this.fireToolCall(b.id, mapped, args);
+          } else if (this.toolActivity) {
+            this.callInputs.set(b.id, args);
+            this.callNames.set(b.id, mapped);
+            events.push(...this.wholeBlock("text", formatToolCall(mapped, args)));
+          }
           continue;
         }
         if (!this.toolActivity || (dsh && this.relay)) continue;
@@ -893,7 +1018,7 @@ export class Translator {
     // One frame per delta arrives, so only a crossed mark writes.
     if (total < entry.nextAt) return [];
     entry.nextAt = nextThinkStep(total);
-    return this.delta(entry.block, ` · ~${tokensText(total)}`);
+    return this.delta(entry.block, ` → ~${tokensText(total)} tokens`);
   }
 
   /** Close the counter: the thinking block it stood in for is over, or the turn is. */
@@ -927,6 +1052,25 @@ export class Translator {
       events.push(...this.endHeartbeat(toolUseId));
       const dsh = this.dshIds.delete(toolUseId);
       if (dsh && this.relayed.delete(toolUseId)) continue; // dsh drew the native call and result
+      // Inline native result: draw a formatted markdown block matching its call, in stream order.
+      if (!this.onToolResult && this.callNames.has(toolUseId)) {
+        const name = this.callNames.get(toolUseId)!;
+        const argsJson = this.callInputs.get(toolUseId) ?? "";
+        this.callNames.delete(toolUseId);
+        this.callInputs.delete(toolUseId);
+        this.firedCalls.delete(toolUseId);
+        let filePath = "";
+        try {
+          // SAFETY: argsJson is Claude's own tool_use input; only file_path is read, defensively
+          filePath = asStr((JSON.parse(argsJson) as { file_path?: unknown }).file_path);
+        } catch {
+          filePath = "";
+        }
+        events.push(
+          ...this.wholeBlock("text", formatToolResult(name, filePath, body, b.is_error ?? false)),
+        );
+        continue;
+      }
       // Native tool result: append a dsh session row, skip reasoning text.
       if (this.onToolResult && !this.callInputs.has(toolUseId)) {
         // Not a native tool we tracked — fall through to old behaviour.

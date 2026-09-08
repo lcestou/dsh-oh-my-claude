@@ -62,6 +62,7 @@ export type Config = {
     maxBudgetUsd?: number;
     titleModel: string;
     toolActivity: boolean;
+    toolsInline: boolean;
     hookRows: boolean;
     resume: boolean;
     idleTimeoutMs: number;
@@ -97,6 +98,7 @@ export declare const Config: z<Schemastery.ObjectS<{
     maxBudgetUsd: z<number, number>;
     titleModel: z<string, string>;
     toolActivity: z<boolean, boolean>;
+    toolsInline: z<boolean, boolean>;
     hookRows: z<boolean, boolean>;
     resume: z<boolean, boolean>;
     idleTimeoutMs: z<number, number>;
@@ -128,6 +130,7 @@ export declare const Config: z<Schemastery.ObjectS<{
     maxBudgetUsd: z<number, number>;
     titleModel: z<string, string>;
     toolActivity: z<boolean, boolean>;
+    toolsInline: z<boolean, boolean>;
     hookRows: z<boolean, boolean>;
     resume: z<boolean, boolean>;
     idleTimeoutMs: z<number, number>;
