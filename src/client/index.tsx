@@ -2507,8 +2507,8 @@ const ensureFoldStyle = () => {
   const existing = document.getElementById("dsh-oh-my-claude-fold");
   const el = existing instanceof HTMLStyleElement ? existing : document.createElement("style");
   el.id = "dsh-oh-my-claude-fold";
-  // The header reads as dsh's muted tool text — a touch smaller and dimmed — and sits flush-left like
-  // any prose line. The leading span is a fixed 16px box holding both glyphs stacked, so the row never
+  // The header reads as dsh's muted tool text — its secondary content size and label colour — and sits
+  // flush-left like any prose line. The leading span is a fixed 16px box holding both glyphs stacked, so the row never
   // shifts: the tool icon is the resting state and the chevron sits on top of it at opacity 0, the two
   // cross-fading on hover. This is how dsh draws its own tool rows (`iconIdle`/`chevronHover` in
   // dsh-client-ui-tool), down to the secondary label colour, and the chevron never rotates — expanding
@@ -2520,10 +2520,19 @@ const ensureFoldStyle = () => {
   const head = `body[data-omc-claude] p[${HEAD_MARK}]`;
   const fold = `${head}:not([${HEAD_MARK}="flat"])`;
   const lead = `span[${LEAD_MARK}]`;
+  // Metrics copied from dsh's own row rather than approximated: a 16px leading box, a 14px icon inside
+  // it, a 6px gap to the title, and both sizes carrying `--dsh-content-font-delta` so the header grows
+  // with the user's content font size the way a dsh tool row does. Fixed pixels made ours read a hair
+  // small for anyone who raised that setting. Colour comes from the same tokens: tertiary for the
+  // icon, secondary for the text and the chevron. The box is `vertical-align:middle`, not a hand-tuned
+  // offset: a fixed em nudge only centres at one font size and sat below the baseline at others.
+  const box = "calc(16px + var(--dsh-content-font-delta,0px))";
+  const glyphSize = "calc(14px + var(--dsh-content-font-delta,0px))";
   el.textContent = [
-    `${head}{user-select:none;font-size:.9em;opacity:.68}`,
+    `${head}{user-select:none;font-size:var(--dsh-content-font-size-secondary,13px);color:var(--dsw-alias-label-secondary)}`,
     `${fold}{cursor:pointer}`,
-    `${head} ${lead}{position:relative;display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;vertical-align:-.2em;margin-right:.3em}`,
+    `${head} ${lead}{position:relative;display:inline-flex;align-items:center;justify-content:center;width:${box};height:${box};vertical-align:middle;margin-right:6px;color:var(--dsw-alias-label-tertiary)}`,
+    `${head} ${lead} svg{width:${glyphSize};height:${glyphSize}}`,
     `${head} ${lead}>[data-omc-part]{display:inline-flex;align-items:center;justify-content:center;transition:opacity .1s}`,
     `${head} ${lead}>[data-omc-part="chevron"]{position:absolute;inset:0;margin:auto;opacity:0;color:var(--dsw-alias-label-secondary)}`,
     `${fold}:hover ${lead}>[data-omc-part="icon"]{opacity:0}`,
