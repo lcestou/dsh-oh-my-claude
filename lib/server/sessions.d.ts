@@ -180,6 +180,17 @@ export interface PickerSettings {
  * file someone is halfway through editing can never empty the picker.
  */
 export declare function readPickerSettings(path: string): Promise<PickerSettings | undefined>;
+/**
+ * A dsh subagent run lives inside its parent conversation; dsh refuses to open it standalone
+ * ("subagent Sessions require their durable parent address"), so it has no working row in any
+ * listing — this cwd's, every cwd's, or a box's.
+ */
+export declare const withoutSubagents: <T extends {
+    id: string;
+    dsh?: {
+        subagent?: boolean;
+    };
+}>(rows: T[]) => T[];
 /** A dsh session a transcript belongs to, and whether it is archived. */
 export interface OwnedSession {
     id: string;

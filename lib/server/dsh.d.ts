@@ -328,6 +328,16 @@ export interface SessionPersistence {
     list(): Promise<Array<SessionHeader | {
         header: SessionHeader;
     }>>;
+    /** Opens the write handle that owns a new session's log; the only way events reach disk. */
+    create(header: SessionHeader, options?: {
+        inheritedEventCount?: number;
+    }): Promise<SessionWriteHandle>;
+}
+/** Mirrors: @deepseek-ai/dsh-session-persistence/lib/types/handle.d.ts (write half). */
+export interface SessionWriteHandle {
+    append(events: readonly SessionEvent[]): Promise<void>;
+    flush(): Promise<void>;
+    close(): Promise<void>;
 }
 /** Mirrors: @deepseek-ai/cordis/lib/types/context.d.ts intersected with dsh service augmentations */
 export interface PluginContext {
@@ -352,6 +362,7 @@ export interface PluginContext {
     /** Optional-service lookup (cordis `ctx.get`); undefined when the provider is absent. */
     get(name: "commands"): PluginContext["commands"];
     get(name: "sessionTitle"): PluginContext["sessionTitle"];
+    get(name: "workspaceRegistry"): WorkspaceRegistry | undefined;
     /** dsh-commands (`/name` in the composer); optional so a host without it still mounts the plugin. */
     commands?: {
         register(definition: {

@@ -9,6 +9,7 @@ import {
   probeBox,
   readPickerSettings,
   registerSessionRoutes,
+  withoutSubagents,
   slugForDir,
   settingsScopePath,
   isSettingsScope,
@@ -509,6 +510,16 @@ import type { InstructionFile } from "./instructions.js";
   assert.equal(owned.get("top")?.subagent, undefined);
   assert.equal(owned.get("sub")?.subagent, true);
   assert.equal(owned.get("claude-sub")?.subagent, true);
+  // Every listing drops it, not just this cwd's: the all-boxes view used to keep the row, whose
+  // Show answered "subagent Sessions require their durable parent address".
+  assert.deepEqual(
+    withoutSubagents([
+      { id: "a", dsh: owned.get("top") },
+      { id: "b", dsh: owned.get("sub") },
+      { id: "c" },
+    ]),
+    [{ id: "a", dsh: { id: "top", archived: false } }, { id: "c" }],
+  );
 }
 
 // slugForDir bounds to one path segment and disambiguates truncated slugs so two long cwds
@@ -561,15 +572,16 @@ import type { InstructionFile } from "./instructions.js";
     dshId?: string;
   }) => {
     const dshId = opts.dshId ?? id;
-    let entered = false;
     const calls: string[] = [];
-    const attached: { id: string; entered: boolean }[] = [];
+    const attached: { id: string; events: number }[] = [];
+    let written: { header: Record<string, unknown>; events: unknown[] } | undefined;
     const ws = {
       id: "w1",
       path: cwd,
       title: "work",
       sessionIds: [],
-      attachSession: async (sid: string) => void attached.push({ id: sid, entered }),
+      attachSession: async (sid: string) =>
+        void attached.push({ id: sid, events: written?.events.length ?? 0 }),
     };
     let state: { archivedSessionIds: string[] } = {
       archivedSessionIds: opts.archived ? [dshId] : [],
@@ -578,20 +590,21 @@ import type { InstructionFile } from "./instructions.js";
     const ctx = {
       sessions: {
         get: () => (opts.inStore ? { id } : undefined),
-        prepare: (sid: string, o: { seed: unknown[] }) => (
-          calls.push("prepare"),
-          { id: sid, seed: o.seed }
-        ),
-        enter: () => (
-          (entered = true),
-          calls.push("enter"),
-          () => ((entered = false), calls.push("leave"))
-        ),
-        announce: () => void calls.push("announce"),
-        flush: async () => void calls.push("flush"),
       },
       sessionPersistence: {
         list: async () => (opts.persisted ? [{ header: { id: dshId, cwd } }] : []),
+        create: async (header: Record<string, unknown>) => {
+          calls.push("create");
+          written = { header, events: [] };
+          return {
+            append: async (events: unknown[]) => {
+              calls.push("append");
+              written?.events.push(...events);
+            },
+            flush: async () => void calls.push("flush"),
+            close: async () => void calls.push("close"),
+          };
+        },
       },
     } as any;
     const registry = {
@@ -612,35 +625,51 @@ import type { InstructionFile } from "./instructions.js";
       (x) => (x === dshId ? id : x),
       registry,
     );
-    return { out, calls, attached, state };
+    return { out, calls, attached, state, written };
   };
 
-  // Fresh transcript: seeded, and attached while still entered so dsh reads the live header.
+  // Fresh transcript: the seed reaches storage through a persistence write handle, and the
+  // workspace attach names a session whose log is already on disk.
   let r = await run({ inStore: false, persisted: false, archived: false });
   assert.equal(r.out.existed, false);
-  assert.deepEqual(r.calls, ["prepare", "enter", "announce", "flush", "leave"]);
-  assert.deepEqual(r.attached, [{ id, entered: true }], "attached before leave()");
+  assert.deepEqual(r.calls, ["create", "append", "flush", "close"]);
+  assert.equal(r.written?.header.id, id);
+  assert.equal(r.written?.header.cwd, cwd);
+  assert.equal(r.written?.header.isSeeded, false);
+  assert.equal(r.written?.events.length, r.out.events, "every seed event was appended");
+  assert.ok((r.out.events ?? 0) > 0, "the transcript's turn produced events");
+  assert.deepEqual(
+    r.attached,
+    [{ id, events: r.out.events }],
+    "attached after the log was written",
+  );
   // Already in the store ("Show"): no seed, still attached.
   r = await run({ inStore: true, persisted: true, archived: false });
   assert.equal(r.out.existed, true);
   assert.deepEqual(r.calls, []);
-  assert.deepEqual(r.attached, [{ id, entered: false }]);
+  assert.deepEqual(r.attached, [{ id, events: 0 }]);
+  // Archived while the store still holds it: the early return used to skip the unarchive, and the
+  // client hides archived sessions, so Restore opened nothing.
+  r = await run({ inStore: true, persisted: true, archived: true });
+  assert.equal(r.out.existed, true);
+  assert.deepEqual(r.state.archivedSessionIds, []);
+  assert.deepEqual(r.attached, [{ id, events: 0 }]);
   // Persisted but unloaded after a restart: the owned branch attaches too.
   r = await run({ inStore: false, persisted: true, archived: false });
   assert.equal(r.out.existed, true);
   assert.deepEqual(r.calls, [], "no second seed for a session dsh already holds");
-  assert.deepEqual(r.attached, [{ id, entered: false }]);
+  assert.deepEqual(r.attached, [{ id, events: 0 }]);
   // Archived: unarchived through the registry state, then attached.
   r = await run({ inStore: false, persisted: true, archived: true });
   assert.equal(r.out.existed, true);
   assert.deepEqual(r.state.archivedSessionIds, []);
-  assert.deepEqual(r.attached, [{ id, entered: false }]);
+  assert.deepEqual(r.attached, [{ id, events: 0 }]);
   // A session the plugin started: the row carries the transcript's id, dsh knows its own. The
   // attach must name dsh's, or dsh answers "session persistence holds no such session".
   const dshId = "d5h00000-0000-4000-8000-000000000001";
   r = await run({ inStore: false, persisted: true, archived: true, dshId });
   assert.equal(r.out.id, dshId);
-  assert.deepEqual(r.attached, [{ id: dshId, entered: false }], "attached under dsh's id");
+  assert.deepEqual(r.attached, [{ id: dshId, events: 0 }], "attached under dsh's id");
 }
 
 console.log("sessions ok");

@@ -795,6 +795,15 @@ async function writeWithBackup(
   return { path, backup, mtime: (await stat(path)).mtimeMs };
 }
 
+/**
+ * A dsh subagent run lives inside its parent conversation; dsh refuses to open it standalone
+ * ("subagent Sessions require their durable parent address"), so it has no working row in any
+ * listing — this cwd's, every cwd's, or a box's.
+ */
+export const withoutSubagents = <T extends { id: string; dsh?: { subagent?: boolean } }>(
+  rows: T[],
+): T[] => rows.filter((s) => !s.dsh?.subagent);
+
 /** A dsh session a transcript belongs to, and whether it is archived. */
 export interface OwnedSession {
   id: string;
@@ -925,9 +934,9 @@ export async function openTranscriptOnce(
 ): Promise<Opened> {
   // dsh 0.1.5 lists a session under a workspace only once it is on that workspace's own
   // `sessionIds`; a session that merely exists (older dsh derived the workspace from its cwd)
-  // shows "Show" in the archive but opens nowhere. Attach after the flush, since dsh validates
-  // the stored header's cwd against the workspace path. Idempotent, so an already-open session
-  // from before this ran is attached on its next Open.
+  // shows "Show" in the archive but opens nowhere. Attach after the log is written, since dsh
+  // validates the stored header's cwd against the workspace path. Idempotent, so an already-open
+  // session from before this ran is attached on its next Open.
   // `sessionId` is dsh's id for the session. A row's `id` is the transcript's, which differs
   // for a session the plugin started (see `claudeIdOf`), and dsh knows only its own.
   const attach = async (sessionId: string) => {
@@ -935,7 +944,26 @@ export async function openTranscriptOnce(
     const ws = (await registry.resolveByPath(cwd)) ?? (await registry.create(cwd));
     await ws.attachSession(asSessionId(sessionId));
   };
+  // ponytail: unarchive through the registry's own operation queue; dsh core has archiveSession
+  // but no inverse, and the another plugin plugin does exactly this. Every path that opens a row
+  // runs it: an archived session the store still holds took the early return below and stayed
+  // archived, and the client hides archived sessions, so Restore opened nothing.
+  const unarchive = async (sessionId: string) => {
+    if (
+      !registry?.enqueueOperation ||
+      !registry.archivedSessionIds.includes(asSessionId(sessionId))
+    )
+      return;
+    await registry.enqueueOperation(async () => {
+      const state = registry.requireState();
+      await registry.setState({
+        ...state,
+        archivedSessionIds: state.archivedSessionIds.filter((x) => x !== sessionId),
+      });
+    });
+  };
   if (ctx.sessions.get(asSessionId(id))) {
+    await unarchive(id);
     await attach(id);
     return { id, existed: true };
   }
@@ -950,16 +978,7 @@ export async function openTranscriptOnce(
     new Set(registry?.archivedSessionIds ?? []),
   ).get(id);
   if (owned) {
-    // ponytail: unarchive through the registry's own operation queue; dsh core has archiveSession
-    // but no inverse, and the another plugin plugin does exactly this.
-    if (owned.archived && registry?.enqueueOperation)
-      await registry.enqueueOperation(async () => {
-        const state = registry.requireState();
-        await registry.setState({
-          ...state,
-          archivedSessionIds: state.archivedSessionIds.filter((x) => x !== owned.id),
-        });
-      });
+    await unarchive(owned.id);
     // Persisted but not in the store (a restart unloads it): the workspace list is the only way it
     // reaches the sidebar, and dsh reads its header from persistence, which lists it by now.
     await attach(owned.id);
@@ -971,21 +990,25 @@ export async function openTranscriptOnce(
   if (folded === undefined) throw new Error("transcript not found");
   if (folded.turns.length === 0) throw new Error("transcript has no completed turn");
   const seed = toSessionEvents(folded);
-  const session = ctx.sessions.prepare(asSessionId(id), {
-    seed,
-    meta: { cwd, createdAt: folded.createdAt },
+  // A session's log reaches disk only through the persistence write handle its creator opens
+  // (dsh 0.1.5 does this in the agent-loop creation transaction). The store's own
+  // prepare/enter/announce/flush owns no handle, so `session/flush` found no writer for this id and
+  // answered nothing: the seed was dropped silently, and the client's adopting `sessions.create`
+  // then found no stored session and made a blank one under the same id. Write the log here.
+  const handle = await ctx.sessionPersistence.create({
+    version: 3,
+    id: asSessionId(id),
+    createdAt: folded.createdAt,
+    cwd,
+    isSeeded: false,
   });
-  const leave = ctx.sessions.enter(session);
   try {
-    ctx.sessions.announce(session);
-    await ctx.sessions.flush(session);
-    // While the session is still entered: dsh validates the attach against the live session's
-    // header, and once `leave` runs it asks persistence instead, whose index does not list a
-    // session flushed a moment ago ("session persistence holds no such session").
-    await attach(id);
+    await handle.append(seed);
+    await handle.flush();
   } finally {
-    leave();
+    await handle.close();
   }
+  await attach(id);
   return { id, existed: false, turns: folded.turns.length, events: seed.length };
 }
 
@@ -1176,11 +1199,16 @@ export function registerSessionRoutes(
    */
   const userSettingsPathOf = async (box: MountBox): Promise<string | undefined> =>
     box.sshHost ? `${await claudeHomeOf(box)}/settings.json` : settingsPath;
-  // Optional: stock dsh has it; without it archived sessions list but cannot be restored.
-  let registry: WorkspaceRegistry | undefined;
+  // Optional: stock dsh has it; without it archived sessions list but cannot be restored. The
+  // routes can serve before it mounts — a request in the first seconds after a restart found no
+  // registry and skipped the workspace attach silently, so the session it had just written was
+  // nowhere in the sidebar — hence the live `get` alongside the injected handle.
+  let injectedRegistry: WorkspaceRegistry | undefined;
   ctx.inject?.(["workspaceRegistry"], (host) => {
-    registry = host.workspaceRegistry;
+    injectedRegistry = host.workspaceRegistry;
   });
+  const workspaceRegistry = (): WorkspaceRegistry | undefined =>
+    injectedRegistry ?? ctx.get?.("workspaceRegistry");
   ctx.inject?.(["webServer", "connection", "sessions", "sessionPersistence"], (host) => {
     const { webServer, connection, sessions, sessionPersistence } = host;
     if (!webServer || !connection || !sessionPersistence) return;
@@ -1230,7 +1258,7 @@ export function registerSessionRoutes(
                     await sessionPersistence.list(),
                     null,
                     claudeIdOf,
-                    new Set(registry?.archivedSessionIds ?? []),
+                    new Set(workspaceRegistry()?.archivedSessionIds ?? []),
                   );
                   const hidden = new Set([...(await startedIds())].filter((id) => !owned.has(id)));
                   const found = [
@@ -1244,10 +1272,12 @@ export function registerSessionRoutes(
                         }))
                       : []),
                   ];
-                  const items = found.map((s) => {
-                    const d = owned.get(s.id);
-                    return d ? { ...s, dsh: d } : s;
-                  });
+                  const items = withoutSubagents(
+                    found.map((s) => {
+                      const d = owned.get(s.id);
+                      return d ? { ...s, dsh: d } : s;
+                    }),
+                  );
                   return json(res, 200, { host: hostname(), sessions: items });
                 }
                 // Transcripts of dsh sessions (started here or opened from here) are listed with
@@ -1257,22 +1287,18 @@ export function registerSessionRoutes(
                   await sessionPersistence.list(),
                   cwd,
                   claudeIdOf,
-                  new Set(registry?.archivedSessionIds ?? []),
+                  new Set(workspaceRegistry()?.archivedSessionIds ?? []),
                 );
                 const hidden = new Set([...(await startedIds())].filter((id) => !owned.has(id)));
                 const seen = await Promise.all(
                   projectDir(cwd).map((dir) => listTranscripts(dir, hidden).catch(() => [])),
                 );
-                const items = seen
-                  .flat()
-                  .map((s) => {
+                const items = withoutSubagents(
+                  seen.flat().map((s) => {
                     const d = owned.get(s.id);
                     return d ? { ...s, dsh: d } : s;
-                  })
-                  // A dsh subagent run lives inside its parent conversation; dsh refuses to open it
-                  // standalone ("subagent Sessions require their durable parent address"), so it has
-                  // no working row here.
-                  .filter((s) => !("dsh" in s && s.dsh?.subagent));
+                  }),
+                );
                 return json(res, 200, { sessions: items });
               }
               if (req.method === "POST" && url.pathname === `${ROUTE_PREFIX}/open`) {
@@ -1288,7 +1314,7 @@ export function registerSessionRoutes(
                     cwd,
                     id,
                     claudeIdOf,
-                    registry,
+                    workspaceRegistry(),
                   ),
                 );
               }
@@ -2087,7 +2113,8 @@ export function registerSessionRoutes(
                     workspaces: await readRemoteWorkspaces(remoteWorkspacesPath),
                   });
                 if (req.method === "POST") {
-                  if (!registry)
+                  const reg = workspaceRegistry();
+                  if (!reg)
                     return json(res, 501, {
                       error: "workspaceRegistry is not available on this host",
                     });
@@ -2100,7 +2127,7 @@ export function registerSessionRoutes(
                   await mkdir(dir, { recursive: true });
                   let ws: { id: WorkspaceId; path: string };
                   try {
-                    ws = await registry.create(dir, `${name} · ${boxHost}`);
+                    ws = await reg.create(dir, `${name} · ${boxHost}`);
                   } catch (e) {
                     return json(res, 500, { error: `create workspace: ${errorText(e)}` });
                   }
@@ -2129,7 +2156,7 @@ export function registerSessionRoutes(
                     try {
                       // SAFETY: workspaceId was returned by registry.create as a WorkspaceId and
                       // stored verbatim; delete ignores an unknown id, so a stale value is harmless.
-                      await registry?.delete(entry.workspaceId as WorkspaceId);
+                      await workspaceRegistry()?.delete(entry.workspaceId as WorkspaceId);
                     } catch (e) {
                       log("warn", `remote-workspace delete: ${errorText(e)}`);
                     }
@@ -2207,7 +2234,7 @@ export function registerSessionRoutes(
                   await sessionPersistence.list(),
                   null,
                   claudeIdOf,
-                  new Set(registry?.archivedSessionIds ?? []),
+                  new Set(workspaceRegistry()?.archivedSessionIds ?? []),
                 );
                 return json(res, 200, {
                   boxes: boxes.map((b, i) => {
@@ -2223,12 +2250,12 @@ export function registerSessionRoutes(
                         ok: false,
                         error: r?.error ?? "no reply",
                       };
-                    const items = r.sessions
-                      .map((s) => {
+                    const items = withoutSubagents(
+                      r.sessions.map((s) => {
                         const d = owned.get(s.id);
                         return d ? { ...s, dsh: d } : s;
-                      })
-                      .filter((s) => !("dsh" in s && s.dsh?.subagent));
+                      }),
+                    );
                     return { name: b.name, host: b.host, provider, ok: true, sessions: items };
                   }),
                 });
