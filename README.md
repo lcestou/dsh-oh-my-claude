@@ -284,3 +284,7 @@ Lint, format check, typecheck, the offline self-checks (`src/adapter.test.ts`, `
 ## Roadmap
 
 What comes next is tracked in the owner's working notes, which are not part of this repository. The package stays private for now.
+
+## License
+
+MIT. See `LICENSE`.

@@ -67,5 +67,6 @@
     }
   },
   "repository": "https://github.com/lcestou/oh-my-claude",
+  "license": "MIT",
   "types": "lib/server/adapter.d.ts"
 }
