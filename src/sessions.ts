@@ -524,6 +524,7 @@ export function authFromStatus(text: string): AuthStatus {
 export interface AccountIdentity {
   host: string;
   email: string | null;
+  loggedIn: boolean;
 }
 /** Per config dir: a second plugin instance has its own login, so its own answer. */
 const identityCache = new Map<string, { at: number; value: AccountIdentity }>();
@@ -544,7 +545,8 @@ export async function accountIdentity(
         ["auth", "status"],
         configDir ? { ...process.env, CLAUDE_CONFIG_DIR: configDir } : undefined,
       );
-  const value = { host: sshHost || hostname(), email: authFromStatus(status.out).email ?? null };
+  const auth = authFromStatus(status.out);
+  const value = { host: sshHost || hostname(), email: auth.email ?? null, loggedIn: auth.loggedIn };
   identityCache.set(key, { at: Date.now(), value });
   return value;
 }
@@ -1019,6 +1021,9 @@ export interface SessionRouteOptions {
    * registering instance, which is what the request would have used anyway.
    */
   instanceFor?: (provider: string | null) => MountBox | undefined;
+  /** What a login probe found for a mount (`null` = the default one), so the adapter can name a
+   *  logged-out box in the picker. */
+  onLoginStatus?: (provider: string | null, loggedIn: boolean) => void;
   /** Per-session turn accounting buffer from the adapter. */
   turnRecords?: Map<string, import("./adapter.js").TurnRecord[]>;
   /** Idle watchdog state from the adapter. */
@@ -1120,6 +1125,7 @@ export function registerSessionRoutes(
     reloadPlugins,
     continueAfterLimit,
     instanceFor,
+    onLoginStatus,
   }: SessionRouteOptions,
 ): void {
   /** The box a request is about: the session's own mount when it named one, else this instance. */
@@ -1587,7 +1593,9 @@ export function registerSessionRoutes(
               }
               if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/status`) {
                 const box = boxOf(url);
-                return json(res, 200, await runtimeStatus(box.configDir, box.command, box.sshHost));
+                const status = await runtimeStatus(box.configDir, box.command, box.sshHost);
+                onLoginStatus?.(url.searchParams.get("provider"), status.loggedIn);
+                return json(res, 200, status);
               }
               if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/models`) {
                 if (!models) return json(res, 404, { error: "models not available" });
@@ -2035,6 +2043,7 @@ export function registerSessionRoutes(
                   boxes: boxes.map((b, i) => {
                     const tokenLogin = !!readSshToken(dirname(sshBoxesPath), b.host);
                     const status = tokenLogin ? { ...probed[i], loggedIn: true } : probed[i];
+                    if (status) onLoginStatus?.(sshBoxProviderId(b.name), status.loggedIn);
                     return { name: b.name, host: b.host, status };
                   }),
                 });
@@ -2133,6 +2142,8 @@ export function registerSessionRoutes(
                 if (!submit.done || !submit.token)
                   return json(res, 200, { done: false, error: submit.error });
                 writeSshToken(dirname(sshBoxesPath), loginHost, submit.token);
+                const loginName = loginBoxes.find((b) => b.host === loginHost)?.name ?? "";
+                onLoginStatus?.(sshBoxProviderId(loginName), true);
                 return json(res, 200, { done: true, loggedIn: true });
               }
               // Drop a box's stored login token. Local only: the plugin forgets the token so it stops
@@ -2147,6 +2158,8 @@ export function registerSessionRoutes(
                 if (!logoutBoxes.some((b) => b.host === logoutHost))
                   return json(res, 400, { error: "unknown box" });
                 deleteSshToken(dirname(sshBoxesPath), logoutHost);
+                const logoutName = logoutBoxes.find((b) => b.host === logoutHost)?.name ?? "";
+                onLoginStatus?.(sshBoxProviderId(logoutName), false);
                 return json(res, 200, { loggedIn: false });
               }
               // SSH boxes list their transcripts over ssh, not HTTP: they run `claude` on their host

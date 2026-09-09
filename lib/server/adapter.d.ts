@@ -598,6 +598,16 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     settingsNs: string;
     stateDir: string;
     constructor(ctx: PluginContext, config: Schemastery.TypeT<typeof Config>);
+    /** dsh's handle for this instance's route. `replace` re-reads `providerInfo`, which is how a
+     *  name change reaches the picker without a restart. */
+    registration?: {
+        replace: (providers: string[]) => void;
+    };
+    private loggedOut;
+    /** "(not logged in)" after the provider name while the box's claude has no login: dsh copies the
+     *  name at registration, so the route is registered again under the new one. Fed by the mount-time
+     *  probe and by every login probe the panel runs, so the picker names a dead box at a glance. */
+    setLoggedIn(loggedIn: boolean): void;
     providerInfo(provider: string): {
         id: string;
         name: string;

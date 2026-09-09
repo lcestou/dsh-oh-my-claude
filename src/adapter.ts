@@ -1669,8 +1669,28 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     });
   }
 
+  /** dsh's handle for this instance's route. `replace` re-reads `providerInfo`, which is how a
+   *  name change reaches the picker without a restart. */
+  registration?: { replace: (providers: string[]) => void };
+  private loggedOut = false;
+  /** "(not logged in)" after the provider name while the box's claude has no login: dsh copies the
+   *  name at registration, so the route is registered again under the new one. Fed by the mount-time
+   *  probe and by every login probe the panel runs, so the picker names a dead box at a glance. */
+  setLoggedIn(loggedIn: boolean) {
+    if (this.loggedOut === !loggedIn) return;
+    this.loggedOut = !loggedIn;
+    try {
+      this.registration?.replace([this.providerId]);
+    } catch (e) {
+      this.log("warn", `provider name update: ${errorText(e)}`);
+    }
+  }
+
   override providerInfo(provider: string) {
-    return { id: provider, name: this.displayName };
+    return {
+      id: provider,
+      name: this.loggedOut ? `${this.displayName} (not logged in)` : this.displayName,
+    };
   }
 
   /** Read on every listing rather than cached: an edit to settings.json takes effect at once. */
@@ -4001,6 +4021,8 @@ function reconcileSshBoxes(
       },
     ]);
     const disposeAdapter = ctx.llm.registerAdapter([adapter.providerId], adapter);
+    adapter.registration = disposeAdapter;
+    probeLogin(adapter);
     mounts.set(providerId, { adapter, disposeAdapter, disposeDirectory });
     adapters.set(providerId, adapter);
     log("info", `ssh box "${box.name}" mounted as ${providerId} -> ${box.host}`);
@@ -4011,6 +4033,12 @@ function reconcileSshBoxes(
     void adapter.adoptHolds().catch((e) => log("warn", `hold adoption: ${errorText(e)}`));
   }
 }
+
+/** One `claude auth status` at mount, so the picker names a logged-out box before its first turn. */
+const probeLogin = (adapter: ClaudeCodeAdapter) =>
+  void accountIdentity(adapter.config.command, adapter.claudeHome, adapter.config.sshHost)
+    .then((who) => adapter.setLoggedIn(who.loggedIn))
+    .catch(() => {});
 
 export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Config>) {
   const adapter = new ClaudeCodeAdapter(ctx, config);
@@ -4023,7 +4051,8 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       settingsPath: [],
     },
   ]);
-  ctx.llm.registerAdapter([adapter.providerId], adapter);
+  adapter.registration = ctx.llm.registerAdapter([adapter.providerId], adapter);
+  probeLogin(adapter);
   // dsh drops a session's Agent out of `ctx.agents` after a few idle minutes; the controller's
   // resolveAgent() cold-resumes it, which is what a wake after a long idle needs.
   ctx.inject?.(["sessionController"], (host) => {
@@ -4147,6 +4176,8 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       command: adapter.config.command,
       sshHost: adapter.config.sshHost,
       instanceFor,
+      onLoginStatus: (id, loggedIn) =>
+        g[ADAPTER_CURRENT]?.get(id ?? adapter.providerId)?.setLoggedIn(loggedIn),
       turnRecords: adapter.turnBuffer,
       idle: {
         deadlineFor: (session: string) => adapter.idleDeadlineMap.get(session) ?? null,

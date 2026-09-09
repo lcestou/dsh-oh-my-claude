@@ -230,7 +230,7 @@ The plugin runs Claude Code as a child process of dsh, so everything is on the m
 
 - **Binary**: `claude` from that process's `PATH`. No path setting; put it on the PATH of the user running dsh.
 - **Config dir**: the plugin's `configDir` if set, else `$CLAUDE_CONFIG_DIR` if set for the dsh process, otherwise `~/.claude` of that user. Transcripts (`projects/`), `settings.json` and the login token all live there, the same place a terminal `claude` on that machine uses.
-- **Login**: done once, in a terminal on that machine, with `claude auth login`. The panel's first line shows which binary, which config dir, which host and which account dsh sees; if it says not logged in, that is the fix.
+- **Login**: done once, in a terminal on that machine, with `claude auth login`. The panel's first line shows which binary, which config dir, which host and which account dsh sees; if it says not logged in, that is the fix. The model picker says so too: a mount whose claude has no login is listed as `<name> (not logged in)`, from one `claude auth status` at mount and from every probe the panel runs after that. The models stay listed, so a session already on that box can still show the error a turn produces.
 
 **Several accounts.** Mount the plugin more than once in the profile's `cordis.patch.yml`, with the same `name: dsh-oh-my-claude`, distinct `id` values, each with its own `configDir` and a `providerId` starting with `claude-code-`:
 

@@ -177,6 +177,22 @@ const autoWorkAdapter = new ClaudeCodeAdapter(
 );
 assert.equal(autoWorkAdapter.displayName, "Oh My Claude (work)");
 assert.equal(workAdapter.settingsNs, "llm-claude-code-work");
+// A logged-out box carries the hint in its provider name and re-registers its route once per
+// change, so the picker learns it without a restart; a repeat of the same state is a no-op.
+{
+  const replaced: string[][] = [];
+  workAdapter.registration = { replace: (p) => void replaced.push(p) };
+  workAdapter.setLoggedIn(true);
+  assert.equal(workAdapter.providerInfo("claude-code-work").name, "Work");
+  assert.deepEqual(replaced, []);
+  workAdapter.setLoggedIn(false);
+  workAdapter.setLoggedIn(false);
+  assert.equal(workAdapter.providerInfo("claude-code-work").name, "Work (not logged in)");
+  assert.deepEqual(replaced, [["claude-code-work"]]);
+  workAdapter.setLoggedIn(true);
+  assert.equal(workAdapter.providerInfo("claude-code-work").name, "Work");
+  assert.equal(replaced.length, 2);
+}
 // state dir for non-default id nests under STATE_DIR/<providerId>; STATE_DIR itself is the
 // suite's tmp dir when DSH_OMC_STATE_DIR is set, the home path otherwise.
 assert.equal(
