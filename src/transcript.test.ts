@@ -159,6 +159,15 @@ assert.equal(firstResultContent.toolCallId, "t1");
 // SAFETY: transcript contains an assistant/message with two content blocks
 const assistantMsg = events.find((e) => e.type === "assistant/message");
 assert.ok(assistantMsg);
+// dsh 0.1.5's seed validator: turn, step and a stream array on every settled assistant message.
+for (const e of events)
+  if (e.type === "assistant/message")
+    assert.ok(
+      typeof e.data.turn === "number" &&
+        typeof e.data.step === "number" &&
+        Array.isArray(e.data.stream),
+      "assistant/message carries settlement fields",
+    );
 const assistantData = assistantMsg.data.message as { content: Array<{ arguments?: string }> };
 // SAFETY: content[1] exists for this transcript
 const secondContent = assistantData.content[1];
