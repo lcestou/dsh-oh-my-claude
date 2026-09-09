@@ -553,7 +553,14 @@ import type { InstructionFile } from "./instructions.js";
         message: { id: "m1", role: "assistant", content: [{ type: "text", text: "hello" }] },
       }),
   );
-  const run = async (opts: { inStore: boolean; persisted: boolean; archived: boolean }) => {
+  const run = async (opts: {
+    inStore: boolean;
+    persisted: boolean;
+    archived: boolean;
+    /** dsh's id for the persisted session when it differs from the transcript's. */
+    dshId?: string;
+  }) => {
+    const dshId = opts.dshId ?? id;
     let entered = false;
     const calls: string[] = [];
     const attached: { id: string; entered: boolean }[] = [];
@@ -565,7 +572,7 @@ import type { InstructionFile } from "./instructions.js";
       attachSession: async (sid: string) => void attached.push({ id: sid, entered }),
     };
     let state: { archivedSessionIds: string[] } = {
-      archivedSessionIds: opts.archived ? [id] : [],
+      archivedSessionIds: opts.archived ? [dshId] : [],
     };
     // SAFETY: partial fakes; the function reads only these members
     const ctx = {
@@ -583,7 +590,9 @@ import type { InstructionFile } from "./instructions.js";
         announce: () => void calls.push("announce"),
         flush: async () => void calls.push("flush"),
       },
-      sessionPersistence: { list: async () => (opts.persisted ? [{ header: { id, cwd } }] : []) },
+      sessionPersistence: {
+        list: async () => (opts.persisted ? [{ header: { id: dshId, cwd } }] : []),
+      },
     } as any;
     const registry = {
       get archivedSessionIds() {
@@ -595,7 +604,14 @@ import type { InstructionFile } from "./instructions.js";
       requireState: () => state,
       setState: async (next: { archivedSessionIds: string[] }) => void (state = next),
     } as any;
-    const out = await openTranscriptOnce(ctx, [dir], cwd, id, (x) => x, registry);
+    const out = await openTranscriptOnce(
+      ctx,
+      [dir],
+      cwd,
+      id,
+      (x) => (x === dshId ? id : x),
+      registry,
+    );
     return { out, calls, attached, state };
   };
 
@@ -619,6 +635,12 @@ import type { InstructionFile } from "./instructions.js";
   assert.equal(r.out.existed, true);
   assert.deepEqual(r.state.archivedSessionIds, []);
   assert.deepEqual(r.attached, [{ id, entered: false }]);
+  // A session the plugin started: the row carries the transcript's id, dsh knows its own. The
+  // attach must name dsh's, or dsh answers "session persistence holds no such session".
+  const dshId = "d5h00000-0000-4000-8000-000000000001";
+  r = await run({ inStore: false, persisted: true, archived: true, dshId });
+  assert.equal(r.out.id, dshId);
+  assert.deepEqual(r.attached, [{ id: dshId, entered: false }], "attached under dsh's id");
 }
 
 console.log("sessions ok");

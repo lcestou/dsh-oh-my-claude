@@ -928,13 +928,15 @@ export async function openTranscriptOnce(
   // shows "Show" in the archive but opens nowhere. Attach after the flush, since dsh validates
   // the stored header's cwd against the workspace path. Idempotent, so an already-open session
   // from before this ran is attached on its next Open.
-  const attach = async () => {
+  // `sessionId` is dsh's id for the session. A row's `id` is the transcript's, which differs
+  // for a session the plugin started (see `claudeIdOf`), and dsh knows only its own.
+  const attach = async (sessionId: string) => {
     if (!registry) return;
     const ws = (await registry.resolveByPath(cwd)) ?? (await registry.create(cwd));
-    await ws.attachSession(asSessionId(id));
+    await ws.attachSession(asSessionId(sessionId));
   };
   if (ctx.sessions.get(asSessionId(id))) {
-    await attach();
+    await attach(id);
     return { id, existed: true };
   }
   // Owned by id across every workspace, not just this `cwd`: an SSH-box session is stored under a
@@ -960,7 +962,7 @@ export async function openTranscriptOnce(
       });
     // Persisted but not in the store (a restart unloads it): the workspace list is the only way it
     // reaches the sidebar, and dsh reads its header from persistence, which lists it by now.
-    await attach();
+    await attach(owned.id);
     return { id: owned.id, existed: true };
   }
   // This PC: the archive lists only local transcripts, so an opened one is always here. An
@@ -980,7 +982,7 @@ export async function openTranscriptOnce(
     // While the session is still entered: dsh validates the attach against the live session's
     // header, and once `leave` runs it asks persistence instead, whose index does not list a
     // session flushed a moment ago ("session persistence holds no such session").
-    await attach();
+    await attach(id);
   } finally {
     leave();
   }
