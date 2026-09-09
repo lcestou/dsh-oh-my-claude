@@ -557,6 +557,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     };
     warnedNoSeam: boolean;
     loggedVersion: boolean;
+    /** Probe targets already written to resume.log, so the line lands once per binary, not per turn. */
+    probeTraced: Set<string>;
     sessionController?: SessionController;
     /** Masks secret env values in tool results; undefined when `redactSecrets` is off. */
     readonly redact: ((s: string) => string) | undefined;

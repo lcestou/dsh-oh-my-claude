@@ -1572,6 +1572,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   mcp?: { base: string; key: string };
   warnedNoSeam = false;
   loggedVersion = false;
+  /** Probe targets already written to resume.log, so the line lands once per binary, not per turn. */
+  probeTraced = new Set<string>();
   sessionController?: SessionController;
   /** Masks secret env values in tool results; undefined when `redactSecrets` is off. */
   readonly redact: ((s: string) => string) | undefined;
@@ -1880,6 +1882,16 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     if (!this.loggedVersion) {
       this.loggedVersion = true;
       this.log("info", `claude ${cli.version}, stdin input ${usesStdin(cli.flags) ? "on" : "off"}`);
+    }
+    // Which binary a turn was measured against, once per target. The plugin's logger goes to dsh's
+    // console, which nothing on a box keeps; resume.log is the plugin's own file and is where a
+    // "wrong flags for that box" report can be answered with evidence instead of a guess.
+    if (!this.probeTraced.has(targetHost ?? "")) {
+      this.probeTraced.add(targetHost ?? "");
+      void trace(
+        join(this.stateDir, "resume.log"),
+        `probe ${targetHost ?? "local"}: claude ${cli.version}, ${cli.flags?.size ?? "unknown"} flags, cwd ${cwd}`,
+      );
     }
     let session;
     const temporary = Boolean(options.sessionId) && this.temporary.has(options.sessionId ?? "");
@@ -3495,17 +3507,22 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       }
       if (tr.limitResetAt !== undefined && this.config.continueAfterLimit)
         this.armLimitWait(options.sessionId, tr.limitResetAt);
-      // The CLI refused a flag the probe credited it with. It exited on argv, before its first
-      // frame, so nothing streamed and the turn can simply run again without the flag — the same
-      // recovery a person would do by hand, minus the failed turn in the log.
-      if (outcome === undefined && !proc.idleKilled && !options.signal?.aborted)
-        if (this.dropRejectedFlag(proc, options)) outcome = "retry";
       if (outcome === "relayed") yield { type: "finish", reason: { kind: "tool-calls" } };
       else if (outcome === "parked") yield { type: "finish", reason: { kind: "stop" } };
       else if (outcome === "retry") {
         if (prep.session) await rememberStarted(prep.session.id, false);
       } else if (outcome === "finished") {
         if (prep.session) await rememberStarted(prep.session.id, true);
+      } else if (this.dropRejectedFlag(proc, options)) {
+        // Last branch of the chain: nothing above claimed the turn, so the process died under it.
+        // The CLI refused a flag the probe credited it with, exiting on argv before its first
+        // frame — nothing streamed, so running the turn again without that flag is a recovery, not
+        // a repeat. Placed here rather than under a test on `outcome` because "died under us" is
+        // exactly what reaching this branch means.
+        outcome = "retry";
+        // Same bookkeeping the stale-resume retry does: the CLI died on argv, so the session it was
+        // told to start does not exist and must not be remembered as started.
+        if (prep.session) await rememberStarted(prep.session.id, false);
       } else yield { type: "finish", reason: this.endReason(proc, options, proc.idleKilled) };
     } finally {
       this.clearIdle(options.sessionId);

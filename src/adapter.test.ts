@@ -750,6 +750,39 @@ assert.ok(!remoteProbe.flags.has("--forward-subagent-text"));
   assert.ok(blind?.has("--input-format") && blind?.has("--resume"));
 }
 
+// A turn whose CLI died on a flag it does not have: the adapter takes the flag out of every later
+// spawn for that binary and asks for one retry, and refuses to ask twice for the same flag.
+{
+  const a = new ClaudeCodeAdapter(
+    fakeCtx({ on() {} }),
+    new Config({ providerId: "claude-code-flagtest", command: "claude-flagtest" }),
+  );
+  const died = fakeProc({
+    stderr: "error: unknown option '--forward-subagent-text'\n",
+    stray: "",
+  });
+  assert.equal(a.dropRejectedFlag(died, { sessionId: "s1" } as never), true);
+  assert.equal(a.dropRejectedFlag(died, { sessionId: "s1" } as never), false, "no retry loop");
+  // The denial reaches the flag set the next spawn is built from.
+  const probe = await probeCli(
+    ((_cmd, args, _opts, cb) =>
+      cb(
+        null,
+        String(args.at(-1) ?? "").includes("--help")
+          ? "Usage\n --input-format <f>\n --forward-subagent-text\n"
+          : "2.0.0 (Claude Code)\n",
+      )) as ExecLike,
+    "claude-flagtest",
+  );
+  assert.ok(!probe.flags?.has("--forward-subagent-text"));
+  assert.ok(probe.flags?.has("--input-format"));
+  // A turn that died for any other reason is not a flag problem and must not ask for a retry.
+  assert.equal(
+    a.dropRejectedFlag(fakeProc({ stderr: "Killed", stray: "" }), { sessionId: "s1" } as never),
+    false,
+  );
+}
+
 const soon = Math.floor(Date.now() / 1000) + 120;
 {
   // A rejected limit does not end the turn: the CLI's own synthetic message follows and is
