@@ -1,7 +1,7 @@
 import type { Spawner, SubprocessHandle, ContextUsage, WorkspaceDiff, McpServerStatus, CliModel } from "./process.js";
 import { LlmAdapter, type ContentBlock, type GenerateOptions, type LlmModelInfo, type LlmResolvedModelInfo, type StreamChunk } from "@deepseek-ai/dsh-llm";
 import z from "@deepseek-ai/schemastery";
-import { type PickerSettings } from "./sessions.js";
+import { type PickerSettings, type RemoteWorkspace } from "./sessions.js";
 import { readUsage } from "./usage.js";
 import { type ClaudeEvent, ClaudeProcess } from "./process.js";
 import type { Agent, ImageAttachmentRef, JsonValue, PluginContext, SessionController, SessionId, SubprocessRuntime } from "./dsh.js";
@@ -14,12 +14,21 @@ import { Translator } from "./translator.js";
 export { Translator, type TranslatorBlock } from "./translator.js";
 import type { FinishReason } from "@deepseek-ai/dsh-llm";
 import type { ClaudeProcessSpec, RelayEvent, RelayResult, TurnPrep } from "./process.js";
+/** Replace the redirect map: the boot read and every panel edit land here. Exported so the offline
+ * suite can drive the two lookups below without a dsh mount. */
+export declare function setRemoteWorkspaces(workspaces: RemoteWorkspace[]): void;
+/** The real remote path for a placeholder workspace on `host`, or `cwd` unchanged. */
+export declare function remoteCwdFor(host: string, cwd: string): string;
 /** The box a turn runs on: this instance's own host when it has one, else the box a remote-workspace
  * cwd belongs to. The choice is by truthiness because `sshHost` defaults to `""`, not undefined —
  * `??` treats that empty string as an answer, which is how a local provider's turn came to probe the
  * local binary for flags while its spawn ran on the box (2026-09-09: `--forward-subagent-text`, a
  * flag this box's CLI has and the box's 2.1.123 does not). */
 export declare const boxFor: (sshHost: string | undefined, workspaceHost: string | undefined) => string | undefined;
+/** The remote workspace whose local placeholder is `cwd`, if any. A session opened on this cwd must
+ * run over SSH on that box regardless of the provider chosen, so a local provider does not sit in the
+ * empty placeholder dir. */
+export declare function remoteWorkspaceFor(cwd: string): RemoteWorkspace | undefined;
 /** A dsh request that belongs to a session; everything on the persistent path has one. */
 type SessionOptions = GenerateOptions & {
     sessionId: SessionId;

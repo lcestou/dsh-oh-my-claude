@@ -159,8 +159,13 @@ import type { ClaudeProcessSpec, RelayEvent, RelayResult, TurnPrep } from "./pro
 /** Live placeholder→remote map for remote workspaces, shared by every box's ssh spawner. Loaded at
  * boot and replaced whenever the panel edits the list, so a redirect applies without a dsh restart. */
 let remoteWorkspaces: RemoteWorkspace[] = [];
+/** Replace the redirect map: the boot read and every panel edit land here. Exported so the offline
+ * suite can drive the two lookups below without a dsh mount. */
+export function setRemoteWorkspaces(workspaces: RemoteWorkspace[]): void {
+  remoteWorkspaces = workspaces;
+}
 /** The real remote path for a placeholder workspace on `host`, or `cwd` unchanged. */
-function remoteCwdFor(host: string, cwd: string): string {
+export function remoteCwdFor(host: string, cwd: string): string {
   return remoteWorkspaces.find((w) => w.host === host && w.path === cwd)?.remoteCwd ?? cwd;
 }
 /** The box a turn runs on: this instance's own host when it has one, else the box a remote-workspace
@@ -174,7 +179,7 @@ export const boxFor = (sshHost: string | undefined, workspaceHost: string | unde
 /** The remote workspace whose local placeholder is `cwd`, if any. A session opened on this cwd must
  * run over SSH on that box regardless of the provider chosen, so a local provider does not sit in the
  * empty placeholder dir. */
-function remoteWorkspaceFor(cwd: string): RemoteWorkspace | undefined {
+export function remoteWorkspaceFor(cwd: string): RemoteWorkspace | undefined {
   return remoteWorkspaces.find((w) => w.path === cwd);
 }
 
@@ -4308,9 +4313,7 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
           adapter.log(level, msg),
         ),
       remoteWorkspacesPath: join(STATE_DIR, "remote-workspaces.json"),
-      onRemoteWorkspaces: (workspaces) => {
-        remoteWorkspaces = workspaces;
-      },
+      onRemoteWorkspaces: setRemoteWorkspaces,
       command: adapter.config.command,
       sshHost: adapter.config.sshHost,
       instanceFor,
@@ -4365,9 +4368,7 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       .catch((e) => adapter.log("warn", `ssh boxes: ${errorText(e)}`));
     // Load the remote-workspace redirects so a box session lands in its real remote path at boot.
     void readRemoteWorkspaces(join(STATE_DIR, "remote-workspaces.json"))
-      .then((ws) => {
-        remoteWorkspaces = ws;
-      })
+      .then(setRemoteWorkspaces)
       .catch((e) => adapter.log("warn", `remote workspaces: ${errorText(e)}`));
   }
 }

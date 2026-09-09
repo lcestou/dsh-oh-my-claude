@@ -17,6 +17,9 @@ import {
   isStaleResume,
   probeCli,
   boxFor,
+  remoteCwdFor,
+  remoteWorkspaceFor,
+  setRemoteWorkspaces,
   type ExecLike,
   denyCliFlag,
   unknownFlagIn,
@@ -694,6 +697,40 @@ assert.equal(boxFor("", "lilly"), "lilly");
 assert.equal(boxFor(undefined, "lilly"), "lilly");
 assert.equal(boxFor("nova", "lilly"), "nova", "this instance's own box wins");
 assert.equal(boxFor("", undefined), undefined, "a local turn in a local workspace stays local");
+
+// The other half of the same choice: which path the turn runs in. A remote workspace's dsh cwd is
+// an empty local placeholder, so a spawn that kept it would land the far claude in a directory with
+// nothing in it. The redirect is by host and path together, so two boxes may hold placeholders for
+// the same path without one answering for the other.
+{
+  setRemoteWorkspaces([
+    {
+      name: "app",
+      host: "lilly",
+      remoteCwd: "/home/lilly/projects/app",
+      path: "/state/remote-workspaces/lilly__app",
+      workspaceId: "w-1",
+    },
+  ]);
+  assert.equal(
+    remoteCwdFor("lilly", "/state/remote-workspaces/lilly__app"),
+    "/home/lilly/projects/app",
+    "the placeholder becomes the real remote path",
+  );
+  assert.equal(
+    remoteCwdFor("nova", "/state/remote-workspaces/lilly__app"),
+    "/state/remote-workspaces/lilly__app",
+    "another box does not inherit this box's redirect",
+  );
+  assert.equal(remoteCwdFor("lilly", "/home/me/work"), "/home/me/work", "an ordinary cwd is kept");
+  assert.equal(
+    remoteWorkspaceFor("/state/remote-workspaces/lilly__app")?.host,
+    "lilly",
+    "a local provider still sends this cwd's turn to the box",
+  );
+  assert.equal(remoteWorkspaceFor("/home/me/work"), undefined);
+  setRemoteWorkspaces([]);
+}
 
 // A remote target probes the box's own claude over ssh, so an older remote binary is handed only the
 // flags it actually has and never a flag it would exit 1 on (e.g. --forward-subagent-text).
