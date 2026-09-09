@@ -12,6 +12,9 @@ import {
   writeSshToken,
 } from "./ssh-login.js";
 
+/** A whole minted token: the ~100-char shape the store and the capture both insist on. */
+const FULL = `sk-ant-oat01-${"A_b9".repeat(20)}`;
+
 /** A stand-in for a child process: stdout/stderr emit data, stdin records writes, exit is driven. */
 function fakeChild() {
   const child = new EventEmitter() as any;
@@ -30,8 +33,13 @@ function fakeChild() {
 {
   const dir = mkdtempSync(join(tmpdir(), "omc-tok-"));
   assert.equal(readSshToken(dir, "nova"), undefined);
-  writeSshToken(dir, "nova", "sk-ant-oat01-abc");
-  assert.equal(readSshToken(dir, "nova"), "sk-ant-oat01-abc");
+  writeSshToken(dir, "nova", FULL);
+  assert.equal(readSshToken(dir, "nova"), FULL);
+  // A truncated file — what a chunk-boundary capture used to store — reads as no login at all,
+  // rather than being injected into the box's env and failing there with a 401.
+  writeSshToken(dir, "nova", "sk-ant-oat01-P");
+  assert.equal(readSshToken(dir, "nova"), undefined);
+  writeSshToken(dir, "nova", FULL);
   deleteSshToken(dir, "nova");
   assert.equal(readSshToken(dir, "nova"), undefined);
   rmSync(dir, { recursive: true, force: true });
@@ -71,11 +79,11 @@ function fakeChild() {
 
   // A clean code is typed; the token is parsed once the process prints it and exits.
   const submit = submitSshLoginCode("nova", "  thecode123  ", 2000);
-  child.stdout.emit("data", Buffer.from("\n✓ created\nsk-ant-oat01-THE_token-01AAA\n"));
-  child.emit("exit", 0);
+  child.stdout.emit("data", Buffer.from(`\n✓ created\n${FULL}\n`));
+  child.emit("close", 0);
   const res = await submit;
   assert.equal(res.done, true);
-  assert.equal(res.token, "sk-ant-oat01-THE_token-01AAA");
+  assert.equal(res.token, FULL);
   assert.ok(child.written.includes("thecode123"));
   // The carriage-return submit lands after the type (the Ink prompt ignores a bare newline).
   await new Promise((r) => setTimeout(r, 650));
@@ -99,10 +107,37 @@ function fakeChild() {
   await startSshLogin("box2", spawnFn, 2000);
   const submit = submitSshLoginCode("box2", "code", 2000);
   child.stdout.emit("data", Buffer.from("Failed to exchange authorization code\n"));
-  child.emit("exit", 1);
+  child.emit("close", 1);
   const res = await submit;
   assert.equal(res.done, false);
   assert.match(res.error ?? "", /Failed to exchange/);
+}
+
+// The token split across chunks with `exit` in between: exit is not the end of stdout, so the half
+// that arrived first must not be stored as the login. The whole token lands once the stream closes.
+{
+  let child: any;
+  const spawnFn = (() => {
+    child = fakeChild();
+    setTimeout(
+      () => child.stdout.emit("data", Buffer.from("go to https://claude.com/y?state=q\n")),
+      5,
+    );
+    return child;
+  }) as any;
+  await startSshLogin("box3", spawnFn, 2000);
+  const submit = submitSshLoginCode("box3", "code", 3000);
+  // A cut long enough that the first half is itself token-shaped: the length floor cannot save
+  // this one, only waiting for the stream to close can.
+  const cut = 60;
+  child.stdout.emit("data", Buffer.from(`\n✓ created\n${FULL.slice(0, cut)}`));
+  child.emit("exit", 0);
+  await new Promise((r) => setTimeout(r, 400));
+  child.stdout.emit("data", Buffer.from(`${FULL.slice(cut)}\n`));
+  child.emit("close", 0);
+  const res = await submit;
+  assert.equal(res.done, true);
+  assert.equal(res.token, FULL);
 }
 
 // A login that never prints a URL times out with the last line as the reason, not a hang.
