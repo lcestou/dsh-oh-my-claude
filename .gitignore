@@ -6,3 +6,10 @@ node_modules
 
 # dsh drops pasted files here per session
 .dsh-filess/
+
+# owner working notes, not part of the repo: agent instructions, agent state,
+# the ranked queue and the surveys behind it. README images stay tracked.
+CLAUDE.md
+.claude/
+docs/*
+!docs/media/

@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <sub>Built with AI assistance, and open to more. Contributions from AI coding agents are welcome; start with <a href="CLAUDE.md">CLAUDE.md</a> and the ranked <a href="docs/queue.md">docs/queue.md</a>.</sub>
+  <sub>Built with AI assistance, and open to more. Contributions from AI coding agents are welcome; start with the Developing section below.</sub>
 </p>
 
 ---
@@ -168,7 +168,7 @@ With `spawn: node` or `dsh`, a dsh restart kills every Claude Code child. Sessio
 
 **Streaming.** Text and thinking arrive as live deltas. Claude Code's own tool calls render as dsh's native tool rows: the adapter appends `tool/call` and `tool/result` session events inside the open step, the same shape dsh's loop writes for its own tools, so `Bash`, `Read`, `Edit`, `Write`, `Grep`, `Glob`, `WebFetch` and `WebSearch` get the bash, read, edit, write and search presenters (Bash shows its description, Edit shows the +/- badge from `meta.diffs`), and every other tool gets the generic row under its own name. dsh never runs those tools; Claude Code does, under the configured permission mode. Note that Fable-class models return thinking blocks with an empty body, so no reasoning text appears for them; local and Sonnet-class models stream theirs.
 
-**Turn status.** While a turn runs on a session this plugin drives, the status row under the last message takes Claude Code's look instead of dsh's blue `Deep diving...`: a spinner glyph played through Claude's own frames, a verb picked per turn from the CLI's list (`settings.json` `spinnerVerbs` is honoured, `append` or `replace`), Claude orange, the elapsed clock kept. The row has no slot, so the client restyles it through a DOM watcher (`watchTurnStatus`), only when the session's provider is `claude-code`. Verbs, frames and colours: `docs/claude-spinner.md`. The same Claude orange tints the running dot beside each session in the sidebar under Workspaces, but only for Claude sessions: a second watcher (`watchSessionSpinners`) colours the matrix dot for sessions whose provider is `claude-code`, matched by their title in the row, and leaves any other provider's dot dsh's default. A session that changes to another provider mid-flight loses the tint.
+**Turn status.** While a turn runs on a session this plugin drives, the status row under the last message takes Claude Code's look instead of dsh's blue `Deep diving...`: a spinner glyph played through Claude's own frames, a verb picked per turn from the CLI's list (`settings.json` `spinnerVerbs` is honoured, `append` or `replace`), Claude orange, the elapsed clock kept. The row has no slot, so the client restyles it through a DOM watcher (`watchTurnStatus`), only when the session's provider is `claude-code`. The same Claude orange tints the running dot beside each session in the sidebar under Workspaces, but only for Claude sessions: a second watcher (`watchSessionSpinners`) colours the matrix dot for sessions whose provider is `claude-code`, matched by their title in the row, and leaves any other provider's dot dsh's default. A session that changes to another provider mid-flight loses the tint.
 
 **Compaction.** The CLI announces compaction with a `compacting` frame, goes silent while it summarises, then emits the boundary; both ends show in the reasoning lane, and a failed compaction is reported.
 
@@ -284,4 +284,4 @@ Lint, format check, typecheck, the offline self-checks (`src/adapter.test.ts`, `
 
 ## Roadmap
 
-`docs/queue.md` is the owner-ranked list of what comes next, with enough detail to start each item cold; `docs/research/` holds the 2026-09-05 and 2026-09-06 surveys it was ranked from; `docs/landscape.md` places the plugin against the other dsh Claude providers. The package stays private for now.
+What comes next is tracked in the owner's working notes, which are not part of this repository. The package stays private for now.
