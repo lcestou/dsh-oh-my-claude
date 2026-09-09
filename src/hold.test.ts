@@ -266,6 +266,16 @@ const tick = () => new Promise((r) => setTimeout(r, 5));
     start.stdin.end();
     assert.equal((await start.done).exitCode, 0, "start script exits 0");
     assert.match(startOut, new RegExp(`^${READY} \\d+\\n$`), "start answers READY and the pid");
+    // The leader outlives this process by design (that is the hold). Whatever the assertions below
+    // do, it and its fake cli are ended here, by the pgid the start script made it the leader of.
+    const leader = Number(startOut.trim().split(" ")[1]);
+    process.on("exit", () => {
+      try {
+        process.kill(-leader, "SIGTERM");
+      } catch {
+        // already gone: the happy path ends it through "quit"
+      }
+    });
     const dir = join(home, ".local", "state", "dsh-oh-my-claude", "hold", name);
     assert.ok(existsSync(join(dir, "in")) && existsSync(join(dir, "pid")), "far dir is laid out");
     // First attach: write, read, drop the ssh; second attach from the offset sees only what is new.
