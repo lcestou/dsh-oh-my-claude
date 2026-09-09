@@ -946,6 +946,47 @@ export function permissionModeFor(
 // process and anything missing is left out. Unknown = assume supported (probe failed, older CLI).
 
 const cliProbes = new Map<string, Promise<{ flags: Set<string> | null; version: string }>>();
+/** Flags a target's binary rejected at runtime, per probe key. A probe can be wrong — a box's CLI
+ * updates under us, `--help` comes back empty over a stalled ssh and every flag then reads as
+ * supported — and the CLI's answer to a flag it does not have is exit 1 before the first frame. What
+ * it printed is better evidence than the probe, so it is remembered and the flag is never sent to
+ * that binary again. */
+const deniedFlags = new Map<string, Set<string>>();
+/** Every flag buildArgs guards with supports(). An unprobed binary is assumed to have all of them;
+ * this list is what "all of them" means once one has to be taken away. */
+const GUARDED_FLAGS = [
+  "--input-format",
+  "--include-partial-messages",
+  "--forward-subagent-text",
+  "--include-hook-events",
+  "--effort",
+  "--settings",
+  "--append-system-prompt",
+  "--no-session-persistence",
+  "--permission-mode",
+  "--permission-prompt-tool",
+  "--tools",
+  "--plugin-dir",
+  "--plugin-url",
+  "--max-budget-usd",
+  "--session-id",
+  "--resume",
+  "--mcp-config",
+];
+/** The flag in `error: unknown option '--x'`, however the CLI wrapped the line. */
+export function unknownFlagIn(text: string): string | undefined {
+  return /unknown option '(--[a-zA-Z][\w-]*)'/.exec(text)?.[1];
+}
+/** Record a flag the target's CLI refused. False when it was already known bad, which is what stops
+ * a retry loop: the second refusal of the same flag is a real failure, not something to retry. */
+export function denyCliFlag(command: string, host: string | undefined, flag: string): boolean {
+  const key = `${host ?? ""}::${command}`;
+  const set = deniedFlags.get(key) ?? new Set<string>();
+  if (set.has(flag)) return false;
+  set.add(flag);
+  deniedFlags.set(key, set);
+  return true;
+}
 /** The slice of node's execFile the probe uses; tests hand in a fake with this shape. */
 export type ExecLike = (
   cmd: string,
@@ -974,11 +1015,22 @@ export function probeCli(exec: ExecLike = execFile as ExecLike, command = "claud
         });
       const [help, version] = await Promise.all([run(["--help"]), run(["--version"])]);
       const flags = new Set(help.match(/--[a-zA-Z-]+/g) ?? []);
+      // A probe that answered nothing is not an answer. Dropping it from the cache costs one more
+      // `--help` next turn and keeps a single stalled ssh from deciding this box's flags for the
+      // life of the process.
+      if (flags.size === 0) cliProbes.delete(key);
       return { flags: flags.size > 0 ? flags : null, version: version.trim() || "unknown" };
     })();
     cliProbes.set(key, probe);
   }
-  return probe;
+  return probe.then(({ flags, version }) => {
+    const bad = deniedFlags.get(key);
+    if (!bad?.size) return { flags, version };
+    // Unknown flags mean "assume everything", so a denial has to be subtracted from the full list
+    // rather than from nothing.
+    const base = flags ?? new Set(GUARDED_FLAGS);
+    return { flags: new Set([...base].filter((f) => !bad.has(f))), version };
+  });
 }
 
 /**
@@ -3077,6 +3129,18 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     return true;
   }
 
+  /** Take a flag the target's CLI rejected out of every later spawn for that binary. True when this
+   * is the first refusal of that flag, which is the only time a retry can help: the box the turn
+   * ran on is the one whose probe was wrong, so the denial is recorded against that box. */
+  dropRejectedFlag(proc: ClaudeProcess, options: SessionOptions): boolean {
+    const flag = unknownFlagIn(`${proc.stderr}\n${proc.stray}`);
+    if (!flag) return false;
+    const host = this.hostLabelFor(options.sessionId);
+    if (!denyCliFlag(this.config.command, host, flag)) return false;
+    this.log("warn", `claude on ${host ?? hostname()} rejected ${flag}; dropping it and retrying`);
+    return true;
+  }
+
   /** Why a turn that neither finished nor parked ended. */
   // SAFETY: returns FinishReason shape for the adapter loop
   endReason(proc: ClaudeProcess, options: SessionOptions, idle: boolean): FinishReason {
@@ -3431,6 +3495,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       }
       if (tr.limitResetAt !== undefined && this.config.continueAfterLimit)
         this.armLimitWait(options.sessionId, tr.limitResetAt);
+      // The CLI refused a flag the probe credited it with. It exited on argv, before its first
+      // frame, so nothing streamed and the turn can simply run again without the flag — the same
+      // recovery a person would do by hand, minus the failed turn in the log.
+      if (outcome === undefined && !proc.idleKilled && !options.signal?.aborted)
+        if (this.dropRejectedFlag(proc, options)) outcome = "retry";
       if (outcome === "relayed") yield { type: "finish", reason: { kind: "tool-calls" } };
       else if (outcome === "parked") yield { type: "finish", reason: { kind: "stop" } };
       else if (outcome === "retry") {

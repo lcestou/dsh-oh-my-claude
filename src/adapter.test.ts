@@ -15,6 +15,9 @@ import {
   permissionModeFor,
   isStaleResume,
   probeCli,
+  type ExecLike,
+  denyCliFlag,
+  unknownFlagIn,
   supports,
   usesStdin,
   buildInput,
@@ -702,6 +705,50 @@ assert.equal(remoteProbe.version, "1.0.0 (Claude Code)");
 assert(remoteProbe.flags);
 assert.ok(remoteProbe.flags.has("--input-format"));
 assert.ok(!remoteProbe.flags.has("--forward-subagent-text"));
+
+// A probe can be wrong — a box updates its CLI, or `--help` comes back empty over a stalled ssh and
+// every flag reads as supported. What the binary printed when it refused a flag outranks the probe.
+{
+  assert.equal(
+    unknownFlagIn("error: unknown option '--forward-subagent-text'"),
+    "--forward-subagent-text",
+  );
+  assert.equal(unknownFlagIn("claude exited 1: no output"), undefined);
+
+  let helps = 0;
+  const helpful = (help: string): ExecLike =>
+    ((_cmd, args, _opts, cb) => {
+      const line = String(args.at(-1) ?? "");
+      if (line.includes("--help")) helps++;
+      cb(null, line.includes("--help") ? help : "1.0.0 (Claude Code)\n");
+    }) as ExecLike;
+
+  // A binary that refuses a flag never sees it again, even though `--help` still lists it.
+  const listed = "Usage\n --input-format <f>\n --forward-subagent-text\n";
+  assert.ok(
+    (await probeCli(helpful(listed), "claude", "vega")).flags?.has("--forward-subagent-text"),
+  );
+  assert.equal(denyCliFlag("claude", "vega", "--forward-subagent-text"), true);
+  // A second refusal of the same flag is not something to retry, so it answers false.
+  assert.equal(denyCliFlag("claude", "vega", "--forward-subagent-text"), false);
+  const after = (await probeCli(helpful(listed), "claude", "vega")).flags;
+  assert.ok(!after?.has("--forward-subagent-text"));
+  assert.ok(after?.has("--input-format"), "only the refused flag is dropped");
+
+  // A probe that answered nothing is not cached: the next turn asks again rather than living with
+  // one stalled ssh for the life of the process.
+  helps = 0;
+  assert.equal((await probeCli(helpful(""), "claude", "rigel")).flags, null);
+  await probeCli(helpful(""), "claude", "rigel");
+  assert.equal(helps, 2, "an empty --help is re-probed");
+
+  // With no probe at all every flag reads as supported, so a denial has to subtract from the full
+  // guarded list rather than from nothing.
+  assert.equal(denyCliFlag("claude", "rigel", "--effort"), true);
+  const blind = (await probeCli(helpful(""), "claude", "rigel")).flags;
+  assert.ok(!blind?.has("--effort"));
+  assert.ok(blind?.has("--input-format") && blind?.has("--resume"));
+}
 
 const soon = Math.floor(Date.now() / 1000) + 120;
 {

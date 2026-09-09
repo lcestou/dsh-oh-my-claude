@@ -344,6 +344,11 @@ type LoadedImage = {
 export declare function accessModeOf(messages: LooseMessage[] | undefined): string | undefined;
 /** The CLI's permission mode for a turn: the configured one, or the one dsh's access mode maps to. */
 export declare function permissionModeFor(config: Schemastery.TypeT<typeof Config>, accessMode: string | undefined): string;
+/** The flag in `error: unknown option '--x'`, however the CLI wrapped the line. */
+export declare function unknownFlagIn(text: string): string | undefined;
+/** Record a flag the target's CLI refused. False when it was already known bad, which is what stops
+ * a retry loop: the second refusal of the same flag is a real failure, not something to retry. */
+export declare function denyCliFlag(command: string, host: string | undefined, flag: string): boolean;
 /** The slice of node's execFile the probe uses; tests hand in a fake with this shape. */
 export type ExecLike = (cmd: string, args: string[], opts: {
     timeout: number;
@@ -868,6 +873,10 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     clearIdle(key: string): void;
     /** Push a stream's deadline out by one full timeout; false when nothing is armed under `key`. */
     extendIdle(key: string): boolean;
+    /** Take a flag the target's CLI rejected out of every later spawn for that binary. True when this
+     * is the first refusal of that flag, which is the only time a retry can help: the box the turn
+     * ran on is the one whose probe was wrong, so the denial is recorded against that box. */
+    dropRejectedFlag(proc: ClaudeProcess, options: SessionOptions): boolean;
     /** Why a turn that neither finished nor parked ended. */
     endReason(proc: ClaudeProcess, options: SessionOptions, idle: boolean): FinishReason;
     turn(options: SessionOptions, forceFresh?: boolean): AsyncGenerator<StreamChunk>;
