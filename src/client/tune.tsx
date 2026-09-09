@@ -215,6 +215,62 @@ type Apply = (
   mutate: (text: string) => { text: string; error?: undefined } | { error: string },
 ) => Promise<string | undefined>;
 
+/**
+ * A destructive button that asks before it acts. The first click arms it and the label becomes
+ * "Sure?"; the second click within five seconds runs `onAct`, and anything slower disarms it. No
+ * dialog: these rows are dense and a modal over a list of plugins costs more than the mistake it
+ * prevents — the point is only that Remove is never one stray click away from uninstalling.
+ * Shared by every remove in the plugin's UI: plugins, marketplaces, MCP servers, boxes, remote
+ * workspaces, permission rules and the saved opener.
+ */
+export function ConfirmButton({
+  label,
+  ariaLabel,
+  onAct,
+  style,
+  disabled,
+  busyLabel,
+}: {
+  label: string;
+  /** Accessible name when the visible label is shared by many rows ("Remove <rule>"). */
+  ariaLabel?: string;
+  onAct: () => void;
+  style: CSSProperties;
+  disabled: boolean;
+  busyLabel?: string;
+}) {
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    if (!armed) return;
+    const t = setTimeout(() => setArmed(false), 5000);
+    return () => clearTimeout(t);
+  }, [armed]);
+  if (busyLabel !== undefined)
+    return (
+      <button type="button" style={style} disabled>
+        {busyLabel}
+      </button>
+    );
+  return (
+    <button
+      type="button"
+      style={armed ? { ...style, color: T.err, borderColor: T.err } : style}
+      disabled={disabled}
+      aria-label={armed ? `Confirm ${ariaLabel ?? label}` : (ariaLabel ?? label)}
+      onClick={() => {
+        if (!armed) {
+          setArmed(true);
+          return;
+        }
+        setArmed(false);
+        onAct();
+      }}
+    >
+      {armed ? "Sure?" : label}
+    </button>
+  );
+}
+
 /** Live thinking-budget tiers the selector offers, matching Claude Code's own keyword steps. null
  *  keeps the session default; 0 turns extended thinking off. Set live, not saved to settings.json. */
 const THINKING_PRESETS: Array<{ label: string; tokens: number | null }> = [
@@ -967,15 +1023,13 @@ function PermissionsBlock({
           {rules[k].map((rule) => (
             <div key={rule} style={ruleRow}>
               <span style={{ flex: 1, wordBreak: "break-all", fontFamily: T.mono }}>{rule}</span>
-              <button
-                type="button"
-                aria-label={`Remove ${rule}`}
-                onClick={() => void change("remove", k, rule)}
+              <ConfirmButton
+                label="Remove"
+                ariaLabel={`Remove ${rule}`}
+                onAct={() => void change("remove", k, rule)}
                 disabled={busy}
                 style={small}
-              >
-                Remove
-              </button>
+              />
             </div>
           ))}
         </div>

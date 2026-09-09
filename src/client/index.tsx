@@ -57,6 +57,7 @@ import {
 } from "./shared.js";
 import { Spark, sparkNode } from "./spark.js";
 import { AccessShield, OhMyClaudeControl } from "./panel.js";
+import { ConfirmButton } from "./tune.js";
 import { markTitle, newlyWaiting, noticesOn, type NoticeSnapshot } from "./notices.js";
 import { SETTINGS_SCOPES, SCOPE_LABELS, overrideNote } from "./settings.js";
 import type { SettingsScope, SettingsScopeInfo } from "./settings.js";
@@ -1729,9 +1730,12 @@ function Boxes({ boxes, setBoxes, open, onToggle }: BoxesProps) {
                 </div>
               )}
             </div>
-            <button type="button" style={btn} disabled={busy} onClick={() => removeSsh(b.host)}>
-              Remove
-            </button>
+            <ConfirmButton
+              label="Remove"
+              style={btn}
+              disabled={busy}
+              onAct={() => removeSsh(b.host)}
+            />
           </div>
         );
       })}
@@ -1785,9 +1789,12 @@ function Boxes({ boxes, setBoxes, open, onToggle }: BoxesProps) {
             >
               Edit settings
             </button>
-            <button type="button" style={btn} disabled={busy} onClick={() => removeDsh(b.url)}>
-              Remove
-            </button>
+            <ConfirmButton
+              label="Remove"
+              style={btn}
+              disabled={busy}
+              onAct={() => removeDsh(b.url)}
+            />
             <button type="button" style={btnPrimary} onClick={() => jump(b)}>
               Open
             </button>
@@ -2080,9 +2087,12 @@ function Boxes({ boxes, setBoxes, open, onToggle }: BoxesProps) {
                 <span style={{ fontFamily: T.mono }}>{w.remoteCwd}</span>
               </div>
             </div>
-            <button type="button" style={btn} disabled={busy} onClick={() => removeRw(w.path)}>
-              Remove
-            </button>
+            <ConfirmButton
+              label="Remove"
+              style={btn}
+              disabled={busy}
+              onAct={() => removeRw(w.path)}
+            />
           </div>
         ))}
         {ssh.length === 0 ? (
@@ -3758,9 +3768,7 @@ function StarterCard({
           </button>
         )}
         {opener === "" ? null : (
-          <button type="button" style={chip} onClick={() => save("")} title="Forget this opener">
-            Forget
-          </button>
+          <ConfirmButton label="Forget" style={chip} disabled={false} onAct={() => save("")} />
         )}
       </div>
     </div>

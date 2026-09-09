@@ -32,7 +32,7 @@ import {
   maskEmail,
 } from "./shared.js";
 import { Spark } from "./spark.js";
-import { TuneBody } from "./tune.js";
+import { ConfirmButton, TuneBody } from "./tune.js";
 import { noticesOn, setNoticesOn } from "./notices.js";
 import type { FeatureSwitches } from "../switches.js";
 import type { PluginRoster } from "../plugins.js";
@@ -430,57 +430,6 @@ interface PluginMutationBody {
 
 /** Post one mutation; returns whether it succeeded so a form can clear itself. */
 type Act = (path: string, body: PluginMutationBody, id: string) => Promise<boolean>;
-
-/**
- * A destructive button that asks before it acts. The first click arms it and the label becomes
- * "Sure?"; the second click within five seconds runs `onAct`, and anything slower disarms it. No
- * dialog: these rows are dense and a modal over a list of plugins costs more than the mistake it
- * prevents — the point is only that Remove is never one stray click away from uninstalling.
- */
-function ConfirmButton({
-  label,
-  onAct,
-  style,
-  disabled,
-  busyLabel,
-}: {
-  label: string;
-  onAct: () => void;
-  style: CSSProperties;
-  disabled: boolean;
-  busyLabel?: string;
-}) {
-  const [armed, setArmed] = useState(false);
-  useEffect(() => {
-    if (!armed) return;
-    const t = setTimeout(() => setArmed(false), 5000);
-    return () => clearTimeout(t);
-  }, [armed]);
-  if (busyLabel !== undefined)
-    return (
-      <button type="button" style={style} disabled>
-        {busyLabel}
-      </button>
-    );
-  return (
-    <button
-      type="button"
-      style={armed ? { ...style, color: T.err, borderColor: T.err } : style}
-      disabled={disabled}
-      aria-label={armed ? `Confirm ${label}` : label}
-      onClick={() => {
-        if (!armed) {
-          setArmed(true);
-          return;
-        }
-        setArmed(false);
-        onAct();
-      }}
-    >
-      {armed ? "Sure?" : label}
-    </button>
-  );
-}
 
 /**
  * The plugins and marketplaces the session's settings turn on, under the CLAUDE.md files: the same
