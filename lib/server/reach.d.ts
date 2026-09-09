@@ -44,3 +44,35 @@ export interface TailscalePeer {
 export declare function tailscalePeers(text: string): TailscalePeer[];
 /** A peer that is already a saved box, by host, so the picker can say so instead of adding twice. */
 export declare const peerSaved: (peer: TailscalePeer, boxes: SshBox[]) => boolean;
+/** What `tailscale status --json` says about this node: whether it is on a tailnet, and who it is. */
+export interface TailscaleState {
+    /** `Running`, `NeedsLogin`, `Stopped`, `NoState`, or whatever the daemon says. */
+    state: string;
+    loggedIn: boolean;
+    self?: {
+        name: string;
+        host: string;
+        ip: string;
+    };
+    peers: TailscalePeer[];
+}
+export declare function tailscaleStatus(text: string): TailscaleState | undefined;
+/** The approval link `tailscale login` prints, once it does. */
+export declare const loginUrlIn: (text: string) => string | undefined;
+/** A WireGuard peer as the Boxes tab offers it: the tunnel address is the host. */
+export interface WireguardPeer {
+    iface: string;
+    /** The first allowed address without its mask: what ssh dials. */
+    host: string;
+    allowedIps: string[];
+    endpoint: string;
+    /** Seconds since the last handshake, or nothing when there has never been one. */
+    handshakeAge: number | null;
+}
+/**
+ * Peers from `wg show all dump`: tab-separated, interface lines with five fields, peer lines with
+ * nine (interface, public key, preshared key, endpoint, allowed ips, latest handshake, rx, tx,
+ * keepalive). The host is the peer's first single address (/32 or /128); a peer whose allowed
+ * ranges hold no single address is skipped, since there is no one host to dial in a range.
+ */
+export declare function wireguardPeers(dump: string, now?: number): WireguardPeer[];

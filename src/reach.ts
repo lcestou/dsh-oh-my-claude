@@ -131,3 +131,81 @@ export function tailscalePeers(text: string): TailscalePeer[] {
 /** A peer that is already a saved box, by host, so the picker can say so instead of adding twice. */
 export const peerSaved = (peer: TailscalePeer, boxes: SshBox[]): boolean =>
   boxes.some((b) => b.host === peer.host || b.host.endsWith(`@${peer.host}`));
+
+/** What `tailscale status --json` says about this node: whether it is on a tailnet, and who it is. */
+export interface TailscaleState {
+  /** `Running`, `NeedsLogin`, `Stopped`, `NoState`, or whatever the daemon says. */
+  state: string;
+  loggedIn: boolean;
+  self?: { name: string; host: string; ip: string };
+  peers: TailscalePeer[];
+}
+
+export function tailscaleStatus(text: string): TailscaleState | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== "object" || parsed === null) return undefined;
+  // SAFETY: tailscale's status document; each field is checked before use
+  const doc = parsed as { BackendState?: unknown; Self?: Record<string, unknown> };
+  const state = typeof doc.BackendState === "string" ? doc.BackendState : "NoState";
+  const out: TailscaleState = { state, loggedIn: state === "Running", peers: tailscalePeers(text) };
+  const me = doc.Self;
+  if (typeof me === "object" && me !== null) {
+    const name = typeof me.HostName === "string" ? me.HostName : "";
+    const dns = typeof me.DNSName === "string" ? me.DNSName.replace(/\.$/, "") : "";
+    const ips = Array.isArray(me.TailscaleIPs)
+      ? me.TailscaleIPs.filter((ip): ip is string => typeof ip === "string")
+      : [];
+    if (name) out.self = { name, host: dns || ips[0] || "", ip: ips[0] ?? "" };
+  }
+  return out;
+}
+
+/** The approval link `tailscale login` prints, once it does. */
+export const loginUrlIn = (text: string): string | undefined =>
+  /https:\/\/login\.tailscale\.com\/[A-Za-z0-9/_-]+/.exec(text)?.[0];
+
+/** A WireGuard peer as the Boxes tab offers it: the tunnel address is the host. */
+export interface WireguardPeer {
+  iface: string;
+  /** The first allowed address without its mask: what ssh dials. */
+  host: string;
+  allowedIps: string[];
+  endpoint: string;
+  /** Seconds since the last handshake, or nothing when there has never been one. */
+  handshakeAge: number | null;
+}
+
+/**
+ * Peers from `wg show all dump`: tab-separated, interface lines with five fields, peer lines with
+ * nine (interface, public key, preshared key, endpoint, allowed ips, latest handshake, rx, tx,
+ * keepalive). The host is the peer's first single address (/32 or /128); a peer whose allowed
+ * ranges hold no single address is skipped, since there is no one host to dial in a range.
+ */
+export function wireguardPeers(dump: string, now = Date.now()): WireguardPeer[] {
+  const peers: WireguardPeer[] = [];
+  for (const line of dump.split(/\r?\n/)) {
+    const f = line.split("\t");
+    if (f.length < 9) continue;
+    const iface = f[0] ?? "";
+    const allowedIps = (f[4] ?? "")
+      .split(",")
+      .map((x) => x.trim())
+      .filter((x) => x !== "");
+    const single = allowedIps.find((ip) => /\/(32|128)$/.test(ip));
+    if (!iface || !single) continue;
+    const handshake = Number(f[5]);
+    peers.push({
+      iface,
+      host: single.replace(/\/(32|128)$/, ""),
+      allowedIps,
+      endpoint: f[3] === "(none)" ? "" : (f[3] ?? ""),
+      handshakeAge: handshake > 0 ? Math.max(0, Math.round(now / 1000 - handshake)) : null,
+    });
+  }
+  return peers;
+}

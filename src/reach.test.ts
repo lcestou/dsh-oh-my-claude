@@ -1,6 +1,14 @@
 // Offline self-check: bun src/reach.test.ts. OpenSSH's own last lines, and a tailscale status document.
 import { strict as assert } from "node:assert";
-import { classifyReach, peerSaved, reachScript, tailscalePeers } from "./reach.js";
+import {
+  classifyReach,
+  loginUrlIn,
+  peerSaved,
+  reachScript,
+  tailscalePeers,
+  tailscaleStatus,
+  wireguardPeers,
+} from "./reach.js";
 
 // The strings are what OpenSSH 9.x prints; each is a different repair.
 const cases: Array<[number, string, string, string]> = [
@@ -81,5 +89,46 @@ assert.deepEqual(tailscalePeers('{"Peer":null}'), []);
 assert.equal(peerSaved(peers[0]!, [{ name: "L", host: "nova.tail1234.ts.net" }]), true);
 assert.equal(peerSaved(peers[0]!, [{ name: "L", host: "me@nova.tail1234.ts.net" }]), true);
 assert.equal(peerSaved(peers[0]!, [{ name: "L", host: "nova" }]), false);
+
+// The node's own state: NeedsLogin is not logged in, Running is, and self carries its tailnet name.
+const st = tailscaleStatus(JSON.stringify({ ...doc, BackendState: "NeedsLogin" }));
+assert.equal(st?.state, "NeedsLogin");
+assert.equal(st?.loggedIn, false);
+assert.deepEqual(st?.self, { name: "desk", host: "desk.tail1234.ts.net", ip: "100.64.0.1" });
+assert.equal(st?.peers.length, 3, "the peers ride along");
+assert.equal(tailscaleStatus(JSON.stringify({ ...doc, BackendState: "Running" }))?.loggedIn, true);
+assert.equal(tailscaleStatus("nope"), undefined);
+assert.equal(
+  loginUrlIn("To authenticate, visit:\n\n\thttps://login.tailscale.com/a/abc123DEF\n"),
+  "https://login.tailscale.com/a/abc123DEF",
+);
+assert.equal(loginUrlIn("Access denied: checkprefs access denied"), undefined);
+
+// A `wg show all dump`: the interface line is skipped, a peer's single allowed address is the
+// host, the handshake age is seconds from now, and a peer with only a range has no host to dial.
+const nowSec = 1_788_918_500;
+const dump = [
+  "wg0\tPRIV\tPUB\t51820\toff",
+  "wg0\tPEER1\t(none)\t192.168.1.79:51820\t10.77.0.2/32\t1788918456\t1234\t5678\t25",
+  "wg0\tPEER2\t(none)\t(none)\t10.77.1.0/24\t0\t0\t0\toff",
+  "wg1\tPEER3\t(none)\t1.2.3.4:51820\t10.9.0.7/32,10.9.1.0/24\t0\t0\t0\toff",
+].join("\n");
+assert.deepEqual(wireguardPeers(dump, nowSec * 1000), [
+  {
+    iface: "wg0",
+    host: "10.77.0.2",
+    allowedIps: ["10.77.0.2/32"],
+    endpoint: "192.168.1.79:51820",
+    handshakeAge: 44,
+  },
+  {
+    iface: "wg1",
+    host: "10.9.0.7",
+    allowedIps: ["10.9.0.7/32", "10.9.1.0/24"],
+    endpoint: "1.2.3.4:51820",
+    handshakeAge: null,
+  },
+]);
+assert.deepEqual(wireguardPeers(""), []);
 
 console.log("reach ok");

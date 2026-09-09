@@ -42,6 +42,8 @@ export declare function validateBoxes(input: unknown): ValidatedBoxes;
 export interface SshBox {
     name: string;
     host: string;
+    /** How the host is reached, when it is a tunnel address rather than a plain ssh host. */
+    via?: "tailscale" | "wireguard";
 }
 /** The provider id a box mounts under: `claude-code-<slug of name>`, so each box is an independent
  * instance with its own login, state and process registry, the way a hand-written mount would be. */
