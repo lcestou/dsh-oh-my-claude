@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   dshSessionsFor,
+  openTranscriptOnce,
   probeBox,
   readPickerSettings,
   registerSessionRoutes,
@@ -506,6 +507,105 @@ import type { InstructionFile } from "./instructions.js";
   const b = "/home/me/projects/really-long-workspace-name-that-goes-past-forty-eight/beta";
   assert.notEqual(slugForDir(a), slugForDir(b), "distinct long cwds get distinct slugs");
   assert.equal(slugForDir(a), slugForDir(a), "same input is stable");
+}
+
+// openTranscriptOnce under dsh 0.1.5: a session reaches the sidebar only once it is on its
+// workspace's list, and dsh validates the attach against the live session (while entered) or
+// persistence (which does not list a session flushed a moment ago). Four ways in, one contract:
+// the workspace for the cwd gets attachSession(id), and a fresh seed is attached before leave().
+{
+  const tmp = await mkdtemp(join(tmpdir(), "omc-open-"));
+  const cwd = join(tmp, "work");
+  await mkdir(cwd, { recursive: true });
+  const dir = join(tmp, "projects", projectDirName(cwd));
+  await mkdir(dir, { recursive: true });
+  const line = (o: object) => JSON.stringify(o) + "\n";
+  const id = "0ba11aa4-46c8-4a48-a360-3ab1bdaf4204";
+  await writeFile(
+    join(dir, `${id}.jsonl`),
+    line({
+      type: "user",
+      uuid: "u-1",
+      sessionId: id,
+      cwd,
+      timestamp: "2026-09-05T10:00:00Z",
+      message: { role: "user", content: [{ type: "text", text: "hi" }] },
+    }) +
+      line({
+        type: "assistant",
+        uuid: "a-1",
+        sessionId: id,
+        cwd,
+        timestamp: "2026-09-05T10:00:01Z",
+        message: { id: "m1", role: "assistant", content: [{ type: "text", text: "hello" }] },
+      }),
+  );
+  const run = async (opts: { inStore: boolean; persisted: boolean; archived: boolean }) => {
+    let entered = false;
+    const calls: string[] = [];
+    const attached: { id: string; entered: boolean }[] = [];
+    const ws = {
+      id: "w1",
+      path: cwd,
+      title: "work",
+      sessionIds: [],
+      attachSession: async (sid: string) => void attached.push({ id: sid, entered }),
+    };
+    let state: { archivedSessionIds: string[] } = {
+      archivedSessionIds: opts.archived ? [id] : [],
+    };
+    // SAFETY: partial fakes; the function reads only these members
+    const ctx = {
+      sessions: {
+        get: () => (opts.inStore ? { id } : undefined),
+        prepare: (sid: string, o: { seed: unknown[] }) => (
+          calls.push("prepare"),
+          { id: sid, seed: o.seed }
+        ),
+        enter: () => (
+          (entered = true),
+          calls.push("enter"),
+          () => ((entered = false), calls.push("leave"))
+        ),
+        announce: () => void calls.push("announce"),
+        flush: async () => void calls.push("flush"),
+      },
+      sessionPersistence: { list: async () => (opts.persisted ? [{ id, cwd }] : []) },
+    } as any;
+    const registry = {
+      get archivedSessionIds() {
+        return state.archivedSessionIds;
+      },
+      resolveByPath: async (p: string) => (p === cwd ? ws : undefined),
+      create: async () => ws,
+      enqueueOperation: <T>(op: () => Promise<T>) => op(),
+      requireState: () => state,
+      setState: async (next: { archivedSessionIds: string[] }) => void (state = next),
+    } as any;
+    const out = await openTranscriptOnce(ctx, [dir], cwd, id, (x) => x, registry);
+    return { out, calls, attached, state };
+  };
+
+  // Fresh transcript: seeded, and attached while still entered so dsh reads the live header.
+  let r = await run({ inStore: false, persisted: false, archived: false });
+  assert.equal(r.out.existed, false);
+  assert.deepEqual(r.calls, ["prepare", "enter", "announce", "flush", "leave"]);
+  assert.deepEqual(r.attached, [{ id, entered: true }], "attached before leave()");
+  // Already in the store ("Show"): no seed, still attached.
+  r = await run({ inStore: true, persisted: true, archived: false });
+  assert.equal(r.out.existed, true);
+  assert.deepEqual(r.calls, []);
+  assert.deepEqual(r.attached, [{ id, entered: false }]);
+  // Persisted but unloaded after a restart: the owned branch attaches too.
+  r = await run({ inStore: false, persisted: true, archived: false });
+  assert.equal(r.out.existed, true);
+  assert.deepEqual(r.calls, [], "no second seed for a session dsh already holds");
+  assert.deepEqual(r.attached, [{ id, entered: false }]);
+  // Archived: unarchived through the registry state, then attached.
+  r = await run({ inStore: false, persisted: true, archived: true });
+  assert.equal(r.out.existed, true);
+  assert.deepEqual(r.state.archivedSessionIds, []);
+  assert.deepEqual(r.attached, [{ id, entered: false }]);
 }
 
 console.log("sessions ok");

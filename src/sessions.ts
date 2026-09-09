@@ -906,7 +906,7 @@ function openTranscript(
  * Loads a Claude Code transcript and creates a dsh session from it, or
  * returns the existing session if one with this id is already live.
  */
-async function openTranscriptOnce(
+export async function openTranscriptOnce(
   ctx: RouteHost,
   dirs: string[],
   cwd: string,
@@ -949,6 +949,9 @@ async function openTranscriptOnce(
           archivedSessionIds: state.archivedSessionIds.filter((x) => x !== owned.id),
         });
       });
+    // Persisted but not in the store (a restart unloads it): the workspace list is the only way it
+    // reaches the sidebar, and dsh reads its header from persistence, which lists it by now.
+    await attach();
     return { id: owned.id, existed: true };
   }
   // This PC: the archive lists only local transcripts, so an opened one is always here. An

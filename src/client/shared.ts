@@ -296,8 +296,10 @@ async function openHere(
       body: JSON.stringify({ cwd, id: s.id }),
     }),
   );
-  if (s.dsh?.archived || (!s.dsh && !existed)) {
-    if (!s.dsh) {
+  // A session dsh owns but has not loaded (persisted, then a restart) is as unknown to the store as
+  // a raw transcript: `open` on it is a no-op, so adopt it through create like the transcript case.
+  if (s.dsh?.archived || !existed) {
+    if (!s.dsh?.archived) {
       const ws = (ctx.workspaces.list.getSnapshot()?.items ?? []).find((w) => w.path === cwd);
       await ctx.sessions.create(
         ws ? { sessionId: id, workspaceId: ws.workspaceId } : { sessionId: id },

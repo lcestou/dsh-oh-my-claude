@@ -1,6 +1,6 @@
 import type { IncomingMessage } from "node:http";
 import { type Reach } from "./reach.js";
-import type { JsonValue, PluginContext } from "./dsh.js";
+import type { JsonValue, PluginContext, WorkspaceRegistry } from "./dsh.js";
 import type { PermissionModeInfo, PermissionModeReply, RewindReply, ContextUsageReply, WorkspaceDiffReply, McpStatusReply, AsideEntry } from "./adapter.js";
 /** Any JSON object, as a request body or a stored file decodes to. */
 type JsonObject = Record<string, JsonValue>;
@@ -198,8 +198,22 @@ export declare function dshSessionsFor(headers: readonly {
     cwd?: string;
     origin?: string;
 }[], cwd: string | null, claudeIdOf: (id: string) => string, archived?: Set<string>): Map<string, OwnedSession>;
+/** What /open answers: the dsh session id to open, and whether it existed before. */
+interface Opened {
+    id: string;
+    existed: boolean;
+    turns?: number;
+    events?: number;
+}
+/** The host services the routes read; injected before the route mounts. */
+type RouteHost = Required<Pick<PluginContext, "webServer" | "connection" | "sessions" | "sessionPersistence">>;
 /** The id the transcript's own records carry, which is what the CLI knew the session by. */
 export declare const idIn: (text: string) => string | undefined;
+/**
+ * Loads a Claude Code transcript and creates a dsh session from it, or
+ * returns the existing session if one with this id is already live.
+ */
+export declare function openTranscriptOnce(ctx: RouteHost, dirs: string[], cwd: string, id: string, claudeIdOf: (id: string) => string, registry: WorkspaceRegistry | undefined): Promise<Opened>;
 /** One mount's own box: which `claude` to run, where its config lives, and whether it is remote. */
 export interface MountBox {
     configDir: string;
