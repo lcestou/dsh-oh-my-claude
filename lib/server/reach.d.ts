@@ -8,7 +8,7 @@
  * read as one ssh error string in the row.
  */
 import type { SshBox } from "./sessions.js";
-export type ReachStage = "dns" | "route" | "hostkey" | "auth" | "shell" | "no-cli" | "ok";
+export type ReachStage = "dns" | "route" | "hostkey" | "auth" | "policy" | "shell" | "no-cli" | "ok";
 export interface Reach {
     stage: ReachStage;
     /** What to do about it, in the user's terms; empty when `ok`. */
@@ -76,3 +76,22 @@ export interface WireguardPeer {
  * ranges hold no single address is skipped, since there is no one host to dial in a range.
  */
 export declare function wireguardPeers(dump: string, now?: number): WireguardPeer[];
+/** What the card sends to join a tailnet; both fields optional, both checked before a shell. */
+export interface TailnetJoin {
+    loginServer: string;
+    authKey: string;
+}
+/**
+ * The two strings reach `tailscale up` through shq, so this is about shape, not shell safety: a
+ * login server is an http(s) URL, and a key is what Tailscale (`tskey-auth-…`) or Headscale (hex,
+ * sometimes base64-ish) hands out.
+ */
+/** A checked join, or the reason it was refused. */
+export interface ValidatedTailnetJoin {
+    value?: TailnetJoin;
+    error?: string;
+}
+export declare function validateTailnetJoin(raw: {
+    loginServer?: unknown;
+    authKey?: unknown;
+}): ValidatedTailnetJoin;

@@ -9,7 +9,15 @@
  */
 import type { SshBox } from "./sessions.js";
 
-export type ReachStage = "dns" | "route" | "hostkey" | "auth" | "shell" | "no-cli" | "ok";
+export type ReachStage =
+  | "dns"
+  | "route"
+  | "hostkey"
+  | "auth"
+  | "policy"
+  | "shell"
+  | "no-cli"
+  | "ok";
 
 export interface Reach {
   stage: ReachStage;
@@ -27,6 +35,8 @@ const STAGE_HINTS = {
   hostkey:
     "The box's host key changed or is unknown. Run `ssh <host>` once in a terminal to accept it, or fix ~/.ssh/known_hosts.",
   auth: "The box refused the key. Copy one with `ssh-copy-id <host>`, or on a tailnet turn on Tailscale SSH so no key is needed.",
+  policy:
+    "Tailscale SSH is on for this box but the tailnet's policy does not let you in. Allow ssh in the tailnet ACL (Headscale: an `ssh` rule in the policy file; Tailscale: the admin console), or run `tailscale set --ssh=false` on the box to use its plain sshd.",
   shell:
     "ssh connected but the command failed on the box. Run `ssh <host> true` in a terminal to see what the login shell says.",
   "no-cli":
@@ -59,6 +69,7 @@ export function classifyReach(exitCode: number | null, stderr: string, stdout: s
       )
     )
       return "route";
+    if (/tailnet policy does not permit|tailscale: .*not permit/i.test(err)) return "policy";
     if (/permission denied|too many authentication failures|authentication failed/i.test(err))
       return "auth";
     if (exitCode === 255) return "route"; // ssh's own failure with a line we do not know
@@ -208,4 +219,34 @@ export function wireguardPeers(dump: string, now = Date.now()): WireguardPeer[] 
     });
   }
   return peers;
+}
+
+/** What the card sends to join a tailnet; both fields optional, both checked before a shell. */
+export interface TailnetJoin {
+  loginServer: string;
+  authKey: string;
+}
+
+/**
+ * The two strings reach `tailscale up` through shq, so this is about shape, not shell safety: a
+ * login server is an http(s) URL, and a key is what Tailscale (`tskey-auth-…`) or Headscale (hex,
+ * sometimes base64-ish) hands out.
+ */
+/** A checked join, or the reason it was refused. */
+export interface ValidatedTailnetJoin {
+  value?: TailnetJoin;
+  error?: string;
+}
+
+export function validateTailnetJoin(raw: {
+  loginServer?: unknown;
+  authKey?: unknown;
+}): ValidatedTailnetJoin {
+  const loginServer = String(raw.loginServer ?? "").trim();
+  const authKey = String(raw.authKey ?? "").trim();
+  if (loginServer && !/^https?:\/\/[A-Za-z0-9.:_-]+(\/[A-Za-z0-9._/-]*)?$/.test(loginServer))
+    return { error: "login server must be an http(s) URL" };
+  if (authKey && !/^[A-Za-z0-9_+/=.-]{8,200}$/.test(authKey))
+    return { error: "that does not look like a pre-auth key" };
+  return { value: { loginServer, authKey } };
 }

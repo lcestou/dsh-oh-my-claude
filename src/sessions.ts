@@ -22,6 +22,7 @@ import {
   reachScript,
   tailscalePeers,
   tailscaleStatus,
+  validateTailnetJoin,
   wireguardPeers,
   type Reach,
 } from "./reach.js";
@@ -1952,7 +1953,24 @@ export function registerSessionRoutes(
               if (req.method === "POST" && url.pathname === `${ROUTE_PREFIX}/tailscale/login`) {
                 const body = await readBody(req);
                 const boxHost = String(body.host ?? "").trim();
-                const script = "sudo -n tailscale login 2>&1 || tailscale login 2>&1";
+                // A self-hosted tailnet (Headscale) is the same client pointed at another server;
+                // a pre-auth key from that server joins with no browser at all. Both are optional
+                // and both are checked before they reach a shell.
+                const joinInput = validateTailnetJoin(body);
+                if (joinInput.error !== undefined || !joinInput.value)
+                  return json(res, 400, { error: joinInput.error ?? "bad join" });
+                const { loginServer, authKey } = joinInput.value;
+                const flags = loginServer ? ` --login-server ${shq(loginServer)}` : "";
+                if (authKey) {
+                  // `up` with a key finishes on its own: answer the state it reached.
+                  const up = `sudo -n tailscale up${flags} --auth-key ${shq(authKey)} --timeout 30s 2>&1 || tailscale up${flags} --auth-key ${shq(authKey)} --timeout 30s 2>&1`;
+                  const r = boxHost
+                    ? await run("ssh", sshArgs(boxHost, up), undefined, undefined, 45_000)
+                    : await run("sh", ["-c", up], undefined, undefined, 45_000);
+                  if (r.error) return json(res, 200, { error: r.error.split(/\r?\n/).at(-1) });
+                  return json(res, 200, { joined: true });
+                }
+                const script = `sudo -n tailscale login${flags} 2>&1 || tailscale login${flags} 2>&1`;
                 const child = boxHost
                   ? spawn("ssh", sshArgs(boxHost, script), { stdio: ["ignore", "pipe", "pipe"] })
                   : spawn("sh", ["-c", script], { stdio: ["ignore", "pipe", "pipe"] });

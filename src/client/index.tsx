@@ -1353,6 +1353,8 @@ function Boxes({ boxes, setBoxes, open, onToggle }: BoxesProps) {
   const [tsLogin, setTsLogin] = useState<{ url?: string; error?: string; busy?: boolean } | null>(
     null,
   );
+  // Headscale users point the client at their own server, and a pre-auth key skips the browser.
+  const [tsServer, setTsServer] = useState({ loginServer: "", authKey: "" });
   const loadNets = useCallback(() => {
     fetch(`${ROUTE}/tailscale/status`)
       .then((r) => readJson<TailscaleStatusRow>(r))
@@ -1375,10 +1377,13 @@ function Boxes({ boxes, setBoxes, open, onToggle }: BoxesProps) {
     fetch(`${ROUTE}/tailscale/login`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: "{}",
+      body: JSON.stringify(tsServer),
     })
-      .then((r) => readJson<{ url?: string; error?: string }>(r))
-      .then((b) => setTsLogin({ url: b.url, error: b.error }))
+      .then((r) => readJson<{ url?: string; joined?: boolean; error?: string }>(r))
+      .then((b) => {
+        setTsLogin({ url: b.url, error: b.error });
+        if (b.joined) loadNets();
+      })
       .catch((e: Error) => setTsLogin({ error: e.message }));
   };
   const [busy, setBusy] = useState(false);
@@ -1949,6 +1954,20 @@ function Boxes({ boxes, setBoxes, open, onToggle }: BoxesProps) {
           ) : (
             <>
               <span style={pill(T.warn)}>not connected</span>
+              <input
+                style={{ ...inputStyle, flex: "1 1 200px", fontSize: 12 }}
+                placeholder="Login server (Headscale), else Tailscale"
+                value={tsServer.loginServer}
+                onChange={(e) => setTsServer({ ...tsServer, loginServer: e.target.value })}
+              />
+              <input
+                style={{ ...inputStyle, flex: "1 1 160px", fontSize: 12 }}
+                type="password"
+                autoComplete="off"
+                placeholder="Pre-auth key (optional)"
+                value={tsServer.authKey}
+                onChange={(e) => setTsServer({ ...tsServer, authKey: e.target.value })}
+              />
               {tsLogin?.url ? (
                 <>
                   <a
@@ -2158,6 +2177,8 @@ const reachLabel = (stage: string): string => {
       return "host key";
     case "auth":
       return "key refused";
+    case "policy":
+      return "tailnet policy";
     case "shell":
       return "shell error";
     case "no-cli":

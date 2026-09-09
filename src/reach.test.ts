@@ -7,6 +7,7 @@ import {
   reachScript,
   tailscalePeers,
   tailscaleStatus,
+  validateTailnetJoin,
   wireguardPeers,
 } from "./reach.js";
 
@@ -30,6 +31,12 @@ const cases: Array<[number, string, string, string]> = [
     "hostkey",
   ],
   [255, "kex_exchange_identification: read: Connection reset by peer", "", "route"],
+  [
+    255,
+    "tailscale: tailnet policy does not permit you to SSH to this node\r\nConnection closed by 100.64.0.2 port 22",
+    "",
+    "policy",
+  ],
   [1, "sh: 1: something: not found", "", "shell"],
   [0, "", "", "no-cli"],
   [0, "Welcome to the box\n", "/usr/local/bin/claude\n", "ok"],
@@ -130,5 +137,38 @@ assert.deepEqual(wireguardPeers(dump, nowSec * 1000), [
   },
 ]);
 assert.deepEqual(wireguardPeers(""), []);
+
+// The join fields: shape only (shq handles the shell); Tailscale's and Headscale's key forms both pass.
+assert.deepEqual(validateTailnetJoin({}), { value: { loginServer: "", authKey: "" } });
+assert.deepEqual(validateTailnetJoin({ loginServer: " http://192.168.1.194:8090 ", authKey: "" }), {
+  value: { loginServer: "http://192.168.1.194:8090", authKey: "" },
+});
+assert.ok(validateTailnetJoin({ loginServer: "https://hs.example.com/" }).value);
+assert.ok(validateTailnetJoin({ authKey: "tskey-auth-kAbC123CNTRL-x9y8z7w6v5u4t3s2r1q0" }).value);
+assert.ok(
+  validateTailnetJoin({
+    authKey: "3f2a9c8b7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d2e1f0a",
+  }).value,
+);
+assert.ok(
+  validateTailnetJoin({ authKey: "abc+def/ghi=jkl.mno-pqr" }).value,
+  "base64-ish keys pass",
+);
+assert.equal(
+  validateTailnetJoin({ loginServer: "hs.example.com" }).error,
+  "login server must be an http(s) URL",
+);
+assert.equal(
+  validateTailnetJoin({ loginServer: "http://x; rm -rf /" }).error,
+  "login server must be an http(s) URL",
+);
+assert.equal(
+  validateTailnetJoin({ authKey: "short" }).error,
+  "that does not look like a pre-auth key",
+);
+assert.equal(
+  validateTailnetJoin({ authKey: "has spaces in it here" }).error,
+  "that does not look like a pre-auth key",
+);
 
 console.log("reach ok");
