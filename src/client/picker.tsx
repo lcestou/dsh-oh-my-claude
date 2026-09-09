@@ -40,6 +40,9 @@ const uiWorkspaceOf = (ctx: ClientCtx): UiWorkspaceFace | undefined =>
 /** dsh's locale registry, absent on a dsh that mounts no locale service. */
 const localeOf = (ctx: ClientCtx): LocaleFace | undefined => ctx.get?.<LocaleFace>("locale");
 
+/** Whether this dsh can browse directories at all, which is what the takeover needs to be worth it. */
+export const canBrowseDirs = (ctx: ClientCtx): boolean => uiWorkspaceOf(ctx) !== undefined;
+
 /** A box the dropdown offers; `host` is empty for this PC. */
 interface BoxRow {
   name: string;
@@ -86,6 +89,9 @@ export const baseName = (path: string): string => segments(path).at(-1) ?? "";
  * dsh's Modal card is sized for a short form, and a directory list wants the width dsh's own
  * browser dialog has. The card takes a class and no style, so the width arrives as one rule.
  */
+/** What Settings dispatches to open this dialog; see the takeover effect below. */
+export const OPEN_EVENT = "omc-add-workspace";
+
 const DIALOG_CLASS = "omc-add-workspace";
 const DIALOG_CSS = `.${DIALOG_CLASS}{width:min(620px,92vw);max-width:none}`;
 
@@ -185,18 +191,27 @@ export function AddWorkspaceFlow({ ctx }: { ctx: ClientCtx }) {
   useEffect(() => {
     if (ssh.length === 0 || !uiWorkspaceOf(ctx)) return;
     const label = localeOf(ctx)?.bind("workspace")("workspace.add") || "Add workspace";
-    const onClick = (e: MouseEvent) => {
-      const target = e.target instanceof Element ? e.target : null;
-      if (!target?.closest(`button[aria-label="${CSS.escape(label)}"]`)) return;
-      e.preventDefault();
-      e.stopPropagation();
+    const start = () => {
       setError("");
       setPicked("");
       setFolder(null);
       setOpen(true);
     };
+    const onClick = (e: MouseEvent) => {
+      const target = e.target instanceof Element ? e.target : null;
+      if (!target?.closest(`button[aria-label="${CSS.escape(label)}"]`)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      start();
+    };
     document.addEventListener("click", onClick, true);
-    return () => document.removeEventListener("click", onClick, true);
+    // The Settings card lists the remote workspaces but no longer takes a typed path; its button
+    // asks for this dialog by event, the two trees having no shared React parent.
+    document.addEventListener(OPEN_EVENT, start);
+    return () => {
+      document.removeEventListener("click", onClick, true);
+      document.removeEventListener(OPEN_EVENT, start);
+    };
   }, [ssh.length, ctx]);
 
   useEffect(() => {

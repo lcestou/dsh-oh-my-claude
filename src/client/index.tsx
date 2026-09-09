@@ -58,7 +58,7 @@ import {
 import { Spark, sparkNode } from "./spark.js";
 import { AccessShield, OhMyClaudeControl } from "./panel.js";
 import { ConfirmButton } from "./tune.js";
-import { AddWorkspaceFlow } from "./picker.js";
+import { AddWorkspaceFlow, canBrowseDirs, OPEN_EVENT } from "./picker.js";
 import { markTitle, newlyWaiting, noticesOn, type NoticeSnapshot } from "./notices.js";
 import { SETTINGS_SCOPES, SCOPE_LABELS, overrideNote } from "./settings.js";
 import type { SettingsScope, SettingsScopeInfo } from "./settings.js";
@@ -1305,6 +1305,7 @@ function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
 }
 
 interface BoxesProps {
+  ctx: ClientCtx;
   boxes: BoxData[];
   setBoxes: React.Dispatch<React.SetStateAction<BoxData[]>>;
   open: boolean;
@@ -1336,12 +1337,15 @@ type BoxKind = "ssh" | "tailscale" | "wireguard" | "dsh";
  *    and Open hops the browser there. Nothing is proxied.
  * Every row is probed server-side so it shows host, claude version and login before you use it.
  */
-function Boxes({ boxes, setBoxes, open, onToggle }: BoxesProps) {
+function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
   const [probe, setProbe] = useState<Record<string, ProbeEntry>>({});
   const [self, setSelf] = useState<{ plugin?: string } | null>(null);
   const [ssh, setSsh] = useState<SshBoxData[]>([]);
   const [sshProbe, setSshProbe] = useState<Record<string, SshProbeEntry>>({});
   const [kind, setKind] = useState<BoxKind>("ssh");
+  // The Add workspace… button opens the sidebar's dialog, which only takes over when a box is
+  // saved and dsh exposes its directory service; without both, the click would do nothing.
+  const canAdd = ssh.length > 0 && canBrowseDirs(ctx);
   const [draft, setDraft] = useState({ name: "", url: "", token: "", host: "" });
   // The two tunnels a box can sit behind, read from this node: a tailnet peer or a WireGuard peer
   // is a pick, not a hostname typed, and the tailnet is joined from here when it is not yet.
@@ -1393,7 +1397,6 @@ function Boxes({ boxes, setBoxes, open, onToggle }: BoxesProps) {
   const [openSettingsUrl, setOpenSettingsUrl] = useState<string | null>(null);
   const [me, setMe] = useState<RuntimeStatus | null>(null);
   const [rws, setRws] = useState<RemoteWs[]>([]);
-  const [wsDraft, setWsDraft] = useState({ name: "", host: "", remoteCwd: "" });
   const [login, setLogin] = useState<{
     host: string;
     url?: string;
@@ -1519,30 +1522,6 @@ function Boxes({ boxes, setBoxes, open, onToggle }: BoxesProps) {
       .catch((e: Error) => setLogin({ host, code: "", error: e.message }));
   };
 
-  const addRw = (ev: React.FormEvent) => {
-    ev.preventDefault();
-    const host = wsDraft.host || ssh[0]?.host || "";
-    if (!wsDraft.name.trim() || !host || !wsDraft.remoteCwd.trim()) return;
-    setBusy(true);
-    setError("");
-    fetch(`${ROUTE}/remote-workspaces`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        name: wsDraft.name.trim(),
-        host,
-        remoteCwd: wsDraft.remoteCwd.trim(),
-      }),
-    })
-      .then((r) => readJson<{ workspace?: RemoteWs; error?: string }>(r))
-      .then((b) => {
-        if (b.error) return setError(b.error);
-        if (b.workspace) setRws([...rws, b.workspace]);
-        setWsDraft({ name: "", host: "", remoteCwd: "" });
-      })
-      .catch((e: Error) => setError(e.message))
-      .finally(() => setBusy(false));
-  };
   const removeRw = (path: string) => {
     setBusy(true);
     setError("");
@@ -2064,7 +2043,7 @@ function Boxes({ boxes, setBoxes, open, onToggle }: BoxesProps) {
       >
         <h3 style={h3}>Remote workspaces</h3>
         <p style={{ margin: "0 0 8px", color: T.muted, fontSize: 13 }}>
-          Pin a directory on an SSH box as a workspace. It shows in the left sidebar like any
+          A directory on an SSH box, pinned as a workspace. It shows in the left sidebar like any
           workspace; pick the box's Claude in the model picker and the session runs in that remote
           folder. No files are copied; the box's Claude reads them there.
         </p>
@@ -2096,44 +2075,21 @@ function Boxes({ boxes, setBoxes, open, onToggle }: BoxesProps) {
             />
           </div>
         ))}
-        {ssh.length === 0 ? (
-          <p style={{ ...meta, whiteSpace: "normal", marginTop: 4 }}>
-            Add an SSH box above first, then pin a folder on it here.
+        <div style={{ ...row, flexWrap: "wrap", paddingTop: 4 }}>
+          <p style={{ ...meta, whiteSpace: "normal", flex: "1 1 220px", margin: 0 }}>
+            {canAdd
+              ? "Add one from the sidebar's Add workspace button: it browses whichever box you pick."
+              : "Add an SSH box above first; the button then browses it."}
           </p>
-        ) : (
-          <form onSubmit={addRw} style={{ ...row, flexWrap: "wrap", paddingTop: 4 }}>
-            <select
-              style={{ ...select, flex: "0 1 140px" }}
-              value={wsDraft.host || ssh[0]?.host || ""}
-              onChange={(e) => setWsDraft({ ...wsDraft, host: e.target.value })}
-            >
-              {ssh.map((b) => (
-                <option key={b.host} value={b.host}>
-                  {b.name}
-                </option>
-              ))}
-            </select>
-            <input
-              style={{ ...inputStyle, flex: "0 1 140px" }}
-              placeholder="Name"
-              value={wsDraft.name}
-              onChange={(e) => setWsDraft({ ...wsDraft, name: e.target.value })}
-            />
-            <input
-              style={{ ...inputStyle, flex: "1 1 220px" }}
-              placeholder="/absolute/path/on/box"
-              value={wsDraft.remoteCwd}
-              onChange={(e) => setWsDraft({ ...wsDraft, remoteCwd: e.target.value })}
-            />
-            <button
-              type="submit"
-              style={btn}
-              disabled={busy || !wsDraft.name.trim() || !wsDraft.remoteCwd.trim()}
-            >
-              Add
-            </button>
-          </form>
-        )}
+          <button
+            type="button"
+            style={btn}
+            disabled={!canAdd}
+            onClick={() => document.dispatchEvent(new Event(OPEN_EVENT))}
+          >
+            Add workspace…
+          </button>
+        </div>
       </div>
     </Card>
   );
@@ -4168,6 +4124,7 @@ export function apply(ctx: ClientCtx) {
         )}
         {boxes !== null && (
           <Boxes
+            ctx={ctx}
             boxes={boxes}
             setBoxes={setBoxes}
             open={openBoxes}
