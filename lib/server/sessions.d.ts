@@ -193,11 +193,16 @@ export interface OwnedSession {
  * from this panel shares the id. Archived sessions are included so the panel can bring them back
  * without any archive plugin.
  */
-export declare function dshSessionsFor(headers: readonly {
+/** dsh 0.1.5's `sessionPersistence.list()` answers snapshots that wrap the header; before that the
+ *  entries were the headers. Either way in, a header out. */
+type StoredHeader = {
     id: string;
     cwd?: string;
     origin?: string;
-}[], cwd: string | null, claudeIdOf: (id: string) => string, archived?: Set<string>): Map<string, OwnedSession>;
+};
+export declare function dshSessionsFor(entries: readonly (StoredHeader | {
+    header: StoredHeader;
+})[], cwd: string | null, claudeIdOf: (id: string) => string, archived?: Set<string>): Map<string, OwnedSession>;
 /** What /open answers: the dsh session id to open, and whether it existed before. */
 interface Opened {
     id: string;

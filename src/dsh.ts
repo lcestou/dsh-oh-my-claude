@@ -315,7 +315,8 @@ export interface ConnectionPolicy {
 }
 /** Mirrors: @deepseek-ai/dsh-session-persistence-jsonl/lib/types/index.d.ts */
 export interface SessionPersistence {
-  list(): Promise<SessionHeader[]>;
+  /** dsh 0.1.5 answers `{ header, revision, sizeBytes? }` snapshots; older dsh answered headers. */
+  list(): Promise<Array<SessionHeader | { header: SessionHeader }>>;
 }
 
 /** Mirrors: @deepseek-ai/cordis/lib/types/context.d.ts intersected with dsh service augmentations */

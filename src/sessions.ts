@@ -809,14 +809,23 @@ export interface OwnedSession {
  * from this panel shares the id. Archived sessions are included so the panel can bring them back
  * without any archive plugin.
  */
+/** dsh 0.1.5's `sessionPersistence.list()` answers snapshots that wrap the header; before that the
+ *  entries were the headers. Either way in, a header out. */
+type StoredHeader = { id: string; cwd?: string; origin?: string };
+const headerOf = (entry: StoredHeader | { header: StoredHeader }): StoredHeader => {
+  if ("header" in entry && entry.header !== undefined) return entry.header;
+  // SAFETY: no `header` member means the entry is the bare header shape of the union
+  return entry as StoredHeader;
+};
+
 export function dshSessionsFor(
-  headers: readonly { id: string; cwd?: string; origin?: string }[],
+  entries: readonly (StoredHeader | { header: StoredHeader })[],
   cwd: string | null,
   claudeIdOf: (id: string) => string,
   archived: Set<string> = new Set(),
 ): Map<string, OwnedSession> {
   const map = new Map<string, OwnedSession>();
-  for (const h of headers) {
+  for (const h of entries.map(headerOf)) {
     if (cwd !== null && h.cwd !== cwd) continue;
     const id = String(h.id);
     const entry: OwnedSession = { id, archived: archived.has(id) };
@@ -2384,7 +2393,7 @@ async function knownCwd(
   sessions: SessionPersistence,
 ): Promise<string | null> {
   if (!validCwd(cwd)) return null;
-  const headers = await sessions.list().catch(() => []);
+  const headers = (await sessions.list().catch(() => [])).map(headerOf);
   return headers.some((h) => h.cwd === cwd) ? cwd : null;
 }
 
@@ -2397,6 +2406,6 @@ async function sessionCwd(
   sessions: SessionPersistence,
 ): Promise<string | null> {
   if (typeof session !== "string" || !session) return null;
-  const headers = await sessions.list().catch(() => []);
+  const headers = (await sessions.list().catch(() => [])).map(headerOf);
   return headers.find((h) => h.id === session)?.cwd ?? null;
 }

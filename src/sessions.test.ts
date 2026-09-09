@@ -481,6 +481,19 @@ import type { InstructionFile } from "./instructions.js";
   assert.equal(isSettingsScope(7), false);
 }
 
+// dshSessionsFor reads dsh 0.1.5's list() snapshots, which wrap the header, as well as the bare
+// headers older dsh returned. Under 0.1.5 the bare read found nothing, so no archived row was ever
+// marked as dsh's own: Open re-seeded a session dsh already held, and archive/unarchive never applied.
+{
+  const owned = dshSessionsFor(
+    [{ header: { id: "s-new", cwd: "/w" } }, { id: "s-old", cwd: "/w" }],
+    "/w",
+    (id) => id,
+    new Set(["s-new"]),
+  );
+  assert.deepEqual(owned.get("s-new"), { id: "s-new", archived: true }, "snapshot shape is read");
+  assert.deepEqual(owned.get("s-old"), { id: "s-old", archived: false }, "bare header still read");
+}
 // dshSessionsFor flags a subagent-origin session so the archive can drop it: dsh cannot open one
 // standalone. Both the dsh id and the derived Claude id resolve to the same flagged entry.
 {
@@ -570,7 +583,7 @@ import type { InstructionFile } from "./instructions.js";
         announce: () => void calls.push("announce"),
         flush: async () => void calls.push("flush"),
       },
-      sessionPersistence: { list: async () => (opts.persisted ? [{ id, cwd }] : []) },
+      sessionPersistence: { list: async () => (opts.persisted ? [{ header: { id, cwd } }] : []) },
     } as any;
     const registry = {
       get archivedSessionIds() {
