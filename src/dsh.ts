@@ -212,6 +212,8 @@ export interface Workspace {
   path: string;
   title: string;
   sessionIds: SessionId[];
+  /** Put a flushed session on this workspace's list; dsh checks its stored cwd is this path. */
+  attachSession(sessionId: SessionId): Promise<void>;
 }
 
 export interface WorkspaceRegistry {

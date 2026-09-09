@@ -914,7 +914,20 @@ async function openTranscriptOnce(
   claudeIdOf: (id: string) => string,
   registry: WorkspaceRegistry | undefined,
 ): Promise<Opened> {
-  if (ctx.sessions.get(asSessionId(id))) return { id, existed: true };
+  // dsh 0.1.5 lists a session under a workspace only once it is on that workspace's own
+  // `sessionIds`; a session that merely exists (older dsh derived the workspace from its cwd)
+  // shows "Show" in the archive but opens nowhere. Attach after the flush, since dsh validates
+  // the stored header's cwd against the workspace path. Idempotent, so an already-open session
+  // from before this ran is attached on its next Open.
+  const attach = async () => {
+    if (!registry) return;
+    const ws = (await registry.resolveByPath(cwd)) ?? (await registry.create(cwd));
+    await ws.attachSession(asSessionId(id));
+  };
+  if (ctx.sessions.get(asSessionId(id))) {
+    await attach();
+    return { id, existed: true };
+  }
   // Owned by id across every workspace, not just this `cwd`: an SSH-box session is stored under a
   // local placeholder cwd, not the transcript's own path, so filtering by `cwd` would miss it and
   // fall through to a local transcript read that ENOENTs (the body lives on the box). `cwd` is only
@@ -955,6 +968,7 @@ async function openTranscriptOnce(
   } finally {
     leave();
   }
+  await attach();
   return { id, existed: false, turns: folded.turns.length, events: seed.length };
 }
 

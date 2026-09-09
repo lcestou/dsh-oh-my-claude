@@ -285,14 +285,18 @@ async function openHere(
 ) {
   const known = () => ctx.sessions.list.getSnapshot()?.byId ?? {};
   const id = s.dsh?.id ?? s.id;
-  if (s.dsh?.archived || (!s.dsh && !known()[id])) {
-    await readJson(
-      await fetch(`${ROUTE}/open`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ cwd, id: s.id }),
-      }),
-    );
+  const existed = Boolean(known()[id]);
+  // Always through the route, even for a session dsh already has ("Show"): the route is what puts
+  // the session on its workspace's list, and one opened before that step existed is nowhere in
+  // the sidebar until it runs again. Idempotent on the server.
+  await readJson(
+    await fetch(`${ROUTE}/open`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ cwd, id: s.id }),
+    }),
+  );
+  if (s.dsh?.archived || (!s.dsh && !existed)) {
     if (!s.dsh) {
       const ws = (ctx.workspaces.list.getSnapshot()?.items ?? []).find((w) => w.path === cwd);
       await ctx.sessions.create(
