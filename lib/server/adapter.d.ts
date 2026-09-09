@@ -767,6 +767,17 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     /** The instance whose aside ring the route and the bubble read: the main mount, else this one. */
     asideOwner(): ClaudeCodeAdapter;
     processFor(sessionId: string): ClaudeProcess | undefined;
+    /**
+     * The mount a session belongs to: the one whose live process it is, else the one its selected
+     * model names, else this one.
+     *
+     * The panel's routes are registered once, by the default mount, but a session on an SSH box's
+     * model runs under that box's instance. A control request written from the wrong instance is
+     * never answered — `resolveControl` only knows the waiters of the adapter whose stream loop reads
+     * that process — so every route that asks a session's process something has to be dispatched
+     * here first, or the panel reports "no live Claude process" for a session that has one.
+     */
+    ownerFor(sessionId: string): ClaudeCodeAdapter;
     askSideQuestion(sessionId: string, question: string): void;
     /** Save (or clear, when the text is blank) an opening prompt for a session or for `default`. */
     setStarter(key: string, text: string | undefined): void;

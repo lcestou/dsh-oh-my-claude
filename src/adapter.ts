@@ -87,6 +87,7 @@ import type {
 import {
   ADAPTER_CURRENT,
   COMMAND_CATALOG,
+  PERMISSION_MODE_OVERRIDES,
   RESUME_TIMER,
   PROCESS_REGISTRY,
   TEMPORARY_SESSIONS,
@@ -1654,12 +1655,13 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         join(this.stateDir, "claude-home"),
         (level, msg) => this.log(level, msg),
       );
-    this.permissionModes = new Map(); // loaded async below; fire-and-forget
     this.accessModes = new Map();
     this.controlWaiters = new Map();
     loadPermissionModes(this.stateDir)
       .then((modes) => {
-        this.permissionModes = modes;
+        // Merge rather than replace: another mount may have filled the shared map already.
+        for (const [id, mode] of modes)
+          if (!this.permissionModes.has(id)) this.permissionModes.set(id, mode);
       })
       .catch(() => {}); // state is an optimization only
     loadTurnRecords(this.stateDir)
@@ -1696,8 +1698,14 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       [PROCESS_REGISTRY]?: Map<string, ClaudeProcess>;
       [TURN_RECORDS]?: Map<string, TurnRecord[]>;
       [TEMPORARY_SESSIONS]?: Set<string>;
+      [PERMISSION_MODE_OVERRIDES]?: Map<string, string | null>;
     };
     this.processes = registry[PROCESS_REGISTRY] ??= new Map(); // providerId:sessionId → ClaudeProcess
+    // Shared across mounts, like the processes above: the panel sets a session's permission mode
+    // through the default instance's route, and the mount that spawns that session — an SSH box's,
+    // for a session on that box's model — is the one that reads it back. A per-instance map left
+    // the box spawning under the config default while the shield reported the chosen mode.
+    this.permissionModes = registry[PERMISSION_MODE_OVERRIDES] ??= new Map();
     this.turnBuffer = registry[TURN_RECORDS] ??= new Map();
     this.temporary = registry[TEMPORARY_SESSIONS] ??= new Set();
     // Adopted processes still point their idle-reply callback at the previous (now dead) adapter.
@@ -2419,6 +2427,31 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     return undefined;
   }
 
+  /**
+   * The mount a session belongs to: the one whose live process it is, else the one its selected
+   * model names, else this one.
+   *
+   * The panel's routes are registered once, by the default mount, but a session on an SSH box's
+   * model runs under that box's instance. A control request written from the wrong instance is
+   * never answered — `resolveControl` only knows the waiters of the adapter whose stream loop reads
+   * that process — so every route that asks a session's process something has to be dispatched
+   * here first, or the panel reports "no live Claude process" for a session that has one.
+   */
+  ownerFor(sessionId: string): ClaudeCodeAdapter {
+    // SAFETY: the registry symbol is this plugin's own key on globalThis, typed here once
+    const g = globalThis as typeof globalThis & {
+      [ADAPTER_CURRENT]?: Map<string, ClaudeCodeAdapter>;
+    };
+    const mounts = g[ADAPTER_CURRENT];
+    const suffix = `:${sessionId}`;
+    for (const [key, proc] of this.processes) {
+      if (!key.endsWith(suffix) || !proc.alive) continue;
+      const mount = mounts?.get(key.slice(0, key.length - suffix.length));
+      if (mount) return mount;
+    }
+    return mounts?.get(this.sessionProvider(sessionId) ?? "") ?? this;
+  }
+
   askSideQuestion(sessionId: string, question: string) {
     const q = question.trim();
     const entry: AsideEntry = {
@@ -2435,28 +2468,29 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       if (oldest !== undefined) this.sideQuestions.delete(oldest);
     }
     this.sideQuestions.set(sessionId, ring.slice(-ASIDE_KEEP));
-    const proc = this.processFor(sessionId);
+    // The ring lives on the main mount, but the control request has to be written and awaited by
+    // the mount whose stream loop reads that process, else the reply resolves nobody's waiter.
+    const owner = this.ownerFor(sessionId);
+    const proc = owner.processFor(sessionId);
     if (!proc?.alive) {
       entry.pending = false;
       entry.error = "no live Claude process for this session; send a prompt first";
       this.persistAsides(sessionId);
       return;
     }
-    void this.control(
-      proc,
-      { subtype: "side_question", question: q, history: [] },
-      ASIDE_TIMEOUT_MS,
-    ).then((reply) => {
-      entry.pending = false;
-      if (!reply.ok) {
-        entry.error = reply.error;
-      } else {
-        const text = asideAnswerText(reply.response);
-        if (text === undefined) entry.error = "Claude gave no answer to the side question";
-        else entry.answer = text;
-      }
-      this.persistAsides(sessionId);
-    });
+    void owner
+      .control(proc, { subtype: "side_question", question: q, history: [] }, ASIDE_TIMEOUT_MS)
+      .then((reply) => {
+        entry.pending = false;
+        if (!reply.ok) {
+          entry.error = reply.error;
+        } else {
+          const text = asideAnswerText(reply.response);
+          if (text === undefined) entry.error = "Claude gave no answer to the side question";
+          else entry.answer = text;
+        }
+        this.persistAsides(sessionId);
+      });
   }
 
   /** Save (or clear, when the text is blank) an opening prompt for a session or for `default`. */
@@ -4212,8 +4246,10 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       keyFile: join(STATE_DIR, "mcp.key"),
       log: (level, msg) => adapter.log(level, msg),
       version: "0.9.0",
+      // The bridge is mounted once; a session on a box's model runs under that box's instance, so
+      // the offer has to reach that mount's live turn (see ownerFor).
       relay: (sessionId, toolName, args, signal) =>
-        adapter.relay(sessionId, toolName, args, signal),
+        adapter.ownerFor(sessionId).relay(sessionId, toolName, args, signal),
     }).then(
       (mcp) => {
         adapter.mcp = mcp;
@@ -4225,6 +4261,14 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       g[ADAPTER_CURRENT]?.get(providerId)?.claudeHome;
     // The same registry answers the session routes: a request that names its session's mount reads
     // that mount's box, so a session on an SSH box stops being reported as this one.
+    // The same registry by host, for a read about a remote workspace: its files are on its box
+    // whichever model the session runs, so the box is found by hostname rather than by provider id.
+    const instanceForHost = (host: string) => {
+      for (const other of g[ADAPTER_CURRENT]?.values() ?? [])
+        if (other.config.sshHost === host)
+          return { configDir: other.claudeHome, command: other.config.command, sshHost: host };
+      return undefined;
+    };
     const instanceFor = (providerId: string | null) => {
       const other = providerId === null ? undefined : g[ADAPTER_CURRENT]?.get(providerId);
       if (other === undefined) return undefined;
@@ -4270,27 +4314,33 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       command: adapter.config.command,
       sshHost: adapter.config.sshHost,
       instanceFor,
+      instanceForHost,
       onLoginStatus: (id, loggedIn) =>
         g[ADAPTER_CURRENT]?.get(id ?? adapter.providerId)?.setLoggedIn(loggedIn),
       turnRecords: adapter.turnBuffer,
       idle: {
-        deadlineFor: (session: string) => adapter.idleDeadlineMap.get(session) ?? null,
-        extend: (session: string) => adapter.extendIdle(session),
+        deadlineFor: (session: string) =>
+          adapter.ownerFor(session).idleDeadlineMap.get(session) ?? null,
+        extend: (session: string) => adapter.ownerFor(session).extendIdle(session),
         timeoutMs: adapter.config.idleTimeoutMs,
       },
+      // Everything below is about one session's own process or its own state, so it runs on the
+      // mount that owns that session rather than on this one: these routes are registered once,
+      // by the default mount, and a session on a box's model lives under the box's instance.
       permissionModes: {
-        info: (sessionId: string) => adapter.permissionModeInfo(sessionId),
-        set: (sessionId: string, mode: string | null) => adapter.setPermissionMode(sessionId, mode),
+        info: (sessionId: string) => adapter.ownerFor(sessionId).permissionModeInfo(sessionId),
+        set: (sessionId: string, mode: string | null) =>
+          adapter.ownerFor(sessionId).setPermissionMode(sessionId, mode),
       },
-      contextUsage: (sessionId: string) => adapter.contextUsage(sessionId),
-      workspaceDiff: (sessionId: string) => adapter.workspaceDiff(sessionId),
+      contextUsage: (sessionId: string) => adapter.ownerFor(sessionId).contextUsage(sessionId),
+      workspaceDiff: (sessionId: string) => adapter.ownerFor(sessionId).workspaceDiff(sessionId),
       mcp: {
-        status: (sessionId: string) => adapter.mcpStatus(sessionId),
+        status: (sessionId: string) => adapter.ownerFor(sessionId).mcpStatus(sessionId),
         reconnect: (sessionId: string, serverName: string) =>
-          adapter.mcpReconnect(sessionId, serverName),
+          adapter.ownerFor(sessionId).mcpReconnect(sessionId, serverName),
       },
       rewind: (sessionId: string, uuid: string, dryRun: boolean) =>
-        adapter.rewind(sessionId, uuid, dryRun),
+        adapter.ownerFor(sessionId).rewind(sessionId, uuid, dryRun),
       permissionAsks: adapter.permissionAsks,
       sideQuestions: adapter.sideQuestions,
       persistAsides: (sessionId: string) => adapter.persistAsides(sessionId),
@@ -4299,12 +4349,12 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
         adapter.setStarter(key, text);
       },
       thinking: {
-        info: (sessionId: string) => adapter.thinkingInfo(sessionId),
+        info: (sessionId: string) => adapter.ownerFor(sessionId).thinkingInfo(sessionId),
         set: (sessionId: string, tokens: number | null) =>
-          adapter.setThinkingBudget(sessionId, tokens),
+          adapter.ownerFor(sessionId).setThinkingBudget(sessionId, tokens),
       },
       models: () => adapter.getAdvisorModels(),
-      reloadPlugins: (sessionId: string) => adapter.reloadPlugins(sessionId),
+      reloadPlugins: (sessionId: string) => adapter.ownerFor(sessionId).reloadPlugins(sessionId),
       continueAfterLimit: adapter.config.continueAfterLimit,
     });
     // Mount the saved SSH boxes at boot; `sshMounts` is scope-local so a hot reload rebuilds them.

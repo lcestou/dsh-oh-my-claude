@@ -87,6 +87,30 @@ import type { InstructionFile } from "./instructions.js";
 {
   const tmp = await mkdtemp(join(tmpdir(), "dsh-sessions-test-"));
   const boxesPath = join(tmp, "boxes.json");
+  // Two remote workspaces: the placeholder dirs dsh stores, and the real paths on their boxes.
+  const localWorkspace = join(tmp, "remote-workspaces", "wsbox__app");
+  const sshWorkspace = join(tmp, "remote-workspaces", "sshbox__app");
+  const remoteWorkspacesPath = join(tmp, "remote-workspaces.json");
+  await writeFile(
+    remoteWorkspacesPath,
+    JSON.stringify([
+      {
+        name: "app",
+        host: "wsbox",
+        remoteCwd: "/srv/app",
+        path: localWorkspace,
+        workspaceId: "w-ws",
+      },
+      {
+        name: "far",
+        host: "sshbox",
+        remoteCwd: "/srv/far",
+        path: sshWorkspace,
+        workspaceId: "w-ssh",
+      },
+    ]),
+    "utf8",
+  );
   await writeFile(
     boxesPath,
     JSON.stringify(
@@ -115,13 +139,20 @@ import type { InstructionFile } from "./instructions.js";
         sessions: { get: () => undefined },
         // The instructions routes only answer for a directory a dsh session is open in, so the
         // fake registry has to know the one the assertions below use.
-        sessionPersistence: { list: async () => [{ id: "sid1", cwd: "/work/app" }] },
+        sessionPersistence: {
+          list: async () => [
+            { id: "sid1", cwd: "/work/app" },
+            { id: "sid2", cwd: localWorkspace },
+            { id: "sid3", cwd: sshWorkspace },
+          ],
+        },
         effect: (fn: () => void | (() => void)) => fn(),
       });
     },
   } as any;
   registerSessionRoutes(ctx, {
     log: () => {},
+    remoteWorkspacesPath,
     projectDir: (cwd: string) => [join(tmp, "claude", "projects", projectDirName(cwd))],
     projectsDir: [join(tmp, "claude", "projects")],
     startedIds: async () => [],
@@ -135,6 +166,12 @@ import type { InstructionFile } from "./instructions.js";
         : provider === "claude-code-box"
           ? { configDir: join(tmp, "box"), sshHost: "box" }
           : undefined,
+    // The workspace's box, found by hostname. `wsbox` is deliberately mounted without an sshHost so
+    // the reads below stay offline; `sshbox` carries one, which is what the refusals hang on.
+    instanceForHost: (host) =>
+      host === "wsbox"
+        ? { configDir: join(tmp, "wsbox") }
+        : { configDir: join(tmp, "box"), sshHost: host },
     rewind: async (sid, uuid, dryRun) => ({ ok: true, dryRun, canRewind: true }),
     settingsPath: join(tmp, "claude", "settings.json"),
   });
@@ -257,20 +294,20 @@ import type { InstructionFile } from "./instructions.js";
   for (const dir of ["other", "claude"]) await mkdir(join(tmp, dir), { recursive: true });
   await writeFile(join(tmp, "other", "CLAUDE.md"), "# other box\n");
   await writeFile(join(tmp, "claude", "CLAUDE.md"), "# this box\n");
-  const userFiles = async (provider: string): Promise<string[]> => {
+  const userFiles = async (at: string, provider: string): Promise<string[]> => {
     const reply = await respond(
       "GET",
-      `/dsh-oh-my-claude/instructions?cwd=${encodeURIComponent(cwd)}&provider=${provider}`,
+      `/dsh-oh-my-claude/instructions?cwd=${encodeURIComponent(at)}&provider=${provider}`,
     );
     return (reply.files as InstructionFile[]).filter((f) => f.kind === "User").map((f) => f.path);
   };
   assert.deepEqual(
-    await userFiles("claude-code-other"),
+    await userFiles(cwd, "claude-code-other"),
     [join(tmp, "other", "CLAUDE.md")],
     "the instructions list reads the named box's user file",
   );
   assert.deepEqual(
-    await userFiles("claude-code-gone"),
+    await userFiles(cwd, "claude-code-gone"),
     [join(tmp, "claude", "CLAUDE.md")],
     "an unknown provider falls back to the registering instance",
   );
@@ -302,6 +339,61 @@ import type { InstructionFile } from "./instructions.js";
     r = await respond("POST", `/dsh-oh-my-claude${path}?${onBox}`, JSON.stringify(body));
     assert.equal(r.error, `${what} do not reach an SSH box yet`, `${path} refuses an ssh box`);
   }
+
+  // A remote workspace's files are on its box under the real remote path, whichever model the
+  // session runs. Every cwd-scoped read follows the workspace, not the `?provider=` beside it:
+  // before this, a session on a remote workspace listed this PC's memories and CLAUDE.md files,
+  // under a project dir slugged from the empty placeholder directory.
+  const wsMem = `/dsh-oh-my-claude/memory?cwd=${encodeURIComponent(localWorkspace)}`;
+  r = await respond(
+    "PUT",
+    "/dsh-oh-my-claude/memory",
+    JSON.stringify({
+      cwd: localWorkspace,
+      name: "w.md",
+      text: "---\ndescription: on the box\n---\nW",
+    }),
+  );
+  assert.equal(r.ok, true);
+  assert.equal(
+    await readFile(
+      join(tmp, "wsbox", "projects", projectDirName("/srv/app"), "memory", "w.md"),
+      "utf8",
+    ),
+    "---\ndescription: on the box\n---\nW\n",
+    "the write lands on the workspace's box, under the remote path",
+  );
+  r = await respond("GET", `${wsMem}&provider=claude-code-other`);
+  assert.deepEqual(
+    (r.files as { name: string }[]).map((f) => f.name),
+    ["w.md"],
+    "another model selected does not move the workspace's memories",
+  );
+  await mkdir(join(tmp, "wsbox"), { recursive: true });
+  await writeFile(join(tmp, "wsbox", "CLAUDE.md"), "# ws box\n");
+  assert.deepEqual(
+    await userFiles(localWorkspace, "claude-code-other"),
+    [join(tmp, "wsbox", "CLAUDE.md")],
+    "the instructions list reads the workspace box's user file, not the selected model's",
+  );
+  r = await respond(
+    "GET",
+    `/dsh-oh-my-claude/diagnostics?cwd=${encodeURIComponent(localWorkspace)}`,
+  );
+  assert.equal(r.runtime.configDir, join(tmp, "wsbox"), "diagnostics report the workspace's box");
+
+  // And a mutation for a workspace on a real ssh box is refused the same way a session on that
+  // box's model is: without the cwd check it would have run the verb here, against a placeholder.
+  r = await respond(
+    "POST",
+    "/dsh-oh-my-claude/plugins/toggle",
+    JSON.stringify({ session: "sid3", scope: "user", key: "p@m" }),
+  );
+  assert.equal(
+    r.error,
+    "plugin changes do not reach an SSH box yet",
+    "a remote workspace refuses a plugin change with no provider named at all",
+  );
   // Export and import. An imported transcript lands in the plugin's own store, keeps the id its
   // records carry while that is free, and downloads back byte for byte.
   const transcript =

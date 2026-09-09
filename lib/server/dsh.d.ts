@@ -11,6 +11,9 @@ export declare const TURN_RECORDS: unique symbol;
 export declare const COMMAND_CATALOG: unique symbol;
 /** dsh session ids marked temporary (/temporary): their Claude processes keep no transcript. */
 export declare const TEMPORARY_SESSIONS: unique symbol;
+/** Per-session permission-mode overrides on globalThis: the panel writes them through the default
+ * mount while the mount that spawns the session reads them, so the map cannot be per-instance. */
+export declare const PERMISSION_MODE_OVERRIDES: unique symbol;
 /** The same brand dsh-llm puts on GenerateOptions.sessionId, so ids flow through without casts. */
 export type SessionId = NonNullable<GenerateOptions["sessionId"]>;
 /** Any JSON document; what MCP tool arguments and relay payloads are made of. */

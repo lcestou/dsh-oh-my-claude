@@ -10,6 +10,7 @@ import {
   mcpToolsByServer,
   hasPendingTodo,
   ClaudeCodeAdapter,
+  ADAPTER_CURRENT,
   accessModeOf,
   buildArgs,
   permissionModeFor,
@@ -2481,7 +2482,38 @@ console.log("ok");
   });
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(a.sideQuestions.get("far")?.[0]?.answer, "a box", "the answer lands in the ring");
+
+  // The routes are registered once, by the main mount, but a session running on a box is read and
+  // steered by that box's mount: its stream loop is the one that resolves a control reply, and its
+  // state dir is the one holding the session's modes. Every session-scoped route dispatches through
+  // `ownerFor`, which finds the mount whose registry key holds the live process.
+  // SAFETY: the registry symbol is this plugin's own key on globalThis
+  const g = globalThis as typeof globalThis & {
+    [ADAPTER_CURRENT]?: Map<string, ClaudeCodeAdapter>;
+  };
+  const mounts = (g[ADAPTER_CURRENT] ??= new Map());
+  const hadMain = mounts.get("claude-code");
+  mounts.set("claude-code", a);
+  mounts.set("claude-code-box", box);
+  box.processes.set(registryKey("claude-code-box", "far"), fakeProc({ alive: true }));
+  assert.equal(a.ownerFor("far"), box, "the box's mount owns a session running on the box");
+  assert.equal(a.ownerFor("nowhere"), a, "a session nobody runs stays with the asking mount");
   box.processes.delete(registryKey("claude-code-box", "far"));
+  assert.equal(
+    a.ownerFor("far"),
+    a,
+    "with no live process left, the session falls back to the asking mount",
+  );
+  mounts.delete("claude-code-box");
+  if (hadMain === undefined) mounts.delete("claude-code");
+  else mounts.set("claude-code", hadMain);
+
+  // Permission modes live in one shared map for the same reason: the panel writes through the main
+  // mount's route while the box's mount reads it back at spawn. A per-instance map left the box
+  // spawning under the config default while the shield reported the chosen mode.
+  a.permissionModes.set("far", "plan");
+  assert.equal(box.permissionModes.get("far"), "plan", "both mounts read one map");
+  a.permissionModes.delete("far");
 }
 {
   const tr = new Translator({ relay: true }) as any;

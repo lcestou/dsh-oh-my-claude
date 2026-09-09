@@ -1021,6 +1021,12 @@ export async function openTranscriptOnce(
   return { id, existed: false, turns: folded.turns.length, events: seed.length };
 }
 
+/** A cwd-scoped read's destination: the box it runs on, and the path to read there. */
+interface CwdTarget<T extends string | null> {
+  box: MountBox;
+  cwd: T;
+}
+
 /** One mount's own box: which `claude` to run, where its config lives, and whether it is remote. */
 export interface MountBox {
   configDir: string;
@@ -1084,6 +1090,13 @@ export interface SessionRouteOptions {
    * registering instance, which is what the request would have used anyway.
    */
   instanceFor?: (provider: string | null) => MountBox | undefined;
+  /**
+   * The box behind a hostname, for a read that is about a remote workspace rather than about a
+   * provider the client named. A remote workspace's files live on its box whichever model the
+   * session runs, the same way the turn itself does (adapter's `boxFor`), so the mount is looked up
+   * by host here instead of by provider id. Falls back to a plain ssh box when no mount matches.
+   */
+  instanceForHost?: (host: string) => MountBox | undefined;
   /** What a login probe found for a mount (`null` = the default one), so the adapter can name a
    *  logged-out box in the picker. */
   onLoginStatus?: (provider: string | null, loggedIn: boolean) => void;
@@ -1188,12 +1201,67 @@ export function registerSessionRoutes(
     reloadPlugins,
     continueAfterLimit,
     instanceFor,
+    instanceForHost,
     onLoginStatus,
   }: SessionRouteOptions,
 ): void {
   /** The box a request is about: the session's own mount when it named one, else this instance. */
   const boxOf = (url: URL): MountBox =>
     instanceFor?.(url.searchParams.get("provider")) ?? { configDir, command, sshHost };
+  /** The remote workspaces, as the routes below last wrote them; seeded from disk at registration. */
+  let remoteWorkspaces: RemoteWorkspace[] = [];
+  if (remoteWorkspacesPath !== undefined)
+    void readRemoteWorkspaces(remoteWorkspacesPath)
+      .then((ws) => {
+        remoteWorkspaces = ws;
+      })
+      .catch((e: unknown) => log("warn", `remote workspaces: ${errorText(e)}`));
+  /**
+   * Where a cwd-scoped read has to run, and under which path.
+   *
+   * A remote workspace's dsh cwd is an empty local placeholder dir; its CLAUDE.md files, transcripts,
+   * memory and project settings all live on its box, under the real remote path, which is also where
+   * the turn runs whichever model is selected (adapter's `boxFor`). Reading them through the named
+   * provider at the placeholder path answered about this PC and about a directory nothing uses: an
+   * Instructions tab listing the owner's own `~/CLAUDE.md`, a Memory tab pointing at a project dir
+   * slugged from the placeholder. Any other cwd is this request's own mount at its own path.
+   */
+  const workspaceAt = (cwd: string | null): RemoteWorkspace | undefined =>
+    cwd === null ? undefined : remoteWorkspaces.find((w) => w.path === cwd);
+  /** That workspace's own transcripts on its box, newest first; an unreachable box lists nothing. */
+  const boxTranscripts = async (
+    ws: RemoteWorkspace,
+    hidden: Set<string>,
+  ): Promise<TranscriptListItem[]> => {
+    const r = await sshTranscripts(ws.host);
+    if (!r.ok) {
+      log("warn", `transcripts on ${ws.host}: ${r.error}`);
+      return [];
+    }
+    return r.sessions.filter((t) => t.cwd === ws.remoteCwd && !hidden.has(t.id));
+  };
+  /**
+   * Bring a remote workspace's transcript to this disk so `open` can seed a dsh session from it.
+   * The body lives on the box, dsh reads the seed from here, and the plugin's import dir is already
+   * one of the directories `open` looks in. A box that cannot be read leaves the open to fall
+   * through to whatever is on this disk, which is what it did before.
+   */
+  const cacheBoxTranscript = async (ws: RemoteWorkspace, id: string): Promise<void> => {
+    if (importedDir === undefined) return;
+    const box = instanceForHost?.(ws.host) ?? { configDir, command, sshHost: ws.host };
+    const path = join(await projectDirAt(box, ws.remoteCwd), `${id}.jsonl`);
+    const read = await readAt(box, path).catch(() => null);
+    if (read === null) return;
+    await mkdir(importedDir, { recursive: true });
+    await writeFile(join(importedDir, `${id}.jsonl`), read.text, "utf8");
+  };
+  const targetOf = <T extends string | null>(url: URL, cwd: T): CwdTarget<T> => {
+    const ws = workspaceAt(cwd);
+    if (ws === undefined) return { box: boxOf(url), cwd };
+    const box = instanceForHost?.(ws.host) ?? { configDir, command, sshHost: ws.host };
+    // SAFETY: a workspace is only ever found for a non-null cwd, so T is string on this branch.
+    return { box, cwd: ws.remoteCwd as T };
+  };
   /**
    * Where a transcript for this workspace can be: Claude's own project dir, then the plugin's
    * import dir. An imported file is deliberately not written into `projects/`, so every read that
@@ -1239,8 +1307,11 @@ export function registerSessionRoutes(
     // box. On a session running over ssh that pairing writes this PC and leaves the box alone —
     // the roster then re-reads remote and still shows the old state, so the panel reports nothing
     // happened while the wrong machine changed. Refuse instead, until the verbs run over ssh.
-    const notOnBox = (url: URL, what: string): string | undefined =>
-      boxOf(url).sshHost ? `${what} do not reach an SSH box yet` : undefined;
+    // The cwd matters as much as the named provider: a remote workspace's directory is on its box
+    // whichever model the session runs, so a local mount would happily run the verb here, against a
+    // placeholder dir, and report success for a box that never changed.
+    const notOnBox = (url: URL, what: string, cwd: string | null = null): string | undefined =>
+      targetOf(url, cwd).box.sshHost ? `${what} do not reach an SSH box yet` : undefined;
     // The CLI wrote the plugin change to settings; ask this session's live process to re-read it so
     // it applies now. Returns whether a live process took it — false (next spawn) when none is up.
     const applyReload = async (session: JsonValue | undefined): Promise<boolean> => {
@@ -1299,9 +1370,15 @@ export function registerSessionRoutes(
                   new Set(workspaceRegistry()?.archivedSessionIds ?? []),
                 );
                 const hidden = new Set([...(await startedIds())].filter((id) => !owned.has(id)));
-                const seen = await Promise.all(
-                  projectDir(cwd).map((dir) => listTranscripts(dir, hidden).catch(() => [])),
-                );
+                // A remote workspace ran its turns on its box, so that is where its transcripts are;
+                // the box lister answers for the whole box and the real remote path picks this
+                // workspace's out. Locally there is only the empty placeholder dir.
+                const ws = workspaceAt(cwd);
+                const seen = ws
+                  ? [await boxTranscripts(ws, hidden)]
+                  : await Promise.all(
+                      projectDir(cwd).map((dir) => listTranscripts(dir, hidden).catch(() => [])),
+                    );
                 const items = withoutSubagents(
                   seen.flat().map((s) => {
                     const d = owned.get(s.id);
@@ -1314,6 +1391,8 @@ export function registerSessionRoutes(
                 const { cwd, id } = await readBody(req);
                 if (!validCwd(cwd) || !validId(id))
                   return json(res, 400, { error: "cwd and id required" });
+                const onBox = workspaceAt(cwd);
+                if (onBox !== undefined) await cacheBoxTranscript(onBox, id);
                 return json(
                   res,
                   200,
@@ -1333,10 +1412,10 @@ export function registerSessionRoutes(
                 const id = url.searchParams.get("id");
                 const cwd = url.searchParams.get("cwd") ?? "";
                 if (!validId(id)) return json(res, 400, { error: "id required" });
-                const box = boxOf(url);
+                const { box, cwd: at } = targetOf(url, cwd);
                 const dirs = box.sshHost
-                  ? [join(await projectDirAt(box, cwd), `${id}.jsonl`)]
-                  : transcriptDirs(cwd).map((d) => join(d, `${id}.jsonl`));
+                  ? [join(await projectDirAt(box, at), `${id}.jsonl`)]
+                  : transcriptDirs(at).map((d) => join(d, `${id}.jsonl`));
                 for (const path of dirs) {
                   const read = await readAt(box, path);
                   if (read === null) continue;
@@ -1393,8 +1472,8 @@ export function registerSessionRoutes(
                   return json(res, 400, {
                     error: "cwd must be a directory a dsh session is open in",
                   });
-                const box = boxOf(url);
-                const dir = join(await projectDirAt(box, cwd), "memory");
+                const { box, cwd: at } = targetOf(url, cwd);
+                const dir = join(await projectDirAt(box, at), "memory");
                 const name = url.searchParams.get("name") ?? body.name;
                 if (req.method === "GET" && name === undefined)
                   return json(res, 200, { dir, files: await listMemory(box, dir) });
@@ -1439,8 +1518,8 @@ export function registerSessionRoutes(
                   return json(res, 400, {
                     error: "cwd must be a directory a dsh session is open in",
                   });
-                const box = boxOf(url);
-                const files = await listInstructions(cwd, await claudeHomeOf(box), box);
+                const { box, cwd: at } = targetOf(url, cwd);
+                const files = await listInstructions(at, await claudeHomeOf(box), box);
                 if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/instructions`)
                   return json(res, 200, { files });
 
@@ -1485,15 +1564,17 @@ export function registerSessionRoutes(
                   if (scope === "managed")
                     return json(res, 400, { error: "managed settings are read-only" });
                   const cwd = await knownCwd(body.cwd, sessionPersistence);
-                  // A remote workspace's dsh cwd is the local placeholder dir the spawner maps to
-                  // the real remote path, so a project or local write would create that local path
-                  // on the box instead of editing the project. User scope resolves from the box's
-                  // own $HOME and is fine.
-                  if (box.sshHost && scope !== "user")
+                  // A project or local write lands in the session's own directory, so it goes to the
+                  // box that directory is on: a remote workspace's path is real over there and the
+                  // write is an ssh write like any other. Any other session on a box still has a
+                  // local cwd that need not exist there, which is what this refuses.
+                  const target = targetOf(url, cwd);
+                  const onWorkspace = workspaceAt(cwd) !== undefined;
+                  if (target.box.sshHost && scope !== "user" && !onWorkspace)
                     return json(res, 400, {
                       error: "project and local settings do not reach an SSH box yet",
                     });
-                  const path = settingsScopePath(scope, userPath, cwd);
+                  const path = settingsScopePath(scope, userPath, target.cwd);
                   if (path === undefined)
                     return json(res, 400, {
                       error: "project and local settings need a directory a dsh session is open in",
@@ -1501,7 +1582,12 @@ export function registerSessionRoutes(
                   const parsed = parseSettingsText(text);
                   if (parsed.error !== undefined) return json(res, 400, { error: parsed.error });
                   const settingsText = typeof text === "string" ? text : "";
-                  const written = await writeWithBackup(box, path, settingsText, mtimeOf(body));
+                  const written = await writeWithBackup(
+                    scope === "user" ? box : target.box,
+                    path,
+                    settingsText,
+                    mtimeOf(body),
+                  );
                   log("info", `${scope} settings saved (${settingsText.length} chars)`);
                   return json(res, 200, written);
                 }
@@ -1510,8 +1596,12 @@ export function registerSessionRoutes(
               // works out from the rest which keys a higher-precedence file overrides.
               if (settingsPath && url.pathname === `${ROUTE_PREFIX}/settings/scopes`) {
                 if (req.method !== "GET") return json(res, 405, { error: "method not allowed" });
-                const cwd = await knownCwd(url.searchParams.get("cwd"), sessionPersistence);
-                const box = boxOf(url);
+                // Project and local scope hang off the session's directory, which for a remote
+                // workspace is its real path on its box; user scope stays with the named mount.
+                const { box, cwd } = targetOf(
+                  url,
+                  await knownCwd(url.searchParams.get("cwd"), sessionPersistence),
+                );
                 const userPath = (await userSettingsPathOf(box)) ?? settingsPath;
                 const scopes: SettingsScopeInfo[] = [];
                 for (const scope of SETTINGS_SCOPES) {
@@ -1533,8 +1623,10 @@ export function registerSessionRoutes(
               // the panel: same question as the CLAUDE.md list, a different set of files.
               if (settingsPath && url.pathname === `${ROUTE_PREFIX}/plugins`) {
                 if (req.method !== "GET") return json(res, 405, { error: "method not allowed" });
-                const cwd = await knownCwd(url.searchParams.get("cwd"), sessionPersistence);
-                const box = boxOf(url);
+                const { box, cwd } = targetOf(
+                  url,
+                  await knownCwd(url.searchParams.get("cwd"), sessionPersistence),
+                );
                 return json(res, 200, {
                   ok: true,
                   ...pluginRoster(
@@ -1552,7 +1644,7 @@ export function registerSessionRoutes(
                 if (!isPluginId(body.key)) return json(res, 400, { error: "plugin id required" });
                 const target = await pluginScopeCwd(body.scope, body.session);
                 if ("error" in target) return json(res, 400, { error: target.error });
-                const remote = notOnBox(url, "plugin changes");
+                const remote = notOnBox(url, "plugin changes", target.cwd ?? null);
                 if (remote) return json(res, 400, { error: remote });
                 const verb = body.enable === false ? "disable" : "enable";
                 const result = await run(
@@ -1570,7 +1662,7 @@ export function registerSessionRoutes(
                 if (!isPluginId(body.key)) return json(res, 400, { error: "plugin id required" });
                 const target = await pluginScopeCwd(body.scope, body.session);
                 if ("error" in target) return json(res, 400, { error: target.error });
-                const remote = notOnBox(url, "plugin changes");
+                const remote = notOnBox(url, "plugin changes", target.cwd ?? null);
                 if (remote) return json(res, 400, { error: remote });
                 // -y is required when stdout is not a TTY, which it never is here.
                 const result = await run(
@@ -1596,7 +1688,7 @@ export function registerSessionRoutes(
                   });
                 const target = await pluginScopeCwd(body.scope, body.session);
                 if ("error" in target) return json(res, 400, { error: target.error });
-                const remote = notOnBox(url, "plugin changes");
+                const remote = notOnBox(url, "plugin changes", target.cwd ?? null);
                 if (remote) return json(res, 400, { error: remote });
                 const result = await run(
                   command || "claude",
@@ -1625,7 +1717,7 @@ export function registerSessionRoutes(
                   return json(res, 400, { error: "marketplace name required" });
                 const target = await pluginScopeCwd(body.scope, body.session);
                 if ("error" in target) return json(res, 400, { error: target.error });
-                const remote = notOnBox(url, "plugin changes");
+                const remote = notOnBox(url, "plugin changes", target.cwd ?? null);
                 if (remote) return json(res, 400, { error: remote });
                 const result = await run(
                   command || "claude",
@@ -1642,8 +1734,10 @@ export function registerSessionRoutes(
               // every open, and diagnostics runs the binary.
               if (settingsPath && url.pathname === `${ROUTE_PREFIX}/feature-switches`) {
                 if (req.method !== "GET") return json(res, 405, { error: "method not allowed" });
-                const cwd = await knownCwd(url.searchParams.get("cwd"), sessionPersistence);
-                const box = boxOf(url);
+                const { box, cwd } = targetOf(
+                  url,
+                  await knownCwd(url.searchParams.get("cwd"), sessionPersistence),
+                );
                 const texts = await settingsTexts(
                   box,
                   (await userSettingsPathOf(box)) ?? settingsPath,
@@ -1676,8 +1770,10 @@ export function registerSessionRoutes(
               // it would refuse to start on. The MCP servers and the denied calls are read from
               // the routes that already serve them, so nothing is answered twice.
               if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/diagnostics`) {
-                const cwd = await knownCwd(url.searchParams.get("cwd"), sessionPersistence);
-                const box = boxOf(url);
+                const { box, cwd } = targetOf(
+                  url,
+                  await knownCwd(url.searchParams.get("cwd"), sessionPersistence),
+                );
                 const runtime = await runtimeStatus(box.configDir, box.command, box.sshHost);
                 const configFiles: DiagnosticFile[] = [];
                 const userPath = await userSettingsPathOf(box);
@@ -1824,9 +1920,9 @@ export function registerSessionRoutes(
                 const body = await readBody(req);
                 const built = buildAddServer(body);
                 if ("error" in built) return json(res, 400, { error: built.error });
-                const remote = notOnBox(url, "MCP server changes");
-                if (remote) return json(res, 400, { error: remote });
                 const cwd = await sessionCwd(body.session, sessionPersistence);
+                const remote = notOnBox(url, "MCP server changes", cwd);
+                if (remote) return json(res, 400, { error: remote });
                 if (scopeNeedsCwd(built.scope) && cwd === null)
                   return json(res, 400, {
                     error: `${built.scope} scope needs a session open in a directory`,
@@ -1846,9 +1942,9 @@ export function registerSessionRoutes(
               if (req.method === "POST" && url.pathname === `${ROUTE_PREFIX}/mcp-servers/remove`) {
                 const body = await readBody(req);
                 if (!isMcpName(body.name)) return json(res, 400, { error: "name required" });
-                const remote = notOnBox(url, "MCP server changes");
-                if (remote) return json(res, 400, { error: remote });
                 const cwd = await sessionCwd(body.session, sessionPersistence);
+                const remote = notOnBox(url, "MCP server changes", cwd);
+                if (remote) return json(res, 400, { error: remote });
                 if (cwd === null)
                   return json(res, 400, { error: "no session open in a directory" });
                 const result = await run(
@@ -1888,10 +1984,10 @@ export function registerSessionRoutes(
                 const cwd = url.searchParams.get("cwd") ?? "";
                 if (!sid || !validCwd(cwd))
                   return json(res, 400, { error: "session and an absolute cwd required" });
-                const box = boxOf(url);
+                const { box, cwd: at } = targetOf(url, cwd);
                 const folded = await sessionTranscript(
                   box,
-                  await projectDirAt(box, cwd),
+                  await projectDirAt(box, at),
                   sid,
                   claudeIdOf,
                 );
@@ -2206,6 +2302,9 @@ export function registerSessionRoutes(
                     `${JSON.stringify(next, null, 2)}\n`,
                     "utf8",
                   );
+                  // Only after the file took it: a failed write must not leave the routes reading
+                  // a workspace list that nothing on disk agrees with.
+                  remoteWorkspaces = next;
                   await onRemoteWorkspaces?.(next);
                   return json(res, 200, { workspace: entry });
                 }
@@ -2229,6 +2328,7 @@ export function registerSessionRoutes(
                     `${JSON.stringify(next, null, 2)}\n`,
                     "utf8",
                   );
+                  remoteWorkspaces = next;
                   await onRemoteWorkspaces?.(next);
                   return json(res, 200, { workspaces: next });
                 }
@@ -2392,11 +2492,11 @@ export function registerSessionRoutes(
                 try {
                   // The durable file and the transcript answer different halves: the file holds
                   // what survives a restart, the transcript is the only record of the rest.
-                  const box = boxOf(url);
-                  const durable = await readDurableTasks(box, cwd);
+                  const { box, cwd: at } = targetOf(url, cwd);
+                  const durable = await readDurableTasks(box, at);
                   const folded = await sessionTranscript(
                     box,
-                    await projectDirAt(box, cwd),
+                    await projectDirAt(box, at),
                     sid,
                     claudeIdOf,
                   );
@@ -2405,7 +2505,7 @@ export function registerSessionRoutes(
                     durable,
                     session: folded ? sessionTasksFrom(folded) : [],
                     goal: folded ? goalFrom(folded) : null,
-                    path: durableTasksPath(cwd),
+                    path: durableTasksPath(at),
                   };
                   return json(res, 200, reply);
                 } catch (e) {
