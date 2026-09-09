@@ -1,4 +1,5 @@
 import type { IncomingMessage } from "node:http";
+import { type Reach } from "./reach.js";
 import type { JsonValue, PluginContext } from "./dsh.js";
 import type { PermissionModeInfo, PermissionModeReply, RewindReply, ContextUsageReply, WorkspaceDiffReply, McpStatusReply, AsideEntry } from "./adapter.js";
 /** Any JSON object, as a request body or a stored file decodes to. */
@@ -96,7 +97,14 @@ export interface RuntimeStatus {
     authMethod: string | null;
     email?: string | null;
     projectsDirectory?: string | null;
+    /** For an SSH box: why it did not answer, sorted so the row can name the fix (reach.ts). */
+    reach?: Reach;
 }
+/**
+ * One ssh to the box, kept apart from `run` because the stage needs the exit code as well as the
+ * text: 255 is ssh's own failure, anything else is the far shell's.
+ */
+export declare const probeReach: (host: string, command: string, timeout?: number) => Promise<Reach>;
 /** One probe's outcome: the decoded body, or why the box could not be reached. */
 export type Probe<T> = {
     ok: true;

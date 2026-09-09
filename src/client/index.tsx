@@ -1341,6 +1341,19 @@ function Boxes({ boxes, setBoxes, open, onToggle }: BoxesProps) {
   const [sshProbe, setSshProbe] = useState<Record<string, SshProbeEntry>>({});
   const [kind, setKind] = useState<BoxKind>("ssh");
   const [draft, setDraft] = useState({ name: "", url: "", token: "", host: "" });
+  // Tailscale peers, when this box is on a tailnet: a box there is a pick, not a hostname typed.
+  const [peers, setPeers] = useState<TailscalePeerRow[]>([]);
+  const [pickedPeer, setPickedPeer] = useState<TailscalePeerRow | null>(null);
+  useEffect(() => {
+    let live = true;
+    fetch(`${ROUTE}/tailscale/peers`)
+      .then((r) => readJson<{ peers?: TailscalePeerRow[] }>(r))
+      .then((b) => live && setPeers(b.peers ?? []))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, []);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [openSettingsUrl, setOpenSettingsUrl] = useState<string | null>(null);
@@ -1605,7 +1618,12 @@ function Boxes({ boxes, setBoxes, open, onToggle }: BoxesProps) {
                 <span style={pill(T.faint)}>ssh</span>
                 <span style={{ fontFamily: T.mono }}>{b.host}</span>
                 {!st && <span style={pill(T.faint)}>{busy ? "checking" : "unchecked"}</span>}
-                {st?.error && <span style={pill(T.err)}>{st.error}</span>}
+                {st?.error && !st.reach && <span style={pill(T.err)}>{st.error}</span>}
+                {st?.reach && st.reach.stage !== "ok" && (
+                  <span style={pill(T.err)} title={st.reach.detail}>
+                    {reachLabel(st.reach.stage)}
+                  </span>
+                )}
                 {up && (
                   <>
                     <span style={pill(st.binary ? T.ok : T.err)}>
@@ -1627,6 +1645,11 @@ function Boxes({ boxes, setBoxes, open, onToggle }: BoxesProps) {
                   </>
                 )}
               </div>
+              {st?.reach && st.reach.stage !== "ok" && (
+                <div style={{ ...meta, whiteSpace: "normal", marginTop: 4, color: T.muted }}>
+                  {st.reach.hint.replaceAll("<host>", b.host)}
+                </div>
+              )}
               {login?.host === b.host && (
                 <div style={{ ...meta, marginTop: 6, whiteSpace: "normal" }}>
                   {login.busy && !login.url && <span>starting login…</span>}
@@ -1763,12 +1786,38 @@ function Boxes({ boxes, setBoxes, open, onToggle }: BoxesProps) {
           onChange={(e) => setDraft({ ...draft, name: e.target.value })}
         />
         {kind === "ssh" ? (
-          <input
-            style={{ ...inputStyle, flex: "1 1 240px" }}
-            placeholder="user@host or ssh alias"
-            value={draft.host}
-            onChange={(e) => setDraft({ ...draft, host: e.target.value })}
-          />
+          <>
+            {peers.length > 0 && (
+              <select
+                style={{ ...select, flex: "0 1 200px" }}
+                aria-label="Tailscale peer"
+                value={pickedPeer?.host ?? ""}
+                onChange={(e) => {
+                  const peer = peers.find((p) => p.host === e.target.value) ?? null;
+                  setPickedPeer(peer);
+                  if (peer) setDraft({ ...draft, name: draft.name || peer.name, host: peer.host });
+                }}
+              >
+                <option value="">From Tailscale…</option>
+                {peers.map((p) => (
+                  <option key={p.host} value={p.host} disabled={peerIsSaved(p, ssh)}>
+                    {p.online ? "●" : "○"} {p.name}
+                    {p.os ? ` · ${p.os}` : ""}
+                    {peerIsSaved(p, ssh) ? " · saved" : ""}
+                  </option>
+                ))}
+              </select>
+            )}
+            <input
+              style={{ ...inputStyle, flex: "1 1 240px" }}
+              placeholder="user@host or ssh alias"
+              value={draft.host}
+              onChange={(e) => {
+                setPickedPeer(null);
+                setDraft({ ...draft, host: e.target.value });
+              }}
+            />
+          </>
         ) : (
           <>
             <input
@@ -1797,13 +1846,19 @@ function Boxes({ boxes, setBoxes, open, onToggle }: BoxesProps) {
           Add
         </button>
       </form>
+      {pickedPeer && (
+        <div style={{ ...meta, whiteSpace: "normal", marginTop: 4 }}>
+          {pickedPeer.tailscaleSsh
+            ? `${pickedPeer.name} runs Tailscale SSH: no key to copy, ssh signs in with your tailnet identity.`
+            : `${pickedPeer.name} needs an SSH key of yours, or Tailscale SSH turned on there (tailscale up --ssh).`}
+        </div>
+      )}
       <div style={{ ...meta, whiteSpace: "normal", marginTop: 4 }}>
         {kind === "ssh" ? (
           <>
-            Key-based ssh only. Not logged in there? Run{" "}
-            <code style={codeInline}>ssh &lt;host&gt;</code> then{" "}
-            <code style={codeInline}>claude auth login</code> on the box; it needs a browser. The
-            file-reading tabs still read this box, not the remote.
+            Key-based ssh, or Tailscale SSH on a tailnet. A tailnet name, a Tailscale IP or a
+            WireGuard address works as the host as it is. Not logged in there? The row offers a
+            login; the panel tabs read the box the session runs on.
           </>
         ) : (
           <>
@@ -1897,6 +1952,38 @@ interface SshBoxData {
   name: string;
   host: string;
 }
+/** A Tailscale peer as `/tailscale/peers` answers it (mirrors reach.ts's `TailscalePeer`). */
+interface TailscalePeerRow {
+  name: string;
+  host: string;
+  os: string;
+  online: boolean;
+  tailscaleSsh: boolean;
+}
+/** Already a saved box, by host (with or without a user@ in front), so the picker says so. */
+const peerIsSaved = (peer: TailscalePeerRow, boxes: Array<{ host: string }>): boolean =>
+  boxes.some((b) => b.host === peer.host || b.host.endsWith(`@${peer.host}`));
+
+/** The row's word for each reach stage; the hint under the row says what to do. */
+const reachLabel = (stage: string): string => {
+  switch (stage) {
+    case "dns":
+      return "name not found";
+    case "route":
+      return "unreachable";
+    case "hostkey":
+      return "host key";
+    case "auth":
+      return "key refused";
+    case "shell":
+      return "shell error";
+    case "no-cli":
+      return "no claude";
+    default:
+      return stage;
+  }
+};
+
 interface SshProbeEntry {
   name: string;
   host: string;
@@ -1904,6 +1991,7 @@ interface SshProbeEntry {
     host?: string;
     binary?: string;
     version?: string;
+    reach?: { stage: string; hint: string; detail: string };
     loggedIn?: boolean;
     email?: string;
     error?: string;

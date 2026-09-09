@@ -58,6 +58,7 @@
         "src/process.ts",
         "src/remote-fs.ts",
         "src/hold.ts",
+        "src/reach.ts",
         "src/keeper.ts",
         "src/transcript.ts",
         "src/mcp.ts",

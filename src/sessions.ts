@@ -16,6 +16,7 @@ import {
   type FoldedTranscript,
 } from "./transcript.js";
 import { shq, sshArgs } from "./process.js";
+import { classifyReach, reachScript, tailscalePeers, type Reach } from "./reach.js";
 import { homeAt, isEnoent, readAt, writeAt, type FsBox } from "./remote-fs.js";
 import type { TranscriptListItem } from "./transcript.js";
 import { deleteMemory, isMemoryName, listMemory } from "./memory.js";
@@ -365,7 +366,27 @@ export interface RuntimeStatus {
   authMethod: string | null;
   email?: string | null;
   projectsDirectory?: string | null;
+  /** For an SSH box: why it did not answer, sorted so the row can name the fix (reach.ts). */
+  reach?: Reach;
 }
+
+/**
+ * One ssh to the box, kept apart from `run` because the stage needs the exit code as well as the
+ * text: 255 is ssh's own failure, anything else is the far shell's.
+ */
+export const probeReach = (host: string, command: string, timeout = 12_000): Promise<Reach> =>
+  new Promise((resolve) =>
+    execFile(
+      "ssh",
+      sshArgs(host, reachScript(command)),
+      { timeout, windowsHide: true },
+      (e, out, err) => {
+        // SAFETY: execFile's error carries the child's exit code as `code` when it exited
+        const code = e ? ((e as { code?: unknown }).code ?? null) : 0;
+        resolve(classifyReach(typeof code === "number" ? code : null, String(err), String(out)));
+      },
+    ),
+  );
 
 /** A box's `/sessions?all=1` answer. */
 interface BoxSessions {
@@ -547,6 +568,8 @@ async function runtimeStatus(
     ...authFromStatus(status.out),
   };
   if (version.error) out.error = version.error;
+  // Only when something is wrong, and only over ssh: the stage names the fix the row shows.
+  if (sshHost && (version.error || !out.binary)) out.reach = await probeReach(sshHost, command);
   return out;
 }
 
@@ -1879,6 +1902,12 @@ export function registerSessionRoutes(
                   }
                   return json(res, 200, { boxes: v.boxes, live });
                 }
+              }
+              // The Tailscale peers this box can see, for the add form: none when tailscale is not
+              // installed or not running, which is not an error, just no picker.
+              if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/tailscale/peers`) {
+                const r = await run("tailscale", ["status", "--json"], undefined, undefined, 5000);
+                return json(res, 200, { peers: r.error ? [] : tailscalePeers(r.out) });
               }
               // Probe each ssh box's `claude` over ssh so the panel shows its login without leaving.
               if (
