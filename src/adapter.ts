@@ -260,7 +260,7 @@ export const Config = z.object({
     .union(["keeper", "node", "dsh"])
     .default("keeper")
     .description(
-      "How the Claude Code process is started. 'keeper' (default): under a small keeper outside dsh's process tree (its own systemd user scope when available), so a dsh restart leaves Claude running and the new dsh reattaches. 'node': directly, as dsh's child. 'dsh': through dsh's subprocess seam (ctx.subprocess); with a remote provider such as a remote subprocess provider mounted, a remote workspace then runs Claude Code on that machine. The seam scrubs credential-shaped env vars (KEY/TOKEN/SECRET/PASSWORD), so log in on the machine that runs it",
+      "How the Claude Code process is started. 'keeper' (default): under a small keeper outside dsh's process tree (its own systemd user scope when available), so a dsh restart leaves Claude running and the new dsh reattaches. 'node': directly, as dsh's child. 'dsh': through dsh's subprocess seam (ctx.subprocess); with a remote provider mounted on that seam, a remote workspace then runs Claude Code on that machine. The seam scrubs credential-shaped env vars (KEY/TOKEN/SECRET/PASSWORD), so log in on the machine that runs it",
     ),
   sshHost: z
     .string()
@@ -4094,7 +4094,7 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
     g[RESUME_TIMER].unref?.();
     void trace("timer armed");
   }
-  // Optional: the subprocess seam (stock dsh mounts a local provider; a remote subprocess provider a remote one).
+  // Optional: the subprocess seam (stock dsh mounts a local provider; a community one can be remote).
   ctx.inject?.(["subprocess"], (host) => {
     // SAFETY: cordis hands services untyped; dsh's subprocess seam is what this key holds
     adapter.subprocess = host.subprocess as Pick<SubprocessRuntime, "spawn"> | undefined;

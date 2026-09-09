@@ -225,7 +225,7 @@ export interface WorkspaceRegistry {
   get archivedSessionIds(): readonly SessionId[];
   archiveSession(sessionId: SessionId): Promise<void>;
   resolveByPath(path: string): Promise<Workspace | undefined>;
-  // Not part of the public surface; the another plugin plugin uses the same three to unarchive.
+  // Not part of the public surface; these three are how a session gets unarchived.
   enqueueOperation?<T>(operation: () => Promise<T>): Promise<T>;
   requireState(): WorkspaceRegistryState;
   setState(state: WorkspaceRegistryState): Promise<void>;

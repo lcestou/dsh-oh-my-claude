@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import type { ClientCtx } from "./shared.js";
 import { claudeProviderOf, maskEmail } from "./shared.js";
 
-assert.equal(maskEmail("me@example.com"), "m*****@gmail.com");
+assert.equal(maskEmail("someone@example.com"), "s******@example.com");
 // Never fewer than three stars, so a short local part does not leak its length.
 assert.equal(maskEmail("ab@x.io"), "a***@x.io");
 // Not an address: the placeholders these callers pass through are left alone.

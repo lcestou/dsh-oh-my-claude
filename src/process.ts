@@ -321,8 +321,8 @@ export function nodeSpawner(
 }
 
 /**
- * dsh's subprocess seam (`ctx.subprocess`). Same shape by definition. With a remote provider such
- * as a remote subprocess provider mounted, Claude Code runs on the remote machine for a remote workspace; the seam
+ * dsh's subprocess seam (`ctx.subprocess`). Same shape by definition. With a remote provider
+ * mounted, Claude Code runs on the remote machine for a remote workspace; the seam
  * scrubs credential-shaped env vars, so credentials come from the login on that machine.
  * `envOverride` is merged last so configured values win.
  */

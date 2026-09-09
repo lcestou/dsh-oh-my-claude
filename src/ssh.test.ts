@@ -14,12 +14,7 @@ import { sshBoxProviderId, validateRemoteWorkspaceInput, validateSshBoxes } from
 // sshInvocation builds `ssh -o BatchMode=yes -o ConnectTimeout=10 <host> <script>`, carrying the
 // remote cwd and CHILD_ENV, with every piece single-quoted so a path with a space cannot break out.
 {
-  const inv = sshInvocation(
-    "nova",
-    "claude",
-    ["-p", "--input-format", "stream-json"],
-    "/home/u/w",
-  );
+  const inv = sshInvocation("nova", "claude", ["-p", "--input-format", "stream-json"], "/home/u/w");
   assert.equal(inv.command, "ssh");
   // Options first, then the host and the script. The set of options is asserted below rather than
   // by index, so adding one does not move the two words that matter.

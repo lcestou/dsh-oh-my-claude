@@ -945,8 +945,8 @@ export async function openTranscriptOnce(
     await ws.attachSession(asSessionId(sessionId));
   };
   // ponytail: unarchive through the registry's own operation queue; dsh core has archiveSession
-  // but no inverse, and the another plugin plugin does exactly this. Every path that opens a row
-  // runs it: an archived session the store still holds took the early return below and stayed
+  // but no inverse, so the state edit goes through the queue that owns it. Every path that opens a
+  // row runs it: an archived session the store still holds took the early return below and stayed
   // archived, and the client hides archived sessions, so Restore opened nothing.
   const unarchive = async (sessionId: string) => {
     if (

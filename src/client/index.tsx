@@ -1332,7 +1332,7 @@ type BoxKind = "ssh" | "tailscale" | "wireguard" | "dsh";
  *  - **SSH** (`ssh`): this dsh drives Claude Code on the box over ssh; it becomes its own entry in
  *    the model picker, nothing runs there but the CLI. Saved in the plugin's own state.
  *  - **Link** (`dsh`): the box runs its own dsh with this plugin; its sessions show in the archive
- *    and Open hops the browser there. Same idea as another tool's environments, nothing proxied.
+ *    and Open hops the browser there. Nothing is proxied.
  * Every row is probed server-side so it shows host, claude version and login before you use it.
  */
 function Boxes({ boxes, setBoxes, open, onToggle }: BoxesProps) {

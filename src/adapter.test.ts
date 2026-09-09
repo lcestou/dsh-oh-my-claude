@@ -222,7 +222,7 @@ const sid = claudeSessionId("abc");
 assert.equal(sid, claudeSessionId("abc"));
 assert.match(sid, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
 assert.notEqual(sid, claudeSessionId("abd"));
-assert.equal(projectDirName("/home/someone/.dsh/x"), "-home-someone--dsh-x");
+assert.equal(projectDirName("/home/me/.dsh/x"), "-home-me--dsh-x");
 
 // turn selection: fresh sends everything, resume sends only what follows the last assistant turn
 const inj = message({
