@@ -268,8 +268,8 @@ export type ValidatedSshBoxes =
   | { error: string; boxes?: undefined };
 
 export function validateSshBoxes(input: unknown): ValidatedSshBoxes {
-  if (!Array.isArray(input)) return { error: "ssh boxes must be an array" };
-  if (input.length > MAX_BOXES) return { error: `at most ${MAX_BOXES} ssh boxes` };
+  if (!Array.isArray(input)) return { error: "SSH boxes must be an array" };
+  if (input.length > MAX_BOXES) return { error: `at most ${MAX_BOXES} SSH boxes` };
   const boxes: SshBox[] = [];
   const ids = new Set<string>();
   const hosts = new Set<string>();
@@ -277,7 +277,7 @@ export function validateSshBoxes(input: unknown): ValidatedSshBoxes {
     const b = isJsonObject(raw) ? raw : {};
     const name = String(b.name ?? "").trim();
     const host = String(b.host ?? "").trim();
-    if (!name || name.length > 40) return { error: "each ssh box needs a name (1-40 chars)" };
+    if (!name || name.length > 40) return { error: "each SSH box needs a name (1-40 chars)" };
     // The name has to slug to a non-empty, unique provider id, else two boxes would collide on one
     // instance. `[user@]host[:port]` and config aliases only; no shell metacharacters near ssh.
     const id = sshBoxProviderId(name);

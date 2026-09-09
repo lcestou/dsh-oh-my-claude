@@ -8,6 +8,8 @@ import {
   openTranscriptOnce,
   probeBox,
   readPickerSettings,
+  readRemoteWorkspaces,
+  readSshBoxes,
   registerSessionRoutes,
   withoutSubagents,
   slugForDir,
@@ -762,6 +764,66 @@ import type { InstructionFile } from "./instructions.js";
   r = await run({ inStore: false, persisted: true, archived: true, dshId });
   assert.equal(r.out.id, dshId);
   assert.deepEqual(r.attached, [{ id: dshId, events: 0 }], "attached under dsh's id");
+}
+
+// The two on-disk lists the panel reads at boot, and how each treats a file it does not like. They
+// differ on purpose: a bad SSH box entry fails the whole file (a half-applied roster would mount a
+// box under the wrong name), while a bad remote-workspace entry is dropped and the rest still load
+// (one broken redirect must not take every other workspace's sessions off its box). Neither may
+// throw: both are read before anything is on screen, and a throw there is a blank panel.
+{
+  const tmp = await mkdtemp(join(tmpdir(), "dsh-readers-test-"));
+  const write = async (name: string, text: string) => {
+    const path = join(tmp, name);
+    await writeFile(path, text, "utf8");
+    return path;
+  };
+
+  const boxes = await readSshBoxes(
+    await write("boxes.json", JSON.stringify([{ name: "box1", host: "host1" }])),
+  );
+  assert.deepEqual(boxes, [{ name: "box1", host: "host1" }]);
+  assert.deepEqual(
+    await readSshBoxes(
+      await write(
+        "boxes-bad.json",
+        JSON.stringify([{ name: "good", host: "host1" }, { host: "host2" }]),
+      ),
+    ),
+    [],
+    "an entry with no name fails the file, rather than mounting the boxes around it",
+  );
+  assert.deepEqual(await readSshBoxes(await write("boxes-broken.json", "{ not json")), []);
+  assert.deepEqual(
+    await readSshBoxes(join(tmp, "gone.json")),
+    [],
+    "never added: no boxes, no throw",
+  );
+
+  const ws = (name: string, extra: Record<string, string> = {}) => ({
+    name,
+    host: "box1",
+    remoteCwd: `/srv/${name}`,
+    path: `/local/${name}`,
+    workspaceId: `ws-${name}`,
+    ...extra,
+  });
+  assert.deepEqual(
+    await readRemoteWorkspaces(await write("ws.json", JSON.stringify([ws("app")]))),
+    [ws("app")],
+  );
+  const partial = { ...ws("bad"), workspaceId: "" };
+  assert.deepEqual(
+    (
+      await readRemoteWorkspaces(
+        await write("ws-partial.json", JSON.stringify([ws("good"), partial, ws("also-good")])),
+      )
+    ).map((w) => w.name),
+    ["good", "also-good"],
+    "an entry with no workspace id is dropped; the workspaces beside it still redirect",
+  );
+  assert.deepEqual(await readRemoteWorkspaces(await write("ws-broken.json", "{ broken")), []);
+  assert.deepEqual(await readRemoteWorkspaces(join(tmp, "gone.json")), []);
 }
 
 console.log("sessions ok");

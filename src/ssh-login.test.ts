@@ -7,6 +7,7 @@ import { join } from "node:path";
 import {
   deleteSshToken,
   readSshToken,
+  sshTokenPath,
   startSshLogin,
   submitSshLoginCode,
   writeSshToken,
@@ -43,6 +44,29 @@ function fakeChild() {
   deleteSshToken(dir, "nova");
   assert.equal(readSshToken(dir, "nova"), undefined);
   rmSync(dir, { recursive: true, force: true });
+}
+
+// A host names its own token file. The host string reaches this from the panel's add-box form, so
+// the file name is a slug rather than the host itself: nothing a form can type may put the token
+// outside the state directory, and no host may be long enough to blow the file name.
+{
+  const dir = "/var/dsh-state";
+  assert.equal(sshTokenPath(dir, "nova.local"), "/var/dsh-state/ssh-tokens/nova-local");
+  assert.equal(sshTokenPath(dir, "NOVA"), "/var/dsh-state/ssh-tokens/nova", "case folds");
+  assert.equal(
+    sshTokenPath(dir, "user@host.example.com"),
+    "/var/dsh-state/ssh-tokens/user-host-example-com",
+  );
+  assert.equal(
+    sshTokenPath(dir, "../../etc/passwd"),
+    "/var/dsh-state/ssh-tokens/etc-passwd",
+    "a traversal attempt is one flat name under the token directory",
+  );
+  const long = sshTokenPath(dir, "a".repeat(200)).split("/").pop() ?? "";
+  assert.equal(long.length, 64, "the name is bounded");
+  // A host of nothing but punctuation would otherwise slug to an empty name, which would make the
+  // token directory itself the file.
+  assert.equal(sshTokenPath(dir, "///"), "/var/dsh-state/ssh-tokens/x");
 }
 
 // setup-token flow: the URL is parsed, the code is typed then submitted with CR, the minted token is

@@ -1225,7 +1225,7 @@ export class Translator {
       }
       // Native tool result: append a dsh session row, skip reasoning text.
       if (this.onToolResult && !this.callInputs.has(toolUseId)) {
-        // Not a native tool we tracked — fall through to old behaviour.
+        // Not a native tool we tracked — fall through to old behavior.
       } else if (this.onToolResult && this.callInputs.has(toolUseId)) {
         const argsJson = this.callInputs.get(toolUseId)!;
         // Result closes the call: both maps only need the entry until here (fire dedupe, Edit diff).

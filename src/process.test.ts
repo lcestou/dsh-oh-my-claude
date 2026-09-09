@@ -4,12 +4,17 @@
 // silent rename or a dropped guard would let malformed CLI output through to the panel unnoticed.
 import assert from "node:assert/strict";
 import {
+  controlErrorLine,
   controlRequestLine,
   decodeCliModels,
   decodeContextUsage,
   decodeMcpStatus,
   decodeRewindResult,
+  decodeTitle,
   decodeWorkspaceDiff,
+  interruptLine,
+  toJsonValue,
+  toolResultText,
 } from "./process.js";
 
 // A rewind answer: canRewind is true only for the literal true, and the string list drops non-strings.
@@ -198,6 +203,135 @@ import {
     request_id: "req-1",
     request: { subtype: "get_context_usage" },
   });
+}
+
+// toolResultText renders a tool_result for the transcript. The CLI writes content as a bare string
+// or as a block array, and a block it has no text for still has to render as something: a throw here
+// would take out the whole turn's rows, and an empty string would silently drop an image result.
+{
+  assert.equal(toolResultText({ content: "plain text" }), "plain text");
+
+  assert.equal(
+    toolResultText({
+      content: [
+        { type: "text", text: "line 1" },
+        { type: "text", text: "line 2" },
+      ],
+    }),
+    "line 1\nline 2",
+  );
+
+  // A block that is not text keeps its type as a label, and a block with no type at all is named.
+  assert.equal(
+    toolResultText({
+      content: [{ type: "text", text: "text" }, { type: "image" }, { foo: "bar" }],
+    }),
+    "text\n[image]\n[unknown]",
+  );
+
+  // Nothing usable is an empty string, never a throw.
+  assert.equal(toolResultText({}), "");
+  assert.equal(toolResultText({ content: undefined }), "");
+
+  assert.equal(toolResultText({ content: null }), "");
+  assert.equal(toolResultText({ content: 42 }), "");
+  assert.equal(toolResultText({ content: {} }), "");
+
+  // Real behaviour worth pinning: a text block with no text renders the word, not an empty line.
+  assert.equal(toolResultText({ content: [{ type: "text" }] }), "undefined");
+
+  assert.equal(toolResultText({ content: [{ type: 123 }] }), "[unknown]");
+}
+
+// decodeTitle names a session in the sidebar. A blank or non-string answer has to come back as
+// undefined so the caller keeps the title it already had, rather than renaming a session to "".
+{
+  assert.equal(decodeTitle({ title: "Session Title" }), "Session Title");
+  assert.equal(decodeTitle({ title: "  Trimmed  " }), "Trimmed");
+
+  assert.equal(decodeTitle({ title: "" }), undefined);
+  assert.equal(decodeTitle({ title: "   " }), undefined);
+
+  assert.equal(decodeTitle({}), undefined);
+  assert.equal(decodeTitle(undefined), undefined);
+  assert.equal(decodeTitle(null), undefined);
+
+  assert.equal(decodeTitle([{ title: "ignored" }]), undefined);
+
+  assert.equal(decodeTitle({ title: 123 }), undefined);
+  assert.equal(decodeTitle({ title: true }), undefined);
+  assert.equal(decodeTitle({ title: { nested: "object" } }), undefined);
+}
+
+// toJsonValue guards the wire: a control response carries whatever a tool handed back, and a value
+// JSON cannot hold has to be dropped here rather than throwing inside the write.
+{
+  assert.equal(toJsonValue("text"), "text");
+  assert.equal(toJsonValue(42), 42);
+  assert.equal(toJsonValue(true), true);
+  assert.deepEqual(toJsonValue({ key: "value" }), { key: "value" });
+  assert.deepEqual(toJsonValue([1, 2, 3]), [1, 2, 3]);
+
+  assert.equal(toJsonValue(undefined), undefined);
+
+  const circular: Record<string, unknown> = { a: 1 };
+  circular.self = circular;
+  assert.equal(toJsonValue(circular), undefined);
+
+  assert.equal(
+    toJsonValue(() => {}),
+    undefined,
+  );
+
+  assert.equal(toJsonValue(Symbol("test")), undefined);
+
+  assert.equal(toJsonValue(BigInt(9007199254740992)), undefined);
+}
+
+// interruptLine is what Stop writes to stdin. The CLI reads stdin line by line, so a missing
+// newline would leave the request sitting in its buffer and the turn running.
+{
+  const line = interruptLine("req-123");
+  assert.ok(line.endsWith("\n"), "wire line ends with newline");
+  const parsed = JSON.parse(line);
+  assert.equal(parsed.type, "control_request");
+  assert.equal(parsed.request_id, "req-123");
+  assert.equal(parsed.request.subtype, "interrupt");
+
+  const emptyLine = interruptLine("");
+  const emptyParsed = JSON.parse(emptyLine);
+  assert.equal(emptyParsed.request_id, "");
+
+  // The id is JSON-escaped, so a quote in it cannot split the line.
+  const specialLine = interruptLine('req-"quote\\"end');
+  const specialParsed = JSON.parse(specialLine);
+  assert.equal(specialParsed.request_id, 'req-"quote\\"end');
+}
+
+// controlErrorLine answers a control request the plugin could not satisfy. The CLI waits for that
+// answer, so the line has to be written even when the error itself is not representable.
+{
+  const line = controlErrorLine("req-1", "operation failed");
+  assert.ok(line.endsWith("\n"), "wire line ends with newline");
+  const parsed = JSON.parse(line);
+  assert.equal(parsed.type, "control_response");
+  assert.equal(parsed.response.subtype, "error");
+  assert.equal(parsed.response.request_id, "req-1");
+  assert.equal(parsed.response.error, "operation failed");
+
+  const objLine = controlErrorLine("req-2", { code: "FAILED", message: "boom" });
+  const objParsed = JSON.parse(objLine);
+  assert.deepEqual(objParsed.response.error, { code: "FAILED", message: "boom" });
+
+  const undefinedLine = controlErrorLine("req-3", undefined);
+  const undefinedParsed = JSON.parse(undefinedLine);
+  assert.equal(undefinedParsed.response.error, undefined);
+
+  // A field JSON cannot hold is dropped; the rest of the error still reaches the CLI.
+  const funcLine = controlErrorLine("req-4", { fn: () => {}, str: "text" });
+  const funcParsed = JSON.parse(funcLine);
+  assert.equal("fn" in funcParsed.response.error, false);
+  assert.equal(funcParsed.response.error.str, "text");
 }
 
 console.log("process ok");

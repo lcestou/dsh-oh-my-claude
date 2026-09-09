@@ -2,7 +2,7 @@
 // pure strings and the local branch writes under a temp dir.
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, writeFile, mkdir } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   ABSENT,
@@ -12,7 +12,9 @@ import {
   listDirsAt,
   listNamesAt,
   listScript,
+  makeDirAt,
   makeDirScript,
+  homeAt,
   readAt,
   readScript,
   readTextAt,
@@ -126,6 +128,24 @@ import {
   assert.deepEqual(level?.names, ["memory", "nested"], "files are left out of a level");
   assert.equal(level?.path, dir);
   assert.equal(await listDirsAt(box, join(dir, "gone")), null);
+}
+
+// makeDirAt on the local box is a plain mkdir, not mkdir -p: the picker's New folder button makes
+// one directory where the user is looking, and a typo in a deep path is an error rather than a tree
+// of empty directories nobody asked for.
+{
+  const dir = await mkdtemp(join(tmpdir(), "omc-mkdir-"));
+  const box = {};
+  await makeDirAt(box, join(dir, "newfolder"));
+  assert.ok((await listDirsAt(box, dir))?.names.includes("newfolder"));
+  await assert.rejects(() => makeDirAt(box, join(dir, "no", "parent", "exists")));
+}
+
+// homeAt answers this box's own home only when there is no ssh host. Every user-scope settings path
+// is built on it, so a box's `~/.claude/settings.json` must never be resolved against this home; the
+// remote branch asks the box for its `$HOME` and is covered by the script tests above.
+{
+  assert.equal(await homeAt({}), homedir());
 }
 
 console.log("remote-fs ok");

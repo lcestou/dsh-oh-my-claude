@@ -69,7 +69,7 @@ import { sshBoxProviderId, validateRemoteWorkspaceInput, validateSshBoxes } from
     { name: "Nova", host: "nova" },
     { name: "Prod", host: "u@h" },
   ]);
-  assert.equal(validateSshBoxes("nope").error, "ssh boxes must be an array");
+  assert.equal(validateSshBoxes("nope").error, "SSH boxes must be an array");
   assert.match(validateSshBoxes([{ name: "", host: "h" }]).error ?? "", /needs a name/);
   assert.match(validateSshBoxes([{ name: "x", host: "" }]).error ?? "", /host is required/);
   // A host with a shell metacharacter is refused rather than passed to ssh.
