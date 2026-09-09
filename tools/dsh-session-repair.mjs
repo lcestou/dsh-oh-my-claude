@@ -110,9 +110,12 @@ function readLog(file) {
 }
 
 function writeLog(file, header, rows) {
-  const jsonl = [header, ...rows].map((r) => JSON.stringify(r)).join("\n") + "\n";
+  // dsh reads the header as its own zstd frame ("first frame is not exactly one header line"
+  // otherwise), then the events; two frames back to back are one valid stream.
+  const frame = (text) => execFileSync("zstd", ["-q", "-c"], { input: text, maxBuffer: 1 << 30 });
+  const body = rows.map((r) => JSON.stringify(r)).join("\n") + "\n";
   const tmp = file + ".repair-tmp";
-  writeFileSync(tmp, execFileSync("zstd", ["-q", "-c"], { input: jsonl, maxBuffer: 1 << 30 }));
+  writeFileSync(tmp, Buffer.concat([frame(JSON.stringify(header) + "\n"), frame(body)]));
   renameSync(file, `${file}.bak-${Date.now()}`);
   renameSync(tmp, file);
 }
