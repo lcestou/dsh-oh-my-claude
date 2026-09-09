@@ -94,14 +94,14 @@ assert.equal(formatToolCall("bash", "not json"), "❯\u2060 Bash\n```bash\n\n```
 // read result highlights by file extension; bash result stays plain
 assert.equal(
   formatToolResult("read", "/a/b.py", "print(1)", false),
-  "▤\u2060 Read result\n```python\nprint(1)\n```",
+  "▤\u2060 Read · Result\n```python\nprint(1)\n```",
 );
-assert.equal(formatToolResult("bash", "", "done", false), "❯\u2060 Bash result\n```\ndone\n```");
+assert.equal(formatToolResult("bash", "", "done", false), "❯\u2060 Bash · Result\n```\ndone\n```");
 
 // error results are plain-fenced and labelled error
 assert.equal(
   formatToolResult("read", "/a/b.py", "nope", true),
-  "▤\u2060 Read error\n```\nnope\n```",
+  "▤\u2060 Read · Error\n```\nnope\n```",
 );
 
 // capLines: bodies at or under the cap pass through untouched

@@ -247,7 +247,8 @@ export function formatToolResult(
   body: string,
   isError: boolean,
 ): string {
-  const head = `${label(name)} ${isError ? "error" : "result"}`;
+  // Same shape as the call header (`❯ Bash · List files`): the dot, then a capitalized word.
+  const head = `${label(name)} · ${isError ? "Error" : "Result"}`;
   if (isError) return `${head}\n${fence(capLines(body))}`;
   const lang = name === "read" ? langOf(filePath) : "";
   return `${head}\n${fence(capLines(body), lang)}`;
