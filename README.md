@@ -70,6 +70,20 @@ subagent-model-selection:       # let dsh subagents run on Claude Code too
 
 Plugin settings live under Settings → Claude Code, or as `config:` on the bundle row if you override it in the profile's `cordis.patch.yml`.
 
+### Upgrading dsh to 0.1.5 or later
+
+Two things change under this plugin:
+
+- The session log gains a versioned format with a strict migration. Logs written with `toolsInline: false` before 2026-09-08 hold raw `tool/call` rows the migration refuses, and dsh then shows *Failed to load history … does not match one advertised tool call* for that session. Repair them once, with dsh-web stopped:
+
+  ```sh
+  node tools/dsh-session-repair.mjs --check --all   # lists what needs repair, changes nothing
+  node tools/dsh-session-repair.mjs --apply --all   # drops the offending rows, keeps a .bak next to each log
+  ```
+
+  The tool proves every repaired log through dsh's own migration chain before writing it. Conversation text is untouched; only the tool cards of those old turns are gone from history.
+- `another dsh plugin` renamed its config key `text` to `prefix`. A preset that mounts it (the `persona` row in `agent.cordis.yml`) fails to mount until the key is renamed.
+
 ### Developing
 
 Install from a checkout instead: `dsh plugin --profile web add link:/path/to/dsh-oh-my-claude-code`. The source is strict TypeScript under `src/`; dsh loads the compiled output in `lib/`, so run `bun run build` after every edit and restart (the patch layer hot-reloads, plugin code does not). `lib/server` comes from `tsc`, `lib/client.js` from `bun build` of `src/client/index.tsx`; both are committed, so a plain install has them. `bun run check` runs lint (oxlint with the anti-slop rules in `tools/oxlint`), format check, typecheck, tests and the build.
@@ -112,7 +126,8 @@ All keys are optional.
 | `maxTurns` | unset | `--max-turns` cap per request. |
 | `maxBudgetUsd` | unset | `--max-budget-usd` cap per request. |
 | `titleModel` | `haiku` | Model used for dsh's session-title requests. |
-| `toolActivity` | `true` | Show Claude Code tool calls and results as native tool rows. |
+| `toolActivity` | `true` | Show Claude Code tool calls and results. |
+| `toolsInline` | `true` | Render tool activity inline in the stream. `false` appends dsh's own `tool/call` rows instead; only honoured on a format-0 session log (dsh before 0.1.5), because the versioned format's migration refuses rows no assistant message advertised. |
 | `resume` | `true` | Keep one Claude Code session per dsh session. |
 | `idleTimeoutMs` | `1800000` | Kill the child when no stream event arrives for this long; surfaces as `IDLE_TIMEOUT`. |
 | `toolTextLimit` | `600` | Characters of a tool result kept in its session row. |

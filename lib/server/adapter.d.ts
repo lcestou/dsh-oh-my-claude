@@ -510,6 +510,19 @@ export interface SideQuestion {
  */
 export declare function sideQuestionsIn(messages: LooseMessage[] | undefined): SideQuestion[];
 export { PROCESS_REGISTRY, ADAPTER_CURRENT, RESUME_TIMER };
+/**
+ * Whether Claude's own tool calls may be appended as raw `tool/call`/`tool/result` rows. Only a
+ * format-0 session (dsh before 0.1.5) takes them: from 0.1.5 the session format is versioned and
+ * its migration refuses any `tool/call` no `assistant/message` advertised, so such rows would make
+ * the whole log unloadable on the next upgrade. Inline rendering has no such row.
+ */
+export declare function nativeToolRows(config: {
+    toolActivity: boolean;
+    toolsInline: boolean;
+}, formatVersion: number): {
+    rows: boolean;
+    refused: boolean;
+};
 /** Count the human prompts dsh has in a transcript (context injections and tool results excluded). */
 export declare function userPromptCount(messages: LooseMessage[] | undefined): number;
 /** The stream chunks that make one relayed dsh tool call a native tool-call block. */
@@ -614,6 +627,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     }): Promise<TurnPrep>;
     /** Claude slash commands already registered as dsh commands, name → disposer. */
     readonly bridged: Map<string, () => void>;
+    /** Sessions already warned that `toolsInline: false` is ignored on a versioned session format. */
+    readonly rowsRefused: Set<string>;
     /**
      * This plugin's own commands, which share the `bridged` map so one disposer list covers all of
      * them. They are never Claude's, so the bridge must not register them as passthroughs and the

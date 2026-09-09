@@ -1442,6 +1442,19 @@ const RELAY_BATCH_MS = 1500;
 /** After asking the CLI to interrupt, how long before falling back to killing the process. */
 const INTERRUPT_GRACE_MS = 5000;
 
+/**
+ * Whether Claude's own tool calls may be appended as raw `tool/call`/`tool/result` rows. Only a
+ * format-0 session (dsh before 0.1.5) takes them: from 0.1.5 the session format is versioned and
+ * its migration refuses any `tool/call` no `assistant/message` advertised, so such rows would make
+ * the whole log unloadable on the next upgrade. Inline rendering has no such row.
+ */
+export function nativeToolRows(
+  config: { toolActivity: boolean; toolsInline: boolean },
+  formatVersion: number,
+) {
+  const wanted = config.toolActivity && !config.toolsInline;
+  return { rows: wanted && formatVersion === 0, refused: wanted && formatVersion !== 0 };
+}
 /** Count the human prompts dsh has in a transcript (context injections and tool results excluded). */
 export function userPromptCount(messages: LooseMessage[] | undefined): number {
   return (messages ?? []).filter((m) => m.role === "user" && m.source?.kind === "user").length;
@@ -1856,6 +1869,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
 
   /** Claude slash commands already registered as dsh commands, name → disposer. */
   readonly bridged = new Map<string, () => void>();
+  /** Sessions already warned that `toolsInline: false` is ignored on a versioned session format. */
+  readonly rowsRefused = new Set<string>();
   /**
    * This plugin's own commands, which share the `bridged` map so one disposer list covers all of
    * them. They are never Claude's, so the bridge must not register them as passthroughs and the
@@ -3123,6 +3138,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     }
     // Compute turn/step once per stream from the open session; used by native tool callbacks.
     let turnStep: { turn: number; step: number } | undefined;
+    let formatVersion = 0; // session log format; 0 = dsh before 0.1.5
     let firstChunkAt = 0; // when the first stream chunk landed, for time-to-first-token
     const callSeqs = new Map<string, number>(); // callId → tool/call seq the result must cite
     try {
@@ -3140,9 +3156,18 @@ export class ClaudeCodeAdapter extends LlmAdapter {
             step = e.data.step as number | undefined;
         }
         if (turn !== undefined && step !== undefined) turnStep = { turn, step };
+        formatVersion = session.header.version;
       }
     } catch {
       // session unavailable; native rows will fall back to old reasoning blocks
+    }
+    const rowMode = nativeToolRows(this.config, formatVersion);
+    if (rowMode.refused && !this.rowsRefused.has(options.sessionId)) {
+      this.rowsRefused.add(options.sessionId);
+      this.log(
+        "warn",
+        `toolsInline: false ignored: dsh session format v${formatVersion} refuses unadvertised tool rows (the log would not load after a migration); rendering tool activity inline`,
+      );
     }
     const tr = new Translator({
       toolActivity: this.config.toolActivity,
@@ -3155,7 +3180,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       hostLabel: this.hostLabelFor(options.sessionId),
       log: this.log.bind(this),
       onToolCall:
-        turnStep && this.config.toolActivity && !this.config.toolsInline
+        turnStep && rowMode.rows
           ? (callId: string, toolName: string, args: string) => {
               // SAFETY: NATIVE_TOOL_MAP is a readonly const object; keyof typeof narrows to known keys only
               const mapped = NATIVE_TOOL_MAP[toolName as keyof typeof NATIVE_TOOL_MAP] ?? toolName;
@@ -3200,7 +3225,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         void saveTurnRecords(this.stateDir, options.sessionId, buf);
       },
       onToolResult:
-        turnStep && this.config.toolActivity && !this.config.toolsInline
+        turnStep && rowMode.rows
           ? (callId, text, isError, meta) => {
               try {
                 const session = this.ctx?.sessions?.get?.(asSessionId(options.sessionId));

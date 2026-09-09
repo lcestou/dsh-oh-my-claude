@@ -1,6 +1,7 @@
 // Offline self-check: node src/adapter.test.js. No CLI, no network.
 import assert from "node:assert/strict";
 import {
+  nativeToolRows,
   Config,
   KNOWN_MODELS,
   Translator,
@@ -3027,6 +3028,22 @@ console.log("plan-review ok");
 }
 console.log("command-catalog-live ok");
 console.log("command-bridge ok");
+{
+  // Raw tool rows only on a format-0 session: dsh 0.1.5's migration refuses unadvertised
+  // tool/call rows, so on a versioned format the rows are refused and the turn renders inline.
+  const rows = { toolActivity: true, toolsInline: false };
+  assert.deepEqual(nativeToolRows(rows, 0), { rows: true, refused: false });
+  assert.deepEqual(nativeToolRows(rows, 3), { rows: false, refused: true });
+  assert.deepEqual(nativeToolRows({ toolActivity: true, toolsInline: true }, 3), {
+    rows: false,
+    refused: false,
+  });
+  assert.deepEqual(nativeToolRows({ toolActivity: false, toolsInline: false }, 0), {
+    rows: false,
+    refused: false,
+  });
+}
+console.log("native-rows ok");
 
 // The catalog survives a restart. globalThis carries it across a hot reload, but a restart adopts
 // the running Claude and never sees a second init frame, so the bridged commands used to leave the
