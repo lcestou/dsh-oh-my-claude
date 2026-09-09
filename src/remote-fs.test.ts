@@ -7,13 +7,18 @@ import { join } from "node:path";
 import {
   ABSENT,
   afterMark,
+  childPath,
+  dirsScript,
+  listDirsAt,
   listNamesAt,
   listScript,
+  makeDirScript,
   readAt,
   readScript,
   readTextAt,
   removeAt,
   removeScript,
+  splitDirs,
   splitRead,
   writeAt,
   writeScript,
@@ -29,6 +34,15 @@ import {
 
   assert.equal(listScript("/w/dir"), "if [ -d '/w/dir' ]; then ls -A -- '/w/dir'; fi");
   assert.equal(removeScript("/w/x.md"), "rm -f -- '/w/x.md'");
+  assert.equal(makeDirScript("/w/new dir"), "mkdir -- '/w/new dir'");
+
+  // The picker's level script: an empty dir opens the box's own home, and an unreadable level exits
+  // with the absent code rather than printing this PC's path.
+  const dirs = dirsScript("/w/a b");
+  assert.ok(dirs.startsWith("cd -- '/w/a b' 2>/dev/null || exit 44;"), "the level is quoted");
+  assert.ok(dirs.includes("pwd;"), "the resolved level comes first");
+  assert.ok(dirsScript("").startsWith('cd -- "$HOME"'), "an empty level means the box's home");
+  assert.ok(dirs.endsWith("; exit 0"), "a level whose last child is a file still exits 0");
 
   // A write keeps a .bak and lands through a temp file, so a dropped connection cannot leave half
   // a settings file the CLI would refuse to start on.
@@ -43,6 +57,18 @@ import {
   // The write answers its own mtime: reading it back would cost a second connection and report on a
   // file that may have moved on since.
   assert.ok(write.endsWith("echo 0; }"), "the write ends by printing the mtime it left");
+}
+
+// The level script prints the resolved path, then $HOME, then one child directory per line.
+{
+  assert.deepEqual(splitDirs("/home/me/p\n/home/me\nsrc\n.git\n"), {
+    path: "/home/me/p",
+    home: "/home/me",
+    names: [".git", "src"],
+  });
+  assert.deepEqual(splitDirs("/\n/root\n"), { path: "/", home: "/root", names: [] });
+  assert.equal(childPath("/", "etc"), "/etc", "the root's slash is not doubled");
+  assert.equal(childPath("/home/me", "p"), "/home/me/p");
 }
 
 // The read script answers the mtime on its own line, then the file verbatim: content with blank
@@ -93,6 +119,13 @@ import {
   await removeAt(box, join(dir, "memory", "a.md"));
   assert.deepEqual(await listNamesAt(box, join(dir, "memory")), []);
   await removeAt(box, join(dir, "memory", "a.md")); // gone already: not an error
+
+  // The picker's level lists directories only, and a level that is not there is null rather than
+  // an empty directory: the dialog says so instead of showing an empty box.
+  const level = await listDirsAt(box, dir);
+  assert.deepEqual(level?.names, ["memory", "nested"], "files are left out of a level");
+  assert.equal(level?.path, dir);
+  assert.equal(await listDirsAt(box, join(dir, "gone")), null);
 }
 
 console.log("remote-fs ok");

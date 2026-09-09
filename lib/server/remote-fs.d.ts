@@ -20,6 +20,28 @@ export declare const readScript: (path: string) => string;
 /** One name per line, or nothing when the directory is absent — a missing dir lists empty, as locally. */
 export declare const listScript: (dir: string) => string;
 /**
+ * One directory level for the workspace picker: the level it resolved to, then the box's `$HOME`,
+ * then one child directory name per line. An empty `dir` means the box's home, which is where the
+ * dialog opens; `cd` resolves `.`, `..` and a symlink for us, so the answer is the path the far box
+ * would actually run in. An unreadable or absent level exits `ABSENT`, the way a file read does.
+ */
+export declare const dirsScript: (dir: string) => string;
+/** Make one directory, and fail when the name is taken: a picker's New folder, not `mkdir -p`. */
+export declare const makeDirScript: (dir: string) => string;
+/** One directory level: where it resolved to, the box's home, and its child directory names. */
+export interface DirLevel {
+    path: string;
+    home: string;
+    names: string[];
+}
+/**
+ * Split `dirsScript`'s answer: the level, then `$HOME`, then the names. The names are sorted here
+ * rather than by the box, whose glob lists the dotted ones after the rest.
+ */
+export declare function splitDirs(out: string): DirLevel;
+/** Join a child onto a POSIX level without doubling the root's slash. */
+export declare const childPath: (dir: string, name: string) => string;
+/**
  * Back the file up the way a local write does, then replace it through a temp file so a dropped
  * connection cannot leave a half-written settings file the CLI would refuse to start on.
  * `base64 -d` is in coreutils and busybox alike. It answers the mtime it left behind, which the
@@ -39,6 +61,13 @@ export declare function readAt(box: FsBox, path: string): Promise<FileRead | nul
 export declare function readTextAt(box: FsBox, path: string): Promise<string | null>;
 /** The names in a directory; an absent directory lists empty, the way a local read does. */
 export declare function listNamesAt(box: FsBox, dir: string): Promise<string[]>;
+/**
+ * One directory level on the box, or null when the level is gone or unreadable. The picker opens on
+ * the box's home, so an empty `dir` asks for that rather than this PC's.
+ */
+export declare function listDirsAt(box: FsBox, dir: string): Promise<DirLevel | null>;
+/** Create one directory on the box. A name already in use is a fault the picker shows. */
+export declare function makeDirAt(box: FsBox, dir: string): Promise<void>;
 /**
  * Write the file, creating its parent and keeping a `.bak` of what was there. Answers the mtime the
  * file ended up with, which is what the editor checks its next write against.

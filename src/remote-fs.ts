@@ -51,6 +51,39 @@ export const listScript = (dir: string): string =>
   `if [ -d ${shq(dir)} ]; then ls -A -- ${shq(dir)}; fi`;
 
 /**
+ * One directory level for the workspace picker: the level it resolved to, then the box's `$HOME`,
+ * then one child directory name per line. An empty `dir` means the box's home, which is where the
+ * dialog opens; `cd` resolves `.`, `..` and a symlink for us, so the answer is the path the far box
+ * would actually run in. An unreadable or absent level exits `ABSENT`, the way a file read does.
+ */
+export const dirsScript = (dir: string): string =>
+  `cd -- ${dir === "" ? '"$HOME"' : shq(dir)} 2>/dev/null || exit ${ABSENT}; pwd; printf '%s\\n' "$HOME"; ` +
+  `for f in * .*; do [ "$f" = . ] || [ "$f" = .. ] || { [ -d "$f" ] && printf '%s\\n' "$f"; }; done; exit 0`;
+
+/** Make one directory, and fail when the name is taken: a picker's New folder, not `mkdir -p`. */
+export const makeDirScript = (dir: string): string => `mkdir -- ${shq(dir)}`;
+
+/** One directory level: where it resolved to, the box's home, and its child directory names. */
+export interface DirLevel {
+  path: string;
+  home: string;
+  names: string[];
+}
+
+/**
+ * Split `dirsScript`'s answer: the level, then `$HOME`, then the names. The names are sorted here
+ * rather than by the box, whose glob lists the dotted ones after the rest.
+ */
+export function splitDirs(out: string): DirLevel {
+  const [path = "", home = "", ...names] = out.split("\n");
+  return { path, home, names: names.filter((n) => n !== "").toSorted() };
+}
+
+/** Join a child onto a POSIX level without doubling the root's slash. */
+export const childPath = (dir: string, name: string): string =>
+  dir.endsWith("/") ? `${dir}${name}` : `${dir}/${name}`;
+
+/**
  * Back the file up the way a local write does, then replace it through a temp file so a dropped
  * connection cannot leave a half-written settings file the CLI would refuse to start on.
  * `base64 -d` is in coreutils and busybox alike. It answers the mtime it left behind, which the
@@ -163,6 +196,41 @@ export async function listNamesAt(box: FsBox, dir: string): Promise<string[]> {
   const r = await ssh(box.sshHost, listScript(dir));
   if (r.code !== 0) throw transportError(box.sshHost, r);
   return r.out.split("\n").filter((n) => n !== "");
+}
+
+/**
+ * One directory level on the box, or null when the level is gone or unreadable. The picker opens on
+ * the box's home, so an empty `dir` asks for that rather than this PC's.
+ */
+export async function listDirsAt(box: FsBox, dir: string): Promise<DirLevel | null> {
+  if (!box.sshHost) {
+    const home = homedir();
+    const at = dir === "" ? home : dir;
+    const kids = await readdir(at, { withFileTypes: true }).catch(() => null);
+    if (kids === null) return null;
+    return {
+      path: at,
+      home,
+      names: kids
+        .filter((k) => k.isDirectory())
+        .map((k) => k.name)
+        .toSorted(),
+    };
+  }
+  const r = await ssh(box.sshHost, dirsScript(dir));
+  if (r.code === ABSENT) return null;
+  if (r.code !== 0) throw transportError(box.sshHost, r);
+  return splitDirs(r.out);
+}
+
+/** Create one directory on the box. A name already in use is a fault the picker shows. */
+export async function makeDirAt(box: FsBox, dir: string): Promise<void> {
+  if (!box.sshHost) {
+    await mkdir(dir);
+    return;
+  }
+  const r = await ssh(box.sshHost, makeDirScript(dir));
+  if (r.code !== 0) throw transportError(box.sshHost, r);
 }
 
 /**

@@ -58,6 +58,7 @@ import {
 import { Spark, sparkNode } from "./spark.js";
 import { AccessShield, OhMyClaudeControl } from "./panel.js";
 import { ConfirmButton } from "./tune.js";
+import { AddWorkspaceFlow } from "./picker.js";
 import { markTitle, newlyWaiting, noticesOn, type NoticeSnapshot } from "./notices.js";
 import { SETTINGS_SCOPES, SCOPE_LABELS, overrideNote } from "./settings.js";
 import type { SettingsScope, SettingsScopeInfo } from "./settings.js";
@@ -4218,6 +4219,17 @@ export function apply(ctx: ClientCtx) {
     ctx.slots.register(
       { name: "conversation.input.dock", id: "claude-tool-icons", order: 46 },
       () => <ToolIconSprites />,
+    );
+    return null;
+  });
+
+  // Add workspace, with a box to pick it on. Renderless until dsh's sidebar "+" is clicked, and
+  // dormant unless an SSH box is saved; the sidebar footer is where a root-scoped entry stays
+  // mounted whether the sidebar is wide or collapsed.
+  ctx.slots.inject("sidebar.footer.action", () => {
+    ctx.slots.register(
+      { name: "sidebar.footer.action", id: "claude-add-workspace", order: 90 },
+      () => <AddWorkspaceFlow ctx={ctx} />,
     );
     return null;
   });

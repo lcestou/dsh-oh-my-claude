@@ -519,6 +519,32 @@ type DshSlots = {
     }) => ReactNode,
   ) => void;
 };
+/** One directory row as dsh's listing reports it (dsh-host-directory-picker `DirectoryEntry`). */
+export interface DirEntry {
+  name: string;
+  /** Absolute path on the box the level came from; a client never joins segments itself. */
+  path: string;
+  /** Dot-prefixed on POSIX; the dialog owns whether to show it. */
+  hidden: boolean;
+}
+
+/**
+ * dsh-client-ui-workspace's directory UI service, which is what its own Select Workspace Directory
+ * dialog lists through. Reached with `ctx.get`, not `inject`.
+ */
+export interface UiWorkspaceFace {
+  listDirectory: (
+    path?: string,
+    signal?: AbortSignal,
+  ) => Promise<{ path: string; home: string; entries: DirEntry[] }>;
+  createDirectory: (path: string, name: string) => Promise<string>;
+}
+
+/** dsh's locale registry, read so a replaced dialog keeps dsh's own copy in dsh's language. */
+export interface LocaleFace {
+  bind: (ns: string) => (key: string) => string;
+}
+
 /** The dsh client services this panel uses, the ones `inject` names. */
 export interface ClientCtx {
   slots: DshSlots;
@@ -569,7 +595,16 @@ export interface ClientCtx {
   };
   workspaces: {
     list: { getSnapshot: () => { items: Array<{ path: string; workspaceId: string }> } };
+    /** Adopt an existing directory as a workspace, which is what dsh's own picker calls. */
+    create: (input: { path: string }) => Promise<{ workspaceId: string }>;
   };
+  /**
+   * cordis's own service lookup, which answers undefined for a service this plugin does not name in
+   * `inject`. Reading such a service off the context directly throws ("cannot get property without
+   * inject"), so this is the only way to treat one as optional: a dsh missing it keeps its own Add
+   * workspace button and the plugin stays out of the way.
+   */
+  get?: <T>(name: string) => T | undefined;
   // From dsh-client-ui-model-selection (`ModelDirectoryResolver`, registered as `modelDirectories`).
   modelDirectories: {
     directoryFor: (sessionId: string) => {

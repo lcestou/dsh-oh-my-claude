@@ -1,4 +1,4 @@
-<h1 align="center">✻ Oh My Claude</h1>
+<h1 align="center"><img src="docs/media/spark.svg" alt="" width="22" height="22"> Oh My Claude</h1>
 
 <p align="center">
   <strong>Claude Code, native inside dsh</strong>
