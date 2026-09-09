@@ -848,7 +848,7 @@ export function permissionReason(
   else if (typeof input?.file_path === "string") detail = input.file_path;
   else if (typeof input?.url === "string") detail = input.url;
   else if (input && typeof input === "object") detail = JSON.stringify(input);
-  const text = [head, detail].filter(Boolean).join(" — ");
+  const text = [head, detail].filter(Boolean).join(": ");
   return text.length > 400 ? `${text.slice(0, 400)}…` : text || toolName;
 }
 

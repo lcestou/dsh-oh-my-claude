@@ -1028,7 +1028,7 @@ assert.deepEqual(cr.response.response.updatedInput, { a: 1 });
 assert.equal(denyResult("t1", "no").decisionClassification, "user_reject");
 assert.equal(
   permissionReason("Bash", { command: "ls -la" }, { title: "Run ls" }),
-  "Run ls — ls -la",
+  "Run ls: ls -la",
 );
 assert.ok(buildArgs({ model: "m", config }).includes("--permission-prompt-tool"));
 assert.ok(

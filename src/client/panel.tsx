@@ -1712,7 +1712,7 @@ function TasksBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
           {data.session.length > 0 ? (
             <>
               <span style={{ ...meta, padding: "2px 4px", display: "block", marginTop: 8 }}>
-                Session-only — reconstructed from this session's transcript; these die when Claude
+                Session-only, reconstructed from this session's transcript; these die when Claude
                 exits.
               </span>
               {data.session.map((t) => (
@@ -2387,7 +2387,7 @@ function AsidesBody({ sessionId }: { sessionId: string }) {
   if (items.length === 0) {
     return (
       <div style={{ ...meta, padding: "4px 10px", fontSize: 12, whiteSpace: "normal" }}>
-        No asides in this session. Ask one with <code style={code}>/btw</code> — the answer docks
+        No asides in this session. Ask one with <code style={code}>/btw</code>. The answer docks
         above the composer instead of joining the transcript, and lands here.
       </div>
     );

@@ -2448,7 +2448,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
           this.askSideQuestion(String(agent.id), question);
           return {
             kind: "success",
-            text: "Side question sent — the answer opens in the ✻ aside bubble.",
+            text: "Side question sent. The answer opens in the ✻ aside bubble.",
           };
         },
       });
@@ -3124,7 +3124,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       if (!midTurn && !afterLastAssistant(messages).some((m) => m.source?.kind === "user")) {
         yield* new Translator({ toolActivity: false }).wholeBlock(
           "text",
-          `Asked as a side question — the answer opens in the ✻ aside bubble.`,
+          `Asked as a side question. The answer opens in the ✻ aside bubble.`,
         );
         yield { type: "finish", reason: { kind: "stop" } };
         return;
@@ -3765,7 +3765,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     if (request.mode === "url") {
       yield* tr.wholeBlock(
         "reasoning",
-        `❓ ${who} wants a browser step: ${request.url ?? "(no url)"} — declined`,
+        `❓ ${who} wants a browser step, declined: ${request.url ?? "(no url)"}`,
       );
       reply(controlResponseLine(requestId, { action: "decline" }));
       return;
@@ -3773,7 +3773,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const questions = elicitationQuestions(request, requestId);
     const ask = this.ctx?.userQuestions?.ask;
     if (!questions || !ask) {
-      yield* tr.wholeBlock("reasoning", `❓ ${who} asked for input dsh cannot present — declined`);
+      yield* tr.wholeBlock("reasoning", `❓ ${who} asked for input dsh cannot present, declined`);
       reply(controlResponseLine(requestId, { action: "decline" }));
       return;
     }

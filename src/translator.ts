@@ -512,7 +512,7 @@ export class Translator {
     this.unknownSeen.add(key);
     this.log(
       "warn",
-      `unhandled Claude Code ${where} "${type}" — stream-json schema may have changed`,
+      `unhandled Claude Code ${where} "${type}"; stream-json schema may have changed`,
     );
   }
 

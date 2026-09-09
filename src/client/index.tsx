@@ -1593,10 +1593,10 @@ function Boxes({ boxes, setBoxes, open, onToggle }: BoxesProps) {
       onToggle={onToggle}
     >
       <p style={{ margin: "0 0 4px", color: T.muted, fontSize: 13 }}>
-        This box plus any you add. <b>SSH</b>: this dsh drives Claude Code on the box over ssh — it
-        shows up in the model picker, no dsh needed there. <b>Link</b>: it runs its own dsh with
-        this plugin — its sessions show in the archive and Open hops there. Each keeps its own
-        Claude Code login.
+        This box plus any you add. <b>SSH</b>: this dsh drives Claude Code on the box over ssh, so
+        it shows up in the model picker with no dsh needed there. <b>Link</b>: it runs its own dsh
+        with this plugin, so its sessions show in the archive and Open hops there. Each keeps its
+        own Claude Code login.
       </p>
       {error && <p style={{ color: T.err, fontSize: 13, margin: "4px 0" }}>{error}</p>}
       {me && (
@@ -2065,7 +2065,7 @@ function Boxes({ boxes, setBoxes, open, onToggle }: BoxesProps) {
         <p style={{ margin: "0 0 8px", color: T.muted, fontSize: 13 }}>
           Pin a directory on an SSH box as a workspace. It shows in the left sidebar like any
           workspace; pick the box's Claude in the model picker and the session runs in that remote
-          folder. No files are copied — the box's Claude reads them there.
+          folder. No files are copied; the box's Claude reads them there.
         </p>
         {rws.map((w) => (
           <div key={`rw:${w.path}`} data-testid="dsh-oh-my-claude-remote-ws-row" style={row}>
