@@ -2075,11 +2075,12 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
       // Watch for dsh's menu to appear and inject our rows into its viewport.
       const menuObserver = new MutationObserver(() => {
         if (!parent.isConnected) return;
-        // The observer's parent is the composer, so this fires on every keystroke that changes the
-        // subtree — and a menu only exists while the picker is open, which the trigger says in one
-        // attribute read. Without this the subtree query ran per keystroke to find nothing.
-        if (trigger.getAttribute("aria-expanded") !== "true") return;
+        // The open menu is the signal, not the trigger: dsh 0.1.5 stopped setting aria-expanded on
+        // it, so gating on that attribute skipped every injection and left dsh's three presets in
+        // place of our six Claude rows. `parent` is the small modes box, not the composer, so one
+        // selector per mutation costs nothing.
         const menus = Array.from(parent.querySelectorAll<HTMLElement>('[role="menu"]'));
+        if (menus.length === 0) return;
         for (const dshMenu of menus) {
           // Our own rows, not the attribute, say whether this menu is done: dsh re-renders the menu
           // through the same element, which drops the six rows we appended and unhides its three
