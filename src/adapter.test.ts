@@ -15,6 +15,7 @@ import {
   permissionModeFor,
   isStaleResume,
   probeCli,
+  boxFor,
   type ExecLike,
   denyCliFlag,
   unknownFlagIn,
@@ -683,6 +684,15 @@ const probed = await probeCli((cmd, args, opts, cb) =>
 assert.equal(probed.version, "9.9.9 (Claude Code)");
 assert(probed.flags);
 assert.ok(probed.flags.has("--effort") && probed.flags.has("--input-format"));
+
+// Which binary a turn is measured against. `sshHost` defaults to "" for a local provider, and an
+// empty string is an answer to `??` but not to `||`: reading it as an answer sent the probe to the
+// local claude while the spawn ran on the box, and the box was handed a flag its older CLI exits 1
+// on. A remote-workspace cwd names its box whether or not this instance has one of its own.
+assert.equal(boxFor("", "lilly"), "lilly");
+assert.equal(boxFor(undefined, "lilly"), "lilly");
+assert.equal(boxFor("nova", "lilly"), "nova", "this instance's own box wins");
+assert.equal(boxFor("", undefined), undefined, "a local turn in a local workspace stays local");
 
 // A remote target probes the box's own claude over ssh, so an older remote binary is handed only the
 // flags it actually has and never a flag it would exit 1 on (e.g. --forward-subagent-text).

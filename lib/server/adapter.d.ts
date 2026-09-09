@@ -14,6 +14,12 @@ import { Translator } from "./translator.js";
 export { Translator, type TranslatorBlock } from "./translator.js";
 import type { FinishReason } from "@deepseek-ai/dsh-llm";
 import type { ClaudeProcessSpec, RelayEvent, RelayResult, TurnPrep } from "./process.js";
+/** The box a turn runs on: this instance's own host when it has one, else the box a remote-workspace
+ * cwd belongs to. The choice is by truthiness because `sshHost` defaults to `""`, not undefined —
+ * `??` treats that empty string as an answer, which is how a local provider's turn came to probe the
+ * local binary for flags while its spawn ran on the box (2026-09-09: `--forward-subagent-text`, a
+ * flag this box's CLI has and the box's 2.1.123 does not). */
+export declare const boxFor: (sshHost: string | undefined, workspaceHost: string | undefined) => string | undefined;
 /** A dsh request that belongs to a session; everything on the persistent path has one. */
 type SessionOptions = GenerateOptions & {
     sessionId: SessionId;
