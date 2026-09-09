@@ -2679,7 +2679,11 @@ const ensureTurnStatusStyle = () => {
   // row is a button in `--dsw-alias-link` blue while its child session is still running (dsh's
   // ui-workflow-run package, `memberButton`); once the member finishes it becomes a plain grey row.
   // The data attributes are dsh's own, the hashed class name is not.
-  styleEl.textContent = `body[data-omc-claude] [role="status"][aria-live="polite"],[data-dsh-oh-my-claude-turn]{background-image:linear-gradient(90deg,${CLAUDE_ORANGE} 0%,${CLAUDE_ORANGE} 40%,${CLAUDE_SHIMMER} 50%,${CLAUDE_ORANGE} 60%,${CLAUDE_ORANGE} 100%)}[data-dsh-oh-my-claude-turn]>span[aria-hidden]{display:inline-block;width:1.3em;text-align:start;flex:none}body[data-omc-claude] [role="tablist"]>[role="tab"][aria-selected="true"]{color:${CLAUDE_ORANGE}}body[data-omc-claude] [role="tablist"]>[role="tab"][aria-selected="true"]::after{background:${CLAUDE_ORANGE}}body[data-omc-claude] [class*="_markdown"] blockquote{border-left-color:${CLAUDE_ORANGE}80}body[data-omc-claude] [class*="_markdown"] hr{background:${CLAUDE_ORANGE}59}body[data-omc-claude] [class*="_markdown"] a{color:${CLAUDE_ORANGE};text-decoration-color:${CLAUDE_ORANGE}66}body[data-omc-claude] [class*="_markdown"] a:hover{color:${CLAUDE_SHIMMER};text-decoration-color:${CLAUDE_SHIMMER}}body[data-omc-claude] [class*="_markdown"] input[type="checkbox"]{accent-color:${CLAUDE_ORANGE}}body[data-omc-claude] [data-workflow-run] button[data-member-status] [data-member-label]{color:${CLAUDE_ORANGE}}`;
+  // The stats row under the composer (`data-composer-stats`) is padded to the composer's side
+  // clearance, which leaves its pills 653px in a 717px column. dsh's two fill that; ours as a
+  // third clips all three to an ellipsis by a few pixels. The pills are centred, so the padding
+  // does no aligning; take it down to the row's rounded corners and the three fit.
+  styleEl.textContent = `body[data-omc-claude] [role="status"][aria-live="polite"],[data-dsh-oh-my-claude-turn]{background-image:linear-gradient(90deg,${CLAUDE_ORANGE} 0%,${CLAUDE_ORANGE} 40%,${CLAUDE_SHIMMER} 50%,${CLAUDE_ORANGE} 60%,${CLAUDE_ORANGE} 100%)}[data-dsh-oh-my-claude-turn]>span[aria-hidden]{display:inline-block;width:1.3em;text-align:start;flex:none}body[data-omc-claude] [role="tablist"]>[role="tab"][aria-selected="true"]{color:${CLAUDE_ORANGE}}body[data-omc-claude] [role="tablist"]>[role="tab"][aria-selected="true"]::after{background:${CLAUDE_ORANGE}}body[data-omc-claude] [class*="_markdown"] blockquote{border-left-color:${CLAUDE_ORANGE}80}body[data-omc-claude] [class*="_markdown"] hr{background:${CLAUDE_ORANGE}59}body[data-omc-claude] [class*="_markdown"] a{color:${CLAUDE_ORANGE};text-decoration-color:${CLAUDE_ORANGE}66}body[data-omc-claude] [class*="_markdown"] a:hover{color:${CLAUDE_SHIMMER};text-decoration-color:${CLAUDE_SHIMMER}}body[data-omc-claude] [class*="_markdown"] input[type="checkbox"]{accent-color:${CLAUDE_ORANGE}}body[data-omc-claude] [data-workflow-run] button[data-member-status] [data-member-label]{color:${CLAUDE_ORANGE}}body[data-omc-claude] [data-composer-stats]{padding-left:8px;padding-right:8px}`;
   document.head.appendChild(styleEl);
 };
 
@@ -3354,7 +3358,11 @@ const STATS_SEP = ':scope > span[aria-hidden="true"][class$="_sep"]';
  * English text stays as a last resort for a row that has one group and therefore no bar yet.
  */
 export const isStatsRow = (el: HTMLElement): boolean => {
-  if (!el.isConnected || el.children.length < 2) return false;
+  if (!el.isConnected || el.children.length < 1) return false;
+  // dsh 0.1.5 draws the row as pills and marks it (`StatsPills`, ui-chat); the shape checks below
+  // are for the earlier row of groups with a bar between them.
+  if (el.hasAttribute("data-composer-stats")) return true;
+  if (el.children.length < 2) return false;
   if (MODULE_ROOT.test(el.className)) {
     const sep = el.querySelector(STATS_SEP);
     // Three other dsh components draw an empty `_sep` span inside a row; only this one is a bar.
@@ -3461,6 +3469,7 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
     let inline: HTMLSpanElement | undefined;
     let body: HTMLSpanElement | undefined;
     let rowLead = "";
+    let pad = " "; // what sits between the bar and the text; nothing inside a pill
     let lastRow: HTMLElement | undefined;
     let lastHost: HTMLElement | undefined; // the footer the row hangs in; it outlives the row
     // The row appears with the first settled step and is one of dsh's own divs anywhere in the
@@ -3485,7 +3494,7 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
       if (inline?.isConnected) {
         // Already in the row: rewrite what it says instead of building it again.
         inline.title = titleRef.current;
-        if (body) body.textContent = ` ${textRef.current}`;
+        if (body) body.textContent = `${pad}${textRef.current}`;
         return;
       }
       if (inline) debug("row dropped our span; hooking again");
@@ -3509,12 +3518,30 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
       inline = document.createElement("span");
       inline.title = titleRef.current;
       inline.style.whiteSpace = "nowrap";
-      const sep = document.createElement("span");
-      sep.setAttribute("aria-hidden", "true");
-      sep.textContent = "|";
       body = document.createElement("span");
-      body.textContent = ` ${textRef.current}`;
-      inline.append(" ", sep, body);
+      // The pill row: an anchor span holding a pill (button or span) whose first span is the
+      // label. Ours borrows the three class names from dsh's first pill, so it takes the same
+      // padding, radius and colour whatever the module hash is in this build.
+      const proto = statsRow.hasAttribute("data-composer-stats")
+        ? statsRow.firstElementChild?.firstElementChild
+        : null;
+      if (proto?.parentElement) {
+        pad = "";
+        inline.className = proto.parentElement.className;
+        const ours = document.createElement("span");
+        ours.className = proto.className;
+        body.className = proto.querySelector("span")?.className ?? "";
+        body.textContent = textRef.current;
+        ours.append(body);
+        inline.append(ours);
+      } else {
+        pad = " ";
+        const sep = document.createElement("span");
+        sep.setAttribute("aria-hidden", "true");
+        sep.textContent = "|";
+        body.textContent = `${pad}${textRef.current}`;
+        inline.append(" ", sep, body);
+      }
       // The row's first group ("52 turns · 77 steps" in any locale) identifies its bubble.
       rowLead = (statsRow.firstElementChild?.textContent ?? "").replace(/\s+/g, "");
       statsRow.append(inline);

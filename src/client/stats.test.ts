@@ -6,10 +6,12 @@ function el(
   className: string,
   children: { className?: string; aria?: string; text?: string }[],
   text = "",
+  attr = "",
 ): HTMLElement {
   const node = {
     isConnected: true,
     className,
+    hasAttribute: (name: string) => name === attr,
     textContent: text || children.map((c) => c.text ?? "").join(" "),
     children: { length: children.length },
     querySelector(selector: string) {
@@ -44,6 +46,12 @@ assert.equal(isStatsRow(el("plain", [{ text: "hello" }, { text: "there" }])), fa
 // One group and therefore no separator yet: the English text is the last resort.
 assert.equal(
   isStatsRow(el("-NDN2W_root", [{ text: "3 turns" }, { text: "· 9 steps" }], "3 turns · 9 steps")),
+  true,
+);
+
+// dsh 0.1.5's pill row: one pill so far, no bar, no English text, but dsh's own mark on it.
+assert.equal(
+  isStatsRow(el("bOPqQW_root", [{ text: "1.8M tok · Cache hit 96%" }], "", "data-composer-stats")),
   true,
 );
 
