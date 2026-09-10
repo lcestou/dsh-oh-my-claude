@@ -13,6 +13,7 @@ import type { CSSProperties } from "react";
 import { useEffect, useState } from "react";
 import {
   Button,
+  IconCheckOutline16,
   IconChevronRightOutline14,
   IconFolderClose16,
   IconPlusOutline16,
@@ -302,9 +303,14 @@ export function AddWorkspaceFlow({ ctx }: { ctx: ClientCtx }) {
       title={t("browser.title")}
       closeLabel={t("close")}
       footer={
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        // dsh's own footer bar, with the box select first: New folder and Show hidden on the
+        // left, a gap, Cancel and Open on the right at 72 px minimum. Full width, else the Modal's
+        // flex-end footer shrinks the row to its content and the gap has nothing to split.
+        <div
+          style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", width: "100%" }}
+        >
           <select
-            style={{ ...selectStyle, maxWidth: 180 }}
+            style={{ ...selectStyle, maxWidth: 180, height: 36, borderRadius: 18 }}
             value={host}
             disabled={busy}
             aria-label="Box"
@@ -320,24 +326,49 @@ export function AddWorkspaceFlow({ ctx }: { ctx: ClientCtx }) {
             ))}
           </select>
           <Button
-            size="sm"
-            icon={<IconPlusOutline16 size={16} />}
+            variant="outline"
+            icon={<IconPlusOutline16 size={14} />}
             disabled={busy || !listing}
             onClick={() => setFolder(folder === null ? "" : null)}
           >
             {t("browser.newFolder")}
           </Button>
-          <label
-            style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: T.muted }}
+          <button
+            type="button"
+            aria-pressed={hidden}
+            style={{
+              ...btn,
+              border: "none",
+              padding: 0,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 4,
+              fontSize: 13,
+              fontWeight: 500,
+              lineHeight: "20px",
+              whiteSpace: "nowrap",
+              color: hidden ? T.text : T.muted,
+            }}
+            onClick={() => setHidden((v) => !v)}
           >
-            <input type="checkbox" checked={hidden} onChange={(e) => setHidden(e.target.checked)} />
             {t("browser.showHidden")}
-          </label>
-          <span style={{ flex: 1 }} />
-          <Button size="sm" disabled={busy} onClick={() => setOpen(false)}>
+            {hidden && <IconCheckOutline16 size={14} />}
+          </button>
+          <span style={{ flex: "1 1 0" }} />
+          <Button
+            variant="outline"
+            style={{ minWidth: 72 }}
+            disabled={busy}
+            onClick={() => setOpen(false)}
+          >
             {t("cancel")}
           </Button>
-          <Button size="sm" variant="primary" disabled={busy || target === ""} onClick={add}>
+          <Button
+            variant="primary"
+            style={{ minWidth: 72 }}
+            disabled={busy || target === ""}
+            onClick={add}
+          >
             {t("browser.open")}
           </Button>
         </div>
