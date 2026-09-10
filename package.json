@@ -84,8 +84,8 @@
       "optional": true
     }
   },
-  "homepage": "https://github.com/lcestou/oh-my-claude#readme",
-  "repository": "https://github.com/lcestou/oh-my-claude",
+  "homepage": "https://github.com/lcestou/dsh-oh-my-claude#readme",
+  "repository": "https://github.com/lcestou/dsh-oh-my-claude",
   "license": "MIT",
   "types": "lib/server/adapter.d.ts"
 }

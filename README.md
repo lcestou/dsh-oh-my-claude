@@ -53,7 +53,7 @@ Once an SSH box is saved, dsh's own Add workspace dialog gains a box dropdown: a
 Needs the Claude Code CLI on `PATH` and already logged in (`claude --version` works, `claude` opens without asking you to sign in). Nothing else: no API key, no Node build step.
 
 ```sh
-dsh plugin --profile web add github:lcestou/oh-my-claude
+dsh plugin --profile web add github:lcestou/dsh-oh-my-claude
 systemctl --user restart dsh-web.service   # or restart `dsh web` however you run it
 ```
 
