@@ -3523,7 +3523,7 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
     let inline: HTMLSpanElement | undefined;
     let body: HTMLSpanElement | undefined;
     let trigger: HTMLButtonElement | undefined; // the pill itself, in the pill row only
-    let pad = " "; // what sits between the bar and the text; nothing inside a pill
+    let pad = ` ${CLAUDE_MARK} `; // between the bar and the text, with the mark; nothing in a pill
     let lastRow: HTMLElement | undefined;
     let lastHost: HTMLElement | undefined; // the footer the row hangs in; it outlives the row
     // The row appears with the first settled step and is one of dsh's own divs anywhere in the
@@ -3610,11 +3610,12 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
         trigger.addEventListener("click", () => setOpen((was) => !was));
         body.className = proto.querySelector("span")?.className ?? "";
         body.textContent = textRef.current;
-        trigger.append(body);
+        // dsh's pills lead with a 14px icon in the pill's own text colour; ours is Claude's spark.
+        trigger.append(sparkNode(14, "currentColor"), body);
         inline.append(trigger);
         pillRef.current = inline;
       } else {
-        pad = " ";
+        pad = ` ${CLAUDE_MARK} `;
         inline.title = titleRef.current;
         const sep = document.createElement("span");
         sep.setAttribute("aria-hidden", "true");
@@ -3681,7 +3682,7 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
           title={title}
           style={{ display: "inline", fontSize: 14, color: T.faint, whiteSpace: "nowrap" }}
         >
-          <span aria-hidden="true">|</span> {text}
+          <span aria-hidden="true">|</span> {CLAUDE_MARK} {text}
         </span>
       </span>
       {open && (
@@ -3694,7 +3695,8 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
         >
           <div data-omc-cost-title="">
             <span data-omc-cost-title-label="">
-              <span aria-hidden="true">{CLAUDE_MARK}</span>Claude cost
+              <Spark size={14} />
+              Claude cost
             </span>
             <span data-omc-cost-title-value="">{fmtCost(total)}</span>
           </div>
@@ -4123,9 +4125,10 @@ const fmtTtft = (ms?: number): string => {
   return `, ${shown} to first token`;
 };
 
-/** `✻ $18.21 · $0.42 last`: the session total, newest turn, and cached tokens. */
+/** `$18.21 · $0.42 last`: the session total, newest turn, and cached tokens. The Claude mark
+ *  goes in front of it by whoever draws it: the spark SVG in the pill, the glyph in a text row. */
 const costText = (total: number, last: number, cacheRead: number = 0) => {
-  let text = `${CLAUDE_MARK} ${fmtCost(total)} · ${fmtCost(last)} last`;
+  let text = `${fmtCost(total)} · ${fmtCost(last)} last`;
   const cached = formatCacheRead(cacheRead);
   if (cached) text += ` · ${cached} cached`;
   return text;
@@ -4169,7 +4172,7 @@ const COST_DIALOG_CSS =
   "[data-omc-cost-dialog]{z-index:1100;box-sizing:border-box;background:var(--dsw-specific-menu);--dsw-elevation-stroke-color:var(--dsw-alias-border-l1);width:max-content;min-width:min(300px,100vw - 24px);max-width:min(440px,100vw - 24px);box-shadow:var(--dsw-elevation-prominent);color:var(--dsw-alias-label-secondary);cursor:default;border:0;border-radius:12px;padding:16px;font-size:12px;line-height:18px;position:fixed}" +
   "[data-omc-cost-title]{color:var(--dsw-alias-label-primary);justify-content:space-between;gap:16px;margin-bottom:8px;font-weight:500;display:flex}" +
   "[data-omc-cost-title-label]{align-items:center;gap:6px;min-width:0;display:inline-flex}" +
-  `[data-omc-cost-title-label]>span{color:${CLAUDE_ORANGE}}` +
+  "[data-omc-cost-title-label] svg{flex:none;width:14px;height:14px}" +
   "[data-omc-cost-title-value]{font-variant-numeric:tabular-nums}" +
   "[data-omc-cost-rule]{border-top:.5px solid var(--dsw-alias-border-l2);margin-bottom:10px}" +
   "[data-omc-cost-details]{color:var(--dsw-alias-label-tertiary);grid-template-columns:minmax(76px,auto) minmax(0,1fr);gap:6px 16px;margin:0;display:grid}" +
