@@ -232,7 +232,7 @@ export function AddWorkspaceFlow({ ctx }: { ctx: ClientCtx }) {
       .catch(failed);
   };
 
-  const boxes: BoxRow[] = [{ name: "This PC", host: "" }, ...ssh];
+  const boxes: BoxRow[] = [{ name: "This box", host: "" }, ...ssh];
   const current = boxes.find((b) => b.host === host) ?? boxes[0];
   return (
     <DirectoryBrowser

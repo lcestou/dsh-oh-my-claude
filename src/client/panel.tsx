@@ -207,7 +207,7 @@ function RestoreBody({
         />
       )}
       {rest.length === 0 && (
-        <span style={{ ...meta, padding: "2px 4px" }}>No transcript matches.</span>
+        <span style={{ ...meta, padding: "2px 4px" }}>No transcript matches</span>
       )}
       {rest.map((s) => (
         <TranscriptRow key={s.id} s={s} cwd={cwd} ctx={ctx} onClose={onClose} />
@@ -456,7 +456,7 @@ function MarketplaceAddForm({ act, busy }: { act: Act; busy: string }) {
     <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
       <input
         type="text"
-        placeholder="marketplace: URL, path or owner/repo"
+        placeholder="Marketplace: URL, path or owner/repo"
         value={source}
         onChange={(e) => setSource(e.currentTarget.value)}
         disabled={busy !== ""}
@@ -1769,7 +1769,7 @@ function TasksBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
           </span>
           {data.durable.length === 0 ? (
             <div style={{ ...meta, padding: "4px 10px", fontSize: 12 }}>
-              <div>Nothing scheduled.</div>
+              <div>Nothing scheduled</div>
               <div style={{ fontSize: 11, marginTop: 4, fontFamily: T.mono }}>{data.path}</div>
             </div>
           ) : (
@@ -1906,7 +1906,7 @@ function McpAddForm({
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
         <input
           type="text"
-          placeholder="server name"
+          placeholder="Server name"
           value={name}
           onChange={(e) => setName(e.currentTarget.value)}
           disabled={busy}
@@ -1939,21 +1939,21 @@ function McpAddForm({
         <>
           <input
             type="text"
-            placeholder="command, e.g. npx"
+            placeholder="Command, e.g. npx"
             value={command}
             onChange={(e) => setCommand(e.currentTarget.value)}
             disabled={busy}
             style={{ width: "100%", padding: 4, fontSize: 12, marginBottom: 4 }}
           />
           <textarea
-            placeholder="args, one per line"
+            placeholder="Args, one per line"
             value={args}
             onChange={(e) => setArgs(e.currentTarget.value)}
             disabled={busy}
             style={{ width: "100%", height: 50, padding: 4, fontSize: 12, marginBottom: 4 }}
           />
           <textarea
-            placeholder="env vars: KEY=value, one per line"
+            placeholder="Env vars: KEY=value, one per line"
             value={env}
             onChange={(e) => setEnv(e.currentTarget.value)}
             disabled={busy}
@@ -1964,14 +1964,14 @@ function McpAddForm({
         <>
           <input
             type="text"
-            placeholder="url, http:// or https://"
+            placeholder="URL, http:// or https://"
             value={url}
             onChange={(e) => setUrl(e.currentTarget.value)}
             disabled={busy}
             style={{ width: "100%", padding: 4, fontSize: 12, marginBottom: 4 }}
           />
           <textarea
-            placeholder="headers: Name: value, one per line"
+            placeholder="Headers: Name: value, one per line"
             value={headers}
             onChange={(e) => setHeaders(e.currentTarget.value)}
             disabled={busy}
@@ -2745,6 +2745,8 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
           >
             <div
               role="tabpanel"
+              id="omc-tabpanel"
+              aria-labelledby={`omc-tab-${tab}`}
               // width:0 + minWidth:100% keeps the body from contributing to the panel's fit-content
               // width: it fills whatever the tab strip sets, and its own long lines scroll rather than
               // widen the panel past the tabs.
@@ -2788,6 +2790,8 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
                 <button
                   key={t.key}
                   role="tab"
+                  id={`omc-tab-${t.key}`}
+                  aria-controls="omc-tabpanel"
                   aria-selected={tab === t.key}
                   // The strip sits under the body, so the lit edge is the mirror of a top tab bar:
                   // accent along the bottom, corners rounded on that side only, no box around each

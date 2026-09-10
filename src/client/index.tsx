@@ -904,7 +904,7 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
       )}
       {!loading && rows.length === 0 && (
         <p id="dsh-oh-my-claude-empty" style={{ ...meta, marginTop: 10 }}>
-          No Claude Code sessions match.
+          No Claude Code sessions match
         </p>
       )}
       <div id="dsh-oh-my-claude-sessions" style={{ marginTop: 6 }}>
@@ -1398,7 +1398,7 @@ function LoginSteps({
           <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
             <input
               style={inputStyle}
-              placeholder="paste code"
+              placeholder="Paste code"
               value={login.code}
               disabled={login.busy}
               onChange={(e) => setLogin({ ...login, code: e.target.value })}
@@ -1998,7 +1998,7 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
           ) : !ts.installed ? (
             <>
               <span style={pill(T.faint)}>not installed</span>
-              Install Tailscale on this PC first (tailscale.com/download); the box side needs it
+              Install Tailscale on this box first (tailscale.com/download); the box side needs it
               too.
             </>
           ) : ts.loggedIn ? (
@@ -2034,7 +2034,7 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
                     rel="noreferrer"
                     style={{ color: CLAUDE_ORANGE }}
                   >
-                    Approve this PC on your tailnet
+                    Approve this box on your tailnet
                   </a>
                   <span>waiting for the approval…</span>
                 </>
