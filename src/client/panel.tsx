@@ -157,6 +157,50 @@ const retentionNote = (s: FeatureSwitches | null): string =>
     : `Claude Code deletes transcripts older than ${s.retention.days} days` +
       `${s.retention.scope === null ? " (cleanupPeriodDays, its default)" : ` (cleanupPeriodDays in ${s.retention.scope} settings)`}.`;
 
+/**
+ * The workspace's Claude Code transcripts, as `GET /sessions?cwd=` lists them; empty until the
+ * answer lands, and dropped when the composer unmounts on a session switch. Shared by the Restore
+ * tab and the composer button, which reads it to know whether a blank session has anything to
+ * restore before the panel is ever opened.
+ */
+function useTranscripts(cwd: string | undefined): SessionData[] {
+  const [transcripts, setTranscripts] = useState<SessionData[]>([]);
+  useEffect(() => {
+    if (!cwd) return;
+    let live = true;
+    fetch(`${ROUTE}/sessions?cwd=${encodeURIComponent(cwd)}`)
+      .then((r) => readJson<{ sessions?: SessionData[] }>(r))
+      .then((body) => live && setTranscripts(body.sessions ?? []))
+      .catch(() => live && setTranscripts([]));
+    return () => {
+      live = false;
+    };
+  }, [cwd]);
+  return transcripts;
+}
+
+/** The last path segment, which is the name a workspace shows in the sidebar. */
+const workspaceName = (cwd: string): string => cwd.split("/").filter(Boolean).at(-1) ?? cwd;
+
+/**
+ * One-time hints, kept on the box under the plugin's state (`GET`/`POST /hints`) so a hint shown
+ * once stays shown across browsers, plugin updates and dsh updates. Read once per page; a failed
+ * read answers nothing, so no hint fires on a box that cannot remember it fired.
+ */
+let hintsCache: Promise<Record<string, boolean> | null> | undefined;
+const readHints = (): Promise<Record<string, boolean> | null> =>
+  (hintsCache ??= fetch(`${ROUTE}/hints`)
+    .then((r) => readJson<Record<string, boolean>>(r))
+    .catch(() => null));
+const markHint = (key: string): void => {
+  hintsCache = Promise.resolve({ [key]: true });
+  void fetch(`${ROUTE}/hints`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ [key]: true }),
+  }).catch(() => {});
+};
+
 /** "Restore Claude session" body rendered inside the Oh My Claude dialog. */
 function RestoreBody({
   sessionId,
@@ -169,27 +213,15 @@ function RestoreBody({
 }) {
   const entry = ctx.sessions.list.getSnapshot()?.byId[sessionId];
   const cwd = entry?.cwd;
-  const [transcripts, setTranscripts] = useState<SessionData[]>([]);
+  const transcripts = useTranscripts(cwd);
   const [query, setQuery] = useState("");
   const switches = useFeatureSwitches(cwd);
 
-  useEffect(() => {
-    if (!cwd) return;
-    let live = true; // the composer unmounts on session switch; drop a late reply
-    fetch(`${ROUTE}/sessions?cwd=${encodeURIComponent(cwd)}`)
-      .then((r) => readJson<{ sessions?: SessionData[] }>(r))
-      .then((body) => live && setTranscripts(body.sessions ?? []))
-      .catch(() => live && setTranscripts([]));
-    return () => {
-      live = false;
-    };
-  }, [cwd]);
-
-  // Hide when the session already has content, the workspace is unknown, or nothing to restore.
+  // Hide when the session already has content or the workspace is unknown.
   if (!cwd || entry?.blank === false) return null;
   const owned = transcripts.filter(isOwnedActive);
   const candidates = transcripts.filter((s) => !isOwnedActive(s));
-  if (candidates.length === 0) return null;
+  const name = workspaceName(cwd);
   const rest = candidates.filter((s) => matchesQuery(s, query)).slice(0, 8);
 
   return (
@@ -201,12 +233,21 @@ function RestoreBody({
           data-omc-restore-search=""
           style={{ ...inputStyle, margin: "2px 4px 4px" }}
           value={query}
-          placeholder={`Search ${candidates.length} transcripts`}
+          placeholder={`Search ${candidates.length} transcripts in ${name}`}
           aria-label="Search transcripts"
           onChange={(e) => setQuery(e.target.value)}
         />
       )}
-      {rest.length === 0 && (
+      {candidates.length === 0 && (
+        <span
+          data-omc-restore-empty=""
+          style={{ ...meta, padding: "2px 4px", whiteSpace: "normal" }}
+        >
+          No Claude Code transcripts in {name} to restore. One appears here after a session runs in
+          this folder, from dsh or from a terminal.
+        </span>
+      )}
+      {candidates.length > 0 && rest.length === 0 && (
         <span style={{ ...meta, padding: "2px 4px" }}>No transcript matches</span>
       )}
       {rest.map((s) => (
@@ -2574,6 +2615,29 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
   const panelRef = useRef<HTMLDivElement>(null);
   const narrow = useNarrow();
   const [tab, setTab] = useState(lastTab);
+  // A blank session with transcripts to restore: the panel opens on Restore, the disc carries a
+  // dot until the panel has been opened once here, and the very first time on this box the disc
+  // pulses a few times. The dot and the default tab need no memory; the pulse is remembered on
+  // the box through the hints store, so it fires once and never again after an update.
+  const entry = ctx.sessions.list.getSnapshot()?.byId[sessionId];
+  const restorable = useTranscripts(entry?.blank === false ? undefined : entry?.cwd).filter(
+    (s) => !isOwnedActive(s),
+  ).length;
+  const [seenRestore, setSeenRestore] = useState(false);
+  const [pulse, setPulse] = useState(false);
+  useEffect(() => {
+    if (restorable === 0 || entry?.blank === false) return;
+    let live = true;
+    void readHints().then((h) => {
+      if (!live || h === null || h.restorePulse) return;
+      markHint("restorePulse");
+      setPulse(true);
+      setTimeout(() => live && setPulse(false), 4000);
+    });
+    return () => {
+      live = false;
+    };
+  }, [restorable, entry?.blank]);
   // dsh's composer card, found when the panel opens: the panel is portalled into it and sits over
   // the composer the way dsh's own slash menu does. `data-composer-card` is the hook dsh's menu
   // dismisses by, so it is as stable as that menu. Null on a host without it: the panel then
@@ -2713,16 +2777,25 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
             justifyContent: "center",
             flex: "none",
             cursor: "pointer",
+            position: "relative",
           }}
           aria-label="Oh My Claude"
           aria-haspopup="dialog"
           aria-expanded={open}
+          {...(pulse ? { "data-omc-pulse": "" } : {})}
           onClick={() => {
             if (open) {
               close();
               return;
             }
-            setTab(lastTab === "Restore" && !blank ? "Memory" : lastTab);
+            setSeenRestore(true);
+            setTab(
+              blank && restorable > 0
+                ? "Restore"
+                : lastTab === "Restore" && !blank
+                  ? "Memory"
+                  : lastTab,
+            );
             const host = rootRef.current?.closest<HTMLElement>("[data-composer-card]") ?? null;
             setCard(host);
             const rect = rootRef.current?.getBoundingClientRect();
@@ -2731,6 +2804,22 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
           }}
         >
           <Spark size={15} />
+          {blank && restorable > 0 && !seenRestore && !open && (
+            <span
+              data-omc-restore-badge=""
+              aria-hidden="true"
+              style={{
+                position: "absolute",
+                top: 2,
+                right: 2,
+                width: 7,
+                height: 7,
+                borderRadius: 999,
+                background: CLAUDE_ORANGE,
+                boxShadow: "0 0 0 2px var(--dsw-specific-input-major, #fff)",
+              }}
+            />
+          )}
         </button>
       </Tooltip>
       {open &&
