@@ -165,6 +165,9 @@ export function ensurePanelStyle(): void {
     `${inScope('[role="tab"]:focus-visible')} { outline-offset: -2px; }`,
     // The trigger in the composer: dsh's own hover shade, as on the buttons beside it.
     `button[aria-label="Oh My Claude"]:hover { background: ${T.hoverSolid} !important; }`,
+    // dsh gives every element corner-shape: superellipse(1.5) where the browser knows the
+    // property; its round buttons opt out, and so must this one or the 999 px radius squares off.
+    `button[aria-label="Oh My Claude"] { corner-shape: round; }`,
     `button[aria-label="Oh My Claude"]:focus-visible { outline: 2px solid color-mix(in srgb, ${CLAUDE_ORANGE} 70%, transparent); outline-offset: 2px; }`,
     `@media (prefers-reduced-motion: reduce) { ${inScope(controls)} { transition: none; } }`,
   ].join("\n");

@@ -2609,7 +2609,10 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
           // The same disc as dsh's own composer buttons (`+` and Add attachment): 28 px, no border,
           // but bare at rest and filled with their hover shade only under the pointer or while the
           // panel is open; the mark at 15 px reads at the size of their 14 px strokes. Written on
-          // the tokens rather than dsh's hashed class, which a build renames.
+          // the tokens rather than dsh's hashed class, which a build renames. dsh gives every
+          // element `corner-shape: superellipse(1.5)` where the browser knows the property and its
+          // round buttons opt back out, so ours does too (the rule beside the hover one in
+          // shared.ts) or a 999 px radius draws a squircle.
           style={{
             width: 28,
             height: 28,
