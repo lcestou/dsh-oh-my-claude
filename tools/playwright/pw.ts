@@ -12,6 +12,7 @@ type Find = { hasText?: string | RegExp };
 export type Locator = {
   first(): Locator;
   last(): Locator;
+  nth(index: number): Locator;
   all(): Promise<Locator[]>;
   filter(where: Find): Locator;
   locator(selector: string, where?: Find): Locator;

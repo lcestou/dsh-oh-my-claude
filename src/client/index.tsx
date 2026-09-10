@@ -4,7 +4,15 @@
 // machines you add, each probed for claude version and login). Built into lib/client.js by
 // `bun run build`.
 import type { CSSProperties, FC, ReactNode } from "react";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   IconAgentPresetOutline16,
   IconApiOutline14,
@@ -17,6 +25,8 @@ import {
   IconSearchOutline16,
   IconSkillOutline16,
   IconSparkle16,
+  useAnchoredPosition,
+  useDismissOnOutsidePointer,
 } from "@deepseek-ai/dsh-client-ui-primitives";
 import {
   ROUTE,
@@ -2687,7 +2697,7 @@ const ensureTurnStatusStyle = () => {
   // clearance, which leaves its pills 653px in a 717px column. dsh's two fill that; ours as a
   // third clips all three to an ellipsis by a few pixels. The pills are centred, so the padding
   // does no aligning; take it down to the row's rounded corners and the three fit.
-  styleEl.textContent = `body[data-omc-claude] [role="status"][aria-live="polite"],[data-dsh-oh-my-claude-turn]{background-image:linear-gradient(90deg,${CLAUDE_ORANGE} 0%,${CLAUDE_ORANGE} 40%,${CLAUDE_SHIMMER} 50%,${CLAUDE_ORANGE} 60%,${CLAUDE_ORANGE} 100%)}[data-dsh-oh-my-claude-turn]>span[aria-hidden]{display:inline-block;width:1.3em;text-align:start;flex:none}body[data-omc-claude] [role="tablist"]>[role="tab"][aria-selected="true"]{color:${CLAUDE_ORANGE}}body[data-omc-claude] [role="tablist"]>[role="tab"][aria-selected="true"]::after{background:${CLAUDE_ORANGE}}body[data-omc-claude] [class*="_markdown"] blockquote{border-left-color:${CLAUDE_ORANGE}80}body[data-omc-claude] [class*="_markdown"] hr{background:${CLAUDE_ORANGE}59}body[data-omc-claude] [class*="_markdown"] a{color:${CLAUDE_ORANGE};text-decoration-color:${CLAUDE_ORANGE}66}body[data-omc-claude] [class*="_markdown"] a:hover{color:${CLAUDE_SHIMMER};text-decoration-color:${CLAUDE_SHIMMER}}body[data-omc-claude] [class*="_markdown"] input[type="checkbox"]{accent-color:${CLAUDE_ORANGE}}body[data-omc-claude] [data-workflow-run] button[data-member-status] [data-member-label]{color:${CLAUDE_ORANGE}}body[data-omc-panel-open] [data-width-handle]{pointer-events:none}body[data-omc-claude] [data-produced-files-row] button{color:${CLAUDE_ORANGE}}body[data-omc-claude] [data-produced-files-row] button:hover{color:${CLAUDE_SHIMMER}}body[data-omc-claude] [data-composer-stats]{padding-left:8px;padding-right:8px}`;
+  styleEl.textContent = `body[data-omc-claude] [role="status"][aria-live="polite"],[data-dsh-oh-my-claude-turn]{background-image:linear-gradient(90deg,${CLAUDE_ORANGE} 0%,${CLAUDE_ORANGE} 40%,${CLAUDE_SHIMMER} 50%,${CLAUDE_ORANGE} 60%,${CLAUDE_ORANGE} 100%)}[data-dsh-oh-my-claude-turn]>span[aria-hidden]{display:inline-block;width:1.3em;text-align:start;flex:none}body[data-omc-claude] [role="tablist"]>[role="tab"][aria-selected="true"]{color:${CLAUDE_ORANGE}}body[data-omc-claude] [role="tablist"]>[role="tab"][aria-selected="true"]::after{background:${CLAUDE_ORANGE}}body[data-omc-claude] [class*="_markdown"] blockquote{border-left-color:${CLAUDE_ORANGE}80}body[data-omc-claude] [class*="_markdown"] hr{background:${CLAUDE_ORANGE}59}body[data-omc-claude] [class*="_markdown"] a{color:${CLAUDE_ORANGE};text-decoration-color:${CLAUDE_ORANGE}66}body[data-omc-claude] [class*="_markdown"] a:hover{color:${CLAUDE_SHIMMER};text-decoration-color:${CLAUDE_SHIMMER}}body[data-omc-claude] [class*="_markdown"] input[type="checkbox"]{accent-color:${CLAUDE_ORANGE}}body[data-omc-claude] [data-workflow-run] button[data-member-status] [data-member-label]{color:${CLAUDE_ORANGE}}body[data-omc-panel-open] [data-width-handle]{pointer-events:none}body[data-omc-claude] [data-produced-files-row] button{color:${CLAUDE_ORANGE}}body[data-omc-claude] [data-produced-files-row] button:hover{color:${CLAUDE_SHIMMER}}body[data-omc-claude] [data-composer-stats]{padding-left:8px;padding-right:8px}${COST_DIALOG_CSS}`;
   document.head.appendChild(styleEl);
 };
 
@@ -3458,6 +3468,35 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
     mine && total > 0 && last
       ? `Claude cost: ${fmtCost(total)} this session, ${fmtCost(last.costUsd)} last turn (${turns.length} turn${turns.length === 1 ? "" : "s"})${fmtTtft(last.ttftMs)}`
       : "";
+  // The pill's dialog, the same seat dsh's own pills use (`useStatDialog`, ui-chat): the injected
+  // anchor span is the trigger root, the panel is fixed-positioned above it by dsh's own hook and
+  // closes on an outside pointer or Escape. No portal: the panel is rendered here, beside the slot
+  // span, and `position: fixed` puts it where the coordinates say regardless.
+  const [open, setOpen] = useState(false);
+  const openRef = useRef(open);
+  const pillRef = useRef<HTMLElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const pos = useAnchoredPosition({
+    open,
+    anchorRef: pillRef,
+    panelRef,
+    side: "top",
+    gap: 8,
+    margin: 12,
+  });
+  useDismissOnOutsidePointer(pillRef, open, setOpen, panelRef);
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [open]);
+  // A cost that left the row takes its dialog with it.
+  useEffect(() => {
+    if (!text) setOpen(false);
+  }, [text]);
   // dsh's stats row is one div of groups; a slot entry can only be its sibling and lands on its
   // own line. Append into that div instead, the way the context meter hooks its popover.
   // ponytail: the row is found by its shape, not by a slot dsh offers; swap for a slot the day
@@ -3476,12 +3515,14 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   useLayoutEffect(() => {
     textRef.current = text;
     titleRef.current = title;
+    openRef.current = open;
   });
   const syncRef = useRef<() => void>(() => {});
-  useEffect(() => syncRef.current(), [text, title]);
+  useEffect(() => syncRef.current(), [text, title, open]);
   useEffect(() => {
     let inline: HTMLSpanElement | undefined;
     let body: HTMLSpanElement | undefined;
+    let trigger: HTMLButtonElement | undefined; // the pill itself, in the pill row only
     let pad = " "; // what sits between the bar and the text; nothing inside a pill
     let lastRow: HTMLElement | undefined;
     let lastHost: HTMLElement | undefined; // the footer the row hangs in; it outlives the row
@@ -3505,7 +3546,10 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
       if (!anchorRef.current?.isConnected) return;
       if (inline?.isConnected) {
         // Already in the row: rewrite what it says instead of building it again.
-        inline.title = titleRef.current;
+        if (trigger) {
+          trigger.setAttribute("aria-label", titleRef.current);
+          trigger.setAttribute("aria-expanded", String(openRef.current));
+        } else inline.title = titleRef.current;
         if (body) body.textContent = `${pad}${textRef.current}`;
         return;
       }
@@ -3535,26 +3579,35 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
         return;
       }
       inline = document.createElement("span");
-      inline.title = titleRef.current;
       inline.style.whiteSpace = "nowrap";
       body = document.createElement("span");
       // The pill row: an anchor span holding a pill (button or span) whose first span is the
       // label. Ours borrows the three class names from dsh's first pill, so it takes the same
-      // padding, radius and colour whatever the module hash is in this build.
+      // padding, radius and colour whatever the module hash is in this build. It is a button, as
+      // dsh's are: the hover rule is `button._pill:hover`, a span never lights up, and a phone has
+      // no hover at all — the tap opens the dialog, which is where the detail lives.
       const proto = statsRow.hasAttribute("data-composer-stats")
         ? statsRow.firstElementChild?.firstElementChild
         : null;
       if (proto?.parentElement) {
         pad = "";
         inline.className = proto.parentElement.className;
-        const ours = document.createElement("span");
-        ours.className = proto.className;
+        trigger = document.createElement("button");
+        trigger.type = "button";
+        trigger.className = proto.className;
+        trigger.setAttribute("data-omc-cost-pill", "");
+        trigger.setAttribute("aria-haspopup", "dialog");
+        trigger.setAttribute("aria-expanded", String(openRef.current));
+        trigger.setAttribute("aria-label", titleRef.current);
+        trigger.addEventListener("click", () => setOpen((was) => !was));
         body.className = proto.querySelector("span")?.className ?? "";
         body.textContent = textRef.current;
-        ours.append(body);
-        inline.append(ours);
+        trigger.append(body);
+        inline.append(trigger);
+        pillRef.current = inline;
       } else {
         pad = " ";
+        inline.title = titleRef.current;
         const sep = document.createElement("span");
         sep.setAttribute("aria-hidden", "true");
         sep.textContent = "|";
@@ -3574,6 +3627,8 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
       inline?.remove();
       inline = undefined;
       body = undefined;
+      trigger = undefined;
+      pillRef.current = null;
       lastRow = undefined; // a fresh hook looks the row up again rather than trusting an old pane
       setHooked(false);
     };
@@ -3612,14 +3667,41 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   }, []);
   if (!text) return <span ref={anchorRef} hidden />;
   return (
-    <span ref={anchorRef} style={hooked ? { display: "none" } : undefined}>
-      <span
-        title={title}
-        style={{ display: "inline", fontSize: 14, color: T.faint, whiteSpace: "nowrap" }}
-      >
-        <span aria-hidden="true">|</span> {text}
+    <>
+      <span ref={anchorRef} style={hooked ? { display: "none" } : undefined}>
+        <span
+          title={title}
+          style={{ display: "inline", fontSize: 14, color: T.faint, whiteSpace: "nowrap" }}
+        >
+          <span aria-hidden="true">|</span> {text}
+        </span>
       </span>
-    </span>
+      {open && (
+        <div
+          ref={panelRef}
+          role="dialog"
+          aria-label="Claude cost"
+          data-omc-cost-dialog=""
+          style={pos ?? MEASURE_STYLE}
+        >
+          <div data-omc-cost-title="">
+            <span data-omc-cost-title-label="">
+              <span aria-hidden="true">{CLAUDE_MARK}</span>Claude cost
+            </span>
+            <span data-omc-cost-title-value="">{fmtCost(total)}</span>
+          </div>
+          <div data-omc-cost-rule="" aria-hidden="true" />
+          <dl data-omc-cost-details="">
+            {costDetails(turns).map(([label, value]) => (
+              <Fragment key={label}>
+                <dt>{label}</dt>
+                <dd>{value}</dd>
+              </Fragment>
+            ))}
+          </dl>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -4040,6 +4122,54 @@ const costText = (total: number, last: number, cacheRead: number = 0) => {
   if (cached) text += ` · ${cached} cached`;
   return text;
 };
+
+/** A token count for the dialog: `0` rather than the readout's blank for none. */
+const fmtTokens = (n: number): string => formatCacheRead(n) || "0";
+
+/** The rows of the cost dialog, label and value, from the session's turn records. */
+export const costDetails = (turns: TurnRecord[]): [string, string][] => {
+  const sum = (pick: (r: TurnRecord) => number) => turns.reduce((s, r) => s + pick(r), 0);
+  const last = turns[turns.length - 1];
+  const totals = {
+    input: sum((r) => r.input),
+    cacheRead: sum((r) => r.cacheRead),
+    cacheWrite: sum((r) => r.cacheWrite),
+  };
+  const rows: [string, string][] = [
+    ["Last turn", fmtCost(last?.costUsd ?? 0)],
+    ["Turns", String(turns.length)],
+    ["Wall time", fmtDuration(sum((r) => r.durationMs))],
+    ["API time", fmtDuration(sum((r) => r.apiMs))],
+    ["Input", fmtTokens(totals.input)],
+    ["Cache read", fmtTokens(totals.cacheRead)],
+  ];
+  if (totals.cacheWrite > 0) rows.push(["Cache write", fmtTokens(totals.cacheWrite)]);
+  rows.push(["Output", fmtTokens(sum((r) => r.output))]);
+  if (totals.input + totals.cacheRead + totals.cacheWrite > 0)
+    rows.push(["Cache hit", `${Math.round(cacheShare(totals) * 100)}%`]);
+  if (last?.ttftMs !== undefined && last.ttftMs > 0)
+    rows.push([
+      "First token",
+      last.ttftMs < 1000 ? `${Math.round(last.ttftMs)}ms` : `${(last.ttftMs / 1000).toFixed(1)}s`,
+    ]);
+  return rows;
+};
+
+/** dsh's `stat-dialog.module.css` (ui-chat), rule for rule, on this plugin's own hooks: the hashed
+ *  class names change with every dsh build, the design tokens do not. */
+const COST_DIALOG_CSS =
+  "[data-omc-cost-dialog]{z-index:1100;box-sizing:border-box;background:var(--dsw-specific-menu);--dsw-elevation-stroke-color:var(--dsw-alias-border-l1);width:max-content;min-width:min(300px,100vw - 24px);max-width:min(440px,100vw - 24px);box-shadow:var(--dsw-elevation-prominent);color:var(--dsw-alias-label-secondary);cursor:default;border:0;border-radius:12px;padding:16px;font-size:12px;line-height:18px;position:fixed}" +
+  "[data-omc-cost-title]{color:var(--dsw-alias-label-primary);justify-content:space-between;gap:16px;margin-bottom:8px;font-weight:500;display:flex}" +
+  "[data-omc-cost-title-label]{align-items:center;gap:6px;min-width:0;display:inline-flex}" +
+  `[data-omc-cost-title-label]>span{color:${CLAUDE_ORANGE}}` +
+  "[data-omc-cost-title-value]{font-variant-numeric:tabular-nums}" +
+  "[data-omc-cost-rule]{border-top:.5px solid var(--dsw-alias-border-l2);margin-bottom:10px}" +
+  "[data-omc-cost-details]{color:var(--dsw-alias-label-tertiary);grid-template-columns:minmax(76px,auto) minmax(0,1fr);gap:6px 16px;margin:0;display:grid}" +
+  "[data-omc-cost-details] dt,[data-omc-cost-details] dd{min-width:0;margin:0}" +
+  "[data-omc-cost-details] dd{color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums;text-align:right}";
+
+/** dsh's unplaced-portal style: mounted so it can be measured, invisible until it has coordinates. */
+const MEASURE_STYLE: CSSProperties = { visibility: "hidden", left: 0, top: 0 };
 
 interface IdleReply {
   deadline: number | null;

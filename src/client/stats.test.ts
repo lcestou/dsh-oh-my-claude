@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import { isStatsRow } from "./index.js";
+import { costDetails, isStatsRow } from "./index.js";
 
 /** The smallest node the predicate reads: dsh's row, its children and its class. */
 function el(
@@ -59,5 +59,47 @@ const detached = groups("-NDN2W_sep", "|");
 // SAFETY: same fake node as above; the predicate refuses a row React has already dropped
 (detached as unknown as { isConnected: boolean }).isConnected = false;
 assert.equal(isStatsRow(detached), false);
+
+// The cost dialog's rows: sums across turns, the last turn's own figures, and the optional rows
+// (cache write, cache hit, first token) only when there is something to say.
+const turn = (over: Partial<Parameters<typeof costDetails>[0][number]>) => ({
+  at: 0,
+  costUsd: 0.1,
+  durationMs: 4000,
+  apiMs: 3000,
+  turns: 1,
+  input: 1000,
+  output: 500,
+  cacheRead: 9000,
+  cacheWrite: 0,
+  ...over,
+});
+assert.deepEqual(costDetails([turn({}), turn({ costUsd: 0.42, ttftMs: 840 })]), [
+  ["Last turn", "$0.42"],
+  ["Turns", "2"],
+  ["Wall time", "8s"],
+  ["API time", "6s"],
+  ["Input", "2K"],
+  ["Cache read", "18K"],
+  ["Output", "1K"],
+  ["Cache hit", "90%"],
+  ["First token", "840ms"],
+]);
+assert.deepEqual(costDetails([turn({ cacheWrite: 2500, cacheRead: 0, ttftMs: 1500 })]), [
+  ["Last turn", "$0.10"],
+  ["Turns", "1"],
+  ["Wall time", "4s"],
+  ["API time", "3s"],
+  ["Input", "1K"],
+  ["Cache read", "0"],
+  ["Cache write", "2.5K"],
+  ["Output", "500"],
+  ["Cache hit", "0%"],
+  ["First token", "1.5s"],
+]);
+assert.deepEqual(costDetails([]).slice(0, 2), [
+  ["Last turn", "$0.00"],
+  ["Turns", "0"],
+]);
 
 console.log("stats-row ok");
