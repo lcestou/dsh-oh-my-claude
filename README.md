@@ -170,7 +170,7 @@ Effort: none is advertised as default, so Claude Code's own default applies unle
 
 The API dates some ids (`claude-haiku-4-5-20251001`) and leaves others alone, while the fallback list and the CLI's picker use the undated form; since dsh keys a model by its id, an API id whose undated form is one the fallback list names is advertised undated. Otherwise every switch between the API and the fallback retired the model you had enabled and offered an unselected copy of it. An id the fallback list does not name keeps whatever the API called it. The CLI's own picker is held to the same rule: its rows lead the lineup under the CLI's labels, windows and effort levels, but a row landing on a model the catalog already knows takes that model's id rather than the alias, so a model is spelled the same before and after the CLI answers `list_models`. Only `default` and the `[1m]` variants keep an alias, having no stable id to take.
 
-**Sessions.** Each dsh session gets a deterministic Claude Code session id. The first request starts it with `--session-id`; later requests find the transcript under `~/.claude/projects/<cwd>/` and pass `--resume`, sending only the new turn. Reopening an old dsh session resumes the same Claude Code session, with all its tool history. Forked sessions start fresh from the full dsh transcript. The child runs in the dsh session's working directory, so Claude Code sees the right CLAUDE.md and project files.
+**Sessions.** Each dsh session gets a deterministic Claude Code session id. The first request starts it with `--session-id`; later requests find the transcript under `~/.claude/projects/<cwd>/` and pass `--resume`, sending only the new turn. Reopening an old dsh session resumes the same Claude Code session, with all its tool history. Forked sessions start fresh from the full dsh transcript. The child runs in the dsh session's working directory, so Claude Code sees the right CLAUDE.md and project files. A terminal `claude` in that directory does not list these sessions under `/resume`: the CLI records them with `entrypoint: sdk-cli` and its picker shows only `cli` ones. `claude --resume <session id>` opens one all the same; the id is the transcript's file name under `~/.claude/projects/<cwd>/`.
 
 **Temporary sessions.** Type `/temporary` in a session to toggle it: from the next turn its Claude process runs with `--no-session-persistence`, so nothing lands under `projects/` for it, and the session is never resumed on the Claude side; a dsh restart continues it from dsh's own log instead. Type `/temporary` again to switch back. The mark lives in memory (it survives a plugin reload, not a dsh restart).
 
@@ -254,19 +254,19 @@ The plugin runs Claude Code as a child process of dsh, so everything is on the m
 - **Config dir**: the plugin's `configDir` if set, else `$CLAUDE_CONFIG_DIR` if set for the dsh process, otherwise `~/.claude` of that user. Transcripts (`projects/`), `settings.json` and the login token all live there, the same place a terminal `claude` on that machine uses.
 - **Login**: done once, in a terminal on that machine, with `claude auth login`. The panel's first line shows which binary, which config dir, which host and which account dsh sees; if it says not logged in, that is the fix. The model picker says so too: a mount whose claude has no login is listed as `<name> (not logged in)`, from one `claude auth status` at mount and from every probe the panel runs after that. The models stay listed, so a session already on that box can still show the error a turn produces. The This box row in Settings → Oh My Claude → Boxes offers the same Log in the ssh rows have when the CLI is there but logged out: it runs `claude setup-token` under a local PTY (`script`), hands you the sign-in link, takes the pasted code and stores the minted token under the plugin's state (`ssh-tokens/.this-box`); the default instance hands it to every local Claude it starts as `CLAUDE_CODE_OAUTH_TOKEN`, the status pill reads "panel token", and Log out forgets the token. A second instance keeps its own login. With no `claude` on PATH the row says so instead; the plugin does not install it.
 
-**Several accounts.** Mount the plugin more than once in the profile's `cordis.patch.yml`, with the same `name: dsh-oh-my-claude`, distinct `id` values (the bundle's own row is `oh-my-claude`), each with its own `configDir` and a `providerId` starting with `claude-code-`:
+**Several accounts.** Mount the plugin more than once in the profile's `cordis.patch.yml`, with the same `name: dsh-oh-my-claude`, distinct `id` values (the bundle's own row is `oh-my-claude`), each with its own `configDir` and a `providerId` starting with `claude-code-`. The extra row goes under `insert`; a bare `- id:` entry only overrides a row that already exists and an unknown id is silently dropped:
 
 ```yaml
 - id: oh-my-claude
-  name: dsh-oh-my-claude
   config:
     configDir: ~/.claude
-- id: oh-my-claude-work
-  name: dsh-oh-my-claude
-  config:
-    providerId: claude-code-work
-    providerName: Work
-    configDir: ~/.claude-work
+- insert:
+    - id: oh-my-claude-work
+      name: dsh-oh-my-claude
+      config:
+        providerId: claude-code-work
+        providerName: Work
+        configDir: ~/.claude-work
 ```
 
 Each mount gets its own `CLAUDE_CONFIG_DIR`, state files under `~/.local/state/dsh-oh-my-claude/<providerId>/` (sessions, busy log, resume trace), and a separate row in the process registry, so the two logins never mix. In v1 the session browser, settings editor, MCP bridge, usage route and turn-status panel all belong to the default `claude-code` instance; a non-default mount logs one info line saying so.
@@ -322,6 +322,10 @@ It checks the local `claude` plus every box a remote workspace names, using the 
 ## Roadmap
 
 What comes next is tracked in the owner's working notes, which are not part of this repository.
+
+## Bugs and feedback
+
+Found a bug, or something that reads wrong? Open an issue at [github.com/lcestou/dsh-oh-my-claude/issues](https://github.com/lcestou/dsh-oh-my-claude/issues) with the dsh and Claude Code versions (`dsh --version`, `claude --version`) and what you expected to see.
 
 ## License
 
