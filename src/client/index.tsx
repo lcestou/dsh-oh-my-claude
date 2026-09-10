@@ -3928,6 +3928,7 @@ function StarterCard({
   const chip: CSSProperties = {
     ...btn,
     fontSize: 12,
+    lineHeight: "16px",
     padding: "2px 8px",
     borderRadius: 999,
     border: `1px solid ${T.border}`,
@@ -3954,6 +3955,10 @@ function StarterCard({
           fontSize: 12,
           color: T.faint,
           minWidth: 0,
+          // Chip height (16 px line + 2 px padding and 1 px border each side) is the row's floor,
+          // so the Save draft chip appearing on the first keystroke does not grow the row and
+          // push the composer down.
+          minHeight: 22,
         }}
       >
         {opener === "" || busy ? (

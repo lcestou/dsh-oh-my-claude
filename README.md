@@ -117,7 +117,7 @@ TOKEN=$(grep -o 'token=[A-Za-z0-9_-]*' ~/.local/state/dsh/web.log | tail -1 | cu
 PLAYWRIGHT_ROOT=/path/to/a/project/with/playwright bun tools/playwright/peek.ts "$TOKEN"
 ```
 
-It prints the sidebar text (a `Failed to load plugins` line means roll back with `git show main:lib/client.js > lib/client.js` and rebuild). `tools/playwright/turn-status.ts <token> <out.png>` and `restore-button.ts <token> <out.png>` screenshot the two DOM features. These are development checks only; nothing in the plugin needs Playwright, which is why it is not a dependency: `tools/playwright/pw.ts` resolves the borrowed install at run time and declares the slice of its API these scripts use.
+It prints the sidebar text (a `Failed to load plugins` line means roll back with `git show main:lib/client.js > lib/client.js` and rebuild). `tools/playwright/turn-status.ts <token> <out.png>` and `restore-button.ts <token> <out.png>` screenshot the two DOM features; `starter-row.ts <token>` types into a blank session and fails if the starter dock changes height when the Save draft chip appears. These are development checks only; nothing in the plugin needs Playwright, which is why it is not a dependency: `tools/playwright/pw.ts` resolves the borrowed install at run time and declares the slice of its API these scripts use.
 
 Everything under `tools/` is TypeScript — the scripts run with `bun`, the oxlint plugin is loaded by oxlint — and `tools/**/*.ts` is in the `tsconfig.json` include, so `bun run typecheck` covers all of it. That is what keeps a rename in `src/` from leaving `live-cli-check.ts` probing the wrong thing, and a null `boundingBox()` from reaching a screenshot crop.
 
