@@ -3545,12 +3545,20 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
     const tryHook = () => {
       if (!anchorRef.current?.isConnected) return;
       if (inline?.isConnected) {
-        // Already in the row: rewrite what it says instead of building it again.
+        // Already in the row: rewrite what it says instead of building it again. Only what
+        // changed: the observer above reports every childList mutation, and a `textContent` write
+        // replaces the text node even when the string is the same, so an unconditional write here
+        // called this back on every frame — 35 mutations a second under an idle pill, measured
+        // 2026-09-10 — for nothing.
         if (trigger) {
-          trigger.setAttribute("aria-label", titleRef.current);
-          trigger.setAttribute("aria-expanded", String(openRef.current));
-        } else inline.title = titleRef.current;
-        if (body) body.textContent = `${pad}${textRef.current}`;
+          const expanded = String(openRef.current);
+          if (trigger.getAttribute("aria-label") !== titleRef.current)
+            trigger.setAttribute("aria-label", titleRef.current);
+          if (trigger.getAttribute("aria-expanded") !== expanded)
+            trigger.setAttribute("aria-expanded", expanded);
+        } else if (inline.title !== titleRef.current) inline.title = titleRef.current;
+        const wanted = `${pad}${textRef.current}`;
+        if (body && body.textContent !== wanted) body.textContent = wanted;
         return;
       }
       if (inline) debug("row dropped our span; hooking again");
