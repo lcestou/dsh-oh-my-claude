@@ -71,9 +71,50 @@
         "src/translator.ts"
       ],
       "rules": {
-        "anti-slop/no-runtime-typeof": "off",
-        "anti-slop/no-unknown-parameters": "off",
-        "anti-slop/no-unknown-returns": "off",
+        "anti-slop/no-runtime-typeof": "off"
+      }
+    },
+    {
+      "files": [
+        "src/process.ts",
+        "src/remote-fs.ts",
+        "src/hold.ts",
+        "src/transcript.ts",
+        "src/mcp.ts",
+        "src/mcp-add-remove.ts",
+        "src/plugins.ts",
+        "src/sessions.ts",
+        "src/scheduled-tasks.ts",
+        "src/state.ts",
+        "src/usage.ts",
+        "src/translator.ts"
+      ],
+      "rules": {
+        "anti-slop/no-unknown-parameters": "off"
+      }
+    },
+    {
+      "files": [
+        "src/sessions.ts",
+        "src/usage.ts"
+      ],
+      "rules": {
+        "anti-slop/no-unknown-returns": "off"
+      }
+    },
+    {
+      "files": [
+        "src/process.ts",
+        "src/hold.ts",
+        "src/reach.ts",
+        "src/transcript.ts",
+        "src/sessions.ts",
+        "src/scheduled-tasks.ts",
+        "src/state.ts",
+        "src/usage.ts",
+        "src/translator.ts"
+      ],
+      "rules": {
         "anti-slop/no-unsafe-dictionary-type": "off"
       }
     }
