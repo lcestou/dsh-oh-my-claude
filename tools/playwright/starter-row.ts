@@ -34,4 +34,55 @@ console.log(
     ? "PASS: no shift"
     : "FAIL: shifted",
 );
+
+// Second half: save the draft so Forget appears, arm it (label becomes "Sure?"), let it revert;
+// the Save draft chip beside it must not move and the dock must not grow.
+await p
+  .getByRole("button", { name: /^Save draft$/ })
+  .first()
+  .click();
+await p.waitForTimeout(800);
+const forget = p.getByRole("button", { name: /Forget$/ }).first();
+const saveChip = p.getByRole("button", { name: /Save draft|Saved/ }).first();
+const at = async () => ({
+  forgetW: (await forget.boundingBox())?.width,
+  saveX: (await saveChip.boundingBox())?.x,
+  dockH: (await dock.boundingBox())?.height,
+});
+// After the save the chip reads Saved and is greyed until the composer differs from the opener.
+console.log(
+  "after save:",
+  await saveChip.innerText(),
+  "disabled=",
+  await saveChip.getAttribute("disabled"),
+);
+await composer.fill("hello again");
+await p.waitForTimeout(800);
+console.log("composer now:", JSON.stringify(await composer.innerText()));
+console.log(
+  "after edit:",
+  await saveChip.innerText(),
+  "disabled=",
+  await saveChip.getAttribute("disabled"),
+);
+await composer.fill("hello");
+await p.waitForTimeout(300);
+const rest = await at();
+await forget.click();
+await p.waitForTimeout(300);
+const armed = await at();
+await p.waitForTimeout(5300); // ConfirmButton disarms itself after 5 s
+const reverted = await at();
+console.log("rest    ", JSON.stringify(rest));
+console.log("armed   ", JSON.stringify(armed));
+console.log("reverted", JSON.stringify(reverted));
+const same = (a: typeof rest, c: typeof rest) =>
+  a.forgetW === c.forgetW && a.saveX === c.saveX && a.dockH === c.dockH;
+console.log(
+  same(rest, armed) && same(rest, reverted) ? "PASS: Forget holds width" : "FAIL: Forget shifts",
+);
+// Leave the session as it was: confirm Forget to drop the saved opener.
+await forget.click();
+await p.waitForTimeout(200);
+await forget.click();
 await b.close();

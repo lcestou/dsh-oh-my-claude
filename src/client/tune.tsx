@@ -224,6 +224,7 @@ type Apply = (
  * Shared by every remove in the plugin's UI: plugins, marketplaces, MCP servers, boxes, remote
  * workspaces, permission rules and the saved opener.
  */
+const ARM_EASE = "color 150ms ease, border-color 150ms ease";
 export function ConfirmButton({
   label,
   ariaLabel,
@@ -255,7 +256,11 @@ export function ConfirmButton({
   return (
     <button
       type="button"
-      style={armed ? { ...style, color: T.err, borderColor: T.err } : style}
+      style={
+        armed
+          ? { ...style, color: T.err, borderColor: T.err, transition: ARM_EASE }
+          : { ...style, transition: ARM_EASE }
+      }
       disabled={disabled}
       aria-label={armed ? `Confirm ${ariaLabel ?? label}` : (ariaLabel ?? label)}
       onClick={() => {
@@ -267,7 +272,12 @@ export function ConfirmButton({
         onAct();
       }}
     >
-      {armed ? "Sure?" : label}
+      {/* Both labels share one grid cell so the button is as wide as the wider of the two and
+          its neighbours stay put when it arms and when it reverts. */}
+      <span style={{ display: "inline-grid" }}>
+        <span style={{ gridArea: "1 / 1", visibility: armed ? "hidden" : "visible" }}>{label}</span>
+        <span style={{ gridArea: "1 / 1", visibility: armed ? "visible" : "hidden" }}>Sure?</span>
+      </span>
     </button>
   );
 }

@@ -3924,6 +3924,7 @@ function StarterCard({
   if (!blank || starter === null) return null;
   const opener = starter.session || starter.fallback;
   const busy = draft !== "" && draft !== opener; // they are writing something of their own
+  const saveLabel = note !== "" ? note : busy ? "Save draft" : "Saved";
 
   const chip: CSSProperties = {
     ...btn,
@@ -3979,20 +3980,169 @@ function StarterCard({
           </>
         )}
         <span style={{ flex: "1 1 auto" }} />
-        {draft === "" ? null : (
+        <Slide open={draft !== ""}>
           <button
             type="button"
             style={chip}
             onClick={() => save(draft)}
             title="Save what is in the composer as this session's opening prompt"
+            // Greyed while the composer already matches the saved opener, and while a save runs.
+            disabled={!busy || note !== ""}
           >
-            {note === "" ? "Save draft" : note}
+            {/* Every label the chip can show shares one cell, so Saving… and Saved do not resize it. */}
+            <span style={{ display: "inline-grid" }}>
+              {["Save draft", "Saving…", "Saved", "Save failed"].map((text) => (
+                <span
+                  key={text}
+                  style={{
+                    gridArea: "1 / 1",
+                    visibility: text === saveLabel ? "visible" : "hidden",
+                  }}
+                >
+                  {text}
+                </span>
+              ))}
+            </span>
           </button>
-        )}
-        {opener === "" ? null : (
-          <ConfirmButton label="Forget" style={chip} disabled={false} onAct={() => save("")} />
-        )}
+        </Slide>
+        <Slide open={opener !== ""}>
+          <ConfirmButton
+            label="Forget"
+            style={chip}
+            disabled={opener === ""}
+            onAct={() => save("")}
+          />
+        </Slide>
       </div>
+    </div>
+  );
+}
+
+/** Width of one starter-row chip eased in and out. The wrapper is a one-column grid whose column
+ *  goes 0fr to 1fr, which is animatable, so a chip appearing or leaving slides its neighbours over
+ *  instead of shoving them. Closed, a negative margin swallows the row gap the empty wrapper would
+ *  still claim, and `visibility` drops it from the tab order, delayed on close so the slide is seen. */
+const SLIDE_MS = globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? 0 : 200;
+function Slide({ open, children }: { open: boolean; children: ReactNode }) {
+  return (
+    <span
+      style={{
+        display: "grid",
+        gridTemplateColumns: open ? "1fr" : "0fr",
+        opacity: open ? 1 : 0,
+        visibility: open ? "visible" : "hidden",
+        marginLeft: open ? 0 : -6,
+        flex: "none",
+        transition: `grid-template-columns ${SLIDE_MS}ms ease, opacity ${SLIDE_MS}ms ease, margin-left ${SLIDE_MS}ms ease, visibility 0s ${open ? 0 : SLIDE_MS}ms`,
+      }}
+    >
+      <span style={{ minWidth: 0, overflow: "hidden", display: "flex" }}>{children}</span>
+    </span>
+  );
+}
+
+/** One flag from the box-wide `hints.json` store, live across components: a set here reaches every
+ *  mounted reader through one window event, so the settings switch hides the dock without a remount. */
+const HINTS_EVENT = "omc-hints";
+function useHintFlag(flag: string): [boolean, (on: boolean) => void] {
+  const [on, setOn] = useState(false);
+  useEffect(() => {
+    let live = true;
+    const load = () =>
+      fetch(`${ROUTE}/hints`)
+        .then((r) => readJson<Record<string, boolean>>(r))
+        .then((h) => {
+          if (live) setOn(h[flag] === true);
+        })
+        .catch(() => {});
+    void load();
+    window.addEventListener(HINTS_EVENT, load);
+    return () => {
+      live = false;
+      window.removeEventListener(HINTS_EVENT, load);
+    };
+  }, [flag]);
+  const set = (next: boolean) => {
+    setOn(next);
+    void fetch(`${ROUTE}/hints`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ [flag]: next }),
+    }).finally(() => window.dispatchEvent(new Event(HINTS_EVENT)));
+  };
+  return [on, set];
+}
+
+/** dsh's own settings switch, drawn with its measurements and colour tokens: a 36 by 20 pill with a
+ *  16 px thumb that slides 16 px, brand-coloured when on. Its class names are generated per build,
+ *  so the look is copied rather than the class borrowed. */
+function Switch({
+  on,
+  onChange,
+  label,
+}: {
+  on: boolean;
+  onChange: (next: boolean) => void;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      aria-label={label}
+      onClick={() => onChange(!on)}
+      style={{
+        boxSizing: "border-box",
+        position: "relative",
+        flex: "0 0 auto",
+        width: 36,
+        height: 20,
+        padding: 2,
+        border: 0,
+        borderRadius: 10,
+        background: on ? "var(--dsw-alias-brand-primary)" : "var(--dsw-alias-border-l3)",
+        cursor: "pointer",
+        transition: "background 120ms ease",
+      }}
+    >
+      <span
+        style={{
+          display: "block",
+          width: 16,
+          height: 16,
+          borderRadius: "50%",
+          background: "var(--dsw-alias-label-primary-foreground)",
+          transform: on ? "translateX(16px)" : "none",
+          transition: "transform 120ms ease",
+        }}
+      />
+    </button>
+  );
+}
+
+/** The settings switch for the prompt-starter dock, first thing under the section title. */
+function StarterSwitch() {
+  const [off, setOff] = useHintFlag("starterOff");
+  return (
+    <div
+      data-omc-starter-switch=""
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
+        fontSize: 13,
+        marginBottom: 12,
+      }}
+    >
+      <div>
+        <div>Prompt starter</div>
+        <div style={{ color: T.faint, fontSize: 12 }}>
+          Offer a saved opening prompt above the composer on a blank session.
+        </div>
+      </div>
+      <Switch on={!off} onChange={(next) => setOff(!next)} label="Prompt starter" />
     </div>
   );
 }
@@ -4012,7 +4162,8 @@ function StarterSlot({
   useInput?: <T>(select: (state: { draft: string }) => T) => T;
 }) {
   const draft = useInput?.((state) => state.draft) ?? "";
-  if (sessionId === undefined || inputActions === undefined) return null;
+  const [off] = useHintFlag("starterOff");
+  if (off || sessionId === undefined || inputActions === undefined) return null;
   return (
     <StarterCard
       sessionId={sessionId}
@@ -4447,6 +4598,7 @@ export function apply(ctx: ClientCtx) {
             Oh My Claude
           </h2>
         </div>
+        <StarterSwitch />
         {error && <p style={{ color: T.err, fontSize: 13 }}>{error}</p>}
         {boxes !== null && (
           <Card
