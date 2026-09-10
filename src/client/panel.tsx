@@ -2606,21 +2606,23 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
       <Tooltip label="Oh My Claude" side="top" delayMs={500} disabled={open}>
         <button
           type="button"
-          // Same box as dsh's own composer icons (22 px, no border, 6 px radius); the mark at 18 px
-          // reads at the size of their 14 px strokes.
+          // The same disc as dsh's own composer buttons (`+` and Add attachment): 28 px, no border,
+          // but bare at rest and filled with their hover shade only under the pointer or while the
+          // panel is open; the mark at 15 px reads at the size of their 14 px strokes. Written on
+          // the tokens rather than dsh's hashed class, which a build renames.
           style={{
-            width: 22,
-            height: 22,
+            width: 28,
+            height: 28,
             padding: 0,
             border: "none",
-            borderRadius: 6,
-            background: open ? T.hover : "transparent",
+            borderRadius: 999,
+            background: open ? T.hoverSolid : "transparent",
             color: CLAUDE_ORANGE,
-            fontSize: 18,
             lineHeight: 1,
             display: "inline-flex",
             alignItems: "center",
             justifyContent: "center",
+            flex: "none",
             cursor: "pointer",
           }}
           aria-label="Oh My Claude"

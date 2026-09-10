@@ -51,6 +51,8 @@ export const T = {
   card: "var(--dsw-alias-bg-layer-1, rgba(128,128,128,.06))",
   field: "var(--dsw-alias-bg-base, transparent)",
   hover: "var(--dsw-alias-interactive-bg-hover, rgba(128,128,128,.1))",
+  /** The shade dsh's composer buttons take under the pointer. */
+  hoverSolid: "var(--dsw-alias-interactive-bg-hover-solid, rgba(128,128,128,.2))",
   brand: "var(--dsw-alias-brand-primary, #3b82f6)",
   ok: "var(--dsw-alias-state-success-primary, #22a06b)",
   warn: "var(--dsw-alias-state-warn-primary, #d9822b)",
@@ -161,8 +163,8 @@ export function ensurePanelStyle(): void {
     `${inScope("summary:hover")} { background-image: linear-gradient(var(--omc-wash), var(--omc-wash)) !important; color: ${T.text} !important; }`,
     `${inScope(`${controls}:focus-visible`)} { outline: 2px solid var(--omc-ring); outline-offset: 2px; }`,
     `${inScope('[role="tab"]:focus-visible')} { outline-offset: -2px; }`,
-    // The trigger in the composer: the same wash, so it answers like everything it opens.
-    `button[aria-label="Oh My Claude"]:hover { background: color-mix(in srgb, ${CLAUDE_ORANGE} 16%, transparent) !important; }`,
+    // The trigger in the composer: dsh's own hover shade, as on the buttons beside it.
+    `button[aria-label="Oh My Claude"]:hover { background: ${T.hoverSolid} !important; }`,
     `button[aria-label="Oh My Claude"]:focus-visible { outline: 2px solid color-mix(in srgb, ${CLAUDE_ORANGE} 70%, transparent); outline-offset: 2px; }`,
     `@media (prefers-reduced-motion: reduce) { ${inScope(controls)} { transition: none; } }`,
   ].join("\n");
