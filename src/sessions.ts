@@ -396,7 +396,7 @@ export interface RuntimeStatus {
  * One ssh to the box, kept apart from `run` because the stage needs the exit code as well as the
  * text: 255 is ssh's own failure, anything else is the far shell's.
  */
-export const probeReach = (host: string, command: string, timeout = 12_000): Promise<Reach> =>
+const probeReach = (host: string, command: string, timeout = 12_000): Promise<Reach> =>
   new Promise((resolve) =>
     execFile(
       "ssh",
@@ -877,7 +877,7 @@ type RouteHost = Required<
 const opening = new Map<string, Promise<Opened>>();
 
 /** The id the transcript's own records carry, which is what the CLI knew the session by. */
-export const idIn = (text: string): string | undefined =>
+const idIn = (text: string): string | undefined =>
   /"sessionId"\s*:\s*"([0-9a-f-]{36})"/.exec(text.slice(0, 8192))?.[1];
 
 /**

@@ -1,6 +1,4 @@
 import { type ClaudeProcessSpec, type SubprocessHandle } from "./process.js";
-/** Under the far `$HOME`; unquoted in the scripts so the far shell expands it. */
-export declare const HOLD_ROOT = "\"$HOME\"/.local/state/dsh-oh-my-claude/hold";
 /** First line of an attach: everything before it is a login shell's banner, not the CLI. */
 export declare const READY = "OMC-HOLD-READY";
 /** Last line of an attach that saw the CLI end; the rest of the line is its exit code. */
@@ -40,8 +38,6 @@ export declare function holdStartScript(name: string, cwd: string, command: stri
  * the inner `sh` wrote, or 255 when the leader died without writing one (a `kill -9`).
  */
 export declare function holdAttachScript(name: string, offset: number): string;
-/** Exit status 0 when the leader is still there. */
-export declare const holdAliveScript: (name: string) => string;
 /** SIGTERM the whole session (the pgid is the leader's pid), SIGKILL what is left five seconds on. */
 export declare const holdKillScript: (name: string) => string;
 /** Remove the far dir: only after the exit line, so the log of a live CLI is never taken away. */

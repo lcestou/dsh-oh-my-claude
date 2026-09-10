@@ -4,7 +4,7 @@ import type { JsonValue } from "./dsh.js";
  * that project's `.mcp.json`, so both of those are read relative to a directory and the route has
  * to run the CLI in the session's own cwd.
  */
-export declare const MCP_SCOPES: readonly ["user", "local", "project"];
+declare const MCP_SCOPES: readonly ["user", "local", "project"];
 export type McpScope = (typeof MCP_SCOPES)[number];
 /** A scope other than `user` writes into a directory, so the route needs the session's cwd. */
 export declare const scopeNeedsCwd: (scope: McpScope) => boolean;
@@ -47,3 +47,4 @@ export declare function buildAddServer(form: AddServerForm): {
 } | {
     error: string;
 };
+export {};

@@ -28,7 +28,7 @@ import {
 } from "./process.js";
 
 /** Under the far `$HOME`; unquoted in the scripts so the far shell expands it. */
-export const HOLD_ROOT = '"$HOME"/.local/state/dsh-oh-my-claude/hold';
+const HOLD_ROOT = '"$HOME"/.local/state/dsh-oh-my-claude/hold';
 /** First line of an attach: everything before it is a login shell's banner, not the CLI. */
 export const READY = "OMC-HOLD-READY";
 /** Last line of an attach that saw the CLI end; the rest of the line is its exit code. */
@@ -109,10 +109,6 @@ export function holdAttachScript(name: string, offset: number): string {
     `printf '${EXIT}%s\\n' "$(cat "$d"/exit 2>/dev/null || echo 255)"`
   );
 }
-
-/** Exit status 0 when the leader is still there. */
-export const holdAliveScript = (name: string): string =>
-  `d=${dirOf(name)}; [ -f "$d"/pid ] && kill -0 "$(cat "$d"/pid)" 2>/dev/null`;
 
 /** SIGTERM the whole session (the pgid is the leader's pid), SIGKILL what is left five seconds on. */
 export const holdKillScript = (name: string): string =>

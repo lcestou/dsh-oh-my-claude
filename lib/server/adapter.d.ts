@@ -5,7 +5,7 @@ import { type PickerSettings, type RemoteWorkspace } from "./sessions.js";
 import { readUsage } from "./usage.js";
 import { type ClaudeEvent, ClaudeProcess } from "./process.js";
 import type { Agent, ImageAttachmentRef, JsonValue, PluginContext, SessionController, SessionId, SubprocessRuntime } from "./dsh.js";
-import { ADAPTER_CURRENT, RESUME_TIMER, PROCESS_REGISTRY } from "./dsh.js";
+import { ADAPTER_CURRENT } from "./dsh.js";
 import { sshRunner, type HoldRecord } from "./hold.js";
 import type { RewindResult } from "./process.js";
 export { markBusy, takeInterrupted } from "./state.js";
@@ -529,7 +529,7 @@ export interface SideQuestion {
  * still prose.
  */
 export declare function sideQuestionsIn(messages: LooseMessage[] | undefined): SideQuestion[];
-export { PROCESS_REGISTRY, ADAPTER_CURRENT, RESUME_TIMER };
+export { ADAPTER_CURRENT };
 /**
  * Whether Claude's own tool calls may be appended as raw `tool/call`/`tool/result` rows. Only a
  * format-0 session (dsh before 0.1.5) takes them: from 0.1.5 the session format is versioned and

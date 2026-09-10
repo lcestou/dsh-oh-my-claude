@@ -21,7 +21,7 @@ export interface PluginRoster {
     marketplaces: MarketplaceRow[];
 }
 /** The scopes `claude plugin` writes to; same set the MCP tab uses, named for this surface. */
-export declare const PLUGIN_SCOPES: readonly ["user", "project", "local"];
+declare const PLUGIN_SCOPES: readonly ["user", "project", "local"];
 export type PluginScope = (typeof PLUGIN_SCOPES)[number];
 export declare const isPluginScope: (value: unknown) => value is PluginScope;
 /** `user` is global; `project` and `local` write into the session's directory. */
@@ -47,3 +47,4 @@ export declare const isMarketplaceSource: (value: unknown) => value is string;
  * where the CLI ignores the alias with a warning.
  */
 export declare function pluginRoster(scopes: readonly ScopeText[]): PluginRoster;
+export {};

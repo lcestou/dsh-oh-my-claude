@@ -32,7 +32,7 @@ export interface MirrorEntry {
 }
 
 /** The entry the CLI must never see through a link, because it is the point of the whole mirror. */
-export const OWNED = "projects";
+const OWNED = "projects";
 
 /** What a build has to do: link these names, and copy these back home before relinking them. */
 export interface MirrorWork {

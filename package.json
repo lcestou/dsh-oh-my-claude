@@ -14,15 +14,15 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "export DSH_OMC_STATE_DIR=$(mktemp -d /tmp/omc-test.XXXXXX) && bun src/adapter.test.ts && bun src/translator.test.ts && bun src/sessions.test.ts && bun src/transcript.test.ts && bun src/process.test.ts && bun src/mcp.test.ts && bun src/mcp-add-remove.test.ts && bun src/usage.test.ts && bun src/permissions.test.ts && bun src/ssh.test.ts && bun src/ssh-login.test.ts && bun src/client/pageSessions.test.ts && bun src/client/restore.test.ts && bun src/client/spinner.test.ts && bun src/client/turns.test.ts && bun src/client/tune.test.ts && bun src/client/settings.test.ts && bun src/client/shared.test.ts && bun src/client/ago.test.ts && bun src/client/notices.test.ts && bun src/client/stats.test.ts && bun src/client/folds.test.ts && bun src/client/picker.test.ts && bun src/keeper.test.ts && bun src/switches.test.ts && bun src/plugins.test.ts && bun src/state.test.ts && bun src/memory.test.ts && bun src/instructions.test.ts && bun src/scheduled-tasks.test.ts && bun src/remote-fs.test.ts && bun src/claude-home.test.ts && bun src/hold.test.ts && bun src/reach.test.ts",
+    "test": "export DSH_OMC_STATE_DIR=$(mktemp -d /tmp/omc-test.XXXXXX) && for f in src/*.test.ts src/client/*.test.ts; do bun \"$f\" || exit 1; done",
     "lint": "oxlint src/ --max-warnings=0",
     "format": "oxfmt src/",
-    "deadcode": "fallow",
+    "deadcode": "fallow dead-code",
     "build:server": "tsc -p tsconfig.build.json",
     "build:client": "NODE_ENV=production bun build src/client/index.tsx --format=cjs --target=browser --outfile=lib/client.js --external react --external react/jsx-runtime --external '@deepseek-ai/*' --banner='window.__ModuleLoader__.load({ id: \"dsh-oh-my-claude\", factory: (require) => { var module = { exports: {} }; var exports = module.exports;' --footer='return module.exports; } });'",
     "build": "bun run build:server && bun run build:client",
-    "check": "oxlint src/ --max-warnings=0 && oxfmt --check src/ && bun run test && bun run build && bun run typecheck",
-    "prepare": "bun run build"
+    "prepare": "bun run build",
+    "validate": "bun tools/validate.ts"
   },
   "dependencies": {},
   "devDependencies": {

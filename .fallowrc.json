@@ -1,3 +1,48 @@
 {
-  "ignorePatterns": ["lib/**"]
+  "$schema": "./node_modules/fallow/schema.json",
+
+  // `lib/` is BUILD OUTPUT that happens to be committed (dsh loads it, so a plain
+  // install has to have it). Reading it doubles every finding.
+  "ignorePatterns": ["lib/**"],
+
+  // Entry points fallow cannot infer. Everything under `tools/` is a dev-only check
+  // run by hand or by `validate.ts`; nothing in the plugin imports any of it, which
+  // is the design, not rot. Without these lines all ten scripts read as dead files.
+  "entry": ["tools/*.ts", "tools/playwright/*.ts", "tools/oxlint/anti-slop/index.ts"],
+
+  // An export used only inside its own module is still a KEEP here. `tools/` imports
+  // the plugin through `lib/server/*.js`, which is ignored above, so the tool-facing
+  // half of the API (`Config`, `buildArgs`, `probeCli`, …) has no visible consumer
+  // from fallow's side and un-exporting on its say-so would break the scripts.
+  "ignoreExportsUsedInFile": true,
+
+  // dsh calls these; nothing in the repo does. `LlmAdapter` subclass methods are the
+  // plugin's contract with the host — an adapter method with no in-repo caller is the
+  // NORMAL case, not a dead one.
+  "usedClassMembers": [{ "extends": "LlmAdapter", "members": ["disposeProcesses", "relay"] }],
+
+  // Deliberate fallback: source runs from `src/`, the tsc build from `lib/server/`, so
+  // `sessions.ts` tries `../package.json` and falls back to `../../package.json`. Only
+  // one of the two resolves from any given location — that is the whole point.
+  "ignoreUnresolvedImports": ["../../package.json"],
+
+  "rules": {
+    // `@oxlint/plugins` is imported ONLY by the anti-slop rules under `tools/oxlint/`,
+    // which never ship: the published artifact is `lib/` plus `src/`, and a plugin
+    // installer never runs the linter. devDependency is where it belongs.
+    "dev-dependencies-in-production": "off",
+
+    // `SubprocessHandle` exists twice ON PURPOSE. `dsh.ts` mirrors dsh's own type
+    // verbatim (it has `waitForExit`); `process.ts` declares the narrower seam this
+    // plugin actually needs, so the node spawner can answer it too. Collapsing them
+    // would mean either dropping a member dsh really has or making the mirror stop
+    // mirroring, and the mirror's whole value is being a literal copy.
+    "duplicate-exports": "off",
+
+    // KNOWN DEBT, tracked in `docs/queue.md`, not silenced: six cycles, all of them
+    // through `adapter.ts`. Breaking them is a real refactor and it is not going to
+    // happen as a side effect of some unrelated change, so this reports without
+    // gating rather than sitting permanently red and teaching everyone to ignore it.
+    "circular-dependencies": "warn"
+  }
 }

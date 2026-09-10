@@ -206,17 +206,6 @@ export const pill = (color: string): CSSProperties => ({
   // and squashing it hides them. The text beside it gives way instead.
   flex: "0 0 auto",
 });
-export const chip = (active: boolean, disabled: boolean): CSSProperties => ({
-  ...btn,
-  padding: "3px 10px",
-  fontSize: 12,
-  borderRadius: 999,
-  background: active ? T.brand : "transparent",
-  color: active ? T.onBrand : disabled ? T.faint : T.text,
-  border: `1px solid ${active ? "transparent" : T.border}`,
-  cursor: disabled ? "not-allowed" : "pointer",
-  opacity: disabled ? 0.6 : 1,
-});
 export const select: CSSProperties = {
   padding: "4px 8px",
   borderRadius: 8,
@@ -436,25 +425,6 @@ interface RestoreButtonProps {
   ctx: ClientCtx;
 }
 export type { RestoreButtonProps };
-
-/** A popover anchored above a composer control, so a list never expands the composer bar. */
-export const popover: CSSProperties = {
-  position: "absolute",
-  bottom: "calc(100% + 6px)",
-  left: 0,
-  width: 440,
-  zIndex: 40,
-  display: "flex",
-  flexDirection: "column",
-  gap: 4,
-  maxHeight: 280,
-  overflowY: "auto",
-  background: T.card,
-  border: `1px solid ${T.border}`,
-  borderRadius: 8,
-  padding: 6,
-  boxShadow: "0 8px 24px rgba(0,0,0,.18)",
-};
 
 /** Body of one Oh My Claude tab: plain flow inside the host panel, which owns position and size. */
 export const bodyFlow: CSSProperties = { display: "flex", flexDirection: "column", gap: 4 };

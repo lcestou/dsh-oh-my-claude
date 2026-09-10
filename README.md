@@ -85,7 +85,7 @@ Two things change under this plugin:
 
 ### Developing
 
-Install from a checkout instead: `dsh plugin --profile web add link:/path/to/oh-my-claude`. The source is strict TypeScript under `src/`; dsh loads the compiled output in `lib/`, so run `bun run build` after every edit and restart (the patch layer hot-reloads, plugin code does not). `lib/server` comes from `tsc`, `lib/client.js` from `bun build` of `src/client/index.tsx`; both are committed, so a plain install has them. `bun run check` runs lint (oxlint with the anti-slop rules in `tools/oxlint`), format check, typecheck, tests and the build.
+Install from a checkout instead: `dsh plugin --profile web add link:/path/to/oh-my-claude`. The source is strict TypeScript under `src/`; dsh loads the compiled output in `lib/`, so run `bun run build` after every edit and restart (the patch layer hot-reloads, plugin code does not). `lib/server` comes from `tsc`, `lib/client.js` from `bun build` of `src/client/index.tsx`; both are committed, so a plain install has them. `bun run validate` runs the whole gate: format, lint (oxlint with the anti-slop rules in `tools/oxlint`), tests, dead-code, build and typecheck.
 
 Lint contract, read before writing code (the anti-slop rules in `.oxlintrc.json` fail the build and cost a worker 25 check runs on 2026-09-05):
 
@@ -95,7 +95,9 @@ Lint contract, read before writing code (the anti-slop rules in `.oxlintrc.json`
 - No `unknown` parameters, returns or type aliases in `src/adapter.ts`; name the shape.
 - Do not widen a known literal (`const x: string = "bash"`); let inference keep the literal.
 - No `_prefixed` identifiers (`no-underscore-dangle`), no shadowed names (`no-shadow`), no unused variables.
-- Run `bun run check` after each edit, not once at the end: the first run tells you which rule you are fighting, and `oxfmt src/` fixes formatting in place.
+- TypeScript, always. Every new script, tool and helper is `.ts`, `tools/` included. No `.js`, no `.mjs`, and no JSDoc types standing in for real ones: JSDoc is checked by nothing here and drifts silently, and one stray `.mjs` leaves the next reader working out which rules apply to which file. If something genuinely has to be served raw as JavaScript, say why at the top of it.
+- Semantic ids and roles in markup. Client code gives what it emits a stable, meaningful `id` or `data-*` hook (`data-omc-turn-status`, not a generated class) and the right ARIA role, and selects on those. dsh's own DOM is not ours to depend on — a hashed class name changes on any dsh upgrade, and a check that selects one then fails for a reason unrelated to this plugin.
+- Run `bun run validate` after each edit, not once at the end: the first run tells you which rule you are fighting, and it formats in place before it checks anything.
 - The suite runs under a fresh `DSH_OMC_STATE_DIR` (the `test` script sets it), and `STATE_DIR` follows it, so a test never rewrites the running plugin's files under `~/.local/state/dsh-oh-my-claude`. Any new store must build its path from `STATE_DIR`, never from `homedir()` on its own.
 
 Client bundle safety: dsh hot-reloads `lib/client.js` the moment `bun run build` writes it, into every open tab. A wrong service name in `export const inject` leaves the plugin `pending (waiting for service: …)` and every panel it owns disappears (2026-09-05: `models` instead of `modelDirectories`). After any client build, run the headless check and read its first line:
@@ -283,10 +285,12 @@ Every turn runs `ssh <host> claude -p --input-format stream-json …`; the remot
 ## Check
 
 ```sh
-bun run check
+bun run validate
 ```
 
-Lint, format check, typecheck, the offline self-checks (`src/adapter.test.ts`, `src/sessions.test.ts`, `src/transcript.test.ts`, `src/mcp.test.ts`, `src/usage.test.ts`, `src/remote-fs.test.ts`, `src/client/pageSessions.test.ts`, `src/client/restore.test.ts`, `src/client/spinner.test.ts`) and the build. Covers config defaults, model resolution, session id derivation, config-dir resolution, turn selection, argument building, stream-json translation including native tool rows, the catalog fallback, the box settings proxy, the remote-fs scripts and their local branch, the transcript conversion (turn folding, tool result pairing, listing filters), session-list paging, the restore filter and the spinner verb helpers. UI checks that need a browser are the Playwright scripts under `tools/playwright`.
+One command for the whole gate, in phases, because the steps are not interchangeable. Formatting runs first and it **writes** — formatting is a fix, not a finding, and failing a run on it before anything else has run wastes the pass. Lint, the tests and `fallow`'s dead-code pass then run together: they share no state and never write, so serialising them only costs wall-clock. The build comes next, and typecheck last, after it — `tsc` reads the `.d.ts` files the build emits, so the order is a real dependency rather than a preference. Conflict markers over the whole repo close it out. Each step is quiet when it passes and prints its output only when it fails; the run ends with a per-step table.
+
+The tests are every `*.test.ts` under `src/` and `src/client/`. The suite is a glob rather than a list, so a new test file runs from the moment it is written. Covers config defaults, model resolution, session id derivation, config-dir resolution, turn selection, argument building, stream-json translation including native tool rows, the catalog fallback, the box settings proxy, the remote-fs scripts and their local branch, the transcript conversion (turn folding, tool result pairing, listing filters), session-list paging, the restore filter and the spinner verb helpers. UI checks that need a browser are the Playwright scripts under `tools/playwright`.
 
 The suite fakes the CLI, so it cannot see a box whose `claude` is older than this one. `tools/live-cli-check.ts` closes that gap against the real binaries:
 

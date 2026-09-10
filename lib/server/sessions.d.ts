@@ -102,11 +102,6 @@ export interface RuntimeStatus {
     /** For an SSH box: why it did not answer, sorted so the row can name the fix (reach.ts). */
     reach?: Reach;
 }
-/**
- * One ssh to the box, kept apart from `run` because the stage needs the exit code as well as the
- * text: 255 is ssh's own failure, anything else is the far shell's.
- */
-export declare const probeReach: (host: string, command: string, timeout?: number) => Promise<Reach>;
 /** One probe's outcome: the decoded body, or why the box could not be reached. */
 export type Probe<T> = {
     ok: true;
@@ -223,8 +218,6 @@ interface Opened {
 }
 /** The host services the routes read; injected before the route mounts. */
 type RouteHost = Required<Pick<PluginContext, "webServer" | "connection" | "sessions" | "sessionPersistence">>;
-/** The id the transcript's own records carry, which is what the CLI knew the session by. */
-export declare const idIn: (text: string) => string | undefined;
 /**
  * Loads a Claude Code transcript and creates a dsh session from it, or
  * returns the existing session if one with this id is already live.

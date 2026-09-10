@@ -1501,8 +1501,8 @@ export function sideQuestionsIn(messages: LooseMessage[] | undefined): SideQuest
   return found;
 }
 
-// Re-export symbols so tests that import from adapter.ts can access them too.
-export { PROCESS_REGISTRY, ADAPTER_CURRENT, RESUME_TIMER };
+// Re-exported so tests that import from adapter.ts can reach it too.
+export { ADAPTER_CURRENT };
 /** How long to wait for the rest of a parallel dsh tool-call batch after the first one arrives. */
 const RELAY_BATCH_MS = 1500;
 /** After asking the CLI to interrupt, how long before falling back to killing the process. */

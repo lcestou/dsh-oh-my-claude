@@ -28,7 +28,7 @@ export interface PluginRoster {
 }
 
 /** The scopes `claude plugin` writes to; same set the MCP tab uses, named for this surface. */
-export const PLUGIN_SCOPES = ["user", "project", "local"] as const;
+const PLUGIN_SCOPES = ["user", "project", "local"] as const;
 export type PluginScope = (typeof PLUGIN_SCOPES)[number];
 
 export const isPluginScope = (value: unknown): value is PluginScope =>

@@ -566,7 +566,7 @@ export function saveAsides(dir: string, sessionId: string, entries: AsideEntry[]
 
 /** Per-session opening prompt, keyed by dsh session id, plus the shared `default` key the starter card
  *  offers a session that has none of its own. */
-export const STARTERS_FILE = (d: string) => join(d, "starters.json");
+const STARTERS_FILE = (d: string) => join(d, "starters.json");
 let startersChain = Promise.resolve();
 
 /** Load the saved openers. A non-string or blank value is skipped, so a hand-edited file cannot put a

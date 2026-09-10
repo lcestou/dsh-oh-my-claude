@@ -4,8 +4,6 @@ export interface MirrorEntry {
     /** Present, but a real file or directory rather than the symlink this module wrote. */
     forked?: boolean;
 }
-/** The entry the CLI must never see through a link, because it is the point of the whole mirror. */
-export declare const OWNED = "projects";
 /** What a build has to do: link these names, and copy these back home before relinking them. */
 export interface MirrorWork {
     link: string[];
