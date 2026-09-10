@@ -2,7 +2,7 @@
 // The dsh packages are NOT dependencies of this repo; we mirror only what this plugin touches.
 
 // Mirrors: @deepseek-ai/cordis/lib/types/context.d.ts + per-service module augmentations
-import type { GenerateOptions, Message } from "@deepseek-ai/dsh-llm";
+import type { ContentBlock, GenerateOptions, Message } from "@deepseek-ai/dsh-llm";
 
 /** Map of providerId → adapter on globalThis (hot-reload cross-plugin process adoption; per-instance). */
 export const ADAPTER_CURRENT = Symbol.for("dsh-oh-my-claude.adapter");
@@ -368,11 +368,15 @@ export interface PluginContext {
     register(definition: {
       name: string;
       description: string;
-      input?: { hint?: string };
+      /** `attachments: true` admits composer attachments; without it dsh's executor refuses
+       *  an invocation carrying any ("/name does not accept attachments"). */
+      input?: { hint?: string; attachments?: boolean };
       recordInput?: boolean;
       handler: (invocation: {
         agent: Agent;
         rawInput: string;
+        /** The admitted image and file blocks, in submission order; empty unless declared. */
+        attachments: readonly ContentBlock[];
         signal: AbortSignal;
       }) => { kind: "success"; text?: string } | { kind: "error"; text: string };
     }): () => void;

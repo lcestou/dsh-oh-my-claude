@@ -1,4 +1,4 @@
-import type { GenerateOptions, Message } from "@deepseek-ai/dsh-llm";
+import type { ContentBlock, GenerateOptions, Message } from "@deepseek-ai/dsh-llm";
 /** Map of providerId → adapter on globalThis (hot-reload cross-plugin process adoption; per-instance). */
 export declare const ADAPTER_CURRENT: unique symbol;
 /** Map of providerId → timer on globalThis (scoped outside cordis to survive plugin re-instantiation). */
@@ -371,13 +371,18 @@ export interface PluginContext {
         register(definition: {
             name: string;
             description: string;
+            /** `attachments: true` admits composer attachments; without it dsh's executor refuses
+             *  an invocation carrying any ("/name does not accept attachments"). */
             input?: {
                 hint?: string;
+                attachments?: boolean;
             };
             recordInput?: boolean;
             handler: (invocation: {
                 agent: Agent;
                 rawInput: string;
+                /** The admitted image and file blocks, in submission order; empty unless declared. */
+                attachments: readonly ContentBlock[];
                 signal: AbortSignal;
             }) => {
                 kind: "success";

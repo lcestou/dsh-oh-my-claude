@@ -29,6 +29,7 @@ export type Locator = {
   boundingBox(): Promise<Box | null>;
   screenshot(how: { path: string }): Promise<void>;
   scrollIntoViewIfNeeded(): Promise<void>;
+  setInputFiles(files: string | string[]): Promise<void>;
 };
 
 export type Page = {
