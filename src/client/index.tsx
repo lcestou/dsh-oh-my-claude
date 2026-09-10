@@ -2453,13 +2453,39 @@ const frameScans = new Set<FrameScan>();
 const syncScans = new Set<FrameScan>();
 let bodyObserver: MutationObserver | undefined;
 let scanQueued = false;
+/** The bursts since the last frame, so a frame scan can look at what changed instead of the body. */
+let pending: MutationRecord[] = [];
+/**
+ * A hidden tab gets no animation frames, so a turn that streams into a background tab piles records
+ * up with nothing draining them. Past this many the burst is dropped and the next frame goes wide,
+ * which is what a scan does on its first run anyway.
+ */
+const PENDING_CAP = 4000;
+let pendingOverflow = false;
 const flushScans = () => {
   scanQueued = false;
-  for (const scan of frameScans) scan();
+  const records = pendingOverflow ? undefined : pending;
+  pending = [];
+  pendingOverflow = false;
+  for (const scan of frameScans) scan(records);
 };
 const observeBody = (observer: MutationObserver) => {
   observer.observe(document.body, { childList: true, subtree: true });
 };
+/**
+ * The elements a burst touched: each record's target plus whatever it added. A scan handed these
+ * covers the same ground as one over `document.body` — dsh only ever draws through the DOM — at a
+ * cost that follows what changed rather than how long the conversation is.
+ */
+const changedElements = (records: MutationRecord[]): Set<HTMLElement> => {
+  const nodes = new Set<HTMLElement>();
+  for (const rec of records) {
+    if (rec.target instanceof HTMLElement) nodes.add(rec.target);
+    for (const node of rec.addedNodes) if (node instanceof HTMLElement) nodes.add(node);
+  }
+  return nodes;
+};
+
 /** Register a scan; the returned function removes it again (a React effect's cleanup needs that). */
 const onBodyMutation = (scan: FrameScan, sync = false): (() => void) => {
   const set = sync ? syncScans : frameScans;
@@ -2482,7 +2508,12 @@ const onBodyMutation = (scan: FrameScan, sync = false): (() => void) => {
     // has nothing to scope itself to. The writes do call this back once more; a scan that already
     // did its work finds nothing to do and the second pass ends there.
     for (const run of syncScans) run(records);
-    if (scanQueued || frameScans.size === 0) return;
+    if (frameScans.size === 0) return;
+    if (pending.length + records.length > PENDING_CAP) {
+      pendingOverflow = true;
+      pending = [];
+    } else if (!pendingOverflow) for (const rec of records) pending.push(rec);
+    if (scanQueued) return;
     scanQueued = true;
     requestAnimationFrame(flushScans);
   });
@@ -2579,7 +2610,13 @@ function watchContextMeter(ctx: ClientCtx) {
       if (tip && isRingRoot(tip.parentElement)) bubble(tip);
     }
   };
-  onBodyMutation(() => scan(document.body));
+  // Scoped to the burst: the ring's dialog and tooltip are rare nodes, and the body-wide pair of
+  // attribute queries this used to run every dirty frame cost 0.4 ms on a conversation of 30k nodes
+  // — paid on every frame of every streaming turn to find, almost always, nothing.
+  onBodyMutation((records) => {
+    if (records === undefined) return scan(document.body);
+    for (const node of changedElements(records)) scan(node);
+  });
   scan(document.body);
 }
 
@@ -2854,9 +2891,10 @@ function watchTurnStatus(ctx: ClientCtx) {
   // Once per dirty frame, and the cheapest check comes first: on a session that is not a Claude
   // mount there is nothing to attach, so bail before the querySelectorAll. attach is idempotent
   // (the status row carries a data-attr once wired), so re-scanning the body each frame is safe.
-  onBodyMutation(() => {
+  onBodyMutation((records) => {
     if (!activeClaudeSession(ctx)) return;
-    scan(document.body);
+    if (records === undefined) return scan(document.body);
+    for (const node of changedElements(records)) scan(node);
   });
   scan(document.body);
 }
@@ -3329,12 +3367,12 @@ export const isStatsRow = (el: HTMLElement): boolean => {
   // dsh 0.1.5 draws the row as pills and marks it (`StatsPills`, ui-chat); the shape checks below
   // are for the earlier row of groups with a bar between them.
   if (el.hasAttribute("data-composer-stats")) return true;
-  if (el.children.length < 2) return false;
-  if (MODULE_ROOT.test(el.className)) {
-    const sep = el.querySelector(STATS_SEP);
-    // Three other dsh components draw an empty `_sep` span inside a row; only this one is a bar.
-    if (sep?.textContent === "|") return true;
-  }
+  // The class comes before the text, and the text is only read for a div that has it. Both old and
+  // new dsh draw the row as a `_root` module div, and `textContent` on a div that is not one builds
+  // the whole subtree's text: over every div in a long conversation that alone was 20 ms a call.
+  if (el.children.length < 2 || !MODULE_ROOT.test(el.className)) return false;
+  // Three other dsh components draw an empty `_sep` span inside a row; only this one is a bar.
+  if (el.querySelector(STATS_SEP)?.textContent === "|") return true;
   return /\d+ turns · \d+ steps/.test(el.textContent ?? "");
 };
 
@@ -3470,8 +3508,15 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
       // which it does on a settled step, and that is exactly when this runs — the footer it hangs
       // in is still the same node, so the second try searches that instead of the document. Only a
       // conversation that was never hooked, or a footer that went away, pays for the full walk.
-      const rowIn = (root: ParentNode) =>
-        [...root.querySelectorAll<HTMLDivElement>("div")].filter(isStatsRow).at(-1);
+      // dsh 0.1.5 marks the row, so ask for it by name first: one indexed attribute query against
+      // a conversation where the `div` walk below is thousands of nodes.
+      const rowIn = (root: ParentNode) => {
+        const marked = [...root.querySelectorAll<HTMLDivElement>("div[data-composer-stats]")].at(
+          -1,
+        );
+        if (marked?.isConnected) return marked;
+        return [...root.querySelectorAll<HTMLDivElement>("div")].filter(isStatsRow).at(-1);
+      };
       const statsRow =
         lastRow && isStatsRow(lastRow)
           ? lastRow

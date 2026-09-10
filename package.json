@@ -31,11 +31,11 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "export DSH_OMC_STATE_DIR=$(mktemp -d /tmp/omc-test.XXXXXX) && for f in src/*.test.ts src/client/*.test.ts; do bun \"$f\" || exit 1; done",
-    "lint": "oxlint src/ --max-warnings=0",
-    "format": "oxfmt src/",
+    "lint": "oxlint src/ tools/ --max-warnings=0",
+    "format": "oxfmt src/ tools/",
     "deadcode": "fallow dead-code",
     "build:server": "tsc -p tsconfig.build.json",
-    "build:client": "NODE_ENV=production bun build src/client/index.tsx --format=cjs --target=browser --outfile=lib/client.js --external react --external react/jsx-runtime --external '@deepseek-ai/*' --banner='window.__ModuleLoader__.load({ id: \"dsh-oh-my-claude\", factory: (require) => { var module = { exports: {} }; var exports = module.exports;' --footer='return module.exports; } });'",
+    "build:client": "NODE_ENV=production bun build src/client/index.tsx --format=cjs --target=browser --minify --outfile=lib/client.js --external react --external react/jsx-runtime --external '@deepseek-ai/*' --banner='window.__ModuleLoader__.load({ id: \"dsh-oh-my-claude\", factory: (require) => { var module = { exports: {} }; var exports = module.exports;' --footer='return module.exports; } });'",
     "build": "bun run build:server && bun run build:client",
     "prepare": "bun run build",
     "validate": "bun tools/validate.ts"
@@ -83,6 +83,7 @@
       "optional": true
     }
   },
+  "homepage": "https://github.com/lcestou/oh-my-claude#readme",
   "repository": "https://github.com/lcestou/oh-my-claude",
   "license": "MIT",
   "types": "lib/server/adapter.d.ts"

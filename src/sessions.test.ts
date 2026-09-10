@@ -1,5 +1,6 @@
 // Offline self-check: node src/sessions.test.js. No CLI, no network.
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,9 +17,11 @@ import {
   settingsScopePath,
   isSettingsScope,
   SETTINGS_SCOPES,
+  SSH_TRANSCRIPT_LISTER,
 } from "./sessions.js";
 import { projectDirName } from "./adapter.js";
 import type { InstructionFile } from "./instructions.js";
+import type { TranscriptListItem } from "./transcript.js";
 
 // probeBox forwards init.method and init.body, plus content-type when body is set. Fake fetch, no network.
 {
@@ -824,6 +827,58 @@ import type { InstructionFile } from "./instructions.js";
   );
   assert.deepEqual(await readRemoteWorkspaces(await write("ws-broken.json", "{ broken")), []);
   assert.deepEqual(await readRemoteWorkspaces(join(tmp, "gone.json")), []);
+}
+
+// The lister that runs on an SSH box, run here against a fake home. It is a string of JavaScript
+// rather than an import, so nothing else type-checks it and nothing else notices when it drifts
+// from `listTranscripts`. Both must survive a transcript whose first prompt is one enormous line.
+{
+  const home = await mkdtemp(join(tmpdir(), "dsh-oh-my-claude-ssh-home-"));
+  const proj = join(home, ".claude", "projects", "-proj-app");
+  await mkdir(proj, { recursive: true });
+  const line = (o: unknown) => JSON.stringify(o) + "\n";
+  const small = "aaaaaaaa-1111-4111-8111-111111111111";
+  const huge = "bbbbbbbb-2222-4222-8222-222222222222";
+  await writeFile(
+    join(proj, `${small}.jsonl`),
+    line({ type: "user", cwd: "/proj/app", message: { role: "user", content: "fix the widget" } }),
+  );
+  await writeFile(
+    join(proj, `${huge}.jsonl`),
+    line({
+      type: "user",
+      message: {
+        role: "user",
+        content: [
+          { type: "image", source: { type: "base64", data: "A".repeat(400 * 1024) } },
+          { type: "text", text: "what is in this image" },
+        ],
+      },
+    }),
+  );
+  // Run by whatever runtime runs this suite; a box runs it under node. The script sticks to the
+  // CommonJS subset both accept, which is the point of checking it here rather than over ssh.
+  const out = execFileSync(process.execPath, ["-e", SSH_TRANSCRIPT_LISTER], {
+    env: { ...process.env, HOME: home },
+    maxBuffer: 1 << 24,
+  }).toString();
+  // SAFETY: the script writes `JSON.stringify` of the array it built; a parse failure is the
+  // failure this check is for.
+  const rows = JSON.parse(out) as TranscriptListItem[];
+  assert.deepEqual(
+    rows.map((r) => r.id).toSorted(),
+    [small, huge].toSorted(),
+    "a first prompt past the 256 KB head still lists",
+  );
+  const one = rows.find((r) => r.id === small);
+  assert.ok(one);
+  assert.equal(one.title, "fix the widget");
+  assert.equal(one.cwd, "/proj/app");
+  assert.equal(one.turns, 1);
+  const big = rows.find((r) => r.id === huge);
+  assert.ok(big);
+  assert.equal(big.title, "what is in this image");
+  assert.equal(big.turns, 1);
 }
 
 console.log("sessions ok");

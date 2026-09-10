@@ -1,6 +1,11 @@
 import { type FsBox } from "./remote-fs.js";
 import type { JsonValue } from "./dsh.js";
-/** Truncate to a byte budget without splitting a character. */
+/**
+ * Truncate to a byte budget without splitting a character. Encode once and cut at a UTF-8 boundary:
+ * this used to append a character at a time and measure `out + ch` on each one, which is quadratic
+ * in the budget and ran on every tool result in a transcript. Folding a 49 MB session spent 1.2 s
+ * of its 1.35 s here.
+ */
 export declare function truncateBytes(text: string, max: number): string;
 /** One transcript in a listing: what the session browser shows before opening it. */
 export interface TranscriptListItem {

@@ -9,15 +9,27 @@ const name = process.env.PW_SESSION ?? "recipe";
 const b = await launch();
 const ctx = await b.newContext({ viewport: { width: 1400, height: 900 } });
 const p = await ctx.newPage();
-p.on("console", (m) => { const t = m.text(); if (/oh-my-claude/.test(t)) console.log("PAGE:", t.slice(0, 200)); });
+p.on("console", (m) => {
+  const t = m.text();
+  if (/oh-my-claude/.test(t)) console.log("PAGE:", t.slice(0, 200));
+});
 await p.goto(dshUrl(token), { waitUntil: "networkidle" });
 await p.waitForTimeout(2500);
 const row = p.locator('[role="treeitem"]').filter({ hasText: name }).first();
 console.log("row count", await row.count());
 await row.click({ force: true });
 await p.waitForTimeout(4000);
-const shield = p.locator('button[aria-label^="Access mode"], button[aria-label^="Claude permission"]').first();
-console.log("shield count", await shield.count(), "aria", await shield.getAttribute("aria-label"), "text", (await shield.textContent())?.trim());
+const shield = p
+  .locator('button[aria-label^="Access mode"], button[aria-label^="Claude permission"]')
+  .first();
+console.log(
+  "shield count",
+  await shield.count(),
+  "aria",
+  await shield.getAttribute("aria-label"),
+  "text",
+  (await shield.textContent())?.trim(),
+);
 await shield.click();
 await p.waitForTimeout(1500);
 const items = await p.locator('[role="menu"] [role="menuitem"]').allTextContents();

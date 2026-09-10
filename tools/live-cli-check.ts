@@ -25,7 +25,9 @@ import { STATE_DIR } from "../lib/server/state.js";
 
 /** The CLI's own closing frame, the only one this check reads. */
 type ResultFrame = { type: "result"; is_error?: boolean; num_turns?: number; duration_ms?: number };
-type TurnOutcome = { result: ResultFrame; error?: undefined } | { error: string; result?: undefined };
+type TurnOutcome =
+  | { result: ResultFrame; error?: undefined }
+  | { error: string; result?: undefined };
 
 const args = process.argv.slice(2);
 const live = args.includes("--live");
@@ -40,7 +42,11 @@ async function knownHosts(): Promise<string[]> {
 /** One real turn through the flags just probed. Resolves to the CLI's own result frame.
  * A box runs it the way the plugin does — same ssh invocation, same stored login — so a token this
  * PC holds for the box is used there, rather than the check reporting the box as logged out. */
-function runTurn(host: string | undefined, argv: string[], timeoutMs = 180000): Promise<TurnOutcome> {
+function runTurn(
+  host: string | undefined,
+  argv: string[],
+  timeoutMs = 180000,
+): Promise<TurnOutcome> {
   const inv = host
     ? sshInvocation(host, "claude", argv, process.cwd(), readSshToken(STATE_DIR, host))
     : { command: "claude", args: argv };
@@ -60,19 +66,25 @@ function runTurn(host: string | undefined, argv: string[], timeoutMs = 180000): 
         .split("\n")
         .flatMap<ResultFrame>((l) => {
           try {
+            // SAFETY: the caller keeps only frames whose `type` it recognises, so a line that
+            // parses to something else is dropped one step later rather than trusted here.
             return [JSON.parse(l) as ResultFrame];
           } catch {
             return [];
           }
         })
         .find((f) => f.type === "result");
-      if (!result) resolve({ error: `exit ${code}: ${err.trim().split("\n").pop() ?? "no output"}` });
+      if (!result)
+        resolve({ error: `exit ${code}: ${err.trim().split("\n").pop() ?? "no output"}` });
       else resolve({ result });
     });
     child.stdin.end(
       JSON.stringify({
         type: "user",
-        message: { role: "user", content: [{ type: "text", text: "Reply with the single word OK." }] },
+        message: {
+          role: "user",
+          content: [{ type: "text", text: "Reply with the single word OK." }],
+        },
       }) + "\n",
     );
   });
@@ -102,7 +114,9 @@ for (const host of ["", ...(hostArgs.length > 0 ? hostArgs : await knownHosts())
     failures++;
     continue;
   }
-  console.log(`ok   ${name} (${version}): ${argv.filter((a) => a.startsWith("--")).length} flags accepted`);
+  console.log(
+    `ok   ${name} (${version}): ${argv.filter((a) => a.startsWith("--")).length} flags accepted`,
+  );
   if (!live) continue;
   // One real turn, with the bridge and the session id dropped: nothing here serves MCP, and a
   // fixed session id would collide on a second run.

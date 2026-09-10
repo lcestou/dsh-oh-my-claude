@@ -44,7 +44,10 @@ const results: { name: string; ok: boolean; ms: number }[] = [];
 /** Run a command to completion with stdout and stderr merged; never throws. */
 function run(argv: string[]): Promise<{ code: number; out: string }> {
   return new Promise((resolve) => {
-    const child = spawn(argv[0] ?? "", argv.slice(1), { cwd: ROOT, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(argv[0] ?? "", argv.slice(1), {
+      cwd: ROOT,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     let out = "";
     child.stdout.on("data", (b: Buffer) => (out += b.toString()));
     child.stderr.on("data", (b: Buffer) => (out += b.toString()));
@@ -99,7 +102,8 @@ if (results.every((r) => r.ok) && (await step("build", "bun", "run", "build"))) 
 
 const pad = Math.max(...results.map((r) => r.name.length));
 console.log("");
-for (const r of results) console.log(`  ${r.ok ? "✔" : "✘"} ${r.name.padEnd(pad)}  ${(r.ms / 1000).toFixed(1)}s`);
+for (const r of results)
+  console.log(`  ${r.ok ? "✔" : "✘"} ${r.name.padEnd(pad)}  ${(r.ms / 1000).toFixed(1)}s`);
 const failed = results.filter((r) => !r.ok);
 console.log(
   `\n${failed.length ? `✘ ${failed.length} FAILED: ${failed.map((f) => f.name).join(", ")}` : "✔ all green"}` +

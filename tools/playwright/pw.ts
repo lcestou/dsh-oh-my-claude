@@ -31,7 +31,7 @@ export type Locator = {
 };
 
 export type Page = {
-  goto(url: string, how?: { waitUntil?: "networkidle" | "load" }): Promise<unknown>;
+  goto(url: string, how?: { waitUntil?: "networkidle" | "load" }): Promise<void>;
   locator(selector: string, where?: Find): Locator;
   getByRole(role: string, where: { name: string | RegExp }): Locator;
   getByText(text: string | RegExp): Locator;
@@ -73,8 +73,12 @@ export async function launch(): Promise<Browser> {
   const { chromium } = await import(entry).catch(() => {
     throw new Error(`no Playwright at ${entry}; point PLAYWRIGHT_ROOT at a project that has it`);
   });
+  // SAFETY: `Browser` is the hand-written slice of Playwright's API these checks use. The import
+  // is dynamic and untyped by design (Playwright is not a dependency here); a method that moved
+  // fails the check that calls it, which is the failure a dev-only check should have.
   return chromium.launch({ headless: true }) as Promise<Browser>;
 }
 
 /** The dsh tab these checks drive; the token is dsh's own launch token, printed in its web log. */
-export const dshUrl = (token: string | undefined): string => `http://127.0.0.1:3080/?token=${token}`;
+export const dshUrl = (token: string | undefined): string =>
+  `http://127.0.0.1:3080/?token=${token}`;

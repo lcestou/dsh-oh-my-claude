@@ -226,6 +226,14 @@ const orphanCall = orphanEvents.find((e) => e.type === "tool/call");
 assert.equal(orphanCall?.data.name, "bash");
 
 assert.equal(truncateBytes("héllo", 3), "hé");
+// The cut lands between characters whatever the budget: a two-byte é, a four-byte emoji, and a
+// budget of zero. Byte-exact budgets keep the character that fits exactly.
+assert.equal(truncateBytes("héllo", 2), "h");
+assert.equal(truncateBytes("🎉ok", 3), "");
+assert.equal(truncateBytes("🎉ok", 4), "🎉");
+assert.equal(truncateBytes("🎉ok", 5), "🎉o");
+assert.equal(truncateBytes("hello", 0), "");
+assert.equal(truncateBytes("hello", 5), "hello", "a text that fits is returned whole");
 
 // Listing: uuid files only, sidechain-only and empty files skipped, newest first, excluded ids hidden.
 const dir = await mkdtemp(join(tmpdir(), "dsh-oh-my-claude-"));

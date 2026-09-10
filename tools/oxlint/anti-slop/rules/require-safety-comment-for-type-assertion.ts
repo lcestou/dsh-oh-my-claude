@@ -35,10 +35,7 @@ function hasSafetyComment(sourceCode: SourceCode, node: TypeAssertion): boolean 
       // not the declaration inside it — hop up once more so `export const X =
       // ... as T` can be satisfied by a comment above the export line.
       const parent: ESTree.Node = current.parent;
-      if (
-        parent.type === "ExportNamedDeclaration" ||
-        parent.type === "ExportDefaultDeclaration"
-      ) {
+      if (parent.type === "ExportNamedDeclaration" || parent.type === "ExportDefaultDeclaration") {
         current = parent;
         continue;
       }

@@ -1,10 +1,8 @@
 // Claude Code transcripts (~/.claude/projects/<cwd>/<uuid>.jsonl) → dsh session events, so a
 // session started in the terminal can be opened in dsh with its history and resumed from there.
 // This is an I/O boundary: transcript lines are decoded here and typed shapes leave.
-import { createReadStream } from "node:fs";
-import { readdir, stat } from "node:fs/promises";
+import { open, readdir, stat } from "node:fs/promises";
 import { readAt, type FsBox } from "./remote-fs.js";
-import { createInterface } from "node:readline";
 import { join } from "node:path";
 import type { JsonValue } from "./dsh.js";
 import { NATIVE_TOOL_MAP } from "./adapter.js";
@@ -63,15 +61,21 @@ function promptText(content: unknown): string {
 /** Injected material Claude Code stores as user lines: slash-command echoes, hook output, reminders. */
 const isNoise = (text: string) => /^\s*<(command-|local-command|system-reminder)/.test(text);
 
-/** Truncate to a byte budget without splitting a character. */
+/**
+ * Truncate to a byte budget without splitting a character. Encode once and cut at a UTF-8 boundary:
+ * this used to append a character at a time and measure `out + ch` on each one, which is quadratic
+ * in the budget and ran on every tool result in a transcript. Folding a 49 MB session spent 1.2 s
+ * of its 1.35 s here.
+ */
 export function truncateBytes(text: string, max: number): string {
-  if (Buffer.byteLength(text) <= max) return text;
-  let out = "";
-  for (const ch of text) {
-    if (Buffer.byteLength(out + ch) > max) break;
-    out += ch;
-  }
-  return out;
+  if (max <= 0) return "";
+  const buf = Buffer.from(text, "utf8");
+  if (buf.length <= max) return text;
+  // Back off over continuation bytes (0b10xxxxxx) so the cut lands between characters, never inside
+  // one. At most three steps, whatever the budget.
+  let end = max;
+  while (end > 0 && (buf[end]! & 0xc0) === 0x80) end--;
+  return buf.toString("utf8", 0, end);
 }
 
 const titleFrom = (text: string): string =>
@@ -97,18 +101,29 @@ async function peek(
   path: string,
   maxBytes = 256 * 1024,
 ): Promise<{ lines: string[]; partial: boolean }> {
-  const lines: string[] = [];
-  let bytes = 0;
-  const rl = createInterface({ input: createReadStream(path), crlfDelay: Infinity });
-  for await (const line of rl) {
-    lines.push(line);
-    bytes += Buffer.byteLength(line) + 1;
-    if (bytes >= maxBytes) {
-      rl.close();
-      return { lines, partial: true };
-    }
+  // ONE READ, NOT A LINE STREAM. This used to run `readline` over a `createReadStream` and call
+  // `rl.close()` once the running byte total passed the cap, which was both slow and wrong:
+  // `close()` does not stop the iterator, so every line already buffered in the current chunk was
+  // still yielded. A 42 MB transcript returned 77 lines by the cap arithmetic and 89 in practice,
+  // and the surplus moved with the chunk boundary — so `turns` for a capped file was not stable
+  // between two peeks of the same bytes. Reading the head once and splitting it is deterministic
+  // and, measured over 187 transcripts, 88 ms became 24 ms.
+  const fh = await open(path, "r");
+  try {
+    // `allocUnsafe`: only the first `bytesRead` bytes are ever read back, and the default head is
+    // far past `Buffer.poolSize`, so this is a fresh allocation rather than a slice of the shared
+    // pool. Zeroing 256 KB per transcript would be part of the cost this rewrite is about.
+    const buf = Buffer.allocUnsafe(maxBytes);
+    const { bytesRead } = await fh.read(buf, 0, maxBytes, 0);
+    const partial = bytesRead >= maxBytes;
+    const lines = buf.toString("utf8", 0, bytesRead).split("\n");
+    // The last element is either the empty string after a trailing newline or, when the cap cut
+    // the file mid-record, a fragment. Neither is a line; a fragment would fail to parse anyway.
+    if (lines.at(-1) === "" || partial) lines.pop();
+    return { lines, partial };
+  } finally {
+    await fh.close();
   }
-  return { lines, partial: false };
 }
 
 /** One transcript in a listing: what the session browser shows before opening it. */
@@ -125,6 +140,23 @@ export interface TranscriptListItem {
   imported?: boolean;
 }
 
+/** How many transcripts to stat and peek at once. Two descriptors each; see `listTranscripts`. */
+const LIST_BATCH = 32;
+
+// Head bound for the retry in `listTranscripts` when the first peek found no turn at all. Sized
+// against the worst dir on this box (194 transcripts): 2 MB recovers every one of them, and a
+// batch of 32 retries at once is 64 MB of transient buffer rather than the 128 MB 4 MB would cost.
+const DEEP_PEEK_BYTES = 2 * 1024 * 1024;
+
+/** What one pass over a transcript head yields; `scan` in `listTranscripts` fills it. */
+interface Scan {
+  turns: number;
+  createdAt: number;
+  title: string;
+  summary?: string;
+  cwd?: string;
+}
+
 /**
  * Transcripts in one project dir, newest first. `exclude` holds Claude session ids that already
  * belong to dsh sessions the plugin started itself (their dsh side is the source of truth).
@@ -139,44 +171,65 @@ export async function listTranscripts(
   } catch {
     return [];
   }
-  const out: TranscriptListItem[] = [];
-  for (const name of names) {
-    const m = UUID_FILE.exec(name);
-    const id = m?.[1];
-    if (!id || exclude.has(id)) continue;
-    const path = join(dir, name);
-    const info = await stat(path);
-    let title = "";
-    let summary: string | undefined;
-    let createdAt = info.mtimeMs;
-    let turns = 0;
-    let cwd: string | undefined;
-    const head = await peek(path);
-    for (const line of head.lines) {
+  // ONE FILE AT A TIME WAS THE WHOLE COST HERE. Every transcript needs a `stat` and a bounded
+  // `peek`, and awaiting them in a plain loop made 187 files into 374 sequential round-trips —
+  // 160 ms on a warm cache for one project dir, and `listAllTranscripts` pays it per dir. The
+  // work per file is independent, so it runs in batches instead. BATCHED rather than one big
+  // `Promise.all`: the caller already fans out across every project dir at once, and an
+  // unbounded map would multiply that into hundreds of open descriptors for no extra speed.
+  /** What a listing needs from the head of one transcript. */
+  const scan = (lines: string[], fallbackTime: number): Scan => {
+    const found: Scan = { turns: 0, createdAt: fallbackTime, title: "" };
+    for (const line of lines) {
       const rec = parseLine(line);
       if (!rec) continue;
-      if (cwd === undefined && typeof rec.cwd === "string") cwd = rec.cwd;
-      if (rec.type === "summary" && typeof rec.summary === "string") summary = rec.summary;
+      if (found.cwd === undefined && typeof rec.cwd === "string") found.cwd = rec.cwd;
+      if (rec.type === "summary" && typeof rec.summary === "string") found.summary = rec.summary;
       if (rec.type !== "user" || rec.isSidechain || rec.isMeta) continue;
       const text = promptText(isRec(rec.message) ? rec.message.content : undefined);
       if (!text) continue;
-      if (turns === 0 && isAuxPrompt(text)) break;
-      turns += 1;
-      if (turns === 1) createdAt = timeOf(rec, createdAt);
-      if (!title && !isNoise(text)) title = titleFrom(text);
+      if (found.turns === 0 && isAuxPrompt(text)) break;
+      found.turns += 1;
+      if (found.turns === 1) found.createdAt = timeOf(rec, found.createdAt);
+      if (!found.title && !isNoise(text)) found.title = titleFrom(text);
     }
-    if (turns === 0) continue;
+    return found;
+  };
+
+  const read = async (name: string): Promise<TranscriptListItem | undefined> => {
+    const m = UUID_FILE.exec(name);
+    const id = m?.[1];
+    if (!id || exclude.has(id)) return undefined;
+    const path = join(dir, name);
+    const info = await stat(path);
+    let head = await peek(path);
+    let found = scan(head.lines, info.mtimeMs);
+    // A SECOND LOOK, ONLY WHEN THE FIRST ONE FOUND NOTHING. A transcript can open with a single
+    // enormous record — a pasted image, a dumped file — and push its first real user turn past the
+    // head bound, which makes a real session look empty and drops it from the list entirely. Nine
+    // of 194 transcripts on this box do exactly that. Re-reading a larger head costs nothing in
+    // the common case because the common case never reaches this line.
+    if (found.turns === 0 && head.partial) {
+      head = await peek(path, DEEP_PEEK_BYTES);
+      found = scan(head.lines, info.mtimeMs);
+    }
+    if (found.turns === 0) return undefined;
     const item: TranscriptListItem = {
       id,
-      title: summary ?? title ?? "",
-      createdAt,
+      title: found.summary ?? found.title,
+      createdAt: found.createdAt,
       modifiedAt: info.mtimeMs,
       bytes: info.size,
-      turns,
+      turns: found.turns,
       turnsPartial: head.partial,
     };
-    if (cwd) item.cwd = cwd;
-    out.push(item);
+    if (found.cwd) item.cwd = found.cwd;
+    return item;
+  };
+  const out: TranscriptListItem[] = [];
+  for (let i = 0; i < names.length; i += LIST_BATCH) {
+    const batch = await Promise.all(names.slice(i, i + LIST_BATCH).map(read));
+    for (const item of batch) if (item) out.push(item);
   }
   return out.toSorted((a, b) => b.modifiedAt - a.modifiedAt);
 }

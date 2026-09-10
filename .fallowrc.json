@@ -5,10 +5,12 @@
   // install has to have it). Reading it doubles every finding.
   "ignorePatterns": ["lib/**"],
 
-  // Entry points fallow cannot infer. Everything under `tools/` is a dev-only check
-  // run by hand or by `validate.ts`; nothing in the plugin imports any of it, which
-  // is the design, not rot. Without these lines all ten scripts read as dead files.
-  "entry": ["tools/*.ts", "tools/playwright/*.ts", "tools/oxlint/anti-slop/index.ts"],
+  // Entry points fallow cannot infer. `src/adapter.ts` is the plugin itself: dsh imports
+  // `name`, `inject` and `apply` from it by name through the Cordis protocol, so nothing
+  // in this repo references them. Everything under `tools/` is a dev-only check run by
+  // hand or by `validate.ts`; nothing in the plugin imports any of it, which is the
+  // design, not rot. Without these lines all ten scripts read as dead files.
+  "entry": ["src/adapter.ts", "tools/*.ts", "tools/playwright/*.ts", "tools/oxlint/anti-slop/index.ts"],
 
   // An export used only inside its own module is still a KEEP here. `tools/` imports
   // the plugin through `lib/server/*.js`, which is ignored above, so the tool-facing

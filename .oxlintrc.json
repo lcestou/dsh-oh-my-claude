@@ -117,6 +117,26 @@
       "rules": {
         "anti-slop/no-unsafe-dictionary-type": "off"
       }
+    },
+    {
+      "files": ["tools/dsh-session-repair.ts"],
+      "rules": {
+        "anti-slop/no-runtime-typeof": "off",
+        "anti-slop/no-unsafe-dictionary-type": "off",
+        "anti-slop/no-known-value-widening": "off"
+      }
+    },
+    {
+      "files": [
+        "tools/oxlint/anti-slop/shared/lexical-type-parameters.ts",
+        "tools/oxlint/anti-slop/rules/no-runtime-typeof.ts"
+      ],
+      "rules": {
+        "anti-slop/no-runtime-typeof": "off",
+        "anti-slop/no-unknown-parameters": "off",
+        "anti-slop/no-unsafe-dictionary-type": "off",
+        "anti-slop/no-chained-type-assertions": "off"
+      }
     }
   ],
   "env": {
