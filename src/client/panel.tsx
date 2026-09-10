@@ -31,6 +31,7 @@ import {
   CLAUDE_ORANGE,
   maskEmail,
 } from "./shared.js";
+import { Tooltip } from "@deepseek-ai/dsh-client-ui-primitives";
 import { Spark } from "./spark.js";
 import { ConfirmButton, TuneBody } from "./tune.js";
 import { noticesOn, setNoticesOn } from "./notices.js";
@@ -2600,42 +2601,45 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
 
   return (
     <span ref={rootRef} style={{ position: "relative", display: "inline-flex" }}>
-      <button
-        type="button"
-        // Same box as dsh's own composer icons (22 px, no border, 6 px radius); the mark at 18 px
-        // reads at the size of their 14 px strokes.
-        style={{
-          width: 22,
-          height: 22,
-          padding: 0,
-          border: "none",
-          borderRadius: 6,
-          background: open ? T.hover : "transparent",
-          color: CLAUDE_ORANGE,
-          fontSize: 18,
-          lineHeight: 1,
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-          cursor: "pointer",
-        }}
-        aria-label="Oh My Claude"
-        title="Oh My Claude: memory, rewind, changes, MCP"
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        onClick={() => {
-          if (open) {
-            close();
-            return;
-          }
-          setTab(lastTab === "Restore" && !blank ? "Memory" : lastTab);
-          const rect = rootRef.current?.getBoundingClientRect();
-          if (rect) setAbove(Math.max(12, window.innerHeight - rect.top + 8));
-          openPanel();
-        }}
-      >
-        <Spark size={15} />
-      </button>
+      {/* dsh's own bubble, as on the composer's "+" and "Add attachment" buttons, in place of the
+          browser's title tooltip. Off while the panel is open so it does not sit on the tab strip. */}
+      <Tooltip label="Oh My Claude" side="top" delayMs={500} disabled={open}>
+        <button
+          type="button"
+          // Same box as dsh's own composer icons (22 px, no border, 6 px radius); the mark at 18 px
+          // reads at the size of their 14 px strokes.
+          style={{
+            width: 22,
+            height: 22,
+            padding: 0,
+            border: "none",
+            borderRadius: 6,
+            background: open ? T.hover : "transparent",
+            color: CLAUDE_ORANGE,
+            fontSize: 18,
+            lineHeight: 1,
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            cursor: "pointer",
+          }}
+          aria-label="Oh My Claude"
+          aria-haspopup="dialog"
+          aria-expanded={open}
+          onClick={() => {
+            if (open) {
+              close();
+              return;
+            }
+            setTab(lastTab === "Restore" && !blank ? "Memory" : lastTab);
+            const rect = rootRef.current?.getBoundingClientRect();
+            if (rect) setAbove(Math.max(12, window.innerHeight - rect.top + 8));
+            openPanel();
+          }}
+        >
+          <Spark size={15} />
+        </button>
+      </Tooltip>
       {open && (
         <div role="dialog" aria-label="Oh My Claude" {...{ [PANEL_ATTR]: "1" }} style={panelStyle}>
           <div
