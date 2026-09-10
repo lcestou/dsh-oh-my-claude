@@ -3197,6 +3197,11 @@ const ensureFoldStyle = () => {
     `${head} ${lead}>[data-omc-part="chevron"]{opacity:0;color:var(--dsw-alias-label-secondary)}`,
     `${fold}:hover ${lead}>[data-omc-part="icon"]{opacity:0}`,
     `${fold}:hover ${lead}>[data-omc-part="chevron"]{opacity:1}`,
+    // The dot between the tool's name and its summary is dsh's own: a 2 px square in the caption
+    // colour with 8 px either side, and the summary in the tertiary colour, so a row this plugin
+    // writes reads like the rows dsh draws for its own tools.
+    `${head}>[data-omc-part="sep"]{display:inline-block;width:2px;height:2px;border-radius:1px;background:var(--dsw-alias-label-caption);margin:0 8px;vertical-align:middle}`,
+    `${head}>[data-omc-part="summary"]{color:var(--dsw-alias-label-tertiary)}`,
     `${head}[${HEAD_MARK}="1"]+.md-code-block{display:none}`,
     // Rows stack the way dsh's own tool rows do: one tight step between rows rather than a
     // paragraph's worth, and an expanded block sits against the header it belongs to. The step has
@@ -3306,6 +3311,37 @@ export const glyphOf = (head: HTMLElement): string => {
   );
 };
 
+/**
+ * "Bash · Show the diff" as the translator writes it becomes name, dot and summary, the dot a
+ * styled span and the summary its own span, once the glyph has been lifted. Split on every " · "
+ * so an MCP tool's "dsh · subagent" keeps a dot inside its name too; the last part is the summary.
+ * Repeatable: a converted header has no " · " left in the text node after the lead, so a second
+ * pass does nothing, and React's text rewrite restores the plain form for the next pass.
+ */
+const dotHeader = (head: HTMLElement): void => {
+  const node = head.querySelector(`span[${LEAD_MARK}]`)?.nextSibling;
+  if (!node || node.nodeType !== Node.TEXT_NODE) return;
+  const text = node.nodeValue ?? "";
+  if (!text.includes(" · ")) return;
+  const parts = text.split(" · ");
+  const frag = document.createDocumentFragment();
+  parts.forEach((part, i) => {
+    if (i > 0) {
+      const sep = document.createElement("span");
+      sep.setAttribute("data-omc-part", "sep");
+      sep.setAttribute("aria-hidden", "true");
+      frag.appendChild(sep);
+    }
+    if (i === parts.length - 1) {
+      const summary = document.createElement("span");
+      summary.setAttribute("data-omc-part", "summary");
+      summary.textContent = part;
+      frag.appendChild(summary);
+    } else frag.appendChild(document.createTextNode(part));
+  });
+  node.replaceWith(frag);
+};
+
 function watchToolFolds() {
   ensureFoldStyle();
   ensurePanelStyle(); // the aside dock shares the panel's hover and focus rules
@@ -3372,6 +3408,7 @@ function watchToolFolds() {
       head.removeAttribute("data-omc-icon");
       head.insertBefore(span, head.firstChild);
     }
+    dotHeader(head);
   };
   const MARKDOWN_P = '[class*="_markdown"] p';
   // What a burst touched, as headers. A record's target is the node whose children changed — the
