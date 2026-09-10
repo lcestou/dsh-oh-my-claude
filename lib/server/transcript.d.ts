@@ -115,21 +115,6 @@ export interface SeedEvent {
 }
 /** dsh session events for folded turns. Shapes follow what dsh writes itself; seqs are contiguous from 0. */
 export declare function toSessionEvents(folded: FoldedTranscript): SeedEvent[];
-/**
- * The bytes a transcript gained past `offset`, or "" when it has not grown. A file shorter than the
- * offset was replaced under us; it reads as nothing new until the next finished turn sets a fresh
- * baseline from its size.
- */
-export declare function readTranscriptFrom(path: string, offset: number): Promise<string>;
-/**
- * The completed turns some other entrypoint wrote into a session's transcript: a terminal that
- * picked the session up with `claude /resume` stamps every row `entrypoint: cli`, while this
- * plugin's child stamps `own`. Rows without the stamp (queue bookkeeping, summaries) never count.
- * Folding drops an unanswered trailing prompt, so a terminal turn still running is not reported.
- */
-export declare function foreignTurns(text: string, own: string): FoldedTurn[];
-/** Those turns as one markdown block for the top of the next dsh turn, each side cut at `limit` bytes. */
-export declare function foreignTurnsBlock(turns: FoldedTurn[], limit: number): string;
 /** Where 2.1 keeps a session's subagent transcripts: a directory beside the session's own file. */
 export declare const subagentsDir: (path: string) => string;
 /**

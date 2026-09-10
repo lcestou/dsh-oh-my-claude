@@ -1,7 +1,7 @@
 // dsh LLM adapter that drives the Claude Code CLI (`claude -p --input-format stream-json --output-format stream-json`).
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { access, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { hostname } from "node:os";
 import { basename, join } from "node:path";
@@ -137,9 +137,7 @@ import {
   type ToolModeInfo,
 } from "./rows-probe.js";
 import { readSshToken, THIS_BOX } from "./ssh-login.js";
-import { CHILD_ENV, childEnv, errorText } from "./process.js";
-import { foreignTurns, foreignTurnsBlock, readTranscriptFrom } from "./transcript.js";
-import type { FoldedTurn } from "./transcript.js";
+import { childEnv, errorText } from "./process.js";
 import {
   READY as READY_MARK,
   asHoldRecord,
@@ -2012,8 +2010,6 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   readonly bridged = new Map<string, () => void>();
   /** Sessions already warned that `toolsInline: false` is ignored on a versioned session format. */
   readonly rowsRefused = new Set<string>();
-  /** Terminal exchanges found on a session's transcript at acquire, shown at the top of the turn. */
-  readonly terminalGaps = new Map<string, FoldedTurn[]>();
   /**
    * This plugin's own commands, which share the `bridged` map so one disposer list covers all of
    * them. They are never Claude's, so the bridge must not register them as passthroughs and the
@@ -3089,19 +3085,6 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // `busy` is cleared in the turn loop's `finally`, so a failed turn does not wedge the session.
     if (proc?.alive && proc.busy)
       throw new LlmError("a turn is already running in this session", "PROVIDER_BUSY");
-    // Someone picked the session up in a terminal (`claude /resume`) since this process last
-    // spoke: its context stops where the transcript did not. Replace it, so the `--resume` below
-    // reads the terminal turns back in, and keep them to show at the top of the turn. Not on a
-    // wake turn: that one exists to drain what the live process already holds, and a kill here
-    // would lose it.
-    if (proc?.alive && proc.transcriptSeen !== undefined && !wakeOnlyTurn(options.messages)) {
-      const gap = await this.terminalTurnsSince(proc, prep);
-      if (gap.length > 0) {
-        this.terminalGaps.set(options.sessionId, gap);
-        proc.kill();
-        proc = undefined;
-      }
-    }
     if (proc?.alive && proc.key !== key) await this.retarget(proc, prep.spec);
     if (proc && (!proc.alive || proc.key !== key)) {
       proc.kill();
@@ -3129,44 +3112,6 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       void this.refreshCliModels(proc);
     }
     return { prep, proc };
-  }
-
-  /** The session's transcript on this box, or undefined when the turn runs on another box.
-   *  ponytail: local only; a remote transcript would cost one ssh read of the whole file per turn,
-   *  so a terminal on an SSH box is picked up by the next respawn, not this check. */
-  transcriptPath(prep: TurnPrep): string | undefined {
-    const id = prep.session?.id;
-    if (!id || this.config.sshHost || remoteWorkspaceFor(prep.cwd)) return undefined;
-    return join(this.claudeHome, "projects", projectDirName(prep.cwd), `${id}.jsonl`);
-  }
-
-  /** Completed turns another entrypoint wrote past the byte this process last saw the file at.
-   *  Measured 2026-09-10 on 2.1.268: `--resume` follows the chain the last row belongs to and
-   *  drops the other, so once dsh respawns behind a terminal turn its own rows extend that chain;
-   *  a terminal that keeps typing forks again, and its next dsh turn takes that fork as the truth. */
-  async terminalTurnsSince(proc: ClaudeProcess, prep: TurnPrep): Promise<FoldedTurn[]> {
-    const path = this.transcriptPath(prep);
-    if (!path || proc.transcriptSeen === undefined) return [];
-    try {
-      return foreignTurns(
-        await readTranscriptFrom(path, proc.transcriptSeen),
-        CHILD_ENV.CLAUDE_CODE_ENTRYPOINT,
-      );
-    } catch (error) {
-      this.log("warn", `terminal turns check failed: ${errorText(error)}`);
-      return [];
-    }
-  }
-
-  /** Baseline for the next check: the transcript's size once this turn's rows are on disk. */
-  async markTranscriptSeen(proc: ClaudeProcess, prep: TurnPrep): Promise<void> {
-    const path = this.transcriptPath(prep);
-    if (!path) return;
-    try {
-      proc.transcriptSeen = (await stat(path)).size;
-    } catch {
-      proc.transcriptSeen = undefined; // no file yet (first turn still writing): check next time
-    }
   }
 
   /** Drop processes idle past processIdleMs, then keep the live count under maxProcesses by
@@ -3668,11 +3613,6 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       }
       // Before the prompt, never inside a turn: a reconnect is a control request on the same stdin.
       if (cont.mode === "prompt" && !wakeOnly) await this.reconnectIfStale(proc, options.sessionId);
-      const gap = this.terminalGaps.get(options.sessionId);
-      if (gap) {
-        this.terminalGaps.delete(options.sessionId);
-        yield* tr.wholeBlock("text", foreignTurnsBlock(gap, this.config.toolTextLimit));
-      }
       if (!wakeOnly) this.openTurn(cont, proc, prep);
       this.armIdle(options.sessionId, proc);
       for (;;) {
@@ -3713,7 +3653,6 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       for (const c of pending.values()) c.abort();
       proc.busy = false;
       proc.lastUsed = Date.now();
-      void this.markTranscriptSeen(proc, prep);
       // A dsh shutdown aborts the stream with a "disposed" reason. Clearing the busy mark then
       // leaves nothing for the boot resume to nudge (2026-09-05, third restart of the day), so the
       // mark stays for that one case and the next boot picks the session up.
