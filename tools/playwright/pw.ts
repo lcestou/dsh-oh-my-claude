@@ -51,6 +51,8 @@ export type ContextOptions = {
   deviceScaleFactor?: number;
   isMobile?: boolean;
   hasTouch?: boolean;
+  /** Emulated prefers-color-scheme; the owner runs dsh dark, so the tour shoots dark. */
+  colorScheme?: "dark" | "light";
   recordVideo?: { dir: string; size: Size };
 };
 

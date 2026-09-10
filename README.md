@@ -44,6 +44,10 @@ Cost and cached token count, figures dsh cannot compute, join dsh's footer stats
 
 Plan usage and the CLI's own context breakdown live in dsh's context ring popover, and on a phone the panel becomes a sheet. Captured by `tools/playwright/tour.ts`.
 
+<p><img src="docs/media/add-workspace.png" width="640" alt="dsh's Select Workspace Directory dialog with a box dropdown in its footer listing This box and an ssh box"></p>
+
+Once an SSH box is saved, dsh's own Add workspace dialog gains a box dropdown: a folder on that box becomes a workspace here, and the session in it runs Claude Code there.
+
 ## Install
 
 Needs the Claude Code CLI on `PATH` and already logged in (`claude --version` works, `claude` opens without asking you to sign in). Nothing else: no API key, no Node build step.

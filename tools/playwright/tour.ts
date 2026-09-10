@@ -16,6 +16,8 @@ const out = process.env.PW_OUT ?? "docs/media";
 const sessionName = process.env.PW_SESSION ?? "Getting started";
 // A session row only exists once its workspace is expanded, so name the workspace to click first.
 const workspaceName = process.env.PW_WORKSPACE ?? "";
+// The owner runs dsh dark; PW_LIGHT=1 shoots the light theme instead.
+const scheme = process.env.PW_LIGHT ? "light" : "dark";
 const b = await launch();
 const wait = (p: Page, ms: number) => p.waitForTimeout(ms);
 const rows = (p: Page, text: string) => p.locator('[role="treeitem"]').filter({ hasText: text });
@@ -84,7 +86,11 @@ const hit = async (loc: Locator) => {
 
 // Desktop stills
 if (!process.env.PW_CLIPS_ONLY) {
-  const ctx = await b.newContext({ viewport: { width: 1400, height: 900 }, deviceScaleFactor: 2 });
+  const ctx = await b.newContext({
+    viewport: { width: 1400, height: 900 },
+    deviceScaleFactor: 2,
+    colorScheme: scheme,
+  });
   const p = await open(ctx);
   await hit(p.locator('button[aria-label="Oh My Claude"]'));
   await wait(p, 1500);
@@ -100,10 +106,10 @@ if (!process.env.PW_CLIPS_ONLY) {
   if (await addServer.count()) {
     await hit(addServer);
     await wait(p, 1200);
-    await p.locator(`${panel()} input[placeholder="server name"]`).fill("recipes-db");
-    await p.locator(`${panel()} input[placeholder^="command"]`).fill("bunx");
+    await p.locator(`${panel()} input[placeholder="Server name"]`).fill("recipes-db");
+    await p.locator(`${panel()} input[placeholder^="Command"]`).fill("bunx");
     await p
-      .locator(`${panel()} textarea[placeholder^="args"]`)
+      .locator(`${panel()} textarea[placeholder^="Args"]`)
       .fill("@example/recipes-mcp\n--db\n./recipes.sqlite");
     await wait(p, 600);
     // Crop to the form alone: the server list under it belongs to whoever runs the tour. The row of
@@ -192,6 +198,7 @@ if (!process.env.PW_CLIPS_ONLY) {
     deviceScaleFactor: 2,
     isMobile: true,
     hasTouch: true,
+    colorScheme: scheme,
   });
   const p = await ctx.newPage();
   await p.goto(dshUrl(token), { waitUntil: "networkidle" });
@@ -249,6 +256,7 @@ for (const [name, drive] of clips) {
   // Record at the desktop size (the sidebar row must be reachable) and crop in ffmpeg afterwards.
   const ctx = await b.newContext({
     viewport: { width: 1400, height: 900 },
+    colorScheme: scheme,
     recordVideo: { dir: `${out}/.video`, size: { width: 1400, height: 900 } },
   });
   const p = await open(ctx);
