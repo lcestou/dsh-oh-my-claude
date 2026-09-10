@@ -30,6 +30,7 @@ import {
   select,
   inputStyle,
   openHere,
+  pill,
   CLAUDE_ORANGE,
   maskEmail,
 } from "./shared.js";
@@ -663,6 +664,83 @@ function PluginManagerBlock({
   );
 }
 
+/** A skill as `GET /skills` lists it: where it comes from, and what its SKILL.md says it does. */
+interface SkillRow {
+  name: string;
+  scope: string;
+  path: string;
+  description: string;
+}
+
+/**
+ * The skills the CLI can reach for this directory, under the plugin roster: the user's, the
+ * project's and each installed plugin's, with a filter once there are more than a dozen. Read-only:
+ * a skill is reached as its slash command through the command bridge, and edited where it lives.
+ */
+function SkillsBlock({
+  skills,
+  query,
+  setQuery,
+}: {
+  skills: SkillRow[];
+  query: string;
+  setQuery: (q: string) => void;
+}) {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const shown = skills.filter((s) =>
+    words.every((w) => `${s.name} ${s.scope} ${s.description}`.toLowerCase().includes(w)),
+  );
+  return (
+    <div data-omc-skills="">
+      <span style={{ ...meta, padding: "2px 4px", display: "block", marginTop: 8 }}>
+        Skills · {skills.length}
+      </span>
+      {skills.length === 0 && (
+        <span style={{ ...meta, padding: "2px 10px", display: "block", whiteSpace: "normal" }}>
+          No skills: none under ~/.claude/skills, this project's .claude/skills, or an installed
+          plugin.
+        </span>
+      )}
+      {skills.length > 12 && (
+        <input
+          type="search"
+          style={{ ...inputStyle, margin: "2px 4px 4px" }}
+          value={query}
+          placeholder={`Search ${skills.length} skills`}
+          aria-label="Search skills"
+          onChange={(e) => setQuery(e.target.value)}
+        />
+      )}
+      {shown.length === 0 && skills.length > 0 && (
+        <span style={{ ...meta, padding: "2px 4px" }}>No skill matches</span>
+      )}
+      {shown.map((s) => (
+        <div
+          key={s.path}
+          style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 10px" }}
+          title={s.path}
+        >
+          <span style={{ flex: "none", fontFamily: T.mono, fontSize: 12 }}>{s.name}</span>
+          <span style={pill(T.faint)}>{s.scope}</span>
+          <span
+            style={{
+              flex: 1,
+              minWidth: 0,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              color: T.muted,
+              fontSize: 12,
+            }}
+          >
+            {s.description}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   const cwd = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.cwd;
   const [files, setFiles] = useState<InstructionFile[]>([]);
@@ -672,6 +750,8 @@ function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCt
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [roster, setRoster] = useState<PluginRoster | null>(null);
+  const [skills, setSkills] = useState<SkillRow[] | null>(null);
+  const [skillQuery, setSkillQuery] = useState("");
 
   // Every call names the session's own mount, so a session on a box lists and edits that box's
   // CLAUDE.md files rather than this PC's.
@@ -703,6 +783,14 @@ function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCt
   useEffect(() => {
     refreshRoster();
   }, [refreshRoster]);
+  // Skills once per open, the way the roster is: a listing, not a poll.
+  useEffect(() => {
+    if (!cwd) return;
+    fetch(`${ROUTE}/skills?${q}`)
+      .then((r) => readJson<{ skills?: SkillRow[] }>(r))
+      .then((b) => mounted.current && setSkills(b.skills ?? []))
+      .catch(() => mounted.current && setSkills([]));
+  }, [cwd, q]);
 
   const openFile = async (f: InstructionFile) => {
     setError("");
@@ -834,6 +922,9 @@ function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCt
           ctx={ctx}
           onChanged={refreshRoster}
         />
+      )}
+      {file === null && skills !== null && (
+        <SkillsBlock skills={skills} query={skillQuery} setQuery={setSkillQuery} />
       )}
       {error && <span style={errText}>{error}</span>}
     </div>
@@ -1170,6 +1261,12 @@ interface McpServer {
   tools?: string[];
 }
 type McpReply = { ok: true; servers: McpServer[] } | { ok: false; error: string };
+/** A server the CLI is configured with, as `GET /mcp-servers/configured` lists it, with its scope. */
+interface ConfiguredMcpRow {
+  name: string;
+  scope: "user" | "local" | "project";
+  summary: string;
+}
 
 /**
  * "MCP" body rendered inside the Oh My Claude dialog: the servers Claude's process
@@ -1183,17 +1280,35 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
   const [note, setNote] = useState("");
   const [showAdd, setShowAdd] = useState(false);
 
+  // The configured list beside the live one: a server added a moment ago has no process yet, so
+  // it shows here as "starts with the next session" instead of vanishing until Claude restarts,
+  // and a live row learns its scope from it. Two file reads on the box, on open and after a change.
+  const [configured, setConfigured] = useState<ConfiguredMcpRow[]>([]);
+  const cwd = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.cwd;
+  const loadConfigured = () => {
+    if (!cwd) return Promise.resolve();
+    return fetch(
+      `${ROUTE}/mcp-servers/configured?cwd=${encodeURIComponent(cwd)}${boxParam(ctx, sessionId)}`,
+    )
+      .then((r) => readJson<{ servers?: ConfiguredMcpRow[] }>(r))
+      .then((b) => setConfigured(b.servers ?? []))
+      .catch(() => setConfigured([]));
+  };
   const load = () =>
-    fetch(`${ROUTE}/mcp-servers?session=${encodeURIComponent(sessionId)}`)
-      .then((r) => readJson<McpReply>(r))
-      .then(setReply)
-      .catch((e: Error) => setReply({ ok: false, error: e.message }));
+    Promise.all([
+      fetch(`${ROUTE}/mcp-servers?session=${encodeURIComponent(sessionId)}`)
+        .then((r) => readJson<McpReply>(r))
+        .then(setReply)
+        .catch((e: Error) => setReply({ ok: false, error: e.message })),
+      loadConfigured(),
+    ]);
   useEffect(() => {
     setReply(null);
     setNote("");
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- load closes over sessionId only
   }, [sessionId]);
+  const scopeOf = (name: string) => configured.find((c) => c.name === name)?.scope;
 
   if (!isClaude) return null;
   const reconnect = async (serverName: string) => {
@@ -1238,6 +1353,9 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
     }
   };
   const servers = reply?.ok ? reply.servers : [];
+  // Configured but not in the process: the plugin-served `plugin:` names never appear in a config
+  // file, so the match is by plain name.
+  const pendingRows = configured.filter((c) => !servers.some((s) => s.name === c.name));
   return (
     <div style={bodyFlow}>
       {/* The form is what this tab is opened to reach, so it sits above the list rather than
@@ -1259,14 +1377,21 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
         }}
       >
         <div style={{ overflow: "hidden", minHeight: 0 }}>
-          <McpAddForm sessionId={sessionId} ctx={ctx} onAdded={() => setNote(SPAWN_NOTE)} />
+          <McpAddForm
+            sessionId={sessionId}
+            ctx={ctx}
+            onAdded={() => {
+              setNote(SPAWN_NOTE);
+              void loadConfigured();
+            }}
+          />
         </div>
       </div>
       {reply === null ? (
         <span style={stateText}>Loading…</span>
       ) : !reply.ok ? (
         <span style={errText}>{reply.error}</span>
-      ) : servers.length === 0 ? (
+      ) : servers.length === 0 && pendingRows.length === 0 ? (
         <span style={{ ...meta, padding: "2px 4px" }}>No MCP servers</span>
       ) : (
         servers.map((s) => (
@@ -1297,6 +1422,7 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
                 {s.name}
                 {s.version ? <span style={meta}> {s.version}</span> : null}
               </span>
+              {scopeOf(s.name) && <span style={pill(T.faint)}>{scopeOf(s.name)}</span>}
               <span style={{ ...meta, flex: "none" }}>{s.status}</span>
               {s.status !== "needs-auth" && (
                 <button
@@ -1332,6 +1458,39 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
           </div>
         ))
       )}
+      {pendingRows.map((c) => (
+        <div key={`configured:${c.name}`} data-omc-mcp-pending="">
+          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 6px" }}>
+            <span
+              aria-hidden="true"
+              style={{ width: 8, height: 8, borderRadius: 4, flex: "none", background: T.faint }}
+            />
+            <span
+              style={{
+                flex: 1,
+                minWidth: 0,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                fontSize: 13,
+              }}
+              title={c.summary}
+            >
+              {c.name}
+              <span style={meta}> {c.summary}</span>
+            </span>
+            <span style={pill(T.faint)}>{c.scope}</span>
+            <span style={{ ...meta, flex: "none" }}>starts with the next session</span>
+            <ConfirmButton
+              label="Remove"
+              style={btn}
+              disabled={busy !== null}
+              busyLabel={busy === c.name ? "…" : undefined}
+              onAct={() => remove(c.name)}
+            />
+          </div>
+        </div>
+      ))}
       {note && <span style={{ ...meta, padding: "2px 4px", marginTop: 8 }}>{note}</span>}
     </div>
   );

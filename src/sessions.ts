@@ -40,6 +40,8 @@ import {
 import type { TranscriptListItem } from "./transcript.js";
 import { deleteMemory, isMemoryName, listMemory } from "./memory.js";
 import { isWritableInstructions, listInstructions } from "./instructions.js";
+import { listSkills } from "./skills.js";
+import { listConfiguredMcp } from "./mcp-config.js";
 import {
   durableTasksPath,
   goalFrom,
@@ -1536,6 +1538,38 @@ export function registerSessionRoutes(
               // Instructions: the CLAUDE.md files the CLI loads for this workspace. The list is
               // recomputed per request and is the allowlist: a path it does not name is refused,
               // so the browser cannot read or write a file outside the hierarchy.
+              // The skills the CLI can reach for the session's directory, with their scope, read
+              // from the box the session runs on. One listing per tab open; nothing polls.
+              if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/skills`) {
+                const cwd = await knownCwd(url.searchParams.get("cwd"), sessionPersistence);
+                if (cwd === null)
+                  return json(res, 400, {
+                    error: "cwd must be a directory a dsh session is open in",
+                  });
+                const { box, cwd: at } = targetOf(url, cwd);
+                return json(res, 200, {
+                  skills: await listSkills(at, await claudeHomeOf(box), box),
+                });
+              }
+              // The servers the CLI is configured with for the session's directory, by scope, from
+              // the config files rather than `claude mcp list` (which connects to each one).
+              if (
+                req.method === "GET" &&
+                url.pathname === `${ROUTE_PREFIX}/mcp-servers/configured`
+              ) {
+                const cwd = await knownCwd(url.searchParams.get("cwd"), sessionPersistence);
+                if (cwd === null)
+                  return json(res, 400, {
+                    error: "cwd must be a directory a dsh session is open in",
+                  });
+                const { box, cwd: at } = targetOf(url, cwd);
+                // Where that instance's CLI keeps .claude.json: inside an exported config dir,
+                // else beside the home's .claude, the same rule cliEnvFor applies to the calls.
+                const claudeJson = cliEnvFor(box.configDir).CLAUDE_CONFIG_DIR
+                  ? join(box.configDir, ".claude.json")
+                  : join(await homeAt(box), ".claude.json");
+                return json(res, 200, { servers: await listConfiguredMcp(at, claudeJson, box) });
+              }
               if (
                 url.pathname === `${ROUTE_PREFIX}/instructions` ||
                 url.pathname === `${ROUTE_PREFIX}/instructions/file`

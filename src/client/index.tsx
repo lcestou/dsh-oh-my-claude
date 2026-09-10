@@ -1639,7 +1639,14 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
       type="button"
       style={
         kind === k
-          ? { ...btn, background: CLAUDE_ORANGE, color: T.onBrand, border: "1px solid transparent" }
+          ? {
+              ...btn,
+              background: CLAUDE_ORANGE,
+              color: T.onBrand,
+              border: "1px solid transparent",
+              // The label on the orange fill was the row's regular weight, thin against it.
+              fontWeight: 600,
+            }
           : btn
       }
       onClick={() => setKind(k)}
@@ -3202,6 +3209,9 @@ const ensureFoldStyle = () => {
     // writes reads like the rows dsh draws for its own tools.
     `${head}>[data-omc-part="sep"]{display:inline-block;width:2px;height:2px;border-radius:1px;background:var(--dsw-alias-label-caption);margin:0 8px;vertical-align:middle}`,
     `${head}>[data-omc-part="summary"]{color:var(--dsw-alias-label-tertiary)}`,
+    // A path in a header is dsh's file link, not a code chip: no fill, the row's own type, the
+    // summary colour. The chip keeps its look everywhere else in the answer.
+    `${head}>code{background:none;border:0;padding:0;font-family:inherit;font-size:inherit;color:var(--dsw-alias-label-tertiary)}`,
     `${head}[${HEAD_MARK}="1"]+.md-code-block{display:none}`,
     // Rows stack the way dsh's own tool rows do: one tight step between rows rather than a
     // paragraph's worth, and an expanded block sits against the header it belongs to. The step has
@@ -3322,7 +3332,21 @@ const dotHeader = (head: HTMLElement): void => {
   const node = head.querySelector(`span[${LEAD_MARK}]`)?.nextSibling;
   if (!node || node.nodeType !== Node.TEXT_NODE) return;
   const text = node.nodeValue ?? "";
-  if (!text.includes(" · ")) return;
+  if (!text.includes(" · ")) {
+    // "Read `path`" and "Write `path`" carry no dot in the text: the path is a code chip right
+    // after the name. dsh draws those rows as name, dot, file; the dot goes in before the chip
+    // and the chip is flattened to dsh's file-link look by the header's own rule. A converted
+    // header has the dot span there instead of the chip, so the pass does nothing twice.
+    const next = node.nextSibling;
+    if (next instanceof HTMLElement && next.tagName === "CODE" && text.trim() !== "") {
+      node.nodeValue = text.trimEnd();
+      const sep = document.createElement("span");
+      sep.setAttribute("data-omc-part", "sep");
+      sep.setAttribute("aria-hidden", "true");
+      head.insertBefore(sep, next);
+    }
+    return;
+  }
   const parts = text.split(" · ");
   const frag = document.createDocumentFragment();
   parts.forEach((part, i) => {
