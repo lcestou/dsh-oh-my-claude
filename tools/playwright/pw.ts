@@ -30,6 +30,8 @@ export type Locator = {
   screenshot(how: { path: string }): Promise<void>;
   scrollIntoViewIfNeeded(): Promise<void>;
   setInputFiles(files: string | string[]): Promise<void>;
+  selectOption(value: string): Promise<string[]>;
+  inputValue(): Promise<string>;
 };
 
 export type Page = {
