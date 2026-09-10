@@ -4256,6 +4256,28 @@ export function apply(ctx: ClientCtx) {
   watchSessionSpinners(ctx);
   watchToolFolds();
 
+  const SECTION_LABEL = "Oh My Claude";
+
+  /**
+   * Renders nothing; on each mount and update finds the settings nav row labelled SECTION_LABEL
+   * (by role and text, not by dsh's hashed classes) and puts the spark where dsh drew its gear,
+   * keeping the gear's class so the row lays out as before. Idempotent: a swapped row is marked.
+   */
+  function SectionNavIcon() {
+    useEffect(() => {
+      const cell = Array.from(
+        document.querySelectorAll<HTMLElement>('[role="dialog"][aria-modal="true"] nav button'),
+      ).find((b) => b.textContent?.trim() === SECTION_LABEL);
+      const gear = cell?.querySelector("svg");
+      if (!gear || gear.hasAttribute("data-omc-spark")) return;
+      const spark = sparkNode(16, "currentColor");
+      spark.setAttribute("class", gear.getAttribute("class") ?? "");
+      spark.setAttribute("data-omc-spark", "1");
+      gear.replaceWith(spark);
+    });
+    return null;
+  }
+
   function Section(props: { close?: () => void }) {
     const [boxes, setBoxes] = useState<BoxData[]>([]);
     const [openBoxes, setOpenBoxes] = useState(true);
@@ -4308,10 +4330,23 @@ export function apply(ctx: ClientCtx) {
         name: "settings.section",
         id: "claude-code-sessions",
         order: 19,
-        label: "Oh My Claude",
+        label: SECTION_LABEL,
         inject: () => ({}),
       },
       Section,
+    );
+    return null;
+  });
+
+  // dsh draws a settings nav glyph per section id and gives every other id its gear; the slot
+  // spec has no field for one. `settings.action` is a list slot in the dialog's header that
+  // mounts whenever the dialog opens (`settings.header` is single, dsh's own title holds it), so
+  // a registrant there that renders nothing can swap our row's gear for the spark, in the row's
+  // own text colour like dsh's glyphs.
+  ctx.slots.inject("settings.action", () => {
+    ctx.slots.register(
+      { name: "settings.action", id: "claude-nav-icon", order: 99, inject: () => ({}) },
+      SectionNavIcon,
     );
     return null;
   });
