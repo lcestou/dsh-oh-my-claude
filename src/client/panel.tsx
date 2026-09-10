@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { CSSProperties } from "react";
+import type { CSSProperties, ReactElement } from "react";
+import { createPortal } from "react-dom";
 import {
   btn,
   btnPrimary,
@@ -31,7 +32,7 @@ import {
   CLAUDE_ORANGE,
   maskEmail,
 } from "./shared.js";
-import { Tooltip } from "@deepseek-ai/dsh-client-ui-primitives";
+import { Tooltip, useAnchoredMaxHeight } from "@deepseek-ai/dsh-client-ui-primitives";
 import { Spark } from "./spark.js";
 import { ConfirmButton, TuneBody } from "./tune.js";
 import { noticesOn, setNoticesOn } from "./notices.js";
@@ -47,6 +48,39 @@ let lastTab = "Memory";
  */
 const easeMs = () =>
   globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? 0 : 140;
+
+/**
+ * Ease the panel between heights instead of snapping. Its height is whatever the open tab's body
+ * needs (capped by the viewport), so it changes on a tab switch and again when a body's data lands;
+ * CSS cannot transition a height it never sets. A ResizeObserver reports each settled height and a
+ * one-shot animation runs from the previous one to it, tabs at the bottom staying put while the
+ * body above them grows or shrinks. Frames of a running animation are resizes too and are skipped.
+ */
+function useHeightEase(ref: { current: HTMLElement | null }, active: boolean) {
+  useEffect(() => {
+    const el = ref.current;
+    if (!active || !el) return;
+    let last = el.getBoundingClientRect().height;
+    let anim: Animation | undefined;
+    const ro = new ResizeObserver(() => {
+      if (anim?.playState === "running") return;
+      const next = el.getBoundingClientRect().height;
+      if (Math.abs(next - last) < 1) return;
+      const from = last;
+      last = next;
+      if (easeMs() === 0) return;
+      anim = el.animate([{ height: `${from}px` }, { height: `${next}px` }], {
+        duration: easeMs() * 1.5,
+        easing: "ease",
+      });
+    });
+    ro.observe(el);
+    return () => {
+      ro.disconnect();
+      anim?.cancel();
+    };
+  }, [ref, active]);
+}
 
 /** One-row transcript pick inside the compact restore list. */
 function TranscriptRow({
@@ -299,7 +333,21 @@ function MemoryBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
             }}
             onClick={() => openFile(f.name)}
           >
-            <span style={{ flex: "none", fontFamily: T.mono, fontSize: 12 }}>{f.name}</span>
+            <span
+              // Shrinks before the summary does (auto basis against the summary's zero), so a
+              // long name on a phone ellipsizes and the age on the right stays in the row.
+              style={{
+                flex: "0 1 auto",
+                minWidth: 0,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                fontFamily: T.mono,
+                fontSize: 12,
+              }}
+            >
+              {f.name}
+            </span>
             <span
               style={{
                 flex: 1,
@@ -2505,10 +2553,18 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
   const [shown, setShown] = useState(false);
   const closeTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const rootRef = useRef<HTMLSpanElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const narrow = useNarrow();
   const [tab, setTab] = useState(lastTab);
-  // Phone sheet: fixed, above the control, wherever the composer sits (a blank session centres it).
+  // dsh's composer card, found when the panel opens: the panel is portalled into it and sits over
+  // the composer the way dsh's own slash menu does. `data-composer-card` is the hook dsh's menu
+  // dismisses by, so it is as stable as that menu. Null on a host without it: the panel then
+  // floats fixed above the control, as before.
+  const [card, setCard] = useState<HTMLElement | null>(null);
+  // Phone sheet (fallback only): fixed, above the control, wherever the composer sits.
   const [above, setAbove] = useState(0);
+  const maxHeight = useAnchoredMaxHeight(panelRef, 400, open);
+  useHeightEase(panelRef, open);
 
   // dsh's chat width handles sit at the edges of the conversation column, outside this panel's
   // box, so a panel above them still leaves them hoverable and the column resizes under an open
@@ -2541,47 +2597,59 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
   }, []);
   useEffect(() => () => clearTimeout(closeTimer.current), []);
 
-  useDismiss(open, close, rootRef);
+  // The panel, not the trigger: a portal takes it out of the trigger's DOM subtree.
+  useDismiss(open, close, panelRef);
 
   if (!isMine) return null;
   // Restore only fits a blank session; the Restore body hides itself for the same reason.
   const blank = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.blank !== false;
 
-  // Centred in the viewport, not hung off the button: the trigger sits at the right end of the
-  // composer, so a panel anchored to it runs past the right edge and grows a horizontal scrollbar
-  // on the whole page. Fixed also lifts it out of the composer's own scrolling box.
-  // z-index above dsh's menus and hover cards (100, 101) and below its modals (1000), so a dsh
-  // dialog still covers the panel while the chat-history resize handle no longer draws over it.
+  // Over the composer, like dsh's slash menu: absolute in the card, 4 px above it, its full width,
+  // on dsh's menu surface (the `--dsw-specific-menu` fill and the prominent elevation), 20 px
+  // corners. z-index 100 is what dsh gives that menu. Without a card (an older host), fall back to
+  // a fixed float centred in the viewport by insets (`100vw` counts the scrollbar; an inset cannot
+  // overshoot), sized to the tab strip on desktop and to the phone under 640 px.
   // overflow hidden so the body is the only scroller and the tab strip cannot scroll out of it.
-  const panelStyle: CSSProperties = {
-    position: "fixed",
-    // Centred by a left/right inset and auto margins rather than 50% plus a translate: `100vw`
-    // counts the page's scrollbar, so any width measured from it can sit a few pixels past the
-    // right edge and give the whole page a horizontal scrollbar. An inset cannot.
-    left: 12,
-    right: 12,
-    marginInline: "auto",
-    bottom: above,
-    // Size to the tab strip: fit-content resolves to the widest child, and the body below is width:0
-    // + minWidth:100% so it contributes nothing, leaving the one-row tab strip to set the width. It
-    // stays on one line until the viewport can no longer hold it, then the strip wraps. The phone
-    // layout stays auto-width.
-    width: narrow ? "auto" : "fit-content",
-    maxWidth: narrow ? undefined : "calc(100vw - 24px)",
-    // dvh, not vh: on a phone the browser chrome slides away and vh keeps measuring the tall value.
-    maxHeight: narrow ? "60dvh" : "min(400px, 80dvh)",
-    zIndex: 200,
+  const panelStyle: CSSProperties = card
+    ? {
+        position: "absolute",
+        left: 0,
+        right: 0,
+        bottom: "calc(100% + 4px)",
+        maxHeight,
+        zIndex: 100,
+        background: `var(--dsw-specific-menu, ${T.card})`,
+        boxShadow: `var(--dsw-elevation-prominent, 0 10px 28px rgba(0,0,0,.26))`,
+        // SAFETY: a custom property is not in CSSProperties; the browser reads it as written.
+        ...({ "--dsw-elevation-stroke-color": "var(--dsw-alias-border-l1)" } as CSSProperties),
+        borderRadius: 20,
+        padding: 4,
+      }
+    : {
+        position: "fixed",
+        left: 12,
+        right: 12,
+        marginInline: "auto",
+        bottom: above,
+        width: narrow ? "auto" : "fit-content",
+        maxWidth: narrow ? undefined : "calc(100vw - 24px)",
+        // dvh, not vh: on a phone the browser chrome slides away and vh keeps measuring the tall value.
+        maxHeight: narrow ? "60dvh" : "min(400px, 80dvh)",
+        zIndex: 200,
+        padding: 6,
+        ...panelSurface,
+        borderRadius: 10,
+      };
+  // In the card the panel only fades: dsh's `useAnchoredMaxHeight` measures the element's bottom
+  // on mount, and a 6 px rise still applied at that moment would size it 6 px too tall.
+  Object.assign(panelStyle, {
     display: "flex",
     flexDirection: "column",
-    padding: 6,
-    ...panelSurface,
-    borderRadius: 10,
     overflow: "hidden",
     opacity: shown ? 1 : 0,
-    // Insets do the centring now, so the transform carries the rise alone.
-    transform: shown ? "none" : "translateY(6px)",
+    transform: shown || card ? "none" : "translateY(6px)",
     transition: `opacity ${easeMs()}ms ease, transform ${easeMs()}ms ease`,
-  };
+  } satisfies CSSProperties);
 
   const tabs = [
     ...(blank ? [{ key: "Restore", label: "Restore" }] : []),
@@ -2637,77 +2705,91 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
               return;
             }
             setTab(lastTab === "Restore" && !blank ? "Memory" : lastTab);
+            const host = rootRef.current?.closest<HTMLElement>("[data-composer-card]") ?? null;
+            setCard(host);
             const rect = rootRef.current?.getBoundingClientRect();
-            if (rect) setAbove(Math.max(12, window.innerHeight - rect.top + 8));
+            if (!host && rect) setAbove(Math.max(12, window.innerHeight - rect.top + 8));
             openPanel();
           }}
         >
           <Spark size={15} />
         </button>
       </Tooltip>
-      {open && (
-        <div role="dialog" aria-label="Oh My Claude" {...{ [PANEL_ATTR]: "1" }} style={panelStyle}>
+      {open &&
+        portal(
+          card,
           <div
-            role="tabpanel"
-            // width:0 + minWidth:100% keeps the body from contributing to the panel's fit-content
-            // width: it fills whatever the tab strip sets, and its own long lines scroll rather than
-            // widen the panel past the tabs.
-            style={{
-              flex: "1 1 auto",
-              minHeight: 0,
-              overflow: "auto",
-              padding: "4px 0",
-              width: narrow ? undefined : 0,
-              minWidth: narrow ? undefined : "100%",
-            }}
+            ref={panelRef}
+            role="dialog"
+            aria-label="Oh My Claude"
+            {...{ [PANEL_ATTR]: "1" }}
+            style={panelStyle}
           >
-            {tab === "Restore" && <RestoreBody sessionId={sessionId} ctx={ctx} onClose={close} />}
-            {tab === "Memory" && <MemoryBody sessionId={sessionId} ctx={ctx} />}
-            {tab === "Instructions" && <InstructionsBody sessionId={sessionId} ctx={ctx} />}
-            {tab === "Rewind" && <RewindBody sessionId={sessionId} ctx={ctx} onClose={close} />}
-            {tab === "Changes" && <ChangesBody sessionId={sessionId} ctx={ctx} />}
-            {tab === "MCP" && <McpBody sessionId={sessionId} ctx={ctx} onClose={close} />}
-            {tab === "Asides" && <AsidesBody sessionId={sessionId} />}
-            {tab === "Diagnostics" && <DiagnosticsBody sessionId={sessionId} ctx={ctx} />}
-            {tab === "Tasks" && <TasksBody sessionId={sessionId} ctx={ctx} />}
-            {tab === "Tune" && <TuneBody sessionId={sessionId} ctx={ctx} />}
-          </div>
-          {/* Under the body, not over it: the panel is anchored to its bottom edge, so a taller tab
+            <div
+              role="tabpanel"
+              // width:0 + minWidth:100% keeps the body from contributing to the panel's fit-content
+              // width: it fills whatever the tab strip sets, and its own long lines scroll rather than
+              // widen the panel past the tabs.
+              style={{
+                flex: "1 1 auto",
+                minHeight: 0,
+                overflow: "auto",
+                padding: "4px 0",
+                width: card || narrow ? undefined : 0,
+                minWidth: card || narrow ? undefined : "100%",
+              }}
+            >
+              {tab === "Restore" && <RestoreBody sessionId={sessionId} ctx={ctx} onClose={close} />}
+              {tab === "Memory" && <MemoryBody sessionId={sessionId} ctx={ctx} />}
+              {tab === "Instructions" && <InstructionsBody sessionId={sessionId} ctx={ctx} />}
+              {tab === "Rewind" && <RewindBody sessionId={sessionId} ctx={ctx} onClose={close} />}
+              {tab === "Changes" && <ChangesBody sessionId={sessionId} ctx={ctx} />}
+              {tab === "MCP" && <McpBody sessionId={sessionId} ctx={ctx} onClose={close} />}
+              {tab === "Asides" && <AsidesBody sessionId={sessionId} />}
+              {tab === "Diagnostics" && <DiagnosticsBody sessionId={sessionId} ctx={ctx} />}
+              {tab === "Tasks" && <TasksBody sessionId={sessionId} ctx={ctx} />}
+              {tab === "Tune" && <TuneBody sessionId={sessionId} ctx={ctx} />}
+            </div>
+            {/* Under the body, not over it: the panel is anchored to its bottom edge, so a taller tab
               pushes the top up and leaves the strip where the pointer left it. */}
-          <div
-            role="tablist"
-            style={{
-              display: "flex",
-              flex: "0 0 auto",
-              borderTop: `1px solid color-mix(in srgb, ${CLAUDE_ORANGE} 18%, ${T.border})`,
-              paddingTop: 4,
-              gap: 2,
-              // Wrap rather than scroll sideways: a strip that scrolls hides the tab that did not
-              // fit, and the panel is anchored to its bottom edge, so a second row grows upward.
-              flexWrap: "wrap",
-              rowGap: 4,
-            }}
-          >
-            {tabs.map((t) => (
-              <button
-                key={t.key}
-                role="tab"
-                aria-selected={tab === t.key}
-                // The strip sits under the body, so the lit edge is the mirror of a top tab bar:
-                // accent along the bottom, corners rounded on that side only, no box around each
-                // tab (nine bordered boxes read as buttons, not as tabs). Hover is in the sheet.
-                style={tabStyle(tab === t.key)}
-                onClick={() => {
-                  lastTab = t.key;
-                  setTab(t.key);
-                }}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
+            <div
+              role="tablist"
+              style={{
+                display: "flex",
+                flex: "0 0 auto",
+                borderTop: `1px solid color-mix(in srgb, ${CLAUDE_ORANGE} 18%, ${T.border})`,
+                paddingTop: 4,
+                gap: 2,
+                // Wrap rather than scroll sideways: a strip that scrolls hides the tab that did not
+                // fit, and the panel is anchored to its bottom edge, so a second row grows upward.
+                flexWrap: "wrap",
+                rowGap: 4,
+              }}
+            >
+              {tabs.map((t) => (
+                <button
+                  key={t.key}
+                  role="tab"
+                  aria-selected={tab === t.key}
+                  // The strip sits under the body, so the lit edge is the mirror of a top tab bar:
+                  // accent along the bottom, corners rounded on that side only, no box around each
+                  // tab (nine bordered boxes read as buttons, not as tabs). Hover is in the sheet.
+                  style={tabStyle(tab === t.key)}
+                  onClick={() => {
+                    lastTab = t.key;
+                    setTab(t.key);
+                  }}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          </div>,
+        )}
     </span>
   );
 }
+
+/** Render `node` inside dsh's composer card when one was found, else in place. */
+const portal = (card: HTMLElement | null, node: ReactElement) =>
+  card ? createPortal(node, card) : node;

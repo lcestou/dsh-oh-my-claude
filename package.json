@@ -35,7 +35,7 @@
     "format": "oxfmt src/ tools/",
     "deadcode": "fallow dead-code",
     "build:server": "tsc -p tsconfig.build.json",
-    "build:client": "NODE_ENV=production bun build src/client/index.tsx --format=cjs --target=browser --minify --outfile=lib/client.js --external react --external react/jsx-runtime --external '@deepseek-ai/*' --banner='window.__ModuleLoader__.load({ id: \"dsh-oh-my-claude\", factory: (require) => { var module = { exports: {} }; var exports = module.exports;' --footer='return module.exports; } });'",
+    "build:client": "NODE_ENV=production bun build src/client/index.tsx --format=cjs --target=browser --minify --outfile=lib/client.js --external react --external react/jsx-runtime --external react-dom --external '@deepseek-ai/*' --banner='window.__ModuleLoader__.load({ id: \"dsh-oh-my-claude\", factory: (require) => { var module = { exports: {} }; var exports = module.exports;' --footer='return module.exports; } });'",
     "build": "bun run build:server && bun run build:client",
     "prepare": "bun run build",
     "validate": "bun tools/validate.ts"
@@ -56,7 +56,8 @@
     "@deepseek-ai/dsh-llm": "^0.1.2-alpha.4",
     "@deepseek-ai/cordis": "^4.0.2",
     "@deepseek-ai/schemastery": "^3.18.0",
-    "react": "^18.3.1"
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
   },
   "files": [
     "src",
