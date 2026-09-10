@@ -136,7 +136,7 @@ import {
   type ToolMode,
   type ToolModeInfo,
 } from "./rows-probe.js";
-import { readSshToken } from "./ssh-login.js";
+import { readSshToken, THIS_BOX } from "./ssh-login.js";
 import { childEnv, errorText } from "./process.js";
 import {
   READY as READY_MARK,
@@ -2670,14 +2670,23 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     return join(this.stateDir, "keepers", h.slice(0, 16));
   }
 
+  /**
+   * What this instance adds to a local Claude's environment: its config dir when it has one, and
+   * this box's panel login as CLAUDE_CODE_OAUTH_TOKEN for the default instance. A second instance
+   * keeps its own login, which is what a second instance is for.
+   */
+  localEnvOverride(): Record<string, string> | undefined {
+    const over: Record<string, string> = {};
+    if (this.config.configDir || this.config.ownTranscripts)
+      over.CLAUDE_CONFIG_DIR = this.claudeHome;
+    const token = this.providerId === "claude-code" ? readSshToken(STATE_DIR, THIS_BOX) : undefined;
+    if (token) over.CLAUDE_CODE_OAUTH_TOKEN = token;
+    return Object.keys(over).length === 0 ? undefined : over;
+  }
+
   /** The child env a keeper hands Claude: dsh's environment plus the plugin's additions. */
   keeperEnv() {
-    return childEnv(
-      process.env,
-      this.config.configDir || this.config.ownTranscripts
-        ? { CLAUDE_CONFIG_DIR: this.claudeHome }
-        : undefined,
-    );
+    return childEnv(process.env, this.localEnvOverride());
   }
 
   /** Spawner for one session: keeper mode needs the session to place and name the keeper. */
@@ -3003,10 +3012,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       this.warnedNoSeam = true;
       this.log("warn", "spawn: dsh requested but ctx.subprocess is not mounted; using node spawn");
     }
-    const local: Spawner =
-      !this.config.configDir && !this.config.ownTranscripts
-        ? base
-        : (command, args, cwd) => base(command, args, cwd, { CLAUDE_CONFIG_DIR: this.claudeHome });
+    // Read per spawn, not once: a login made in the panel applies to the next session started.
+    const local: Spawner = (command, args, cwd) =>
+      base(command, args, cwd, this.localEnvOverride());
     // A remote-workspace cwd runs the far `claude` over SSH on its box, even when this provider is
     // local: otherwise the session sits in the empty local placeholder dir.
     return (command: string, args: string[], cwd: string) => {

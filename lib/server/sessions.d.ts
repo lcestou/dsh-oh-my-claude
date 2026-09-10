@@ -88,6 +88,8 @@ export type ValidatedRemoteWorkspace = {
 };
 export declare function validateRemoteWorkspaceInput(input: unknown): ValidatedRemoteWorkspace;
 export declare function readRemoteWorkspaces(path: string): Promise<RemoteWorkspace[]>;
+/** `authMethod` a status reports when the login is a token the panel minted, not the CLI's own. */
+export declare const PANEL_TOKEN = "panel token";
 /** What a box's `/status` reports; the panel shows these fields as pills. */
 export interface RuntimeStatus {
     host: string;

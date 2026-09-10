@@ -173,3 +173,19 @@ function fakeChild() {
 }
 
 console.log("ok ssh-login");
+
+// This box: the token file has a name no slug can produce, and setup-token runs under a local
+// `script` PTY, with the platform deciding the argument order.
+{
+  const { THIS_BOX, setupTokenInvocation } = await import("./ssh-login.js");
+  assert.equal(sshTokenPath("/var/dsh-state", THIS_BOX), "/var/dsh-state/ssh-tokens/.this-box");
+  const linux = setupTokenInvocation(THIS_BOX, "claude", "linux");
+  assert.equal(linux.command, "script");
+  assert.deepEqual(linux.args.slice(0, 1), ["-qfc"]);
+  assert.match(linux.args[1] ?? "", /claude setup-token$/);
+  const mac = setupTokenInvocation(THIS_BOX, "claude", "darwin");
+  assert.deepEqual(mac.args.slice(0, 4), ["-q", "/dev/null", "sh", "-c"]);
+  const box = setupTokenInvocation("nova", "claude", "linux");
+  assert.equal(box.command, "ssh");
+  assert.equal(box.args[0], "-tt");
+}

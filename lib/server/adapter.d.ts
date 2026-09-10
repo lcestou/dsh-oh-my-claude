@@ -831,6 +831,12 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     /** Node's spawn, or dsh's subprocess seam when configured and mounted. */
     /** Where a session's keeper lives: one directory per provider id and dsh session. */
     keeperDir(sessionId: string): string;
+    /**
+     * What this instance adds to a local Claude's environment: its config dir when it has one, and
+     * this box's panel login as CLAUDE_CODE_OAUTH_TOKEN for the default instance. A second instance
+     * keeps its own login, which is what a second instance is for.
+     */
+    localEnvOverride(): Record<string, string> | undefined;
     /** The child env a keeper hands Claude: dsh's environment plus the plugin's additions. */
     keeperEnv(): Record<string, string>;
     /** Spawner for one session: keeper mode needs the session to place and name the keeper. */

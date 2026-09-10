@@ -40,9 +40,15 @@ const slug = (s: string): string =>
     .replace(/^-+|-+$/g, "")
     .slice(0, 64) || "x";
 
-/** Per-box token file: `<stateDir>/ssh-tokens/<slug(host)>`, private. */
+/** The host string that means the box this plugin runs on; its token sits beside the ssh ones. */
+export const THIS_BOX = "";
+
+/**
+ * Per-box token file: `<stateDir>/ssh-tokens/<slug(host)>`, private. This box's own login is
+ * `.this-box`, a name a slug can never produce, so no saved ssh box can collide with it.
+ */
 export function sshTokenPath(stateDir: string, host: string): string {
-  return join(stateDir, "ssh-tokens", slug(host));
+  return join(stateDir, "ssh-tokens", host === THIS_BOX ? ".this-box" : slug(host));
 }
 
 /** The stored login token for a host, or undefined if the box was never logged in from the panel. */
@@ -83,20 +89,43 @@ function lastLine(s: string): string {
 }
 
 /**
- * Start `claude setup-token` on `host` under a kept-alive PTY and resolve with the OAuth URL it prints.
- * The process is held in `logins` keyed by host until the code is submitted or it times out. A prior
- * unfinished login for the same host is killed first.
+ * The command line that runs `setup-token` under a PTY. On a box it rides `ssh -tt`. On this box
+ * there is no ssh to lend a PTY, so `script` (util-linux on Linux, BSD's on macOS) provides one;
+ * the invocation differs between the two, which is what the platform switch is for.
+ */
+/** A process to start: the binary and its argument list. */
+export interface Invocation {
+  command: string;
+  args: string[];
+}
+export function setupTokenInvocation(
+  host: string,
+  command = "claude",
+  platform: NodeJS.Platform = process.platform,
+): Invocation {
+  // Wide `stty` so the ~100-char token prints on one line.
+  const line = `stty cols 400 rows 60 2>/dev/null; ${command} setup-token`;
+  if (host !== THIS_BOX) return { command: "ssh", args: ["-tt", ...sshArgs(host, line)] };
+  return platform === "darwin"
+    ? { command: "script", args: ["-q", "/dev/null", "sh", "-c", line] }
+    : { command: "script", args: ["-qfc", line, "/dev/null"] };
+}
+
+/**
+ * Start `claude setup-token` on `host` (THIS_BOX for the local one) under a kept-alive PTY and
+ * resolve with the OAuth URL it prints. The process is held in `logins` keyed by host until the
+ * code is submitted or it times out. A prior unfinished login for the same host is killed first.
  */
 export function startSshLogin(
   host: string,
   spawnFn: SpawnFn = spawn,
   timeoutMs = 15000,
+  command = "claude",
 ): Promise<{ url?: string; error?: string }> {
   const prev = logins.get(host);
   if (prev && !prev.done) prev.child.kill();
-  // Wide `stty` so the ~100-char token prints on one line; `-tt` forces the PTY setup-token needs.
-  const remote = "stty cols 400 rows 60 2>/dev/null; claude setup-token";
-  const child = spawnFn("ssh", ["-tt", ...sshArgs(host, remote)], {
+  const inv = setupTokenInvocation(host, command);
+  const child = spawnFn(inv.command, inv.args, {
     stdio: ["pipe", "pipe", "pipe"],
   });
   const proc: LoginProc = { child, out: "", done: false, startedAt: Date.now() };

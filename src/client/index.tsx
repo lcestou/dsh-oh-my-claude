@@ -1367,6 +1367,61 @@ type BoxKind = "ssh" | "tailscale" | "wireguard" | "dsh";
  *    and Open hops the browser there. Nothing is proxied.
  * Every row is probed server-side so it shows host, claude version and login before you use it.
  */
+/** A login in progress on one row: the sign-in link, then the pasted code. Shared by every box kind. */
+interface LoginFlow {
+  host: string;
+  code: string;
+  url?: string;
+  error?: string;
+  busy?: boolean;
+}
+function LoginSteps({
+  login,
+  setLogin,
+  submit,
+}: {
+  login: LoginFlow;
+  setLogin: (next: LoginFlow | null) => void;
+  submit: () => void;
+}) {
+  return (
+    <div style={{ ...meta, marginTop: 6, whiteSpace: "normal", overflowWrap: "anywhere" }}>
+      {login.busy && !login.url && <span>starting login…</span>}
+      {login.url && (
+        <>
+          <div>
+            1. Open this URL, sign in, copy the code:{" "}
+            <a href={login.url} target="_blank" rel="noreferrer" style={{ color: CLAUDE_ORANGE }}>
+              Claude sign-in
+            </a>
+          </div>
+          <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+            <input
+              style={inputStyle}
+              placeholder="paste code"
+              value={login.code}
+              disabled={login.busy}
+              onChange={(e) => setLogin({ ...login, code: e.target.value })}
+            />
+            <button
+              type="button"
+              style={btn}
+              disabled={login.busy || !login.code.trim()}
+              onClick={submit}
+            >
+              {login.busy ? "…" : "Submit"}
+            </button>
+            <button type="button" style={btn} onClick={() => setLogin(null)}>
+              Cancel
+            </button>
+          </div>
+        </>
+      )}
+      {login.error && <div style={{ color: T.err, marginTop: 4 }}>{login.error}</div>}
+    </div>
+  );
+}
+
 function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
   const [probe, setProbe] = useState<Record<string, ProbeEntry>>({});
   const [self, setSelf] = useState<{ plugin?: string } | null>(null);
@@ -1427,13 +1482,7 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
   const [openSettingsUrl, setOpenSettingsUrl] = useState<string | null>(null);
   const [me, setMe] = useState<RuntimeStatus | null>(null);
   const [rws, setRws] = useState<RemoteWs[]>([]);
-  const [login, setLogin] = useState<{
-    host: string;
-    url?: string;
-    code: string;
-    error?: string;
-    busy?: boolean;
-  } | null>(null);
+  const [login, setLogin] = useState<LoginFlow | null>(null);
 
   useEffect(() => {
     fetch(`${ROUTE}/ssh-boxes`)
@@ -1534,6 +1583,17 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
       .then((b) => setLogin({ host, code: "", url: b.url, error: b.error }))
       .catch((e: Error) => setLogin({ host, code: "", error: e.message }));
   };
+  const logout = (host: string) => {
+    setBusy(true);
+    fetch(`${ROUTE}/ssh-boxes/login/logout`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ host }),
+    })
+      .then(() => refresh())
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setBusy(false));
+  };
   const submitLogin = () => {
     if (!login) return;
     const host = login.host;
@@ -1632,13 +1692,34 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
               <span style={pill(me.loggedIn ? T.ok : T.err)}>
                 {me.loggedIn ? maskEmail(me.email ?? "logged in") : "not logged in"}
               </span>
-              {!me.loggedIn && (
+              {/* The same relay the ssh rows use, run under a local PTY; the token it mints goes
+                  to this box's own spawns. Log out forgets that token only. */}
+              {me.binary && !me.loggedIn && login?.host !== "" && (
+                <button
+                  type="button"
+                  style={btn}
+                  disabled={busy}
+                  data-testid="dsh-oh-my-claude-this-box-login"
+                  onClick={() => startLogin("")}
+                >
+                  Log in
+                </button>
+              )}
+              {me.loggedIn && me.authMethod === "panel token" && (
+                <button type="button" style={btn} disabled={busy} onClick={() => logout("")}>
+                  Log out
+                </button>
+              )}
+              {!me.binary && (
                 <span style={{ width: "100%", color: T.err, fontSize: 12 }}>
-                  Run <code style={codeInline}>claude auth login</code> in a terminal here, then
+                  Install Claude Code here (<code style={codeInline}>claude</code> on PATH), then
                   refresh.
                 </span>
               )}
             </div>
+            {login?.host === "" && (
+              <LoginSteps login={login} setLogin={setLogin} submit={submitLogin} />
+            )}
           </div>
           <span style={{ ...meta, alignSelf: "center" }}>auto</span>
         </div>
@@ -1697,47 +1778,7 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
                 </div>
               )}
               {login?.host === b.host && (
-                <div
-                  style={{ ...meta, marginTop: 6, whiteSpace: "normal", overflowWrap: "anywhere" }}
-                >
-                  {login.busy && !login.url && <span>starting login…</span>}
-                  {login.url && (
-                    <>
-                      <div>
-                        1. Open this URL, sign in, copy the code:{" "}
-                        <a
-                          href={login.url}
-                          target="_blank"
-                          rel="noreferrer"
-                          style={{ color: CLAUDE_ORANGE }}
-                        >
-                          Claude sign-in
-                        </a>
-                      </div>
-                      <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
-                        <input
-                          style={inputStyle}
-                          placeholder="paste code"
-                          value={login.code}
-                          disabled={login.busy}
-                          onChange={(e) => setLogin({ ...login, code: e.target.value })}
-                        />
-                        <button
-                          type="button"
-                          style={btn}
-                          disabled={login.busy || !login.code.trim()}
-                          onClick={submitLogin}
-                        >
-                          {login.busy ? "…" : "Submit"}
-                        </button>
-                        <button type="button" style={btn} onClick={() => setLogin(null)}>
-                          Cancel
-                        </button>
-                      </div>
-                    </>
-                  )}
-                  {login.error && <div style={{ color: T.err, marginTop: 4 }}>{login.error}</div>}
-                </div>
+                <LoginSteps login={login} setLogin={setLogin} submit={submitLogin} />
               )}
             </div>
             <ConfirmButton
