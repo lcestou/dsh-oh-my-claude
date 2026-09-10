@@ -1240,6 +1240,9 @@ export class ClaudeProcess {
   /** When this turn's prompt was written, for time-to-first-token; 0 once a result has read it. */
   promptSentAt: number = 0;
   prep?: TurnPrep;
+  /** Byte size of the session's transcript when this process last finished a turn; rows past it
+   *  that another entrypoint wrote mean a terminal picked the session up. Unset until a turn ends. */
+  transcriptSeen?: number;
   /** Sees every `control_response` line as it arrives, even between turns; true means consumed. */
   controlListener?: (event: ClaudeEvent) => boolean;
 

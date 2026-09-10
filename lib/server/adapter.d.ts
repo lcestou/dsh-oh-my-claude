@@ -7,6 +7,7 @@ import { type ClaudeEvent, ClaudeProcess } from "./process.js";
 import type { Agent, ImageAttachmentRef, JsonValue, PluginContext, SessionController, SessionId, SubprocessRuntime } from "./dsh.js";
 import { ADAPTER_CURRENT } from "./dsh.js";
 import { type ToolMode, type ToolModeInfo } from "./rows-probe.js";
+import type { FoldedTurn } from "./transcript.js";
 import { sshRunner, type HoldRecord } from "./hold.js";
 import type { RewindResult } from "./process.js";
 export { markBusy, takeInterrupted } from "./state.js";
@@ -665,6 +666,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     readonly bridged: Map<string, () => void>;
     /** Sessions already warned that `toolsInline: false` is ignored on a versioned session format. */
     readonly rowsRefused: Set<string>;
+    /** Terminal exchanges found on a session's transcript at acquire, shown at the top of the turn. */
+    readonly terminalGaps: Map<string, FoldedTurn[]>;
     /**
      * This plugin's own commands, which share the `bridged` map so one disposer list covers all of
      * them. They are never Claude's, so the bridge must not register them as passthroughs and the
@@ -889,6 +892,17 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
         prep: TurnPrep;
         proc: ClaudeProcess;
     }>;
+    /** The session's transcript on this box, or undefined when the turn runs on another box.
+     *  ponytail: local only; a remote transcript would cost one ssh read of the whole file per turn,
+     *  so a terminal on an SSH box is picked up by the next respawn, not this check. */
+    transcriptPath(prep: TurnPrep): string | undefined;
+    /** Completed turns another entrypoint wrote past the byte this process last saw the file at.
+     *  Measured 2026-09-10 on 2.1.268: `--resume` follows the chain the last row belongs to and
+     *  drops the other, so once dsh respawns behind a terminal turn its own rows extend that chain;
+     *  a terminal that keeps typing forks again, and its next dsh turn takes that fork as the truth. */
+    terminalTurnsSince(proc: ClaudeProcess, prep: TurnPrep): Promise<FoldedTurn[]>;
+    /** Baseline for the next check: the transcript's size once this turn's rows are on disk. */
+    markTranscriptSeen(proc: ClaudeProcess, prep: TurnPrep): Promise<void>;
     /** Drop processes idle past processIdleMs, then keep the live count under maxProcesses by
      *  killing the longest-idle ones that are not mid-turn. Called before each spawn. */
     /** Live processes belonging to this mount; the registry is shared across mounts. */

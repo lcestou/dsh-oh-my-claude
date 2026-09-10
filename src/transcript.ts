@@ -570,6 +570,57 @@ export function toSessionEvents(folded: FoldedTranscript): SeedEvent[] {
   return events;
 }
 
+/**
+ * The bytes a transcript gained past `offset`, or "" when it has not grown. A file shorter than the
+ * offset was replaced under us; it reads as nothing new until the next finished turn sets a fresh
+ * baseline from its size.
+ */
+export async function readTranscriptFrom(path: string, offset: number): Promise<string> {
+  const fh = await open(path, "r");
+  try {
+    const { size } = await fh.stat();
+    if (size <= offset) return "";
+    const buf = Buffer.alloc(size - offset);
+    await fh.read(buf, 0, buf.length, offset);
+    return buf.toString("utf8");
+  } finally {
+    await fh.close();
+  }
+}
+
+/**
+ * The completed turns some other entrypoint wrote into a session's transcript: a terminal that
+ * picked the session up with `claude /resume` stamps every row `entrypoint: cli`, while this
+ * plugin's child stamps `own`. Rows without the stamp (queue bookkeeping, summaries) never count.
+ * Folding drops an unanswered trailing prompt, so a terminal turn still running is not reported.
+ */
+export function foreignTurns(text: string, own: string): FoldedTurn[] {
+  const lines = stripBom(text)
+    .split("\n")
+    .filter((l) => {
+      const e = parseLine(l);
+      return typeof e?.entrypoint === "string" && e.entrypoint !== own;
+    });
+  return lines.length === 0 ? [] : foldTranscript(lines.join("\n")).turns;
+}
+
+/** Those turns as one markdown block for the top of the next dsh turn, each side cut at `limit` bytes. */
+export function foreignTurnsBlock(turns: FoldedTurn[], limit: number): string {
+  const n = turns.length;
+  const out = [
+    `⇄ ${n} exchange${n === 1 ? "" : "s"} in a terminal since the last turn here; Claude resumed from the transcript, so it saw them.`,
+  ];
+  for (const t of turns) {
+    const prompt = t.content.map((b) => b.text).join("\n");
+    const reply = t.steps
+      .flatMap((s) => s.content.filter((b) => b.type === "text").map((b) => b.text))
+      .join("\n");
+    out.push("", `> ${truncateBytes(prompt, limit).replaceAll("\n", "\n> ")}`);
+    if (reply) out.push("", truncateBytes(reply, limit));
+  }
+  return out.join("\n");
+}
+
 /** Where 2.1 keeps a session's subagent transcripts: a directory beside the session's own file. */
 export const subagentsDir = (path: string): string =>
   join(path.endsWith(".jsonl") ? path.slice(0, -".jsonl".length) : path, "subagents");
