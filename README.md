@@ -286,14 +286,14 @@ bun run check
 
 Lint, format check, typecheck, the offline self-checks (`src/adapter.test.ts`, `src/sessions.test.ts`, `src/transcript.test.ts`, `src/mcp.test.ts`, `src/usage.test.ts`, `src/remote-fs.test.ts`, `src/client/pageSessions.test.ts`, `src/client/restore.test.ts`, `src/client/spinner.test.ts`) and the build. Covers config defaults, model resolution, session id derivation, config-dir resolution, turn selection, argument building, stream-json translation including native tool rows, the catalog fallback, the box settings proxy, the remote-fs scripts and their local branch, the transcript conversion (turn folding, tool result pairing, listing filters), session-list paging, the restore filter and the spinner verb helpers. UI checks that need a browser are the Playwright scripts under `tools/playwright`.
 
-The suite fakes the CLI, so it cannot see a box whose `claude` is older than this one. `tools/live-cli-check.mjs` closes that gap against the real binaries:
+The suite fakes the CLI, so it cannot see a box whose `claude` is older than this one. `tools/live-cli-check.ts` closes that gap against the real binaries:
 
 ```sh
-node tools/live-cli-check.mjs          # every flag the plugin would send is a flag that binary has
-node tools/live-cli-check.mjs --live   # also runs one real turn per target, which spends tokens
+bun tools/live-cli-check.ts          # every flag the plugin would send is a flag that binary has
+bun tools/live-cli-check.ts --live   # also runs one real turn per target, which spends tokens
 ```
 
-It checks the local `claude` plus every box a remote workspace names, using the same argument builder, the same SSH invocation and the same stored box login the plugin spawns with. An unreachable host is skipped; a flag the target does not have is a failure. Development check only, like Playwright.
+It checks the local `claude` plus every box a remote workspace names, using the same argument builder, the same SSH invocation and the same stored box login the plugin spawns with. An unreachable host is skipped; a flag the target does not have is a failure. Development check only, like Playwright. It is TypeScript, and named in the `tsconfig.json` include, because it is the one script under `tools/` that imports the plugin's own API: a rename in `src/` then fails `bun run typecheck` rather than leaving this check silently probing the wrong thing.
 
 ## Roadmap
 

@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 // Live check: every flag the plugin would hand a `claude` binary is a flag that binary has.
 //
 // The offline suite fakes the CLI, so it cannot see a box whose `claude` is older than this PC's.
@@ -6,42 +6,45 @@
 // unknown option, and the probe that should have caught it measured the local binary because the
 // box was resolved from an empty sshHost. This runs against the real binaries.
 //
-//   node tools/live-cli-check.mjs                 # flag audit: local, plus every box a remote workspace names
-//   node tools/live-cli-check.mjs lilly nova      # those hosts instead
-//   node tools/live-cli-check.mjs --live          # also run one real `claude -p` turn per target (spends tokens)
+//   bun tools/live-cli-check.ts                 # flag audit: local, plus every box a remote workspace names
+//   bun tools/live-cli-check.ts lilly nova      # those hosts instead
+//   bun tools/live-cli-check.ts --live          # also run one real `claude -p` turn per target (spends tokens)
+//
+// TypeScript, unlike its neighbours under `tools/`, because it is the one check that imports the
+// plugin's own API: typed, a rename in `src/` fails `bun run typecheck` instead of this file quietly
+// probing nothing.
 //
 // A host that cannot be reached is skipped, not failed; a mismatch is a failure.
 import { execFile, spawn } from "node:child_process";
-import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { Config, buildArgs, probeCli } from "../lib/server/adapter.js";
 import { sshInvocation } from "../lib/server/process.js";
+import { readRemoteWorkspaces } from "../lib/server/sessions.js";
 import { readSshToken } from "../lib/server/ssh-login.js";
+import { STATE_DIR } from "../lib/server/state.js";
 
-const STATE_DIR = join(homedir(), ".local", "state", "dsh-oh-my-claude");
+/** The CLI's own closing frame, the only one this check reads. */
+type ResultFrame = { type: "result"; is_error?: boolean; num_turns?: number; duration_ms?: number };
+type TurnOutcome = { result: ResultFrame; error?: undefined } | { error: string; result?: undefined };
+
 const args = process.argv.slice(2);
 const live = args.includes("--live");
 const hostArgs = args.filter((a) => !a.startsWith("--"));
 
 /** The boxes to check when none are named: whichever hosts the remote workspaces point at. */
-async function knownHosts() {
-  try {
-    const raw = JSON.parse(await readFile(join(STATE_DIR, "remote-workspaces.json"), "utf8"));
-    return [...new Set(raw.map((w) => String(w.host)).filter(Boolean))];
-  } catch {
-    return [];
-  }
+async function knownHosts(): Promise<string[]> {
+  const workspaces = await readRemoteWorkspaces(join(STATE_DIR, "remote-workspaces.json"));
+  return [...new Set(workspaces.map((w) => w.host).filter(Boolean))];
 }
 
 /** One real turn through the flags just probed. Resolves to the CLI's own result frame.
  * A box runs it the way the plugin does — same ssh invocation, same stored login — so a token this
  * PC holds for the box is used there, rather than the check reporting the box as logged out. */
-function runTurn(host, argv, timeoutMs = 180000) {
+function runTurn(host: string | undefined, argv: string[], timeoutMs = 180000): Promise<TurnOutcome> {
   const inv = host
     ? sshInvocation(host, "claude", argv, process.cwd(), readSshToken(STATE_DIR, host))
     : { command: "claude", args: argv };
-  return new Promise((resolve) => {
+  return new Promise<TurnOutcome>((resolve) => {
     const child = spawn(inv.command, inv.args, { stdio: ["pipe", "pipe", "pipe"] });
     let out = "";
     let err = "";
@@ -55,9 +58,9 @@ function runTurn(host, argv, timeoutMs = 180000) {
       clearTimeout(timer);
       const result = out
         .split("\n")
-        .flatMap((l) => {
+        .flatMap<ResultFrame>((l) => {
           try {
-            return [JSON.parse(l)];
+            return [JSON.parse(l) as ResultFrame];
           } catch {
             return [];
           }

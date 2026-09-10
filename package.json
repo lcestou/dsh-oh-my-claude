@@ -21,7 +21,7 @@
     "build:server": "tsc -p tsconfig.build.json",
     "build:client": "NODE_ENV=production bun build src/client/index.tsx --format=cjs --target=browser --outfile=lib/client.js --external react --external react/jsx-runtime --external '@deepseek-ai/*' --banner='window.__ModuleLoader__.load({ id: \"dsh-oh-my-claude\", factory: (require) => { var module = { exports: {} }; var exports = module.exports;' --footer='return module.exports; } });'",
     "build": "bun run build:server && bun run build:client",
-    "check": "oxlint src/ --max-warnings=0 && oxfmt --check src/ && bun run typecheck && bun run test && bun run build",
+    "check": "oxlint src/ --max-warnings=0 && oxfmt --check src/ && bun run test && bun run build && bun run typecheck",
     "prepare": "bun run build"
   },
   "dependencies": {},
