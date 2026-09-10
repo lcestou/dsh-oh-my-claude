@@ -2790,6 +2790,7 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
                 <button
                   key={t.key}
                   role="tab"
+                  data-omc-label={t.label}
                   id={`omc-tab-${t.key}`}
                   aria-controls="omc-tabpanel"
                   aria-selected={tab === t.key}

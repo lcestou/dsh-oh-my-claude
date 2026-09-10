@@ -121,6 +121,10 @@ export const tabStyle = (selected: boolean): CSSProperties => ({
   fontWeight: selected ? 600 : 400,
   whiteSpace: "nowrap",
   marginBottom: -1,
+  // The bold width is reserved by a hidden bold copy of the label (ensurePanelStyle's ::after
+  // rule reads data-omc-label), so selecting a tab never nudges its neighbours; the visible
+  // label sits centred in that box.
+  textAlign: "center",
 });
 
 const PANEL_STYLE_ID = "dsh-oh-my-claude-panel";
@@ -163,6 +167,9 @@ export function ensurePanelStyle(): void {
     `${inScope("summary:hover")} { background-image: linear-gradient(var(--omc-wash), var(--omc-wash)) !important; color: ${T.text} !important; }`,
     `${inScope(`${controls}:focus-visible`)} { outline: 2px solid var(--omc-ring); outline-offset: 2px; }`,
     `${inScope('[role="tab"]:focus-visible')} { outline-offset: -2px; }`,
+    // A zero-height bold twin of the label under the real one: the tab is as wide as its bold
+    // form from the start, so the strip does not shift when the weight changes.
+    `${inScope('[role="tab"]::after')} { content: attr(data-omc-label); display: block; height: 0; overflow: hidden; visibility: hidden; font-weight: 600; }`,
     // The trigger in the composer: dsh's own hover shade, as on the buttons beside it.
     `button[aria-label="Oh My Claude"]:hover { background: ${T.hoverSolid} !important; }`,
     // dsh gives every element corner-shape: superellipse(1.5) where the browser knows the
