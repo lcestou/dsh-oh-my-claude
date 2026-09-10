@@ -56,6 +56,7 @@ import {
   isRingRoot,
   SessionData,
   isOwnedActive,
+  matchesQuery,
   activeClaudeSession,
   isClaudeSession,
   activeClaudeProvider,
@@ -512,13 +513,22 @@ const PAGE = 10;
  */
 export function pageSessions(
   groups: GroupInfo[],
-  filters: { box: string; cwd: string; origin: string; shown: Record<string, number> },
+  filters: {
+    box: string;
+    cwd: string;
+    origin: string;
+    /** Typed search; see `matchesQuery`. Absent or empty keeps every row. */
+    query?: string;
+    shown: Record<string, number>;
+  },
 ) {
-  const { box, cwd, origin, shown } = filters;
+  const { box, cwd, origin, query = "", shown } = filters;
   const hidden: Record<string, number> = {};
   const matched: Record<string, number> = {};
   const keep = (s: SessionData) =>
-    (cwd === "all" || s.cwd === cwd) && (origin === "all" || originOf(s) === origin);
+    (cwd === "all" || s.cwd === cwd) &&
+    (origin === "all" || originOf(s) === origin) &&
+    matchesQuery(s, query);
   const cappedList = (pairs: Array<{ g: GroupInfo; s: SessionData }>, key: string) => {
     const sorted = pairs.toSorted((a, b) => b.s.modifiedAt - a.s.modifiedAt);
     matched[key] = sorted.length;
@@ -555,6 +565,7 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
   const [box, setBox] = useState("all");
   const [cwd, setCwd] = useState("all");
   const [origin, setOrigin] = useState("all");
+  const [query, setQuery] = useState("");
   const [busyId, setBusyId] = useState("");
   // How many rows each box shows; every box starts at PAGE and grows by "Load more".
   const [shown, setShown] = useState<Record<string, number>>({});
@@ -631,8 +642,8 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
   // Rows in box order, newest first within each box, capped to that box's `shown` count. `hidden`
   // and `matched` are per box so the footer can offer "Load more"/"Load all" and count the rest.
   const paged = useMemo(
-    () => pageSessions(groups, { box, cwd, origin, shown }),
-    [groups, box, cwd, origin, shown],
+    () => pageSessions(groups, { box, cwd, origin, query, shown }),
+    [groups, box, cwd, origin, query, shown],
   );
   const rows = paged.list;
 
@@ -876,6 +887,15 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
           <option value="archived">Archived</option>
           <option value="terminal">Terminal only</option>
         </select>
+        <input
+          id="dsh-oh-my-claude-session-search"
+          type="search"
+          style={{ ...inputStyle, minWidth: 160 }}
+          value={query}
+          placeholder="Search title, id or path"
+          aria-label="Search sessions"
+          onChange={(e) => setQuery(e.target.value)}
+        />
       </div>
       {error && (
         <p id="dsh-oh-my-claude-error" style={{ color: T.err, fontSize: 13, margin: "8px 0 0" }}>

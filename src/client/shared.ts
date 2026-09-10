@@ -267,6 +267,20 @@ export interface SessionData {
   imported?: boolean;
 }
 
+/**
+ * Whether a transcript row answers a typed search: every whitespace-separated word must appear in
+ * its title, id or workspace path, case-insensitively, in any order. An empty query matches all.
+ */
+export const matchesQuery = (
+  s: { id: string; title?: string; cwd?: string },
+  query: string,
+): boolean => {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return true;
+  const hay = `${s.title ?? ""} ${s.id} ${s.cwd ?? ""}`.toLowerCase();
+  return words.every((w) => hay.includes(w));
+};
+
 /** A transcript already tracked by a live (not archived) dsh session: it is in the sidebar, skip it. */
 export const isOwnedActive = (s: { dsh?: { id?: string; archived?: boolean } }): boolean =>
   !!s.dsh?.id && !s.dsh.archived;

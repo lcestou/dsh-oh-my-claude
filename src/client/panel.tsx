@@ -17,6 +17,7 @@ import {
   ROUTE,
   ago,
   isOwnedActive,
+  matchesQuery,
   activeClaudeSession,
   claudeProviderOf,
   boxQuery,
@@ -169,6 +170,7 @@ function RestoreBody({
   const entry = ctx.sessions.list.getSnapshot()?.byId[sessionId];
   const cwd = entry?.cwd;
   const [transcripts, setTranscripts] = useState<SessionData[]>([]);
+  const [query, setQuery] = useState("");
   const switches = useFeatureSwitches(cwd);
 
   useEffect(() => {
@@ -186,11 +188,27 @@ function RestoreBody({
   // Hide when the session already has content, the workspace is unknown, or nothing to restore.
   if (!cwd || entry?.blank === false) return null;
   const owned = transcripts.filter(isOwnedActive);
-  const rest = transcripts.filter((s) => !isOwnedActive(s)).slice(0, 8);
-  if (rest.length === 0) return null;
+  const candidates = transcripts.filter((s) => !isOwnedActive(s));
+  if (candidates.length === 0) return null;
+  const rest = candidates.filter((s) => matchesQuery(s, query)).slice(0, 8);
 
   return (
     <div style={bodyFlow}>
+      {/* Eight rows show; the search is how the rest are reached, so it appears once there are more. */}
+      {candidates.length > 8 && (
+        <input
+          type="search"
+          data-omc-restore-search=""
+          style={{ ...inputStyle, margin: "2px 4px 4px" }}
+          value={query}
+          placeholder={`Search ${candidates.length} transcripts`}
+          aria-label="Search transcripts"
+          onChange={(e) => setQuery(e.target.value)}
+        />
+      )}
+      {rest.length === 0 && (
+        <span style={{ ...meta, padding: "2px 4px" }}>No transcript matches.</span>
+      )}
       {rest.map((s) => (
         <TranscriptRow key={s.id} s={s} cwd={cwd} ctx={ctx} onClose={onClose} />
       ))}

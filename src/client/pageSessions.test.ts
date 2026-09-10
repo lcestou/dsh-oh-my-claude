@@ -132,4 +132,23 @@ const many = group(
   assert.equal(list[0]?.g.sshBox, true);
 }
 
+// A typed query narrows by title, id or path, every word in any order, case-insensitively.
+{
+  const g = group("local", [
+    sess("aa11", 3, { title: "Fix the cost pill", cwd: "/p/app" }),
+    sess("bb22", 2, { title: "Tooltip on the button", cwd: "/p/app" }),
+    sess("cc33", 1, { cwd: "/srv/site", dsh: { archived: true } }),
+  ]);
+  const ids = (q: string, origin = "all") =>
+    pageSessions([g], { box: "all", cwd: "all", origin, query: q, shown: {} }).list.map(
+      (r) => r.s.id,
+    );
+  assert.deepEqual(ids("PILL cost"), ["aa11"], "words in any order, case folded");
+  assert.deepEqual(ids("bb2"), ["bb22"], "an id fragment");
+  assert.deepEqual(ids("srv"), ["cc33"], "a path fragment");
+  assert.deepEqual(ids("site", "archived"), ["cc33"], "stacks with the origin filter");
+  assert.deepEqual(ids("  "), ["aa11", "bb22", "cc33"], "blank keeps every row");
+  assert.deepEqual(ids("nothing-here"), []);
+}
+
 console.log("pageSessions: ok");
