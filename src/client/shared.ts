@@ -511,7 +511,14 @@ export interface UiWorkspaceFace {
   listDirectory: (
     path?: string,
     signal?: AbortSignal,
-  ) => Promise<{ path: string; home: string; entries: DirEntry[] }>;
+  ) => Promise<{
+    path: string;
+    home: string;
+    /** Root-to-level ancestry, every crumb a jump target. */
+    crumbs: DirEntry[];
+    entries: DirEntry[];
+    truncated?: boolean;
+  }>;
   createDirectory: (path: string, name: string) => Promise<string>;
 }
 
