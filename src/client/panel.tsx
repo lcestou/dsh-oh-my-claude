@@ -1016,6 +1016,19 @@ type DiffReply =
   | { ok: false; error: string };
 
 /**
+ * Added and removed line counts the way a diff stat reads: the plus in the success colour, the
+ * minus in the error colour, either dimmed when it is zero so the eye lands on the side that moved.
+ */
+function DiffCounts({ added, removed }: { added: number; removed: number }) {
+  return (
+    <span data-omc-diff-counts="">
+      <span style={{ color: added > 0 ? T.ok : T.faint }}>+{added}</span>{" "}
+      <span style={{ color: removed > 0 ? T.err : T.faint }}>−{removed}</span>
+    </span>
+  );
+}
+
+/**
  * "Changes" body rendered inside the Oh My Claude dialog: the CLI's own working-tree
  * diff (`get_workspace_diff`), one row per file with its line counts, a row unfolds its hunks.
  */
@@ -1054,7 +1067,7 @@ function ChangesBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
             </button>
             <span style={{ fontSize: 13, fontFamily: "monospace" }}>{current.path}</span>
             <span style={{ ...meta, marginLeft: "auto" }}>
-              +{current.added} −{current.removed}
+              <DiffCounts added={current.added} removed={current.removed} />
             </span>
           </div>
           {current.hunks.length === 0 ? (
@@ -1097,9 +1110,14 @@ function ChangesBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
       ) : (
         <>
           <span style={{ ...meta, padding: "2px 4px" }}>
-            {reply.filesCount === 0
-              ? "Working tree clean"
-              : `${reply.filesCount} files, +${reply.linesAdded} −${reply.linesRemoved}`}
+            {reply.filesCount === 0 ? (
+              "Working tree clean"
+            ) : (
+              <>
+                {reply.filesCount} files,{" "}
+                <DiffCounts added={reply.linesAdded} removed={reply.linesRemoved} />
+              </>
+            )}
           </span>
           {files.map((f) => (
             <button
@@ -1127,7 +1145,13 @@ function ChangesBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
                 {f.path}
               </span>
               <span style={{ ...meta, flex: "none", marginLeft: 8 }}>
-                {f.untracked ? "new" : f.binary ? "binary" : `+${f.added} −${f.removed}`}
+                {f.untracked ? (
+                  "new"
+                ) : f.binary ? (
+                  "binary"
+                ) : (
+                  <DiffCounts added={f.added} removed={f.removed} />
+                )}
               </span>
             </button>
           ))}
