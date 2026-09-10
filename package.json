@@ -53,7 +53,7 @@
     "typescript": "^7.0.2"
   },
   "peerDependencies": {
-    "@deepseek-ai/dsh-llm": "^0.1.2-alpha.4",
+    "@deepseek-ai/dsh-llm": "^0.1.5-rc.1",
     "@deepseek-ai/cordis": "^4.0.2",
     "@deepseek-ai/schemastery": "^3.18.0",
     "react": "^18.3.1",
@@ -85,6 +85,9 @@
     }
   },
   "homepage": "https://github.com/lcestou/dsh-oh-my-claude#readme",
+  "bugs": {
+    "url": "https://github.com/lcestou/dsh-oh-my-claude/issues"
+  },
   "repository": "https://github.com/lcestou/dsh-oh-my-claude",
   "license": "MIT",
   "types": "lib/server/adapter.d.ts"
