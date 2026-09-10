@@ -1,8 +1,11 @@
 # dsh-oh-my-claude bundle patch: one insert registering the plugin. dsh mounts this layer for
 # every profile that lists `dsh-oh-my-claude` in `dsh.profile.bundles`; `dsh plugin add` adds
 # the entry itself because package.json declares `dsh.bundle.patch`.
-# The row id must match the exported cordis `name` in src/adapter.js.
+# The row id is the address a profile patch targets to configure this plugin, and dsh refuses to
+# boot a profile where two rows share an id, so it is the product's own name rather than a role
+# name another Claude provider would also pick. A second instance is another row with the same
+# `name` and a different id.
 - insert:
-    - id: llm-claude
+    - id: oh-my-claude
       name: 'dsh-oh-my-claude'
       config: {}
