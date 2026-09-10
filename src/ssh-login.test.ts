@@ -183,6 +183,11 @@ console.log("ok ssh-login");
   assert.equal(linux.command, "script");
   assert.deepEqual(linux.args.slice(0, 1), ["-qfc"]);
   assert.match(linux.args[1] ?? "", /claude setup-token$/);
+  assert.match(
+    linux.args[1] ?? "",
+    /^BROWSER=true DISPLAY= WAYLAND_DISPLAY= /,
+    "no tab of its own",
+  );
   const mac = setupTokenInvocation(THIS_BOX, "claude", "darwin");
   assert.deepEqual(mac.args.slice(0, 4), ["-q", "/dev/null", "sh", "-c"]);
   const box = setupTokenInvocation("nova", "claude", "linux");
