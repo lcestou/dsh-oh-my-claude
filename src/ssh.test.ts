@@ -38,7 +38,8 @@ import { sshBoxProviderId, validateRemoteWorkspaceInput, validateSshBoxes } from
   assert.equal(
     script,
     "cd '/home/u/w' 2>/dev/null || cd \"$HOME\"; exec env MCP_TOOL_TIMEOUT='3600000' " +
-      "CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING='1' 'claude' '-p' '--input-format' 'stream-json'",
+      "CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING='1' CLAUDE_CODE_ENTRYPOINT='dsh-oh-my-claude' " +
+      "'claude' '-p' '--input-format' 'stream-json'",
   );
 }
 

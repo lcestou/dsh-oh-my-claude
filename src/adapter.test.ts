@@ -3313,6 +3313,9 @@ console.log("hook-rows ok");
   assert.notEqual(a1, workAdapter.keeperDir("s1"), "per provider id");
   assert.ok(a1.includes("/keepers/"));
   assert.equal(defaultAdapter.keeperEnv().MCP_TOOL_TIMEOUT, "3600000");
+  // The plugin's own entrypoint, so a terminal `claude --resume` lists these sessions instead of
+  // hiding them as sdk-cli.
+  assert.equal(defaultAdapter.keeperEnv().CLAUDE_CODE_ENTRYPOINT, "dsh-oh-my-claude");
   // Both spawn paths compose the child env through one helper, and the plugin's own values beat an
   // inherited one: a shell that exports MCP_TOOL_TIMEOUT used to cut relayed dsh tools short under
   // `spawn: node` while keeper mode ignored it, so the same config behaved two ways.
