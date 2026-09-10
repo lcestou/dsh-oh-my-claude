@@ -30,7 +30,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "export DSH_OMC_STATE_DIR=$(mktemp -d /tmp/omc-test.XXXXXX) && for f in src/*.test.ts src/client/*.test.ts; do bun \"$f\" || exit 1; done",
+    "test": "ls src/*.test.ts src/client/*.test.ts | xargs -P 8 -I{} sh -c 'DSH_OMC_STATE_DIR=$(mktemp -d /tmp/omc-test.XXXXXX) bun \"$1\"' _ {}",
     "lint": "oxlint src/ tools/ --max-warnings=0",
     "format": "oxfmt src/ tools/",
     "deadcode": "fallow dead-code",

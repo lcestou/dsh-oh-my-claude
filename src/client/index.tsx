@@ -2754,16 +2754,21 @@ const wireTurnStatus = (
     clearInterval(interval);
     obs.disconnect();
   };
-  const interval = setInterval(() => {
-    // The 120ms beat doubles as the teardown check: React unmounts this row by removing an
-    // ancestor, so watching for `el` itself in a removal record missed it and left one
-    // whole-document observer plus one interval alive per row dsh ever drew.
-    if (!el.isConnected) {
-      stop();
-      return;
-    }
-    tick();
-  }, 120);
+  const interval = setInterval(
+    () => {
+      // The beat doubles as the teardown check: React unmounts this row by removing an
+      // ancestor, so watching for `el` itself in a removal record missed it and left one
+      // whole-document observer plus one interval alive per row dsh ever drew.
+      if (!el.isConnected) {
+        stop();
+        return;
+      }
+      tick();
+    },
+    // A reduced-motion spinner is one glyph that never changes, so its beat is the teardown check
+    // and nothing else; 1s notices an unmounted row soon enough at an eighth of the wakeups.
+    reduced ? 1000 : 120,
+  );
   // The row can outlive the bundle that wired it — a rebuild disposes the context while the turn is
   // still running — and a connected row never trips the check above, so each reload used to leave
   // one more beat animating the same spinner. The wired mark and the spinner go back with it: both
@@ -2921,10 +2926,11 @@ const spinnerRowTitle = (dot: Element): string | null =>
 // button in a settings view, so class alone is not enough. The real one shares an ancestor with the
 // message box (a contenteditable). Walk up until an ancestor holds one; null means it is not the
 // composer button. Structural, so no hashed class is needed.
-const inComposer = (node: Element): boolean => {
-  // One subtree query for the message box, then `contains` per level: the walk used to run a fresh
-  // subtree query at every ancestor, which is the whole document by the time it reaches the top.
-  const box = document.querySelector("[contenteditable]");
+const inComposer = (node: Element, box: Element | null): boolean => {
+  // `contains` per level, against a message box the caller looked up once. The walk used to run a
+  // fresh subtree query at every ancestor, which is the whole document by the time it reaches the
+  // top; the query then moved out here, and now out again to the scan, which checks several
+  // buttons per pass and was paying for one lookup each.
   if (box === null) return false;
   for (let p = node.parentElement; p && p !== document.body; p = p.parentElement)
     if (p.contains(box)) return true;
@@ -2972,8 +2978,11 @@ function watchSessionSpinners(ctx: ClientCtx) {
     // The composer's send/stop button (one button, aria-label toggles). dsh fills it from
     // `--dsw-alias-button-info-*`; overriding those two vars on the button recolours both the base
     // and hover states in one place, and clearing them hands it back to dsh's blue on the next pass.
+    // One message-box lookup for the pass: `inComposer` is asked about every primary button dsh
+    // draws, and each ask used to run its own subtree query for the same element.
+    const box = document.querySelector("[contenteditable]");
     for (const sendBtn of document.querySelectorAll<HTMLElement>('button[class*="_primary"]')) {
-      const sendWant = openIsClaude && inComposer(sendBtn);
+      const sendWant = openIsClaude && inComposer(sendBtn, box);
       if (sendWant) {
         sendBtn.style.setProperty("--dsw-alias-button-info-fill", CLAUDE_ORANGE);
         sendBtn.style.setProperty("--dsw-alias-button-info-hover", CLAUDE_SHIMMER);
@@ -3473,7 +3482,6 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   useEffect(() => {
     let inline: HTMLSpanElement | undefined;
     let body: HTMLSpanElement | undefined;
-    let rowLead = "";
     let pad = " "; // what sits between the bar and the text; nothing inside a pill
     let lastRow: HTMLElement | undefined;
     let lastHost: HTMLElement | undefined; // the footer the row hangs in; it outlives the row
@@ -3482,7 +3490,6 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
     // `inline?.isConnected`, not `inline`: dsh re-renders this row on every step and React drops
     // the span we appended. Holding the detached node as proof it is hooked left the cost gone for
     // good — the row has to be hooked again each time it loses ours.
-    const MARK = "data-dsh-oh-my-claude-cost";
     // `localStorage.setItem("omc-debug", "1")` prints every hook, drop and repaint to the console;
     // the row lives in someone else's DOM, so this is the only way to watch what removed it.
     const debug = (...args: unknown[]) => {
@@ -3554,45 +3561,20 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
         body.textContent = `${pad}${textRef.current}`;
         inline.append(" ", sep, body);
       }
-      // The row's first group ("52 turns · 77 steps" in any locale) identifies its bubble.
-      rowLead = (statsRow.firstElementChild?.textContent ?? "").replace(/\s+/g, "");
       statsRow.append(inline);
-      debug("hooked the stats row", { rowLead, text: textRef.current });
+      debug("hooked the stats row", { text: textRef.current });
       setHooked(true);
-    };
-
-    // The row truncates and dsh shows its full line in a hover bubble built from its own text;
-    // append the cost to that bubble. Every open bubble is checked on each pass, not only the ones
-    // a mutation just added: dsh rewrites an open bubble's text in place while the pointer is on
-    // it, which drops our span without ever adding an element for an observer to notice.
-    const hookTips = () => {
-      if (!rowLead) return;
-      for (const tip of document.querySelectorAll<HTMLElement>('[role="tooltip"]')) {
-        if (!(tip.textContent ?? "").replace(/\s+/g, "").startsWith(rowLead)) continue;
-        // The mark rides the appended span, so a re-render that drops it asks for it again.
-        const part = tip.querySelector<HTMLElement>(`:scope > [${MARK}]`);
-        if (part) {
-          part.textContent = ` | ${textRef.current}`;
-          continue;
-        }
-        const fresh = document.createElement("span");
-        fresh.setAttribute(MARK, "1");
-        fresh.textContent = ` | ${textRef.current}`;
-        tip.append(fresh);
-        debug("hooked a bubble");
-      }
     };
 
     const drop = () => {
       // Nothing was ever put on screen: the first turn of a session runs this on every frame with
-      // no cost to show yet, and the tooltip sweep below is a document-wide attribute query.
-      if (inline === undefined && rowLead === "") return;
+      // no cost to show yet. `lastRow` is what says a hook once succeeded, so a span dsh has since
+      // dropped still clears the hooked flag.
+      if (inline === undefined && lastRow === undefined) return;
       inline?.remove();
       inline = undefined;
-      rowLead = "";
       body = undefined;
       lastRow = undefined; // a fresh hook looks the row up again rather than trusting an old pane
-      for (const part of document.querySelectorAll(`[${MARK}]`)) part.remove();
       setHooked(false);
     };
 
@@ -3607,7 +3589,6 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
         return;
       }
       tryHook();
-      hookTips();
     };
     syncRef.current = () => {
       if (!queued) {
