@@ -882,3 +882,14 @@ import type { TranscriptListItem } from "./transcript.js";
 }
 
 console.log("sessions ok");
+
+// CLI calls made by the routes export CLAUDE_CONFIG_DIR only for a dir that is not the CLI's own
+// default: exporting the default moves the CLI's .claude.json into the config dir, a shadow file
+// nothing else reads.
+{
+  const { cliEnvFor } = await import("./sessions.js");
+  const { CLAUDE_HOME } = await import("./state.js");
+  assert.equal(cliEnvFor(undefined), process.env, "no dir: the process env as is");
+  assert.equal(cliEnvFor(CLAUDE_HOME), process.env, "the default dir: nothing exported");
+  assert.equal(cliEnvFor("/tmp/omc-other-home").CLAUDE_CONFIG_DIR, "/tmp/omc-other-home");
+}

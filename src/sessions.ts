@@ -75,7 +75,7 @@ import {
   pluginRoster,
   pluginScopeNeedsCwd,
 } from "./plugins.js";
-import { PERMISSION_MODES, isPermissionMode } from "./state.js";
+import { CLAUDE_HOME, PERMISSION_MODES, isPermissionMode } from "./state.js";
 import { projectDirName } from "./adapter.js";
 import type {
   PermissionModeInfo,
@@ -556,15 +556,23 @@ export async function accountIdentity(
   // meaningless there, so it is never sent.
   const status = sshHost
     ? await run("ssh", sshArgs(sshHost, `${shq(command)} auth status`))
-    : await run(
-        command,
-        ["auth", "status"],
-        configDir ? { ...process.env, CLAUDE_CONFIG_DIR: configDir } : undefined,
-      );
+    : await run(command, ["auth", "status"], cliEnvFor(configDir));
   const auth = authFromStatus(status.out);
   const value = { host: sshHost || hostname(), email: auth.email ?? null, loggedIn: auth.loggedIn };
   identityCache.set(key, { at: Date.now(), value });
   return value;
+}
+
+/**
+ * The environment for a `claude` call on this box. `CLAUDE_CONFIG_DIR` is exported only when the
+ * instance's dir is not the CLI's own default: with the variable set, the CLI keeps its
+ * `.claude.json` (local and user MCP servers, project trust) inside that dir instead of at
+ * `~/.claude.json`, so an MCP server added from the panel with the default dir landed in a shadow
+ * file no terminal and no plugin-started Claude ever read (found 2026-09-10). The spawn env
+ * follows the same rule, so the routes and the process see one config.
+ */
+export function cliEnvFor(dir?: string): NodeJS.ProcessEnv {
+  return dir && dir !== CLAUDE_HOME ? { ...process.env, CLAUDE_CONFIG_DIR: dir } : process.env;
 }
 
 /**
@@ -1673,7 +1681,7 @@ export function registerSessionRoutes(
                 const result = await run(
                   command || "claude",
                   ["plugin", verb, body.key, "--scope", String(body.scope)],
-                  { ...process.env, CLAUDE_CONFIG_DIR: configDir },
+                  cliEnvFor(configDir),
                   target.cwd,
                 );
                 if (result.error) return json(res, 400, { error: result.error });
@@ -1691,7 +1699,7 @@ export function registerSessionRoutes(
                 const result = await run(
                   command || "claude",
                   ["plugin", "uninstall", body.key, "--scope", String(body.scope), "-y"],
-                  { ...process.env, CLAUDE_CONFIG_DIR: configDir },
+                  cliEnvFor(configDir),
                   target.cwd,
                 );
                 if (result.error) return json(res, 400, { error: result.error });
@@ -1723,7 +1731,7 @@ export function registerSessionRoutes(
                     "--scope",
                     String(body.scope),
                   ],
-                  { ...process.env, CLAUDE_CONFIG_DIR: configDir },
+                  cliEnvFor(configDir),
                   target.cwd,
                   60000,
                 );
@@ -1745,7 +1753,7 @@ export function registerSessionRoutes(
                 const result = await run(
                   command || "claude",
                   ["plugin", "marketplace", "remove", body.name, "--scope", String(body.scope)],
-                  { ...process.env, CLAUDE_CONFIG_DIR: configDir },
+                  cliEnvFor(configDir),
                   target.cwd,
                 );
                 if (result.error) return json(res, 400, { error: result.error });
@@ -1840,10 +1848,7 @@ export function registerSessionRoutes(
                   200,
                   box.sshHost
                     ? await run("ssh", sshArgs(box.sshHost, `${shq(bin)} doctor`))
-                    : await run(bin, ["doctor"], {
-                        ...process.env,
-                        CLAUDE_CONFIG_DIR: box.configDir,
-                      }),
+                    : await run(bin, ["doctor"], cliEnvFor(box.configDir)),
                 );
               }
               if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/turns`) {
@@ -1986,7 +1991,7 @@ export function registerSessionRoutes(
                 const result = await run(
                   command || "claude",
                   ["mcp", "add-json", built.name, JSON.stringify(built.json), "-s", built.scope],
-                  { ...process.env, CLAUDE_CONFIG_DIR: configDir },
+                  cliEnvFor(configDir),
                   cwd ?? undefined,
                 );
                 if (result.error) return json(res, 400, { error: result.error });
@@ -2006,7 +2011,7 @@ export function registerSessionRoutes(
                 const result = await run(
                   command || "claude",
                   ["mcp", "remove", body.name],
-                  { ...process.env, CLAUDE_CONFIG_DIR: configDir },
+                  cliEnvFor(configDir),
                   cwd,
                 );
                 if (result.error) return json(res, 400, { error: result.error });
