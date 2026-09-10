@@ -1,11 +1,13 @@
 // Dev-only check: composer screenshots at desktop and phone widths plus the Oh My Claude button's box. Point PLAYWRIGHT_ROOT at any project with Playwright installed; arg 1 is the dsh launch token.
-const { chromium } = await import(`${process.env.PLAYWRIGHT_ROOT}/node_modules/playwright/index.mjs`);
+import { type Size, dshUrl, launch } from "./pw.js";
+
 const token = process.argv[2];
-const b = await chromium.launch({ headless: true });
-for (const [name, vp, mobile] of [["desktop", { width: 1400, height: 900 }, false], ["mobile", { width: 390, height: 844 }, true]]) {
+const b = await launch();
+const widths: [string, Size, boolean][] = [["desktop", { width: 1400, height: 900 }, false], ["mobile", { width: 390, height: 844 }, true]];
+for (const [name, vp, mobile] of widths) {
   const ctx = await b.newContext({ viewport: vp, deviceScaleFactor: 2, isMobile: mobile, hasTouch: mobile });
   const p = await ctx.newPage();
-  await p.goto(`http://127.0.0.1:3080/?token=${token}`, { waitUntil: "networkidle" });
+  await p.goto(dshUrl(token), { waitUntil: "networkidle" });
   await p.waitForTimeout(2500);
   const want = /Running|\bnow\b|\d+min/;
   const item = p.locator('[role="treeitem"]').filter({ hasText: want }).first();

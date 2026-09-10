@@ -2,14 +2,15 @@
 // that menu, so a dsh upgrade can silently drop our injection (0.1.5 removed the aria-expanded
 // attribute the observer used to gate on). Point PLAYWRIGHT_ROOT at any project with Playwright
 // installed; arg 1 is the dsh launch token; PW_SESSION names the session row to open.
-const { chromium } = await import(`${process.env.PLAYWRIGHT_ROOT}/node_modules/playwright/index.mjs`);
+import { dshUrl, launch } from "./pw.js";
+
 const token = process.argv[2];
 const name = process.env.PW_SESSION ?? "recipe";
-const b = await chromium.launch({ headless: true });
+const b = await launch();
 const ctx = await b.newContext({ viewport: { width: 1400, height: 900 } });
 const p = await ctx.newPage();
 p.on("console", (m) => { const t = m.text(); if (/oh-my-claude/.test(t)) console.log("PAGE:", t.slice(0, 200)); });
-await p.goto(`http://127.0.0.1:3080/?token=${token}`, { waitUntil: "networkidle" });
+await p.goto(dshUrl(token), { waitUntil: "networkidle" });
 await p.waitForTimeout(2500);
 const row = p.locator('[role="treeitem"]').filter({ hasText: name }).first();
 console.log("row count", await row.count());

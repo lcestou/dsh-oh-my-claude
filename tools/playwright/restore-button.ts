@@ -1,9 +1,11 @@
 // Dev-only check. Point PLAYWRIGHT_ROOT at any project that has Playwright installed.
-const { chromium } = await import(`${process.env.PLAYWRIGHT_ROOT ?? process.cwd()}/node_modules/playwright/index.mjs`);
-const token = process.argv[2]; const out = process.argv[3] ?? "/tmp/pw/page.png";
-const b = await chromium.launch({ headless: true });
+import { dshUrl, launch } from "./pw.js";
+
+const token = process.argv[2];
+const out = process.argv[3] ?? "/tmp/pw/page.png";
+const b = await launch();
 const p = await b.newPage({ viewport: { width: 1400, height: 900 } });
-await p.goto(`http://127.0.0.1:3080/?token=${token}`, { waitUntil: "networkidle" });
+await p.goto(dshUrl(token), { waitUntil: "networkidle" });
 await p.waitForTimeout(2500);
 // try: open a new blank session via any "new" control
 const newBtn = p.locator('button[aria-label*="New" i], button:has-text("New session"), a[href*="new"]').first();

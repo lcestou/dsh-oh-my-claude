@@ -1,9 +1,10 @@
 // Dev-only check. Point PLAYWRIGHT_ROOT at any project that has Playwright installed.
-const { chromium } = await import(`${process.env.PLAYWRIGHT_ROOT ?? process.cwd()}/node_modules/playwright/index.mjs`);
-const [token, out] = process.argv.slice(2);
-const b = await chromium.launch({ headless: true });
+import { dshUrl, launch } from "./pw.js";
+
+const [token, out = "/tmp/pw/usage-popover.png"] = process.argv.slice(2);
+const b = await launch();
 const p = await b.newPage({ viewport: { width: 1400, height: 900 }, deviceScaleFactor: 2 });
-await p.goto(`http://127.0.0.1:3080/?token=${token}`, { waitUntil: "networkidle" });
+await p.goto(dshUrl(token), { waitUntil: "networkidle" });
 await p.waitForTimeout(2500);
 const want = /Running|\bnow\b|\d+min/;
 // Workspace to expand: PW_WORKSPACE, else the first workspace row.

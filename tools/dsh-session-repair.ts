@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 // Repair dsh session logs that dsh 0.1.5+ refuses to migrate.
 //
 // Before 2026-09-08 (toolsInline: false) this plugin appended raw `tool/call` and `tool/result`
@@ -12,9 +12,9 @@
 // turns disappear from history.
 //
 // usage:
-//   node tools/dsh-session-repair.mjs --check  [--dsh <prefix>] [<log> | --all]
-//   node tools/dsh-session-repair.mjs --apply  [--dsh <prefix>] [<log> | --all]
-//   node tools/dsh-session-repair.mjs --self-check
+//   bun tools/dsh-session-repair.ts --check  [--dsh <prefix>] [<log> | --all]
+//   bun tools/dsh-session-repair.ts --apply  [--dsh <prefix>] [<log> | --all]
+//   bun tools/dsh-session-repair.ts --self-check
 //
 // <prefix> is the npm prefix holding dsh 0.1.5+ (default: the one `dsh` on PATH lives in).
 // --all walks $DSH_HOME/sessions (default ~/.dsh/sessions). Stop dsh-web before --apply. The
@@ -25,74 +25,115 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import assert from "node:assert/strict";
 
+/** A span of seqs a row shadows or replaces; dsh carries more fields on it than the repair reads. */
+type Range = { start: number; end: number; [key: string]: unknown };
+/** One seq, or an inclusive pair standing for a run of them. */
+type Ref = number | [number, number];
+/** A block of an assistant message; only `tool-call` blocks matter here. */
+type Block = { type: string; id?: string; [key: string]: unknown };
+/** The payload fields the repair reads. dsh's events carry plenty more, which pass through as-is. */
+type Data = {
+  callId?: string;
+  message?: { content?: Block[]; source?: { callId?: string; [key: string]: unknown }; [key: string]: unknown };
+  shadowedSeqs?: number[];
+  shadowedRange?: Range;
+  messageSeqs?: number[];
+  texts?: string[];
+  dt?: number[];
+  [key: string]: unknown;
+};
+/** A log row. Ordinary rows own one `seq`; a packed chunk run owns `seq0` plus one slot per chunk. */
+type Row = {
+  type: string;
+  seq?: number;
+  seq0?: number;
+  data?: Data;
+  surfaceOp?: string | Range;
+  sourceEventSeqs?: Ref[];
+  [key: string]: unknown;
+};
+type Header = { version?: number; [key: string]: unknown };
+/** The slice of dsh's session-format catalog this uses: its migration chain, run in strict mode. */
+type Catalog = {
+  createRestore(header: Header, options: { recovery: string; validation: string }): {
+    decodeRow(row: Row): void;
+    finish(): void;
+  };
+};
+
 const args = process.argv.slice(2);
-const flag = (name) => args.includes(name);
-const opt = (name) => { const i = args.indexOf(name); return i === -1 ? undefined : args[i + 1]; };
+const flag = (name: string) => args.includes(name);
+const opt = (name: string) => { const i = args.indexOf(name); return i === -1 ? undefined : args[i + 1]; };
 
 /** Drop unadvertised tool rows from a v0 event list and keep every seq reference consistent. */
-export function repair(rows) {
-  const advertised = new Set();
-  const dropIds = new Set();
-  const dropped = new Set();
-  const kept = [];
+export function repair(rows: Row[]): { rows: Row[]; droppedCalls: number } {
+  const advertised = new Set<string>();
+  const dropIds = new Set<string>();
+  const dropped = new Set<number>();
+  const drop = (e: Row) => { if (e.seq !== undefined) dropped.add(e.seq); };
+  const kept: Row[] = [];
   for (const e of rows) {
     if (e.type === "assistant/message")
-      for (const b of e.data.message.content ?? []) if (b.type === "tool-call") advertised.add(b.id);
-    if (e.type === "tool/call" && !advertised.has(e.data.callId)) {
+      for (const b of e.data?.message?.content ?? []) if (b.type === "tool-call" && b.id !== undefined) advertised.add(b.id);
+    if (e.type === "tool/call" && e.data?.callId !== undefined && !advertised.has(e.data.callId)) {
       dropIds.add(e.data.callId);
-      dropped.add(e.seq);
+      drop(e);
       continue;
     }
-    if (e.type === "tool/result" && dropIds.has(e.data?.message?.source?.callId)) {
-      dropped.add(e.seq);
+    const resultOf = e.data?.message?.source?.callId;
+    if (e.type === "tool/result" && resultOf !== undefined && dropIds.has(resultOf)) {
+      drop(e);
       continue;
     }
     kept.push(e);
   }
   // Rows that only pointed at dropped rows go too: compaction/prune and range-replacing results.
-  const alive = (n) => !dropped.has(n);
-  const out = [];
+  const alive = (n: number) => !dropped.has(n);
+  const out: Row[] = [];
   for (const e of kept) {
     if (e.type === "compaction/prune" && Array.isArray(e.data?.shadowedSeqs)) {
       const keep = e.data.shadowedSeqs.filter(alive);
-      if (keep.length === 0) { dropped.add(e.seq); continue; }
+      if (keep.length === 0) { drop(e); continue; }
       e.data.shadowedSeqs = keep;
       e.data.shadowedRange = { ...e.data.shadowedRange, start: Math.min(...keep), end: Math.max(...keep) };
     }
     if (e.type === "tool/result" && e.surfaceOp && typeof e.surfaceOp === "object" && "start" in e.surfaceOp) {
-      const span = [];
+      const span: number[] = [];
       for (let x = e.surfaceOp.start; x <= e.surfaceOp.end; x++) if (alive(x)) span.push(x);
-      if (span.length === 0) { dropped.add(e.seq); continue; }
-      e.surfaceOp = { ...e.surfaceOp, start: span[0], end: span[span.length - 1] };
+      const first = span[0];
+      const last = span[span.length - 1];
+      if (first === undefined || last === undefined) { drop(e); continue; }
+      e.surfaceOp = { ...e.surfaceOp, start: first, end: last };
     }
     out.push(e);
   }
   // Every row owns one seq slot; a packed chunk run owns one per chunk. Renumber, then remap
   // every reference (ranges, lists, prune targets) onto the surviving seqs.
-  const map = new Map();
+  const map = new Map<number, number>();
   let k = 0;
   for (const e of out) {
-    if ("seq0" in e) {
-      const n = e.data.texts?.length ?? e.data.dt?.length ?? 1;
+    if (e.seq0 !== undefined) {
+      const n = e.data?.texts?.length ?? e.data?.dt?.length ?? 1;
       for (let j = 0; j < n; j++) map.set(e.seq0 + j, k + j);
       e.seq0 = k;
       k += n;
-    } else if ("seq" in e) {
+    } else if (e.seq !== undefined) {
       map.set(e.seq, k);
       e.seq = k++;
     }
   }
   const keys = [...map.keys()].sort((a, b) => a - b);
-  const lo = (x) => { const key = keys.find((v) => v >= x); return key === undefined ? undefined : map.get(key); };
-  const hi = (x) => { let r; for (const v of keys) { if (v > x) break; r = map.get(v); } return r; };
-  const one = (x) => map.get(x);
-  const list = (arr) => arr.map(one).filter((x) => x !== undefined);
-  const refs = (arr) => arr.map((x) => {
+  const lo = (x: number) => { const key = keys.find((v) => v >= x); return key === undefined ? undefined : map.get(key); };
+  const hi = (x: number) => { let r; for (const v of keys) { if (v > x) break; r = map.get(v); } return r; };
+  const one = (x: number) => map.get(x);
+  const defined = <T>(x: T | undefined): x is T => x !== undefined;
+  const list = (arr: number[]) => arr.map(one).filter(defined);
+  const refs = (arr: Ref[]): Ref[] => arr.map((x): Ref | undefined => {
     if (!Array.isArray(x)) return one(x);
     const s = lo(x[0]), e = hi(x[1]);
     return s !== undefined && e !== undefined && s <= e ? [s, e] : undefined;
-  }).filter((x) => x !== undefined);
-  const range = (r) => { const s = lo(r.start), e = hi(r.end); return s !== undefined && e !== undefined && s <= e ? { ...r, start: s, end: e } : r; };
+  }).filter(defined);
+  const range = (r: Range): Range => { const s = lo(r.start), e = hi(r.end); return s !== undefined && e !== undefined && s <= e ? { ...r, start: s, end: e } : r; };
   for (const e of out) {
     if (Array.isArray(e.sourceEventSeqs)) e.sourceEventSeqs = refs(e.sourceEventSeqs);
     if (e.surfaceOp && typeof e.surfaceOp === "object" && "start" in e.surfaceOp) e.surfaceOp = range(e.surfaceOp);
@@ -103,16 +144,18 @@ export function repair(rows) {
   return { rows: out, droppedCalls: dropIds.size };
 }
 
-function readLog(file) {
+function readLog(file: string): { header: Header; rows: Row[] } {
   const text = execFileSync("zstd", ["-dc", "--", file], { maxBuffer: 1 << 30 }).toString("utf8");
-  const rows = text.split("\n").filter(Boolean).map((l) => JSON.parse(l));
-  return { header: rows[0], rows: rows.slice(1) };
+  const rows = text.split("\n").filter(Boolean).map((l) => JSON.parse(l) as Row);
+  const header = rows[0] as Header | undefined;
+  if (!header) throw new Error(`${file} is empty: no header line`);
+  return { header, rows: rows.slice(1) };
 }
 
-function writeLog(file, header, rows) {
+function writeLog(file: string, header: Header, rows: Row[]) {
   // dsh reads the header as its own zstd frame ("first frame is not exactly one header line"
   // otherwise), then the events; two frames back to back are one valid stream.
-  const frame = (text) => execFileSync("zstd", ["-q", "-c"], { input: text, maxBuffer: 1 << 30 });
+  const frame = (text: string) => execFileSync("zstd", ["-q", "-c"], { input: text, maxBuffer: 1 << 30 });
   const body = rows.map((r) => JSON.stringify(r)).join("\n") + "\n";
   const tmp = file + ".repair-tmp";
   writeFileSync(tmp, Buffer.concat([frame(JSON.stringify(header) + "\n"), frame(body)]));
@@ -120,7 +163,7 @@ function writeLog(file, header, rows) {
   renameSync(tmp, file);
 }
 
-function dshPrefix() {
+function dshPrefix(): string {
   const given = opt("--dsh");
   if (given) return resolve(given);
   const bin = execFileSync("sh", ["-c", "command -v dsh"]).toString().trim();
@@ -129,14 +172,14 @@ function dshPrefix() {
   return resolve(dirname(real), "..", "..", "..", "..", "..");
 }
 
-async function loadCatalog(prefix) {
+async function loadCatalog(prefix: string): Promise<Catalog> {
   const p = join(prefix, "lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-session-format-catalog/lib/index.js");
   if (!existsSync(p)) throw new Error(`no session-format catalog under ${prefix}; dsh 0.1.5+ is needed (use --dsh <prefix>)`);
-  return (await import(p)).sessionFormatCatalog;
+  return (await import(p)).sessionFormatCatalog as Catalog;
 }
 
 /** Feed rows through dsh's migration chain; returns undefined on success, the refusal otherwise. */
-function migrate(catalog, header, rows) {
+function migrate(catalog: Catalog, header: Header, rows: Row[]): string | undefined {
   try {
     const restore = catalog.createRestore(header, { recovery: "strict", validation: "transformed" });
     for (const e of rows) restore.decodeRow(e);
@@ -147,7 +190,7 @@ function migrate(catalog, header, rows) {
   }
 }
 
-function findLogs() {
+function findLogs(): string[] {
   const root = join(process.env.DSH_HOME ?? join(homedir(), ".dsh"), "sessions");
   const logs = [];
   for (const ws of readdirSync(root, { withFileTypes: true })) {
@@ -163,9 +206,9 @@ function findLogs() {
 }
 
 function selfCheck() {
-  const ev = (seq, type, data, extra = {}) => ({ type, seq, time: seq, data, ...extra });
-  const msg = (id, content) => ({ role: "assistant", id, source: { kind: "model", provider: "p", model: "m" }, content });
-  const rows = [
+  const ev = (seq: number, type: string, data: Data, extra: Partial<Row> = {}): Row => ({ type, seq, time: seq, data, ...extra });
+  const msg = (id: string, content: Block[]) => ({ role: "assistant", id, source: { kind: "model", provider: "p", model: "m" }, content });
+  const rows: Row[] = [
     ev(0, "turn/start", { turn: 1 }),
     ev(1, "step/start", { turn: 1, step: 1 }),
     ev(2, "assistant/chunk", { turn: 1, step: 1, chunk: { type: "block-start", index: 0, blockType: "text" } }),
@@ -184,10 +227,10 @@ function selfCheck() {
   assert.equal(droppedCalls, 1, "one unadvertised call dropped");
   assert.deepEqual(out.map((e) => e.type), ["turn/start", "step/start", "assistant/chunk", "text-chunks", "assistant/chunk", "assistant/message", "tool/call", "tool/result", "step/end", "turn/end"], "orphan call, its result and the prune that shadowed only them are gone");
   // seq slots stay contiguous: 0,1,2 then the packed run owns 3-4, then 5..
-  assert.deepEqual(out.filter((e) => "seq" in e).map((e) => e.seq), [0, 1, 2, 5, 6, 7, 8, 9, 10]);
-  assert.equal(out[3].seq0, 3);
-  assert.deepEqual(out[5].sourceEventSeqs, [[2, 5]], "message range follows the surviving chunk seqs");
-  assert.deepEqual(out[7].sourceEventSeqs, [7], "advertised call's result still cites its call");
+  assert.deepEqual(out.filter((e) => e.seq !== undefined).map((e) => e.seq), [0, 1, 2, 5, 6, 7, 8, 9, 10]);
+  assert.equal(out[3]?.seq0, 3);
+  assert.deepEqual(out[5]?.sourceEventSeqs, [[2, 5]], "message range follows the surviving chunk seqs");
+  assert.deepEqual(out[7]?.sourceEventSeqs, [7], "advertised call's result still cites its call");
   console.log("dsh-session-repair self-check ok");
 }
 

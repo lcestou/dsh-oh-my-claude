@@ -42,7 +42,7 @@ Cost and cached token count, figures dsh cannot compute, join dsh's footer stats
 
 <p><img src="docs/media/context-usage.png" width="300" alt="dsh's context ring popover with Claude plan windows and the CLI's own context breakdown"> <img src="docs/media/phone-panel.png" width="300" alt="the panel as a phone sheet above the composer"></p>
 
-Plan usage and the CLI's own context breakdown live in dsh's context ring popover, and on a phone the panel becomes a sheet. Captured by `tools/playwright/tour.mjs`.
+Plan usage and the CLI's own context breakdown live in dsh's context ring popover, and on a phone the panel becomes a sheet. Captured by `tools/playwright/tour.ts`.
 
 ## Install
 
@@ -77,8 +77,8 @@ Two things change under this plugin:
 - The session log gains a versioned format with a strict migration. Logs written with `toolsInline: false` before 2026-09-08 hold raw `tool/call` rows the migration refuses, and dsh then shows *Failed to load history … does not match one advertised tool call* for that session. Repair them once, with dsh-web stopped:
 
   ```sh
-  node tools/dsh-session-repair.mjs --check --all   # lists what needs repair, changes nothing
-  node tools/dsh-session-repair.mjs --apply --all   # drops the offending rows, keeps a .bak next to each log
+  bun tools/dsh-session-repair.ts --check --all   # lists what needs repair, changes nothing
+  bun tools/dsh-session-repair.ts --apply --all   # drops the offending rows, keeps a .bak next to each log
   ```
 
   The tool proves every repaired log through dsh's own migration chain before writing it. Conversation text is untouched; only the tool cards of those old turns are gone from history.
@@ -102,10 +102,12 @@ Client bundle safety: dsh hot-reloads `lib/client.js` the moment `bun run build`
 
 ```sh
 TOKEN=$(grep -o 'token=[A-Za-z0-9_-]*' ~/.local/state/dsh/web.log | tail -1 | cut -d= -f2)
-PLAYWRIGHT_ROOT=/path/to/a/project/with/playwright node tools/playwright/peek.mjs "$TOKEN"
+PLAYWRIGHT_ROOT=/path/to/a/project/with/playwright bun tools/playwright/peek.ts "$TOKEN"
 ```
 
-It prints the sidebar text (a `Failed to load plugins` line means roll back with `git show main:lib/client.js > lib/client.js` and rebuild). `tools/playwright/turn-status.mjs <token> <out.png>` and `restore-button.mjs <token> <out.png>` screenshot the two DOM features. These are development checks only; nothing in the plugin needs Playwright.
+It prints the sidebar text (a `Failed to load plugins` line means roll back with `git show main:lib/client.js > lib/client.js` and rebuild). `tools/playwright/turn-status.ts <token> <out.png>` and `restore-button.ts <token> <out.png>` screenshot the two DOM features. These are development checks only; nothing in the plugin needs Playwright, which is why it is not a dependency: `tools/playwright/pw.ts` resolves the borrowed install at run time and declares the slice of its API these scripts use.
+
+Everything under `tools/` is TypeScript — the scripts run with `bun`, the oxlint plugin is loaded by oxlint — and `tools/**/*.ts` is in the `tsconfig.json` include, so `bun run typecheck` covers all of it. That is what keeps a rename in `src/` from leaving `live-cli-check.ts` probing the wrong thing, and a null `boundingBox()` from reaching a screenshot crop.
 
 ## Configuration
 
@@ -293,7 +295,7 @@ bun tools/live-cli-check.ts          # every flag the plugin would send is a fla
 bun tools/live-cli-check.ts --live   # also runs one real turn per target, which spends tokens
 ```
 
-It checks the local `claude` plus every box a remote workspace names, using the same argument builder, the same SSH invocation and the same stored box login the plugin spawns with. An unreachable host is skipped; a flag the target does not have is a failure. Development check only, like Playwright. It is TypeScript, and named in the `tsconfig.json` include, because it is the one script under `tools/` that imports the plugin's own API: a rename in `src/` then fails `bun run typecheck` rather than leaving this check silently probing the wrong thing.
+It checks the local `claude` plus every box a remote workspace names, using the same argument builder, the same SSH invocation and the same stored box login the plugin spawns with. An unreachable host is skipped; a flag the target does not have is a failure. Development check only, like Playwright.
 
 ## Roadmap
 

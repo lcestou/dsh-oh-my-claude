@@ -1,9 +1,10 @@
 // Dev-only check. Point PLAYWRIGHT_ROOT at any project that has Playwright installed.
-const { chromium } = await import(`${process.env.PLAYWRIGHT_ROOT ?? process.cwd()}/node_modules/playwright/index.mjs`);
-const [token, out] = process.argv.slice(2);
-const b = await chromium.launch({ headless: true });
+import { dshUrl, launch } from "./pw.js";
+
+const [token, out = "/tmp/pw/turn-status.png"] = process.argv.slice(2);
+const b = await launch();
 const p = await b.newPage({ viewport: { width: 1400, height: 900 } });
-await p.goto(`http://127.0.0.1:3080/?token=${token}`, { waitUntil: "networkidle" });
+await p.goto(dshUrl(token), { waitUntil: "networkidle" });
 await p.waitForTimeout(2500);
 const side = await p.locator("body").innerText();
 console.log("sidebar hits:", side.split("\n").filter((l) => /todo|queue/i.test(l)).slice(0, 5).join(" || "));
@@ -16,7 +17,7 @@ const want = process.argv[4] ? new RegExp(process.argv[4], "i") : /Running|\bnow
 if (await ws.count() && !(await p.locator('[role="treeitem"]').filter({ hasText: want }).count())) { await ws.click({ force: true }); await p.waitForTimeout(1200); }
 const cand = p.locator('[role="treeitem"]').filter({ hasText: want }).first();
 if (await cand.count()) await cand.click({ force: true });
-else await p.getByText(want).first().click({ force: true, timeout: 8000 }).catch((e) => console.log("click failed:", e.message.split("\n")[0]));
+else await p.getByText(want).first().click({ force: true, timeout: 8000 }).catch((e: Error) => console.log("click failed:", e.message.split("\n")[0]));
 await p.waitForTimeout(3500);
 const st = p.locator('[role="status"][aria-live="polite"]').first();
 const n = await st.count();
