@@ -20,6 +20,12 @@ export interface InstructionFile {
  */
 export declare function importsIn(text: string): string[];
 /**
+ * Every file the walk below asks for by name, in walk order. Only the fixed ones: a rules file is
+ * named by a directory listing that has not happened yet, and an `@` import by a file that has not
+ * been read yet, so both are found on the way through.
+ */
+export declare const instructionCandidates: (cwd: string, claudeHome: string) => string[];
+/**
  * Whether a listed file may be written back. The list doubles as the write allowlist, and a `@`
  * line puts any absolute path a repo names on it — a cloned `CLAUDE.md` holding `@~/.ssh/authorized_keys`
  * would otherwise offer that file as an editable row. The CLI loads instructions as markdown, so a

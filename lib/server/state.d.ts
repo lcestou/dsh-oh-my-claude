@@ -1,4 +1,5 @@
 import type { AsideEntry, TurnRecord } from "./adapter.js";
+import type { ToolMode } from "./rows-probe.js";
 /** Claude Code's config dir: transcripts, settings.json. Honors CLAUDE_CONFIG_DIR like the CLI. */
 export declare const CLAUDE_HOME: string;
 /** Resolve a raw configDir value to an absolute path for this plugin instance.
@@ -109,4 +110,8 @@ export declare function saveStarter(dir: string, key: string, text: string | und
  * `cat .env` or an echoed header would otherwise land verbatim in the session log.
  */
 export declare function buildRedactor(env: Record<string, string | undefined>): (s: string) => string;
+/** Tool activity as the Tune switch last set it; absent means the config default. */
+export declare const TOOL_MODE_FILE: (d: string) => string;
+export declare function loadToolMode(dir: string): Promise<ToolMode | undefined>;
+export declare const saveToolMode: (dir: string, mode: ToolMode) => Promise<void>;
 export {};

@@ -20,6 +20,7 @@ import {
   type PermissionKind,
 } from "../permissions.js";
 import { SCOPE_LABELS, type SettingsScopeInfo } from "./settings.js";
+import type { ToolMode, ToolModeInfo } from "../rows-probe.js";
 
 /** What the usage route answers about extra usage. */
 interface UsageReply {
@@ -306,6 +307,10 @@ export function TuneBody({
   // settings.json: null keeps the session default, 0 turns thinking off. Undefined until we read it.
   const [thinkBudget, setThinkBudget] = useState<number | null | undefined>(undefined);
   const [thinkBusy, setThinkBusy] = useState(false);
+  // Tool activity for every session: inline text or dsh's native rows. The plugin holds it, not
+  // settings.json: the CLI has no such key. Null until the first read answers.
+  const [toolMode, setToolMode] = useState<ToolModeInfo | null>(null);
+  const [toolModeErr, setToolModeErr] = useState("");
   const [thinkErr, setThinkErr] = useState("");
 
   useEffect(() => {
@@ -330,6 +335,17 @@ export function TuneBody({
       live = false;
     };
   }, [sessionId]);
+
+  useEffect(() => {
+    let live = true;
+    fetch(`${ROUTE}/tool-mode`)
+      .then((r) => readJson<ToolModeInfo>(r))
+      .then((b) => live && setToolMode(b))
+      .catch(() => live && setToolModeErr("could not read the tool activity setting"));
+    return () => {
+      live = false;
+    };
+  }, []);
 
   if (!file)
     return error ? (
@@ -448,12 +464,65 @@ export function TuneBody({
   };
   const thinking = settings.alwaysThinkingEnabled === true;
 
+  const pickToolMode = async (mode: ToolMode) => {
+    setToolModeErr("");
+    try {
+      setToolMode(
+        await readJson<ToolModeInfo>(
+          await fetch(`${ROUTE}/tool-mode`, {
+            method: "PUT",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ mode }),
+          }),
+        ),
+      );
+    } catch (e) {
+      setToolModeErr(e instanceof Error ? e.message : String(e));
+    }
+  };
+  // Rows are locked, not hidden, on a dsh that refuses to load them: the row says why, and the
+  // same switch works again on a dsh that does, with nothing to update here.
+  const rowsLocked = toolMode?.rows.ok === false;
+
   return (
     <div style={bodyFlow}>
       <span style={{ ...meta, padding: "2px 4px", whiteSpace: "normal" }}>
         Saved to Claude Code's settings.json; each takes effect the next time Claude spawns.
       </span>
       {error ? <span style={errText}>{error}</span> : null}
+
+      <div style={rowStyle} data-omc-tool-mode="">
+        <span style={labelStyle}>Tool activity</span>
+        <div style={controlStyle} role="radiogroup" aria-label="Tool activity">
+          {(["inline", "rows"] as const).map((mode) => {
+            const locked = mode === "rows" && rowsLocked;
+            const usable = toolMode !== null && !locked;
+            return (
+              <label
+                key={mode}
+                style={{ display: "flex", alignItems: "center", gap: 6, cursor: check(usable) }}
+              >
+                <input
+                  type="radio"
+                  name="omc-tool-mode"
+                  checked={(toolMode?.mode ?? "inline") === mode}
+                  disabled={!usable}
+                  onChange={() => void pickToolMode(mode)}
+                  style={{ cursor: check(usable) }}
+                />
+                <span style={{ fontSize: 12 }}>{mode === "inline" ? "Inline" : "Native rows"}</span>
+              </label>
+            );
+          })}
+        </div>
+        <span style={{ ...meta, flexBasis: "100%", whiteSpace: "normal" }}>
+          {toolModeErr
+            ? toolModeErr
+            : rowsLocked
+              ? `Native rows are off: this dsh will not load a session that holds them (${toolMode?.rows.reason ?? ""}). The switch unlocks by itself on a dsh that does.`
+              : "Inline: text and tool calls show live, in the order they happen. Native rows: dsh's own tool cards, but the chat looks idle while a step runs and the text lands in one bubble under the cards when it settles; each steer starts a new step. Rows can also be refused by a later dsh format migration, as 0.1.5's were (tools/dsh-session-repair.ts mends such logs). Applies from your next message, no restart."}
+        </span>
+      </div>
 
       <div style={rowStyle}>
         <span style={labelStyle}>Output style</span>

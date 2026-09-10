@@ -107,6 +107,8 @@ import {
   loadStarted,
   isPermissionMode,
   loadPermissionModes,
+  loadToolMode,
+  saveToolMode,
   type PermissionMode,
   lastSelectedProvider,
   loadLimitWaits,
@@ -128,6 +130,12 @@ import {
   trace,
 } from "./state.js";
 import { suggestRule } from "./permissions.js";
+import {
+  probeRawToolRows,
+  type RowsSupport,
+  type ToolMode,
+  type ToolModeInfo,
+} from "./rows-probe.js";
 import { readSshToken } from "./ssh-login.js";
 import { childEnv, errorText } from "./process.js";
 import {
@@ -960,6 +968,16 @@ export function permissionModeFor(
 // process and anything missing is left out. Unknown = assume supported (probe failed, older CLI).
 
 const cliProbes = new Map<string, Promise<{ flags: Set<string> | null; version: string }>>();
+
+/**
+ * Whether the running dsh loads a log holding raw tool rows: one probe per process, on first ask.
+ *
+ * Per process is the right scope even with several mounts: the question is about the dsh that owns
+ * the session log, and every session's log lives in this dsh whatever box its Claude runs on. A
+ * remote box runs `claude`, never a second dsh, so there is nothing per-mount to ask.
+ */
+let rowsProbe: Promise<RowsSupport> | undefined;
+const rowsSupported = (): Promise<RowsSupport> => (rowsProbe ??= probeRawToolRows());
 /** Flags a target's binary rejected at runtime, per probe key. A probe can be wrong — a box's CLI
  * updates under us, `--help` comes back empty over a stalled ssh and every flag then reads as
  * supported — and the CLI's answer to a flag it does not have is exit 1 before the first frame. What
@@ -1517,9 +1535,12 @@ const INTERRUPT_GRACE_MS = 5000;
 export function nativeToolRows(
   config: { toolActivity: boolean; toolsInline: boolean },
   formatVersion: number,
+  rawRowsLoad = false,
 ) {
   const wanted = config.toolActivity && !config.toolsInline;
-  return { rows: wanted && formatVersion === 0, refused: wanted && formatVersion !== 0 };
+  // A format-0 log predates the rule; a later one takes rows only when the probe says its dsh does.
+  const fits = formatVersion === 0 || rawRowsLoad;
+  return { rows: wanted && fits, refused: wanted && !fits };
 }
 /** Count the human prompts dsh has in a transcript (context injections and tool results excluded). */
 export function userPromptCount(messages: LooseMessage[] | undefined): number {
@@ -1621,6 +1642,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   /** The live thinking budget this plugin last set per session (null = session default, 0 = off);
    *  memory only, since a respawn resets it and the CLI has no flag to carry it. */
   readonly thinkingBudgets = new Map<string, number | null>();
+  /** Tool activity as the Tune switch set it; undefined = the config's `toolsInline`. Loaded from
+   *  disk on construct, written through on every set, and read fresh at the start of each turn. */
+  toolMode: ToolMode | undefined = undefined;
   cliModels: CliModel[] = [];
   claudeHome: string;
   /** `~/.claude` itself, which stays the box's login and settings even when transcripts move. */
@@ -1667,6 +1691,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         // Merge rather than replace: another mount may have filled the shared map already.
         for (const [id, mode] of modes)
           if (!this.permissionModes.has(id)) this.permissionModes.set(id, mode);
+      })
+      .catch(() => {}); // state is an optimization only
+    loadToolMode(this.stateDir)
+      .then((mode) => {
+        this.toolMode = mode;
       })
       .catch(() => {}); // state is an optimization only
     loadTurnRecords(this.stateDir)
@@ -2511,6 +2540,28 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     if (ring) void saveAsides(this.stateDir, sessionId, ring);
   }
 
+  /** Inline tool text unless the Tune switch, or failing that the config, asks for rows. */
+  toolsInline(): boolean {
+    return this.toolMode === undefined ? this.config.toolsInline : this.toolMode === "inline";
+  }
+
+  /** What the Tune switch shows: the mode in force, and whether rows are open to it at all. */
+  async toolModeInfo(): Promise<ToolModeInfo> {
+    return { mode: this.toolsInline() ? "inline" : "rows", rows: await rowsSupported() };
+  }
+
+  /** Set the mode on every mount at once, so a session on a box's model follows the same switch. */
+  async setToolMode(mode: ToolMode): Promise<ToolModeInfo> {
+    // SAFETY: the registry symbol is this plugin's own key on globalThis, typed here once
+    const g = globalThis as typeof globalThis & {
+      [ADAPTER_CURRENT]?: Map<string, ClaudeCodeAdapter>;
+    };
+    for (const mount of g[ADAPTER_CURRENT]?.values() ?? [this]) mount.toolMode = mode;
+    this.toolMode = mode;
+    await saveToolMode(this.stateDir, mode);
+    return this.toolModeInfo();
+  }
+
   /** What the /tune thinking selector shows: the budget this plugin last set for the session, or
    *  `undefined` when it has set none and the session runs on its own default. */
   thinkingInfo(sessionId: string) {
@@ -3304,7 +3355,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     } catch {
       // session unavailable; native rows will fall back to old reasoning blocks
     }
-    const rowMode = nativeToolRows(this.config, formatVersion);
+    const rowMode = nativeToolRows(
+      { toolActivity: this.config.toolActivity, toolsInline: this.toolsInline() },
+      formatVersion,
+      (await rowsSupported()).ok,
+    );
     if (rowMode.refused && !this.rowsRefused.has(options.sessionId)) {
       this.rowsRefused.add(options.sessionId);
       this.log(
@@ -4326,6 +4381,10 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
           adapter.ownerFor(session).idleDeadlineMap.get(session) ?? null,
         extend: (session: string) => adapter.ownerFor(session).extendIdle(session),
         timeoutMs: adapter.config.idleTimeoutMs,
+      },
+      toolMode: {
+        info: () => adapter.toolModeInfo(),
+        set: (mode: ToolMode) => adapter.setToolMode(mode),
       },
       // Everything below is about one session's own process or its own state, so it runs on the
       // mount that owns that session rather than on this one: these routes are registered once,

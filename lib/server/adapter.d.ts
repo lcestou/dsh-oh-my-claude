@@ -6,6 +6,7 @@ import { readUsage } from "./usage.js";
 import { type ClaudeEvent, ClaudeProcess } from "./process.js";
 import type { Agent, ImageAttachmentRef, JsonValue, PluginContext, SessionController, SessionId, SubprocessRuntime } from "./dsh.js";
 import { ADAPTER_CURRENT } from "./dsh.js";
+import { type ToolMode, type ToolModeInfo } from "./rows-probe.js";
 import { sshRunner, type HoldRecord } from "./hold.js";
 import type { RewindResult } from "./process.js";
 export { markBusy, takeInterrupted } from "./state.js";
@@ -539,7 +540,7 @@ export { ADAPTER_CURRENT };
 export declare function nativeToolRows(config: {
     toolActivity: boolean;
     toolsInline: boolean;
-}, formatVersion: number): {
+}, formatVersion: number, rawRowsLoad?: boolean): {
     rows: boolean;
     refused: boolean;
 };
@@ -611,6 +612,9 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     /** The live thinking budget this plugin last set per session (null = session default, 0 = off);
      *  memory only, since a respawn resets it and the CLI has no flag to carry it. */
     readonly thinkingBudgets: Map<string, number | null>;
+    /** Tool activity as the Tune switch set it; undefined = the config's `toolsInline`. Loaded from
+     *  disk on construct, written through on every set, and read fresh at the start of each turn. */
+    toolMode: ToolMode | undefined;
     cliModels: CliModel[];
     claudeHome: string;
     /** `~/.claude` itself, which stays the box's login and settings even when transcripts move. */
@@ -792,6 +796,12 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     setStarter(key: string, text: string | undefined): void;
     /** Persist a session's aside ring to disk so an answer survives a restart, eviction or hot reload. */
     persistAsides(sessionId: string): void;
+    /** Inline tool text unless the Tune switch, or failing that the config, asks for rows. */
+    toolsInline(): boolean;
+    /** What the Tune switch shows: the mode in force, and whether rows are open to it at all. */
+    toolModeInfo(): Promise<ToolModeInfo>;
+    /** Set the mode on every mount at once, so a session on a box's model follows the same switch. */
+    setToolMode(mode: ToolMode): Promise<ToolModeInfo>;
     /** What the /tune thinking selector shows: the budget this plugin last set for the session, or
      *  `undefined` when it has set none and the session runs on its own default. */
     thinkingInfo(sessionId: string): {

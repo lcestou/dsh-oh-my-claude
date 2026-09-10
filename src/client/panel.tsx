@@ -2363,8 +2363,20 @@ interface AsideRow {
  * server's ring (the last ten per session, persisted under STATE_DIR), so it survives a restart but
  * does not grow without bound.
  */
+/** A small outlined state label for an aside's header: waiting, error, dismissed. */
+const asidePill = (color: string): CSSProperties => ({
+  fontSize: 10,
+  lineHeight: "16px",
+  padding: "0 6px",
+  borderRadius: 8,
+  border: `1px solid ${color}`,
+  color,
+  whiteSpace: "nowrap",
+});
+
 function AsidesBody({ sessionId }: { sessionId: string }) {
   const [items, setItems] = useState<AsideRow[] | null>(null);
+  const [copied, setCopied] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -2393,15 +2405,32 @@ function AsidesBody({ sessionId }: { sessionId: string }) {
     );
   }
 
+  // The same copy the composer card offers: the answer, or the error, or the question while the
+  // answer is still pending. A dismissed card lives only here, so this is where it gets copied from.
+  const copy = (it: AsideRow) => {
+    const text = it.answer ?? it.error ?? it.question;
+    void navigator.clipboard?.writeText(text).then(() => {
+      setCopied(it.id);
+      setTimeout(() => setCopied((cur) => (cur === it.id ? null : cur)), 1200);
+    });
+  };
+
   // An accordion of native <details>: the question is the row, the answer opens under it, and only
-  // the newest starts open, so ten long answers cost ten lines until one is wanted.
+  // the newest starts open, so ten long answers cost ten lines until one is wanted. The header's
+  // right end holds the state and the copy, floated so the native marker and the ellipsis on the
+  // question both survive; the copy stops its click so the row does not toggle under it.
   return (
     <div style={bodyFlow}>
       {items.toReversed().map((it, i) => (
         <details
           key={it.id}
           open={i === 0}
-          style={{ padding: "4px 10px", fontSize: 12, lineHeight: "1.5" }}
+          style={{
+            padding: "6px 10px",
+            fontSize: 12,
+            lineHeight: "1.5",
+            borderTop: i === 0 ? "none" : `1px solid ${T.border}`,
+          }}
         >
           <summary
             style={{
@@ -2412,15 +2441,43 @@ function AsidesBody({ sessionId }: { sessionId: string }) {
               textOverflow: "ellipsis",
             }}
           >
-            {it.question}
-            <span style={{ ...meta, fontSize: 11, marginLeft: 6 }}>
-              {ago(it.at)}
-              {it.dismissed === true ? " · dismissed" : ""}
+            <span
+              style={{
+                float: "right",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                marginLeft: 8,
+              }}
+            >
+              {it.pending ? (
+                <span style={asidePill(T.faint)}>waiting</span>
+              ) : it.error !== undefined ? (
+                <span style={asidePill(T.err)}>error</span>
+              ) : null}
+              {it.dismissed === true ? <span style={asidePill(T.faint)}>dismissed</span> : null}
+              <span style={{ ...meta, fontSize: 11 }}>{ago(it.at)}</span>
+              <button
+                type="button"
+                data-omc-aside-copy={it.id}
+                style={{ ...btn, fontSize: 11, padding: "1px 8px", lineHeight: "16px" }}
+                aria-label={copied === it.id ? "Copied" : "Copy aside"}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  copy(it);
+                }}
+              >
+                {copied === it.id ? "Copied" : "Copy"}
+              </button>
             </span>
+            {it.question}
           </summary>
           <div
             style={{
-              marginTop: 2,
+              marginTop: 4,
+              maxHeight: "40vh",
+              overflow: "auto",
               whiteSpace: "pre-wrap",
               wordBreak: "break-word",
               color: it.error !== undefined ? T.err : T.faint,
@@ -2451,6 +2508,18 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
   const [tab, setTab] = useState(lastTab);
   // Phone sheet: fixed, above the control, wherever the composer sits (a blank session centres it).
   const [above, setAbove] = useState(0);
+
+  // dsh's chat width handles sit at the edges of the conversation column, outside this panel's
+  // box, so a panel above them still leaves them hoverable and the column resizes under an open
+  // dialog. They are dsh's own elements: mark the body instead, and the plugin's style block
+  // switches their pointer events off for as long as the panel is mounted.
+  useEffect(() => {
+    if (!open) return;
+    document.body.dataset.omcPanelOpen = "1";
+    return () => {
+      delete document.body.dataset.omcPanelOpen;
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;

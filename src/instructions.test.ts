@@ -3,7 +3,25 @@ import assert from "node:assert/strict";
 import { mkdtemp, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { importsIn, listInstructions } from "./instructions.js";
+import { importsIn, instructionCandidates, listInstructions } from "./instructions.js";
+
+// The paths the walk is warmed with, in load order: managed, user, then every ancestor root-first.
+// One that drifts out of this list is one the walk waits a whole ssh round trip for.
+{
+  assert.deepEqual(instructionCandidates("/a/b", "/home/u/.claude"), [
+    "/etc/claude-code/CLAUDE.md",
+    "/home/u/.claude/CLAUDE.md",
+    "/CLAUDE.md",
+    "/.claude/CLAUDE.md",
+    "/CLAUDE.local.md",
+    "/a/CLAUDE.md",
+    "/a/.claude/CLAUDE.md",
+    "/a/CLAUDE.local.md",
+    "/a/b/CLAUDE.md",
+    "/a/b/.claude/CLAUDE.md",
+    "/a/b/CLAUDE.local.md",
+  ]);
+}
 
 // What counts as an `@` import, and what the CLI would leave alone.
 {

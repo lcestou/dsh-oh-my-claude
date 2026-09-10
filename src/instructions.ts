@@ -2,7 +2,7 @@
 // pull in with `@`. Read-only: the routes in sessions.ts use this list as their allowlist. The
 // walk and the import rules were read off the 2.1.263 binary; tested in instructions.test.ts.
 import { dirname, join, resolve } from "node:path";
-import { homeAt, listNamesAt, readAt, type FsBox } from "./remote-fs.js";
+import { homeAt, listNamesAt, readAt, type FileRead, type FsBox } from "./remote-fs.js";
 
 /** Where a file sits in the hierarchy, named as the CLI names its own layers. */
 export type InstructionKind = "Managed" | "User" | "Project" | "Local";
@@ -62,6 +62,61 @@ const rulesIn = async (box: FsBox, dir: string): Promise<string[]> => {
     .map((n) => join(dir, n));
 };
 
+/** The ancestors of `cwd`, root first: the order the CLI loads them in, nearest file last. */
+const ancestors = (cwd: string): string[] => {
+  const chain: string[] = [];
+  for (let dir = resolve(cwd); ; dir = dirname(dir)) {
+    chain.unshift(dir);
+    if (dir === dirname(dir)) break;
+  }
+  return chain;
+};
+
+/**
+ * Every file the walk below asks for by name, in walk order. Only the fixed ones: a rules file is
+ * named by a directory listing that has not happened yet, and an `@` import by a file that has not
+ * been read yet, so both are found on the way through.
+ */
+export const instructionCandidates = (cwd: string, claudeHome: string): string[] => [
+  join(MANAGED_DIR, "CLAUDE.md"),
+  join(claudeHome, "CLAUDE.md"),
+  ...ancestors(cwd).flatMap((dir) => [
+    join(dir, "CLAUDE.md"),
+    join(dir, ".claude", "CLAUDE.md"),
+    join(dir, "CLAUDE.local.md"),
+  ]),
+];
+
+/** The rules directories the walk lists, in walk order. */
+const ruleDirs = (cwd: string, claudeHome: string): string[] => [
+  join(MANAGED_DIR, ".claude", "rules"),
+  join(claudeHome, "rules"),
+  ...ancestors(cwd).map((dir) => join(dir, ".claude", "rules")),
+];
+
+/**
+ * How many reads may be in flight at once.
+ *
+ * On an ssh box every read is a channel on the shared connection, and sshd's default MaxSessions is
+ * 10 — open more and the extras are refused, which would read as a missing file. Six leaves room for
+ * the session pipe and the status probe to keep working while a panel loads.
+ * ponytail: a fixed cap, not a pool shared with the rest of the plugin's ssh; raise it only
+ * alongside the box's MaxSessions.
+ */
+const READ_FANOUT = 6;
+
+/** Run `job` over `items`, `limit` at a time. Results are discarded: each job caches its own. */
+const inFlight = async <T>(items: string[], limit: number, job: (item: string) => Promise<T>) => {
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const item = items[next++];
+      if (item !== undefined) await job(item);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+};
+
 /**
  * Whether a listed file may be written back. The list doubles as the write allowlist, and a `@`
  * line puts any absolute path a repo names on it — a cloned `CLAUDE.md` holding `@~/.ssh/authorized_keys`
@@ -83,18 +138,54 @@ export async function listInstructions(
 ): Promise<InstructionFile[]> {
   const files: InstructionFile[] = [];
   const seen = new Set<string>();
-  // `~/` in an import is the home of the box the files live on, not this PC's.
-  const home = await homeAt(box);
+
+  // One read serves both the listing and the imports it pulls in, which is a round trip rather
+  // than two for a box across ssh. Anything that will not read as a file — absent, a directory,
+  // unreadable — is skipped: this walk is discovery, and the status panel is where a box that
+  // cannot be reached is reported.
+  const reads = new Map<string, Promise<FileRead | null>>();
+  const readOnce = (at: string): Promise<FileRead | null> => {
+    let job = reads.get(at);
+    if (job === undefined) {
+      job = readAt(box, at).catch(() => null);
+      reads.set(at, job);
+    }
+    return job;
+  };
+  const lists = new Map<string, Promise<string[]>>();
+  const listOnce = (dir: string): Promise<string[]> => {
+    let job = lists.get(dir);
+    if (job === undefined) {
+      job = rulesIn(box, dir);
+      lists.set(dir, job);
+    }
+    return job;
+  };
+
+  // The walk below is a chain of awaits, so on an ssh box it used to spend one full round trip per
+  // ancestor file with the connection idle in between — about 25 of them in a row, 0.09s each on a
+  // LAN even with the shared connection. The paths it will ask for are known before it starts, so
+  // they go out together first and the walk reads their answers; it still visits them in load
+  // order, and a path the prefetch did not know (a rules file, an `@` import) is fetched when it
+  // is reached.
+  // `~/` in an import is the home of the box the files live on, not this PC's. It is asked for
+  // alongside the prefetch rather than after it: it is one more round trip on an ssh box, and
+  // nothing before the first `@` line needs the answer.
+  const homeJob = homeAt(box);
+  // A box that cannot be reached rejects this, and the prefetch below is several awaits long: with
+  // no handler attached yet that reaches the host as an unhandled rejection. The await further down
+  // is what reports it, as before; this only says someone is coming for it.
+  void homeJob.catch(() => {});
+  const warm = inFlight(instructionCandidates(cwd, claudeHome), READ_FANOUT, readOnce);
+  await inFlight(ruleDirs(cwd, claudeHome), READ_FANOUT, listOnce);
+  await warm;
+  const home = await homeJob;
 
   const add = async (path: string, kind: InstructionKind, depth = 0, importedBy?: string) => {
     const at = resolve(path);
     if (seen.has(at)) return;
     seen.add(at);
-    // One read serves both the listing and the imports it pulls in, which is a round trip rather
-    // than two for a box across ssh. Anything that will not read as a file — absent, a directory,
-    // unreadable — is skipped: this walk is discovery, and the status panel is where a box that
-    // cannot be reached is reported.
-    const found = await readAt(box, at).catch(() => null);
+    const found = await readOnce(at);
     if (found === null) return;
     const file: InstructionFile = {
       path: at,
@@ -110,23 +201,17 @@ export async function listInstructions(
   };
 
   await add(join(MANAGED_DIR, "CLAUDE.md"), "Managed");
-  for (const rule of await rulesIn(box, join(MANAGED_DIR, ".claude", "rules")))
+  for (const rule of await listOnce(join(MANAGED_DIR, ".claude", "rules")))
     await add(rule, "Managed");
 
   await add(join(claudeHome, "CLAUDE.md"), "User");
-  for (const rule of await rulesIn(box, join(claudeHome, "rules"))) await add(rule, "User");
+  for (const rule of await listOnce(join(claudeHome, "rules"))) await add(rule, "User");
 
   // Root first, workspace last: the nearer file is loaded later and so has the last word.
-  const chain: string[] = [];
-  for (let dir = resolve(cwd); ; dir = dirname(dir)) {
-    chain.unshift(dir);
-    if (dir === dirname(dir)) break;
-  }
-  for (const dir of chain) {
+  for (const dir of ancestors(cwd)) {
     await add(join(dir, "CLAUDE.md"), "Project");
     await add(join(dir, ".claude", "CLAUDE.md"), "Project");
-    for (const rule of await rulesIn(box, join(dir, ".claude", "rules")))
-      await add(rule, "Project");
+    for (const rule of await listOnce(join(dir, ".claude", "rules"))) await add(rule, "Project");
     await add(join(dir, "CLAUDE.local.md"), "Local");
   }
   return files;

@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { AsideEntry, TurnRecord } from "./adapter.js";
+import type { ToolMode } from "./rows-probe.js";
 
 /** Claude Code's config dir: transcripts, settings.json. Honors CLAUDE_CONFIG_DIR like the CLI. */
 export const CLAUDE_HOME = process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude");
@@ -629,3 +630,23 @@ export function buildRedactor(env: Record<string, string | undefined>): (s: stri
     return out;
   };
 }
+
+/** Tool activity as the Tune switch last set it; absent means the config default. */
+export const TOOL_MODE_FILE = (d: string) => join(d, "tool-mode.json");
+
+export async function loadToolMode(dir: string): Promise<ToolMode | undefined> {
+  try {
+    const parsed: unknown = JSON.parse(await readFile(TOOL_MODE_FILE(dir), "utf8"));
+    // SAFETY: a top-level JSON object; the one key read is checked against its two values below.
+    const mode =
+      typeof parsed === "object" && parsed !== null
+        ? (parsed as { mode?: unknown }).mode
+        : undefined;
+    return mode === "inline" || mode === "rows" ? mode : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export const saveToolMode = (dir: string, mode: ToolMode): Promise<void> =>
+  writeJson(TOOL_MODE_FILE(dir), { mode });

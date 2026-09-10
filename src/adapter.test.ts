@@ -3209,6 +3209,8 @@ console.log("command-bridge ok");
   const rows = { toolActivity: true, toolsInline: false };
   assert.deepEqual(nativeToolRows(rows, 0), { rows: true, refused: false });
   assert.deepEqual(nativeToolRows(rows, 3), { rows: false, refused: true });
+  // A dsh whose loader takes raw rows (the probe passed) lifts the refusal on a versioned format.
+  assert.deepEqual(nativeToolRows(rows, 3, true), { rows: true, refused: false });
   assert.deepEqual(nativeToolRows({ toolActivity: true, toolsInline: true }, 3), {
     rows: false,
     refused: false,

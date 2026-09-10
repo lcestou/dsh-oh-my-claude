@@ -66,6 +66,7 @@ import type {
 } from "./dsh.js";
 import { errorText } from "./process.js";
 import { featureSwitches } from "./switches.js";
+import type { ToolMode, ToolModeInfo } from "./rows-probe.js";
 import {
   isMarketplaceSource,
   isPluginId,
@@ -1118,6 +1119,11 @@ export interface SessionRouteOptions {
     extend(session: string): boolean;
     timeoutMs: number;
   };
+  /** Tool activity as the Tune switch reads and sets it, with whether this dsh takes rows at all. */
+  toolMode?: {
+    info(): Promise<ToolModeInfo>;
+    set(mode: ToolMode): Promise<ToolModeInfo>;
+  };
   /** Per-session permission mode: read the effective mode, set or clear the override. */
   permissionModes?: {
     info: (sessionId: string) => PermissionModeInfo;
@@ -1196,6 +1202,7 @@ export function registerSessionRoutes(
     sshHost,
     turnRecords,
     idle,
+    toolMode,
     permissionModes,
     thinking,
     rewind,
@@ -1966,6 +1973,19 @@ export function registerSessionRoutes(
                 if (result.error) return json(res, 400, { error: result.error });
                 log("info", `mcp server ${body.name} removed`);
                 return json(res, 200, { ok: true });
+              }
+              // Tool activity: inline text (the default) or dsh's native rows. The Tune tab reads
+              // it on open; a PUT takes effect on the next turn, no restart. Rows stay refused while
+              // the running dsh will not load a log holding them, and the reason rides along.
+              if (toolMode && url.pathname === `${ROUTE_PREFIX}/tool-mode`) {
+                if (req.method === "GET") return json(res, 200, await toolMode.info());
+                if (req.method === "PUT") {
+                  const { mode } = await readBody(req);
+                  if (mode !== "inline" && mode !== "rows")
+                    return json(res, 400, { error: "mode must be inline or rows" });
+                  return json(res, 200, await toolMode.set(mode));
+                }
+                return json(res, 405, { error: "method not allowed" });
               }
               if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/idle`) {
                 const sid = url.searchParams.get("session");
