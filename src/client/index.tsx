@@ -3786,7 +3786,10 @@ const DOCK_CARD: CSSProperties = {
     "calc(100% - var(--dsh-composer-side-clearance) - var(--dsh-composer-side-clearance) - var(--dsh-composer-dock-inset) - var(--dsh-composer-dock-inset))",
   maxWidth:
     "calc(var(--dsh-composer-card-max-width) - var(--dsh-composer-dock-inset) - var(--dsh-composer-dock-inset))",
-  margin: "0 auto calc(0px - var(--dsh-composer-stack-gap) - 3px)",
+  // dsh stacks the dock and the composer with its stack gap between them; pulling the card up by
+  // most of that gap keeps it close, and the 4 px left over is what stops the composer's top edge
+  // from clipping the strip's buttons.
+  margin: "0 auto calc(4px - var(--dsh-composer-stack-gap))",
   padding: "0 var(--dsh-composer-dock-inset)",
   flex: "none",
   display: "flex",

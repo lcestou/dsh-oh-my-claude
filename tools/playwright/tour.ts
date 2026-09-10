@@ -94,7 +94,21 @@ if (!process.env.PW_CLIPS_ONLY) {
   const p = await open(ctx);
   await hit(p.locator('button[aria-label="Oh My Claude"]'));
   await wait(p, 1500);
-  for (const t of ["Memory", "Rewind", "Changes", "Asides"]) {
+  // Asides first: its shot wants the answered side question, and the pinned card of that same
+  // question would otherwise sit behind every other shot, so it is dismissed right after.
+  await hit(tab(p, "Asides"));
+  await wait(p, 1500);
+  await shot(p, "panel-asides", await composerClip(p));
+  await p.keyboard.press("Escape");
+  await wait(p, 400);
+  const pinned = p.locator('button[aria-label="Dismiss side question"]');
+  if (await pinned.count()) {
+    await hit(pinned.first());
+    await wait(p, 600);
+  }
+  await hit(p.locator('button[aria-label="Oh My Claude"]'));
+  await wait(p, 1500);
+  for (const t of ["Memory", "Rewind", "Changes"]) {
     await hit(tab(p, t));
     await wait(p, 1500);
     await shot(p, `panel-${t.toLowerCase()}`, await composerClip(p));

@@ -3858,8 +3858,9 @@ console.log("interrupt-on-abort ok");
   console.log("mcp-status ok");
 }
 
-// CLI model picker: list_models entries lead the catalog, known models they cover drop out,
-// the rest follow so ids stored in older dsh sessions still resolve.
+// CLI model picker: list_models entries lead the catalog, a known model whose exact id a CLI row
+// now carries drops out, the rest follow so ids stored in dsh sessions still resolve. A `[1m]`
+// variant or the `default` alias keeps its own id, so the plain model it resolves to stays too.
 {
   const cli = [
     {
@@ -3888,7 +3889,11 @@ console.log("interrupt-on-abort ok");
       "whether or not the CLI has answered yet",
   );
   const rest = merged.slice(3).map((m) => m.id);
-  assert.ok(!rest.includes("claude-opus-5"), "covered by default");
+  assert.ok(
+    rest.includes("claude-opus-5"),
+    "default resolves to the 1M variant and keeps the id `default`, so the plain id stays for " +
+      "sessions bound to it",
+  );
   assert.ok(!rest.includes("claude-sonnet-5"), "covered by sonnet");
   assert.ok(!rest.includes("claude-haiku-4-5"), "covered by haiku (dated id)");
   assert.ok(rest.includes("claude-fable-5-1"), "uncovered known model stays");
