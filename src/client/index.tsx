@@ -4653,7 +4653,7 @@ function TerminalSyncSwitch() {
         </div>
         <div style={{ color: T.faint, fontSize: 12 }}>
           {err ||
-            "Copy exchanges from a terminal that picked this session up with claude /resume into this dsh session as they land. Experimental: it holds a turn open while it fills, so a prompt you type can wait behind it. Carrying a session between dsh and a terminal works either way — this only controls the live copy."}
+            "Copy exchanges from a terminal that picked this session up with claude /resume into this dsh session as they land. Experimental: it holds a turn open while it fills, so a prompt you type can wait behind it. Carrying a session between dsh and a terminal works either way; this only controls the live copy."}
         </div>
       </div>
       <Switch on={on ?? false} onChange={(next) => void toggle(next)} label="Terminal mirror" />
