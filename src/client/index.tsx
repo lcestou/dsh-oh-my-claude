@@ -2984,20 +2984,13 @@ const wireTurnStatus = (
   void poll();
   paint();
 
-  // Re-apply on characterData mutations (dsh may reset the text node).
-  const obs = new MutationObserver((records) => {
-    for (const r of records) {
-      if (r.type === "characterData" && textNode && r.target === textNode) {
-        if (textNode.nodeValue !== verbLabel) textNode.nodeValue = verbLabel;
-      }
-    }
+  // Re-apply when dsh resets the verb's text node. Observed on that node alone: watching the whole
+  // row with subtree fired the callback on every clock tick and on every write of ours, and the
+  // handler only ever looked at this one node anyway.
+  const obs = new MutationObserver(() => {
+    if (textNode && textNode.nodeValue !== verbLabel) textNode.nodeValue = verbLabel;
   });
-  obs.observe(el, {
-    childList: true,
-    subtree: true,
-    characterData: true,
-    characterDataOldValue: false,
-  });
+  if (textNode) obs.observe(textNode, { characterData: true });
 };
 
 /**
