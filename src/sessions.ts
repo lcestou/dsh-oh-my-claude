@@ -88,6 +88,7 @@ import type {
   WorkspaceDiffReply,
   McpStatusReply,
   AsideEntry,
+  LiveTurn,
 } from "./adapter.js";
 
 const ROUTE_PREFIX = "/dsh-oh-my-claude";
@@ -1133,10 +1134,7 @@ export interface SessionRouteOptions {
   /** Per-session turn accounting buffer from the adapter. */
   turnRecords?: Map<string, import("./adapter.js").TurnRecord[]>;
   /** The running turn's figures per session, for the status row; absent when no turn is running. */
-  liveTurn?: Map<
-    string,
-    { thinking?: number; thinkingOpen?: boolean; thinkingAt?: number; output?: number; at: number }
-  >;
+  liveTurn?: Map<string, LiveTurn>;
   /** Idle watchdog state from the adapter. */
   idle?: {
     deadlineFor(session: string): number | null;
@@ -1908,11 +1906,19 @@ export function registerSessionRoutes(
                 // the thinking block in progress, which the next usage frame folds in for real.
                 const live = liveTurn?.get(sid);
                 if (!live) return json(res, 200, {});
-                // `thinkingMs` is how long the open thinking burst has run; absent when none is open.
+                // `thinkingMs` is how long the open thinking burst has run, absent when none is open;
+                // `idleMs` is the time since the last frame of model output; `tool` says a call is
+                // in flight. The client turns these into the CLI's own colour ramps.
+                const now = Date.now();
                 const open = live.thinkingOpen === true && live.thinkingAt !== undefined;
                 return json(res, 200, {
                   tokens: (live.output ?? 0) + (live.thinking ?? 0),
-                  thinkingMs: open ? Date.now() - live.thinkingAt! : undefined,
+                  thinkingMs: open ? now - live.thinkingAt! : undefined,
+                  idleMs: live.frameAt !== undefined ? now - live.frameAt : undefined,
+                  tool: live.tool === true,
+                  thoughtMs: live.thoughtMs,
+                  thoughtAgoMs: live.thoughtAt !== undefined ? now - live.thoughtAt : undefined,
+                  effort: live.effort,
                 });
               }
               if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/turns`) {

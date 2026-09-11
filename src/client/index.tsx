@@ -2765,7 +2765,7 @@ const ensureTurnStatusStyle = () => {
   // clearance, which leaves its pills 653px in a 717px column. dsh's two fill that; ours as a
   // third clips all three to an ellipsis by a few pixels. The pills are centred, so the padding
   // does no aligning; take it down to the row's rounded corners and the three fit.
-  styleEl.textContent = `body[data-omc-claude] [role="status"][aria-live="polite"],[data-dsh-oh-my-claude-turn]{background-image:linear-gradient(90deg,${CLAUDE_ORANGE} 0%,${CLAUDE_ORANGE} 40%,${CLAUDE_SHIMMER} 50%,${CLAUDE_ORANGE} 60%,${CLAUDE_ORANGE} 100%)}body[data-omc-claude] [role="status"][aria-live="polite"][data-omc-warm],[data-dsh-oh-my-claude-turn][data-omc-warm]{background-image:linear-gradient(90deg,${T.warn} 0%,${T.warn} 40%,color-mix(in srgb,${T.warn} 65%,white) 50%,${T.warn} 60%,${T.warn} 100%)}[data-dsh-oh-my-claude-turn]>span[aria-hidden]{display:inline-block;width:1.3em;text-align:start;flex:none}body[data-omc-claude] [role="tablist"]>[role="tab"][aria-selected="true"]{color:${CLAUDE_ORANGE}}body[data-omc-claude] [role="tablist"]>[role="tab"][aria-selected="true"]::after{background:${CLAUDE_ORANGE}}body[data-omc-claude] [class*="_markdown"] blockquote{border-left-color:${CLAUDE_ORANGE}80}body[data-omc-claude] [class*="_markdown"] hr{background:${CLAUDE_ORANGE}59}body[data-omc-claude] [class*="_markdown"] a{color:${CLAUDE_ORANGE};text-decoration-color:${CLAUDE_ORANGE}66}body[data-omc-claude] [class*="_markdown"] a:hover{color:${CLAUDE_SHIMMER};text-decoration-color:${CLAUDE_SHIMMER}}body[data-omc-claude] [class*="_markdown"] input[type="checkbox"]{accent-color:${CLAUDE_ORANGE}}body[data-omc-claude] [data-workflow-run] button[data-member-status] [data-member-label]{color:${CLAUDE_ORANGE}}body[data-omc-panel-open] [data-width-handle]{pointer-events:none}body[data-omc-panel-open] [class*="_toBottomSlot"]{opacity:0;pointer-events:none;transition:opacity .1s}@keyframes omc-pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,${CLAUDE_ORANGE} 55%,transparent)}100%{box-shadow:0 0 0 12px transparent}}button[aria-label="Oh My Claude"][data-omc-pulse]{animation:omc-pulse 1.1s ease-out 3}@media (prefers-reduced-motion:reduce){button[aria-label="Oh My Claude"][data-omc-pulse]{animation:none}}body[data-omc-claude] [data-produced-files-row] button{color:${CLAUDE_ORANGE}}body[data-omc-claude] [data-produced-files-row] button:hover{color:${CLAUDE_SHIMMER}}body[data-omc-claude] [data-composer-stats]{padding-left:8px;padding-right:8px}body[data-omc-claude] [class*="_optionLine"]>[class*="_badge"]{background:color-mix(in srgb,${CLAUDE_ORANGE} 16%,transparent);color:${CLAUDE_ORANGE}}${COST_DIALOG_CSS}`;
+  styleEl.textContent = `body[data-omc-claude] [role="status"][aria-live="polite"],[data-dsh-oh-my-claude-turn]{background-image:var(--omc-row-bg,linear-gradient(90deg,${CLAUDE_ORANGE} 0%,${CLAUDE_ORANGE} 40%,${CLAUDE_SHIMMER} 50%,${CLAUDE_ORANGE} 60%,${CLAUDE_ORANGE} 100%))}@keyframes omc-word{from{-webkit-text-fill-color:var(--omc-word-lo)}to{-webkit-text-fill-color:var(--omc-word-hi)}}[data-omc-turn-word]{animation:omc-word 1s ease-in-out 3s infinite alternate}@media (prefers-reduced-motion:reduce){[data-omc-turn-word]{animation:none}}[data-dsh-oh-my-claude-turn]>span[aria-hidden]{display:inline-block;width:1.3em;text-align:start;flex:none}body[data-omc-claude] [role="tablist"]>[role="tab"][aria-selected="true"]{color:${CLAUDE_ORANGE}}body[data-omc-claude] [role="tablist"]>[role="tab"][aria-selected="true"]::after{background:${CLAUDE_ORANGE}}body[data-omc-claude] [class*="_markdown"] blockquote{border-left-color:${CLAUDE_ORANGE}80}body[data-omc-claude] [class*="_markdown"] hr{background:${CLAUDE_ORANGE}59}body[data-omc-claude] [class*="_markdown"] a{color:${CLAUDE_ORANGE};text-decoration-color:${CLAUDE_ORANGE}66}body[data-omc-claude] [class*="_markdown"] a:hover{color:${CLAUDE_SHIMMER};text-decoration-color:${CLAUDE_SHIMMER}}body[data-omc-claude] [class*="_markdown"] input[type="checkbox"]{accent-color:${CLAUDE_ORANGE}}body[data-omc-claude] [data-workflow-run] button[data-member-status] [data-member-label]{color:${CLAUDE_ORANGE}}body[data-omc-panel-open] [data-width-handle]{pointer-events:none}body[data-omc-panel-open] [class*="_toBottomSlot"]{opacity:0;pointer-events:none;transition:opacity .1s}@keyframes omc-pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,${CLAUDE_ORANGE} 55%,transparent)}100%{box-shadow:0 0 0 12px transparent}}button[aria-label="Oh My Claude"][data-omc-pulse]{animation:omc-pulse 1.1s ease-out 3}@media (prefers-reduced-motion:reduce){button[aria-label="Oh My Claude"][data-omc-pulse]{animation:none}}body[data-omc-claude] [data-produced-files-row] button{color:${CLAUDE_ORANGE}}body[data-omc-claude] [data-produced-files-row] button:hover{color:${CLAUDE_SHIMMER}}body[data-omc-claude] [data-composer-stats]{padding-left:8px;padding-right:8px}body[data-omc-claude] [class*="_optionLine"]>[class*="_badge"]{background:color-mix(in srgb,${CLAUDE_ORANGE} 16%,transparent);color:${CLAUDE_ORANGE}}${COST_DIALOG_CSS}`;
   document.head.appendChild(styleEl);
 };
 
@@ -2807,6 +2807,51 @@ const THINKING_WORDS: [number, string][] = [
 ];
 const thinkingWord = (ms: number): string =>
   THINKING_WORDS.find(([at]) => ms >= at)?.[1] ?? "thinking";
+
+type Rgb = readonly [number, number, number];
+/** The CLI's spinner colours (2.1.268 themes). `claude` is the same in both; the shimmer and the
+ *  warning shade differ, so the row picks by the page's background. The stall red is a constant in
+ *  the spinner code, not a theme entry. The grey pair is the bracket word's idle pulse. */
+const SPINNER_DARK = {
+  claude: [215, 119, 87],
+  shimmer: [235, 159, 127],
+  warning: [255, 193, 7],
+} as const;
+const SPINNER_LIGHT = {
+  claude: [215, 119, 87],
+  shimmer: [245, 149, 117],
+  warning: [150, 108, 30],
+} as const;
+const STALL_RED: Rgb = [171, 43, 63];
+const WORD_GREY_LO: Rgb = [153, 153, 153];
+const WORD_GREY_HI: Rgb = [185, 185, 185];
+const clamp01 = (n: number): number => Math.min(Math.max(n, 0), 1);
+const mixRgb = (a: Rgb, b: Rgb, t: number): Rgb => [
+  Math.round(a[0] + (b[0] - a[0]) * t),
+  Math.round(a[1] + (b[1] - a[1]) * t),
+  Math.round(a[2] + (b[2] - a[2]) * t),
+];
+const cssRgb = (c: Rgb): string => `rgb(${c[0]},${c[1]},${c[2]})`;
+/** Dark page or light, from the body's own background: dsh keeps its theme in CSS variables and
+ *  exposes no flag, and the luminance of what is actually painted is what the eye compares to. */
+const pageIsDark = (): boolean => {
+  const m = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(getComputedStyle(document.body).backgroundColor);
+  if (!m) return true;
+  return (Number(m[1]) * 299 + Number(m[2]) * 587 + Number(m[3]) * 114) / 1000 < 128;
+};
+/** The CLI's ramps: nothing for the first 10s, then linear to full over the next 10s. */
+const rampAfter10s = (ms: number): number => clamp01((ms - 10_000) / 10_000);
+/** One 50ms step of the CLI's count easing, in characters (tokens × 4): small gaps close by 3,
+ *  middling ones by 15%, large ones by 50, and a gap past 2000 snaps. */
+const easeChars = (shown: number, target: number): number => {
+  const gap = target - shown;
+  if (gap === 0) return shown;
+  const abs = Math.abs(gap);
+  if (abs > 2000) return target;
+  const step = abs < 70 ? 3 : abs < 200 ? Math.max(8, Math.ceil(abs * 0.15)) : 50;
+  return gap > 0 ? Math.min(shown + step, target) : Math.max(shown - step, target);
+};
+const noBeat = (): void => undefined;
 const wireTurnStatus = (
   el: HTMLElement,
   sessionId: string,
@@ -2828,6 +2873,8 @@ const wireTurnStatus = (
   );
 
   const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  /** The figure and colour beat, assigned once the row's state exists below. */
+  let onTick: () => void = noBeat;
   let frameIndex = 0;
   let direction = 1; // 1 = forward, -1 = reverse
 
@@ -2864,6 +2911,7 @@ const wireTurnStatus = (
         return;
       }
       tick();
+      onTick();
     },
     // A reduced-motion spinner is one glyph that never changes, so its beat is the teardown check
     // and nothing else; 1s notices an unmounted row soon enough at an eighth of the wakeups.
@@ -2916,13 +2964,56 @@ const wireTurnStatus = (
     }
     return undefined;
   };
-  let tokens = "";
-  /** Age of the open thinking burst in ms from the route, -1 when none is open. */
+  // The figures the route last reported, and when, so the beat can carry them forward between
+  // polls: the burst and stall ages grow with the clock, the count eases toward its target.
+  let polledAt = 0;
+  let targetChars = 0;
   let thinkingMs = -1;
-  /** What the bracket last showed, so a beat that changes nothing writes nothing: rebuilding the
-   *  span every second invalidated layout for a row that reads the same as before. */
+  let idleMs = -1;
+  let tool = false;
+  let thoughtMs = -1;
+  let thoughtAgoMs = -1;
+  let effort = "";
+  // What is on screen: the eased count in characters (the CLI eases its response length, and
+  // shows it over four) and the two colour ramps, each chased 10% per 50ms like the CLI does.
+  let shownChars = 0;
+  let thinkIntensity = 0;
+  let stallIntensity = 0;
+  let lastBeat = Date.now();
+  const palette = pageIsDark() ? SPINNER_DARK : SPINNER_LIGHT;
+  /** What the bracket last showed, so a beat that changes nothing writes nothing. */
   let painted = "";
+  const wordNode = document.createElement("span");
+  wordNode.setAttribute("data-omc-turn-word", "1");
   const paint = () => {
+    const now = Date.now();
+    const since = polledAt > 0 ? now - polledAt : 0;
+    const burst = thinkingMs >= 0 ? thinkingMs + since : -1;
+    const idle = idleMs >= 0 ? idleMs + since : -1;
+    // The CLI holds both ramps at zero while a tool runs, and the stall ramp while thinking: a
+    // running tool is silence by design, and thinking has its own ramp.
+    const thinkTarget = burst >= 0 && !tool ? rampAfter10s(burst) : 0;
+    const stallTarget = burst < 0 && !tool && idle >= 0 ? rampAfter10s(idle) : 0;
+    if (reduced) {
+      thinkIntensity = thinkTarget;
+      stallIntensity = stallTarget;
+      shownChars = targetChars;
+    } else {
+      const steps = Math.floor((now - lastBeat) / 50);
+      if (steps > 0) {
+        for (let i = 0; i < steps; i++) {
+          thinkIntensity += (thinkTarget - thinkIntensity) * 0.1;
+          stallIntensity += (stallTarget - stallIntensity) * 0.1;
+          shownChars = easeChars(shownChars, targetChars);
+        }
+        lastBeat += steps * 50;
+      }
+    }
+    // Snap to the target once within a hair of it, so the memo key settles.
+    if (Math.abs(thinkTarget - thinkIntensity) < 0.01) thinkIntensity = thinkTarget;
+    if (Math.abs(stallTarget - stallIntensity) < 0.01) stallIntensity = stallTarget;
+    const ti = thinkIntensity;
+    const si = stallIntensity;
     const parts: string[] = [];
     const clock = clockNode();
     const time = (clock?.textContent ?? "").trim();
@@ -2930,37 +3021,65 @@ const wireTurnStatus = (
     // dsh's copy goes quiet only while ours is showing the same figure. Hiding it unconditionally is
     // what left the row reading just the verb when the read came back empty.
     if (clock) clock.style.display = time ? "none" : "";
-    if (tokens) parts.push(tokens);
-    // The state word is a node of its own so it can warm to amber once thinking has run long, the
-    const ms = thinkingMs;
-    const word = ms >= 0 ? thinkingWord(ms) : "";
-    const warm = ms >= THINKING_WORDS[THINKING_WORDS.length - 1]![0];
-    const key = `${parts.join("\0")}\0${word}\0${warm}`;
+    const shownTokens = Math.round(shownChars / 4);
+    if (shownTokens > 0) parts.push(`↓ ${shortCount(shownTokens)} tokens`);
+    // The CLI names the effort after the word when one was asked for, and once a burst closes
+    // it says "thought for Ns" for two seconds, never sooner than two seconds after the burst
+    // began.
+    let word = "";
+    if (burst >= 0) word = `${thinkingWord(burst)}${effort ? ` with ${effort} effort` : ""}`;
+    else if (thoughtAgoMs >= 0) {
+      const closedFor = thoughtAgoMs + since;
+      const showAt = Math.max(0, 2000 - thoughtMs);
+      if (closedFor >= showAt && closedFor < showAt + 2000)
+        word = `thought for ${Math.max(1, Math.round(thoughtMs / 1000))}s`;
+    }
+    const thinking = burst >= 0;
+    // The CLI's colours. Verb and spinner: Claude orange, toward the warning shade by the thinking
+    // ramp, toward its stall red by the stall ramp; the spinner goes bold past half. The word:
+    // a slow grey pulse, itself pulled toward the warning shade by the thinking ramp. Time, count
+    // and the brackets stay dim. Once either ramp is above zero the verb is one flat colour, no
+    // shimmer: the CLI's glimmer only draws when neither ramp is up.
+    const tint =
+      ti > 0
+        ? mixRgb(palette.claude, palette.warning, ti)
+        : si > 0
+          ? mixRgb(palette.claude, STALL_RED, si)
+          : undefined;
+    const lo = cssRgb(mixRgb(WORD_GREY_LO, palette.warning, ti));
+    const hi = cssRgb(mixRgb(WORD_GREY_HI, palette.warning, ti));
+    const key = `${parts.join("\0")}\0${word}\0${tint ? cssRgb(tint) : ""}\0${lo}\0${hi}\0${ti >= 0.5}`;
     if (key === painted) return;
     painted = key;
-    // The whole row warms with the word, spinner and verb included, the way the CLI's line does once
-    // a burst has run long. An attribute rather than inline styles: the row's colour is a clipped
-    // background gradient, and the rule that paints it is the one place that can swap it.
-    if (warm) el.setAttribute("data-omc-warm", "1");
-    else el.removeAttribute("data-omc-warm");
-    // way the CLI's own line does. Neither the wording nor the colour is ever put on the wire, so
-    // the rule is kept here rather than relayed.
+    if (tint)
+      el.style.setProperty(
+        "--omc-row-bg",
+        `linear-gradient(90deg,${cssRgb(tint)},${cssRgb(tint)})`,
+      );
+    else el.style.removeProperty("--omc-row-bg");
+    spinner.style.fontWeight = ti >= 0.5 ? "bold" : "";
     if (word) {
       detailSpan.textContent = "";
-      detailSpan.append(` (${parts.join(" · ")}${parts.length > 0 ? " · " : ""}`);
-      const wordNode = document.createElement("span");
-
+      detailSpan.append(` (${parts.join(" · ")}${parts.length > 0 ? " · " : ""}`);
       wordNode.textContent = word;
-      if (warm) {
-        wordNode.style.setProperty("color", T.warn, "important");
-        wordNode.style.setProperty("-webkit-text-fill-color", T.warn, "important");
+      if (thinking) {
+        // The grey pulse, pulled toward the warning shade by the ramp.
+        wordNode.setAttribute("data-omc-turn-word", "1");
+        wordNode.style.setProperty("--omc-word-lo", lo);
+        wordNode.style.setProperty("--omc-word-hi", hi);
+        wordNode.style.setProperty("-webkit-text-fill-color", lo, "important");
+      } else {
+        // "thought for Ns": the warning shade while the ramp is still fading, dim after.
+        wordNode.removeAttribute("data-omc-turn-word");
+        const c = ti > 0 ? cssRgb(palette.warning) : T.faint;
+        wordNode.style.setProperty("-webkit-text-fill-color", c, "important");
       }
       detailSpan.append(wordNode, ")");
       return;
     }
     // A non-breaking space: an ordinary one is at the edge of the element and collapses away, which
     // ran the bracket straight into the verb.
-    detailSpan.textContent = parts.length > 0 ? ` (${parts.join(" · ")})` : "";
+    detailSpan.textContent = parts.length > 0 ? ` (${parts.join(" · ")})` : "";
   };
   const poll = async () => {
     // A hidden tab paints nothing, so its read would be a round trip for no one; the next beat
@@ -2968,17 +3087,32 @@ const wireTurnStatus = (
     if (!el.isConnected || document.hidden) return;
     try {
       const r = await fetch(`${ROUTE}/live-turn?session=${encodeURIComponent(sessionId)}`);
-      const b = await readJson<{ tokens?: number; thinkingMs?: number }>(r);
-      tokens = b.tokens !== undefined && b.tokens > 0 ? `↓ ${shortCount(b.tokens)} tokens` : "";
-      // The burst's age comes from the adapter, which saw the block open; a tab that opens
-      // mid-think would otherwise start its own clock late and climb the ladder late with it.
+      const b = await readJson<{
+        tokens?: number;
+        thinkingMs?: number;
+        idleMs?: number;
+        tool?: boolean;
+        thoughtMs?: number;
+        thoughtAgoMs?: number;
+        effort?: string;
+      }>(r);
+      targetChars = (b.tokens ?? 0) * 4;
+      // The ages come from the adapter, which saw the block open and the last frame land; a tab
+      // that opens mid-think would otherwise start its own clocks late.
       thinkingMs = b.thinkingMs ?? -1;
+      idleMs = b.idleMs ?? -1;
+      tool = b.tool === true;
+      thoughtMs = b.thoughtMs ?? -1;
+      thoughtAgoMs = b.thoughtAgoMs ?? -1;
+      effort = b.effort ?? "";
+      polledAt = Date.now();
     } catch {
       // the row keeps its verb; the bracket is decoration
     }
     paint();
   };
   const pollTimer = setInterval(() => void poll(), 1000);
+  onTick = paint;
   void poll();
   paint();
 

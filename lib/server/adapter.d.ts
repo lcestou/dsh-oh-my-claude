@@ -595,6 +595,22 @@ export declare function hasPendingTodo(todos: JsonValue[]): boolean;
  * into stdin lines and the CLI's stream-json back into dsh events, and keeps the state — turn
  * records, permission modes, keepers — that has to survive a restart.
  */
+/** The running turn's figures for the status row; see `TurnProgress` in translator.ts. */
+export interface LiveTurn {
+    thinking?: number;
+    thinkingOpen?: boolean;
+    thinkingAt?: number;
+    output?: number;
+    tool?: boolean;
+    /** When the last frame of model output arrived; the stall clock. */
+    frameAt?: number;
+    /** How long the last thinking burst ran and when it closed, for the CLI's "thought for Ns". */
+    thoughtMs?: number;
+    thoughtAt?: number;
+    /** The effort dsh asked for this turn, when it asked for one: the CLI's line names it. */
+    effort?: string;
+    at: number;
+}
 export declare class ClaudeCodeAdapter extends LlmAdapter {
     ctx: PluginContext;
     config: Schemastery.TypeT<typeof Config>;
@@ -627,13 +643,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      *  The estimate is cleared when the next usage frame lands, since that frame counts the same
      *  tokens for real. Set by the live translator, cleared when the turn ends; a session with no entry
      *  has no turn running. */
-    readonly liveTurn: Map<string, {
-        thinking?: number;
-        thinkingOpen?: boolean;
-        thinkingAt?: number;
-        output?: number;
-        at: number;
-    }>;
+    readonly liveTurn: Map<string, LiveTurn>;
     /** Per-session idle watchdog deadline in epoch ms; null means no active arm. */
     readonly idleDeadlineMap: Map<string, number | null>;
     /** Per-session kill and warning timers, keyed by session id. */

@@ -2,7 +2,7 @@ import type { IncomingMessage } from "node:http";
 import { type Reach } from "./reach.js";
 import type { JsonValue, PluginContext, WorkspaceRegistry } from "./dsh.js";
 import type { ToolMode, ToolModeInfo } from "./rows-probe.js";
-import type { PermissionModeInfo, PermissionModeReply, RewindReply, ContextUsageReply, WorkspaceDiffReply, McpStatusReply, AsideEntry } from "./adapter.js";
+import type { PermissionModeInfo, PermissionModeReply, RewindReply, ContextUsageReply, WorkspaceDiffReply, McpStatusReply, AsideEntry, LiveTurn } from "./adapter.js";
 /** Any JSON object, as a request body or a stored file decodes to. */
 type JsonObject = Record<string, JsonValue>;
 /** Parse a JSON request body, capped at `limit` bytes. A non-object body reads as an empty object. */
@@ -295,13 +295,7 @@ export interface SessionRouteOptions {
     /** Per-session turn accounting buffer from the adapter. */
     turnRecords?: Map<string, import("./adapter.js").TurnRecord[]>;
     /** The running turn's figures per session, for the status row; absent when no turn is running. */
-    liveTurn?: Map<string, {
-        thinking?: number;
-        thinkingOpen?: boolean;
-        thinkingAt?: number;
-        output?: number;
-        at: number;
-    }>;
+    liveTurn?: Map<string, LiveTurn>;
     /** Idle watchdog state from the adapter. */
     idle?: {
         deadlineFor(session: string): number | null;

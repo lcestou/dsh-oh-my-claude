@@ -367,6 +367,20 @@ const LIMIT_NAMES = new Map([
 ]);
 
 /** Turns the CLI's stream-json events into the markdown and tool rows one dsh turn shows. */
+/** What the live translator tells the adapter about the running turn, for the status row. */
+export interface TurnProgress {
+  /** The estimate for the thinking block in progress, cumulative for that block. */
+  thinking?: number;
+  /** A thinking block opened (true) or closed (false). */
+  thinkingOpen?: boolean;
+  /** Output tokens summed across the turn so far. */
+  output?: number;
+  /** A tool call is in flight (true) or its result landed (false). */
+  tool?: boolean;
+  /** A frame of model output arrived; moves the stall clock. */
+  frame?: boolean;
+}
+
 export class Translator {
   log: (level: string, msg: string) => void;
   unknownSeen: Set<string>; // (where:type) already warned, so schema drift warns once, not per event
@@ -418,7 +432,7 @@ export class Translator {
   onInit?: (commands: string[], tools: string[]) => void;
   /** Running figures for the turn's status row: the thinking estimate as it climbs, and output tokens
    *  once a usage frame names them. Fired on the frames that carry them, nothing is polled. */
-  onProgress?: (progress: { thinking?: number; thinkingOpen?: boolean; output?: number }) => void;
+  onProgress?: (progress: TurnProgress) => void;
   /** Output tokens across every assistant message of this turn so far. A `message_delta` reports
    *  the message it closes, not the turn, so the figure summed here is what the status row shows;
    *  reporting each message's own count made the row drop back to a few hundred at every tool step. */
@@ -476,7 +490,7 @@ export class Translator {
     onResult?: (summary: TurnRecord) => void;
     redact?: (s: string) => string;
     onInit?: (commands: string[], tools: string[]) => void;
-    onProgress?: (progress: { thinking?: number; thinkingOpen?: boolean; output?: number }) => void;
+    onProgress?: (progress: TurnProgress) => void;
     /** The box a remote turn runs on, so a logged-out error names it, not this local host. */
     hostLabel?: string;
   } = {}) {
@@ -573,6 +587,10 @@ export class Translator {
   }
 
   translate(event: ClaudeEvent): StreamChunk[] {
+    // Every frame of model output moves the stall clock the status row reads; the CLI's own line
+    // watches its response length for the same purpose.
+    if (event?.type === "stream_event" || event?.type === "assistant")
+      this.onProgress?.({ frame: true });
     switch (event?.type) {
       case "system": {
         if (event.subtype === "init") {
@@ -934,7 +952,7 @@ export class Translator {
         // Which message is being streamed, so the echo of *this* message can be dropped without
         // dropping a different one. See `assistant`.
         this.streamedId = ev.message?.id;
-        this.toolPending = false;
+        this.setToolPending(false);
         this.open.clear();
         this.closeThinking();
         return this.endThinking();
@@ -993,7 +1011,7 @@ export class Translator {
         this.open.delete(apiIndex);
         // A finished tool_use block means the CLI is now running that tool: no stream events until
         // its result arrives, however long it takes. Callers read this to pause their idle timer.
-        this.toolPending = block.tool === true;
+        this.setToolPending(block.tool === true);
         // The estimate resets at the next content_block_start, so the counter ends with its block.
         let done: StreamChunk[] = [];
         if (block === this.thinkingBlock) {
@@ -1207,6 +1225,13 @@ export class Translator {
     return this.delta(entry.block, `\n~${tokensText(total)} tokens`);
   }
 
+  /** A tool call in flight, or not: the status row reads it to hold its thinking and stall ramps
+   *  the way the CLI's line does while a tool runs. Reported only on change. */
+  private setToolPending(v: boolean): void {
+    if (this.toolPending !== v) this.onProgress?.({ tool: v });
+    this.toolPending = v;
+  }
+
   /** The thinking block is over, or the turn is: tell the status row, once per open block. */
   private closeThinking(): void {
     if (this.thinkingBlock) this.onProgress?.({ thinkingOpen: false });
@@ -1230,7 +1255,7 @@ export class Translator {
   }
 
   toolResults(content: ClaudeContentBlock[], parentToolUseId: string | null | undefined) {
-    this.toolPending = false;
+    this.setToolPending(false);
     if (!this.toolActivity) return [];
     const events: StreamChunk[] = [];
     for (const b of content) {

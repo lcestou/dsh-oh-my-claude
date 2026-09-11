@@ -33,6 +33,19 @@ export declare function tokensText(tokens: number): string;
  *  No year: a plan window reopens within a week, so the nearest future date is the only reading. */
 export declare function resetClock(ms: number, zone?: string): string;
 /** Turns the CLI's stream-json events into the markdown and tool rows one dsh turn shows. */
+/** What the live translator tells the adapter about the running turn, for the status row. */
+export interface TurnProgress {
+    /** The estimate for the thinking block in progress, cumulative for that block. */
+    thinking?: number;
+    /** A thinking block opened (true) or closed (false). */
+    thinkingOpen?: boolean;
+    /** Output tokens summed across the turn so far. */
+    output?: number;
+    /** A tool call is in flight (true) or its result landed (false). */
+    tool?: boolean;
+    /** A frame of model output arrived; moves the stall clock. */
+    frame?: boolean;
+}
 export declare class Translator {
     log: (level: string, msg: string) => void;
     unknownSeen: Set<string>;
@@ -93,11 +106,7 @@ export declare class Translator {
     onInit?: (commands: string[], tools: string[]) => void;
     /** Running figures for the turn's status row: the thinking estimate as it climbs, and output tokens
      *  once a usage frame names them. Fired on the frames that carry them, nothing is polled. */
-    onProgress?: (progress: {
-        thinking?: number;
-        thinkingOpen?: boolean;
-        output?: number;
-    }) => void;
+    onProgress?: (progress: TurnProgress) => void;
     /** Output tokens across every assistant message of this turn so far. A `message_delta` reports
      *  the message it closes, not the turn, so the figure summed here is what the status row shows;
      *  reporting each message's own count made the row drop back to a few hundred at every tool step. */
@@ -128,11 +137,7 @@ export declare class Translator {
         onResult?: (summary: TurnRecord) => void;
         redact?: (s: string) => string;
         onInit?: (commands: string[], tools: string[]) => void;
-        onProgress?: (progress: {
-            thinking?: number;
-            thinkingOpen?: boolean;
-            output?: number;
-        }) => void;
+        onProgress?: (progress: TurnProgress) => void;
         /** The box a remote turn runs on, so a logged-out error names it, not this local host. */
         hostLabel?: string;
     });
@@ -182,6 +187,9 @@ export declare class Translator {
      *  counter beside it would say the same thing twice. Fable-class models return thinking blocks
      *  that carry a signature and no text, and this is the only sign they are working. */
     thinkingTokens(total: number): StreamChunk[];
+    /** A tool call in flight, or not: the status row reads it to hold its thinking and stall ramps
+     *  the way the CLI's line does while a tool runs. Reported only on change. */
+    private setToolPending;
     /** The thinking block is over, or the turn is: tell the status row, once per open block. */
     private closeThinking;
     /** Close the counter: the thinking block it stood in for is over, or the turn is. */

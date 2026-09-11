@@ -1693,6 +1693,23 @@ export function hasPendingTodo(todos: JsonValue[]): boolean {
  * into stdin lines and the CLI's stream-json back into dsh events, and keeps the state — turn
  * records, permission modes, keepers — that has to survive a restart.
  */
+/** The running turn's figures for the status row; see `TurnProgress` in translator.ts. */
+export interface LiveTurn {
+  thinking?: number;
+  thinkingOpen?: boolean;
+  thinkingAt?: number;
+  output?: number;
+  tool?: boolean;
+  /** When the last frame of model output arrived; the stall clock. */
+  frameAt?: number;
+  /** How long the last thinking burst ran and when it closed, for the CLI's "thought for Ns". */
+  thoughtMs?: number;
+  thoughtAt?: number;
+  /** The effort dsh asked for this turn, when it asked for one: the CLI's line names it. */
+  effort?: string;
+  at: number;
+}
+
 export class ClaudeCodeAdapter extends LlmAdapter {
   ctx: PluginContext;
   config: Schemastery.TypeT<typeof Config>;
@@ -1720,10 +1737,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    *  The estimate is cleared when the next usage frame lands, since that frame counts the same
    *  tokens for real. Set by the live translator, cleared when the turn ends; a session with no entry
    *  has no turn running. */
-  readonly liveTurn = new Map<
-    string,
-    { thinking?: number; thinkingOpen?: boolean; thinkingAt?: number; output?: number; at: number }
-  >();
+  readonly liveTurn = new Map<string, LiveTurn>();
   /** Per-session idle watchdog deadline in epoch ms; null means no active arm. */
   readonly idleDeadlineMap = new Map<string, number | null>();
   /** Per-session kill and warning timers, keyed by session id. */
@@ -4056,13 +4070,23 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       hostLabel: this.hostLabelFor(options.sessionId),
       log: this.log.bind(this),
       onProgress: (p) => {
-        const cur = this.liveTurn.get(options.sessionId) ?? { at: Date.now() };
+        const cur = this.liveTurn.get(options.sessionId) ?? {
+          at: Date.now(),
+          effort: options.reasoningEffort ?? undefined,
+        };
+        if (p.frame) cur.frameAt = Date.now();
+        if (p.tool !== undefined) cur.tool = p.tool;
         if (p.thinking !== undefined) cur.thinking = p.thinking;
         // When the burst began, kept here rather than in the tab: a tab opened mid-think must read
         // the true age of the burst, not the time since it first looked.
         if (p.thinkingOpen !== undefined) {
+          const now = Date.now();
+          if (!p.thinkingOpen && cur.thinkingAt !== undefined) {
+            cur.thoughtMs = now - cur.thinkingAt;
+            cur.thoughtAt = now;
+          }
           cur.thinkingOpen = p.thinkingOpen;
-          cur.thinkingAt = p.thinkingOpen ? Date.now() : undefined;
+          cur.thinkingAt = p.thinkingOpen ? now : undefined;
         }
         // Never lower than what the row already showed: the CLI's own line takes the max of the
         // estimate and the usage figure (its responseLength reducer), so a block whose estimate ran
