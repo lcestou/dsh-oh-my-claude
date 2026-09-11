@@ -2765,7 +2765,7 @@ const ensureTurnStatusStyle = () => {
   // clearance, which leaves its pills 653px in a 717px column. dsh's two fill that; ours as a
   // third clips all three to an ellipsis by a few pixels. The pills are centred, so the padding
   // does no aligning; take it down to the row's rounded corners and the three fit.
-  styleEl.textContent = `body[data-omc-claude] [role="status"][aria-live="polite"],[data-dsh-oh-my-claude-turn]{background-image:var(--omc-row-bg,linear-gradient(90deg,${CLAUDE_ORANGE} 0%,${CLAUDE_ORANGE} 40%,${CLAUDE_SHIMMER} 50%,${CLAUDE_ORANGE} 60%,${CLAUDE_ORANGE} 100%))}@keyframes omc-word{from{-webkit-text-fill-color:var(--omc-word-lo)}to{-webkit-text-fill-color:var(--omc-word-hi)}}[data-omc-turn-word]{animation:omc-word 1s ease-in-out 3s infinite alternate}@media (prefers-reduced-motion:reduce){[data-omc-turn-word]{animation:none}}[data-dsh-oh-my-claude-turn]>span[aria-hidden]{display:inline-block;width:1.3em;text-align:start;flex:none}body[data-omc-claude] [role="tablist"]>[role="tab"][aria-selected="true"]{color:${CLAUDE_ORANGE}}body[data-omc-claude] [role="tablist"]>[role="tab"][aria-selected="true"]::after{background:${CLAUDE_ORANGE}}body[data-omc-claude] [class*="_markdown"] blockquote{border-left-color:${CLAUDE_ORANGE}80}body[data-omc-claude] [class*="_markdown"] hr{background:${CLAUDE_ORANGE}59}body[data-omc-claude] [class*="_markdown"] a{color:${CLAUDE_ORANGE};text-decoration-color:${CLAUDE_ORANGE}66}body[data-omc-claude] [class*="_markdown"] a:hover{color:${CLAUDE_SHIMMER};text-decoration-color:${CLAUDE_SHIMMER}}body[data-omc-claude] [class*="_markdown"] input[type="checkbox"]{accent-color:${CLAUDE_ORANGE}}body[data-omc-claude] [data-workflow-run] button[data-member-status] [data-member-label]{color:${CLAUDE_ORANGE}}body[data-omc-panel-open] [data-width-handle]{pointer-events:none}body[data-omc-panel-open] [class*="_toBottomSlot"]{opacity:0;pointer-events:none;transition:opacity .1s}@keyframes omc-pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,${CLAUDE_ORANGE} 55%,transparent)}100%{box-shadow:0 0 0 12px transparent}}button[aria-label="Oh My Claude"][data-omc-pulse]{animation:omc-pulse 1.1s ease-out 3}@media (prefers-reduced-motion:reduce){button[aria-label="Oh My Claude"][data-omc-pulse]{animation:none}}body[data-omc-claude] [data-produced-files-row] button{color:${CLAUDE_ORANGE}}body[data-omc-claude] [data-produced-files-row] button:hover{color:${CLAUDE_SHIMMER}}body[data-omc-claude] [data-composer-stats]{padding-left:8px;padding-right:8px}body[data-omc-claude] [class*="_optionLine"]>[class*="_badge"]{background:color-mix(in srgb,${CLAUDE_ORANGE} 16%,transparent);color:${CLAUDE_ORANGE}}${COST_DIALOG_CSS}`;
+  styleEl.textContent = `body[data-omc-claude] [role="status"][aria-live="polite"],[data-dsh-oh-my-claude-turn]{background-image:var(--omc-row-bg,linear-gradient(90deg,${CLAUDE_ORANGE} 0%,${CLAUDE_ORANGE} 40%,${CLAUDE_SHIMMER} 50%,${CLAUDE_ORANGE} 60%,${CLAUDE_ORANGE} 100%))}@keyframes omc-word{from{-webkit-text-fill-color:var(--omc-word-lo)}to{-webkit-text-fill-color:var(--omc-word-hi)}}[data-omc-turn-word]{animation:omc-word 1s ease-in-out 3s infinite alternate}@media (prefers-reduced-motion:reduce){[data-omc-turn-word]{animation:none}}[data-dsh-oh-my-claude-turn]>span[aria-hidden]{display:inline-block;width:1.3em;text-align:start;flex:none}body[data-omc-claude] [role="tablist"]>[role="tab"][aria-selected="true"]{color:${CLAUDE_ORANGE}}body[data-omc-claude] [role="tablist"]>[role="tab"][aria-selected="true"]::after{background:${CLAUDE_ORANGE}}body[data-omc-claude] [class*="_markdown"] blockquote{border-left-color:${CLAUDE_ORANGE}80}body[data-omc-claude] [class*="_markdown"] hr{background:${CLAUDE_ORANGE}59}body[data-omc-claude] [class*="_markdown"] a{color:${CLAUDE_ORANGE};text-decoration-color:${CLAUDE_ORANGE}66}body[data-omc-claude] [class*="_markdown"] a:hover{color:${CLAUDE_SHIMMER};text-decoration-color:${CLAUDE_SHIMMER}}body[data-omc-claude] [class*="_markdown"] input[type="checkbox"]{accent-color:${CLAUDE_ORANGE}}body[data-omc-claude] [data-workflow-run] button[data-member-status] [data-member-label]{color:${CLAUDE_ORANGE}}body[data-omc-panel-open] [data-width-handle]{pointer-events:none}body[data-omc-panel-open] [class*="_toBottomSlot"]{opacity:0;pointer-events:none;transition:opacity .1s}@keyframes omc-pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,${CLAUDE_ORANGE} 55%,transparent)}100%{box-shadow:0 0 0 12px transparent}}button[aria-label="Oh My Claude"][data-omc-pulse]{animation:omc-pulse 1.1s ease-out 3}@media (prefers-reduced-motion:reduce){button[aria-label="Oh My Claude"][data-omc-pulse]{animation:none}}body[data-omc-claude] [data-produced-files-row] button{color:${CLAUDE_ORANGE}}body[data-omc-claude] [data-produced-files-row] button:hover{color:${CLAUDE_SHIMMER}}body[data-omc-claude] [data-composer-stats]{padding-left:8px;padding-right:8px}body[data-omc-claude] [class*="_optionLine"]>[class*="_badge"]{background:color-mix(in srgb,${CLAUDE_ORANGE} 16%,transparent);color:${CLAUDE_ORANGE}}${RAINBOW_CSS}${COST_DIALOG_CSS}`;
   document.head.appendChild(styleEl);
 };
 
@@ -3060,7 +3060,7 @@ const wireTurnStatus = (
     spinner.style.fontWeight = ti >= 0.5 ? "bold" : "";
     if (word) {
       detailSpan.textContent = "";
-      detailSpan.append(` (${parts.join(" · ")}${parts.length > 0 ? " · " : ""}`);
+      detailSpan.append(`\u00A0(${parts.join(" · ")}${parts.length > 0 ? " · " : ""}`);
       wordNode.textContent = word;
       if (thinking) {
         // The grey pulse, pulled toward the warning shade by the ramp.
@@ -3077,9 +3077,10 @@ const wireTurnStatus = (
       detailSpan.append(wordNode, ")");
       return;
     }
-    // A non-breaking space: an ordinary one is at the edge of the element and collapses away, which
-    // ran the bracket straight into the verb.
-    detailSpan.textContent = parts.length > 0 ? ` (${parts.join(" · ")})` : "";
+    // A non-breaking space, written as its escape so a rewrite cannot quietly turn it into an
+    // ordinary one: at the edge of the element an ordinary space collapses away, which ran the
+    // bracket straight into the verb.
+    detailSpan.textContent = parts.length > 0 ? `\u00A0(${parts.join(" · ")})` : "";
   };
   const poll = async () => {
     // A hidden tab paints nothing, so its read would be a round trip for no one; the next beat
@@ -3260,6 +3261,94 @@ const inComposer = (node: Element, box: Element | null): boolean => {
     if (p.contains(box)) return true;
   return false;
 };
+
+/** The CLI's rainbow for the word `ultrathink` (2.1.268, `ZT` over the `rainbow_*` theme entries,
+ *  the same seven values in all four themes): each character of the word takes the next colour,
+ *  wrapping after violet. Only that one word, `\bultrathink\b` case-insensitive; `ultracode`,
+ *  `ultraplan` and `ultrareview` are other features and draw nothing. It is painted in the
+ *  composer as it is typed and in the sent message. */
+const RAINBOW: readonly string[] = [
+  "rgb(235,95,87)",
+  "rgb(245,139,87)",
+  "rgb(250,195,95)",
+  "rgb(145,200,130)",
+  "rgb(130,170,220)",
+  "rgb(155,130,200)",
+  "rgb(200,130,180)",
+];
+const RAINBOW_CSS = RAINBOW.map((c, i) => `::highlight(omc-rainbow-${i}){color:${c}}`).join("");
+const ULTRATHINK = /\bultrathink\b/gi;
+
+/**
+ * Paint `ultrathink` in the CLI's rainbow wherever a person wrote it: the composer and the sent
+ * user messages. Done with the CSS Highlight API, ranges over the existing text nodes, so neither
+ * dsh's chat (React) nor its composer (Lexical) sees a DOM change; wrapping characters in spans
+ * would have been undone by the next render of either, or thrown when it reconciled a node that
+ * had moved. Both hosts are found by their own data attributes.
+ */
+function watchUltrathink(ctx: ClientCtx) {
+  // A browser without the Highlight API paints nothing; every Chromium since 105 has it.
+  if (!("highlights" in CSS) || !("Highlight" in globalThis)) return;
+  const registry = CSS.highlights;
+  const names = RAINBOW.map((_, i) => `omc-rainbow-${i}`);
+  const clear = () => {
+    for (const key of names) registry.delete(key);
+  };
+  const scan = () => {
+    if (document.hidden) return;
+    if (activeClaudeSession(ctx) === undefined) {
+      clear();
+      return;
+    }
+    const buckets: Range[][] = RAINBOW.map(() => []);
+    const hosts = document.querySelectorAll<HTMLElement>(
+      '[data-composer-input], [data-chat-anchor-key*=":input-message"]',
+    );
+    for (const host of hosts) {
+      const walker = document.createTreeWalker(host, NodeFilter.SHOW_TEXT);
+      let node: Node | null;
+      while ((node = walker.nextNode())) {
+        const text = node.textContent ?? "";
+        if (!text.includes("ltrathink") && !text.includes("LTRATHINK")) continue;
+        for (const m of text.matchAll(ULTRATHINK)) {
+          for (let i = 0; i < m[0].length; i++) {
+            const r = document.createRange();
+            r.setStart(node, m.index + i);
+            r.setEnd(node, m.index + i + 1);
+            buckets[i % RAINBOW.length]!.push(r);
+          }
+        }
+      }
+    }
+    names.forEach((key, i) => {
+      const ranges = buckets[i]!;
+      if (ranges.length === 0) registry.delete(key);
+      else registry.set(key, new Highlight(...ranges));
+    });
+  };
+  // The composer changes on every keystroke and the chat on every message; both are observed
+  // rather than polled, with the pass folded to one per frame.
+  let queued = false;
+  const request = () => {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(() => {
+      queued = false;
+      guard(scan)();
+    });
+  };
+  const obs = new MutationObserver(request);
+  obs.observe(document.body, { childList: true, subtree: true, characterData: true });
+  document.addEventListener("input", request, true);
+  document.addEventListener("visibilitychange", request);
+  request();
+  whenContextGone(() => {
+    obs.disconnect();
+    document.removeEventListener("input", request, true);
+    document.removeEventListener("visibilitychange", request);
+    clear();
+  });
+}
 
 function watchSessionSpinners(ctx: ClientCtx) {
   const MARK = "data-omc-spinner";
@@ -4854,6 +4943,7 @@ export function apply(ctx: ClientCtx) {
   watchTurnStatus(ctx);
   watchSessionNotices(ctx);
   watchSessionSpinners(ctx);
+  watchUltrathink(ctx);
   watchToolFolds();
 
   const SECTION_LABEL = "Oh My Claude";
