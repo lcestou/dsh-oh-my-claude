@@ -2773,6 +2773,9 @@ const ensureTurnStatusStyle = () => {
  *  fresh pick each time reads as flicker. Keyed by session; forgotten after a short absence. */
 const turnVerbs = new Map<string, { verb: string; seen: number }>();
 const VERB_MEMORY_MS = 4000;
+/** A token count the way the CLI's status line writes one: `1.2k` past a thousand, plain below. */
+const shortCount = (n: number): string => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
+
 const verbFor = (sessionId: string, verbs: string[]): string => {
   const now = Date.now();
   // Every session that ever ran a turn in this tab left an entry behind. They are small, but the
@@ -2786,6 +2789,14 @@ const verbFor = (sessionId: string, verbs: string[]): string => {
 
 /** On dsh's status element once this bundle has wired it; read before the wiring path allocates. */
 const TURN_MARK = "data-dsh-oh-my-claude-turn";
+/** The bracket this bundle appends to a status row. Marked so a later bundle can clear the one its
+ *  predecessor left: a hot reload re-runs the wiring over a row already on screen, and without this
+ *  every rebuild added another bracket to it. */
+const DETAIL_MARK = "data-omc-turn-detail";
+/** How long thinking runs before the row says so differently. The CLI switches to "still thinking"
+ *  and warms the colour once it has been at it a while; neither the wording nor the colour is ever
+ *  put on the wire, so the rule is kept here. */
+const STILL_THINKING_MS = 60_000;
 const wireTurnStatus = (
   el: HTMLElement,
   sessionId: string,
@@ -2830,6 +2841,7 @@ const wireTurnStatus = (
   };
   const stop = () => {
     clearInterval(interval);
+    clearInterval(pollTimer);
     obs.disconnect();
   };
   const interval = setInterval(
@@ -2861,13 +2873,98 @@ const wireTurnStatus = (
 
   // Pick a fresh verb once per element instance.
   const verb = verbFor(sessionId, verbs);
-  if (textNode) textNode.nodeValue = `${verb}…`;
+  // The row reads `Marinating… · ↓ 1.2k · thinking` once the turn has figures, the way the CLI's own
+  // status line does; dsh's clock beside it is left alone. The figures come from the plugin's
+  // live-turn route, polled once a second while this row is up: the browser never sees the CLI
+  // stream, so the adapter keeps the running count and this asks for it.
+  const verbLabel = `${verb}…`;
+  if (textNode) textNode.nodeValue = verbLabel;
+  // Everything after the verb sits in one quiet bracket, the way the CLI's status line writes it.
+  for (const stale of Array.from(el.querySelectorAll(`[${DETAIL_MARK}]`))) stale.remove();
+  const detailSpan = document.createElement("span");
+  detailSpan.setAttribute(DETAIL_MARK, "1");
+  // Important, because the row's own rule paints the whole status line in the brand colour and a
+  // plain inline colour loses to it: the bracket came out orange with the verb.
+  // Out of the row's painted gradient, then into a plain grey. The row is coloured by clipping a
+  // background to its text, so the glyphs take that gradient and ignore any `color` set on them:
+  // setting the colour alone, even important, left the bracket orange alongside the verb.
+  detailSpan.style.setProperty("background-image", "none", "important");
+  detailSpan.style.setProperty("background-clip", "border-box", "important");
+  detailSpan.style.setProperty("-webkit-background-clip", "border-box", "important");
+  detailSpan.style.setProperty("color", T.faint, "important");
+  // The one that actually decides it: with the background clipped to the text, the glyphs are filled
+  // from that background and `color` is ignored, so the fill colour is what has to be set.
+  detailSpan.style.setProperty("-webkit-text-fill-color", T.faint, "important");
+  el.append(detailSpan);
+  /** dsh's own elapsed-time node. Found, not hidden: the time belongs inside the bracket, but hiding
+   *  it as a side effect of looking meant one failed read left the row showing no time at all. */
+  const clockNode = (): HTMLElement | undefined => {
+    for (const child of Array.from(el.children)) {
+      if (child === spinner || child === detailSpan) continue;
+      const text = (child.textContent ?? "").trim();
+      if (/^\d+\s*[hms]/.test(text) && child instanceof HTMLElement) return child;
+    }
+    return undefined;
+  };
+  let tokens = "";
+  let thinkingSince = 0;
+  const paint = () => {
+    const parts: string[] = [];
+    const clock = clockNode();
+    const time = (clock?.textContent ?? "").trim();
+    if (time) parts.push(time);
+    // dsh's copy goes quiet only while ours is showing the same figure. Hiding it unconditionally is
+    // what left the row reading just the verb when the read came back empty.
+    if (clock) clock.style.display = time ? "none" : "";
+    if (tokens) parts.push(tokens);
+    // The state word is a node of its own so it can warm to amber once thinking has run long, the
+    // way the CLI's own line does. Neither the wording nor the colour is ever put on the wire, so
+    // the rule is kept here rather than relayed.
+    if (thinkingSince > 0) {
+      detailSpan.textContent = "";
+      detailSpan.append(` (${parts.join(" · ")}${parts.length > 0 ? " · " : ""}`);
+      const word = document.createElement("span");
+      const long = Date.now() - thinkingSince > STILL_THINKING_MS;
+      word.textContent = long ? "still thinking" : "thinking";
+      if (long) {
+        word.style.setProperty("color", T.warn, "important");
+        word.style.setProperty("-webkit-text-fill-color", T.warn, "important");
+      }
+      detailSpan.append(word, ")");
+      return;
+    }
+    // A non-breaking space: an ordinary one is at the edge of the element and collapses away, which
+    // ran the bracket straight into the verb.
+    detailSpan.textContent = parts.length > 0 ? ` (${parts.join(" · ")})` : "";
+  };
+  const poll = async () => {
+    if (!el.isConnected) return;
+    try {
+      const r = await fetch(`${ROUTE}/live-turn?session=${encodeURIComponent(sessionId)}`);
+      const b = await readJson<{ thinking?: number; output?: number }>(r);
+      // Output tokens once the model has written any, the thinking estimate before that: two names
+      // for the same climbing figure, and showing both at once would say it twice.
+      const figure = b.output !== undefined && b.output > 0 ? b.output : b.thinking;
+      tokens = figure !== undefined && figure > 0 ? `↓ ${shortCount(figure)} tokens` : "";
+      // When thinking started, so the wording can warm once it has run long. The route reports the
+      // figure only while it is still climbing, so its absence is what says thinking stopped.
+      const thinkingNow = b.thinking !== undefined && b.output === undefined;
+      if (!thinkingNow) thinkingSince = 0;
+      else if (thinkingSince === 0) thinkingSince = Date.now();
+    } catch {
+      // the row keeps its verb; the bracket is decoration
+    }
+    paint();
+  };
+  const pollTimer = setInterval(() => void poll(), 1000);
+  void poll();
+  paint();
 
   // Re-apply on characterData mutations (dsh may reset the text node).
   const obs = new MutationObserver((records) => {
     for (const r of records) {
       if (r.type === "characterData" && textNode && r.target === textNode) {
-        if (textNode.nodeValue !== `${verb}…`) textNode.nodeValue = `${verb}…`;
+        if (textNode.nodeValue !== verbLabel) textNode.nodeValue = verbLabel;
       }
     }
   });

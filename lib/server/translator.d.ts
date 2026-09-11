@@ -91,6 +91,12 @@ export declare class Translator {
     redact?: (s: string) => string;
     /** Injected: the CLI's slash-command catalog and tool names from its init frame. */
     onInit?: (commands: string[], tools: string[]) => void;
+    /** Running figures for the turn's status row: the thinking estimate as it climbs, and output tokens
+     *  once a usage frame names them. Fired on the frames that carry them, nothing is polled. */
+    onProgress?: (progress: {
+        thinking?: number;
+        output?: number;
+    }) => void;
     /** callId → original input JSON string, kept so Edit can build meta.diffs from it. */
     readonly callInputs: Map<string, string>;
     /** callId → the seq onToolCall returned, so a re-fired block never appends `tool/call` twice. */
@@ -103,7 +109,7 @@ export declare class Translator {
      * one callId, which throws in ConversationNodeAssembler and stalls the whole event feed.
      */
     private fireToolCall;
-    constructor({ toolActivity, continueAfterLimit, timeZone, toolTextLimit, relay, dshIds, relayed, log, onToolCall, onToolResult, onResult, redact, onInit, hostLabel, }?: {
+    constructor({ toolActivity, continueAfterLimit, timeZone, toolTextLimit, relay, dshIds, relayed, log, onToolCall, onToolResult, onResult, redact, onInit, onProgress, hostLabel, }?: {
         toolActivity?: boolean;
         continueAfterLimit?: boolean;
         timeZone?: string;
@@ -117,6 +123,10 @@ export declare class Translator {
         onResult?: (summary: TurnRecord) => void;
         redact?: (s: string) => string;
         onInit?: (commands: string[], tools: string[]) => void;
+        onProgress?: (progress: {
+            thinking?: number;
+            output?: number;
+        }) => void;
         /** The box a remote turn runs on, so a logged-out error names it, not this local host. */
         hostLabel?: string;
     });

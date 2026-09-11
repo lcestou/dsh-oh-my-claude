@@ -1715,6 +1715,13 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   /** Per-session turn accounting buffer (last 50 turns); keyed by dsh sessionId. Lives on
    *  globalThis so the route registered at boot reads what a hot-reloaded adapter fills. */
   readonly turnBuffer: Map<string, TurnRecord[]>;
+  /** What the running turn has done so far, per session, for the status row: the thinking estimate
+   *  as it climbs and output tokens once known. Set by the live translator, cleared when the turn
+   *  ends; a session with no entry has no turn running. */
+  readonly liveTurn = new Map<
+    string,
+    { thinking?: number; thinkingAt?: number; output?: number; at: number }
+  >();
   /** Per-session idle watchdog deadline in epoch ms; null means no active arm. */
   readonly idleDeadlineMap = new Map<string, number | null>();
   /** Per-session kill and warning timers, keyed by session id. */
@@ -4046,6 +4053,17 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       relayed: proc.relayed,
       hostLabel: this.hostLabelFor(options.sessionId),
       log: this.log.bind(this),
+      onProgress: (p) => {
+        const cur = this.liveTurn.get(options.sessionId) ?? { at: Date.now() };
+        // When the figure last moved, not just what it was: the CLI sends one thinking frame per
+        // delta, so the gap since the last one is how the route tells thinking from finished.
+        if (p.thinking !== undefined) {
+          cur.thinking = p.thinking;
+          cur.thinkingAt = Date.now();
+        }
+        if (p.output !== undefined) cur.output = p.output;
+        this.liveTurn.set(options.sessionId, cur);
+      },
       onToolCall:
         turnStep && rowMode.rows
           ? (callId: string, toolName: string, args: string) => {
@@ -4296,6 +4314,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         if (prep.session) await rememberStarted(prep.session.id, false);
       } else yield { type: "finish", reason: this.endReason(proc, options, proc.idleKilled) };
     } finally {
+      // The turn is over, whichever way: the status row must not keep showing its figures.
+      this.liveTurn.delete(options.sessionId);
       this.clearIdle(options.sessionId);
       options.signal?.removeEventListener("abort", onAbort);
       for (const c of pending.values()) c.abort();
@@ -5046,6 +5066,7 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       onLoginStatus: (id, loggedIn) =>
         g[ADAPTER_CURRENT]?.get(id ?? adapter.providerId)?.setLoggedIn(loggedIn),
       turnRecords: adapter.turnBuffer,
+      liveTurn: adapter.liveTurn,
       idle: {
         deadlineFor: (session: string) =>
           adapter.ownerFor(session).idleDeadlineMap.get(session) ?? null,

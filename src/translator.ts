@@ -416,6 +416,9 @@ export class Translator {
   redact?: (s: string) => string;
   /** Injected: the CLI's slash-command catalog and tool names from its init frame. */
   onInit?: (commands: string[], tools: string[]) => void;
+  /** Running figures for the turn's status row: the thinking estimate as it climbs, and output tokens
+   *  once a usage frame names them. Fired on the frames that carry them, nothing is polled. */
+  onProgress?: (progress: { thinking?: number; output?: number }) => void;
   /** callId → original input JSON string, kept so Edit can build meta.diffs from it. */
   readonly callInputs = new Map<string, string>();
   /** callId → the seq onToolCall returned, so a re-fired block never appends `tool/call` twice. */
@@ -453,6 +456,7 @@ export class Translator {
     onResult,
     redact,
     onInit,
+    onProgress,
     hostLabel,
   }: {
     toolActivity?: boolean;
@@ -468,6 +472,7 @@ export class Translator {
     onResult?: (summary: TurnRecord) => void;
     redact?: (s: string) => string;
     onInit?: (commands: string[], tools: string[]) => void;
+    onProgress?: (progress: { thinking?: number; output?: number }) => void;
     /** The box a remote turn runs on, so a logged-out error names it, not this local host. */
     hostLabel?: string;
   } = {}) {
@@ -497,6 +502,7 @@ export class Translator {
     this.onResult = onResult;
     this.redact = redact;
     this.onInit = onInit;
+    this.onProgress = onProgress;
   }
 
   deltaType(block: TranslatorBlock): "text-delta" | "reasoning-delta" {
@@ -573,8 +579,10 @@ export class Translator {
           if (names.length > 0 || tools.length > 0) this.onInit?.(names, tools);
           return [];
         }
-        if (event.subtype === "thinking_tokens")
+        if (event.subtype === "thinking_tokens") {
+          this.onProgress?.({ thinking: event.estimated_tokens ?? 0 });
           return this.thinkingTokens(event.estimated_tokens ?? 0);
+        }
         // Compaction opens with a `status:"compacting"` frame, then a long silent stretch while the
         // CLI summarizes, then `compact_boundary` when done. Announce the start at once so the silence
         // is explained; the boundary line reports the result. A failed run gets neither boundary nor a
@@ -809,7 +817,10 @@ export class Translator {
             ),
           );
         }
-        if (event.usage) events.push(usageEvent(event.usage));
+        if (event.usage) {
+          events.push(usageEvent(event.usage));
+          this.onProgress?.({ output: event.usage.output_tokens ?? 0 });
+        }
         // Per-turn accounting: forward the summary to the adapter's ring buffer.
         // SAFETY: these fields are emitted by the Claude Code CLI on the result frame; they may not be in every schema version
         const e = event as {
@@ -989,6 +1000,18 @@ export class Translator {
         return [...tail, ...inlineCall];
       }
       default:
+        // `message_delta` is the only frame carrying usage while the turn is still running: the
+        // `result` frame reports it too, but not until the turn is over, which is too late for a
+        // status row that exists to say what is happening now. Measured on 2.1.268: one per
+        // assistant message, so the figure climbs a step per tool step. Nothing is rendered from it
+        // — it feeds the running count and the frame stays bookkeeping otherwise.
+        if (ev?.type === "message_delta") {
+          // SAFETY: a stream event off the wire, read as unknown; the one field used is checked as a
+          // number below, so a frame of another shape reports nothing rather than throwing.
+          const out = (ev as { usage?: { output_tokens?: unknown } }).usage?.output_tokens;
+          if (typeof out === "number" && out > 0) this.onProgress?.({ output: out });
+          return [];
+        }
         if (!BENIGN_PARTIALS.has(ev?.type)) this.noteUnknown("stream event", ev?.type);
         return [];
     }

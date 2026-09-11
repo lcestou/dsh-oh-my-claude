@@ -91,6 +91,10 @@ import type {
 } from "./adapter.js";
 
 const ROUTE_PREFIX = "/dsh-oh-my-claude";
+/** How long a thinking figure counts as current. The CLI sends one frame per delta while the model
+ *  thinks, so anything older than a beat or two means it stopped and the status row should stop
+ *  saying so. Generous enough to survive a slow delta, short enough that the word does not linger. */
+const THINKING_FRESH_MS = 3000;
 const BODY_LIMIT = 64 * 1024;
 /** An imported transcript is a whole conversation, not a form field: megabytes, not kilobytes. */
 const IMPORT_LIMIT = 32 * 1024 * 1024;
@@ -1129,6 +1133,8 @@ export interface SessionRouteOptions {
   onLoginStatus?: (provider: string | null, loggedIn: boolean) => void;
   /** Per-session turn accounting buffer from the adapter. */
   turnRecords?: Map<string, import("./adapter.js").TurnRecord[]>;
+  /** The running turn's figures per session, for the status row; absent when no turn is running. */
+  liveTurn?: Map<string, { thinking?: number; thinkingAt?: number; output?: number; at: number }>;
   /** Idle watchdog state from the adapter. */
   idle?: {
     deadlineFor(session: string): number | null;
@@ -1222,6 +1228,7 @@ export function registerSessionRoutes(
     command,
     sshHost,
     turnRecords,
+    liveTurn,
     idle,
     toolMode,
     terminalSync,
@@ -1890,6 +1897,21 @@ export function registerSessionRoutes(
                     ? await run("ssh", sshArgs(box.sshHost, `${shq(bin)} doctor`))
                     : await run(bin, ["doctor"], cliEnvFor(box.configDir)),
                 );
+              }
+              // The running turn's figures for the status row; `{}` when no turn is running.
+              if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/live-turn`) {
+                const sid = url.searchParams.get("session");
+                if (!sid) return json(res, 400, { error: "session param required" });
+                // The thinking figure is reported only while it is still climbing. The CLI sends one
+                // frame per delta, so a gap means the model stopped thinking; without this the word
+                // stayed on the row for the rest of the turn, long after it had moved on.
+                const live = liveTurn?.get(sid);
+                if (!live) return json(res, 200, {});
+                const thinkingNow =
+                  live.thinkingAt !== undefined && Date.now() - live.thinkingAt < THINKING_FRESH_MS
+                    ? live.thinking
+                    : undefined;
+                return json(res, 200, { thinking: thinkingNow, output: live.output });
               }
               if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/turns`) {
                 const sid = url.searchParams.get("session");

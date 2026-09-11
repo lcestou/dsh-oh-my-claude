@@ -622,6 +622,15 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     /** Per-session turn accounting buffer (last 50 turns); keyed by dsh sessionId. Lives on
      *  globalThis so the route registered at boot reads what a hot-reloaded adapter fills. */
     readonly turnBuffer: Map<string, TurnRecord[]>;
+    /** What the running turn has done so far, per session, for the status row: the thinking estimate
+     *  as it climbs and output tokens once known. Set by the live translator, cleared when the turn
+     *  ends; a session with no entry has no turn running. */
+    readonly liveTurn: Map<string, {
+        thinking?: number;
+        thinkingAt?: number;
+        output?: number;
+        at: number;
+    }>;
     /** Per-session idle watchdog deadline in epoch ms; null means no active arm. */
     readonly idleDeadlineMap: Map<string, number | null>;
     /** Per-session kill and warning timers, keyed by session id. */
