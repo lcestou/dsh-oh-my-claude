@@ -1013,9 +1013,7 @@ export function attachmentNotes(turns: LooseMessage[], images: readonly LoadedIm
     if (m.role !== "user" || !Array.isArray(m.content)) continue;
     for (const b of m.content) {
       if (b.type !== "image" || !b.attachment) continue;
-      // SAFETY: the repo's dsh-llm typings predate the width, height and name dsh 0.1.5 stamps on
-      // an image ref; the plugin's own mirror of the ref carries them as optional.
-      const ref = b.attachment as ImageAttachmentRef;
+      const ref = b.attachment;
       const path = pathOf.get(ref.attachmentId);
       if (!path) continue;
       const size = ref.width && ref.height ? `, ${ref.width}x${ref.height}px` : "";
