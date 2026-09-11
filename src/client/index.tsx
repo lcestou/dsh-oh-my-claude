@@ -2918,6 +2918,9 @@ const wireTurnStatus = (
   };
   let tokens = "";
   let thinkingSince = 0;
+  /** What the bracket last showed, so a beat that changes nothing writes nothing: rebuilding the
+   *  span every second invalidated layout for a row that reads the same as before. */
+  let painted = "";
   const paint = () => {
     const parts: string[] = [];
     const clock = clockNode();
@@ -2928,19 +2931,25 @@ const wireTurnStatus = (
     if (clock) clock.style.display = time ? "none" : "";
     if (tokens) parts.push(tokens);
     // The state word is a node of its own so it can warm to amber once thinking has run long, the
+    const ms = thinkingSince > 0 ? Date.now() - thinkingSince : -1;
+    const word = ms >= 0 ? thinkingWord(ms) : "";
+    const warm = ms >= THINKING_WORDS[THINKING_WORDS.length - 1]![0];
+    const key = `${parts.join("\0")}\0${word}\0${warm}`;
+    if (key === painted) return;
+    painted = key;
     // way the CLI's own line does. Neither the wording nor the colour is ever put on the wire, so
     // the rule is kept here rather than relayed.
-    if (thinkingSince > 0) {
+    if (word) {
       detailSpan.textContent = "";
       detailSpan.append(` (${parts.join(" · ")}${parts.length > 0 ? " · " : ""}`);
-      const word = document.createElement("span");
-      const ms = Date.now() - thinkingSince;
-      word.textContent = thinkingWord(ms);
-      if (ms >= THINKING_WORDS[THINKING_WORDS.length - 1]![0]) {
-        word.style.setProperty("color", T.warn, "important");
-        word.style.setProperty("-webkit-text-fill-color", T.warn, "important");
+      const wordNode = document.createElement("span");
+
+      wordNode.textContent = word;
+      if (warm) {
+        wordNode.style.setProperty("color", T.warn, "important");
+        wordNode.style.setProperty("-webkit-text-fill-color", T.warn, "important");
       }
-      detailSpan.append(word, ")");
+      detailSpan.append(wordNode, ")");
       return;
     }
     // A non-breaking space: an ordinary one is at the edge of the element and collapses away, which
@@ -2948,7 +2957,9 @@ const wireTurnStatus = (
     detailSpan.textContent = parts.length > 0 ? ` (${parts.join(" · ")})` : "";
   };
   const poll = async () => {
-    if (!el.isConnected) return;
+    // A hidden tab paints nothing, so its read would be a round trip for no one; the next beat
+    // after it is shown again catches up.
+    if (!el.isConnected || document.hidden) return;
     try {
       const r = await fetch(`${ROUTE}/live-turn?session=${encodeURIComponent(sessionId)}`);
       const b = await readJson<{ tokens?: number; thinking?: boolean }>(r);
