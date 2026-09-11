@@ -389,12 +389,22 @@ export declare function withoutNativeInstructions(text: string): string;
  * along in `imageRefs`.
  */
 export declare function buildPrompt(turns: LooseMessage[]): string;
-/** An image loaded from dsh's attachment store, ready for the stdin line. */
+/** An image loaded from dsh's attachment store, ready for the stdin line, plus the path of the
+ *  copy kept for Claude's tools when one could be written. */
 type LoadedImage = {
     mediaType: string;
     data: string;
     attachmentId?: string;
+    path?: string;
 };
+/**
+ * Where each image of the turn lives on disk, told to the model after the prompt. The image rides
+ * inline on the stdin line, which lets Claude see it and nothing more: no path, so no Read, no
+ * edit, no handing it to a subagent. dsh's own store names an image by hash with no extension, so
+ * the note points at the copy `keepImageCopy` wrote. Files need nothing here: dsh replaces a file
+ * block with a line naming its stored path before any provider sees the turn.
+ */
+export declare function attachmentNotes(turns: LooseMessage[], images: readonly LoadedImage[]): string;
 /** dsh's access-mode switch arrives as text in the runtime-context injection; the last snapshot wins. */
 export declare function accessModeOf(messages: LooseMessage[] | undefined): string | undefined;
 /** The CLI's permission mode for a turn: the configured one, or the one dsh's access mode maps to. */
@@ -714,6 +724,11 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     getPermissionMode(sessionId: string, accessMode: string | undefined): string;
     sessionCwd(sessionId: string): string | undefined;
     log(level: string, message: string): void;
+    /** A copy of the image under the plugin's state dir, named by attachment id with the extension
+     *  its media type calls for: dsh's own stored object has no extension, and Claude Code's Read
+     *  decides image-or-text by the name. Written once per attachment; a failure just leaves the
+     *  image inline-only, as before. */
+    keepImageCopy(ref: ImageAttachmentRef, data: ArrayBuffer): Promise<string | undefined>;
     loadImages(refs: ImageAttachmentRef[], signal: AbortSignal | undefined): Promise<LoadedImage[]>;
     /** A dsh fork of a Claude session becomes a Claude fork: the parent's transcript is copied under
      *  the new id, cut at the forked turn. True when a copy was made. */

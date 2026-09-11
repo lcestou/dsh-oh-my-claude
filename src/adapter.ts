@@ -985,8 +985,47 @@ export function buildPrompt(turns: LooseMessage[]): string {
 }
 
 // Lightweight image ref shape; full ImageAttachmentRef from dsh-attachment has attachmentId too.
-/** An image loaded from dsh's attachment store, ready for the stdin line. */
-type LoadedImage = { mediaType: string; data: string; attachmentId?: string };
+/** An image loaded from dsh's attachment store, ready for the stdin line, plus the path of the
+ *  copy kept for Claude's tools when one could be written. */
+type LoadedImage = { mediaType: string; data: string; attachmentId?: string; path?: string };
+
+/** The file extension Claude Code's Read tool needs to treat a copy as an image. */
+const IMAGE_EXT = new Map([
+  ["image/png", "png"],
+  ["image/jpeg", "jpg"],
+  ["image/gif", "gif"],
+  ["image/webp", "webp"],
+]);
+
+/**
+ * Where each image of the turn lives on disk, told to the model after the prompt. The image rides
+ * inline on the stdin line, which lets Claude see it and nothing more: no path, so no Read, no
+ * edit, no handing it to a subagent. dsh's own store names an image by hash with no extension, so
+ * the note points at the copy `keepImageCopy` wrote. Files need nothing here: dsh replaces a file
+ * block with a line naming its stored path before any provider sees the turn.
+ */
+export function attachmentNotes(turns: LooseMessage[], images: readonly LoadedImage[]): string {
+  const pathOf = new Map(
+    images.filter((i) => i.attachmentId && i.path).map((i) => [i.attachmentId, i.path]),
+  );
+  const notes: string[] = [];
+  for (const m of turns) {
+    if (m.role !== "user" || !Array.isArray(m.content)) continue;
+    for (const b of m.content) {
+      if (b.type !== "image" || !b.attachment) continue;
+      // SAFETY: the repo's dsh-llm typings predate the width, height and name dsh 0.1.5 stamps on
+      // an image ref; the plugin's own mirror of the ref carries them as optional.
+      const ref = b.attachment as ImageAttachmentRef;
+      const path = pathOf.get(ref.attachmentId);
+      if (!path) continue;
+      const size = ref.width && ref.height ? `, ${ref.width}x${ref.height}px` : "";
+      notes.push(
+        `[Image ${ref.name ? `"${ref.name}" ` : ""}(${ref.attachmentId}): the copy shown above is saved at "${path}" (${ref.mediaType}${size}). Read that path with your file tools when it is needed again, and copy it to a writable location before modifying it.]`,
+      );
+    }
+  }
+  return notes.join("\n");
+}
 
 /** The images of a turn, newest MAX_IMAGES kept, for the stdin line that carries them. */
 function imageRefs(turns: LooseMessage[]): ImageAttachmentRef[] {
@@ -1972,6 +2011,34 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     }
   }
 
+  /** A copy of the image under the plugin's state dir, named by attachment id with the extension
+   *  its media type calls for: dsh's own stored object has no extension, and Claude Code's Read
+   *  decides image-or-text by the name. Written once per attachment; a failure just leaves the
+   *  image inline-only, as before. */
+  async keepImageCopy(ref: ImageAttachmentRef, data: ArrayBuffer): Promise<string | undefined> {
+    // dsh's ids read `sha256:<hex>`; the hex alone is the file name, and anything else is refused
+    // rather than written under a name the id could steer.
+    const ext = IMAGE_EXT.get(ref.mediaType);
+    const stem = ref.attachmentId.replace(/^sha256:/, "");
+    if (!ext || !/^[A-Za-z0-9_-]+$/.test(stem)) return undefined;
+    const dir = join(process.env.DSH_OMC_STATE_DIR ?? STATE_DIR, "attachments");
+    const path = join(dir, `${stem}.${ext}`);
+    try {
+      await access(path);
+      return path;
+    } catch {
+      // not there yet
+    }
+    try {
+      await mkdir(dir, { recursive: true });
+      await writeFile(path, Buffer.from(data));
+      return path;
+    } catch (error: unknown) {
+      this.log("warn", `image copy for ${ref.attachmentId} not written: ${String(error)}`);
+      return undefined;
+    }
+  }
+
   async loadImages(
     refs: ImageAttachmentRef[],
     signal: AbortSignal | undefined,
@@ -1986,6 +2053,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
           mediaType: ref.mediaType,
           data: Buffer.from(stored.data).toString("base64"),
           attachmentId: ref.attachmentId,
+          path: await this.keepImageCopy(ref, stored.data),
         });
       } catch (error: unknown) {
         this.log(
@@ -2085,9 +2153,13 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       session = { id, resuming: known && !forceFresh };
     }
     const turns = selectTurns(options.messages, session?.resuming ?? false);
-    const prompt = buildPrompt(turns);
+    let prompt = buildPrompt(turns);
     const stdin = usesStdin(cli.flags);
     const images = stdin ? await this.loadImages(imageRefs(turns), options.signal) : [];
+    // Where each image lives on disk, after the prompt: the inline copy lets Claude see it, the
+    // note lets it Read, edit or delegate it.
+    const notes = attachmentNotes(turns, images);
+    if (notes) prompt = `${prompt}\n\n${notes}`;
     const model = options.purpose === "session-title" ? this.config.titleModel : options.model;
     const accessMode = accessModeOf(options.messages);
     if (options.sessionId) this.accessModes.set(options.sessionId, accessMode);

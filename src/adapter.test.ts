@@ -27,6 +27,7 @@ import {
   usesStdin,
   buildInput,
   buildPrompt,
+  attachmentNotes,
   claudeSessionId,
   getCatalog,
   modelFromApi,
@@ -4135,6 +4136,43 @@ console.log("interrupt-on-abort ok");
   assert.equal(hasPendingTodo([{ status: "pending" }]), true);
   assert.equal(hasPendingTodo(["a string is not a todo we can read"]), true);
   assert.equal(hasPendingTodo([]), false, "an empty list has nothing outstanding");
+}
+
+// Images are named by path after the prompt: the note carries the copy the adapter kept (with an
+// extension, so Read treats it as an image), its name and size, and an image without a copy says
+// nothing rather than pointing nowhere.
+{
+  const turns: LooseMessage[] = [
+    {
+      role: "user",
+      content: [
+        { type: "text", text: "look" },
+        {
+          type: "image",
+          attachment: {
+            attachmentId: "sha256:abc",
+            mediaType: "image/png",
+            width: 4,
+            height: 2,
+            name: "logo.png",
+          },
+        },
+        { type: "image", attachment: { attachmentId: "sha256:def", mediaType: "image/png" } },
+      ],
+    } as LooseMessage,
+  ];
+  const notes = attachmentNotes(turns, [
+    {
+      mediaType: "image/png",
+      data: "",
+      attachmentId: "sha256:abc",
+      path: "/state/attachments/abc.png",
+    },
+  ]);
+  assert.ok(notes.includes('"/state/attachments/abc.png"'), "the note names the kept copy");
+  assert.ok(notes.includes('"logo.png"') && notes.includes("4x2px"), "name and size ride along");
+  assert.ok(!notes.includes("sha256:def"), "an image with no copy gets no note");
+  assert.equal(attachmentNotes([{ role: "user", content: "plain" }], []), "");
 }
 
 // MCP headers name the server: a plugin-mounted server drops the `plugin_` prefix and the doubled

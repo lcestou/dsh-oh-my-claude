@@ -284,6 +284,10 @@ export interface ImageAttachmentRef {
         width: number;
         height: number;
     };
+    /** Intrinsic size and display name, as dsh 0.1.5 stamps them; older refs may lack them. */
+    readonly width?: number;
+    readonly height?: number;
+    readonly name?: string;
 }
 export interface StoredImageAttachment {
     data: ArrayBuffer;
