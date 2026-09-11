@@ -89,7 +89,10 @@
   "bugs": {
     "url": "https://github.com/lcestou/dsh-oh-my-claude/issues"
   },
-  "repository": "https://github.com/lcestou/dsh-oh-my-claude",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lcestou/dsh-oh-my-claude.git"
+  },
   "license": "MIT",
   "types": "lib/server/adapter.d.ts"
 }

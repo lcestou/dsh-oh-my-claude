@@ -9,6 +9,7 @@
 </p>
 
 <p align="center">
+  <a href="https://www.npmjs.com/package/dsh-oh-my-claude"><img src="https://img.shields.io/npm/v/dsh-oh-my-claude?style=flat&color=cb3837&logo=npm" alt="npm version" /></a>
   <img src="https://img.shields.io/badge/host-dsh-6c5ce7?style=flat" alt="dsh" />
   <img src="https://img.shields.io/badge/drives-Claude%20Code%20CLI-d97757?style=flat" alt="Claude Code CLI" />
   <img src="https://img.shields.io/badge/language-TypeScript-3178c6?style=flat&logo=typescript" alt="TypeScript" />
