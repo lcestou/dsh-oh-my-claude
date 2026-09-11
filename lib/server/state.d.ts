@@ -114,4 +114,33 @@ export declare function buildRedactor(env: Record<string, string | undefined>): 
 export declare const TOOL_MODE_FILE: (d: string) => string;
 export declare function loadToolMode(dir: string): Promise<ToolMode | undefined>;
 export declare const saveToolMode: (dir: string, mode: ToolMode) => Promise<void>;
+/** Where each watched session's transcript stood when it was last read: `{ [dshSessionId]:
+ *  { path, seen } }`, so a restart carries on where the watch left off instead of re-showing or
+ *  skipping what landed meanwhile. */
+export declare const WATCH_FILE: (d: string) => string;
+/** `provider` is the plugin instance that ran the session's turns and so owns its mirror turns; a
+ *  second instance watching the same file would send a followup the first does not recognise, and
+ *  that would reach Claude as a prompt (seen 2026-09-11 on a session on an SSH box). */
+export type WatchRecord = {
+    path: string;
+    seen: number;
+    host?: string;
+    provider?: string;
+    claudeId?: string;
+};
+export declare function loadWatches(dir: string): Promise<Map<string, WatchRecord>>;
+export declare function saveWatch(dir: string, sessionId: string, record: WatchRecord): Promise<void>;
+/** The terminal mirror: whether the plugin copies exchanges from a terminal that picked this session
+ *  up with `claude /resume` into the dsh session as they land. Off unless the owner turned it on,
+ *  and a missing or unreadable file reads as off, so a fresh box does not get it by surprise: the
+ *  mirror holds a dsh turn open while it fills, which can leave a typed prompt queued behind it.
+ *  Carrying a session between dsh and a terminal does not depend on this and never did — Claude Code
+ *  writes the transcript itself, so `/resume` sees dsh's turns, and opening a terminal session in dsh
+ *  seeds it from that transcript. This flag only governs the live copy in one direction. */
+export declare const TERMINAL_SYNC_FILE: (d: string) => string;
+/** The saved choice, or undefined when there is none to read. Undefined rather than a value on a
+ *  missing or corrupt file so the caller keeps its own default instead of having one asserted over
+ *  it: the read is asynchronous, and answering `false` here overwrote a value set meanwhile. */
+export declare function loadTerminalSync(dir: string): Promise<boolean | undefined>;
+export declare const saveTerminalSync: (dir: string, enabled: boolean) => Promise<void>;
 export {};

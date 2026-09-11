@@ -51,12 +51,22 @@ export declare const childPath: (dir: string, name: string) => string;
 export declare const writeScript: (path: string, base64: string) => string;
 /** Delete, and stay silent about a file that was already gone. */
 export declare const removeScript: (path: string) => string;
+/** The file's size in bytes, GNU or BSD stat; a missing file exits with the absent code. */
+export declare const sizeScript: (path: string) => string;
+/** The bytes past `offset` (tail counts from 1); nothing when the file is shorter or missing. */
+export declare const tailScript: (path: string, offset: number) => string;
 /** The script's own output, or null when the marker never arrived and there is no answer to read. */
 export declare const afterMark: (out: string) => string | null;
 /** Split the read script's answer: the first line is the mtime in seconds, the rest is the file. */
 export declare function splitRead(out: string): FileRead;
 /** The file with its mtime, or null when it does not exist. Throws when the box cannot be reached. */
 export declare function readAt(box: FsBox, path: string): Promise<FileRead | null>;
+/** The file's size, or null when it does not exist. Throws when the box cannot be reached. */
+export declare function sizeAt(box: FsBox, path: string): Promise<number | null>;
+/** The bytes a file gained past `offset`, or "" when it has not grown or is not there. Locally one
+ *  positioned read; on a box one `tail`, over the shared connection. A file shorter than the offset
+ *  was replaced under us and reads as nothing new. */
+export declare function readFromAt(box: FsBox, path: string, offset: number): Promise<string>;
 /** The file's text, or null when it does not exist. */
 export declare function readTextAt(box: FsBox, path: string): Promise<string | null>;
 /** The names in a directory; an absent directory lists empty, the way a local read does. */

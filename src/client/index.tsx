@@ -4147,6 +4147,62 @@ function StarterSwitch() {
   );
 }
 
+/** The settings switch for terminal sync. Server-held, unlike the starter's client hint: it gates a
+ *  watcher the adapter runs, so it reads and writes the plugin's `/terminal-sync` route. */
+function TerminalSyncSwitch() {
+  const [on, setOn] = useState<boolean | null>(null);
+  const [err, setErr] = useState("");
+  useEffect(() => {
+    let live = true;
+    fetch(`${ROUTE}/terminal-sync`)
+      .then((r) => readJson<{ enabled: boolean }>(r))
+      .then((b) => live && setOn(b.enabled))
+      .catch(() => live && setErr("could not read the terminal sync setting"));
+    return () => {
+      live = false;
+    };
+  }, []);
+  const toggle = async (next: boolean) => {
+    setErr("");
+    try {
+      const b = await readJson<{ enabled: boolean }>(
+        await fetch(`${ROUTE}/terminal-sync`, {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ enabled: next }),
+        }),
+      );
+      setOn(b.enabled);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  };
+  return (
+    <div
+      data-omc-terminal-sync=""
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
+        fontSize: 13,
+        marginBottom: 12,
+      }}
+    >
+      <div>
+        <div>
+          Terminal mirror <span style={{ color: T.err }}>(experimental)</span>
+        </div>
+        <div style={{ color: T.faint, fontSize: 12 }}>
+          {err ||
+            "Copy exchanges from a terminal that picked this session up with claude /resume into this dsh session as they land. Experimental: it holds a turn open while it fills, so a prompt you type can wait behind it. Carrying a session between dsh and a terminal works either way — this only controls the live copy."}
+        </div>
+      </div>
+      <Switch on={on ?? false} onChange={(next) => void toggle(next)} label="Terminal mirror" />
+    </div>
+  );
+}
+
 /** Slot wrapper: reads the live draft through dsh's own input hook before handing the card its props.
  *  The hook comes in as a prop, so the read has to happen in a component dsh renders, not in the
  *  registration callback. */
@@ -4599,6 +4655,7 @@ export function apply(ctx: ClientCtx) {
           </h2>
         </div>
         <StarterSwitch />
+        <TerminalSyncSwitch />
         {error && <p style={{ color: T.err, fontSize: 13 }}>{error}</p>}
         {boxes !== null && (
           <Card

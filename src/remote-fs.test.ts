@@ -17,6 +17,8 @@ import {
   homeAt,
   readAt,
   readScript,
+  sizeScript,
+  tailScript,
   readTextAt,
   removeAt,
   removeScript,
@@ -35,6 +37,10 @@ import {
   assert.ok(read.includes("stat -c %Y") && read.includes("stat -f %m"), "GNU and BSD stat");
 
   assert.equal(listScript("/w/dir"), "if [ -d '/w/dir' ]; then ls -A -- '/w/dir'; fi");
+  const size = sizeScript(path);
+  assert.ok(size.includes("stat -c %s") && size.includes("stat -f %z"), "GNU and BSD size");
+  assert.ok(size.endsWith(`else exit ${ABSENT}; fi`), "a missing file exits with the absent code");
+  assert.equal(tailScript("/w/t.jsonl", 41), "tail -c +42 -- '/w/t.jsonl' 2>/dev/null || true");
   assert.equal(removeScript("/w/x.md"), "rm -f -- '/w/x.md'");
   assert.equal(makeDirScript("/w/new dir"), "mkdir -- '/w/new dir'");
 

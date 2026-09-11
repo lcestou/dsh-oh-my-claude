@@ -3,6 +3,8 @@ import type { ContentBlock, GenerateOptions, Message } from "@deepseek-ai/dsh-ll
 export declare const ADAPTER_CURRENT: unique symbol;
 /** Map of providerId → timer on globalThis (scoped outside cordis to survive plugin re-instantiation). */
 export declare const RESUME_TIMER: unique symbol;
+/** One interval per dsh process that puts loaded sessions' transcripts under watch. */
+export declare const WATCH_SWEEP: unique symbol;
 /** Symbol for the Claude process registry on globalThis (adopted processes across hot reloads). */
 export declare const PROCESS_REGISTRY: unique symbol;
 /** Per-session turn accounting on globalThis: the route registered at boot must read the buffer a hot-reloaded adapter fills. */

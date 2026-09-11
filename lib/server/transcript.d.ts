@@ -93,16 +93,6 @@ export interface FoldedTranscript {
     /** Task call id to the subagent that answered it, for the records kept in a file of their own. */
     agents: Map<string, string>;
 }
-/**
- * Fold a transcript into turns: one user prompt, then assistant steps (one per Claude message id)
- * with their tool calls and results. Unfinished trailing prompts are dropped; the seed must end on
- * a completed turn.
- *
- * A subagent's own records are not folded here. On 2.1 they are not in this file at all — they live
- * in `<session>/subagents/agent-<id>.jsonl` and are attached by `attachSubagents` — and the inline
- * `isSidechain` records older transcripts carry are skipped, because the turn they belong to is the
- * Task call that spawned them rather than a prompt of the user's own.
- */
 export declare function foldTranscript(text: string): FoldedTranscript;
 /** One dsh session event as the seed writes it: the shapes dsh persists itself. */
 export interface SeedEvent {
@@ -115,6 +105,50 @@ export interface SeedEvent {
 }
 /** dsh session events for folded turns. Shapes follow what dsh writes itself; seqs are contiguous from 0. */
 export declare function toSessionEvents(folded: FoldedTranscript): SeedEvent[];
+/** What another entrypoint wrote into a stretch of transcript: its completed turns, and how many
+ *  bytes of the stretch are settled. A prompt still being answered is not settled: `consumed` stops
+ *  at its row, so the next read starts there and reports the whole turn once. */
+export interface ForeignTurns {
+    turns: FoldedTurn[];
+    consumed: number;
+    /** Bytes through the end of the first completed turn, or `consumed` when there is none. A live
+     *  stream owns one exchange: settling it moves the baseline by this much rather than by
+     *  `consumed`, so an exchange that landed behind it is still ahead of the baseline for the next
+     *  read to mirror instead of being jumped over and lost. */
+    firstEnd: number;
+    /** The entrypoint stamps seen on those rows: `cli` for a terminal, `sdk-cli` for a print run. */
+    stamps: Set<string>;
+    /** Byte offset of the newest foreign prompt in the read, open or answered; where the latest
+     *  exchange begins. `consumed` when there is no foreign prompt. Used to re-read the latest
+     *  exchange when a session is opened, so the tab always catches up to it. */
+    lastPromptAt: number;
+    /** The turn still being answered at the end of the read, folded up to its completed steps, or
+     *  undefined when the read ends on a settled turn. Live streaming renders this as it grows. */
+    running?: FoldedTurn;
+}
+export declare function foreignTurns(text: string, own: string): ForeignTurns;
+/** A short, stable fingerprint of a turn for dedup: its prompt and the start of its final answer,
+ *  both of which the mirrored dsh message also carries, so "has the dsh log already shown this
+ *  exchange?" is a substring test against the log's recent messages. Empty only for an empty turn. */
+/** The text blocks of a dsh assistant/message's content, joined; other block kinds are skipped.
+ *  A boundary decode so callers outside this file need no `typeof` on event data. */
+export declare function assistantMessageText(content: unknown): string;
+/** Whether the dsh log already shows this exchange, so re-reading the latest one when a session opens
+ *  does not mirror it twice. The prompt and the reply land in dsh as two separate messages, so one
+ *  string spanning both can never be found in either: the fingerprint that did exactly that matched
+ *  nothing at all, and every re-read mirrored the exchange again. Both halves are checked, and both
+ *  must be present, because dropping an exchange that was not really shown is the worse mistake — a
+ *  tool-heavy reply can open with the same rendered line as another, so the reply alone is not enough
+ *  to tell two exchanges apart. `shown` must carry the text of recent user *and* assistant messages. */
+export declare function alreadyShown(turn: FoldedTurn, shown: string, limit: number): boolean;
+/** The reply a terminal got, as the markdown of one dsh assistant message: each step's blocks in
+ *  order, tool calls and their results drawn the way the inline translator draws them in a live
+ *  turn, text as it is. Thinking stays out, as it does live. Results are cut at `limit` bytes. */
+export declare function mirrorReply(turn: FoldedTurn, limit: number): string;
+/** The reply as one markdown chunk per rendered block — a text block, or a tool call with its
+ *  result — in order. Live streaming yields the chunks a running turn has gained since the last
+ *  render, so a long turn fills into one dsh turn step by step instead of landing all at once. */
+export declare function mirrorReplyBlocks(turn: FoldedTurn, limit: number): string[];
 /** Where 2.1 keeps a session's subagent transcripts: a directory beside the session's own file. */
 export declare const subagentsDir: (path: string) => string;
 /**

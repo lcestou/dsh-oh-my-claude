@@ -1140,6 +1140,11 @@ export interface SessionRouteOptions {
     info(): Promise<ToolModeInfo>;
     set(mode: ToolMode): Promise<ToolModeInfo>;
   };
+  /** Terminal sync: whether terminal `/resume` exchanges mirror into the dsh session. */
+  terminalSync?: {
+    info(): { enabled: boolean };
+    set(enabled: boolean): Promise<{ enabled: boolean }>;
+  };
   /** Per-session permission mode: read the effective mode, set or clear the override. */
   permissionModes?: {
     info: (sessionId: string) => PermissionModeInfo;
@@ -1219,6 +1224,7 @@ export function registerSessionRoutes(
     turnRecords,
     idle,
     toolMode,
+    terminalSync,
     permissionModes,
     thinking,
     rewind,
@@ -2066,6 +2072,18 @@ export function registerSessionRoutes(
                   if (mode !== "inline" && mode !== "rows")
                     return json(res, 400, { error: "mode must be inline or rows" });
                   return json(res, 200, await toolMode.set(mode));
+                }
+                return json(res, 405, { error: "method not allowed" });
+              }
+              // Terminal sync: whether terminal /resume exchanges mirror into the dsh session. The
+              // Tune tab reads it on open; a PUT takes effect at once, no restart.
+              if (terminalSync && url.pathname === `${ROUTE_PREFIX}/terminal-sync`) {
+                if (req.method === "GET") return json(res, 200, terminalSync.info());
+                if (req.method === "PUT") {
+                  const { enabled } = await readBody(req);
+                  if (typeof enabled !== "boolean")
+                    return json(res, 400, { error: "enabled must be a boolean" });
+                  return json(res, 200, await terminalSync.set(enabled));
                 }
                 return json(res, 405, { error: "method not allowed" });
               }

@@ -548,3 +548,280 @@ assert.ok(validateBoxes("nope").error);
 }
 
 console.log("transcript ok");
+
+// --- terminal turns: rows another entrypoint wrote, folded and rendered ---
+{
+  const { alreadyShown, foreignTurns, mirrorReply, mirrorReplyBlocks } =
+    await import("./transcript.js");
+  const { readFromAt } = await import("./remote-fs.js");
+  const readTranscriptFrom = (p: string, o: number) => readFromAt({}, p, o);
+  const own = "dsh-oh-my-claude";
+  const row = (o: object) => JSON.stringify(o);
+  const user = (uuid: string, ep: string, content: unknown) =>
+    row({ type: "user", uuid, timestamp: T, entrypoint: ep, message: { role: "user", content } });
+  const asst = (uuid: string, ep: string, content: unknown) =>
+    row({
+      type: "assistant",
+      uuid,
+      timestamp: T,
+      entrypoint: ep,
+      message: { id: uuid, role: "assistant", content },
+    });
+  const ours = [
+    user("d1", own, "from dsh"),
+    asst("d2", own, [{ type: "text", text: "dsh reply" }]),
+  ].join("\n");
+  const done = [
+    row({ type: "queue-operation", operation: "enqueue", timestamp: T }),
+    user("t1", "cli", "hello from terminal\nline two"),
+    asst("t2", "cli", [{ type: "text", text: "terminal reply" }]),
+  ].join("\n");
+  const running = [
+    user("t3", "cli", "still typing"),
+    asst("t3a", "cli", [{ type: "thinking", thinking: "hm" }]),
+    asst("t4", "cli", [{ type: "tool_use", id: "c1", name: "Bash", input: {} }]),
+    user("t5", "cli", [{ type: "tool_result", tool_use_id: "c1", content: "out" }]),
+  ].join("\n");
+  // Only the terminal's finished exchange counts: ours are skipped, bookkeeping rows have no stamp,
+  // and a prompt whose newest assistant row has not reached a terminal stop_reason is still running.
+  const text = `${ours}\n${done}\n${running}\n`;
+  const found = foreignTurns(text, own);
+  assert.equal(found.turns.length, 1, "one finished terminal turn");
+  assert.equal(found.turns[0]!.content[0]!.text, "hello from terminal\nline two");
+  const runningAt = Buffer.byteLength(`${ours}\n${done}\n`);
+  assert.equal(found.consumed, runningAt, "settled up to the running prompt's row");
+  // Once its final text row lands, the running turn is reported from that offset, exactly once.
+  const rest = `${running}\n${asst("t6", "cli", [{ type: "text", text: "done now" }])}\n`;
+  const later = foreignTurns(rest, own);
+  assert.equal(later.turns.length, 1, "the finished turn is reported");
+  assert.equal(later.turns[0]!.content[0]!.text, "still typing");
+  assert.equal(later.consumed, Buffer.byteLength(rest), "everything settled");
+  assert.deepEqual(foreignTurns(`${ours}\n`, own).turns, [], "nothing foreign reads as no turns");
+  const sdk = [
+    user("s1", "sdk-cli", "from a script"),
+    asst("s2", "sdk-cli", [{ type: "text", text: "x" }]),
+  ];
+  assert.deepEqual(
+    foreignTurns(`${sdk.join("\n")}\n`, own).turns,
+    [],
+    "an SDK run is not a terminal",
+  );
+  assert.equal(foreignTurns("", own).consumed, 0, "an empty tail is settled at zero");
+  assert.deepEqual([...found.stamps], ["cli"], "the stamps seen are reported");
+  // The reply renders as one assistant message: text as is, a tool call and its result drawn the
+  // way a live turn draws them, cut at the limit.
+  assert.equal(mirrorReply(found.turns[0]!, 1000), "terminal reply");
+  const tooled = foreignTurns(
+    [
+      user("p1", "cli", "list it"),
+      asst("p2", "cli", [{ type: "tool_use", id: "c9", name: "Bash", input: { command: "ls" } }]),
+      user("p3", "cli", [{ type: "tool_result", tool_use_id: "c9", content: "a.txt\nb.txt" }]),
+      asst("p4", "cli", [{ type: "text", text: "two files" }]),
+    ].join("\n"),
+    own,
+  ).turns[0]!;
+  const md = mirrorReply(tooled, 1000);
+  assert.match(md, /Bash/, "the call is drawn");
+  assert.match(md, /a\.txt\nb\.txt/, "the result is drawn");
+  assert.match(md, /two files$/, "the text closes the reply");
+  assert.doesNotMatch(mirrorReply(tooled, 3), /a\.txt\nb\.txt/, "results are cut at the limit");
+  // A terminal reply of only a thinking row is not a finished turn: nothing is reported, and the
+  // baseline stops at its prompt so the same prompt is read again once a text reply lands.
+  const thinkingOnly = foreignTurns(
+    [user("k1", "cli", "wait"), asst("k2", "cli", [{ type: "thinking", thinking: "hmm" }])].join(
+      "\n",
+    ) + "\n",
+    own,
+  );
+  assert.deepEqual(thinkingOnly.turns, [], "a thinking-only reply is still running");
+  assert.equal(thinkingOnly.consumed, 0, "the baseline stops at the open prompt");
+  // The real terminal shape: a reply writes a sentence, calls a tool, then writes the answer. Every
+  // row before the tool carries stop_reason "tool_use"; only the last carries a terminal one. The
+  // exchange must not be cut at the opening sentence — its tool call and closing text belong to it.
+  const stop = (uuid: string, blocks: unknown[], reason: string) =>
+    row({
+      type: "assistant",
+      uuid,
+      timestamp: T,
+      entrypoint: "cli",
+      message: { id: uuid, role: "assistant", content: blocks, stop_reason: reason },
+    });
+  const midStream = [
+    user("m0", "cli", "do the thing"),
+    stop("m1", [{ type: "text", text: "Let me check." }], "tool_use"),
+    stop(
+      "m2",
+      [{ type: "tool_use", id: "cc", name: "Bash", input: { command: "ls" } }],
+      "tool_use",
+    ),
+    user("m3", "cli", [{ type: "tool_result", tool_use_id: "cc", content: "a.txt" }]),
+  ].join("\n");
+  assert.deepEqual(
+    foreignTurns(midStream + "\n", own).turns,
+    [],
+    "not cut at the opening sentence",
+  );
+  assert.equal(foreignTurns(midStream + "\n", own).consumed, 0, "baseline holds at the prompt");
+  const whole = foreignTurns(
+    midStream + "\n" + stop("m4", [{ type: "text", text: "Done: found a.txt" }], "end_turn") + "\n",
+    own,
+  );
+  assert.equal(whole.turns.length, 1, "the finished turn mirrors once end_turn lands");
+  const wholeMd = mirrorReply(whole.turns[0]!, 2000);
+  assert.match(wholeMd, /Let me check\./, "the opening sentence is kept");
+  assert.match(wholeMd, /Bash/, "the tool call is drawn");
+  assert.match(wholeMd, /a\.txt/, "the result is drawn");
+  assert.match(wholeMd, /Done: found a\.txt$/, "the closing answer is kept");
+  // lastPromptAt points at the newest prompt, so a re-read from there covers the latest exchange.
+  const twoPrompts =
+    user("p0", "cli", "first") +
+    "\n" +
+    stop("p0a", [{ type: "text", text: "one" }], "end_turn") +
+    "\n";
+  const secondAt = Buffer.byteLength(twoPrompts);
+  const ft = foreignTurns(twoPrompts + user("p1", "cli", "second") + "\n", own);
+  assert.equal(ft.lastPromptAt, secondAt, "lastPromptAt is the newest prompt's byte offset");
+  // firstEnd stops at the end of the first settled exchange. A live stream settles by this much, so
+  // an exchange that landed behind the one it was showing stays ahead of the baseline to be mirrored.
+  assert.equal(ft.firstEnd, secondAt, "firstEnd is the end of the first completed turn");
+  const twoDone = foreignTurns(
+    `${twoPrompts + user("p1", "cli", "second")}\n${stop("p1a", [{ type: "text", text: "two" }], "end_turn")}\n`,
+    own,
+  );
+  assert.equal(twoDone.turns.length, 2, "both exchanges are settled");
+  assert.equal(twoDone.firstEnd, secondAt, "firstEnd covers only the first of them");
+  assert.ok(twoDone.consumed > twoDone.firstEnd, "consumed covers both");
+  // Two settled exchanges with a third still being answered: firstEnd still ends the first, so
+  // settling a stream cannot jump the exchange sitting behind it. Read once as collapsing to
+  // `consumed` here, which would drop that middle exchange from the mirror entirely.
+  const settledThenRunning = foreignTurns(
+    `${twoPrompts + user("p1", "cli", "second")}\n${stop("p1a", [{ type: "text", text: "two" }], "end_turn")}\n${user("p2", "cli", "third")}\n${stop("p2a", [{ type: "tool_use", id: "z", name: "Bash", input: {} }], "tool_use")}\n`,
+    own,
+  );
+  assert.equal(settledThenRunning.turns.length, 2, "both settled exchanges are there");
+  assert.ok(settledThenRunning.running, "the third is still running");
+  assert.equal(settledThenRunning.firstEnd, secondAt, "firstEnd still ends the first exchange");
+  assert.ok(
+    settledThenRunning.consumed > settledThenRunning.firstEnd,
+    "and consumed reaches the running prompt, past the second exchange",
+  );
+  // A message typed while the CLI was busy is written as a `queue-operation` row, with no entrypoint
+  // and no message of its own, so both the fold and the foreign filter used to drop it and the words
+  // reached dsh by no route at all. One taken back out of the queue was never said.
+  const q = (operation: string, content: string) =>
+    JSON.stringify({ type: "queue-operation", operation, content });
+  const queuedRun = foreignTurns(
+    `${user("k0", "cli", "first")}\n${q("enqueue", "typed while busy")}\n${stop("k1", [{ type: "text", text: "answer" }], "end_turn")}\n`,
+    own,
+  );
+  assert.equal(
+    queuedRun.running?.content[0]?.text ?? queuedRun.turns.at(-1)?.content[0]?.text,
+    "typed while busy",
+    "a queued message opens an exchange of its own",
+  );
+  // A `remove` row does not drop the message. Counted across every transcript on this box: 2046
+  // removals, of which 1238 are `absorbed_mid_turn`, 3 are `delivered_to_agent` and 805 carry no
+  // reason at all — and of those 805, 439 hold text that appears as a user row nowhere, which is
+  // what a message delivered mid-turn looks like. Not one removal in 2046 names a retraction, and
+  // two earlier attempts at reading one as a retraction each lost real messages.
+  const removed = foreignTurns(
+    `${user("k2", "cli", "first")}\n${q("enqueue", "said anyway")}\n${q("remove", "said anyway")}\n${stop("k3", [{ type: "text", text: "answer" }], "end_turn")}\n`,
+    own,
+  );
+  assert.ok(
+    JSON.stringify([removed.turns, removed.running]).includes("said anyway"),
+    "a removal does not drop a queued message, whatever reason it carries",
+  );
+  // The CLI also writes a `remove` when it hands a queued message to the turn already running, marked
+  // `absorbed_mid_turn`. That one was said, and reading it as a retraction dropped every message the
+  // owner typed mid-turn — the whole reason this reads queue rows at all.
+  const absorbed = (content: string) =>
+    JSON.stringify({
+      type: "queue-operation",
+      operation: "remove",
+      reason: "absorbed_mid_turn",
+      content,
+    });
+  const wasAbsorbed = foreignTurns(
+    `${user("k4", "cli", "first")}\n${q("enqueue", "typed mid turn")}\n${absorbed("typed mid turn")}\n${stop("k5", [{ type: "text", text: "answer" }], "end_turn")}\n`,
+    own,
+  );
+  assert.ok(
+    JSON.stringify([wasAbsorbed.turns, wasAbsorbed.running]).includes("typed mid turn"),
+    "a message absorbed into the running turn was said, and is kept",
+  );
+  // ...but when the CLI also delivers it as a prompt of its own, that row is the canonical one and
+  // the queue row is skipped. Folding both put the same words in twice, as two exchanges with
+  // different replies, which is what makes a mirrored conversation read as though it jumped around.
+  const alsoDelivered = foreignTurns(
+    `${q("enqueue", "typed while busy")}\n${user("k6", "cli", "typed while busy")}\n${stop("k7", [{ type: "text", text: "answer" }], "end_turn")}\n`,
+    own,
+  );
+  const foldedText = JSON.stringify([alsoDelivered.turns, alsoDelivered.running]);
+  assert.equal(
+    foldedText.split("typed while busy").length - 1,
+    1,
+    "a queued message that also arrives as a prompt folds exactly once",
+  );
+  // Dedup against what dsh actually holds: the prompt in a user message, the rendered reply in an
+  // assistant message. The fingerprint this replaces glued both into one string and looked for it in
+  // assistant text alone, which matched nothing ever, so every re-read mirrored the exchange twice.
+  const shownBoth = `do the thing\n${wholeMd}`;
+  assert.equal(alreadyShown(whole.turns[0]!, shownBoth, 2000), true, "both halves present: shown");
+  assert.equal(
+    alreadyShown(whole.turns[0]!, wholeMd, 2000),
+    false,
+    "the reply alone is not enough, or a repeated opening line would drop a real exchange",
+  );
+  assert.equal(alreadyShown(whole.turns[0]!, "", 2000), false, "an empty log shows nothing");
+  // A turn still running is exposed as `running`, folded up to its completed steps, so a live stream
+  // can render it while it grows: its finished tool step shows, the open tail waits for more.
+  const midRun = foreignTurns(midStream + "\n", own);
+  assert.equal(midRun.turns.length, 0, "no completed turn yet");
+  assert.ok(midRun.running, "the in-flight turn is exposed");
+  assert.equal(midRun.running!.content[0]!.text, "do the thing", "running carries the prompt");
+  const runBlocks = mirrorReplyBlocks(midRun.running!, 1000);
+  assert.ok(
+    runBlocks.some((b) => /Bash/.test(b)),
+    "the call renders",
+  );
+  assert.ok(
+    runBlocks.some((b) => /a\.txt/.test(b)),
+    "and its output follows",
+  );
+  // A call is shown as soon as the CLI writes its row, without waiting for the tool to return: the
+  // output is a block of its own that follows when it lands, so a slow command is visible while it
+  // runs instead of leaving the tab blank for its whole duration.
+  const callOnly = foreignTurns(
+    [
+      user("c0", "cli", "go"),
+      stop("c1", [{ type: "tool_use", id: "z", name: "Bash", input: {} }], "tool_use"),
+    ].join("\n") + "\n",
+    own,
+  );
+  const pending = mirrorReplyBlocks(callOnly.running!, 1000);
+  assert.equal(pending.length, 1, "a call with no result yet still shows its card");
+  assert.match(pending[0]!, /Bash/, "and the card names the tool");
+  const long = foreignTurns(
+    [
+      user("q1", "cli", "talk"),
+      asst("q2", "cli", [{ type: "text", text: "x".repeat(60_000) }]),
+    ].join("\n"),
+    own,
+  ).turns[0]!;
+  assert.ok(
+    Buffer.byteLength(mirrorReply(long, 1000)) < 50_000,
+    "a long reply is cut as one message",
+  );
+  assert.match(mirrorReply(long, 1000), /cut here/, "and says so");
+  // The tail read starts at the byte offset the last turn ended on; a shorter file reads as "".
+  const dir = await mkdtemp(join(tmpdir(), "omc-tail-"));
+  const path = join(dir, "s.jsonl");
+  await writeFile(path, `${ours}\n`);
+  const seen = Buffer.byteLength(`${ours}\n`);
+  assert.equal(await readTranscriptFrom(path, seen), "", "no growth reads as nothing");
+  await writeFile(path, `${ours}\n${done}\n`);
+  assert.equal(await readTranscriptFrom(path, seen), `${done}\n`, "only the new bytes");
+  assert.equal(await readTranscriptFrom(path, seen * 10), "", "a file shorter than the offset");
+  console.log("terminal turns ok");
+}

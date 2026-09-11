@@ -490,6 +490,7 @@ export function TuneBody({
       setToolModeErr(e instanceof Error ? e.message : String(e));
     }
   };
+
   // Rows are locked, not hidden, on a dsh that refuses to load them: the row says why, and the
   // same switch works again on a dsh that does, with nothing to update here.
   const rowsLocked = toolMode?.rows.ok === false;

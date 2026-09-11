@@ -8,6 +8,8 @@ import type { ContentBlock, GenerateOptions, Message } from "@deepseek-ai/dsh-ll
 export const ADAPTER_CURRENT = Symbol.for("dsh-oh-my-claude.adapter");
 /** Map of providerId → timer on globalThis (scoped outside cordis to survive plugin re-instantiation). */
 export const RESUME_TIMER = Symbol.for("dsh-oh-my-claude.resume-timer");
+/** One interval per dsh process that puts loaded sessions' transcripts under watch. */
+export const WATCH_SWEEP = Symbol.for("dsh-oh-my-claude.watch-sweep");
 /** Symbol for the Claude process registry on globalThis (adopted processes across hot reloads). */
 export const PROCESS_REGISTRY = Symbol.for("dsh-oh-my-claude.processes");
 /** Per-session turn accounting on globalThis: the route registered at boot must read the buffer a hot-reloaded adapter fills. */

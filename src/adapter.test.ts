@@ -2348,6 +2348,25 @@ console.log("ok");
   };
   await a.wake("s1", fakeProc({ busy: false }));
   assert.equal(sent.length, 2, "resume failure is logged, not thrown");
+  // The restart notice asks the model to carry on. A mirrored session's context is a conversation
+  // someone is holding in a terminal, and nudging one made it read that conversation as its own
+  // instructions: it wrote a feature being discussed there, committed it, and switched the branch of
+  // a shared checkout. With the mirror on, a restart leaves the session alone.
+  ctx.agents.get = () => agent;
+  a.terminalSync = true;
+  await a.wake("s1", fakeProc({ busy: false }), RESTART_TEXT);
+  assert.equal(sent.length, 2, "terminal mirror on: a restart never nudges the session");
+  await a.wake("s1", fakeProc({ busy: false }));
+  assert.equal(
+    sent.length,
+    2,
+    "nor does a background-task wake, which reaches the model the same way",
+  );
+  a.terminalSync = false;
+  await a.wake("s1", fakeProc({ busy: false }), RESTART_TEXT);
+  assert.equal(sent.length, 3, "mirror off: the restart notice still goes");
+  await a.wake("s1", fakeProc({ busy: false }));
+  assert.equal(sent.length, 4, "and so does the idle-reply wake");
 }
 {
   // dsh's instruction bundle: CLAUDE.md blocks go, Claude Code loads those files itself.
@@ -4189,4 +4208,374 @@ console.log("interrupt-on-abort ok");
   assert.equal(asideAnswerText(undefined), undefined, "no response is none");
   assert.equal(asideAnswerText({ other: "x" }), undefined, "missing response field is none");
   console.log("aside-answer-text ok");
+}
+
+// --- terminal turns: the watcher starts at a turn's end, reads past its baseline, marks the live
+// process stale and opens a mirror turn; a remote box is not watched ---
+{
+  const fsp = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join: j } = await import("node:path");
+  const home = await fsp.mkdtemp(j(tmpdir(), "omc-home-"));
+  const cwd = j(home, "ws");
+  const a = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  a.claudeHome = home;
+  const path = (await a.transcriptLocation(cwd, "c1"))!.path;
+  assert.equal(path, j(home, "projects", projectDirName(cwd), "c1.jsonl"));
+  assert.equal(await a.transcriptLocation(cwd, undefined), undefined, "no session id");
+  const row = (o: object) => JSON.stringify(o);
+  const T = "2026-09-10T22:00:00.000Z";
+  const user = (uuid: string, ep: string, content: unknown) =>
+    row({ type: "user", uuid, timestamp: T, entrypoint: ep, message: { role: "user", content } });
+  const asst = (uuid: string, ep: string, text: string) =>
+    row({
+      type: "assistant",
+      uuid,
+      timestamp: T,
+      entrypoint: ep,
+      message: { id: uuid, role: "assistant", content: [{ type: "text", text }] },
+    });
+  a.terminalSync = true; // the mirror ships off; these cases are about what it does when on
+  await a.watchTranscript("s1", cwd, "c1");
+  assert.equal(a.watchers.has("s1"), false, "no file yet: nothing to watch");
+  await fsp.mkdir(j(path, ".."), { recursive: true });
+  await fsp.writeFile(path, `${user("d1", "dsh-oh-my-claude", "ours")}\n`);
+  await a.watchTranscript("s1", cwd, "c1");
+  const w = a.watchers.get("s1")!;
+  // A first watch starts back in the tail rather than at the end of the file, so exchanges already
+  // written are still ahead of the baseline and get mirrored. This file is shorter than that window,
+  // so it starts at nothing; the scan below finds only our own rows and moves the baseline up.
+  assert.equal(w.seen, 0, "a first watch starts back in the tail, not at the end");
+  // Starting back in the tail means the watch fires a catch-up scan of its own. Let it finish, or it
+  // is still holding `scanning` when the next scan runs and that one defers instead of doing the work.
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(w.seen, (await fsp.stat(path)).size, "and the catch-up scan moves it to the end");
+  const sent: Array<{
+    id: string;
+    content: Array<{ type: string; text?: string }>;
+    source: { kind: string };
+  }> = [];
+  // SAFETY: the test's agent only records followups; agentFor reads nothing else off it
+  a.agentFor = async () => ({
+    agent: { followup: (m: unknown) => sent.push(m as (typeof sent)[0]) } as unknown as Agent,
+    how: "live",
+  });
+  const proc = fakeProc({ alive: true, staleContext: false, kill() {} });
+  a.processes.set(registryKey("claude-code", "s1"), proc);
+  await a.scanTranscript("s1");
+  assert.equal(sent.length, 0, "nothing new: no turn opened");
+  assert.equal(proc.staleContext, false, "the process is not stale");
+  await fsp.appendFile(
+    path,
+    `${user("t1", "cli", "typed in a terminal")}\n${asst("t2", "cli", "answered there")}\n`,
+  );
+  await a.scanTranscript("s1");
+  assert.equal(sent.length, 1, "a terminal exchange opens a mirror turn");
+  assert.equal(sent[0]!.content[0]!.text, "typed in a terminal", "the prompt is the user message");
+  assert.equal(sent[0]!.source.kind, "user", "shown as the user's own bubble");
+  assert.equal(a.mirrors.get("s1")!.inFlight!.id, sent[0]!.id, "the turn is matched by message id");
+  assert.equal(proc.staleContext, true, "the live process is stale");
+  assert.equal(w.seen, (await fsp.stat(path)).size, "the baseline moved past the exchange");
+  await a.scanTranscript("s1");
+  assert.equal(sent.length, 1, "the same exchange is not reported twice");
+  // A second exchange waits while one is in flight, and goes out once that turn has been shown.
+  await fsp.appendFile(path, `${user("t3", "cli", "second")}\n${asst("t4", "cli", "two")}\n`);
+  await a.scanTranscript("s1");
+  assert.equal(sent.length, 1, "queued behind the one in flight");
+  a.mirrors.get("s1")!.inFlight = undefined;
+  await a.pumpMirror("s1");
+  assert.equal(sent.length, 2, "pumped once the turn is free");
+  assert.equal(sent[1]!.content[0]!.text, "second");
+  // A mirror whose turn never opened is put back and sent again after the timeout.
+  a.mirrors.get("s1")!.inFlight!.at = 0;
+  await a.pumpMirror("s1");
+  assert.equal(sent.length, 3, "re-sent after the timeout");
+  // A box that has spent its inotify budget answers ENOSPC from fs.watch, and a transcript on a
+  // network filesystem may refuse to be watched at all. The watch carries on without an FSWatcher
+  // rather than bailing, leaving the session on the sweep's poll — how an ssh box runs anyway.
+  {
+    const w1 = a.watchers.get("s1")!;
+    w1.fw?.close();
+    w1.fw = undefined;
+    const before = sent.length;
+    await fsp.appendFile(
+      path,
+      `${user("t7", "cli", "no inotify here")}\n${asst("t8", "cli", "still seen")}\n`,
+    );
+    await a.pollTranscript("s1");
+    a.mirrors.get("s1")!.inFlight = undefined;
+    await a.pumpMirror("s1");
+    assert.ok(sent.length > before, "a watch with no FSWatcher still mirrors, from the poll");
+    assert.equal(
+      sent.at(-1)!.content[0]!.text,
+      "no inotify here",
+      "and it is the exchange that landed",
+    );
+  }
+  assert.equal(sent[2]!.content[0]!.text, "second");
+  // A second turn ending on the same session keeps the watcher; the baseline moves by scans only.
+  await fsp.appendFile(path, `${user("d2", "dsh-oh-my-claude", "ours again")}\n`);
+  await a.watchTranscript("s1", cwd, "c1");
+  assert.equal(a.watchers.get("s1"), w, "same watcher");
+  await new Promise((r) => setTimeout(r, 50)); // the scan the watch call started
+  assert.equal(w.seen, (await fsp.stat(path)).size);
+  // A new adapter (dsh restarted) carries on from the persisted baseline rather than the end, and
+  // a first watch on a file with a terminal prompt still being answered starts at that prompt.
+  const c = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  c.claudeHome = home;
+  c.terminalSync = true;
+  await fsp.appendFile(
+    path,
+    `${user("t9", "cli", "landed during the restart")}\n${asst("t10", "cli", "yes")}\n`,
+  );
+  const sentC: Array<{ content: Array<{ text?: string }> }> = [];
+  // SAFETY: as above, a recording agent
+  c.agentFor = async () => ({
+    agent: { followup: (m: unknown) => sentC.push(m as (typeof sentC)[0]) } as unknown as Agent,
+    how: "live",
+  });
+  await c.watchTranscript("s1", cwd, "c1");
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(
+    sentC[0]?.content[0]?.text,
+    "landed during the restart",
+    "the restart missed nothing",
+  );
+
+  // The sweep watches a loaded session only from the record its own turn saved (another instance's
+  // session, or one that never spoke here, is left to the instance that runs it).
+  const b = new ClaudeCodeAdapter(
+    fakeCtx({
+      on() {},
+      sessions: {
+        list: () => [
+          { id: "dsh-a", header: { cwd } },
+          { id: "dsh-b", header: { cwd } },
+        ],
+      },
+    }),
+    Config({}),
+  );
+  b.claudeHome = home;
+  b.terminalSync = true;
+  const hashed = (await a.transcriptLocation(cwd, claudeSessionId("dsh-a")))!.path;
+  await fsp.writeFile(hashed, `${user("x1", "dsh-oh-my-claude", "ours")}\n`);
+  await b.watchLoadedSessions();
+  assert.deepEqual([...b.watchers.keys()], [], "no record yet: nothing watched by the sweep");
+  const { saveWatch: save } = await import("./state.js");
+  await save(b.stateDir, "dsh-a", {
+    path: hashed,
+    seen: 0,
+    provider: "claude-code",
+    claudeId: claudeSessionId("dsh-a"),
+  });
+  await save(b.stateDir, "dsh-b", {
+    path: hashed,
+    seen: 0,
+    provider: "claude-code-other",
+    claudeId: "zz",
+  });
+  await b.watchLoadedSessions();
+  assert.deepEqual([...b.watchers.keys()], ["dsh-a"], "only the session this instance ran");
+  assert.equal(b.watchers.get("dsh-a")!.path, hashed);
+  // Terminal sync off: watchTranscript and the sweep do nothing, and turning it off clears watchers.
+  {
+    const off = new ClaudeCodeAdapter(
+      fakeCtx({ on() {}, sessions: { list: () => [] } }),
+      Config({}),
+    );
+    off.claudeHome = home;
+    off.terminalSync = false;
+    await off.watchTranscript("s-off", cwd, "c-off");
+    assert.equal(off.watchers.has("s-off"), false, "off: no watcher created");
+    await off.watchLoadedSessions();
+    assert.equal(off.watchers.size, 0, "off: the sweep watches nothing");
+    assert.equal(off.terminalSyncInfo().enabled, false);
+    // On, then a watcher, then off clears it.
+    off.terminalSync = true;
+    await off.watchTranscript("s-off", cwd, claudeSessionId("s-off"));
+    // No transcript for that id, so no watcher; assert the setter still clears any that exist.
+    off.watchers.set("x", { path: "/x", seen: 0, claudeId: "c", box: {} } as never);
+    await off.setTerminalSync(false);
+    assert.equal(off.watchers.size, 0, "setTerminalSync(false) clears watchers");
+    assert.equal(
+      (await import("./state.js")).TERMINAL_SYNC_FILE(off.stateDir).endsWith("terminal-sync.json"),
+      true,
+    );
+    await off.setTerminalSync(true); // restore the shared state file and registry mounts
+  }
+  // An archived session is left alone: the baseline stays and no turn opens, so nothing restores
+  // it; once it is open again, the poll finds the file past the baseline and the exchange shows.
+  let archived = true;
+  const d = new ClaudeCodeAdapter(
+    fakeCtx({
+      on() {},
+      get: (name: string) =>
+        name === "workspaceRegistry" ? { archivedSessionIds: archived ? ["s9"] : [] } : undefined,
+    }),
+    Config({}),
+  );
+  d.claudeHome = home;
+  d.terminalSync = true;
+  const sentD: Array<{ content: Array<{ text?: string }> }> = [];
+  // SAFETY: a recording agent, as above
+  d.agentFor = async () => ({
+    agent: { followup: (m: unknown) => sentD.push(m as (typeof sentD)[0]) } as unknown as Agent,
+    how: "live",
+  });
+  const nine = (await d.transcriptLocation(cwd, "c9"))!.path;
+  await fsp.writeFile(nine, `${user("z1", "dsh-oh-my-claude", "ours")}\n`);
+  await d.watchTranscript("s9", cwd, "c9");
+  const w9 = d.watchers.get("s9")!;
+  // The watch starts back in the tail and scans to catch up. Let that finish before reading the
+  // baseline: while it runs, the scan below stands down and poll finds one already in flight.
+  await new Promise((r) => setTimeout(r, 50));
+  const before9 = w9.seen;
+  await fsp.appendFile(
+    nine,
+    `${user("z2", "cli", "while archived")}\n${asst("z3", "cli", "ok")}\n`,
+  );
+  await d.scanTranscript("s9");
+  assert.equal(sentD.length, 0, "archived: no turn opened");
+  assert.equal(w9.seen, before9, "archived: baseline kept");
+  archived = false;
+  await d.pollTranscript("s9");
+  assert.equal(sentD[0]?.content[0]?.text, "while archived", "opened again: the exchange shows");
+  assert.equal(w9.seen, (await fsp.stat(nine)).size, "and the baseline moves");
+  // Catch-up dedup: when the dsh log already shows an exchange, re-reading it (as opening a session
+  // does) does not mirror it again. The fake session reports one assistant message; a scan of a
+  // transcript whose only foreign exchange matches it opens no mirror turn.
+  {
+    const shownText = "you asked me something\nhere is the whole answer";
+    const e2 = new ClaudeCodeAdapter(
+      fakeCtx({
+        on() {},
+        sessions: {
+          get: () => ({
+            snapshotEvents: () => [
+              {
+                type: "assistant/message",
+                data: { message: { content: [{ type: "text", text: shownText }] } },
+              },
+            ],
+          }),
+        },
+      }),
+      Config({}),
+    );
+    e2.claudeHome = home;
+    e2.terminalSync = true;
+    const sentE: Array<unknown> = [];
+    e2.agentFor = async () => ({
+      agent: { followup: (m: unknown) => sentE.push(m) } as unknown as Agent,
+      how: "live",
+    });
+    const ep = (await e2.transcriptLocation(cwd, "ce"))!.path;
+    await fsp.writeFile(
+      ep,
+      `${user("e1", "cli", "you asked me something")}\n${asst("e2", "cli", "here is the whole answer")}\n`,
+    );
+    await e2.watchTranscript("se", cwd, "ce");
+    await e2.scanTranscript("se");
+    assert.equal(sentE.length, 0, "an exchange the dsh log already shows is not mirrored again");
+    // latestExchangeStart backs up to the newest prompt, so a re-read covers the latest exchange.
+    const w = e2.watchers.get("se")!;
+    const start = await e2.latestExchangeStart(w.box, w.path, (await fsp.stat(ep)).size);
+    assert.equal(start, 0, "one exchange: the latest starts at the file's head");
+    for (const w2 of e2.watchers.values()) w2.fw?.close(); // e2 owns no processes, just this watcher
+    e2.watchers.clear();
+  }
+  // Live streaming: a terminal turn still running past the threshold opens a streaming mirror (its
+  // prompt goes out, the render fills as it grows), and once the turn ends the scan marks it done
+  // and advances the baseline past it, so the completed path never doubles it.
+  {
+    const g = new ClaudeCodeAdapter(
+      fakeCtx({ on() {}, sessions: { get: () => undefined } }),
+      Config({}),
+    );
+    g.claudeHome = home;
+    g.terminalSync = true;
+    const sentG: Array<{ id: string; content: Array<{ text?: string }> }> = [];
+    g.agentFor = async () => ({
+      agent: { followup: (m: unknown) => sentG.push(m as (typeof sentG)[0]) } as unknown as Agent,
+      how: "live",
+    });
+    const gp = (await g.transcriptLocation(cwd, "cg"))!.path;
+    const oldT = new Date(Date.now() - 10_000).toISOString(); // older than the stream threshold
+    const runRow = (uuid: string, blocks: unknown[], reason: string) =>
+      JSON.stringify({
+        type: "assistant",
+        uuid,
+        timestamp: oldT,
+        entrypoint: "cli",
+        message: { id: uuid, role: "assistant", content: blocks, stop_reason: reason },
+      });
+    const userRow = (uuid: string, content: unknown) =>
+      JSON.stringify({
+        type: "user",
+        uuid,
+        timestamp: oldT,
+        entrypoint: "cli",
+        message: { role: "user", content },
+      });
+    // A turn in flight: prompt, one finished tool step, and no terminal stop yet.
+    const inflight =
+      `${userRow("g1", "long job")}\n` +
+      `${runRow("g2", [{ type: "tool_use", id: "k", name: "Bash", input: { command: "sleep" } }], "tool_use")}\n` +
+      `${userRow("g3", [{ type: "tool_result", tool_use_id: "k", content: "tick" }])}\n`;
+    await fsp.writeFile(gp, inflight);
+    await g.watchTranscript("sg", cwd, "cg");
+    await g.scanTranscript("sg");
+    await new Promise((r) => setTimeout(r, 60)); // watchTranscript's own scan opens the stream async
+    assert.equal(g.streaming.has("sg"), true, "a long-running turn opens a stream");
+    assert.equal(sentG[0]?.content[0]?.text, "long job", "the stream turn carries the prompt");
+    const sg = g.streaming.get("sg")!;
+    assert.equal(sg.done, false, "still running");
+    // The render loop yields the finished step's block, then can be told to stop.
+    const gen = g.streamMirror("sg", sg);
+    const first = await gen.next();
+    assert.equal(first.done, false, "the render yields something");
+    sg.done = true;
+    sg.wake?.();
+    // Drain to completion. The bound is generous on purpose: a call and its output are separate
+    // blocks, so the chunk count per rendered step is not something this test should pin.
+    for (let i = 0; i < 50 && !(await gen.next()).done; i++) {}
+    assert.equal(g.streaming.has("sg"), false, "the render clears its stream when it ends");
+    // The turn finishes in the transcript; the scan marks the stream done and moves the baseline.
+    g.streaming.set("sg", { ...sg, done: false, shown: 0 });
+    await fsp.appendFile(gp, `${runRow("g4", [{ type: "text", text: "all done" }], "end_turn")}\n`);
+    const before = g.watchers.get("sg")!.seen;
+    await g.scanTranscript("sg");
+    assert.equal(g.streaming.get("sg")!.done, true, "the scan marks the finished stream done");
+    assert.ok(g.watchers.get("sg")!.seen > before, "the baseline advances past the finished turn");
+    // Regression: the owner types again while the stream is open. The exchange the stream owns has
+    // ended, so it settles on that rather than waiting for nothing to be running — the hang that
+    // froze the baseline and left every later prompt unmirrored for STREAM_MAX_MS — and the baseline
+    // stops at its end, leaving the newer exchange ahead of it for the completed path.
+    // Settling schedules one more scan for whatever landed behind the exchange; let it finish, or it
+    // lands mid-setup below and settles that stream instead.
+    await new Promise((r) => setTimeout(r, 60));
+    g.watchers.get("sg")!.seen = before;
+    g.streaming.set("sg", { ...sg, done: false, shown: 0 });
+    await fsp.appendFile(gp, `${userRow("g5", "next question")}\n`);
+    await g.scanTranscript("sg");
+    assert.equal(g.streaming.get("sg")!.done, true, "a newer prompt still settles the stream");
+    const after = g.watchers.get("sg")!.seen;
+    assert.ok(after > before, "the baseline advances past the streamed exchange");
+    assert.ok(
+      after < (await fsp.stat(gp)).size,
+      "and stops short of the newer exchange, which the completed path still mirrors",
+    );
+    for (const w2 of g.watchers.values()) w2.fw?.close();
+    g.watchers.clear();
+    g.streaming.clear();
+  }
+  // The registry is shared across adapters; fakes earlier tests left in it have no kill().
+  for (const p of a.processes.values()) if (typeof p.kill !== "function") p.kill = () => {};
+  b.disposeProcesses();
+  c.disposeProcesses();
+  d.disposeProcesses();
+  a.disposeProcesses();
+  assert.equal(a.watchers.size, 0, "dispose closes the watchers");
+  console.log("terminal turns adapter ok");
 }

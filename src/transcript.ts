@@ -6,6 +6,7 @@ import { readAt, type FsBox } from "./remote-fs.js";
 import { join } from "node:path";
 import type { JsonValue } from "./dsh.js";
 import { NATIVE_TOOL_MAP } from "./adapter.js";
+import { formatToolCall, formatToolResult } from "./translator.js";
 
 const UUID_FILE = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/;
 const RESULT_TEXT_LIMIT = 4000;
@@ -347,8 +348,43 @@ export interface FoldedTranscript {
  * `isSidechain` records older transcripts carry are skipped, because the turn they belong to is the
  * Task call that spawned them rather than a prompt of the user's own.
  */
+/** Text the owner typed while the CLI was busy. Claude Code records it as a `queue-operation` row
+ *  rather than a user row: no `entrypoint`, no `message`, just the text. Both the fold and the
+ *  foreign-row filter below key off those fields, so a message queued mid-turn reached dsh by no
+ *  route at all — neither the mirror nor the seed a terminal-only session is opened from. Measured on
+ *  a real transcript 2026-09-11: 68 `enqueue` rows, of which 25 never appeared as a user row. */
+const queuedPrompt = (rec: Rec): string | undefined => {
+  if (rec.type !== "queue-operation" || rec.operation !== "enqueue") return undefined;
+  const text = typeof rec.content === "string" ? rec.content : "";
+  return text.trim() ? text : undefined;
+};
+
+/** How a queued message is matched against the prompts, on a trimmed head rather than the whole text
+ *  so a stray newline does not make the same words look like two different messages. */
+const queueKey = (text: string): string => text.trim().slice(0, 200);
+
+/** Queued texts that also arrive as a prompt of their own. The CLI writes the queue row when the
+ *  message is typed and, when it delivers it, usually writes it again as a real user row carrying
+ *  `promptSource: "queued"`. Folding both puts the same words in twice as two exchanges with
+ *  different replies, which is what makes a mirrored conversation read as though it jumped around.
+ *  Measured on this session: 85 enqueue rows, 46 of them also a user row. The user row is the
+ *  canonical one, since it sits where the CLI actually delivered the message, so the queue row is
+ *  skipped wherever its text turns up there — and kept where it does not, which is the case this
+ *  reads queue rows for at all. */
+const deliveredAsPrompt = (text: string): Set<string> => {
+  const out = new Set<string>();
+  for (const line of stripBom(text).split("\n")) {
+    const rec = parseLine(line);
+    if (rec?.type !== "user") continue;
+    const content = isRec(rec.message) ? rec.message.content : undefined;
+    if (typeof content === "string" && content.trim()) out.add(queueKey(content));
+  }
+  return out;
+};
+
 export function foldTranscript(text: string): FoldedTranscript {
   const turns: FoldedTurn[] = [];
+  const delivered = deliveredAsPrompt(text);
   let cur: FoldedTurn | undefined;
   let title: string | undefined;
   let createdAt: number | undefined;
@@ -362,6 +398,33 @@ export function foldTranscript(text: string): FoldedTranscript {
     if (!rec || rec.isSidechain) continue;
     if (rec.type === "summary" && typeof rec.summary === "string") {
       title = rec.summary;
+      continue;
+    }
+    const queued = queuedPrompt(rec);
+    if (queued !== undefined) {
+      // A message typed mid-turn opens an exchange of its own here. The CLI hands it to the same
+      // turn it was typed during, but dsh has no way to show a second prompt inside one turn, and a
+      // bubble in the wrong place reads better than words that are simply gone.
+      // A later `remove` row for this text is not a reason to drop it. Two attempts at reading one
+      // as a retraction both lost real messages: the CLI writes `remove` when it *delivers* a queued
+      // message, under `absorbed_mid_turn`, under `delivered_to_agent`, and under no reason at all.
+      // Counted across every transcript on this box: 2046 removals, of which 1238 are absorbed, 3
+      // are delivered_to_agent and 805 carry no reason — and of those 805, 439 hold text that never
+      // appears as a user row anywhere, which is the signature of a message delivered mid-turn. Not
+      // one removal in 2046 names a retraction. Showing a line someone took back is a cosmetic
+      // oddity; dropping one is the failure this reads queue rows to prevent, so nothing is dropped.
+      // The exception is a message that also arrives as a prompt of its own: fold it there, once.
+      if (delivered.has(queueKey(queued))) continue;
+      close();
+      const qtime = timeOf(rec, Date.now());
+      createdAt ??= qtime;
+      title ??= titleFrom(queued);
+      cur = {
+        id: typeof rec.uuid === "string" ? rec.uuid : `q${turns.length}`,
+        time: qtime,
+        content: [{ type: "text", text: queued }],
+        steps: [],
+      };
       continue;
     }
     const msg = isRec(rec.message) ? rec.message : undefined;
@@ -568,6 +631,200 @@ export function toSessionEvents(folded: FoldedTranscript): SeedEvent[] {
       source: { kind: "user" },
     });
   return events;
+}
+
+/** What another entrypoint wrote into a stretch of transcript: its completed turns, and how many
+ *  bytes of the stretch are settled. A prompt still being answered is not settled: `consumed` stops
+ *  at its row, so the next read starts there and reports the whole turn once. */
+export interface ForeignTurns {
+  turns: FoldedTurn[];
+  consumed: number;
+  /** Bytes through the end of the first completed turn, or `consumed` when there is none. A live
+   *  stream owns one exchange: settling it moves the baseline by this much rather than by
+   *  `consumed`, so an exchange that landed behind it is still ahead of the baseline for the next
+   *  read to mirror instead of being jumped over and lost. */
+  firstEnd: number;
+  /** The entrypoint stamps seen on those rows: `cli` for a terminal, `sdk-cli` for a print run. */
+  stamps: Set<string>;
+  /** Byte offset of the newest foreign prompt in the read, open or answered; where the latest
+   *  exchange begins. `consumed` when there is no foreign prompt. Used to re-read the latest
+   *  exchange when a session is opened, so the tab always catches up to it. */
+  lastPromptAt: number;
+  /** The turn still being answered at the end of the read, folded up to its completed steps, or
+   *  undefined when the read ends on a settled turn. Live streaming renders this as it grows. */
+  running?: FoldedTurn;
+}
+
+const isPromptContent = (content: unknown): boolean =>
+  typeof content === "string" ||
+  (Array.isArray(content) && !content.some((b) => isRec(b) && b.type === "tool_result"));
+/** Stop reasons that end a Claude turn; `tool_use` does not — the assistant resumes after the tool. */
+const TERMINAL_STOPS = new Set(["end_turn", "stop_sequence", "max_tokens"]);
+/** Whether an assistant row closes the turn it belongs to. The CLI splits one turn into several
+ *  assistant rows (thinking, text, then a tool call), and stamps every row before a tool with
+ *  `stop_reason: "tool_use"`; only the last row of a finished turn carries a terminal stop reason.
+ *  Keying off `stop_reason` is why an answer that writes a sentence, calls a tool, then writes the
+ *  rest is not cut at that first sentence. A row without the field (older transcript, a partial)
+ *  falls back to "has text, no tool call", the shape used before the field was read. */
+const endsTurn = (message: Rec | undefined): boolean => {
+  const stop = typeof message?.stop_reason === "string" ? message.stop_reason : undefined;
+  if (stop !== undefined) return TERMINAL_STOPS.has(stop);
+  const content = message?.content;
+  return (
+    Array.isArray(content) &&
+    content.some((b) => isRec(b) && b.type === "text") &&
+    !content.some((b) => isRec(b) && b.type === "tool_use")
+  );
+};
+
+/**
+ * The turns some other entrypoint wrote into a stretch of a session's transcript: a terminal that
+ * picked the session up with `claude /resume` stamps every row `entrypoint: cli`, while this
+ * plugin's child stamps `own`. Rows without the stamp (queue bookkeeping, summaries) never count,
+ * and neither do SDK stamps: another program driving the CLI is not a person to echo, and a CLI
+ * too old to keep the stamp it was given (lilly's 2.1.123 writes sdk-cli for this plugin's own
+ * child) would otherwise see its own dsh turns come back as terminal ones.
+ * A prompt is running until an assistant row with a terminal `stop_reason` lands; it and what
+ * follows wait for the next read, so a reply that writes a sentence, calls a tool, then writes the
+ * rest is mirrored whole, not cut at the sentence.
+ */
+const SDK_STAMPS = new Set(["sdk-cli", "sdk-ts", "sdk-py"]);
+
+export function foreignTurns(text: string, own: string): ForeignTurns {
+  const lines: string[] = [];
+  const stamps = new Set<string>();
+  let offset = 0;
+  let pending: { at: number; line: number } | undefined;
+  let lastPromptAt: number | undefined;
+  let firstEnd: number | undefined;
+  const delivered = deliveredAsPrompt(text);
+  for (const l of text.split("\n")) {
+    const e = parseLine(l);
+    // A queued message carries no stamp to judge it by, only its text. Nothing this plugin drives
+    // queues anything — dsh sends one prompt per turn over stream-json, and the queue is the
+    // terminal's own — so a queue row is a person at a terminal, which is exactly what to mirror.
+    const queued = e ? queuedPrompt(e) : undefined;
+    if (queued !== undefined && !delivered.has(queueKey(queued))) {
+      pending = { at: offset, line: lines.length };
+      lastPromptAt = offset;
+      lines.push(l);
+    } else if (
+      typeof e?.entrypoint === "string" &&
+      e.entrypoint !== own &&
+      !SDK_STAMPS.has(e.entrypoint)
+    ) {
+      stamps.add(e.entrypoint);
+      const content = isRec(e.message) ? e.message.content : undefined;
+      if (e.type === "user" && isPromptContent(content)) {
+        pending = { at: offset, line: lines.length };
+        lastPromptAt = offset;
+      } else if (e.type === "assistant" && endsTurn(isRec(e.message) ? e.message : undefined)) {
+        pending = undefined;
+        firstEnd ??= offset + Buffer.byteLength(l) + 1;
+      }
+      lines.push(l);
+    }
+    offset += Buffer.byteLength(l) + 1;
+  }
+  const done = pending ? lines.slice(0, pending.line) : lines;
+  const consumed = pending?.at ?? Buffer.byteLength(text);
+  // The unfinished turn at the tail, folded up to whatever completed steps it has so far, so a live
+  // stream can render it while it grows. foldTranscript drops a trailing prompt with no step, so a
+  // just-typed prompt with no reply yet yields nothing here until its first step lands.
+  const runningLines = pending ? lines.slice(pending.line) : [];
+  const running =
+    runningLines.length > 0 ? foldTranscript(runningLines.join("\n")).turns[0] : undefined;
+  return {
+    turns: done.length === 0 ? [] : foldTranscript(done.join("\n")).turns,
+    consumed,
+    firstEnd: firstEnd ?? consumed,
+    stamps,
+    lastPromptAt: lastPromptAt ?? consumed,
+    running,
+  };
+}
+
+/** A short, stable fingerprint of a turn for dedup: its prompt and the start of its final answer,
+ *  both of which the mirrored dsh message also carries, so "has the dsh log already shown this
+ *  exchange?" is a substring test against the log's recent messages. Empty only for an empty turn. */
+/** The text blocks of a dsh assistant/message's content, joined; other block kinds are skipped.
+ *  A boundary decode so callers outside this file need no `typeof` on event data. */
+export function assistantMessageText(content: unknown): string {
+  if (!Array.isArray(content)) return "";
+  const out: string[] = [];
+  for (const b of content) if (isRec(b) && typeof b.text === "string") out.push(b.text);
+  return out.join("\n");
+}
+
+/** Whether the dsh log already shows this exchange, so re-reading the latest one when a session opens
+ *  does not mirror it twice. The prompt and the reply land in dsh as two separate messages, so one
+ *  string spanning both can never be found in either: the fingerprint that did exactly that matched
+ *  nothing at all, and every re-read mirrored the exchange again. Both halves are checked, and both
+ *  must be present, because dropping an exchange that was not really shown is the worse mistake — a
+ *  tool-heavy reply can open with the same rendered line as another, so the reply alone is not enough
+ *  to tell two exchanges apart. `shown` must carry the text of recent user *and* assistant messages. */
+export function alreadyShown(turn: FoldedTurn, shown: string, limit: number): boolean {
+  if (shown === "") return false;
+  const prompt = turn.content
+    .map((b) => b.text)
+    .join(" ")
+    .trim()
+    .slice(0, 60);
+  const reply = mirrorReply(turn, limit).trim().slice(0, 60);
+  return prompt !== "" && reply !== "" && shown.includes(prompt) && shown.includes(reply);
+}
+
+/** A long terminal turn (a build, a survey with dozens of tool calls) is cut here as one message. */
+const MIRROR_REPLY_BYTES = 48 * 1024;
+
+/** The reply a terminal got, as the markdown of one dsh assistant message: each step's blocks in
+ *  order, tool calls and their results drawn the way the inline translator draws them in a live
+ *  turn, text as it is. Thinking stays out, as it does live. Results are cut at `limit` bytes. */
+export function mirrorReply(turn: FoldedTurn, limit: number): string {
+  const md = mirrorReplyBlocks(turn, limit).join("\n\n") || "(no reply)";
+  if (Buffer.byteLength(md) <= MIRROR_REPLY_BYTES) return md;
+  return `${truncateBytes(md, MIRROR_REPLY_BYTES)}\n\n… cut here; the whole exchange is in the transcript.`;
+}
+
+/** The reply as one markdown chunk per rendered block — a text block, or a tool call with its
+ *  result — in order. Live streaming yields the chunks a running turn has gained since the last
+ *  render, so a long turn fills into one dsh turn step by step instead of landing all at once. */
+export function mirrorReplyBlocks(turn: FoldedTurn, limit: number): string[] {
+  const parts: string[] = [];
+  for (const step of turn.steps) {
+    for (const block of step.content) {
+      if (block.type === "text") {
+        if (block.text.trim()) parts.push(block.text.trim());
+      } else if (block.type === "tool-call") {
+        const name = toolNameOf(block.name);
+        const result = step.results.get(block.id);
+        let filePath = "";
+        try {
+          const args: unknown = JSON.parse(block.arguments);
+          if (isRec(args) && typeof args.file_path === "string") filePath = args.file_path;
+        } catch {
+          // arguments that are not JSON have no path to read
+        }
+        // The call is one block and its output is the next. The CLI writes the call row when it makes
+        // the call and the result row only when the tool returns — a median of 1.5s apart on this box
+        // and minutes for a slow command — so pairing them into a single block left the tab blank for
+        // the whole run, showing nothing of what was already known to be running. Two blocks also keep
+        // the live render append-only: a block that has been shown is never rewritten, only followed
+        // by its output when that lands. Joined for a settled turn, the rendered text is unchanged.
+        parts.push(formatToolCall(name, block.arguments));
+        if (result)
+          parts.push(
+            formatToolResult(
+              name,
+              filePath,
+              truncateBytes(result.content.map((b) => b.text).join("\n"), limit),
+              result.isError,
+            ),
+          );
+      }
+    }
+  }
+  return parts;
 }
 
 /** Where 2.1 keeps a session's subagent transcripts: a directory beside the session's own file. */

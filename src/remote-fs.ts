@@ -14,7 +14,7 @@
  * memory file fits in comfortably; swap for a piped stdin the day something megabyte-sized needs it.
  */
 import { execFile } from "node:child_process";
-import { readFile, writeFile, mkdir, readdir, rm, stat } from "node:fs/promises";
+import { mkdir, open, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname } from "node:path";
 import { shq, sshArgs } from "./process.js";
@@ -100,6 +100,15 @@ export const writeScript = (path: string, base64: string): string =>
 /** Delete, and stay silent about a file that was already gone. */
 export const removeScript = (path: string): string => `rm -f -- ${shq(path)}`;
 
+/** The file's size in bytes, GNU or BSD stat; a missing file exits with the absent code. */
+export const sizeScript = (path: string): string =>
+  `if [ -e ${shq(path)} ]; then stat -c %s -- ${shq(path)} 2>/dev/null || ` +
+  `stat -f %z -- ${shq(path)}; else exit ${ABSENT}; fi`;
+
+/** The bytes past `offset` (tail counts from 1); nothing when the file is shorter or missing. */
+export const tailScript = (path: string, offset: number): string =>
+  `tail -c +${Math.max(0, Math.floor(offset)) + 1} -- ${shq(path)} 2>/dev/null || true`;
+
 /** What a remote command returned: `code` is the remote exit status when ssh itself connected. */
 interface Ran {
   code: number;
@@ -183,6 +192,52 @@ export async function readAt(box: FsBox, path: string): Promise<FileRead | null>
   if (r.code === ABSENT) return null;
   if (r.code !== 0) throw transportError(box.sshHost, r);
   return splitRead(r.out);
+}
+
+/** The file's size, or null when it does not exist. Throws when the box cannot be reached. */
+export async function sizeAt(box: FsBox, path: string): Promise<number | null> {
+  if (!box.sshHost) {
+    try {
+      return (await stat(path)).size;
+    } catch (e) {
+      if (!isEnoent(e)) throw e;
+      return null;
+    }
+  }
+  const r = await ssh(box.sshHost, sizeScript(path));
+  if (r.code === ABSENT) return null;
+  if (r.code !== 0) throw transportError(box.sshHost, r);
+  const n = Number(r.out.trim());
+  return Number.isFinite(n) ? n : null;
+}
+
+/** The bytes a file gained past `offset`, or "" when it has not grown or is not there. Locally one
+ *  positioned read; on a box one `tail`, over the shared connection. A file shorter than the offset
+ *  was replaced under us and reads as nothing new. */
+export async function readFromAt(box: FsBox, path: string, offset: number): Promise<string> {
+  if (!box.sshHost) {
+    let fh;
+    try {
+      fh = await open(path, "r");
+    } catch (e) {
+      if (!isEnoent(e)) throw e;
+      return "";
+    }
+    try {
+      const { size } = await fh.stat();
+      if (size <= offset) return "";
+      const buf = Buffer.alloc(size - offset);
+      // `bytesRead`, not `buf.length`: a file truncated between the stat and the read returns fewer
+      // bytes, and decoding the untouched zero tail would append junk that fails to parse as a row.
+      const { bytesRead } = await fh.read(buf, 0, buf.length, offset);
+      return buf.toString("utf8", 0, bytesRead);
+    } finally {
+      await fh.close();
+    }
+  }
+  const r = await ssh(box.sshHost, tailScript(path, offset), 60_000);
+  if (r.code !== 0) throw transportError(box.sshHost, r);
+  return r.out;
 }
 
 /** The file's text, or null when it does not exist. */

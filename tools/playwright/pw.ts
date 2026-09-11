@@ -36,6 +36,12 @@ export type Locator = {
 
 export type Page = {
   goto(url: string, how?: { waitUntil?: "networkidle" | "load" }): Promise<void>;
+  /** Run in the page, which carries dsh's session cookie: the plugin's own routes answer 401 to a
+   *  token passed as a query parameter, so a check that has to call one goes through here. */
+  evaluate<T>(fn: () => T | Promise<T>): Promise<T>;
+  /** The closure is serialised to the page, so it captures nothing from here: anything it needs
+   *  travels as the second argument. */
+  evaluate<T, A>(fn: (arg: A) => T | Promise<T>, arg: A): Promise<T>;
   locator(selector: string, where?: Find): Locator;
   getByRole(role: string, where: { name: string | RegExp }): Locator;
   getByText(text: string | RegExp): Locator;

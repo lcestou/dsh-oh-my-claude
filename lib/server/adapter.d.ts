@@ -1,3 +1,4 @@
+import { type FSWatcher } from "node:fs";
 import type { Spawner, SubprocessHandle, ContextUsage, WorkspaceDiff, McpServerStatus, CliModel } from "./process.js";
 import { LlmAdapter, type ContentBlock, type GenerateOptions, type LlmModelInfo, type LlmResolvedModelInfo, type StreamChunk } from "@deepseek-ai/dsh-llm";
 import z from "@deepseek-ai/schemastery";
@@ -7,6 +8,8 @@ import { type ClaudeEvent, ClaudeProcess } from "./process.js";
 import type { Agent, ImageAttachmentRef, JsonValue, PluginContext, SessionController, SessionId, SubprocessRuntime } from "./dsh.js";
 import { ADAPTER_CURRENT } from "./dsh.js";
 import { type ToolMode, type ToolModeInfo } from "./rows-probe.js";
+import { type FsBox } from "./remote-fs.js";
+import type { FoldedTurn } from "./transcript.js";
 import { sshRunner, type HoldRecord } from "./hold.js";
 import type { RewindResult } from "./process.js";
 export { markBusy, takeInterrupted } from "./state.js";
@@ -315,12 +318,48 @@ export declare function getCatalog(fetchImpl?: typeof fetch, cli?: CliModel[], p
 /** Exact model metadata. `id` must echo the requested id: dsh-llm normalizeModelInfo rejects mismatches. */
 export declare function resolveModelInfo(provider: string, modelId: string, models?: ReturnType<typeof M>[]): LlmResolvedModelInfo;
 /** Deterministic UUID for a dsh session id, so a reopened dsh session resumes the same Claude session. */
+/** Terminal exchanges waiting to be shown in a dsh session, and the one whose turn is open. */
+interface MirrorQueue {
+    queue: FoldedTurn[];
+    inFlight?: {
+        id: string;
+        turn: FoldedTurn;
+        at: number;
+    };
+}
+/** A terminal turn being streamed live into one open dsh turn. `id` matches the followup that
+ *  opened the turn; the render loop reads the exchange from `start`, renders its blocks, and yields
+ *  the ones past `shown`, waking on `wake` when a scan sees new rows and settling when `done`. */
+interface StreamState {
+    id: string;
+    path: string;
+    box: FsBox;
+    start: number;
+    shown: number;
+    done: boolean;
+    startedAt: number;
+    wake?: () => void;
+}
+/** A session's transcript under watch: the file, the byte its settled rows end at, the watcher. */
+interface TranscriptWatch {
+    path: string;
+    seen: number;
+    claudeId: string;
+    /** The box the file is on; a remote one has no inotify and is polled by the sweep instead. */
+    box: FsBox;
+    fw?: FSWatcher;
+    timer?: NodeJS.Timeout;
+    /** A scan is reading the file; one asked for meanwhile runs after it, never alongside it. */
+    scanning?: boolean;
+    again?: boolean;
+}
 export declare function claudeSessionId(sessionId: string): string;
 /** Claude Code stores transcripts under ~/.claude/projects/<cwd with non-alphanumerics as '-'>/<id>.jsonl */
 export declare function projectDirName(cwd: string): string;
 /** The slice of a dsh message this adapter reads; dsh's own Message type is wider. */
 /** The slice of a dsh message this adapter reads; exported for test fixtures. */
 export type LooseMessage = {
+    id?: string;
     role?: string;
     source?: {
         kind?: string;
@@ -665,6 +704,14 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     readonly bridged: Map<string, () => void>;
     /** Sessions already warned that `toolsInline: false` is ignored on a versioned session format. */
     readonly rowsRefused: Set<string>;
+    /** Terminal exchanges the watcher found, by dsh session, each shown as one turn of its own. */
+    readonly mirrors: Map<string, MirrorQueue>;
+    /** Terminal turns being streamed live into an open dsh turn, by dsh session. */
+    readonly streaming: Map<string, StreamState>;
+    /** Whether terminal exchanges are mirrored into dsh at all; the owner's switch, on by default. */
+    terminalSync: boolean;
+    /** One transcript watcher per dsh session that finished a turn on this box, by dsh session. */
+    readonly watchers: Map<string, TranscriptWatch>;
     /**
      * This plugin's own commands, which share the `bridged` map so one disposer list covers all of
      * them. They are never Claude's, so the bridge must not register them as passthroughs and the
@@ -802,6 +849,14 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     toolModeInfo(): Promise<ToolModeInfo>;
     /** Set the mode on every mount at once, so a session on a box's model follows the same switch. */
     setToolMode(mode: ToolMode): Promise<ToolModeInfo>;
+    terminalSyncInfo(): {
+        enabled: boolean;
+    };
+    /** Turn terminal sync on or off for every mount. Off stops each mount's watchers and drops any
+     *  queued mirror; on lets the next sweep pick loaded sessions back up. */
+    setTerminalSync(enabled: boolean): Promise<{
+        enabled: boolean;
+    }>;
     /** What the /tune thinking selector shows: the budget this plugin last set for the session, or
      *  `undefined` when it has set none and the session runs on its own default. */
     thinkingInfo(sessionId: string): {
@@ -889,6 +944,67 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
         prep: TurnPrep;
         proc: ClaudeProcess;
     }>;
+    /** Where a session's Claude transcript is: on this box under `claudeHome`, or on the SSH box the
+     *  turn runs on under that account's `~/.claude`, at the cwd the box really uses. Undefined
+     *  without a Claude id or when the box's home cannot be read. */
+    transcriptLocation(cwd: string, id: string | undefined): Promise<{
+        box: FsBox;
+        path: string;
+    } | undefined>;
+    /** Put every loaded session this instance has run under watch, and poll the ones already
+     *  watched, so a session that sits in a tab is followed without having spoken in dsh since dsh
+     *  started. The record a turn's end saved says which instance ran it: only that one watches, since
+     *  the mirror turns it opens are recognised by that instance alone. A session with no record yet
+     *  is watched from its first turn's end. The list is in memory; a watched session costs one
+     *  `stat` per sweep, on an SSH box over the shared connection, which is how a box is followed at
+     *  all, there being no inotify across ssh. */
+    watchLoadedSessions(): Promise<void>;
+    /** One sweep's look at a watched transcript: scan when it grew past the baseline. This is the
+     *  only way a remote one is read, and for a local one it catches what inotify could not deliver
+     *  (a scan that stood down because the session was archived). */
+    pollTranscript(sessionId: string): Promise<void>;
+    /** Watch the session's transcript from the end of this turn on, so a terminal that picks the
+     *  session up (`claude /resume`) is noticed while dsh sits idle. One watcher per session; the
+     *  baseline moves only by scans. */
+    watchTranscript(sessionId: string, cwd: string, claudeId: string | undefined): Promise<void>;
+    /** Byte offset where the newest foreign exchange begins (its prompt), or the end of the file when
+     *  the tail holds no foreign prompt. Reading from here re-scans the latest exchange, which is how
+     *  opening a session catches its tab up to the latest. */
+    latestExchangeStart(box: FsBox, path: string, size: number): Promise<number>;
+    /** The text of the last few assistant messages the dsh log holds, joined, so a mirror candidate
+     *  whose signature is already in it is not shown twice. Only the tail is read: a re-shown exchange
+     *  is always among the most recent, and scanning the whole log on every scan would not scale. */
+    dshRecentText(sessionId: string): string;
+    /** The transcript settled after a write: read what landed past the baseline, and when a terminal
+     *  finished a turn there, mark the live process stale and open a turn that shows the exchange.
+     *  Measured 2026-09-10 on 2.1.268: `--resume` follows the chain the last row belongs to and drops
+     *  the other, so once dsh respawns behind a terminal turn its own rows extend that chain; a
+     *  terminal that keeps typing forks again, and the next dsh turn takes that fork as the truth. */
+    scanTranscript(sessionId: string): Promise<void>;
+    scanOnce(sessionId: string, w: TranscriptWatch): Promise<void>;
+    /** Open one dsh turn that streams a still-running terminal exchange live: the prompt goes out as a
+     *  user message through the followup seam, and the turn loop's `streamMirror` fills its reply as
+     *  the transcript grows. One stream per session; the running exchange begins at `w.seen`. */
+    openStream(sessionId: string, w: TranscriptWatch): Promise<void>;
+    /** The reply half of a streamed mirror turn: re-read the exchange, render its blocks, yield the
+     *  ones past what has been shown, then wait for a scan to wake it. Ends when the exchange settles
+     *  (`done`, set by `scanOnce`) or the hung-turn guard fires. */
+    streamMirror(sessionId: string, stream: StreamState): AsyncGenerator<StreamChunk>;
+    /** Whether dsh's workspace registry lists the session as archived; false when there is no such
+     *  service, so a dsh without one behaves as before. Read through `ctx.get`: the service is not in
+     *  `inject`, and a direct property read would throw. */
+    isArchived(sessionId: string): boolean;
+    /** Open the next mirror turn of a session: one terminal exchange, its prompt as a user message of
+     *  its own through the followup seam the wake uses, answered by the turn loop with the reply the
+     *  terminal got. One at a time, so each turn is one prompt and one reply; the loop's `finally`
+     *  pumps the next. While a turn runs, the exchange waits for that `finally`. */
+    pumpMirror(sessionId: string): Promise<void>;
+    /** The session's Agent, live or resumed the way a typed prompt resumes it; undefined with a note
+     *  in resume.log when neither is possible. */
+    agentFor(sessionId: string): Promise<{
+        agent: Agent;
+        how: string;
+    } | undefined>;
     /** Drop processes idle past processIdleMs, then keep the live count under maxProcesses by
      *  killing the longest-idle ones that are not mid-turn. Called before each spawn. */
     /** Live processes belonging to this mount; the registry is shared across mounts. */

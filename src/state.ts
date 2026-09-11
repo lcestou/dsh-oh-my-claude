@@ -650,3 +650,83 @@ export async function loadToolMode(dir: string): Promise<ToolMode | undefined> {
 
 export const saveToolMode = (dir: string, mode: ToolMode): Promise<void> =>
   writeJson(TOOL_MODE_FILE(dir), { mode });
+
+/** Where each watched session's transcript stood when it was last read: `{ [dshSessionId]:
+ *  { path, seen } }`, so a restart carries on where the watch left off instead of re-showing or
+ *  skipping what landed meanwhile. */
+export const WATCH_FILE = (d: string) => join(d, "watch.json");
+
+/** `provider` is the plugin instance that ran the session's turns and so owns its mirror turns; a
+ *  second instance watching the same file would send a followup the first does not recognise, and
+ *  that would reach Claude as a prompt (seen 2026-09-11 on a session on an SSH box). */
+export type WatchRecord = {
+  path: string;
+  seen: number;
+  host?: string;
+  provider?: string;
+  claudeId?: string;
+};
+
+export async function loadWatches(dir: string): Promise<Map<string, WatchRecord>> {
+  const out = new Map<string, WatchRecord>();
+  try {
+    const parsed: unknown = JSON.parse(await readFile(WATCH_FILE(dir), "utf8"));
+    if (typeof parsed !== "object" || parsed === null) return out;
+    for (const [id, v] of Object.entries(parsed)) {
+      // SAFETY: each value is checked field by field before it is kept
+      const r = v as {
+        path?: unknown;
+        seen?: unknown;
+        host?: unknown;
+        provider?: unknown;
+        claudeId?: unknown;
+      };
+      if (typeof r?.path !== "string" || typeof r.seen !== "number") continue;
+      const record: WatchRecord = { path: r.path, seen: r.seen };
+      if (typeof r.host === "string") record.host = r.host;
+      if (typeof r.provider === "string") record.provider = r.provider;
+      if (typeof r.claudeId === "string") record.claudeId = r.claudeId;
+      out.set(id, record);
+    }
+  } catch {
+    // no file yet, or unreadable: every watch starts from its own baseline
+  }
+  return out;
+}
+
+export async function saveWatch(
+  dir: string,
+  sessionId: string,
+  record: WatchRecord,
+): Promise<void> {
+  const all = await loadWatches(dir);
+  all.set(sessionId, record);
+  await writeJson(WATCH_FILE(dir), Object.fromEntries(all));
+}
+
+/** The terminal mirror: whether the plugin copies exchanges from a terminal that picked this session
+ *  up with `claude /resume` into the dsh session as they land. Off unless the owner turned it on,
+ *  and a missing or unreadable file reads as off, so a fresh box does not get it by surprise: the
+ *  mirror holds a dsh turn open while it fills, which can leave a typed prompt queued behind it.
+ *  Carrying a session between dsh and a terminal does not depend on this and never did — Claude Code
+ *  writes the transcript itself, so `/resume` sees dsh's turns, and opening a terminal session in dsh
+ *  seeds it from that transcript. This flag only governs the live copy in one direction. */
+export const TERMINAL_SYNC_FILE = (d: string) => join(d, "terminal-sync.json");
+
+/** The saved choice, or undefined when there is none to read. Undefined rather than a value on a
+ *  missing or corrupt file so the caller keeps its own default instead of having one asserted over
+ *  it: the read is asynchronous, and answering `false` here overwrote a value set meanwhile. */
+export async function loadTerminalSync(dir: string): Promise<boolean | undefined> {
+  try {
+    const parsed: unknown = JSON.parse(await readFile(TERMINAL_SYNC_FILE(dir), "utf8"));
+    if (typeof parsed !== "object" || parsed === null) return undefined;
+    // SAFETY: parsed is a non-null object; the one key read is compared, not trusted as a type.
+    const enabled = (parsed as { enabled?: unknown }).enabled;
+    return typeof enabled === "boolean" ? enabled : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export const saveTerminalSync = (dir: string, enabled: boolean): Promise<void> =>
+  writeJson(TERMINAL_SYNC_FILE(dir), { enabled });

@@ -21,6 +21,9 @@ import {
   rememberStarted,
   ASIDES_FILE,
   STATE_DIR,
+  loadTerminalSync,
+  saveTerminalSync,
+  TERMINAL_SYNC_FILE,
 } from "./state.js";
 
 const dir = await mkdtemp(join(tmpdir(), "omc-state-"));
@@ -260,3 +263,18 @@ if (process.env.DSH_OMC_STATE_DIR !== undefined)
   await dropHold(dir, "missing", "x");
 }
 console.log("state.test: ok");
+
+// The terminal mirror: only a stored choice answers here. No file, or an unreadable one, answers
+// undefined so the caller keeps its own default rather than having one asserted over it — the read
+// is asynchronous, and answering a value used to overwrite one set while it was in flight.
+{
+  const dir = await mkdtemp(join(tmpdir(), "omc-sync-"));
+  assert.equal(await loadTerminalSync(dir), undefined, "no file: no stored choice");
+  await saveTerminalSync(dir, false);
+  assert.equal(await loadTerminalSync(dir), false, "off once stored false");
+  await saveTerminalSync(dir, true);
+  assert.equal(await loadTerminalSync(dir), true, "on once stored true");
+  await writeFile(TERMINAL_SYNC_FILE(dir), "not json");
+  assert.equal(await loadTerminalSync(dir), undefined, "a corrupt file is no choice either");
+  console.log("terminal sync state ok");
+}
