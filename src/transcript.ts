@@ -35,6 +35,12 @@ const toolNameOf = (name: unknown): string => {
 /** A leading byte-order mark, dropped: with it the first line is not JSON and the record is lost. */
 const stripBom = (text: string): string => (text.charCodeAt(0) === 0xfe_ff ? text.slice(1) : text);
 
+/** A user row the CLI wrote on its own behalf, not a person's prompt: background-task notifications
+ *  land as `type: "user"` with `promptSource: "system"` (`origin.kind: "task-notification"`, seen on
+ *  2.1.268). Kept as an exclusion rather than a test for `"typed"` so rows from CLIs that predate the
+ *  field, and `"queued"` rows (a person's prompt held while the CLI was busy), still count. */
+const isSystemPrompt = (rec: Rec): boolean => rec.promptSource === "system";
+
 const parseLine = (line: string): Rec | undefined => {
   try {
     const v: unknown = JSON.parse(line);
@@ -186,7 +192,7 @@ export async function listTranscripts(
       if (!rec) continue;
       if (found.cwd === undefined && typeof rec.cwd === "string") found.cwd = rec.cwd;
       if (rec.type === "summary" && typeof rec.summary === "string") found.summary = rec.summary;
-      if (rec.type !== "user" || rec.isSidechain || rec.isMeta) continue;
+      if (rec.type !== "user" || rec.isSidechain || rec.isMeta || isSystemPrompt(rec)) continue;
       const text = promptText(isRec(rec.message) ? rec.message.content : undefined);
       if (!text) continue;
       if (found.turns === 0 && isAuxPrompt(text)) break;
@@ -449,7 +455,7 @@ export function foldTranscript(text: string): FoldedTranscript {
         }
         continue;
       }
-      if (rec.isMeta) continue;
+      if (rec.isMeta || isSystemPrompt(rec)) continue;
       const prompt = textBlocks(msg?.content);
       if (prompt.length === 0) continue;
       const plain = promptText(msg?.content);
@@ -715,7 +721,7 @@ export function foreignTurns(text: string, own: string): ForeignTurns {
     ) {
       stamps.add(e.entrypoint);
       const content = isRec(e.message) ? e.message.content : undefined;
-      if (e.type === "user" && isPromptContent(content)) {
+      if (e.type === "user" && isPromptContent(content) && !isSystemPrompt(e)) {
         pending = { at: offset, line: lines.length };
         lastPromptAt = offset;
       } else if (e.type === "assistant" && endsTurn(isRec(e.message) ? e.message : undefined)) {

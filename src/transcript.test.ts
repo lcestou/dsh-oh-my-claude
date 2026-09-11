@@ -597,6 +597,30 @@ console.log("transcript ok");
   assert.equal(later.turns[0]!.content[0]!.text, "still typing");
   assert.equal(later.consumed, Buffer.byteLength(rest), "everything settled");
   assert.deepEqual(foreignTurns(`${ours}\n`, own).turns, [], "nothing foreign reads as no turns");
+  // A background-task notification is a user row the CLI wrote itself (`promptSource: "system"`);
+  // it is not a person's prompt and must not mirror as one. The typed rows around it still do.
+  const notice = row({
+    type: "user",
+    uuid: "n1",
+    timestamp: T,
+    entrypoint: "cli",
+    promptSource: "system",
+    origin: { kind: "task-notification" },
+    message: { role: "user", content: "<task-notification>done</task-notification>" },
+  });
+  const withNotice = [
+    user("p1", "cli", "first typed"),
+    asst("p2", "cli", [{ type: "text", text: "one" }]),
+    notice,
+    asst("p3", "cli", [{ type: "text", text: "noted" }]),
+    user("p4", "cli", "second typed"),
+    asst("p5", "cli", [{ type: "text", text: "two" }]),
+  ].join("\n");
+  assert.deepEqual(
+    foreignTurns(`${withNotice}\n`, own).turns.map((t) => t.content[0]!.text),
+    ["first typed", "second typed"],
+    "a system-sourced user row is skipped; the typed prompts either side mirror",
+  );
   const sdk = [
     user("s1", "sdk-cli", "from a script"),
     asst("s2", "sdk-cli", [{ type: "text", text: "x" }]),
