@@ -73,6 +73,7 @@ export declare class Translator {
     streamedId: string | undefined;
     finished: boolean;
     denied: number;
+    autoDenied: string[];
     toolPending: boolean;
     aborting: boolean;
     /** task_id → { block, lastSummary, lastToolName } tracks open task blocks across progress frames. */

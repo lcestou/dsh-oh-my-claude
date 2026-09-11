@@ -4138,6 +4138,44 @@ console.log("interrupt-on-abort ok");
   assert.equal(hasPendingTodo([]), false, "an empty list has nothing outstanding");
 }
 
+// Auto mode's classifier refusal ends the turn with its own notice, reasons named and deduped,
+// and does not count as a "needed approval" denial, whose advice (Full Access) would not help.
+{
+  const t = new Translator() as any;
+  const refusal = (why: string) =>
+    `Permission for this action was denied by the Claude Code auto mode classifier. Reason: [${why}]. If you have other tasks, continue.`;
+  t.toolResults(
+    [{ type: "tool_result", tool_use_id: "a", is_error: true, content: refusal("Exfil Scouting") }],
+    null,
+  );
+  t.toolResults(
+    [{ type: "tool_result", tool_use_id: "b", is_error: true, content: refusal("Exfil Scouting") }],
+    null,
+  );
+  t.toolResults(
+    [
+      {
+        type: "tool_result",
+        tool_use_id: "c",
+        is_error: true,
+        content: refusal("Code from External"),
+      },
+    ],
+    null,
+  );
+  const out = t.translate({ type: "result", subtype: "success", is_error: false, result: "" });
+  const text =
+    out
+      .filter((e: any) => e.type === "text-delta" || e.type === "delta")
+      .map((e: any) => e.text ?? e.delta ?? "")
+      .join("") || JSON.stringify(out);
+  assert.ok(
+    text.includes("Auto mode blocked 3 tool calls (Exfil Scouting, Code from External)"),
+    text,
+  );
+  assert.ok(!text.includes("needed approval"), "the manual-mode advice stays out");
+}
+
 // Images are named by path after the prompt: the note carries the copy the adapter kept (with an
 // extension, so Read treats it as an image), its name and size, and an image without a copy says
 // nothing rather than pointing nowhere.

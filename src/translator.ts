@@ -15,6 +15,9 @@ import type { JsonValue } from "./dsh.js";
 const TOOL_TEXT_LIMIT = 600;
 const clip = (s: string, n = TOOL_TEXT_LIMIT): string => (s.length > n ? `${s.slice(0, n)}…` : s);
 const DENIED_RE = /requires? approval|permission (was )?denied|not allowed/i;
+/** Auto mode's own refusal: the CLI's classifier names a reason in brackets, and nothing a dsh
+ *  access mode could change would have let the call through, so it is reported apart. */
+const AUTO_DENIED_RE = /denied by the Claude Code auto mode classifier\. Reason: \[([^\]]+)\]/;
 /** Every Claude Code tool except the dsh MCP relay gets a session row: mapped names pick the
  *  client's bash/read/edit presenters, the rest (TodoWrite, ToolSearch, Skill, mcp__*) the generic one. */
 const isNativeTool = (toolName: string) => toolName !== "" && !toolName.startsWith("mcp__dsh__");
@@ -427,7 +430,8 @@ export class Translator {
   /** `message.id` of the message currently streaming, so only its own echo is dropped. */
   streamedId: string | undefined;
   finished: boolean;
-  denied: number; // tool calls Claude Code refused because a non-interactive run cannot ask
+  denied: number;
+  autoDenied: string[]; // tool calls Claude Code refused because a non-interactive run cannot ask
   toolPending: boolean; // a tool_use block closed and its result has not arrived yet
   aborting: boolean; // dsh cancelled: the CLI's interrupt result finishes as aborted, not error
   /** task_id → { block, lastSummary, lastToolName } tracks open task blocks across progress frames. */
@@ -535,6 +539,7 @@ export class Translator {
     this.streamedId = undefined;
     this.finished = false;
     this.denied = 0; // tool calls Claude Code refused because a non-interactive run cannot ask
+    this.autoDenied = []; // reasons auto mode's classifier gave for the calls it blocked
     this.toolPending = false; // a tool_use block closed and its result has not arrived yet
     this.aborting = false; // dsh cancelled: the CLI's interrupt result finishes as aborted, not error
     this.onToolCall = onToolCall;
@@ -858,6 +863,16 @@ export class Translator {
             ...this.wholeBlock(
               "text",
               `\n\n_Claude Code denied ${n} tool call${n === 1 ? "" : "s"} that needed approval. Switch Access mode to Full Access to allow them._`,
+            ),
+          );
+        }
+        if (this.autoDenied.length > 0 && !event.is_error) {
+          const n = this.autoDenied.length;
+          const reasons = [...new Set(this.autoDenied)].join(", ");
+          events.push(
+            ...this.wholeBlock(
+              "text",
+              `\n\n_Auto mode blocked ${n} tool call${n === 1 ? "" : "s"} (${reasons}). A Bash permission rule in Claude Code's settings allows such a call; permissionMode bypassPermissions skips the classifier._`,
             ),
           );
         }
@@ -1284,7 +1299,9 @@ export class Translator {
       if (b.type !== "tool_result") continue;
       const rawText = toolResultText(b).trim();
       const raw = this.redact ? this.redact(rawText) : rawText;
-      if (b.is_error && DENIED_RE.test(raw)) this.denied++;
+      const auto = b.is_error ? AUTO_DENIED_RE.exec(raw) : null;
+      if (auto) this.autoDenied.push(auto[1]!);
+      else if (b.is_error && DENIED_RE.test(raw)) this.denied++;
       const body = clip(raw || "(empty)", this.limit);
       const tag = parentToolUseId ? "↳ " : "";
       const toolUseId = b.tool_use_id ?? "";
