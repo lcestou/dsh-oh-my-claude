@@ -3324,6 +3324,7 @@ function watchUltrathink(ctx: ClientCtx) {
   const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
   const names = RAINBOW.map((_, i) => `omc-rainbow-${i}`);
   const shimmerNames = RAINBOW.map((_, i) => `omc-rainbow-s${i}`);
+  const HOSTS = '[data-composer-input], [data-chat-anchor-key*=":input-message"]';
   const clear = () => {
     for (const key of [...names, ...shimmerNames]) registry.delete(key);
   };
@@ -3384,15 +3385,11 @@ function watchUltrathink(ctx: ClientCtx) {
     }
     const buckets: RainbowChar[][] = RAINBOW.map(() => []);
     composer = [];
-    for (const host of document.querySelectorAll<HTMLElement>("[data-composer-input]")) {
+    for (const host of document.querySelectorAll<HTMLElement>(HOSTS)) {
       const cs = charsIn(host);
-      composer.push(...cs);
+      if (host.hasAttribute("data-composer-input")) composer.push(...cs);
       for (const c of cs) buckets[c.colour]!.push(c);
     }
-    for (const host of document.querySelectorAll<HTMLElement>(
-      '[data-chat-anchor-key*=":input-message"]',
-    ))
-      for (const c of charsIn(host)) buckets[c.colour]!.push(c);
     names.forEach((key, i) => {
       const cs = buckets[i]!;
       if (cs.length === 0) registry.delete(key);
@@ -3416,7 +3413,10 @@ function watchUltrathink(ctx: ClientCtx) {
     paintSweep();
   };
   // The composer changes on every keystroke and the chat on every message; both are observed
-  // rather than polled, with the pass folded to one per frame.
+  // rather than polled, with the pass folded to one per frame. The observer has to sit on the
+  // body (dsh remounts the chat and the composer), but a streaming reply mutates the document
+  // many times a second, so only a change inside a host, or one that adds a host, asks for a
+  // pass; the rest is dropped before any walking happens.
   let queued = false;
   const request = () => {
     if (queued) return;
@@ -3426,7 +3426,18 @@ function watchUltrathink(ctx: ClientCtx) {
       guard(scan)();
     });
   };
-  const obs = new MutationObserver(request);
+  const touchesHost = (records: MutationRecord[]): boolean => {
+    for (const r of records) {
+      const el = r.target instanceof Element ? r.target : r.target.parentElement;
+      if (el?.closest(HOSTS)) return true;
+      for (const n of r.addedNodes)
+        if (n instanceof Element && (n.matches(HOSTS) || n.querySelector(HOSTS))) return true;
+    }
+    return false;
+  };
+  const obs = new MutationObserver((records) => {
+    if (touchesHost(records)) request();
+  });
   obs.observe(document.body, { childList: true, subtree: true, characterData: true });
   document.addEventListener("input", request, true);
   document.addEventListener("visibilitychange", request);
