@@ -97,6 +97,10 @@ export declare class Translator {
         thinking?: number;
         output?: number;
     }) => void;
+    /** Output tokens across every assistant message of this turn so far. A `message_delta` reports
+     *  the message it closes, not the turn, so the figure summed here is what the status row shows;
+     *  reporting each message's own count made the row drop back to a few hundred at every tool step. */
+    private turnOutput;
     /** callId → original input JSON string, kept so Edit can build meta.diffs from it. */
     readonly callInputs: Map<string, string>;
     /** callId → the seq onToolCall returned, so a re-fired block never appends `tool/call` twice. */

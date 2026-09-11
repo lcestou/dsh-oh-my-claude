@@ -4137,6 +4137,22 @@ console.log("interrupt-on-abort ok");
   assert.equal(hasPendingTodo([]), false, "an empty list has nothing outstanding");
 }
 
+// The status row's figure climbs across the turn: each `message_delta` reports the message it
+// closes, so the translator sums them, and the result frame's total closes the turn.
+{
+  const seen: { thinking?: number; output?: number }[] = [];
+  const t = new Translator({ onProgress: (p) => seen.push(p) }) as any;
+  t.partial({ type: "message_delta", usage: { output_tokens: 600 } });
+  t.partial({ type: "message_delta", usage: { output_tokens: 250 } });
+  t.translate({ type: "system", subtype: "thinking_tokens", estimated_tokens: 1200 });
+  t.partial({ type: "message_delta", usage: { output_tokens: 1300 } });
+  assert.deepEqual(
+    seen,
+    [{ output: 600 }, { output: 850 }, { thinking: 1200 }, { output: 2150 }],
+    "output is the running sum for the turn, not each message's own count",
+  );
+}
+
 // The token counter stands in for thinking that never shows a word. It opens at the first mark, adds a
 // fresh line at each mark after it (no arrow chain — dsh's Think summary follows the end, so the latest
 // line shows collapsed), stays quiet while thinking text is streaming, and closes with the block it

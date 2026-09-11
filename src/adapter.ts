@@ -1715,9 +1715,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   /** Per-session turn accounting buffer (last 50 turns); keyed by dsh sessionId. Lives on
    *  globalThis so the route registered at boot reads what a hot-reloaded adapter fills. */
   readonly turnBuffer: Map<string, TurnRecord[]>;
-  /** What the running turn has done so far, per session, for the status row: the thinking estimate
-   *  as it climbs and output tokens once known. Set by the live translator, cleared when the turn
-   *  ends; a session with no entry has no turn running. */
+  /** What the running turn has done so far, per session, for the status row: output tokens across
+   *  the finished assistant messages, plus the thinking estimate for the block the model is in now.
+   *  The estimate is cleared when the next usage frame lands, since that frame counts the same
+   *  tokens for real. Set by the live translator, cleared when the turn ends; a session with no entry
+   *  has no turn running. */
   readonly liveTurn = new Map<
     string,
     { thinking?: number; thinkingAt?: number; output?: number; at: number }
@@ -4061,7 +4063,14 @@ export class ClaudeCodeAdapter extends LlmAdapter {
           cur.thinking = p.thinking;
           cur.thinkingAt = Date.now();
         }
-        if (p.output !== undefined) cur.output = p.output;
+        // Never lower than what the row already showed: the CLI's own line takes the max of the
+        // estimate and the usage figure (its responseLength reducer), so a block whose estimate ran
+        // high does not make the count step backwards when the real number lands.
+        if (p.output !== undefined) {
+          cur.output = Math.max(p.output, (cur.output ?? 0) + (cur.thinking ?? 0));
+          cur.thinking = undefined;
+          cur.thinkingAt = undefined;
+        }
         this.liveTurn.set(options.sessionId, cur);
       },
       onToolCall:

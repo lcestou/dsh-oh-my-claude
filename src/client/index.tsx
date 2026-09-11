@@ -2796,7 +2796,17 @@ const DETAIL_MARK = "data-omc-turn-detail";
 /** How long thinking runs before the row says so differently. The CLI switches to "still thinking"
  *  and warms the colour once it has been at it a while; neither the wording nor the colour is ever
  *  put on the wire, so the rule is kept here. */
-const STILL_THINKING_MS = 60_000;
+/** The CLI's own wording ladder for a thinking burst (2.1.268, `gr()` in its spinner), by how long
+ *  the burst has run; it warms the colour from the first step. Same marks here so the row reads
+ *  the way a terminal user already knows it. */
+const THINKING_WORDS: [number, string][] = [
+  [45_000, "almost done thinking"],
+  [30_000, "thinking some more"],
+  [20_000, "thinking more"],
+  [10_000, "still thinking"],
+];
+const thinkingWord = (ms: number): string =>
+  THINKING_WORDS.find(([at]) => ms >= at)?.[1] ?? "thinking";
 const wireTurnStatus = (
   el: HTMLElement,
   sessionId: string,
@@ -2924,9 +2934,9 @@ const wireTurnStatus = (
       detailSpan.textContent = "";
       detailSpan.append(` (${parts.join(" · ")}${parts.length > 0 ? " · " : ""}`);
       const word = document.createElement("span");
-      const long = Date.now() - thinkingSince > STILL_THINKING_MS;
-      word.textContent = long ? "still thinking" : "thinking";
-      if (long) {
+      const ms = Date.now() - thinkingSince;
+      word.textContent = thinkingWord(ms);
+      if (ms >= THINKING_WORDS[THINKING_WORDS.length - 1]![0]) {
         word.style.setProperty("color", T.warn, "important");
         word.style.setProperty("-webkit-text-fill-color", T.warn, "important");
       }
@@ -2941,14 +2951,12 @@ const wireTurnStatus = (
     if (!el.isConnected) return;
     try {
       const r = await fetch(`${ROUTE}/live-turn?session=${encodeURIComponent(sessionId)}`);
-      const b = await readJson<{ thinking?: number; output?: number }>(r);
-      // Output tokens once the model has written any, the thinking estimate before that: two names
-      // for the same climbing figure, and showing both at once would say it twice.
-      const figure = b.output !== undefined && b.output > 0 ? b.output : b.thinking;
-      tokens = figure !== undefined && figure > 0 ? `↓ ${shortCount(figure)} tokens` : "";
-      // When thinking started, so the wording can warm once it has run long. The route reports the
-      // figure only while it is still climbing, so its absence is what says thinking stopped.
-      const thinkingNow = b.thinking !== undefined && b.output === undefined;
+      const b = await readJson<{ tokens?: number; thinking?: boolean }>(r);
+      tokens = b.tokens !== undefined && b.tokens > 0 ? `↓ ${shortCount(b.tokens)} tokens` : "";
+      // When thinking started, so the wording can warm once it has run long. The route says whether
+      // the estimate is still climbing; gating the word on "no output yet" instead hid every
+      // thinking block after the first tool step, since output is known from then on.
+      const thinkingNow = b.thinking === true;
       if (!thinkingNow) thinkingSince = 0;
       else if (thinkingSince === 0) thinkingSince = Date.now();
     } catch {
