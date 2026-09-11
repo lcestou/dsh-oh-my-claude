@@ -95,6 +95,7 @@ export declare class Translator {
      *  once a usage frame names them. Fired on the frames that carry them, nothing is polled. */
     onProgress?: (progress: {
         thinking?: number;
+        thinkingOpen?: boolean;
         output?: number;
     }) => void;
     /** Output tokens across every assistant message of this turn so far. A `message_delta` reports
@@ -129,6 +130,7 @@ export declare class Translator {
         onInit?: (commands: string[], tools: string[]) => void;
         onProgress?: (progress: {
             thinking?: number;
+            thinkingOpen?: boolean;
             output?: number;
         }) => void;
         /** The box a remote turn runs on, so a logged-out error names it, not this local host. */
@@ -180,6 +182,8 @@ export declare class Translator {
      *  counter beside it would say the same thing twice. Fable-class models return thinking blocks
      *  that carry a signature and no text, and this is the only sign they are working. */
     thinkingTokens(total: number): StreamChunk[];
+    /** The thinking block is over, or the turn is: tell the status row, once per open block. */
+    private closeThinking;
     /** Close the counter: the thinking block it stood in for is over, or the turn is. */
     endThinking(): StreamChunk[];
     /** Close the elapsed-time block a slow call opened, whichever way its result is drawn. */

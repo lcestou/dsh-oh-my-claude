@@ -1722,7 +1722,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    *  has no turn running. */
   readonly liveTurn = new Map<
     string,
-    { thinking?: number; thinkingAt?: number; output?: number; at: number }
+    { thinking?: number; thinkingOpen?: boolean; output?: number; at: number }
   >();
   /** Per-session idle watchdog deadline in epoch ms; null means no active arm. */
   readonly idleDeadlineMap = new Map<string, number | null>();
@@ -4057,19 +4057,14 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       log: this.log.bind(this),
       onProgress: (p) => {
         const cur = this.liveTurn.get(options.sessionId) ?? { at: Date.now() };
-        // When the figure last moved, not just what it was: the CLI sends one thinking frame per
-        // delta, so the gap since the last one is how the route tells thinking from finished.
-        if (p.thinking !== undefined) {
-          cur.thinking = p.thinking;
-          cur.thinkingAt = Date.now();
-        }
+        if (p.thinking !== undefined) cur.thinking = p.thinking;
+        if (p.thinkingOpen !== undefined) cur.thinkingOpen = p.thinkingOpen;
         // Never lower than what the row already showed: the CLI's own line takes the max of the
         // estimate and the usage figure (its responseLength reducer), so a block whose estimate ran
         // high does not make the count step backwards when the real number lands.
         if (p.output !== undefined) {
           cur.output = Math.max(p.output, (cur.output ?? 0) + (cur.thinking ?? 0));
           cur.thinking = undefined;
-          cur.thinkingAt = undefined;
         }
         this.liveTurn.set(options.sessionId, cur);
       },

@@ -297,7 +297,7 @@ export interface SessionRouteOptions {
     /** The running turn's figures per session, for the status row; absent when no turn is running. */
     liveTurn?: Map<string, {
         thinking?: number;
-        thinkingAt?: number;
+        thinkingOpen?: boolean;
         output?: number;
         at: number;
     }>;

@@ -629,7 +629,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      *  has no turn running. */
     readonly liveTurn: Map<string, {
         thinking?: number;
-        thinkingAt?: number;
+        thinkingOpen?: boolean;
         output?: number;
         at: number;
     }>;

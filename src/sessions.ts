@@ -94,7 +94,6 @@ const ROUTE_PREFIX = "/dsh-oh-my-claude";
 /** How long a thinking figure counts as current. The CLI sends one frame per delta while the model
  *  thinks, so anything older than a beat or two means it stopped and the status row should stop
  *  saying so. Generous enough to survive a slow delta, short enough that the word does not linger. */
-const THINKING_FRESH_MS = 3000;
 const BODY_LIMIT = 64 * 1024;
 /** An imported transcript is a whole conversation, not a form field: megabytes, not kilobytes. */
 const IMPORT_LIMIT = 32 * 1024 * 1024;
@@ -1134,7 +1133,10 @@ export interface SessionRouteOptions {
   /** Per-session turn accounting buffer from the adapter. */
   turnRecords?: Map<string, import("./adapter.js").TurnRecord[]>;
   /** The running turn's figures per session, for the status row; absent when no turn is running. */
-  liveTurn?: Map<string, { thinking?: number; thinkingAt?: number; output?: number; at: number }>;
+  liveTurn?: Map<
+    string,
+    { thinking?: number; thinkingOpen?: boolean; output?: number; at: number }
+  >;
   /** Idle watchdog state from the adapter. */
   idle?: {
     deadlineFor(session: string): number | null;
@@ -1902,18 +1904,13 @@ export function registerSessionRoutes(
               if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/live-turn`) {
                 const sid = url.searchParams.get("session");
                 if (!sid) return json(res, 400, { error: "session param required" });
-                // The thinking figure is reported only while it is still climbing. The CLI sends one
-                // frame per delta, so a gap means the model stopped thinking; without this the word
-                // stayed on the row for the rest of the turn, long after it had moved on.
                 // `tokens` is one climbing figure for the turn: finished messages plus the estimate for
                 // the thinking block in progress, which the next usage frame folds in for real.
                 const live = liveTurn?.get(sid);
                 if (!live) return json(res, 200, {});
-                const climbing =
-                  live.thinkingAt !== undefined && Date.now() - live.thinkingAt < THINKING_FRESH_MS;
                 return json(res, 200, {
                   tokens: (live.output ?? 0) + (live.thinking ?? 0),
-                  thinking: climbing,
+                  thinking: live.thinkingOpen === true,
                 });
               }
               if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/turns`) {

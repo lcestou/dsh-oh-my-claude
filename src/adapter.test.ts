@@ -4140,16 +4140,27 @@ console.log("interrupt-on-abort ok");
 // The status row's figure climbs across the turn: each `message_delta` reports the message it
 // closes, so the translator sums them, and the result frame's total closes the turn.
 {
-  const seen: { thinking?: number; output?: number }[] = [];
+  const seen: { thinking?: number; thinkingOpen?: boolean; output?: number }[] = [];
   const t = new Translator({ onProgress: (p) => seen.push(p) }) as any;
   t.partial({ type: "message_delta", usage: { output_tokens: 600 } });
   t.partial({ type: "message_delta", usage: { output_tokens: 250 } });
+  t.partial({ type: "message_start", message: { id: "m3" } });
+  t.partial({ type: "content_block_start", index: 0, content_block: { type: "thinking" } });
   t.translate({ type: "system", subtype: "thinking_tokens", estimated_tokens: 1200 });
+  t.partial({ type: "content_block_stop", index: 0 });
+  t.partial({ type: "content_block_stop", index: 0 }); // a second stop for a closed block says nothing
   t.partial({ type: "message_delta", usage: { output_tokens: 1300 } });
   assert.deepEqual(
     seen,
-    [{ output: 600 }, { output: 850 }, { thinking: 1200 }, { output: 2150 }],
-    "output is the running sum for the turn, not each message's own count",
+    [
+      { output: 600 },
+      { output: 850 },
+      { thinkingOpen: true },
+      { thinking: 1200 },
+      { thinkingOpen: false },
+      { output: 2150 },
+    ],
+    "output is the running sum for the turn; thinking is open from the block's start to its stop",
   );
 }
 

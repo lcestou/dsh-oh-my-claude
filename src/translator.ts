@@ -418,7 +418,7 @@ export class Translator {
   onInit?: (commands: string[], tools: string[]) => void;
   /** Running figures for the turn's status row: the thinking estimate as it climbs, and output tokens
    *  once a usage frame names them. Fired on the frames that carry them, nothing is polled. */
-  onProgress?: (progress: { thinking?: number; output?: number }) => void;
+  onProgress?: (progress: { thinking?: number; thinkingOpen?: boolean; output?: number }) => void;
   /** Output tokens across every assistant message of this turn so far. A `message_delta` reports
    *  the message it closes, not the turn, so the figure summed here is what the status row shows;
    *  reporting each message's own count made the row drop back to a few hundred at every tool step. */
@@ -476,7 +476,7 @@ export class Translator {
     onResult?: (summary: TurnRecord) => void;
     redact?: (s: string) => string;
     onInit?: (commands: string[], tools: string[]) => void;
-    onProgress?: (progress: { thinking?: number; output?: number }) => void;
+    onProgress?: (progress: { thinking?: number; thinkingOpen?: boolean; output?: number }) => void;
     /** The box a remote turn runs on, so a logged-out error names it, not this local host. */
     hostLabel?: string;
   } = {}) {
@@ -811,7 +811,7 @@ export class Translator {
         for (const [, entry] of this.heartbeatBlocks) events.push(...this.endBlock(entry.block));
         this.heartbeatBlocks.clear();
         events.push(...this.endThinking());
-        this.thinkingBlock = undefined;
+        this.closeThinking();
         if (this.denied > 0 && !event.is_error) {
           const n = this.denied;
           events.push(
@@ -936,7 +936,7 @@ export class Translator {
         this.streamedId = ev.message?.id;
         this.toolPending = false;
         this.open.clear();
-        this.thinkingBlock = undefined;
+        this.closeThinking();
         return this.endThinking();
       }
       case "content_block_start":
@@ -998,7 +998,7 @@ export class Translator {
         let done: StreamChunk[] = [];
         if (block === this.thinkingBlock) {
           done = this.endThinking();
-          this.thinkingBlock = undefined;
+          this.closeThinking();
         }
         const tail = block.index < 0 ? done : [...done, ...this.endBlock(block)];
         return [...tail, ...inlineCall];
@@ -1033,6 +1033,10 @@ export class Translator {
     else if (cb.type === "thinking") {
       opened = this.startBlock("reasoning");
       this.thinkingBlock = opened.block;
+      // The status row's "thinking" is the block being open, the way the CLI's own spinner mode
+      // works, not the estimate frames being fresh: Fable-class thinking streams no text, and its
+      // estimate frames come every 50 tokens or so, which on a slow think is seconds apart.
+      this.onProgress?.({ thinkingOpen: true });
     } else if (cb.type === "tool_use") {
       const toolName = cb.name ?? "";
       const dsh = toolName.startsWith("mcp__dsh__");
@@ -1201,6 +1205,12 @@ export class Translator {
     // end (data-follow-end), so the collapsed row shows the newest figure while the expanded block
     // keeps the ladder.
     return this.delta(entry.block, `\n~${tokensText(total)} tokens`);
+  }
+
+  /** The thinking block is over, or the turn is: tell the status row, once per open block. */
+  private closeThinking(): void {
+    if (this.thinkingBlock) this.onProgress?.({ thinkingOpen: false });
+    this.thinkingBlock = undefined;
   }
 
   /** Close the counter: the thinking block it stood in for is over, or the turn is. */
