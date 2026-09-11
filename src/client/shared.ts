@@ -42,6 +42,60 @@ export const ago = (ms: number): string => {
   return new Date(ms).toLocaleDateString();
 };
 
+/** The CLI's keyword matcher (`SOt`) for a composer keyword such as `ultracode`: no match when the
+ *  text is a slash command, inside quotes, backticks, brackets or a tag, glued to a path or flag
+ *  character, or followed by a dotted member. A keyword typed as an example is not a trigger, so
+ *  it is not painted. */
+const KEYWORD_PAIRS = new Map<string, string>([
+  ["`", "`"],
+  ['"', '"'],
+  ["<", ">"],
+  ["{", "}"],
+  ["[", "]"],
+  ["(", ")"],
+  ["'", "'"],
+]);
+const wordy = (ch: string | undefined): boolean => ch !== undefined && /[\p{L}\p{N}_]/u.test(ch);
+export const keywordMatches = (text: string, word: string): { start: number; end: number }[] => {
+  const out: { start: number; end: number }[] = [];
+  if (!new RegExp(word, "i").test(text) || text.startsWith("/")) return out;
+  const spans: { start: number; end: number }[] = [];
+  let open: string | null = null;
+  let at = 0;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!;
+    if (open) {
+      if (open === "[" && ch === "[") {
+        at = i;
+        continue;
+      }
+      if (ch !== KEYWORD_PAIRS.get(open)) continue;
+      if (open === "'" && wordy(text[i + 1])) continue;
+      spans.push({ start: at, end: i + 1 });
+      open = null;
+    } else if (
+      (ch === "<" && i + 1 < text.length && /[a-zA-Z/]/.test(text[i + 1]!)) ||
+      (ch === "'" && !wordy(text[i - 1])) ||
+      (ch !== "<" && ch !== "'" && KEYWORD_PAIRS.has(ch))
+    ) {
+      open = ch;
+      at = i;
+    }
+  }
+  for (const m of text.matchAll(new RegExp(`\\b${word}\\b`, "gi"))) {
+    const start = m.index;
+    const end = start + m[0].length;
+    if (spans.some((sp) => start >= sp.start && start < sp.end)) continue;
+    const before = text[start - 1];
+    const after = text[end];
+    if (before === "/" || before === "\\" || before === "-") continue;
+    if (after === "/" || after === "\\" || after === "-" || after === "?") continue;
+    if (after === "." && wordy(text[end + 1])) continue;
+    out.push({ start, end });
+  }
+  return out;
+};
+
 // dsh's design tokens (`--dsw-alias-*`) with plain fallbacks for any other host theme.
 export const T = {
   text: "var(--dsw-alias-label-primary, inherit)",

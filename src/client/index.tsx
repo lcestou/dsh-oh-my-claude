@@ -65,6 +65,7 @@ import {
   maskEmail,
   whenContextGone,
   guard,
+  keywordMatches,
 } from "./shared.js";
 import { Spark, sparkNode } from "./spark.js";
 import { AccessShield, OhMyClaudeControl } from "./panel.js";
@@ -2765,7 +2766,7 @@ const ensureTurnStatusStyle = () => {
   // clearance, which leaves its pills 653px in a 717px column. dsh's two fill that; ours as a
   // third clips all three to an ellipsis by a few pixels. The pills are centred, so the padding
   // does no aligning; take it down to the row's rounded corners and the three fit.
-  styleEl.textContent = `body[data-omc-claude] [role="status"][aria-live="polite"],[data-dsh-oh-my-claude-turn]{background-image:var(--omc-row-bg,linear-gradient(90deg,${CLAUDE_ORANGE} 0%,${CLAUDE_ORANGE} 40%,${CLAUDE_SHIMMER} 50%,${CLAUDE_ORANGE} 60%,${CLAUDE_ORANGE} 100%))}@keyframes omc-word{from{-webkit-text-fill-color:var(--omc-word-lo)}to{-webkit-text-fill-color:var(--omc-word-hi)}}[data-omc-turn-word]{animation:omc-word 1s ease-in-out 3s infinite alternate}@media (prefers-reduced-motion:reduce){[data-omc-turn-word]{animation:none}}[data-dsh-oh-my-claude-turn]>span[aria-hidden]{display:inline-block;width:1.3em;text-align:start;flex:none}body[data-omc-claude] [role="tablist"]>[role="tab"][aria-selected="true"]{color:${CLAUDE_ORANGE}}body[data-omc-claude] [role="tablist"]>[role="tab"][aria-selected="true"]::after{background:${CLAUDE_ORANGE}}body[data-omc-claude] [class*="_markdown"] blockquote{border-left-color:${CLAUDE_ORANGE}80}body[data-omc-claude] [class*="_markdown"] hr{background:${CLAUDE_ORANGE}59}body[data-omc-claude] [class*="_markdown"] a{color:${CLAUDE_ORANGE};text-decoration-color:${CLAUDE_ORANGE}66}body[data-omc-claude] [class*="_markdown"] a:hover{color:${CLAUDE_SHIMMER};text-decoration-color:${CLAUDE_SHIMMER}}body[data-omc-claude] [class*="_markdown"] input[type="checkbox"]{accent-color:${CLAUDE_ORANGE}}body[data-omc-claude] [data-workflow-run] button[data-member-status] [data-member-label]{color:${CLAUDE_ORANGE}}body[data-omc-panel-open] [data-width-handle]{pointer-events:none}body[data-omc-panel-open] [class*="_toBottomSlot"]{opacity:0;pointer-events:none;transition:opacity .1s}@keyframes omc-pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,${CLAUDE_ORANGE} 55%,transparent)}100%{box-shadow:0 0 0 12px transparent}}button[aria-label="Oh My Claude"][data-omc-pulse]{animation:omc-pulse 1.1s ease-out 3}@media (prefers-reduced-motion:reduce){button[aria-label="Oh My Claude"][data-omc-pulse]{animation:none}}body[data-omc-claude] [data-produced-files-row] button{color:${CLAUDE_ORANGE}}body[data-omc-claude] [data-produced-files-row] button:hover{color:${CLAUDE_SHIMMER}}body[data-omc-claude] [data-composer-stats]{padding-left:8px;padding-right:8px}body[data-omc-claude] [class*="_optionLine"]>[class*="_badge"]{background:color-mix(in srgb,${CLAUDE_ORANGE} 16%,transparent);color:${CLAUDE_ORANGE}}${RAINBOW_CSS}${COST_DIALOG_CSS}`;
+  styleEl.textContent = `body[data-omc-claude] [role="status"][aria-live="polite"],[data-dsh-oh-my-claude-turn]{background-image:var(--omc-row-bg,linear-gradient(90deg,${CLAUDE_ORANGE} 0%,${CLAUDE_ORANGE} 40%,${CLAUDE_SHIMMER} 50%,${CLAUDE_ORANGE} 60%,${CLAUDE_ORANGE} 100%))}@keyframes omc-word{from{-webkit-text-fill-color:var(--omc-word-lo)}to{-webkit-text-fill-color:var(--omc-word-hi)}}[data-omc-turn-word]{animation:omc-word 1s ease-in-out 3s infinite alternate}@media (prefers-reduced-motion:reduce){[data-omc-turn-word]{animation:none}}[data-dsh-oh-my-claude-turn]>span[aria-hidden]{display:inline-block;width:1.3em;text-align:start;flex:none}body[data-omc-claude] [role="tablist"]>[role="tab"][aria-selected="true"]{color:${CLAUDE_ORANGE}}body[data-omc-claude] [role="tablist"]>[role="tab"][aria-selected="true"]::after{background:${CLAUDE_ORANGE}}body[data-omc-claude] [class*="_markdown"] blockquote{border-left-color:${CLAUDE_ORANGE}80}body[data-omc-claude] [class*="_markdown"] hr{background:${CLAUDE_ORANGE}59}body[data-omc-claude] [class*="_markdown"] a{color:${CLAUDE_ORANGE};text-decoration-color:${CLAUDE_ORANGE}66}body[data-omc-claude] [class*="_markdown"] a:hover{color:${CLAUDE_SHIMMER};text-decoration-color:${CLAUDE_SHIMMER}}body[data-omc-claude] [class*="_markdown"] input[type="checkbox"]{accent-color:${CLAUDE_ORANGE}}body[data-omc-claude] [data-workflow-run] button[data-member-status] [data-member-label]{color:${CLAUDE_ORANGE}}body[data-omc-panel-open] [data-width-handle]{pointer-events:none}body[data-omc-panel-open] [class*="_toBottomSlot"],body:has([data-omc-cost-dialog]) [class*="_toBottomSlot"]{opacity:0;pointer-events:none;transition:opacity .1s}@keyframes omc-pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,${CLAUDE_ORANGE} 55%,transparent)}100%{box-shadow:0 0 0 12px transparent}}button[aria-label="Oh My Claude"][data-omc-pulse]{animation:omc-pulse 1.1s ease-out 3}@media (prefers-reduced-motion:reduce){button[aria-label="Oh My Claude"][data-omc-pulse]{animation:none}}body[data-omc-claude] [data-produced-files-row] button{color:${CLAUDE_ORANGE}}body[data-omc-claude] [data-produced-files-row] button:hover{color:${CLAUDE_SHIMMER}}body[data-omc-claude] [data-composer-stats]{padding-left:8px;padding-right:8px}body[data-omc-claude] [class*="_optionLine"]>[class*="_badge"]{background:color-mix(in srgb,${CLAUDE_ORANGE} 16%,transparent);color:${CLAUDE_ORANGE}}${RAINBOW_CSS}${COST_DIALOG_CSS}`;
   document.head.appendChild(styleEl);
 };
 
@@ -3301,58 +3302,6 @@ const RAINBOW_CSS =
   `::highlight(omc-rainbow-${ULTRACODE_INDEX}){color:var(--omc-ultracode,${ULTRACODE_DARK})}` +
   `::highlight(omc-rainbow-s${ULTRACODE_INDEX}){color:${ULTRACODE_SHIMMER}}`;
 const ULTRATHINK = /\bultrathink\b/gi;
-/** The CLI's keyword matcher (`SOt`) for `ultracode`: no match when the text is a slash command,
- *  inside quotes, backticks, brackets or a tag, glued to a path or flag character, or followed by
- *  a dotted member. A keyword typed as an example is not a trigger, so it is not painted. */
-const KEYWORD_PAIRS = new Map<string, string>([
-  ["`", "`"],
-  ['"', '"'],
-  ["<", ">"],
-  ["{", "}"],
-  ["[", "]"],
-  ["(", ")"],
-  ["'", "'"],
-]);
-const wordy = (ch: string | undefined): boolean => ch !== undefined && /[\p{L}\p{N}_]/u.test(ch);
-const keywordMatches = (text: string, word: string): { start: number; end: number }[] => {
-  const out: { start: number; end: number }[] = [];
-  if (!new RegExp(word, "i").test(text) || text.startsWith("/")) return out;
-  const spans: { start: number; end: number }[] = [];
-  let open: string | null = null;
-  let at = 0;
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i]!;
-    if (open) {
-      if (open === "[" && ch === "[") {
-        at = i;
-        continue;
-      }
-      if (ch !== KEYWORD_PAIRS.get(open)) continue;
-      if (open === "'" && wordy(text[i + 1])) continue;
-      spans.push({ start: at, end: i + 1 });
-      open = null;
-    } else if (
-      (ch === "<" && i + 1 < text.length && /[a-zA-Z/]/.test(text[i + 1]!)) ||
-      (ch === "'" && !wordy(text[i - 1])) ||
-      (ch !== "<" && ch !== "'" && KEYWORD_PAIRS.has(ch))
-    ) {
-      open = ch;
-      at = i;
-    }
-  }
-  for (const m of text.matchAll(new RegExp(`\\b${word}\\b`, "gi"))) {
-    const start = m.index;
-    const end = start + m[0].length;
-    if (spans.some((sp) => start >= sp.start && start < sp.end)) continue;
-    const before = text[start - 1];
-    const after = text[end];
-    if (before === "/" || before === "\\" || before === "-") continue;
-    if (after === "/" || after === "\\" || after === "-" || after === "?") continue;
-    if (after === "." && wordy(text[end + 1])) continue;
-    out.push({ start, end });
-  }
-  return out;
-};
 /** One character of a match: where it sits, which colour it takes, and its index in the
  *  composer's text (the sweep runs over those indices, as the CLI's does over its input string). */
 interface RainbowChar {
