@@ -1135,7 +1135,7 @@ export interface SessionRouteOptions {
   /** The running turn's figures per session, for the status row; absent when no turn is running. */
   liveTurn?: Map<
     string,
-    { thinking?: number; thinkingOpen?: boolean; output?: number; at: number }
+    { thinking?: number; thinkingOpen?: boolean; thinkingAt?: number; output?: number; at: number }
   >;
   /** Idle watchdog state from the adapter. */
   idle?: {
@@ -1908,9 +1908,11 @@ export function registerSessionRoutes(
                 // the thinking block in progress, which the next usage frame folds in for real.
                 const live = liveTurn?.get(sid);
                 if (!live) return json(res, 200, {});
+                // `thinkingMs` is how long the open thinking burst has run; absent when none is open.
+                const open = live.thinkingOpen === true && live.thinkingAt !== undefined;
                 return json(res, 200, {
                   tokens: (live.output ?? 0) + (live.thinking ?? 0),
-                  thinking: live.thinkingOpen === true,
+                  thinkingMs: open ? Date.now() - live.thinkingAt! : undefined,
                 });
               }
               if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/turns`) {

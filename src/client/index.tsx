@@ -2765,7 +2765,7 @@ const ensureTurnStatusStyle = () => {
   // clearance, which leaves its pills 653px in a 717px column. dsh's two fill that; ours as a
   // third clips all three to an ellipsis by a few pixels. The pills are centred, so the padding
   // does no aligning; take it down to the row's rounded corners and the three fit.
-  styleEl.textContent = `body[data-omc-claude] [role="status"][aria-live="polite"],[data-dsh-oh-my-claude-turn]{background-image:linear-gradient(90deg,${CLAUDE_ORANGE} 0%,${CLAUDE_ORANGE} 40%,${CLAUDE_SHIMMER} 50%,${CLAUDE_ORANGE} 60%,${CLAUDE_ORANGE} 100%)}[data-dsh-oh-my-claude-turn][data-omc-warm]{background-image:linear-gradient(90deg,${T.warn},${T.warn})}[data-dsh-oh-my-claude-turn]>span[aria-hidden]{display:inline-block;width:1.3em;text-align:start;flex:none}body[data-omc-claude] [role="tablist"]>[role="tab"][aria-selected="true"]{color:${CLAUDE_ORANGE}}body[data-omc-claude] [role="tablist"]>[role="tab"][aria-selected="true"]::after{background:${CLAUDE_ORANGE}}body[data-omc-claude] [class*="_markdown"] blockquote{border-left-color:${CLAUDE_ORANGE}80}body[data-omc-claude] [class*="_markdown"] hr{background:${CLAUDE_ORANGE}59}body[data-omc-claude] [class*="_markdown"] a{color:${CLAUDE_ORANGE};text-decoration-color:${CLAUDE_ORANGE}66}body[data-omc-claude] [class*="_markdown"] a:hover{color:${CLAUDE_SHIMMER};text-decoration-color:${CLAUDE_SHIMMER}}body[data-omc-claude] [class*="_markdown"] input[type="checkbox"]{accent-color:${CLAUDE_ORANGE}}body[data-omc-claude] [data-workflow-run] button[data-member-status] [data-member-label]{color:${CLAUDE_ORANGE}}body[data-omc-panel-open] [data-width-handle]{pointer-events:none}body[data-omc-panel-open] [class*="_toBottomSlot"]{opacity:0;pointer-events:none;transition:opacity .1s}@keyframes omc-pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,${CLAUDE_ORANGE} 55%,transparent)}100%{box-shadow:0 0 0 12px transparent}}button[aria-label="Oh My Claude"][data-omc-pulse]{animation:omc-pulse 1.1s ease-out 3}@media (prefers-reduced-motion:reduce){button[aria-label="Oh My Claude"][data-omc-pulse]{animation:none}}body[data-omc-claude] [data-produced-files-row] button{color:${CLAUDE_ORANGE}}body[data-omc-claude] [data-produced-files-row] button:hover{color:${CLAUDE_SHIMMER}}body[data-omc-claude] [data-composer-stats]{padding-left:8px;padding-right:8px}body[data-omc-claude] [class*="_optionLine"]>[class*="_badge"]{background:color-mix(in srgb,${CLAUDE_ORANGE} 16%,transparent);color:${CLAUDE_ORANGE}}${COST_DIALOG_CSS}`;
+  styleEl.textContent = `body[data-omc-claude] [role="status"][aria-live="polite"],[data-dsh-oh-my-claude-turn]{background-image:linear-gradient(90deg,${CLAUDE_ORANGE} 0%,${CLAUDE_ORANGE} 40%,${CLAUDE_SHIMMER} 50%,${CLAUDE_ORANGE} 60%,${CLAUDE_ORANGE} 100%)}body[data-omc-claude] [role="status"][aria-live="polite"][data-omc-warm],[data-dsh-oh-my-claude-turn][data-omc-warm]{background-image:linear-gradient(90deg,${T.warn},${T.warn})}[data-dsh-oh-my-claude-turn]>span[aria-hidden]{display:inline-block;width:1.3em;text-align:start;flex:none}body[data-omc-claude] [role="tablist"]>[role="tab"][aria-selected="true"]{color:${CLAUDE_ORANGE}}body[data-omc-claude] [role="tablist"]>[role="tab"][aria-selected="true"]::after{background:${CLAUDE_ORANGE}}body[data-omc-claude] [class*="_markdown"] blockquote{border-left-color:${CLAUDE_ORANGE}80}body[data-omc-claude] [class*="_markdown"] hr{background:${CLAUDE_ORANGE}59}body[data-omc-claude] [class*="_markdown"] a{color:${CLAUDE_ORANGE};text-decoration-color:${CLAUDE_ORANGE}66}body[data-omc-claude] [class*="_markdown"] a:hover{color:${CLAUDE_SHIMMER};text-decoration-color:${CLAUDE_SHIMMER}}body[data-omc-claude] [class*="_markdown"] input[type="checkbox"]{accent-color:${CLAUDE_ORANGE}}body[data-omc-claude] [data-workflow-run] button[data-member-status] [data-member-label]{color:${CLAUDE_ORANGE}}body[data-omc-panel-open] [data-width-handle]{pointer-events:none}body[data-omc-panel-open] [class*="_toBottomSlot"]{opacity:0;pointer-events:none;transition:opacity .1s}@keyframes omc-pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,${CLAUDE_ORANGE} 55%,transparent)}100%{box-shadow:0 0 0 12px transparent}}button[aria-label="Oh My Claude"][data-omc-pulse]{animation:omc-pulse 1.1s ease-out 3}@media (prefers-reduced-motion:reduce){button[aria-label="Oh My Claude"][data-omc-pulse]{animation:none}}body[data-omc-claude] [data-produced-files-row] button{color:${CLAUDE_ORANGE}}body[data-omc-claude] [data-produced-files-row] button:hover{color:${CLAUDE_SHIMMER}}body[data-omc-claude] [data-composer-stats]{padding-left:8px;padding-right:8px}body[data-omc-claude] [class*="_optionLine"]>[class*="_badge"]{background:color-mix(in srgb,${CLAUDE_ORANGE} 16%,transparent);color:${CLAUDE_ORANGE}}${COST_DIALOG_CSS}`;
   document.head.appendChild(styleEl);
 };
 
@@ -2917,7 +2917,8 @@ const wireTurnStatus = (
     return undefined;
   };
   let tokens = "";
-  let thinkingSince = 0;
+  /** Age of the open thinking burst in ms from the route, -1 when none is open. */
+  let thinkingMs = -1;
   /** What the bracket last showed, so a beat that changes nothing writes nothing: rebuilding the
    *  span every second invalidated layout for a row that reads the same as before. */
   let painted = "";
@@ -2931,7 +2932,7 @@ const wireTurnStatus = (
     if (clock) clock.style.display = time ? "none" : "";
     if (tokens) parts.push(tokens);
     // The state word is a node of its own so it can warm to amber once thinking has run long, the
-    const ms = thinkingSince > 0 ? Date.now() - thinkingSince : -1;
+    const ms = thinkingMs;
     const word = ms >= 0 ? thinkingWord(ms) : "";
     const warm = ms >= THINKING_WORDS[THINKING_WORDS.length - 1]![0];
     const key = `${parts.join("\0")}\0${word}\0${warm}`;
@@ -2967,14 +2968,11 @@ const wireTurnStatus = (
     if (!el.isConnected || document.hidden) return;
     try {
       const r = await fetch(`${ROUTE}/live-turn?session=${encodeURIComponent(sessionId)}`);
-      const b = await readJson<{ tokens?: number; thinking?: boolean }>(r);
+      const b = await readJson<{ tokens?: number; thinkingMs?: number }>(r);
       tokens = b.tokens !== undefined && b.tokens > 0 ? `↓ ${shortCount(b.tokens)} tokens` : "";
-      // When thinking started, so the wording can warm once it has run long. The route says whether
-      // the estimate is still climbing; gating the word on "no output yet" instead hid every
-      // thinking block after the first tool step, since output is known from then on.
-      const thinkingNow = b.thinking === true;
-      if (!thinkingNow) thinkingSince = 0;
-      else if (thinkingSince === 0) thinkingSince = Date.now();
+      // The burst's age comes from the adapter, which saw the block open; a tab that opens
+      // mid-think would otherwise start its own clock late and climb the ladder late with it.
+      thinkingMs = b.thinkingMs ?? -1;
     } catch {
       // the row keeps its verb; the bracket is decoration
     }

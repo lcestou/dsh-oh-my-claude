@@ -298,6 +298,7 @@ export interface SessionRouteOptions {
     liveTurn?: Map<string, {
         thinking?: number;
         thinkingOpen?: boolean;
+        thinkingAt?: number;
         output?: number;
         at: number;
     }>;

@@ -1722,7 +1722,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    *  has no turn running. */
   readonly liveTurn = new Map<
     string,
-    { thinking?: number; thinkingOpen?: boolean; output?: number; at: number }
+    { thinking?: number; thinkingOpen?: boolean; thinkingAt?: number; output?: number; at: number }
   >();
   /** Per-session idle watchdog deadline in epoch ms; null means no active arm. */
   readonly idleDeadlineMap = new Map<string, number | null>();
@@ -4058,7 +4058,12 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       onProgress: (p) => {
         const cur = this.liveTurn.get(options.sessionId) ?? { at: Date.now() };
         if (p.thinking !== undefined) cur.thinking = p.thinking;
-        if (p.thinkingOpen !== undefined) cur.thinkingOpen = p.thinkingOpen;
+        // When the burst began, kept here rather than in the tab: a tab opened mid-think must read
+        // the true age of the burst, not the time since it first looked.
+        if (p.thinkingOpen !== undefined) {
+          cur.thinkingOpen = p.thinkingOpen;
+          cur.thinkingAt = p.thinkingOpen ? Date.now() : undefined;
+        }
         // Never lower than what the row already showed: the CLI's own line takes the max of the
         // estimate and the usage figure (its responseLength reducer), so a block whose estimate ran
         // high does not make the count step backwards when the real number lands.
