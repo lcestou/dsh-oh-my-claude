@@ -3276,8 +3276,35 @@ const RAINBOW: readonly string[] = [
   "rgb(155,130,200)",
   "rgb(200,130,180)",
 ];
-const RAINBOW_CSS = RAINBOW.map((c, i) => `::highlight(omc-rainbow-${i}){color:${c}}`).join("");
+/** The `rainbow_*_shimmer` entries: what a character shows while the composer's sweep is on it. */
+const RAINBOW_SHIMMER: readonly string[] = [
+  "rgb(250,155,147)",
+  "rgb(255,185,137)",
+  "rgb(255,225,155)",
+  "rgb(185,230,180)",
+  "rgb(180,205,240)",
+  "rgb(195,180,230)",
+  "rgb(230,180,210)",
+];
+const RAINBOW_CSS =
+  RAINBOW.map((c, i) => `::highlight(omc-rainbow-${i}){color:${c}}`).join("") +
+  RAINBOW_SHIMMER.map((c, i) => `::highlight(omc-rainbow-s${i}){color:${c}}`).join("");
 const ULTRATHINK = /\bultrathink\b/gi;
+/** One character of a match: where it sits, which colour it takes, and its index in the
+ *  composer's text (the sweep runs over those indices, as the CLI's does over its input string). */
+interface RainbowChar {
+  node: Node;
+  offset: number;
+  colour: number;
+  index: number;
+}
+
+const rangeOf = (c: RainbowChar): Range => {
+  const r = document.createRange();
+  r.setStart(c.node, c.offset);
+  r.setEnd(c.node, c.offset + 1);
+  return r;
+};
 
 /**
  * Paint `ultrathink` in the CLI's rainbow wherever a person wrote it: the composer and the sent
@@ -3285,46 +3312,108 @@ const ULTRATHINK = /\bultrathink\b/gi;
  * dsh's chat (React) nor its composer (Lexical) sees a DOM change; wrapping characters in spans
  * would have been undone by the next render of either, or thrown when it reconciled a node that
  * had moved. Both hosts are found by their own data attributes.
+ *
+ * The composer also gets the CLI's shimmer (its text input's `glimmerIndex`): a window of three
+ * characters, lit in the shimmer shades, that steps one character every 50ms from ten before the
+ * first match to ten past the last and wraps. Sent messages never shimmer, as in the CLI.
  */
 function watchUltrathink(ctx: ClientCtx) {
   // A browser without the Highlight API paints nothing; every Chromium since 105 has it.
   if (!("highlights" in CSS) || !("Highlight" in globalThis)) return;
   const registry = CSS.highlights;
+  const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
   const names = RAINBOW.map((_, i) => `omc-rainbow-${i}`);
+  const shimmerNames = RAINBOW.map((_, i) => `omc-rainbow-s${i}`);
   const clear = () => {
-    for (const key of names) registry.delete(key);
+    for (const key of [...names, ...shimmerNames]) registry.delete(key);
+  };
+  const charsIn = (host: Element): RainbowChar[] => {
+    const out: RainbowChar[] = [];
+    const walker = document.createTreeWalker(host, NodeFilter.SHOW_TEXT);
+    let node: Node | null;
+    let base = 0;
+    while ((node = walker.nextNode())) {
+      const text = node.textContent ?? "";
+      if (text.includes("ltrathink") || text.includes("LTRATHINK"))
+        for (const m of text.matchAll(ULTRATHINK))
+          for (let i = 0; i < m[0].length; i++)
+            out.push({
+              node,
+              offset: m.index + i,
+              colour: i % RAINBOW.length,
+              index: base + m.index + i,
+            });
+      base += text.length;
+    }
+    return out;
+  };
+  // The composer's characters, kept for the sweep; the sweep's window and length come from them.
+  let composer: RainbowChar[] = [];
+  let sweepStart = 0;
+  let cycle = 1;
+  let tick = 0;
+  let sweep: ReturnType<typeof setInterval> | undefined;
+  const paintSweep = () => {
+    const at = sweepStart + (tick % cycle);
+    const lit: RainbowChar[][] = RAINBOW.map(() => []);
+    for (const c of composer) if (Math.abs(c.index - at) <= 1) lit[c.colour]!.push(c);
+    shimmerNames.forEach((key, i) => {
+      const cs = lit[i]!;
+      if (cs.length === 0) registry.delete(key);
+      else {
+        const h = new Highlight(...cs.map(rangeOf));
+        h.priority = 1; // over the base colour of the same character
+        registry.set(key, h);
+      }
+    });
+  };
+  const stopSweep = () => {
+    if (sweep !== undefined) clearInterval(sweep);
+    sweep = undefined;
+    for (const key of shimmerNames) registry.delete(key);
   };
   const scan = () => {
-    if (document.hidden) return;
+    if (document.hidden) {
+      stopSweep();
+      return;
+    }
     if (activeClaudeSession(ctx) === undefined) {
+      stopSweep();
       clear();
       return;
     }
-    const buckets: Range[][] = RAINBOW.map(() => []);
-    const hosts = document.querySelectorAll<HTMLElement>(
-      '[data-composer-input], [data-chat-anchor-key*=":input-message"]',
-    );
-    for (const host of hosts) {
-      const walker = document.createTreeWalker(host, NodeFilter.SHOW_TEXT);
-      let node: Node | null;
-      while ((node = walker.nextNode())) {
-        const text = node.textContent ?? "";
-        if (!text.includes("ltrathink") && !text.includes("LTRATHINK")) continue;
-        for (const m of text.matchAll(ULTRATHINK)) {
-          for (let i = 0; i < m[0].length; i++) {
-            const r = document.createRange();
-            r.setStart(node, m.index + i);
-            r.setEnd(node, m.index + i + 1);
-            buckets[i % RAINBOW.length]!.push(r);
-          }
-        }
-      }
+    const buckets: RainbowChar[][] = RAINBOW.map(() => []);
+    composer = [];
+    for (const host of document.querySelectorAll<HTMLElement>("[data-composer-input]")) {
+      const cs = charsIn(host);
+      composer.push(...cs);
+      for (const c of cs) buckets[c.colour]!.push(c);
     }
+    for (const host of document.querySelectorAll<HTMLElement>(
+      '[data-chat-anchor-key*=":input-message"]',
+    ))
+      for (const c of charsIn(host)) buckets[c.colour]!.push(c);
     names.forEach((key, i) => {
-      const ranges = buckets[i]!;
-      if (ranges.length === 0) registry.delete(key);
-      else registry.set(key, new Highlight(...ranges));
+      const cs = buckets[i]!;
+      if (cs.length === 0) registry.delete(key);
+      else registry.set(key, new Highlight(...cs.map(rangeOf)));
     });
+    if (composer.length === 0 || reduced) {
+      stopSweep();
+      return;
+    }
+    const first = Math.min(...composer.map((c) => c.index));
+    const last = Math.max(...composer.map((c) => c.index)) + 1;
+    sweepStart = first - 10;
+    cycle = last - first + 20;
+    if (sweep === undefined) {
+      tick = 0;
+      sweep = setInterval(() => {
+        tick++;
+        guard(paintSweep)();
+      }, 50);
+    }
+    paintSweep();
   };
   // The composer changes on every keystroke and the chat on every message; both are observed
   // rather than polled, with the pass folded to one per frame.
@@ -3346,6 +3435,7 @@ function watchUltrathink(ctx: ClientCtx) {
     obs.disconnect();
     document.removeEventListener("input", request, true);
     document.removeEventListener("visibilitychange", request);
+    stopSweep();
     clear();
   });
 }
