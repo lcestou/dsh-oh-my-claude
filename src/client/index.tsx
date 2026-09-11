@@ -3286,10 +3286,73 @@ const RAINBOW_SHIMMER: readonly string[] = [
   "rgb(195,180,230)",
   "rgb(230,180,210)",
 ];
+/** `ultracode` in the composer takes the CLI's `autoAccept` purple (dark rgb(175,135,255), light
+ *  rgb(135,0,255)) with the one `autoAcceptShimmer` for both, under the same sweep. It opts the
+ *  turn into the Workflow tool's multi-agent orchestration when workflows are on; the CLI's chat
+ *  never colours it, only the composer does. The light value rides a custom property set on the
+ *  root, since a highlight rule cannot read the page's theme itself. */
+const ULTRACODE_DARK = "rgb(175,135,255)";
+const ULTRACODE_LIGHT = "rgb(135,0,255)";
+const ULTRACODE_SHIMMER = "rgb(208,180,255)";
+const ULTRACODE_INDEX = RAINBOW.length;
 const RAINBOW_CSS =
   RAINBOW.map((c, i) => `::highlight(omc-rainbow-${i}){color:${c}}`).join("") +
-  RAINBOW_SHIMMER.map((c, i) => `::highlight(omc-rainbow-s${i}){color:${c}}`).join("");
+  RAINBOW_SHIMMER.map((c, i) => `::highlight(omc-rainbow-s${i}){color:${c}}`).join("") +
+  `::highlight(omc-rainbow-${ULTRACODE_INDEX}){color:var(--omc-ultracode,${ULTRACODE_DARK})}` +
+  `::highlight(omc-rainbow-s${ULTRACODE_INDEX}){color:${ULTRACODE_SHIMMER}}`;
 const ULTRATHINK = /\bultrathink\b/gi;
+/** The CLI's keyword matcher (`SOt`) for `ultracode`: no match when the text is a slash command,
+ *  inside quotes, backticks, brackets or a tag, glued to a path or flag character, or followed by
+ *  a dotted member. A keyword typed as an example is not a trigger, so it is not painted. */
+const KEYWORD_PAIRS = new Map<string, string>([
+  ["`", "`"],
+  ['"', '"'],
+  ["<", ">"],
+  ["{", "}"],
+  ["[", "]"],
+  ["(", ")"],
+  ["'", "'"],
+]);
+const wordy = (ch: string | undefined): boolean => ch !== undefined && /[\p{L}\p{N}_]/u.test(ch);
+const keywordMatches = (text: string, word: string): { start: number; end: number }[] => {
+  const out: { start: number; end: number }[] = [];
+  if (!new RegExp(word, "i").test(text) || text.startsWith("/")) return out;
+  const spans: { start: number; end: number }[] = [];
+  let open: string | null = null;
+  let at = 0;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!;
+    if (open) {
+      if (open === "[" && ch === "[") {
+        at = i;
+        continue;
+      }
+      if (ch !== KEYWORD_PAIRS.get(open)) continue;
+      if (open === "'" && wordy(text[i + 1])) continue;
+      spans.push({ start: at, end: i + 1 });
+      open = null;
+    } else if (
+      (ch === "<" && i + 1 < text.length && /[a-zA-Z/]/.test(text[i + 1]!)) ||
+      (ch === "'" && !wordy(text[i - 1])) ||
+      (ch !== "<" && ch !== "'" && KEYWORD_PAIRS.has(ch))
+    ) {
+      open = ch;
+      at = i;
+    }
+  }
+  for (const m of text.matchAll(new RegExp(`\\b${word}\\b`, "gi"))) {
+    const start = m.index;
+    const end = start + m[0].length;
+    if (spans.some((sp) => start >= sp.start && start < sp.end)) continue;
+    const before = text[start - 1];
+    const after = text[end];
+    if (before === "/" || before === "\\" || before === "-") continue;
+    if (after === "/" || after === "\\" || after === "-" || after === "?") continue;
+    if (after === "." && wordy(text[end + 1])) continue;
+    out.push({ start, end });
+  }
+  return out;
+};
 /** One character of a match: where it sits, which colour it takes, and its index in the
  *  composer's text (the sweep runs over those indices, as the CLI's does over its input string). */
 interface RainbowChar {
@@ -3322,13 +3385,18 @@ function watchUltrathink(ctx: ClientCtx) {
   if (!("highlights" in CSS) || !("Highlight" in globalThis)) return;
   const registry = CSS.highlights;
   const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const names = RAINBOW.map((_, i) => `omc-rainbow-${i}`);
-  const shimmerNames = RAINBOW.map((_, i) => `omc-rainbow-s${i}`);
-  const HOSTS = '[data-composer-input], [data-chat-anchor-key*=":input-message"]';
+  const colours = RAINBOW.length + 1; // the seven, then ultracode's purple
+  const names = Array.from({ length: colours }, (_, i) => `omc-rainbow-${i}`);
+  const shimmerNames = Array.from({ length: colours }, (_, i) => `omc-rainbow-s${i}`);
+  if (!pageIsDark()) document.documentElement.style.setProperty("--omc-ultracode", ULTRACODE_LIGHT);
+  // A message sent mid-turn waits under `data-pending-steering` until the CLI takes it, and only
+  // then becomes an input-message anchor; it is a person's words either way, so both are hosts.
+  const HOSTS =
+    '[data-composer-input], [data-pending-steering], [data-chat-anchor-key*=":input-message"]';
   const clear = () => {
     for (const key of [...names, ...shimmerNames]) registry.delete(key);
   };
-  const charsIn = (host: Element): RainbowChar[] => {
+  const charsIn = (host: Element, isComposer: boolean): RainbowChar[] => {
     const out: RainbowChar[] = [];
     const walker = document.createTreeWalker(host, NodeFilter.SHOW_TEXT);
     let node: Node | null;
@@ -3344,6 +3412,10 @@ function watchUltrathink(ctx: ClientCtx) {
               colour: i % RAINBOW.length,
               index: base + m.index + i,
             });
+      if (isComposer && (text.includes("ltracode") || text.includes("LTRACODE")))
+        for (const m of keywordMatches(text, "ultracode"))
+          for (let i = m.start; i < m.end; i++)
+            out.push({ node, offset: i, colour: ULTRACODE_INDEX, index: base + i });
       base += text.length;
     }
     return out;
@@ -3356,7 +3428,7 @@ function watchUltrathink(ctx: ClientCtx) {
   let sweep: ReturnType<typeof setInterval> | undefined;
   const paintSweep = () => {
     const at = sweepStart + (tick % cycle);
-    const lit: RainbowChar[][] = RAINBOW.map(() => []);
+    const lit: RainbowChar[][] = names.map(() => []);
     for (const c of composer) if (Math.abs(c.index - at) <= 1) lit[c.colour]!.push(c);
     shimmerNames.forEach((key, i) => {
       const cs = lit[i]!;
@@ -3383,11 +3455,12 @@ function watchUltrathink(ctx: ClientCtx) {
       clear();
       return;
     }
-    const buckets: RainbowChar[][] = RAINBOW.map(() => []);
+    const buckets: RainbowChar[][] = names.map(() => []);
     composer = [];
     for (const host of document.querySelectorAll<HTMLElement>(HOSTS)) {
-      const cs = charsIn(host);
-      if (host.hasAttribute("data-composer-input")) composer.push(...cs);
+      const isComposer = host.hasAttribute("data-composer-input");
+      const cs = charsIn(host, isComposer);
+      if (isComposer) composer.push(...cs);
       for (const c of cs) buckets[c.colour]!.push(c);
     }
     names.forEach((key, i) => {
