@@ -54,6 +54,19 @@ const EXT_LANG = {
   php: "php",
   swift: "swift",
   kt: "kotlin",
+  // The rest of what dsh's highlighter knows (its shiki alias map, 0.1.5): a fence in any other
+  // language renders plain, so an extension outside this table is a plain Read or Write row.
+  kts: "kotlin",
+  cs: "csharp",
+  hpp: "cpp",
+  cc: "cpp",
+  cxx: "cpp",
+  htm: "html",
+  jsonc: "jsonc",
+  ini: "ini",
+  mdx: "mdx",
+  less: "less",
+  lua: "lua",
 } satisfies Record<string, string>;
 
 const langOf = (path: string): string => {
@@ -126,9 +139,18 @@ const words = (name: string): string => cap(name.replaceAll("_", " "));
 /** An MCP tool's own name: `mcp__dsh__subagent` is dsh's `subagent`, not a tool called `Mcp`. */
 const mcpName = (name: string): string | undefined => {
   const parts = name.split("__");
-  return parts.length >= 3 && parts[0] === "mcp"
-    ? `${parts[1]} · ${parts.slice(2).join(" ")}`
-    : undefined;
+  if (parts.length < 3 || parts[0] !== "mcp") return undefined;
+  // A server mounted by a Claude Code plugin is registered as `plugin_<plugin>_<server>`, and the
+  // two are usually the same word: `plugin_context-mode_context-mode`. The header reads the
+  // server's own name.
+  let server = parts[1]!;
+  const m = /^plugin_(.+)$/.exec(server);
+  if (m) {
+    const rest = m[1]!;
+    const half = rest.slice(0, Math.floor(rest.length / 2));
+    server = rest === `${half}_${half}` ? half : rest;
+  }
+  return `${server} · ${parts.slice(2).join(" ")}`;
 };
 
 /** Icon + a capitalized, human name for a tool header: `❯ Bash`, `▤ Read`, `⤓ Web fetch`. */

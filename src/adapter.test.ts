@@ -85,7 +85,7 @@ import {
 } from "./state.js";
 import type { ClaudeEvent, ClaudeProcessSpec, SubprocessHandle, TurnPrep } from "./process.js";
 import type { LooseMessage } from "./adapter.js";
-import { elapsedText, resetClock, tokensText } from "./translator.js";
+import { elapsedText, formatToolCall, resetClock, tokensText } from "./translator.js";
 import type { FinishReason, LlmFailure, Message, StreamChunk } from "@deepseek-ai/dsh-llm";
 import type { Agent, PluginContext, SubprocessSpawnSpec } from "./dsh.js";
 import type { SubprocessHandle as SeamHandle } from "./dsh.js";
@@ -4135,6 +4135,22 @@ console.log("interrupt-on-abort ok");
   assert.equal(hasPendingTodo([{ status: "pending" }]), true);
   assert.equal(hasPendingTodo(["a string is not a todo we can read"]), true);
   assert.equal(hasPendingTodo([]), false, "an empty list has nothing outstanding");
+}
+
+// MCP headers name the server: a plugin-mounted server drops the `plugin_` prefix and the doubled
+// plugin/server word, a plain one keeps its name, and a native tool is untouched.
+{
+  const head = (name: string) => formatToolCall(name, "{}").split("\n")[0]!.replace("\u2060", "");
+  assert.equal(
+    head("mcp__plugin_context-mode_context-mode__ctx_search"),
+    "◆ context-mode · ctx_search",
+  );
+  assert.equal(
+    head("mcp__plugin_claude-mem_mcp-search__search"),
+    "◆ claude-mem_mcp-search · search",
+  );
+  assert.equal(head("mcp__serena__find_symbol"), "◆ serena · find_symbol");
+  assert.equal(head("bash").startsWith("❯ Bash"), true);
 }
 
 // The status row's figure climbs across the turn: each `message_delta` reports the message it
