@@ -1391,10 +1391,11 @@ function LoginSteps({
       {login.url && (
         <>
           <div>
-            1. Open this URL, sign in, copy the code:{" "}
+            Open this link and sign in:{" "}
             <a href={login.url} target="_blank" rel="noreferrer" style={{ color: CLAUDE_ORANGE }}>
               Claude sign-in
             </a>
+            . Paste the code below if the page shows one; otherwise this finishes on its own.
           </div>
           <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
             <input
@@ -1595,6 +1596,34 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
       .catch((e: Error) => setError(e.message))
       .finally(() => setBusy(false));
   };
+  // While the link is up, ask every 2s whether setup-token finished by itself (it does when the
+  // box already has a login: no browser, no code). Paused during a submit, stopped on an error.
+  const pollKey = login && login.url && !login.busy && !login.error ? login.host : null;
+  useEffect(() => {
+    if (pollKey === null) return;
+    const host = pollKey;
+    let live = true;
+    const tick = () =>
+      fetch(`${ROUTE}/ssh-boxes/login/poll`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ host }),
+      })
+        .then((r) => readJson<{ pending?: boolean; done?: boolean; error?: string }>(r))
+        .then((b) => {
+          if (!live || b.pending) return;
+          if (b.done) {
+            setLogin(null);
+            refresh();
+          } else setLogin((cur) => (cur && cur.host === host ? { ...cur, error: b.error } : cur));
+        })
+        .catch(() => {});
+    const timer = setInterval(tick, 2000);
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
+  }, [pollKey]);
   const submitLogin = () => {
     if (!login) return;
     const host = login.host;
