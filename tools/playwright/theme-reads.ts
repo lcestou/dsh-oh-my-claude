@@ -60,7 +60,7 @@ async function readScheme(colorScheme: "dark" | "light"): Promise<Reads> {
       checkboxAccent: css(host.querySelector("input"), "accent-color"),
       statusRowBg: css(status, "background-image"),
       viewTabColor: css(tab, "color"),
-      sendFill: send ? send.style.getPropertyValue("--dsw-alias-button-info-fill") : missing,
+      sendFill: css(send, "background-color"),
       ongoingDot: css(document.querySelector('svg[data-state="ongoing"]'), "color"),
     };
     host.remove();

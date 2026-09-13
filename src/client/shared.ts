@@ -124,6 +124,7 @@ export const CLAUDE_SHIMMER = "#F59575";
 /** The same pair as the page paints them: the accent custom properties applyTheme writes, with
  *  today's values as the fallback, for inline styles that must follow the Claude look switch. */
 export const ACCENT = "var(--omc-accent, #D97757)";
+export const SHIMMER = "var(--omc-shimmer, #F59575)";
 /** Claude's own spinner glyph, used as the mark beside anything Claude-owned in dsh's chrome. */
 export const CLAUDE_MARK = "✻";
 

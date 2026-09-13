@@ -51,6 +51,8 @@ import {
   ensurePanelStyle,
   CLAUDE_ORANGE,
   CLAUDE_SHIMMER,
+  ACCENT,
+  SHIMMER,
   CLAUDE_MARK,
   isRingRoot,
   SessionData,
@@ -71,7 +73,7 @@ import {
   resumeCommand,
   saveBlob,
 } from "./shared.js";
-import { themeOf, type ThemeGroup } from "./theme.js";
+import { themeOf, hexToRgb, type ThemeGroup } from "./theme.js";
 import { PluginUpdateBadge } from "./update-pill.js";
 import { ReportBlock } from "./report.js";
 import { Spark, sparkNode } from "./spark.js";
@@ -3083,6 +3085,17 @@ const gated = (group: ThemeGroup, rest: string, claude = true): string => {
   return `${body}:not([data-omc-theme]) ${rest},${body}[data-omc-theme~="${group}"] ${rest}`;
 };
 
+/** Whether a theme group is on right now: absent attribute means on (nothing has loaded yet). */
+const hasTheme = (group: ThemeGroup): boolean => {
+  const v = document.body.getAttribute("data-omc-theme");
+  return v === null || v.split(" ").includes(group);
+};
+/** The page's accent as channels for the spinner's mixing, or `fallback` when none is set yet. */
+const accentRgb = (fallback: Rgb): Rgb => {
+  const v = getComputedStyle(document.documentElement).getPropertyValue("--omc-accent").trim();
+  return /^#[0-9a-f]{6}$/i.test(v) ? hexToRgb(v) : fallback;
+};
+
 /** Wire one turn-status element for a claude-code session: verb + ping-pong spinner + orange gradient. */
 /** Inject (or re-inject after a hot reload) the Claude-orange rule; idempotent by id. Reuses the
  *  element but always rewrites it: a hot reload lands a new bundle in a page still carrying the last
@@ -3414,15 +3427,16 @@ const wireTurnStatus = (
     // a slow grey pulse, itself pulled toward the warning shade by the thinking ramp. Time, count
     // and the brackets stay dim. Once either ramp is above zero the verb is one flat colour, no
     // shimmer: the CLI's glimmer only draws when neither ramp is up.
+    const claude = accentRgb(palette.claude);
     const tint =
       ti > 0
-        ? mixRgb(palette.claude, palette.warning, ti)
+        ? mixRgb(claude, palette.warning, ti)
         : si > 0
-          ? mixRgb(palette.claude, STALL_RED, si)
+          ? mixRgb(claude, STALL_RED, si)
           : undefined;
     const lo = cssRgb(mixRgb(WORD_GREY_LO, palette.warning, ti));
     const hi = cssRgb(mixRgb(WORD_GREY_HI, palette.warning, ti));
-    const key = `${parts.join("\0")}\0${word}\0${tint ? cssRgb(tint) : ""}\0${lo}\0${hi}\0${ti >= 0.5}`;
+    const key = `${parts.join("\0")}\0${word}\0${cssRgb(claude)}\0${tint ? cssRgb(tint) : ""}\0${lo}\0${hi}\0${ti >= 0.5}`;
     if (key === painted) return;
     painted = key;
     if (tint)
@@ -3579,6 +3593,7 @@ function watchTurnStatus(ctx: ClientCtx) {
     if (el.hasAttribute(TURN_MARK)) return;
     const activeId = activeClaudeSession(ctx);
     if (!activeId) return;
+    if (!hasTheme("row")) return; // the Claude look's status row is off: dsh's own text stays
     spinnerSettings ??= loadSpinnerSettings(); // once per page load
     // The settings load once and resolve for good, so this is a microtask after the first frame —
     // but the await used to be unhandled, so a throw inside `wireTurnStatus` became a rejection
@@ -3772,7 +3787,7 @@ function watchUltrathink(ctx: ClientCtx) {
       stopSweep();
       return;
     }
-    if (activeClaudeSession(ctx) === undefined) {
+    if (activeClaudeSession(ctx) === undefined || !hasTheme("rainbow")) {
       stopSweep();
       clear();
       return;
@@ -3866,18 +3881,19 @@ function watchSessionSpinners(ctx: ClientCtx) {
     // Every other ongoing matrix square — the job-list dot in the session header, and the same dot
     // dsh shows for subagents, plans and schedules — renders inside the open conversation, so it
     // belongs to whichever session is open. Tint those when that session is a Claude mount.
-    const openIsClaude = activeClaudeSession(ctx) !== undefined;
+    const openClaude = activeClaudeSession(ctx) !== undefined;
+    const openIsClaude = openClaude && hasTheme("row");
     for (const dot of document.querySelectorAll<SVGElement>('svg[data-state="ongoing"]')) {
       const inRow = dot.closest('[role="treeitem"]'); // a sidebar session row vs a dot elsewhere
       let want: boolean;
       if (inRow) {
         const title = spinnerRowTitle(dot);
-        want = title !== null && claude.has(title);
+        want = title !== null && claude.has(title) && hasTheme("row");
       } else {
         want = openIsClaude;
       }
       if (want) {
-        dot.style.color = CLAUDE_ORANGE;
+        dot.style.color = ACCENT;
         dot.setAttribute(MARK, "1");
       } else if (dot.hasAttribute(MARK)) {
         dot.style.color = "";
@@ -3891,10 +3907,10 @@ function watchSessionSpinners(ctx: ClientCtx) {
     // draws, and each ask used to run its own subtree query for the same element.
     const box = document.querySelector("[contenteditable]");
     for (const sendBtn of document.querySelectorAll<HTMLElement>('button[class*="_primary"]')) {
-      const sendWant = openIsClaude && inComposer(sendBtn, box);
+      const sendWant = openClaude && hasTheme("send") && inComposer(sendBtn, box);
       if (sendWant) {
-        sendBtn.style.setProperty("--dsw-alias-button-info-fill", CLAUDE_ORANGE);
-        sendBtn.style.setProperty("--dsw-alias-button-info-hover", CLAUDE_SHIMMER);
+        sendBtn.style.setProperty("--dsw-alias-button-info-fill", ACCENT);
+        sendBtn.style.setProperty("--dsw-alias-button-info-hover", SHIMMER);
         sendBtn.setAttribute(SEND_MARK, "1");
       } else if (sendBtn.hasAttribute(SEND_MARK)) {
         sendBtn.style.removeProperty("--dsw-alias-button-info-fill");
