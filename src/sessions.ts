@@ -1999,9 +1999,26 @@ export function registerSessionRoutes(
                   if (parsed?.error !== undefined) entry.parseError = parsed.error;
                   configFiles.push(entry);
                 }
+                const sid = url.searchParams.get("session");
+                let session: { claudeId: string; cwd: string } | undefined;
+                if (sid && cwd) {
+                  // A session opened from a transcript keeps that transcript's id; one this plugin
+                  // started keeps its transcript under the hash of the dsh id.
+                  // Only this box's disk is checked; a box session's id is the hash either way.
+                  let own = false;
+                  if (!box.sshHost)
+                    for (const d of transcriptDirs(cwd)) {
+                      own = await access(join(d, `${sid}.jsonl`)).then(
+                        () => true,
+                        () => false,
+                      );
+                      if (own) break;
+                    }
+                  session = { claudeId: own ? sid : claudeIdOf(sid), cwd };
+                }
                 // `ok` is what the tab keys its render on; without it the reply reads as the
                 // failure shape and the tab draws an empty error line instead of the report.
-                return json(res, 200, { ok: true, runtime, configFiles });
+                return json(res, 200, { ok: true, runtime, configFiles, session });
               }
               if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/report`) {
                 const box = boxOf(url);

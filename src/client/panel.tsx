@@ -33,6 +33,8 @@ import {
   pill,
   CLAUDE_ORANGE,
   maskEmail,
+  resumeCommand,
+  saveBlob,
 } from "./shared.js";
 import { UpdatePill } from "./update-pill.js";
 import { ReportBlock } from "./report.js";
@@ -1521,6 +1523,7 @@ interface DiagnosticsReply {
     error?: string;
   };
   configFiles: Array<{ scope: string; path: string; exists: boolean; parseError?: string }>;
+  session?: { claudeId: string; cwd: string };
 }
 type DiagnosticsError = { ok: false; error: string };
 /** The slice of a turn record this tab reads: when the turn ran, and the calls a rule refused. */
@@ -1660,7 +1663,9 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
     // The session's own mount, so a session on a box is diagnosed on that box, not on this one.
     const provider = claudeProviderOf(ctx, sessionId);
     const on = provider ? `&provider=${encodeURIComponent(provider)}` : "";
-    fetch(`${ROUTE}/diagnostics?cwd=${encodeURIComponent(cwd)}${on}`)
+    fetch(
+      `${ROUTE}/diagnostics?cwd=${encodeURIComponent(cwd)}${on}&session=${encodeURIComponent(sessionId)}`,
+    )
       .then((r) => readJson<DiagnosticsReply | DiagnosticsError>(r))
       .then((b) => live && setData(b))
       .catch((e: Error) => live && setData({ ok: false, error: e.message }));
@@ -1691,6 +1696,32 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
     }
   };
 
+  const [rowNote, setRowNote] = useState("");
+  const exportMd = async () => {
+    if (!data || !data.ok || !data.session) return;
+    setRowNote("");
+    const q = new URLSearchParams({ id: data.session.claudeId, cwd: data.session.cwd });
+    if (doctorProvider) q.set("provider", doctorProvider);
+    try {
+      await saveBlob(
+        `${ROUTE}/transcript.md?${q}`,
+        `claude-${data.session.claudeId.slice(0, 8)}.md`,
+      );
+    } catch (e) {
+      setRowNote(e instanceof Error ? e.message : String(e));
+    }
+  };
+  const copyResume = async () => {
+    if (!data || !data.ok || !data.session) return;
+    try {
+      await navigator.clipboard.writeText(resumeCommand(data.session.claudeId, data.session.cwd));
+      setRowNote("Copied");
+      setTimeout(() => setRowNote(""), 1600);
+    } catch {
+      setRowNote("Clipboard write failed");
+    }
+  };
+
   if (!cwd) return null;
   return (
     <div style={bodyFlow}>
@@ -1701,6 +1732,56 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
         <span style={errText}>{data.error || "Diagnostics could not be read."}</span>
       ) : (
         <>
+          {data.session && (
+            <>
+              <span style={{ ...meta, padding: "2px 4px", display: "block" }}>Session</span>
+              <div
+                data-omc-session-row=""
+                style={{
+                  padding: "4px 10px",
+                  fontSize: 12,
+                  lineHeight: "1.5",
+                  display: "flex",
+                  gap: 8,
+                  alignItems: "center",
+                  flexWrap: "wrap",
+                }}
+              >
+                <span style={{ fontFamily: T.mono }} title={data.session.claudeId}>
+                  {data.session.claudeId.slice(0, 8)}
+                </span>
+                <span
+                  style={{
+                    fontFamily: T.mono,
+                    minWidth: 0,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                  }}
+                  title={data.session.cwd}
+                >
+                  {shortPath(data.session.cwd, cwd)}
+                </span>
+                <span style={{ flex: 1 }} />
+                <button
+                  type="button"
+                  style={btn}
+                  data-omc-export-md=""
+                  onClick={() => void exportMd()}
+                >
+                  Export as Markdown
+                </button>
+                <button
+                  type="button"
+                  style={btn}
+                  data-omc-copy-resume=""
+                  onClick={() => void copyResume()}
+                >
+                  {rowNote === "Copied" ? "Copied" : "Copy resume command"}
+                </button>
+                {rowNote !== "" && rowNote !== "Copied" && <span style={errText}>{rowNote}</span>}
+              </div>
+            </>
+          )}
           {/* Runtime */}
           <span style={{ ...meta, padding: "2px 4px", display: "block" }}>Runtime</span>
           <div style={{ padding: "4px 10px", fontSize: 12, lineHeight: "1.5" }}>
