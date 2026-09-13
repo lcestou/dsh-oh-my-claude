@@ -948,6 +948,7 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
           No Claude Code sessions match
         </p>
       )}
+      {loading && <SkeletonRows rows={4} />}
       <div id="dsh-oh-my-claude-sessions" style={{ marginTop: 6 }}>
         {rows.map((r) => {
           const isLocal = r.g.key === "local";
@@ -965,7 +966,12 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
                   ? "Restore"
                   : "Open";
           return (
-            <div key={rowKey(r)} data-testid="dsh-oh-my-claude-session-row" style={row}>
+            <div
+              key={rowKey(r)}
+              data-testid="dsh-oh-my-claude-session-row"
+              data-omc-arrived=""
+              style={row}
+            >
               {/* Only a row this box can read is downloadable: an HTTP box's transcript is on that
                   box's disk, and its own panel is where it downloads from. */}
               <input
@@ -1517,6 +1523,27 @@ function BoxRow({
 const cliVersion = (v: string | null | undefined): string =>
   `Claude Code ${(v ?? "").replace(/\s*\(Claude Code\)\s*$/, "")}`.trim();
 
+/** Placeholder rows while a list loads: the shape of what is coming, in the border tone with a
+ *  slow sheen, so the card does not sit empty and then snap full. Motion off under reduced-motion. */
+function SkeletonRows({ rows: n }: { rows: number }) {
+  return (
+    <div aria-hidden="true" data-testid="dsh-oh-my-claude-skeleton">
+      {Array.from({ length: n }, (_, i) => (
+        <div key={i} style={{ ...row, alignItems: "center" }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div data-omc-skeleton="" style={{ height: 12, width: `${46 - (i % 3) * 9}%` }} />
+            <div
+              data-omc-skeleton=""
+              style={{ height: 10, width: `${70 - (i % 2) * 14}%`, marginTop: 7 }}
+            />
+          </div>
+          <div data-omc-skeleton="" style={{ height: 28, width: 64, borderRadius: 8 }} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /** A fact in the status line that is a problem: the error colour, so the eye lands on it. */
 const bad = (text: string): ReactNode => <span style={{ color: T.err }}>{text}</span>;
 
@@ -1859,12 +1886,15 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
     <Card
       id="dsh-oh-my-claude-boxes"
       title="Boxes"
-      summary={summary}
+      summary="Where Claude Code runs: this box, any ssh box, a linked dsh. Each keeps its own login."
       actions={
         open ? (
-          <button type="button" style={btn} disabled={busy || total === 0} onClick={refresh}>
-            {busy ? "Checking…" : "Refresh"}
-          </button>
+          <>
+            <span style={{ ...meta, alignSelf: "center", marginRight: "auto" }}>{summary}</span>
+            <button type="button" style={btn} disabled={busy || total === 0} onClick={refresh}>
+              {busy ? "Checking…" : "Refresh"}
+            </button>
+          </>
         ) : null
       }
       open={open}
@@ -3024,7 +3054,7 @@ const ensureTurnStatusStyle = () => {
   // clearance, which leaves its pills 653px in a 717px column. dsh's two fill that; ours as a
   // third clips all three to an ellipsis by a few pixels. The pills are centred, so the padding
   // does no aligning; take it down to the row's rounded corners and the three fit.
-  styleEl.textContent = `body[data-omc-claude] [role="status"][aria-live="polite"],[data-dsh-oh-my-claude-turn]{background-image:var(--omc-row-bg,linear-gradient(90deg,${CLAUDE_ORANGE} 0%,${CLAUDE_ORANGE} 40%,${CLAUDE_SHIMMER} 50%,${CLAUDE_ORANGE} 60%,${CLAUDE_ORANGE} 100%))}@keyframes omc-word{from{-webkit-text-fill-color:var(--omc-word-lo)}to{-webkit-text-fill-color:var(--omc-word-hi)}}[data-omc-turn-word]{animation:omc-word 1s ease-in-out 3s infinite alternate}@media (prefers-reduced-motion:reduce){[data-omc-turn-word]{animation:none}}[data-dsh-oh-my-claude-turn]>span[aria-hidden]{display:inline-block;width:1.3em;text-align:start;flex:none}[data-dsh-oh-my-claude-turn]{max-width:100%;min-width:0}[data-omc-turn-detail]{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}[data-omc-login-card] button:hover,[data-omc-login-card] button:focus-visible{color:${CLAUDE_ORANGE};border-color:${CLAUDE_ORANGE}}#dsh-oh-my-claude-boxes button:not(:disabled):hover,#dsh-oh-my-claude-boxes button:focus-visible{background:${T.hover}}[data-omc-card]:hover{border-color:var(--dsw-alias-label-dimmed,rgba(128,128,128,.5))}[data-omc-card]>button:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#3b82f6);outline-offset:-2px}[data-omc-card]>button:hover{background:none}body[data-omc-claude] [role="tablist"]>[role="tab"][aria-selected="true"]{color:${CLAUDE_ORANGE}}body[data-omc-claude] [role="tablist"]>[role="tab"][aria-selected="true"]::after{background:${CLAUDE_ORANGE}}body[data-omc-claude] [class*="_markdown"] blockquote{border-left-color:${CLAUDE_ORANGE}80}body[data-omc-claude] [class*="_markdown"] hr{background:${CLAUDE_ORANGE}59}body[data-omc-claude] [class*="_markdown"] a{color:${CLAUDE_ORANGE};text-decoration-color:${CLAUDE_ORANGE}66}body[data-omc-claude] [class*="_markdown"] a:hover{color:${CLAUDE_SHIMMER};text-decoration-color:${CLAUDE_SHIMMER}}body[data-omc-claude] [class*="_markdown"] input[type="checkbox"]{accent-color:${CLAUDE_ORANGE}}body[data-omc-claude] [data-workflow-run] button[data-member-status] [data-member-label]{color:${CLAUDE_ORANGE}}body[data-omc-panel-open] [data-width-handle]{pointer-events:none}body[data-omc-panel-open] [class*="_toBottomSlot"],body:has([data-omc-cost-dialog]) [class*="_toBottomSlot"]{opacity:0;pointer-events:none;transition:opacity .1s}@keyframes omc-pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,${CLAUDE_ORANGE} 55%,transparent)}100%{box-shadow:0 0 0 12px transparent}}button[aria-label="Oh My Claude"][data-omc-pulse]{animation:omc-pulse 1.1s ease-out 3}@media (prefers-reduced-motion:reduce){button[aria-label="Oh My Claude"][data-omc-pulse]{animation:none}}body[data-omc-claude] [data-produced-files-row] button{color:${CLAUDE_ORANGE}}body[data-omc-claude] [data-produced-files-row] button:hover{color:${CLAUDE_SHIMMER}}body[data-omc-claude] [data-composer-stats]{padding-left:8px;padding-right:8px}body[data-omc-claude] [class*="_optionLine"]>[class*="_badge"]{background:color-mix(in srgb,${CLAUDE_ORANGE} 16%,transparent);color:${CLAUDE_ORANGE}}${RAINBOW_CSS}${COST_DIALOG_CSS}`;
+  styleEl.textContent = `body[data-omc-claude] [role="status"][aria-live="polite"],[data-dsh-oh-my-claude-turn]{background-image:var(--omc-row-bg,linear-gradient(90deg,${CLAUDE_ORANGE} 0%,${CLAUDE_ORANGE} 40%,${CLAUDE_SHIMMER} 50%,${CLAUDE_ORANGE} 60%,${CLAUDE_ORANGE} 100%))}@keyframes omc-word{from{-webkit-text-fill-color:var(--omc-word-lo)}to{-webkit-text-fill-color:var(--omc-word-hi)}}[data-omc-turn-word]{animation:omc-word 1s ease-in-out 3s infinite alternate}@media (prefers-reduced-motion:reduce){[data-omc-turn-word]{animation:none}}[data-dsh-oh-my-claude-turn]>span[aria-hidden]{display:inline-block;width:1.3em;text-align:start;flex:none}[data-dsh-oh-my-claude-turn]{max-width:100%;min-width:0}[data-omc-turn-detail]{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}[data-omc-login-card] button:hover,[data-omc-login-card] button:focus-visible{color:${CLAUDE_ORANGE};border-color:${CLAUDE_ORANGE}}#dsh-oh-my-claude-boxes button:not(:disabled):hover,#dsh-oh-my-claude-boxes button:focus-visible{background:${T.hover}}[data-omc-card]:hover{border-color:var(--dsw-alias-label-dimmed,rgba(128,128,128,.5))}[data-omc-card]>button:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#3b82f6);outline-offset:-2px}[data-omc-card]>button:hover{background:none}@keyframes omc-sheen{from{background-position:200% 0}to{background-position:-200% 0}}[data-omc-skeleton]{border-radius:6px;background:linear-gradient(90deg,${T.border} 30%,${T.hover} 50%,${T.border} 70%);background-size:200% 100%;animation:omc-sheen 1.4s linear infinite}@keyframes omc-rise{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}[data-omc-arrived]{animation:omc-rise .18s ease-out}@media (prefers-reduced-motion:reduce){[data-omc-skeleton],[data-omc-arrived]{animation:none}}body[data-omc-claude] [role="tablist"]>[role="tab"][aria-selected="true"]{color:${CLAUDE_ORANGE}}body[data-omc-claude] [role="tablist"]>[role="tab"][aria-selected="true"]::after{background:${CLAUDE_ORANGE}}body[data-omc-claude] [class*="_markdown"] blockquote{border-left-color:${CLAUDE_ORANGE}80}body[data-omc-claude] [class*="_markdown"] hr{background:${CLAUDE_ORANGE}59}body[data-omc-claude] [class*="_markdown"] a{color:${CLAUDE_ORANGE};text-decoration-color:${CLAUDE_ORANGE}66}body[data-omc-claude] [class*="_markdown"] a:hover{color:${CLAUDE_SHIMMER};text-decoration-color:${CLAUDE_SHIMMER}}body[data-omc-claude] [class*="_markdown"] input[type="checkbox"]{accent-color:${CLAUDE_ORANGE}}body[data-omc-claude] [data-workflow-run] button[data-member-status] [data-member-label]{color:${CLAUDE_ORANGE}}body[data-omc-panel-open] [data-width-handle]{pointer-events:none}body[data-omc-panel-open] [class*="_toBottomSlot"],body:has([data-omc-cost-dialog]) [class*="_toBottomSlot"]{opacity:0;pointer-events:none;transition:opacity .1s}@keyframes omc-pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,${CLAUDE_ORANGE} 55%,transparent)}100%{box-shadow:0 0 0 12px transparent}}button[aria-label="Oh My Claude"][data-omc-pulse]{animation:omc-pulse 1.1s ease-out 3}@media (prefers-reduced-motion:reduce){button[aria-label="Oh My Claude"][data-omc-pulse]{animation:none}}body[data-omc-claude] [data-produced-files-row] button{color:${CLAUDE_ORANGE}}body[data-omc-claude] [data-produced-files-row] button:hover{color:${CLAUDE_SHIMMER}}body[data-omc-claude] [data-composer-stats]{padding-left:8px;padding-right:8px}body[data-omc-claude] [class*="_optionLine"]>[class*="_badge"]{background:color-mix(in srgb,${CLAUDE_ORANGE} 16%,transparent);color:${CLAUDE_ORANGE}}${RAINBOW_CSS}${COST_DIALOG_CSS}`;
   document.head.appendChild(styleEl);
 };
 
@@ -5508,6 +5538,7 @@ export function apply(ctx: ClientCtx) {
           <Card
             id="dsh-oh-my-claude-sessions-card"
             title="Archived Sessions"
+            summary="Claude Code transcripts on every box: open one here, import, download, or move."
             open={openSessions}
             onToggle={() => setOpenSessions((v) => !v)}
           >
