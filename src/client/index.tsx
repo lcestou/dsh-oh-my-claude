@@ -1403,8 +1403,9 @@ function BoxRow({
   title: string;
   /** The transport and address: `ssh · lilly`, `link · http://…`, or this box's hostname. */
   kind?: string;
-  /** The dot: green when the box can take a turn, red when something stops it, grey while unknown. */
-  tone: "ok" | "err" | "faint";
+  /** The dot: green when the box can take a turn, red when something stops it, grey while unknown;
+   *  none for a row that has no state of its own. */
+  tone: "ok" | "err" | "faint" | "none";
   /** The status line's items, left to right; a string item joins with a middle dot. */
   facts: ReactNode[];
   /** A line under the facts: a reach hint, an install hint. */
@@ -1443,16 +1444,18 @@ function BoxRow({
             lineHeight: "18px",
           }}
         >
-          <span
-            aria-hidden="true"
-            style={{
-              width: 7,
-              height: 7,
-              borderRadius: "50%",
-              background: dot,
-              flex: "0 0 auto",
-            }}
-          />
+          {tone !== "none" && (
+            <span
+              aria-hidden="true"
+              style={{
+                width: 7,
+                height: 7,
+                borderRadius: "50%",
+                background: dot,
+                flex: "0 0 auto",
+              }}
+            />
+          )}
           <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>
             {facts.map((f, i) => (
               <span key={i}>
@@ -1603,6 +1606,8 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
   const [ssh, setSsh] = useState<SshBoxData[]>([]);
   const [sshProbe, setSshProbe] = useState<Record<string, SshProbeEntry>>({});
   const [kind, setKind] = useState<BoxKind>("ssh");
+  /** The add form is folded behind one button once a box exists; a first visit sees it open. */
+  const [adding, setAdding] = useState(false);
   // The Add workspace… button opens the sidebar's dialog, which only takes over when a box is
   // saved and dsh exposes its directory service; without both, the click would do nothing.
   const canAdd = ssh.length > 0 && canBrowseDirs(ctx);
@@ -1847,12 +1852,6 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
       open={open}
       onToggle={onToggle}
     >
-      <p style={{ margin: "0 0 4px", color: T.muted, fontSize: 13 }}>
-        This box plus any you add. <b>SSH</b>: this dsh drives Claude Code on the box over ssh, so
-        it shows up in the model picker with no dsh needed there. <b>Link</b>: it runs its own dsh
-        with this plugin, so its sessions show in the archive and Open hops there. Each keeps its
-        own Claude Code login.
-      </p>
       {error && <p style={{ color: T.err, fontSize: 13, margin: "4px 0" }}>{error}</p>}
       {me && (
         <BoxRow
@@ -2105,250 +2104,279 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
           />
         </div>
       )}
-      <form
-        onSubmit={add}
-        style={{
-          ...row,
-          borderTop: total ? `1px solid ${T.border}` : "none",
-          paddingTop: total ? 12 : 4,
-          flexWrap: "wrap",
-        }}
-      >
-        <div style={{ display: "flex", gap: 6 }}>
-          {seg("ssh", "SSH")}
-          {seg("tailscale", "Tailscale")}
-          {seg("wireguard", "WireGuard")}
-          {seg("dsh", "Link")}
-        </div>
-        <input
-          style={{ ...inputStyle, flex: "0 1 140px" }}
-          placeholder="Name"
-          value={draft.name}
-          onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-        />
-        {kind === "ssh" ? (
-          <input
-            style={{ ...inputStyle, flex: "1 1 240px" }}
-            placeholder="user@host or ssh alias"
-            value={draft.host}
-            onChange={(e) => setDraft({ ...draft, host: e.target.value })}
-          />
-        ) : kind === "tailscale" ? (
-          <>
-            {ts?.loggedIn && (
-              <select
-                style={{ ...select, flex: "0 1 220px" }}
-                aria-label="Tailscale peer"
-                value={pickedPeer?.host ?? ""}
-                onChange={(e) => {
-                  const peer = ts.peers.find((p) => p.host === e.target.value) ?? null;
-                  setPickedPeer(peer);
-                  if (peer) setDraft({ ...draft, name: draft.name || peer.name, host: peer.host });
-                }}
-              >
-                <option value="">Pick a peer…</option>
-                {ts.peers.map((p) => (
-                  <option key={p.host} value={p.host} disabled={peerIsSaved(p, ssh)}>
-                    {p.online ? "●" : "○"} {p.name}
-                    {p.os ? ` · ${p.os}` : ""}
-                    {peerIsSaved(p, ssh) ? " · saved" : ""}
-                  </option>
-                ))}
-              </select>
-            )}
+      {adding || total === 0 ? (
+        <>
+          <form
+            onSubmit={add}
+            style={{
+              ...row,
+              borderTop: `1px solid ${T.border}`,
+              paddingTop: 12,
+              flexWrap: "wrap",
+            }}
+          >
+            <div style={{ display: "flex", gap: 6 }}>
+              {seg("ssh", "SSH")}
+              {seg("tailscale", "Tailscale")}
+              {seg("wireguard", "WireGuard")}
+              {seg("dsh", "Link")}
+            </div>
             <input
-              style={{ ...inputStyle, flex: "1 1 220px" }}
-              placeholder="user@name.tailnet.ts.net or 100.x.y.z"
-              value={draft.host}
-              onChange={(e) => {
-                setPickedPeer(null);
-                setDraft({ ...draft, host: e.target.value });
-              }}
+              style={{ ...inputStyle, flex: "0 1 140px" }}
+              placeholder="Name"
+              value={draft.name}
+              onChange={(e) => setDraft({ ...draft, name: e.target.value })}
             />
-          </>
-        ) : kind === "wireguard" ? (
-          <>
-            {wg && wg.peers.length > 0 && (
-              <select
-                style={{ ...select, flex: "0 1 220px" }}
-                aria-label="WireGuard peer"
-                // Reflects what the host field holds, with or without a user in front of it.
-                value={
-                  wg.peers.find((p) => draft.host === p.host || draft.host.endsWith(`@${p.host}`))
-                    ?.host ?? ""
-                }
-                onChange={(e) => {
-                  const peer = wg.peers.find((p) => p.host === e.target.value);
-                  if (peer) setDraft({ ...draft, host: peer.host });
-                }}
-              >
-                <option value="">Pick a peer…</option>
-                {wg.peers.map((p) => (
-                  <option key={`${p.iface}:${p.host}`} value={p.host}>
-                    {p.host} · {p.iface} · handshake {handshakeText(p.handshakeAge)}
-                  </option>
-                ))}
-              </select>
-            )}
-            <input
-              style={{ ...inputStyle, flex: "1 1 220px" }}
-              placeholder="user@10.x.y.z (the tunnel address)"
-              value={draft.host}
-              onChange={(e) => setDraft({ ...draft, host: e.target.value })}
-            />
-          </>
-        ) : (
-          <>
-            <input
-              style={{ ...inputStyle, flex: "1 1 260px" }}
-              placeholder="https://dsh.other-box.lan"
-              value={draft.url}
-              onChange={(e) => setDraft({ ...draft, url: e.target.value })}
-            />
-            <input
-              style={{ ...inputStyle, flex: "1 1 200px" }}
-              type="password"
-              autoComplete="off"
-              placeholder="dsh token (optional)"
-              value={draft.token}
-              onChange={(e) => setDraft({ ...draft, token: e.target.value })}
-            />
-          </>
-        )}
-        <button
-          type="submit"
-          style={btn}
-          disabled={
-            busy || !draft.name.trim() || (kind !== "dsh" ? !draft.host.trim() : !draft.url.trim())
-          }
-        >
-          Add
-        </button>
-      </form>
-      {kind === "tailscale" && (
-        <div
-          style={{
-            ...meta,
-            whiteSpace: "normal",
-            marginTop: 6,
-            display: "flex",
-            flexWrap: "wrap",
-            gap: 8,
-            alignItems: "center",
-          }}
-        >
-          {ts === null ? (
-            "Checking this node's tailnet…"
-          ) : !ts.installed ? (
-            <>
-              <span style={pill(T.faint)}>not installed</span>
-              Install Tailscale on this box first (tailscale.com/download); the box side needs it
-              too.
-            </>
-          ) : ts.loggedIn ? (
-            <>
-              <span style={pill(T.ok)}>on the tailnet</span>
-              {ts.self && (
-                <span style={{ fontFamily: T.mono }}>{ts.self.host || ts.self.name}</span>
-              )}
-              {ts.peers.length === 0 && "No peers yet: bring the box onto the tailnet and Refresh."}
-            </>
-          ) : (
-            <>
-              <span style={pill(T.warn)}>not connected</span>
+            {kind === "ssh" ? (
               <input
-                style={{ ...inputStyle, flex: "1 1 200px", fontSize: 12 }}
-                placeholder="Login server (Headscale), else Tailscale"
-                value={tsServer.loginServer}
-                onChange={(e) => setTsServer({ ...tsServer, loginServer: e.target.value })}
+                style={{ ...inputStyle, flex: "1 1 240px" }}
+                placeholder="user@host or ssh alias"
+                value={draft.host}
+                onChange={(e) => setDraft({ ...draft, host: e.target.value })}
               />
-              <input
-                style={{ ...inputStyle, flex: "1 1 160px", fontSize: 12 }}
-                type="password"
-                autoComplete="off"
-                placeholder="Pre-auth key (optional)"
-                value={tsServer.authKey}
-                onChange={(e) => setTsServer({ ...tsServer, authKey: e.target.value })}
-              />
-              {tsLogin?.url ? (
-                <>
-                  <a
-                    href={tsLogin.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    style={{ color: CLAUDE_ORANGE }}
+            ) : kind === "tailscale" ? (
+              <>
+                {ts?.loggedIn && (
+                  <select
+                    style={{ ...select, flex: "0 1 220px" }}
+                    aria-label="Tailscale peer"
+                    value={pickedPeer?.host ?? ""}
+                    onChange={(e) => {
+                      const peer = ts.peers.find((p) => p.host === e.target.value) ?? null;
+                      setPickedPeer(peer);
+                      if (peer)
+                        setDraft({ ...draft, name: draft.name || peer.name, host: peer.host });
+                    }}
                   >
-                    Approve this box on your tailnet
-                  </a>
-                  <span>waiting for the approval…</span>
+                    <option value="">Pick a peer…</option>
+                    {ts.peers.map((p) => (
+                      <option key={p.host} value={p.host} disabled={peerIsSaved(p, ssh)}>
+                        {p.online ? "●" : "○"} {p.name}
+                        {p.os ? ` · ${p.os}` : ""}
+                        {peerIsSaved(p, ssh) ? " · saved" : ""}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                <input
+                  style={{ ...inputStyle, flex: "1 1 220px" }}
+                  placeholder="user@name.tailnet.ts.net or 100.x.y.z"
+                  value={draft.host}
+                  onChange={(e) => {
+                    setPickedPeer(null);
+                    setDraft({ ...draft, host: e.target.value });
+                  }}
+                />
+              </>
+            ) : kind === "wireguard" ? (
+              <>
+                {wg && wg.peers.length > 0 && (
+                  <select
+                    style={{ ...select, flex: "0 1 220px" }}
+                    aria-label="WireGuard peer"
+                    // Reflects what the host field holds, with or without a user in front of it.
+                    value={
+                      wg.peers.find(
+                        (p) => draft.host === p.host || draft.host.endsWith(`@${p.host}`),
+                      )?.host ?? ""
+                    }
+                    onChange={(e) => {
+                      const peer = wg.peers.find((p) => p.host === e.target.value);
+                      if (peer) setDraft({ ...draft, host: peer.host });
+                    }}
+                  >
+                    <option value="">Pick a peer…</option>
+                    {wg.peers.map((p) => (
+                      <option key={`${p.iface}:${p.host}`} value={p.host}>
+                        {p.host} · {p.iface} · handshake {handshakeText(p.handshakeAge)}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                <input
+                  style={{ ...inputStyle, flex: "1 1 220px" }}
+                  placeholder="user@10.x.y.z (the tunnel address)"
+                  value={draft.host}
+                  onChange={(e) => setDraft({ ...draft, host: e.target.value })}
+                />
+              </>
+            ) : (
+              <>
+                <input
+                  style={{ ...inputStyle, flex: "1 1 260px" }}
+                  placeholder="https://dsh.other-box.lan"
+                  value={draft.url}
+                  onChange={(e) => setDraft({ ...draft, url: e.target.value })}
+                />
+                <input
+                  style={{ ...inputStyle, flex: "1 1 200px" }}
+                  type="password"
+                  autoComplete="off"
+                  placeholder="dsh token (optional)"
+                  value={draft.token}
+                  onChange={(e) => setDraft({ ...draft, token: e.target.value })}
+                />
+              </>
+            )}
+            <button
+              type="submit"
+              style={btnPrimary}
+              disabled={
+                busy ||
+                !draft.name.trim() ||
+                (kind !== "dsh" ? !draft.host.trim() : !draft.url.trim())
+              }
+            >
+              Add
+            </button>
+            {total > 0 && (
+              <button type="button" style={btn} onClick={() => setAdding(false)}>
+                Cancel
+              </button>
+            )}
+          </form>
+          {kind === "tailscale" && (
+            <div
+              style={{
+                ...meta,
+                whiteSpace: "normal",
+                marginTop: 6,
+                display: "flex",
+                flexWrap: "wrap",
+                gap: 8,
+                alignItems: "center",
+              }}
+            >
+              {ts === null ? (
+                "Checking this node's tailnet…"
+              ) : !ts.installed ? (
+                <>
+                  <span style={{ color: T.faint }}>not installed</span>
+                  Install Tailscale on this box first (tailscale.com/download); the box side needs
+                  it too.
+                </>
+              ) : ts.loggedIn ? (
+                <>
+                  <span style={{ color: T.ok }}>on the tailnet</span>
+                  {ts.self && (
+                    <span style={{ fontFamily: T.mono }}>{ts.self.host || ts.self.name}</span>
+                  )}
+                  {ts.peers.length === 0 &&
+                    "No peers yet: bring the box onto the tailnet and Refresh."}
                 </>
               ) : (
-                <button type="button" style={btn} disabled={tsLogin?.busy} onClick={joinTailnet}>
-                  {tsLogin?.busy ? "Asking…" : "Connect"}
-                </button>
+                <>
+                  <span style={{ color: T.warn }}>not connected</span>
+                  <input
+                    style={{ ...inputStyle, flex: "1 1 200px", fontSize: 12 }}
+                    placeholder="Login server (Headscale), else Tailscale"
+                    value={tsServer.loginServer}
+                    onChange={(e) => setTsServer({ ...tsServer, loginServer: e.target.value })}
+                  />
+                  <input
+                    style={{ ...inputStyle, flex: "1 1 160px", fontSize: 12 }}
+                    type="password"
+                    autoComplete="off"
+                    placeholder="Pre-auth key (optional)"
+                    value={tsServer.authKey}
+                    onChange={(e) => setTsServer({ ...tsServer, authKey: e.target.value })}
+                  />
+                  {tsLogin?.url ? (
+                    <>
+                      <a
+                        href={tsLogin.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{ color: CLAUDE_ORANGE }}
+                      >
+                        Approve this box on your tailnet
+                      </a>
+                      <span>waiting for the approval…</span>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      style={btn}
+                      disabled={tsLogin?.busy}
+                      onClick={joinTailnet}
+                    >
+                      {tsLogin?.busy ? "Asking…" : "Connect"}
+                    </button>
+                  )}
+                  {tsLogin?.error && <span style={{ color: T.err }}>{tsLogin.error}</span>}
+                </>
               )}
-              {tsLogin?.error && <span style={{ color: T.err }}>{tsLogin.error}</span>}
-            </>
+            </div>
           )}
-        </div>
-      )}
-      {kind === "tailscale" && pickedPeer && (
-        <div style={{ ...meta, whiteSpace: "normal", marginTop: 4 }}>
-          {pickedPeer.tailscaleSsh
-            ? `${pickedPeer.name} runs Tailscale SSH: no key to copy, ssh signs in with your tailnet identity.`
-            : `${pickedPeer.name} needs an SSH key of yours, or Tailscale SSH turned on there (tailscale up --ssh).`}
-        </div>
-      )}
-      {kind === "wireguard" && (
-        <div
-          style={{
-            ...meta,
-            whiteSpace: "normal",
-            marginTop: 6,
-            display: "flex",
-            flexWrap: "wrap",
-            gap: 8,
-            alignItems: "center",
-          }}
-        >
-          {wg === null ? (
-            "Checking WireGuard…"
-          ) : !wg.installed ? (
-            <>
-              <span style={pill(T.faint)}>not installed</span>
-              Install wireguard-tools and bring a tunnel up (wg-quick up); its peer address is the
-              host.
-            </>
-          ) : wg.peers.length === 0 ? (
-            <>
-              <span style={pill(T.warn)}>no tunnel up</span>
-              {wg.error
-                ? wg.error
-                : "Bring one up with wg-quick, or type the peer's tunnel address."}
-            </>
-          ) : (
-            <>
-              <span style={pill(T.ok)}>
-                {wg.peers.length === 1 ? "1 peer" : `${wg.peers.length} peers`}
-              </span>
-              The tunnel address is the host; ssh still needs your key on the box.
-            </>
+          {kind === "tailscale" && pickedPeer && (
+            <div style={{ ...meta, whiteSpace: "normal", marginTop: 4 }}>
+              {pickedPeer.tailscaleSsh
+                ? `${pickedPeer.name} runs Tailscale SSH: no key to copy, ssh signs in with your tailnet identity.`
+                : `${pickedPeer.name} needs an SSH key of yours, or Tailscale SSH turned on there (tailscale up --ssh).`}
+            </div>
           )}
+          {kind === "wireguard" && (
+            <div
+              style={{
+                ...meta,
+                whiteSpace: "normal",
+                marginTop: 6,
+                display: "flex",
+                flexWrap: "wrap",
+                gap: 8,
+                alignItems: "center",
+              }}
+            >
+              {wg === null ? (
+                "Checking WireGuard…"
+              ) : !wg.installed ? (
+                <>
+                  <span style={{ color: T.faint }}>not installed</span>
+                  Install wireguard-tools and bring a tunnel up (wg-quick up); its peer address is
+                  the host.
+                </>
+              ) : wg.peers.length === 0 ? (
+                <>
+                  <span style={{ color: T.warn }}>no tunnel up</span>
+                  {wg.error
+                    ? wg.error
+                    : "Bring one up with wg-quick, or type the peer's tunnel address."}
+                </>
+              ) : (
+                <>
+                  <span style={{ color: T.ok }}>
+                    {wg.peers.length === 1 ? "1 peer" : `${wg.peers.length} peers`}
+                  </span>
+                  The tunnel address is the host; ssh still needs your key on the box.
+                </>
+              )}
+            </div>
+          )}
+          <div style={{ ...meta, whiteSpace: "normal", marginTop: 4 }}>
+            {kind !== "dsh" ? (
+              <>
+                This dsh drives Claude Code on the box over ssh (key-based, or Tailscale SSH), and
+                the box shows up in the model picker. Log in from its row once it is added.
+              </>
+            ) : (
+              <>
+                The box runs its own dsh with this plugin: its sessions show in the archive and Open
+                hops there. The token is its dsh launch token, needed only when this browser has
+                never logged into it.
+              </>
+            )}
+          </div>
+        </>
+      ) : (
+        <div style={{ ...row, flexWrap: "wrap", paddingTop: 12 }}>
+          <p style={{ ...meta, whiteSpace: "normal", flex: "1 1 220px", margin: 0 }}>
+            An ssh box shows up in the model picker; a linked dsh shows its sessions in the archive.
+          </p>
+          <button type="button" style={btn} disabled={busy} onClick={() => setAdding(true)}>
+            Add a box…
+          </button>
         </div>
       )}
-      <div style={{ ...meta, whiteSpace: "normal", marginTop: 4 }}>
-        {kind !== "dsh" ? (
-          <>
-            Key-based ssh, or Tailscale SSH on a tailnet. Not logged in there? The row offers a
-            login; the panel tabs read the box the session runs on.
-          </>
-        ) : (
-          <>
-            Token: the box's dsh launch token (printed when dsh web starts, or already in its URL
-            behind a proxy). Needed only when this browser has never logged into that box.
-          </>
-        )}
-      </div>
       <div
         style={{
           borderTop: `1px solid ${T.border}`,
@@ -2357,38 +2385,32 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
         }}
       >
         <h3 style={h3}>Remote workspaces</h3>
-        <p style={{ margin: "0 0 8px", color: T.muted, fontSize: 13 }}>
-          A directory on an SSH box, pinned as a workspace. It shows in the left sidebar like any
-          workspace; pick the box's Claude in the model picker and the session runs in that remote
-          folder. No files are copied; the box's Claude reads them there.
+        <p style={{ margin: "2px 0 4px", color: T.muted, fontSize: 13 }}>
+          A folder on an ssh box, pinned as a workspace. Sessions there run that box's Claude on its
+          files; nothing is copied.
         </p>
         {rws.map((w) => (
-          <div key={`rw:${w.path}`} data-testid="dsh-oh-my-claude-remote-ws-row" style={row}>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ color: T.text, fontWeight: 600 }}>{w.name}</div>
-              <div
-                style={{
-                  ...meta,
-                  marginTop: 3,
-                  display: "flex",
-                  flexWrap: "wrap",
-                  gap: 6,
-                  alignItems: "center",
-                  whiteSpace: "normal",
-                }}
-              >
-                <span style={pill(T.faint)}>ssh</span>
-                <span style={{ fontFamily: T.mono }}>{w.host}</span>
-                <span style={{ fontFamily: T.mono }}>{w.remoteCwd}</span>
-              </div>
-            </div>
-            <ConfirmButton
-              label="Remove"
-              style={btn}
-              disabled={busy}
-              onAct={() => removeRw(w.path)}
-            />
-          </div>
+          <BoxRow
+            key={`rw:${w.path}`}
+            testId="dsh-oh-my-claude-remote-ws-row"
+            title={w.name}
+            kind={w.host}
+            tone="none"
+            facts={[
+              <span key="path" style={{ fontFamily: T.mono }}>
+                {w.remoteCwd}
+              </span>,
+            ]}
+            actions={
+              <ConfirmButton
+                label="Remove"
+                ariaLabel={`Remove ${w.name}`}
+                style={btn}
+                disabled={busy}
+                onAct={() => removeRw(w.path)}
+              />
+            }
+          />
         ))}
         <div style={{ ...row, flexWrap: "wrap", paddingTop: 4 }}>
           <p style={{ ...meta, whiteSpace: "normal", flex: "1 1 220px", margin: 0 }}>
