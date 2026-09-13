@@ -1,7 +1,7 @@
 // Offline self-check for the login mask: every surface that names the account runs through it.
 import assert from "node:assert/strict";
 import type { ClientCtx } from "./shared.js";
-import { claudeProviderOf, maskEmail, numberOr } from "./shared.js";
+import { claudeProviderOf, maskEmail, numberOr, resumeCommand } from "./shared.js";
 
 assert.equal(maskEmail("someone@example.com"), "s******@example.com");
 // Never fewer than three stars, so a short local part does not leak its length.
@@ -49,5 +49,10 @@ assert.equal(claudeProviderOf(coldCtx(undefined), "s1"), undefined);
 assert.equal(numberOr(5), 5);
 assert.equal(numberOr(true), undefined);
 assert.equal(numberOr(undefined), undefined);
+
+assert.equal(resumeCommand("abc", undefined), "claude --resume abc");
+assert.equal(resumeCommand("abc", "/w/a"), "cd '/w/a' && claude --resume abc");
+assert.equal(resumeCommand("abc", "/w/it's"), "cd '/w/it'\\''s' && claude --resume abc");
+assert.equal(resumeCommand("abc", "/w/a", "nova"), "ssh nova \"cd '/w/a' && claude --resume abc\"");
 
 console.log("✓ All login mask checks pass");

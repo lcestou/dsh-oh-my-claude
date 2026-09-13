@@ -25,6 +25,7 @@ import {
   IconSearchOutline16,
   IconSkillOutline16,
   IconSparkle16,
+  Menu,
   useAnchoredPosition,
   useDismissOnOutsidePointer,
 } from "@deepseek-ai/dsh-client-ui-primitives";
@@ -67,6 +68,8 @@ import {
   guard,
   keywordMatches,
   controlStatesCss,
+  resumeCommand,
+  saveBlob,
 } from "./shared.js";
 import { PluginUpdateBadge } from "./update-pill.js";
 import { ReportBlock } from "./report.js";
@@ -617,6 +620,7 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
   // Rows ticked for download, by their row key: the same id can sit on two boxes.
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [moving, setMoving] = useState("");
+  const [menuFor, setMenuFor] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
 
   const load = () => {
@@ -788,22 +792,40 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
         const q = new URLSearchParams({ id: r.s.id });
         if (r.s.cwd) q.set("cwd", r.s.cwd);
         if (r.g.provider) q.set("provider", r.g.provider);
-        const reply = await fetch(`${ROUTE}/transcript?${q.toString()}`);
-        if (!reply.ok) throw new Error(`${r.s.id.slice(0, 8)}: ${reply.status}`);
-        const url = URL.createObjectURL(await reply.blob());
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `${r.s.title ? slugFile(r.s.title) : "claude"}-${r.s.id.slice(0, 8)}.jsonl`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        setTimeout(() => URL.revokeObjectURL(url), 30_000);
+        const base = `${r.s.title ? slugFile(r.s.title) : "claude"}-${r.s.id.slice(0, 8)}`;
+        await saveBlob(`${ROUTE}/transcript?${q}`, `${base}.jsonl`);
       }
       setPicked(new Set());
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setMoving("");
+    }
+  };
+
+  // One row's menu: the same file the batch download saves, the Markdown export, and the command
+  // that reopens the session in a terminal on the box it lives on.
+  const rowAction = async (
+    r: Exclude<(typeof paged)["list"], undefined>[number],
+    action: string,
+  ) => {
+    setMenuFor("");
+    setError("");
+    const q = new URLSearchParams({ id: r.s.id });
+    if (r.s.cwd) q.set("cwd", r.s.cwd);
+    if (r.g.provider) q.set("provider", r.g.provider);
+    const base = `${r.s.title ? slugFile(r.s.title) : "claude"}-${r.s.id.slice(0, 8)}`;
+    try {
+      if (action === "jsonl") await saveBlob(`${ROUTE}/transcript?${q}`, `${base}.jsonl`);
+      else if (action === "md") await saveBlob(`${ROUTE}/transcript.md?${q}`, `${base}.md`);
+      else if (action === "resume") {
+        const host = r.g.sshBox ? r.g.host : undefined;
+        await navigator.clipboard.writeText(resumeCommand(r.s.id, r.s.cwd, host));
+        setMoving("Copied");
+        setTimeout(() => setMoving(""), 1600);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     }
   };
 
@@ -1053,6 +1075,34 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
               >
                 {label}
               </button>
+              {(isLocal || isSsh) && (
+                <Menu
+                  open={menuFor === rowKey(r)}
+                  onClose={() => setMenuFor("")}
+                  selectedId=""
+                  items={[
+                    { id: "jsonl", label: "Download .jsonl" },
+                    { id: "md", label: "Export as Markdown" },
+                    { id: "resume", label: "Copy resume command" },
+                  ]}
+                  onSelect={(id) => void rowAction(r, id)}
+                  side="top"
+                  portal
+                  anchor={
+                    <button
+                      type="button"
+                      aria-label="More actions"
+                      aria-haspopup="menu"
+                      aria-expanded={menuFor === rowKey(r)}
+                      data-omc-row-menu=""
+                      style={{ ...btn, padding: "0 8px", marginLeft: 6 }}
+                      onClick={() => setMenuFor((cur) => (cur === rowKey(r) ? "" : rowKey(r)))}
+                    >
+                      ⋯
+                    </button>
+                  }
+                />
+              )}
             </div>
           );
         })}
