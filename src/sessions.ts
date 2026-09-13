@@ -16,6 +16,7 @@ import {
   type FoldedTranscript,
 } from "./transcript.js";
 import { shq, sshArgs } from "./process.js";
+import { isNewer, latestVersion, profileFromPath, updateCommand } from "./update.js";
 import {
   classifyReach,
   loginUrlIn,
@@ -191,6 +192,17 @@ const packageJson: unknown = JSON.parse(
 );
 const PLUGIN_VERSION =
   isJsonObject(packageJson) && typeof packageJson.version === "string" ? packageJson.version : "";
+const PLUGIN_NAME =
+  isJsonObject(packageJson) && typeof packageJson.name === "string" ? packageJson.name : "";
+/** The one `dsh plugin ... update` line for this install; the profile is read off this file's path. */
+const UPDATE_COMMAND = updateCommand(PLUGIN_NAME, profileFromPath(import.meta.url));
+/** A newer release on npm than the one running, with the command that brings it in. Only this box
+ *  asks: a remote dsh box answers its own `/status` from its own copy. */
+async function pluginUpdate(): Promise<{ latest: string; update: string } | undefined> {
+  if (!PLUGIN_NAME || !PLUGIN_VERSION) return undefined;
+  const latest = await latestVersion(PLUGIN_NAME);
+  return latest && isNewer(PLUGIN_VERSION, latest) ? { latest, update: UPDATE_COMMAND } : undefined;
+}
 
 const MAX_BOXES = 20;
 
@@ -403,6 +415,9 @@ export interface RuntimeStatus {
   projectsDirectory?: string | null;
   /** For an SSH box: why it did not answer, sorted so the row can name the fix (reach.ts). */
   reach?: Reach;
+  /** A newer plugin release on npm, and the command that installs it. This box only. */
+  latest?: string;
+  update?: string;
 }
 
 /**
@@ -1831,7 +1846,13 @@ export function registerSessionRoutes(
               }
               if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/status`) {
                 const box = boxOf(url);
-                const status = await runtimeStatus(box.configDir, box.command, box.sshHost);
+                // The registry read runs beside the CLI probes, so it adds no wait of its own and
+                // is bounded regardless; a remote box reports its own plugin from its own copy.
+                const [status, upd] = await Promise.all([
+                  runtimeStatus(box.configDir, box.command, box.sshHost),
+                  box.sshHost ? undefined : pluginUpdate(),
+                ]);
+                if (upd) Object.assign(status, upd);
                 // A panel login on this box stores a token the default instance injects at spawn;
                 // the CLI's own `auth status` cannot see it, so it counts as logged in here, the
                 // way an ssh box's does.

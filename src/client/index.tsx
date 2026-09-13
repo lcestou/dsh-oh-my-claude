@@ -448,6 +448,10 @@ const jumpUrl = (box: { url: string; token?: string }, s: { id: string; cwd?: st
 interface RuntimeStatus {
   binary?: string;
   version?: string;
+  plugin?: string;
+  /** A newer plugin release on npm, and the command that installs it. */
+  latest?: string;
+  update?: string;
   loggedIn?: boolean;
   email?: string;
   authMethod?: string;
@@ -1484,6 +1488,15 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
   const [me, setMe] = useState<RuntimeStatus | null>(null);
   const [rws, setRws] = useState<RemoteWs[]>([]);
   const [login, setLogin] = useState<LoginFlow | null>(null);
+  /** The update pill after a click: the command sits on the clipboard for a moment's notice. */
+  const [updateCopied, setUpdateCopied] = useState(false);
+  const copyUpdate = () => {
+    if (!me?.update) return;
+    void navigator.clipboard?.writeText(me.update).then(() => {
+      setUpdateCopied(true);
+      setTimeout(() => setUpdateCopied(false), 1500);
+    });
+  };
 
   useEffect(() => {
     fetch(`${ROUTE}/ssh-boxes`)
@@ -1697,6 +1710,27 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
               <span style={pill(me.binary ? T.ok : T.err)}>
                 {me.binary ? `claude ${me.version ?? ""}`.trim() : "claude not on PATH"}
               </span>
+              {/* Neither npm nor dsh says when a plugin has moved on, so this row does: the pill
+                  turns orange with the new version, and a click puts the update command on the
+                  clipboard. The server reads the registry once a day. */}
+              {me.latest && me.update ? (
+                <button
+                  type="button"
+                  style={{ ...pill(CLAUDE_ORANGE), cursor: "pointer", background: "none" }}
+                  title={`${me.update}\nthen restart dsh. Click to copy the command.`}
+                  aria-label={`Plugin ${me.latest} available. Copy the update command.`}
+                  data-omc-update={me.latest}
+                  onClick={copyUpdate}
+                >
+                  {updateCopied ? "command copied" : `${me.latest} available`}
+                </button>
+              ) : (
+                me.plugin && (
+                  <span style={pill(T.faint)} data-omc-plugin-version={me.plugin}>
+                    plugin {me.plugin}
+                  </span>
+                )
+              )}
               <span style={pill(me.loggedIn ? T.ok : T.err)}>
                 {me.loggedIn ? maskEmail(me.email ?? "logged in") : "not logged in"}
               </span>

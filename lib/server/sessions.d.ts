@@ -104,6 +104,9 @@ export interface RuntimeStatus {
     projectsDirectory?: string | null;
     /** For an SSH box: why it did not answer, sorted so the row can name the fix (reach.ts). */
     reach?: Reach;
+    /** A newer plugin release on npm, and the command that installs it. This box only. */
+    latest?: string;
+    update?: string;
 }
 /** One probe's outcome: the decoded body, or why the box could not be reached. */
 export type Probe<T> = {

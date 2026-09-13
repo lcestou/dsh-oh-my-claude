@@ -52,7 +52,20 @@ export type Page = {
   on(event: "console", handler: (message: { text(): string }) => void): void;
   video(): { path(): Promise<string> };
   url(): string;
+  /** Answer one of the page's requests from the check: the handler may fetch the real reply and
+   *  fulfil an edited copy, which is how a check shows a state the box is not in. */
+  route(url: string, handler: (route: Route) => Promise<void>): Promise<void>;
 };
+
+/** Any JSON document, as a plugin route answers with. */
+export type JsonValue = string | number | boolean | null | JsonValue[] | JsonDoc;
+export type JsonDoc = { [key: string]: JsonValue };
+/** One intercepted request; the slice a check needs to rewrite a JSON reply. */
+export type Route = {
+  fetch(): Promise<Reply>;
+  fulfill(how: { response: Reply; json: JsonDoc }): Promise<void>;
+};
+export type Reply = { json(): Promise<JsonDoc> };
 
 /** What a context is opened with: a phone shot needs the touch flags, a clip needs the recorder. */
 export type ContextOptions = {
@@ -63,6 +76,8 @@ export type ContextOptions = {
   /** Emulated prefers-color-scheme; the owner runs dsh dark, so the tour shoots dark. */
   colorScheme?: "dark" | "light";
   recordVideo?: { dir: string; size: Size };
+  /** Browser permissions granted up front; a check that reads the clipboard needs both. */
+  permissions?: ("clipboard-read" | "clipboard-write")[];
 };
 
 export type Context = {
