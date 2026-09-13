@@ -4814,7 +4814,7 @@ function useHintFlag(flag: string): [boolean, (on: boolean) => void] {
     let live = true;
     const load = () =>
       fetch(`${ROUTE}/hints`)
-        .then((r) => readJson<Record<string, boolean>>(r))
+        .then((r) => readJson<Record<string, boolean | number>>(r))
         .then((h) => {
           if (live) setOn(h[flag] === true);
         })

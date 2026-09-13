@@ -197,15 +197,19 @@ const PLUGIN_NAME =
   isJsonObject(packageJson) && typeof packageJson.name === "string" ? packageJson.name : "";
 /** The one `dsh plugin ... update` line for this install; the profile is read off this file's path. */
 const UPDATE_COMMAND = updateCommand(PLUGIN_NAME, profileFromPath(import.meta.url));
-/** The box-wide booleans under `hints.json`: one-time hints and the settings switches. Only `true`
- *  is kept, so a missing or unreadable file reads as every switch at its default. */
-async function readHints(hintsPath: string): Promise<Record<string, boolean>> {
+/** The box-wide booleans and non-negative numbers under `hints.json`: one-time hints and the
+ *  settings switches. Only `true` and finite non-negative numbers are kept, so a missing or
+ *  unreadable file reads as every switch at its default. */
+export async function readHints(hintsPath: string): Promise<Record<string, boolean | number>> {
   const parsed: unknown = await readFile(hintsPath, "utf8")
     .then((t) => JSON.parse(t))
     .catch(() => null);
-  const out: Record<string, boolean> = {};
+  const out: Record<string, boolean | number> = {};
   if (isJsonObject(parsed))
-    for (const [k, v] of Object.entries(parsed)) if (v === true) out[k] = true;
+    for (const [k, v] of Object.entries(parsed)) {
+      if (v === true) out[k] = true;
+      else if (typeof v === "number" && Number.isFinite(v) && v >= 0) out[k] = v;
+    }
   return out;
 }
 
@@ -216,7 +220,7 @@ async function pluginUpdate(
   hintsPath: string,
 ): Promise<{ latest: string; update: string } | undefined> {
   if (!PLUGIN_NAME || !PLUGIN_VERSION) return undefined;
-  if ((await readHints(hintsPath)).updateCheckOff) return undefined;
+  if ((await readHints(hintsPath)).updateCheckOff === true) return undefined;
   const latest = await latestVersion(PLUGIN_NAME);
   return latest && isNewer(PLUGIN_VERSION, latest) ? { latest, update: UPDATE_COMMAND } : undefined;
 }
@@ -2011,8 +2015,9 @@ export function registerSessionRoutes(
               // falls back to. A POST with blank text clears the key, which is how the card's
               // "forget" works.
               // One-time hints (the Restore pulse) and box-wide UI switches (`starterOff`): a flat
-              // map of booleans under the plugin's state, so a hint shown once or a switch flipped on
-              // this box holds for every browser and every update. `false` drops the key.
+              // map of booleans and non-negative numbers under the plugin's state, so a hint shown
+              // once or a switch flipped on this box holds for every browser and every update.
+              // `false` or `null` drops the key; other types are ignored.
               if (sshBoxesPath && url.pathname === `${ROUTE_PREFIX}/hints`) {
                 const hintsPath = join(dirname(sshBoxesPath), "hints.json");
                 const current = await readHints(hintsPath);
@@ -2023,7 +2028,8 @@ export function registerSessionRoutes(
                   for (const [k, v] of Object.entries(body)) {
                     if (!/^[a-zA-Z][a-zA-Z0-9]{0,40}$/.test(k)) continue;
                     if (v === true) next[k] = true;
-                    else if (v === false) delete next[k];
+                    else if (typeof v === "number" && Number.isFinite(v) && v >= 0) next[k] = v;
+                    else if (v === false || v === null) delete next[k];
                   }
                   await writeFile(hintsPath, `${JSON.stringify(next, null, 2)}\n`);
                   return json(res, 200, next);

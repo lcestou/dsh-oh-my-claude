@@ -18,6 +18,10 @@ export type ParsedSettings = {
 };
 /** settings.json must be one JSON object; anything else Claude Code would reject or ignore. */
 export declare function parseSettingsText(text: unknown): ParsedSettings;
+/** The box-wide booleans and non-negative numbers under `hints.json`: one-time hints and the
+ *  settings switches. Only `true` and finite non-negative numbers are kept, so a missing or
+ *  unreadable file reads as every switch at its default. */
+export declare function readHints(hintsPath: string): Promise<Record<string, boolean | number>>;
 /** Another dsh server this panel can hop to; `token` is that box's dsh launch token. */
 export interface Box {
     name: string;

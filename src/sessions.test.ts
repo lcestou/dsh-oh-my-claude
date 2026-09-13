@@ -18,6 +18,7 @@ import {
   isSettingsScope,
   SETTINGS_SCOPES,
   SSH_TRANSCRIPT_LISTER,
+  readHints,
 } from "./sessions.js";
 import { projectDirName } from "./adapter.js";
 import type { InstructionFile } from "./instructions.js";
@@ -892,4 +893,17 @@ console.log("sessions ok");
   assert.equal(cliEnvFor(undefined), process.env, "no dir: the process env as is");
   assert.equal(cliEnvFor(CLAUDE_HOME), process.env, "the default dir: nothing exported");
   assert.equal(cliEnvFor("/tmp/omc-other-home").CLAUDE_CONFIG_DIR, "/tmp/omc-other-home");
+}
+
+// readHints keeps true and finite non-negative numbers; drops everything else.
+{
+  const dir = await mkdtemp(join(tmpdir(), "omc-hints-"));
+  const hintsPath = join(dir, "hints.json");
+  await writeFile(
+    hintsPath,
+    '{"a": true, "b": false, "n": 3.5, "neg": -1, "s": "x", "inf": 1e999}\n',
+  );
+  assert.deepStrictEqual(await readHints(hintsPath), { a: true, n: 3.5 });
+  const emptyPath = join(dir, "missing.json");
+  assert.deepStrictEqual(await readHints(emptyPath), {});
 }

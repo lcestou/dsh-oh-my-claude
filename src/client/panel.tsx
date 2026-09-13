@@ -189,10 +189,10 @@ const workspaceName = (cwd: string): string => cwd.split("/").filter(Boolean).at
  * once stays shown across browsers, plugin updates and dsh updates. Read once per page; a failed
  * read answers nothing, so no hint fires on a box that cannot remember it fired.
  */
-let hintsCache: Promise<Record<string, boolean> | null> | undefined;
-const readHints = (): Promise<Record<string, boolean> | null> =>
+let hintsCache: Promise<Record<string, boolean | number> | null> | undefined;
+const readHints = (): Promise<Record<string, boolean | number> | null> =>
   (hintsCache ??= fetch(`${ROUTE}/hints`)
-    .then((r) => readJson<Record<string, boolean>>(r))
+    .then((r) => readJson<Record<string, boolean | number>>(r))
     .catch(() => null));
 const markHint = (key: string): void => {
   hintsCache = Promise.resolve({ [key]: true });
