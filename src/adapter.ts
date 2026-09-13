@@ -29,6 +29,7 @@ import {
 import z from "@deepseek-ai/schemastery";
 import {
   accountIdentity,
+  forgetIdentity,
   type PickerSettings,
   readPickerSettings,
   readRemoteWorkspaces,
@@ -1994,6 +1995,18 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    *  its "could not load" row with a Retry, which is the honest picker for a box no turn can use.
    *  The row names the fix; Retry after the login brings the models back. */
   override async listModels(provider: string) {
+    // A box named logged out asks its CLI again before refusing: a login made in a terminal there
+    // would otherwise stay hidden until Settings was opened or dsh restarted, and the picker's
+    // Retry would keep answering from a stale flag. One `claude auth status` per open while out.
+    if (this.loggedOut) {
+      forgetIdentity();
+      const who = await accountIdentity(
+        this.config.command,
+        this.claudeHome,
+        this.config.sshHost,
+      ).catch(() => ({ loggedIn: false }));
+      if (who.loggedIn) this.setLoggedIn(true);
+    }
     if (this.loggedOut)
       throw new Error(
         `not logged in on ${this.config.sshHost || hostname()}. Log in under Settings, Oh My Claude, Boxes`,

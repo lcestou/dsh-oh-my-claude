@@ -1385,6 +1385,104 @@ interface LoginFlow {
 /** One box's panel login from the browser: start (the sign-in link), a paste when the page shows a
  *  code, and a 2s poll for a login the CLI finished by itself. Shared by the Boxes rows and the card
  *  above the composer, so both run the same three routes. `onDone` fires once the token is stored. */
+/** One box in the Boxes card, in dsh's own settings shape: a name, a quiet kind and address beside
+ *  it, one status line under it (a dot for the state, facts joined by dots, problems in the error
+ *  colour), and the actions in a column on the right that never wraps into the facts. Every box
+ *  kind renders through this so they read the same. */
+function BoxRow({
+  testId,
+  title,
+  kind,
+  tone,
+  facts,
+  note,
+  actions,
+  children,
+}: {
+  testId: string;
+  title: string;
+  /** The transport and address: `ssh · lilly`, `link · http://…`, or this box's hostname. */
+  kind?: string;
+  /** The dot: green when the box can take a turn, red when something stops it, grey while unknown. */
+  tone: "ok" | "err" | "faint";
+  /** The status line's items, left to right; a string item joins with a middle dot. */
+  facts: ReactNode[];
+  /** A line under the facts: a reach hint, an install hint. */
+  note?: ReactNode;
+  actions?: ReactNode;
+  children?: ReactNode;
+}) {
+  const dot = tone === "ok" ? T.ok : tone === "err" ? T.err : T.faint;
+  return (
+    <div data-testid={testId} style={{ ...row, alignItems: "flex-start", flexWrap: "wrap" }}>
+      <div style={{ flex: "1 1 260px", minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 8, minWidth: 0 }}>
+          <span style={{ color: T.text, fontWeight: 600, fontSize: 13 }}>{title}</span>
+          {kind && (
+            <span
+              style={{
+                ...meta,
+                fontFamily: T.mono,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                minWidth: 0,
+              }}
+            >
+              {kind}
+            </span>
+          )}
+        </div>
+        <div
+          style={{
+            ...meta,
+            marginTop: 3,
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            whiteSpace: "normal",
+            lineHeight: "18px",
+          }}
+        >
+          <span
+            aria-hidden="true"
+            style={{
+              width: 7,
+              height: 7,
+              borderRadius: "50%",
+              background: dot,
+              flex: "0 0 auto",
+            }}
+          />
+          <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>
+            {facts.map((f, i) => (
+              <span key={i}>
+                {i > 0 && <span style={{ margin: "0 6px", opacity: 0.6 }}>·</span>}
+                {f}
+              </span>
+            ))}
+          </span>
+        </div>
+        {note && (
+          <div style={{ ...meta, whiteSpace: "normal", marginTop: 4, color: T.muted }}>{note}</div>
+        )}
+        {children}
+      </div>
+      {actions && (
+        <div style={{ display: "flex", gap: 6, flex: "0 0 auto", alignSelf: "flex-start" }}>
+          {actions}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** `2.1.270 (Claude Code)` as the CLI prints it, without the name the row already says. */
+const cliVersion = (v: string | null | undefined): string =>
+  `Claude Code ${(v ?? "").replace(/\s*\(Claude Code\)\s*$/, "")}`.trim();
+
+/** A fact in the status line that is a problem: the error colour, so the eye lands on it. */
+const bad = (text: string): ReactNode => <span style={{ color: T.err }}>{text}</span>;
+
 /** Where a login flow's three routes live and what names the box in their body: an ssh box (or
  *  this box, host "") under `ssh-boxes/login` by host; a linked dsh box under `boxes/login` by url,
  *  forwarded to that dsh's own copy of this plugin. */
@@ -1757,55 +1855,69 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
       </p>
       {error && <p style={{ color: T.err, fontSize: 13, margin: "4px 0" }}>{error}</p>}
       {me && (
-        <div data-testid="dsh-oh-my-claude-self-box-row" style={row}>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ color: T.text, fontWeight: 600 }}>This box</div>
-            <div
-              style={{
-                ...meta,
-                marginTop: 3,
-                display: "flex",
-                flexWrap: "wrap",
-                gap: 6,
-                alignItems: "center",
-                whiteSpace: "normal",
-              }}
-            >
-              <span style={pill(CLAUDE_ORANGE)}>this box</span>
-              {me.host && <span style={{ fontFamily: T.mono }}>{me.host}</span>}
-              <span style={pill(me.binary ? T.ok : T.err)}>
-                {me.binary ? `claude ${me.version ?? ""}`.trim() : "claude not on PATH"}
-              </span>
-              {/* Neither npm nor dsh says when a plugin has moved on, so this row does: the pill
-                  turns orange with the new version, and a click puts the update command on the
-                  clipboard. The server reads the registry once a day. */}
-              {me.latest && me.update ? (
-                <button
-                  type="button"
-                  style={{ ...pill(CLAUDE_ORANGE), cursor: "pointer", background: "none" }}
-                  title={`${me.update}\nthen restart dsh. Click to copy the command.`}
-                  aria-label={`Plugin ${me.latest} available. Copy the update command.`}
-                  data-omc-update={me.latest}
-                  onClick={copyUpdate}
-                >
-                  {updateCopied || `${me.latest} available`}
-                </button>
-              ) : (
-                me.plugin && (
-                  <span style={pill(T.faint)} data-omc-plugin-version={me.plugin}>
-                    plugin {me.plugin}
-                  </span>
-                )
-              )}
-              {/* A token from the earlier setup-token flow is named, since it is the plugin's alone;
-                  a login made here or in a terminal is the CLI's own and needs no label. */}
-              <span style={pill(me.loggedIn ? T.ok : T.err)} data-omc-login-method={me.authMethod}>
-                {me.loggedIn
-                  ? `${maskEmail(me.email ?? "logged in")}${me.authMethod === "panel token" ? " · panel token" : ""}`
-                  : "not logged in"}
-              </span>
-              {/* The same relay the ssh rows use, run under a local PTY; the token it mints goes
-                  to this box's own spawns. Log out forgets that token only. */}
+        <BoxRow
+          testId="dsh-oh-my-claude-self-box-row"
+          title="This box"
+          kind={me.host}
+          tone={!me.binary || !me.loggedIn ? "err" : "ok"}
+          facts={[
+            me.binary ? (
+              <>
+                {cliVersion(me.version)}
+                {/* Neither npm nor dsh says when a plugin has moved on, so this row does: the
+                    one badge here, orange with the new version; a click puts the update command
+                    on the clipboard. The server reads the registry once a day. */}
+                {me.latest && me.update ? (
+                  <button
+                    type="button"
+                    style={{
+                      ...pill(CLAUDE_ORANGE),
+                      cursor: "pointer",
+                      background: "none",
+                      marginLeft: 6,
+                    }}
+                    title={`${me.update}\nthen restart dsh. Click to copy the command.`}
+                    aria-label={`Plugin ${me.latest} available. Copy the update command.`}
+                    data-omc-update={me.latest}
+                    onClick={copyUpdate}
+                  >
+                    {updateCopied || `${me.latest} available`}
+                  </button>
+                ) : (
+                  <span data-omc-plugin-version={me.plugin} />
+                )}
+              </>
+            ) : (
+              bad("Claude Code not on PATH")
+            ),
+            // A token from the earlier setup-token flow is named, since it is the plugin's alone; a
+            // login made here or in a terminal is the CLI's own and needs no label.
+            <span key="login" data-omc-login-method={me.authMethod}>
+              {me.loggedIn
+                ? `${maskEmail(me.email ?? "logged in")}${me.authMethod === "panel token" ? " · panel token" : ""}`
+                : bad("not logged in")}
+            </span>,
+            // Logged out on disk, but processes started earlier still answer on the login they
+            // read then; Log out makes the cut.
+            ...(!me.loggedIn && (me.running ?? 0) > 0
+              ? [
+                  <span key="running" data-omc-running={me.running}>
+                    {me.running} {me.running === 1 ? "session" : "sessions"} still answering on the
+                    old login
+                  </span>,
+                ]
+              : []),
+          ]}
+          note={
+            !me.binary && (
+              <>
+                Install Claude Code here (<code style={codeInline}>claude</code> on PATH), then
+                refresh.
+              </>
+            )
+          }
+          actions={
+            <>
               {me.binary && !me.loggedIn && login?.host !== "" && (
                 <button
                   type="button"
@@ -1818,14 +1930,7 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
                 </button>
               )}
               {/* One Log out does everything: forgets a stored token, logs the box's Claude Code
-                  out, and kills its running sessions. It also shows when the box reads logged out
-                  on disk but processes started earlier still answer on the login they read then. */}
-              {!me.loggedIn && (me.running ?? 0) > 0 && (
-                <span style={{ color: T.faint, fontSize: 12 }} data-omc-running={me.running}>
-                  {me.running} {me.running === 1 ? "session" : "sessions"} still answering on the
-                  old login
-                </span>
-              )}
+                  out, and kills its running sessions. */}
               {(me.loggedIn || (me.running ?? 0) > 0) && (
                 <ConfirmButton
                   label="Log out"
@@ -1835,181 +1940,160 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
                   onAct={() => logout("")}
                 />
               )}
-              {!me.binary && (
-                <span style={{ width: "100%", color: T.err, fontSize: 12 }}>
-                  Install Claude Code here (<code style={codeInline}>claude</code> on PATH), then
-                  refresh.
-                </span>
-              )}
-            </div>
-            {login?.host === "" && (
-              <LoginSteps login={login} setLogin={setLogin} submit={submitLogin} />
-            )}
-          </div>
-          <span style={{ ...meta, alignSelf: "center" }}>auto</span>
-        </div>
+            </>
+          }
+        >
+          {login?.host === "" && (
+            <LoginSteps login={login} setLogin={setLogin} submit={submitLogin} />
+          )}
+        </BoxRow>
       )}
       {ssh.map((b) => {
         const st = sshProbe[b.host]?.status;
+        const down = st?.reach && st.reach.stage !== "ok";
         const up = st && !st.error && st.binary;
+        const facts: ReactNode[] = !st
+          ? [busy ? "checking…" : "unchecked"]
+          : down
+            ? [
+                <span key="reach" title={st.reach?.detail}>
+                  {bad(reachLabel(st.reach?.stage ?? ""))}
+                </span>,
+              ]
+            : st.error
+              ? [bad(st.error)]
+              : [
+                  st.binary ? cliVersion(st.version) : bad("no claude"),
+                  st.loggedIn ? maskEmail(st.email ?? "logged in") : bad("not logged in"),
+                ];
+        if (st && up && !st.loggedIn && (st.running ?? 0) > 0)
+          facts.push(
+            `${st.running} ${st.running === 1 ? "session" : "sessions"} still answering on the old login`,
+          );
         return (
-          <div key={`ssh:${b.host}`} data-testid="dsh-oh-my-claude-ssh-box-row" style={row}>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ color: T.text, fontWeight: 600 }}>{b.name}</div>
-              <div
-                style={{
-                  ...meta,
-                  marginTop: 3,
-                  display: "flex",
-                  flexWrap: "wrap",
-                  gap: 6,
-                  alignItems: "center",
-                  whiteSpace: "normal",
-                }}
-              >
-                <span style={pill(T.faint)}>{b.via ?? "ssh"}</span>
-                <span style={{ fontFamily: T.mono }}>{b.host}</span>
-                {!st && <span style={pill(T.faint)}>{busy ? "checking" : "unchecked"}</span>}
-                {st?.error && !st.reach && <span style={pill(T.err)}>{st.error}</span>}
-                {st?.reach && st.reach.stage !== "ok" && (
-                  <span style={pill(T.err)} title={st.reach.detail}>
-                    {reachLabel(st.reach.stage)}
-                  </span>
+          <BoxRow
+            key={`ssh:${b.host}`}
+            testId="dsh-oh-my-claude-ssh-box-row"
+            title={b.name}
+            kind={`${b.via ?? "ssh"} · ${b.host}`}
+            tone={!st ? "faint" : up && st.loggedIn ? "ok" : "err"}
+            facts={facts}
+            note={down ? st.reach?.hint.replaceAll("<host>", b.host) : undefined}
+            actions={
+              <>
+                {up && !st.loggedIn && login?.host !== b.host && (
+                  <button
+                    type="button"
+                    style={btn}
+                    disabled={busy}
+                    onClick={() => startLogin(b.host)}
+                  >
+                    Log in
+                  </button>
                 )}
-                {up && (
-                  <>
-                    <span style={pill(st.binary ? T.ok : T.err)}>
-                      {st.binary ? `claude ${st.version ?? ""}`.trim() : "no claude"}
-                    </span>
-                    <span style={pill(st.loggedIn ? T.ok : T.err)}>
-                      {st.loggedIn ? maskEmail(st.email ?? "logged in") : "not logged in"}
-                    </span>
-                    {st.binary && !st.loggedIn && login?.host !== b.host && (
-                      <button
-                        type="button"
-                        style={btn}
-                        disabled={busy}
-                        onClick={() => startLogin(b.host)}
-                      >
-                        Log in
-                      </button>
-                    )}
-                    {/* The same Log out this box has: `claude auth logout` over ssh, its running
-                        sessions stopped, any leftover token forgotten. */}
-                    {(st.loggedIn || (st.running ?? 0) > 0) && (
-                      <ConfirmButton
-                        label="Log out"
-                        ariaLabel={`Log out ${b.name}: log its Claude Code out and stop its running sessions`}
-                        style={btn}
-                        disabled={busy}
-                        onAct={() => logout(b.host)}
-                      />
-                    )}
-                  </>
+                {/* The same Log out this box has: `claude auth logout` over ssh, its running
+                    sessions stopped, any leftover token forgotten. */}
+                {up && (st.loggedIn || (st.running ?? 0) > 0) && (
+                  <ConfirmButton
+                    label="Log out"
+                    ariaLabel={`Log out ${b.name}: log its Claude Code out and stop its running sessions`}
+                    style={btn}
+                    disabled={busy}
+                    onAct={() => logout(b.host)}
+                  />
                 )}
-              </div>
-              {st?.reach && st.reach.stage !== "ok" && (
-                <div style={{ ...meta, whiteSpace: "normal", marginTop: 4, color: T.muted }}>
-                  {st.reach.hint.replaceAll("<host>", b.host)}
-                </div>
-              )}
-              {login?.host === b.host && (
-                <LoginSteps login={login} setLogin={setLogin} submit={submitLogin} />
-              )}
-            </div>
-            <ConfirmButton
-              label="Remove"
-              style={btn}
-              disabled={busy}
-              onAct={() => removeSsh(b.host)}
-            />
-          </div>
+                <ConfirmButton
+                  label="Remove"
+                  ariaLabel={`Remove ${b.name}`}
+                  style={btn}
+                  disabled={busy}
+                  onAct={() => removeSsh(b.host)}
+                />
+              </>
+            }
+          >
+            {login?.host === b.host && (
+              <LoginSteps login={login} setLogin={setLogin} submit={submitLogin} />
+            )}
+          </BoxRow>
         );
       })}
       {boxes.map((b) => {
         const st = probe[b.url];
         const ok = st?.ok;
-        const skew = ok && self && st.status?.plugin && st.status.plugin !== self.plugin;
+        const r = ok ? st.status : undefined;
+        const skew = r?.plugin && self && r.plugin !== self.plugin;
+        const facts: ReactNode[] = !st
+          ? [busy ? "checking…" : "unchecked"]
+          : !ok
+            ? [bad(st.error ?? "unreachable")]
+            : r
+              ? [
+                  r.host ?? "",
+                  r.binary ? cliVersion(r.version) : bad("no claude"),
+                  r.loggedIn ? maskEmail(r.email ?? "logged in") : bad("not logged in"),
+                  <span key="plugin" style={skew ? { color: T.warn } : undefined}>
+                    plugin {r.plugin ?? "?"}
+                    {skew ? ` ≠ ${self?.plugin} here` : ""}
+                  </span>,
+                ]
+              : [];
         return (
-          <div key={`dsh:${b.url}`} data-testid="dsh-oh-my-claude-box-row" style={row}>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ color: T.text, fontWeight: 600 }}>{b.name}</div>
-              <div
-                style={{
-                  ...meta,
-                  marginTop: 3,
-                  display: "flex",
-                  flexWrap: "wrap",
-                  gap: 6,
-                  alignItems: "center",
-                  whiteSpace: "normal",
-                }}
-              >
-                <span style={pill(T.faint)}>link</span>
-                <span style={{ fontFamily: T.mono }}>{b.url}</span>
-                {!st && <span style={pill(T.faint)}>{busy ? "checking" : "unchecked"}</span>}
-                {st && !ok && <span style={pill(T.err)}>{st.error}</span>}
-                {ok && st.status && (
-                  <>
-                    <span style={pill(T.faint)}>{st.status.host}</span>
-                    <span style={pill(st.status.binary ? T.ok : T.err)}>
-                      {st.status.binary ? `claude ${st.status.version ?? ""}`.trim() : "no claude"}
-                    </span>
-                    <span style={pill(st.status.loggedIn ? T.ok : T.err)}>
-                      {st.status.loggedIn
-                        ? maskEmail(st.status.email ?? "logged in")
-                        : "not logged in"}
-                    </span>
-                    <span style={pill(skew ? T.warn : T.faint)}>
-                      plugin {st.status.plugin ?? "?"}
-                      {skew ? ` ≠ ${self.plugin} here` : ""}
-                    </span>
-                    {/* The same Log in and Log out every row has, run by that dsh's own copy of
-                        this plugin on its box. */}
-                    {st.status.binary && !st.status.loggedIn && dsh.login?.host !== b.url && (
-                      <button
-                        type="button"
-                        style={btn}
-                        disabled={busy}
-                        onClick={() => dsh.startLogin(b.url)}
-                      >
-                        Log in
-                      </button>
-                    )}
-                    {st.status.loggedIn && (
-                      <ConfirmButton
-                        label="Log out"
-                        ariaLabel={`Log out ${b.name}: log its Claude Code out and stop its running sessions`}
-                        style={btn}
-                        disabled={busy}
-                        onAct={() => logoutDsh(b.url)}
-                      />
-                    )}
-                  </>
+          <BoxRow
+            key={`dsh:${b.url}`}
+            testId="dsh-oh-my-claude-box-row"
+            title={b.name}
+            kind={`link · ${b.url}`}
+            tone={!st ? "faint" : ok && r?.binary && r.loggedIn ? "ok" : "err"}
+            facts={facts}
+            actions={
+              <>
+                {/* The same Log in and Log out every row has, run by that dsh's own copy of this
+                    plugin on its box. */}
+                {r?.binary && !r.loggedIn && dsh.login?.host !== b.url && (
+                  <button
+                    type="button"
+                    style={btn}
+                    disabled={busy}
+                    onClick={() => dsh.startLogin(b.url)}
+                  >
+                    Log in
+                  </button>
                 )}
-              </div>
-              {dsh.login?.host === b.url && (
-                <LoginSteps login={dsh.login} setLogin={dsh.setLogin} submit={dsh.submitLogin} />
-              )}
-            </div>
-            <button
-              type="button"
-              style={btn}
-              disabled={busy || !ok}
-              onClick={() => setOpenSettingsUrl(openSettingsUrl === b.url ? null : b.url)}
-            >
-              Edit settings
-            </button>
-            <ConfirmButton
-              label="Remove"
-              style={btn}
-              disabled={busy}
-              onAct={() => removeDsh(b.url)}
-            />
-            <button type="button" style={btnPrimary} onClick={() => jump(b)}>
-              Open
-            </button>
-          </div>
+                {r?.loggedIn && (
+                  <ConfirmButton
+                    label="Log out"
+                    ariaLabel={`Log out ${b.name}: log its Claude Code out and stop its running sessions`}
+                    style={btn}
+                    disabled={busy}
+                    onAct={() => logoutDsh(b.url)}
+                  />
+                )}
+                <button
+                  type="button"
+                  style={btn}
+                  disabled={busy || !ok}
+                  onClick={() => setOpenSettingsUrl(openSettingsUrl === b.url ? null : b.url)}
+                >
+                  Edit settings
+                </button>
+                <ConfirmButton
+                  label="Remove"
+                  ariaLabel={`Remove ${b.name}`}
+                  style={btn}
+                  disabled={busy}
+                  onAct={() => removeDsh(b.url)}
+                />
+                <button type="button" style={btnPrimary} onClick={() => jump(b)}>
+                  Open
+                </button>
+              </>
+            }
+          >
+            {dsh.login?.host === b.url && (
+              <LoginSteps login={dsh.login} setLogin={dsh.setLogin} submit={dsh.submitLogin} />
+            )}
+          </BoxRow>
         );
       })}
       {openSettingsUrl && (
@@ -2920,7 +3004,7 @@ const ensureTurnStatusStyle = () => {
   // clearance, which leaves its pills 653px in a 717px column. dsh's two fill that; ours as a
   // third clips all three to an ellipsis by a few pixels. The pills are centred, so the padding
   // does no aligning; take it down to the row's rounded corners and the three fit.
-  styleEl.textContent = `body[data-omc-claude] [role="status"][aria-live="polite"],[data-dsh-oh-my-claude-turn]{background-image:var(--omc-row-bg,linear-gradient(90deg,${CLAUDE_ORANGE} 0%,${CLAUDE_ORANGE} 40%,${CLAUDE_SHIMMER} 50%,${CLAUDE_ORANGE} 60%,${CLAUDE_ORANGE} 100%))}@keyframes omc-word{from{-webkit-text-fill-color:var(--omc-word-lo)}to{-webkit-text-fill-color:var(--omc-word-hi)}}[data-omc-turn-word]{animation:omc-word 1s ease-in-out 3s infinite alternate}@media (prefers-reduced-motion:reduce){[data-omc-turn-word]{animation:none}}[data-dsh-oh-my-claude-turn]>span[aria-hidden]{display:inline-block;width:1.3em;text-align:start;flex:none}[data-dsh-oh-my-claude-turn]{max-width:100%;min-width:0}[data-omc-turn-detail]{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}[data-omc-login-card] button:hover,[data-omc-login-card] button:focus-visible{color:${CLAUDE_ORANGE};border-color:${CLAUDE_ORANGE}}body[data-omc-claude] [role="tablist"]>[role="tab"][aria-selected="true"]{color:${CLAUDE_ORANGE}}body[data-omc-claude] [role="tablist"]>[role="tab"][aria-selected="true"]::after{background:${CLAUDE_ORANGE}}body[data-omc-claude] [class*="_markdown"] blockquote{border-left-color:${CLAUDE_ORANGE}80}body[data-omc-claude] [class*="_markdown"] hr{background:${CLAUDE_ORANGE}59}body[data-omc-claude] [class*="_markdown"] a{color:${CLAUDE_ORANGE};text-decoration-color:${CLAUDE_ORANGE}66}body[data-omc-claude] [class*="_markdown"] a:hover{color:${CLAUDE_SHIMMER};text-decoration-color:${CLAUDE_SHIMMER}}body[data-omc-claude] [class*="_markdown"] input[type="checkbox"]{accent-color:${CLAUDE_ORANGE}}body[data-omc-claude] [data-workflow-run] button[data-member-status] [data-member-label]{color:${CLAUDE_ORANGE}}body[data-omc-panel-open] [data-width-handle]{pointer-events:none}body[data-omc-panel-open] [class*="_toBottomSlot"],body:has([data-omc-cost-dialog]) [class*="_toBottomSlot"]{opacity:0;pointer-events:none;transition:opacity .1s}@keyframes omc-pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,${CLAUDE_ORANGE} 55%,transparent)}100%{box-shadow:0 0 0 12px transparent}}button[aria-label="Oh My Claude"][data-omc-pulse]{animation:omc-pulse 1.1s ease-out 3}@media (prefers-reduced-motion:reduce){button[aria-label="Oh My Claude"][data-omc-pulse]{animation:none}}body[data-omc-claude] [data-produced-files-row] button{color:${CLAUDE_ORANGE}}body[data-omc-claude] [data-produced-files-row] button:hover{color:${CLAUDE_SHIMMER}}body[data-omc-claude] [data-composer-stats]{padding-left:8px;padding-right:8px}body[data-omc-claude] [class*="_optionLine"]>[class*="_badge"]{background:color-mix(in srgb,${CLAUDE_ORANGE} 16%,transparent);color:${CLAUDE_ORANGE}}${RAINBOW_CSS}${COST_DIALOG_CSS}`;
+  styleEl.textContent = `body[data-omc-claude] [role="status"][aria-live="polite"],[data-dsh-oh-my-claude-turn]{background-image:var(--omc-row-bg,linear-gradient(90deg,${CLAUDE_ORANGE} 0%,${CLAUDE_ORANGE} 40%,${CLAUDE_SHIMMER} 50%,${CLAUDE_ORANGE} 60%,${CLAUDE_ORANGE} 100%))}@keyframes omc-word{from{-webkit-text-fill-color:var(--omc-word-lo)}to{-webkit-text-fill-color:var(--omc-word-hi)}}[data-omc-turn-word]{animation:omc-word 1s ease-in-out 3s infinite alternate}@media (prefers-reduced-motion:reduce){[data-omc-turn-word]{animation:none}}[data-dsh-oh-my-claude-turn]>span[aria-hidden]{display:inline-block;width:1.3em;text-align:start;flex:none}[data-dsh-oh-my-claude-turn]{max-width:100%;min-width:0}[data-omc-turn-detail]{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}[data-omc-login-card] button:hover,[data-omc-login-card] button:focus-visible{color:${CLAUDE_ORANGE};border-color:${CLAUDE_ORANGE}}#dsh-oh-my-claude-boxes button:not(:disabled):hover,#dsh-oh-my-claude-boxes button:focus-visible{background:${T.hover}}body[data-omc-claude] [role="tablist"]>[role="tab"][aria-selected="true"]{color:${CLAUDE_ORANGE}}body[data-omc-claude] [role="tablist"]>[role="tab"][aria-selected="true"]::after{background:${CLAUDE_ORANGE}}body[data-omc-claude] [class*="_markdown"] blockquote{border-left-color:${CLAUDE_ORANGE}80}body[data-omc-claude] [class*="_markdown"] hr{background:${CLAUDE_ORANGE}59}body[data-omc-claude] [class*="_markdown"] a{color:${CLAUDE_ORANGE};text-decoration-color:${CLAUDE_ORANGE}66}body[data-omc-claude] [class*="_markdown"] a:hover{color:${CLAUDE_SHIMMER};text-decoration-color:${CLAUDE_SHIMMER}}body[data-omc-claude] [class*="_markdown"] input[type="checkbox"]{accent-color:${CLAUDE_ORANGE}}body[data-omc-claude] [data-workflow-run] button[data-member-status] [data-member-label]{color:${CLAUDE_ORANGE}}body[data-omc-panel-open] [data-width-handle]{pointer-events:none}body[data-omc-panel-open] [class*="_toBottomSlot"],body:has([data-omc-cost-dialog]) [class*="_toBottomSlot"]{opacity:0;pointer-events:none;transition:opacity .1s}@keyframes omc-pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,${CLAUDE_ORANGE} 55%,transparent)}100%{box-shadow:0 0 0 12px transparent}}button[aria-label="Oh My Claude"][data-omc-pulse]{animation:omc-pulse 1.1s ease-out 3}@media (prefers-reduced-motion:reduce){button[aria-label="Oh My Claude"][data-omc-pulse]{animation:none}}body[data-omc-claude] [data-produced-files-row] button{color:${CLAUDE_ORANGE}}body[data-omc-claude] [data-produced-files-row] button:hover{color:${CLAUDE_SHIMMER}}body[data-omc-claude] [data-composer-stats]{padding-left:8px;padding-right:8px}body[data-omc-claude] [class*="_optionLine"]>[class*="_badge"]{background:color-mix(in srgb,${CLAUDE_ORANGE} 16%,transparent);color:${CLAUDE_ORANGE}}${RAINBOW_CSS}${COST_DIALOG_CSS}`;
   document.head.appendChild(styleEl);
 };
 
