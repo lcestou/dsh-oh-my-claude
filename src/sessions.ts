@@ -2728,6 +2728,26 @@ export function registerSessionRoutes(
                   boxes: boxes.map((b, i) => ({ name: b.name, url: b.url, ...probed[i] })),
                 });
               }
+              // A linked dsh box's login lives on that dsh: its own copy of this plugin runs the
+              // same login routes for its own "this box", so these forward start, code, poll and
+              // logout there with the box's token. The sign-in tab opens on that desktop, if any;
+              // the link shows here, and a page that cannot reach that CLI shows the code to paste.
+              const loginProxy = /^\/boxes\/login\/(start|code|poll|logout)$/.exec(
+                url.pathname.slice(ROUTE_PREFIX.length),
+              );
+              if (boxesPath && req.method === "POST" && loginProxy) {
+                const body = await readBody(req);
+                const target = String(body.url ?? "");
+                const box = (await readBoxes(boxesPath)).find((b) => b.url === target);
+                if (!box) return json(res, 400, { error: "unknown box" });
+                const p = await probeBox<Record<string, JsonValue>>(
+                  box,
+                  fetch,
+                  `ssh-boxes/login/${loginProxy[1]}`,
+                  { method: "POST", body: JSON.stringify({ host: "", code: body.code ?? "" }) },
+                );
+                return json(res, 200, p.ok ? p.status : { error: p.error });
+              }
               if (boxesPath && url.pathname === `${ROUTE_PREFIX}/boxes/settings`) {
                 const urlParam = url.searchParams.get("url");
                 if (!urlParam) return json(res, 400, { error: "url parameter required" });

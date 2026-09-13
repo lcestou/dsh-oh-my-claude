@@ -1385,15 +1385,27 @@ interface LoginFlow {
 /** One box's panel login from the browser: start (the sign-in link), a paste when the page shows a
  *  code, and a 2s poll for a login the CLI finished by itself. Shared by the Boxes rows and the card
  *  above the composer, so both run the same three routes. `onDone` fires once the token is stored. */
-function useLoginFlow(onDone: (host: string) => void) {
+/** Where a login flow's three routes live and what names the box in their body: an ssh box (or
+ *  this box, host "") under `ssh-boxes/login` by host; a linked dsh box under `boxes/login` by url,
+ *  forwarded to that dsh's own copy of this plugin. */
+interface LoginRoutes {
+  base: string;
+  field: "host" | "url";
+}
+const SSH_LOGIN: LoginRoutes = { base: "ssh-boxes/login", field: "host" };
+const DSH_LOGIN: LoginRoutes = { base: "boxes/login", field: "url" };
+
+function useLoginFlow(onDone: (host: string) => void, routes: LoginRoutes = SSH_LOGIN) {
   const [login, setLogin] = useState<LoginFlow | null>(null);
-  const startLogin = (host: string) => {
-    setLogin({ host, code: "", busy: true });
-    fetch(`${ROUTE}/ssh-boxes/login/start`, {
+  const post = (route: string, host: string, extra: Record<string, string> = {}) =>
+    fetch(`${ROUTE}/${routes.base}/${route}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ host }),
-    })
+      body: JSON.stringify({ [routes.field]: host, ...extra }),
+    });
+  const startLogin = (host: string) => {
+    setLogin({ host, code: "", busy: true });
+    post("start", host)
       .then((r) => readJson<{ url?: string; error?: string }>(r))
       .then((b) => setLogin({ host, code: "", url: b.url, error: b.error }))
       .catch((e: Error) => setLogin({ host, code: "", error: e.message }));
@@ -1406,11 +1418,7 @@ function useLoginFlow(onDone: (host: string) => void) {
     const host = pollKey;
     let live = true;
     const tick = () =>
-      fetch(`${ROUTE}/ssh-boxes/login/poll`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ host }),
-      })
+      post("poll", host)
         .then((r) => readJson<{ pending?: boolean; done?: boolean; error?: string }>(r))
         .then((b) => {
           if (!live || b.pending) return;
@@ -1430,11 +1438,7 @@ function useLoginFlow(onDone: (host: string) => void) {
     if (!login) return;
     const host = login.host;
     setLogin({ ...login, busy: true, error: undefined });
-    fetch(`${ROUTE}/ssh-boxes/login/code`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ host, code: login.code }),
-    })
+    post("code", host, { code: login.code })
       .then((r) => readJson<{ done?: boolean; loggedIn?: boolean; error?: string }>(r))
       .then((b) => {
         if (b.error) return setLogin({ host, code: "", error: b.error });
@@ -1556,6 +1560,18 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
   const [me, setMe] = useState<RuntimeStatus | null>(null);
   const [rws, setRws] = useState<RemoteWs[]>([]);
   const { login, setLogin, startLogin, submitLogin } = useLoginFlow(() => refresh());
+  const dsh = useLoginFlow(() => refresh(), DSH_LOGIN);
+  const logoutDsh = (target: string) => {
+    setBusy(true);
+    fetch(`${ROUTE}/boxes/login/logout`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ url: target }),
+    })
+      .then(() => refresh())
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setBusy(false));
+  };
   /** The update pill after a click: the command sits on the clipboard for a moment's notice. */
   const [updateCopied, setUpdateCopied] = useState<"" | "command copied" | "copy blocked">("");
   const copyUpdate = () => {
@@ -1948,9 +1964,33 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
                       plugin {st.status.plugin ?? "?"}
                       {skew ? ` ≠ ${self.plugin} here` : ""}
                     </span>
+                    {/* The same Log in and Log out every row has, run by that dsh's own copy of
+                        this plugin on its box. */}
+                    {st.status.binary && !st.status.loggedIn && dsh.login?.host !== b.url && (
+                      <button
+                        type="button"
+                        style={btn}
+                        disabled={busy}
+                        onClick={() => dsh.startLogin(b.url)}
+                      >
+                        Log in
+                      </button>
+                    )}
+                    {st.status.loggedIn && (
+                      <ConfirmButton
+                        label="Log out"
+                        ariaLabel={`Log out ${b.name}: log its Claude Code out and stop its running sessions`}
+                        style={btn}
+                        disabled={busy}
+                        onAct={() => logoutDsh(b.url)}
+                      />
+                    )}
                   </>
                 )}
               </div>
+              {dsh.login?.host === b.url && (
+                <LoginSteps login={dsh.login} setLogin={dsh.setLogin} submit={dsh.submitLogin} />
+              )}
             </div>
             <button
               type="button"
