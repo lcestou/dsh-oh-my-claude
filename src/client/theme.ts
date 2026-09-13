@@ -13,19 +13,20 @@ const OFF_KEY = {
 const isColourInt = (v: boolean | number | undefined): v is number =>
   Number.isInteger(v) && Number(v) >= 0 && Number(v) <= 0xffffff;
 
-type ThemeResult = { groups: ThemeGroup[]; accent: string };
+type ThemeResult = { groups: ThemeGroup[]; accent: string; shimmer: string };
 
 /** Hints in, body tokens and accent out. Absent keys mean on and the default colour. */
 export function themeOf(hints: Record<string, boolean | number>): ThemeResult {
   const n = isColourInt(hints.themeAccent) ? hints.themeAccent : THEME_DEFAULT_ACCENT;
   const accent = "#" + n.toString(16).padStart(6, "0");
+  const shimmer = accent === "#d97757" ? "#f59575" : `color-mix(in srgb, ${accent} 72%, white)`;
 
   if (hints.themeOff === true) {
-    return { groups: [], accent };
+    return { groups: [], accent, shimmer };
   }
 
   const groups = THEME_GROUPS.filter((g) => hints[OFF_KEY[g]] !== true);
-  return { groups, accent };
+  return { groups, accent, shimmer };
 }
 
 /** "#rrggbb" (lower case, six digits) to its channels. */

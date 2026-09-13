@@ -71,6 +71,7 @@ import {
   resumeCommand,
   saveBlob,
 } from "./shared.js";
+import { themeOf } from "./theme.js";
 import { PluginUpdateBadge } from "./update-pill.js";
 import { ReportBlock } from "./report.js";
 import { Spark, sparkNode } from "./spark.js";
@@ -5049,6 +5050,17 @@ function useHintFlag(flag: string): [boolean, (on: boolean) => void] {
   return [value === true, (on) => set(on)];
 }
 
+/** Write the Claude look's switches to the page: the group tokens on `<body>` (absent means every
+ *  group on, so the first paint before the hints load is today's paint) and the accent pair on the
+ *  root. Read by the sheets through `[data-omc-theme~="…"]` and `var(--omc-accent)`. */
+function applyTheme(hints: Record<string, boolean | number>): void {
+  const theme = themeOf(hints);
+  document.body.setAttribute("data-omc-theme", theme.groups.join(" "));
+  const root = document.documentElement.style;
+  root.setProperty("--omc-accent", theme.accent);
+  root.setProperty("--omc-shimmer", theme.shimmer);
+}
+
 /** dsh's own settings switch, drawn with its measurements and colour tokens: a 36 by 20 pill with a
  *  16 px thumb that slides 16 px, brand-coloured when on. Its class names are generated per build,
  *  so the look is copied rather than the class borrowed. */
@@ -5790,6 +5802,14 @@ export function apply(ctx: ClientCtx) {
   watchSessionSpinners(ctx);
   watchUltrathink(ctx);
   watchToolFolds();
+
+  // The Claude look: apply the stored switches once the hints load, and again on every change
+  // (a Settings switch dispatches HINTS_EVENT after its POST). Removed with the module, like the
+  // interval in watchTurnStatus, so a hot reload does not stack listeners.
+  const reapplyTheme = () => void loadHints().then(applyTheme, console.error);
+  reapplyTheme();
+  window.addEventListener(HINTS_EVENT, reapplyTheme);
+  whenContextGone(() => window.removeEventListener(HINTS_EVENT, reapplyTheme));
 
   const SECTION_LABEL = "Oh My Claude";
 

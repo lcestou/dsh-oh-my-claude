@@ -5,6 +5,7 @@ import { themeOf, hexToRgb, THEME_GROUPS } from "./theme.js";
 assert.deepEqual(themeOf({}), {
   groups: ["row", "prose", "send", "panel", "rainbow"],
   accent: "#d97757",
+  shimmer: "#f59575",
 });
 assert.deepEqual(themeOf({ themeOff: true }).groups, []);
 assert.deepEqual(themeOf({ themeProseOff: true }).groups, ["row", "send", "panel", "rainbow"]);
@@ -13,6 +14,9 @@ assert.deepEqual(themeOf({ themeRowOff: true, themeRainbowOff: true }).groups, [
   "send",
   "panel",
 ]);
+assert.equal(themeOf({}).shimmer, "#f59575");
+assert.equal(themeOf({ themeAccent: 0xd97757 }).shimmer, "#f59575");
+assert.equal(themeOf({ themeAccent: 0x3366cc }).shimmer, "color-mix(in srgb, #3366cc 72%, white)");
 assert.equal(themeOf({ themeAccent: 0x3366cc }).accent, "#3366cc");
 assert.equal(themeOf({ themeAccent: 0x0066cc }).accent, "#0066cc");
 assert.equal(themeOf({ themeAccent: -1 }).accent, "#d97757");
