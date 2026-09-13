@@ -227,22 +227,36 @@ export const row: CSSProperties = {
   padding: "9px 0",
   borderTop: `1px solid ${T.border}`,
 };
+/** dsh's own settings-card buttons (ui-settings-plugins, 2026-09-13): the secondary is a hairline
+ *  box in the secondary label colour that firms up under the pointer; the primary is the primary
+ *  label colour filled, text in the layer colour. Hover, disabled and focus live in one CSS rule
+ *  under the settings section and the panel, since inline styles cannot carry states. */
 export const btn: CSSProperties = {
-  padding: "5px 12px",
+  appearance: "none",
+  font: "inherit",
+  padding: "5px 14px",
   cursor: "pointer",
   borderRadius: 8,
   border: `1px solid ${T.border}`,
   background: "transparent",
-  color: T.text,
+  color: T.muted,
   fontSize: 13,
+  lineHeight: 1.5,
   whiteSpace: "nowrap",
 };
 export const btnPrimary: CSSProperties = {
   ...btn,
-  background: T.brand,
-  color: T.onBrand,
+  background: "var(--dsw-alias-label-primary, #eee)",
+  color: "var(--dsw-alias-bg-layer-3, #111)",
   border: "1px solid transparent",
 };
+/** The states those two need, plus the fields', as one stylesheet rule set under `scope`. */
+export const controlStatesCss = (scope: string): string =>
+  `${scope} button:not([role="switch"]):not([aria-expanded]):disabled{opacity:.4;cursor:default}` +
+  `${scope} button:not([role="switch"]):not([aria-expanded]):not(:disabled):hover{color:var(--dsw-alias-label-primary,inherit);border-color:var(--dsw-alias-label-dimmed,rgba(128,128,128,.5))}` +
+  `${scope} button:not([role="switch"]):focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#3b82f6);outline-offset:1px}` +
+  `${scope} input:not([type="checkbox"]):not([type="file"]):focus-visible,${scope} select:focus-visible,${scope} textarea:focus-visible{border-color:var(--dsw-alias-brand-primary,#3b82f6);outline:none}` +
+  `${scope} input:disabled,${scope} select:disabled{color:var(--dsw-alias-label-tertiary,rgba(128,128,128,.7));cursor:default}`;
 export const pill = (color: string): CSSProperties => ({
   display: "inline-block",
   padding: "1px 8px",
@@ -258,16 +272,35 @@ export const pill = (color: string): CSSProperties => ({
   // and squashing it hides them. The text beside it gives way instead.
   flex: "0 0 auto",
 });
-export const select: CSSProperties = {
-  padding: "4px 8px",
+/** dsh's settings field (ui-settings-plugins `input`, ui-settings-models `selectInput`): a hairline
+ *  box on the layer colour, 32px tall, the brand colour on focus, and a drawn chevron on a select. */
+export const inputStyle: CSSProperties = {
+  boxSizing: "border-box",
+  appearance: "none",
+  font: "inherit",
+  height: 32,
+  padding: "0 12px",
   borderRadius: 8,
-  border: `1px solid ${T.border}`,
-  background: T.field,
+  border: "0.5px solid var(--dsw-alias-border-l4, rgba(128,128,128,.3))",
+  background: "var(--dsw-alias-bg-layer-3, transparent)",
   color: T.text,
   fontSize: 13,
-  maxWidth: 260,
+  lineHeight: 1.5,
+  minWidth: 0,
+  flex: 1,
 };
-export const inputStyle: CSSProperties = { ...select, minWidth: 0, flex: 1 };
+export const select: CSSProperties = {
+  ...inputStyle,
+  flex: "0 1 auto",
+  maxWidth: 260,
+  cursor: "pointer",
+  paddingRight: 32,
+  backgroundImage:
+    "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M3 4.5L6 7.5L9 4.5' stroke='%2381858C' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E\")",
+  backgroundPosition: "right 12px center",
+  backgroundRepeat: "no-repeat",
+  backgroundSize: "12px 12px",
+};
 export const code: CSSProperties = {
   width: "100%",
   boxSizing: "border-box",
