@@ -1781,11 +1781,11 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
                   </span>
                 )
               )}
-              {/* The method rides along, since the panel token and the CLI's own login look the
-                  same otherwise and a Log out that forgot only the token read as a no-op. */}
+              {/* A token from the earlier setup-token flow is named, since it is the plugin's alone;
+                  a login made here or in a terminal is the CLI's own and needs no label. */}
               <span style={pill(me.loggedIn ? T.ok : T.err)} data-omc-login-method={me.authMethod}>
                 {me.loggedIn
-                  ? `${maskEmail(me.email ?? "logged in")} · ${me.authMethod === "panel token" ? "panel token" : "terminal login"}`
+                  ? `${maskEmail(me.email ?? "logged in")}${me.authMethod === "panel token" ? " · panel token" : ""}`
                   : "not logged in"}
               </span>
               {/* The same relay the ssh rows use, run under a local PTY; the token it mints goes

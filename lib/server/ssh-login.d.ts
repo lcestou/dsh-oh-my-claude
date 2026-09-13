@@ -9,35 +9,31 @@ export declare const THIS_BOX = "";
 export declare function sshTokenPath(stateDir: string, host: string): string;
 /** The stored login token for a host, or undefined if the box was never logged in from the panel. */
 export declare function readSshToken(stateDir: string, host: string): string | undefined;
-export declare function writeSshToken(stateDir: string, host: string, token: string): void;
 export declare function deleteSshToken(stateDir: string, host: string): void;
-/**
- * The command line that runs `setup-token` under a PTY. On a box it rides `ssh -tt`. On this box
- * there is no ssh to lend a PTY, so `script` (util-linux on Linux, BSD's on macOS) provides one;
- * the invocation differs between the two, which is what the platform switch is for.
- */
 /** A process to start: the binary and its argument list. */
 export interface Invocation {
     command: string;
     args: string[];
 }
-export declare function setupTokenInvocation(host: string, command?: string, platform?: NodeJS.Platform): Invocation;
 /**
- * Start `claude setup-token` on `host` (THIS_BOX for the local one) under a kept-alive PTY and
- * resolve with the OAuth URL it prints. The process is held in `logins` keyed by host until the
- * code is submitted or it times out. A prior unfinished login for the same host is killed first.
+ * The command line that runs `claude auth login` under a PTY. On a box it rides `ssh -tt`. On this
+ * box there is no ssh to lend a PTY, so `script` (util-linux on Linux, BSD's on macOS) provides one;
+ * the invocation differs between the two, which is what the platform switch is for.
+ */
+export declare function loginInvocation(host: string, command?: string, platform?: NodeJS.Platform): Invocation;
+/**
+ * Start `claude auth login` on `host` (THIS_BOX for the local one) under a kept-alive PTY and
+ * resolve with the sign-in URL it prints. The process is held in `logins` keyed by host until it
+ * finishes or its time to live passes. A prior unfinished login for the same host is killed first.
  */
 export declare function startSshLogin(host: string, spawnFn?: SpawnFn, timeoutMs?: number, command?: string, ttlMs?: number): Promise<{
     url?: string;
     error?: string;
 }>;
-/** What a held login has come to: undefined while it runs; the token once it has printed one and
- * exited; an error when it exited without one. Answered again on every ask, so a poll and a submit
- * that both see the finished login both get the same token rather than one of them a stale error. */
-/** How a login ended: `done` with the minted token, or not, with the CLI's last line as the error. */
+/** How a login ended: `done` once the box's own `claude auth status` says logged in after the
+ *  process exited, or not, with the CLI's last line as the error. */
 export interface LoginOutcome {
     done: boolean;
-    token?: string;
     error?: string;
 }
 /** A poll's answer: still running, or the outcome. */
@@ -46,19 +42,20 @@ export type LoginPoll = {
 } | ({
     pending: false;
 } & LoginOutcome);
+/** Asks the box whether it is logged in now: the one proof a login took, run after the process
+ *  exits. The routes hand in `claude auth status` on that box; tests hand in a stub. */
+export type VerifyLogin = () => Promise<boolean>;
 /**
- * Whether the held login has finished by itself. `claude setup-token` on a box that already has a
- * login mints the token without a browser and without a code (CLI 2.1.26x, prompt reads "Paste code
- * here if prompted"), so the panel cannot wait on a paste that never comes: it asks this every few
- * seconds after showing the link and stores the token when it lands.
+ * Whether the held login has finished by itself. On a box with a browser the approval reaches the
+ * CLI over loopback and it exits with no code pasted, so the panel cannot wait on a paste that never
+ * comes: it asks this every few seconds after showing the link.
  */
-export declare function pollSshLogin(host: string): LoginPoll;
+export declare function pollSshLogin(host: string, verify: VerifyLogin): Promise<LoginPoll>;
 /**
- * Write the pasted code to the held setup-token process, submit it with a carriage return, and wait
- * for the process to finish and print the token. Resolves with the minted token on success; the caller
- * stores it. A login that exits without a token reads honestly as an error rather than claiming
- * success. A login that already finished on its own answers with its token: the code was never
- * needed, and "no login in progress" after a successful mint sent the owner back to start.
+ * Write the pasted code to the held login process, submit it with a carriage return, and wait for
+ * the process to finish; then the box says whether the login took. A login that exits without one
+ * reads honestly as an error rather than claiming success. A login that already finished on its
+ * own answers with its outcome: the code was never needed.
  */
-export declare function submitSshLoginCode(host: string, code: string, timeoutMs?: number): Promise<LoginOutcome>;
+export declare function submitSshLoginCode(host: string, code: string, verify: VerifyLogin, timeoutMs?: number): Promise<LoginOutcome>;
 export {};
