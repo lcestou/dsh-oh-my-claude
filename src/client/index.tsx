@@ -2377,11 +2377,17 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
           </button>
         </div>
       )}
+      {/* Nothing here works without an ssh box, so the whole block reads as unavailable until one
+          is saved, not just its button. */}
       <div
+        data-omc-remote-workspaces={ssh.length > 0 ? "on" : "off"}
+        aria-disabled={ssh.length === 0}
         style={{
           borderTop: `1px solid ${T.border}`,
           marginTop: 12,
           paddingTop: 12,
+          opacity: ssh.length > 0 ? 1 : 0.45,
+          transition: "opacity 120ms ease",
         }}
       >
         <h3 style={h3}>Remote workspaces</h3>
@@ -2416,7 +2422,9 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
           <p style={{ ...meta, whiteSpace: "normal", flex: "1 1 220px", margin: 0 }}>
             {canAdd
               ? "Add one from the sidebar's Add workspace button: it browses whichever box you pick."
-              : "Add an SSH box above first; the button then browses it."}
+              : ssh.length === 0
+                ? "Needs an ssh box above first."
+                : "The sidebar's Add workspace button browses the box you pick once dsh can list its folders."}
           </p>
           <button
             type="button"
