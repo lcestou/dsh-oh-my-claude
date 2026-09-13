@@ -4647,6 +4647,34 @@ function StarterSwitch() {
   );
 }
 
+/** The settings switch for the update notice. The flag lives in the box's hints store, which the
+ *  server reads before it asks npm: off means no registry read at all, not a hidden pill. */
+function UpdateNoticeSwitch() {
+  const [off, setOff] = useHintFlag("updateCheckOff");
+  return (
+    <div
+      data-omc-update-switch=""
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
+        fontSize: 13,
+        marginBottom: 12,
+      }}
+    >
+      <div>
+        <div>Update notice</div>
+        <div style={{ color: T.faint, fontSize: 12 }}>
+          Say on the This box row when a newer plugin is on npm. One registry read a day, from this
+          dsh server; off means none.
+        </div>
+      </div>
+      <Switch on={!off} onChange={(next) => setOff(!next)} label="Update notice" />
+    </div>
+  );
+}
+
 /** The settings switch for terminal sync. Server-held, unlike the starter's client hint: it gates a
  *  watcher the adapter runs, so it reads and writes the plugin's `/terminal-sync` route. */
 function TerminalSyncSwitch() {
@@ -5156,6 +5184,7 @@ export function apply(ctx: ClientCtx) {
           </h2>
         </div>
         <StarterSwitch />
+        <UpdateNoticeSwitch />
         <TerminalSyncSwitch />
         {error && <p style={{ color: T.err, fontSize: 13 }}>{error}</p>}
         {boxes !== null && (

@@ -196,10 +196,26 @@ const PLUGIN_NAME =
   isJsonObject(packageJson) && typeof packageJson.name === "string" ? packageJson.name : "";
 /** The one `dsh plugin ... update` line for this install; the profile is read off this file's path. */
 const UPDATE_COMMAND = updateCommand(PLUGIN_NAME, profileFromPath(import.meta.url));
+/** The box-wide booleans under `hints.json`: one-time hints and the settings switches. Only `true`
+ *  is kept, so a missing or unreadable file reads as every switch at its default. */
+async function readHints(hintsPath: string): Promise<Record<string, boolean>> {
+  const parsed: unknown = await readFile(hintsPath, "utf8")
+    .then((t) => JSON.parse(t))
+    .catch(() => null);
+  const out: Record<string, boolean> = {};
+  if (isJsonObject(parsed))
+    for (const [k, v] of Object.entries(parsed)) if (v === true) out[k] = true;
+  return out;
+}
+
 /** A newer release on npm than the one running, with the command that brings it in. Only this box
- *  asks: a remote dsh box answers its own `/status` from its own copy. */
-async function pluginUpdate(): Promise<{ latest: string; update: string } | undefined> {
+ *  asks: a remote dsh box answers its own `/status` from its own copy. The Update notice switch
+ *  (`updateCheckOff` in the hints store) turns the read off entirely, not just the pill. */
+async function pluginUpdate(
+  hintsPath: string,
+): Promise<{ latest: string; update: string } | undefined> {
   if (!PLUGIN_NAME || !PLUGIN_VERSION) return undefined;
+  if ((await readHints(hintsPath)).updateCheckOff) return undefined;
   const latest = await latestVersion(PLUGIN_NAME);
   return latest && isNewer(PLUGIN_VERSION, latest) ? { latest, update: UPDATE_COMMAND } : undefined;
 }
@@ -1850,7 +1866,9 @@ export function registerSessionRoutes(
                 // is bounded regardless; a remote box reports its own plugin from its own copy.
                 const [status, upd] = await Promise.all([
                   runtimeStatus(box.configDir, box.command, box.sshHost),
-                  box.sshHost ? undefined : pluginUpdate(),
+                  box.sshHost || !sshBoxesPath
+                    ? undefined
+                    : pluginUpdate(join(dirname(sshBoxesPath), "hints.json")),
                 ]);
                 if (upd) Object.assign(status, upd);
                 // A panel login on this box stores a token the default instance injects at spawn;
@@ -1974,12 +1992,7 @@ export function registerSessionRoutes(
               // this box holds for every browser and every update. `false` drops the key.
               if (sshBoxesPath && url.pathname === `${ROUTE_PREFIX}/hints`) {
                 const hintsPath = join(dirname(sshBoxesPath), "hints.json");
-                const parsed: unknown = await readFile(hintsPath, "utf8")
-                  .then((t) => JSON.parse(t))
-                  .catch(() => null);
-                const current: Record<string, boolean> = {};
-                if (isJsonObject(parsed))
-                  for (const [k, v] of Object.entries(parsed)) if (v === true) current[k] = true;
+                const current = await readHints(hintsPath);
                 if (req.method === "GET") return json(res, 200, current);
                 if (req.method === "POST") {
                   const body = await readBody(req);
