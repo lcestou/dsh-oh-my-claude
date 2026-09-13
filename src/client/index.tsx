@@ -58,6 +58,7 @@ import {
   activeClaudeSession,
   isClaudeSession,
   activeClaudeProvider,
+  claudeProviderOf,
   type ClientCtx,
   openHere,
   maskEmail,
@@ -4629,6 +4630,44 @@ interface StarterReply {
   fallback: string;
 }
 
+/** Session ids this tab already applied a remembered model to, so a re-render never re-selects. */
+const appliedModel = new Set<string>();
+
+/**
+ * On a blank session whose provider is already Claude, select the model this workspace last ran.
+ * The provider is never changed: the memory is which Claude model, not whether Claude. Once per
+ * session id per tab, and never once the session has a message.
+ */
+function WorkspaceModelMemory({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
+  useEffect(() => {
+    const entry = ctx.sessions.list.getSnapshot()?.byId[sessionId];
+    if (!entry || entry.blank === false || !entry.cwd) return;
+    const provider = claudeProviderOf(ctx, sessionId);
+    if (!provider || appliedModel.has(sessionId)) return;
+    appliedModel.add(sessionId);
+    let live = true;
+    const runApply = async () => {
+      const hints = await readJson<Record<string, boolean | number>>(await fetch(`${ROUTE}/hints`));
+      if (hints.workspaceModelOff === true || !live) return;
+      const q = `cwd=${encodeURIComponent(entry.cwd ?? "")}`;
+      const saved = await readJson<{ model?: string }>(
+        await fetch(`${ROUTE}/workspace-model?${q}`),
+      );
+      if (!saved.model || !live) return;
+      const dir = ctx.modelDirectories.directoryFor(sessionId);
+      if (dir.store.getSnapshot().current?.model === saved.model) return;
+      if (dir.select) await dir.select({ provider, model: saved.model });
+    };
+    // A session dsh has not bound yet throws from directoryFor (see claudeProviderOf); a route
+    // that is not there answers an error. Neither is this component's problem to report.
+    void runApply().catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [ctx, sessionId]);
+  return null;
+}
+
 /**
  * The prompt starter: a card above the composer on a session that has not been used yet, offering the
  * opening line saved for this session — or, on a brand-new tab, the last one saved anywhere — and
@@ -4936,6 +4975,33 @@ function UpdateNoticeSwitch() {
         </div>
       </div>
       <Switch on={!off} onChange={(next) => setOff(!next)} label="Update notice" />
+    </div>
+  );
+}
+
+/** The settings switch for remembering which Claude model a workspace last ran. */
+function WorkspaceModelSwitch() {
+  const [off, setOff] = useHintFlag("workspaceModelOff");
+  return (
+    <div
+      data-omc-workspace-model-switch=""
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
+        fontSize: 13,
+        marginBottom: 12,
+      }}
+    >
+      <div>
+        <div>Remember model per workspace</div>
+        <div style={{ color: T.faint, fontSize: 12 }}>
+          A new Claude session in a workspace opens on the model it last ran there. The provider
+          never changes; only which Claude model.
+        </div>
+      </div>
+      <Switch on={!off} onChange={(next) => setOff(!next)} label="Remember model per workspace" />
     </div>
   );
 }
@@ -5535,6 +5601,7 @@ export function apply(ctx: ClientCtx) {
         </div>
         <StarterSwitch />
         <UpdateNoticeSwitch />
+        <WorkspaceModelSwitch />
         <TerminalSyncSwitch />
         {error && <p style={{ color: T.err, fontSize: 13 }}>{error}</p>}
         {boxes !== null && (
@@ -5624,6 +5691,12 @@ export function apply(ctx: ClientCtx) {
     ctx.slots.register(
       { name: "conversation.input.dock", id: "claude-tool-icons", order: 46 },
       () => <ToolIconSprites />,
+    );
+    // Renderless: applies the workspace's remembered Claude model to a blank session.
+    ctx.slots.register(
+      { name: "conversation.input.dock", id: "claude-workspace-model", order: 47 },
+      (props) =>
+        props.sessionId ? <WorkspaceModelMemory sessionId={props.sessionId} ctx={ctx} /> : null,
     );
     return null;
   });
