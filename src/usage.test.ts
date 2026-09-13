@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { UsageCredits } from "./usage.js";
 import { extraUsageOn, readUsage, stillLimitedUntil, usageCredits, usageWindows } from "./usage.js";
 
@@ -35,23 +38,36 @@ assert.deepEqual(usageWindows({ five_hour: { utilization: 50, resets_at: null },
 assert.deepEqual(usageWindows(null), []);
 assert.deepEqual(usageWindows({ limits: "nope" }), []);
 
+// A fake login in a scratch home, so these reads never touch this box's own credentials: with the
+// box logged out they stopped at "needs a Claude Code login" before the fake fetch was ever called.
+const home = mkdtempSync(join(tmpdir(), "omc-usage-"));
+writeFileSync(
+  join(home, ".credentials.json"),
+  JSON.stringify({
+    claudeAiOauth: { accessToken: "sk-ant-test", expiresAt: Date.now() + 3_600_000 },
+  }),
+);
+
 // readUsage never throws
 const dead = await readUsage(async () => {
   throw new Error("ECONNREFUSED");
-});
+}, home);
 assert.equal(dead.ok, false);
 
 // a 429 surfaces retryAfterMs from the header (seconds), so the route can back off
-const limited = await readUsage(async () => ({
-  status: 429,
-  headers: { get: (n: string) => (n === "retry-after" ? "120" : null) },
-  json: async () => ({}),
-}));
+const limited = await readUsage(
+  async () => ({
+    status: 429,
+    headers: { get: (n: string) => (n === "retry-after" ? "120" : null) },
+    json: async () => ({}),
+  }),
+  home,
+);
 assert.equal(limited.ok, false);
 assert.equal(limited.ok === false && limited.retryAfterMs, 120_000);
 
 // a 429 with no header still backs off at the floor (60s), never 0
-const noHeader = await readUsage(async () => ({ status: 429, json: async () => ({}) }));
+const noHeader = await readUsage(async () => ({ status: 429, json: async () => ({}) }), home);
 assert.equal(noHeader.ok === false && noHeader.retryAfterMs, 60_000);
 
 // still at the cap: the latest reset among full windows; nothing when all have room, expired, or unreadable

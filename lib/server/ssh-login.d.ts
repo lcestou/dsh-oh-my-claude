@@ -31,15 +31,34 @@ export declare function startSshLogin(host: string, spawnFn?: SpawnFn, timeoutMs
     url?: string;
     error?: string;
 }>;
+/** What a held login has come to: undefined while it runs; the token once it has printed one and
+ * exited; an error when it exited without one. Answered again on every ask, so a poll and a submit
+ * that both see the finished login both get the same token rather than one of them a stale error. */
+/** How a login ended: `done` with the minted token, or not, with the CLI's last line as the error. */
+export interface LoginOutcome {
+    done: boolean;
+    token?: string;
+    error?: string;
+}
+/** A poll's answer: still running, or the outcome. */
+export type LoginPoll = {
+    pending: true;
+} | ({
+    pending: false;
+} & LoginOutcome);
+/**
+ * Whether the held login has finished by itself. `claude setup-token` on a box that already has a
+ * login mints the token without a browser and without a code (CLI 2.1.26x, prompt reads "Paste code
+ * here if prompted"), so the panel cannot wait on a paste that never comes: it asks this every few
+ * seconds after showing the link and stores the token when it lands.
+ */
+export declare function pollSshLogin(host: string): LoginPoll;
 /**
  * Write the pasted code to the held setup-token process, submit it with a carriage return, and wait
  * for the process to finish and print the token. Resolves with the minted token on success; the caller
  * stores it. A login that exits without a token reads honestly as an error rather than claiming
- * success.
+ * success. A login that already finished on its own answers with its token: the code was never
+ * needed, and "no login in progress" after a successful mint sent the owner back to start.
  */
-export declare function submitSshLoginCode(host: string, code: string, timeoutMs?: number): Promise<{
-    done: boolean;
-    token?: string;
-    error?: string;
-}>;
+export declare function submitSshLoginCode(host: string, code: string, timeoutMs?: number): Promise<LoginOutcome>;
 export {};

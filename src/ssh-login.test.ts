@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   deleteSshToken,
+  pollSshLogin,
   readSshToken,
   sshTokenPath,
   startSshLogin,
@@ -113,8 +114,53 @@ function fakeChild() {
   await new Promise((r) => setTimeout(r, 650));
   assert.ok(child.written.includes("\r"));
 
-  // After it has exited, a further submit reports no login in progress.
-  assert.match((await submitSshLoginCode("nova", "again")).error ?? "", /no login in progress/);
+  // After it has exited with a token, a further submit or a poll answers with that token again: a
+  // second ask must not undo a login that succeeded.
+  assert.equal((await submitSshLoginCode("nova", "again")).token, FULL);
+  assert.deepEqual(pollSshLogin("nova"), { pending: false, done: true, token: FULL });
+  assert.deepEqual(pollSshLogin("never-started"), {
+    pending: false,
+    done: false,
+    error: "no login in progress; start again",
+  });
+}
+
+// setup-token on a box that already has a login mints the token by itself: no code is ever pasted.
+// The poll reads pending while it runs and hands over the token once it has printed one and exited.
+{
+  let child: any;
+  const spawnFn = (() => {
+    child = fakeChild();
+    setTimeout(
+      () =>
+        child.stdout.emit(
+          "data",
+          Buffer.from(
+            "https://claude.com/cai/oauth/authorize?code=true&state=s\nPaste code here if prompted >",
+          ),
+        ),
+      5,
+    );
+    return child;
+  }) as any;
+  await startSshLogin("box0", spawnFn, 2000);
+  assert.deepEqual(pollSshLogin("box0"), { pending: true });
+  child.stdout.emit("data", Buffer.from(`\n✓ created\n${FULL}\n`));
+  child.emit("close", 0);
+  assert.deepEqual(pollSshLogin("box0"), { pending: false, done: true, token: FULL });
+  assert.equal(child.written.length, 0, "nothing typed at a prompt that never needed a code");
+  // Exited without a token: the poll carries the CLI's last line, not a false success.
+  const spawn2 = (() => {
+    child = fakeChild();
+    setTimeout(() => child.stdout.emit("data", Buffer.from("https://claude.com/z?state=1\n")), 5);
+    return child;
+  }) as any;
+  await startSshLogin("box0", spawn2, 2000);
+  child.stdout.emit("data", Buffer.from("Failed to exchange authorization code\n"));
+  child.emit("close", 1);
+  const failed = pollSshLogin("box0");
+  assert.ok(!failed.pending && failed.done === false);
+  assert.match((failed.pending ? "" : failed.error) ?? "", /Failed to exchange/);
 }
 
 // A login that exits without a token is an honest error, not a false success.
