@@ -1801,31 +1801,23 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
                   Log in
                 </button>
               )}
-              {me.loggedIn && (
+              {/* One Log out does everything: forgets a stored token, logs the box's Claude Code
+                  out, and kills its running sessions. It also shows when the box reads logged out
+                  on disk but processes started earlier still answer on the login they read then. */}
+              {!me.loggedIn && (me.running ?? 0) > 0 && (
+                <span style={{ color: T.faint, fontSize: 12 }} data-omc-running={me.running}>
+                  {me.running} {me.running === 1 ? "session" : "sessions"} still answering on the
+                  old login
+                </span>
+              )}
+              {(me.loggedIn || (me.running ?? 0) > 0) && (
                 <ConfirmButton
                   label="Log out"
-                  ariaLabel="Log out: forget the panel token and log this box's Claude Code out"
+                  ariaLabel="Log out: log this box's Claude Code out and stop its running sessions"
                   style={btn}
                   disabled={busy}
                   onAct={() => logout("")}
                 />
-              )}
-              {/* Logged out on disk, but processes started earlier still hold the login they read
-                  then and keep answering. Say so, and offer the same cut Log out makes. */}
-              {!me.loggedIn && (me.running ?? 0) > 0 && (
-                <>
-                  <span style={{ color: T.faint, fontSize: 12 }} data-omc-running={me.running}>
-                    {me.running} {me.running === 1 ? "session" : "sessions"} still answering on the
-                    old login
-                  </span>
-                  <ConfirmButton
-                    label="Stop them"
-                    ariaLabel="Stop the sessions still running on the old login"
-                    style={btn}
-                    disabled={busy}
-                    onAct={() => logout("")}
-                  />
-                </>
               )}
               {!me.binary && (
                 <span style={{ width: "100%", color: T.err, fontSize: 12 }}>
