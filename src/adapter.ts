@@ -1814,6 +1814,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    *  tokens for real. Set by the live translator, cleared when the turn ends; a session with no entry
    *  has no turn running. */
   readonly liveTurn = new Map<string, LiveTurn>();
+  /** The model last written to workspace-models.json per cwd, so a turn on the same model writes nothing. */
+  readonly workspaceModelWritten = new Map<string, string>();
   /** Per-session idle watchdog deadline in epoch ms; null means no active arm. */
   readonly idleDeadlineMap = new Map<string, number | null>();
   /** Per-session kill and warning timers, keyed by session id. */
@@ -3462,7 +3464,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     if (prep.spec.model && !prep.spec.temporary) {
       const wsCwd =
         this.ctx?.sessions?.get?.(asSessionId(options.sessionId))?.header?.cwd ?? prep.cwd;
-      void saveWorkspaceModel(STATE_DIR, wsCwd, prep.spec.model).catch(() => {});
+      // One file write per change, not per turn: a long session on one model writes once.
+      if (this.workspaceModelWritten.get(wsCwd) !== prep.spec.model) {
+        this.workspaceModelWritten.set(wsCwd, prep.spec.model);
+        void saveWorkspaceModel(STATE_DIR, wsCwd, prep.spec.model).catch(() => {});
+      }
     }
     const key = specKey(prep.spec);
     const key2 = registryKey(this.providerId, options.sessionId);

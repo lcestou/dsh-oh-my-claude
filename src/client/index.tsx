@@ -4796,7 +4796,7 @@ function WorkspaceModelMemory({ sessionId, ctx }: { sessionId: string; ctx: Clie
     appliedModel.add(sessionId);
     let live = true;
     const runApply = async () => {
-      const hints = await readJson<Record<string, boolean | number>>(await fetch(`${ROUTE}/hints`));
+      const hints = await loadHints();
       if (hints.workspaceModelOff === true || !live) return;
       const q = `cwd=${encodeURIComponent(entry.cwd ?? "")}`;
       const saved = await readJson<{ model?: string }>(
@@ -4998,6 +4998,16 @@ function Slide({ open, children }: { open: boolean; children: ReactNode }) {
  *  mounted reader through one window event, so the settings switch hides the dock without a remount. */
 const HINTS_EVENT = "omc-hints";
 let statusOnce: Promise<boolean> | undefined;
+/** One read of the store shared by every hook on the page: a Settings open mounts five readers and
+ *  every cost pill two, so the fetch is memoised until a write dispatches the event. */
+let hintsOnce: Promise<Record<string, boolean | number>> | undefined;
+const loadHints = (): Promise<Record<string, boolean | number>> =>
+  (hintsOnce ??= fetch(`${ROUTE}/hints`)
+    .then((r) => readJson<Record<string, boolean | number>>(r))
+    .catch(() => {
+      hintsOnce = undefined; // a failed read is retried by the next reader, not cached
+      return {};
+    }));
 function useHintValue(
   key: string,
 ): [boolean | number | undefined, (next: boolean | number | null) => void] {
@@ -5005,12 +5015,9 @@ function useHintValue(
   useEffect(() => {
     let live = true;
     const load = () =>
-      fetch(`${ROUTE}/hints`)
-        .then((r) => readJson<Record<string, boolean | number>>(r))
-        .then((h) => {
-          if (live) setValue(h[key]);
-        })
-        .catch(() => {});
+      loadHints().then((h) => {
+        if (live) setValue(h[key]);
+      });
     void load();
     window.addEventListener(HINTS_EVENT, load);
     return () => {
@@ -5024,7 +5031,10 @@ function useHintValue(
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ [key]: next }),
-    }).finally(() => window.dispatchEvent(new Event(HINTS_EVENT)));
+    }).finally(() => {
+      hintsOnce = undefined; // every reader re-reads once, through one shared fetch
+      window.dispatchEvent(new Event(HINTS_EVENT));
+    });
   };
   return [value, set];
 }
