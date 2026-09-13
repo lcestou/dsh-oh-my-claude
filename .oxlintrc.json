@@ -55,6 +55,7 @@
     },
     {
       "files": [
+        "src/anthropic-status.ts",
         "src/process.ts",
         "src/remote-fs.ts",
         "src/hold.ts",
@@ -77,6 +78,7 @@
     },
     {
       "files": [
+        "src/anthropic-status.ts",
         "src/process.ts",
         "src/remote-fs.ts",
         "src/hold.ts",
@@ -106,6 +108,7 @@
     },
     {
       "files": [
+        "src/anthropic-status.ts",
         "src/process.ts",
         "src/hold.ts",
         "src/reach.ts",

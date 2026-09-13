@@ -1,5 +1,6 @@
 // Offline self-check: node src/adapter.test.js. No CLI, no network.
 import assert from "node:assert/strict";
+import { anthropicStatus, forgetStatus } from "./anthropic-status.js";
 import {
   nativeToolRows,
   Config,
@@ -2639,6 +2640,18 @@ console.log("schema-guard ok");
   assert.match(failureOf(expired).message, /OAuth access token is invalid/);
   const other = finishReason({ is_error: true, result: "rate limited" });
   assert.equal(failureOf(other).message, "rate limited");
+  // A 5xx that gave up carries what the status page said, once the retries have read it.
+  forgetStatus();
+  const fetchMinor = async () =>
+    new Response(
+      JSON.stringify({ status: { indicator: "minor", description: "Degraded performance" } }),
+    );
+  await anthropicStatus(fetchMinor);
+  const gaveUp = finishReason({ is_error: true, api_error_status: 529, result: "overloaded" });
+  assert.equal(failureOf(gaveUp).message, "overloaded · Anthropic reports Degraded performance");
+  forgetStatus();
+  const unknown = finishReason({ is_error: true, api_error_status: 529, result: "overloaded" });
+  assert.equal(failureOf(unknown).message, "overloaded", "nothing cached, nothing appended");
   // The one predicate the error text and the composer's login card share.
   assert.equal(
     isLoginFailure({ is_error: true, result: "Not logged in · Please run /login" }),

@@ -419,6 +419,8 @@ export class Translator {
   /** IANA zone for reset clocks: the browser's when dsh stamped one, else the box's. */
   timeZone: string | undefined;
   hostLabel: string | undefined;
+  /** The suffix for a 5xx retry line, from the adapter's cache of Anthropic's status page. */
+  statusNote: ((httpStatus: number) => string) | undefined;
   relay: boolean; // dsh tool calls are relayed to dsh's own loop: hide Claude's view of them
   dshIds: Set<string>; // tool_use ids of dsh tools called over the MCP bridge
   dshNames: Map<string, string>; // dsh tool_use id → tool name, for a fallback row
@@ -502,6 +504,7 @@ export class Translator {
     onInit,
     onProgress,
     hostLabel,
+    statusNote,
   }: {
     toolActivity?: boolean;
     continueAfterLimit?: boolean;
@@ -519,6 +522,8 @@ export class Translator {
     onProgress?: (progress: TurnProgress) => void;
     /** The box a remote turn runs on, so a logged-out error names it, not this local host. */
     hostLabel?: string;
+    /** What to append to a 5xx retry line from the Anthropic status page cache. */
+    statusNote?: (httpStatus: number) => string;
   } = {}) {
     this.log = log ?? (() => {});
     this.unknownSeen = new Set(); // (where:type) already warned, so schema drift warns once, not per event
@@ -528,6 +533,7 @@ export class Translator {
     this.limitFailure = undefined;
     this.timeZone = timeZone;
     this.hostLabel = hostLabel;
+    this.statusNote = statusNote;
     this.relay = relay; // dsh tool calls are relayed to dsh's own loop: hide Claude's view of them
     this.dshIds = dshIds ?? new Set(); // tool_use ids of dsh tools called over the MCP bridge
     this.dshNames = new Map(); // dsh tool_use id → tool name, for a fallback row
@@ -822,7 +828,10 @@ export class Translator {
           const tail = retrying
             ? ` · Retrying in ${wait}s${reset} · attempt ${event.attempt ?? "?"}/${event.max_retries ?? "?"}`
             : reset;
-          return this.wholeBlock("reasoning", `⚠ ${head}${down}${tail}`);
+          // A 5xx (529 included) is Anthropic's side; the status page can say whether it is known.
+          const code = err.status ?? 0;
+          const status = code >= 500 ? (this.statusNote?.(code) ?? "") : "";
+          return this.wholeBlock("reasoning", `⚠ ${head}${down}${tail}${status}`);
         }
         // Claude Code compacted its own context (auto or /compact). One line so the user knows
         // why the model may have lost detail; every other system subtype is handshake noise.
