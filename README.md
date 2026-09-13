@@ -61,7 +61,7 @@ dsh plugin --profile web add github:lcestou/dsh-oh-my-claude         # or straig
 systemctl --user restart dsh-web.service   # or restart `dsh web` however you run it
 ```
 
-The package declares a dsh bundle, so `dsh plugin add` registers it in the profile by itself. After the restart, "Oh My Claude" appears in the model picker with the models your login can use. Pick one and chat. Later, `dsh plugin --profile web update dsh-oh-my-claude` and the same restart bring in a new version. Neither npm nor dsh announces one, so the This box row under Settings → Oh My Claude → Boxes does: the plugin pill turns orange with the new version number once a newer release is on npm (one registry read a day, from the dsh server), and a click puts that update command on the clipboard. The Update notice switch at the top of that settings section turns the read off; the pill then only names the running version.
+The package declares a dsh bundle, so `dsh plugin add` registers it in the profile by itself. After the restart, "Oh My Claude" appears in the model picker with the models your login can use. Pick one and chat. Later, `dsh plugin --profile web update dsh-oh-my-claude` and the same restart bring in a new version. Neither npm nor dsh announces one, so the plugin does: an orange pill with the new version number appears beside the Oh My Claude heading in Settings, and on the panel's Runtime line, once a newer release is on npm (one registry read a day, from the dsh server); a click puts that update command on the clipboard. The Update notice switch at the top of that settings section turns the read off; the pill then only names the running version.
 
 Optional, in `~/.dsh/settings.yaml`:
 

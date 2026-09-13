@@ -67,6 +67,7 @@ import {
   guard,
   keywordMatches,
 } from "./shared.js";
+import { PluginUpdateBadge } from "./update-pill.js";
 import { Spark, sparkNode } from "./spark.js";
 import { AccessShield, OhMyClaudeControl } from "./panel.js";
 import { ConfirmButton } from "./tune.js";
@@ -1675,22 +1676,6 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
       .catch((e: Error) => setError(e.message))
       .finally(() => setBusy(false));
   };
-  /** The update pill after a click: the command sits on the clipboard for a moment's notice. */
-  const [updateCopied, setUpdateCopied] = useState<"" | "command copied" | "copy blocked">("");
-  const copyUpdate = () => {
-    if (!me?.update) return;
-    const say = (what: "command copied" | "copy blocked") => {
-      setUpdateCopied(what);
-      setTimeout(() => setUpdateCopied(""), 1500);
-    };
-    // No clipboard over plain http or when the browser refuses: the tooltip still carries the
-    // command, and the pill says the click did nothing rather than looking like it worked.
-    if (!navigator.clipboard) return say("copy blocked");
-    navigator.clipboard.writeText(me.update).then(
-      () => say("command copied"),
-      () => say("copy blocked"),
-    );
-  };
 
   /** This box's own row. Read on mount and again after every login change here: the row used to
    *  keep its old pills and its Log out button until the page was reloaded, which read as the
@@ -1860,35 +1845,7 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
           kind={me.host}
           tone={!me.binary || !me.loggedIn ? "err" : "ok"}
           facts={[
-            me.binary ? (
-              <>
-                {cliVersion(me.version)}
-                {/* Neither npm nor dsh says when a plugin has moved on, so this row does: the
-                    one badge here, orange with the new version; a click puts the update command
-                    on the clipboard. The server reads the registry once a day. */}
-                {me.latest && me.update ? (
-                  <button
-                    type="button"
-                    style={{
-                      ...pill(CLAUDE_ORANGE),
-                      cursor: "pointer",
-                      background: "none",
-                      marginLeft: 6,
-                    }}
-                    title={`${me.update}\nthen restart dsh. Click to copy the command.`}
-                    aria-label={`Plugin ${me.latest} available. Copy the update command.`}
-                    data-omc-update={me.latest}
-                    onClick={copyUpdate}
-                  >
-                    {updateCopied || `${me.latest} available`}
-                  </button>
-                ) : (
-                  <span data-omc-plugin-version={me.plugin} />
-                )}
-              </>
-            ) : (
-              bad("Claude Code not on PATH")
-            ),
+            me.binary ? cliVersion(me.version) : bad("Claude Code not on PATH"),
             // A token from the earlier setup-token flow is named, since it is the plugin's alone; a
             // login made here or in a terminal is the CLI's own and needs no label.
             <span key="login" data-omc-login-method={me.authMethod}>
@@ -5504,6 +5461,11 @@ export function apply(ctx: ClientCtx) {
           <h2 id="dsh-oh-my-claude-heading" style={{ margin: 0, fontSize: 18 }}>
             Oh My Claude
           </h2>
+          {/* A newer plugin on npm is a fact about the plugin, so it sits by its name, not in a
+              box row: the one place everyone who opens this section looks. */}
+          <span style={{ marginLeft: "auto" }}>
+            <PluginUpdateBadge />
+          </span>
         </div>
         <StarterSwitch />
         <UpdateNoticeSwitch />

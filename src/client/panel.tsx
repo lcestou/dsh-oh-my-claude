@@ -34,6 +34,7 @@ import {
   CLAUDE_ORANGE,
   maskEmail,
 } from "./shared.js";
+import { UpdatePill } from "./update-pill.js";
 import { Tooltip, useAnchoredMaxHeight } from "@deepseek-ai/dsh-client-ui-primitives";
 import { Spark } from "./spark.js";
 import { ConfirmButton, TuneBody } from "./tune.js";
@@ -1710,7 +1711,9 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
             <div>
               Plugin: {data.runtime.plugin || "(unknown)"}
               {data.runtime.latest && data.runtime.update && (
-                <UpdatePill latest={data.runtime.latest} command={data.runtime.update} />
+                <span style={{ marginLeft: 6 }}>
+                  <UpdatePill latest={data.runtime.latest} command={data.runtime.update} />
+                </span>
               )}
             </div>
             <div>
@@ -3100,33 +3103,3 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
 /** Render `node` inside dsh's composer card when one was found, else in place. */
 const portal = (card: HTMLElement | null, node: ReactElement) =>
   card ? createPortal(node, card) : node;
-
-/** "<version> available" beside the plugin version: a click puts the update command on the
- *  clipboard and says so for a moment, or says the clipboard refused. The same pill the Boxes row
- *  shows, here because the panel is opened far more often than Settings. */
-function UpdatePill({ latest, command }: { latest: string; command: string }) {
-  const [said, setSaid] = useState<"" | "command copied" | "copy blocked">("");
-  const say = (what: "command copied" | "copy blocked") => {
-    setSaid(what);
-    setTimeout(() => setSaid(""), 1500);
-  };
-  const copy = () => {
-    if (!navigator.clipboard) return say("copy blocked");
-    navigator.clipboard.writeText(command).then(
-      () => say("command copied"),
-      () => say("copy blocked"),
-    );
-  };
-  return (
-    <button
-      type="button"
-      style={{ ...pill(CLAUDE_ORANGE), cursor: "pointer", background: "none", marginLeft: 6 }}
-      title={`${command}\nthen restart dsh. Click to copy the command.`}
-      aria-label={`Plugin ${latest} available. Copy the update command.`}
-      data-omc-update={latest}
-      onClick={copy}
-    >
-      {said || `${latest} available`}
-    </button>
-  );
-}
