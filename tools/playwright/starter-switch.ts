@@ -1,5 +1,5 @@
-// Dev-only check: the Prompt starter switch is the first control under the Oh My Claude settings
-// title and is on by default. Point PLAYWRIGHT_ROOT at any project with Playwright installed;
+// Dev-only check: the Prompt starter switch is the second control under the Oh My Claude settings
+// title (under Claude look) and is on by default. Point PLAYWRIGHT_ROOT at any project with Playwright installed;
 // arg 1 is the dsh launch token.
 import { dshUrl, launch } from "./pw.js";
 
@@ -19,20 +19,24 @@ await p
   .click();
 await p.waitForTimeout(800);
 const heading = p.locator("#dsh-oh-my-claude-heading");
+const theme = p.locator("[data-omc-theme-switch]");
 const sw = p.locator("[data-omc-starter-switch]");
 const box = p.locator('[data-omc-starter-switch] [role="switch"]');
 const h = await heading.boundingBox();
+const t = await theme.boundingBox();
 const s = await sw.boundingBox();
 console.log("switch count:", await sw.count(), "checked:", await box.getAttribute("aria-checked"));
 console.log(
   "heading bottom:",
   h && Math.round(h.y + h.height),
+  "theme top:",
+  t && Math.round(t.y),
   "switch top:",
   s && Math.round(s.y),
 );
 console.log(
-  (await sw.count()) === 1 && h && s && s.y >= h.y + h.height
-    ? "PASS: switch first under title"
+  (await theme.count()) === 1 && t && s && h && t.y >= h.y + h.height && s.y >= t.y + t.height
+    ? "PASS: Claude look first, Prompt starter under it"
     : "FAIL",
 );
 // Round trip through the store: off, reload, still off; on, reload, still on.

@@ -5132,7 +5132,96 @@ function Switch({
   );
 }
 
-/** The settings switch for the prompt-starter dock, first thing under the section title. */
+/** One theme group's checkbox: checked means on; the flag is the group's off key. */
+function ThemeGroupBox({ flag, group, label }: { flag: string; group: string; label: string }) {
+  const [off, setOff] = useHintFlag(flag);
+  return (
+    <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+      <input
+        type="checkbox"
+        data-omc-theme-group={group}
+        checked={!off}
+        onChange={(e) => setOff(!e.target.checked)}
+      />
+      {label}
+    </label>
+  );
+}
+
+/** The Claude look: the master switch first under the section title, then a fold with one checkbox
+ *  per group and the accent colour. Box-wide in the hints store like the switches under it;
+ *  applyTheme repaints on the hints event the setters dispatch, so nothing here touches the DOM. */
+function ThemeSwitch() {
+  const [off, setOff] = useHintFlag("themeOff");
+  const [accent, setAccent] = useHintValue("themeAccent");
+  const hints: Record<string, boolean | number> = {};
+  if (accent !== undefined) hints.themeAccent = accent;
+  const hex = themeOf(hints).accent;
+  return (
+    <>
+      <div
+        data-omc-theme-switch=""
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+          fontSize: 13,
+          marginBottom: off ? 12 : 4,
+        }}
+      >
+        <div>
+          <div>Claude look</div>
+          <div style={{ color: T.faint, fontSize: 12 }}>
+            Orange accent, the verb status line, links and the panel tint. Off is dsh's own colours.
+          </div>
+        </div>
+        <Switch on={!off} onChange={(next) => setOff(!next)} label="Claude look" />
+      </div>
+      {!off && (
+        <details data-omc-theme-custom="" style={{ marginBottom: 12, fontSize: 13 }}>
+          <summary style={{ cursor: "pointer", color: T.muted }}>Customize</summary>
+          <div
+            style={{ display: "flex", flexDirection: "column", gap: 6, padding: "8px 0 0 16px" }}
+          >
+            <ThemeGroupBox
+              flag="themeRowOff"
+              group="row"
+              label="Status row, verb and running dots"
+            />
+            <ThemeGroupBox flag="themeProseOff" group="prose" label="Links, rules and quotes" />
+            <ThemeGroupBox flag="themeSendOff" group="send" label="Send button" />
+            <ThemeGroupBox flag="themePanelOff" group="panel" label="Panel and spark" />
+            <ThemeGroupBox flag="themeRainbowOff" group="rainbow" label="Rainbow words" />
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+              Accent
+              <input
+                type="color"
+                data-omc-theme-accent=""
+                aria-label="Accent colour"
+                value={hex}
+                // `change`, not `input`: a drag through the picker must not post per frame.
+                onChange={(e) => setAccent(parseInt(e.target.value.slice(1), 16))}
+              />
+              {accent !== undefined && (
+                <button
+                  type="button"
+                  style={btn}
+                  data-omc-theme-reset=""
+                  onClick={() => setAccent(null)}
+                >
+                  Reset
+                </button>
+              )}
+            </label>
+          </div>
+        </details>
+      )}
+    </>
+  );
+}
+
+/** The settings switch for the prompt-starter dock, under the Claude look switch. */
 function StarterSwitch() {
   const [off, setOff] = useHintFlag("starterOff");
   return (
@@ -5884,6 +5973,7 @@ export function apply(ctx: ClientCtx) {
             <PluginUpdateBadge />
           </span>
         </div>
+        <ThemeSwitch />
         <StarterSwitch />
         <UpdateNoticeSwitch />
         <WorkspaceModelSwitch />
