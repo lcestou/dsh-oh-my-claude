@@ -1391,11 +1391,12 @@ function LoginSteps({
       {login.url && (
         <>
           <div>
-            Open this link and sign in:{" "}
+            A sign-in tab may have opened by itself; if not, open{" "}
             <a href={login.url} target="_blank" rel="noreferrer" style={{ color: CLAUDE_ORANGE }}>
               Claude sign-in
-            </a>
-            . Paste the code below if the page shows one; otherwise this finishes on its own.
+            </a>{" "}
+            and approve. If that page shows a code, paste it below; if it says you are all set, this
+            row finishes on its own.
           </div>
           <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
             <input
@@ -1486,15 +1487,20 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
   const [rws, setRws] = useState<RemoteWs[]>([]);
   const [login, setLogin] = useState<LoginFlow | null>(null);
 
+  /** This box's own row. Read on mount and again after every login change here: the row used to
+   *  keep its old pills and its Log out button until the page was reloaded, which read as the
+   *  click having done nothing. */
+  const loadMe = () =>
+    fetch(`${ROUTE}/status`)
+      .then((r) => readJson<RuntimeStatus | null>(r))
+      .then(setMe)
+      .catch(() => {});
   useEffect(() => {
     fetch(`${ROUTE}/ssh-boxes`)
       .then((r) => readJson<{ boxes?: SshBoxData[] }>(r))
       .then((b) => setSsh(b.boxes ?? []))
       .catch((e: Error) => setError(e.message));
-    fetch(`${ROUTE}/status`)
-      .then((r) => readJson<RuntimeStatus | null>(r))
-      .then(setMe)
-      .catch(() => {});
+    void loadMe();
     fetch(`${ROUTE}/remote-workspaces`)
       .then((r) => readJson<{ workspaces?: RemoteWs[] }>(r))
       .then((b) => setRws(b.workspaces ?? []))
@@ -1502,10 +1508,9 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
   }, []);
 
   const refresh = () => {
-    if (boxes.length === 0 && ssh.length === 0) return;
     setBusy(true);
     setError("");
-    const jobs: Promise<unknown>[] = [];
+    const jobs: Promise<unknown>[] = [loadMe()];
     if (boxes.length)
       jobs.push(
         fetch(`${ROUTE}/boxes/status`)
@@ -1743,9 +1748,13 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
                 </button>
               )}
               {me.loggedIn && me.authMethod === "panel token" && (
-                <button type="button" style={btn} disabled={busy} onClick={() => logout("")}>
-                  Log out
-                </button>
+                <ConfirmButton
+                  label="Log out"
+                  ariaLabel="Log out: forget this box's panel token"
+                  style={btn}
+                  disabled={busy}
+                  onAct={() => logout("")}
+                />
               )}
               {!me.binary && (
                 <span style={{ width: "100%", color: T.err, fontSize: 12 }}>
