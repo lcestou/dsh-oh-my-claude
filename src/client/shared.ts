@@ -9,6 +9,9 @@ export const maskEmail = (email: string): string => {
   if (at < 1) return email;
   return `${email[0]}${"*".repeat(Math.max(3, at - 1))}${email.slice(at)}`;
 };
+/** A hints-store value as a number, or undefined for a flag or a missing key. */
+export const numberOr = (v: boolean | number | undefined): number | undefined =>
+  typeof v === "number" ? v : undefined;
 /** Format a turn's cost in USD with two decimals. */
 export const fmtCost = (usd: number): string => `$${usd.toFixed(2)}`;
 /** Format duration ms into a human string: "34s" or "1m 35s". */

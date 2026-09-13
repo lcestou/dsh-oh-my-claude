@@ -62,6 +62,7 @@ import {
   type ClientCtx,
   openHere,
   maskEmail,
+  numberOr,
   whenContextGone,
   guard,
   keywordMatches,
@@ -3057,7 +3058,7 @@ const ensureTurnStatusStyle = () => {
   // clearance, which leaves its pills 653px in a 717px column. dsh's two fill that; ours as a
   // third clips all three to an ellipsis by a few pixels. The pills are centred, so the padding
   // does no aligning; take it down to the row's rounded corners and the three fit.
-  styleEl.textContent = `body[data-omc-claude] [role="status"][aria-live="polite"],[data-dsh-oh-my-claude-turn]{background-image:var(--omc-row-bg,linear-gradient(90deg,${CLAUDE_ORANGE} 0%,${CLAUDE_ORANGE} 40%,${CLAUDE_SHIMMER} 50%,${CLAUDE_ORANGE} 60%,${CLAUDE_ORANGE} 100%))}@keyframes omc-word{from{-webkit-text-fill-color:var(--omc-word-lo)}to{-webkit-text-fill-color:var(--omc-word-hi)}}[data-omc-turn-word]{animation:omc-word 1s ease-in-out 3s infinite alternate}@media (prefers-reduced-motion:reduce){[data-omc-turn-word]{animation:none}}[data-dsh-oh-my-claude-turn]>span[aria-hidden]{display:inline-block;width:1.3em;text-align:start;flex:none}[data-dsh-oh-my-claude-turn]{max-width:100%;min-width:0}[data-omc-turn-detail]{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}[data-omc-login-card] button:hover,[data-omc-login-card] button:focus-visible{color:${CLAUDE_ORANGE};border-color:${CLAUDE_ORANGE}}${controlStatesCss("[data-omc-settings]")}${controlStatesCss('[role="dialog"][aria-label="Oh My Claude"]')}[data-omc-card]:hover{border-color:var(--dsw-alias-label-dimmed,rgba(128,128,128,.5))}[data-omc-card]>button:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#3b82f6);outline-offset:-2px}[data-omc-card]>button:hover{background:none}@keyframes omc-sheen{from{background-position:200% 0}to{background-position:-200% 0}}[data-omc-skeleton]{border-radius:6px;background:linear-gradient(90deg,${T.border} 30%,${T.hover} 50%,${T.border} 70%);background-size:200% 100%;animation:omc-sheen 1.4s linear infinite}@keyframes omc-rise{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}[data-omc-arrived]{animation:omc-rise .18s ease-out}@media (prefers-reduced-motion:reduce){[data-omc-skeleton],[data-omc-arrived]{animation:none}}body[data-omc-claude] [role="tablist"]>[role="tab"][aria-selected="true"]{color:${CLAUDE_ORANGE}}body[data-omc-claude] [role="tablist"]>[role="tab"][aria-selected="true"]::after{background:${CLAUDE_ORANGE}}body[data-omc-claude] [class*="_markdown"] blockquote{border-left-color:${CLAUDE_ORANGE}80}body[data-omc-claude] [class*="_markdown"] hr{background:${CLAUDE_ORANGE}59}body[data-omc-claude] [class*="_markdown"] a{color:${CLAUDE_ORANGE};text-decoration-color:${CLAUDE_ORANGE}66}body[data-omc-claude] [class*="_markdown"] a:hover{color:${CLAUDE_SHIMMER};text-decoration-color:${CLAUDE_SHIMMER}}body[data-omc-claude] [class*="_markdown"] input[type="checkbox"]{accent-color:${CLAUDE_ORANGE}}body[data-omc-claude] [data-workflow-run] button[data-member-status] [data-member-label]{color:${CLAUDE_ORANGE}}body[data-omc-panel-open] [data-width-handle]{pointer-events:none}body[data-omc-panel-open] [class*="_toBottomSlot"],body:has([data-omc-cost-dialog]) [class*="_toBottomSlot"]{opacity:0;pointer-events:none;transition:opacity .1s}@keyframes omc-pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,${CLAUDE_ORANGE} 55%,transparent)}100%{box-shadow:0 0 0 12px transparent}}button[aria-label="Oh My Claude"][data-omc-pulse]{animation:omc-pulse 1.1s ease-out 3}@media (prefers-reduced-motion:reduce){button[aria-label="Oh My Claude"][data-omc-pulse]{animation:none}}body[data-omc-claude] [data-produced-files-row] button{color:${CLAUDE_ORANGE}}body[data-omc-claude] [data-produced-files-row] button:hover{color:${CLAUDE_SHIMMER}}body[data-omc-claude] [data-composer-stats]{padding-left:8px;padding-right:8px}body[data-omc-claude] [class*="_optionLine"]>[class*="_badge"]{background:color-mix(in srgb,${CLAUDE_ORANGE} 16%,transparent);color:${CLAUDE_ORANGE}}${RAINBOW_CSS}${COST_DIALOG_CSS}`;
+  styleEl.textContent = `body[data-omc-claude] [role="status"][aria-live="polite"],[data-dsh-oh-my-claude-turn]{background-image:var(--omc-row-bg,linear-gradient(90deg,${CLAUDE_ORANGE} 0%,${CLAUDE_ORANGE} 40%,${CLAUDE_SHIMMER} 50%,${CLAUDE_ORANGE} 60%,${CLAUDE_ORANGE} 100%))}@keyframes omc-word{from{-webkit-text-fill-color:var(--omc-word-lo)}to{-webkit-text-fill-color:var(--omc-word-hi)}}[data-omc-turn-word]{animation:omc-word 1s ease-in-out 3s infinite alternate}@media (prefers-reduced-motion:reduce){[data-omc-turn-word]{animation:none}}[data-dsh-oh-my-claude-turn]>span[aria-hidden]{display:inline-block;width:1.3em;text-align:start;flex:none}[data-dsh-oh-my-claude-turn]{max-width:100%;min-width:0}[data-omc-turn-detail]{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}[data-omc-login-card] button:hover,[data-omc-login-card] button:focus-visible{color:${CLAUDE_ORANGE};border-color:${CLAUDE_ORANGE}}${controlStatesCss("[data-omc-settings]")}${controlStatesCss('[role="dialog"][aria-label="Oh My Claude"]')}[data-omc-card]:hover{border-color:var(--dsw-alias-label-dimmed,rgba(128,128,128,.5))}[data-omc-card]>button:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#3b82f6);outline-offset:-2px}[data-omc-card]>button:hover{background:none}@keyframes omc-sheen{from{background-position:200% 0}to{background-position:-200% 0}}[data-omc-skeleton]{border-radius:6px;background:linear-gradient(90deg,${T.border} 30%,${T.hover} 50%,${T.border} 70%);background-size:200% 100%;animation:omc-sheen 1.4s linear infinite}@keyframes omc-rise{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}[data-omc-arrived]{animation:omc-rise .18s ease-out}@media (prefers-reduced-motion:reduce){[data-omc-skeleton],[data-omc-arrived]{animation:none}}body[data-omc-claude] [role="tablist"]>[role="tab"][aria-selected="true"]{color:${CLAUDE_ORANGE}}body[data-omc-claude] [role="tablist"]>[role="tab"][aria-selected="true"]::after{background:${CLAUDE_ORANGE}}body[data-omc-claude] [class*="_markdown"] blockquote{border-left-color:${CLAUDE_ORANGE}80}body[data-omc-claude] [class*="_markdown"] hr{background:${CLAUDE_ORANGE}59}body[data-omc-claude] [class*="_markdown"] a{color:${CLAUDE_ORANGE};text-decoration-color:${CLAUDE_ORANGE}66}body[data-omc-claude] [class*="_markdown"] a:hover{color:${CLAUDE_SHIMMER};text-decoration-color:${CLAUDE_SHIMMER}}body[data-omc-claude] [class*="_markdown"] input[type="checkbox"]{accent-color:${CLAUDE_ORANGE}}body[data-omc-claude] [data-workflow-run] button[data-member-status] [data-member-label]{color:${CLAUDE_ORANGE}}body[data-omc-panel-open] [data-width-handle]{pointer-events:none}body[data-omc-panel-open] [class*="_toBottomSlot"],body:has([data-omc-cost-dialog]) [class*="_toBottomSlot"]{opacity:0;pointer-events:none;transition:opacity .1s}@keyframes omc-pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,${CLAUDE_ORANGE} 55%,transparent)}100%{box-shadow:0 0 0 12px transparent}}button[aria-label="Oh My Claude"][data-omc-pulse]{animation:omc-pulse 1.1s ease-out 3}@media (prefers-reduced-motion:reduce){button[aria-label="Oh My Claude"][data-omc-pulse]{animation:none}}body[data-omc-claude] [data-produced-files-row] button{color:${CLAUDE_ORANGE}}body[data-omc-claude] [data-produced-files-row] button:hover{color:${CLAUDE_SHIMMER}}body[data-omc-claude] [data-composer-stats]{padding-left:8px;padding-right:8px}body[data-omc-claude] [class*="_optionLine"]>[class*="_badge"]{background:color-mix(in srgb,${CLAUDE_ORANGE} 16%,transparent);color:${CLAUDE_ORANGE}}[data-omc-cost-over]{color:${CLAUDE_ORANGE}}[data-omc-cost-over]{color:${CLAUDE_ORANGE}}${RAINBOW_CSS}${COST_DIALOG_CSS}`;
   document.head.appendChild(styleEl);
 };
 
@@ -4331,6 +4332,12 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
     };
   }, [ctx, sessionId]);
 
+  const [boxLine] = useHintValue("spendWarnUsd");
+  const [sessionLine, setSessionLine] = useHintValue(
+    `spendWarnUsd${sessionId.replaceAll("-", "")}`,
+  );
+  const line = numberOr(sessionLine) ?? numberOr(boxLine);
+
   // dsh's current session blinks: a child session takes the slot for a moment, and a model
   // directory mid-rebind answers no provider at all. A blank answer used to read as "not mine" and
   // took the cost off the row under the pointer, so only another session's id gives it up.
@@ -4352,10 +4359,41 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   const totalCacheRead = turns.reduce((s, r) => s + r.cacheRead, 0);
   const last = turns[turns.length - 1];
   const text = mine && total > 0 && last ? costText(total, last.costUsd, totalCacheRead) : "";
-  const title =
+  // Past the line the pill turns orange and the tooltip leads with the fact; every wording says
+  // API-rate, since a subscription login is not billed by this figure.
+  const over = mine && total > 0 && line !== undefined && total >= line;
+  const base =
     mine && total > 0 && last
-      ? `Claude cost: ${fmtCost(total)} this session, ${fmtCost(last.costUsd)} last turn (${turns.length} turn${turns.length === 1 ? "" : "s"})${fmtTtft(last.ttftMs)}`
+      ? `Claude cost, API-rate: ${fmtCost(total)} this session, ${fmtCost(last.costUsd)} last turn (${turns.length} turn${turns.length === 1 ? "" : "s"})${fmtTtft(last.ttftMs)}`
       : "";
+  const title =
+    over && line !== undefined ? `over ${fmtCost(line)} this session, API-rate · ${base}` : base;
+  const [subscription, setSubscription] = useState(false);
+  useEffect(() => {
+    let live = true;
+    statusOnce ??= fetch(`${ROUTE}/status`)
+      .then((r) => readJson<{ authMethod?: string | null }>(r))
+      .then((s) => s.authMethod === "claude.ai")
+      .catch(() => false);
+    void statusOnce.then((v) => live && setSubscription(v));
+    return () => {
+      live = false;
+    };
+  }, []);
+  const [guardDraft, setGuardDraft] = useState("");
+  useEffect(() => {
+    setGuardDraft(numberOr(sessionLine) === undefined ? "" : String(sessionLine));
+  }, [sessionLine]);
+  const saveGuard = () => {
+    const t = guardDraft.trim();
+    if (t === "") {
+      setSessionLine(null);
+      return;
+    }
+    const n = Number(t);
+    if (Number.isFinite(n) && n >= 0) setSessionLine(n);
+    else setGuardDraft(numberOr(sessionLine) === undefined ? "" : String(sessionLine));
+  };
   // The pill's dialog, the same seat dsh's own pills use (`useStatDialog`, ui-chat): the injected
   // anchor span is the trigger root, the panel is fixed-positioned above it by dsh's own hook and
   // closes on an outside pointer or Escape. No portal: the panel is rendered here, beside the slot
@@ -4400,6 +4438,8 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   // the sync still sees the new text.
   const textRef = useRef(text);
   const titleRef = useRef(title);
+  const overRef = useRef(false);
+  overRef.current = over;
   useLayoutEffect(() => {
     textRef.current = text;
     titleRef.current = title;
@@ -4429,6 +4469,13 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
         // a browser that refuses localStorage simply has no debug output
       }
     };
+    const paintOver = () => {
+      const target = trigger ?? inline;
+      if (target) {
+        if (overRef.current) target.setAttribute("data-omc-cost-over", "");
+        else target.removeAttribute("data-omc-cost-over");
+      }
+    };
 
     const tryHook = () => {
       if (!anchorRef.current?.isConnected) return;
@@ -4444,7 +4491,11 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
             trigger.setAttribute("aria-label", titleRef.current);
           if (trigger.getAttribute("aria-expanded") !== expanded)
             trigger.setAttribute("aria-expanded", expanded);
-        } else if (inline.title !== titleRef.current) inline.title = titleRef.current;
+          paintOver();
+        } else if (inline.title !== titleRef.current) {
+          inline.title = titleRef.current;
+          paintOver();
+        }
         const wanted = `${pad}${textRef.current}`;
         if (body && body.textContent !== wanted) body.textContent = wanted;
         return;
@@ -4495,6 +4546,7 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
         trigger.setAttribute("aria-haspopup", "dialog");
         trigger.setAttribute("aria-expanded", String(openRef.current));
         trigger.setAttribute("aria-label", titleRef.current);
+        paintOver();
         trigger.addEventListener("click", () => setOpen((was) => !was));
         body.className = proto.querySelector("span")?.className ?? "";
         body.textContent = textRef.current;
@@ -4505,6 +4557,7 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
       } else {
         pad = ` ${CLAUDE_MARK} `;
         inline.title = titleRef.current;
+        paintOver();
         const sep = document.createElement("span");
         sep.setAttribute("aria-hidden", "true");
         sep.textContent = "|";
@@ -4566,12 +4619,24 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   return (
     <>
       <span ref={anchorRef} style={hooked ? { display: "none" } : undefined}>
-        <span
-          title={title}
-          style={{ display: "inline", fontSize: 14, color: T.faint, whiteSpace: "nowrap" }}
-        >
-          <span aria-hidden="true">|</span> {CLAUDE_MARK} {text}
-        </span>
+        {(() => {
+          const overAttr: Record<string, string> = {};
+          if (over) overAttr["data-omc-cost-over"] = "";
+          return (
+            <span
+              title={title}
+              style={{
+                display: "inline",
+                fontSize: 14,
+                color: over ? CLAUDE_ORANGE : T.faint,
+                whiteSpace: "nowrap",
+              }}
+              {...overAttr}
+            >
+              <span aria-hidden="true">|</span> {CLAUDE_MARK} {text}
+            </span>
+          );
+        })()}
       </span>
       {open && (
         <div
@@ -4597,6 +4662,40 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
               </Fragment>
             ))}
           </dl>
+          <div data-omc-cost-guard="">
+            <label>
+              Warn at $
+              <input
+                type="number"
+                min={0}
+                step={1}
+                inputMode="decimal"
+                aria-label="Warn this session at dollars"
+                data-omc-cost-guard-input=""
+                value={guardDraft}
+                placeholder={numberOr(boxLine) === undefined ? "off" : String(boxLine)}
+                onChange={(e) => setGuardDraft(e.target.value)}
+                onBlur={saveGuard}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") saveGuard();
+                }}
+              />
+            </label>
+            {numberOr(sessionLine) !== undefined && (
+              <button
+                type="button"
+                data-omc-cost-guard-clear=""
+                onClick={() => setSessionLine(null)}
+              >
+                Clear
+              </button>
+            )}
+            {subscription && (
+              <p data-omc-cost-note="">
+                Shown at API rates; a subscription login is not billed by it.
+              </p>
+            )}
+          </div>
         </div>
       )}
     </>
@@ -4848,15 +4947,18 @@ function Slide({ open, children }: { open: boolean; children: ReactNode }) {
 /** One flag from the box-wide `hints.json` store, live across components: a set here reaches every
  *  mounted reader through one window event, so the settings switch hides the dock without a remount. */
 const HINTS_EVENT = "omc-hints";
-function useHintFlag(flag: string): [boolean, (on: boolean) => void] {
-  const [on, setOn] = useState(false);
+let statusOnce: Promise<boolean> | undefined;
+function useHintValue(
+  key: string,
+): [boolean | number | undefined, (next: boolean | number | null) => void] {
+  const [value, setValue] = useState<boolean | number | undefined>(undefined);
   useEffect(() => {
     let live = true;
     const load = () =>
       fetch(`${ROUTE}/hints`)
         .then((r) => readJson<Record<string, boolean | number>>(r))
         .then((h) => {
-          if (live) setOn(h[flag] === true);
+          if (live) setValue(h[key]);
         })
         .catch(() => {});
     void load();
@@ -4865,16 +4967,22 @@ function useHintFlag(flag: string): [boolean, (on: boolean) => void] {
       live = false;
       window.removeEventListener(HINTS_EVENT, load);
     };
-  }, [flag]);
-  const set = (next: boolean) => {
-    setOn(next);
+  }, [key]);
+  const set = (next: boolean | number | null) => {
+    setValue(next === null ? undefined : next);
     void fetch(`${ROUTE}/hints`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ [flag]: next }),
+      body: JSON.stringify({ [key]: next }),
     }).finally(() => window.dispatchEvent(new Event(HINTS_EVENT)));
   };
-  return [on, set];
+  return [value, set];
+}
+
+/** One boolean flag from the hints store; `false` clears the key. */
+function useHintFlag(flag: string): [boolean, (on: boolean) => void] {
+  const [value, set] = useHintValue(flag);
+  return [value === true, (on) => set(on)];
 }
 
 /** dsh's own settings switch, drawn with its measurements and colour tokens: a 36 by 20 pill with a
@@ -5002,6 +5110,71 @@ function WorkspaceModelSwitch() {
         </div>
       </div>
       <Switch on={!off} onChange={(next) => setOff(!next)} label="Remember model per workspace" />
+    </div>
+  );
+}
+
+/** Box-wide spend warning: a dollar figure that turns the cost pill orange once a session passes it. */
+function SpendGuardField() {
+  const [stored, setStored] = useHintValue("spendWarnUsd");
+  const [draft, setDraft] = useState("");
+  useEffect(() => {
+    setDraft(numberOr(stored) === undefined ? "" : String(stored));
+  }, [stored]);
+  const save = () => {
+    const t = draft.trim();
+    if (t === "") {
+      setStored(null);
+      return;
+    }
+    const n = Number(t);
+    if (Number.isFinite(n) && n >= 0) setStored(n);
+    else setDraft(numberOr(stored) === undefined ? "" : String(stored));
+  };
+  return (
+    <div
+      data-omc-spend-field=""
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
+        fontSize: 13,
+        marginBottom: 12,
+      }}
+    >
+      <div>
+        <div>Spend warning</div>
+        <div style={{ color: T.faint, fontSize: 12 }}>
+          Turns the cost pill orange once a session passes this API-rate figure. Empty is off. A
+          session can set its own line in the cost dialog.
+        </div>
+      </div>
+      <label
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 4,
+          fontSize: 13,
+        }}
+      >
+        $
+        <input
+          type="number"
+          min={0}
+          step={1}
+          inputMode="decimal"
+          aria-label="Warn per session at dollars"
+          data-omc-spend-input=""
+          style={{ ...inputStyle, width: 72 }}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={save}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") save();
+          }}
+        />
+      </label>
     </div>
   );
 }
@@ -5469,7 +5642,12 @@ const COST_DIALOG_CSS =
   "[data-omc-cost-rule]{border-top:.5px solid var(--dsw-alias-border-l2);margin-bottom:10px}" +
   "[data-omc-cost-details]{color:var(--dsw-alias-label-tertiary);grid-template-columns:minmax(76px,auto) minmax(0,1fr);gap:6px 16px;margin:0;display:grid}" +
   "[data-omc-cost-details] dt,[data-omc-cost-details] dd{min-width:0;margin:0}" +
-  "[data-omc-cost-details] dd{color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums;text-align:right}";
+  "[data-omc-cost-details] dd{color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums;text-align:right}" +
+  "[data-omc-cost-guard]{margin-top:10px;padding-top:8px;border-top:1px solid var(--dsw-alias-border-l1);display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12px}" +
+  "[data-omc-cost-guard] label{display:inline-flex;align-items:center;gap:4px}" +
+  "[data-omc-cost-guard] input{width:64px;font:inherit;color:inherit;background:var(--dsw-alias-bg-module-platform,rgba(128,128,128,.1));border:0;border-radius:6px;padding:2px 6px}" +
+  "[data-omc-cost-guard] button{font:inherit;font-size:12px;color:inherit;background:transparent;border:1px solid var(--dsw-alias-border-l1);border-radius:999px;padding:2px 8px;cursor:pointer}" +
+  "[data-omc-cost-note]{flex-basis:100%;margin:4px 0 0;color:var(--dsw-alias-label-tertiary)}";
 
 /** dsh's unplaced-portal style: mounted so it can be measured, invisible until it has coordinates. */
 const MEASURE_STYLE: CSSProperties = { visibility: "hidden", left: 0, top: 0 };
@@ -5602,6 +5780,7 @@ export function apply(ctx: ClientCtx) {
         <StarterSwitch />
         <UpdateNoticeSwitch />
         <WorkspaceModelSwitch />
+        <SpendGuardField />
         <TerminalSyncSwitch />
         {error && <p style={{ color: T.err, fontSize: 13 }}>{error}</p>}
         {boxes !== null && (

@@ -70,7 +70,8 @@
         "src/scheduled-tasks.ts",
         "src/state.ts",
         "src/usage.ts",
-        "src/translator.ts"
+        "src/translator.ts",
+        "src/client/shared.ts"
       ],
       "rules": {
         "anti-slop/no-runtime-typeof": "off"
