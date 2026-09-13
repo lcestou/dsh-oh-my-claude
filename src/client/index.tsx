@@ -5919,6 +5919,10 @@ export function apply(ctx: ClientCtx) {
   // (a Settings switch dispatches HINTS_EVENT after its POST). Removed with the module, like the
   // interval in watchTurnStatus, so a hot reload does not stack listeners.
   const reapplyTheme = () => void loadHints().then(applyTheme, console.error);
+  // The sheets read bare var(--omc-accent); until the hints land nothing has set it and a fresh
+  // page would paint the status row, links and rules unaccented for a fetch. Write the defaults
+  // now, synchronously; the stored switches overwrite them a moment later.
+  applyTheme({});
   reapplyTheme();
   window.addEventListener(HINTS_EVENT, reapplyTheme);
   whenContextGone(() => window.removeEventListener(HINTS_EVENT, reapplyTheme));

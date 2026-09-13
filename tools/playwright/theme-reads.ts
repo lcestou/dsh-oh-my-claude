@@ -49,8 +49,15 @@ async function readScheme(colorScheme: "dark" | "light"): Promise<Reads> {
       el ? getComputedStyle(el).getPropertyValue(prop).trim() : missing;
     const status = document.querySelector('[role="status"][aria-live="polite"]');
     const tab = document.querySelector('[role="tablist"] > [role="tab"][aria-selected="true"]');
-    // The composer's send button carries the plugin's own mark once tinted (`data-omc-send`).
-    const send = document.querySelector<HTMLElement>("button[data-omc-send]");
+    // dsh's send button: the primary button whose ancestry holds the composer box. Found the way
+    // the plugin finds it, not by the plugin's own mark, which is gone in the off state.
+    const box = document.querySelector("[contenteditable]");
+    const send =
+      Array.from(document.querySelectorAll<HTMLElement>('button[class*="_primary"]')).find((el) => {
+        for (let a = el.parentElement; a && a !== document.body; a = a.parentElement)
+          if (box && a.contains(box)) return true;
+        return false;
+      }) ?? null;
     const out = {
       claude: "yes",
       linkColor: css(host.querySelector("a"), "color"),

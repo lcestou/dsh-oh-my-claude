@@ -43,13 +43,22 @@ const colours = (page: Page) =>
     host.innerHTML = '<a href="#">l</a>';
     document.body.appendChild(host);
     const missing = "missing";
+    // dsh's send button: the primary button whose ancestry holds the composer box. Found the way
+    // the plugin finds it, not by the plugin's own mark, which is gone in the off state.
+    const box = document.querySelector("[contenteditable]");
+    const send =
+      Array.from(document.querySelectorAll<HTMLElement>('button[class*="_primary"]')).find((el) => {
+        for (let a = el.parentElement; a && a !== document.body; a = a.parentElement)
+          if (box && a.contains(box)) return true;
+        return false;
+      }) ?? null;
     const css = (el: Element | null, prop: string) =>
       el ? getComputedStyle(el).getPropertyValue(prop).trim() : missing;
     const out = {
       claude: document.body.getAttribute("data-omc-claude") ?? "none",
       theme: document.body.getAttribute("data-omc-theme") ?? "absent",
       link: css(host.querySelector("a"), "color"),
-      send: css(document.querySelector("button[data-omc-send]"), "background-color"),
+      send: css(send, "background-color"),
       spark: css(document.querySelector('button[aria-label="Oh My Claude"] svg'), "fill"),
     };
     host.remove();
@@ -105,7 +114,11 @@ await closeSettings();
 const off = await colours(p);
 console.log("off:", JSON.stringify(off), "fold while off:", foldWhileOff);
 console.log(
-  off.theme === "" && off.link !== ORANGE && off.send !== ORANGE && foldWhileOff === 0
+  off.theme === "" &&
+    off.link !== ORANGE &&
+    off.send !== ORANGE &&
+    off.send !== "missing" &&
+    foldWhileOff === 0
     ? "PASS: off hands the page to dsh"
     : "FAIL: off",
 );
