@@ -149,6 +149,11 @@ export declare function mirrorReply(turn: FoldedTurn, limit: number): string;
  *  result — in order. Live streaming yields the chunks a running turn has gained since the last
  *  render, so a long turn fills into one dsh turn step by step instead of landing all at once. */
 export declare function mirrorReplyBlocks(turn: FoldedTurn, limit: number): string[];
+/**
+ * A transcript as one Markdown document: title, date, then `## You` and `## Claude` per turn, the
+ * reply rendered by the same blocks the terminal mirror draws (text, tool calls, results).
+ */
+export declare function toMarkdown(folded: FoldedTranscript, limit?: number): string;
 /** Where 2.1 keeps a session's subagent transcripts: a directory beside the session's own file. */
 export declare const subagentsDir: (path: string) => string;
 /**

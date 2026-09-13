@@ -23,6 +23,7 @@ import {
   foldTranscript,
   listTranscripts,
   readTranscript,
+  toMarkdown,
   toSessionEvents,
   type FoldedTranscript,
 } from "./transcript.js";
@@ -1550,6 +1551,35 @@ export function registerSessionRoutes(
                   });
                   res.end(read.text);
                   return;
+                }
+                return json(res, 404, { error: "transcript not found" });
+              }
+              // Same lookup as /transcript, answered as one Markdown document for reading or sharing
+              // rather than the raw rows. readTranscript folds the file and attaches subagent
+              // transcripts behind their Task calls, so the export reads as the session did.
+              if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/transcript.md`) {
+                const id = url.searchParams.get("id");
+                const cwd = url.searchParams.get("cwd") ?? "";
+                if (!validId(id)) return json(res, 400, { error: "id required" });
+                const { box, cwd: at } = targetOf(url, cwd);
+                const dirs = box.sshHost
+                  ? [join(await projectDirAt(box, at), `${id}.jsonl`)]
+                  : transcriptDirs(at).map((d) => join(d, `${id}.jsonl`));
+                try {
+                  for (const path of dirs) {
+                    const folded = await readTranscript(box, path);
+                    if (folded === undefined) continue;
+                    res.writeHead(200, {
+                      "content-type": "text/markdown; charset=utf-8",
+                      "content-disposition": `attachment; filename="${id}.md"`,
+                      "cache-control": "no-store",
+                    });
+                    res.end(toMarkdown(folded));
+                    return;
+                  }
+                } catch (e) {
+                  // A box that cannot be reached throws; that is not "no such transcript".
+                  return json(res, 502, { error: errorText(e) });
                 }
                 return json(res, 404, { error: "transcript not found" });
               }
