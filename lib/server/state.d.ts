@@ -106,6 +106,14 @@ export declare function saveAsides(dir: string, sessionId: string, entries: Asid
 export declare function loadStarters(dir: string): Promise<Map<string, string>>;
 /** Save one opener, or drop it when the text is blank; serialized read-modify-write. */
 export declare function saveStarter(dir: string, key: string, text: string | undefined): Promise<void>;
+export interface WorkspaceModel {
+    model: string;
+    at: number;
+}
+/** `{ [cwd]: { model, at } }`; a row whose model is not a non-empty string is skipped. */
+export declare function loadWorkspaceModels(dir: string): Promise<Map<string, WorkspaceModel>>;
+/** Save the model for one cwd, or forget it when `model` is undefined or blank. */
+export declare function saveWorkspaceModel(dir: string, cwd: string, model: string | undefined, at?: number): Promise<void>;
 /**
  * A replacer that masks the values of secret-looking environment variables (`*KEY`, `*TOKEN`,
  * `*SECRET`, `*PASSWORD`, `*CREDENTIAL`, eight characters or longer) as `[redacted:NAME]`.

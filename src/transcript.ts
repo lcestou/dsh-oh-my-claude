@@ -833,6 +833,36 @@ export function mirrorReplyBlocks(turn: FoldedTurn, limit: number): string[] {
   return parts;
 }
 
+/**
+ * A transcript as one Markdown document: title, date, then `## You` and `## Claude` per turn, the
+ * reply rendered by the same blocks the terminal mirror draws (text, tool calls, results).
+ */
+export function toMarkdown(folded: FoldedTranscript, limit = 4000): string {
+  const lines: string[] = [
+    `# ${folded.title ?? "Claude Code session"}`,
+    "",
+    `_${new Date(folded.createdAt).toISOString()}_`,
+  ];
+  for (const turn of folded.turns) {
+    const userText = turn.content
+      .map((b) => b.text)
+      .join("\n")
+      .trim();
+    lines.push(
+      "",
+      "## You",
+      "",
+      userText || "(empty)",
+      "",
+      "## Claude",
+      "",
+      // Blocks are paragraphs: a text block followed by a fenced tool call needs the blank line.
+      mirrorReplyBlocks(turn, limit).join("\n\n"),
+    );
+  }
+  return `${lines.join("\n")}\n`;
+}
+
 /** Where 2.1 keeps a session's subagent transcripts: a directory beside the session's own file. */
 export const subagentsDir = (path: string): string =>
   join(path.endsWith(".jsonl") ? path.slice(0, -".jsonl".length) : path, "subagents");

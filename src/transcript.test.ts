@@ -9,6 +9,7 @@ import {
   listTranscripts,
   subagentText,
   subagentsDir,
+  toMarkdown,
   toSessionEvents,
   truncateBytes,
 } from "./transcript.js";
@@ -98,6 +99,19 @@ const transcript = [
 const folded = foldTranscript(transcript);
 assert.equal(folded.title, "Fix the widget");
 assert.equal(folded.turns.length, 1, "unanswered trailing prompt is dropped");
+// SAFETY: turns.length is 1 so turns[0] is defined
+const firstText = folded.turns[0]!.content[0]!.text;
+const md = toMarkdown(folded);
+assert.ok(md.startsWith("# "));
+assert.ok(md.includes("\n## You\n"));
+assert.ok(md.includes("\n## Claude\n"));
+assert.ok(md.includes(firstText));
+assert.equal(md.split("## You").length - 1, folded.turns.length);
+assert.ok(md.endsWith("\n") && !md.endsWith("\n\n"));
+assert.equal(
+  toMarkdown({ turns: [], title: undefined, createdAt: 0, agents: new Map() }),
+  "# Claude Code session\n\n_1970-01-01T00:00:00.000Z_\n",
+);
 const [turn] = folded.turns;
 // SAFETY: we just asserted turns.length === 1 so turn is defined
 assert.ok(turn);

@@ -39,7 +39,9 @@ One `✻` button beside the composer opens the whole plugin: Memory, Instruction
 
 <p><img src="https://raw.githubusercontent.com/lcestou/dsh-oh-my-claude/main/docs/media/cost-row.png" width="640" alt="dsh's footer stats row ending with the Claude session cost and cached token count"></p>
 
-Cost and cached token count, figures dsh cannot compute, join dsh's footer stats row.
+Cost and cached token count, figures dsh cannot compute, join dsh's footer stats row. The pill turns orange once a session passes the spend line set in Settings, or its own line from the cost dialog; every figure is the CLI's API-rate cost, which a subscription login is not billed by.
+
+Four smaller things live where their facts already are. Settings, Report a problem, shows a redacted report of the box (versions, login method, switches, last error; home written as `~`, no email, hostname only behind a checkbox) in an editable box, copies it, or opens a GitHub issue with it; the Diagnostics tab carries the same block for a session. Each archived session row has a menu: download the raw transcript, export it as Markdown, or copy the `claude --resume` command; the Diagnostics tab offers the last two for the open session. A blank Claude session in a workspace opens on the model that workspace last ran, provider unchanged (Settings, Remember model per workspace). And a retry line for a 5xx names the incident Anthropic's status page reports, if any.
 
 <p><img src="https://raw.githubusercontent.com/lcestou/dsh-oh-my-claude/main/docs/media/context-usage.png" width="300" alt="dsh's context ring popover with Claude plan windows and the CLI's own context breakdown"> <img src="https://raw.githubusercontent.com/lcestou/dsh-oh-my-claude/main/docs/media/phone-panel.png" width="300" alt="the panel as a phone sheet above the composer"></p>
 

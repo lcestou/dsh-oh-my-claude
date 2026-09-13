@@ -18,6 +18,10 @@ export type ParsedSettings = {
 };
 /** settings.json must be one JSON object; anything else Claude Code would reject or ignore. */
 export declare function parseSettingsText(text: unknown): ParsedSettings;
+/** The box-wide booleans and non-negative numbers under `hints.json`: one-time hints and the
+ *  settings switches. Only `true` and finite non-negative numbers are kept, so a missing or
+ *  unreadable file reads as every switch at its default. */
+export declare function readHints(hintsPath: string): Promise<Record<string, boolean | number>>;
 /** Another dsh server this panel can hop to; `token` is that box's dsh launch token. */
 export interface Box {
     name: string;
@@ -302,6 +306,8 @@ export interface SessionRouteOptions {
     onLoginStatus?: (provider: string | null, loggedIn: boolean) => void;
     /** Per-session turn accounting buffer from the adapter. */
     turnRecords?: Map<string, import("./adapter.js").TurnRecord[]>;
+    /** dsh version read off the package this plugin loads beside; null when unavailable. */
+    dshVersion?: string | null;
     /** The running turn's figures per session, for the status row; absent when no turn is running. */
     liveTurn?: Map<string, LiveTurn>;
     /** Idle watchdog state from the adapter. */
@@ -388,7 +394,7 @@ export interface SessionRouteOptions {
     continueAfterLimit?: boolean;
 }
 /** `projectDir(cwd)` → Claude Code project dir; `startedIds()` → ids the adapter started itself. */
-export declare function registerSessionRoutes(ctx: PluginContext, { log, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, importedDir, sshBoxesPath, onSshBoxes, remoteWorkspacesPath, onRemoteWorkspaces, command, sshHost, turnRecords, liveTurn, idle, toolMode, terminalSync, permissionModes, thinking, rewind, contextUsage, workspaceDiff, mcp, permissionAsks, sideQuestions, loginNeeded, loginDone, logoutDone, liveCount, persistAsides, starters, setStarter, models, reloadPlugins, continueAfterLimit, instanceFor, instanceForHost, onLoginStatus, }: SessionRouteOptions): void;
+export declare function registerSessionRoutes(ctx: PluginContext, { log, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, importedDir, sshBoxesPath, onSshBoxes, remoteWorkspacesPath, onRemoteWorkspaces, command, sshHost, turnRecords, dshVersion, liveTurn, idle, toolMode, terminalSync, permissionModes, thinking, rewind, contextUsage, workspaceDiff, mcp, permissionAsks, sideQuestions, loginNeeded, loginDone, logoutDone, liveCount, persistAsides, starters, setStarter, models, reloadPlugins, continueAfterLimit, instanceFor, instanceForHost, onLoginStatus, }: SessionRouteOptions): void;
 /**
  * The four files Claude Code merges for one session, highest precedence first. Duplicated in
  * `src/client/settings.ts`: the browser half cannot import server code, and the order is the

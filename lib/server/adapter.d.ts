@@ -665,6 +665,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      *  tokens for real. Set by the live translator, cleared when the turn ends; a session with no entry
      *  has no turn running. */
     readonly liveTurn: Map<string, LiveTurn>;
+    /** The model last written to workspace-models.json per cwd, so a turn on the same model writes nothing. */
+    readonly workspaceModelWritten: Map<string, string>;
     /** Per-session idle watchdog deadline in epoch ms; null means no active arm. */
     readonly idleDeadlineMap: Map<string, number | null>;
     /** Per-session kill and warning timers, keyed by session id. */

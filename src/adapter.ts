@@ -5,6 +5,7 @@ import { access, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promise
 import { watch, type FSWatcher } from "node:fs";
 import { dirname } from "node:path";
 import { hostname } from "node:os";
+import { createRequire } from "node:module";
 import { basename, join } from "node:path";
 import type {
   Spawner,
@@ -135,6 +136,7 @@ import {
   saveWatch,
   loadTerminalSync,
   saveTerminalSync,
+  saveWorkspaceModel,
   type WatchRecord,
 } from "./state.js";
 import { suggestRule } from "./permissions.js";
@@ -171,6 +173,7 @@ import { forkTranscriptText } from "./transcript.js";
 import { buildMirror } from "./claude-home.js";
 export { markBusy, takeInterrupted } from "./state.js";
 export { forkTranscriptText } from "./transcript.js";
+import { anthropicStatus, degradedNote, peekStatus } from "./anthropic-status.js";
 import { Translator } from "./translator.js";
 export { Translator, type TranslatorBlock } from "./translator.js";
 import type {
@@ -180,6 +183,17 @@ import type {
   ToolCallId,
 } from "@deepseek-ai/dsh-llm";
 import type { ClaudeProcessSpec, RelayEvent, RelayResult, TurnPrep } from "./process.js";
+import { versionOf } from "./report.js";
+
+// dsh's own version for the bug report, read off the package this plugin is loaded beside.
+// Unknown when the plugin runs from a checkout without dsh's tree in reach.
+const DSH_VERSION: string | null = (() => {
+  try {
+    return versionOf(createRequire(import.meta.url)("@deepseek-ai/dsh-llm/package.json"));
+  } catch {
+    return null;
+  }
+})();
 
 /** Live placeholder→remote map for remote workspaces, shared by every box's ssh spawner. Loaded at
  * boot and replaced whenever the panel edits the list, so a redirect applies without a dsh restart. */
@@ -1501,6 +1515,9 @@ export function finishReason(result: ResultFrame, hostLabel?: string): FinishRea
     // the local hostname would point the user at the wrong machine to run `claude auth login` on.
     if (isLoginFailure(result))
       message = `Claude Code is not logged in on ${hostLabel ?? hostname()}. Use Log in above the composer, or run \`claude auth login\` in a terminal there, then send your message again. (${message})`;
+    // The retries before this result already asked the status page; a 5xx that gave up names
+    // the incident the page reports, if any, so the failure reads as theirs rather than ours.
+    if ((result.api_error_status ?? 0) >= 500) message += degradedNote(peekStatus());
     return { kind: "error", failure: { message, code: "PROVIDER_ERROR" } };
   }
   if (result.stop_reason === "max_tokens") return { kind: "max-tokens" };
@@ -1797,6 +1814,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    *  tokens for real. Set by the live translator, cleared when the turn ends; a session with no entry
    *  has no turn running. */
   readonly liveTurn = new Map<string, LiveTurn>();
+  /** The model last written to workspace-models.json per cwd, so a turn on the same model writes nothing. */
+  readonly workspaceModelWritten = new Map<string, string>();
   /** Per-session idle watchdog deadline in epoch ms; null means no active arm. */
   readonly idleDeadlineMap = new Map<string, number | null>();
   /** Per-session kill and warning timers, keyed by session id. */
@@ -3439,6 +3458,18 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   async acquire(options: SessionOptions, forceFresh?: boolean) {
     const prep = await this.prepare(options, { forceFresh });
     if (prep.input === null) return { prep, proc: null }; // text-mode CLI: fall back to one-shot semantics
+    // The model this workspace last ran, so a new session there opens on it (the client applies
+    // it). Keyed by the dsh session's own cwd, the path the client asks with; a temporary session
+    // is a side call and does not count.
+    if (prep.spec.model && !prep.spec.temporary) {
+      const wsCwd =
+        this.ctx?.sessions?.get?.(asSessionId(options.sessionId))?.header?.cwd ?? prep.cwd;
+      // One file write per change, not per turn: a long session on one model writes once.
+      if (this.workspaceModelWritten.get(wsCwd) !== prep.spec.model) {
+        this.workspaceModelWritten.set(wsCwd, prep.spec.model);
+        void saveWorkspaceModel(STATE_DIR, wsCwd, prep.spec.model).catch(() => {});
+      }
+    }
     const key = specKey(prep.spec);
     const key2 = registryKey(this.providerId, options.sessionId);
     let proc = this.processes.get(key2);
@@ -4255,6 +4286,12 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       dshIds: proc.dshIds,
       relayed: proc.relayed,
       hostLabel: this.hostLabelFor(options.sessionId),
+      // A 5xx or 529 asks the status page once a minute; the note lands on the next retry line.
+      statusNote: () => {
+        const known = peekStatus();
+        if (known === undefined) void anthropicStatus();
+        return degradedNote(known);
+      },
       log: this.log.bind(this),
       onProgress: (p) => {
         const cur = this.liveTurn.get(options.sessionId) ?? {
@@ -5307,6 +5344,7 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       onLoginStatus: (id, loggedIn) =>
         g[ADAPTER_CURRENT]?.get(id ?? adapter.providerId)?.setLoggedIn(loggedIn),
       turnRecords: adapter.turnBuffer,
+      dshVersion: DSH_VERSION,
       liveTurn: adapter.liveTurn,
       idle: {
         deadlineFor: (session: string) =>

@@ -55,6 +55,7 @@
     },
     {
       "files": [
+        "src/anthropic-status.ts",
         "src/process.ts",
         "src/remote-fs.ts",
         "src/hold.ts",
@@ -64,11 +65,13 @@
         "src/mcp.ts",
         "src/mcp-add-remove.ts",
         "src/plugins.ts",
+        "src/report.ts",
         "src/sessions.ts",
         "src/scheduled-tasks.ts",
         "src/state.ts",
         "src/usage.ts",
-        "src/translator.ts"
+        "src/translator.ts",
+        "src/client/shared.ts"
       ],
       "rules": {
         "anti-slop/no-runtime-typeof": "off"
@@ -76,6 +79,7 @@
     },
     {
       "files": [
+        "src/anthropic-status.ts",
         "src/process.ts",
         "src/remote-fs.ts",
         "src/hold.ts",
@@ -83,6 +87,7 @@
         "src/mcp.ts",
         "src/mcp-add-remove.ts",
         "src/plugins.ts",
+        "src/report.ts",
         "src/sessions.ts",
         "src/scheduled-tasks.ts",
         "src/state.ts",
@@ -104,9 +109,11 @@
     },
     {
       "files": [
+        "src/anthropic-status.ts",
         "src/process.ts",
         "src/hold.ts",
         "src/reach.ts",
+        "src/report.ts",
         "src/transcript.ts",
         "src/sessions.ts",
         "src/scheduled-tasks.ts",

@@ -24,6 +24,8 @@ import {
   loadTerminalSync,
   saveTerminalSync,
   TERMINAL_SYNC_FILE,
+  loadWorkspaceModels,
+  saveWorkspaceModel,
 } from "./state.js";
 
 const dir = await mkdtemp(join(tmpdir(), "omc-state-"));
@@ -224,6 +226,22 @@ starters = await loadStarters(startersDir);
 assert.equal(starters.get("s1"), undefined);
 assert.equal(starters.get("default"), "what changed?");
 console.log("starters ok");
+// Workspace models: remember which Claude model a workspace last ran; cleared when blank or absent.
+const wsDir = await mkdtemp(join(tmpdir(), "omc-ws-"));
+let wsModels = await loadWorkspaceModels(wsDir);
+assert.equal(wsModels.size, 0, "empty dir loads empty map");
+await saveWorkspaceModel(wsDir, "/w/a", "claude-opus-5", 10);
+await saveWorkspaceModel(wsDir, "/w/b", "haiku", 20);
+wsModels = await loadWorkspaceModels(wsDir);
+assert.deepEqual(wsModels.get("/w/a"), { model: "claude-opus-5", at: 10 });
+assert.deepEqual(wsModels.get("/w/b"), { model: "haiku", at: 20 });
+await saveWorkspaceModel(wsDir, "/w/b", undefined);
+wsModels = await loadWorkspaceModels(wsDir);
+assert.equal(wsModels.size, 1, "undefined model forgets it");
+await saveWorkspaceModel(wsDir, "/w/a", "");
+wsModels = await loadWorkspaceModels(wsDir);
+assert.equal(wsModels.size, 0, "blank model forgets it");
+console.log("workspace models ok");
 // Started ids: what another writer put in the file between two of ours survives, which it did not
 // while the set was read once and cached for the life of the process.
 const startedFile = join(await mkdtemp(join(tmpdir(), "omc-started-")), "sessions.json");

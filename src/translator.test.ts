@@ -1,5 +1,11 @@
 import { strict as assert } from "node:assert";
-import { capLines, formatToolCall, formatToolResult, HEADER_MARK } from "./translator.js";
+import {
+  Translator,
+  capLines,
+  formatToolCall,
+  formatToolResult,
+  HEADER_MARK,
+} from "./translator.js";
 
 // Every header we write carries the mark right behind its glyph, and nothing else does: the client
 // requires it before it claims a paragraph as a tool header, so prose that opens with one of these
@@ -196,6 +202,42 @@ assert.equal(
 {
   const md = formatToolCall("mcp__dsh__subagent", "{}");
   assert.ok(md.startsWith("\u25c6\u2060 dsh \u00b7 subagent"), md);
+}
+
+// api_retry with statusNote: 5xx gets the note appended, 429 does not; seen tracks which codes were asked
+{
+  const seen: number[] = [];
+  // SAFETY: Translator constructor type lacks statusNote in the exported declaration but the field is set
+  const t = new Translator({
+    statusNote: (code) => {
+      seen.push(code);
+      return " · Anthropic reports Degraded performance";
+    },
+  }) as any;
+  const degraded = t.translate({
+    type: "system",
+    subtype: "api_retry",
+    attempt: 1,
+    max_retries: 3,
+    retry_delay_ms: 2000,
+    error: { status: 529, message: "overloaded" },
+  });
+  assert.equal(degraded.at(-1).block.type, "reasoning");
+  assert.equal(
+    degraded.at(-1).block.text,
+    "⚠ overloaded · Retrying in 2s · attempt 1/3 · Anthropic reports Degraded performance",
+  );
+  assert.deepEqual(seen, [529]);
+  const rateLimited = t.translate({
+    type: "system",
+    subtype: "api_retry",
+    attempt: 1,
+    max_retries: 3,
+    retry_delay_ms: 2000,
+    error: { status: 429, message: "rate limit" },
+  });
+  assert.equal(rateLimited.at(-1).block.text, "⚠ rate limit · Retrying in 2s · attempt 1/3");
+  assert.deepEqual(seen, [529]);
 }
 
 console.log("translator format ok");

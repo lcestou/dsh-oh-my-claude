@@ -9,6 +9,9 @@ export const maskEmail = (email: string): string => {
   if (at < 1) return email;
   return `${email[0]}${"*".repeat(Math.max(3, at - 1))}${email.slice(at)}`;
 };
+/** A hints-store value as a number, or undefined for a flag or a missing key. */
+export const numberOr = (v: boolean | number | undefined): number | undefined =>
+  typeof v === "number" ? v : undefined;
 /** Format a turn's cost in USD with two decimals. */
 export const fmtCost = (usd: number): string => `$${usd.toFixed(2)}`;
 /** Format duration ms into a human string: "34s" or "1m 35s". */
@@ -518,6 +521,29 @@ export const activeClaudeProvider = (ctx: ClientCtx): string | undefined => {
   const id = openSessionId(ctx);
   return id ? claudeProviderOf(ctx, id) : undefined;
 };
+
+/** A single-quoted shell word: `'` inside becomes `'\''`. */
+const shq = (s: string): string => `'${s.replaceAll("'", "'\\''")}'`;
+
+/** `cd '<cwd>' && claude --resume <id>`, wrapped in `ssh <host> "…"` for a session on an ssh box. */
+export const resumeCommand = (id: string, cwd: string | undefined, host?: string): string => {
+  const local = cwd ? `cd ${shq(cwd)} && claude --resume ${id}` : `claude --resume ${id}`;
+  return host ? `ssh ${host} ${JSON.stringify(local)}` : local;
+};
+
+/** Fetch a file and save it through a temporary anchor; the object URL is revoked after 30 s. */
+export async function saveBlob(url: string, filename: string): Promise<void> {
+  const reply = await fetch(url);
+  if (!reply.ok) throw new Error(`${filename}: ${reply.status}`);
+  const href = URL.createObjectURL(await reply.blob());
+  const a = document.createElement("a");
+  a.href = href;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(href), 30_000);
+}
 
 interface RestoreButtonProps {
   sessionId: string;

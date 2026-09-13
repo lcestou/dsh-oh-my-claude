@@ -613,6 +613,63 @@ export function saveStarter(dir: string, key: string, text: string | undefined):
   return run;
 }
 
+/** Per-workspace last Claude model, keyed by workspace cwd. Read by the client on a blank session. */
+const WORKSPACE_MODELS_FILE = (d: string) => join(d, "workspace-models.json");
+let workspaceModelsChain = Promise.resolve();
+
+export interface WorkspaceModel {
+  model: string;
+  at: number;
+}
+
+/** `{ [cwd]: { model, at } }`; a row whose model is not a non-empty string is skipped. */
+export async function loadWorkspaceModels(dir: string): Promise<Map<string, WorkspaceModel>> {
+  try {
+    const parsed: unknown = JSON.parse(await readFile(WORKSPACE_MODELS_FILE(dir), "utf8"));
+    const map = new Map<string, WorkspaceModel>();
+    if (typeof parsed === "object" && parsed !== null) {
+      for (const [cwd, v] of Object.entries(parsed)) {
+        if (typeof v !== "object" || v === null) continue;
+        // SAFETY: workspace-models.json rows have model (string) and at (number) fields.
+        const row = v as Record<string, unknown>;
+        if (typeof row.model !== "string" || row.model.trim() === "") continue;
+        map.set(cwd, {
+          model: row.model,
+          at: typeof row.at === "number" && Number.isFinite(row.at) ? row.at : 0,
+        });
+      }
+    }
+    return map;
+  } catch {
+    return new Map();
+  }
+}
+
+/** Save the model for one cwd, or forget it when `model` is undefined or blank. */
+export function saveWorkspaceModel(
+  dir: string,
+  cwd: string,
+  model: string | undefined,
+  at = Date.now(),
+): Promise<void> {
+  const run = workspaceModelsChain.then(async () => {
+    const file = WORKSPACE_MODELS_FILE(dir);
+    let obj: Record<string, unknown> = {};
+    try {
+      const parsed: unknown = JSON.parse(await readFile(file, "utf8"));
+      if (typeof parsed === "object" && parsed !== null) {
+        // SAFETY: a top-level JSON object with string keys.
+        obj = parsed as Record<string, unknown>;
+      }
+    } catch {}
+    if (model === undefined || model.trim() === "") delete obj[cwd];
+    else obj[cwd] = { model, at };
+    await writeJson(file, obj);
+  });
+  workspaceModelsChain = run.catch(() => {});
+  return run;
+}
+
 /** Whole name segments only: `GH_TOKEN`, `DB_PASSWORD`, `API_KEY` match; `SECRETARY` does not. */
 const SECRET_NAME = /(^|_)(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?)(_|$)/i;
 

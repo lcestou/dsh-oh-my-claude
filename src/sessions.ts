@@ -5,13 +5,25 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { hostname } from "node:os";
-import { readdir, readFile, writeFile, rename, copyFile, stat, mkdir, rm } from "node:fs/promises";
+import { homedir, hostname, release, userInfo } from "node:os";
+import { constants } from "node:fs";
+import {
+  access,
+  readdir,
+  readFile,
+  writeFile,
+  rename,
+  copyFile,
+  stat,
+  mkdir,
+  rm,
+} from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
   foldTranscript,
   listTranscripts,
   readTranscript,
+  toMarkdown,
   toSessionEvents,
   type FoldedTranscript,
 } from "./transcript.js";
@@ -53,6 +65,7 @@ import {
 } from "./scheduled-tasks.js";
 import { asSessionId } from "./dsh.js";
 import { buildAddServer, isMcpName, scopeNeedsCwd } from "./mcp-add-remove.js";
+import { buildReport, type PrivateValues, type ReportInput } from "./report.js";
 import {
   deleteSshToken,
   readSshToken,
@@ -79,7 +92,14 @@ import {
   pluginRoster,
   pluginScopeNeedsCwd,
 } from "./plugins.js";
-import { CLAUDE_HOME, PERMISSION_MODES, isPermissionMode } from "./state.js";
+import {
+  CLAUDE_HOME,
+  PERMISSION_MODES,
+  STATE_DIR,
+  isPermissionMode,
+  loadWorkspaceModels,
+  saveWorkspaceModel,
+} from "./state.js";
 import { projectDirName, type LoginNeed } from "./adapter.js";
 import type {
   PermissionModeInfo,
@@ -195,17 +215,23 @@ const PLUGIN_VERSION =
   isJsonObject(packageJson) && typeof packageJson.version === "string" ? packageJson.version : "";
 const PLUGIN_NAME =
   isJsonObject(packageJson) && typeof packageJson.name === "string" ? packageJson.name : "";
+/** Mirrors bugs.url in package.json; the report's Open issue link. */
+const ISSUES_URL = "https://github.com/lcestou/dsh-oh-my-claude/issues/new";
 /** The one `dsh plugin ... update` line for this install; the profile is read off this file's path. */
 const UPDATE_COMMAND = updateCommand(PLUGIN_NAME, profileFromPath(import.meta.url));
-/** The box-wide booleans under `hints.json`: one-time hints and the settings switches. Only `true`
- *  is kept, so a missing or unreadable file reads as every switch at its default. */
-async function readHints(hintsPath: string): Promise<Record<string, boolean>> {
+/** The box-wide booleans and non-negative numbers under `hints.json`: one-time hints and the
+ *  settings switches. Only `true` and finite non-negative numbers are kept, so a missing or
+ *  unreadable file reads as every switch at its default. */
+export async function readHints(hintsPath: string): Promise<Record<string, boolean | number>> {
   const parsed: unknown = await readFile(hintsPath, "utf8")
     .then((t) => JSON.parse(t))
     .catch(() => null);
-  const out: Record<string, boolean> = {};
+  const out: Record<string, boolean | number> = {};
   if (isJsonObject(parsed))
-    for (const [k, v] of Object.entries(parsed)) if (v === true) out[k] = true;
+    for (const [k, v] of Object.entries(parsed)) {
+      if (v === true) out[k] = true;
+      else if (typeof v === "number" && Number.isFinite(v) && v >= 0) out[k] = v;
+    }
   return out;
 }
 
@@ -216,7 +242,7 @@ async function pluginUpdate(
   hintsPath: string,
 ): Promise<{ latest: string; update: string } | undefined> {
   if (!PLUGIN_NAME || !PLUGIN_VERSION) return undefined;
-  if ((await readHints(hintsPath)).updateCheckOff) return undefined;
+  if ((await readHints(hintsPath)).updateCheckOff === true) return undefined;
   const latest = await latestVersion(PLUGIN_NAME);
   return latest && isNewer(PLUGIN_VERSION, latest) ? { latest, update: UPDATE_COMMAND } : undefined;
 }
@@ -1171,6 +1197,8 @@ export interface SessionRouteOptions {
   onLoginStatus?: (provider: string | null, loggedIn: boolean) => void;
   /** Per-session turn accounting buffer from the adapter. */
   turnRecords?: Map<string, import("./adapter.js").TurnRecord[]>;
+  /** dsh version read off the package this plugin loads beside; null when unavailable. */
+  dshVersion?: string | null;
   /** The running turn's figures per session, for the status row; absent when no turn is running. */
   liveTurn?: Map<string, LiveTurn>;
   /** Idle watchdog state from the adapter. */
@@ -1274,6 +1302,7 @@ export function registerSessionRoutes(
     command,
     sshHost,
     turnRecords,
+    dshVersion,
     liveTurn,
     idle,
     toolMode,
@@ -1522,6 +1551,35 @@ export function registerSessionRoutes(
                   });
                   res.end(read.text);
                   return;
+                }
+                return json(res, 404, { error: "transcript not found" });
+              }
+              // Same lookup as /transcript, answered as one Markdown document for reading or sharing
+              // rather than the raw rows. readTranscript folds the file and attaches subagent
+              // transcripts behind their Task calls, so the export reads as the session did.
+              if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/transcript.md`) {
+                const id = url.searchParams.get("id");
+                const cwd = url.searchParams.get("cwd") ?? "";
+                if (!validId(id)) return json(res, 400, { error: "id required" });
+                const { box, cwd: at } = targetOf(url, cwd);
+                const dirs = box.sshHost
+                  ? [join(await projectDirAt(box, at), `${id}.jsonl`)]
+                  : transcriptDirs(at).map((d) => join(d, `${id}.jsonl`));
+                try {
+                  for (const path of dirs) {
+                    const folded = await readTranscript(box, path);
+                    if (folded === undefined) continue;
+                    res.writeHead(200, {
+                      "content-type": "text/markdown; charset=utf-8",
+                      "content-disposition": `attachment; filename="${id}.md"`,
+                      "cache-control": "no-store",
+                    });
+                    res.end(toMarkdown(folded));
+                    return;
+                  }
+                } catch (e) {
+                  // A box that cannot be reached throws; that is not "no such transcript".
+                  return json(res, 502, { error: errorText(e) });
                 }
                 return json(res, 404, { error: "transcript not found" });
               }
@@ -1941,9 +1999,77 @@ export function registerSessionRoutes(
                   if (parsed?.error !== undefined) entry.parseError = parsed.error;
                   configFiles.push(entry);
                 }
+                const sid = url.searchParams.get("session");
+                let session: { claudeId: string; cwd: string } | undefined;
+                if (sid && cwd) {
+                  // A session opened from a transcript keeps that transcript's id; one this plugin
+                  // started keeps its transcript under the hash of the dsh id.
+                  // Only this box's disk is checked; a box session's id is the hash either way.
+                  let own = false;
+                  if (!box.sshHost)
+                    for (const d of transcriptDirs(cwd)) {
+                      own = await access(join(d, `${sid}.jsonl`)).then(
+                        () => true,
+                        () => false,
+                      );
+                      if (own) break;
+                    }
+                  session = { claudeId: own ? sid : claudeIdOf(sid), cwd };
+                }
                 // `ok` is what the tab keys its render on; without it the reply reads as the
                 // failure shape and the tab draws an empty error line instead of the report.
-                return json(res, 200, { ok: true, runtime, configFiles });
+                return json(res, 200, { ok: true, runtime, configFiles, session });
+              }
+              if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/report`) {
+                const box = boxOf(url);
+                const runtime = await boxStatus(box, url.searchParams.get("provider"));
+                const sid = url.searchParams.get("session");
+                let mcpRows: { name: string; status: string }[] | null = null;
+                if (sid && mcp) {
+                  const reply = await mcp.status(sid);
+                  if (reply.ok)
+                    mcpRows = reply.servers.map((s) => ({ name: s.name, status: s.status }));
+                }
+                const stateDirPath = sshBoxesPath ? dirname(sshBoxesPath) : "";
+                const switches = sshBoxesPath
+                  ? await readHints(join(stateDirPath, "hints.json"))
+                  : {};
+                const stateWritable = stateDirPath
+                  ? await access(stateDirPath, constants.W_OK).then(
+                      () => true,
+                      () => false,
+                    )
+                  : false;
+                const input: ReportInput = {
+                  plugin: PLUGIN_VERSION,
+                  dsh: dshVersion ?? null,
+                  cli: runtime.version,
+                  binary: runtime.binary !== null,
+                  os: `${process.platform} ${release()}`,
+                  node: process.versions.bun
+                    ? `bun ${process.versions.bun}`
+                    : `node ${process.version}`,
+                  loggedIn: runtime.loggedIn,
+                  authMethod: runtime.authMethod,
+                  configDir: runtime.configDir,
+                  stateDir: stateDirPath,
+                  stateWritable,
+                  mcp: mcpRows,
+                  lastError: runtime.error ?? runtime.reach?.detail ?? null,
+                  switches,
+                  running: runtime.running ?? 0,
+                };
+                const priv: PrivateValues = {
+                  home: homedir(),
+                  user: userInfo().username,
+                  hostname: hostname(),
+                  email: runtime.email ?? null,
+                };
+                return json(res, 200, {
+                  ok: true,
+                  text: buildReport(input, priv, url.searchParams.get("host") === "1"),
+                  issues: ISSUES_URL,
+                });
               }
               // `claude doctor` runs a process and takes a second, so it is its own route and
               // nothing runs it until the button is pressed.
@@ -2011,8 +2137,9 @@ export function registerSessionRoutes(
               // falls back to. A POST with blank text clears the key, which is how the card's
               // "forget" works.
               // One-time hints (the Restore pulse) and box-wide UI switches (`starterOff`): a flat
-              // map of booleans under the plugin's state, so a hint shown once or a switch flipped on
-              // this box holds for every browser and every update. `false` drops the key.
+              // map of booleans and non-negative numbers under the plugin's state, so a hint shown
+              // once or a switch flipped on this box holds for every browser and every update.
+              // `false` or `null` drops the key; other types are ignored.
               if (sshBoxesPath && url.pathname === `${ROUTE_PREFIX}/hints`) {
                 const hintsPath = join(dirname(sshBoxesPath), "hints.json");
                 const current = await readHints(hintsPath);
@@ -2023,11 +2150,30 @@ export function registerSessionRoutes(
                   for (const [k, v] of Object.entries(body)) {
                     if (!/^[a-zA-Z][a-zA-Z0-9]{0,40}$/.test(k)) continue;
                     if (v === true) next[k] = true;
-                    else if (v === false) delete next[k];
+                    else if (typeof v === "number" && Number.isFinite(v) && v >= 0) next[k] = v;
+                    else if (v === false || v === null) delete next[k];
                   }
                   await writeFile(hintsPath, `${JSON.stringify(next, null, 2)}\n`);
                   return json(res, 200, next);
                 }
+              }
+              // The model a workspace last ran, written by the adapter at turn start and applied by
+              // the client on a blank session; POST with a null or absent model forgets it.
+              if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/workspace-model`) {
+                const cwd = url.searchParams.get("cwd");
+                if (!cwd) return json(res, 400, { error: "cwd param required" });
+                return json(res, 200, (await loadWorkspaceModels(STATE_DIR)).get(cwd) ?? {});
+              }
+              if (req.method === "POST" && url.pathname === `${ROUTE_PREFIX}/workspace-model`) {
+                const body = await readBody(req);
+                const cwd = String(body.cwd ?? "");
+                if (!cwd) return json(res, 400, { error: "cwd required" });
+                await saveWorkspaceModel(
+                  STATE_DIR,
+                  cwd,
+                  typeof body.model === "string" ? body.model : undefined,
+                );
+                return json(res, 200, { ok: true });
               }
               if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/starter`) {
                 const sid = url.searchParams.get("session");
