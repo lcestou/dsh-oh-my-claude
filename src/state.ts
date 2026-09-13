@@ -262,8 +262,14 @@ export function rememberStarted(id: string, keep = true, stateFile = STATE_FILE)
 /** Headers for the Anthropic Models API: an API key from the env, else Claude Code's stored OAuth token. */
 export async function authHeaders(home = CLAUDE_HOME): Promise<Record<string, string> | null> {
   if (process.env.ANTHROPIC_API_KEY) return { "x-api-key": process.env.ANTHROPIC_API_KEY };
+  return authHeadersFrom(await readFile(join(home, ".credentials.json"), "utf8").catch(() => null));
+}
+
+/** The same read from the text of a credentials file already in hand: a remote box's, fetched
+ *  over ssh, decodes here the way this box's does. */
+export function authHeadersFrom(raw: string | null): Record<string, string> | null {
+  if (raw === null) return null;
   try {
-    const raw = await readFile(join(home, ".credentials.json"), "utf8");
     const parsed: unknown = JSON.parse(raw);
     const oauth =
       typeof parsed === "object" && parsed !== null && "claudeAiOauth" in parsed

@@ -2,8 +2,9 @@
 // command, read with the login Claude Code stores, projected to the few fields the panel shows.
 // This is an I/O boundary: the payload is undocumented and decoded here into a closed shape.
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { authHeaders } from "./state.js";
-import { errorText } from "./process.js";
+import { execFile } from "node:child_process";
+import { authHeaders, authHeadersFrom } from "./state.js";
+import { errorText, sshArgs } from "./process.js";
 import type { PluginContext } from "./dsh.js";
 
 const USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
@@ -203,9 +204,28 @@ export type UsageFetch = (
   json(): Promise<unknown>;
 }>;
 
-/** Read usage with the stored login; never throws, the panel shows the reason instead. */
-export async function readUsage(fetchImpl: UsageFetch = fetch, home?: string): Promise<UsageReply> {
-  const headers = await authHeaders(home);
+/** A box's credentials file over ssh: its own `~/.claude`, read with `cat` so no path of this box
+ *  is assumed there. Null when the box has none or does not answer. */
+const remoteCredentials = (sshHost: string): Promise<string | null> =>
+  new Promise((resolve) => {
+    execFile(
+      "ssh",
+      sshArgs(sshHost, "cat ~/.claude/.credentials.json"),
+      { timeout: 15_000, maxBuffer: 64 * 1024 },
+      (err, stdout) => resolve(err ? null : stdout),
+    );
+  });
+
+/** Read usage with the stored login; never throws, the panel shows the reason instead. An SSH
+ *  box's usage is its own account's: its credentials come over ssh, the endpoint is asked from here. */
+export async function readUsage(
+  fetchImpl: UsageFetch = fetch,
+  home?: string,
+  sshHost?: string,
+): Promise<UsageReply> {
+  const headers = sshHost
+    ? authHeadersFrom(await remoteCredentials(sshHost))
+    : await authHeaders(home);
   if (!headers?.Authorization) return { ok: false, error: "needs a Claude Code login" };
   try {
     const r = await fetchImpl(USAGE_URL, {
@@ -247,11 +267,15 @@ export function stillLimitedUntil(reply: UsageReply, now = Date.now()): number |
 export function registerUsageRoute(
   ctx: PluginContext,
   log: (level: string, msg: string) => void,
-  identity: (home?: string) => Promise<{ host: string; email: string | null }>,
-  options?: { home?: string; homeFor?: (providerId: string) => string | undefined },
+  identity: (home?: string, sshHost?: string) => Promise<{ host: string; email: string | null }>,
+  options?: {
+    home?: string;
+    /** The box a provider runs on: its local config dir, or the ssh host whose own login it uses. */
+    boxFor?: (providerId: string) => { home: string; sshHost?: string } | undefined;
+  },
 ) {
   const defaultHome = options?.home;
-  const homeFor = options?.homeFor;
+  const boxFor = options?.boxFor;
   // Per-home caches so different instances keep their own answers.
   const cached = new Map<string, { at: number; reply: UsageReply }>();
   const inFlight = new Map<string, Promise<UsageReply>>();
@@ -263,30 +287,32 @@ export function registerUsageRoute(
     cached.get(home)?.reply.ok
       ? cached.get(home)!.reply
       : { ok: false, error: "usage endpoint rate limited" };
-  const read = (force: boolean, home: string): Promise<UsageReply> => {
-    if (Date.now() < (rateLimitedUntil.get(home) ?? 0)) return Promise.resolve(rateLimited(home));
-    const entry = cached.get(home);
+  // Keyed per box: an ssh box's login is its own, whichever local dir its mount names.
+  const read = (force: boolean, home: string, sshHost?: string): Promise<UsageReply> => {
+    const key = sshHost ? `ssh:${sshHost}` : home;
+    if (Date.now() < (rateLimitedUntil.get(key) ?? 0)) return Promise.resolve(rateLimited(key));
+    const entry = cached.get(key);
     const age = entry ? Date.now() - entry.at : Infinity;
     if (entry && age < (force ? FORCE_MIN_AGE_MS : CACHE_MS)) return Promise.resolve(entry.reply);
-    if (!inFlight.has(home)) {
+    if (!inFlight.has(key)) {
       inFlight.set(
-        home,
-        readUsage(undefined, home).then((reply) => {
+        key,
+        readUsage(undefined, home, sshHost).then((reply) => {
           if (!reply.ok && reply.retryAfterMs)
             rateLimitedUntil.set(
-              home,
+              key,
               Date.now() + Math.max(reply.retryAfterMs, RATE_LIMIT_FLOOR_MS),
             );
           // One transient failure keeps the last good answer for its remaining cache life; the
           // fetch time is not refreshed, so a failure that persists surfaces once that life is over.
           if (reply.ok || !entry?.reply.ok || age >= CACHE_MS)
-            cached.set(home, { at: Date.now(), reply });
-          inFlight.delete(home);
-          return cached.get(home)!.reply;
+            cached.set(key, { at: Date.now(), reply });
+          inFlight.delete(key);
+          return cached.get(key)!.reply;
         }),
       );
     }
-    return inFlight.get(home)!;
+    return inFlight.get(key)!;
   };
   ctx.inject?.(["webServer", "connection"], (host) => {
     const { webServer, connection } = host;
@@ -310,12 +336,15 @@ export function registerUsageRoute(
             try {
               const url = new URL(req.url ?? "/", "http://dsh");
               const force = url.searchParams.get("force") === "1";
-              // Resolve the home for the requested provider; fall back to the default instance.
-              const provider = url.searchParams.get("provider");
+              // Resolve the box for the requested provider; fall back to the default instance.
               // An unknown provider id (instance gone after a reload) reads the default instance.
-              const home = (provider && homeFor?.(provider)) || defaultHome;
-              // The usage belongs to this box's login; say so, the browser hops between boxes.
-              const [reply, who] = await Promise.all([read(force, home ?? ""), identity(home)]);
+              const provider = url.searchParams.get("provider");
+              const box = (provider && boxFor?.(provider)) || { home: defaultHome ?? "" };
+              // The usage belongs to that box's login; say so, the browser hops between boxes.
+              const [reply, who] = await Promise.all([
+                read(force, box.home, box.sshHost),
+                identity(box.home, box.sshHost),
+              ]);
               return send(200, { ...reply, ...who });
             } catch (e) {
               log("warn", `usage route failed: ${errorText(e)}`);

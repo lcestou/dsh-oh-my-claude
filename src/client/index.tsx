@@ -39,8 +39,6 @@ import {
   code,
   codeInline,
   readJson,
-  card,
-  cardHead,
   h3,
   row,
   pill,
@@ -66,7 +64,9 @@ import {
   whenContextGone,
   guard,
   keywordMatches,
+  controlStatesCss,
 } from "./shared.js";
+import { PluginUpdateBadge } from "./update-pill.js";
 import { Spark, sparkNode } from "./spark.js";
 import { AccessShield, OhMyClaudeControl } from "./panel.js";
 import { ConfirmButton } from "./tune.js";
@@ -330,61 +330,96 @@ interface CardProps {
   children: ReactNode;
 }
 
-/** Disclosure chevron, 14px to match dsh's own todo/queue: up when closed, down when open. */
+/** dsh's own disclosure chevron (ui-settings-plugins): down when closed, turned when open. */
 function Chevron({ open }: { open: boolean }) {
   return (
-    <span
-      style={{
-        width: 14,
-        height: 14,
-        color: "var(--dsw-alias-label-tertiary, " + T.faint + ")",
-        flex: "0 0 auto",
-        display: "grid",
-        placeItems: "center",
-      }}
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 14 14"
+      fill="none"
       aria-hidden="true"
+      style={{
+        color: T.faint,
+        flex: "none",
+        transition: "transform .16s",
+        transform: open ? "rotate(180deg)" : "none",
+      }}
     >
-      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-        <polyline
-          points={open ? "3.5,5.5 7,9 10.5,5.5" : "3.5,8.5 7,5 10.5,8.5"}
-          stroke="currentColor"
-          strokeWidth="1.25"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
-    </span>
+      <path
+        d="M11.8486 5.5L11.4238 5.92383L8.69727 8.65137C8.44157 8.90706 8.21562 9.13382 8.01172 9.29785C7.79912 9.46883 7.55595 9.61756 7.25 9.66602C7.08435 9.69222 6.91565 9.69222 6.75 9.66602C6.44405 9.61756 6.20088 9.46883 5.98828 9.29785C5.78438 9.13382 5.55843 8.90706 5.30273 8.65137L2.57617 5.92383L2.15137 5.5L3 4.65137L3.42383 5.07617L6.15137 7.80273C6.42595 8.07732 6.59876 8.24849 6.74023 8.3623C6.87291 8.46904 6.92272 8.47813 6.9375 8.48047C6.97895 8.48703 7.02105 8.48703 7.0625 8.48047C7.07728 8.47813 7.12709 8.46904 7.25977 8.3623C7.40124 8.24849 7.57405 8.07732 7.84863 7.80273L10.5762 5.07617L11 4.65137L11.8486 5.5Z"
+        fill="currentColor"
+      />
+    </svg>
   );
 }
 
 /** Collapsible card: title, a one-line summary that stays visible when closed, optional actions. */
 function Card({ id, title, summary, actions, open, onToggle, children }: CardProps) {
+  // dsh's own plugin-settings card (ui-settings-plugins, 2026-09-13): name over description on the
+  // left, chevron on the right that turns when open, the body under a hairline. Measurements and
+  // tokens copied rather than the class borrowed, since dsh's class names change per build.
   return (
-    <section id={id} style={card}>
-      <div style={cardHead}>
-        <button
-          type="button"
-          onClick={onToggle}
-          aria-expanded={open}
+    <section
+      id={id}
+      data-omc-card={open ? "open" : "closed"}
+      style={{
+        border: `0.5px solid ${open ? "var(--dsw-alias-label-dimmed, rgba(128,128,128,.5))" : "var(--dsw-alias-border-l4, rgba(128,128,128,.3))"}`,
+        background: open
+          ? "var(--dsw-alias-bg-layer-2, rgba(128,128,128,.08))"
+          : "var(--dsw-alias-bg-layer-3, rgba(128,128,128,.05))",
+        borderRadius: 16,
+        marginTop: 12,
+        transition: "border-color .16s, background .16s",
+      }}
+    >
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        aria-label={`${open ? "Hide" : "Show"} ${title}`}
+        style={{
+          appearance: "none",
+          width: "100%",
+          font: "inherit",
+          color: "inherit",
+          textAlign: "left",
+          cursor: "pointer",
+          background: "none",
+          border: 0,
+          borderRadius: 12,
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          padding: "14px 16px",
+        }}
+      >
+        <span style={{ display: "flex", flexDirection: "column", flex: 1, gap: 4, minWidth: 0 }}>
+          <span style={{ color: T.text, fontSize: 15, fontWeight: 600, lineHeight: 1.4 }}>
+            {title}
+          </span>
+          {summary && (
+            <span style={{ color: T.faint, fontSize: 13, lineHeight: 1.5 }}>{summary}</span>
+          )}
+        </span>
+        <Chevron open={open} />
+      </button>
+      {open && (
+        <div
           style={{
-            all: "unset",
-            cursor: "pointer",
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            minWidth: 0,
-            flex: 1,
+            borderTop: `0.5px solid ${T.border}`,
+            margin: "0 16px",
+            paddingBottom: 8,
           }}
         >
-          <Chevron open={open} />
-          <h3 style={h3}>{title}</h3>
-          {summary && (
-            <span style={{ ...meta, whiteSpace: "normal", overflow: "hidden" }}>{summary}</span>
+          {actions && (
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, paddingTop: 10 }}>
+              {actions}
+            </div>
           )}
-        </button>
-        {actions && <div style={{ display: "flex", gap: 8 }}>{actions}</div>}
-      </div>
-      {open && <div style={{ marginTop: 10 }}>{children}</div>}
+          <div style={{ marginTop: actions ? 4 : 10 }}>{children}</div>
+        </div>
+      )}
     </section>
   );
 }
@@ -452,6 +487,8 @@ interface RuntimeStatus {
   /** A newer plugin release on npm, and the command that installs it. */
   latest?: string;
   update?: string;
+  /** Claude processes still running on the box on a login they loaded at start. */
+  running?: number;
   loggedIn?: boolean;
   email?: string;
   authMethod?: string;
@@ -912,6 +949,7 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
           No Claude Code sessions match
         </p>
       )}
+      {loading && <SkeletonRows rows={4} />}
       <div id="dsh-oh-my-claude-sessions" style={{ marginTop: 6 }}>
         {rows.map((r) => {
           const isLocal = r.g.key === "local";
@@ -929,7 +967,12 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
                   ? "Restore"
                   : "Open";
           return (
-            <div key={rowKey(r)} data-testid="dsh-oh-my-claude-session-row" style={row}>
+            <div
+              key={rowKey(r)}
+              data-testid="dsh-oh-my-claude-session-row"
+              data-omc-arrived=""
+              style={row}
+            >
               {/* Only a row this box can read is downloadable: an HTTP box's transcript is on that
                   box's disk, and its own panel is where it downloads from. */}
               <input
@@ -1380,6 +1423,196 @@ interface LoginFlow {
   error?: string;
   busy?: boolean;
 }
+/** One box's panel login from the browser: start (the sign-in link), a paste when the page shows a
+ *  code, and a 2s poll for a login the CLI finished by itself. Shared by the Boxes rows and the card
+ *  above the composer, so both run the same three routes. `onDone` fires once the token is stored. */
+/** One box in the Boxes card, in dsh's own settings shape: a name, a quiet kind and address beside
+ *  it, one status line under it (a dot for the state, facts joined by dots, problems in the error
+ *  colour), and the actions in a column on the right that never wraps into the facts. Every box
+ *  kind renders through this so they read the same. */
+function BoxRow({
+  testId,
+  title,
+  kind,
+  tone,
+  facts,
+  note,
+  actions,
+  children,
+}: {
+  testId: string;
+  title: string;
+  /** The transport and address: `ssh · lilly`, `link · http://…`, or this box's hostname. */
+  kind?: string;
+  /** The dot: green when the box can take a turn, red when something stops it, grey while unknown;
+   *  none for a row that has no state of its own. */
+  tone: "ok" | "err" | "faint" | "none";
+  /** The status line's items, left to right; a string item joins with a middle dot. */
+  facts: ReactNode[];
+  /** A line under the facts: a reach hint, an install hint. */
+  note?: ReactNode;
+  actions?: ReactNode;
+  children?: ReactNode;
+}) {
+  const dot = tone === "ok" ? T.ok : tone === "err" ? T.err : T.faint;
+  return (
+    <div data-testid={testId} style={{ ...row, alignItems: "flex-start", flexWrap: "wrap" }}>
+      <div style={{ flex: "1 1 260px", minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 8, minWidth: 0 }}>
+          <span style={{ color: T.text, fontWeight: 600, fontSize: 13 }}>{title}</span>
+          {kind && (
+            <span
+              style={{
+                ...meta,
+                fontFamily: T.mono,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                minWidth: 0,
+              }}
+            >
+              {kind}
+            </span>
+          )}
+        </div>
+        <div
+          style={{
+            ...meta,
+            marginTop: 3,
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            whiteSpace: "normal",
+            lineHeight: "18px",
+          }}
+        >
+          {tone !== "none" && (
+            <span
+              aria-hidden="true"
+              style={{
+                width: 7,
+                height: 7,
+                borderRadius: "50%",
+                background: dot,
+                flex: "0 0 auto",
+              }}
+            />
+          )}
+          <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>
+            {facts.map((f, i) => (
+              <span key={i}>
+                {i > 0 && <span style={{ margin: "0 6px", opacity: 0.6 }}>·</span>}
+                {f}
+              </span>
+            ))}
+          </span>
+        </div>
+        {note && (
+          <div style={{ ...meta, whiteSpace: "normal", marginTop: 4, color: T.muted }}>{note}</div>
+        )}
+        {children}
+      </div>
+      {actions && (
+        <div style={{ display: "flex", gap: 6, flex: "0 0 auto", alignSelf: "flex-start" }}>
+          {actions}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** `2.1.270 (Claude Code)` as the CLI prints it, without the name the row already says. */
+const cliVersion = (v: string | null | undefined): string =>
+  `Claude Code ${(v ?? "").replace(/\s*\(Claude Code\)\s*$/, "")}`.trim();
+
+/** Placeholder rows while a list loads: the shape of what is coming, in the border tone with a
+ *  slow sheen, so the card does not sit empty and then snap full. Motion off under reduced-motion. */
+function SkeletonRows({ rows: n }: { rows: number }) {
+  return (
+    <div aria-hidden="true" data-testid="dsh-oh-my-claude-skeleton">
+      {Array.from({ length: n }, (_, i) => (
+        <div key={i} style={{ ...row, alignItems: "center" }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div data-omc-skeleton="" style={{ height: 12, width: `${46 - (i % 3) * 9}%` }} />
+            <div
+              data-omc-skeleton=""
+              style={{ height: 10, width: `${70 - (i % 2) * 14}%`, marginTop: 7 }}
+            />
+          </div>
+          <div data-omc-skeleton="" style={{ height: 28, width: 64, borderRadius: 8 }} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** A fact in the status line that is a problem: the error colour, so the eye lands on it. */
+const bad = (text: string): ReactNode => <span style={{ color: T.err }}>{text}</span>;
+
+/** Where a login flow's three routes live and what names the box in their body: an ssh box (or
+ *  this box, host "") under `ssh-boxes/login` by host; a linked dsh box under `boxes/login` by url,
+ *  forwarded to that dsh's own copy of this plugin. */
+interface LoginRoutes {
+  base: string;
+  field: "host" | "url";
+}
+const SSH_LOGIN: LoginRoutes = { base: "ssh-boxes/login", field: "host" };
+const DSH_LOGIN: LoginRoutes = { base: "boxes/login", field: "url" };
+
+function useLoginFlow(onDone: (host: string) => void, routes: LoginRoutes = SSH_LOGIN) {
+  const [login, setLogin] = useState<LoginFlow | null>(null);
+  const post = (route: string, host: string, extra: Record<string, string> = {}) =>
+    fetch(`${ROUTE}/${routes.base}/${route}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ [routes.field]: host, ...extra }),
+    });
+  const startLogin = (host: string) => {
+    setLogin({ host, code: "", busy: true });
+    post("start", host)
+      .then((r) => readJson<{ url?: string; error?: string }>(r))
+      .then((b) => setLogin({ host, code: "", url: b.url, error: b.error }))
+      .catch((e: Error) => setLogin({ host, code: "", error: e.message }));
+  };
+  // While the link is up, ask every 2s whether setup-token finished by itself (it does when the
+  // box already has a login: no browser, no code). Paused during a submit, stopped on an error.
+  const pollKey = login && login.url && !login.busy && !login.error ? login.host : null;
+  useEffect(() => {
+    if (pollKey === null) return;
+    const host = pollKey;
+    let live = true;
+    const tick = () =>
+      post("poll", host)
+        .then((r) => readJson<{ pending?: boolean; done?: boolean; error?: string }>(r))
+        .then((b) => {
+          if (!live || b.pending) return;
+          if (b.done) {
+            setLogin(null);
+            onDone(host);
+          } else setLogin((cur) => (cur && cur.host === host ? { ...cur, error: b.error } : cur));
+        })
+        .catch(() => {});
+    const timer = setInterval(tick, 2000);
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
+  }, [pollKey]);
+  const submitLogin = () => {
+    if (!login) return;
+    const host = login.host;
+    setLogin({ ...login, busy: true, error: undefined });
+    post("code", host, { code: login.code })
+      .then((r) => readJson<{ done?: boolean; loggedIn?: boolean; error?: string }>(r))
+      .then((b) => {
+        if (b.error) return setLogin({ host, code: "", error: b.error });
+        setLogin(null);
+        onDone(host);
+      })
+      .catch((e: Error) => setLogin({ host, code: "", error: e.message }));
+  };
+  return { login, setLogin, startLogin, submitLogin };
+}
+
 function LoginSteps({
   login,
   setLogin,
@@ -1435,6 +1668,8 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
   const [ssh, setSsh] = useState<SshBoxData[]>([]);
   const [sshProbe, setSshProbe] = useState<Record<string, SshProbeEntry>>({});
   const [kind, setKind] = useState<BoxKind>("ssh");
+  /** The add form is folded behind one button once a box exists; a first visit sees it open. */
+  const [adding, setAdding] = useState(false);
   // The Add workspace… button opens the sidebar's dialog, which only takes over when a box is
   // saved and dsh exposes its directory service; without both, the click would do nothing.
   const canAdd = ssh.length > 0 && canBrowseDirs(ctx);
@@ -1489,22 +1724,18 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
   const [openSettingsUrl, setOpenSettingsUrl] = useState<string | null>(null);
   const [me, setMe] = useState<RuntimeStatus | null>(null);
   const [rws, setRws] = useState<RemoteWs[]>([]);
-  const [login, setLogin] = useState<LoginFlow | null>(null);
-  /** The update pill after a click: the command sits on the clipboard for a moment's notice. */
-  const [updateCopied, setUpdateCopied] = useState<"" | "command copied" | "copy blocked">("");
-  const copyUpdate = () => {
-    if (!me?.update) return;
-    const say = (what: "command copied" | "copy blocked") => {
-      setUpdateCopied(what);
-      setTimeout(() => setUpdateCopied(""), 1500);
-    };
-    // No clipboard over plain http or when the browser refuses: the tooltip still carries the
-    // command, and the pill says the click did nothing rather than looking like it worked.
-    if (!navigator.clipboard) return say("copy blocked");
-    navigator.clipboard.writeText(me.update).then(
-      () => say("command copied"),
-      () => say("copy blocked"),
-    );
+  const { login, setLogin, startLogin, submitLogin } = useLoginFlow(() => refresh());
+  const dsh = useLoginFlow(() => refresh(), DSH_LOGIN);
+  const logoutDsh = (target: string) => {
+    setBusy(true);
+    fetch(`${ROUTE}/boxes/login/logout`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ url: target }),
+    })
+      .then(() => refresh())
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setBusy(false));
   };
 
   /** This box's own row. Read on mount and again after every login change here: the row used to
@@ -1599,17 +1830,6 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
   const removeDsh = (url: string) => saveDsh(boxes.filter((b) => b.url !== url));
   const removeSsh = (host: string) => saveSsh(ssh.filter((b) => b.host !== host));
 
-  const startLogin = (host: string) => {
-    setLogin({ host, code: "", busy: true });
-    fetch(`${ROUTE}/ssh-boxes/login/start`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ host }),
-    })
-      .then((r) => readJson<{ url?: string; error?: string }>(r))
-      .then((b) => setLogin({ host, code: "", url: b.url, error: b.error }))
-      .catch((e: Error) => setLogin({ host, code: "", error: e.message }));
-  };
   const logout = (host: string) => {
     setBusy(true);
     fetch(`${ROUTE}/ssh-boxes/login/logout`, {
@@ -1621,52 +1841,6 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
       .catch((e: Error) => setError(e.message))
       .finally(() => setBusy(false));
   };
-  // While the link is up, ask every 2s whether setup-token finished by itself (it does when the
-  // box already has a login: no browser, no code). Paused during a submit, stopped on an error.
-  const pollKey = login && login.url && !login.busy && !login.error ? login.host : null;
-  useEffect(() => {
-    if (pollKey === null) return;
-    const host = pollKey;
-    let live = true;
-    const tick = () =>
-      fetch(`${ROUTE}/ssh-boxes/login/poll`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ host }),
-      })
-        .then((r) => readJson<{ pending?: boolean; done?: boolean; error?: string }>(r))
-        .then((b) => {
-          if (!live || b.pending) return;
-          if (b.done) {
-            setLogin(null);
-            refresh();
-          } else setLogin((cur) => (cur && cur.host === host ? { ...cur, error: b.error } : cur));
-        })
-        .catch(() => {});
-    const timer = setInterval(tick, 2000);
-    return () => {
-      live = false;
-      clearInterval(timer);
-    };
-  }, [pollKey]);
-  const submitLogin = () => {
-    if (!login) return;
-    const host = login.host;
-    setLogin({ ...login, busy: true, error: undefined });
-    fetch(`${ROUTE}/ssh-boxes/login/code`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ host, code: login.code }),
-    })
-      .then((r) => readJson<{ done?: boolean; loggedIn?: boolean; error?: string }>(r))
-      .then((b) => {
-        if (b.error) return setLogin({ host, code: "", error: b.error });
-        setLogin(null);
-        refresh();
-      })
-      .catch((e: Error) => setLogin({ host, code: "", error: e.message }));
-  };
-
   const removeRw = (path: string) => {
     setBusy(true);
     setError("");
@@ -1713,70 +1887,57 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
     <Card
       id="dsh-oh-my-claude-boxes"
       title="Boxes"
-      summary={summary}
+      summary="Where Claude Code runs: this box, any ssh box, a linked dsh. Each keeps its own login."
       actions={
         open ? (
-          <button type="button" style={btn} disabled={busy || total === 0} onClick={refresh}>
-            {busy ? "Checking…" : "Refresh"}
-          </button>
+          <>
+            <span style={{ ...meta, alignSelf: "center", marginRight: "auto" }}>{summary}</span>
+            <button type="button" style={btn} disabled={busy || total === 0} onClick={refresh}>
+              {busy ? "Checking…" : "Refresh"}
+            </button>
+          </>
         ) : null
       }
       open={open}
       onToggle={onToggle}
     >
-      <p style={{ margin: "0 0 4px", color: T.muted, fontSize: 13 }}>
-        This box plus any you add. <b>SSH</b>: this dsh drives Claude Code on the box over ssh, so
-        it shows up in the model picker with no dsh needed there. <b>Link</b>: it runs its own dsh
-        with this plugin, so its sessions show in the archive and Open hops there. Each keeps its
-        own Claude Code login.
-      </p>
       {error && <p style={{ color: T.err, fontSize: 13, margin: "4px 0" }}>{error}</p>}
       {me && (
-        <div data-testid="dsh-oh-my-claude-self-box-row" style={row}>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ color: T.text, fontWeight: 600 }}>This box</div>
-            <div
-              style={{
-                ...meta,
-                marginTop: 3,
-                display: "flex",
-                flexWrap: "wrap",
-                gap: 6,
-                alignItems: "center",
-                whiteSpace: "normal",
-              }}
-            >
-              <span style={pill(CLAUDE_ORANGE)}>this box</span>
-              {me.host && <span style={{ fontFamily: T.mono }}>{me.host}</span>}
-              <span style={pill(me.binary ? T.ok : T.err)}>
-                {me.binary ? `claude ${me.version ?? ""}`.trim() : "claude not on PATH"}
-              </span>
-              {/* Neither npm nor dsh says when a plugin has moved on, so this row does: the pill
-                  turns orange with the new version, and a click puts the update command on the
-                  clipboard. The server reads the registry once a day. */}
-              {me.latest && me.update ? (
-                <button
-                  type="button"
-                  style={{ ...pill(CLAUDE_ORANGE), cursor: "pointer", background: "none" }}
-                  title={`${me.update}\nthen restart dsh. Click to copy the command.`}
-                  aria-label={`Plugin ${me.latest} available. Copy the update command.`}
-                  data-omc-update={me.latest}
-                  onClick={copyUpdate}
-                >
-                  {updateCopied || `${me.latest} available`}
-                </button>
-              ) : (
-                me.plugin && (
-                  <span style={pill(T.faint)} data-omc-plugin-version={me.plugin}>
-                    plugin {me.plugin}
-                  </span>
-                )
-              )}
-              <span style={pill(me.loggedIn ? T.ok : T.err)}>
-                {me.loggedIn ? maskEmail(me.email ?? "logged in") : "not logged in"}
-              </span>
-              {/* The same relay the ssh rows use, run under a local PTY; the token it mints goes
-                  to this box's own spawns. Log out forgets that token only. */}
+        <BoxRow
+          testId="dsh-oh-my-claude-self-box-row"
+          title="This box"
+          kind={me.host}
+          tone={!me.binary || !me.loggedIn ? "err" : "ok"}
+          facts={[
+            me.binary ? cliVersion(me.version) : bad("Claude Code not on PATH"),
+            // A token from the earlier setup-token flow is named, since it is the plugin's alone; a
+            // login made here or in a terminal is the CLI's own and needs no label.
+            <span key="login" data-omc-login-method={me.authMethod}>
+              {me.loggedIn
+                ? `${maskEmail(me.email ?? "logged in")}${me.authMethod === "panel token" ? " · panel token" : ""}`
+                : bad("not logged in")}
+            </span>,
+            // Logged out on disk, but processes started earlier still answer on the login they
+            // read then; Log out makes the cut.
+            ...(!me.loggedIn && (me.running ?? 0) > 0
+              ? [
+                  <span key="running" data-omc-running={me.running}>
+                    {me.running} {me.running === 1 ? "session" : "sessions"} still answering on the
+                    old login
+                  </span>,
+                ]
+              : []),
+          ]}
+          note={
+            !me.binary && (
+              <>
+                Install Claude Code here (<code style={codeInline}>claude</code> on PATH), then
+                refresh.
+              </>
+            )
+          }
+          actions={
+            <>
               {me.binary && !me.loggedIn && login?.host !== "" && (
                 <button
                   type="button"
@@ -1788,155 +1949,171 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
                   Log in
                 </button>
               )}
-              {me.loggedIn && me.authMethod === "panel token" && (
+              {/* One Log out does everything: forgets a stored token, logs the box's Claude Code
+                  out, and kills its running sessions. */}
+              {(me.loggedIn || (me.running ?? 0) > 0) && (
                 <ConfirmButton
                   label="Log out"
-                  ariaLabel="Log out: forget this box's panel token"
+                  ariaLabel="Log out: log this box's Claude Code out and stop its running sessions"
                   style={btn}
                   disabled={busy}
                   onAct={() => logout("")}
                 />
               )}
-              {!me.binary && (
-                <span style={{ width: "100%", color: T.err, fontSize: 12 }}>
-                  Install Claude Code here (<code style={codeInline}>claude</code> on PATH), then
-                  refresh.
-                </span>
-              )}
-            </div>
-            {login?.host === "" && (
-              <LoginSteps login={login} setLogin={setLogin} submit={submitLogin} />
-            )}
-          </div>
-          <span style={{ ...meta, alignSelf: "center" }}>auto</span>
-        </div>
+            </>
+          }
+        >
+          {login?.host === "" && (
+            <LoginSteps login={login} setLogin={setLogin} submit={submitLogin} />
+          )}
+        </BoxRow>
       )}
       {ssh.map((b) => {
         const st = sshProbe[b.host]?.status;
+        const down = st?.reach && st.reach.stage !== "ok";
         const up = st && !st.error && st.binary;
+        const facts: ReactNode[] = !st
+          ? [busy ? "checking…" : "unchecked"]
+          : down
+            ? [
+                <span key="reach" title={st.reach?.detail}>
+                  {bad(reachLabel(st.reach?.stage ?? ""))}
+                </span>,
+              ]
+            : st.error
+              ? [bad(st.error)]
+              : [
+                  st.binary ? cliVersion(st.version) : bad("no claude"),
+                  st.loggedIn ? maskEmail(st.email ?? "logged in") : bad("not logged in"),
+                ];
+        if (st && up && !st.loggedIn && (st.running ?? 0) > 0)
+          facts.push(
+            `${st.running} ${st.running === 1 ? "session" : "sessions"} still answering on the old login`,
+          );
         return (
-          <div key={`ssh:${b.host}`} data-testid="dsh-oh-my-claude-ssh-box-row" style={row}>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ color: T.text, fontWeight: 600 }}>{b.name}</div>
-              <div
-                style={{
-                  ...meta,
-                  marginTop: 3,
-                  display: "flex",
-                  flexWrap: "wrap",
-                  gap: 6,
-                  alignItems: "center",
-                  whiteSpace: "normal",
-                }}
-              >
-                <span style={pill(T.faint)}>{b.via ?? "ssh"}</span>
-                <span style={{ fontFamily: T.mono }}>{b.host}</span>
-                {!st && <span style={pill(T.faint)}>{busy ? "checking" : "unchecked"}</span>}
-                {st?.error && !st.reach && <span style={pill(T.err)}>{st.error}</span>}
-                {st?.reach && st.reach.stage !== "ok" && (
-                  <span style={pill(T.err)} title={st.reach.detail}>
-                    {reachLabel(st.reach.stage)}
-                  </span>
+          <BoxRow
+            key={`ssh:${b.host}`}
+            testId="dsh-oh-my-claude-ssh-box-row"
+            title={b.name}
+            kind={`${b.via ?? "ssh"} · ${b.host}`}
+            tone={!st ? "faint" : up && st.loggedIn ? "ok" : "err"}
+            facts={facts}
+            note={down ? st.reach?.hint.replaceAll("<host>", b.host) : undefined}
+            actions={
+              <>
+                {up && !st.loggedIn && login?.host !== b.host && (
+                  <button
+                    type="button"
+                    style={btn}
+                    disabled={busy}
+                    onClick={() => startLogin(b.host)}
+                  >
+                    Log in
+                  </button>
                 )}
-                {up && (
-                  <>
-                    <span style={pill(st.binary ? T.ok : T.err)}>
-                      {st.binary ? `claude ${st.version ?? ""}`.trim() : "no claude"}
-                    </span>
-                    <span style={pill(st.loggedIn ? T.ok : T.err)}>
-                      {st.loggedIn ? maskEmail(st.email ?? "logged in") : "not logged in"}
-                    </span>
-                    {st.binary && !st.loggedIn && login?.host !== b.host && (
-                      <button
-                        type="button"
-                        style={btn}
-                        disabled={busy}
-                        onClick={() => startLogin(b.host)}
-                      >
-                        Log in
-                      </button>
-                    )}
-                  </>
+                {/* The same Log out this box has: `claude auth logout` over ssh, its running
+                    sessions stopped, any leftover token forgotten. */}
+                {up && (st.loggedIn || (st.running ?? 0) > 0) && (
+                  <ConfirmButton
+                    label="Log out"
+                    ariaLabel={`Log out ${b.name}: log its Claude Code out and stop its running sessions`}
+                    style={btn}
+                    disabled={busy}
+                    onAct={() => logout(b.host)}
+                  />
                 )}
-              </div>
-              {st?.reach && st.reach.stage !== "ok" && (
-                <div style={{ ...meta, whiteSpace: "normal", marginTop: 4, color: T.muted }}>
-                  {st.reach.hint.replaceAll("<host>", b.host)}
-                </div>
-              )}
-              {login?.host === b.host && (
-                <LoginSteps login={login} setLogin={setLogin} submit={submitLogin} />
-              )}
-            </div>
-            <ConfirmButton
-              label="Remove"
-              style={btn}
-              disabled={busy}
-              onAct={() => removeSsh(b.host)}
-            />
-          </div>
+                <ConfirmButton
+                  label="Remove"
+                  ariaLabel={`Remove ${b.name}`}
+                  style={btn}
+                  disabled={busy}
+                  onAct={() => removeSsh(b.host)}
+                />
+              </>
+            }
+          >
+            {login?.host === b.host && (
+              <LoginSteps login={login} setLogin={setLogin} submit={submitLogin} />
+            )}
+          </BoxRow>
         );
       })}
       {boxes.map((b) => {
         const st = probe[b.url];
         const ok = st?.ok;
-        const skew = ok && self && st.status?.plugin && st.status.plugin !== self.plugin;
+        const r = ok ? st.status : undefined;
+        const skew = r?.plugin && self && r.plugin !== self.plugin;
+        const facts: ReactNode[] = !st
+          ? [busy ? "checking…" : "unchecked"]
+          : !ok
+            ? [bad(st.error ?? "unreachable")]
+            : r
+              ? [
+                  r.host ?? "",
+                  r.binary ? cliVersion(r.version) : bad("no claude"),
+                  r.loggedIn ? maskEmail(r.email ?? "logged in") : bad("not logged in"),
+                  <span key="plugin" style={skew ? { color: T.warn } : undefined}>
+                    plugin {r.plugin ?? "?"}
+                    {skew ? ` ≠ ${self?.plugin} here` : ""}
+                  </span>,
+                ]
+              : [];
         return (
-          <div key={`dsh:${b.url}`} data-testid="dsh-oh-my-claude-box-row" style={row}>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ color: T.text, fontWeight: 600 }}>{b.name}</div>
-              <div
-                style={{
-                  ...meta,
-                  marginTop: 3,
-                  display: "flex",
-                  flexWrap: "wrap",
-                  gap: 6,
-                  alignItems: "center",
-                  whiteSpace: "normal",
-                }}
-              >
-                <span style={pill(T.faint)}>link</span>
-                <span style={{ fontFamily: T.mono }}>{b.url}</span>
-                {!st && <span style={pill(T.faint)}>{busy ? "checking" : "unchecked"}</span>}
-                {st && !ok && <span style={pill(T.err)}>{st.error}</span>}
-                {ok && st.status && (
-                  <>
-                    <span style={pill(T.faint)}>{st.status.host}</span>
-                    <span style={pill(st.status.binary ? T.ok : T.err)}>
-                      {st.status.binary ? `claude ${st.status.version ?? ""}`.trim() : "no claude"}
-                    </span>
-                    <span style={pill(st.status.loggedIn ? T.ok : T.err)}>
-                      {st.status.loggedIn
-                        ? maskEmail(st.status.email ?? "logged in")
-                        : "not logged in"}
-                    </span>
-                    <span style={pill(skew ? T.warn : T.faint)}>
-                      plugin {st.status.plugin ?? "?"}
-                      {skew ? ` ≠ ${self.plugin} here` : ""}
-                    </span>
-                  </>
+          <BoxRow
+            key={`dsh:${b.url}`}
+            testId="dsh-oh-my-claude-box-row"
+            title={b.name}
+            kind={`link · ${b.url}`}
+            tone={!st ? "faint" : ok && r?.binary && r.loggedIn ? "ok" : "err"}
+            facts={facts}
+            actions={
+              <>
+                {/* The same Log in and Log out every row has, run by that dsh's own copy of this
+                    plugin on its box. */}
+                {r?.binary && !r.loggedIn && dsh.login?.host !== b.url && (
+                  <button
+                    type="button"
+                    style={btn}
+                    disabled={busy}
+                    onClick={() => dsh.startLogin(b.url)}
+                  >
+                    Log in
+                  </button>
                 )}
-              </div>
-            </div>
-            <button
-              type="button"
-              style={btn}
-              disabled={busy || !ok}
-              onClick={() => setOpenSettingsUrl(openSettingsUrl === b.url ? null : b.url)}
-            >
-              Edit settings
-            </button>
-            <ConfirmButton
-              label="Remove"
-              style={btn}
-              disabled={busy}
-              onAct={() => removeDsh(b.url)}
-            />
-            <button type="button" style={btnPrimary} onClick={() => jump(b)}>
-              Open
-            </button>
-          </div>
+                {r?.loggedIn && (
+                  <ConfirmButton
+                    label="Log out"
+                    ariaLabel={`Log out ${b.name}: log its Claude Code out and stop its running sessions`}
+                    style={btn}
+                    disabled={busy}
+                    onAct={() => logoutDsh(b.url)}
+                  />
+                )}
+                <button
+                  type="button"
+                  style={btn}
+                  disabled={busy || !ok}
+                  onClick={() => setOpenSettingsUrl(openSettingsUrl === b.url ? null : b.url)}
+                >
+                  Edit settings
+                </button>
+                <ConfirmButton
+                  label="Remove"
+                  ariaLabel={`Remove ${b.name}`}
+                  style={btn}
+                  disabled={busy}
+                  onAct={() => removeDsh(b.url)}
+                />
+                <button type="button" style={btnPrimary} onClick={() => jump(b)}>
+                  Open
+                </button>
+              </>
+            }
+          >
+            {dsh.login?.host === b.url && (
+              <LoginSteps login={dsh.login} setLogin={dsh.setLogin} submit={dsh.submitLogin} />
+            )}
+          </BoxRow>
         );
       })}
       {openSettingsUrl && (
@@ -1948,296 +2125,327 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
           />
         </div>
       )}
-      <form
-        onSubmit={add}
-        style={{
-          ...row,
-          borderTop: total ? `1px solid ${T.border}` : "none",
-          paddingTop: total ? 12 : 4,
-          flexWrap: "wrap",
-        }}
-      >
-        <div style={{ display: "flex", gap: 6 }}>
-          {seg("ssh", "SSH")}
-          {seg("tailscale", "Tailscale")}
-          {seg("wireguard", "WireGuard")}
-          {seg("dsh", "Link")}
-        </div>
-        <input
-          style={{ ...inputStyle, flex: "0 1 140px" }}
-          placeholder="Name"
-          value={draft.name}
-          onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-        />
-        {kind === "ssh" ? (
-          <input
-            style={{ ...inputStyle, flex: "1 1 240px" }}
-            placeholder="user@host or ssh alias"
-            value={draft.host}
-            onChange={(e) => setDraft({ ...draft, host: e.target.value })}
-          />
-        ) : kind === "tailscale" ? (
-          <>
-            {ts?.loggedIn && (
-              <select
-                style={{ ...select, flex: "0 1 220px" }}
-                aria-label="Tailscale peer"
-                value={pickedPeer?.host ?? ""}
-                onChange={(e) => {
-                  const peer = ts.peers.find((p) => p.host === e.target.value) ?? null;
-                  setPickedPeer(peer);
-                  if (peer) setDraft({ ...draft, name: draft.name || peer.name, host: peer.host });
-                }}
-              >
-                <option value="">Pick a peer…</option>
-                {ts.peers.map((p) => (
-                  <option key={p.host} value={p.host} disabled={peerIsSaved(p, ssh)}>
-                    {p.online ? "●" : "○"} {p.name}
-                    {p.os ? ` · ${p.os}` : ""}
-                    {peerIsSaved(p, ssh) ? " · saved" : ""}
-                  </option>
-                ))}
-              </select>
-            )}
+      {adding || total === 0 ? (
+        <>
+          <form
+            onSubmit={add}
+            style={{
+              ...row,
+              borderTop: `1px solid ${T.border}`,
+              paddingTop: 12,
+              flexWrap: "wrap",
+            }}
+          >
+            <div style={{ display: "flex", gap: 6 }}>
+              {seg("ssh", "SSH")}
+              {seg("tailscale", "Tailscale")}
+              {seg("wireguard", "WireGuard")}
+              {seg("dsh", "Link")}
+            </div>
             <input
-              style={{ ...inputStyle, flex: "1 1 220px" }}
-              placeholder="user@name.tailnet.ts.net or 100.x.y.z"
-              value={draft.host}
-              onChange={(e) => {
-                setPickedPeer(null);
-                setDraft({ ...draft, host: e.target.value });
-              }}
+              style={{ ...inputStyle, flex: "0 1 140px" }}
+              placeholder="Name"
+              value={draft.name}
+              onChange={(e) => setDraft({ ...draft, name: e.target.value })}
             />
-          </>
-        ) : kind === "wireguard" ? (
-          <>
-            {wg && wg.peers.length > 0 && (
-              <select
-                style={{ ...select, flex: "0 1 220px" }}
-                aria-label="WireGuard peer"
-                // Reflects what the host field holds, with or without a user in front of it.
-                value={
-                  wg.peers.find((p) => draft.host === p.host || draft.host.endsWith(`@${p.host}`))
-                    ?.host ?? ""
-                }
-                onChange={(e) => {
-                  const peer = wg.peers.find((p) => p.host === e.target.value);
-                  if (peer) setDraft({ ...draft, host: peer.host });
-                }}
-              >
-                <option value="">Pick a peer…</option>
-                {wg.peers.map((p) => (
-                  <option key={`${p.iface}:${p.host}`} value={p.host}>
-                    {p.host} · {p.iface} · handshake {handshakeText(p.handshakeAge)}
-                  </option>
-                ))}
-              </select>
-            )}
-            <input
-              style={{ ...inputStyle, flex: "1 1 220px" }}
-              placeholder="user@10.x.y.z (the tunnel address)"
-              value={draft.host}
-              onChange={(e) => setDraft({ ...draft, host: e.target.value })}
-            />
-          </>
-        ) : (
-          <>
-            <input
-              style={{ ...inputStyle, flex: "1 1 260px" }}
-              placeholder="https://dsh.other-box.lan"
-              value={draft.url}
-              onChange={(e) => setDraft({ ...draft, url: e.target.value })}
-            />
-            <input
-              style={{ ...inputStyle, flex: "1 1 200px" }}
-              type="password"
-              autoComplete="off"
-              placeholder="dsh token (optional)"
-              value={draft.token}
-              onChange={(e) => setDraft({ ...draft, token: e.target.value })}
-            />
-          </>
-        )}
-        <button
-          type="submit"
-          style={btn}
-          disabled={
-            busy || !draft.name.trim() || (kind !== "dsh" ? !draft.host.trim() : !draft.url.trim())
-          }
-        >
-          Add
-        </button>
-      </form>
-      {kind === "tailscale" && (
-        <div
-          style={{
-            ...meta,
-            whiteSpace: "normal",
-            marginTop: 6,
-            display: "flex",
-            flexWrap: "wrap",
-            gap: 8,
-            alignItems: "center",
-          }}
-        >
-          {ts === null ? (
-            "Checking this node's tailnet…"
-          ) : !ts.installed ? (
-            <>
-              <span style={pill(T.faint)}>not installed</span>
-              Install Tailscale on this box first (tailscale.com/download); the box side needs it
-              too.
-            </>
-          ) : ts.loggedIn ? (
-            <>
-              <span style={pill(T.ok)}>on the tailnet</span>
-              {ts.self && (
-                <span style={{ fontFamily: T.mono }}>{ts.self.host || ts.self.name}</span>
-              )}
-              {ts.peers.length === 0 && "No peers yet: bring the box onto the tailnet and Refresh."}
-            </>
-          ) : (
-            <>
-              <span style={pill(T.warn)}>not connected</span>
+            {kind === "ssh" ? (
               <input
-                style={{ ...inputStyle, flex: "1 1 200px", fontSize: 12 }}
-                placeholder="Login server (Headscale), else Tailscale"
-                value={tsServer.loginServer}
-                onChange={(e) => setTsServer({ ...tsServer, loginServer: e.target.value })}
+                style={{ ...inputStyle, flex: "1 1 240px" }}
+                placeholder="user@host or ssh alias"
+                value={draft.host}
+                onChange={(e) => setDraft({ ...draft, host: e.target.value })}
               />
-              <input
-                style={{ ...inputStyle, flex: "1 1 160px", fontSize: 12 }}
-                type="password"
-                autoComplete="off"
-                placeholder="Pre-auth key (optional)"
-                value={tsServer.authKey}
-                onChange={(e) => setTsServer({ ...tsServer, authKey: e.target.value })}
-              />
-              {tsLogin?.url ? (
-                <>
-                  <a
-                    href={tsLogin.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    style={{ color: CLAUDE_ORANGE }}
+            ) : kind === "tailscale" ? (
+              <>
+                {ts?.loggedIn && (
+                  <select
+                    style={{ ...select, flex: "0 1 220px" }}
+                    aria-label="Tailscale peer"
+                    value={pickedPeer?.host ?? ""}
+                    onChange={(e) => {
+                      const peer = ts.peers.find((p) => p.host === e.target.value) ?? null;
+                      setPickedPeer(peer);
+                      if (peer)
+                        setDraft({ ...draft, name: draft.name || peer.name, host: peer.host });
+                    }}
                   >
-                    Approve this box on your tailnet
-                  </a>
-                  <span>waiting for the approval…</span>
+                    <option value="">Pick a peer…</option>
+                    {ts.peers.map((p) => (
+                      <option key={p.host} value={p.host} disabled={peerIsSaved(p, ssh)}>
+                        {p.online ? "●" : "○"} {p.name}
+                        {p.os ? ` · ${p.os}` : ""}
+                        {peerIsSaved(p, ssh) ? " · saved" : ""}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                <input
+                  style={{ ...inputStyle, flex: "1 1 220px" }}
+                  placeholder="user@name.tailnet.ts.net or 100.x.y.z"
+                  value={draft.host}
+                  onChange={(e) => {
+                    setPickedPeer(null);
+                    setDraft({ ...draft, host: e.target.value });
+                  }}
+                />
+              </>
+            ) : kind === "wireguard" ? (
+              <>
+                {wg && wg.peers.length > 0 && (
+                  <select
+                    style={{ ...select, flex: "0 1 220px" }}
+                    aria-label="WireGuard peer"
+                    // Reflects what the host field holds, with or without a user in front of it.
+                    value={
+                      wg.peers.find(
+                        (p) => draft.host === p.host || draft.host.endsWith(`@${p.host}`),
+                      )?.host ?? ""
+                    }
+                    onChange={(e) => {
+                      const peer = wg.peers.find((p) => p.host === e.target.value);
+                      if (peer) setDraft({ ...draft, host: peer.host });
+                    }}
+                  >
+                    <option value="">Pick a peer…</option>
+                    {wg.peers.map((p) => (
+                      <option key={`${p.iface}:${p.host}`} value={p.host}>
+                        {p.host} · {p.iface} · handshake {handshakeText(p.handshakeAge)}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                <input
+                  style={{ ...inputStyle, flex: "1 1 220px" }}
+                  placeholder="user@10.x.y.z (the tunnel address)"
+                  value={draft.host}
+                  onChange={(e) => setDraft({ ...draft, host: e.target.value })}
+                />
+              </>
+            ) : (
+              <>
+                <input
+                  style={{ ...inputStyle, flex: "1 1 260px" }}
+                  placeholder="https://dsh.other-box.lan"
+                  value={draft.url}
+                  onChange={(e) => setDraft({ ...draft, url: e.target.value })}
+                />
+                <input
+                  style={{ ...inputStyle, flex: "1 1 200px" }}
+                  type="password"
+                  autoComplete="off"
+                  placeholder="dsh token (optional)"
+                  value={draft.token}
+                  onChange={(e) => setDraft({ ...draft, token: e.target.value })}
+                />
+              </>
+            )}
+            <button
+              type="submit"
+              style={btnPrimary}
+              disabled={
+                busy ||
+                !draft.name.trim() ||
+                (kind !== "dsh" ? !draft.host.trim() : !draft.url.trim())
+              }
+            >
+              Add
+            </button>
+            {total > 0 && (
+              <button type="button" style={btn} onClick={() => setAdding(false)}>
+                Cancel
+              </button>
+            )}
+          </form>
+          {kind === "tailscale" && (
+            <div
+              style={{
+                ...meta,
+                whiteSpace: "normal",
+                marginTop: 6,
+                display: "flex",
+                flexWrap: "wrap",
+                gap: 8,
+                alignItems: "center",
+              }}
+            >
+              {ts === null ? (
+                "Checking this node's tailnet…"
+              ) : !ts.installed ? (
+                <>
+                  <span style={{ color: T.faint }}>not installed</span>
+                  Install Tailscale on this box first (tailscale.com/download); the box side needs
+                  it too.
+                </>
+              ) : ts.loggedIn ? (
+                <>
+                  <span style={{ color: T.ok }}>on the tailnet</span>
+                  {ts.self && (
+                    <span style={{ fontFamily: T.mono }}>{ts.self.host || ts.self.name}</span>
+                  )}
+                  {ts.peers.length === 0 &&
+                    "No peers yet: bring the box onto the tailnet and Refresh."}
                 </>
               ) : (
-                <button type="button" style={btn} disabled={tsLogin?.busy} onClick={joinTailnet}>
-                  {tsLogin?.busy ? "Asking…" : "Connect"}
-                </button>
+                <>
+                  <span style={{ color: T.warn }}>not connected</span>
+                  <input
+                    style={{ ...inputStyle, flex: "1 1 200px", fontSize: 12 }}
+                    placeholder="Login server (Headscale), else Tailscale"
+                    value={tsServer.loginServer}
+                    onChange={(e) => setTsServer({ ...tsServer, loginServer: e.target.value })}
+                  />
+                  <input
+                    style={{ ...inputStyle, flex: "1 1 160px", fontSize: 12 }}
+                    type="password"
+                    autoComplete="off"
+                    placeholder="Pre-auth key (optional)"
+                    value={tsServer.authKey}
+                    onChange={(e) => setTsServer({ ...tsServer, authKey: e.target.value })}
+                  />
+                  {tsLogin?.url ? (
+                    <>
+                      <a
+                        href={tsLogin.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{ color: CLAUDE_ORANGE }}
+                      >
+                        Approve this box on your tailnet
+                      </a>
+                      <span>waiting for the approval…</span>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      style={btn}
+                      disabled={tsLogin?.busy}
+                      onClick={joinTailnet}
+                    >
+                      {tsLogin?.busy ? "Asking…" : "Connect"}
+                    </button>
+                  )}
+                  {tsLogin?.error && <span style={{ color: T.err }}>{tsLogin.error}</span>}
+                </>
               )}
-              {tsLogin?.error && <span style={{ color: T.err }}>{tsLogin.error}</span>}
-            </>
+            </div>
           )}
-        </div>
-      )}
-      {kind === "tailscale" && pickedPeer && (
-        <div style={{ ...meta, whiteSpace: "normal", marginTop: 4 }}>
-          {pickedPeer.tailscaleSsh
-            ? `${pickedPeer.name} runs Tailscale SSH: no key to copy, ssh signs in with your tailnet identity.`
-            : `${pickedPeer.name} needs an SSH key of yours, or Tailscale SSH turned on there (tailscale up --ssh).`}
-        </div>
-      )}
-      {kind === "wireguard" && (
-        <div
-          style={{
-            ...meta,
-            whiteSpace: "normal",
-            marginTop: 6,
-            display: "flex",
-            flexWrap: "wrap",
-            gap: 8,
-            alignItems: "center",
-          }}
-        >
-          {wg === null ? (
-            "Checking WireGuard…"
-          ) : !wg.installed ? (
-            <>
-              <span style={pill(T.faint)}>not installed</span>
-              Install wireguard-tools and bring a tunnel up (wg-quick up); its peer address is the
-              host.
-            </>
-          ) : wg.peers.length === 0 ? (
-            <>
-              <span style={pill(T.warn)}>no tunnel up</span>
-              {wg.error
-                ? wg.error
-                : "Bring one up with wg-quick, or type the peer's tunnel address."}
-            </>
-          ) : (
-            <>
-              <span style={pill(T.ok)}>
-                {wg.peers.length === 1 ? "1 peer" : `${wg.peers.length} peers`}
-              </span>
-              The tunnel address is the host; ssh still needs your key on the box.
-            </>
+          {kind === "tailscale" && pickedPeer && (
+            <div style={{ ...meta, whiteSpace: "normal", marginTop: 4 }}>
+              {pickedPeer.tailscaleSsh
+                ? `${pickedPeer.name} runs Tailscale SSH: no key to copy, ssh signs in with your tailnet identity.`
+                : `${pickedPeer.name} needs an SSH key of yours, or Tailscale SSH turned on there (tailscale up --ssh).`}
+            </div>
           )}
+          {kind === "wireguard" && (
+            <div
+              style={{
+                ...meta,
+                whiteSpace: "normal",
+                marginTop: 6,
+                display: "flex",
+                flexWrap: "wrap",
+                gap: 8,
+                alignItems: "center",
+              }}
+            >
+              {wg === null ? (
+                "Checking WireGuard…"
+              ) : !wg.installed ? (
+                <>
+                  <span style={{ color: T.faint }}>not installed</span>
+                  Install wireguard-tools and bring a tunnel up (wg-quick up); its peer address is
+                  the host.
+                </>
+              ) : wg.peers.length === 0 ? (
+                <>
+                  <span style={{ color: T.warn }}>no tunnel up</span>
+                  {wg.error
+                    ? wg.error
+                    : "Bring one up with wg-quick, or type the peer's tunnel address."}
+                </>
+              ) : (
+                <>
+                  <span style={{ color: T.ok }}>
+                    {wg.peers.length === 1 ? "1 peer" : `${wg.peers.length} peers`}
+                  </span>
+                  The tunnel address is the host; ssh still needs your key on the box.
+                </>
+              )}
+            </div>
+          )}
+          <div style={{ ...meta, whiteSpace: "normal", marginTop: 4 }}>
+            {kind !== "dsh" ? (
+              <>
+                This dsh drives Claude Code on the box over ssh (key-based, or Tailscale SSH), and
+                the box shows up in the model picker. Log in from its row once it is added.
+              </>
+            ) : (
+              <>
+                The box runs its own dsh with this plugin: its sessions show in the archive and Open
+                hops there. The token is its dsh launch token, needed only when this browser has
+                never logged into it.
+              </>
+            )}
+          </div>
+        </>
+      ) : (
+        <div style={{ ...row, flexWrap: "wrap", paddingTop: 12 }}>
+          <p style={{ ...meta, whiteSpace: "normal", flex: "1 1 220px", margin: 0 }}>
+            An ssh box shows up in the model picker; a linked dsh shows its sessions in the archive.
+          </p>
+          <button type="button" style={btn} disabled={busy} onClick={() => setAdding(true)}>
+            Add a box…
+          </button>
         </div>
       )}
-      <div style={{ ...meta, whiteSpace: "normal", marginTop: 4 }}>
-        {kind !== "dsh" ? (
-          <>
-            Key-based ssh, or Tailscale SSH on a tailnet. Not logged in there? The row offers a
-            login; the panel tabs read the box the session runs on.
-          </>
-        ) : (
-          <>
-            Token: the box's dsh launch token (printed when dsh web starts, or already in its URL
-            behind a proxy). Needed only when this browser has never logged into that box.
-          </>
-        )}
-      </div>
+      {/* Nothing here works without an ssh box, so the whole block reads as unavailable until one
+          is saved, not just its button. */}
       <div
+        data-omc-remote-workspaces={ssh.length > 0 ? "on" : "off"}
+        aria-disabled={ssh.length === 0}
         style={{
           borderTop: `1px solid ${T.border}`,
           marginTop: 12,
           paddingTop: 12,
+          opacity: ssh.length > 0 ? 1 : 0.45,
+          transition: "opacity 120ms ease",
         }}
       >
         <h3 style={h3}>Remote workspaces</h3>
-        <p style={{ margin: "0 0 8px", color: T.muted, fontSize: 13 }}>
-          A directory on an SSH box, pinned as a workspace. It shows in the left sidebar like any
-          workspace; pick the box's Claude in the model picker and the session runs in that remote
-          folder. No files are copied; the box's Claude reads them there.
+        <p style={{ margin: "2px 0 4px", color: T.muted, fontSize: 13 }}>
+          A folder on an ssh box, pinned as a workspace. Sessions there run that box's Claude on its
+          files; nothing is copied.
         </p>
         {rws.map((w) => (
-          <div key={`rw:${w.path}`} data-testid="dsh-oh-my-claude-remote-ws-row" style={row}>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ color: T.text, fontWeight: 600 }}>{w.name}</div>
-              <div
-                style={{
-                  ...meta,
-                  marginTop: 3,
-                  display: "flex",
-                  flexWrap: "wrap",
-                  gap: 6,
-                  alignItems: "center",
-                  whiteSpace: "normal",
-                }}
-              >
-                <span style={pill(T.faint)}>ssh</span>
-                <span style={{ fontFamily: T.mono }}>{w.host}</span>
-                <span style={{ fontFamily: T.mono }}>{w.remoteCwd}</span>
-              </div>
-            </div>
-            <ConfirmButton
-              label="Remove"
-              style={btn}
-              disabled={busy}
-              onAct={() => removeRw(w.path)}
-            />
-          </div>
+          <BoxRow
+            key={`rw:${w.path}`}
+            testId="dsh-oh-my-claude-remote-ws-row"
+            title={w.name}
+            kind={w.host}
+            tone="none"
+            facts={[
+              <span key="path" style={{ fontFamily: T.mono }}>
+                {w.remoteCwd}
+              </span>,
+            ]}
+            actions={
+              <ConfirmButton
+                label="Remove"
+                ariaLabel={`Remove ${w.name}`}
+                style={btn}
+                disabled={busy}
+                onAct={() => removeRw(w.path)}
+              />
+            }
+          />
         ))}
         <div style={{ ...row, flexWrap: "wrap", paddingTop: 4 }}>
           <p style={{ ...meta, whiteSpace: "normal", flex: "1 1 220px", margin: 0 }}>
             {canAdd
               ? "Add one from the sidebar's Add workspace button: it browses whichever box you pick."
-              : "Add an SSH box above first; the button then browses it."}
+              : ssh.length === 0
+                ? "Needs an ssh box above first."
+                : "The sidebar's Add workspace button browses the box you pick once dsh can list its folders."}
           </p>
           <button
             type="button"
@@ -2322,6 +2530,8 @@ interface SshProbeEntry {
     version?: string;
     reach?: { stage: string; hint: string; detail: string };
     loggedIn?: boolean;
+    /** Claude processes still running for the box on a login they loaded at start. */
+    running?: number;
     email?: string;
     error?: string;
   };
@@ -2845,7 +3055,7 @@ const ensureTurnStatusStyle = () => {
   // clearance, which leaves its pills 653px in a 717px column. dsh's two fill that; ours as a
   // third clips all three to an ellipsis by a few pixels. The pills are centred, so the padding
   // does no aligning; take it down to the row's rounded corners and the three fit.
-  styleEl.textContent = `body[data-omc-claude] [role="status"][aria-live="polite"],[data-dsh-oh-my-claude-turn]{background-image:var(--omc-row-bg,linear-gradient(90deg,${CLAUDE_ORANGE} 0%,${CLAUDE_ORANGE} 40%,${CLAUDE_SHIMMER} 50%,${CLAUDE_ORANGE} 60%,${CLAUDE_ORANGE} 100%))}@keyframes omc-word{from{-webkit-text-fill-color:var(--omc-word-lo)}to{-webkit-text-fill-color:var(--omc-word-hi)}}[data-omc-turn-word]{animation:omc-word 1s ease-in-out 3s infinite alternate}@media (prefers-reduced-motion:reduce){[data-omc-turn-word]{animation:none}}[data-dsh-oh-my-claude-turn]>span[aria-hidden]{display:inline-block;width:1.3em;text-align:start;flex:none}[data-dsh-oh-my-claude-turn]{max-width:100%;min-width:0}[data-omc-turn-detail]{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}body[data-omc-claude] [role="tablist"]>[role="tab"][aria-selected="true"]{color:${CLAUDE_ORANGE}}body[data-omc-claude] [role="tablist"]>[role="tab"][aria-selected="true"]::after{background:${CLAUDE_ORANGE}}body[data-omc-claude] [class*="_markdown"] blockquote{border-left-color:${CLAUDE_ORANGE}80}body[data-omc-claude] [class*="_markdown"] hr{background:${CLAUDE_ORANGE}59}body[data-omc-claude] [class*="_markdown"] a{color:${CLAUDE_ORANGE};text-decoration-color:${CLAUDE_ORANGE}66}body[data-omc-claude] [class*="_markdown"] a:hover{color:${CLAUDE_SHIMMER};text-decoration-color:${CLAUDE_SHIMMER}}body[data-omc-claude] [class*="_markdown"] input[type="checkbox"]{accent-color:${CLAUDE_ORANGE}}body[data-omc-claude] [data-workflow-run] button[data-member-status] [data-member-label]{color:${CLAUDE_ORANGE}}body[data-omc-panel-open] [data-width-handle]{pointer-events:none}body[data-omc-panel-open] [class*="_toBottomSlot"],body:has([data-omc-cost-dialog]) [class*="_toBottomSlot"]{opacity:0;pointer-events:none;transition:opacity .1s}@keyframes omc-pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,${CLAUDE_ORANGE} 55%,transparent)}100%{box-shadow:0 0 0 12px transparent}}button[aria-label="Oh My Claude"][data-omc-pulse]{animation:omc-pulse 1.1s ease-out 3}@media (prefers-reduced-motion:reduce){button[aria-label="Oh My Claude"][data-omc-pulse]{animation:none}}body[data-omc-claude] [data-produced-files-row] button{color:${CLAUDE_ORANGE}}body[data-omc-claude] [data-produced-files-row] button:hover{color:${CLAUDE_SHIMMER}}body[data-omc-claude] [data-composer-stats]{padding-left:8px;padding-right:8px}body[data-omc-claude] [class*="_optionLine"]>[class*="_badge"]{background:color-mix(in srgb,${CLAUDE_ORANGE} 16%,transparent);color:${CLAUDE_ORANGE}}${RAINBOW_CSS}${COST_DIALOG_CSS}`;
+  styleEl.textContent = `body[data-omc-claude] [role="status"][aria-live="polite"],[data-dsh-oh-my-claude-turn]{background-image:var(--omc-row-bg,linear-gradient(90deg,${CLAUDE_ORANGE} 0%,${CLAUDE_ORANGE} 40%,${CLAUDE_SHIMMER} 50%,${CLAUDE_ORANGE} 60%,${CLAUDE_ORANGE} 100%))}@keyframes omc-word{from{-webkit-text-fill-color:var(--omc-word-lo)}to{-webkit-text-fill-color:var(--omc-word-hi)}}[data-omc-turn-word]{animation:omc-word 1s ease-in-out 3s infinite alternate}@media (prefers-reduced-motion:reduce){[data-omc-turn-word]{animation:none}}[data-dsh-oh-my-claude-turn]>span[aria-hidden]{display:inline-block;width:1.3em;text-align:start;flex:none}[data-dsh-oh-my-claude-turn]{max-width:100%;min-width:0}[data-omc-turn-detail]{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}[data-omc-login-card] button:hover,[data-omc-login-card] button:focus-visible{color:${CLAUDE_ORANGE};border-color:${CLAUDE_ORANGE}}${controlStatesCss("[data-omc-settings]")}${controlStatesCss('[role="dialog"][aria-label="Oh My Claude"]')}[data-omc-card]:hover{border-color:var(--dsw-alias-label-dimmed,rgba(128,128,128,.5))}[data-omc-card]>button:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#3b82f6);outline-offset:-2px}[data-omc-card]>button:hover{background:none}@keyframes omc-sheen{from{background-position:200% 0}to{background-position:-200% 0}}[data-omc-skeleton]{border-radius:6px;background:linear-gradient(90deg,${T.border} 30%,${T.hover} 50%,${T.border} 70%);background-size:200% 100%;animation:omc-sheen 1.4s linear infinite}@keyframes omc-rise{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}[data-omc-arrived]{animation:omc-rise .18s ease-out}@media (prefers-reduced-motion:reduce){[data-omc-skeleton],[data-omc-arrived]{animation:none}}body[data-omc-claude] [role="tablist"]>[role="tab"][aria-selected="true"]{color:${CLAUDE_ORANGE}}body[data-omc-claude] [role="tablist"]>[role="tab"][aria-selected="true"]::after{background:${CLAUDE_ORANGE}}body[data-omc-claude] [class*="_markdown"] blockquote{border-left-color:${CLAUDE_ORANGE}80}body[data-omc-claude] [class*="_markdown"] hr{background:${CLAUDE_ORANGE}59}body[data-omc-claude] [class*="_markdown"] a{color:${CLAUDE_ORANGE};text-decoration-color:${CLAUDE_ORANGE}66}body[data-omc-claude] [class*="_markdown"] a:hover{color:${CLAUDE_SHIMMER};text-decoration-color:${CLAUDE_SHIMMER}}body[data-omc-claude] [class*="_markdown"] input[type="checkbox"]{accent-color:${CLAUDE_ORANGE}}body[data-omc-claude] [data-workflow-run] button[data-member-status] [data-member-label]{color:${CLAUDE_ORANGE}}body[data-omc-panel-open] [data-width-handle]{pointer-events:none}body[data-omc-panel-open] [class*="_toBottomSlot"],body:has([data-omc-cost-dialog]) [class*="_toBottomSlot"]{opacity:0;pointer-events:none;transition:opacity .1s}@keyframes omc-pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,${CLAUDE_ORANGE} 55%,transparent)}100%{box-shadow:0 0 0 12px transparent}}button[aria-label="Oh My Claude"][data-omc-pulse]{animation:omc-pulse 1.1s ease-out 3}@media (prefers-reduced-motion:reduce){button[aria-label="Oh My Claude"][data-omc-pulse]{animation:none}}body[data-omc-claude] [data-produced-files-row] button{color:${CLAUDE_ORANGE}}body[data-omc-claude] [data-produced-files-row] button:hover{color:${CLAUDE_SHIMMER}}body[data-omc-claude] [data-composer-stats]{padding-left:8px;padding-right:8px}body[data-omc-claude] [class*="_optionLine"]>[class*="_badge"]{background:color-mix(in srgb,${CLAUDE_ORANGE} 16%,transparent);color:${CLAUDE_ORANGE}}${RAINBOW_CSS}${COST_DIALOG_CSS}`;
   document.head.appendChild(styleEl);
 };
 
@@ -3033,6 +3243,12 @@ const wireTurnStatus = (
   // The one that actually decides it: with the background clipped to the text, the glyphs are filled
   // from that background and `color` is ignored, so the fill colour is what has to be set.
   detailSpan.style.setProperty("-webkit-text-fill-color", T.faint, "important");
+  // The clock's face from the first paint: dsh adds its clock node a moment after the row, and
+  // the copy below only lands once it exists, so the bracket opened at the row's 16px medium and
+  // shrank a beat later (owner, 2026-09-13). The clock measures 14px regular against the row's
+  // 16px, hence the ratio; the copy still takes over the moment the node is there.
+  detailSpan.style.fontSize = "0.875em";
+  detailSpan.style.fontWeight = "400";
   el.append(detailSpan);
   /** dsh's own elapsed-time node. Found, not hidden: the time belongs inside the bracket, but hiding
    *  it as a side effect of looking meant one failed read left the row showing no time at all. */
@@ -3063,6 +3279,8 @@ const wireTurnStatus = (
   const palette = pageIsDark() ? SPINNER_DARK : SPINNER_LIGHT;
   /** What the bracket last showed, so a beat that changes nothing writes nothing. */
   let painted = "";
+  /** Whether the bracket has taken the clock's measured face yet (the guess above until then). */
+  let clockFaceCopied = false;
   const wordNode = document.createElement("span");
   wordNode.setAttribute("data-omc-turn-word", "1");
   const paint = () => {
@@ -3099,7 +3317,8 @@ const wireTurnStatus = (
     // The bracket wears dsh's own clock face, read off its node rather than assumed: the row's
     // verb is 16px medium and the clock dsh set beside it 14px regular (measured 2026-09-12),
     // and a bracket at the verb's size read heavier than the verb it follows.
-    if (clock && !detailSpan.style.fontSize) {
+    if (clock && !clockFaceCopied) {
+      clockFaceCopied = true;
       const face = getComputedStyle(clock);
       detailSpan.style.fontSize = face.fontSize;
       detailSpan.style.fontWeight = face.fontWeight;
@@ -4711,8 +4930,8 @@ function UpdateNoticeSwitch() {
       <div>
         <div>Update notice</div>
         <div style={{ color: T.faint, fontSize: 12 }}>
-          Say on the This box row when a newer plugin is on npm. One registry read a day, from this
-          dsh server; off means none.
+          A pill beside the heading above when a newer plugin is on npm. One registry read a day,
+          from this dsh server; off means none.
         </div>
       </div>
       <Switch on={!off} onChange={(next) => setOff(!next)} label="Update notice" />
@@ -4820,12 +5039,81 @@ interface AsideItem {
  * CLI returns off the transcript. Pending cards read as thinking; each is dismissed on its own. The
  * server keeps only the last few per session, so the list stays short.
  */
+/** Mirrors the server's LoginNeed: the box the failed turn ran on (empty for this box) and its name. */
+interface LoginNeed {
+  host: string;
+  label: string;
+}
+const sameNeed = (a: LoginNeed | null, b: LoginNeed | null): boolean =>
+  a === b || (a !== null && b !== null && a.host === b.host && a.label === b.label);
+
+/** The card above the composer after a turn failed for want of a login on its box: the same login
+ *  the Boxes row runs, here so nobody has to find Settings. It only ever follows a failed turn, so a
+ *  box nobody uses never asks. Once the token is stored the server clears the need and the next poll
+ *  takes the card down; until then it says what to do next. */
+function LoginCard({ need, onDismiss }: { need: LoginNeed; onDismiss: () => void }) {
+  const [done, setDone] = useState(false);
+  const { login, setLogin, startLogin, submitLogin } = useLoginFlow(() => setDone(true));
+  const where = need.host ? need.label : "this box";
+  return (
+    <div
+      data-omc-login-card={need.host || "this-box"}
+      role="status"
+      style={{
+        boxSizing: "border-box",
+        background: "var(--dsw-specific-tip, var(--dsw-alias-bg-base, transparent))",
+        border: "0.5px solid var(--dsw-alias-border-l1, rgba(217,119,87,.4))",
+        borderRadius: "12px 12px 0 0",
+        padding: "8px 10px",
+        fontSize: 13,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <Spark size={14} />
+        <span style={{ flex: 1 }}>
+          {done ? "Logged in. Send your message again." : `Claude Code on ${where} is logged out.`}
+        </span>
+        {!done && !login && (
+          <button
+            type="button"
+            style={btn}
+            data-testid="dsh-oh-my-claude-card-login"
+            onClick={() => startLogin(need.host)}
+          >
+            Log in
+          </button>
+        )}
+        <button
+          type="button"
+          aria-label="Dismiss login card"
+          title="Dismiss"
+          onClick={onDismiss}
+          style={{
+            background: "none",
+            border: "none",
+            cursor: "pointer",
+            padding: "0 2px",
+            color: T.faint,
+          }}
+        >
+          ×
+        </button>
+      </div>
+      {login && !done && <LoginSteps login={login} setLogin={setLogin} submit={submitLogin} />}
+    </div>
+  );
+}
+
 function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   const [items, setItems] = useState<AsideItem[]>([]);
   // What the poll compares its answer against, without listing `items` as a dependency of its effect.
   const itemsRef = useRef<AsideItem[]>([]);
   itemsRef.current = items;
   const [dismissed, setDismissed] = useState<Set<string>>(() => new Set());
+  /** The box whose login the last turn wanted, from the same poll; null once a turn or a login
+   *  clears it on the server. Dismissal is this tab's alone. */
+  const [need, setNeed] = useState<LoginNeed | null>(null);
+  const [needDismissed, setNeedDismissed] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   // Only the newest card starts open; the rest fold to their header row, so a stack of answers costs
   // the composer one line each rather than a screen. A click flips a card either way.
@@ -4845,8 +5133,14 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
         const r = await fetch(`${ROUTE}/side-questions?session=${encodeURIComponent(sessionId)}`);
         if (!r.ok) return;
         // SAFETY: our own JSON route; the union names both shapes the caller checks.
-        const body = (await r.json()) as { items: AsideItem[] } | { error: string };
+        const body = (await r.json()) as
+          | { items: AsideItem[]; loginNeeded?: LoginNeed | null }
+          | { error: string };
         if ("error" in body) return;
+        if (alive) {
+          const nextNeed = body.loginNeeded ?? null;
+          setNeed((cur) => (sameNeed(cur, nextNeed) ? cur : nextNeed));
+        }
         // A fresh array every three seconds re-rendered the dock in every conversation forever,
         // answer or no answer; only a list that actually moved is worth a render.
         const next = body.items ?? [];
@@ -4880,7 +5174,8 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
   // No `activeClaudeSession` gate here either: the card shows this session's own persisted asides,
   // which only exist for a Claude session, so an empty list is the only reason to hide it. Reading
   // the provider binding at render blinked the card out whenever the binding reloaded.
-  if (shown.length === 0) return null;
+  const loginCard = need && needDismissed !== need.host ? need : null;
+  if (shown.length === 0 && !loginCard) return null;
 
   const dismissAside = (id: string) => {
     // Hide now, but tell the server to drop it so the next poll (or a remount) does not bring it back.
@@ -4920,6 +5215,9 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
 
   return (
     <div {...{ [DOCK_ATTR]: "1" }} style={DOCK_CARD}>
+      {loginCard && (
+        <LoginCard need={loginCard} onDismiss={() => setNeedDismissed(loginCard.host)} />
+      )}
       {shown.map((it) => {
         const open = (it.id === newest) !== toggled.has(it.id);
         return (
@@ -5221,12 +5519,17 @@ export function apply(ctx: ClientCtx) {
         });
     }, []);
     return (
-      <div>
+      <div data-omc-settings="">
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
           <Spark size={16} />
           <h2 id="dsh-oh-my-claude-heading" style={{ margin: 0, fontSize: 18 }}>
             Oh My Claude
           </h2>
+          {/* A newer plugin on npm is a fact about the plugin, so it sits by its name, not in a
+              box row: the one place everyone who opens this section looks. */}
+          <span style={{ marginLeft: "auto" }}>
+            <PluginUpdateBadge />
+          </span>
         </div>
         <StarterSwitch />
         <UpdateNoticeSwitch />
@@ -5236,6 +5539,7 @@ export function apply(ctx: ClientCtx) {
           <Card
             id="dsh-oh-my-claude-sessions-card"
             title="Archived Sessions"
+            summary="Claude Code transcripts on every box: open one here, import, download, or move."
             open={openSessions}
             onToggle={() => setOpenSessions((v) => !v)}
           >

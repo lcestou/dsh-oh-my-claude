@@ -55,6 +55,8 @@ export type Page = {
   /** Answer one of the page's requests from the check: the handler may fetch the real reply and
    *  fulfil an edited copy, which is how a check shows a state the box is not in. */
   route(url: string, handler: (route: Route) => Promise<void>): Promise<void>;
+  /** Drop every route handler before the context closes, so a reply in flight does not throw. */
+  unrouteAll(how: { behavior: "ignoreErrors" }): Promise<void>;
 };
 
 /** Any JSON document, as a plugin route answers with. */
@@ -63,7 +65,7 @@ export type JsonDoc = { [key: string]: JsonValue };
 /** One intercepted request; the slice a check needs to rewrite a JSON reply. */
 export type Route = {
   fetch(): Promise<Reply>;
-  fulfill(how: { response: Reply; json: JsonDoc }): Promise<void>;
+  fulfill(how: { response?: Reply; json: JsonDoc }): Promise<void>;
 };
 export type Reply = { json(): Promise<JsonDoc> };
 

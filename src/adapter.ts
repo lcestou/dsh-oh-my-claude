@@ -29,6 +29,7 @@ import {
 import z from "@deepseek-ai/schemastery";
 import {
   accountIdentity,
+  forgetIdentity,
   type PickerSettings,
   readPickerSettings,
   readRemoteWorkspaces,
@@ -572,6 +573,12 @@ const MAX_IMAGES = 20;
 const ASK_SUGGESTIONS = 10;
 /** How many asked rpcIds to remember, so the dedupe set cannot grow without bound. */
 const ASIDE_ASKED_KEEP = 200;
+/** A session whose last turn wanted a login: the box it ran on (empty for this box) and its name. */
+export interface LoginNeed {
+  host: string;
+  label: string;
+}
+
 /** How many `/btw` asides a session keeps; older ones drop off the ring. */
 const ASIDE_KEEP = 10;
 /** A side question is a full model turn, so it gets a longer wait than a control ping. */
@@ -1461,24 +1468,39 @@ export function isStaleResume(event: ClaudeEvent): boolean {
 const NOT_LOGGED_IN_RE =
   /not logged in|authentication_error|failed to authenticate|oauth .*invalid/i;
 
-export function finishReason(
-  result: {
-    is_error?: boolean;
-    stop_reason?: string;
-    result?: unknown;
-    errors?: unknown[];
-    api_error_status?: number;
-    subtype?: string;
-  },
-  hostLabel?: string,
-): FinishReason {
+/** The shape of a CLI `result` frame the login checks read. */
+export interface ResultFrame {
+  is_error?: boolean;
+  stop_reason?: string;
+  result?: unknown;
+  errors?: unknown[];
+  api_error_status?: number;
+  subtype?: string;
+}
+
+/** The result's own words, for the error text and the login match. */
+const resultMessage = (result: ResultFrame): string => {
+  const errors = Array.isArray(result.errors) ? result.errors.join("; ") : "";
+  return String(result.result ?? errors ?? result.subtype ?? "claude error");
+};
+
+/** A turn that failed because the box's Claude has no usable login: the CLI's own wording, or the
+ *  API's 401 once a stored token has been revoked. The one test both the error text and the login
+ *  card key on, so they cannot disagree about what counts. */
+export function isLoginFailure(result: ResultFrame): boolean {
+  return (
+    result.is_error === true &&
+    (result.api_error_status === 401 || NOT_LOGGED_IN_RE.test(resultMessage(result)))
+  );
+}
+
+export function finishReason(result: ResultFrame, hostLabel?: string): FinishReason {
   if (result.is_error) {
-    const errors = Array.isArray(result.errors) ? result.errors.join("; ") : "";
-    let message = String(result.result ?? errors ?? result.subtype ?? "claude error");
+    let message = resultMessage(result);
     // Name the box the turn actually ran on: an SSH box or a remote workspace runs the far claude, so
     // the local hostname would point the user at the wrong machine to run `claude auth login` on.
-    if (result.api_error_status === 401 || NOT_LOGGED_IN_RE.test(message))
-      message = `Claude Code is not logged in on ${hostLabel ?? hostname()}. Run \`claude auth login\` in a terminal there, then send your message again. (${message})`;
+    if (isLoginFailure(result))
+      message = `Claude Code is not logged in on ${hostLabel ?? hostname()}. Use Log in above the composer, or run \`claude auth login\` in a terminal there, then send your message again. (${message})`;
     return { kind: "error", failure: { message, code: "PROVIDER_ERROR" } };
   }
   if (result.stop_reason === "max_tokens") return { kind: "max-tokens" };
@@ -1794,6 +1816,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   readonly asked = new Set<string>();
   /** `/btw` side questions and their answers, newest last, per session; kept in memory only. */
   readonly sideQuestions = new Map<string, AsideEntry[]>();
+  /** Sessions whose last turn failed for want of a login, and the box that turn ran on. The composer
+   *  card reads this beside the asides; a turn that succeeds, or a panel login on that box, clears it.
+   *  Memory only: after a restart the next failed turn writes it again. */
+  readonly loginNeeded = new Map<string, LoginNeed>();
   /** Saved opening prompts: one per session id, plus `default` for the one a session without its own
    *  is offered. Loaded from disk on construct and written through on every save. */
   readonly starters = new Map<string, string>();
@@ -1965,9 +1991,100 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     return readPickerSettings(join(this.claudeHome, "settings.json"));
   }
 
+  /** A box without a login lists nothing: dsh's catalog drops a provider whose listing throws into
+   *  its "could not load" row with a Retry, which is the honest picker for a box no turn can use.
+   *  The row names the fix; Retry after the login brings the models back. */
   override async listModels(provider: string) {
+    // A box named logged out asks its CLI again before refusing: a login made in a terminal there
+    // would otherwise stay hidden until Settings was opened or dsh restarted, and the picker's
+    // Retry would keep answering from a stale flag. One `claude auth status` per open while out.
+    if (this.loggedOut) {
+      forgetIdentity();
+      const who = await accountIdentity(
+        this.config.command,
+        this.claudeHome,
+        this.config.sshHost,
+      ).catch(() => ({ loggedIn: false }));
+      if (who.loggedIn) this.setLoggedIn(true);
+    }
+    if (this.loggedOut)
+      throw new Error(
+        `not logged in on ${this.config.sshHost || hostname()}. Log in under Settings, Oh My Claude, Boxes`,
+      );
     const models = await getCatalog(undefined, this.cliModels, await this.pickerSettings());
     return models.map((m) => modelInfo(provider, m));
+  }
+
+  /** After a `result` frame: remember a login failure for the card, and name the box's providers
+   *  logged out so the picker stops offering them; a turn that succeeded clears both. */
+  noteTurnLogin(sessionId: string, result: ResultFrame) {
+    if (!isLoginFailure(result)) {
+      if (!result.is_error) this.loginNeeded.delete(sessionId);
+      return;
+    }
+    const label = this.hostLabelFor(sessionId);
+    // This box is the empty string here and in loginDone/logoutBox, one spelling for the compare.
+    const host = label ?? "";
+    this.loginNeeded.set(sessionId, { host, label: label ?? hostname() });
+    // The process that failed carries no usable login in its environment, and it stays alive
+    // between turns: reused, it fails again with the token the panel has since stored (seen
+    // 2026-09-13: card login said done, the next message was still logged out). Marked stale, the
+    // next prompt replaces it and the fresh spawn reads the token.
+    const held = this.processes.get(registryKey(this.providerId, sessionId));
+    if (held?.alive) held.staleContext = true;
+    // Every provider whose turns run on that box: this box's own, or the box's saved instance. A
+    // remote workspace's turn from a local provider says nothing about the local login.
+    // ponytail: a panel token the box refused stays on disk until the owner logs out or in again;
+    // deleting it here could drop a good newer token on a process spawned before it was written.
+    for (const mount of ClaudeCodeAdapter.mounts(this))
+      if ((mount.config.sshHost || "") === host) mount.setLoggedIn(false);
+  }
+
+  /** Log out on `host` (this box when empty) cuts the cord: every live Claude on that box is killed,
+   *  so nothing keeps answering on a login that is gone. A process that loaded the login at start
+   *  would otherwise carry it in memory until it exited. Each session resumes from its transcript on
+   *  its next message, which then fails for want of a login and shows the card. */
+  logoutBox(host: string) {
+    for (const mount of ClaudeCodeAdapter.mounts(this)) {
+      if ((mount.config.sshHost || "") !== host) continue;
+      for (const [key, p] of mount.processes) {
+        if (!key.startsWith(`${mount.providerId}:`)) continue;
+        p.kill();
+        mount.processes.delete(key);
+      }
+      mount.setLoggedIn(false);
+    }
+  }
+
+  /** Live Claude processes on `host` (this box when empty), across every mount there. The row shows
+   *  the count when the box reads logged out: those still answer on the login they loaded at start. */
+  liveCount(host: string): number {
+    let n = 0;
+    for (const mount of ClaudeCodeAdapter.mounts(this)) {
+      if ((mount.config.sshHost || "") !== host) continue;
+      for (const [key, p] of mount.processes)
+        if (key.startsWith(`${mount.providerId}:`) && p.alive) n++;
+    }
+    return n;
+  }
+
+  /** A panel login on `host` (this box when empty) succeeded: its providers list models again and
+   *  the cards for sessions on that box read done. */
+  loginDone(host: string) {
+    for (const mount of ClaudeCodeAdapter.mounts(this))
+      if ((mount.config.sshHost || "") === host) mount.setLoggedIn(true);
+    for (const [sid, need] of this.loginNeeded)
+      if (need.host === host) this.loginNeeded.delete(sid);
+  }
+
+  /** Every mounted instance, this one included: at boot or in a test it may not be in the shared
+   *  registry yet. */
+  private static mounts(self: ClaudeCodeAdapter): Set<ClaudeCodeAdapter> {
+    // SAFETY: the registry symbol is this plugin's own key on globalThis, typed here once
+    const g = globalThis as typeof globalThis & {
+      [ADAPTER_CURRENT]?: Map<string, ClaudeCodeAdapter>;
+    };
+    return new Set<ClaudeCodeAdapter>([self, ...(g[ADAPTER_CURRENT]?.values() ?? [])]);
   }
 
   /** No picker filter here: the allowlist curates what the picker offers, and the CLI keeps a
@@ -4290,6 +4407,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       this.armIdle(options.sessionId, proc, true, this.config.idleTimeoutMs * TOOL_IDLE_FACTOR);
     const resolveControl = this.resolveControl.bind(this);
     /** One CLI event. Returns what the loop should do next. */
+    // The generator below is a plain function, so the adapter is reached through this closure.
+    const noteLogin = (r: ResultFrame) => this.noteTurnLogin(options.sessionId, r);
     const dispatch = async function* (event: ClaudeEvent) {
       if (event.type === "idle_warning") {
         yield* tr.wholeBlock(
@@ -4327,6 +4446,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       if (firstChunkAt === 0 && (event.type === "stream_event" || event.type === "assistant"))
         firstChunkAt = Date.now();
       yield* tr.translate(event);
+      if (event.type === "result") noteLogin(event);
       if (tr.toolPending) armToolIdle(); // tool running: silence is expected, but not forever
       if (tr.finished) return "finished";
       if (proc.steerPending && event.type === "user") {
@@ -5003,11 +5123,23 @@ function reconcileSshBoxes(
   }
 }
 
-/** One `claude auth status` at mount, so the picker names a logged-out box before its first turn. */
-const probeLogin = (adapter: ClaudeCodeAdapter) =>
+/** One `claude auth status` at mount, so the picker names a logged-out box before its first turn.
+ *  A panel token counts too: the CLI's own status cannot see one, and without this a restart named
+ *  a box logged in only from the panel as logged out until someone opened Settings. */
+const probeLogin = (adapter: ClaudeCodeAdapter) => {
+  const panelToken = adapter.config.sshHost
+    ? readSshToken(STATE_DIR, adapter.config.sshHost)
+    : adapter.providerId === "claude-code"
+      ? readSshToken(STATE_DIR, THIS_BOX)
+      : undefined;
+  if (panelToken) {
+    adapter.setLoggedIn(true);
+    return;
+  }
   void accountIdentity(adapter.config.command, adapter.claudeHome, adapter.config.sshHost)
     .then((who) => adapter.setLoggedIn(who.loggedIn))
     .catch(() => {});
+};
 
 export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Config>) {
   const adapter = new ClaudeCodeAdapter(ctx, config);
@@ -5109,9 +5241,14 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       },
       (e) => adapter.log("warn", `mcp bridge unavailable: ${errorText(e)}`),
     );
-    // Build a provider→home lookup from the registry so the usage route can resolve other instances.
-    const homeFor = (providerId: string): string | undefined =>
-      g[ADAPTER_CURRENT]?.get(providerId)?.claudeHome;
+    // Build a provider→box lookup from the registry so the usage route reads the right login: a
+    // second local instance's own dir, or an ssh box's own `~/.claude` over ssh.
+    const usageBoxFor = (providerId: string): { home: string; sshHost?: string } | undefined => {
+      const other = g[ADAPTER_CURRENT]?.get(providerId);
+      return other
+        ? { home: other.claudeHome, sshHost: other.config.sshHost || undefined }
+        : undefined;
+    };
     // The same registry answers the session routes: a request that names its session's mount reads
     // that mount's box, so a session on an SSH box stops being reported as this one.
     // The same registry by host, for a read about a remote workspace: its files are on its box
@@ -5134,8 +5271,9 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
     registerUsageRoute(
       ctx,
       (level, msg) => adapter.log(level, msg),
-      (home?: string) => accountIdentity(adapter.config.command, home, adapter.config.sshHost),
-      { home: claudeHome, homeFor },
+      (home?: string, sshHost?: string) =>
+        accountIdentity(adapter.config.command, home, sshHost ?? adapter.config.sshHost),
+      { home: claudeHome, boxFor: usageBoxFor },
     );
     registerSessionRoutes(ctx, {
       log: (level: string, msg: string) => adapter.log(level, msg),
@@ -5203,6 +5341,10 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
         adapter.ownerFor(sessionId).rewind(sessionId, uuid, dryRun),
       permissionAsks: adapter.permissionAsks,
       sideQuestions: adapter.sideQuestions,
+      loginNeeded: adapter.loginNeeded,
+      loginDone: (host: string) => adapter.loginDone(host),
+      logoutDone: (host: string) => adapter.logoutBox(host),
+      liveCount: (host: string) => adapter.liveCount(host),
       persistAsides: (sessionId: string) => adapter.persistAsides(sessionId),
       starters: adapter.starters,
       setStarter: (key: string, text: string | undefined) => {

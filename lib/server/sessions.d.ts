@@ -2,6 +2,7 @@ import type { IncomingMessage } from "node:http";
 import { type Reach } from "./reach.js";
 import type { JsonValue, PluginContext, WorkspaceRegistry } from "./dsh.js";
 import type { ToolMode, ToolModeInfo } from "./rows-probe.js";
+import { type LoginNeed } from "./adapter.js";
 import type { PermissionModeInfo, PermissionModeReply, RewindReply, ContextUsageReply, WorkspaceDiffReply, McpStatusReply, AsideEntry, LiveTurn } from "./adapter.js";
 /** Any JSON object, as a request body or a stored file decodes to. */
 type JsonObject = Record<string, JsonValue>;
@@ -107,6 +108,8 @@ export interface RuntimeStatus {
     /** A newer plugin release on npm, and the command that installs it. This box only. */
     latest?: string;
     update?: string;
+    /** Claude processes still running on the box; they answer on the login they loaded at start. */
+    running?: number;
 }
 /** One probe's outcome: the decoded body, or why the box could not be reached. */
 export type Probe<T> = {
@@ -153,6 +156,8 @@ export interface AccountIdentity {
     email: string | null;
     loggedIn: boolean;
 }
+/** A panel login or logout changed who a box is: the next ask reads the CLI again. */
+export declare function forgetIdentity(): void;
 export declare function accountIdentity(command?: string, configDir?: string, sshHost?: string): Promise<AccountIdentity>;
 /**
  * The environment for a `claude` call on this box. `CLAUDE_CONFIG_DIR` is exported only when the
@@ -342,6 +347,14 @@ export interface SessionRouteOptions {
     permissionAsks?: Map<string, string[]>;
     /** `/btw` side questions and their answers, per session; the client bubble reads them. */
     sideQuestions?: Map<string, AsideEntry[]>;
+    /** Sessions whose last turn failed for want of a login, read beside the asides for the card. */
+    loginNeeded?: Map<string, LoginNeed>;
+    /** A panel login on a box (this box when empty) succeeded: clear its cards, relist its models. */
+    loginDone?: (host: string) => void;
+    /** Log out on a box: kill its live Claude processes so nothing keeps answering on a gone login. */
+    logoutDone?: (host: string) => void;
+    /** Live Claude processes on a box, for the row to name when the box reads logged out. */
+    liveCount?: (host: string) => number;
     /** Persist a session's aside ring after the route mutates it (e.g. a dismiss), so the change survives a restart. */
     persistAsides?: (sessionId: string) => void;
     /** Saved opening prompts, keyed by session id plus `default`, and the writer the starter card uses. */
@@ -375,7 +388,7 @@ export interface SessionRouteOptions {
     continueAfterLimit?: boolean;
 }
 /** `projectDir(cwd)` → Claude Code project dir; `startedIds()` → ids the adapter started itself. */
-export declare function registerSessionRoutes(ctx: PluginContext, { log, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, importedDir, sshBoxesPath, onSshBoxes, remoteWorkspacesPath, onRemoteWorkspaces, command, sshHost, turnRecords, liveTurn, idle, toolMode, terminalSync, permissionModes, thinking, rewind, contextUsage, workspaceDiff, mcp, permissionAsks, sideQuestions, persistAsides, starters, setStarter, models, reloadPlugins, continueAfterLimit, instanceFor, instanceForHost, onLoginStatus, }: SessionRouteOptions): void;
+export declare function registerSessionRoutes(ctx: PluginContext, { log, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, importedDir, sshBoxesPath, onSshBoxes, remoteWorkspacesPath, onRemoteWorkspaces, command, sshHost, turnRecords, liveTurn, idle, toolMode, terminalSync, permissionModes, thinking, rewind, contextUsage, workspaceDiff, mcp, permissionAsks, sideQuestions, loginNeeded, loginDone, logoutDone, liveCount, persistAsides, starters, setStarter, models, reloadPlugins, continueAfterLimit, instanceFor, instanceForHost, onLoginStatus, }: SessionRouteOptions): void;
 /**
  * The four files Claude Code merges for one session, highest precedence first. Duplicated in
  * `src/client/settings.ts`: the browser half cannot import server code, and the order is the

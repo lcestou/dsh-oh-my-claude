@@ -61,7 +61,6 @@ import {
   type LoginOutcome,
   pollSshLogin,
   submitSshLoginCode,
-  writeSshToken,
 } from "./ssh-login.js";
 import type {
   JsonValue,
@@ -81,7 +80,7 @@ import {
   pluginScopeNeedsCwd,
 } from "./plugins.js";
 import { CLAUDE_HOME, PERMISSION_MODES, isPermissionMode } from "./state.js";
-import { projectDirName } from "./adapter.js";
+import { projectDirName, type LoginNeed } from "./adapter.js";
 import type {
   PermissionModeInfo,
   PermissionModeReply,
@@ -436,6 +435,8 @@ export interface RuntimeStatus {
   /** A newer plugin release on npm, and the command that installs it. This box only. */
   latest?: string;
   update?: string;
+  /** Claude processes still running on the box; they answer on the login they loaded at start. */
+  running?: number;
 }
 
 /**
@@ -583,6 +584,10 @@ export interface AccountIdentity {
 }
 /** Per config dir: a second plugin instance has its own login, so its own answer. */
 const identityCache = new Map<string, { at: number; value: AccountIdentity }>();
+/** A panel login or logout changed who a box is: the next ask reads the CLI again. */
+export function forgetIdentity(): void {
+  identityCache.clear();
+}
 export async function accountIdentity(
   command = "claude",
   configDir?: string,
@@ -1204,6 +1209,14 @@ export interface SessionRouteOptions {
   permissionAsks?: Map<string, string[]>;
   /** `/btw` side questions and their answers, per session; the client bubble reads them. */
   sideQuestions?: Map<string, AsideEntry[]>;
+  /** Sessions whose last turn failed for want of a login, read beside the asides for the card. */
+  loginNeeded?: Map<string, LoginNeed>;
+  /** A panel login on a box (this box when empty) succeeded: clear its cards, relist its models. */
+  loginDone?: (host: string) => void;
+  /** Log out on a box: kill its live Claude processes so nothing keeps answering on a gone login. */
+  logoutDone?: (host: string) => void;
+  /** Live Claude processes on a box, for the row to name when the box reads logged out. */
+  liveCount?: (host: string) => number;
   /** Persist a session's aside ring after the route mutates it (e.g. a dismiss), so the change survives a restart. */
   persistAsides?: (sessionId: string) => void;
   /** Saved opening prompts, keyed by session id plus `default`, and the writer the starter card uses. */
@@ -1273,6 +1286,10 @@ export function registerSessionRoutes(
     mcp,
     permissionAsks,
     sideQuestions,
+    loginNeeded,
+    loginDone,
+    logoutDone,
+    liveCount,
     persistAsides,
     starters,
     setStarter,
@@ -1862,10 +1879,11 @@ export function registerSessionRoutes(
                   ...featureSwitches(texts, process.env, continueAfterLimit ?? true),
                 });
               }
-              if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/status`) {
-                const box = boxOf(url);
-                // The registry read runs beside the CLI probes, so it adds no wait of its own and
-                // is bounded regardless; a remote box reports its own plugin from its own copy.
+              /** A box's status as the panel shows it: the CLI probes, the npm read beside them
+               *  (this box only; a remote box reports its own plugin from its own copy), and a
+               *  panel token counted as a login, since the CLI's own `auth status` cannot see the
+               *  token the default instance injects at spawn. */
+              const boxStatus = async (box: MountBox, provider: string | null) => {
                 const [status, upd] = await Promise.all([
                   runtimeStatus(box.configDir, box.command, box.sshHost),
                   box.sshHost || !sshBoxesPath
@@ -1873,10 +1891,7 @@ export function registerSessionRoutes(
                     : pluginUpdate(join(dirname(sshBoxesPath), "hints.json")),
                 ]);
                 if (upd) Object.assign(status, upd);
-                // A panel login on this box stores a token the default instance injects at spawn;
-                // the CLI's own `auth status` cannot see it, so it counts as logged in here, the
-                // way an ssh box's does.
-                const provider = url.searchParams.get("provider");
+                status.running = liveCount?.(box.sshHost ?? "") ?? 0;
                 if (
                   !box.sshHost &&
                   (provider === null || provider === DEFAULT_PROVIDER) &&
@@ -1886,6 +1901,12 @@ export function registerSessionRoutes(
                   status.loggedIn = true;
                   status.authMethod = PANEL_TOKEN;
                 }
+                return status;
+              };
+              if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/status`) {
+                const box = boxOf(url);
+                const provider = url.searchParams.get("provider");
+                const status = await boxStatus(box, provider);
                 onLoginStatus?.(provider, status.loggedIn);
                 return json(res, 200, status);
               }
@@ -1906,7 +1927,7 @@ export function registerSessionRoutes(
                   url,
                   await knownCwd(url.searchParams.get("cwd"), sessionPersistence),
                 );
-                const runtime = await runtimeStatus(box.configDir, box.command, box.sshHost);
+                const runtime = await boxStatus(box, url.searchParams.get("provider"));
                 const configFiles: DiagnosticFile[] = [];
                 const userPath = await userSettingsPathOf(box);
                 for (const scope of SETTINGS_SCOPES) {
@@ -2031,7 +2052,7 @@ export function registerSessionRoutes(
                 const sid = url.searchParams.get("session");
                 if (!sid) return json(res, 400, { error: "session param required" });
                 const items: AsideEntry[] = sideQuestions?.get(sid) ?? [];
-                return json(res, 200, { items });
+                return json(res, 200, { items, loginNeeded: loginNeeded?.get(sid) ?? null });
               }
               // Dismiss is server-side so a closed card stays closed: a client-only hide is lost on the
               // next remount and the entry, still in the ring, would poll back into view. It marks
@@ -2401,6 +2422,7 @@ export function registerSessionRoutes(
                   boxes: boxes.map((b, i) => {
                     const tokenLogin = !!readSshToken(dirname(sshBoxesPath), b.host);
                     const status = tokenLogin ? { ...probed[i], loggedIn: true } : probed[i];
+                    if (status) status.running = liveCount?.(b.host) ?? 0;
                     if (status) onLoginStatus?.(sshBoxProviderId(b.name), status.loggedIn);
                     return { name: b.name, host: b.host, status };
                   }),
@@ -2535,12 +2557,21 @@ export function registerSessionRoutes(
               // elsewhere; an empty host is this box, run under a local PTY, and its token goes to
               // the default instance's local spawns.
               /** A finished login: store its token and flip the row's status, or hand back its error. */
+              /** The box's own `claude auth status`, the proof a login took once its process exits. */
+              const verifyLogin = (loginHost: string) => async () => {
+                const cli = command ?? "claude";
+                const st =
+                  loginHost === THIS_BOX
+                    ? await run(cli, ["auth", "status"], cliEnvFor(boxOf(url).configDir))
+                    : await run("ssh", sshArgs(loginHost, `${shq(cli)} auth status`));
+                return authFromStatus(st.out).loggedIn;
+              };
               const storeLogin = (loginHost: string, loginBoxes: SshBox[], fin: LoginOutcome) => {
-                if (!fin.done || !fin.token || !sshBoxesPath)
-                  return { done: false, error: fin.error };
-                writeSshToken(dirname(sshBoxesPath), loginHost, fin.token);
+                if (!fin.done) return { done: false, error: fin.error };
+                forgetIdentity();
                 const loginName = loginBoxes.find((b) => b.host === loginHost)?.name;
                 onLoginStatus?.(loginName === undefined ? null : sshBoxProviderId(loginName), true);
+                loginDone?.(loginHost);
                 return { done: true, loggedIn: true };
               };
               if (
@@ -2568,7 +2599,11 @@ export function registerSessionRoutes(
                 const loginBoxes = await readSshBoxes(sshBoxesPath);
                 if (loginHost !== THIS_BOX && !loginBoxes.some((b) => b.host === loginHost))
                   return json(res, 400, { error: "unknown box" });
-                const submit = await submitSshLoginCode(loginHost, String(body.code ?? ""));
+                const submit = await submitSshLoginCode(
+                  loginHost,
+                  String(body.code ?? ""),
+                  verifyLogin(loginHost),
+                );
                 return json(res, 200, storeLogin(loginHost, loginBoxes, submit));
               }
               // The panel asks this after showing the link: setup-token on a box that already has
@@ -2582,7 +2617,7 @@ export function registerSessionRoutes(
                 const loginBoxes = await readSshBoxes(sshBoxesPath);
                 if (loginHost !== THIS_BOX && !loginBoxes.some((b) => b.host === loginHost))
                   return json(res, 400, { error: "unknown box" });
-                const poll = pollSshLogin(loginHost);
+                const poll = await pollSshLogin(loginHost, verifyLogin(loginHost));
                 if (poll.pending) return json(res, 200, { pending: true });
                 return json(res, 200, storeLogin(loginHost, loginBoxes, poll));
               }
@@ -2598,6 +2633,17 @@ export function registerSessionRoutes(
                 if (logoutHost !== THIS_BOX && !logoutBoxes.some((b) => b.host === logoutHost))
                   return json(res, 400, { error: "unknown box" });
                 deleteSshToken(dirname(sshBoxesPath), logoutHost);
+                // The box's own CLI login goes too, so Log out means logged out: with only the
+                // panel token forgotten, a terminal login kept the row logged in and the click read
+                // as a no-op. `claude auth logout` is non-interactive and answers a box without a
+                // login harmlessly.
+                const logoutBox = boxOf(url);
+                const cli = command ?? "claude";
+                await (logoutHost === THIS_BOX
+                  ? run(cli, ["auth", "logout"], cliEnvFor(logoutBox.configDir))
+                  : run("ssh", sshArgs(logoutHost, `${shq(cli)} auth logout`)));
+                forgetIdentity();
+                logoutDone?.(logoutHost);
                 const logoutName = logoutBoxes.find((b) => b.host === logoutHost)?.name;
                 onLoginStatus?.(
                   logoutName === undefined ? null : sshBoxProviderId(logoutName),
@@ -2681,6 +2727,26 @@ export function registerSessionRoutes(
                   self: { plugin: PLUGIN_VERSION, host: hostname() },
                   boxes: boxes.map((b, i) => ({ name: b.name, url: b.url, ...probed[i] })),
                 });
+              }
+              // A linked dsh box's login lives on that dsh: its own copy of this plugin runs the
+              // same login routes for its own "this box", so these forward start, code, poll and
+              // logout there with the box's token. The sign-in tab opens on that desktop, if any;
+              // the link shows here, and a page that cannot reach that CLI shows the code to paste.
+              const loginProxy = /^\/boxes\/login\/(start|code|poll|logout)$/.exec(
+                url.pathname.slice(ROUTE_PREFIX.length),
+              );
+              if (boxesPath && req.method === "POST" && loginProxy) {
+                const body = await readBody(req);
+                const target = String(body.url ?? "");
+                const box = (await readBoxes(boxesPath)).find((b) => b.url === target);
+                if (!box) return json(res, 400, { error: "unknown box" });
+                const p = await probeBox<Record<string, JsonValue>>(
+                  box,
+                  fetch,
+                  `ssh-boxes/login/${loginProxy[1]}`,
+                  { method: "POST", body: JSON.stringify({ host: "", code: body.code ?? "" }) },
+                );
+                return json(res, 200, p.ok ? p.status : { error: p.error });
               }
               if (boxesPath && url.pathname === `${ROUTE_PREFIX}/boxes/settings`) {
                 const urlParam = url.searchParams.get("url");

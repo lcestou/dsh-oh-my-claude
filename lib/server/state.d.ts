@@ -53,6 +53,9 @@ export declare function loadStarted(stateFile?: string): Promise<Set<string>>;
 export declare function rememberStarted(id: string, keep?: boolean, stateFile?: string): Promise<void>;
 /** Headers for the Anthropic Models API: an API key from the env, else Claude Code's stored OAuth token. */
 export declare function authHeaders(home?: string): Promise<Record<string, string> | null>;
+/** The same read from the text of a credentials file already in hand: a remote box's, fetched
+ *  over ssh, decodes here the way this box's does. */
+export declare function authHeadersFrom(raw: string | null): Record<string, string> | null;
 /**
  * Record this boot's time in `file` and return how long ago the previous boot was, or undefined
  * when there was none (or the file is unreadable). Best effort, never throws.

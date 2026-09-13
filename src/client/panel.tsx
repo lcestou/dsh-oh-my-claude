@@ -34,6 +34,7 @@ import {
   CLAUDE_ORANGE,
   maskEmail,
 } from "./shared.js";
+import { UpdatePill } from "./update-pill.js";
 import { Tooltip, useAnchoredMaxHeight } from "@deepseek-ai/dsh-client-ui-primitives";
 import { Spark } from "./spark.js";
 import { ConfirmButton, TuneBody } from "./tune.js";
@@ -1513,6 +1514,9 @@ interface DiagnosticsReply {
     email: string | null;
     configDir: string;
     plugin: string;
+    /** A newer plugin release on npm, and the command that installs it. This box only. */
+    latest?: string;
+    update?: string;
     error?: string;
   };
   configFiles: Array<{ scope: string; path: string; exists: boolean; parseError?: string }>;
@@ -1705,13 +1709,24 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
             </div>
             <div>Version: {data.runtime.version || "(unknown)"}</div>
             <div>
+              Plugin: {data.runtime.plugin || "(unknown)"}
+              {data.runtime.latest && data.runtime.update && (
+                <span style={{ marginLeft: 6 }}>
+                  <UpdatePill latest={data.runtime.latest} command={data.runtime.update} />
+                </span>
+              )}
+            </div>
+            <div>
               Login:{" "}
               {data.runtime.loggedIn ? (
                 <span style={{ color: T.ok }}>
                   {maskEmail(data.runtime.email || "logged in")} · {data.runtime.host}
                 </span>
               ) : (
-                <span style={{ color: T.err }}>not logged in · run `claude auth login`</span>
+                <span style={{ color: T.err }}>
+                  not logged in · Log in under Settings, Oh My Claude, Boxes, or run `claude auth
+                  login`
+                </span>
               )}
             </div>
             <div>
