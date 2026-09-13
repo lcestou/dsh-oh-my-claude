@@ -8,11 +8,8 @@ node_modules
 .dsh-filess/
 
 # owner working notes, not part of the repo: agent instructions, agent state,
-# the ranked queue and the surveys behind it. README images stay tracked.
+# the ranked queue and the surveys behind it. Anything a reader may need goes
+# under docs/, which is tracked whole; anything private goes under notes/.
 CLAUDE.md
 .claude/
-docs/*
-!docs/media/
-
-# plans and worker briefs are tracked: they are the record of how a batch was built
-!docs/plans/
+notes/
