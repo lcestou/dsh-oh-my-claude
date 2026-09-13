@@ -47,6 +47,7 @@ import {
   WAKE_TEXT,
   withoutNativeInstructions,
   finishReason,
+  isLoginFailure,
   TurnRecord,
   RESTART_TEXT,
   markBusy,
@@ -2638,6 +2639,16 @@ console.log("schema-guard ok");
   assert.match(failureOf(expired).message, /OAuth access token is invalid/);
   const other = finishReason({ is_error: true, result: "rate limited" });
   assert.equal(failureOf(other).message, "rate limited");
+  // The one predicate the error text and the composer's login card share.
+  assert.equal(
+    isLoginFailure({ is_error: true, result: "Not logged in · Please run /login" }),
+    true,
+  );
+  assert.equal(isLoginFailure({ is_error: true, api_error_status: 401, result: "x" }), true);
+  assert.equal(isLoginFailure({ is_error: true, result: "rate limited" }), false);
+  assert.equal(isLoginFailure({ is_error: false, result: "Not logged in" }), false, "not an error");
+  // The text points at the card first: it is on the screen the person is already looking at.
+  assert.match(failureOf(notIn).message, /Log in above the composer/);
 }
 
 // ClaudeProcess talks to one handle shape; a fake spawner proves write, line intake, exit, kill.

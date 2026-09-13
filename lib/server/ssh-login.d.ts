@@ -27,7 +27,7 @@ export declare function setupTokenInvocation(host: string, command?: string, pla
  * resolve with the OAuth URL it prints. The process is held in `logins` keyed by host until the
  * code is submitted or it times out. A prior unfinished login for the same host is killed first.
  */
-export declare function startSshLogin(host: string, spawnFn?: SpawnFn, timeoutMs?: number, command?: string): Promise<{
+export declare function startSshLogin(host: string, spawnFn?: SpawnFn, timeoutMs?: number, command?: string, ttlMs?: number): Promise<{
     url?: string;
     error?: string;
 }>;

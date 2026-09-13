@@ -24,6 +24,8 @@ interface LoginProc {
 }
 
 const logins = new Map<string, LoginProc>();
+/** How long a started login may sit unfinished before its process is killed. */
+const LOGIN_TTL_MS = 10 * 60_000;
 const URL_RE = /https:\/\/claude\.com\/[^\s'"]+/;
 // A minted token is ~100 chars, so the length floor is what tells a whole token from the first few
 // bytes of one: stdout arrives in chunks, and a prefix like `sk-ant-oat01-P` matches an open-ended
@@ -125,6 +127,7 @@ export function startSshLogin(
   spawnFn: SpawnFn = spawn,
   timeoutMs = 15000,
   command = "claude",
+  ttlMs = LOGIN_TTL_MS,
 ): Promise<{ url?: string; error?: string }> {
   const prev = logins.get(host);
   if (prev && !prev.done) prev.child.kill();
@@ -134,6 +137,12 @@ export function startSshLogin(
   });
   const proc: LoginProc = { child, out: "", done: false, startedAt: Date.now() };
   logins.set(host, proc);
+  // A login nobody finishes would otherwise hold its PTY and `setup-token` for the life of the
+  // server (found 2026-09-13: a check that hit the start route left one running for good).
+  const ttl = setTimeout(() => {
+    if (!proc.done) proc.child.kill();
+  }, ttlMs);
+  ttl.unref?.();
   const onData = (chunk: Buffer) => {
     proc.out += chunk.toString();
     if (!proc.url) {

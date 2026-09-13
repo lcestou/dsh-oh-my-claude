@@ -1513,6 +1513,9 @@ interface DiagnosticsReply {
     email: string | null;
     configDir: string;
     plugin: string;
+    /** A newer plugin release on npm, and the command that installs it. This box only. */
+    latest?: string;
+    update?: string;
     error?: string;
   };
   configFiles: Array<{ scope: string; path: string; exists: boolean; parseError?: string }>;
@@ -1705,13 +1708,22 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
             </div>
             <div>Version: {data.runtime.version || "(unknown)"}</div>
             <div>
+              Plugin: {data.runtime.plugin || "(unknown)"}
+              {data.runtime.latest && data.runtime.update && (
+                <UpdatePill latest={data.runtime.latest} command={data.runtime.update} />
+              )}
+            </div>
+            <div>
               Login:{" "}
               {data.runtime.loggedIn ? (
                 <span style={{ color: T.ok }}>
                   {maskEmail(data.runtime.email || "logged in")} · {data.runtime.host}
                 </span>
               ) : (
-                <span style={{ color: T.err }}>not logged in · run `claude auth login`</span>
+                <span style={{ color: T.err }}>
+                  not logged in · Log in under Settings, Oh My Claude, Boxes, or run `claude auth
+                  login`
+                </span>
               )}
             </div>
             <div>
@@ -3088,3 +3100,33 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
 /** Render `node` inside dsh's composer card when one was found, else in place. */
 const portal = (card: HTMLElement | null, node: ReactElement) =>
   card ? createPortal(node, card) : node;
+
+/** "<version> available" beside the plugin version: a click puts the update command on the
+ *  clipboard and says so for a moment, or says the clipboard refused. The same pill the Boxes row
+ *  shows, here because the panel is opened far more often than Settings. */
+function UpdatePill({ latest, command }: { latest: string; command: string }) {
+  const [said, setSaid] = useState<"" | "command copied" | "copy blocked">("");
+  const say = (what: "command copied" | "copy blocked") => {
+    setSaid(what);
+    setTimeout(() => setSaid(""), 1500);
+  };
+  const copy = () => {
+    if (!navigator.clipboard) return say("copy blocked");
+    navigator.clipboard.writeText(command).then(
+      () => say("command copied"),
+      () => say("copy blocked"),
+    );
+  };
+  return (
+    <button
+      type="button"
+      style={{ ...pill(CLAUDE_ORANGE), cursor: "pointer", background: "none", marginLeft: 6 }}
+      title={`${command}\nthen restart dsh. Click to copy the command.`}
+      aria-label={`Plugin ${latest} available. Copy the update command.`}
+      data-omc-update={latest}
+      onClick={copy}
+    >
+      {said || `${latest} available`}
+    </button>
+  );
+}

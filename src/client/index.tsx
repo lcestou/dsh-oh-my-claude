@@ -1380,6 +1380,70 @@ interface LoginFlow {
   error?: string;
   busy?: boolean;
 }
+/** One box's panel login from the browser: start (the sign-in link), a paste when the page shows a
+ *  code, and a 2s poll for a login the CLI finished by itself. Shared by the Boxes rows and the card
+ *  above the composer, so both run the same three routes. `onDone` fires once the token is stored. */
+function useLoginFlow(onDone: (host: string) => void) {
+  const [login, setLogin] = useState<LoginFlow | null>(null);
+  const startLogin = (host: string) => {
+    setLogin({ host, code: "", busy: true });
+    fetch(`${ROUTE}/ssh-boxes/login/start`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ host }),
+    })
+      .then((r) => readJson<{ url?: string; error?: string }>(r))
+      .then((b) => setLogin({ host, code: "", url: b.url, error: b.error }))
+      .catch((e: Error) => setLogin({ host, code: "", error: e.message }));
+  };
+  // While the link is up, ask every 2s whether setup-token finished by itself (it does when the
+  // box already has a login: no browser, no code). Paused during a submit, stopped on an error.
+  const pollKey = login && login.url && !login.busy && !login.error ? login.host : null;
+  useEffect(() => {
+    if (pollKey === null) return;
+    const host = pollKey;
+    let live = true;
+    const tick = () =>
+      fetch(`${ROUTE}/ssh-boxes/login/poll`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ host }),
+      })
+        .then((r) => readJson<{ pending?: boolean; done?: boolean; error?: string }>(r))
+        .then((b) => {
+          if (!live || b.pending) return;
+          if (b.done) {
+            setLogin(null);
+            onDone(host);
+          } else setLogin((cur) => (cur && cur.host === host ? { ...cur, error: b.error } : cur));
+        })
+        .catch(() => {});
+    const timer = setInterval(tick, 2000);
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
+  }, [pollKey]);
+  const submitLogin = () => {
+    if (!login) return;
+    const host = login.host;
+    setLogin({ ...login, busy: true, error: undefined });
+    fetch(`${ROUTE}/ssh-boxes/login/code`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ host, code: login.code }),
+    })
+      .then((r) => readJson<{ done?: boolean; loggedIn?: boolean; error?: string }>(r))
+      .then((b) => {
+        if (b.error) return setLogin({ host, code: "", error: b.error });
+        setLogin(null);
+        onDone(host);
+      })
+      .catch((e: Error) => setLogin({ host, code: "", error: e.message }));
+  };
+  return { login, setLogin, startLogin, submitLogin };
+}
+
 function LoginSteps({
   login,
   setLogin,
@@ -1489,7 +1553,7 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
   const [openSettingsUrl, setOpenSettingsUrl] = useState<string | null>(null);
   const [me, setMe] = useState<RuntimeStatus | null>(null);
   const [rws, setRws] = useState<RemoteWs[]>([]);
-  const [login, setLogin] = useState<LoginFlow | null>(null);
+  const { login, setLogin, startLogin, submitLogin } = useLoginFlow(() => refresh());
   /** The update pill after a click: the command sits on the clipboard for a moment's notice. */
   const [updateCopied, setUpdateCopied] = useState<"" | "command copied" | "copy blocked">("");
   const copyUpdate = () => {
@@ -1599,17 +1663,6 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
   const removeDsh = (url: string) => saveDsh(boxes.filter((b) => b.url !== url));
   const removeSsh = (host: string) => saveSsh(ssh.filter((b) => b.host !== host));
 
-  const startLogin = (host: string) => {
-    setLogin({ host, code: "", busy: true });
-    fetch(`${ROUTE}/ssh-boxes/login/start`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ host }),
-    })
-      .then((r) => readJson<{ url?: string; error?: string }>(r))
-      .then((b) => setLogin({ host, code: "", url: b.url, error: b.error }))
-      .catch((e: Error) => setLogin({ host, code: "", error: e.message }));
-  };
   const logout = (host: string) => {
     setBusy(true);
     fetch(`${ROUTE}/ssh-boxes/login/logout`, {
@@ -1621,52 +1674,6 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
       .catch((e: Error) => setError(e.message))
       .finally(() => setBusy(false));
   };
-  // While the link is up, ask every 2s whether setup-token finished by itself (it does when the
-  // box already has a login: no browser, no code). Paused during a submit, stopped on an error.
-  const pollKey = login && login.url && !login.busy && !login.error ? login.host : null;
-  useEffect(() => {
-    if (pollKey === null) return;
-    const host = pollKey;
-    let live = true;
-    const tick = () =>
-      fetch(`${ROUTE}/ssh-boxes/login/poll`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ host }),
-      })
-        .then((r) => readJson<{ pending?: boolean; done?: boolean; error?: string }>(r))
-        .then((b) => {
-          if (!live || b.pending) return;
-          if (b.done) {
-            setLogin(null);
-            refresh();
-          } else setLogin((cur) => (cur && cur.host === host ? { ...cur, error: b.error } : cur));
-        })
-        .catch(() => {});
-    const timer = setInterval(tick, 2000);
-    return () => {
-      live = false;
-      clearInterval(timer);
-    };
-  }, [pollKey]);
-  const submitLogin = () => {
-    if (!login) return;
-    const host = login.host;
-    setLogin({ ...login, busy: true, error: undefined });
-    fetch(`${ROUTE}/ssh-boxes/login/code`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ host, code: login.code }),
-    })
-      .then((r) => readJson<{ done?: boolean; loggedIn?: boolean; error?: string }>(r))
-      .then((b) => {
-        if (b.error) return setLogin({ host, code: "", error: b.error });
-        setLogin(null);
-        refresh();
-      })
-      .catch((e: Error) => setLogin({ host, code: "", error: e.message }));
-  };
-
   const removeRw = (path: string) => {
     setBusy(true);
     setError("");
@@ -4820,12 +4827,81 @@ interface AsideItem {
  * CLI returns off the transcript. Pending cards read as thinking; each is dismissed on its own. The
  * server keeps only the last few per session, so the list stays short.
  */
+/** Mirrors the server's LoginNeed: the box the failed turn ran on (empty for this box) and its name. */
+interface LoginNeed {
+  host: string;
+  label: string;
+}
+const sameNeed = (a: LoginNeed | null, b: LoginNeed | null): boolean =>
+  a === b || (a !== null && b !== null && a.host === b.host && a.label === b.label);
+
+/** The card above the composer after a turn failed for want of a login on its box: the same login
+ *  the Boxes row runs, here so nobody has to find Settings. It only ever follows a failed turn, so a
+ *  box nobody uses never asks. Once the token is stored the server clears the need and the next poll
+ *  takes the card down; until then it says what to do next. */
+function LoginCard({ need, onDismiss }: { need: LoginNeed; onDismiss: () => void }) {
+  const [done, setDone] = useState(false);
+  const { login, setLogin, startLogin, submitLogin } = useLoginFlow(() => setDone(true));
+  const where = need.host ? need.label : "this box";
+  return (
+    <div
+      data-omc-login-card={need.host || "this-box"}
+      role="status"
+      style={{
+        boxSizing: "border-box",
+        background: "var(--dsw-specific-tip, var(--dsw-alias-bg-base, transparent))",
+        border: "0.5px solid var(--dsw-alias-border-l1, rgba(217,119,87,.4))",
+        borderRadius: "12px 12px 0 0",
+        padding: "8px 10px",
+        fontSize: 13,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <Spark size={14} />
+        <span style={{ flex: 1 }}>
+          {done ? "Logged in. Send your message again." : `Claude Code on ${where} is logged out.`}
+        </span>
+        {!done && !login && (
+          <button
+            type="button"
+            style={btn}
+            data-testid="dsh-oh-my-claude-card-login"
+            onClick={() => startLogin(need.host)}
+          >
+            Log in
+          </button>
+        )}
+        <button
+          type="button"
+          aria-label="Dismiss login card"
+          title="Dismiss"
+          onClick={onDismiss}
+          style={{
+            background: "none",
+            border: "none",
+            cursor: "pointer",
+            padding: "0 2px",
+            color: T.faint,
+          }}
+        >
+          ×
+        </button>
+      </div>
+      {login && !done && <LoginSteps login={login} setLogin={setLogin} submit={submitLogin} />}
+    </div>
+  );
+}
+
 function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   const [items, setItems] = useState<AsideItem[]>([]);
   // What the poll compares its answer against, without listing `items` as a dependency of its effect.
   const itemsRef = useRef<AsideItem[]>([]);
   itemsRef.current = items;
   const [dismissed, setDismissed] = useState<Set<string>>(() => new Set());
+  /** The box whose login the last turn wanted, from the same poll; null once a turn or a login
+   *  clears it on the server. Dismissal is this tab's alone. */
+  const [need, setNeed] = useState<LoginNeed | null>(null);
+  const [needDismissed, setNeedDismissed] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   // Only the newest card starts open; the rest fold to their header row, so a stack of answers costs
   // the composer one line each rather than a screen. A click flips a card either way.
@@ -4845,8 +4921,14 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
         const r = await fetch(`${ROUTE}/side-questions?session=${encodeURIComponent(sessionId)}`);
         if (!r.ok) return;
         // SAFETY: our own JSON route; the union names both shapes the caller checks.
-        const body = (await r.json()) as { items: AsideItem[] } | { error: string };
+        const body = (await r.json()) as
+          | { items: AsideItem[]; loginNeeded?: LoginNeed | null }
+          | { error: string };
         if ("error" in body) return;
+        if (alive) {
+          const nextNeed = body.loginNeeded ?? null;
+          setNeed((cur) => (sameNeed(cur, nextNeed) ? cur : nextNeed));
+        }
         // A fresh array every three seconds re-rendered the dock in every conversation forever,
         // answer or no answer; only a list that actually moved is worth a render.
         const next = body.items ?? [];
@@ -4880,7 +4962,8 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
   // No `activeClaudeSession` gate here either: the card shows this session's own persisted asides,
   // which only exist for a Claude session, so an empty list is the only reason to hide it. Reading
   // the provider binding at render blinked the card out whenever the binding reloaded.
-  if (shown.length === 0) return null;
+  const loginCard = need && needDismissed !== need.host ? need : null;
+  if (shown.length === 0 && !loginCard) return null;
 
   const dismissAside = (id: string) => {
     // Hide now, but tell the server to drop it so the next poll (or a remount) does not bring it back.
@@ -4920,6 +5003,9 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
 
   return (
     <div {...{ [DOCK_ATTR]: "1" }} style={DOCK_CARD}>
+      {loginCard && (
+        <LoginCard need={loginCard} onDismiss={() => setNeedDismissed(loginCard.host)} />
+      )}
       {shown.map((it) => {
         const open = (it.id === newest) !== toggled.has(it.id);
         return (

@@ -125,6 +125,22 @@ function fakeChild() {
   });
 }
 
+// A login nobody finishes is killed after its time to live, so an abandoned start does not hold a
+// setup-token process for the life of the server.
+{
+  let child: any;
+  const spawnFn = (() => {
+    child = fakeChild();
+    setTimeout(() => child.stdout.emit("data", Buffer.from("https://claude.com/t?state=1\n")), 5);
+    return child;
+  }) as any;
+  // The start resolves on its 250ms poll, so the time to live has to outlast that first.
+  await startSshLogin("box-ttl", spawnFn, 2000, "claude", 700);
+  assert.equal(child.killed, false);
+  await new Promise((r) => setTimeout(r, 700));
+  assert.equal(child.killed, true, "killed once the time to live passed");
+}
+
 // setup-token on a box that already has a login mints the token by itself: no code is ever pasted.
 // The poll reads pending while it runs and hands over the token once it has printed one and exited.
 {

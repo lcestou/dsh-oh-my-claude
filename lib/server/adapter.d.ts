@@ -284,6 +284,11 @@ export declare const KNOWN_MODELS: {
  * undated, and an id we do not know keeps whatever the API called it.
  */
 export declare const stableModelId: (id: string) => string;
+/** A session whose last turn wanted a login: the box it ran on (empty for this box) and its name. */
+export interface LoginNeed {
+    host: string;
+    label: string;
+}
 /**
  * Pull the answer text out of a `side_question` control response. The CLI answers with
  * `{ response: string }` (or a bare string on some paths, or null when it declined), so both shapes
@@ -511,14 +516,20 @@ export interface IdleTarget {
 }
 /** `--resume` of a session Claude Code no longer has: a result whose errors name the missing conversation. */
 export declare function isStaleResume(event: ClaudeEvent): boolean;
-export declare function finishReason(result: {
+/** The shape of a CLI `result` frame the login checks read. */
+export interface ResultFrame {
     is_error?: boolean;
     stop_reason?: string;
     result?: unknown;
     errors?: unknown[];
     api_error_status?: number;
     subtype?: string;
-}, hostLabel?: string): FinishReason;
+}
+/** A turn that failed because the box's Claude has no usable login: the CLI's own wording, or the
+ *  API's 401 once a stored token has been revoked. The one test both the error text and the login
+ *  card key on, so they cannot disagree about what counts. */
+export declare function isLoginFailure(result: ResultFrame): boolean;
+export declare function finishReason(result: ResultFrame, hostLabel?: string): FinishReason;
 /**
  * Incremental translator from Claude Code stream-json lines to dsh StreamChunks.
  * Prefers partial `stream_event`s; falls back to whole `assistant` messages when no partials arrived.
@@ -677,6 +688,10 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     readonly asked: Set<string>;
     /** `/btw` side questions and their answers, newest last, per session; kept in memory only. */
     readonly sideQuestions: Map<string, AsideEntry[]>;
+    /** Sessions whose last turn failed for want of a login, and the box that turn ran on. The composer
+     *  card reads this beside the asides; a turn that succeeds, or a panel login on that box, clears it.
+     *  Memory only: after a restart the next failed turn writes it again. */
+    readonly loginNeeded: Map<string, LoginNeed>;
     /** Saved opening prompts: one per session id, plus `default` for the one a session without its own
      *  is offered. Loaded from disk on construct and written through on every save. */
     readonly starters: Map<string, string>;
@@ -711,12 +726,24 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     };
     /** Read on every listing rather than cached: an edit to settings.json takes effect at once. */
     private pickerSettings;
+    /** A box without a login lists nothing: dsh's catalog drops a provider whose listing throws into
+     *  its "could not load" row with a Retry, which is the honest picker for a box no turn can use.
+     *  The row names the fix; Retry after the login brings the models back. */
     listModels(provider: string): Promise<{
         provider: string;
         id: string;
         name: string;
         inputModalities: readonly ["text", "image"];
     }[]>;
+    /** After a `result` frame: remember a login failure for the card, and name the box's providers
+     *  logged out so the picker stops offering them; a turn that succeeded clears both. */
+    noteTurnLogin(sessionId: string, result: ResultFrame): void;
+    /** A panel login on `host` (this box when empty) succeeded: its providers list models again and
+     *  the cards for sessions on that box read done. */
+    loginDone(host: string): void;
+    /** Every mounted instance, this one included: at boot or in a test it may not be in the shared
+     *  registry yet. */
+    private static mounts;
     /** No picker filter here: the allowlist curates what the picker offers, and the CLI keeps a
      *  session's own model when the allowlist excludes it rather than failing to resolve it. */
     resolveModel(provider: string, model: string, _signal?: AbortSignal): Promise<LlmResolvedModelInfo>;
