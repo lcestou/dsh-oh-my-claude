@@ -39,8 +39,6 @@ import {
   code,
   codeInline,
   readJson,
-  card,
-  cardHead,
   h3,
   row,
   pill,
@@ -331,61 +329,96 @@ interface CardProps {
   children: ReactNode;
 }
 
-/** Disclosure chevron, 14px to match dsh's own todo/queue: up when closed, down when open. */
+/** dsh's own disclosure chevron (ui-settings-plugins): down when closed, turned when open. */
 function Chevron({ open }: { open: boolean }) {
   return (
-    <span
-      style={{
-        width: 14,
-        height: 14,
-        color: "var(--dsw-alias-label-tertiary, " + T.faint + ")",
-        flex: "0 0 auto",
-        display: "grid",
-        placeItems: "center",
-      }}
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 14 14"
+      fill="none"
       aria-hidden="true"
+      style={{
+        color: T.faint,
+        flex: "none",
+        transition: "transform .16s",
+        transform: open ? "rotate(180deg)" : "none",
+      }}
     >
-      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-        <polyline
-          points={open ? "3.5,5.5 7,9 10.5,5.5" : "3.5,8.5 7,5 10.5,8.5"}
-          stroke="currentColor"
-          strokeWidth="1.25"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
-    </span>
+      <path
+        d="M11.8486 5.5L11.4238 5.92383L8.69727 8.65137C8.44157 8.90706 8.21562 9.13382 8.01172 9.29785C7.79912 9.46883 7.55595 9.61756 7.25 9.66602C7.08435 9.69222 6.91565 9.69222 6.75 9.66602C6.44405 9.61756 6.20088 9.46883 5.98828 9.29785C5.78438 9.13382 5.55843 8.90706 5.30273 8.65137L2.57617 5.92383L2.15137 5.5L3 4.65137L3.42383 5.07617L6.15137 7.80273C6.42595 8.07732 6.59876 8.24849 6.74023 8.3623C6.87291 8.46904 6.92272 8.47813 6.9375 8.48047C6.97895 8.48703 7.02105 8.48703 7.0625 8.48047C7.07728 8.47813 7.12709 8.46904 7.25977 8.3623C7.40124 8.24849 7.57405 8.07732 7.84863 7.80273L10.5762 5.07617L11 4.65137L11.8486 5.5Z"
+        fill="currentColor"
+      />
+    </svg>
   );
 }
 
 /** Collapsible card: title, a one-line summary that stays visible when closed, optional actions. */
 function Card({ id, title, summary, actions, open, onToggle, children }: CardProps) {
+  // dsh's own plugin-settings card (ui-settings-plugins, 2026-09-13): name over description on the
+  // left, chevron on the right that turns when open, the body under a hairline. Measurements and
+  // tokens copied rather than the class borrowed, since dsh's class names change per build.
   return (
-    <section id={id} style={card}>
-      <div style={cardHead}>
-        <button
-          type="button"
-          onClick={onToggle}
-          aria-expanded={open}
+    <section
+      id={id}
+      data-omc-card={open ? "open" : "closed"}
+      style={{
+        border: `0.5px solid ${open ? "var(--dsw-alias-label-dimmed, rgba(128,128,128,.5))" : "var(--dsw-alias-border-l4, rgba(128,128,128,.3))"}`,
+        background: open
+          ? "var(--dsw-alias-bg-layer-2, rgba(128,128,128,.08))"
+          : "var(--dsw-alias-bg-layer-3, rgba(128,128,128,.05))",
+        borderRadius: 16,
+        marginTop: 12,
+        transition: "border-color .16s, background .16s",
+      }}
+    >
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        aria-label={`${open ? "Hide" : "Show"} ${title}`}
+        style={{
+          appearance: "none",
+          width: "100%",
+          font: "inherit",
+          color: "inherit",
+          textAlign: "left",
+          cursor: "pointer",
+          background: "none",
+          border: 0,
+          borderRadius: 12,
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          padding: "14px 16px",
+        }}
+      >
+        <span style={{ display: "flex", flexDirection: "column", flex: 1, gap: 4, minWidth: 0 }}>
+          <span style={{ color: T.text, fontSize: 15, fontWeight: 600, lineHeight: 1.4 }}>
+            {title}
+          </span>
+          {summary && (
+            <span style={{ color: T.faint, fontSize: 13, lineHeight: 1.5 }}>{summary}</span>
+          )}
+        </span>
+        <Chevron open={open} />
+      </button>
+      {open && (
+        <div
           style={{
-            all: "unset",
-            cursor: "pointer",
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            minWidth: 0,
-            flex: 1,
+            borderTop: `0.5px solid ${T.border}`,
+            margin: "0 16px",
+            paddingBottom: 8,
           }}
         >
-          <Chevron open={open} />
-          <h3 style={h3}>{title}</h3>
-          {summary && (
-            <span style={{ ...meta, whiteSpace: "normal", overflow: "hidden" }}>{summary}</span>
+          {actions && (
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, paddingTop: 10 }}>
+              {actions}
+            </div>
           )}
-        </button>
-        {actions && <div style={{ display: "flex", gap: 8 }}>{actions}</div>}
-      </div>
-      {open && <div style={{ marginTop: 10 }}>{children}</div>}
+          <div style={{ marginTop: actions ? 4 : 10 }}>{children}</div>
+        </div>
+      )}
     </section>
   );
 }
@@ -2991,7 +3024,7 @@ const ensureTurnStatusStyle = () => {
   // clearance, which leaves its pills 653px in a 717px column. dsh's two fill that; ours as a
   // third clips all three to an ellipsis by a few pixels. The pills are centred, so the padding
   // does no aligning; take it down to the row's rounded corners and the three fit.
-  styleEl.textContent = `body[data-omc-claude] [role="status"][aria-live="polite"],[data-dsh-oh-my-claude-turn]{background-image:var(--omc-row-bg,linear-gradient(90deg,${CLAUDE_ORANGE} 0%,${CLAUDE_ORANGE} 40%,${CLAUDE_SHIMMER} 50%,${CLAUDE_ORANGE} 60%,${CLAUDE_ORANGE} 100%))}@keyframes omc-word{from{-webkit-text-fill-color:var(--omc-word-lo)}to{-webkit-text-fill-color:var(--omc-word-hi)}}[data-omc-turn-word]{animation:omc-word 1s ease-in-out 3s infinite alternate}@media (prefers-reduced-motion:reduce){[data-omc-turn-word]{animation:none}}[data-dsh-oh-my-claude-turn]>span[aria-hidden]{display:inline-block;width:1.3em;text-align:start;flex:none}[data-dsh-oh-my-claude-turn]{max-width:100%;min-width:0}[data-omc-turn-detail]{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}[data-omc-login-card] button:hover,[data-omc-login-card] button:focus-visible{color:${CLAUDE_ORANGE};border-color:${CLAUDE_ORANGE}}#dsh-oh-my-claude-boxes button:not(:disabled):hover,#dsh-oh-my-claude-boxes button:focus-visible{background:${T.hover}}body[data-omc-claude] [role="tablist"]>[role="tab"][aria-selected="true"]{color:${CLAUDE_ORANGE}}body[data-omc-claude] [role="tablist"]>[role="tab"][aria-selected="true"]::after{background:${CLAUDE_ORANGE}}body[data-omc-claude] [class*="_markdown"] blockquote{border-left-color:${CLAUDE_ORANGE}80}body[data-omc-claude] [class*="_markdown"] hr{background:${CLAUDE_ORANGE}59}body[data-omc-claude] [class*="_markdown"] a{color:${CLAUDE_ORANGE};text-decoration-color:${CLAUDE_ORANGE}66}body[data-omc-claude] [class*="_markdown"] a:hover{color:${CLAUDE_SHIMMER};text-decoration-color:${CLAUDE_SHIMMER}}body[data-omc-claude] [class*="_markdown"] input[type="checkbox"]{accent-color:${CLAUDE_ORANGE}}body[data-omc-claude] [data-workflow-run] button[data-member-status] [data-member-label]{color:${CLAUDE_ORANGE}}body[data-omc-panel-open] [data-width-handle]{pointer-events:none}body[data-omc-panel-open] [class*="_toBottomSlot"],body:has([data-omc-cost-dialog]) [class*="_toBottomSlot"]{opacity:0;pointer-events:none;transition:opacity .1s}@keyframes omc-pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,${CLAUDE_ORANGE} 55%,transparent)}100%{box-shadow:0 0 0 12px transparent}}button[aria-label="Oh My Claude"][data-omc-pulse]{animation:omc-pulse 1.1s ease-out 3}@media (prefers-reduced-motion:reduce){button[aria-label="Oh My Claude"][data-omc-pulse]{animation:none}}body[data-omc-claude] [data-produced-files-row] button{color:${CLAUDE_ORANGE}}body[data-omc-claude] [data-produced-files-row] button:hover{color:${CLAUDE_SHIMMER}}body[data-omc-claude] [data-composer-stats]{padding-left:8px;padding-right:8px}body[data-omc-claude] [class*="_optionLine"]>[class*="_badge"]{background:color-mix(in srgb,${CLAUDE_ORANGE} 16%,transparent);color:${CLAUDE_ORANGE}}${RAINBOW_CSS}${COST_DIALOG_CSS}`;
+  styleEl.textContent = `body[data-omc-claude] [role="status"][aria-live="polite"],[data-dsh-oh-my-claude-turn]{background-image:var(--omc-row-bg,linear-gradient(90deg,${CLAUDE_ORANGE} 0%,${CLAUDE_ORANGE} 40%,${CLAUDE_SHIMMER} 50%,${CLAUDE_ORANGE} 60%,${CLAUDE_ORANGE} 100%))}@keyframes omc-word{from{-webkit-text-fill-color:var(--omc-word-lo)}to{-webkit-text-fill-color:var(--omc-word-hi)}}[data-omc-turn-word]{animation:omc-word 1s ease-in-out 3s infinite alternate}@media (prefers-reduced-motion:reduce){[data-omc-turn-word]{animation:none}}[data-dsh-oh-my-claude-turn]>span[aria-hidden]{display:inline-block;width:1.3em;text-align:start;flex:none}[data-dsh-oh-my-claude-turn]{max-width:100%;min-width:0}[data-omc-turn-detail]{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}[data-omc-login-card] button:hover,[data-omc-login-card] button:focus-visible{color:${CLAUDE_ORANGE};border-color:${CLAUDE_ORANGE}}#dsh-oh-my-claude-boxes button:not(:disabled):hover,#dsh-oh-my-claude-boxes button:focus-visible{background:${T.hover}}[data-omc-card]:hover{border-color:var(--dsw-alias-label-dimmed,rgba(128,128,128,.5))}[data-omc-card]>button:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#3b82f6);outline-offset:-2px}[data-omc-card]>button:hover{background:none}body[data-omc-claude] [role="tablist"]>[role="tab"][aria-selected="true"]{color:${CLAUDE_ORANGE}}body[data-omc-claude] [role="tablist"]>[role="tab"][aria-selected="true"]::after{background:${CLAUDE_ORANGE}}body[data-omc-claude] [class*="_markdown"] blockquote{border-left-color:${CLAUDE_ORANGE}80}body[data-omc-claude] [class*="_markdown"] hr{background:${CLAUDE_ORANGE}59}body[data-omc-claude] [class*="_markdown"] a{color:${CLAUDE_ORANGE};text-decoration-color:${CLAUDE_ORANGE}66}body[data-omc-claude] [class*="_markdown"] a:hover{color:${CLAUDE_SHIMMER};text-decoration-color:${CLAUDE_SHIMMER}}body[data-omc-claude] [class*="_markdown"] input[type="checkbox"]{accent-color:${CLAUDE_ORANGE}}body[data-omc-claude] [data-workflow-run] button[data-member-status] [data-member-label]{color:${CLAUDE_ORANGE}}body[data-omc-panel-open] [data-width-handle]{pointer-events:none}body[data-omc-panel-open] [class*="_toBottomSlot"],body:has([data-omc-cost-dialog]) [class*="_toBottomSlot"]{opacity:0;pointer-events:none;transition:opacity .1s}@keyframes omc-pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,${CLAUDE_ORANGE} 55%,transparent)}100%{box-shadow:0 0 0 12px transparent}}button[aria-label="Oh My Claude"][data-omc-pulse]{animation:omc-pulse 1.1s ease-out 3}@media (prefers-reduced-motion:reduce){button[aria-label="Oh My Claude"][data-omc-pulse]{animation:none}}body[data-omc-claude] [data-produced-files-row] button{color:${CLAUDE_ORANGE}}body[data-omc-claude] [data-produced-files-row] button:hover{color:${CLAUDE_SHIMMER}}body[data-omc-claude] [data-composer-stats]{padding-left:8px;padding-right:8px}body[data-omc-claude] [class*="_optionLine"]>[class*="_badge"]{background:color-mix(in srgb,${CLAUDE_ORANGE} 16%,transparent);color:${CLAUDE_ORANGE}}${RAINBOW_CSS}${COST_DIALOG_CSS}`;
   document.head.appendChild(styleEl);
 };
 

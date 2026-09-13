@@ -121,20 +121,6 @@ export const CLAUDE_SHIMMER = "#F59575";
 /** Claude's own spinner glyph, used as the mark beside anything Claude-owned in dsh's chrome. */
 export const CLAUDE_MARK = "✻";
 
-export const card: CSSProperties = {
-  background: T.card,
-  border: `1px solid ${T.border}`,
-  borderRadius: 12,
-  padding: "14px 18px",
-  marginTop: 14,
-};
-export const cardHead: CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "space-between",
-  gap: 12,
-  flexWrap: "wrap",
-};
 export const h3: CSSProperties = { margin: 0, fontSize: 15, fontWeight: 600, color: T.text };
 export const meta: CSSProperties = { color: T.faint, fontSize: 12, whiteSpace: "nowrap" };
 /** One voice for a failure inside a tab: small, the error colour, wrapping, never a raw red line. */
