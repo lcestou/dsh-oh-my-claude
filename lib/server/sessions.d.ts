@@ -349,6 +349,8 @@ export interface SessionRouteOptions {
     loginNeeded?: Map<string, LoginNeed>;
     /** A panel login on a box (this box when empty) succeeded: clear its cards, relist its models. */
     loginDone?: (host: string) => void;
+    /** Log out on a box: kill its live Claude processes so nothing keeps answering on a gone login. */
+    logoutDone?: (host: string) => void;
     /** Persist a session's aside ring after the route mutates it (e.g. a dismiss), so the change survives a restart. */
     persistAsides?: (sessionId: string) => void;
     /** Saved opening prompts, keyed by session id plus `default`, and the writer the starter card uses. */
@@ -382,7 +384,7 @@ export interface SessionRouteOptions {
     continueAfterLimit?: boolean;
 }
 /** `projectDir(cwd)` → Claude Code project dir; `startedIds()` → ids the adapter started itself. */
-export declare function registerSessionRoutes(ctx: PluginContext, { log, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, importedDir, sshBoxesPath, onSshBoxes, remoteWorkspacesPath, onRemoteWorkspaces, command, sshHost, turnRecords, liveTurn, idle, toolMode, terminalSync, permissionModes, thinking, rewind, contextUsage, workspaceDiff, mcp, permissionAsks, sideQuestions, loginNeeded, loginDone, persistAsides, starters, setStarter, models, reloadPlugins, continueAfterLimit, instanceFor, instanceForHost, onLoginStatus, }: SessionRouteOptions): void;
+export declare function registerSessionRoutes(ctx: PluginContext, { log, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, importedDir, sshBoxesPath, onSshBoxes, remoteWorkspacesPath, onRemoteWorkspaces, command, sshHost, turnRecords, liveTurn, idle, toolMode, terminalSync, permissionModes, thinking, rewind, contextUsage, workspaceDiff, mcp, permissionAsks, sideQuestions, loginNeeded, loginDone, logoutDone, persistAsides, starters, setStarter, models, reloadPlugins, continueAfterLimit, instanceFor, instanceForHost, onLoginStatus, }: SessionRouteOptions): void;
 /**
  * The four files Claude Code merges for one session, highest precedence first. Duplicated in
  * `src/client/settings.ts`: the browser half cannot import server code, and the order is the

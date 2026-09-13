@@ -738,6 +738,11 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     /** After a `result` frame: remember a login failure for the card, and name the box's providers
      *  logged out so the picker stops offering them; a turn that succeeded clears both. */
     noteTurnLogin(sessionId: string, result: ResultFrame): void;
+    /** Log out on `host` (this box when empty) cuts the cord: every live Claude on that box is killed,
+     *  so nothing keeps answering on a login that is gone. A process that loaded the login at start
+     *  would otherwise carry it in memory until it exited. Each session resumes from its transcript on
+     *  its next message, which then fails for want of a login and shows the card. */
+    logoutBox(host: string): void;
     /** A panel login on `host` (this box when empty) succeeded: its providers list models again and
      *  the cards for sessions on that box read done. */
     loginDone(host: string): void;

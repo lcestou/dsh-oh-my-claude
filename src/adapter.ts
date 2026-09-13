@@ -2025,6 +2025,22 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       if ((mount.config.sshHost || undefined) === host) mount.setLoggedIn(false);
   }
 
+  /** Log out on `host` (this box when empty) cuts the cord: every live Claude on that box is killed,
+   *  so nothing keeps answering on a login that is gone. A process that loaded the login at start
+   *  would otherwise carry it in memory until it exited. Each session resumes from its transcript on
+   *  its next message, which then fails for want of a login and shows the card. */
+  logoutBox(host: string) {
+    for (const mount of ClaudeCodeAdapter.mounts(this)) {
+      if ((mount.config.sshHost || "") !== host) continue;
+      for (const [key, p] of mount.processes) {
+        if (!key.startsWith(`${mount.providerId}:`)) continue;
+        p.kill();
+        mount.processes.delete(key);
+      }
+      mount.setLoggedIn(false);
+    }
+  }
+
   /** A panel login on `host` (this box when empty) succeeded: its providers list models again and
    *  the cards for sessions on that box read done. */
   loginDone(host: string) {
@@ -5294,6 +5310,7 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       sideQuestions: adapter.sideQuestions,
       loginNeeded: adapter.loginNeeded,
       loginDone: (host: string) => adapter.loginDone(host),
+      logoutDone: (host: string) => adapter.logoutBox(host),
       persistAsides: (sessionId: string) => adapter.persistAsides(sessionId),
       starters: adapter.starters,
       setStarter: (key: string, text: string | undefined) => {
