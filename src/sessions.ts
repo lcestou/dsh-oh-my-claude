@@ -5,8 +5,19 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { hostname } from "node:os";
-import { readdir, readFile, writeFile, rename, copyFile, stat, mkdir, rm } from "node:fs/promises";
+import { homedir, hostname, release, userInfo } from "node:os";
+import { constants } from "node:fs";
+import {
+  access,
+  readdir,
+  readFile,
+  writeFile,
+  rename,
+  copyFile,
+  stat,
+  mkdir,
+  rm,
+} from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
   foldTranscript,
@@ -53,6 +64,7 @@ import {
 } from "./scheduled-tasks.js";
 import { asSessionId } from "./dsh.js";
 import { buildAddServer, isMcpName, scopeNeedsCwd } from "./mcp-add-remove.js";
+import { buildReport, type PrivateValues, type ReportInput } from "./report.js";
 import {
   deleteSshToken,
   readSshToken,
@@ -202,6 +214,8 @@ const PLUGIN_VERSION =
   isJsonObject(packageJson) && typeof packageJson.version === "string" ? packageJson.version : "";
 const PLUGIN_NAME =
   isJsonObject(packageJson) && typeof packageJson.name === "string" ? packageJson.name : "";
+/** Mirrors bugs.url in package.json; the report's Open issue link. */
+const ISSUES_URL = "https://github.com/lcestou/dsh-oh-my-claude/issues/new";
 /** The one `dsh plugin ... update` line for this install; the profile is read off this file's path. */
 const UPDATE_COMMAND = updateCommand(PLUGIN_NAME, profileFromPath(import.meta.url));
 /** The box-wide booleans and non-negative numbers under `hints.json`: one-time hints and the
@@ -1182,6 +1196,8 @@ export interface SessionRouteOptions {
   onLoginStatus?: (provider: string | null, loggedIn: boolean) => void;
   /** Per-session turn accounting buffer from the adapter. */
   turnRecords?: Map<string, import("./adapter.js").TurnRecord[]>;
+  /** dsh version read off the package this plugin loads beside; null when unavailable. */
+  dshVersion?: string | null;
   /** The running turn's figures per session, for the status row; absent when no turn is running. */
   liveTurn?: Map<string, LiveTurn>;
   /** Idle watchdog state from the adapter. */
@@ -1285,6 +1301,7 @@ export function registerSessionRoutes(
     command,
     sshHost,
     turnRecords,
+    dshVersion,
     liveTurn,
     idle,
     toolMode,
@@ -1955,6 +1972,57 @@ export function registerSessionRoutes(
                 // `ok` is what the tab keys its render on; without it the reply reads as the
                 // failure shape and the tab draws an empty error line instead of the report.
                 return json(res, 200, { ok: true, runtime, configFiles });
+              }
+              if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/report`) {
+                const box = boxOf(url);
+                const runtime = await boxStatus(box, url.searchParams.get("provider"));
+                const sid = url.searchParams.get("session");
+                let mcpRows: { name: string; status: string }[] | null = null;
+                if (sid && mcp) {
+                  const reply = await mcp.status(sid);
+                  if (reply.ok)
+                    mcpRows = reply.servers.map((s) => ({ name: s.name, status: s.status }));
+                }
+                const stateDirPath = sshBoxesPath ? dirname(sshBoxesPath) : "";
+                const switches = sshBoxesPath
+                  ? await readHints(join(stateDirPath, "hints.json"))
+                  : {};
+                const stateWritable = stateDirPath
+                  ? await access(stateDirPath, constants.W_OK).then(
+                      () => true,
+                      () => false,
+                    )
+                  : false;
+                const input: ReportInput = {
+                  plugin: PLUGIN_VERSION,
+                  dsh: dshVersion ?? null,
+                  cli: runtime.version,
+                  binary: runtime.binary !== null,
+                  os: `${process.platform} ${release()}`,
+                  node: process.versions.bun
+                    ? `bun ${process.versions.bun}`
+                    : `node ${process.version}`,
+                  loggedIn: runtime.loggedIn,
+                  authMethod: runtime.authMethod,
+                  configDir: runtime.configDir,
+                  stateDir: stateDirPath,
+                  stateWritable,
+                  mcp: mcpRows,
+                  lastError: runtime.error ?? runtime.reach?.detail ?? null,
+                  switches,
+                  running: runtime.running ?? 0,
+                };
+                const priv: PrivateValues = {
+                  home: homedir(),
+                  user: userInfo().username,
+                  hostname: hostname(),
+                  email: runtime.email ?? null,
+                };
+                return json(res, 200, {
+                  ok: true,
+                  text: buildReport(input, priv, url.searchParams.get("host") === "1"),
+                  issues: ISSUES_URL,
+                });
               }
               // `claude doctor` runs a process and takes a second, so it is its own route and
               // nothing runs it until the button is pressed.

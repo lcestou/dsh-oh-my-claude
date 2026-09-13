@@ -13,3 +13,6 @@ CLAUDE.md
 .claude/
 docs/*
 !docs/media/
+
+# plans and worker briefs are tracked: they are the record of how a batch was built
+!docs/plans/

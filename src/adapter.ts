@@ -5,6 +5,7 @@ import { access, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promise
 import { watch, type FSWatcher } from "node:fs";
 import { dirname } from "node:path";
 import { hostname } from "node:os";
+import { createRequire } from "node:module";
 import { basename, join } from "node:path";
 import type {
   Spawner,
@@ -181,6 +182,17 @@ import type {
   ToolCallId,
 } from "@deepseek-ai/dsh-llm";
 import type { ClaudeProcessSpec, RelayEvent, RelayResult, TurnPrep } from "./process.js";
+import { versionOf } from "./report.js";
+
+// dsh's own version for the bug report, read off the package this plugin is loaded beside.
+// Unknown when the plugin runs from a checkout without dsh's tree in reach.
+const DSH_VERSION: string | null = (() => {
+  try {
+    return versionOf(createRequire(import.meta.url)("@deepseek-ai/dsh-llm/package.json"));
+  } catch {
+    return null;
+  }
+})();
 
 /** Live placeholder→remote map for remote workspaces, shared by every box's ssh spawner. Loaded at
  * boot and replaced whenever the panel edits the list, so a redirect applies without a dsh restart. */
@@ -5316,6 +5328,7 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       onLoginStatus: (id, loggedIn) =>
         g[ADAPTER_CURRENT]?.get(id ?? adapter.providerId)?.setLoggedIn(loggedIn),
       turnRecords: adapter.turnBuffer,
+      dshVersion: DSH_VERSION,
       liveTurn: adapter.liveTurn,
       idle: {
         deadlineFor: (session: string) =>
