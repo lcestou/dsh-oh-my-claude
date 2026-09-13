@@ -1779,8 +1779,12 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
                   </span>
                 )
               )}
-              <span style={pill(me.loggedIn ? T.ok : T.err)}>
-                {me.loggedIn ? maskEmail(me.email ?? "logged in") : "not logged in"}
+              {/* The method rides along, since the panel token and the CLI's own login look the
+                  same otherwise and a Log out that forgot only the token read as a no-op. */}
+              <span style={pill(me.loggedIn ? T.ok : T.err)} data-omc-login-method={me.authMethod}>
+                {me.loggedIn
+                  ? `${maskEmail(me.email ?? "logged in")} · ${me.authMethod === "panel token" ? "panel token" : "terminal login"}`
+                  : "not logged in"}
               </span>
               {/* The same relay the ssh rows use, run under a local PTY; the token it mints goes
                   to this box's own spawns. Log out forgets that token only. */}
@@ -1795,10 +1799,10 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
                   Log in
                 </button>
               )}
-              {me.loggedIn && me.authMethod === "panel token" && (
+              {me.loggedIn && (
                 <ConfirmButton
                   label="Log out"
-                  ariaLabel="Log out: forget this box's panel token"
+                  ariaLabel="Log out: forget the panel token and log this box's Claude Code out"
                   style={btn}
                   disabled={busy}
                   onAct={() => logout("")}
