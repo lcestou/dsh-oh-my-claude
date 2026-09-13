@@ -743,6 +743,9 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      *  would otherwise carry it in memory until it exited. Each session resumes from its transcript on
      *  its next message, which then fails for want of a login and shows the card. */
     logoutBox(host: string): void;
+    /** Live Claude processes on `host` (this box when empty), across every mount there. The row shows
+     *  the count when the box reads logged out: those still answer on the login they loaded at start. */
+    liveCount(host: string): number;
     /** A panel login on `host` (this box when empty) succeeded: its providers list models again and
      *  the cards for sessions on that box read done. */
     loginDone(host: string): void;

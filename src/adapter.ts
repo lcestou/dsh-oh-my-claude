@@ -2041,6 +2041,18 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     }
   }
 
+  /** Live Claude processes on `host` (this box when empty), across every mount there. The row shows
+   *  the count when the box reads logged out: those still answer on the login they loaded at start. */
+  liveCount(host: string): number {
+    let n = 0;
+    for (const mount of ClaudeCodeAdapter.mounts(this)) {
+      if ((mount.config.sshHost || "") !== host) continue;
+      for (const [key, p] of mount.processes)
+        if (key.startsWith(`${mount.providerId}:`) && p.alive) n++;
+    }
+    return n;
+  }
+
   /** A panel login on `host` (this box when empty) succeeded: its providers list models again and
    *  the cards for sessions on that box read done. */
   loginDone(host: string) {
@@ -5311,6 +5323,7 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       loginNeeded: adapter.loginNeeded,
       loginDone: (host: string) => adapter.loginDone(host),
       logoutDone: (host: string) => adapter.logoutBox(host),
+      liveCount: (host: string) => adapter.liveCount(host),
       persistAsides: (sessionId: string) => adapter.persistAsides(sessionId),
       starters: adapter.starters,
       setStarter: (key: string, text: string | undefined) => {

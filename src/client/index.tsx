@@ -452,6 +452,8 @@ interface RuntimeStatus {
   /** A newer plugin release on npm, and the command that installs it. */
   latest?: string;
   update?: string;
+  /** Claude processes still running on the box on a login they loaded at start. */
+  running?: number;
   loggedIn?: boolean;
   email?: string;
   authMethod?: string;
@@ -1807,6 +1809,23 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
                   disabled={busy}
                   onAct={() => logout("")}
                 />
+              )}
+              {/* Logged out on disk, but processes started earlier still hold the login they read
+                  then and keep answering. Say so, and offer the same cut Log out makes. */}
+              {!me.loggedIn && (me.running ?? 0) > 0 && (
+                <>
+                  <span style={{ color: T.faint, fontSize: 12 }} data-omc-running={me.running}>
+                    {me.running} {me.running === 1 ? "session" : "sessions"} still answering on the
+                    old login
+                  </span>
+                  <ConfirmButton
+                    label="Stop them"
+                    ariaLabel="Stop the sessions still running on the old login"
+                    style={btn}
+                    disabled={busy}
+                    onAct={() => logout("")}
+                  />
+                </>
               )}
               {!me.binary && (
                 <span style={{ width: "100%", color: T.err, fontSize: 12 }}>

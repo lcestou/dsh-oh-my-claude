@@ -436,6 +436,8 @@ export interface RuntimeStatus {
   /** A newer plugin release on npm, and the command that installs it. This box only. */
   latest?: string;
   update?: string;
+  /** Claude processes still running on the box; they answer on the login they loaded at start. */
+  running?: number;
 }
 
 /**
@@ -1214,6 +1216,8 @@ export interface SessionRouteOptions {
   loginDone?: (host: string) => void;
   /** Log out on a box: kill its live Claude processes so nothing keeps answering on a gone login. */
   logoutDone?: (host: string) => void;
+  /** Live Claude processes on a box, for the row to name when the box reads logged out. */
+  liveCount?: (host: string) => number;
   /** Persist a session's aside ring after the route mutates it (e.g. a dismiss), so the change survives a restart. */
   persistAsides?: (sessionId: string) => void;
   /** Saved opening prompts, keyed by session id plus `default`, and the writer the starter card uses. */
@@ -1286,6 +1290,7 @@ export function registerSessionRoutes(
     loginNeeded,
     loginDone,
     logoutDone,
+    liveCount,
     persistAsides,
     starters,
     setStarter,
@@ -1887,6 +1892,7 @@ export function registerSessionRoutes(
                     : pluginUpdate(join(dirname(sshBoxesPath), "hints.json")),
                 ]);
                 if (upd) Object.assign(status, upd);
+                status.running = liveCount?.(box.sshHost ?? "") ?? 0;
                 if (
                   !box.sshHost &&
                   (provider === null || provider === DEFAULT_PROVIDER) &&
