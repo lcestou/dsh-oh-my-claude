@@ -448,6 +448,10 @@ const jumpUrl = (box: { url: string; token?: string }, s: { id: string; cwd?: st
 interface RuntimeStatus {
   binary?: string;
   version?: string;
+  plugin?: string;
+  /** A newer plugin release on npm, and the command that installs it. */
+  latest?: string;
+  update?: string;
   loggedIn?: boolean;
   email?: string;
   authMethod?: string;
@@ -1486,6 +1490,22 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
   const [me, setMe] = useState<RuntimeStatus | null>(null);
   const [rws, setRws] = useState<RemoteWs[]>([]);
   const [login, setLogin] = useState<LoginFlow | null>(null);
+  /** The update pill after a click: the command sits on the clipboard for a moment's notice. */
+  const [updateCopied, setUpdateCopied] = useState<"" | "command copied" | "copy blocked">("");
+  const copyUpdate = () => {
+    if (!me?.update) return;
+    const say = (what: "command copied" | "copy blocked") => {
+      setUpdateCopied(what);
+      setTimeout(() => setUpdateCopied(""), 1500);
+    };
+    // No clipboard over plain http or when the browser refuses: the tooltip still carries the
+    // command, and the pill says the click did nothing rather than looking like it worked.
+    if (!navigator.clipboard) return say("copy blocked");
+    navigator.clipboard.writeText(me.update).then(
+      () => say("command copied"),
+      () => say("copy blocked"),
+    );
+  };
 
   /** This box's own row. Read on mount and again after every login change here: the row used to
    *  keep its old pills and its Log out button until the page was reloaded, which read as the
@@ -1731,6 +1751,27 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
               <span style={pill(me.binary ? T.ok : T.err)}>
                 {me.binary ? `claude ${me.version ?? ""}`.trim() : "claude not on PATH"}
               </span>
+              {/* Neither npm nor dsh says when a plugin has moved on, so this row does: the pill
+                  turns orange with the new version, and a click puts the update command on the
+                  clipboard. The server reads the registry once a day. */}
+              {me.latest && me.update ? (
+                <button
+                  type="button"
+                  style={{ ...pill(CLAUDE_ORANGE), cursor: "pointer", background: "none" }}
+                  title={`${me.update}\nthen restart dsh. Click to copy the command.`}
+                  aria-label={`Plugin ${me.latest} available. Copy the update command.`}
+                  data-omc-update={me.latest}
+                  onClick={copyUpdate}
+                >
+                  {updateCopied || `${me.latest} available`}
+                </button>
+              ) : (
+                me.plugin && (
+                  <span style={pill(T.faint)} data-omc-plugin-version={me.plugin}>
+                    plugin {me.plugin}
+                  </span>
+                )
+              )}
               <span style={pill(me.loggedIn ? T.ok : T.err)}>
                 {me.loggedIn ? maskEmail(me.email ?? "logged in") : "not logged in"}
               </span>
@@ -4651,6 +4692,34 @@ function StarterSwitch() {
   );
 }
 
+/** The settings switch for the update notice. The flag lives in the box's hints store, which the
+ *  server reads before it asks npm: off means no registry read at all, not a hidden pill. */
+function UpdateNoticeSwitch() {
+  const [off, setOff] = useHintFlag("updateCheckOff");
+  return (
+    <div
+      data-omc-update-switch=""
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
+        fontSize: 13,
+        marginBottom: 12,
+      }}
+    >
+      <div>
+        <div>Update notice</div>
+        <div style={{ color: T.faint, fontSize: 12 }}>
+          Say on the This box row when a newer plugin is on npm. One registry read a day, from this
+          dsh server; off means none.
+        </div>
+      </div>
+      <Switch on={!off} onChange={(next) => setOff(!next)} label="Update notice" />
+    </div>
+  );
+}
+
 /** The settings switch for terminal sync. Server-held, unlike the starter's client hint: it gates a
  *  watcher the adapter runs, so it reads and writes the plugin's `/terminal-sync` route. */
 function TerminalSyncSwitch() {
@@ -5160,6 +5229,7 @@ export function apply(ctx: ClientCtx) {
           </h2>
         </div>
         <StarterSwitch />
+        <UpdateNoticeSwitch />
         <TerminalSyncSwitch />
         {error && <p style={{ color: T.err, fontSize: 13 }}>{error}</p>}
         {boxes !== null && (

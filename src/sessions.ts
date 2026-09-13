@@ -16,6 +16,7 @@ import {
   type FoldedTranscript,
 } from "./transcript.js";
 import { shq, sshArgs } from "./process.js";
+import { isNewer, latestVersion, profileFromPath, updateCommand } from "./update.js";
 import {
   classifyReach,
   loginUrlIn,
@@ -193,6 +194,33 @@ const packageJson: unknown = JSON.parse(
 );
 const PLUGIN_VERSION =
   isJsonObject(packageJson) && typeof packageJson.version === "string" ? packageJson.version : "";
+const PLUGIN_NAME =
+  isJsonObject(packageJson) && typeof packageJson.name === "string" ? packageJson.name : "";
+/** The one `dsh plugin ... update` line for this install; the profile is read off this file's path. */
+const UPDATE_COMMAND = updateCommand(PLUGIN_NAME, profileFromPath(import.meta.url));
+/** The box-wide booleans under `hints.json`: one-time hints and the settings switches. Only `true`
+ *  is kept, so a missing or unreadable file reads as every switch at its default. */
+async function readHints(hintsPath: string): Promise<Record<string, boolean>> {
+  const parsed: unknown = await readFile(hintsPath, "utf8")
+    .then((t) => JSON.parse(t))
+    .catch(() => null);
+  const out: Record<string, boolean> = {};
+  if (isJsonObject(parsed))
+    for (const [k, v] of Object.entries(parsed)) if (v === true) out[k] = true;
+  return out;
+}
+
+/** A newer release on npm than the one running, with the command that brings it in. Only this box
+ *  asks: a remote dsh box answers its own `/status` from its own copy. The Update notice switch
+ *  (`updateCheckOff` in the hints store) turns the read off entirely, not just the pill. */
+async function pluginUpdate(
+  hintsPath: string,
+): Promise<{ latest: string; update: string } | undefined> {
+  if (!PLUGIN_NAME || !PLUGIN_VERSION) return undefined;
+  if ((await readHints(hintsPath)).updateCheckOff) return undefined;
+  const latest = await latestVersion(PLUGIN_NAME);
+  return latest && isNewer(PLUGIN_VERSION, latest) ? { latest, update: UPDATE_COMMAND } : undefined;
+}
 
 const MAX_BOXES = 20;
 
@@ -405,6 +433,9 @@ export interface RuntimeStatus {
   projectsDirectory?: string | null;
   /** For an SSH box: why it did not answer, sorted so the row can name the fix (reach.ts). */
   reach?: Reach;
+  /** A newer plugin release on npm, and the command that installs it. This box only. */
+  latest?: string;
+  update?: string;
 }
 
 /**
@@ -1833,7 +1864,15 @@ export function registerSessionRoutes(
               }
               if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/status`) {
                 const box = boxOf(url);
-                const status = await runtimeStatus(box.configDir, box.command, box.sshHost);
+                // The registry read runs beside the CLI probes, so it adds no wait of its own and
+                // is bounded regardless; a remote box reports its own plugin from its own copy.
+                const [status, upd] = await Promise.all([
+                  runtimeStatus(box.configDir, box.command, box.sshHost),
+                  box.sshHost || !sshBoxesPath
+                    ? undefined
+                    : pluginUpdate(join(dirname(sshBoxesPath), "hints.json")),
+                ]);
+                if (upd) Object.assign(status, upd);
                 // A panel login on this box stores a token the default instance injects at spawn;
                 // the CLI's own `auth status` cannot see it, so it counts as logged in here, the
                 // way an ssh box's does.
@@ -1955,12 +1994,7 @@ export function registerSessionRoutes(
               // this box holds for every browser and every update. `false` drops the key.
               if (sshBoxesPath && url.pathname === `${ROUTE_PREFIX}/hints`) {
                 const hintsPath = join(dirname(sshBoxesPath), "hints.json");
-                const parsed: unknown = await readFile(hintsPath, "utf8")
-                  .then((t) => JSON.parse(t))
-                  .catch(() => null);
-                const current: Record<string, boolean> = {};
-                if (isJsonObject(parsed))
-                  for (const [k, v] of Object.entries(parsed)) if (v === true) current[k] = true;
+                const current = await readHints(hintsPath);
                 if (req.method === "GET") return json(res, 200, current);
                 if (req.method === "POST") {
                   const body = await readBody(req);
