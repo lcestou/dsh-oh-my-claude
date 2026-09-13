@@ -35,6 +35,7 @@ import {
   maskEmail,
 } from "./shared.js";
 import { UpdatePill } from "./update-pill.js";
+import { ReportBlock } from "./report.js";
 import { Tooltip, useAnchoredMaxHeight } from "@deepseek-ai/dsh-client-ui-primitives";
 import { Spark } from "./spark.js";
 import { ConfirmButton, TuneBody } from "./tune.js";
@@ -1912,6 +1913,12 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
                 {doctorOutput}
               </pre>
             )}
+          </div>
+          <span style={{ ...meta, padding: "2px 4px", display: "block", marginTop: 8 }}>
+            Report a problem
+          </span>
+          <div style={{ padding: "4px 10px" }}>
+            <ReportBlock sessionId={sessionId} provider={doctorProvider} />
           </div>
         </>
       )}

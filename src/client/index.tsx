@@ -67,6 +67,7 @@ import {
   controlStatesCss,
 } from "./shared.js";
 import { PluginUpdateBadge } from "./update-pill.js";
+import { ReportBlock } from "./report.js";
 import { Spark, sparkNode } from "./spark.js";
 import { AccessShield, OhMyClaudeControl } from "./panel.js";
 import { ConfirmButton } from "./tune.js";
@@ -5508,6 +5509,7 @@ export function apply(ctx: ClientCtx) {
     const [boxes, setBoxes] = useState<BoxData[]>([]);
     const [openBoxes, setOpenBoxes] = useState(true);
     const [openSessions, setOpenSessions] = useState(false);
+    const [openReport, setOpenReport] = useState(false);
     const [error, setError] = useState("");
     useEffect(() => {
       fetch(`${ROUTE}/boxes`)
@@ -5555,6 +5557,15 @@ export function apply(ctx: ClientCtx) {
             onToggle={() => setOpenBoxes((v) => !v)}
           />
         )}
+        <Card
+          id="dsh-oh-my-claude-report-card"
+          title="Report a problem"
+          summary="A masked report of this box for a GitHub issue: versions, login state, switches, last error."
+          open={openReport}
+          onToggle={() => setOpenReport((v) => !v)}
+        >
+          <ReportBlock />
+        </Card>
       </div>
     );
   }
