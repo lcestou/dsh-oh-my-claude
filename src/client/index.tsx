@@ -4899,8 +4899,8 @@ function UpdateNoticeSwitch() {
       <div>
         <div>Update notice</div>
         <div style={{ color: T.faint, fontSize: 12 }}>
-          Say on the This box row when a newer plugin is on npm. One registry read a day, from this
-          dsh server; off means none.
+          A pill beside the heading above when a newer plugin is on npm. One registry read a day,
+          from this dsh server; off means none.
         </div>
       </div>
       <Switch on={!off} onChange={(next) => setOff(!next)} label="Update notice" />
