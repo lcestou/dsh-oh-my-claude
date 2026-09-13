@@ -2022,8 +2022,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       if (!result.is_error) this.loginNeeded.delete(sessionId);
       return;
     }
-    const host = this.hostLabelFor(sessionId);
-    this.loginNeeded.set(sessionId, { host: host ?? "", label: host ?? hostname() });
+    const label = this.hostLabelFor(sessionId);
+    // This box is the empty string here and in loginDone/logoutBox, one spelling for the compare.
+    const host = label ?? "";
+    this.loginNeeded.set(sessionId, { host, label: label ?? hostname() });
     // The process that failed carries no usable login in its environment, and it stays alive
     // between turns: reused, it fails again with the token the panel has since stored (seen
     // 2026-09-13: card login said done, the next message was still logged out). Marked stale, the
@@ -2035,7 +2037,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // ponytail: a panel token the box refused stays on disk until the owner logs out or in again;
     // deleting it here could drop a good newer token on a process spawned before it was written.
     for (const mount of ClaudeCodeAdapter.mounts(this))
-      if ((mount.config.sshHost || undefined) === host) mount.setLoggedIn(false);
+      if ((mount.config.sshHost || "") === host) mount.setLoggedIn(false);
   }
 
   /** Log out on `host` (this box when empty) cuts the cord: every live Claude on that box is killed,
