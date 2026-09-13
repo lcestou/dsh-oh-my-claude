@@ -3108,6 +3108,12 @@ const wireTurnStatus = (
   // The one that actually decides it: with the background clipped to the text, the glyphs are filled
   // from that background and `color` is ignored, so the fill colour is what has to be set.
   detailSpan.style.setProperty("-webkit-text-fill-color", T.faint, "important");
+  // The clock's face from the first paint: dsh adds its clock node a moment after the row, and
+  // the copy below only lands once it exists, so the bracket opened at the row's 16px medium and
+  // shrank a beat later (owner, 2026-09-13). The clock measures 14px regular against the row's
+  // 16px, hence the ratio; the copy still takes over the moment the node is there.
+  detailSpan.style.fontSize = "0.875em";
+  detailSpan.style.fontWeight = "400";
   el.append(detailSpan);
   /** dsh's own elapsed-time node. Found, not hidden: the time belongs inside the bracket, but hiding
    *  it as a side effect of looking meant one failed read left the row showing no time at all. */
@@ -3138,6 +3144,8 @@ const wireTurnStatus = (
   const palette = pageIsDark() ? SPINNER_DARK : SPINNER_LIGHT;
   /** What the bracket last showed, so a beat that changes nothing writes nothing. */
   let painted = "";
+  /** Whether the bracket has taken the clock's measured face yet (the guess above until then). */
+  let clockFaceCopied = false;
   const wordNode = document.createElement("span");
   wordNode.setAttribute("data-omc-turn-word", "1");
   const paint = () => {
@@ -3174,7 +3182,8 @@ const wireTurnStatus = (
     // The bracket wears dsh's own clock face, read off its node rather than assumed: the row's
     // verb is 16px medium and the clock dsh set beside it 14px regular (measured 2026-09-12),
     // and a bracket at the verb's size read heavier than the verb it follows.
-    if (clock && !detailSpan.style.fontSize) {
+    if (clock && !clockFaceCopied) {
+      clockFaceCopied = true;
       const face = getComputedStyle(clock);
       detailSpan.style.fontSize = face.fontSize;
       detailSpan.style.fontWeight = face.fontWeight;
