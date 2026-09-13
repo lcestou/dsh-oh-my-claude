@@ -24,12 +24,34 @@ export function UpdatePill({ latest, command }: { latest: string; command: strin
   return (
     <button
       type="button"
-      style={{ ...pill(CLAUDE_ORANGE), cursor: "pointer", background: "none" }}
+      style={{
+        ...pill(CLAUDE_ORANGE),
+        cursor: "pointer",
+        background: "none",
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 4,
+      }}
       title={`${command}\nthen restart dsh. Click to copy the command.`}
       aria-label={`Plugin ${latest} available. Copy the update command.`}
       data-omc-update={latest}
       onClick={copy}
     >
+      {/* An arrow onto a shelf: the upgrade glyph, drawn at the pill's stroke and colour. */}
+      <svg
+        aria-hidden="true"
+        width="10"
+        height="10"
+        viewBox="0 0 10 10"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M5 8.2V2.4M2.4 5 5 2.4 7.6 5" />
+        <path d="M1.6 1.2h6.8" />
+      </svg>
       {said || `${latest} available`}
     </button>
   );
