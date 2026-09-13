@@ -58,6 +58,8 @@ import {
   readSshToken,
   THIS_BOX,
   startSshLogin,
+  type LoginOutcome,
+  pollSshLogin,
   submitSshLoginCode,
   writeSshToken,
 } from "./ssh-login.js";
@@ -2532,6 +2534,15 @@ export function registerSessionRoutes(
               // stores the minted token. The host must be a saved box, so this cannot ssh
               // elsewhere; an empty host is this box, run under a local PTY, and its token goes to
               // the default instance's local spawns.
+              /** A finished login: store its token and flip the row's status, or hand back its error. */
+              const storeLogin = (loginHost: string, loginBoxes: SshBox[], fin: LoginOutcome) => {
+                if (!fin.done || !fin.token || !sshBoxesPath)
+                  return { done: false, error: fin.error };
+                writeSshToken(dirname(sshBoxesPath), loginHost, fin.token);
+                const loginName = loginBoxes.find((b) => b.host === loginHost)?.name;
+                onLoginStatus?.(loginName === undefined ? null : sshBoxProviderId(loginName), true);
+                return { done: true, loggedIn: true };
+              };
               if (
                 sshBoxesPath &&
                 req.method === "POST" &&
@@ -2558,12 +2569,22 @@ export function registerSessionRoutes(
                 if (loginHost !== THIS_BOX && !loginBoxes.some((b) => b.host === loginHost))
                   return json(res, 400, { error: "unknown box" });
                 const submit = await submitSshLoginCode(loginHost, String(body.code ?? ""));
-                if (!submit.done || !submit.token)
-                  return json(res, 200, { done: false, error: submit.error });
-                writeSshToken(dirname(sshBoxesPath), loginHost, submit.token);
-                const loginName = loginBoxes.find((b) => b.host === loginHost)?.name;
-                onLoginStatus?.(loginName === undefined ? null : sshBoxProviderId(loginName), true);
-                return json(res, 200, { done: true, loggedIn: true });
+                return json(res, 200, storeLogin(loginHost, loginBoxes, submit));
+              }
+              // The panel asks this after showing the link: setup-token on a box that already has
+              // a login finishes on its own, no code, so the token is stored the moment it lands.
+              if (
+                sshBoxesPath &&
+                req.method === "POST" &&
+                url.pathname === `${ROUTE_PREFIX}/ssh-boxes/login/poll`
+              ) {
+                const loginHost = String((await readBody(req)).host ?? "");
+                const loginBoxes = await readSshBoxes(sshBoxesPath);
+                if (loginHost !== THIS_BOX && !loginBoxes.some((b) => b.host === loginHost))
+                  return json(res, 400, { error: "unknown box" });
+                const poll = pollSshLogin(loginHost);
+                if (poll.pending) return json(res, 200, { pending: true });
+                return json(res, 200, storeLogin(loginHost, loginBoxes, poll));
               }
               // Drop a box's stored login token. Local only: the plugin forgets the token so it stops
               // injecting it; the token stays valid on Anthropic's side until revoked in the account.
