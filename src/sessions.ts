@@ -79,7 +79,14 @@ import {
   pluginRoster,
   pluginScopeNeedsCwd,
 } from "./plugins.js";
-import { CLAUDE_HOME, PERMISSION_MODES, isPermissionMode } from "./state.js";
+import {
+  CLAUDE_HOME,
+  PERMISSION_MODES,
+  STATE_DIR,
+  isPermissionMode,
+  loadWorkspaceModels,
+  saveWorkspaceModel,
+} from "./state.js";
 import { projectDirName, type LoginNeed } from "./adapter.js";
 import type {
   PermissionModeInfo,
@@ -2034,6 +2041,24 @@ export function registerSessionRoutes(
                   await writeFile(hintsPath, `${JSON.stringify(next, null, 2)}\n`);
                   return json(res, 200, next);
                 }
+              }
+              // The model a workspace last ran, written by the adapter at turn start and applied by
+              // the client on a blank session; POST with a null or absent model forgets it.
+              if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/workspace-model`) {
+                const cwd = url.searchParams.get("cwd");
+                if (!cwd) return json(res, 400, { error: "cwd param required" });
+                return json(res, 200, (await loadWorkspaceModels(STATE_DIR)).get(cwd) ?? {});
+              }
+              if (req.method === "POST" && url.pathname === `${ROUTE_PREFIX}/workspace-model`) {
+                const body = await readBody(req);
+                const cwd = String(body.cwd ?? "");
+                if (!cwd) return json(res, 400, { error: "cwd required" });
+                await saveWorkspaceModel(
+                  STATE_DIR,
+                  cwd,
+                  typeof body.model === "string" ? body.model : undefined,
+                );
+                return json(res, 200, { ok: true });
               }
               if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/starter`) {
                 const sid = url.searchParams.get("session");

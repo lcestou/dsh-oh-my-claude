@@ -135,6 +135,7 @@ import {
   saveWatch,
   loadTerminalSync,
   saveTerminalSync,
+  saveWorkspaceModel,
   type WatchRecord,
 } from "./state.js";
 import { suggestRule } from "./permissions.js";
@@ -3439,6 +3440,14 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   async acquire(options: SessionOptions, forceFresh?: boolean) {
     const prep = await this.prepare(options, { forceFresh });
     if (prep.input === null) return { prep, proc: null }; // text-mode CLI: fall back to one-shot semantics
+    // The model this workspace last ran, so a new session there opens on it (the client applies
+    // it). Keyed by the dsh session's own cwd, the path the client asks with; a temporary session
+    // is a side call and does not count.
+    if (prep.spec.model && !prep.spec.temporary) {
+      const wsCwd =
+        this.ctx?.sessions?.get?.(asSessionId(options.sessionId))?.header?.cwd ?? prep.cwd;
+      void saveWorkspaceModel(STATE_DIR, wsCwd, prep.spec.model).catch(() => {});
+    }
     const key = specKey(prep.spec);
     const key2 = registryKey(this.providerId, options.sessionId);
     let proc = this.processes.get(key2);
