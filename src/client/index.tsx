@@ -1491,13 +1491,20 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
   const [rws, setRws] = useState<RemoteWs[]>([]);
   const [login, setLogin] = useState<LoginFlow | null>(null);
   /** The update pill after a click: the command sits on the clipboard for a moment's notice. */
-  const [updateCopied, setUpdateCopied] = useState(false);
+  const [updateCopied, setUpdateCopied] = useState<"" | "command copied" | "copy blocked">("");
   const copyUpdate = () => {
     if (!me?.update) return;
-    void navigator.clipboard?.writeText(me.update).then(() => {
-      setUpdateCopied(true);
-      setTimeout(() => setUpdateCopied(false), 1500);
-    });
+    const say = (what: "command copied" | "copy blocked") => {
+      setUpdateCopied(what);
+      setTimeout(() => setUpdateCopied(""), 1500);
+    };
+    // No clipboard over plain http or when the browser refuses: the tooltip still carries the
+    // command, and the pill says the click did nothing rather than looking like it worked.
+    if (!navigator.clipboard) return say("copy blocked");
+    navigator.clipboard.writeText(me.update).then(
+      () => say("command copied"),
+      () => say("copy blocked"),
+    );
   };
 
   /** This box's own row. Read on mount and again after every login change here: the row used to
@@ -1756,7 +1763,7 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
                   data-omc-update={me.latest}
                   onClick={copyUpdate}
                 >
-                  {updateCopied ? "command copied" : `${me.latest} available`}
+                  {updateCopied || `${me.latest} available`}
                 </button>
               ) : (
                 me.plugin && (
