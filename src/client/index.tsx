@@ -552,6 +552,10 @@ export interface GroupInfo {
 /** Rows shown per box before "Load more"; each press adds another PAGE. */
 const PAGE = 10;
 
+/** A filter control that shares its row evenly: the shared `select` caps at 260 px and left the
+ *  first row 50 px short of the card's edge while the search row below it filled it. */
+const filterSelect: CSSProperties = { ...select, flex: "1 1 160px", maxWidth: "none" };
+
 /**
  * The rows to show, newest first, capped to `shown[key]` (default PAGE). With a box selected the
  * key is that box; with "all" every box is merged into one recency-sorted stream keyed `"all"`, so
@@ -914,7 +918,7 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
       >
         <select
           id="dsh-oh-my-claude-box-filter"
-          style={select}
+          style={filterSelect}
           value={box}
           onChange={(e) => setBox(e.target.value)}
           title="Box"
@@ -930,7 +934,7 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
         </select>
         <select
           id="dsh-oh-my-claude-cwd-filter"
-          style={select}
+          style={filterSelect}
           value={cwd}
           onChange={(e) => setCwd(e.target.value)}
           title="Workspace"
@@ -944,7 +948,7 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
         </select>
         <select
           id="dsh-oh-my-claude-origin-filter"
-          style={select}
+          style={{ ...filterSelect, flexBasis: 120 }}
           value={origin}
           onChange={(e) => setOrigin(e.target.value)}
           title="Origin"
@@ -957,7 +961,7 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
         <input
           id="dsh-oh-my-claude-session-search"
           type="search"
-          style={{ ...inputStyle, minWidth: 160 }}
+          style={{ ...inputStyle, flex: "2 1 200px", minWidth: 160 }}
           value={query}
           placeholder="Search title, id or path"
           aria-label="Search sessions"
