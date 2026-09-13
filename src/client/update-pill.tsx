@@ -4,7 +4,7 @@
 // line. A click puts the update command on the clipboard and says so for a moment, or says the
 // clipboard refused. The server reads the registry once a day; the pill never fetches npm itself.
 import { useEffect, useState } from "react";
-import { CLAUDE_ORANGE, pill, readJson } from "./shared.js";
+import { ACCENT, pill, readJson } from "./shared.js";
 
 const ROUTE = "/dsh-oh-my-claude";
 
@@ -25,7 +25,7 @@ export function UpdatePill({ latest, command }: { latest: string; command: strin
     <button
       type="button"
       style={{
-        ...pill(CLAUDE_ORANGE),
+        ...pill(ACCENT),
         cursor: "pointer",
         background: "none",
         display: "inline-flex",

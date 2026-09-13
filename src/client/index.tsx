@@ -49,8 +49,6 @@ import {
   btnPrimary,
   DOCK_ATTR,
   ensurePanelStyle,
-  CLAUDE_ORANGE,
-  CLAUDE_SHIMMER,
   ACCENT,
   SHIMMER,
   CLAUDE_MARK,
@@ -1689,7 +1687,7 @@ function LoginSteps({
         <>
           <div>
             A sign-in tab may have opened by itself; if not, open{" "}
-            <a href={login.url} target="_blank" rel="noreferrer" style={{ color: CLAUDE_ORANGE }}>
+            <a href={login.url} target="_blank" rel="noreferrer" style={{ color: ACCENT }}>
               Claude sign-in
             </a>{" "}
             and approve. If that page shows a code, paste it below; if it says you are all set, this
@@ -1930,7 +1928,7 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
         kind === k
           ? {
               ...btn,
-              background: CLAUDE_ORANGE,
+              background: ACCENT,
               color: T.onBrand,
               border: "1px solid transparent",
               // The label on the orange fill was the row's regular weight, thin against it.
@@ -2368,7 +2366,7 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
                         href={tsLogin.url}
                         target="_blank"
                         rel="noreferrer"
-                        style={{ color: CLAUDE_ORANGE }}
+                        style={{ color: ACCENT }}
                       >
                         Approve this box on your tailnet
                       </a>
@@ -2816,7 +2814,7 @@ function renderUsage(block: HTMLElement, reply: UsageReply) {
     // Label and reset on the left, percent on the right, a thin bar under both: the same shape
     // dsh draws for the context meter below, so the two sections read as one panel.
     const pct = Math.max(0, Math.min(100, w.usedPercent));
-    const tone = pct >= 90 ? T.err : pct >= 70 ? T.warn : CLAUDE_ORANGE;
+    const tone = pct >= 90 ? T.err : pct >= 70 ? T.warn : ACCENT;
     const usageRow = document.createElement("div");
     usageRow.style.cssText =
       "display:grid;grid-template-columns:1fr auto;align-items:baseline;column-gap:12px;row-gap:3px;padding:3px 0";
@@ -2834,7 +2832,7 @@ function renderUsage(block: HTMLElement, reply: UsageReply) {
     bar.setAttribute("aria-label", `${w.label} ${Math.round(pct)}% used`);
     bar.style.cssText = `grid-column:1 / -1;height:4px;border-radius:2px;background:${T.border};overflow:hidden`;
     const fill = document.createElement("div");
-    fill.style.cssText = `height:100%;width:${pct}%;border-radius:2px;background:linear-gradient(90deg,${tone},${pct >= 70 ? tone : CLAUDE_SHIMMER})`;
+    fill.style.cssText = `height:100%;width:${pct}%;border-radius:2px;background:linear-gradient(90deg,${tone},${pct >= 70 ? tone : SHIMMER})`;
     bar.append(fill);
     const when = document.createElement("span");
     when.textContent = resetText(w.resetsAt);
@@ -3008,7 +3006,7 @@ function watchContextMeter(ctx: ClientCtx) {
     // The mark is a drawing, not a letter, so the row centres on it rather than sitting it on a
     // baseline it does not have.
     line.style.cssText = `border-bottom:1px solid ${T.border};margin-bottom:4px;padding-bottom:4px;display:flex;gap:6px;align-items:center`;
-    const mark = sparkNode(12, CLAUDE_SHIMMER);
+    const mark = sparkNode(12, SHIMMER);
     const text = document.createElement("span");
     text.textContent = "Claude usage…";
     line.append(mark, text);
@@ -4708,7 +4706,7 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
               style={{
                 display: "inline",
                 fontSize: 14,
-                color: over ? CLAUDE_ORANGE : T.faint,
+                color: over ? ACCENT : T.faint,
                 whiteSpace: "nowrap",
               }}
               {...overAttr}
@@ -5600,7 +5598,7 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
               <Spark size={12} />
               <span
                 style={{
-                  color: CLAUDE_ORANGE,
+                  color: ACCENT,
                   fontWeight: 600,
                   fontSize: 12,
                   flex: "0 0 auto",
@@ -5632,7 +5630,7 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
                 aria-label="Copy side question"
                 style={{
                   ...iconBtn,
-                  color: copied === it.id ? CLAUDE_ORANGE : T.muted,
+                  color: copied === it.id ? ACCENT : T.muted,
                   fontSize: 11,
                 }}
               >
@@ -5656,7 +5654,7 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
               // A very tall answer scrolls inside the card rather than pushing the composer down.
               <div style={{ padding: "0 10px 8px 24px", maxHeight: "40vh", overflow: "auto" }}>
                 {it.pending ? (
-                  <div style={{ color: CLAUDE_ORANGE, fontSize: 12, fontStyle: "italic" }}>
+                  <div style={{ color: ACCENT, fontSize: 12, fontStyle: "italic" }}>
                     Claude is thinking…
                   </div>
                 ) : it.error ? (

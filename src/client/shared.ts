@@ -118,13 +118,15 @@ export const T = {
   onBrand: "var(--dsw-alias-label-primary-inverted, #fff)",
 };
 
-/** Claude's brand orange and its shimmer stop (the CLI theme table): the one accent this plugin adds. */
+/** Claude's brand orange (the CLI theme table): the one accent this plugin adds. */
 export const CLAUDE_ORANGE = "#D97757";
-export const CLAUDE_SHIMMER = "#F59575";
 /** The same pair as the page paints them: the accent custom properties applyTheme writes, with
  *  today's values as the fallback, for inline styles that must follow the Claude look switch. */
 export const ACCENT = "var(--omc-accent, #D97757)";
 export const SHIMMER = "var(--omc-shimmer, #F59575)";
+/** The accent as the panel and its trigger see it: `--omc-accent-panel` where ensurePanelStyle
+ *  sets it (the panel group switch can point that at dsh's brand colour), the page accent elsewhere. */
+export const PANEL_ACCENT = "var(--omc-accent-panel, var(--omc-accent, #D97757))";
 /** Claude's own spinner glyph, used as the mark beside anything Claude-owned in dsh's chrome. */
 export const CLAUDE_MARK = "✻";
 
@@ -151,16 +153,16 @@ export const stateText: CSSProperties = { ...meta, padding: "2px 4px", whiteSpac
 export const PANEL_ATTR = "data-omc-panel";
 export const DOCK_ATTR = "data-omc-dock";
 export const panelSurface: CSSProperties = {
-  background: `color-mix(in srgb, ${CLAUDE_ORANGE} 7%, ${T.card})`,
-  border: `1px solid color-mix(in srgb, ${CLAUDE_ORANGE} 34%, ${T.border})`,
-  boxShadow: `0 10px 28px rgba(0,0,0,.26), 0 0 0 1px color-mix(in srgb, ${CLAUDE_ORANGE} 10%, transparent)`,
+  background: `color-mix(in srgb, ${PANEL_ACCENT} 7%, ${T.card})`,
+  border: `1px solid color-mix(in srgb, ${PANEL_ACCENT} 34%, ${T.border})`,
+  boxShadow: `0 10px 28px rgba(0,0,0,.26), 0 0 0 1px color-mix(in srgb, ${PANEL_ACCENT} 10%, transparent)`,
 };
 /** A tab in the strip under the body: text only, the accent as a 2px rule on the open one. */
 export const tabStyle = (selected: boolean): CSSProperties => ({
   padding: "6px 10px 5px",
   cursor: "pointer",
   border: "none",
-  borderBottom: `2px solid ${selected ? CLAUDE_ORANGE : "transparent"}`,
+  borderBottom: `2px solid ${selected ? PANEL_ACCENT : "transparent"}`,
   borderRadius: "0 0 8px 8px",
   background: "transparent",
   color: selected ? T.text : T.muted,
@@ -204,6 +206,7 @@ export function ensurePanelStyle(): void {
     `  --omc-ring: color-mix(in srgb, var(--omc-accent-panel) 70%, transparent);`,
     `}`,
     `body[data-omc-theme]:not([data-omc-theme~="panel"]) :is([${PANEL_ATTR}], [${DOCK_ATTR}]) { --omc-accent-panel: ${T.brand}; }`,
+    `body[data-omc-theme]:not([data-omc-theme~="panel"]) button[aria-label="Oh My Claude"] { --omc-accent-panel: ${T.brand}; }`,
     `${inScope(controls)} { transition: background-color .15s ease, background-image .15s ease, border-color .15s ease, color .15s ease, box-shadow .15s ease, opacity .15s ease; }`,
     // The wash is a background-image so it lays over any fill: transparent ghost, brand primary,
     // the field colour. One rule, every button.
