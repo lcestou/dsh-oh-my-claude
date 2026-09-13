@@ -86,6 +86,13 @@ assert.equal(redact("Bearer abcdefghijklmnopqrstuvwxyz", priv, false), "Bearer <
 const shortPriv: PrivateValues = { home: "/home/alice", user: "al", hostname: "box7" };
 assert.ok(redact("al is here", shortPriv, false).includes("al"), "short user not redacted");
 
+// A sibling directory that starts with the home path is not the home path.
+assert.equal(
+  redact("/home/alice2/config and /home/alice", priv, false),
+  "/home/alice2/config and ~",
+  "path boundary",
+);
+
 // file:// home redaction.
 assert.equal(
   redact("file:///home/alice/x", priv, false),
