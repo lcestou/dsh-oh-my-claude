@@ -190,13 +190,16 @@ export function ensurePanelStyle(): void {
   // sheet rule and resets `background-image` besides. The sheet owns only the transient states.
   const inScope = (sel: string) => `[${PANEL_ATTR}] ${sel}, [${DOCK_ATTR}] ${sel}`;
   el.textContent = [
+    // The panel's accent follows the page's `--omc-accent` (set by applyTheme; today's orange
+    // when unset) unless the panel group is off, when the next rule hands it dsh's brand colour.
     `${scope} {`,
-    `  --omc-accent: ${CLAUDE_ORANGE};`,
-    `  --omc-wash: color-mix(in srgb, var(--omc-accent) 10%, transparent);`,
-    `  --omc-wash-strong: color-mix(in srgb, var(--omc-accent) 18%, transparent);`,
-    `  --omc-edge: color-mix(in srgb, var(--omc-accent) 45%, ${T.border});`,
-    `  --omc-ring: color-mix(in srgb, var(--omc-accent) 70%, transparent);`,
+    `  --omc-accent-panel: var(--omc-accent, ${CLAUDE_ORANGE});`,
+    `  --omc-wash: color-mix(in srgb, var(--omc-accent-panel) 10%, transparent);`,
+    `  --omc-wash-strong: color-mix(in srgb, var(--omc-accent-panel) 18%, transparent);`,
+    `  --omc-edge: color-mix(in srgb, var(--omc-accent-panel) 45%, ${T.border});`,
+    `  --omc-ring: color-mix(in srgb, var(--omc-accent-panel) 70%, transparent);`,
     `}`,
+    `body[data-omc-theme]:not([data-omc-theme~="panel"]) :is([${PANEL_ATTR}], [${DOCK_ATTR}]) { --omc-accent-panel: ${T.brand}; }`,
     `${inScope(controls)} { transition: background-color .15s ease, background-image .15s ease, border-color .15s ease, color .15s ease, box-shadow .15s ease, opacity .15s ease; }`,
     // The wash is a background-image so it lays over any fill: transparent ghost, brand primary,
     // the field colour. One rule, every button.
@@ -206,7 +209,7 @@ export function ensurePanelStyle(): void {
     `${inScope(":is(select, input, textarea):not(:disabled):hover")} { border-color: var(--omc-edge) !important; }`,
     `${inScope('[role="tab"]:not([aria-selected="true"]):hover')} { background-image: linear-gradient(var(--omc-wash), var(--omc-wash)) !important; color: ${T.text} !important; }`,
     `${inScope("summary")} { cursor: pointer; border-radius: 6px; }`,
-    `${inScope("summary::marker")} { color: var(--omc-accent); }`,
+    `${inScope("summary::marker")} { color: var(--omc-accent-panel); }`,
     `${inScope("summary:hover")} { background-image: linear-gradient(var(--omc-wash), var(--omc-wash)) !important; color: ${T.text} !important; }`,
     `${inScope(`${controls}:focus-visible`)} { outline: 2px solid var(--omc-ring); outline-offset: 2px; }`,
     `${inScope('[role="tab"]:focus-visible')} { outline-offset: -2px; }`,
@@ -218,7 +221,7 @@ export function ensurePanelStyle(): void {
     // dsh gives every element corner-shape: superellipse(1.5) where the browser knows the
     // property; its round buttons opt out, and so must this one or the 999 px radius squares off.
     `button[aria-label="Oh My Claude"] { corner-shape: round; }`,
-    `button[aria-label="Oh My Claude"]:focus-visible { outline: 2px solid color-mix(in srgb, ${CLAUDE_ORANGE} 70%, transparent); outline-offset: 2px; }`,
+    `button[aria-label="Oh My Claude"]:focus-visible { outline: 2px solid color-mix(in srgb, var(--omc-accent) 70%, transparent); outline-offset: 2px; }`,
     `@media (prefers-reduced-motion: reduce) { ${inScope(controls)} { transition: none; } }`,
   ].join("\n");
   if (!existing) document.head.appendChild(el);
