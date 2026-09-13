@@ -64,16 +64,21 @@ export type UsageFetch = (url: string, init: {
     };
     json(): Promise<unknown>;
 }>;
-/** Read usage with the stored login; never throws, the panel shows the reason instead. */
-export declare function readUsage(fetchImpl?: UsageFetch, home?: string): Promise<UsageReply>;
+/** Read usage with the stored login; never throws, the panel shows the reason instead. An SSH
+ *  box's usage is its own account's: its credentials come over ssh, the endpoint is asked from here. */
+export declare function readUsage(fetchImpl?: UsageFetch, home?: string, sshHost?: string): Promise<UsageReply>;
 /** The reset instant of a window still at its cap, or undefined when nothing blocks a request.
  *  A reply that could not be read answers undefined too: the wake then finds out by trying. */
 export declare function stillLimitedUntil(reply: UsageReply, now?: number): number | undefined;
 /** Serve `/dsh-oh-my-claude/usage` (`?force=1` refreshes sooner) from a small cache. */
-export declare function registerUsageRoute(ctx: PluginContext, log: (level: string, msg: string) => void, identity: (home?: string) => Promise<{
+export declare function registerUsageRoute(ctx: PluginContext, log: (level: string, msg: string) => void, identity: (home?: string, sshHost?: string) => Promise<{
     host: string;
     email: string | null;
 }>, options?: {
     home?: string;
-    homeFor?: (providerId: string) => string | undefined;
+    /** The box a provider runs on: its local config dir, or the ssh host whose own login it uses. */
+    boxFor?: (providerId: string) => {
+        home: string;
+        sshHost?: string;
+    } | undefined;
 }): void;

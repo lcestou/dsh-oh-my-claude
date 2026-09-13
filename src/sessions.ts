@@ -2422,6 +2422,7 @@ export function registerSessionRoutes(
                   boxes: boxes.map((b, i) => {
                     const tokenLogin = !!readSshToken(dirname(sshBoxesPath), b.host);
                     const status = tokenLogin ? { ...probed[i], loggedIn: true } : probed[i];
+                    if (status) status.running = liveCount?.(b.host) ?? 0;
                     if (status) onLoginStatus?.(sshBoxProviderId(b.name), status.loggedIn);
                     return { name: b.name, host: b.host, status };
                   }),

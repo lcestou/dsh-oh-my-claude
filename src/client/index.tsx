@@ -1878,6 +1878,17 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
                         Log in
                       </button>
                     )}
+                    {/* The same Log out this box has: `claude auth logout` over ssh, its running
+                        sessions stopped, any leftover token forgotten. */}
+                    {(st.loggedIn || (st.running ?? 0) > 0) && (
+                      <ConfirmButton
+                        label="Log out"
+                        ariaLabel={`Log out ${b.name}: log its Claude Code out and stop its running sessions`}
+                        style={btn}
+                        disabled={busy}
+                        onAct={() => logout(b.host)}
+                      />
+                    )}
                   </>
                 )}
               </div>
@@ -2344,6 +2355,8 @@ interface SshProbeEntry {
     version?: string;
     reach?: { stage: string; hint: string; detail: string };
     loggedIn?: boolean;
+    /** Claude processes still running for the box on a login they loaded at start. */
+    running?: number;
     email?: string;
     error?: string;
   };

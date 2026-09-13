@@ -5226,9 +5226,14 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       },
       (e) => adapter.log("warn", `mcp bridge unavailable: ${errorText(e)}`),
     );
-    // Build a provider→home lookup from the registry so the usage route can resolve other instances.
-    const homeFor = (providerId: string): string | undefined =>
-      g[ADAPTER_CURRENT]?.get(providerId)?.claudeHome;
+    // Build a provider→box lookup from the registry so the usage route reads the right login: a
+    // second local instance's own dir, or an ssh box's own `~/.claude` over ssh.
+    const usageBoxFor = (providerId: string): { home: string; sshHost?: string } | undefined => {
+      const other = g[ADAPTER_CURRENT]?.get(providerId);
+      return other
+        ? { home: other.claudeHome, sshHost: other.config.sshHost || undefined }
+        : undefined;
+    };
     // The same registry answers the session routes: a request that names its session's mount reads
     // that mount's box, so a session on an SSH box stops being reported as this one.
     // The same registry by host, for a read about a remote workspace: its files are on its box
@@ -5251,8 +5256,9 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
     registerUsageRoute(
       ctx,
       (level, msg) => adapter.log(level, msg),
-      (home?: string) => accountIdentity(adapter.config.command, home, adapter.config.sshHost),
-      { home: claudeHome, homeFor },
+      (home?: string, sshHost?: string) =>
+        accountIdentity(adapter.config.command, home, sshHost ?? adapter.config.sshHost),
+      { home: claudeHome, boxFor: usageBoxFor },
     );
     registerSessionRoutes(ctx, {
       log: (level: string, msg: string) => adapter.log(level, msg),
