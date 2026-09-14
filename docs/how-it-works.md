@@ -104,7 +104,15 @@ All of this colour is the Claude look switch in Settings: off, or off per group,
 
 ## Compaction
 
-The CLI announces compaction with a `compacting` frame, goes silent while it summarises, then emits the boundary; both ends show in the reasoning lane, and a failed compaction is reported.
+The CLI announces compaction with a `compacting` frame, goes silent while it summarises, then emits the boundary; both ends show in the reasoning lane, and a failed compaction is reported. The `compacting` frame repeats every 30 seconds until the boundary arrives, so the announcement is written once and the repeats only keep the status row's clock moving. A 141-second compaction was measured on 2026-09-14.
+
+dsh's own automatic compaction never runs on this plugin's routes, and there is no setting to turn it on, because compacting on top of a harness that already compacts wastes a summary and stalls the turn. Two things made it worth switching off rather than tuning. Claude Code compacts its own context and this plugin relays that, so the work is already being done. And dsh's pressure reading does not describe this route: dsh measures its own session surface, which keeps growing, while `resume` sends the CLI only the tail after the last assistant message, so dsh reached its threshold 22 times in two sessions that had declared a 1,000,000-token window. Each of those spent about 100 seconds writing a summary the prompt builder then sliced off.
+
+The switch is capacity, reported to one caller and not the other. dsh asks an adapter for a model's context window through two methods: `prepareCall`, whose answer feeds the context ring and the readouts this plugin injects into it, and `resolveModel`, whose answer is what `compaction-basic` multiplies by its threshold ratio before every step. This plugin answers the first and stays quiet on the second, so the ring works and the threshold can never be computed. Compaction's own pre-step handler catches that, warns once and continues the turn. The scope is this plugin's routes only: a second provider in the same profile keeps its compaction, and so does anything mounted by an agent preset, which profile patches never reach.
+
+What stays: `/compact` on demand, which is a different code path and never reads capacity, and dsh's context ring. What goes with automatic compaction: automatic overflow recovery, which is free here because this plugin never reports a context overflow, and `dsh-session-reference`'s capacity-scaled budget, which falls back to its 65,536-byte default on these routes; setting `maxReferenceBytes` on that plugin gets any budget you want back, since it is checked before capacity is.
+
+After a dsh upgrade, one thing is worth re-checking: this depends on `compaction-basic` still reading capacity through `llm.resolveModelInfo()`. If a future version reads it from the prepared call instead, automatic compaction comes back on these routes with no warning, and the fix belongs here rather than in a profile.
 
 ## Task progress
 

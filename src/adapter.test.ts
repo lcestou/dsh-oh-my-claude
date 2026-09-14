@@ -2239,6 +2239,31 @@ console.log("ok");
   assert.match(failed.at(-1).block.text, /Compaction failed: Not enough messages to compact\./);
 }
 {
+  // The CLI repeats status:"compacting" every 30 s until it is done, and a 141-second run was
+  // measured. One announcement covers the whole stretch, but every repeat still has to tick the
+  // stall clock: no other frame arrives in that window, so this is the turn's only proof of life.
+  let frames = 0;
+  const t = new Translator({ onProgress: (p: any) => p.frame && frames++ }) as any;
+  const beat = { type: "system", subtype: "status", status: "compacting" };
+  const first = t.translate({ ...beat });
+  assert.match(first.at(-1).block.text, /Compacting context…/);
+  assert.deepEqual(t.translate({ ...beat }), [], "the heartbeat repeats, the line does not");
+  assert.deepEqual(t.translate({ ...beat }), []);
+  assert.equal(frames, 3, "every heartbeat ticks the stall clock");
+  // The boundary re-arms it, so a second compaction in the same turn is announced too.
+  t.translate({
+    type: "system",
+    subtype: "compact_boundary",
+    compact_metadata: { trigger: "auto" },
+  });
+  assert.match(t.translate({ ...beat }).at(-1).block.text, /Compacting context…/);
+  // A failure re-arms it as well, since that run ends without a boundary.
+  const t2 = new Translator() as any;
+  t2.translate({ ...beat });
+  t2.translate({ type: "system", subtype: "status", status: null, compact_result: "failed" });
+  assert.match(t2.translate({ ...beat }).at(-1).block.text, /Compacting context…/);
+}
+{
   // sessionProvider reads the last model/selection from the session log: the limit wait must not
   // wake a session that was rerouted to another provider meanwhile.
   const events = [
@@ -4127,9 +4152,25 @@ console.log("interrupt-on-abort ok");
   assert.equal(asked, 1);
   const first = (await adapter.listModels("claude-code"))[0];
   assert.equal(first?.id, "opus[1m]");
-  const resolved = await adapter.resolveModel("claude-code", "opus[1m]");
-  assert.equal(resolved.context?.contextWindow, 1_000_000);
+  const prepared = await adapter.prepareCall("claude-code", "opus[1m]");
+  assert.equal(prepared.model.context?.contextWindow, 1_000_000);
   console.log("cli-models ok");
+}
+
+// capacity split: prepareCall reports the window (the ring reads it), resolveModel does not
+// (dsh-compaction-basic reads that one, and silence there is what keeps it from compacting on top
+// of Claude Code's own compaction). Identity and reasoning survive on both.
+{
+  const adapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  const prepared = await adapter.prepareCall("claude-code", "claude-opus-5");
+  const resolved = await adapter.resolveModel("claude-code", "claude-opus-5");
+  assert.ok((prepared.model.context?.contextWindow ?? 0) > 0, "prepareCall reports capacity");
+  // `in`, not `.context`: the narrowed return type has no such property, which is the point.
+  assert.ok(!("context" in resolved), "resolveModel withholds capacity");
+  assert.equal(resolved.id, prepared.model.id);
+  assert.deepEqual(resolved.reasoning, prepared.model.reasoning);
+  assert.equal(typeof prepared.stream, "function");
+  console.log("capacity-split ok");
 }
 
 // elicitation: schema properties become dsh questions; answers become the accept content.
