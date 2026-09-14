@@ -8,44 +8,40 @@ import {
   TOGGLEABLE,
 } from "./context-sources.js";
 
-assert.deepEqual(contextDrops({}), new Set());
-assert.deepEqual(contextDrops({ dshContextInstructionsOff: true }), new Set(["instructions"]));
-assert.deepEqual(contextDrops({ dshContextSkillsOff: true }), new Set(["skills"]));
-assert.deepEqual(
-  contextDrops({ dshContextInstructionsOff: true, dshContextSkillsOff: true }),
-  new Set(["instructions", "skills"]),
-);
-assert.deepEqual(contextDrops({ dshContextOff: true }), new Set(["instructions", "skills"]));
-assert.deepEqual(
-  contextDrops({ dshContextOff: true, dshContextInstructionsOff: false }),
-  new Set(["instructions", "skills"]),
-);
+// A fresh box has no hints, and a fresh box sends no dsh context: the master switch is off until
+// someone turns it on, and the per-source keys mean nothing while it is.
+assert.deepEqual(contextDrops({}), new Set(["instructions", "skills"]));
 assert.deepEqual(
   contextDrops({ dshContextInstructionsOff: false, dshContextSkillsOff: false }),
-  new Set(),
+  new Set(["instructions", "skills"]),
+);
+assert.deepEqual(contextDrops({ dshContextOn: false }), new Set(["instructions", "skills"]));
+assert.deepEqual(contextDrops({ dshContextOn: true }), new Set());
+assert.deepEqual(
+  contextDrops({ dshContextOn: true, dshContextInstructionsOff: true }),
+  new Set(["instructions"]),
+);
+assert.deepEqual(
+  contextDrops({ dshContextOn: true, dshContextSkillsOff: true }),
+  new Set(["skills"]),
+);
+assert.deepEqual(
+  contextDrops({ dshContextOn: true, dshContextInstructionsOff: true, dshContextSkillsOff: true }),
+  new Set(["instructions", "skills"]),
 );
 assert.equal(contextDrops({}).has("runtime"), false);
-assert.equal(contextDrops({ dshContextInstructionsOff: true }).has("runtime"), false);
-assert.equal(contextDrops({ dshContextSkillsOff: true }).has("runtime"), false);
+assert.equal(contextDrops({ dshContextOn: true }).has("runtime"), false);
 assert.equal(
-  contextDrops({ dshContextInstructionsOff: true, dshContextSkillsOff: true }).has("runtime"),
+  contextDrops({ dshContextOn: true, dshContextInstructionsOff: true }).has("runtime"),
   false,
 );
-assert.equal(contextDrops({ dshContextOff: true }).has("runtime"), false);
-assert.equal(
-  contextDrops({ dshContextOff: true, dshContextInstructionsOff: false }).has("runtime"),
-  false,
-);
-assert.equal(
-  contextDrops({ dshContextInstructionsOff: false, dshContextSkillsOff: false }).has("runtime"),
-  false,
-);
-assert.equal(
-  contextDrops({ dshContextOff: true, dshContextRuntimeOff: true }).has("runtime"),
-  false,
-);
+assert.equal(contextDrops({ dshContextOn: true, dshContextSkillsOff: true }).has("runtime"), false);
 assert.equal(contextDrops({ dshContextRuntimeOff: true }).has("runtime"), false);
-const HINT_KEYS = ["dshContextOff", "dshContextInstructionsOff", "dshContextSkillsOff"];
+assert.equal(
+  contextDrops({ dshContextOn: true, dshContextRuntimeOff: true }).has("runtime"),
+  false,
+);
+const HINT_KEYS = ["dshContextOn", "dshContextInstructionsOff", "dshContextSkillsOff"];
 for (const k of HINT_KEYS) {
   assert.equal(/^[a-zA-Z][a-zA-Z0-9]{0,40}$/.test(k), true);
 }
@@ -69,29 +65,19 @@ const rows: Record<string, ChatFlowNode> = {
 const order = ["typed", "instructions", "catalog", "snapshot", "job", "harness"];
 const node = (key: string) => rows[key];
 
-// Switches all on: dsh's system prompt is still masked, because this plugin never passes it on.
-assert.deepEqual(maskedRows(order, node, contextDrops({})), ["harness"]);
-assert.deepEqual(maskedRows(order, node, contextDrops({ dshContextOff: true })), [
-  "instructions",
-  "catalog",
-  "harness",
-]);
-assert.deepEqual(maskedRows(order, node, contextDrops({ dshContextSkillsOff: true })), [
-  "catalog",
-  "harness",
-]);
+// Master switch on: dsh's system prompt is still masked, because this plugin never passes it on.
+assert.deepEqual(maskedRows(order, node, contextDrops({ dshContextOn: true })), ["harness"]);
+assert.deepEqual(maskedRows(order, node, contextDrops({})), ["instructions", "catalog", "harness"]);
+assert.deepEqual(
+  maskedRows(order, node, contextDrops({ dshContextOn: true, dshContextSkillsOff: true })),
+  ["catalog", "harness"],
+);
 // The runtime snapshot goes out whatever the switches say, and so does a job notice that happens
 // to share its source kind. Masking either would hide a block Claude Code did receive.
-assert.equal(
-  maskedRows(order, node, contextDrops({ dshContextOff: true })).includes("snapshot"),
-  false,
-);
-assert.equal(maskedRows(order, node, contextDrops({ dshContextOff: true })).includes("job"), false);
-assert.equal(
-  maskedRows(order, node, contextDrops({ dshContextOff: true })).includes("typed"),
-  false,
-);
+assert.equal(maskedRows(order, node, contextDrops({})).includes("snapshot"), false);
+assert.equal(maskedRows(order, node, contextDrops({})).includes("job"), false);
+assert.equal(maskedRows(order, node, contextDrops({})).includes("typed"), false);
 // A key the store no longer holds is skipped rather than named in the sheet.
-assert.deepEqual(maskedRows(["gone"], node, contextDrops({ dshContextOff: true })), []);
+assert.deepEqual(maskedRows(["gone"], node, contextDrops({})), []);
 
 console.log("context-sources.test.ts: ok");

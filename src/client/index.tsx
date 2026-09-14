@@ -5491,7 +5491,8 @@ function ContextFixed({
  *  keys go to the box's hints store, and the adapter reads them when it assembles a turn, so a
  *  session already running keeps whatever it was sent before the switch moved. */
 function ContextSwitch({ ctx }: { ctx: ClientCtx }) {
-  const [off, setOff] = useHintFlag(MASTER_KEY);
+  const [on, setOn] = useHintFlag(MASTER_KEY);
+  const off = !on;
   const sizes = useContextSizes(ctx);
   const claudeMd = useClaudeMd(ctx);
   // The two switchable blocks and nothing else. The runtime snapshot, the tools guidance and the
@@ -5517,9 +5518,9 @@ function ContextSwitch({ ctx }: { ctx: ClientCtx }) {
         <div>
           <div>dsh context</div>
           <div style={{ color: T.faint, fontSize: 12 }}>
-            What dsh adds to every prompt besides what you typed. Off means a new session sees your
-            prompt, its own CLAUDE.md and nothing else. A session already running keeps whatever dsh
-            sent it before the switch moved.
+            What dsh adds to every prompt besides what you typed. Off by default, so a new session
+            sees your prompt, its own CLAUDE.md and nothing else. A session already running keeps
+            whatever dsh sent it before the switch moved.
           </div>
           {/* The sizes are measured before any switch drops a block, so the number holds in both
               states and only the tense changes: off, it is what the switch is already keeping out.
@@ -5532,7 +5533,7 @@ function ContextSwitch({ ctx }: { ctx: ClientCtx }) {
             </div>
           )}
         </div>
-        <Switch on={!off} onChange={(next) => setOff(!next)} label="dsh context" />
+        <Switch on={on} onChange={setOn} label="dsh context" />
       </div>
       {!off && (
         <details data-omc-context-custom="" style={{ marginBottom: 12, fontSize: 13 }}>
@@ -5630,7 +5631,7 @@ function ContextRowMask({
   ctx: ClientCtx;
   useChat?: <S>(select: (chat: ChatFlow) => S, eq?: (a: S, b: S) => boolean) => S;
 }) {
-  const [off] = useHintFlag(MASTER_KEY);
+  const [on] = useHintFlag(MASTER_KEY);
   const [instructionsOff] = useHintFlag(OFF_KEY.instructions);
   const [skillsOff] = useHintFlag(OFF_KEY.skills);
   const order = useChat?.((chat) => chat.order) ?? NO_ROWS;
@@ -5639,12 +5640,12 @@ function ContextRowMask({
   const masked = useMemo(() => {
     if (!mine || nodes === undefined) return [];
     const drops = contextDrops({
-      [MASTER_KEY]: off,
+      [MASTER_KEY]: on,
       [OFF_KEY.instructions]: instructionsOff,
       [OFF_KEY.skills]: skillsOff,
     });
     return maskedRows(order, (key) => nodes.get(key), drops);
-  }, [mine, nodes, order, off, instructionsOff, skillsOff]);
+  }, [mine, nodes, order, on, instructionsOff, skillsOff]);
   useEffect(() => {
     const existing = document.getElementById(ROW_MASK_STYLE_ID);
     const el = existing instanceof HTMLStyleElement ? existing : document.createElement("style");
@@ -6504,10 +6505,12 @@ export function apply(ctx: ClientCtx) {
           </span>
         </div>
         <ThemeSwitch />
-        <ContextSwitch ctx={ctx} />
         <StarterSwitch />
         <UpdateNoticeSwitch />
         <WorkspaceModelSwitch />
+        {/* The three switches that start off sit together at the end, so the card reads as what the
+            plugin does by default first, then what you can add to it. */}
+        <ContextSwitch ctx={ctx} />
         <ReturnRecapSwitch />
         <SpendGuardField />
         <TerminalSyncSwitch />

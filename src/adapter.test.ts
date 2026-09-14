@@ -4948,7 +4948,9 @@ console.log("interrupt-on-abort ok");
   // The seam: `prepare` is what reads hints.json, and nothing above this block touches it. Without
   // this, an omitted argument in `prepare` leaks every block back into the prompt with a green suite.
   const hints = joinPath(stateDir("claude-code"), "hints.json");
-  await writeFile(hints, '{"dshContextSkillsOff":true}');
+  // Master switch on, one block cleared: with the switch off (the default) both blocks drop and the
+  // per-source key proves nothing about whether `prepare` read the file.
+  await writeFile(hints, '{"dshContextOn":true,"dshContextSkillsOff":true}');
   // SAFETY: partial fake for tests; PluginContext requires many fields not used here
   const adapter = new ClaudeCodeAdapter({ on() {} } as unknown as PluginContext, Config({}));
   const prep = await adapter.prepare({

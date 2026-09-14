@@ -6,14 +6,16 @@ export type ContextSource = (typeof CONTEXT_SOURCES)[number];
  *  approvals that are auto-rejected, so it is deliberately not in here. */
 export declare const TOGGLEABLE: readonly ["instructions", "skills"];
 export type Toggleable = (typeof TOGGLEABLE)[number];
-/** Hint key per source. Absent means the block is sent, so a fresh box behaves as it did before
- *  these switches existed; `readHints` drops `false` outright, which is the same thing. */
+/** Hint key per source. These only matter once the master switch is on; absent means the block is
+ *  sent, and `readHints` drops `false` outright, which is the same thing. */
 export declare const OFF_KEY: {
     instructions: string;
     skills: string;
 };
-/** True withholds every toggleable block, whatever the per-source keys say. */
-export declare const MASTER_KEY = "dshContextOff";
+/** The master switch, off unless the box says otherwise: a fresh install sends the prompt, the
+ *  CLAUDE.md files and nothing else. Anything but `true` withholds every toggleable block, whatever
+ *  the per-source keys say. Named `On` rather than `Off` so the absent key reads as the default. */
+export declare const MASTER_KEY = "dshContextOn";
 /** Which of the toggleable context sources are withheld by the given hint map. */
 export declare function contextDrops(hints: Record<string, boolean | number>): Set<ContextSource>;
 /** The fields of a logged `user/message` source that decide which block it is. dsh types the source
