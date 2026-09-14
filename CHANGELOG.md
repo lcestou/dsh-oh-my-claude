@@ -28,6 +28,10 @@ Staged as 1.1.0 in `package.json`.
 
 ### Fixed
 
+- The ring beside the send button filled to 100% during any long turn. dsh fills it from the prompt
+  side of the last usage sample, which Claude Code reports with every API call of the turn summed
+  into it: a turn of a hundred calls reads as millions of tokens. The arc and its label now follow
+  the CLI's own occupancy, the same figure the popover shows.
 - dsh's context ring read a session at a fifth of its real fill. The window reported to dsh was the
   one the model can hold, while Claude Code runs several of them against a smaller one until 1M is
   turned on: an Opus 5 session 83% of the way to compaction showed as 17%. The window is now taken

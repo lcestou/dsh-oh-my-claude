@@ -3170,7 +3170,67 @@ function watchContextMeter(ctx: ClientCtx) {
         hideNativeContext(tip, block);
       });
   };
+  // The meter's ring, the occupancy last read for it, and when that read was asked for.
+  let ring: HTMLElement | undefined;
+  let ringSession: string | undefined;
+  let ringPercent: number | undefined;
+  let ringAsked = 0;
+  /**
+   * Fill the ring from the CLI's own occupancy.
+   *
+   * dsh draws the arc from `contextPressure`, which is the prompt side of the last usage sample —
+   * input plus both cache counters — over the window. For a Claude Code session that sample is the
+   * result frame's, and the CLI sums it across every API call the turn made: a turn of 117 calls
+   * reports millions of cache reads, so the arc pins at 100% while the session is a third full. The
+   * dash is rewritten with the percentage the CLI reports, which is the number this plugin's popover
+   * and bubble already show and the one auto-compact fires on.
+   *
+   * Written rather than handed upstream because the number dsh is drawing is also what it bills the
+   * turn on; the throughput figure is right for that and wrong only here. The circle is found the
+   * same structural way `isRingRoot` finds it, and its radius is read from the element rather than
+   * assumed, so a ring dsh redraws at another size still gets a correct arc.
+   */
+  const paintRing = () => {
+    if (ring?.isConnected !== true) ring = undefined;
+    const arc = ring?.querySelector<SVGCircleElement>(
+      ':scope > button[aria-haspopup="dialog"] circle + circle',
+    );
+    if (!arc) return;
+    const sid = activeClaudeSession(ctx);
+    if (sid === undefined) return;
+    if (sid !== ringSession) {
+      ringSession = sid;
+      ringPercent = undefined;
+      ringAsked = 0;
+    }
+    // dsh repaints the arc by rewriting an attribute, which the body observer does not watch, and a
+    // ring already pinned at 100% stops changing altogether — so neither dsh's repaints nor ours can
+    // be the thing that keeps this current. It is re-asked on a clock instead, off the same
+    // ten-second cache the popover reads.
+    if (Date.now() - ringAsked > 5_000) {
+      ringAsked = Date.now();
+      void loadContext(sid).then((reply) => {
+        if (!reply.ok) return;
+        ringPercent = Math.min(100, Math.max(0, reply.percentage));
+        paintRing();
+      });
+    }
+    if (ringPercent === undefined) return;
+    const radius = Number(arc.getAttribute("r"));
+    if (!Number.isFinite(radius) || radius <= 0) return;
+    const circumference = 2 * Math.PI * radius;
+    const dash = `${(circumference * ringPercent) / 100} ${circumference}`;
+    if (arc.getAttribute("stroke-dasharray") !== dash) arc.setAttribute("stroke-dasharray", dash);
+    // The button's label is the same reading spoken aloud, so it moves with the arc.
+    const label = `${Math.round(ringPercent)}% of context used`;
+    const button = arc.closest("button");
+    if (button?.getAttribute("aria-label") !== label) button?.setAttribute("aria-label", label);
+  };
   const scan = (root: ParentNode) => {
+    for (const el of root.querySelectorAll<HTMLElement>('button[aria-haspopup="dialog"]')) {
+      const host = el.parentElement;
+      if (host && isRingRoot(host)) ring = host;
+    }
     for (const el of root.querySelectorAll<HTMLElement>('[role="dialog"]'))
       if (isRingRoot(el.parentElement)) attach(el);
     for (const el of root.querySelectorAll<HTMLElement>('[role="tooltip"]'))
@@ -3187,10 +3247,12 @@ function watchContextMeter(ctx: ClientCtx) {
   // attribute queries this used to run every dirty frame cost 0.4 ms on a conversation of 30k nodes
   // — paid on every frame of every streaming turn to find, almost always, nothing.
   onBodyMutation((records) => {
-    if (records === undefined) return scan(document.body);
-    for (const node of changedElements(records)) scan(node);
+    if (records === undefined) scan(document.body);
+    else for (const node of changedElements(records)) scan(node);
+    paintRing();
   });
   scan(document.body);
+  paintRing();
 }
 
 /** Fetch Claude Code's settings.json text and extract spinnerVerbs if present. */
