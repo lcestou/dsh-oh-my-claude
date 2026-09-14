@@ -435,6 +435,10 @@ export class Translator {
   denied: number;
   autoDenied: string[]; // tool calls Claude Code refused because a non-interactive run cannot ask
   toolPending: boolean; // a tool_use block closed and its result has not arrived yet
+  /** A compaction announced and not yet closed, so its 30-second heartbeat prints one line, not six.
+   *  A Translator lives for one stream() call; a compaction killed mid-flight leaves this set for the
+   *  rest of that turn, which costs at most one missing announcement. */
+  compacting = false;
   aborting: boolean; // dsh cancelled: the CLI's interrupt result finishes as aborted, not error
   /** task_id → { block, lastSummary, lastToolName } tracks open task blocks across progress frames. */
   readonly taskBlocks = new Map<
@@ -644,13 +648,22 @@ export class Translator {
         // start it can pair with, so surface its error here. All of it rides the reasoning lane so it
         // reads as model activity in the UI, not as chat text the model appears to have typed.
         if (event.subtype === "status") {
-          if (event.status === "compacting")
+          if (event.status === "compacting") {
+            // The CLI repeats this frame every 30 s until the boundary, so the announcement is guarded
+            // but the tick is not: a 141-second compaction was measured on 2026-09-14, and no other
+            // frame arrives in that window to move the stall clock the status row reads.
+            this.onProgress?.({ frame: true });
+            if (this.compacting) return [];
+            this.compacting = true;
             return this.wholeBlock("reasoning", "⟳ Compacting context…");
-          if (event.compact_result === "failed")
+          }
+          if (event.compact_result === "failed") {
+            this.compacting = false;
             return this.wholeBlock(
               "reasoning",
               `⚠ Compaction failed: ${event.compact_error ?? "unknown reason"}`,
             );
+          }
           return [];
         }
         // Auto-memory traffic: one line each way, so the Memory button's count is explained.
@@ -836,6 +849,7 @@ export class Translator {
         // Claude Code compacted its own context (auto or /compact). One line so the user knows
         // why the model may have lost detail; every other system subtype is handshake noise.
         if (event.subtype !== "compact_boundary") return [];
+        this.compacting = false; // re-arm: a second compaction in the same turn announces again
         const meta = event.compact_metadata ?? {};
         const how = meta.trigger === "manual" ? "manual" : "auto";
         const size = Number.isFinite(meta.pre_tokens) ? `, ${meta.pre_tokens} tokens before` : "";

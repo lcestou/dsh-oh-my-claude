@@ -77,6 +77,10 @@ export declare class Translator {
     denied: number;
     autoDenied: string[];
     toolPending: boolean;
+    /** A compaction announced and not yet closed, so its 30-second heartbeat prints one line, not six.
+     *  A Translator lives for one stream() call; a compaction killed mid-flight leaves this set for the
+     *  rest of that turn, which costs at most one missing announcement. */
+    compacting: boolean;
     aborting: boolean;
     /** task_id → { block, lastSummary, lastToolName } tracks open task blocks across progress frames. */
     readonly taskBlocks: Map<string, {

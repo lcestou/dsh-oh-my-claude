@@ -2212,8 +2212,53 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   }
 
   /** No picker filter here: the allowlist curates what the picker offers, and the CLI keeps a
-   *  session's own model when the allowlist excludes it rather than failing to resolve it. */
+   *  session's own model when the allowlist excludes it rather than failing to resolve it.
+   *
+   *  The missing `context` is deliberate; see `prepareCall` below for why.
+   */
   override async resolveModel(provider: string, model: string, _signal?: AbortSignal) {
+    const { context: _capacity, ...info } = await this.fullModelInfo(provider, model);
+    return info;
+  }
+
+  /** Capacity, reported here and only here.
+   *
+   *  dsh reads a model's context window through two different methods and uses each answer for a
+   *  different job. `prepareCall` feeds the context ring: `request/context` carries the window to
+   *  the token meter, and this plugin's own readouts are injected into that ring. `resolveModel`
+   *  feeds `llm.resolveModelInfo()`, which is what `@deepseek-ai/dsh-compaction-basic` multiplies
+   *  by its threshold ratio to decide whether to compact before a step. Answering the first and
+   *  staying quiet on the second turns dsh's automatic compaction off for this plugin's routes
+   *  while the ring keeps working.
+   *
+   *  That is worth doing because dsh's pressure number is not measuring the thing it thinks it is.
+   *  Claude Code compacts its own context (169,490 tokens before the boundary, in a session logged
+   *  2026-09-14) and dsh cannot see it: dsh measures its own session surface, which keeps growing
+   *  because `resume` sends the CLI only the tail after the last assistant message. Two sessions
+   *  that day declared a 1,000,000-token window and dsh still compacted 22 times, spending ~100 s
+   *  of Opus per trigger on a summary `selectTurns` slices off before the prompt is built. So the
+   *  compaction runs on top of the CLI's own, off a number that does not describe the CLI's
+   *  context, and throws the result away.
+   *
+   *  What this costs, measured against every reader of `resolveModelInfo(...).context` in installed
+   *  dsh: `dsh-session-reference` falls back from a 160,000-byte reference budget to its 65,536-byte
+   *  default on these routes, and automatic overflow recovery goes with automatic compaction, which
+   *  is free here because this plugin never reports CONTEXT_WINDOW_EXCEEDED. `/compact` still works:
+   *  `compactNow` never reads capacity. `dsh-acp` reads modalities and reasoning, not context, and
+   *  `buildModelCatalog` does not read context at all, so the model picker is unaffected.
+   *
+   *  Compaction's own `agent/pre-step` handler catches the resulting `TargetPressureConfigError`,
+   *  warns once per target and calls `next()`, so a turn is never failed by the silence.
+   */
+  override async prepareCall(provider: string, model: string, _signal?: AbortSignal) {
+    return {
+      model: await this.fullModelInfo(provider, model),
+      stream: (options: GenerateOptions) => this.stream(options),
+    };
+  }
+
+  /** Full metadata for one model, capacity included: the single source both methods above narrow. */
+  private async fullModelInfo(provider: string, model: string): Promise<LlmResolvedModelInfo> {
     const models = await getCatalog(undefined, this.cliModels);
     return resolveModelInfo(provider, model, models);
   }
