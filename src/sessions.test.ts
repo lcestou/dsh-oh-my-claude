@@ -692,6 +692,44 @@ const responder =
   assert.equal(received?.withDiff, true);
   assert.equal(received?.path, "a.ts");
   assert.equal(ring.get("sid1")?.[0]?.question, "what changed?");
+
+  // What askAside was handed since the last look, clearing as it reads. A plain re-read would not
+  // do: assigning `received = undefined` narrows it for the rest of the block, and the compiler has
+  // no way to know the next request writes it again from inside the callback.
+  const took = () => {
+    const seen = received;
+    received = undefined;
+    return seen;
+  };
+
+  // A recap is asked once per session however many tabs notice the same return. The second post
+  // answers ok so the tab that lost has nothing to report, but it never reaches askAside.
+  took();
+  const recap = JSON.stringify({ session: "sid2", question: "recap", recap: true });
+  r = await respond("POST", "/dsh-oh-my-claude/side-questions", recap);
+  assert.equal(r.body.duplicate, undefined, "the first tab's recap goes out");
+  assert.equal(took()?.session, "sid2");
+  r = await respond("POST", "/dsh-oh-my-claude/side-questions", recap);
+  assert.equal(r.status, 200);
+  assert.equal(r.body.duplicate, true, "the second tab's copy is dropped");
+  assert.equal(took(), undefined, "and never reaches askAside");
+
+  // Another session is another return: the guard is per session, not a lock on the feature.
+  r = await respond(
+    "POST",
+    "/dsh-oh-my-claude/side-questions",
+    JSON.stringify({ session: "sid3", question: "recap", recap: true }),
+  );
+  assert.equal(r.body.duplicate, undefined);
+  assert.equal(took()?.session, "sid3");
+
+  // Only recaps are deduplicated. A question someone typed twice was meant twice.
+  const typed = JSON.stringify({ session: "sid2", question: "again?" });
+  await respond("POST", "/dsh-oh-my-claude/side-questions", typed);
+  took();
+  r = await respond("POST", "/dsh-oh-my-claude/side-questions", typed);
+  assert.equal(r.body.duplicate, undefined);
+  assert.equal(took()?.question, "again?", "a typed repeat goes out both times");
   console.log("ask-route ok");
 }
 

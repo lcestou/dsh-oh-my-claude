@@ -1298,6 +1298,29 @@ async function sessionTranscript(
   return undefined;
 }
 
+/**
+ * When each session last had a recap asked for it, so the second tab asking for the same return is
+ * dropped instead of billed. The watcher that fires a recap runs in every open tab, and its queue is
+ * in-memory and per-tab: a laptop and a phone both looking at the box both notice the same return
+ * and both post. Only the server sees both, so the guard lives here.
+ *
+ * A minute is enough and needs nothing from the client: two tabs noticing one return post within a
+ * second or two of each other, and a second recap cannot be *earned* faster than the away bar, whose
+ * smallest offered value is a minute. Nothing expires it on a timer — a stale entry is one number,
+ * and the write path sweeps what it passes.
+ */
+const RECAP_GAP_MS = 60_000;
+const recapAsked = new Map<string, number>();
+
+/** True when this session already had one within the gap. Records the ask when it does not. */
+function recapIsRepeat(sessionId: string, now: number): boolean {
+  const last = recapAsked.get(sessionId);
+  if (last !== undefined && now - last < RECAP_GAP_MS) return true;
+  for (const [id, at] of recapAsked) if (now - at >= RECAP_GAP_MS) recapAsked.delete(id);
+  recapAsked.set(sessionId, now);
+  return false;
+}
+
 /** `projectDir(cwd)` → Claude Code project dir; `startedIds()` → ids the adapter started itself. */
 export function registerSessionRoutes(
   ctx: PluginContext,
@@ -2229,6 +2252,11 @@ export function registerSessionRoutes(
                 const question = raw.trim();
                 if (sid === "" || question === "")
                   return json(res, 400, { error: "session and question required" });
+                // A recap says so, and only a recap is deduplicated: a question someone typed twice
+                // was meant twice. `ok` either way — the caller wanted a recap for this return and
+                // there is one; it simply belongs to whichever tab asked first.
+                if (body.recap === true && recapIsRepeat(sid, Date.now()))
+                  return json(res, 200, { ok: true, duplicate: true });
                 const reply = await askAside(sid, question, {
                   withDiff: body.withDiff === true,
                   path: typeof body.path === "string" ? body.path : "",

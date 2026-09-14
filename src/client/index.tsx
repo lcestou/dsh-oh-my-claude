@@ -3595,7 +3595,10 @@ function watchSessionNotices(ctx: ClientCtx) {
       void fetch(`${ROUTE}/side-questions`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ session, question: RECAP_QUESTION }),
+        // `recap: true` lets the route drop this when another tab already asked for the same
+        // return. Every open tab runs this watcher with its own queue, so the tab is not the place
+        // the count can be held.
+        body: JSON.stringify({ session, question: RECAP_QUESTION, recap: true }),
       }).catch(() => {
         // A recap nobody typed stays quiet when it fails. The route refuses before the ring is
         // touched when there is no live process, so there is nothing to clean up here either.
