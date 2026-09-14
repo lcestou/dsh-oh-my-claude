@@ -366,6 +366,35 @@ export interface WorkspaceDiff {
 }
 /** A `get_workspace_diff` answer as totals, per-file counts and hunks, skipping malformed entries. */
 export declare function decodeWorkspaceDiff(v: JsonValue | undefined): WorkspaceDiff;
+/** The slice of a `list_permission_rules` answer this plugin reports. `text` is the CLI's own
+ *  display line, which is why nothing here re-words a rule. */
+export interface PermissionRules {
+    rules: Array<{
+        behavior: string;
+        source: string;
+        rule: string;
+        text: string;
+    }>;
+    directories: Array<{
+        path: string;
+        source: string;
+    }>;
+    managedOnly: boolean;
+}
+/** A `list_permission_rules` answer as rules, workspace directories and a managed-only flag,
+ *  skipping malformed entries. */
+export declare function decodePermissionRules(v: JsonValue | undefined): PermissionRules;
+/** The slice of a `get_hooks_listing` answer this plugin reports, one row per configured hook. */
+export interface HooksListing {
+    hooks: Array<{
+        event: string;
+        matcher: string;
+        source: string;
+        text: string;
+    }>;
+}
+/** A `get_hooks_listing` answer as per-hook rows, skipping malformed entries. */
+export declare function decodeHooksListing(v: JsonValue | undefined): HooksListing;
 /** One MCP server as `mcp_status` reports it. */
 export interface McpServerStatus {
     name: string;

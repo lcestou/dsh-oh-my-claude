@@ -21,6 +21,7 @@ import {
   readHints,
 } from "./sessions.js";
 import { projectDirName } from "./adapter.js";
+import type { PermissionReadoutReply } from "./adapter.js";
 import type { InstructionFile } from "./instructions.js";
 import type { TranscriptListItem } from "./transcript.js";
 
@@ -671,6 +672,132 @@ import type { TranscriptListItem } from "./transcript.js";
   assert.equal(received?.path, "a.ts");
   assert.equal(ring.get("sid1")?.[0]?.question, "what changed?");
   console.log("ask-route ok");
+}
+
+// GET /permissions: 400 when session is missing, 404 when permissionReadout is absent,
+// and 200 that returns both lists with decoded content.
+{
+  const tmp = await mkdtemp(join(tmpdir(), "dsh-permissions-test-"));
+  let handler: ((req: any, res: any) => void) | undefined;
+  // SAFETY: partial fake for tests
+  const ctx = {
+    inject: (deps: string[], cb: (host: any) => void) => {
+      cb({
+        webServer: {
+          register: (r: any) => {
+            handler = r.handler as (req: any, res: any) => void;
+            return () => {};
+          },
+        },
+        connection: { requestRejection: () => undefined },
+        sessions: { get: () => undefined },
+        sessionPersistence: { list: async () => [] },
+        effect: (fn: () => void | (() => void)) => fn(),
+      });
+    },
+  } as any;
+  registerSessionRoutes(ctx, {
+    log: () => {},
+    projectDir: (cwd: string) => [join(tmp, "claude", "projects", projectDirName(cwd))],
+    projectsDir: [join(tmp, "claude", "projects")],
+    startedIds: async () => [],
+    claudeIdOf: (id: string) => id,
+    configDir: join(tmp, "claude"),
+    boxesPath: join(tmp, "boxes.json"),
+    importedDir: join(tmp, "imported"),
+    instanceFor: () => undefined,
+    instanceForHost: () => ({ configDir: join(tmp, "box") }),
+  });
+  assert.ok(handler);
+
+  const respond = async (method: string, url: string, body?: string) => {
+    const resChunks: Buffer[] = [];
+    let status = 0;
+    // SAFETY: partial fake for tests
+    const fakeRes = {
+      writeHead: (s: number, _h: Record<string, string>) => {
+        status = s;
+      },
+      end: (b: Buffer | string) => {
+        if (typeof b === "string") resChunks.push(Buffer.from(b));
+        else resChunks.push(b);
+      },
+    };
+    // SAFETY: partial fake for tests
+    const fakeReq = {
+      method,
+      url,
+      on: (ev: string, cb: (c?: Buffer) => void) => {
+        if (ev === "data" && body !== undefined) cb(Buffer.from(body));
+        if (ev === "end") cb();
+      },
+      destroy: () => {},
+    } as any;
+    await handler!(fakeReq, fakeRes);
+    return { status, body: JSON.parse(Buffer.concat(resChunks).toString("utf8")) };
+  };
+
+  // 404: permissionReadout is absent from the bag.
+  let r = await respond("GET", "/dsh-oh-my-claude/permissions?session=sid1");
+  assert.equal(r.status, 404);
+  assert.equal(r.body.error, "permission readout not available");
+
+  // Now register with permissionReadout in place.
+  const permissionReadout = async (sid: string): Promise<PermissionReadoutReply> => ({
+    ok: true,
+    rules: [{ behavior: "allow", source: "project", rule: "ReadFile", text: "Allow reading" }],
+    directories: [{ path: "/home/user/proj", source: "workspace" }],
+    managedOnly: false,
+    hooks: [{ event: "PreToolUse", matcher: "Bash", source: "", text: `Before bash in ${sid}` }],
+  });
+  // Re-register with the callback; registerSessionRoutes is called once per ctx but we pass a new one.
+  // SAFETY: partial fake for tests
+  const ctx2 = {
+    inject: (deps: string[], cb: (host: any) => void) => {
+      cb({
+        webServer: {
+          register: (r: any) => {
+            handler = r.handler as (req: any, res: any) => void;
+            return () => {};
+          },
+        },
+        connection: { requestRejection: () => undefined },
+        sessions: { get: () => undefined },
+        sessionPersistence: { list: async () => [] },
+        effect: (fn: () => void | (() => void)) => fn(),
+      });
+    },
+  } as any;
+  registerSessionRoutes(ctx2, {
+    log: () => {},
+    projectDir: (cwd: string) => [join(tmp, "claude", "projects", projectDirName(cwd))],
+    projectsDir: [join(tmp, "claude", "projects")],
+    startedIds: async () => [],
+    claudeIdOf: (id: string) => id,
+    configDir: join(tmp, "claude"),
+    boxesPath: join(tmp, "boxes.json"),
+    importedDir: join(tmp, "imported"),
+    instanceFor: () => undefined,
+    instanceForHost: () => ({ configDir: join(tmp, "box") }),
+    permissionReadout,
+  });
+
+  // 400: missing session.
+  r = await respond("GET", "/dsh-oh-my-claude/permissions");
+  assert.equal(r.status, 400);
+  assert.equal(r.body.error, "session param required");
+
+  // 200: valid request; the callback returned both lists.
+  r = await respond("GET", "/dsh-oh-my-claude/permissions?session=sid1");
+  assert.equal(r.status, 200);
+  assert.equal(r.body.ok, true);
+  assert.equal(r.body.rules.length, 1);
+  assert.equal(r.body.rules[0].behavior, "allow");
+  assert.equal(r.body.directories.length, 1);
+  assert.equal(r.body.managedOnly, false);
+  assert.equal(r.body.hooks.length, 1);
+  assert.equal(r.body.hooks[0].event, "PreToolUse");
+  console.log("permissions-route ok");
 }
 
 // readPickerSettings: the two picker keys out of settings.json, and undefined for anything else.

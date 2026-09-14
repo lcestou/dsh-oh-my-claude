@@ -607,6 +607,75 @@ export function decodeWorkspaceDiff(v: JsonValue | undefined): WorkspaceDiff {
   };
 }
 
+/** The slice of a `list_permission_rules` answer this plugin reports. `text` is the CLI's own
+ *  display line, which is why nothing here re-words a rule. */
+export interface PermissionRules {
+  rules: Array<{ behavior: string; source: string; rule: string; text: string }>;
+  directories: Array<{ path: string; source: string }>;
+  managedOnly: boolean;
+}
+/** A `list_permission_rules` answer as rules, workspace directories and a managed-only flag,
+ *  skipping malformed entries. */
+export function decodePermissionRules(v: JsonValue | undefined): PermissionRules {
+  const outer = isRecord(v) ? v : {};
+  const state = isRecord(outer.state) ? outer.state : {};
+  const rules: PermissionRules["rules"] = [];
+  if (Array.isArray(state.rules))
+    for (const r of state.rules) {
+      if (!isRecord(r)) continue;
+      const behavior = typeof r.behavior === "string" ? r.behavior : "";
+      const source = typeof r.source === "string" ? r.source : "";
+      const rule = typeof r.rule === "string" ? r.rule : "";
+      const desc = isRecord(r.description) ? r.description : {};
+      const prefix = typeof desc.prefix === "string" ? desc.prefix : undefined;
+      const emphasis = typeof desc.emphasis === "string" ? desc.emphasis : undefined;
+      const text = prefix !== undefined && emphasis !== undefined ? `${prefix} ${emphasis}` : rule;
+      rules.push({ behavior, source, rule, text });
+    }
+  const directories: PermissionRules["directories"] = [];
+  if (Array.isArray(state.workspaceDirectories))
+    for (const d of state.workspaceDirectories) {
+      if (!isRecord(d) || typeof d.path !== "string") continue;
+      const source = typeof d.source === "string" ? d.source : "";
+      directories.push({ path: d.path, source });
+    }
+  return {
+    rules,
+    directories,
+    managedOnly: state.managedOnly === true,
+  };
+}
+
+/** The slice of a `get_hooks_listing` answer this plugin reports, one row per configured hook. */
+export interface HooksListing {
+  hooks: Array<{ event: string; matcher: string; source: string; text: string }>;
+}
+/** A `get_hooks_listing` answer as per-hook rows, skipping malformed entries. */
+export function decodeHooksListing(v: JsonValue | undefined): HooksListing {
+  const outer = isRecord(v) ? v : {};
+  const hooks: HooksListing["hooks"] = [];
+  if (Array.isArray(outer.hooks))
+    for (const h of outer.hooks) {
+      if (!isRecord(h) || typeof h.event !== "string") continue;
+      const event = h.event;
+      const matcher = typeof h.matcher === "string" ? h.matcher : "";
+      const source =
+        typeof h.sourceLabel === "string"
+          ? h.sourceLabel
+          : typeof h.source === "string"
+            ? h.source
+            : "";
+      const text =
+        typeof h.displayText === "string" && h.displayText.length > 0
+          ? h.displayText
+          : typeof h.commandText === "string"
+            ? h.commandText
+            : "";
+      hooks.push({ event, matcher, source, text });
+    }
+  return { hooks };
+}
+
 /** One MCP server as `mcp_status` reports it. */
 export interface McpServerStatus {
   name: string;

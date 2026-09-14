@@ -1,5 +1,5 @@
 import { type FSWatcher } from "node:fs";
-import type { Spawner, SubprocessHandle, ContextUsage, WorkspaceDiff, McpServerStatus, CliModel } from "./process.js";
+import type { Spawner, SubprocessHandle, ContextUsage, WorkspaceDiff, McpServerStatus, CliModel, PermissionRules, HooksListing } from "./process.js";
 import { LlmAdapter, type ContentBlock, type GenerateOptions, type LlmModelInfo, type LlmResolvedModelInfo, type StreamChunk } from "@deepseek-ai/dsh-llm";
 import z from "@deepseek-ai/schemastery";
 import { type PickerSettings, type RemoteWorkspace } from "./sessions.js";
@@ -223,6 +223,13 @@ export type WorkspaceDiffReply = ({
     ok: true;
     error?: undefined;
 } & WorkspaceDiff) | {
+    ok: false;
+    error: string;
+};
+/** What `/permissions` answers: both lists, or the reason there are none. */
+export type PermissionReadoutReply = ({
+    ok: true;
+} & PermissionRules & HooksListing) | {
     ok: false;
     error: string;
 };
@@ -880,6 +887,10 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     }>;
     /** The CLI's working-tree diff (`get_workspace_diff`) for a session with a live process. */
     workspaceDiff(sessionId: string): Promise<WorkspaceDiffReply>;
+    /** The permission rules and hooks a session's live process actually loaded
+     *  (`list_permission_rules`, `get_hooks_listing`), read-only. Both or neither: the readout is one
+     *  section pair and a half-answer would read as an empty half. */
+    permissionReadout(sessionId: string): Promise<PermissionReadoutReply>;
     /**
      * The CLI's own context breakdown (`/context` in the TUI) for a session with a live process;
      * answered between turns as well as inside one. 5 s: the CLI replies at once when it reads stdin.

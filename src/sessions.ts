@@ -108,6 +108,7 @@ import type {
   RewindReply,
   ContextUsageReply,
   WorkspaceDiffReply,
+  PermissionReadoutReply,
   McpStatusReply,
   AsideEntry,
   LiveTurn,
@@ -1228,6 +1229,8 @@ export interface SessionRouteOptions {
   contextUsage?: (sessionId: string) => Promise<ContextUsageReply>;
   /** The CLI's working-tree diff for a session with a live process. */
   workspaceDiff?: (sessionId: string) => Promise<WorkspaceDiffReply>;
+  /** Permission rules and hooks for a session with a live process. */
+  permissionReadout?: (sessionId: string) => Promise<PermissionReadoutReply>;
   /** MCP servers of a session's live process, and a reconnect for one of them. */
   mcp?: {
     status: (sessionId: string) => Promise<McpStatusReply>;
@@ -1319,6 +1322,7 @@ export function registerSessionRoutes(
     rewind,
     contextUsage,
     workspaceDiff,
+    permissionReadout,
     askAside,
     mcp,
     permissionAsks,
@@ -2260,6 +2264,14 @@ export function registerSessionRoutes(
                 if (!workspaceDiff)
                   return json(res, 404, { error: "workspace diff not available" });
                 const reply = await workspaceDiff(sid);
+                return json(res, reply.ok ? 200 : 409, reply);
+              }
+              if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/permissions`) {
+                const sid = url.searchParams.get("session");
+                if (!sid) return json(res, 400, { error: "session param required" });
+                if (!permissionReadout)
+                  return json(res, 404, { error: "permission readout not available" });
+                const reply = await permissionReadout(sid);
                 return json(res, reply.ok ? 200 : 409, reply);
               }
               if (mcp && req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/mcp-servers`) {

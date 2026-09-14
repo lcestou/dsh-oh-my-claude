@@ -14,6 +14,8 @@ import type {
   WorkspaceDiff,
   McpServerStatus,
   CliModel,
+  PermissionRules,
+  HooksListing,
 } from "./process.js";
 import {
   LlmAdapter,
@@ -58,6 +60,8 @@ import {
   decodeRewindResult,
   decodeContextUsage,
   decodeWorkspaceDiff,
+  decodePermissionRules,
+  decodeHooksListing,
   decodeMcpStatus,
   decodeCliModels,
   elicitationQuestions,
@@ -509,6 +513,10 @@ export type ContextUsageReply =
 /** What the diff route reports: the CLI's working-tree diff for a live session. */
 export type WorkspaceDiffReply =
   | ({ ok: true; error?: undefined } & WorkspaceDiff)
+  | { ok: false; error: string };
+/** What `/permissions` answers: both lists, or the reason there are none. */
+export type PermissionReadoutReply =
+  | ({ ok: true } & PermissionRules & HooksListing)
   | { ok: false; error: string };
 /** What the MCP route reports: the servers Claude's process has, as `mcp_status` lists them. */
 export type McpStatusReply =
@@ -2769,6 +2777,27 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const reply = await this.control(proc, { subtype: "get_workspace_diff" }, 10_000);
     if (!reply.ok) return { ok: false, error: reply.error };
     return { ok: true, ...decodeWorkspaceDiff(reply.response) };
+  }
+
+  /** The permission rules and hooks a session's live process actually loaded
+   *  (`list_permission_rules`, `get_hooks_listing`), read-only. Both or neither: the readout is one
+   *  section pair and a half-answer would read as an empty half. */
+  async permissionReadout(sessionId: string): Promise<PermissionReadoutReply> {
+    const proc = this.processes.get(registryKey(this.providerId, sessionId));
+    if (!proc?.alive) return { ok: false, error: "no live Claude process for this session" };
+    const [rules, hooks] = await Promise.all([
+      this.control(proc, { subtype: "list_permission_rules" }, 10_000),
+      this.control(proc, { subtype: "get_hooks_listing" }, 10_000),
+    ]);
+    if (!rules.ok) return { ok: false, error: rules.error };
+    if (!hooks.ok) return { ok: false, error: hooks.error };
+    // Both decoders take `undefined` without throwing, so a payload the CLI reshapes reads as an
+    // empty list rather than a 500. `// SAFETY:` is for assertions and there are none here.
+    return {
+      ok: true,
+      ...decodePermissionRules(rules.response),
+      ...decodeHooksListing(hooks.response),
+    };
   }
 
   /**
@@ -5407,6 +5436,8 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       },
       contextUsage: (sessionId: string) => adapter.ownerFor(sessionId).contextUsage(sessionId),
       workspaceDiff: (sessionId: string) => adapter.ownerFor(sessionId).workspaceDiff(sessionId),
+      permissionReadout: (sessionId: string) =>
+        adapter.ownerFor(sessionId).permissionReadout(sessionId),
       mcp: {
         status: (sessionId: string) => adapter.ownerFor(sessionId).mcpStatus(sessionId),
         reconnect: (sessionId: string, serverName: string) =>
