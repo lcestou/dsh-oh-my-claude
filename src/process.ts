@@ -516,9 +516,26 @@ export function decodeRewindResult(v: JsonValue | undefined): RewindResult {
   return out;
 }
 
+/**
+ * A running total read as one turn's own share: the rise since the previous result, or the whole
+ * figure when the total started over. `total_cost_usd` and `duration_api_ms` climb for the life of
+ * a CLI process — "each result carries the running total so far, so read the latest result rather
+ * than summing across results" — and a new process, a resume or a mid-session `/clear` starts them
+ * again from zero, which arrives here as a figure below the last one.
+ */
+export const turnDelta = (total: number, soFar: number): number =>
+  total >= soFar ? total - soFar : Math.max(0, total);
+
+/** What a breakdown row is. The CLI's own words for the field: "'used' content occupies the window;
+ *  'free' is the remaining window; 'buffer' is the compaction reserve; 'deferred' rows are
+ *  out-of-window tool schemas. Classify on this, never on the English name." Absent from a CLI
+ *  older than 2.1, where the name and `isDeferred` are all there is. */
+export type ContextRowKind = "used" | "free" | "buffer" | "deferred";
+const ROW_KINDS: ContextRowKind[] = ["used", "free", "buffer", "deferred"];
+
 /** The slice of a `get_context_usage` answer this plugin reports: the CLI's own token count per category. */
 export interface ContextUsage {
-  categories: Array<{ name: string; tokens: number; deferred: boolean }>;
+  categories: Array<{ name: string; tokens: number; deferred: boolean; kind?: ContextRowKind }>;
   totalTokens: number;
   maxTokens: number;
   percentage: number;
@@ -532,7 +549,14 @@ export function decodeContextUsage(v: JsonValue | undefined): ContextUsage {
     for (const c of r.categories) {
       if (typeof c !== "object" || c === null || Array.isArray(c)) continue;
       if (typeof c.name !== "string" || typeof c.tokens !== "number") continue;
-      categories.push({ name: c.name, tokens: c.tokens, deferred: c.isDeferred === true });
+      const row: ContextUsage["categories"][number] = {
+        name: c.name,
+        tokens: c.tokens,
+        deferred: c.isDeferred === true,
+      };
+      const kind = ROW_KINDS.find((k) => k === c.kind);
+      if (kind) row.kind = kind;
+      categories.push(row);
     }
   const out: ContextUsage = {
     categories,
@@ -1324,6 +1348,12 @@ export class ClaudeProcess {
   staleResults: number = 0;
   /** When this turn's prompt was written, for time-to-first-token; 0 once a result has read it. */
   promptSentAt: number = 0;
+  /** `total_cost_usd` and `duration_api_ms` as of the last result frame. Both are running totals
+   *  for the life of the process, not this turn's figures, so each turn's own is the difference
+   *  from here. They hang off the process because a Translator lives for one turn and the CLI's
+   *  totals restart with the process. */
+  costSoFar: number = 0;
+  apiMsSoFar: number = 0;
   prep?: TurnPrep;
   /** A terminal wrote turns into this session's transcript since this process last spoke, so its
    *  context is behind the file; the next prompt replaces it and resumes from the transcript. */

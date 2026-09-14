@@ -17,6 +17,7 @@ import {
   interruptLine,
   toJsonValue,
   toolResultText,
+  turnDelta,
 } from "./process.js";
 
 // A rewind answer: canRewind is true only for the literal true, and the string list drops non-strings.
@@ -51,8 +52,8 @@ import {
 {
   const out = decodeContextUsage({
     categories: [
-      { name: "system", tokens: 100, isDeferred: true },
-      { name: "tools", tokens: 50 },
+      { name: "system", tokens: 100, isDeferred: true, kind: "deferred" },
+      { name: "tools", tokens: 50, kind: "used" },
       { name: "no-tokens" },
       { tokens: 5 },
       "junk",
@@ -63,16 +64,42 @@ import {
     model: "claude-opus-4-8",
     autocompactSource: "threshold",
   });
+  // `kind` is what the panel classifies a row on — the CLI's description says never to classify on
+  // the English name — so a kind the plugin does not know is dropped rather than shown as a row
+  // whose tokens count as conversation.
   assert.deepEqual(out.categories, [
-    { name: "system", tokens: 100, deferred: true },
-    { name: "tools", tokens: 50, deferred: false },
+    { name: "system", tokens: 100, deferred: true, kind: "deferred" },
+    { name: "tools", tokens: 50, deferred: false, kind: "used" },
   ]);
+  assert.deepEqual(
+    decodeContextUsage({ categories: [{ name: "later", tokens: 1, kind: "something-new" }] })
+      .categories,
+    [{ name: "later", tokens: 1, deferred: false }],
+  );
   assert.equal(out.totalTokens, 150);
   assert.equal(out.maxTokens, 200000);
   assert.equal(out.percentage, 0.1);
   assert.equal(out.model, "claude-opus-4-8");
   // The CLI names it autocompactSource; the panel reads out.autocompact. A rename breaks the badge.
   assert.equal(out.autocompact, "threshold");
+
+  // A running total read per turn. The CLI's cost and API time climb for the life of a process, and
+  // every reader of a turn record sums it, so a rise that was stored whole would bill each turn for
+  // the whole session again. A figure below the last one is a total that started over.
+  const running = [12.94, 16.15, 16.95, 21.3];
+  let soFar = 0;
+  const perTurn = running.map((total) => {
+    const share = turnDelta(total, soFar);
+    soFar = total;
+    return share;
+  });
+  assert.deepEqual(
+    perTurn.map((n) => Number(n.toFixed(2))),
+    [12.94, 3.21, 0.8, 4.35],
+  );
+  assert.equal(Number(perTurn.reduce((a, b) => a + b, 0).toFixed(2)), 21.3);
+  assert.equal(turnDelta(0.5, 40), 0.5, "a total that restarted is already this turn's own");
+  assert.equal(turnDelta(-1, 0), 0, "no negative share from a figure the CLI should never send");
 
   // Missing everything: totals fall back to 0, optional strings stay absent, categories is empty.
   const bare = decodeContextUsage({});
