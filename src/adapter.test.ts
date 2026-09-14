@@ -456,28 +456,24 @@ const done = tr.translate({
   usage: { input_tokens: 2, output_tokens: 4, cache_read_input_tokens: 10 },
 });
 // SAFETY: partial fake for tests
+// Usage before finish, never after: dsh fails a stream that emits anything past a terminal finish.
 assert.deepEqual(
   done.map((e: { type: string }) => e.type),
-  ["finish"],
+  ["usage", "finish"],
 );
-assert.equal(done[0].reason.kind, "stop");
+assert.equal(done[1].reason.kind, "stop");
 assert.equal(tr.finished, true);
-// This CLI streamed no `message_delta`, so the result frame's own usage is the fallback the step
-// closes with. Every counter is written even at zero: one attempt omitting the cache bucket drops
-// the cache-hit row off the whole turn.
-assert.deepEqual(tr.takeStepUsage(), [
-  {
-    type: "usage",
-    usage: {
-      inputTokens: 2,
-      outputTokens: 4,
-      cacheReadTokens: 10,
-      cacheWriteTokens: 0,
-      totalTokens: 16,
-    },
-  },
-]);
-// Spent once: a second step must not re-report the turn's figures.
+// This CLI streamed no `message_delta`, so the result frame's own usage is the fallback the last
+// step closes with. Every counter is written even at zero: one attempt omitting the cache bucket
+// drops the cache-hit row off the whole turn.
+assert.deepEqual(done[0].usage, {
+  inputTokens: 2,
+  outputTokens: 4,
+  cacheReadTokens: 10,
+  cacheWriteTokens: 0,
+  totalTokens: 16,
+});
+// Spent once: the adapter's own call at the step's end must not re-report the turn's figures.
 assert.deepEqual(tr.takeStepUsage(), []);
 
 // With partials on the wire, a step is its own messages summed — not the turn's total, and not the
@@ -518,6 +514,28 @@ assert.deepEqual(trs.takeStepUsage(), [
     },
   },
 ]);
+
+// The last step of a turn sees both sources: its own deltas, then the result frame carrying the
+// turn's total. It reports the deltas once and the fallback never — a second chunk would be a
+// duplicate, and after the terminal finish the same frame emits, which dsh fails a stream for.
+const trb = new Translator() as any;
+trb.translate({
+  type: "stream_event",
+  event: { type: "message_delta", usage: { input_tokens: 3, output_tokens: 7 } },
+});
+const closing = trb.translate({
+  type: "result",
+  is_error: false,
+  stop_reason: "end_turn",
+  usage: { input_tokens: 40, output_tokens: 90, cache_read_input_tokens: 500 },
+});
+assert.deepEqual(
+  closing.map((e: { type: string }) => e.type),
+  ["usage", "finish"],
+);
+assert.equal(closing[0].usage.outputTokens, 7);
+// Nothing left for the adapter's own call at the step's end to spend.
+assert.deepEqual(trb.takeStepUsage(), []);
 
 // dsh tools called over the MCP bridge render as visible text rows, results too
 const trd = new Translator() as any;

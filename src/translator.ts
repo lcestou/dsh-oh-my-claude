@@ -996,6 +996,10 @@ export class Translator {
           }
           this.onResult?.(record);
         }
+        // What the last step spent, before the chunk that ends the stream: dsh fails a stream that
+        // emits anything "after terminal finish", and this frame is what closes the final step of
+        // every turn. The adapter's own call after this one then finds nothing left to spend.
+        events.push(...this.takeStepUsage());
         events.push({
           type: "finish",
           reason: this.aborting
@@ -1061,24 +1065,28 @@ export class Translator {
    *  whichever step happened to see it is what left every other step with no sample at all — and
    *  `deriveTurnTokenUsage` drops the turn's pill unless every step has one. */
   takeStepUsage(): StreamChunk[] {
-    if (this.sawUsageDelta) {
-      const chunk = usageEvent(this.stepUsage);
-      this.stepUsage = {
-        input_tokens: 0,
-        output_tokens: 0,
-        cache_read_input_tokens: 0,
-        cache_creation_input_tokens: 0,
-        reasoning_tokens: 0,
-      };
-      this.sawUsageDelta = false;
-      return [chunk];
-    }
+    const summed = this.sawUsageDelta ? usageEvent(this.stepUsage) : undefined;
     // No partials on the wire: an older CLI without `--include-partial-messages`, where the result
     // frame is the only usage there is and the multi-step turn stays unprovable as it is today.
-    if (this.resultUsage === undefined) return [];
-    const fallback = usageEvent(this.resultUsage);
+    const fallback =
+      summed === undefined && this.resultUsage !== undefined
+        ? usageEvent(this.resultUsage)
+        : undefined;
+    // Both sources are spent whichever one answered. The last step of a turn sees the deltas *and*
+    // the result frame, so leaving the unused one behind let the adapter's own call at the step's
+    // end fire a second chunk — a duplicate, and after the terminal finish this frame already
+    // emitted. dsh fails a stream for either.
+    this.stepUsage = {
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_read_input_tokens: 0,
+      cache_creation_input_tokens: 0,
+      reasoning_tokens: 0,
+    };
+    this.sawUsageDelta = false;
     this.resultUsage = undefined;
-    return [fallback];
+    const chunk = summed ?? fallback;
+    return chunk === undefined ? [] : [chunk];
   }
 
   // SAFETY: ev is ClaudeStreamPartial from Claude Code stream-json protocol
