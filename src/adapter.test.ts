@@ -65,6 +65,7 @@ import {
   killAfterGrace,
   asideAnswerText,
   diffContext,
+  contextSizes,
 } from "./adapter.js";
 import { PERMISSION_MODES } from "./state.js";
 import {
@@ -4911,4 +4912,57 @@ console.log("interrupt-on-abort ok");
   assert.ok(!(prep.input ?? "").includes("CATALOG"), "and the built input has no catalog in it");
   assert.ok((prep.input ?? "").includes("do the thing"), "the typed turn still reached the CLI");
   adapter.disposeProcesses();
+}
+{
+  // contextSizes: what each dsh block cost this turn, measured before any switch removed it.
+  const bundle = [
+    "<system-reminder>",
+    "The following workspace instructions may be relevant to your work.",
+    "Instructions from: /w/AGENTS.md",
+    "",
+    "# Global rules",
+    "be lazy",
+    "",
+    "Instructions from: /w/CLAUDE.md",
+    "",
+    "# CRITICAL DIRECTIVES",
+    "no rm -rf",
+    "",
+    "</system-reminder>",
+  ].join("\n");
+  const instr = message({
+    role: "user",
+    source: { kind: "agent-instructions" },
+    content: [{ type: "text", text: bundle }],
+  });
+  const sizes = contextSizes([instr]);
+  assert.ok(sizes.instructions !== undefined && sizes.instructions > 0, "instructions is non-zero");
+  assert.ok(sizes.claudemd !== undefined && sizes.claudemd > 0, "claudemd is non-zero");
+  assert.equal(
+    sizes.instructions + sizes.claudemd,
+    bundle.length,
+    "instructions + claudemd sum to the bundle's own length",
+  );
+
+  const cat = message({
+    role: "user",
+    source: { kind: "skill-catalog" },
+    content: [{ type: "text", text: "SKILL CATALOG: design-pass, unslop" }],
+  });
+  const snap = message({
+    role: "user",
+    source: { kind: "plugin", plugin: "@deepseek-ai/dsh-system-prompt", form: "snapshot" },
+    content: [{ type: "text", text: "approval policy: ask" }],
+  });
+  const typed = message({ role: "user", content: "do the thing" });
+
+  const allSizes = contextSizes([instr, cat, snap, typed]);
+  assert.equal(
+    allSizes.skills,
+    "SKILL CATALOG: design-pass, unslop".length,
+    "skills reports raw length",
+  );
+  assert.equal(allSizes.runtime, "approval policy: ask".length, "runtime reports raw length");
+  const keys = Object.keys(contextSizes([typed]));
+  assert.equal(keys.length, 0, "a plain typed turn contributes no keys at all");
 }

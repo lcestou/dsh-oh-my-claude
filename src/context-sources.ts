@@ -31,3 +31,12 @@ export function contextDrops(hints: Record<string, boolean | number>): Set<Conte
   }
   return dropped;
 }
+
+/** Every row the Settings card shows a number for. Two of them are not messages: `tools` is this
+ *  plugin's own guidance appended to the system prompt, and `claudemd` is what the CLAUDE.md filter
+ *  took out of dsh's instruction bundle before the rest was sent. */
+export const CONTEXT_SIZE_KEYS = [...CONTEXT_SOURCES, "tools", "claudemd"] as const;
+export type ContextSizeKey = (typeof CONTEXT_SIZE_KEYS)[number];
+
+/** Characters per row, absent where this turn carried nothing to measure. */
+export type ContextSizes = Partial<Record<ContextSizeKey, number>>;

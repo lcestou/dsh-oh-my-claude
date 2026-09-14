@@ -30,7 +30,13 @@ import {
   createUserMessage,
 } from "@deepseek-ai/dsh-llm";
 import z from "@deepseek-ai/schemastery";
-import { contextDrops, type ContextSource } from "./context-sources.js";
+import {
+  CONTEXT_SIZE_KEYS,
+  contextDrops,
+  type ContextSizeKey,
+  type ContextSizes,
+  type ContextSource,
+} from "./context-sources.js";
 import {
   accountIdentity,
   forgetIdentity,
@@ -142,6 +148,7 @@ import {
   saveWatch,
   loadTerminalSync,
   saveTerminalSync,
+  saveContextSizes,
   saveWorkspaceModel,
   type WatchRecord,
 } from "./state.js";
@@ -992,6 +999,31 @@ export function contextSourceOf(m: LooseMessage): ContextSource | undefined {
   if (m.source?.kind === "plugin" && m.source.plugin === "@deepseek-ai/dsh-system-prompt")
     return "runtime";
   return undefined;
+}
+
+/** What each dsh block cost this turn, in characters, measured before any switch removed it: a
+ *  cleared checkbox still has to show its number or the owner cannot tell whether to put it back.
+ *  `instructions` counts what survives the CLAUDE.md filter and `claudemd` counts what the filter
+ *  took, so the two together are the bundle dsh handed over. A key is absent when this turn carried
+ *  nothing of that kind, which is not the same as zero and must not be flattened into one. */
+export function contextSizes(turns: LooseMessage[]): ContextSizes {
+  const sizes: ContextSizes = {};
+  const add = (key: ContextSizeKey, n: number) => {
+    sizes[key] = (sizes[key] ?? 0) + n;
+  };
+  for (const m of turns) {
+    const source = contextSourceOf(m);
+    if (source === undefined) continue;
+    const text = textOf(m.content);
+    if (source !== "instructions") {
+      add(source, text.length);
+      continue;
+    }
+    const kept = withoutNativeInstructions(text);
+    add("instructions", kept.length);
+    add("claudemd", text.length - kept.length);
+  }
+  return sizes;
 }
 
 /** Prompt text of one dsh message: a withheld block answers empty, and the instruction bundle keeps
@@ -1887,6 +1919,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   readonly liveTurn = new Map<string, LiveTurn>();
   /** The model last written to workspace-models.json per cwd, so a turn on the same model writes nothing. */
   readonly workspaceModelWritten = new Map<string, string>();
+  /** The sizes last written to context-sizes.json per cwd, as `key:value` pairs in a fixed order,
+   *  so a workspace whose blocks did not change writes nothing. */
+  readonly contextSizesWritten = new Map<string, string>();
   /** Per-session idle watchdog deadline in epoch ms; null means no active arm. */
   readonly idleDeadlineMap = new Map<string, number | null>();
   /** Per-session kill and warning timers, keyed by session id. */
@@ -2374,6 +2409,18 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const effectivePermissionMode = options.sessionId
       ? this.getPermissionMode(options.sessionId, accessMode)
       : undefined;
+    // Hoisted out of the buildArgs call: `buildArgs` appends the tools guidance to the system
+    // prompt exactly when this bridge is passed, so the size readout has to ask the same question
+    // rather than a similar-looking one.
+    const mcpBridge =
+      this.mcp && options.sessionId && !options.purpose && this.config.dshTools
+        ? { url: `${this.mcp.base}${MCP_PATH}/${options.sessionId}`, key: this.mcp.key }
+        : undefined;
+    // Side calls (title, compaction) carry no card and no workspace of their own, so they measure
+    // nothing; leaving `sizes` undefined is what keeps them out of the store.
+    const sizes: ContextSizes | undefined = options.purpose
+      ? undefined
+      : { ...contextSizes(turns), tools: mcpBridge ? DSH_TOOLS_GUIDANCE.length : 0 };
     const args = buildArgs({
       ...options,
       model,
@@ -2384,10 +2431,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       promptText: prompt,
       temporary,
       permissionMode: effectivePermissionMode,
-      mcp:
-        this.mcp && options.sessionId && !options.purpose && this.config.dshTools
-          ? { url: `${this.mcp.base}${MCP_PATH}/${options.sessionId}`, key: this.mcp.key }
-          : undefined,
+      mcp: mcpBridge,
     });
     // Spec = what a running process was spawned with. `resuming` is deliberately left out: it flips
     // to true after the first turn and must not force a respawn.
@@ -2407,6 +2451,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       accessMode,
       input: stdin ? buildInput(prompt, images) : null,
       drops,
+      sizes,
     };
   }
 
@@ -3593,13 +3638,26 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // The model this workspace last ran, so a new session there opens on it (the client applies
     // it). Keyed by the dsh session's own cwd, the path the client asks with; a temporary session
     // is a side call and does not count.
+    const wsCwd =
+      this.ctx?.sessions?.get?.(asSessionId(options.sessionId))?.header?.cwd ?? prep.cwd;
     if (prep.spec.model && !prep.spec.temporary) {
-      const wsCwd =
-        this.ctx?.sessions?.get?.(asSessionId(options.sessionId))?.header?.cwd ?? prep.cwd;
       // One file write per change, not per turn: a long session on one model writes once.
       if (this.workspaceModelWritten.get(wsCwd) !== prep.spec.model) {
         this.workspaceModelWritten.set(wsCwd, prep.spec.model);
         void saveWorkspaceModel(STATE_DIR, wsCwd, prep.spec.model).catch(() => {});
+      }
+    }
+    // What dsh's blocks cost on this turn, for the numbers on the Settings card. Same rule as the
+    // model above: one write per change, so a workspace whose context is steady writes once rather
+    // than once a turn. The key is built in a fixed order, since the measured keys arrive in
+    // whatever order the turn's messages did.
+    if (prep.sizes && !prep.spec.temporary) {
+      const measured = CONTEXT_SIZE_KEYS.filter((k) => prep.sizes?.[k] !== undefined)
+        .map((k) => `${k}:${prep.sizes?.[k]}`)
+        .join(",");
+      if (this.contextSizesWritten.get(wsCwd) !== measured) {
+        this.contextSizesWritten.set(wsCwd, measured);
+        void saveContextSizes(STATE_DIR, wsCwd, { ...prep.sizes }).catch(() => {});
       }
     }
     const key = specKey(prep.spec);

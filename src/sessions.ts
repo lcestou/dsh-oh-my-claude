@@ -97,6 +97,7 @@ import {
   PERMISSION_MODES,
   STATE_DIR,
   isPermissionMode,
+  loadContextSizes,
   loadWorkspaceModels,
   saveWorkspaceModel,
 } from "./state.js";
@@ -2215,6 +2216,15 @@ export function registerSessionRoutes(
                   typeof body.model === "string" ? body.model : undefined,
                 );
                 return json(res, 200, { ok: true });
+              }
+              // What dsh's context blocks cost on the last turn in this workspace, in characters,
+              // written by the adapter at turn start and shown beside each row on the Settings
+              // card. A workspace that has never run a turn answers `{}`, which the card renders
+              // as no number rather than as a zero.
+              if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/context-sizes`) {
+                const cwd = url.searchParams.get("cwd");
+                if (!cwd) return json(res, 400, { error: "cwd param required" });
+                return json(res, 200, (await loadContextSizes(STATE_DIR)).get(cwd) ?? {});
               }
               if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/starter`) {
                 const sid = url.searchParams.get("session");

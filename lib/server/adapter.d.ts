@@ -2,7 +2,7 @@ import { type FSWatcher } from "node:fs";
 import type { Spawner, SubprocessHandle, ContextUsage, WorkspaceDiff, McpServerStatus, CliModel, PermissionRules, HooksListing } from "./process.js";
 import { LlmAdapter, type ContentBlock, type GenerateOptions, type LlmModelInfo, type LlmResolvedModelInfo, type StreamChunk } from "@deepseek-ai/dsh-llm";
 import z from "@deepseek-ai/schemastery";
-import { type ContextSource } from "./context-sources.js";
+import { type ContextSizes, type ContextSource } from "./context-sources.js";
 import { type PickerSettings, type RemoteWorkspace } from "./sessions.js";
 import { readUsage } from "./usage.js";
 import { type ClaudeEvent, ClaudeProcess } from "./process.js";
@@ -398,6 +398,12 @@ export declare function withoutNativeInstructions(text: string): string;
 /** Which withheld block a message is, if any. `kind: "plugin"` alone is never enough: the wake
  *  notice and the background job notices share that kind and are how those features report back. */
 export declare function contextSourceOf(m: LooseMessage): ContextSource | undefined;
+/** What each dsh block cost this turn, in characters, measured before any switch removed it: a
+ *  cleared checkbox still has to show its number or the owner cannot tell whether to put it back.
+ *  `instructions` counts what survives the CLAUDE.md filter and `claudemd` counts what the filter
+ *  took, so the two together are the bundle dsh handed over. A key is absent when this turn carried
+ *  nothing of that kind, which is not the same as zero and must not be flattened into one. */
+export declare function contextSizes(turns: LooseMessage[]): ContextSizes;
 /**
  * The turn's text as one stdin prompt. A turn with assistant text in it is labelled by role so the
  * history stays legible; a plain user turn is sent as it was typed, with no label. A turn that
@@ -683,6 +689,9 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     readonly liveTurn: Map<string, LiveTurn>;
     /** The model last written to workspace-models.json per cwd, so a turn on the same model writes nothing. */
     readonly workspaceModelWritten: Map<string, string>;
+    /** The sizes last written to context-sizes.json per cwd, as `key:value` pairs in a fixed order,
+     *  so a workspace whose blocks did not change writes nothing. */
+    readonly contextSizesWritten: Map<string, string>;
     /** Per-session idle watchdog deadline in epoch ms; null means no active arm. */
     readonly idleDeadlineMap: Map<string, number | null>;
     /** Per-session kill and warning timers, keyed by session id. */

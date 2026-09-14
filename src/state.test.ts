@@ -26,6 +26,8 @@ import {
   TERMINAL_SYNC_FILE,
   loadWorkspaceModels,
   saveWorkspaceModel,
+  loadContextSizes,
+  saveContextSizes,
 } from "./state.js";
 
 const dir = await mkdtemp(join(tmpdir(), "omc-state-"));
@@ -242,6 +244,28 @@ await saveWorkspaceModel(wsDir, "/w/a", "");
 wsModels = await loadWorkspaceModels(wsDir);
 assert.equal(wsModels.size, 0, "blank model forgets it");
 console.log("workspace models ok");
+// Context sizes: per-workspace character cost of each dsh context block.
+const csDir = await mkdtemp(join(tmpdir(), "omc-cs-"));
+let csMap = await loadContextSizes(csDir);
+assert.equal(csMap.size, 0, "empty dir loads empty map");
+await saveContextSizes(csDir, "/w/a", { instructions: 100, skills: 200 }, 42);
+csMap = await loadContextSizes(csDir);
+assert.deepEqual(csMap.get("/w/a"), { sizes: { instructions: 100, skills: 200 }, at: 42 });
+// Merge, not replace: a resumed turn carries no instruction bundle and no skill catalog.
+await saveContextSizes(csDir, "/w/a", { skills: 0, tools: 50 }, 99);
+csMap = await loadContextSizes(csDir);
+assert.deepEqual(csMap.get("/w/a"), { sizes: { instructions: 100, skills: 0, tools: 50 }, at: 99 });
+await saveContextSizes(csDir, "/w/a", undefined);
+csMap = await loadContextSizes(csDir);
+assert.equal(csMap.get("/w/a"), undefined, "undefined sizes forgets the row");
+// A hand-written file with a non-number size drops that key and keeps the rest.
+await writeFile(
+  join(csDir, "context-sizes.json"),
+  JSON.stringify({ "/w/b": { sizes: { instructions: 10, skills: "bad", runtime: 30 }, at: 1 } }),
+);
+csMap = await loadContextSizes(csDir);
+assert.deepEqual(csMap.get("/w/b"), { sizes: { instructions: 10, runtime: 30 }, at: 1 });
+console.log("context sizes ok");
 // Started ids: what another writer put in the file between two of ours survives, which it did not
 // while the set was read once and cached for the life of the process.
 const startedFile = join(await mkdtemp(join(tmpdir(), "omc-started-")), "sessions.json");
