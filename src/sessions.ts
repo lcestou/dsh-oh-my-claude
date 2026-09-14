@@ -1235,6 +1235,12 @@ export interface SessionRouteOptions {
   mcp?: {
     status: (sessionId: string) => Promise<McpStatusReply>;
     reconnect: (sessionId: string, name: string) => Promise<{ ok: boolean; error?: string }>;
+    /** Pin one MCP server's tools back to asking, or clear the pin. */
+    ask: (
+      sessionId: string,
+      name: string,
+      ask: boolean,
+    ) => Promise<{ ok: boolean; error?: string }>;
   };
   /** The rules recent approval requests suggest, per session; the Tune tab offers them as chips. */
   permissionAsks?: Map<string, string[]>;
@@ -2289,6 +2295,17 @@ export function registerSessionRoutes(
                 if (typeof session !== "string" || typeof name !== "string")
                   return json(res, 400, { error: "session and name required" });
                 const reply = await mcp.reconnect(session, name);
+                return json(res, reply.ok ? 200 : 409, reply);
+              }
+              if (
+                mcp &&
+                req.method === "POST" &&
+                url.pathname === `${ROUTE_PREFIX}/mcp-servers/ask`
+              ) {
+                const { session, name, ask } = await readBody(req);
+                if (typeof session !== "string" || typeof name !== "string")
+                  return json(res, 400, { error: "session and name required" });
+                const reply = await mcp.ask(session, name, ask === true);
                 return json(res, reply.ok ? 200 : 409, reply);
               }
               // Add a server: `claude mcp add-json`, run in the session's own directory so a

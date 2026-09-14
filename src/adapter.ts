@@ -2759,6 +2759,26 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     return reply.ok ? { ok: true } : { ok: false, error: reply.error };
   }
 
+  /** Pin one MCP server's tools back to asking, or clear the pin
+   *  (`set_mcp_permission_mode_override`). Tighten-only over this channel: the CLI accepts
+   *  `default`, `auto` and null and rejects the rest without changing state, so this offers the two
+   *  ends. It lives in the process's own tool-permission context, so it dies with the process, and
+   *  it is read only when the session's mode would otherwise auto-allow. */
+  async setMcpAsk(
+    sessionId: string,
+    serverName: string,
+    ask: boolean,
+  ): Promise<{ ok: boolean; error?: string }> {
+    const proc = this.processes.get(registryKey(this.providerId, sessionId));
+    if (!proc?.alive) return { ok: false, error: "no live Claude process for this session" };
+    const reply = await this.control(
+      proc,
+      { subtype: "set_mcp_permission_mode_override", serverName, mode: ask ? "default" : null },
+      10_000,
+    );
+    return reply.ok ? { ok: true } : { ok: false, error: reply.error };
+  }
+
   /** Ask a session's live process to re-read plugins, commands, agents and their MCP servers from
    *  disk (`reload_plugins`), so an enable, uninstall or marketplace change the CLI just wrote to
    *  settings takes effect now instead of at the next spawn. No live process is not a failure: the
@@ -5442,6 +5462,8 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
         status: (sessionId: string) => adapter.ownerFor(sessionId).mcpStatus(sessionId),
         reconnect: (sessionId: string, serverName: string) =>
           adapter.ownerFor(sessionId).mcpReconnect(sessionId, serverName),
+        ask: (sessionId: string, serverName: string, ask: boolean) =>
+          adapter.ownerFor(sessionId).setMcpAsk(sessionId, serverName, ask),
       },
       rewind: (sessionId: string, uuid: string, dryRun: boolean) =>
         adapter.ownerFor(sessionId).rewind(sessionId, uuid, dryRun),

@@ -21,7 +21,7 @@ import {
   readHints,
 } from "./sessions.js";
 import { projectDirName } from "./adapter.js";
-import type { PermissionReadoutReply } from "./adapter.js";
+import type { McpStatusReply, PermissionReadoutReply } from "./adapter.js";
 import type { InstructionFile } from "./instructions.js";
 import type { TranscriptListItem } from "./transcript.js";
 
@@ -798,6 +798,165 @@ import type { TranscriptListItem } from "./transcript.js";
   assert.equal(r.body.hooks.length, 1);
   assert.equal(r.body.hooks[0].event, "PreToolUse");
   console.log("permissions-route ok");
+}
+
+// POST /mcp-servers/ask: 400 when session or name is missing, 404 when mcp.ask is absent,
+// and 200 that proves the callback received session, name and the boolean.
+{
+  const tmp = await mkdtemp(join(tmpdir(), "dsh-mcp-ask-test-"));
+  let handler: ((req: any, res: any) => void) | undefined;
+  // SAFETY: partial fake for tests
+  const ctx = {
+    inject: (deps: string[], cb: (host: any) => void) => {
+      cb({
+        webServer: {
+          register: (r: any) => {
+            handler = r.handler as (req: any, res: any) => void;
+            return () => {};
+          },
+        },
+        connection: { requestRejection: () => undefined },
+        sessions: { get: () => undefined },
+        sessionPersistence: { list: async () => [] },
+        effect: (fn: () => void | (() => void)) => fn(),
+      });
+    },
+  } as any;
+  registerSessionRoutes(ctx, {
+    log: () => {},
+    projectDir: (cwd: string) => [join(tmp, "claude", "projects", projectDirName(cwd))],
+    projectsDir: [join(tmp, "claude", "projects")],
+    startedIds: async () => [],
+    claudeIdOf: (id: string) => id,
+    configDir: join(tmp, "claude"),
+    boxesPath: join(tmp, "boxes.json"),
+    importedDir: join(tmp, "imported"),
+    instanceFor: () => undefined,
+    instanceForHost: () => ({ configDir: join(tmp, "box") }),
+  });
+  assert.ok(handler);
+
+  const respond = async (method: string, url: string, body?: string) => {
+    const resChunks: Buffer[] = [];
+    let status = 0;
+    // SAFETY: partial fake for tests
+    const fakeRes = {
+      writeHead: (s: number, _h: Record<string, string>) => {
+        status = s;
+      },
+      end: (b: Buffer | string) => {
+        if (typeof b === "string") resChunks.push(Buffer.from(b));
+        else resChunks.push(b);
+      },
+    };
+    // SAFETY: partial fake for tests
+    const fakeReq = {
+      method,
+      url,
+      on: (ev: string, cb: (c?: Buffer) => void) => {
+        if (ev === "data" && body !== undefined) cb(Buffer.from(body));
+        if (ev === "end") cb();
+      },
+      destroy: () => {},
+    } as any;
+    await handler!(fakeReq, fakeRes);
+    return { status, body: JSON.parse(Buffer.concat(resChunks).toString("utf8")) };
+  };
+
+  // 404: mcp is absent from the bag.
+  let r = await respond(
+    "POST",
+    "/dsh-oh-my-claude/mcp-servers/ask",
+    JSON.stringify({ session: "s", name: "n", ask: true }),
+  );
+  assert.equal(r.status, 404);
+  assert.equal(r.body.error, "not found");
+
+  // Now register with mcp.ask in place.
+  let receivedMcpAsk: { session: string; name: string; ask: boolean } | undefined;
+  const mcp = {
+    status: async (): Promise<McpStatusReply> => ({ ok: true, servers: [] }),
+    reconnect: async () => ({ ok: true }),
+    ask: async (sid: string, name: string, ask: boolean) => {
+      receivedMcpAsk = { session: sid, name, ask };
+      return { ok: true };
+    },
+  };
+  // Re-register with the callback; registerSessionRoutes is called once per ctx but we pass a new one.
+  // SAFETY: partial fake for tests
+  const ctx2 = {
+    inject: (deps: string[], cb: (host: any) => void) => {
+      cb({
+        webServer: {
+          register: (r: any) => {
+            handler = r.handler as (req: any, res: any) => void;
+            return () => {};
+          },
+        },
+        connection: { requestRejection: () => undefined },
+        sessions: { get: () => undefined },
+        sessionPersistence: { list: async () => [] },
+        effect: (fn: () => void | (() => void)) => fn(),
+      });
+    },
+  } as any;
+  registerSessionRoutes(ctx2, {
+    log: () => {},
+    projectDir: (cwd: string) => [join(tmp, "claude", "projects", projectDirName(cwd))],
+    projectsDir: [join(tmp, "claude", "projects")],
+    startedIds: async () => [],
+    claudeIdOf: (id: string) => id,
+    configDir: join(tmp, "claude"),
+    boxesPath: join(tmp, "boxes.json"),
+    importedDir: join(tmp, "imported"),
+    instanceFor: () => undefined,
+    instanceForHost: () => ({ configDir: join(tmp, "box") }),
+    mcp,
+  });
+
+  // 400: missing session.
+  r = await respond(
+    "POST",
+    "/dsh-oh-my-claude/mcp-servers/ask",
+    JSON.stringify({ name: "n", ask: true }),
+  );
+  assert.equal(r.status, 400);
+  assert.equal(r.body.error, "session and name required");
+
+  // 400: missing name.
+  r = await respond(
+    "POST",
+    "/dsh-oh-my-claude/mcp-servers/ask",
+    JSON.stringify({ session: "s", ask: true }),
+  );
+  assert.equal(r.status, 400);
+  assert.equal(r.body.error, "session and name required");
+
+  // 200: valid body with ask true; the callback received session, name and true.
+  r = await respond(
+    "POST",
+    "/dsh-oh-my-claude/mcp-servers/ask",
+    JSON.stringify({ session: "sid1", name: "my-server", ask: true }),
+  );
+  assert.equal(r.status, 200);
+  assert.equal(r.body.ok, true);
+  assert.equal(receivedMcpAsk?.session, "sid1");
+  assert.equal(receivedMcpAsk?.name, "my-server");
+  assert.equal(receivedMcpAsk?.ask, true);
+
+  // 200: valid body with ask false (missing asks defaults to false per the side-questions pattern).
+  r = await respond(
+    "POST",
+    "/dsh-oh-my-claude/mcp-servers/ask",
+    JSON.stringify({ session: "sid2", name: "other" }),
+  );
+  assert.equal(r.status, 200);
+  assert.equal(r.body.ok, true);
+  assert.equal(receivedMcpAsk?.session, "sid2");
+  assert.equal(receivedMcpAsk?.name, "other");
+  assert.equal(receivedMcpAsk?.ask, false);
+
+  console.log("mcp-ask-route ok");
 }
 
 // readPickerSettings: the two picker keys out of settings.json, and undefined for anything else.

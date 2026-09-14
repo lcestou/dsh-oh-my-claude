@@ -350,6 +350,11 @@ export interface SessionRouteOptions {
             ok: boolean;
             error?: string;
         }>;
+        /** Pin one MCP server's tools back to asking, or clear the pin. */
+        ask: (sessionId: string, name: string, ask: boolean) => Promise<{
+            ok: boolean;
+            error?: string;
+        }>;
     };
     /** The rules recent approval requests suggest, per session; the Tune tab offers them as chips. */
     permissionAsks?: Map<string, string[]>;

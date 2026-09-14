@@ -876,6 +876,15 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
         ok: boolean;
         error?: string;
     }>;
+    /** Pin one MCP server's tools back to asking, or clear the pin
+     *  (`set_mcp_permission_mode_override`). Tighten-only over this channel: the CLI accepts
+     *  `default`, `auto` and null and rejects the rest without changing state, so this offers the two
+     *  ends. It lives in the process's own tool-permission context, so it dies with the process, and
+     *  it is read only when the session's mode would otherwise auto-allow. */
+    setMcpAsk(sessionId: string, serverName: string, ask: boolean): Promise<{
+        ok: boolean;
+        error?: string;
+    }>;
     /** Ask a session's live process to re-read plugins, commands, agents and their MCP servers from
      *  disk (`reload_plugins`), so an enable, uninstall or marketplace change the CLI just wrote to
      *  settings takes effect now instead of at the next spawn. No live process is not a failure: the
