@@ -46,6 +46,7 @@ import { queueDraft } from "./draft.js";
 import { diffQuestion, reviewPrompt } from "../prompts.js";
 import type { FeatureSwitches } from "../switches.js";
 import type { PluginRoster } from "../plugins.js";
+import type { PermissionRules, HooksListing } from "../process.js";
 
 // Module-level variable so reopening lands on the last picked tab.
 let lastTab = "Memory";
@@ -1709,6 +1710,120 @@ function ReturnRecap() {
 }
 
 /**
+ * The line a readout section shows in place of its list: no process to ask, the read still out, or
+ * the reason it failed. Both sections show it, because both come from the one fetch.
+ */
+function ReadoutState({
+  running,
+  error,
+  reply,
+}: {
+  running: boolean;
+  error: string;
+  reply: PermissionsReply | null;
+}) {
+  if (!running)
+    return (
+      <span style={{ ...meta, padding: "2px 4px", fontSize: 12 }}>
+        Claude is not running for this session.
+      </span>
+    );
+  if (error !== "") return <span style={errText}>{error}</span>;
+  if (reply === null) return <span style={stateText}>Loading…</span>;
+  if (!reply.ok) return <span style={errText}>{reply.error}</span>;
+  return null;
+}
+
+/** Sort rank for permission behaviour: deny before ask before allow. */
+const ruleRank = (r: string): number => (r === "deny" ? 0 : r === "ask" ? 1 : 2);
+
+/**
+ * The permission rules readout: one row per rule, behaviour as a pill, the CLI's own display text
+ * in mono, the source beside it. The eight it shows folded are the deny and ask rules first, so a
+ * truncated list never hides a restriction; unfolded it is the CLI's own order, which is the order
+ * the rules are applied in.
+ */
+function RulesList({ rules }: { rules: PermissionRules["rules"] }) {
+  const [shown, setShown] = useState(8);
+  // Deny first, then ask, then allow — within each group the CLI's own order is preserved.
+  const allShown = shown >= rules.length;
+  const visible = allShown
+    ? rules
+    : [...rules].toSorted((a, b) => ruleRank(a.behavior) - ruleRank(b.behavior)).slice(0, shown);
+  return (
+    <div>
+      {visible.map((r, i) => (
+        <div
+          key={i}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "3px 10px",
+            fontSize: 12,
+          }}
+        >
+          <span
+            style={pill(r.behavior === "allow" ? T.ok : r.behavior === "deny" ? T.err : T.warn)}
+          >
+            {r.behavior}
+          </span>
+          <span style={{ flex: 1, fontFamily: T.mono, fontSize: 11 }}>{r.text}</span>
+          <span style={{ ...meta, flex: "none" }}>{r.source}</span>
+        </div>
+      ))}
+      {rules.length > 8 && (
+        <button
+          type="button"
+          style={{ ...btn, fontSize: 12, margin: "2px 10px" }}
+          onClick={() => setShown(allShown ? 8 : rules.length)}
+        >
+          {allShown ? "Show fewer" : `Show all ${rules.length}`}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** The hooks readout: one row per hook, the event and the command in mono, the matcher and the
+ *  source beside them, in the order the CLI listed them. */
+function HooksList({ hooks }: { hooks: HooksListing["hooks"] }) {
+  const [shown, setShown] = useState(8);
+  const visible = hooks.slice(0, shown);
+  const allShown = shown >= hooks.length;
+  return (
+    <div>
+      {visible.map((h, i) => (
+        <div
+          key={i}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "3px 10px",
+            fontSize: 12,
+          }}
+        >
+          <span style={{ flex: "none", fontFamily: T.mono, fontSize: 11 }}>{h.event}</span>
+          {h.matcher !== "" && <span style={{ ...meta, flex: "none" }}>{h.matcher}</span>}
+          <span style={{ flex: 1, fontFamily: T.mono, fontSize: 11 }}>{h.text}</span>
+          <span style={{ ...meta, flex: "none" }}>{h.source}</span>
+        </div>
+      ))}
+      {hooks.length > 8 && (
+        <button
+          type="button"
+          style={{ ...btn, fontSize: 12, margin: "2px 10px" }}
+          onClick={() => setShown(allShown ? 8 : hooks.length)}
+        >
+          {allShown ? "Show fewer" : `Show all ${hooks.length}`}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/**
  * "Diagnostics" body in the Oh My Claude dialog: runtime status, config file parse errors,
  * MCP servers that are not connected with their errors, and a doctor output button.
  */
@@ -1720,6 +1835,8 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
   const [reconnecting, setReconnecting] = useState<string | null>(null);
   const [audit, setAudit] = useState<DeniedTurn[] | null>(null);
   const [auditError, setAuditError] = useState("");
+  const [permissions, setPermissions] = useState<PermissionsReply | null>(null);
+  const [permissionsError, setPermissionsError] = useState("");
   const [doctorOutput, setDoctorOutput] = useState<string | null>(null);
   const [doctorError, setDoctorError] = useState("");
   const [doctorBusy, setDoctorBusy] = useState(false);
@@ -1754,6 +1871,18 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
       live = false;
     };
   }, [sessionId]);
+
+  useEffect(() => {
+    if (!running) return;
+    let live = true;
+    fetch(`${ROUTE}/permissions?session=${encodeURIComponent(sessionId)}`)
+      .then((r) => readJson<PermissionsReply>(r))
+      .then((b) => live && setPermissions(b))
+      .catch((e: Error) => live && setPermissionsError(e.message));
+    return () => {
+      live = false;
+    };
+  }, [running, sessionId]);
 
   const reconnect = async (serverName: string) => {
     setReconnecting(serverName);
@@ -2081,6 +2210,55 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
               </div>
             ))
           )}
+
+          {/* The rules and hooks the live process loaded, read-only: this tab reports them,
+              the CLI owns them. Headings paint whether or not the read lands, so a failed one
+              says which section is missing rather than leaving a bare error line. */}
+          <div data-omc-permission-rules="">
+            <span style={{ ...meta, padding: "2px 4px", display: "block", marginTop: 8 }}>
+              Permission rules
+              {permissions?.ok && ` · ${permissions.rules.length}`}
+              {permissions?.ok && permissions.managedOnly && (
+                <span style={{ marginLeft: 4 }}>managed</span>
+              )}
+            </span>
+            <ReadoutState running={running} error={permissionsError} reply={permissions} />
+            {permissions?.ok &&
+              (permissions.rules.length === 0 ? (
+                <span style={{ ...meta, padding: "2px 4px", fontSize: 12 }}>
+                  This session loaded no permission rules.
+                </span>
+              ) : (
+                <>
+                  <RulesList rules={permissions.rules} />
+                  {permissions.directories.length > 0 && (
+                    <span style={{ ...meta, padding: "2px 4px", fontSize: 12 }}>
+                      {permissions.directories.length}{" "}
+                      {permissions.directories.length === 1
+                        ? "workspace directory"
+                        : "workspace directories"}
+                      {permissions.directories.length <= 3 &&
+                        `: ${permissions.directories.map((d) => d.path).join(", ")}`}
+                    </span>
+                  )}
+                </>
+              ))}
+          </div>
+          <div data-omc-hooks="">
+            <span style={{ ...meta, padding: "2px 4px", display: "block", marginTop: 8 }}>
+              Hooks
+              {permissions?.ok && ` · ${permissions.hooks.length}`}
+            </span>
+            <ReadoutState running={running} error={permissionsError} reply={permissions} />
+            {permissions?.ok &&
+              (permissions.hooks.length === 0 ? (
+                <span style={{ ...meta, padding: "2px 4px", fontSize: 12 }}>
+                  This session loaded no hooks.
+                </span>
+              ) : (
+                <HooksList hooks={permissions.hooks} />
+              ))}
+          </div>
 
           {/* Doctor button */}
           <div style={{ padding: "6px 10px", marginTop: 8, borderTop: `1px solid ${T.border}` }}>
@@ -2442,6 +2620,10 @@ interface PermissionModeState {
   live?: boolean;
   error?: string;
 }
+/** What `GET /permissions` reports: the rules and hooks the session's live process loaded. */
+type PermissionsReply =
+  | ({ ok: true } & PermissionRules & HooksListing)
+  | { ok: false; error: string };
 
 // The three dsh presets in strict id→label order (kept for text-fallback trigger lookup).
 const PRESETS = [
