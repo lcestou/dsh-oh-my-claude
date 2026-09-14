@@ -3067,9 +3067,17 @@ function watchContextMeter(ctx: ClientCtx) {
   // The mark goes on the node we inject, never on dsh's node: React owns these children and drops
   // ours whenever it re-renders the panel, and a mark on the host would say "done" forever while
   // the row it names is gone.
-  const missing = (host: HTMLElement) => host.querySelector(`:scope > [${MARK}]`) === null;
+  // Our block, if this host already has one. A host that has it is done — except for the hiding,
+  // which is about dsh's children rather than ours: React rebuilds those on every repaint of the
+  // percentage, so a readout hidden a moment ago can be back beside a block that never left.
+  const HID = "data-dsh-oh-my-claude-replaced";
+  const ours = (host: HTMLElement) => host.querySelector<HTMLElement>(`:scope > [${MARK}]`);
+  const rehide = (host: HTMLElement, block: HTMLElement) => {
+    if (block.hasAttribute(HID)) hideNativeContext(host, block);
+  };
   const attach = (panel: HTMLElement) => {
-    if (!missing(panel)) return;
+    const already = ours(panel);
+    if (already) return rehide(panel, already);
     // Only sessions on a Claude mount: a local-model session's meter stays dsh's own.
     if (!activeClaudeSession(ctx)) return;
     const block = document.createElement("div");
@@ -3106,6 +3114,7 @@ function watchContextMeter(ctx: ClientCtx) {
         // CLI's own answer replaces it — and only when there is an answer, so a session with no
         // live process still gets dsh's estimate rather than nothing.
         if (!reply.ok) return;
+        block.setAttribute(HID, "1");
         hideNativeContext(panel, block);
         // The rule under this block divided it from dsh's readout. With that readout gone it is the
         // last thing in the dialog, and a rule under the last thing is a line to nowhere.
@@ -3129,7 +3138,8 @@ function watchContextMeter(ctx: ClientCtx) {
   // dialog is matched through its parent rather than as the button's next sibling.
   // The hover bubble (`role=tooltip`, a sibling of the ring button) gets one compact line on top.
   const bubble = (tip: HTMLElement) => {
-    if (!missing(tip)) return;
+    const already = ours(tip);
+    if (already) return rehide(tip, already);
     if (!activeClaudeSession(ctx)) return;
     const block = document.createElement("div");
     block.setAttribute(MARK, "1");
@@ -3167,6 +3177,7 @@ function watchContextMeter(ctx: ClientCtx) {
           return;
         }
         ctxLine.textContent = `${Math.round(reply.percentage)}% of context used · ${kTokens(reply.totalTokens)} / ${kTokens(reply.maxTokens)}`;
+        block.setAttribute(HID, "1");
         hideNativeContext(tip, block);
       });
   };

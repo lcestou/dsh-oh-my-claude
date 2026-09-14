@@ -1354,6 +1354,9 @@ export class ClaudeProcess {
    *  totals restart with the process. */
   costSoFar: number = 0;
   apiMsSoFar: number = 0;
+  /** The model whose context window was last asked for, as `spec.model ?? ""`. A session started on
+   *  the mount's default model names no model at all, so "asked" cannot be read off the bank alone. */
+  windowAskedFor?: string;
   prep?: TurnPrep;
   /** A terminal wrote turns into this session's transcript since this process last spoke, so its
    *  context is behind the file; the next prompt replaces it and resumes from the transcript. */

@@ -4659,9 +4659,17 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         void saveTurnRecords(this.stateDir, options.sessionId, buf);
         // The window this model actually runs at, asked once per model between turns so dsh's
         // context ring is right before anyone opens the breakdown. A model switched mid-session is
-        // an id we have not banked yet, so the next result asks again for the model it switched to.
-        if (proc.spec.model !== undefined && liveWindowFor(proc.spec.model) === undefined)
+        // an id this process has not asked about, so the next result asks again for the model it
+        // switched to. A session on the mount's default names no model, which is why the guard is
+        // what this process asked rather than what the bank holds: nothing would ever ask for it.
+        const asking = proc.spec.model ?? "";
+        if (
+          proc.windowAskedFor !== asking &&
+          (asking === "" || liveWindowFor(asking) === undefined)
+        ) {
+          proc.windowAskedFor = asking;
           void this.contextUsage(options.sessionId).catch(() => {});
+        }
       },
       onToolResult:
         turnStep && rowMode.rows
