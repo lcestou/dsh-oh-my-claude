@@ -67,6 +67,14 @@ const rowState = await Promise.all(
 for (const [i, row] of rowState.entries()) {
   console.log(`row ${i}: checked=${row[0]}, disabled=${row[1]}`);
 }
+const sizes = p.locator("[data-omc-context-size]");
+const sizeTexts = await sizes.allTextContents();
+console.log("size count:", sizeTexts.length, "texts:", sizeTexts.join(", "));
+if (sizeTexts.length > 0) {
+  console.log("PASS: sizes rendered");
+} else {
+  console.log("note: no sizes yet in this workspace");
+}
 const allChecked = rowState.every(([checked]) => checked);
 const lastThreeDisabled = [2, 3, 4].every((i) => rowState[i]![1]);
 console.log(allChecked && lastThreeDisabled ? "PASS: fold rows correct" : "FAIL: fold rows wrong");

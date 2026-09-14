@@ -5307,9 +5307,60 @@ function StarterSwitch() {
   );
 }
 
+/** What each dsh block cost on the last turn in this workspace, in characters. Read once when the
+ *  card renders, which is when Settings opens; nothing polls. A workspace that has not run a turn
+ *  yet answers nothing, and a row with no number shows no number rather than a zero: zero would
+ *  claim dsh sent nothing, and not knowing is not the same claim. */
+function useContextSizes(ctx: ClientCtx): Record<string, number> | null {
+  const [sizes, setSizes] = useState<Record<string, number> | null>(null);
+  const snap = ctx.sessions.list.getSnapshot();
+  const cwd = (snap?.current ? snap.byId[snap.current]?.cwd : "") ?? "";
+  useEffect(() => {
+    if (!cwd) return;
+    let live = true;
+    const run = async () => {
+      const reply = await readJson<{ sizes?: Record<string, number> }>(
+        await fetch(`${ROUTE}/context-sizes?cwd=${encodeURIComponent(cwd)}`),
+      );
+      if (live) setSizes(reply.sizes ?? null);
+    };
+    // A box whose server predates this route answers an error; the card is still usable without
+    // the numbers, so it stays quiet rather than showing the owner a failure they cannot act on.
+    void run().catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [cwd]);
+  return sizes;
+}
+
+/** One measured size, beside the row it belongs to. Thousands are rounded to one decimal because
+ *  the exact character count of a block nobody can edit is noise; the order of magnitude is the
+ *  decision. */
+function ContextSize({ source, chars }: { source: string; chars: number | undefined }) {
+  if (chars === undefined) return null;
+  const shown = chars >= 1000 ? `${(chars / 1000).toFixed(1)}k` : String(chars);
+  return (
+    <span data-omc-context-size={source} style={{ color: T.faint, fontSize: 12 }}>
+      {" "}
+      {shown} chars
+    </span>
+  );
+}
+
 /** One block the switches can withhold: checked means dsh sends it, and the flag is that block's
  *  off key, so a box that has never opened this card behaves as it did before the card existed. */
-function ContextBox({ source, label, flag }: { source: string; label: string; flag: string }) {
+function ContextBox({
+  source,
+  label,
+  flag,
+  chars,
+}: {
+  source: string;
+  label: string;
+  flag: string;
+  chars: number | undefined;
+}) {
   const [off, setOff] = useHintFlag(flag);
   return (
     <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
@@ -5319,7 +5370,10 @@ function ContextBox({ source, label, flag }: { source: string; label: string; fl
         checked={!off}
         onChange={(e) => setOff(!e.target.checked)}
       />
-      {label}
+      <span>
+        {label}
+        <ContextSize source={source} chars={chars} />
+      </span>
     </label>
   );
 }
@@ -5328,7 +5382,17 @@ function ContextBox({ source, label, flag }: { source: string; label: string; fl
  *  in a title, so it is not mouse-only. Listing it is the point: a block that vanishes from the
  *  list is worse than one the owner can see and not turn off. It is backed by no hint key at all,
  *  so there is nothing here for a later edit to wire up by mistake. */
-function ContextFixed({ source, label, why }: { source: string; label: string; why: string }) {
+function ContextFixed({
+  source,
+  label,
+  why,
+  chars,
+}: {
+  source: string;
+  label: string;
+  why: string;
+  chars: number | undefined;
+}) {
   return (
     <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: T.muted }}>
       <input
@@ -5341,6 +5405,7 @@ function ContextFixed({ source, label, why }: { source: string; label: string; w
       />
       <span>
         {label}
+        <ContextSize source={source} chars={chars} />
         <span style={{ color: T.faint, fontSize: 12 }}> — {why}</span>
       </span>
     </label>
@@ -5351,8 +5416,16 @@ function ContextFixed({ source, label, why }: { source: string; label: string; w
  *  one checkbox per block the plugin can withhold and one disabled row per block it cannot. The
  *  keys go to the box's hints store, and the adapter reads them when it assembles a turn, so a
  *  session already running keeps whatever it was sent before the switch moved. */
-function ContextSwitch() {
+function ContextSwitch({ ctx }: { ctx: ClientCtx }) {
   const [off, setOff] = useHintFlag("dshContextOff");
+  const sizes = useContextSizes(ctx);
+  // The two switchable blocks and nothing else. The runtime snapshot, the tools guidance and the
+  // CLAUDE.md copy are all still sent (or already dropped) whatever this switch says, so counting
+  // them here would promise a saving the switch cannot deliver.
+  const savable =
+    sizes && (sizes.instructions !== undefined || sizes.skills !== undefined)
+      ? (sizes.instructions ?? 0) + (sizes.skills ?? 0)
+      : undefined;
   return (
     <>
       <div
@@ -5373,6 +5446,12 @@ function ContextSwitch() {
             prompt, its own CLAUDE.md and nothing else. A session already running keeps whatever dsh
             sent it before the switch moved.
           </div>
+          {savable !== undefined && (
+            <div style={{ color: T.faint, fontSize: 12, marginTop: 2 }}>
+              Off would have saved
+              <ContextSize source="total" chars={savable} /> on the last turn in this workspace.
+            </div>
+          )}
         </div>
         <Switch on={!off} onChange={(next) => setOff(!next)} label="dsh context" />
       </div>
@@ -5387,17 +5466,25 @@ function ContextSwitch() {
               source="instructions"
               flag="dshContextInstructionsOff"
               label="Workspace instructions (AGENTS.md)"
+              chars={sizes?.instructions}
             />
-            <ContextBox source="skills" flag="dshContextSkillsOff" label="dsh skill catalog" />
+            <ContextBox
+              source="skills"
+              flag="dshContextSkillsOff"
+              label="dsh skill catalog"
+              chars={sizes?.skills}
+            />
             <ContextFixed
               source="runtime"
               label="Runtime snapshot (file and approval policy)"
               why="Always sent. Without it a session asks for approvals that are auto-rejected."
+              chars={sizes?.runtime}
             />
             <ContextFixed
               source="tools"
               label="dsh tools guidance"
               why="Follows the dshTools setting in the plugin config, not this card."
+              chars={sizes?.tools}
             />
             <div style={{ color: T.muted, fontSize: 12, marginTop: 6 }}>
               What Claude Code loads on its own
@@ -5406,11 +5493,12 @@ function ContextSwitch() {
               source="claudemd"
               label="Your CLAUDE.md files"
               why="Claude Code reads these itself. dsh sends a copy too and this plugin already drops it."
+              chars={sizes?.claudemd}
             />
             <div style={{ color: T.faint, fontSize: 12, marginTop: 6 }}>
               AGENTS.md Claude Code never reads, so a repo whose only instruction file is AGENTS.md
-              goes unguided with that box clear. The skill catalog was 24,000 characters in a recent
-              session and says nothing a session can use when dsh tools are off.
+              goes unguided with that box clear. The skill catalog says nothing a session can use
+              when dsh tools are off, and it is usually the largest block on this list.
             </div>
           </div>
         </details>
@@ -6256,7 +6344,7 @@ export function apply(ctx: ClientCtx) {
           </span>
         </div>
         <ThemeSwitch />
-        <ContextSwitch />
+        <ContextSwitch ctx={ctx} />
         <StarterSwitch />
         <UpdateNoticeSwitch />
         <WorkspaceModelSwitch />
