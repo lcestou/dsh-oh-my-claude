@@ -76,6 +76,9 @@ if (sizeTexts.length > 0) {
 } else {
   console.log("note: no sizes yet in this workspace");
 }
+// Row 4 is the CLAUDE.md row, and it is checked only while the CLI is loading those files. On a box
+// where a settings file or the environment sets CLAUDE_CODE_DISABLE_CLAUDE_MDS it draws clear, which
+// is the row working, not failing.
 const checkedCorrect = [0, 1, 2, 3, 4].every((i) => rowState[i]![0]) && !rowState[5]![0];
 const lastFourDisabled = [2, 3, 4, 5].every((i) => rowState[i]![1]);
 console.log(

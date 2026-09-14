@@ -93,6 +93,9 @@ import {
 } from "./notices.js";
 import { SETTINGS_SCOPES, SCOPE_LABELS, overrideNote } from "./settings.js";
 import type { SettingsScope, SettingsScopeInfo } from "./settings.js";
+// Type only, so nothing from the server half reaches the bundle: the row renders what the route
+// answered, and the route is the only thing that knows how to work the answer out.
+import type { ClaudeMdState } from "../switches.js";
 import {
   type ChatFlowNode,
   contextDrops,
@@ -5341,15 +5344,74 @@ function useContextSizes(ctx: ClientCtx): Record<string, number> | null {
   return sizes;
 }
 
+/** What Claude Code loads for itself in this workspace, and whether anything turns it off. Read
+ *  once beside the sizes, from the same open. The whole answer is worked out on the box: the count
+ *  and total come from the files, and the on/off from that box's settings files plus, for a local
+ *  box, dsh's own environment. Null while it is in flight, on a card with no session behind it, or
+ *  on a box whose server predates the route, and the row reads as loaded in all three: that is what
+ *  a Claude Code session does on a fresh box. */
+function useClaudeMd(ctx: ClientCtx): ClaudeMdState | null {
+  const [state, setState] = useState<ClaudeMdState | null>(null);
+  const snap = ctx.sessions.list.getSnapshot();
+  const id = snap?.current ?? "";
+  const cwd = (id ? snap?.byId[id]?.cwd : "") ?? "";
+  // A second account or a named ssh box keeps its own settings files, so the box has to be named;
+  // `cwd` alone resolves a remote workspace but not which instance the session is bound to.
+  const provider = id ? (claudeProviderOf(ctx, id) ?? "") : "";
+  useEffect(() => {
+    if (!cwd) return;
+    let live = true;
+    const run = async () => {
+      const onBox = provider ? `&provider=${encodeURIComponent(provider)}` : "";
+      const reply = await readJson<ClaudeMdState>(
+        await fetch(`${ROUTE}/claude-md?cwd=${encodeURIComponent(cwd)}${onBox}`),
+      );
+      if (live) setState(reply);
+    };
+    void run().catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [cwd, provider]);
+  return state;
+}
+
+/** The sentence beside the CLAUDE.md row. Long only where it has to be: almost nobody disables
+ *  these files, so the loaded state says the one thing a reader needs and the off states, which are
+ *  the ones worth acting on, name the variable and where it was set. The key is named rather than
+ *  linked on purpose: the settings editor below this card is mounted once per box, so a jump would
+ *  have to guess which, and the name is greppable on a box this panel is not open on. */
+function claudeMdWhy(state: ClaudeMdState | null): string {
+  const by = state?.disabledBy;
+  if (by === undefined) return "Claude Code loads these itself. The copy dsh sends is dropped.";
+  const scope = SETTINGS_SCOPES.find((s) => s === by);
+  return scope === undefined
+    ? "Off: CLAUDE_CODE_DISABLE_CLAUDE_MDS is set in the environment dsh runs in, not in any settings file."
+    : `Off: ${SCOPE_LABELS[scope]} sets CLAUDE_CODE_DISABLE_CLAUDE_MDS. Nothing from these files reaches the session, since the copy dsh sends is dropped too.`;
+}
+
 /** One measured size, beside the row it belongs to. Thousands are rounded to one decimal because
  *  the exact character count of a block nobody can edit is noise; the order of magnitude is the
  *  decision. */
-function ContextSize({ source, chars }: { source: string; chars: number | undefined }) {
+function ContextSize({
+  source,
+  chars,
+  files,
+}: {
+  source: string;
+  chars: number | undefined;
+  /** Shown before the size where one block is really several files. It is the whole explanation for
+   *  a total larger than the file the reader is thinking of, without listing paths the Instructions
+   *  tab already lists. */
+  files?: number;
+}) {
   if (chars === undefined) return null;
   const shown = chars >= 1000 ? `${(chars / 1000).toFixed(1)}k` : String(chars);
+  const howMany = files === undefined ? "" : `${files} ${files === 1 ? "file" : "files"} · `;
   return (
     <span data-omc-context-size={source} style={{ color: T.faint, fontSize: 12 }}>
       {" "}
+      {howMany}
       {shown} chars
     </span>
   );
@@ -5395,12 +5457,14 @@ function ContextFixed({
   label,
   why,
   chars,
+  files,
   checked = true,
 }: {
   source: string;
   label: string;
   why: string;
   chars: number | undefined;
+  files?: number;
   checked?: boolean;
 }) {
   return (
@@ -5415,7 +5479,7 @@ function ContextFixed({
       />
       <span>
         {label}
-        <ContextSize source={source} chars={chars} />
+        <ContextSize source={source} chars={chars} files={files} />
         <span style={{ color: T.faint, fontSize: 12 }}> — {why}</span>
       </span>
     </label>
@@ -5429,6 +5493,7 @@ function ContextFixed({
 function ContextSwitch({ ctx }: { ctx: ClientCtx }) {
   const [off, setOff] = useHintFlag(MASTER_KEY);
   const sizes = useContextSizes(ctx);
+  const claudeMd = useClaudeMd(ctx);
   // The two switchable blocks and nothing else. The runtime snapshot, the tools guidance and the
   // CLAUDE.md copy are all still sent (or already dropped) whatever this switch says, so counting
   // them here would promise a saving the switch cannot deliver.
@@ -5506,8 +5571,10 @@ function ContextSwitch({ ctx }: { ctx: ClientCtx }) {
             <ContextFixed
               source="claudemd"
               label="Your CLAUDE.md files"
-              why="Claude Code reads these itself. dsh sends a copy too and this plugin already drops it."
-              chars={sizes?.claudemd}
+              why={claudeMdWhy(claudeMd)}
+              chars={claudeMd?.chars}
+              files={claudeMd?.files}
+              checked={claudeMd?.disabledBy === undefined}
             />
             <div style={{ color: T.muted, fontSize: 12, marginTop: 6 }}>
               What dsh writes down but never sends

@@ -40,6 +40,49 @@ export interface FeatureSwitches {
 /** Only these two layers provide a retention: the CLI reads it from policy and user settings. */
 const RETENTION_SCOPES = ["managed", "user"];
 
+/** The CLI's own boolean rule for an environment variable: `"1"` or `"true"`, nothing else. A `"0"`
+ *  does not disable anything, and neither does an empty string. */
+const cliTrue = (value: string | undefined): boolean => value === "1" || value === "true";
+
+/**
+ * What Claude Code loads for a workspace, and who decided it. The count and the total are the files
+ * themselves, so they are reported whether or not loading is on: they are what *would* load.
+ */
+export interface ClaudeMdState {
+  files: number;
+  chars: number;
+  /** The settings scope that sets `CLAUDE_CODE_DISABLE_CLAUDE_MDS`, or `"env"` for the environment
+   *  dsh itself runs in. Absent means the files load. No settings scope is called `env`. */
+  disabledBy?: string;
+}
+
+/**
+ * Whether anything turns CLAUDE.md loading off, and where it came from.
+ *
+ * Settings win over the inherited environment, because the CLI spreads a file's `env` block over the
+ * environment it started with. So the highest scope that names the key decides: a `"0"` there keeps
+ * the files loading even when dsh's own environment says otherwise, and a lower file naming the key
+ * changes nothing.
+ *
+ * `local` is the last word on the environment half. A local child inherits dsh-web's environment, so
+ * `process.env` is authoritative for it. A box across ssh runs its own shell, which cannot be read
+ * from here, so the environment is not consulted for one at all.
+ */
+export function claudeMdDisabledBy(
+  scopes: readonly ScopeText[],
+  env: string | undefined,
+  local: boolean,
+): string | undefined {
+  for (const { scope, text } of scopes) {
+    const block = parseSettings(text).env;
+    if (!(block instanceof Object) || Array.isArray(block)) continue;
+    const value = block.CLAUDE_CODE_DISABLE_CLAUDE_MDS;
+    if (value === undefined) continue;
+    return cliTrue(String(value)) ? scope : undefined;
+  }
+  return local && cliTrue(env) ? "env" : undefined;
+}
+
 /** One settings file read back as an object, or an empty one when it is not JSON. */
 export const parseSettings = (text: string): Record<string, JsonValue> => {
   try {

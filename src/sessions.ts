@@ -83,7 +83,7 @@ import type {
   WorkspaceRegistry,
 } from "./dsh.js";
 import { errorText } from "./process.js";
-import { featureSwitches } from "./switches.js";
+import { claudeMdDisabledBy, featureSwitches, type ClaudeMdState } from "./switches.js";
 import type { ToolMode, ToolModeInfo } from "./rows-probe.js";
 import {
   isMarketplaceSource,
@@ -1978,6 +1978,36 @@ export function registerSessionRoutes(
                   ok: true,
                   ...featureSwitches(texts, process.env, continueAfterLimit ?? true),
                 });
+              }
+              // What Claude Code loads for itself, for the one row on the context card that this
+              // plugin does not control. Apart from `/feature-switches` because it walks the
+              // instructions tree: the shield and Rewind ask for that route on every open, and an
+              // ssh box would pay a tree walk each time for a number neither of them reads.
+              if (settingsPath && url.pathname === `${ROUTE_PREFIX}/claude-md`) {
+                if (req.method !== "GET") return json(res, 405, { error: "method not allowed" });
+                const cwd = await knownCwd(url.searchParams.get("cwd"), sessionPersistence);
+                if (cwd === null)
+                  return json(res, 400, {
+                    error: "cwd must be a directory a dsh session is open in",
+                  });
+                const { box, cwd: at } = targetOf(url, cwd);
+                const [files, texts] = await Promise.all([
+                  listInstructions(at, await claudeHomeOf(box), box),
+                  settingsTexts(box, (await userSettingsPathOf(box)) ?? settingsPath, at),
+                ]);
+                const state: ClaudeMdState = {
+                  files: files.length,
+                  chars: files.reduce((sum, f) => sum + f.size, 0),
+                };
+                // Only a local child inherits this process's environment; `box.sshHost` is the box
+                // whose shell cannot be read from here, so that half is skipped for one.
+                const by = claudeMdDisabledBy(
+                  texts,
+                  process.env.CLAUDE_CODE_DISABLE_CLAUDE_MDS,
+                  !box.sshHost,
+                );
+                if (by !== undefined) state.disabledBy = by;
+                return json(res, 200, state);
               }
               /** A box's status as the panel shows it: the CLI probes, the npm read beside them
                *  (this box only; a remote box reports its own plugin from its own copy), and a

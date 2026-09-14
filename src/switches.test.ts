@@ -1,6 +1,6 @@
 // Offline self-check: bun src/switches.test.ts. No CLI, no network.
 import assert from "node:assert/strict";
-import { DEFAULT_RETENTION_DAYS, featureSwitches } from "./switches.js";
+import { claudeMdDisabledBy, DEFAULT_RETENTION_DAYS, featureSwitches } from "./switches.js";
 
 const scopes = (files: Record<string, unknown>) =>
   Object.entries(files).map(([scope, value]) => ({ scope, text: JSON.stringify(value) }));
@@ -94,6 +94,68 @@ for (const days of [0, -5, 2.5, "30", null]) {
     {},
   );
   assert.deepEqual(higher.usageLimit.cli, true, "the higher scope decides");
+}
+
+// CLAUDE.md loading: nothing set anywhere leaves it on.
+{
+  assert.equal(claudeMdDisabledBy(scopes({ user: {} }), undefined, true), undefined);
+  assert.equal(claudeMdDisabledBy([], undefined, true), undefined);
+}
+
+// A settings file sets it, and the scope that did is named. Only the CLI's two true values count.
+{
+  const off = { env: { CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1" } };
+  assert.equal(claudeMdDisabledBy(scopes({ project: off }), undefined, true), "project");
+  assert.equal(
+    claudeMdDisabledBy(
+      scopes({ user: { env: { CLAUDE_CODE_DISABLE_CLAUDE_MDS: "true" } } }),
+      undefined,
+      true,
+    ),
+    "user",
+  );
+  assert.equal(
+    claudeMdDisabledBy(
+      scopes({ user: { env: { CLAUDE_CODE_DISABLE_CLAUDE_MDS: "0" } } }),
+      undefined,
+      true,
+    ),
+    undefined,
+    "the CLI reads 0 as unset, so the files still load",
+  );
+}
+
+// The environment dsh runs in is the other half, and only a local child inherits it. The remote pair
+// is the test that keeps the row from claiming a box's shell it cannot read.
+{
+  assert.equal(claudeMdDisabledBy([], "1", true), "env");
+  assert.equal(claudeMdDisabledBy([], "1", false), undefined, "an ssh box's shell is unreadable");
+  assert.equal(claudeMdDisabledBy([], "0", true), undefined);
+}
+
+// Settings beat the environment either way, because the CLI spreads a file's env over what it
+// inherited. A "0" in the highest file that names the key turns a set variable back on.
+{
+  assert.equal(
+    claudeMdDisabledBy(
+      scopes({ user: { env: { CLAUDE_CODE_DISABLE_CLAUDE_MDS: "0" } } }),
+      "1",
+      true,
+    ),
+    undefined,
+  );
+  assert.equal(
+    claudeMdDisabledBy(
+      scopes({
+        project: { env: { CLAUDE_CODE_DISABLE_CLAUDE_MDS: "0" } },
+        user: { env: { CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1" } },
+      }),
+      undefined,
+      true,
+    ),
+    undefined,
+    "the first scope that names the key decides; the lower file changes nothing",
+  );
 }
 
 console.log("switches ok");
