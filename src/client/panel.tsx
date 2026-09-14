@@ -1130,7 +1130,8 @@ function DiffCounts({ added, removed }: { added: number; removed: number }) {
  * "Changes" body rendered inside the Oh My Claude dialog: the CLI's own working-tree
  * diff (`get_workspace_diff`), one row per file with its line counts, a row unfolds its hunks.
  * Ask sends the diff, whole or one file, as a side question, so the answer arrives beside the
- * transcript rather than in it. Review writes a prompt into the composer and closes the dialog,
+ * transcript rather than in it, and closes the dialog on the way so the answer is not behind it.
+ * Review writes a prompt into the composer and closes the dialog,
  * because that one is the turn itself and belongs where the person can edit it before it goes.
  */
 function ChangesBody({
@@ -1163,7 +1164,10 @@ function ChangesBody({
         }),
       });
       const body = await readJson<{ ok: boolean; error?: string }>(r);
-      setNote(body.ok ? "Asked. The answer docks above the composer." : (body.error ?? "failed"));
+      // On success the dialog gets out of the way: the answer docks above the composer, which this
+      // panel covers. A failure keeps it open, because the message is the only place the error shows.
+      if (body.ok) onClose();
+      else setNote(body.error ?? "failed");
     } catch (e) {
       setNote(e instanceof Error ? e.message : String(e));
     } finally {
