@@ -524,6 +524,44 @@ import type { TranscriptListItem } from "./transcript.js";
   assert.equal(JSON.parse(await readFile(userSettings, "utf8")).a, 3);
 }
 
+type RouteReply = { status: number; body: Record<string, any> };
+
+/**
+ * Drives one route handler with a fake req/res pair and hands back the status beside the parsed
+ * body. The status is half of what the route tests assert: a 400, a 404 and a 409 all carry an
+ * `error`, so a test that reads the text alone passes on the wrong one. Takes a getter rather than
+ * the handler, because every block below registers its routes twice - once without the bag entry to
+ * prove the 404, once with it - and the second registration replaces the handler the first captured.
+ */
+const responder =
+  (handler: () => ((req: any, res: any) => void) | undefined) =>
+  async (method: string, url: string, body?: string): Promise<RouteReply> => {
+    const resChunks: Buffer[] = [];
+    let status = 0;
+    // SAFETY: partial fake for tests
+    const fakeRes = {
+      writeHead: (s: number, _h: Record<string, string>) => {
+        status = s;
+      },
+      end: (b: Buffer | string) => {
+        if (typeof b === "string") resChunks.push(Buffer.from(b));
+        else resChunks.push(b);
+      },
+    } as any;
+    // SAFETY: partial fake for tests
+    const fakeReq = {
+      method,
+      url,
+      on: (ev: string, cb: (c?: Buffer) => void) => {
+        if (ev === "data" && body !== undefined) cb(Buffer.from(body));
+        if (ev === "end") cb();
+      },
+      destroy: () => {},
+    } as any;
+    await handler()!(fakeReq, fakeRes);
+    return { status, body: JSON.parse(Buffer.concat(resChunks).toString("utf8")) };
+  };
+
 // POST /side-questions: 400 when session or question is missing, 404 when askAside is absent,
 // and 200 that proves the callback received the parsed body.
 {
@@ -560,34 +598,7 @@ import type { TranscriptListItem } from "./transcript.js";
   });
   assert.ok(handler);
 
-  // The status matters here: a 400, a 404 and a 409 all carry an `error`, so asserting the text
-  // alone would pass on the wrong one.
-  const respond = async (method: string, url: string, body?: string) => {
-    const resChunks: Buffer[] = [];
-    let status = 0;
-    // SAFETY: partial fake for tests
-    const fakeRes = {
-      writeHead: (s: number, _h: Record<string, string>) => {
-        status = s;
-      },
-      end: (b: Buffer | string) => {
-        if (typeof b === "string") resChunks.push(Buffer.from(b));
-        else resChunks.push(b);
-      },
-    };
-    // SAFETY: partial fake for tests
-    const fakeReq = {
-      method,
-      url,
-      on: (ev: string, cb: (c?: Buffer) => void) => {
-        if (ev === "data" && body !== undefined) cb(Buffer.from(body));
-        if (ev === "end") cb();
-      },
-      destroy: () => {},
-    } as any;
-    await handler!(fakeReq, fakeRes);
-    return { status, body: JSON.parse(Buffer.concat(resChunks).toString("utf8")) };
-  };
+  const respond = responder(() => handler);
 
   // 404: askAside is absent from the bag.
   let r = await respond(
@@ -710,32 +721,7 @@ import type { TranscriptListItem } from "./transcript.js";
   });
   assert.ok(handler);
 
-  const respond = async (method: string, url: string, body?: string) => {
-    const resChunks: Buffer[] = [];
-    let status = 0;
-    // SAFETY: partial fake for tests
-    const fakeRes = {
-      writeHead: (s: number, _h: Record<string, string>) => {
-        status = s;
-      },
-      end: (b: Buffer | string) => {
-        if (typeof b === "string") resChunks.push(Buffer.from(b));
-        else resChunks.push(b);
-      },
-    };
-    // SAFETY: partial fake for tests
-    const fakeReq = {
-      method,
-      url,
-      on: (ev: string, cb: (c?: Buffer) => void) => {
-        if (ev === "data" && body !== undefined) cb(Buffer.from(body));
-        if (ev === "end") cb();
-      },
-      destroy: () => {},
-    } as any;
-    await handler!(fakeReq, fakeRes);
-    return { status, body: JSON.parse(Buffer.concat(resChunks).toString("utf8")) };
-  };
+  const respond = responder(() => handler);
 
   // 404: permissionReadout is absent from the bag.
   let r = await respond("GET", "/dsh-oh-my-claude/permissions?session=sid1");
@@ -836,32 +822,7 @@ import type { TranscriptListItem } from "./transcript.js";
   });
   assert.ok(handler);
 
-  const respond = async (method: string, url: string, body?: string) => {
-    const resChunks: Buffer[] = [];
-    let status = 0;
-    // SAFETY: partial fake for tests
-    const fakeRes = {
-      writeHead: (s: number, _h: Record<string, string>) => {
-        status = s;
-      },
-      end: (b: Buffer | string) => {
-        if (typeof b === "string") resChunks.push(Buffer.from(b));
-        else resChunks.push(b);
-      },
-    };
-    // SAFETY: partial fake for tests
-    const fakeReq = {
-      method,
-      url,
-      on: (ev: string, cb: (c?: Buffer) => void) => {
-        if (ev === "data" && body !== undefined) cb(Buffer.from(body));
-        if (ev === "end") cb();
-      },
-      destroy: () => {},
-    } as any;
-    await handler!(fakeReq, fakeRes);
-    return { status, body: JSON.parse(Buffer.concat(resChunks).toString("utf8")) };
-  };
+  const respond = responder(() => handler);
 
   // 404: mcp is absent from the bag.
   let r = await respond(
