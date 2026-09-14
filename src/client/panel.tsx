@@ -1580,7 +1580,10 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
                   this tab's memory only; the CLI offers no read-back of what it has set. */}
               <button
                 type="button"
-                style={btn}
+                // Filled while it is on. `aria-pressed` alone tells a screen reader and nobody
+                // else, and this is a button that changes what the session does the next time a
+                // tool runs, so it has to read as on from across the row.
+                style={askOverrides[s.name] === true ? btnPrimary : btn}
                 aria-pressed={askOverrides[s.name] === true}
                 aria-label={`Always ask: ${s.name}`}
                 data-omc-mcp-ask=""
