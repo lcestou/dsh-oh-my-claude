@@ -4409,13 +4409,12 @@ console.log("interrupt-on-abort ok");
   // matches the number of `--- ` headers in the output.
   const diff300 = makeDiff(300);
   const out300 = diffContext(diff300, "");
-  const headerCount = (out300.match(/--- /g) ?? []).length;
+  // Each file is one 4_500-byte line plus its header, so seven fit under 32_000 and the eighth is
+  // what breaks the cap. The literal is the point: derived from the output, the assertion would hold
+  // for any number the function happened to produce.
+  assert.equal((out300.match(/--- /g) ?? []).length, 7, "seven files fit under the cap");
   assert.ok(out300.length <= 32_000 + 4_500 + 30, "300-file output stays under cap plus one file");
-  assert.match(
-    out300,
-    new RegExp(`… diff truncated \\(${headerCount} of 300 files\\)`),
-    "marker N equals the number of `--- ` headers",
-  );
+  assert.match(out300, /… diff truncated \(7 of 300 files\)/, "marker names the seven it sent");
   // Two files fit comfortably: no truncation marker at all.
   const diff2 = makeDiff(2);
   const out2 = diffContext(diff2, "");

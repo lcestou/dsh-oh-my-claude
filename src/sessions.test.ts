@@ -664,6 +664,16 @@ const responder =
   assert.equal(r.status, 400);
   assert.equal(r.body.error, "session and question required");
 
+  // 400: a JSON object where a string belongs. Coerced with String() it would read
+  // "[object Object]", pass the non-empty check and reach the ring as a question nobody wrote.
+  r = await respond(
+    "POST",
+    "/dsh-oh-my-claude/side-questions",
+    JSON.stringify({ session: {}, question: ["a", "b"] }),
+  );
+  assert.equal(r.status, 400);
+  assert.equal(r.body.error, "session and question required");
+
   // 200: valid body; the callback received session, trimmed question, withDiff, and path.
   r = await respond(
     "POST",

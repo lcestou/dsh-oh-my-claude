@@ -1145,10 +1145,11 @@ function ChangesBody({
   const isClaude = activeClaudeSession(ctx) === sessionId;
   const [reply, setReply] = useState<DiffReply | null>(null);
   const [shown, setShown] = useState<string | null>(null);
-  const [asking, setAsking] = useState(false);
+  // Which Ask is in flight, by path ("" is the whole tree), so pressing one does not blank the other.
+  const [asking, setAsking] = useState<string | null>(null);
   const [note, setNote] = useState("");
   const ask = async (path: string) => {
-    setAsking(true);
+    setAsking(path);
     setNote("");
     try {
       const r = await fetch(`${ROUTE}/side-questions`, {
@@ -1166,7 +1167,7 @@ function ChangesBody({
     } catch (e) {
       setNote(e instanceof Error ? e.message : String(e));
     } finally {
-      setAsking(false);
+      setAsking(null);
     }
   };
 
@@ -1174,6 +1175,7 @@ function ChangesBody({
     let live = true;
     setReply(null);
     setShown(null);
+    setNote("");
     fetch(`${ROUTE}/diff?session=${encodeURIComponent(sessionId)}`)
       .then((r) => readJson<DiffReply>(r))
       .then((b) => live && setReply(b))
@@ -1195,7 +1197,14 @@ function ChangesBody({
       ) : current ? (
         <>
           <div style={{ display: "flex", gap: 8, alignItems: "center", padding: "2px 4px" }}>
-            <button type="button" style={btn} onClick={() => setShown(null)}>
+            <button
+              type="button"
+              style={btn}
+              onClick={() => {
+                setShown(null);
+                setNote("");
+              }}
+            >
               ‹ Back
             </button>
             <span style={{ fontSize: 13, fontFamily: "monospace" }}>{current.path}</span>
@@ -1207,10 +1216,10 @@ function ChangesBody({
               style={btn}
               data-omc-diff-ask=""
               title="Ask Claude about this file, off the transcript"
-              disabled={asking}
+              disabled={asking !== null}
               onClick={() => void ask(current.path)}
             >
-              {asking ? "…" : "Ask"}
+              {asking === current.path ? "…" : "Ask"}
             </button>
           </div>
           {current.hunks.length === 0 ? (
@@ -1269,10 +1278,10 @@ function ChangesBody({
                 style={btn}
                 data-omc-diff-ask-all=""
                 title="Ask Claude about all the changes, off the transcript"
-                disabled={asking}
+                disabled={asking !== null}
                 onClick={() => void ask("")}
               >
-                {asking ? "…" : "Ask"}
+                {asking === "" ? "…" : "Ask"}
               </button>
               <button
                 type="button"
@@ -1288,7 +1297,6 @@ function ChangesBody({
               </button>
             </div>
           )}
-          {note && <span style={{ ...meta, padding: "2px 4px" }}>{note}</span>}
           {files.map((f) => (
             <button
               key={f.path}
@@ -1301,7 +1309,10 @@ function ChangesBody({
                 padding: "5px 10px",
                 fontFamily: "monospace",
               }}
-              onClick={() => setShown(f.path)}
+              onClick={() => {
+                setShown(f.path);
+                setNote("");
+              }}
             >
               <span
                 style={{
@@ -1327,9 +1338,20 @@ function ChangesBody({
           ))}
         </>
       )}
+      {/* Outside the branches: Ask is reachable from the file list and from a file's own header, and
+          a failed ask used to write this line where only the list would have drawn it. */}
+      {note !== "" && <span style={{ ...meta, padding: "2px 4px" }}>{note}</span>}
     </div>
   );
 }
+
+/**
+ * The modes in which the CLI reads a per-server override at all, because they auto-allow an MCP
+ * tool call. `auto` and `dontAsk` rank the same in `src/state.ts`, and leaving `dontAsk` out had the
+ * tab printing "this changes nothing yet" in the one mode where the toggle does the most work.
+ * `acceptEdits` is not here: it auto-allows file edits, not tool calls from a server.
+ */
+const AUTO_ALLOWING = new Set(["auto", "dontAsk", "bypassPermissions"]);
 
 interface McpServer {
   name: string;
@@ -1390,16 +1412,24 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
   useEffect(() => {
     setReply(null);
     setNote("");
+    // Overrides belong to the session that set them: carried across a switch, this tab would show
+    // a server as asking on a session that never asked for it, and there is no read-back to correct it.
+    setAskOverrides({});
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- load closes over sessionId only
   }, [sessionId]);
   // Fetch the session's permission mode so rows can say whether the toggle is inert. A failed read
   // leaves permMode null; the row still renders because the mode may change while the tab is open.
   useEffect(() => {
+    let live = true;
+    setPermMode(null);
     fetch(`${ROUTE}/permission-mode?session=${encodeURIComponent(sessionId)}`)
       .then((r) => readJson<PermissionModeState>(r))
-      .then((snap) => setPermMode(snap))
-      .catch(() => setPermMode(null));
+      .then((snap) => live && setPermMode(snap))
+      .catch(() => live && setPermMode(null));
+    return () => {
+      live = false;
+    };
   }, [sessionId]);
   const scopeOf = (name: string) => configured.find((c) => c.name === name)?.scope;
 
@@ -1467,11 +1497,10 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
     }
   };
   const servers = reply?.ok ? reply.servers : [];
-  // A mode that already asks before every tool reads no override, so the toggles change nothing
-  // today. They still draw: the mode can change while this tab is open. One line says it once,
-  // because it is a fact about the session and not about any one server.
-  const askIsInert =
-    permMode !== null && permMode.mode !== "bypassPermissions" && permMode.mode !== "auto";
+  // A mode that would not have auto-allowed the tool reads no override, so the toggles change
+  // nothing today. They still draw: the mode can change while this tab is open. One line says it
+  // once, because it is a fact about the session and not about any one server.
+  const askIsInert = permMode !== null && !AUTO_ALLOWING.has(permMode.mode);
   // Configured but not in the process: the plugin-served `plugin:` names never appear in a config
   // file, so the match is by plain name.
   const pendingRows = configured.filter((c) => !servers.some((s) => s.name === c.name));
@@ -1549,6 +1578,7 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
                 type="button"
                 style={btn}
                 aria-pressed={askOverrides[s.name] === true}
+                aria-label={`Always ask: ${s.name}`}
                 data-omc-mcp-ask=""
                 disabled={busy !== null}
                 onClick={() => setAsk(s.name, !(askOverrides[s.name] === true))}
@@ -1631,7 +1661,7 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
       ))}
       {askIsInert && servers.length > 0 && (
         <span style={{ ...meta, padding: "2px 4px", marginTop: 8 }}>
-          This session asks before every tool, so this changes nothing yet.
+          This session already asks before an MCP tool runs, so Always ask changes nothing yet.
         </span>
       )}
       {note && <span style={{ ...meta, padding: "2px 4px", marginTop: 8 }}>{note}</span>}
@@ -1794,8 +1824,27 @@ function ReadoutState({
     );
   if (error !== "") return <span style={errText}>{error}</span>;
   if (reply === null) return <span style={stateText}>Loading…</span>;
-  if (!reply.ok) return <span style={errText}>{reply.error}</span>;
   return null;
+}
+
+/**
+ * The fold both readout lists share: eight rows, a button past that, and back to eight. Returns how
+ * many to show, whether that is all of them, and the button to draw when there is more than a fold.
+ */
+function useFold(total: number) {
+  const [shown, setShown] = useState(8);
+  const allShown = shown >= total;
+  const button =
+    total > 8 ? (
+      <button
+        type="button"
+        style={{ ...btn, fontSize: 12, margin: "2px 10px" }}
+        onClick={() => setShown(allShown ? 8 : total)}
+      >
+        {allShown ? "Show fewer" : `Show all ${total}`}
+      </button>
+    ) : null;
+  return { shown, allShown, button };
 }
 
 /** Sort rank for permission behaviour: deny before ask before allow. */
@@ -1803,14 +1852,13 @@ const ruleRank = (r: string): number => (r === "deny" ? 0 : r === "ask" ? 1 : 2)
 
 /**
  * The permission rules readout: one row per rule, behaviour as a pill, the CLI's own display text
- * in mono, the source beside it. The eight it shows folded are the deny and ask rules first, so a
- * truncated list never hides a restriction; unfolded it is the CLI's own order, which is the order
- * the rules are applied in.
+ * in mono, the source beside it. The eight it shows folded are the deny and ask rules first, so what
+ * a fold hides is an allow rule for as long as there are fewer than eight restrictions; unfolded it
+ * is the CLI's own order, which is the order the rules are applied in.
  */
 function RulesList({ rules }: { rules: PermissionRules["rules"] }) {
-  const [shown, setShown] = useState(8);
+  const { shown, allShown, button } = useFold(rules.length);
   // Deny first, then ask, then allow — within each group the CLI's own order is preserved.
-  const allShown = shown >= rules.length;
   const visible = allShown
     ? rules
     : [...rules].toSorted((a, b) => ruleRank(a.behavior) - ruleRank(b.behavior)).slice(0, shown);
@@ -1836,15 +1884,7 @@ function RulesList({ rules }: { rules: PermissionRules["rules"] }) {
           <span style={{ ...meta, flex: "none" }}>{r.source}</span>
         </div>
       ))}
-      {rules.length > 8 && (
-        <button
-          type="button"
-          style={{ ...btn, fontSize: 12, margin: "2px 10px" }}
-          onClick={() => setShown(allShown ? 8 : rules.length)}
-        >
-          {allShown ? "Show fewer" : `Show all ${rules.length}`}
-        </button>
-      )}
+      {button}
     </div>
   );
 }
@@ -1852,9 +1892,8 @@ function RulesList({ rules }: { rules: PermissionRules["rules"] }) {
 /** The hooks readout: one row per hook, the event and the command in mono, the matcher and the
  *  source beside them, in the order the CLI listed them. */
 function HooksList({ hooks }: { hooks: HooksListing["hooks"] }) {
-  const [shown, setShown] = useState(8);
+  const { shown, button } = useFold(hooks.length);
   const visible = hooks.slice(0, shown);
-  const allShown = shown >= hooks.length;
   return (
     <div>
       {visible.map((h, i) => (
@@ -1874,15 +1913,7 @@ function HooksList({ hooks }: { hooks: HooksListing["hooks"] }) {
           <span style={{ ...meta, flex: "none" }}>{h.source}</span>
         </div>
       ))}
-      {hooks.length > 8 && (
-        <button
-          type="button"
-          style={{ ...btn, fontSize: 12, margin: "2px 10px" }}
-          onClick={() => setShown(allShown ? 8 : hooks.length)}
-        >
-          {allShown ? "Show fewer" : `Show all ${hooks.length}`}
-        </button>
-      )}
+      {button}
     </div>
   );
 }
@@ -2689,9 +2720,9 @@ interface PermissionModeState {
   error?: string;
 }
 /** What `GET /permissions` reports: the rules and hooks the session's live process loaded. */
-type PermissionsReply =
-  | ({ ok: true } & PermissionRules & HooksListing)
-  | { ok: false; error: string };
+/** What `GET /permissions` returns on success. A failure answers 409, which `readJson` throws, so
+ *  the failed arm never reaches state: the reason lands in `permissionsError` instead. */
+type PermissionsReply = { ok: true } & PermissionRules & HooksListing;
 
 // The three dsh presets in strict id→label order (kept for text-fallback trigger lookup).
 const PRESETS = [

@@ -49,8 +49,10 @@ if (askAllCount > 0) {
   if (cleanLines.length === 1) {
     console.log("note: clean working tree exercised");
     expect(
-      (await p.locator("[data-omc-diff-review]").count()) === 0,
-      "clean: neither control renders",
+      (await p.locator("[data-omc-diff-review]").count()) === 0 &&
+        (await p.locator("[data-omc-diff-ask-all]").count()) === 0 &&
+        (await p.locator("[data-omc-diff-ask]").count()) === 0,
+      "clean: none of the three controls render",
     );
   } else {
     console.log("note: totals line did not match either case; both skipped");
@@ -105,7 +107,18 @@ if (mcpButtons.length > 0) {
       pressed === "false",
       `MCP ask button aria-pressed is "false" (${JSON.stringify(pressed)})`,
     );
+    // One accessible name per row, not the same "Always ask" on every one of them.
+    const askLabel = await btn.getAttribute("aria-label");
+    expect(
+      askLabel !== null &&
+        askLabel.startsWith("Always ask: ") &&
+        askLabel.length > "Always ask: ".length,
+      `MCP ask button names its server (${JSON.stringify(askLabel)})`,
+    );
   }
+  // Nothing here clicks: the Claude behind these rows is the owner's daily driver, and an override
+  // it did not ask for would outlive this script. What a click does is covered by the route test in
+  // src/sessions.test.ts and by the adapter test for setMcpAsk.
 } else {
   console.log("note: no MCP server rows present; button assertions skipped");
 }

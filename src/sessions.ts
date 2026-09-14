@@ -2221,9 +2221,13 @@ export function registerSessionRoutes(
                 url.pathname === `${ROUTE_PREFIX}/side-questions`
               ) {
                 const body = await readBody(req);
-                const sid = String(body.session ?? "");
-                const question = String(body.question ?? "").trim();
-                if (!sid || !question)
+                const { session: sid, question: raw } = body;
+                // Typed, not coerced: `String({})` is `"[object Object]"`, which passes a non-empty
+                // check and reaches the aside ring as a question nobody wrote.
+                if (typeof sid !== "string" || typeof raw !== "string")
+                  return json(res, 400, { error: "session and question required" });
+                const question = raw.trim();
+                if (sid === "" || question === "")
                   return json(res, 400, { error: "session and question required" });
                 const reply = await askAside(sid, question, {
                   withDiff: body.withDiff === true,
