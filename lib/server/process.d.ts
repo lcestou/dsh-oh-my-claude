@@ -46,6 +46,8 @@ export type ClaudeEvent = {
     slash_commands?: JsonValue;
     /** subtype "init": every tool name the session has; MCP ones read `mcp__<server>__<tool>`. */
     tools?: JsonValue;
+    /** subtype "compact_boundary": `trigger` and `pre_tokens` always, `post_tokens` and
+     *  `duration_ms` when the CLI chose to fill them in. */
     compact_metadata?: Record<string, unknown>;
     status?: string | null;
     compact_result?: string;

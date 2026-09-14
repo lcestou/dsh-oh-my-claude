@@ -1684,6 +1684,26 @@ console.log("ok");
   });
   assert.equal(out.at(-1).block.type, "reasoning", "compaction rides the reasoning lane");
   assert.match(manual.at(-1).block.text, /\(manual\)/, "manual trigger, no token count");
+  // The CLI fills post_tokens and duration_ms when it has them, and both are optional in its own
+  // schema, so the line has to read whole either way.
+  const full = t.translate({
+    type: "system",
+    subtype: "compact_boundary",
+    compact_metadata: {
+      trigger: "auto",
+      pre_tokens: 150000,
+      post_tokens: 42000,
+      duration_ms: 8430,
+    },
+  });
+  assert.match(full.at(-1).block.text, /\(auto, 150000 tokens before, 42000 after, 8\.4s\)/);
+  // "after" without a "before" to pair with is dropped rather than left dangling.
+  const noPre = t.translate({
+    type: "system",
+    subtype: "compact_boundary",
+    compact_metadata: { trigger: "auto", post_tokens: 42000 },
+  });
+  assert.match(noPre.at(-1).block.text, /\(auto\)/, "a lone post_tokens says nothing on its own");
 }
 {
   // Auto-memory traffic: saved files and recalls show as one reasoning line each; an empty recall is silent.

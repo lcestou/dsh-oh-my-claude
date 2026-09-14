@@ -20,6 +20,7 @@ Staged as 1.1.0 in `package.json`.
 - The README is a front page now. The manual moved to `docs/`.
 - Archive filters run edge to edge with the rows they filter.
 - Claude Code compacts its own context, so the plugin stops reporting a context window to dsh's compactor. dsh no longer compacts on top of it.
+- The compaction line says what the context came down to and how long it took, where the CLI reports them.
 
 ### Fixed
 
