@@ -2,6 +2,7 @@ import { type FSWatcher } from "node:fs";
 import type { Spawner, SubprocessHandle, ContextUsage, WorkspaceDiff, McpServerStatus, CliModel, PermissionRules, HooksListing } from "./process.js";
 import { LlmAdapter, type ContentBlock, type GenerateOptions, type LlmModelInfo, type LlmResolvedModelInfo, type StreamChunk } from "@deepseek-ai/dsh-llm";
 import z from "@deepseek-ai/schemastery";
+import type { ContextSource } from "./context-sources.js";
 import { type PickerSettings, type RemoteWorkspace } from "./sessions.js";
 import { readUsage } from "./usage.js";
 import { type ClaudeEvent, ClaudeProcess } from "./process.js";
@@ -394,13 +395,16 @@ export declare function selectTurns(messages: LooseMessage[] | undefined, resumi
  *  bundle is one `<system-reminder>` with `Instructions from: <path>` headers; a block runs to
  *  the next header or the closing tag. Empty when nothing but the wrapper would remain. */
 export declare function withoutNativeInstructions(text: string): string;
+/** Which withheld block a message is, if any. `kind: "plugin"` alone is never enough: the wake
+ *  notice and the background job notices share that kind and are how those features report back. */
+export declare function contextSourceOf(m: LooseMessage): ContextSource | undefined;
 /**
  * The turn's text as one stdin prompt. A turn with assistant text in it is labelled by role so the
  * history stays legible; a plain user turn is sent as it was typed, with no label. A turn that
  * carries only an image has no text to send, so it becomes `(see attached)` and the image rides
  * along in `imageRefs`.
  */
-export declare function buildPrompt(turns: LooseMessage[]): string;
+export declare function buildPrompt(turns: LooseMessage[], drops?: ReadonlySet<ContextSource>): string;
 /** An image loaded from dsh's attachment store, ready for the stdin line, plus the path of the
  *  copy kept for Claude's tools when one could be written. */
 type LoadedImage = {

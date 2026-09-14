@@ -30,6 +30,7 @@ import {
   createUserMessage,
 } from "@deepseek-ai/dsh-llm";
 import z from "@deepseek-ai/schemastery";
+import type { ContextSource } from "./context-sources.js";
 import {
   accountIdentity,
   forgetIdentity,
@@ -982,11 +983,29 @@ export function withoutNativeInstructions(text: string): string {
   return kept.join("").trimEnd() + (close ? close[0] : "");
 }
 
-/** Prompt text of one dsh message, with Claude-native instruction files filtered out. */
-const promptTextOf = (m: LooseMessage): string =>
-  m.source?.kind === "agent-instructions"
+/** Which withheld block a message is, if any. `kind: "plugin"` alone is never enough: the wake
+ *  notice and the background job notices share that kind and are how those features report back. */
+export function contextSourceOf(m: LooseMessage): ContextSource | undefined {
+  if (m.source?.kind === "agent-instructions") return "instructions";
+  if (m.source?.kind === "skill-catalog") return "skills";
+  if (m.source?.kind === "plugin" && m.source.plugin === "@deepseek-ai/dsh-system-prompt")
+    return "runtime";
+  return undefined;
+}
+
+/** Prompt text of one dsh message: a withheld block answers empty, and the instruction bundle keeps
+ *  losing its CLAUDE.md sections whatever the switches say, since Claude Code loads those itself. */
+const promptTextOf = (m: LooseMessage, drops: ReadonlySet<ContextSource> = new Set()): string => {
+  const source = contextSourceOf(m);
+  if (source !== undefined && drops.has(source)) return "";
+  return m.source?.kind === "agent-instructions"
     ? withoutNativeInstructions(textOf(m.content))
     : textOf(m.content);
+};
+
+/** The turn's parts, with withheld blocks removed. */
+const partsOf = (turns: LooseMessage[], drops: ReadonlySet<ContextSource>) =>
+  turns.map((m) => ({ role: m.role, text: promptTextOf(m, drops) })).filter((t) => t.text !== "");
 
 /**
  * The turn's text as one stdin prompt. A turn with assistant text in it is labelled by role so the
@@ -994,10 +1013,16 @@ const promptTextOf = (m: LooseMessage): string =>
  * carries only an image has no text to send, so it becomes `(see attached)` and the image rides
  * along in `imageRefs`.
  */
-export function buildPrompt(turns: LooseMessage[]): string {
-  const parts = turns
-    .map((m) => ({ role: m.role, text: promptTextOf(m) }))
-    .filter((t) => t.text !== "");
+export function buildPrompt(
+  turns: LooseMessage[],
+  drops: ReadonlySet<ContextSource> = new Set(),
+): string {
+  const filtered = partsOf(turns, drops);
+  // A turn dsh opened with nothing but a withheld block would leave no prompt at all, and the CLI
+  // needs one, so that turn goes out unfiltered: failing a turn is a worse answer than sending the
+  // block it was about. The live case is the runtime snapshot, which re-sends itself whenever the
+  // file or approval policy changes and can arrive as the only message of a turn.
+  const parts = filtered.length > 0 ? filtered : partsOf(turns, new Set());
   if (!parts.some((t) => t.role === "user")) {
     // Attachment-only turn: the user sent an image (or other non-text block) with no typed
     // text. Images ride along separately via imageRefs, but Claude still needs a non-empty
