@@ -6,7 +6,7 @@ Only 1.0.0 reached npm. Everything below it was released from the repository whi
 
 ## [Unreleased]
 
-Staged as 1.1.0 in `package.json`.
+## [1.1.0] - 2026-09-14
 
 ### Added
 
@@ -17,10 +17,10 @@ Staged as 1.1.0 in `package.json`.
 
 ### Changed
 
-- The context breakdown is drawn the way dsh draws its own meter: a filled bar across the window, a
-  colour per category and a legend row each, with the model the percentage is measured against. It
-  replaces dsh's readout in that popover rather than sitting above it, so there is one set of
-  numbers instead of two that disagree.
+- The context breakdown is drawn the way dsh draws its own meter, with a filled bar across the
+  window, a colour per category and a legend row each, plus the model the percentage is measured
+  against. It replaces dsh's readout in that popover rather than sitting above it, so there is one
+  set of numbers instead of two that disagree.
 - The README is a front page now. The manual moved to `docs/`.
 - Archive filters run edge to edge with the rows they filter.
 - Claude Code compacts its own context, so the plugin stops reporting a context window to dsh's compactor. dsh no longer compacts on top of it.
@@ -30,14 +30,14 @@ Staged as 1.1.0 in `package.json`.
 
 - The ring beside the send button filled to 100% during any long turn. dsh fills it from the prompt
   side of the last usage sample, which Claude Code reports with every API call of the turn summed
-  into it: a turn of a hundred calls reads as millions of tokens. The arc and its label now follow
+  into it, so a turn of a hundred calls reads as millions of tokens. The arc and its label now follow
   the CLI's own occupancy, the same figure the popover shows.
 - dsh's context ring read a session at a fifth of its real fill. The window reported to dsh was the
   one the model can hold, while Claude Code runs several of them against a smaller one until 1M is
-  turned on: an Opus 5 session 83% of the way to compaction showed as 17%. The window is now taken
+  turned on, so an Opus 5 session 83% of the way to compaction showed as 17%. The window is now taken
   from the session itself, so it is right for a model released after this build and follows a model
   switched mid-session, including a session left on the mount's default model.
-- The cost pill billed every turn for the whole session again. Claude Code's `total_cost_usd` and `duration_api_ms` are running totals for the process, not the turn's own figures, and the pill summed them: a session of 50 turns read as many times its real cost, and "last turn" was the running total rather than the last turn. The turn's own share is now taken where the record is written, so the pill, the cost dialog and the `/turns` route all agree with `/cost`. Records written before this fix still hold the old numbers.
+- The cost pill billed every turn for the whole session again. Claude Code's `total_cost_usd` and `duration_api_ms` are running totals for the process, not the turn's own figures, and the pill summed them, so a session of 50 turns read as many times its real cost and "last turn" was the running total rather than the last turn. The turn's own share is now taken where the record is written, so the pill, the cost dialog and the `/turns` route all agree with `/cost`. Records written before this fix still hold the old numbers.
 - The context breakdown counted the compaction buffer as conversation. Rows are classified on the CLI's own `kind` field, which is what tells free space and the compaction reserve apart from content; the English row names it used to match are explicitly not for this.
 - Plan usage dropped every window the endpoint marks `is_active: false`, which is how a live account's own 5-hour and weekly windows arrive. The two survived by falling back to the legacy fields that repeat them; a per-model weekly row, which has no legacy twin, disappeared.
 - The keeper test left a keeper and its child alive on every run. They accumulated.
