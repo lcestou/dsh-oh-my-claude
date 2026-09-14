@@ -3105,7 +3105,13 @@ function watchContextMeter(ctx: ClientCtx) {
         // away. Two bars disagreeing by tens of thousands of tokens is worse than one, so the
         // CLI's own answer replaces it — and only when there is an answer, so a session with no
         // live process still gets dsh's estimate rather than nothing.
-        if (reply.ok) hideNativeContext(panel, block);
+        if (!reply.ok) return;
+        hideNativeContext(panel, block);
+        // The rule under this block divided it from dsh's readout. With that readout gone it is the
+        // last thing in the dialog, and a rule under the last thing is a line to nowhere.
+        block.style.borderBottom = "none";
+        block.style.paddingBottom = "0";
+        block.style.marginBottom = "0";
       });
     loadUsage(provider).then(
       (reply) => {
