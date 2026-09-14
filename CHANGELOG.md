@@ -6,11 +6,14 @@ Only 1.0.0 reached npm. Everything below it was released from the repository whi
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-09-14
+
 ### Fixed
 
-- The turn usage pill appears on turns that used tools. Token counts were reported once per turn, and dsh needs one per step to prove the total, so the pill showed up on single-step turns and went missing on the rest. Each step now reports what it spent.
-- Tokens per second, per turn and in the session statistics. The whole turn's output was charged against one step's decode window, which read about four times faster than the turn ran.
-- The usage popover breaks out reasoning tokens, which Claude Code reports and the plugin was dropping.
+- The turn usage pill appears on turns that used tools. dsh proves a turn's token total by folding one usage sample per step, and the plugin reported usage once per turn, on the result frame. A single-step turn had its sample and drew the pill. A turn that ran tools left most of its steps without one, and dsh drops a total it cannot prove, so the pill went missing on 13 turns of a 27-turn session. Each step now reports what it spent, summed from the per-message counts Claude Code streams while the turn runs.
+- Tokens per second, on the turn and in the session statistics. Both folds count a step's decode time only when that step also carries usage, so a turn's whole output was divided by one step's decode window. The same session reads 57 tok/s where it read 183.
+- Reasoning tokens in the usage popover. Claude Code reports them with every message and the plugin dropped them, so that row never appeared.
+- The running dots take the accent colour wherever dsh draws them, including the subagent list. They stayed blue outside the turn status row because dsh sets the colour on the element itself, which beats a value inherited from the page.
 
 ## [1.1.0] - 2026-09-14
 
