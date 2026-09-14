@@ -65,7 +65,7 @@ await wait(100);
 assert.equal(readKeeperInfo(dir)?.exit?.code, 3, "exit recorded in keeper.json");
 // keeper.log records startup, attach/detach, kill, and child exit for post-mortem evidence
 const logDir = mkdtempSync(join(tmpdir(), "omc-keeper-log-"));
-const hLog = await spawnKeeper(
+await spawnKeeper(
   logDir,
   {
     command: process.execPath,
@@ -94,6 +94,13 @@ const logContent = readFileSync(join(logDir, "keeper.log"), "utf8");
 assert.ok(logContent.includes("start pid="), "keeper.log has start line");
 assert.ok(logContent.includes("attach buffered="), "keeper.log has attach line");
 assert.ok(logContent.includes("detach buffered="), "keeper.log has detach line");
+// The raw socket above replaced hLog's client, and the keeper destroyed the one it displaced.
+// `hLog.terminate()` would write its kill into that dead socket, so the keeper would never hear
+// it and would outlive the run holding its child (it ignores SIGTERM by design). Kill it over a
+// live socket instead. 2026-09-14: 925 of these had piled up, one per test run.
+const hLogKill = await attachKeeper(logDir, 2000);
+hLogKill.terminate();
+await hLogKill.done;
 // Send kill to set endedBy=client, then check keeper.json.
 const logDir2 = mkdtempSync(join(tmpdir(), "omc-keeper-log2-"));
 const h4 = await spawnKeeper(
@@ -154,9 +161,24 @@ await fresh.done;
 console.log("keeper-respawn ok");
 
 // Leave no keeper behind: every handle above is ended here.
-for (const h of [h1, h2, hLog]) {
+for (const h of [h1, h2]) {
   try {
     h.terminate();
   } catch {}
 }
 await Promise.race([h1.done, wait(3000)]);
+
+// And prove it. A keeper survives its child by 3 s so an attached client can read the exit, so
+// poll rather than assert once. Without this the leak above was invisible: the suite passed
+// green while every run left a keeper and a `claude` behind for the box to accumulate.
+const pids = [oldPid, ...[dir, logDir, logDir2, raceDir].map((d) => readKeeperInfo(d)?.pid)].filter(
+  (p): p is number => typeof p === "number",
+);
+const deadline = Date.now() + 8000;
+let alive = pids.filter((p) => pidAlive(p));
+while (alive.length > 0 && Date.now() < deadline) {
+  await wait(200);
+  alive = pids.filter((p) => pidAlive(p));
+}
+assert.deepEqual(alive, [], `keepers outlived the test: ${alive.join(", ")}`);
+console.log("keeper-cleanup ok");
