@@ -78,6 +78,7 @@ import { Spark, sparkNode } from "./spark.js";
 import { AccessShield, OhMyClaudeControl } from "./panel.js";
 import { ConfirmButton } from "./tune.js";
 import { AddWorkspaceFlow, canBrowseDirs, OPEN_EVENT } from "./picker.js";
+import { takeDraft, subscribeDraft } from "./draft.js";
 import { markTitle, newlyWaiting, noticesOn, type NoticeSnapshot } from "./notices.js";
 import { SETTINGS_SCOPES, SCOPE_LABELS, overrideNote } from "./settings.js";
 import type { SettingsScope, SettingsScopeInfo } from "./settings.js";
@@ -5450,6 +5451,27 @@ function StarterSlot({
   );
 }
 
+/** Renderless: writes a draft the panel queued into the composer. The panel has no `setDraft` of its
+ *  own, and this slot does, so Review my changes crosses here. */
+function DraftRelay({
+  sessionId,
+  inputActions,
+}: {
+  sessionId?: string;
+  inputActions?: { setDraft: (text: string) => void };
+}) {
+  useEffect(() => {
+    if (sessionId === undefined || inputActions === undefined) return;
+    const flush = () => {
+      const text = takeDraft(sessionId);
+      if (text !== undefined) inputActions.setDraft(text);
+    };
+    flush(); // queued before this mounted, e.g. the panel closed on the same click
+    return subscribeDraft(flush);
+  }, [sessionId, inputActions]);
+  return null;
+}
+
 /** One `/btw` side question as the client bubble draws it (mirrors the adapter's `AsideEntry`). */
 interface AsideItem {
   id: string;
@@ -6065,6 +6087,10 @@ export function apply(ctx: ClientCtx) {
     ctx.slots.register(
       { name: "conversation.input.dock", id: "claude-starter", order: 44 },
       (props) => <StarterSlot {...props} ctx={ctx} />,
+    );
+    ctx.slots.register(
+      { name: "conversation.input.dock", id: "claude-draft-relay", order: 43 },
+      (props) => <DraftRelay {...props} />,
     );
     // The tool headers' icons are cloned out of this hidden sheet; it rides along with the dock
     // because that is mounted wherever a conversation is, which is the only place headers exist.
