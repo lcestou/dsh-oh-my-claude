@@ -279,24 +279,35 @@ export function formatToolResult(
   return `${head}\n${fence(capLines(body), lang)}`;
 }
 
+/** A token counter off the wire: the number itself, or 0 for anything else a frame might carry. */
+const countOf = (v: unknown): number => (typeof v === "number" && v > 0 ? v : 0);
+
 function usageEvent(u: {
   input_tokens?: number;
   output_tokens?: number;
   cache_read_input_tokens?: number;
   cache_creation_input_tokens?: number;
+  reasoning_tokens?: number;
 }): StreamChunk {
   // dsh TokenUsage: inputTokens excludes cache hits; the three prompt counters plus output sum to totalTokens.
   const input = u.input_tokens ?? 0;
   const output = u.output_tokens ?? 0;
   const cacheRead = u.cache_read_input_tokens ?? 0;
   const cacheWrite = u.cache_creation_input_tokens ?? 0;
+  // Every counter is written even at zero. `aggregateAttempts` keeps a turn's cache bucket only
+  // when *every* attempt of that turn carries one (`cacheRead.every(isCount)`), so a single step
+  // that omits a zero drops the cache-hit row off the whole turn rather than adding nothing to it.
   const usage: TokenUsage = {
     inputTokens: input,
     outputTokens: output,
+    cacheReadTokens: cacheRead,
+    cacheWriteTokens: cacheWrite,
     totalTokens: input + cacheRead + cacheWrite + output,
   };
-  if (cacheRead) usage.cacheReadTokens = cacheRead;
-  if (cacheWrite) usage.cacheWriteTokens = cacheWrite;
+  // Same all-or-nothing rule as the cache bucket, and `normalizeUsage` rejects the turn outright if
+  // reasoning ever exceeds output, so the count is clamped rather than trusted.
+  if (u.reasoning_tokens !== undefined)
+    usage.reasoningTokens = Math.min(u.reasoning_tokens, output);
   return { type: "usage", usage };
 }
 
@@ -469,6 +480,25 @@ export class Translator {
    *  the message it closes, not the turn, so the figure summed here is what the status row shows;
    *  reporting each message's own count made the row drop back to a few hundred at every tool step. */
   private turnOutput = 0;
+  /** This step's own token usage, summed over the assistant messages it covered.
+   *
+   *  A step is one `stream()` call, and it ends when tool calls are relayed to dsh — so a step runs
+   *  one API call per assistant message and several when the CLI works through its own Read, Bash
+   *  and Edit without ever handing dsh a call. `message_delta` reports each of those messages
+   *  exactly once and carries all four counters settled, so summing them is what this step really
+   *  spent. Emitted by `takeStepUsage` at the step's end, because dsh fails a stream that reports
+   *  usage more than once ("LLM stream emitted usage more than once"). */
+  private stepUsage = {
+    input_tokens: 0,
+    output_tokens: 0,
+    cache_read_input_tokens: 0,
+    cache_creation_input_tokens: 0,
+    reasoning_tokens: 0,
+  };
+  /** Whether any `message_delta` was counted, which is what makes `stepUsage` the better source. */
+  private sawUsageDelta = false;
+  /** The result frame's `usage`: the whole turn's, kept only for a CLI too old to stream partials. */
+  private resultUsage: Parameters<typeof usageEvent>[0] | undefined;
   /** callId → original input JSON string, kept so Edit can build meta.diffs from it. */
   readonly callInputs = new Map<string, string>();
   /** callId → the seq onToolCall returned, so a re-fired block never appends `tool/call` twice. */
@@ -872,7 +902,12 @@ export class Translator {
       case "tool_progress":
         return this.toolProgress(event);
       case "stream_event":
-        return this.partial(event.event ?? { type: "" });
+        // A nested agent's frames are tagged; its tokens belong to no step of ours, and the result
+        // frame this is reconciled against excludes them too.
+        return this.partial(
+          event.event ?? { type: "" },
+          (event.parent_tool_use_id ?? undefined) !== undefined,
+        );
       case "assistant":
         return this.assistant(
           event.message?.content ?? [],
@@ -914,7 +949,8 @@ export class Translator {
           );
         }
         if (event.usage) {
-          events.push(usageEvent(event.usage));
+          // Kept, not emitted: `takeStepUsage` spends it only if this turn streamed no partials.
+          this.resultUsage = event.usage;
           this.onProgress?.({ output: event.usage.output_tokens ?? 0 });
         }
         // Per-turn accounting: forward the summary to the adapter's ring buffer.
@@ -1018,8 +1054,35 @@ export class Translator {
     }
   }
 
+  /** One summed usage chunk for the step that is ending, or nothing when none can be proven.
+   *
+   *  Called once per `stream()` call, right before its `finish`. The result frame is only a
+   *  fallback: it carries the whole turn's usage, so on a turn of several steps charging it to
+   *  whichever step happened to see it is what left every other step with no sample at all — and
+   *  `deriveTurnTokenUsage` drops the turn's pill unless every step has one. */
+  takeStepUsage(): StreamChunk[] {
+    if (this.sawUsageDelta) {
+      const chunk = usageEvent(this.stepUsage);
+      this.stepUsage = {
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_read_input_tokens: 0,
+        cache_creation_input_tokens: 0,
+        reasoning_tokens: 0,
+      };
+      this.sawUsageDelta = false;
+      return [chunk];
+    }
+    // No partials on the wire: an older CLI without `--include-partial-messages`, where the result
+    // frame is the only usage there is and the multi-step turn stays unprovable as it is today.
+    if (this.resultUsage === undefined) return [];
+    const fallback = usageEvent(this.resultUsage);
+    this.resultUsage = undefined;
+    return [fallback];
+  }
+
   // SAFETY: ev is ClaudeStreamPartial from Claude Code stream-json protocol
-  partial(ev: ClaudeStreamPartial) {
+  partial(ev: ClaudeStreamPartial, subagent = false) {
     switch (ev.type) {
       case "message_start": {
         this.sawPartial = true;
@@ -1102,12 +1165,27 @@ export class Translator {
         // assistant message, so the figure climbs a step per tool step. Nothing is rendered from it
         // — it feeds the running count and the frame stays bookkeeping otherwise.
         if (ev?.type === "message_delta") {
-          // SAFETY: a stream event off the wire, read as unknown; the one field used is checked as a
-          // number below, so a frame of another shape reports nothing rather than throwing.
-          const out = (ev as { usage?: { output_tokens?: unknown } }).usage?.output_tokens;
-          if (typeof out === "number" && out > 0) {
+          // SAFETY: a stream event off the wire, read as unknown; every field used is checked as a
+          // number below, so a frame of another shape counts nothing rather than throwing.
+          const u = (ev as { usage?: Record<string, unknown> }).usage;
+          const out = countOf(u?.output_tokens);
+          if (out > 0) {
             this.turnOutput += out;
             this.onProgress?.({ output: this.turnOutput });
+          }
+          if (u !== undefined && !subagent) {
+            // Measured on 2.1.270: the four counters summed over a turn's `message_delta` frames
+            // equal the result frame's to the token, thinking included. Subagent messages are left
+            // out because the result frame leaves them out too, and the two have to agree.
+            this.sawUsageDelta = true;
+            this.stepUsage.input_tokens += countOf(u.input_tokens);
+            this.stepUsage.output_tokens += out;
+            this.stepUsage.cache_read_input_tokens += countOf(u.cache_read_input_tokens);
+            this.stepUsage.cache_creation_input_tokens += countOf(u.cache_creation_input_tokens);
+            // SAFETY: read as unknown off the wire and passed straight to `countOf`, which yields 0
+            // for anything that is not a positive number, so a frame of another shape adds nothing.
+            const details = u.output_tokens_details as { thinking_tokens?: unknown } | undefined;
+            this.stepUsage.reasoning_tokens += countOf(details?.thinking_tokens);
           }
           return [];
         }

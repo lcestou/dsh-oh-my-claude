@@ -458,16 +458,66 @@ const done = tr.translate({
 // SAFETY: partial fake for tests
 assert.deepEqual(
   done.map((e: { type: string }) => e.type),
-  ["usage", "finish"],
+  ["finish"],
 );
-assert.deepEqual(done[0].usage, {
-  inputTokens: 2,
-  outputTokens: 4,
-  totalTokens: 16,
-  cacheReadTokens: 10,
-});
-assert.equal(done[1].reason.kind, "stop");
+assert.equal(done[0].reason.kind, "stop");
 assert.equal(tr.finished, true);
+// This CLI streamed no `message_delta`, so the result frame's own usage is the fallback the step
+// closes with. Every counter is written even at zero: one attempt omitting the cache bucket drops
+// the cache-hit row off the whole turn.
+assert.deepEqual(tr.takeStepUsage(), [
+  {
+    type: "usage",
+    usage: {
+      inputTokens: 2,
+      outputTokens: 4,
+      cacheReadTokens: 10,
+      cacheWriteTokens: 0,
+      totalTokens: 16,
+    },
+  },
+]);
+// Spent once: a second step must not re-report the turn's figures.
+assert.deepEqual(tr.takeStepUsage(), []);
+
+// With partials on the wire, a step is its own messages summed — not the turn's total, and not the
+// last message's alone. Two messages, as when the CLI runs its own Read between them.
+const trs = new Translator() as any;
+const delta = (usage: object) =>
+  trs.translate({ type: "stream_event", event: { type: "message_delta", usage } });
+delta({
+  input_tokens: 10,
+  output_tokens: 337,
+  cache_read_input_tokens: 4163,
+  cache_creation_input_tokens: 16576,
+  output_tokens_details: { thinking_tokens: 256 },
+});
+delta({
+  input_tokens: 10,
+  output_tokens: 544,
+  cache_read_input_tokens: 20739,
+  cache_creation_input_tokens: 1354,
+  output_tokens_details: { thinking_tokens: 453 },
+});
+// A nested agent's frames are the result frame's business, not this step's.
+trs.translate({
+  type: "stream_event",
+  parent_tool_use_id: "t1",
+  event: { type: "message_delta", usage: { input_tokens: 99, output_tokens: 99 } },
+});
+assert.deepEqual(trs.takeStepUsage(), [
+  {
+    type: "usage",
+    usage: {
+      inputTokens: 20,
+      outputTokens: 881,
+      cacheReadTokens: 24902,
+      cacheWriteTokens: 17930,
+      reasoningTokens: 709,
+      totalTokens: 43733,
+    },
+  },
+]);
 
 // dsh tools called over the MCP bridge render as visible text rows, results too
 const trd = new Translator() as any;
