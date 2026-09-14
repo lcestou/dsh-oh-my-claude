@@ -586,7 +586,7 @@ export declare function dropSent<T extends LooseMessage>(messages: T[] | undefin
 /** What dsh delivered at this step boundary besides the tool result: steers the user sent while
  *  the tool ran, subagent notices, other injections. Claude only sees the tool result, so they
  *  ride along with it. Empty when there is nothing. */
-export declare function stepContextFor(messages: LooseMessage[] | undefined): string;
+export declare function stepContextFor(messages: LooseMessage[] | undefined, drops?: ReadonlySet<ContextSource>): string;
 /** A fresh user message that is nothing but `/btw <question>`, and the question it carries. */
 export interface SideQuestion {
     message: LooseMessage;

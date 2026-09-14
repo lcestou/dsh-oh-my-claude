@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { PassThrough, Writable } from "node:stream";
 import { createInterface } from "node:readline";
 import type { AskUserQuestionItem, JsonValue, SubprocessRuntime } from "./dsh.js";
+import type { ContextSource } from "./context-sources.js";
 import { STATE_DIR } from "./state.js";
 export type { JsonValue } from "./dsh.js";
 
@@ -994,6 +995,8 @@ export interface TurnPrep {
   spec: ClaudeProcessSpec;
   accessMode?: string;
   input: string | null;
+  /** The context blocks the Settings switches withhold, read once when this turn was assembled. */
+  drops?: ReadonlySet<ContextSource>;
 }
 
 /** Everything a Claude process needs at spawn: where it runs, how it is reached, what it may do. */

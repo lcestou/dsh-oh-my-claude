@@ -1689,12 +1689,15 @@ export function dropSent<T extends LooseMessage>(
 /** What dsh delivered at this step boundary besides the tool result: steers the user sent while
  *  the tool ran, subagent notices, other injections. Claude only sees the tool result, so they
  *  ride along with it. Empty when there is nothing. */
-export function stepContextFor(messages: LooseMessage[] | undefined): string {
+export function stepContextFor(
+  messages: LooseMessage[] | undefined,
+  drops: ReadonlySet<ContextSource> = new Set(),
+): string {
   const parts = [];
   for (const m of afterLastAssistant(messages)) {
     if (m.role !== "user") continue;
     if (m.source?.kind === "tool") continue;
-    const text = promptTextOf(m);
+    const text = promptTextOf(m, drops);
     if (text) parts.push(text);
   }
   return parts.length === 0
@@ -4159,7 +4162,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     if (cont.mode === "relay") {
       const relays = [...proc.relays.values()];
       proc.relays.clear();
-      const extra = stepContextFor(cont.options.messages); // steers and notices ride on the last result
+      const extra = stepContextFor(cont.options.messages, prep.drops); // steers and notices ride on the last result
       relays.forEach((relay, i) => {
         const result = cont.results[i];
         if (!result) return; // cannot happen: results were built from relays.keys()

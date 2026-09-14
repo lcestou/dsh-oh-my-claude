@@ -1,4 +1,5 @@
 import type { AskUserQuestionItem, JsonValue, SubprocessRuntime } from "./dsh.js";
+import type { ContextSource } from "./context-sources.js";
 export type { JsonValue } from "./dsh.js";
 /** Errors reach us as `unknown`; this is the one place they become text. */
 export declare const errorText: (e: unknown) => string;
@@ -508,6 +509,8 @@ export interface TurnPrep {
     spec: ClaudeProcessSpec;
     accessMode?: string;
     input: string | null;
+    /** The context blocks the Settings switches withhold, read once when this turn was assembled. */
+    drops?: ReadonlySet<ContextSource>;
 }
 /** Everything a Claude process needs at spawn: where it runs, how it is reached, what it may do. */
 export interface ClaudeProcessSpec {
