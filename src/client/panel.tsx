@@ -1939,6 +1939,10 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
   useEffect(() => {
     if (!running) return;
     let live = true;
+    // Clear both first: the error is read before the reply, so a failure left over from the previous
+    // process would outlive the read that replaced it.
+    setPermissions(null);
+    setPermissionsError("");
     fetch(`${ROUTE}/permissions?session=${encodeURIComponent(sessionId)}`)
       .then((r) => readJson<PermissionsReply>(r))
       .then((b) => live && setPermissions(b))
