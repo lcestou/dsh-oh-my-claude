@@ -2836,7 +2836,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     return mounts?.get(this.sessionProvider(sessionId) ?? "") ?? this;
   }
 
-  askSideQuestion(sessionId: string, question: string) {
+  askSideQuestion(sessionId: string, question: string, context?: string) {
     const q = question.trim();
     const entry: AsideEntry = {
       id: `omc-${randomUUID()}`,
@@ -2862,8 +2862,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       this.persistAsides(sessionId);
       return;
     }
+    // The ring keeps `q`, which is what the bubble and the Asides tab show. `context` (a diff, today)
+    // is sent to the CLI and dropped: a persisted ring is not the place for a copy of the tree.
+    const asked = context === undefined || context === "" ? q : `${q}\n\n${context}`;
     void owner
-      .control(proc, { subtype: "side_question", question: q, history: [] }, ASIDE_TIMEOUT_MS)
+      .control(proc, { subtype: "side_question", question: asked, history: [] }, ASIDE_TIMEOUT_MS)
       .then((reply) => {
         entry.pending = false;
         if (!reply.ok) {

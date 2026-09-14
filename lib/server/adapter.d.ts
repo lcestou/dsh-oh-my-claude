@@ -912,7 +912,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * here first, or the panel reports "no live Claude process" for a session that has one.
      */
     ownerFor(sessionId: string): ClaudeCodeAdapter;
-    askSideQuestion(sessionId: string, question: string): void;
+    askSideQuestion(sessionId: string, question: string, context?: string): void;
     /** Save (or clear, when the text is blank) an opening prompt for a session or for `default`. */
     setStarter(key: string, text: string | undefined): void;
     /** Persist a session's aside ring to disk so an answer survives a restart, eviction or hot reload. */

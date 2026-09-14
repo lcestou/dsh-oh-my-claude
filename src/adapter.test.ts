@@ -2575,6 +2575,39 @@ console.log("ok");
   a.permissionModes.delete("far");
 }
 {
+  // askSideQuestion accepts an optional `context` argument that is appended to the question sent to
+  // the CLI but never stored in the persisted ring: the ring shows just the question, which is what
+  // the bubble and the Asides tab display.
+  const a = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  a.stateDir = await mkdtemp(joinPath(tmpdir(), "omc-aside-context-"));
+  const wrote: string[] = [];
+  a.processes.set(
+    registryKey("claude-code", "ctx"),
+    fakeProc({ alive: true, write: (line: string) => (wrote.push(line), true) }),
+  );
+  a.askSideQuestion("ctx", "what changed?", "--- a.ts\n@@ -1 +1 @@\n-old\n+new");
+  assert.equal(a.sideQuestions.get("ctx")?.[0]?.error, undefined, "no error on the way out");
+  const parsed = JSON.parse(wrote[0] ?? "{}");
+  assert.equal(
+    parsed.request.question,
+    "what changed?\n\n--- a.ts\n@@ -1 +1 @@\n-old\n+new",
+    "the CLI receives question plus context",
+  );
+  assert.equal(
+    a.sideQuestions.get("ctx")?.[0]?.question,
+    "what changed?",
+    "the ring keeps only the question, not the context",
+  );
+  // Answer it so no 120 s control timer keeps the test process alive.
+  const requestId = String(parsed.request_id);
+  a.resolveControl({
+    type: "control_response",
+    request_id: requestId,
+    response: { request_id: requestId, subtype: "success", response: { response: "a" } },
+  });
+  await new Promise((r) => setTimeout(r, 0));
+}
+{
   const tr = new Translator({ relay: true }) as any;
   const open = (id: any) =>
     tr.translate({
