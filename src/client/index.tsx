@@ -3038,18 +3038,27 @@ const onBodyMutation = (scan: FrameScan, sync = false): (() => void) => {
 };
 
 /**
- * Hide the meter dialog's own context readout, leaving this plugin's block in its place.
+ * Hide the meter's own context readout, leaving this plugin's block in its place.
  *
- * Selected structurally — every child of the dialog that is not ours — because dsh's class names
- * are generated and change under us on any upgrade, and there is nothing else in this dialog: the
- * ring's popover is the context readout. Re-applied on each attach, since React rebuilds these
- * children whenever it re-renders the panel. `hidden` rather than removal, so a dsh that later puts
- * something else in here is one line away from being let back through.
+ * Selected structurally — every child of the host that is not ours — because dsh's class names are
+ * generated and change under us on any upgrade, and there is nothing else in either host to keep:
+ * the ring's popover and its hover bubble are both the context readout and nothing more. Re-applied
+ * on each attach, since React rebuilds these children whenever it re-renders. Elements are hidden
+ * rather than removed, so a dsh that later puts something else here is one line from being let back
+ * through; a bare text node has no style to set, so it goes, and the next re-render restores it.
+ *
+ * The `hidden` attribute alone does not do it. It works through the user agent's `[hidden]{display:
+ * none}`, which any class rule of dsh's outranks — its own header carries `display:flex`, so the row
+ * stayed on screen wearing `hidden=""`. The inline `!important` is what actually wins, and the
+ * attribute stays for the accessibility tree.
  */
-function hideNativeContext(panel: HTMLElement, ours: HTMLElement) {
-  for (const child of Array.from(panel.children)) {
-    if (child === ours || !(child instanceof HTMLElement)) continue;
-    child.hidden = true;
+function hideNativeContext(host: HTMLElement, ours: HTMLElement) {
+  for (const node of Array.from(host.childNodes)) {
+    if (node === ours) continue;
+    if (node instanceof HTMLElement) {
+      node.hidden = true;
+      node.style.setProperty("display", "none", "important");
+    } else node.remove();
   }
 }
 
@@ -3116,17 +3125,23 @@ function watchContextMeter(ctx: ClientCtx) {
   const bubble = (tip: HTMLElement) => {
     if (!missing(tip)) return;
     if (!activeClaudeSession(ctx)) return;
+    const block = document.createElement("div");
+    block.setAttribute(MARK, "1");
     const line = document.createElement("div");
-    line.setAttribute(MARK, "1");
-    // Above dsh's own sentence, like the panel rows, with a hairline between.
     // The mark is a drawing, not a letter, so the row centres on it rather than sitting it on a
     // baseline it does not have.
-    line.style.cssText = `border-bottom:1px solid ${T.border};margin-bottom:4px;padding-bottom:4px;display:flex;gap:6px;align-items:center`;
+    line.style.cssText = "display:flex;gap:6px;align-items:center";
     const mark = sparkNode(12, SHIMMER);
     const text = document.createElement("span");
     text.textContent = "Claude usage…";
     line.append(mark, text);
-    tip.prepend(line);
+    // The context sentence dsh's bubble carries, over the CLI's own count rather than dsh's, for
+    // the same reason the dialog's breakdown replaces its readout: the two measure different
+    // things and the CLI's is the one auto-compact fires on.
+    const ctxLine = document.createElement("div");
+    ctxLine.style.cssText = `color:${T.faint};margin-left:18px`;
+    block.append(line, ctxLine);
+    tip.prepend(block);
     loadUsage(activeClaudeProvider(ctx)).then(
       (reply) => {
         const who = reply.host ? ` (${reply.host})` : "";
@@ -3138,6 +3153,16 @@ function watchContextMeter(ctx: ClientCtx) {
         text.textContent = `Claude usage: ${e.message}`;
       },
     );
+    const sid = activeClaudeSession(ctx);
+    if (sid)
+      loadContext(sid).then((reply) => {
+        if (!reply.ok) {
+          ctxLine.remove();
+          return;
+        }
+        ctxLine.textContent = `${Math.round(reply.percentage)}% of context used · ${kTokens(reply.totalTokens)} / ${kTokens(reply.maxTokens)}`;
+        hideNativeContext(tip, block);
+      });
   };
   const scan = (root: ParentNode) => {
     for (const el of root.querySelectorAll<HTMLElement>('[role="dialog"]'))
