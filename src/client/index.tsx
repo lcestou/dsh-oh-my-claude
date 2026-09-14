@@ -5307,6 +5307,118 @@ function StarterSwitch() {
   );
 }
 
+/** One block the switches can withhold: checked means dsh sends it, and the flag is that block's
+ *  off key, so a box that has never opened this card behaves as it did before the card existed. */
+function ContextBox({ source, label, flag }: { source: string; label: string; flag: string }) {
+  const [off, setOff] = useHintFlag(flag);
+  return (
+    <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+      <input
+        type="checkbox"
+        data-omc-context={source}
+        checked={!off}
+        onChange={(e) => setOff(!e.target.checked)}
+      />
+      {label}
+    </label>
+  );
+}
+
+/** A block this card cannot move, drawn checked and disabled with the reason beside it rather than
+ *  in a title, so it is not mouse-only. Listing it is the point: a block that vanishes from the
+ *  list is worse than one the owner can see and not turn off. It is backed by no hint key at all,
+ *  so there is nothing here for a later edit to wire up by mistake. */
+function ContextFixed({ source, label, why }: { source: string; label: string; why: string }) {
+  return (
+    <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: T.muted }}>
+      <input
+        type="checkbox"
+        data-omc-context={source}
+        checked
+        disabled
+        aria-disabled="true"
+        readOnly
+      />
+      <span>
+        {label}
+        <span style={{ color: T.faint, fontSize: 12 }}> — {why}</span>
+      </span>
+    </label>
+  );
+}
+
+/** What dsh adds to every prompt besides what the owner typed: the master switch, then a fold with
+ *  one checkbox per block the plugin can withhold and one disabled row per block it cannot. The
+ *  keys go to the box's hints store, and the adapter reads them when it assembles a turn, so a
+ *  session already running keeps whatever it was sent before the switch moved. */
+function ContextSwitch() {
+  const [off, setOff] = useHintFlag("dshContextOff");
+  return (
+    <>
+      <div
+        data-omc-context-switch=""
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+          fontSize: 13,
+          marginBottom: off ? 12 : 4,
+        }}
+      >
+        <div>
+          <div>dsh context</div>
+          <div style={{ color: T.faint, fontSize: 12 }}>
+            What dsh adds to every prompt besides what you typed. Off means a new session sees your
+            prompt, its own CLAUDE.md and nothing else. A session already running keeps whatever dsh
+            sent it before the switch moved.
+          </div>
+        </div>
+        <Switch on={!off} onChange={(next) => setOff(!next)} label="dsh context" />
+      </div>
+      {!off && (
+        <details data-omc-context-custom="" style={{ marginBottom: 12, fontSize: 13 }}>
+          <summary style={{ cursor: "pointer", color: T.muted }}>Customize</summary>
+          <div
+            style={{ display: "flex", flexDirection: "column", gap: 6, padding: "8px 0 0 16px" }}
+          >
+            <div style={{ color: T.muted, fontSize: 12 }}>What dsh adds</div>
+            <ContextBox
+              source="instructions"
+              flag="dshContextInstructionsOff"
+              label="Workspace instructions (AGENTS.md)"
+            />
+            <ContextBox source="skills" flag="dshContextSkillsOff" label="dsh skill catalog" />
+            <ContextFixed
+              source="runtime"
+              label="Runtime snapshot (file and approval policy)"
+              why="Always sent. Without it a session asks for approvals that are auto-rejected."
+            />
+            <ContextFixed
+              source="tools"
+              label="dsh tools guidance"
+              why="Follows the dshTools setting in the plugin config, not this card."
+            />
+            <div style={{ color: T.muted, fontSize: 12, marginTop: 6 }}>
+              What Claude Code loads on its own
+            </div>
+            <ContextFixed
+              source="claudemd"
+              label="Your CLAUDE.md files"
+              why="Claude Code reads these itself. dsh sends a copy too and this plugin already drops it."
+            />
+            <div style={{ color: T.faint, fontSize: 12, marginTop: 6 }}>
+              AGENTS.md Claude Code never reads, so a repo whose only instruction file is AGENTS.md
+              goes unguided with that box clear. The skill catalog was 24,000 characters in a recent
+              session and says nothing a session can use when dsh tools are off.
+            </div>
+          </div>
+        </details>
+      )}
+    </>
+  );
+}
+
 /** The settings switch for the update notice. The flag lives in the box's hints store, which the
  *  server reads before it asks npm: off means no registry read at all, not a hidden pill. */
 function UpdateNoticeSwitch() {
@@ -6144,6 +6256,7 @@ export function apply(ctx: ClientCtx) {
           </span>
         </div>
         <ThemeSwitch />
+        <ContextSwitch />
         <StarterSwitch />
         <UpdateNoticeSwitch />
         <WorkspaceModelSwitch />
