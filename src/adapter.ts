@@ -30,11 +30,12 @@ import {
   createUserMessage,
 } from "@deepseek-ai/dsh-llm";
 import z from "@deepseek-ai/schemastery";
-import type { ContextSource } from "./context-sources.js";
+import { contextDrops, type ContextSource } from "./context-sources.js";
 import {
   accountIdentity,
   forgetIdentity,
   type PickerSettings,
+  readHints,
   readPickerSettings,
   readRemoteWorkspaces,
   readSshBoxes,
@@ -2356,8 +2357,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       if (!known && !forceFresh) known = await this.forkTranscript(options, cwd, id);
       session = { id, resuming: known && !forceFresh };
     }
+    // One small file read per turn, next to a process spawn. No cache: the Settings card writes
+    // this file, and a stale set is a switch that visibly does nothing.
+    const drops = contextDrops(await readHints(join(this.stateDir, "hints.json")));
     const turns = selectTurns(options.messages, session?.resuming ?? false);
-    let prompt = buildPrompt(turns);
+    let prompt = buildPrompt(turns, drops);
     const stdin = usesStdin(cli.flags);
     const images = stdin ? await this.loadImages(imageRefs(turns), options.signal) : [];
     // Where each image lives on disk, after the prompt: the inline copy lets Claude see it, the
@@ -2402,6 +2406,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       spec,
       accessMode,
       input: stdin ? buildInput(prompt, images) : null,
+      drops,
     };
   }
 
