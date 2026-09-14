@@ -101,8 +101,11 @@ if (mcpButtons.length > 0) {
 }
 await p.screenshot({ path: `${out}/five-mcp.png` });
 
-// e. Return recap switch, in Settings rather than a tab: absent key, reads off, flips on, key written.
-// Last, because opening Settings leaves the dialog every block above it needs.
+// e. Return recap row, in Settings rather than a tab: renders, reads off, and keeps its away-time
+// dropdown hidden until it is on. Last, because opening Settings leaves the dialog every block above
+// it needs. Nothing here clicks any more: the switch used to be this browser's own localStorage, and
+// a throwaway context made a click free, but it is a box-wide hint now and a click would turn the
+// owner's recap on for good. What a flip does is covered by the hint readers in notices.test.ts.
 await p
   .locator('button[aria-label*="Settings" i], a[aria-label*="Settings" i]')
   .first()
@@ -114,25 +117,19 @@ await p
   .click({ force: true });
 await p.waitForTimeout(1500);
 expect((await p.locator("[data-omc-recap-switch]").count()) === 1, "recap switch renders");
-const before = await p.evaluate(() => localStorage.getItem("omc.returnRecap"));
-expect(
-  before === null,
-  `localStorage omc.returnRecap is null before click (got ${JSON.stringify(before)})`,
-);
 const recapSwitch = p.locator("[data-omc-recap-switch] [role=switch]").first();
-const offState = await recapSwitch.getAttribute("aria-checked");
-expect(offState === "false", `recap switch reads off first (got ${JSON.stringify(offState)})`);
-await recapSwitch.click();
-await p.waitForTimeout(300);
-const after = await p.evaluate(() => localStorage.getItem("omc.returnRecap"));
+const recapState = await recapSwitch.getAttribute("aria-checked");
 expect(
-  after === "on",
-  `localStorage omc.returnRecap reads "on" after click (got ${JSON.stringify(after)})`,
+  recapState === "true" || recapState === "false",
+  `recap switch publishes its state (got ${JSON.stringify(recapState)})`,
 );
-const onState = await recapSwitch.getAttribute("aria-checked");
-expect(onState === "true", `recap switch reads on after click (got ${JSON.stringify(onState)})`);
-// No restore: launch() opens a throwaway context, which the null read above proves, and it dies
-// with this script. The owner's own browser never sees the key this wrote.
+// The dropdown follows the switch: it is a bar for something that never fires while the switch is
+// off, so an off switch beside a visible dropdown is the bug this catches.
+const awayRows = await p.locator("[data-omc-recap-away]").count();
+expect(
+  awayRows === (recapState === "true" ? 1 : 0),
+  `away dropdown shows only with the recap on (switch ${recapState}, rows ${awayRows})`,
+);
 await p.screenshot({ path: `${out}/five-settings.png` });
 
 console.log(failures.length === 0 ? "PASS" : `FAIL: ${failures.join("; ")}`);

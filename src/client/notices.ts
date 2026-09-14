@@ -53,27 +53,6 @@ export const RECAP_AWAY_MS = 5 * 60_000;
 /** What the settings dropdown offers, with `RECAP_AWAY_MS` among them as the default. */
 export const RECAP_AWAY_CHOICES = [60_000, RECAP_AWAY_MS, 15 * 60_000, 30 * 60_000, 60 * 60_000];
 
-const AWAY_KEY = "omc.recapAwayMs";
-
-/** The chosen bar, or the default when unset, unreadable or not one of the offered choices. */
-export const recapAwayMs = (): number => {
-  try {
-    const raw = Number(window.localStorage.getItem(AWAY_KEY));
-    return RECAP_AWAY_CHOICES.includes(raw) ? raw : RECAP_AWAY_MS;
-  } catch {
-    return RECAP_AWAY_MS;
-  }
-};
-
-export const setRecapAwayMs = (ms: number): void => {
-  try {
-    if (ms === RECAP_AWAY_MS) window.localStorage.removeItem(AWAY_KEY);
-    else window.localStorage.setItem(AWAY_KEY, String(ms));
-  } catch {
-    // Nothing to do: the dropdown reads back the default, which is what will be used.
-  }
-};
-
 /**
  * The recap queue after this snapshot, and the session to recap now. A session joins the queue when
  * it stops working while unselected, and leaves it when it becomes the one on screen: that is the
@@ -99,23 +78,26 @@ export function recapNext(
   return { pending: next };
 }
 
-const RECAP_KEY = "omc.returnRecap";
+/**
+ * The recap's two settings live in the box-wide hints store, like every other row of the settings
+ * section and unlike the notices toggle below, which is browser-local because the notification
+ * permission it depends on is. Nothing here is per-browser: the answer lands in the Asides ring,
+ * which is the box's, so whether to spend the call is the box's question too.
+ *
+ * Reading them is a pure function of a hints object so this module stays free of both the store and
+ * the DOM. `recapOn` absent means off, which is the default a feature that bills a model call gets.
+ */
+export const recapOnIn = (hints: Record<string, boolean | number>): boolean =>
+  hints.recapOn === true;
 
-/** Off by default: it costs a model call, and the transcript is right there to scroll. */
-export const recapOn = (): boolean => {
-  try {
-    return window.localStorage.getItem(RECAP_KEY) === "on";
-  } catch {
-    return false; // storage denied: treat as off, which is what the switch will read back
-  }
-};
-
-export const setRecapOn = (on: boolean): void => {
-  try {
-    window.localStorage.setItem(RECAP_KEY, on ? "on" : "off");
-  } catch {
-    // Nothing to do: the switch reads back off, which is the honest state.
-  }
+/**
+ * The chosen bar from the stored value, falling back to the default for anything that is not one of
+ * the offered choices: unset, a stale choice from an older build, or the wrong kind entirely
+ * (`Number` sends a boolean to 0 or 1, neither of which is offered).
+ */
+export const recapAwayIn = (stored: boolean | number | undefined): number => {
+  const ms = Number(stored);
+  return RECAP_AWAY_CHOICES.includes(ms) ? ms : RECAP_AWAY_MS;
 };
 
 /**

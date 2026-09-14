@@ -84,10 +84,8 @@ import {
   newlyWaiting,
   noticesOn,
   recapNext,
-  recapOn,
-  setRecapOn,
-  recapAwayMs,
-  setRecapAwayMs,
+  recapOnIn,
+  recapAwayIn,
   RECAP_AWAY_MS,
   RECAP_AWAY_CHOICES,
   RECAP_QUESTION,
@@ -3544,6 +3542,14 @@ function watchSessionNotices(ctx: ClientCtx) {
   let prev: NoticeSnapshot | null = null;
   const waiting = new Set<string>();
   let recapPending: Record<string, number> = {};
+  // The recap's two settings, kept beside the tick rather than read in it: the tick is synchronous
+  // and the store is a fetch. Re-read on the same event the settings switches dispatch, so flipping
+  // the switch reaches this watcher without a reload.
+  let hints: Record<string, boolean | number> = {};
+  const readHints = () => void loadHints().then((h) => (hints = h));
+  readHints();
+  window.addEventListener(HINTS_EVENT, readHints);
+  whenContextGone(() => window.removeEventListener(HINTS_EVENT, readHints));
   const tick = () => {
     const snap = ctx.sessions.list.getSnapshot();
     if (!snap) return;
@@ -3568,14 +3574,20 @@ function watchSessionNotices(ctx: ClientCtx) {
     // runs in, so a current that lags the screen by a tick can bill a recap for a session nobody left.
     // A spurious title mark is free; a spurious recap is a model call, which is why the switch is off
     // until asked for.
-    const step = recapNext(recapPending, stopped, snap.current, Date.now(), recapAwayMs());
+    const step = recapNext(
+      recapPending,
+      stopped,
+      snap.current,
+      Date.now(),
+      recapAwayIn(hints.recapAwayMs),
+    );
     recapPending = step.pending;
     // Three reasons not to spend the call, all of them the CLI's own: the switch is off, there is
     // half a prompt in the composer so the person is already saying what they want, or the session
     // picked up a new turn while the tick was deciding and the recap would describe stale work.
     if (
       step.fire !== undefined &&
-      recapOn() &&
+      recapOnIn(hints) &&
       !draftPending() &&
       snap.byId[step.fire]?.running !== true
     ) {
@@ -5353,8 +5365,9 @@ function WorkspaceModelSwitch() {
  * read the line, not to every tab on the box.
  */
 function ReturnRecapSwitch() {
-  const [on, setOn] = useState(recapOn);
-  const [away, setAway] = useState(recapAwayMs);
+  const [on, setOn] = useHintFlag("recapOn");
+  const [stored, setStored] = useHintValue("recapAwayMs");
+  const away = recapAwayIn(stored);
   return (
     <>
       <div
@@ -5375,14 +5388,7 @@ function ReturnRecapSwitch() {
             to one that finished without you. Costs a model call each time.
           </div>
         </div>
-        <Switch
-          on={on}
-          onChange={(next) => {
-            setRecapOn(next);
-            setOn(next);
-          }}
-          label="Return recap"
-        />
+        <Switch on={on} onChange={setOn} label="Return recap" />
       </div>
       {/* Only with the feature on: a bar for something that never fires is a question about nothing. */}
       {on && (
@@ -5402,10 +5408,11 @@ function ReturnRecapSwitch() {
             style={select}
             aria-label="Away time before a recap"
             value={String(away)}
+            // The default is stored as absence, so a box that never touched this reads the default
+            // even if it moves later.
             onChange={(e) => {
               const next = Number(e.target.value);
-              setRecapAwayMs(next);
-              setAway(next);
+              setStored(next === RECAP_AWAY_MS ? null : next);
             }}
           >
             {RECAP_AWAY_CHOICES.map((ms) => (

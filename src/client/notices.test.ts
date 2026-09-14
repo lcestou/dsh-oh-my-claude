@@ -1,6 +1,14 @@
 // Offline self-check: bun src/client/notices.test.ts. No DOM, no server.
 import assert from "node:assert/strict";
-import { markTitle, newlyWaiting, recapNext, RECAP_AWAY_MS, stripMark } from "./notices.js";
+import {
+  markTitle,
+  newlyWaiting,
+  recapNext,
+  recapAwayIn,
+  recapOnIn,
+  RECAP_AWAY_MS,
+  stripMark,
+} from "./notices.js";
 
 const snap = (byId: Record<string, { running?: boolean; completed?: boolean }>, current?: string) =>
   ({ byId, current }) as const;
@@ -114,6 +122,18 @@ assert.deepEqual(newlyWaiting(snap({ a: { running: true } }), snap({ a: { runnin
   assert.deepEqual(recapNext({ a: 1, b: 2 }, [], undefined, 9_000_000, RECAP_AWAY_MS), {
     pending: { a: 1, b: 2 },
   });
+}
+
+// The two hint readers. Absent means off and means the default bar: a box that never opened the
+// settings section must not start billing for recaps, and must not read a bar nobody chose.
+{
+  assert.equal(recapOnIn({}), false, "absent is off");
+  assert.equal(recapOnIn({ recapOn: false }), false);
+  assert.equal(recapOnIn({ recapOn: true }), true);
+  assert.equal(recapAwayIn(undefined), RECAP_AWAY_MS, "absent is the default bar");
+  assert.equal(recapAwayIn(60_000), 60_000, "an offered choice is kept");
+  assert.equal(recapAwayIn(7_000), RECAP_AWAY_MS, "a bar nobody offers falls back");
+  assert.equal(recapAwayIn(true), RECAP_AWAY_MS, "so does the wrong kind of value");
 }
 
 console.log("notices ok");
