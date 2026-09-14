@@ -456,18 +456,86 @@ const done = tr.translate({
   usage: { input_tokens: 2, output_tokens: 4, cache_read_input_tokens: 10 },
 });
 // SAFETY: partial fake for tests
+// Usage before finish, never after: dsh fails a stream that emits anything past a terminal finish.
 assert.deepEqual(
   done.map((e: { type: string }) => e.type),
   ["usage", "finish"],
 );
+assert.equal(done[1].reason.kind, "stop");
+assert.equal(tr.finished, true);
+// This CLI streamed no `message_delta`, so the result frame's own usage is the fallback the last
+// step closes with. Every counter is written even at zero: one attempt omitting the cache bucket
+// drops the cache-hit row off the whole turn.
 assert.deepEqual(done[0].usage, {
   inputTokens: 2,
   outputTokens: 4,
-  totalTokens: 16,
   cacheReadTokens: 10,
+  cacheWriteTokens: 0,
+  totalTokens: 16,
 });
-assert.equal(done[1].reason.kind, "stop");
-assert.equal(tr.finished, true);
+// Spent once: the adapter's own call at the step's end must not re-report the turn's figures.
+assert.deepEqual(tr.takeStepUsage(), []);
+
+// With partials on the wire, a step is its own messages summed — not the turn's total, and not the
+// last message's alone. Two messages, as when the CLI runs its own Read between them.
+const trs = new Translator() as any;
+const delta = (usage: object) =>
+  trs.translate({ type: "stream_event", event: { type: "message_delta", usage } });
+delta({
+  input_tokens: 10,
+  output_tokens: 337,
+  cache_read_input_tokens: 4163,
+  cache_creation_input_tokens: 16576,
+  output_tokens_details: { thinking_tokens: 256 },
+});
+delta({
+  input_tokens: 10,
+  output_tokens: 544,
+  cache_read_input_tokens: 20739,
+  cache_creation_input_tokens: 1354,
+  output_tokens_details: { thinking_tokens: 453 },
+});
+// A nested agent's frames are the result frame's business, not this step's.
+trs.translate({
+  type: "stream_event",
+  parent_tool_use_id: "t1",
+  event: { type: "message_delta", usage: { input_tokens: 99, output_tokens: 99 } },
+});
+assert.deepEqual(trs.takeStepUsage(), [
+  {
+    type: "usage",
+    usage: {
+      inputTokens: 20,
+      outputTokens: 881,
+      cacheReadTokens: 24902,
+      cacheWriteTokens: 17930,
+      reasoningTokens: 709,
+      totalTokens: 43733,
+    },
+  },
+]);
+
+// The last step of a turn sees both sources: its own deltas, then the result frame carrying the
+// turn's total. It reports the deltas once and the fallback never — a second chunk would be a
+// duplicate, and after the terminal finish the same frame emits, which dsh fails a stream for.
+const trb = new Translator() as any;
+trb.translate({
+  type: "stream_event",
+  event: { type: "message_delta", usage: { input_tokens: 3, output_tokens: 7 } },
+});
+const closing = trb.translate({
+  type: "result",
+  is_error: false,
+  stop_reason: "end_turn",
+  usage: { input_tokens: 40, output_tokens: 90, cache_read_input_tokens: 500 },
+});
+assert.deepEqual(
+  closing.map((e: { type: string }) => e.type),
+  ["usage", "finish"],
+);
+assert.equal(closing[0].usage.outputTokens, 7);
+// Nothing left for the adapter's own call at the step's end to spend.
+assert.deepEqual(trb.takeStepUsage(), []);
 
 // dsh tools called over the MCP bridge render as visible text rows, results too
 const trd = new Translator() as any;

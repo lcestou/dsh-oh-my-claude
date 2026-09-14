@@ -4861,6 +4861,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       }
       if (tr.limitResetAt !== undefined && this.config.continueAfterLimit)
         this.armLimitWait(options.sessionId, tr.limitResetAt);
+      // What this step spent, once, just before the chunk that closes it. A step that streamed
+      // nothing yields nothing here: dsh would rather show no pill than one it cannot prove.
+      if (outcome !== "retry") yield* tr.takeStepUsage();
       if (outcome === "relayed") yield { type: "finish", reason: { kind: "tool-calls" } };
       else if (outcome === "parked") yield { type: "finish", reason: { kind: "stop" } };
       else if (outcome === "retry") {

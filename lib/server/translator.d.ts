@@ -118,6 +118,19 @@ export declare class Translator {
      *  the message it closes, not the turn, so the figure summed here is what the status row shows;
      *  reporting each message's own count made the row drop back to a few hundred at every tool step. */
     private turnOutput;
+    /** This step's own token usage, summed over the assistant messages it covered.
+     *
+     *  A step is one `stream()` call, and it ends when tool calls are relayed to dsh — so a step runs
+     *  one API call per assistant message and several when the CLI works through its own Read, Bash
+     *  and Edit without ever handing dsh a call. `message_delta` reports each of those messages
+     *  exactly once and carries all four counters settled, so summing them is what this step really
+     *  spent. Emitted by `takeStepUsage` at the step's end, because dsh fails a stream that reports
+     *  usage more than once ("LLM stream emitted usage more than once"). */
+    private stepUsage;
+    /** Whether any `message_delta` was counted, which is what makes `stepUsage` the better source. */
+    private sawUsageDelta;
+    /** The result frame's `usage`: the whole turn's, kept only for a CLI too old to stream partials. */
+    private resultUsage;
     /** callId → original input JSON string, kept so Edit can build meta.diffs from it. */
     readonly callInputs: Map<string, string>;
     /** callId → the seq onToolCall returned, so a re-fired block never appends `tool/call` twice. */
@@ -166,7 +179,14 @@ export declare class Translator {
     endBlock(block: TranslatorBlock): StreamChunk[];
     wholeBlock(blockType: string, text: string): StreamChunk[];
     translate(event: ClaudeEvent): StreamChunk[];
-    partial(ev: ClaudeStreamPartial): StreamChunk[];
+    /** One summed usage chunk for the step that is ending, or nothing when none can be proven.
+     *
+     *  Called once per `stream()` call, right before its `finish`. The result frame is only a
+     *  fallback: it carries the whole turn's usage, so on a turn of several steps charging it to
+     *  whichever step happened to see it is what left every other step with no sample at all — and
+     *  `deriveTurnTokenUsage` drops the turn's pill unless every step has one. */
+    takeStepUsage(): StreamChunk[];
+    partial(ev: ClaudeStreamPartial, subagent?: boolean): StreamChunk[];
     /** Tracks content_block metadata for native-tool blocks whose input we collect via deltas. */
     readonly cbMeta: Map<number, {
         id?: string;

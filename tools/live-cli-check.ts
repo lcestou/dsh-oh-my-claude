@@ -16,6 +16,8 @@
 //
 // A host that cannot be reached is skipped, not failed; a mismatch is a failure.
 import { execFile, spawn } from "node:child_process";
+import { readFile, readdir } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { Config, buildArgs, probeCli } from "../lib/server/adapter.js";
 import { sshInvocation } from "../lib/server/process.js";
@@ -23,8 +25,29 @@ import { readRemoteWorkspaces } from "../lib/server/sessions.js";
 import { readSshToken } from "../lib/server/ssh-login.js";
 import { STATE_DIR } from "../lib/server/state.js";
 
+/** The four counters the turn pill is built from. */
+type Usage = {
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_read_input_tokens?: number;
+  cache_creation_input_tokens?: number;
+};
+const COUNTERS = [
+  "input_tokens",
+  "output_tokens",
+  "cache_read_input_tokens",
+  "cache_creation_input_tokens",
+] as const;
+
 /** The CLI's own closing frame, the only one this check reads. */
-type ResultFrame = { type: "result"; is_error?: boolean; num_turns?: number; duration_ms?: number };
+type ResultFrame = {
+  type: "result";
+  is_error?: boolean;
+  num_turns?: number;
+  duration_ms?: number;
+  session_id?: string;
+  usage?: Usage;
+};
 type TurnOutcome =
   | { result: ResultFrame; error?: undefined }
   | { error: string; result?: undefined };
@@ -90,6 +113,46 @@ function runTurn(
   });
 }
 
+/**
+ * The same turn's tokens as Claude Code's own transcript records them, summed over its assistant
+ * messages.
+ *
+ * The transcript is written by a different path than the result frame the plugin forwards, so the
+ * two agreeing is corroboration rather than one number repeated: the turn pill shows what the CLI
+ * itself billed. Undefined when the transcript for that session is not on this box, which is every
+ * remote host.
+ */
+async function transcriptUsage(sessionId: string): Promise<Usage | undefined> {
+  const root = join(homedir(), ".claude", "projects");
+  for (const project of await readdir(root).catch(() => [])) {
+    const text = await readFile(join(root, project, `${sessionId}.jsonl`), "utf8").catch(
+      () => undefined,
+    );
+    if (text === undefined) continue;
+    // One assistant message is logged more than once; its id is what makes it a single sample.
+    const byId = new Map<string, Usage>();
+    for (const line of text.split("\n")) {
+      try {
+        // SAFETY: only the two shapes below are read off it, each through a typeof-checked sum.
+        const entry = JSON.parse(line) as {
+          type?: string;
+          message?: { id?: string; usage?: Usage };
+        };
+        if (entry.type !== "assistant") continue;
+        const { id, usage } = entry.message ?? {};
+        if (id !== undefined && usage !== undefined) byId.set(id, usage);
+      } catch {
+        continue;
+      }
+    }
+    const total: Usage = {};
+    for (const key of COUNTERS)
+      total[key] = [...byId.values()].reduce((sum, u) => sum + (u[key] ?? 0), 0);
+    return total;
+  }
+  return undefined;
+}
+
 let failures = 0;
 for (const host of ["", ...(hostArgs.length > 0 ? hostArgs : await knownHosts())]) {
   const name = host || "local";
@@ -127,6 +190,24 @@ for (const host of ["", ...(hostArgs.length > 0 ? hostArgs : await knownHosts())
     failures++;
   } else {
     console.log(`ok   ${name}: turn ran, ${result.num_turns} turn(s), ${result.duration_ms}ms`);
+    // The turn pill is this frame's `usage`, forwarded untouched. Corroborate it against the
+    // transcript before trusting a number the whole cost readout is built on.
+    const ledger =
+      result.session_id === undefined ? undefined : await transcriptUsage(result.session_id);
+    const frame = result.usage;
+    if (ledger === undefined || frame === undefined) {
+      console.log(`skip ${name}: no transcript on this box to check usage against`);
+    } else {
+      const off = COUNTERS.filter((k) => (frame[k] ?? 0) !== ledger[k]);
+      if (off.length > 0) {
+        const shown = off.map((k) => `${k} ${frame[k] ?? 0} vs ${ledger[k]}`).join(", ");
+        console.log(`FAIL ${name}: result frame disagrees with its own transcript: ${shown}`);
+        failures++;
+      } else {
+        const total = COUNTERS.reduce((sum, k) => sum + (frame[k] ?? 0), 0);
+        console.log(`ok   ${name}: usage matches the transcript, ${total} tok over the turn`);
+      }
+    }
   }
 }
 process.exit(failures > 0 ? 1 : 0);

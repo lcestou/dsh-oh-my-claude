@@ -135,6 +135,8 @@ export type ClaudeEvent = {
 } | {
     type: "stream_event";
     event?: ClaudeStreamPartial;
+    /** Set when the frame belongs to a nested agent, as on `assistant` and `user` frames. */
+    parent_tool_use_id?: string | null;
 } | {
     type: "assistant";
     message?: ClaudeAssistantMessage;

@@ -6,6 +6,12 @@ Only 1.0.0 reached npm. Everything below it was released from the repository whi
 
 ## [Unreleased]
 
+### Fixed
+
+- The turn usage pill appears on turns that used tools. Token counts were reported once per turn, and dsh needs one per step to prove the total, so the pill showed up on single-step turns and went missing on the rest. Each step now reports what it spent.
+- Tokens per second, per turn and in the session statistics. The whole turn's output was charged against one step's decode window, which read about four times faster than the turn ran.
+- The usage popover breaks out reasoning tokens, which Claude Code reports and the plugin was dropping.
+
 ## [1.1.0] - 2026-09-14
 
 ### Added
