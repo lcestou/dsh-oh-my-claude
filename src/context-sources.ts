@@ -8,19 +8,21 @@ export type ContextSource = (typeof CONTEXT_SOURCES)[number];
 export const TOGGLEABLE = ["instructions", "skills"] as const;
 export type Toggleable = (typeof TOGGLEABLE)[number];
 
-/** Hint key per source. Absent means the block is sent, so a fresh box behaves as it did before
- *  these switches existed; `readHints` drops `false` outright, which is the same thing. */
+/** Hint key per source. These only matter once the master switch is on; absent means the block is
+ *  sent, and `readHints` drops `false` outright, which is the same thing. */
 export const OFF_KEY = {
   instructions: "dshContextInstructionsOff",
   skills: "dshContextSkillsOff",
 } satisfies Record<Toggleable, string>;
 
-/** True withholds every toggleable block, whatever the per-source keys say. */
-export const MASTER_KEY = "dshContextOff";
+/** The master switch, off unless the box says otherwise: a fresh install sends the prompt, the
+ *  CLAUDE.md files and nothing else. Anything but `true` withholds every toggleable block, whatever
+ *  the per-source keys say. Named `On` rather than `Off` so the absent key reads as the default. */
+export const MASTER_KEY = "dshContextOn";
 
 /** Which of the toggleable context sources are withheld by the given hint map. */
 export function contextDrops(hints: Record<string, boolean | number>): Set<ContextSource> {
-  if (hints[MASTER_KEY] === true) {
+  if (hints[MASTER_KEY] !== true) {
     return new Set(TOGGLEABLE);
   }
   const dropped = new Set<ContextSource>();

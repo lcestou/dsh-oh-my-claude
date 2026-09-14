@@ -75,6 +75,8 @@ export type ClaudeEvent =
       slash_commands?: JsonValue;
       /** subtype "init": every tool name the session has; MCP ones read `mcp__<server>__<tool>`. */
       tools?: JsonValue;
+      /** subtype "compact_boundary": `trigger` and `pre_tokens` always, `post_tokens` and
+       *  `duration_ms` when the CLI chose to fill them in. */
       compact_metadata?: Record<string, unknown>;
       // subtype "status": `status:"compacting"` opens the silent summarize stretch; a later frame
       // with `status:null` carries `compact_result` ("success"|"failed") and, on failure, `compact_error`.
