@@ -5456,10 +5456,14 @@ function ContextSwitch({ ctx }: { ctx: ClientCtx }) {
             prompt, its own CLAUDE.md and nothing else. A session already running keeps whatever dsh
             sent it before the switch moved.
           </div>
+          {/* The sizes are measured before any switch drops a block, so the number holds in both
+              states and only the tense changes: off, it is what the switch is already keeping out.
+              "Going by" rather than "on", because the switch may have moved since that turn ran. */}
           {savable !== undefined && (
             <div style={{ color: T.faint, fontSize: 12, marginTop: 2 }}>
-              Off would have saved
-              <ContextSize source="total" chars={savable} /> on the last turn in this workspace.
+              {off ? "Off is saving" : "Off would save"}
+              <ContextSize source="total" chars={savable} /> a turn, going by the last turn in this
+              workspace.
             </div>
           )}
         </div>
