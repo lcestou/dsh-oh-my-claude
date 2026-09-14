@@ -2417,10 +2417,13 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         ? { url: `${this.mcp.base}${MCP_PATH}/${options.sessionId}`, key: this.mcp.key }
         : undefined;
     // Side calls (title, compaction) carry no card and no workspace of their own, so they measure
-    // nothing; leaving `sizes` undefined is what keeps them out of the store.
+    // nothing; leaving `sizes` undefined is what keeps them out of the store. The guidance also
+    // rides on `--append-system-prompt`, so a CLI without that flag sends none of it and the row
+    // has to read zero rather than the length of text that stayed home.
+    const toolsSent = mcpBridge !== undefined && supports(cli.flags, "--append-system-prompt");
     const sizes: ContextSizes | undefined = options.purpose
       ? undefined
-      : { ...contextSizes(turns), tools: mcpBridge ? DSH_TOOLS_GUIDANCE.length : 0 };
+      : { ...contextSizes(turns), tools: toolsSent ? DSH_TOOLS_GUIDANCE.length : 0 };
     const args = buildArgs({
       ...options,
       model,
