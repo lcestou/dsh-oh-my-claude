@@ -5363,9 +5363,9 @@ function WorkspaceModelSwitch() {
 }
 
 /**
- * The settings switch for the one-line recap on returning to a finished session. Backed by
- * `localStorage`, not a hint, because it costs a model call and belongs to the browser that would
- * read the line, not to every tab on the box.
+ * The settings switch for the one-line recap on returning to a finished session, and the away bar
+ * under it. Both are hints: the answer lands in the Asides ring, which is the box's, so whether to
+ * spend the call is the box's question and not this browser's.
  */
 function ReturnRecapSwitch() {
   const [on, setOn] = useHintFlag("recapOn");
