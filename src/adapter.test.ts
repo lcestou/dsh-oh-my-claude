@@ -35,6 +35,7 @@ import {
   modelFromApi,
   stableModelId,
   projectDirName,
+  noteLiveWindow,
   resolveModelInfo,
   selectTurns,
   relayBlocks,
@@ -605,6 +606,34 @@ assert.equal(
   200_000,
   "a session stored under the dated id still resolves",
 );
+
+// The window a live session reported outranks the table, which only ever holds a guess.
+{
+  const window = (id: string) => resolveModelInfo("claude-code", id).context?.contextWindow;
+  assert.equal(window("claude-opus-5"), 200_000, "the table's figure until a session answers");
+  noteLiveWindow("claude-opus-5", 1_000_000);
+  assert.equal(
+    window("claude-opus-5"),
+    1_000_000,
+    "a session running 1M is believed over the table",
+  );
+  // Switching models reads the other model's own answer, not the one just banked.
+  assert.equal(window("claude-sonnet-4-6"), 200_000, "another model keeps its own window");
+  // The `[1m]` variant and the dated spelling are the same model wearing a different name.
+  noteLiveWindow("claude-haiku-4-5-20251001", 500_000);
+  assert.equal(window("claude-haiku-4-5"), 500_000, "a dated id banks under the stable one");
+  noteLiveWindow("claude-opus-4-8[1m]", 1_000_000);
+  assert.equal(window("claude-opus-4-8"), 1_000_000, "the [1m] suffix banks under the plain id");
+  // Nothing usable leaves the last good answer standing.
+  for (const bad of [0, -1, Number.NaN, undefined]) noteLiveWindow("claude-opus-5", bad);
+  assert.equal(window("claude-opus-5"), 1_000_000, "a nonsense figure is not banked");
+  noteLiveWindow(undefined, 123);
+  // A model no table knows still gets a window once a session has run it.
+  assert.equal(window("claude-unheard-of-9"), undefined, "unknown model, no guess to offer");
+  noteLiveWindow("claude-unheard-of-9", 750_000);
+  assert.equal(window("claude-unheard-of-9"), 750_000, "unknown model, answered by its session");
+  console.log("live context window ok");
+}
 
 // access-mode switch from the dsh UI → Claude Code permission mode, unless config pins one
 const policy = (mode: string): LooseMessage => ({

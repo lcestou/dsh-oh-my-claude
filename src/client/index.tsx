@@ -2720,6 +2720,7 @@ type ContextReply =
       totalTokens: number;
       maxTokens: number;
       percentage: number;
+      model?: string;
     }
   | { ok: false; error: string };
 // The breakdown is re-read whenever dsh re-renders the meter's dialog, which is on every repaint of
@@ -2754,33 +2755,84 @@ const isUsedRow = (c: { name: string; deferred: boolean; kind?: string }): boole
   c.kind !== undefined
     ? c.kind === "used"
     : !c.deferred && c.name !== "Free space" && !/buffer$/i.test(c.name);
+/**
+ * A colour per breakdown row, by position. dsh's own meter paints three bands and names them in a
+ * legend; this keeps that shape over the CLI's categories, which are more numerous and vary with
+ * what a session loaded. Position rather than name because the names are the CLI's to change, and a
+ * swatch that drifts one hue is a smaller wrong than a classification that reads the name and is
+ * believed — the same reason `isUsedRow` asks `kind` instead. The order opens on the neutral grey,
+ * purple and blue dsh itself uses, so the block still reads as part of its meter.
+ */
+const SEGMENT_COLORS = [
+  "#8b8f98",
+  "#a855f7",
+  "#3b82f6",
+  "#14b8a6",
+  "#f59e0b",
+  "#ec4899",
+  "#22c55e",
+  "#6366f1",
+];
+
+/** The meter's own readout, over the CLI's categories: a filled bar and one legend row each. */
 function renderContext(el: HTMLElement, reply: ContextReply) {
   el.replaceChildren();
   if (!reply.ok) {
     el.textContent = `Context breakdown: ${reply.error}`;
     return;
   }
+  const rows = reply.categories.filter((c) => c.tokens > 0 && isUsedRow(c));
   const head = document.createElement("div");
-  head.style.cssText = `display:flex;justify-content:space-between;color:${T.text};font-weight:500`;
+  head.style.cssText = `display:flex;justify-content:space-between;gap:12px;color:${T.text}`;
   const headLabel = document.createElement("span");
-  headLabel.textContent = "Context breakdown (Claude's count)";
+  headLabel.textContent = `${Math.round(reply.percentage)}% of context used`;
+  // The model whose window that percentage is against, so a session that switched models says so
+  // rather than leaving the reader to assume the one they picked first.
+  if (reply.model) {
+    const on = document.createElement("span");
+    on.style.color = T.faint;
+    on.textContent = ` · ${reply.model}`;
+    headLabel.append(on);
+  }
   const headValue = document.createElement("span");
-  headValue.style.cssText = "font-variant-numeric:tabular-nums";
-  headValue.textContent = `${kTokens(reply.totalTokens)} / ${kTokens(reply.maxTokens)} · ${Math.round(reply.percentage)}%`;
+  headValue.style.cssText = `font-variant-numeric:tabular-nums;color:${T.faint};white-space:nowrap`;
+  headValue.textContent = `${kTokens(reply.totalTokens)} / ${kTokens(reply.maxTokens)}`;
   head.append(headLabel, headValue);
-  el.append(head);
-  for (const c of reply.categories) {
-    if (c.tokens <= 0 || !isUsedRow(c)) continue;
+  // The bar spans the whole window, so the empty tail is the room left. Segments are sized against
+  // `maxTokens` rather than against each other, which is what makes the filled part read as the
+  // percentage above it.
+  const bar = document.createElement("div");
+  bar.style.cssText = `display:flex;gap:1px;height:6px;margin:6px 0;border-radius:3px;overflow:hidden;background:${T.border}`;
+  bar.setAttribute("role", "img");
+  bar.setAttribute(
+    "aria-label",
+    `${Math.round(reply.percentage)}% of the context window used: ${rows.map((c) => `${c.name} ${kTokens(c.tokens)}`).join(", ")}`,
+  );
+  const legend = document.createElement("div");
+  rows.forEach((c, i) => {
+    const color = SEGMENT_COLORS[i % SEGMENT_COLORS.length];
+    const seg = document.createElement("div");
+    // A row worth a fraction of a percent still earns a sliver, so the legend never names a colour
+    // the bar does not show.
+    seg.style.cssText = `flex:0 0 auto;width:${Math.max((c.tokens / Math.max(reply.maxTokens, 1)) * 100, 0.4)}%;background:${color}`;
+    bar.append(seg);
     const line = document.createElement("div");
-    line.style.cssText = "display:flex;justify-content:space-between;gap:12px";
+    line.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:12px";
     const label = document.createElement("span");
-    label.textContent = c.name;
+    label.style.cssText = "display:flex;align-items:center;gap:6px;min-width:0";
+    const dot = document.createElement("span");
+    dot.style.cssText = `flex:0 0 auto;width:8px;height:8px;border-radius:2px;background:${color}`;
+    const rowName = document.createElement("span");
+    rowName.style.cssText = "overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
+    rowName.textContent = c.name;
+    label.append(dot, rowName);
     const val = document.createElement("span");
-    val.style.cssText = "font-variant-numeric:tabular-nums";
+    val.style.cssText = "font-variant-numeric:tabular-nums;white-space:nowrap";
     val.textContent = kTokens(c.tokens);
     line.append(label, val);
-    el.append(line);
-  }
+    legend.append(line);
+  });
+  el.append(head, bar, legend);
 }
 
 const extLink = (text: string, href: string): HTMLAnchorElement => {
@@ -2985,6 +3037,22 @@ const onBodyMutation = (scan: FrameScan, sync = false): (() => void) => {
   return off;
 };
 
+/**
+ * Hide the meter dialog's own context readout, leaving this plugin's block in its place.
+ *
+ * Selected structurally — every child of the dialog that is not ours — because dsh's class names
+ * are generated and change under us on any upgrade, and there is nothing else in this dialog: the
+ * ring's popover is the context readout. Re-applied on each attach, since React rebuilds these
+ * children whenever it re-renders the panel. `hidden` rather than removal, so a dsh that later puts
+ * something else in here is one line away from being let back through.
+ */
+function hideNativeContext(panel: HTMLElement, ours: HTMLElement) {
+  for (const child of Array.from(panel.children)) {
+    if (child === ours || !(child instanceof HTMLElement)) continue;
+    child.hidden = true;
+  }
+}
+
 function watchContextMeter(ctx: ClientCtx) {
   const MARK = "data-dsh-oh-my-claude-usage";
   // The mark goes on the node we inject, never on dsh's node: React owns these children and drops
@@ -3019,7 +3087,17 @@ function watchContextMeter(ctx: ClientCtx) {
     panel.prepend(block);
     const sid = activeClaudeSession(ctx);
     const provider = activeClaudeProvider(ctx);
-    if (sid) loadContext(sid).then((reply) => renderContext(breakdown, reply));
+    if (sid)
+      loadContext(sid).then((reply) => {
+        renderContext(breakdown, reply);
+        // dsh's own readout of the same window sits below this block and measures a different
+        // thing: its count of the session surface it holds, which has never seen the system prompt,
+        // the tool schemas or the files the CLI read, and keeps counting turns the CLI compacted
+        // away. Two bars disagreeing by tens of thousands of tokens is worse than one, so the
+        // CLI's own answer replaces it — and only when there is an answer, so a session with no
+        // live process still gets dsh's estimate rather than nothing.
+        if (reply.ok) hideNativeContext(panel, block);
+      });
     loadUsage(provider).then(
       (reply) => {
         const who = whose(reply);

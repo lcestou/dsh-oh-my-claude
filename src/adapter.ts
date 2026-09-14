@@ -573,15 +573,23 @@ const M = (id: string, label: string, contextWindow: number, efforts: readonly s
 // The floor a brand-new box falls back to when the Models API is unreachable and no catalog has
 // ever been cached to disk yet. Once a fetch succeeds its result is persisted and seeds later boots,
 // so this list only matters on the first offline boot. Ids are what `claude --model` accepts.
+//
+// The window here is the one the CLI manages a session against, which is not always the window the
+// model can hold. Claude Code 2.1.270 names four models whose table row reads `window:1e6` and
+// whose sessions still run at 200,000 unless 1M is turned on with the `[1m]` suffix or the beta
+// header: `new Set(["claude-sonnet-4-6","claude-opus-4-6","claude-opus-4-8","claude-opus-5"])`,
+// where the resolver falls through to its `I1 = 200000`. Declaring 1M for those made dsh's context
+// ring read 17% while the CLI's own count said 83% of the window it compacts on. Any figure here is
+// a guess until a session answers; `liveWindows` below replaces it with what the CLI reports.
 export const KNOWN_MODELS = [
   M("claude-fable-5-1", "Claude Fable 5.1", 1_000_000, EFFORTS_ALL),
   M("claude-fable-5", "Claude Fable 5", 1_000_000, EFFORTS_ALL),
-  M("claude-opus-5", "Claude Opus 5", 1_000_000, EFFORTS_ALL),
-  M("claude-opus-4-8", "Claude Opus 4.8", 1_000_000, EFFORTS_ALL),
+  M("claude-opus-5", "Claude Opus 5", 200_000, EFFORTS_ALL),
+  M("claude-opus-4-8", "Claude Opus 4.8", 200_000, EFFORTS_ALL),
   M("claude-opus-4-7", "Claude Opus 4.7", 1_000_000, EFFORTS_ALL),
-  M("claude-opus-4-6", "Claude Opus 4.6", 1_000_000, ["low", "medium", "high", "max"]),
+  M("claude-opus-4-6", "Claude Opus 4.6", 200_000, ["low", "medium", "high", "max"]),
   M("claude-sonnet-5", "Claude Sonnet 5", 1_000_000, EFFORTS_ALL),
-  M("claude-sonnet-4-6", "Claude Sonnet 4.6", 1_000_000, ["low", "medium", "high", "max"]),
+  M("claude-sonnet-4-6", "Claude Sonnet 4.6", 200_000, ["low", "medium", "high", "max"]),
   M("claude-opus-4-5", "Claude Opus 4.5", 200_000, EFFORTS_45),
   M("claude-sonnet-4-5", "Claude Sonnet 4.5", 200_000, []),
   M("claude-haiku-4-5", "Claude Haiku 4.5", 200_000, []),
@@ -734,6 +742,30 @@ const bareId = (id: string) => {
   const s = strip(id);
   return s.startsWith("claude-") ? s.slice("claude-".length) : s;
 };
+
+/**
+ * The window a live session reported, which outranks every guess this file makes.
+ *
+ * Both sources above answer a different question than the one dsh's context ring asks. The Models
+ * API sends `max_input_tokens` and `KNOWN_MODELS` is a baked-in copy of the same figure: what the
+ * model can hold. What the ring needs is what the CLI manages the session against, and the two part
+ * company — Opus 5 holds a million and runs at 200,000 until 1M is turned on. Only a session knows
+ * which it got, so the figure is taken from that session's own `get_context_usage` and kept per
+ * model id for every later read.
+ *
+ * Not persisted: a dsh-web restart relearns on the first context read of each model, and until then
+ * the table above answers. Write it next to the catalog cache the day that gap is worth a file.
+ */
+const liveWindows = new Map<string, number>();
+const windowKey = (id: string) => stableModelId(strip(id));
+/** Record what a session answered. A missing or nonsense figure leaves the last good one standing. */
+export const noteLiveWindow = (modelId: string | undefined, maxTokens: number | undefined) => {
+  if (modelId === undefined || maxTokens === undefined || !Number.isFinite(maxTokens)) return;
+  if (maxTokens <= 0) return;
+  liveWindows.set(windowKey(modelId), maxTokens);
+};
+export const liveWindowFor = (modelId: string): number | undefined =>
+  liveWindows.get(windowKey(modelId));
 /** The three forms an entry takes: a family alias, a version prefix, or the whole id. */
 const allows = (entry: string, id: string) => {
   const want = bareId(entry);
@@ -844,8 +876,14 @@ export function resolveModelInfo(
   const info: LlmResolvedModelInfo = {
     ...modelInfo(provider, { id: modelId, name: found?.name ?? modelId }),
   };
-  if (!found) return info;
-  info.context = { contextWindow: found.contextWindow };
+  // A session's own answer first, whatever the tables say. It is the only figure that describes the
+  // window the CLI compacts on, and it is right for a model released after this build.
+  const live = liveWindowFor(modelId);
+  if (!found) {
+    if (live !== undefined) info.context = { contextWindow: live };
+    return info;
+  }
+  info.context = { contextWindow: live ?? found.contextWindow };
   if (found.efforts.length > 0) {
     info.reasoning = {
       // SAFETY: effort ids come from the CLI's own catalog; the brand marks provenance only
@@ -2972,7 +3010,14 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       5000,
     );
     if (!reply.ok) return { ok: false, error: reply.error };
-    return { ok: true, ...decodeContextUsage(reply.response) };
+    const usage = decodeContextUsage(reply.response);
+    // What this session runs at, banked for dsh's context ring. Both spellings are recorded: dsh
+    // asks for a window by the id it stored, which is the spec's, while the CLI answers with its
+    // own name for the model. `retarget` writes the new spec on a `set_model`, so a model switched
+    // mid-session banks under the model it switched to, and the ring follows on the next turn.
+    noteLiveWindow(proc.spec?.model, usage.maxTokens);
+    noteLiveWindow(usage.model, usage.maxTokens);
+    return { ok: true, ...usage };
   }
 
   /**
@@ -4612,6 +4657,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         if (buf.length > TURN_RING) buf.shift();
         this.turnBuffer.set(options.sessionId, buf);
         void saveTurnRecords(this.stateDir, options.sessionId, buf);
+        // The window this model actually runs at, asked once per model between turns so dsh's
+        // context ring is right before anyone opens the breakdown. A model switched mid-session is
+        // an id we have not banked yet, so the next result asks again for the model it switched to.
+        if (proc.spec.model !== undefined && liveWindowFor(proc.spec.model) === undefined)
+          void this.contextUsage(options.sessionId).catch(() => {});
       },
       onToolResult:
         turnStep && rowMode.rows
