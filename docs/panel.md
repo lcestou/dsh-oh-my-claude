@@ -91,6 +91,8 @@ A Customize fold under the switch lists every block with the size it cost on the
 
 Two warnings worth reading before clearing a box. Claude Code does not read AGENTS.md, so a repo whose only instruction file is AGENTS.md goes unguided with that row off. The skill catalog is usually the largest block on the list and says nothing a session can act on when dsh tools are off.
 
+dsh's chat draws a row for every block it assembled, which is a record of dsh's side of the seam, not a receipt from Claude Code. In a session on this plugin those rows are folded away once the block does not reach the CLI: dsh's system prompt always, since the plugin has never passed it on, and the instructions and skill-catalog rows whenever their switch is off. The runtime snapshot keeps its row, because it is still sent. Sessions on any other provider are left alone, where the rows are true.
+
 The settings are box-wide, in the same `hints.json` as the switches around them, as the off keys `dshContextOff`, `dshContextInstructionsOff` and `dshContextSkillsOff`; an absent key means the block is sent. The adapter reads them when it assembles a turn, so a session already running keeps whatever it was sent before the switch moved. Sizes come from `GET /dsh-oh-my-claude/context-sizes?cwd=`, measured on the last real turn in that workspace and written only when a number changes.
 
 ## Prompt starter

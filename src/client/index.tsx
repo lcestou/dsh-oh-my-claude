@@ -93,6 +93,13 @@ import {
 } from "./notices.js";
 import { SETTINGS_SCOPES, SCOPE_LABELS, overrideNote } from "./settings.js";
 import type { SettingsScope, SettingsScopeInfo } from "./settings.js";
+import {
+  type ChatFlowNode,
+  contextDrops,
+  maskedRows,
+  MASTER_KEY,
+  OFF_KEY,
+} from "../context-sources.js";
 export { type SessionData, isOwnedActive, fmtCost, fmtDuration, cacheShare };
 
 /** Deep link another box's panel sends us to: `#claude-session=<id>&cwd=<path>`. */
@@ -5420,7 +5427,7 @@ function ContextFixed({
  *  keys go to the box's hints store, and the adapter reads them when it assembles a turn, so a
  *  session already running keeps whatever it was sent before the switch moved. */
 function ContextSwitch({ ctx }: { ctx: ClientCtx }) {
-  const [off, setOff] = useHintFlag("dshContextOff");
+  const [off, setOff] = useHintFlag(MASTER_KEY);
   const sizes = useContextSizes(ctx);
   // The two switchable blocks and nothing else. The runtime snapshot, the tools guidance and the
   // CLAUDE.md copy are all still sent (or already dropped) whatever this switch says, so counting
@@ -5467,13 +5474,13 @@ function ContextSwitch({ ctx }: { ctx: ClientCtx }) {
             <div style={{ color: T.muted, fontSize: 12 }}>What dsh adds</div>
             <ContextBox
               source="instructions"
-              flag="dshContextInstructionsOff"
+              flag={OFF_KEY.instructions}
               label="Workspace instructions (AGENTS.md)"
               chars={sizes?.instructions}
             />
             <ContextBox
               source="skills"
-              flag="dshContextSkillsOff"
+              flag={OFF_KEY.skills}
               label="dsh skill catalog"
               chars={sizes?.skills}
             />
@@ -5518,6 +5525,75 @@ function ContextSwitch({ ctx }: { ctx: ClientCtx }) {
       )}
     </>
   );
+}
+
+/** The part of dsh's chat publication the row mask reads: the render order, and a keyed reader for
+ *  the rows. dsh ships the full contract to its own packages only, so the shape is named here. */
+type ChatFlow = {
+  readonly order: readonly string[];
+  readonly nodes: { get: (key: string) => ChatFlowNode | undefined };
+};
+
+/** Stable empty order, so a mount without the chat hook does not hand `useMemo` a new array. */
+const NO_ROWS: readonly string[] = [];
+
+const ROW_MASK_STYLE_ID = "dsh-oh-my-claude-context-rows";
+
+/**
+ * Fold away the chat rows that describe context Claude Code never received. dsh logs every block it
+ * assembled and draws a row per block, so a session with the switches off still shows an
+ * "Instructions from" row and a "System prompt" row for text this plugin dropped at the seam. That
+ * reads as a receipt and it is not one.
+ *
+ * Renderless, and it writes one sheet rather than touching dsh's DOM: the rows are named by
+ * `data-chat-flow-key`, the key dsh's own projection put on the row, so nothing here depends on a
+ * generated class name or on the row's text. Only a session running on this plugin's provider is
+ * masked; dsh sends all of it to everyone else, and their rows are true.
+ */
+function ContextRowMask({
+  sessionId,
+  ctx,
+  useChat,
+}: {
+  sessionId?: string;
+  ctx: ClientCtx;
+  useChat?: <S>(select: (chat: ChatFlow) => S, eq?: (a: S, b: S) => boolean) => S;
+}) {
+  const [off] = useHintFlag(MASTER_KEY);
+  const [instructionsOff] = useHintFlag(OFF_KEY.instructions);
+  const [skillsOff] = useHintFlag(OFF_KEY.skills);
+  const order = useChat?.((chat) => chat.order) ?? NO_ROWS;
+  const nodes = useChat?.((chat) => chat.nodes);
+  const mine = sessionId !== undefined && isClaudeSession(ctx, sessionId);
+  const masked = useMemo(() => {
+    if (!mine || nodes === undefined) return [];
+    const drops = contextDrops({
+      [MASTER_KEY]: off,
+      [OFF_KEY.instructions]: instructionsOff,
+      [OFF_KEY.skills]: skillsOff,
+    });
+    return maskedRows(order, (key) => nodes.get(key), drops);
+  }, [mine, nodes, order, off, instructionsOff, skillsOff]);
+  useEffect(() => {
+    const existing = document.getElementById(ROW_MASK_STYLE_ID);
+    const el = existing instanceof HTMLStyleElement ? existing : document.createElement("style");
+    el.id = ROW_MASK_STYLE_ID;
+    // A key is dsh's to shape, so it is escaped for the attribute string rather than trusted.
+    const css =
+      masked.length === 0
+        ? ""
+        : `${masked
+            .map((key) => `[data-chat-flow-key="${key.replace(/["\\]/g, "\\$&")}"]`)
+            .join(",")}{display:none}`;
+    if (el.textContent !== css) el.textContent = css;
+    if (!existing) document.head.appendChild(el);
+    // Cleared rather than removed on unmount: leaving the rules behind would hide rows in whatever
+    // session the tab moves to next, which may be another provider's.
+    return () => {
+      el.textContent = "";
+    };
+  }, [masked]);
+  return null;
 }
 
 /** The settings switch for the update notice. The flag lives in the box's hints store, which the
@@ -6456,6 +6532,11 @@ export function apply(ctx: ClientCtx) {
     ctx.slots.register(
       { name: "conversation.input.dock", id: "claude-tool-icons", order: 46 },
       () => <ToolIconSprites />,
+    );
+    // Renderless: folds away the chat rows for context this plugin withheld from the CLI.
+    ctx.slots.register(
+      { name: "conversation.input.dock", id: "claude-context-rows", order: 48 },
+      (props) => <ContextRowMask {...props} ctx={ctx} />,
     );
     // Renderless: applies the workspace's remembered Claude model to a blank session.
     ctx.slots.register(

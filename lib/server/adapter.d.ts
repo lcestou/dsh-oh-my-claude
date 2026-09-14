@@ -395,9 +395,9 @@ export declare function selectTurns(messages: LooseMessage[] | undefined, resumi
  *  bundle is one `<system-reminder>` with `Instructions from: <path>` headers; a block runs to
  *  the next header or the closing tag. Empty when nothing but the wrapper would remain. */
 export declare function withoutNativeInstructions(text: string): string;
-/** Which withheld block a message is, if any. `kind: "plugin"` alone is never enough: the wake
- *  notice and the background job notices share that kind and are how those features report back. */
-export declare function contextSourceOf(m: LooseMessage): ContextSource | undefined;
+/** Which withheld block a message is, if any. The chat row mask classifies the same sources from
+ *  the client side, so the rule itself lives in `context-sources.ts` and both read it there. */
+export declare const contextSourceOf: (m: LooseMessage) => ContextSource | undefined;
 /** What each dsh block cost this turn, in characters, measured before any switch removed it: a
  *  cleared checkbox still has to show its number or the owner cannot tell whether to put it back.
  *  `instructions` counts what survives the CLAUDE.md filter and `claudemd` counts what the filter

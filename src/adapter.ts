@@ -36,6 +36,7 @@ import {
   type ContextSizeKey,
   type ContextSizes,
   type ContextSource,
+  sourceBlockOf,
 } from "./context-sources.js";
 import {
   accountIdentity,
@@ -991,15 +992,10 @@ export function withoutNativeInstructions(text: string): string {
   return kept.join("").trimEnd() + (close ? close[0] : "");
 }
 
-/** Which withheld block a message is, if any. `kind: "plugin"` alone is never enough: the wake
- *  notice and the background job notices share that kind and are how those features report back. */
-export function contextSourceOf(m: LooseMessage): ContextSource | undefined {
-  if (m.source?.kind === "agent-instructions") return "instructions";
-  if (m.source?.kind === "skill-catalog") return "skills";
-  if (m.source?.kind === "plugin" && m.source.plugin === "@deepseek-ai/dsh-system-prompt")
-    return "runtime";
-  return undefined;
-}
+/** Which withheld block a message is, if any. The chat row mask classifies the same sources from
+ *  the client side, so the rule itself lives in `context-sources.ts` and both read it there. */
+export const contextSourceOf = (m: LooseMessage): ContextSource | undefined =>
+  sourceBlockOf(m.source);
 
 /** What each dsh block cost this turn, in characters, measured before any switch removed it: a
  *  cleared checkbox still has to show its number or the owner cannot tell whether to put it back.

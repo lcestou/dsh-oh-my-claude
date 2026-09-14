@@ -34,6 +34,7 @@ export type Locator = {
   inputValue(): Promise<string>;
   isChecked(): Promise<boolean>;
   isDisabled(): Promise<boolean>;
+  isVisible(): Promise<boolean>;
 };
 
 export type Page = {
