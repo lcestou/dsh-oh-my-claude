@@ -3170,8 +3170,10 @@ function watchContextMeter(ctx: ClientCtx) {
         hideNativeContext(tip, block);
       });
   };
-  // The meter's ring, the occupancy last read for it, and when that read was asked for.
-  let ring: HTMLElement | undefined;
+  // The ring's filled arc, its geometry, the occupancy last read for it, and when that was asked for.
+  const ARC = ':scope > button[aria-haspopup="dialog"] circle + circle';
+  let arc: SVGCircleElement | undefined;
+  let arcLength = 0;
   let ringSession: string | undefined;
   let ringPercent: number | undefined;
   let ringAsked = 0;
@@ -3189,13 +3191,13 @@ function watchContextMeter(ctx: ClientCtx) {
    * turn on; the throughput figure is right for that and wrong only here. The circle is found the
    * same structural way `isRingRoot` finds it, and its radius is read from the element rather than
    * assumed, so a ring dsh redraws at another size still gets a correct arc.
+   *
+   * This runs once per mutation burst, so past the first paint it is two string compares and no DOM
+   * query: the circle and its circumference are held from the scan that found them, and a ring that
+   * went away is an element that is no longer connected.
    */
   const paintRing = () => {
-    if (ring?.isConnected !== true) ring = undefined;
-    const arc = ring?.querySelector<SVGCircleElement>(
-      ':scope > button[aria-haspopup="dialog"] circle + circle',
-    );
-    if (!arc) return;
+    if (arc?.isConnected !== true) return;
     const sid = activeClaudeSession(ctx);
     if (sid === undefined) return;
     if (sid !== ringSession) {
@@ -3216,10 +3218,7 @@ function watchContextMeter(ctx: ClientCtx) {
       });
     }
     if (ringPercent === undefined) return;
-    const radius = Number(arc.getAttribute("r"));
-    if (!Number.isFinite(radius) || radius <= 0) return;
-    const circumference = 2 * Math.PI * radius;
-    const dash = `${(circumference * ringPercent) / 100} ${circumference}`;
+    const dash = `${(arcLength * ringPercent) / 100} ${arcLength}`;
     if (arc.getAttribute("stroke-dasharray") !== dash) arc.setAttribute("stroke-dasharray", dash);
     // The button's label is the same reading spoken aloud, so it moves with the arc.
     const label = `${Math.round(ringPercent)}% of context used`;
@@ -3227,9 +3226,19 @@ function watchContextMeter(ctx: ClientCtx) {
     if (button?.getAttribute("aria-label") !== label) button?.setAttribute("aria-label", label);
   };
   const scan = (root: ParentNode) => {
-    for (const el of root.querySelectorAll<HTMLElement>('button[aria-haspopup="dialog"]')) {
-      const host = el.parentElement;
-      if (host && isRingRoot(host)) ring = host;
+    // Looked for only until it is found. The ring outlives every burst that follows, and this query
+    // would otherwise run over each of them for an element already in hand.
+    if (arc?.isConnected !== true) {
+      arc = undefined;
+      for (const el of root.querySelectorAll<HTMLElement>('button[aria-haspopup="dialog"]')) {
+        const host = el.parentElement;
+        const found = host && isRingRoot(host) ? host.querySelector<SVGCircleElement>(ARC) : null;
+        const radius = Number(found?.getAttribute("r"));
+        if (!found || !Number.isFinite(radius) || radius <= 0) continue;
+        arc = found;
+        arcLength = 2 * Math.PI * radius;
+        break;
+      }
     }
     for (const el of root.querySelectorAll<HTMLElement>('[role="dialog"]'))
       if (isRingRoot(el.parentElement)) attach(el);
