@@ -62,7 +62,9 @@ export interface ClaudeMdState {
  * Settings win over the inherited environment, because the CLI spreads a file's `env` block over the
  * environment it started with. So the highest scope that names the key decides: a `"0"` there keeps
  * the files loading even when dsh's own environment says otherwise, and a lower file naming the key
- * changes nothing.
+ * changes nothing. `scopes` has to arrive highest precedence first for that to hold, which is the
+ * order `ScopeText` is documented in and the order `settingsTexts` builds; this reads the first
+ * scope that names the key and stops, exactly as `featureSwitches` above resolves its own scalars.
  *
  * `local` is the last word on the environment half. A local child inherits dsh-web's environment, so
  * `process.env` is authoritative for it. A box across ssh runs its own shell, which cannot be read
