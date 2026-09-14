@@ -43,18 +43,42 @@ export interface RecapStep {
 }
 
 /**
- * How long a session must have sat finished before returning to it earns a recap. Five minutes, the
- * same bar the CLI's own away summary uses ("shown when you return after being away for 5+ minutes",
+ * How long a session must have sat finished before returning to it earns a recap, unless the
+ * dropdown in Settings says otherwise. Five minutes, the same bar the CLI's own away summary uses ("shown when you return after being away for 5+ minutes",
  * `awaySummaryEnabled` in claude 2.1.270). Below it you already know what you left, and the recap is
  * a model call.
  */
 export const RECAP_AWAY_MS = 5 * 60_000;
 
+/** What the settings dropdown offers, with `RECAP_AWAY_MS` among them as the default. */
+export const RECAP_AWAY_CHOICES = [60_000, RECAP_AWAY_MS, 15 * 60_000, 30 * 60_000, 60 * 60_000];
+
+const AWAY_KEY = "omc.recapAwayMs";
+
+/** The chosen bar, or the default when unset, unreadable or not one of the offered choices. */
+export const recapAwayMs = (): number => {
+  try {
+    const raw = Number(window.localStorage.getItem(AWAY_KEY));
+    return RECAP_AWAY_CHOICES.includes(raw) ? raw : RECAP_AWAY_MS;
+  } catch {
+    return RECAP_AWAY_MS;
+  }
+};
+
+export const setRecapAwayMs = (ms: number): void => {
+  try {
+    if (ms === RECAP_AWAY_MS) window.localStorage.removeItem(AWAY_KEY);
+    else window.localStorage.setItem(AWAY_KEY, String(ms));
+  } catch {
+    // Nothing to do: the dropdown reads back the default, which is what will be used.
+  }
+};
+
 /**
  * The recap queue after this snapshot, and the session to recap now. A session joins the queue when
  * it stops working while unselected, and leaves it when it becomes the one on screen: that is the
  * return the recap is named for. Leaving the queue is not the same as firing, though — a return
- * inside `RECAP_AWAY_MS` drops the entry silently, because flicking to another tab and back is not
+ * inside `awayMs` drops the entry silently, because flicking to another tab and back is not
  * being away. Never persisted, so a reload forgets: a recap of work from before a page load is
  * history, not a return.
  */
@@ -63,14 +87,14 @@ export function recapNext(
   waiting: readonly string[],
   current: string | undefined,
   now: number,
+  awayMs: number,
 ): RecapStep {
   const next = { ...pending };
   for (const id of waiting) if (id !== current) next[id] ??= now;
   if (current !== undefined) {
     const since = next[current];
     delete next[current];
-    if (since !== undefined && now - since >= RECAP_AWAY_MS)
-      return { pending: next, fire: current };
+    if (since !== undefined && now - since >= awayMs) return { pending: next, fire: current };
   }
   return { pending: next };
 }

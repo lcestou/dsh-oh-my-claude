@@ -86,6 +86,10 @@ import {
   recapNext,
   recapOn,
   setRecapOn,
+  recapAwayMs,
+  setRecapAwayMs,
+  RECAP_AWAY_MS,
+  RECAP_AWAY_CHOICES,
   RECAP_QUESTION,
   type NoticeSnapshot,
 } from "./notices.js";
@@ -3564,7 +3568,7 @@ function watchSessionNotices(ctx: ClientCtx) {
     // runs in, so a current that lags the screen by a tick can bill a recap for a session nobody left.
     // A spurious title mark is free; a spurious recap is a model call, which is why the switch is off
     // until asked for.
-    const step = recapNext(recapPending, stopped, snap.current, Date.now());
+    const step = recapNext(recapPending, stopped, snap.current, Date.now(), recapAwayMs());
     recapPending = step.pending;
     // Three reasons not to spend the call, all of them the CLI's own: the switch is off, there is
     // half a prompt in the composer so the person is already saying what they want, or the session
@@ -5350,36 +5354,79 @@ function WorkspaceModelSwitch() {
  */
 function ReturnRecapSwitch() {
   const [on, setOn] = useState(recapOn);
+  const [away, setAway] = useState(recapAwayMs);
   return (
-    <div
-      data-omc-recap-switch=""
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: 12,
-        fontSize: 13,
-        marginBottom: 12,
-      }}
-    >
-      <div>
-        <div>Return recap</div>
-        <div style={{ color: T.faint, fontSize: 12 }}>
-          One line on what Claude did while you were on another session, asked when you come back to
-          one that finished without you. Costs a model call each time.
-        </div>
-      </div>
-      <Switch
-        on={on}
-        onChange={(next) => {
-          setRecapOn(next);
-          setOn(next);
+    <>
+      <div
+        data-omc-recap-switch=""
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+          fontSize: 13,
+          marginBottom: on ? 4 : 12,
         }}
-        label="Return recap"
-      />
-    </div>
+      >
+        <div>
+          <div>Return recap</div>
+          <div style={{ color: T.faint, fontSize: 12 }}>
+            One line on what Claude did while you were on another session, asked when you come back
+            to one that finished without you. Costs a model call each time.
+          </div>
+        </div>
+        <Switch
+          on={on}
+          onChange={(next) => {
+            setRecapOn(next);
+            setOn(next);
+          }}
+          label="Return recap"
+        />
+      </div>
+      {/* Only with the feature on: a bar for something that never fires is a question about nothing. */}
+      {on && (
+        <label
+          data-omc-recap-away=""
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            fontSize: 13,
+            marginBottom: 12,
+            paddingLeft: 16,
+          }}
+        >
+          <span style={{ color: T.muted }}>Away at least</span>
+          <select
+            style={select}
+            aria-label="Away time before a recap"
+            value={String(away)}
+            onChange={(e) => {
+              const next = Number(e.target.value);
+              setRecapAwayMs(next);
+              setAway(next);
+            }}
+          >
+            {RECAP_AWAY_CHOICES.map((ms) => (
+              <option key={ms} value={String(ms)}>
+                {awayLabel(ms)}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+    </>
   );
 }
+
+/** Minutes or hours, with the default named so picking it back is one choice rather than a button. */
+const awayLabel = (ms: number): string => {
+  const minutes = ms / 60_000;
+  const text =
+    minutes >= 60 ? `${minutes / 60} hour` : `${minutes} minute${minutes === 1 ? "" : "s"}`;
+  return ms === RECAP_AWAY_MS ? `${text} (default)` : text;
+};
 
 /** Box-wide spend warning: a dollar figure that turns the cost pill orange once a session passes it. */
 function SpendGuardField() {
