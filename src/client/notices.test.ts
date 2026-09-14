@@ -1,6 +1,6 @@
 // Offline self-check: bun src/client/notices.test.ts. No DOM, no server.
 import assert from "node:assert/strict";
-import { markTitle, newlyWaiting, stripMark } from "./notices.js";
+import { markTitle, newlyWaiting, recapNext, stripMark } from "./notices.js";
 
 const snap = (byId: Record<string, { running?: boolean; completed?: boolean }>, current?: string) =>
   ({ byId, current }) as const;
@@ -56,6 +56,36 @@ assert.deepEqual(newlyWaiting(snap({ a: { running: true } }), snap({ a: { runnin
   assert.equal(markTitle(markTitle("dsh", 1), 1), "● dsh", "no second mark");
   assert.equal(markTitle("● dsh", 0), "dsh");
   assert.equal(stripMark("dsh"), "dsh");
+}
+
+// The once-only sequence, run as a sequence: each tick feeds the pending list the last one returned,
+// which is what the caller does. Hardcoding each tick's input would pass even if the queue leaked.
+{
+  let step = recapNext([], [], undefined); // first tick: nothing has stopped yet
+  assert.deepEqual(step, { pending: [] });
+  step = recapNext(step.pending, ["a"], "b"); // "a" stops while "b" is on screen
+  assert.deepEqual(step, { pending: ["a"] }, "queued, not fired");
+  step = recapNext(step.pending, [], "a"); // the return
+  assert.deepEqual(step, { pending: [], fire: "a" }, "fires once, queue cleared");
+  step = recapNext(step.pending, [], "a"); // still looking at it
+  assert.deepEqual(step, { pending: [] }, "a second tick on the same session asks nothing");
+}
+
+// A session that stops while it IS current never enters pending and never fires.
+{
+  assert.deepEqual(recapNext([], ["a"], "a"), {
+    pending: [],
+  });
+  assert.deepEqual(recapNext([], [], "a"), {
+    pending: [],
+  });
+}
+
+// current: undefined fires nothing; pending survives until a current arrives.
+{
+  assert.deepEqual(recapNext(["a", "b"], [], undefined), {
+    pending: ["a", "b"],
+  });
 }
 
 console.log("notices ok");

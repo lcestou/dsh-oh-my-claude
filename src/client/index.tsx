@@ -79,7 +79,15 @@ import { AccessShield, OhMyClaudeControl } from "./panel.js";
 import { ConfirmButton } from "./tune.js";
 import { AddWorkspaceFlow, canBrowseDirs, OPEN_EVENT } from "./picker.js";
 import { takeDraft, subscribeDraft } from "./draft.js";
-import { markTitle, newlyWaiting, noticesOn, type NoticeSnapshot } from "./notices.js";
+import {
+  markTitle,
+  newlyWaiting,
+  noticesOn,
+  recapNext,
+  recapOn,
+  RECAP_QUESTION,
+  type NoticeSnapshot,
+} from "./notices.js";
 import { SETTINGS_SCOPES, SCOPE_LABELS, overrideNote } from "./settings.js";
 import type { SettingsScope, SettingsScopeInfo } from "./settings.js";
 export { type SessionData, isOwnedActive, fmtCost, fmtDuration, cacheShare };
@@ -3530,6 +3538,7 @@ const wireTurnStatus = (
 function watchSessionNotices(ctx: ClientCtx) {
   let prev: NoticeSnapshot | null = null;
   const waiting = new Set<string>();
+  let recapPending: string[] = [];
   const tick = () => {
     const snap = ctx.sessions.list.getSnapshot();
     if (!snap) return;
@@ -3539,12 +3548,34 @@ function watchSessionNotices(ctx: ClientCtx) {
     for (const [id, s] of Object.entries(snap.byId))
       byId[id] = { running: s.running, completed: s.completed, displayTitle: s.displayTitle };
     const next: NoticeSnapshot = { byId, current: snap.current };
-    for (const id of newlyWaiting(prev, next)) {
-      if (!isClaudeSession(ctx, id)) continue; // other providers are not this plugin's to announce
+    const stopped = newlyWaiting(prev, next).filter((id) => isClaudeSession(ctx, id));
+    for (const id of stopped) {
       waiting.add(id);
       notifyWaiting(ctx, id, snap.byId[id]?.displayTitle ?? id);
     }
     prev = next;
+    // Return recap: a session that stopped working while it was not the one on screen is asked for
+    // one line when it is opened. Off by default; the switch is in Diagnostics beside the notices
+    // one. `recapNext` clears the id as it fires, so a return asks once and a second open of the
+    // same session asks nothing. Two things this accepts on purpose: the queue is cleared before
+    // `recapOn()` is read, so turning the switch on mid-session waits for the next return rather than
+    // firing for a session that already came back, and the fire trusts `snap.current` for the tick it
+    // runs in, so a current that lags the screen by a tick can bill a recap for a session nobody left.
+    // A spurious title mark is free; a spurious recap is a model call, which is why the switch is off
+    // until asked for.
+    const step = recapNext(recapPending, stopped, snap.current);
+    recapPending = step.pending;
+    if (step.fire !== undefined && recapOn()) {
+      const session = step.fire;
+      void fetch(`${ROUTE}/side-questions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ session, question: RECAP_QUESTION }),
+      }).catch(() => {
+        // A recap nobody typed stays quiet when it fails. The route refuses before the ring is
+        // touched when there is no live process, so there is nothing to clean up here either.
+      });
+    }
     // Reading it clears it: the open session, and everything else once the tab is looked at again.
     if (snap.current !== undefined) waiting.delete(snap.current);
     if (!document.hidden) waiting.clear();

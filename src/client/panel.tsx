@@ -41,7 +41,7 @@ import { ReportBlock } from "./report.js";
 import { Tooltip, useAnchoredMaxHeight } from "@deepseek-ai/dsh-client-ui-primitives";
 import { Spark } from "./spark.js";
 import { ConfirmButton, TuneBody } from "./tune.js";
-import { noticesOn, setNoticesOn } from "./notices.js";
+import { noticesOn, setNoticesOn, recapOn, setRecapOn } from "./notices.js";
 import type { FeatureSwitches } from "../switches.js";
 import type { PluginRoster } from "../plugins.js";
 
@@ -1592,6 +1592,49 @@ function SessionNotices() {
 }
 
 /**
+ * The opt-in for the one-line recap a session gives when you come back to it. Beside the notices
+ * switch because both are this browser's own state, and off by default because unlike a title mark
+ * this one bills a model call.
+ */
+function ReturnRecap() {
+  const [on, setOn] = useState(recapOn);
+  const write = (next: boolean) => {
+    setRecapOn(next);
+    setOn(next);
+  };
+  const state = on
+    ? "On. One line when you come back to a session that finished while you were away."
+    : "Asks Claude for one line about what it did while you were on another session. Costs a model call.";
+  return (
+    <>
+      <span style={{ ...meta, padding: "2px 4px", display: "block", marginTop: 8 }}>
+        Return recap
+      </span>
+      <div
+        data-omc-recap-switch=""
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          padding: "4px 10px",
+          fontSize: 12,
+          lineHeight: "1.5",
+        }}
+      >
+        <button
+          type="button"
+          style={{ ...btn, fontSize: 12, flex: "0 0 auto" }}
+          onClick={() => write(!on)}
+        >
+          {on ? "Turn off" : "Turn on"}
+        </button>
+        <span>{state}</span>
+      </div>
+    </>
+  );
+}
+
+/**
  * "Diagnostics" body in the Oh My Claude dialog: runtime status, config file parse errors,
  * MCP servers that are not connected with their errors, and a doctor output button.
  */
@@ -1843,6 +1886,7 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
           )}
 
           <SessionNotices />
+          <ReturnRecap />
 
           {/* The three settings that switch a tab off underneath it */}
           <span style={{ ...meta, padding: "2px 4px", display: "block", marginTop: 8 }}>

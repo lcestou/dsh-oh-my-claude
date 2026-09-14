@@ -34,6 +34,52 @@ export function newlyWaiting(prev: NoticeSnapshot | null, next: NoticeSnapshot):
   return out;
 }
 
+/** The one return shape `recapNext` uses. Kept narrow so the caller reads what it gets without a
+ *  widening cast. */
+export interface RecapStep {
+  pending: string[];
+  fire?: string;
+}
+
+/**
+ * The recap queue after this snapshot, and the session to recap now. A session joins the queue when
+ * it stops working while unselected, and leaves it when it becomes the one on screen: that is the
+ * return the recap is named for. Never persisted, so a reload forgets: a recap of work from before a
+ * page load is history, not a return.
+ */
+export function recapNext(
+  pending: readonly string[],
+  waiting: readonly string[],
+  current: string | undefined,
+): RecapStep {
+  const next = new Set(pending);
+  for (const id of waiting) if (id !== current) next.add(id);
+  if (current !== undefined && next.delete(current)) return { pending: [...next], fire: current };
+  return { pending: [...next] };
+}
+
+const RECAP_KEY = "omc.returnRecap";
+
+/** Off by default: it costs a model call, and the transcript is right there to scroll. */
+export const recapOn = (): boolean => {
+  try {
+    return window.localStorage.getItem(RECAP_KEY) === "on";
+  } catch {
+    return false; // storage denied: treat as off, which is what the switch will read back
+  }
+};
+
+export const setRecapOn = (on: boolean): void => {
+  try {
+    window.localStorage.setItem(RECAP_KEY, on ? "on" : "off");
+  } catch {
+    // Nothing to do: the switch reads back off, which is the honest state.
+  }
+};
+
+/** What the recap asks. One line, because the answer docks in a card two lines tall. */
+export const RECAP_QUESTION = "One line: what did you do in this session since my last message?";
+
 const MARK = "● ";
 
 /** The tab title with one mark while any session waits, and without it when none does. */
