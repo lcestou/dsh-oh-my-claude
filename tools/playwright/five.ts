@@ -79,10 +79,12 @@ await p.waitForTimeout(1000);
 const mcpButtons = await p.locator("[data-omc-mcp-ask]").all();
 if (mcpButtons.length > 0) {
   for (const btn of mcpButtons) {
+    // Either state is right: the button now reads the live process's own pins rather than this
+    // page's memory, so a server the owner pinned earlier reads true and is not a failure.
     const pressed = await btn.getAttribute("aria-pressed");
     expect(
-      pressed === "false",
-      `MCP ask button aria-pressed is "false" (${JSON.stringify(pressed)})`,
+      pressed === "false" || pressed === "true",
+      `MCP ask button publishes its state (${JSON.stringify(pressed)})`,
     );
     // One accessible name per row, not the same "Always ask" on every one of them.
     const askLabel = await btn.getAttribute("aria-label");

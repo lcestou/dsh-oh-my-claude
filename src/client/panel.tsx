@@ -1364,6 +1364,9 @@ interface McpServer {
   error?: string;
   /** Bare tool names the server contributes; absent when the session has seen no init frame. */
   tools?: string[];
+  /** Pinned back to asking on the live process. Comes from the plugin's record of what it sent,
+   *  since the CLI reports connection only, and it is the live process that is asked either way. */
+  asking?: boolean;
 }
 type McpReply = { ok: true; servers: McpServer[] } | { ok: false; error: string };
 /** A server the CLI is configured with, as `GET /mcp-servers/configured` lists it, with its scope. */
@@ -1384,9 +1387,6 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState("");
   const [showAdd, setShowAdd] = useState(false);
-  // What this tab has told the process to ask for, keyed by server name. No read-back exists,
-  // so the CLI's state is not reported here—only what this page set this session.
-  const [askOverrides, setAskOverrides] = useState<Record<string, boolean>>({});
   // The session's own permission mode: whether the Always ask toggle would be inert. Null until
   // fetched; a failed read leaves it null and the toggle still renders because the mode can change.
   const [permMode, setPermMode] = useState<PermissionModeState | null>(null);
@@ -1416,9 +1416,6 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
   useEffect(() => {
     setReply(null);
     setNote("");
-    // Overrides belong to the session that set them: carried across a switch, this tab would show
-    // a server as asking on a session that never asked for it, and there is no read-back to correct it.
-    setAskOverrides({});
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- load closes over sessionId only
   }, [sessionId]);
@@ -1492,7 +1489,7 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
           body: JSON.stringify({ session: sessionId, name: serverName, ask }),
         }),
       );
-      if (r.ok) setAskOverrides((prev) => ({ ...prev, [serverName]: ask }));
+      if (r.ok) await load();
       else setNote(`${serverName}: ${r.error ?? "failed"}`);
     } catch (e) {
       setNote(e instanceof Error ? e.message : String(e));
@@ -1576,19 +1573,20 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
               </span>
               {scopeOf(s.name) && <span style={pill(T.faint)}>{scopeOf(s.name)}</span>}
               <span style={{ ...meta, flex: "none" }}>{s.status}</span>
-              {/* A tighten-only toggle: on sends default (ask), off sends null (clear). The record is
-                  this tab's memory only; the CLI offers no read-back of what it has set. */}
+              {/* A tighten-only toggle: on sends default (ask), off sends null (clear). What it
+                  reads is the plugin's record on the live process, so a refresh or a second browser
+                  sees the same thing; the CLI offers no read-back of its own. */}
               <button
                 type="button"
                 // Filled while it is on. `aria-pressed` alone tells a screen reader and nobody
                 // else, and this is a button that changes what the session does the next time a
                 // tool runs, so it has to read as on from across the row.
-                style={askOverrides[s.name] === true ? btnPrimary : btn}
-                aria-pressed={askOverrides[s.name] === true}
+                style={s.asking === true ? btnPrimary : btn}
+                aria-pressed={s.asking === true}
                 aria-label={`Always ask: ${s.name}`}
                 data-omc-mcp-ask=""
                 disabled={busy !== null}
-                onClick={() => setAsk(s.name, !(askOverrides[s.name] === true))}
+                onClick={() => setAsk(s.name, s.asking !== true)}
               >
                 Always ask
               </button>
@@ -1625,7 +1623,7 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
             ) : null}
             {/* When the override is set and the session would otherwise auto-allow, say what it
                 does. The CLI keeps it in state that dies with the process, so the note says so. */}
-            {askOverrides[s.name] === true && !askIsInert && (
+            {s.asking === true && !askIsInert && (
               <div style={{ padding: "0 6px 4px 22px", color: T.muted, fontSize: 12 }}>
                 Tools from this server ask, until this session's Claude restarts.
               </div>

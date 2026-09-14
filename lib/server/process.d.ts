@@ -404,6 +404,9 @@ export interface McpServerStatus {
     /** Bare tool names this server contributes. Filled from the init frame by the adapter, not by
      *  `mcp_status`, which does not report tools; absent when no init frame has been seen. */
     tools?: string[];
+    /** This server's tools have been pinned back to asking on the live process. The adapter's own
+     *  record, not the CLI's: `mcp_status` reports connection and nothing about permissions. */
+    asking?: boolean;
 }
 /** An `mcp_status` answer as one row per server, with its own error kept when it is not connected. */
 export declare function decodeMcpStatus(v: JsonValue | undefined): McpServerStatus[];
@@ -609,6 +612,11 @@ export declare class ClaudeProcess {
     idleKilled: boolean;
     /** The silence it was allowed before that kill: longer while a tool call is out. */
     idleKilledAfterMs?: number;
+    /** MCP servers this process has been told to ask about, by name. The CLI holds the override in
+     *  its own tool-permission context and offers no read-back, so the only record is the one kept
+     *  where the override was sent from. It hangs off the process for the same reason the override
+     *  does: both end when the process does, so nothing has to remember to clear it. */
+    mcpAsking: Set<string>;
     staleResults: number;
     /** When this turn's prompt was written, for time-to-first-token; 0 once a result has read it. */
     promptSentAt: number;

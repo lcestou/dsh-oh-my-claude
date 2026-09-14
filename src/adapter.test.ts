@@ -3885,6 +3885,7 @@ console.log("interrupt-on-abort ok");
     alive: true,
     busy: false,
     controlListener: undefined,
+    mcpAsking: new Set<string>(),
     write(line: string) {
       written.push(line);
       const req = JSON.parse(line);
@@ -3926,11 +3927,39 @@ console.log("interrupt-on-abort ok");
   assert.deepEqual(st, {
     ok: true,
     servers: [
-      { name: "dsh", status: "connected", version: "0.9.0" },
-      { name: "plugin:x", status: "failed", error: "Connection timeout" },
-      { name: "plugin:y", status: "needs-auth", error: "Please log in to your account" },
+      { name: "dsh", status: "connected", version: "0.9.0", asking: false },
+      { name: "plugin:x", status: "failed", error: "Connection timeout", asking: false },
+      {
+        name: "plugin:y",
+        status: "needs-auth",
+        error: "Please log in to your account",
+        asking: false,
+      },
     ],
   });
+
+  // The Always ask pin survives the tab that set it: the record is on the process, so the next read
+  // of the status reports it whoever is asking. Clearing the pin takes it back off.
+  assert.deepEqual(await adapter.setMcpAsk("ms", "dsh", true), { ok: true });
+  assert.deepEqual(JSON.parse(written.at(-1)!).request, {
+    subtype: "set_mcp_permission_mode_override",
+    serverName: "dsh",
+    mode: "default",
+  });
+  let after = await adapter.mcpStatus("ms");
+  assert.deepEqual(
+    after.ok ? after.servers.map((s) => [s.name, s.asking]) : [],
+    [
+      ["dsh", true],
+      ["plugin:x", false],
+      ["plugin:y", false],
+    ],
+    "only the pinned server reads as asking",
+  );
+  assert.deepEqual(await adapter.setMcpAsk("ms", "dsh", false), { ok: true });
+  after = await adapter.mcpStatus("ms");
+  assert.equal(after.ok ? after.servers[0]?.asking : undefined, false, "clearing the pin shows");
+
   assert.deepEqual(await adapter.mcpReconnect("ms", "dsh"), { ok: true });
   assert.deepEqual(JSON.parse(written.at(-1)!).request, {
     subtype: "mcp_reconnect",
