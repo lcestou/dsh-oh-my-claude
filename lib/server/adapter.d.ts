@@ -2,6 +2,7 @@ import { type FSWatcher } from "node:fs";
 import type { Spawner, SubprocessHandle, ContextUsage, WorkspaceDiff, McpServerStatus, CliModel, PermissionRules, HooksListing } from "./process.js";
 import { LlmAdapter, type ContentBlock, type GenerateOptions, type LlmModelInfo, type LlmResolvedModelInfo, type StreamChunk } from "@deepseek-ai/dsh-llm";
 import z from "@deepseek-ai/schemastery";
+import { type ContextSizes, type ContextSource } from "./context-sources.js";
 import { type PickerSettings, type RemoteWorkspace } from "./sessions.js";
 import { readUsage } from "./usage.js";
 import { type ClaudeEvent, ClaudeProcess } from "./process.js";
@@ -394,13 +395,22 @@ export declare function selectTurns(messages: LooseMessage[] | undefined, resumi
  *  bundle is one `<system-reminder>` with `Instructions from: <path>` headers; a block runs to
  *  the next header or the closing tag. Empty when nothing but the wrapper would remain. */
 export declare function withoutNativeInstructions(text: string): string;
+/** Which withheld block a message is, if any. The chat row mask classifies the same sources from
+ *  the client side, so the rule itself lives in `context-sources.ts` and both read it there. */
+export declare const contextSourceOf: (m: LooseMessage) => ContextSource | undefined;
+/** What each dsh block cost this turn, in characters, measured before any switch removed it: a
+ *  cleared checkbox still has to show its number or the owner cannot tell whether to put it back.
+ *  `instructions` counts what survives the CLAUDE.md filter and `claudemd` counts what the filter
+ *  took, so the two together are the bundle dsh handed over. A key is absent when this turn carried
+ *  nothing of that kind, which is not the same as zero and must not be flattened into one. */
+export declare function contextSizes(turns: LooseMessage[]): ContextSizes;
 /**
  * The turn's text as one stdin prompt. A turn with assistant text in it is labelled by role so the
  * history stays legible; a plain user turn is sent as it was typed, with no label. A turn that
  * carries only an image has no text to send, so it becomes `(see attached)` and the image rides
  * along in `imageRefs`.
  */
-export declare function buildPrompt(turns: LooseMessage[]): string;
+export declare function buildPrompt(turns: LooseMessage[], drops?: ReadonlySet<ContextSource>): string;
 /** An image loaded from dsh's attachment store, ready for the stdin line, plus the path of the
  *  copy kept for Claude's tools when one could be written. */
 type LoadedImage = {
@@ -582,7 +592,7 @@ export declare function dropSent<T extends LooseMessage>(messages: T[] | undefin
 /** What dsh delivered at this step boundary besides the tool result: steers the user sent while
  *  the tool ran, subagent notices, other injections. Claude only sees the tool result, so they
  *  ride along with it. Empty when there is nothing. */
-export declare function stepContextFor(messages: LooseMessage[] | undefined): string;
+export declare function stepContextFor(messages: LooseMessage[] | undefined, drops?: ReadonlySet<ContextSource>): string;
 /** A fresh user message that is nothing but `/btw <question>`, and the question it carries. */
 export interface SideQuestion {
     message: LooseMessage;
@@ -679,6 +689,9 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     readonly liveTurn: Map<string, LiveTurn>;
     /** The model last written to workspace-models.json per cwd, so a turn on the same model writes nothing. */
     readonly workspaceModelWritten: Map<string, string>;
+    /** The sizes last written to context-sizes.json per cwd, as `key:value` pairs in a fixed order,
+     *  so a workspace whose blocks did not change writes nothing. */
+    readonly contextSizesWritten: Map<string, string>;
     /** Per-session idle watchdog deadline in epoch ms; null means no active arm. */
     readonly idleDeadlineMap: Map<string, number | null>;
     /** Per-session kill and warning timers, keyed by session id. */

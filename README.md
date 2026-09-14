@@ -99,6 +99,7 @@ Working on the plugin itself? Start at [docs/developing.md](https://github.com/l
 13. Run Claude on another box over SSH, or mount several accounts. [Remote boxes and accounts](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/remote.md)
 14. Report a problem with a redacted box report, copied or filed as an issue. [Report a problem](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#report-a-problem)
 15. All the orange is a switch, per group, any colour. [Claude look](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#claude-look)
+16. Pick what dsh adds to your prompts, with the size of each block on the label. [dsh context](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#dsh-context)
 
 Defaults you never have to touch, such as secret redaction in tool results and surviving the CLI's own updates, are on [How it works](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md).
 

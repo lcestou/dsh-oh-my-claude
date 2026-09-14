@@ -32,6 +32,9 @@ export type Locator = {
   setInputFiles(files: string | string[]): Promise<void>;
   selectOption(value: string): Promise<string[]>;
   inputValue(): Promise<string>;
+  isChecked(): Promise<boolean>;
+  isDisabled(): Promise<boolean>;
+  isVisible(): Promise<boolean>;
 };
 
 export type Page = {

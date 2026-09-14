@@ -39,6 +39,32 @@ export interface FeatureSwitches {
         cli: boolean | null;
     };
 }
+/**
+ * What Claude Code loads for a workspace, and who decided it. The count and the total are the files
+ * themselves, so they are reported whether or not loading is on: they are what *would* load.
+ */
+export interface ClaudeMdState {
+    files: number;
+    chars: number;
+    /** The settings scope that sets `CLAUDE_CODE_DISABLE_CLAUDE_MDS`, or `"env"` for the environment
+     *  dsh itself runs in. Absent means the files load. No settings scope is called `env`. */
+    disabledBy?: string;
+}
+/**
+ * Whether anything turns CLAUDE.md loading off, and where it came from.
+ *
+ * Settings win over the inherited environment, because the CLI spreads a file's `env` block over the
+ * environment it started with. So the highest scope that names the key decides: a `"0"` there keeps
+ * the files loading even when dsh's own environment says otherwise, and a lower file naming the key
+ * changes nothing. `scopes` has to arrive highest precedence first for that to hold, which is the
+ * order `ScopeText` is documented in and the order `settingsTexts` builds; this reads the first
+ * scope that names the key and stops, exactly as `featureSwitches` above resolves its own scalars.
+ *
+ * `local` is the last word on the environment half. A local child inherits dsh-web's environment, so
+ * `process.env` is authoritative for it. A box across ssh runs its own shell, which cannot be read
+ * from here, so the environment is not consulted for one at all.
+ */
+export declare function claudeMdDisabledBy(scopes: readonly ScopeText[], env: string | undefined, local: boolean): string | undefined;
 /** One settings file read back as an object, or an empty one when it is not JSON. */
 export declare const parseSettings: (text: string) => Record<string, JsonValue>;
 /**

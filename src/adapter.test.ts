@@ -11,6 +11,7 @@ import {
   mcpToolsByServer,
   hasPendingTodo,
   ClaudeCodeAdapter,
+  contextSourceOf,
   ADAPTER_CURRENT,
   accessModeOf,
   buildArgs,
@@ -64,6 +65,7 @@ import {
   killAfterGrace,
   asideAnswerText,
   diffContext,
+  contextSizes,
 } from "./adapter.js";
 import { PERMISSION_MODES } from "./state.js";
 import {
@@ -271,6 +273,19 @@ assert.equal(
   "[user]\nhi\n\n[assistant]\nyo\n\n[user]\nagain\n\n[user]\n<system-reminder>ctx</system-reminder>",
 );
 assert.throws(() => buildPrompt([{ role: "assistant", content: "x" }]));
+// dsh's own system prompt arrives as role "system" and never reaches the CLI. Verified against a
+// fresh session on 2026-09-14: the block sits in the dsh log as a system/message, and neither the
+// Claude Code transcript nor the spawned process argv carries a word of it. The card says so, so
+// the drop is pinned here rather than left to hold by accident.
+const dshSystem = message({
+  role: "system",
+  content: [{ type: "text", text: "You are an AI agent powered by DeepSeek Harness." }],
+});
+assert.deepEqual(selectTurns([dshSystem], false), []);
+assert.equal(
+  buildPrompt(selectTurns(messageList([{ role: "user", content: "hi" }, dshSystem]), false)),
+  "hi",
+);
 // image-only / attachment-only user turn: no typed text, but not rejected — synthesize a prompt
 assert.equal(
   buildPrompt([{ role: "user", content: [{ type: "image", attachment: { path: "/x.png" } }] }]),
@@ -4823,4 +4838,144 @@ console.log("interrupt-on-abort ok");
   a.disposeProcesses();
   assert.equal(a.watchers.size, 0, "dispose closes the watchers");
   console.log("terminal turns adapter ok");
+}
+{
+  // The context switches. dsh injects three kinds of block into every prompt; two of them the
+  // owner can withhold from Settings, and the third is the approval snapshot, which never goes.
+  const instr = message({
+    role: "user",
+    source: { kind: "agent-instructions" },
+    content: [{ type: "text", text: "Instructions from: AGENTS.md\n\nbe lazy" }],
+  });
+  const cat = message({
+    role: "user",
+    source: { kind: "skill-catalog" },
+    content: [{ type: "text", text: "SKILL CATALOG: design-pass, unslop" }],
+  });
+  const snap = message({
+    role: "user",
+    source: { kind: "plugin", plugin: "@deepseek-ai/dsh-system-prompt", form: "snapshot" },
+    content: [{ type: "text", text: "approval policy: ask" }],
+  });
+  const job = message({
+    role: "user",
+    source: { kind: "plugin", plugin: "tool-jobs" },
+    content: [{ type: "text", text: "background job finished" }],
+  });
+  const typed = message({ role: "user", content: "do the thing" });
+
+  assert.equal(contextSourceOf(instr), "instructions");
+  assert.equal(contextSourceOf(cat), "skills");
+  assert.equal(contextSourceOf(snap), "runtime");
+  assert.equal(contextSourceOf(job), undefined, "a job notice is not context, it is the answer");
+  assert.equal(contextSourceOf(typed), undefined, "what the owner typed is never withheld");
+
+  const all = messageList([instr, cat, snap, typed]);
+  const sent = buildPrompt(all);
+  assert.ok(sent.includes("be lazy") && sent.includes("SKILL CATALOG"), "default sends everything");
+
+  const noSkills = buildPrompt(all, new Set(["skills"]));
+  assert.ok(!noSkills.includes("SKILL CATALOG"), "the withheld catalog is gone");
+  assert.ok(noSkills.includes("be lazy"), "and nothing else went with it");
+  assert.ok(noSkills.includes("approval policy: ask"), "the snapshot is not withholdable");
+  assert.ok(noSkills.includes("do the thing"), "the typed turn survives");
+
+  const neither = buildPrompt(all, new Set(["instructions", "skills"]));
+  assert.ok(!neither.includes("be lazy") && !neither.includes("SKILL CATALOG"));
+  assert.ok(neither.includes("do the thing"));
+
+  // A turn whose only message is a withheld block would leave no prompt at all, and the CLI needs
+  // one. Failing the turn is worse than sending the block, so that turn goes out unfiltered.
+  const catOnly = messageList([cat]);
+  assert.ok(
+    buildPrompt(catOnly, new Set(["skills"])).includes("SKILL CATALOG"),
+    "the last block standing is sent rather than losing the turn",
+  );
+
+  // The mid-turn path has no such fallback on purpose: a tool result already carries the turn.
+  const midTurn = messageList([
+    { role: "user", source: { kind: "tool", callId: "x" }, content: [{ type: "tool-result" }] },
+    cat,
+    { role: "user", content: "and also this" },
+  ]);
+  assert.ok(stepContextFor(midTurn).includes("SKILL CATALOG"), "default sends it mid-turn too");
+  const midDropped = stepContextFor(midTurn, new Set(["skills"]));
+  assert.ok(!midDropped.includes("SKILL CATALOG"), "and the switch reaches the mid-turn path");
+  assert.ok(midDropped.includes("and also this"), "a steer typed in the same batch survives");
+}
+{
+  // The seam: `prepare` is what reads hints.json, and nothing above this block touches it. Without
+  // this, an omitted argument in `prepare` leaks every block back into the prompt with a green suite.
+  const hints = joinPath(stateDir("claude-code"), "hints.json");
+  await writeFile(hints, '{"dshContextSkillsOff":true}');
+  // SAFETY: partial fake for tests; PluginContext requires many fields not used here
+  const adapter = new ClaudeCodeAdapter({ on() {} } as unknown as PluginContext, Config({}));
+  const prep = await adapter.prepare({
+    messages: messageList([
+      {
+        role: "user",
+        source: { kind: "skill-catalog" },
+        content: [{ type: "text", text: "CATALOG" }],
+      },
+      { role: "user", content: "do the thing" },
+    ]),
+  } as never);
+  await writeFile(hints, "{}");
+  assert.deepEqual([...(prep.drops ?? [])], ["skills"], "prepare read the switch off disk");
+  assert.ok(!(prep.input ?? "").includes("CATALOG"), "and the built input has no catalog in it");
+  assert.ok((prep.input ?? "").includes("do the thing"), "the typed turn still reached the CLI");
+  adapter.disposeProcesses();
+}
+{
+  // contextSizes: what each dsh block cost this turn, measured before any switch removed it.
+  const bundle = [
+    "<system-reminder>",
+    "The following workspace instructions may be relevant to your work.",
+    "Instructions from: /w/AGENTS.md",
+    "",
+    "# Global rules",
+    "be lazy",
+    "",
+    "Instructions from: /w/CLAUDE.md",
+    "",
+    "# CRITICAL DIRECTIVES",
+    "no rm -rf",
+    "",
+    "</system-reminder>",
+  ].join("\n");
+  const instr = message({
+    role: "user",
+    source: { kind: "agent-instructions" },
+    content: [{ type: "text", text: bundle }],
+  });
+  const sizes = contextSizes([instr]);
+  assert.ok(sizes.instructions !== undefined && sizes.instructions > 0, "instructions is non-zero");
+  assert.ok(sizes.claudemd !== undefined && sizes.claudemd > 0, "claudemd is non-zero");
+  assert.equal(
+    sizes.instructions + sizes.claudemd,
+    bundle.length,
+    "instructions + claudemd sum to the bundle's own length",
+  );
+
+  const cat = message({
+    role: "user",
+    source: { kind: "skill-catalog" },
+    content: [{ type: "text", text: "SKILL CATALOG: design-pass, unslop" }],
+  });
+  const snap = message({
+    role: "user",
+    source: { kind: "plugin", plugin: "@deepseek-ai/dsh-system-prompt", form: "snapshot" },
+    content: [{ type: "text", text: "approval policy: ask" }],
+  });
+  const typed = message({ role: "user", content: "do the thing" });
+
+  const allSizes = contextSizes([instr, cat, snap, typed]);
+  assert.equal(
+    allSizes.skills,
+    "SKILL CATALOG: design-pass, unslop".length,
+    "skills reports raw length",
+  );
+  assert.equal(allSizes.runtime, "approval policy: ask".length, "runtime reports raw length");
+  const keys = Object.keys(contextSizes([typed]));
+  assert.equal(keys.length, 0, "a plain typed turn contributes no keys at all");
 }

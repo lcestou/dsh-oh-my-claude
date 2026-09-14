@@ -31,9 +31,18 @@ import {
 } from "@deepseek-ai/dsh-llm";
 import z from "@deepseek-ai/schemastery";
 import {
+  CONTEXT_SIZE_KEYS,
+  contextDrops,
+  type ContextSizeKey,
+  type ContextSizes,
+  type ContextSource,
+  sourceBlockOf,
+} from "./context-sources.js";
+import {
   accountIdentity,
   forgetIdentity,
   type PickerSettings,
+  readHints,
   readPickerSettings,
   readRemoteWorkspaces,
   readSshBoxes,
@@ -140,6 +149,7 @@ import {
   saveWatch,
   loadTerminalSync,
   saveTerminalSync,
+  saveContextSizes,
   saveWorkspaceModel,
   type WatchRecord,
 } from "./state.js";
@@ -982,11 +992,49 @@ export function withoutNativeInstructions(text: string): string {
   return kept.join("").trimEnd() + (close ? close[0] : "");
 }
 
-/** Prompt text of one dsh message, with Claude-native instruction files filtered out. */
-const promptTextOf = (m: LooseMessage): string =>
-  m.source?.kind === "agent-instructions"
+/** Which withheld block a message is, if any. The chat row mask classifies the same sources from
+ *  the client side, so the rule itself lives in `context-sources.ts` and both read it there. */
+export const contextSourceOf = (m: LooseMessage): ContextSource | undefined =>
+  sourceBlockOf(m.source);
+
+/** What each dsh block cost this turn, in characters, measured before any switch removed it: a
+ *  cleared checkbox still has to show its number or the owner cannot tell whether to put it back.
+ *  `instructions` counts what survives the CLAUDE.md filter and `claudemd` counts what the filter
+ *  took, so the two together are the bundle dsh handed over. A key is absent when this turn carried
+ *  nothing of that kind, which is not the same as zero and must not be flattened into one. */
+export function contextSizes(turns: LooseMessage[]): ContextSizes {
+  const sizes: ContextSizes = {};
+  const add = (key: ContextSizeKey, n: number) => {
+    sizes[key] = (sizes[key] ?? 0) + n;
+  };
+  for (const m of turns) {
+    const source = contextSourceOf(m);
+    if (source === undefined) continue;
+    const text = textOf(m.content);
+    if (source !== "instructions") {
+      add(source, text.length);
+      continue;
+    }
+    const kept = withoutNativeInstructions(text);
+    add("instructions", kept.length);
+    add("claudemd", text.length - kept.length);
+  }
+  return sizes;
+}
+
+/** Prompt text of one dsh message: a withheld block answers empty, and the instruction bundle keeps
+ *  losing its CLAUDE.md sections whatever the switches say, since Claude Code loads those itself. */
+const promptTextOf = (m: LooseMessage, drops: ReadonlySet<ContextSource> = new Set()): string => {
+  const source = contextSourceOf(m);
+  if (source !== undefined && drops.has(source)) return "";
+  return m.source?.kind === "agent-instructions"
     ? withoutNativeInstructions(textOf(m.content))
     : textOf(m.content);
+};
+
+/** The turn's parts, with withheld blocks removed. */
+const partsOf = (turns: LooseMessage[], drops: ReadonlySet<ContextSource>) =>
+  turns.map((m) => ({ role: m.role, text: promptTextOf(m, drops) })).filter((t) => t.text !== "");
 
 /**
  * The turn's text as one stdin prompt. A turn with assistant text in it is labelled by role so the
@@ -994,10 +1042,19 @@ const promptTextOf = (m: LooseMessage): string =>
  * carries only an image has no text to send, so it becomes `(see attached)` and the image rides
  * along in `imageRefs`.
  */
-export function buildPrompt(turns: LooseMessage[]): string {
-  const parts = turns
-    .map((m) => ({ role: m.role, text: promptTextOf(m) }))
-    .filter((t) => t.text !== "");
+export function buildPrompt(
+  turns: LooseMessage[],
+  drops: ReadonlySet<ContextSource> = new Set(),
+): string {
+  const filtered = partsOf(turns, drops);
+  // A turn dsh opened with nothing but a withheld block would leave no prompt at all, and the CLI
+  // needs one, so that turn goes out with an empty drop set: failing a turn is a worse answer than
+  // sending the block it was about. The live case is the runtime snapshot, which re-sends itself
+  // whenever the file or approval policy changes and can arrive as the only message of a turn.
+  // `withoutNativeInstructions` still applies on this path, and should: dropping dsh's duplicate of
+  // a CLAUDE.md the CLI loads itself is not one of the switches, it is what the adapter has always
+  // done, and re-sending the copy here would double the file rather than rescue the turn.
+  const parts = filtered.length > 0 ? filtered : partsOf(turns, new Set());
   if (!parts.some((t) => t.role === "user")) {
     // Attachment-only turn: the user sent an image (or other non-text block) with no typed
     // text. Images ride along separately via imageRefs, but Claude still needs a non-empty
@@ -1664,12 +1721,15 @@ export function dropSent<T extends LooseMessage>(
 /** What dsh delivered at this step boundary besides the tool result: steers the user sent while
  *  the tool ran, subagent notices, other injections. Claude only sees the tool result, so they
  *  ride along with it. Empty when there is nothing. */
-export function stepContextFor(messages: LooseMessage[] | undefined): string {
+export function stepContextFor(
+  messages: LooseMessage[] | undefined,
+  drops: ReadonlySet<ContextSource> = new Set(),
+): string {
   const parts = [];
   for (const m of afterLastAssistant(messages)) {
     if (m.role !== "user") continue;
     if (m.source?.kind === "tool") continue;
-    const text = promptTextOf(m);
+    const text = promptTextOf(m, drops);
     if (text) parts.push(text);
   }
   return parts.length === 0
@@ -1858,6 +1918,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   readonly liveTurn = new Map<string, LiveTurn>();
   /** The model last written to workspace-models.json per cwd, so a turn on the same model writes nothing. */
   readonly workspaceModelWritten = new Map<string, string>();
+  /** The sizes last written to context-sizes.json per cwd, as `key:value` pairs in a fixed order,
+   *  so a workspace whose blocks did not change writes nothing. */
+  readonly contextSizesWritten = new Map<string, string>();
   /** Per-session idle watchdog deadline in epoch ms; null means no active arm. */
   readonly idleDeadlineMap = new Map<string, number | null>();
   /** Per-session kill and warning timers, keyed by session id. */
@@ -2328,8 +2391,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       if (!known && !forceFresh) known = await this.forkTranscript(options, cwd, id);
       session = { id, resuming: known && !forceFresh };
     }
+    // One small file read per turn, next to a process spawn. No cache: the Settings card writes
+    // this file, and a stale set is a switch that visibly does nothing.
+    const drops = contextDrops(await readHints(join(this.stateDir, "hints.json")));
     const turns = selectTurns(options.messages, session?.resuming ?? false);
-    let prompt = buildPrompt(turns);
+    let prompt = buildPrompt(turns, drops);
     const stdin = usesStdin(cli.flags);
     const images = stdin ? await this.loadImages(imageRefs(turns), options.signal) : [];
     // Where each image lives on disk, after the prompt: the inline copy lets Claude see it, the
@@ -2342,6 +2408,21 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const effectivePermissionMode = options.sessionId
       ? this.getPermissionMode(options.sessionId, accessMode)
       : undefined;
+    // Hoisted out of the buildArgs call: `buildArgs` appends the tools guidance to the system
+    // prompt exactly when this bridge is passed, so the size readout has to ask the same question
+    // rather than a similar-looking one.
+    const mcpBridge =
+      this.mcp && options.sessionId && !options.purpose && this.config.dshTools
+        ? { url: `${this.mcp.base}${MCP_PATH}/${options.sessionId}`, key: this.mcp.key }
+        : undefined;
+    // Side calls (title, compaction) carry no card and no workspace of their own, so they measure
+    // nothing; leaving `sizes` undefined is what keeps them out of the store. The guidance also
+    // rides on `--append-system-prompt`, so a CLI without that flag sends none of it and the row
+    // has to read zero rather than the length of text that stayed home.
+    const toolsSent = mcpBridge !== undefined && supports(cli.flags, "--append-system-prompt");
+    const sizes: ContextSizes | undefined = options.purpose
+      ? undefined
+      : { ...contextSizes(turns), tools: toolsSent ? DSH_TOOLS_GUIDANCE.length : 0 };
     const args = buildArgs({
       ...options,
       model,
@@ -2352,10 +2433,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       promptText: prompt,
       temporary,
       permissionMode: effectivePermissionMode,
-      mcp:
-        this.mcp && options.sessionId && !options.purpose && this.config.dshTools
-          ? { url: `${this.mcp.base}${MCP_PATH}/${options.sessionId}`, key: this.mcp.key }
-          : undefined,
+      mcp: mcpBridge,
     });
     // Spec = what a running process was spawned with. `resuming` is deliberately left out: it flips
     // to true after the first turn and must not force a respawn.
@@ -2374,6 +2452,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       spec,
       accessMode,
       input: stdin ? buildInput(prompt, images) : null,
+      drops,
+      sizes,
     };
   }
 
@@ -3560,13 +3640,26 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // The model this workspace last ran, so a new session there opens on it (the client applies
     // it). Keyed by the dsh session's own cwd, the path the client asks with; a temporary session
     // is a side call and does not count.
+    const wsCwd =
+      this.ctx?.sessions?.get?.(asSessionId(options.sessionId))?.header?.cwd ?? prep.cwd;
     if (prep.spec.model && !prep.spec.temporary) {
-      const wsCwd =
-        this.ctx?.sessions?.get?.(asSessionId(options.sessionId))?.header?.cwd ?? prep.cwd;
       // One file write per change, not per turn: a long session on one model writes once.
       if (this.workspaceModelWritten.get(wsCwd) !== prep.spec.model) {
         this.workspaceModelWritten.set(wsCwd, prep.spec.model);
         void saveWorkspaceModel(STATE_DIR, wsCwd, prep.spec.model).catch(() => {});
+      }
+    }
+    // What dsh's blocks cost on this turn, for the numbers on the Settings card. Same rule as the
+    // model above: one write per change, so a workspace whose context is steady writes once rather
+    // than once a turn. The key is built in a fixed order, since the measured keys arrive in
+    // whatever order the turn's messages did.
+    if (prep.sizes && !prep.spec.temporary) {
+      const measured = CONTEXT_SIZE_KEYS.filter((k) => prep.sizes?.[k] !== undefined)
+        .map((k) => `${k}:${prep.sizes?.[k]}`)
+        .join(",");
+      if (this.contextSizesWritten.get(wsCwd) !== measured) {
+        this.contextSizesWritten.set(wsCwd, measured);
+        void saveContextSizes(STATE_DIR, wsCwd, { ...prep.sizes }).catch(() => {});
       }
     }
     const key = specKey(prep.spec);
@@ -4134,7 +4227,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     if (cont.mode === "relay") {
       const relays = [...proc.relays.values()];
       proc.relays.clear();
-      const extra = stepContextFor(cont.options.messages); // steers and notices ride on the last result
+      const extra = stepContextFor(cont.options.messages, prep.drops); // steers and notices ride on the last result
       relays.forEach((relay, i) => {
         const result = cont.results[i];
         if (!result) return; // cannot happen: results were built from relays.keys()

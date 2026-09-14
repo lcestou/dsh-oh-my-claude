@@ -114,6 +114,18 @@ export interface WorkspaceModel {
 export declare function loadWorkspaceModels(dir: string): Promise<Map<string, WorkspaceModel>>;
 /** Save the model for one cwd, or forget it when `model` is undefined or blank. */
 export declare function saveWorkspaceModel(dir: string, cwd: string, model: string | undefined, at?: number): Promise<void>;
+export interface WorkspaceContextSizes {
+    sizes: Record<string, number>;
+    at: number;
+}
+/** `{ [cwd]: { sizes, at } }`; a row without a sizes object is skipped, and a size that is not a
+ *  finite number is dropped rather than shown as a wrong figure. */
+export declare function loadContextSizes(dir: string): Promise<Map<string, WorkspaceContextSizes>>;
+/** Merge one turn's measurements into the row for `cwd`, or forget the row when `sizes` is
+ *  undefined. Merged, not replaced: a resumed turn carries no instruction bundle and no skill
+ *  catalog, and overwriting the row with what that one turn happened to contain would show the
+ *  owner a zero for a block dsh really did send at the start of the session. */
+export declare function saveContextSizes(dir: string, cwd: string, sizes: Record<string, number> | undefined, at?: number): Promise<void>;
 /**
  * A replacer that masks the values of secret-looking environment variables (`*KEY`, `*TOKEN`,
  * `*SECRET`, `*PASSWORD`, `*CREDENTIAL`, eight characters or longer) as `[redacted:NAME]`.

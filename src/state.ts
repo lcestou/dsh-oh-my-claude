@@ -670,6 +670,78 @@ export function saveWorkspaceModel(
   return run;
 }
 
+/** Per-workspace character cost of each dsh context block, keyed by workspace cwd, read by the
+ *  Settings card. Its own file rather than a field on `workspace-models.json`: that loader skips
+ *  any row without a non-empty model, and its writer replaces the row whole, so sizes parked next
+ *  to a model would be lost on read and again on the next model change. */
+const CONTEXT_SIZES_FILE = (d: string) => join(d, "context-sizes.json");
+let contextSizesChain = Promise.resolve();
+
+export interface WorkspaceContextSizes {
+  sizes: Record<string, number>;
+  at: number;
+}
+
+/** `{ [cwd]: { sizes, at } }`; a row without a sizes object is skipped, and a size that is not a
+ *  finite number is dropped rather than shown as a wrong figure. */
+export async function loadContextSizes(dir: string): Promise<Map<string, WorkspaceContextSizes>> {
+  try {
+    const parsed: unknown = JSON.parse(await readFile(CONTEXT_SIZES_FILE(dir), "utf8"));
+    const map = new Map<string, WorkspaceContextSizes>();
+    if (typeof parsed === "object" && parsed !== null) {
+      for (const [cwd, v] of Object.entries(parsed)) {
+        if (typeof v !== "object" || v === null) continue;
+        // SAFETY: context-sizes.json rows have sizes (object of numbers) and at (number) fields.
+        const row = v as Record<string, unknown>;
+        if (typeof row.sizes !== "object" || row.sizes === null) continue;
+        const sizes: Record<string, number> = {};
+        // SAFETY: checked as a non-null object on the line above.
+        for (const [key, n] of Object.entries(row.sizes as Record<string, unknown>)) {
+          if (typeof n === "number" && Number.isFinite(n)) sizes[key] = n;
+        }
+        map.set(cwd, {
+          sizes,
+          at: typeof row.at === "number" && Number.isFinite(row.at) ? row.at : 0,
+        });
+      }
+    }
+    return map;
+  } catch {
+    return new Map();
+  }
+}
+
+/** Merge one turn's measurements into the row for `cwd`, or forget the row when `sizes` is
+ *  undefined. Merged, not replaced: a resumed turn carries no instruction bundle and no skill
+ *  catalog, and overwriting the row with what that one turn happened to contain would show the
+ *  owner a zero for a block dsh really did send at the start of the session. */
+export function saveContextSizes(
+  dir: string,
+  cwd: string,
+  sizes: Record<string, number> | undefined,
+  at = Date.now(),
+): Promise<void> {
+  const run = contextSizesChain.then(async () => {
+    const file = CONTEXT_SIZES_FILE(dir);
+    let obj: Record<string, unknown> = {};
+    try {
+      const parsed: unknown = JSON.parse(await readFile(file, "utf8"));
+      if (typeof parsed === "object" && parsed !== null) {
+        // SAFETY: a top-level JSON object with string keys.
+        obj = parsed as Record<string, unknown>;
+      }
+    } catch {}
+    if (sizes === undefined) delete obj[cwd];
+    else {
+      const before = (await loadContextSizes(dir)).get(cwd)?.sizes ?? {};
+      obj[cwd] = { sizes: { ...before, ...sizes }, at };
+    }
+    await writeJson(file, obj);
+  });
+  contextSizesChain = run.catch(() => {});
+  return run;
+}
+
 /** Whole name segments only: `GH_TOKEN`, `DB_PASSWORD`, `API_KEY` match; `SECRETARY` does not. */
 const SECRET_NAME = /(^|_)(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?)(_|$)/i;
 
