@@ -68,6 +68,7 @@ import {
   controlRequestLine,
   decodeRewindResult,
   decodeContextUsage,
+  turnDelta,
   decodeWorkspaceDiff,
   decodePermissionRules,
   decodeHooksListing,
@@ -4597,6 +4598,15 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         if (firstChunkAt > 0 && proc.promptSentAt > 0 && firstChunkAt >= proc.promptSentAt)
           summary.ttftMs = firstChunkAt - proc.promptSentAt;
         proc.promptSentAt = 0;
+        // `total_cost_usd` and `duration_api_ms` arrive as running totals, not this turn's figures.
+        // Every reader sums these records — the footer pill, the cost dialog, the /turns route — so
+        // the difference is taken here, once, and what is stored is the turn's own.
+        const costSoFar = summary.costUsd;
+        const apiMsSoFar = summary.apiMs;
+        summary.costUsd = turnDelta(costSoFar, proc.costSoFar);
+        summary.apiMs = turnDelta(apiMsSoFar, proc.apiMsSoFar);
+        proc.costSoFar = costSoFar;
+        proc.apiMsSoFar = apiMsSoFar;
         const buf = this.turnBuffer.get(options.sessionId) ?? [];
         buf.push(summary);
         if (buf.length > TURN_RING) buf.shift();

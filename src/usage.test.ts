@@ -5,11 +5,13 @@ import { join } from "node:path";
 import type { UsageCredits } from "./usage.js";
 import { extraUsageOn, readUsage, stillLimitedUntil, usageCredits, usageWindows } from "./usage.js";
 
-// limits shape: session + weekly + one active scoped model, one inactive scoped model skipped
+// limits shape: session + weekly + scoped model rows, a repeated kind taking the first only.
+// `is_active` is deliberately not a filter: the endpoint sends false for windows that are running,
+// so a row carrying it false is read like any other.
 const w = usageWindows({
   limits: [
-    { kind: "session", percent: 34.4, resets_at: "2026-09-05T12:00:00Z" },
-    { kind: "weekly_all", percent: 12, resets_at: 1_800_000_000 },
+    { kind: "session", percent: 34.4, resets_at: "2026-09-05T12:00:00Z", is_active: false },
+    { kind: "weekly_all", percent: 12, resets_at: 1_800_000_000, is_active: false },
     {
       kind: "weekly_scoped",
       percent: 140,
@@ -19,7 +21,6 @@ const w = usageWindows({
     { kind: "weekly_scoped", percent: 5, is_active: false, scope: { surface: "code" } },
     { kind: "session", percent: 99 },
     { kind: "opus_daily", percent: 7, resets_at: null },
-    { kind: "sonnet_daily", percent: 3, is_active: false },
   ],
 });
 assert.deepEqual(
@@ -28,6 +29,7 @@ assert.deepEqual(
     ["5-hour", 34.4, Date.parse("2026-09-05T12:00:00Z")],
     ["Weekly", 12, 1_800_000_000_000],
     ["Opus weekly", 100, null],
+    ["code weekly", 5, null],
     ["Opus daily", 7, null],
   ],
 );

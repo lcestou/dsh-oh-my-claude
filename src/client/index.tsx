@@ -2711,7 +2711,12 @@ const loadUsage = async (provider?: string): Promise<UsageReply> => {
 type ContextReply =
   | {
       ok: true;
-      categories: Array<{ name: string; tokens: number; deferred: boolean }>;
+      categories: Array<{
+        name: string;
+        tokens: number;
+        deferred: boolean;
+        kind?: "used" | "free" | "buffer" | "deferred";
+      }>;
       totalTokens: number;
       maxTokens: number;
       percentage: number;
@@ -2738,6 +2743,17 @@ const loadContext = (sessionId: string): Promise<ContextReply> => {
 };
 const kTokens = (n: number) =>
   n >= 1000 ? `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k` : String(n);
+/**
+ * Rows worth a line: the ones whose tokens are the conversation. The CLI's `kind` is the authority
+ * — it says so in the field's own description, "classify on this, never on the English name" — and
+ * it is what keeps the free space and the compaction buffer out, neither of which is content and
+ * neither of which is counted in `totalTokens` either. The name test is the fallback for a CLI too
+ * old to send `kind`; it misses the buffer rows, which is what this whole readout used to do.
+ */
+const isUsedRow = (c: { name: string; deferred: boolean; kind?: string }): boolean =>
+  c.kind !== undefined
+    ? c.kind === "used"
+    : !c.deferred && c.name !== "Free space" && !/buffer$/i.test(c.name);
 function renderContext(el: HTMLElement, reply: ContextReply) {
   el.replaceChildren();
   if (!reply.ok) {
@@ -2754,7 +2770,7 @@ function renderContext(el: HTMLElement, reply: ContextReply) {
   head.append(headLabel, headValue);
   el.append(head);
   for (const c of reply.categories) {
-    if (c.deferred || c.tokens <= 0 || c.name === "Free space") continue;
+    if (c.tokens <= 0 || !isUsedRow(c)) continue;
     const line = document.createElement("div");
     line.style.cssText = "display:flex;justify-content:space-between;gap:12px";
     const label = document.createElement("span");
@@ -6317,7 +6333,13 @@ const costText = (total: number, last: number, cacheRead: number = 0) => {
 /** A token count for the dialog: `0` rather than the readout's blank for none. */
 const fmtTokens = (n: number): string => formatCacheRead(n) || "0";
 
-/** The rows of the cost dialog, label and value, from the session's turn records. */
+/**
+ * The rows of the cost dialog, label and value, from the session's turn records.
+ * ponytail: the token rows are the result frame's `usage`, which is the main agent loop only —
+ * a Task subagent's tokens are not in them, while the cost above them covers the whole pipeline.
+ * The frame's `modelUsage` has the pipeline totals per model; read those instead the day the gap
+ * between the money and the tokens beside it matters.
+ */
 export const costDetails = (turns: TurnRecord[]): [string, string][] => {
   const sum = (pick: (r: TurnRecord) => number) => turns.reduce((s, r) => s + pick(r), 0);
   const last = turns[turns.length - 1];
