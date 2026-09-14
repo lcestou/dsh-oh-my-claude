@@ -1190,6 +1190,9 @@ function ChangesBody({
   const current = files.find((f) => f.path === shown);
   return (
     <div style={bodyFlow}>
+      {/* Above the branches, not below them: Ask is pressed from the file list and from a file's own
+          header, and a line appended after the list sits below the fold on any real diff. */}
+      {note !== "" && <span style={{ ...meta, padding: "2px 4px" }}>{note}</span>}
       {reply === null ? (
         <span style={stateText}>Loading…</span>
       ) : !reply.ok ? (
@@ -1338,9 +1341,6 @@ function ChangesBody({
           ))}
         </>
       )}
-      {/* Outside the branches: Ask is reachable from the file list and from a file's own header, and
-          a failed ask used to write this line where only the list would have drawn it. */}
-      {note !== "" && <span style={{ ...meta, padding: "2px 4px" }}>{note}</span>}
     </div>
   );
 }
