@@ -2720,6 +2720,7 @@ type ContextReply =
       totalTokens: number;
       maxTokens: number;
       percentage: number;
+      model?: string;
     }
   | { ok: false; error: string };
 // The breakdown is re-read whenever dsh re-renders the meter's dialog, which is on every repaint of
@@ -2754,33 +2755,84 @@ const isUsedRow = (c: { name: string; deferred: boolean; kind?: string }): boole
   c.kind !== undefined
     ? c.kind === "used"
     : !c.deferred && c.name !== "Free space" && !/buffer$/i.test(c.name);
+/**
+ * A colour per breakdown row, by position. dsh's own meter paints three bands and names them in a
+ * legend; this keeps that shape over the CLI's categories, which are more numerous and vary with
+ * what a session loaded. Position rather than name because the names are the CLI's to change, and a
+ * swatch that drifts one hue is a smaller wrong than a classification that reads the name and is
+ * believed — the same reason `isUsedRow` asks `kind` instead. The order opens on the neutral grey,
+ * purple and blue dsh itself uses, so the block still reads as part of its meter.
+ */
+const SEGMENT_COLORS = [
+  "#8b8f98",
+  "#a855f7",
+  "#3b82f6",
+  "#14b8a6",
+  "#f59e0b",
+  "#ec4899",
+  "#22c55e",
+  "#6366f1",
+];
+
+/** The meter's own readout, over the CLI's categories: a filled bar and one legend row each. */
 function renderContext(el: HTMLElement, reply: ContextReply) {
   el.replaceChildren();
   if (!reply.ok) {
     el.textContent = `Context breakdown: ${reply.error}`;
     return;
   }
+  const rows = reply.categories.filter((c) => c.tokens > 0 && isUsedRow(c));
   const head = document.createElement("div");
-  head.style.cssText = `display:flex;justify-content:space-between;color:${T.text};font-weight:500`;
+  head.style.cssText = `display:flex;justify-content:space-between;gap:12px;color:${T.text}`;
   const headLabel = document.createElement("span");
-  headLabel.textContent = "Context breakdown (Claude's count)";
+  headLabel.textContent = `${Math.round(reply.percentage)}% of context used`;
+  // The model whose window that percentage is against, so a session that switched models says so
+  // rather than leaving the reader to assume the one they picked first.
+  if (reply.model) {
+    const on = document.createElement("span");
+    on.style.color = T.faint;
+    on.textContent = ` · ${reply.model}`;
+    headLabel.append(on);
+  }
   const headValue = document.createElement("span");
-  headValue.style.cssText = "font-variant-numeric:tabular-nums";
-  headValue.textContent = `${kTokens(reply.totalTokens)} / ${kTokens(reply.maxTokens)} · ${Math.round(reply.percentage)}%`;
+  headValue.style.cssText = `font-variant-numeric:tabular-nums;color:${T.faint};white-space:nowrap`;
+  headValue.textContent = `${kTokens(reply.totalTokens)} / ${kTokens(reply.maxTokens)}`;
   head.append(headLabel, headValue);
-  el.append(head);
-  for (const c of reply.categories) {
-    if (c.tokens <= 0 || !isUsedRow(c)) continue;
+  // The bar spans the whole window, so the empty tail is the room left. Segments are sized against
+  // `maxTokens` rather than against each other, which is what makes the filled part read as the
+  // percentage above it.
+  const bar = document.createElement("div");
+  bar.style.cssText = `display:flex;gap:1px;height:6px;margin:6px 0;border-radius:3px;overflow:hidden;background:${T.border}`;
+  bar.setAttribute("role", "img");
+  bar.setAttribute(
+    "aria-label",
+    `${Math.round(reply.percentage)}% of the context window used: ${rows.map((c) => `${c.name} ${kTokens(c.tokens)}`).join(", ")}`,
+  );
+  const legend = document.createElement("div");
+  rows.forEach((c, i) => {
+    const color = SEGMENT_COLORS[i % SEGMENT_COLORS.length];
+    const seg = document.createElement("div");
+    // A row worth a fraction of a percent still earns a sliver, so the legend never names a colour
+    // the bar does not show.
+    seg.style.cssText = `flex:0 0 auto;width:${Math.max((c.tokens / Math.max(reply.maxTokens, 1)) * 100, 0.4)}%;background:${color}`;
+    bar.append(seg);
     const line = document.createElement("div");
-    line.style.cssText = "display:flex;justify-content:space-between;gap:12px";
+    line.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:12px";
     const label = document.createElement("span");
-    label.textContent = c.name;
+    label.style.cssText = "display:flex;align-items:center;gap:6px;min-width:0";
+    const dot = document.createElement("span");
+    dot.style.cssText = `flex:0 0 auto;width:8px;height:8px;border-radius:2px;background:${color}`;
+    const rowName = document.createElement("span");
+    rowName.style.cssText = "overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
+    rowName.textContent = c.name;
+    label.append(dot, rowName);
     const val = document.createElement("span");
-    val.style.cssText = "font-variant-numeric:tabular-nums";
+    val.style.cssText = "font-variant-numeric:tabular-nums;white-space:nowrap";
     val.textContent = kTokens(c.tokens);
     line.append(label, val);
-    el.append(line);
-  }
+    legend.append(line);
+  });
+  el.append(head, bar, legend);
 }
 
 const extLink = (text: string, href: string): HTMLAnchorElement => {
@@ -2985,14 +3037,47 @@ const onBodyMutation = (scan: FrameScan, sync = false): (() => void) => {
   return off;
 };
 
+/**
+ * Hide the meter's own context readout, leaving this plugin's block in its place.
+ *
+ * Selected structurally — every child of the host that is not ours — because dsh's class names are
+ * generated and change under us on any upgrade, and there is nothing else in either host to keep:
+ * the ring's popover and its hover bubble are both the context readout and nothing more. Re-applied
+ * on each attach, since React rebuilds these children whenever it re-renders. Elements are hidden
+ * rather than removed, so a dsh that later puts something else here is one line from being let back
+ * through; a bare text node has no style to set, so it goes, and the next re-render restores it.
+ *
+ * The `hidden` attribute alone does not do it. It works through the user agent's `[hidden]{display:
+ * none}`, which any class rule of dsh's outranks — its own header carries `display:flex`, so the row
+ * stayed on screen wearing `hidden=""`. The inline `!important` is what actually wins, and the
+ * attribute stays for the accessibility tree.
+ */
+function hideNativeContext(host: HTMLElement, ours: HTMLElement) {
+  for (const node of Array.from(host.childNodes)) {
+    if (node === ours) continue;
+    if (node instanceof HTMLElement) {
+      node.hidden = true;
+      node.style.setProperty("display", "none", "important");
+    } else node.remove();
+  }
+}
+
 function watchContextMeter(ctx: ClientCtx) {
   const MARK = "data-dsh-oh-my-claude-usage";
   // The mark goes on the node we inject, never on dsh's node: React owns these children and drops
   // ours whenever it re-renders the panel, and a mark on the host would say "done" forever while
   // the row it names is gone.
-  const missing = (host: HTMLElement) => host.querySelector(`:scope > [${MARK}]`) === null;
+  // Our block, if this host already has one. A host that has it is done — except for the hiding,
+  // which is about dsh's children rather than ours: React rebuilds those on every repaint of the
+  // percentage, so a readout hidden a moment ago can be back beside a block that never left.
+  const HID = "data-dsh-oh-my-claude-replaced";
+  const ours = (host: HTMLElement) => host.querySelector<HTMLElement>(`:scope > [${MARK}]`);
+  const rehide = (host: HTMLElement, block: HTMLElement) => {
+    if (block.hasAttribute(HID)) hideNativeContext(host, block);
+  };
   const attach = (panel: HTMLElement) => {
-    if (!missing(panel)) return;
+    const already = ours(panel);
+    if (already) return rehide(panel, already);
     // Only sessions on a Claude mount: a local-model session's meter stays dsh's own.
     if (!activeClaudeSession(ctx)) return;
     const block = document.createElement("div");
@@ -3019,7 +3104,24 @@ function watchContextMeter(ctx: ClientCtx) {
     panel.prepend(block);
     const sid = activeClaudeSession(ctx);
     const provider = activeClaudeProvider(ctx);
-    if (sid) loadContext(sid).then((reply) => renderContext(breakdown, reply));
+    if (sid)
+      loadContext(sid).then((reply) => {
+        renderContext(breakdown, reply);
+        // dsh's own readout of the same window sits below this block and measures a different
+        // thing: its count of the session surface it holds, which has never seen the system prompt,
+        // the tool schemas or the files the CLI read, and keeps counting turns the CLI compacted
+        // away. Two bars disagreeing by tens of thousands of tokens is worse than one, so the
+        // CLI's own answer replaces it — and only when there is an answer, so a session with no
+        // live process still gets dsh's estimate rather than nothing.
+        if (!reply.ok) return;
+        block.setAttribute(HID, "1");
+        hideNativeContext(panel, block);
+        // The rule under this block divided it from dsh's readout. With that readout gone it is the
+        // last thing in the dialog, and a rule under the last thing is a line to nowhere.
+        block.style.borderBottom = "none";
+        block.style.paddingBottom = "0";
+        block.style.marginBottom = "0";
+      });
     loadUsage(provider).then(
       (reply) => {
         const who = whose(reply);
@@ -3036,19 +3138,26 @@ function watchContextMeter(ctx: ClientCtx) {
   // dialog is matched through its parent rather than as the button's next sibling.
   // The hover bubble (`role=tooltip`, a sibling of the ring button) gets one compact line on top.
   const bubble = (tip: HTMLElement) => {
-    if (!missing(tip)) return;
+    const already = ours(tip);
+    if (already) return rehide(tip, already);
     if (!activeClaudeSession(ctx)) return;
+    const block = document.createElement("div");
+    block.setAttribute(MARK, "1");
     const line = document.createElement("div");
-    line.setAttribute(MARK, "1");
-    // Above dsh's own sentence, like the panel rows, with a hairline between.
     // The mark is a drawing, not a letter, so the row centres on it rather than sitting it on a
     // baseline it does not have.
-    line.style.cssText = `border-bottom:1px solid ${T.border};margin-bottom:4px;padding-bottom:4px;display:flex;gap:6px;align-items:center`;
+    line.style.cssText = "display:flex;gap:6px;align-items:center";
     const mark = sparkNode(12, SHIMMER);
     const text = document.createElement("span");
     text.textContent = "Claude usage…";
     line.append(mark, text);
-    tip.prepend(line);
+    // The context sentence dsh's bubble carries, over the CLI's own count rather than dsh's, for
+    // the same reason the dialog's breakdown replaces its readout: the two measure different
+    // things and the CLI's is the one auto-compact fires on.
+    const ctxLine = document.createElement("div");
+    ctxLine.style.cssText = `color:${T.faint};margin-left:18px`;
+    block.append(line, ctxLine);
+    tip.prepend(block);
     loadUsage(activeClaudeProvider(ctx)).then(
       (reply) => {
         const who = reply.host ? ` (${reply.host})` : "";
@@ -3060,8 +3169,88 @@ function watchContextMeter(ctx: ClientCtx) {
         text.textContent = `Claude usage: ${e.message}`;
       },
     );
+    const sid = activeClaudeSession(ctx);
+    if (sid)
+      loadContext(sid).then((reply) => {
+        if (!reply.ok) {
+          ctxLine.remove();
+          return;
+        }
+        ctxLine.textContent = `${Math.round(reply.percentage)}% of context used · ${kTokens(reply.totalTokens)} / ${kTokens(reply.maxTokens)}`;
+        block.setAttribute(HID, "1");
+        hideNativeContext(tip, block);
+      });
+  };
+  // The ring's filled arc, its geometry, the occupancy last read for it, and when that was asked for.
+  const ARC = ':scope > button[aria-haspopup="dialog"] circle + circle';
+  let arc: SVGCircleElement | undefined;
+  let arcLength = 0;
+  let ringSession: string | undefined;
+  let ringPercent: number | undefined;
+  let ringAsked = 0;
+  /**
+   * Fill the ring from the CLI's own occupancy.
+   *
+   * dsh draws the arc from `contextPressure`, which is the prompt side of the last usage sample —
+   * input plus both cache counters — over the window. For a Claude Code session that sample is the
+   * result frame's, and the CLI sums it across every API call the turn made: a turn of 117 calls
+   * reports millions of cache reads, so the arc pins at 100% while the session is a third full. The
+   * dash is rewritten with the percentage the CLI reports, which is the number this plugin's popover
+   * and bubble already show and the one auto-compact fires on.
+   *
+   * Written rather than handed upstream because the number dsh is drawing is also what it bills the
+   * turn on; the throughput figure is right for that and wrong only here. The circle is found the
+   * same structural way `isRingRoot` finds it, and its radius is read from the element rather than
+   * assumed, so a ring dsh redraws at another size still gets a correct arc.
+   *
+   * This runs once per mutation burst, so past the first paint it is two string compares and no DOM
+   * query: the circle and its circumference are held from the scan that found them, and a ring that
+   * went away is an element that is no longer connected.
+   */
+  const paintRing = () => {
+    if (arc?.isConnected !== true) return;
+    const sid = activeClaudeSession(ctx);
+    if (sid === undefined) return;
+    if (sid !== ringSession) {
+      ringSession = sid;
+      ringPercent = undefined;
+      ringAsked = 0;
+    }
+    // dsh repaints the arc by rewriting an attribute, which the body observer does not watch, and a
+    // ring already pinned at 100% stops changing altogether — so neither dsh's repaints nor ours can
+    // be the thing that keeps this current. It is re-asked on a clock instead, off the same
+    // ten-second cache the popover reads.
+    if (Date.now() - ringAsked > 5_000) {
+      ringAsked = Date.now();
+      void loadContext(sid).then((reply) => {
+        if (!reply.ok) return;
+        ringPercent = Math.min(100, Math.max(0, reply.percentage));
+        paintRing();
+      });
+    }
+    if (ringPercent === undefined) return;
+    const dash = `${(arcLength * ringPercent) / 100} ${arcLength}`;
+    if (arc.getAttribute("stroke-dasharray") !== dash) arc.setAttribute("stroke-dasharray", dash);
+    // The button's label is the same reading spoken aloud, so it moves with the arc.
+    const label = `${Math.round(ringPercent)}% of context used`;
+    const button = arc.closest("button");
+    if (button?.getAttribute("aria-label") !== label) button?.setAttribute("aria-label", label);
   };
   const scan = (root: ParentNode) => {
+    // Looked for only until it is found. The ring outlives every burst that follows, and this query
+    // would otherwise run over each of them for an element already in hand.
+    if (arc?.isConnected !== true) {
+      arc = undefined;
+      for (const el of root.querySelectorAll<HTMLElement>('button[aria-haspopup="dialog"]')) {
+        const host = el.parentElement;
+        const found = host && isRingRoot(host) ? host.querySelector<SVGCircleElement>(ARC) : null;
+        const radius = Number(found?.getAttribute("r"));
+        if (!found || !Number.isFinite(radius) || radius <= 0) continue;
+        arc = found;
+        arcLength = 2 * Math.PI * radius;
+        break;
+      }
+    }
     for (const el of root.querySelectorAll<HTMLElement>('[role="dialog"]'))
       if (isRingRoot(el.parentElement)) attach(el);
     for (const el of root.querySelectorAll<HTMLElement>('[role="tooltip"]'))
@@ -3078,10 +3267,12 @@ function watchContextMeter(ctx: ClientCtx) {
   // attribute queries this used to run every dirty frame cost 0.4 ms on a conversation of 30k nodes
   // — paid on every frame of every streaming turn to find, almost always, nothing.
   onBodyMutation((records) => {
-    if (records === undefined) return scan(document.body);
-    for (const node of changedElements(records)) scan(node);
+    if (records === undefined) scan(document.body);
+    else for (const node of changedElements(records)) scan(node);
+    paintRing();
   });
   scan(document.body);
+  paintRing();
 }
 
 /** Fetch Claude Code's settings.json text and extract spinnerVerbs if present. */

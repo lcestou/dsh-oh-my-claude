@@ -314,6 +314,9 @@ export declare function modelFromApi(m: {
         effort?: EffortCaps;
     };
 }): LlmModelInfo;
+/** Record what a session answered. A missing or nonsense figure leaves the last good one standing. */
+export declare const noteLiveWindow: (modelId: string | undefined, maxTokens: number | undefined) => void;
+export declare const liveWindowFor: (modelId: string) => number | undefined;
 export declare function mergeCatalog(cli: CliModel[], base: ReturnType<typeof M>[], picker?: PickerSettings): {
     provider: string;
     id: string;
