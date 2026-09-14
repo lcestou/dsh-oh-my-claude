@@ -60,35 +60,12 @@ if (askAllCount > 0) {
 }
 await p.screenshot({ path: `${out}/five-changes.png` });
 
-// b. Return recap switch in Diagnostics: absent key, reads off, toggles on, label changes, key restored.
+// b. Diagnostics: permission rules and hooks containers render whether or not a process is live.
 await p
   .locator('[role="tab"]', { hasText: /^Diagnostics/ })
   .first()
   .click();
 await p.waitForTimeout(1000);
-expect((await p.locator("[data-omc-recap-switch]").count()) === 1, "recap switch renders");
-const before = await p.evaluate(() => localStorage.getItem("omc.returnRecap"));
-expect(
-  before === null,
-  `localStorage omc.returnRecap is null before click (got ${JSON.stringify(before)})`,
-);
-const switchBtn = p.locator("[data-omc-recap-switch] button").first();
-await switchBtn.click();
-await p.waitForTimeout(300);
-const after = await p.evaluate(() => localStorage.getItem("omc.returnRecap"));
-expect(
-  after === "on",
-  `localStorage omc.returnRecap reads "on" after click (got ${JSON.stringify(after)})`,
-);
-const label = await switchBtn.innerText();
-expect(
-  label === "Turn off",
-  `switch button label changed to "Turn off" (got ${JSON.stringify(label)})`,
-);
-// No restore: launch() opens a throwaway context, which the null read above proves, and it dies
-// with this script. The owner's own browser never sees the key this wrote.
-
-// c. Diagnostics: permission rules and hooks containers render whether or not a process is live.
 expect(
   (await p.locator("[data-omc-permission-rules]").count()) === 1,
   "permission rules container renders",
@@ -123,6 +100,40 @@ if (mcpButtons.length > 0) {
   console.log("note: no MCP server rows present; button assertions skipped");
 }
 await p.screenshot({ path: `${out}/five-mcp.png` });
+
+// e. Return recap switch, in Settings rather than a tab: absent key, reads off, flips on, key written.
+// Last, because opening Settings leaves the dialog every block above it needs.
+await p
+  .locator('button[aria-label*="Settings" i], a[aria-label*="Settings" i]')
+  .first()
+  .click({ force: true });
+await p.waitForTimeout(800);
+await p
+  .getByText(/^Oh My Claude$/)
+  .first()
+  .click({ force: true });
+await p.waitForTimeout(1500);
+expect((await p.locator("[data-omc-recap-switch]").count()) === 1, "recap switch renders");
+const before = await p.evaluate(() => localStorage.getItem("omc.returnRecap"));
+expect(
+  before === null,
+  `localStorage omc.returnRecap is null before click (got ${JSON.stringify(before)})`,
+);
+const recapSwitch = p.locator("[data-omc-recap-switch] [role=switch]").first();
+const offState = await recapSwitch.getAttribute("aria-checked");
+expect(offState === "false", `recap switch reads off first (got ${JSON.stringify(offState)})`);
+await recapSwitch.click();
+await p.waitForTimeout(300);
+const after = await p.evaluate(() => localStorage.getItem("omc.returnRecap"));
+expect(
+  after === "on",
+  `localStorage omc.returnRecap reads "on" after click (got ${JSON.stringify(after)})`,
+);
+const onState = await recapSwitch.getAttribute("aria-checked");
+expect(onState === "true", `recap switch reads on after click (got ${JSON.stringify(onState)})`);
+// No restore: launch() opens a throwaway context, which the null read above proves, and it dies
+// with this script. The owner's own browser never sees the key this wrote.
+await p.screenshot({ path: `${out}/five-settings.png` });
 
 console.log(failures.length === 0 ? "PASS" : `FAIL: ${failures.join("; ")}`);
 await ctx.close();

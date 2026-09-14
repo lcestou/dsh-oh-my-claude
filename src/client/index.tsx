@@ -85,6 +85,7 @@ import {
   noticesOn,
   recapNext,
   recapOn,
+  setRecapOn,
   RECAP_QUESTION,
   type NoticeSnapshot,
 } from "./notices.js";
@@ -5334,6 +5335,44 @@ function WorkspaceModelSwitch() {
   );
 }
 
+/**
+ * The settings switch for the one-line recap on returning to a finished session. Backed by
+ * `localStorage`, not a hint, because it costs a model call and belongs to the browser that would
+ * read the line, not to every tab on the box.
+ */
+function ReturnRecapSwitch() {
+  const [on, setOn] = useState(recapOn);
+  return (
+    <div
+      data-omc-recap-switch=""
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
+        fontSize: 13,
+        marginBottom: 12,
+      }}
+    >
+      <div>
+        <div>Return recap</div>
+        <div style={{ color: T.faint, fontSize: 12 }}>
+          One line on what Claude did while you were on another session, asked when you come back to
+          one that finished without you. Costs a model call each time.
+        </div>
+      </div>
+      <Switch
+        on={on}
+        onChange={(next) => {
+          setRecapOn(next);
+          setOn(next);
+        }}
+        label="Return recap"
+      />
+    </div>
+  );
+}
+
 /** Box-wide spend warning: a dollar figure that turns the cost pill orange once a session passes it. */
 function SpendGuardField() {
   const [stored, setStored] = useHintValue("spendWarnUsd");
@@ -6034,6 +6073,7 @@ export function apply(ctx: ClientCtx) {
         <StarterSwitch />
         <UpdateNoticeSwitch />
         <WorkspaceModelSwitch />
+        <ReturnRecapSwitch />
         <SpendGuardField />
         <TerminalSyncSwitch />
         {error && <p style={{ color: T.err, fontSize: 13 }}>{error}</p>}
