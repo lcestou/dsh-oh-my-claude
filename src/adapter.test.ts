@@ -273,6 +273,19 @@ assert.equal(
   "[user]\nhi\n\n[assistant]\nyo\n\n[user]\nagain\n\n[user]\n<system-reminder>ctx</system-reminder>",
 );
 assert.throws(() => buildPrompt([{ role: "assistant", content: "x" }]));
+// dsh's own system prompt arrives as role "system" and never reaches the CLI. Verified against a
+// fresh session on 2026-09-14: the block sits in the dsh log as a system/message, and neither the
+// Claude Code transcript nor the spawned process argv carries a word of it. The card says so, so
+// the drop is pinned here rather than left to hold by accident.
+const dshSystem = message({
+  role: "system",
+  content: [{ type: "text", text: "You are an AI agent powered by DeepSeek Harness." }],
+});
+assert.deepEqual(selectTurns([dshSystem], false), []);
+assert.equal(
+  buildPrompt(selectTurns(messageList([{ role: "user", content: "hi" }, dshSystem]), false)),
+  "hi",
+);
 // image-only / attachment-only user turn: no typed text, but not rejected — synthesize a prompt
 assert.equal(
   buildPrompt([{ role: "user", content: [{ type: "image", attachment: { path: "/x.png" } }] }]),

@@ -1,8 +1,9 @@
 // Dev-only check: the Context settings card sits between the Claude look switch and the Prompt starter
-// switch, with five rows (instructions, skills, runtime, tools, claudemd), the first two of them
-// switchable and the rest checked and disabled for transparency only. The master
+// switch, with six rows (instructions, skills, runtime, tools, claudemd, system), the first two of
+// them switchable and the rest disabled for transparency only. Every row but the last is checked;
+// `system` is dsh's own system prompt, which the adapter drops, so it draws clear. The master
 // switch reads aria-checked="true" on a box that has never touched it, and the fold shows exactly
-// the last three rows disabled. Round-trip through the store proves the key reached the box-wide
+// the last four rows disabled. Round-trip through the store proves the key reached the box-wide
 // store rather than the tab.
 //
 // Point PLAYWRIGHT_ROOT at any project with Playwright installed; arg 1 is the dsh launch token.
@@ -54,13 +55,13 @@ const fold = p.locator("[data-omc-context-custom]");
 console.log("fold present:", await fold.count());
 const rows = p.locator("[data-omc-context]");
 console.log("context row count:", await rows.count());
-if ((await rows.count()) !== 5) {
-  console.error("FAIL: expected 5 context rows, got", await rows.count());
+if ((await rows.count()) !== 6) {
+  console.error("FAIL: expected 6 context rows, got", await rows.count());
   await b.close();
   process.exit(1);
 }
 const rowState = await Promise.all(
-  Array.from({ length: 5 }, (_, i) =>
+  Array.from({ length: 6 }, (_, i) =>
     Promise.all([rows.nth(i).isChecked(), rows.nth(i).isDisabled()]),
   ),
 );
@@ -75,9 +76,11 @@ if (sizeTexts.length > 0) {
 } else {
   console.log("note: no sizes yet in this workspace");
 }
-const allChecked = rowState.every(([checked]) => checked);
-const lastThreeDisabled = [2, 3, 4].every((i) => rowState[i]![1]);
-console.log(allChecked && lastThreeDisabled ? "PASS: fold rows correct" : "FAIL: fold rows wrong");
+const checkedCorrect = [0, 1, 2, 3, 4].every((i) => rowState[i]![0]) && !rowState[5]![0];
+const lastFourDisabled = [2, 3, 4, 5].every((i) => rowState[i]![1]);
+console.log(
+  checkedCorrect && lastFourDisabled ? "PASS: fold rows correct" : "FAIL: fold rows wrong",
+);
 // Round trip through the store: off, reload, still off; on, reload, still on.
 const state = async () => {
   await p.goto(dshUrl(token), { waitUntil: "networkidle" });

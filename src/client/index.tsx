@@ -5378,27 +5378,30 @@ function ContextBox({
   );
 }
 
-/** A block this card cannot move, drawn checked and disabled with the reason beside it rather than
- *  in a title, so it is not mouse-only. Listing it is the point: a block that vanishes from the
- *  list is worse than one the owner can see and not turn off. It is backed by no hint key at all,
- *  so there is nothing here for a later edit to wire up by mistake. */
+/** A block this card cannot move, drawn disabled with the reason beside it rather than in a title,
+ *  so it is not mouse-only. Listing it is the point: a block that vanishes from the list is worse
+ *  than one the owner can see and not turn off. Checked means it reaches Claude Code; the one row
+ *  that draws clear is dsh's system prompt, which the adapter has always dropped. It is backed by
+ *  no hint key at all, so there is nothing here for a later edit to wire up by mistake. */
 function ContextFixed({
   source,
   label,
   why,
   chars,
+  checked = true,
 }: {
   source: string;
   label: string;
   why: string;
   chars: number | undefined;
+  checked?: boolean;
 }) {
   return (
     <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: T.muted }}>
       <input
         type="checkbox"
         data-omc-context={source}
-        checked
+        checked={checked}
         disabled
         aria-disabled="true"
         readOnly
@@ -5494,6 +5497,16 @@ function ContextSwitch({ ctx }: { ctx: ClientCtx }) {
               label="Your CLAUDE.md files"
               why="Claude Code reads these itself. dsh sends a copy too and this plugin already drops it."
               chars={sizes?.claudemd}
+            />
+            <div style={{ color: T.muted, fontSize: 12, marginTop: 6 }}>
+              What dsh writes down but never sends
+            </div>
+            <ContextFixed
+              source="system"
+              label="dsh system prompt"
+              why="dsh records it on the session, this plugin has never passed it to Claude Code."
+              chars={undefined}
+              checked={false}
             />
             <div style={{ color: T.faint, fontSize: 12, marginTop: 6 }}>
               AGENTS.md Claude Code never reads, so a repo whose only instruction file is AGENTS.md
