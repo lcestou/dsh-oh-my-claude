@@ -523,6 +523,156 @@ import type { TranscriptListItem } from "./transcript.js";
   assert.equal(JSON.parse(await readFile(userSettings, "utf8")).a, 3);
 }
 
+// POST /side-questions: 400 when session or question is missing, 404 when askAside is absent,
+// and 200 that proves the callback received the parsed body.
+{
+  const tmp = await mkdtemp(join(tmpdir(), "dsh-side-question-test-"));
+  let handler: ((req: any, res: any) => void) | undefined;
+  // SAFETY: partial fake for tests
+  const ctx = {
+    inject: (deps: string[], cb: (host: any) => void) => {
+      cb({
+        webServer: {
+          register: (r: any) => {
+            handler = r.handler as (req: any, res: any) => void;
+            return () => {};
+          },
+        },
+        connection: { requestRejection: () => undefined },
+        sessions: { get: () => undefined },
+        sessionPersistence: { list: async () => [] },
+        effect: (fn: () => void | (() => void)) => fn(),
+      });
+    },
+  } as any;
+  registerSessionRoutes(ctx, {
+    log: () => {},
+    projectDir: (cwd: string) => [join(tmp, "claude", "projects", projectDirName(cwd))],
+    projectsDir: [join(tmp, "claude", "projects")],
+    startedIds: async () => [],
+    claudeIdOf: (id: string) => id,
+    configDir: join(tmp, "claude"),
+    boxesPath: join(tmp, "boxes.json"),
+    importedDir: join(tmp, "imported"),
+    instanceFor: () => undefined,
+    instanceForHost: () => ({ configDir: join(tmp, "box") }),
+  });
+  assert.ok(handler);
+
+  // The status matters here: a 400, a 404 and a 409 all carry an `error`, so asserting the text
+  // alone would pass on the wrong one.
+  const respond = async (method: string, url: string, body?: string) => {
+    const resChunks: Buffer[] = [];
+    let status = 0;
+    // SAFETY: partial fake for tests
+    const fakeRes = {
+      writeHead: (s: number, _h: Record<string, string>) => {
+        status = s;
+      },
+      end: (b: Buffer | string) => {
+        if (typeof b === "string") resChunks.push(Buffer.from(b));
+        else resChunks.push(b);
+      },
+    };
+    // SAFETY: partial fake for tests
+    const fakeReq = {
+      method,
+      url,
+      on: (ev: string, cb: (c?: Buffer) => void) => {
+        if (ev === "data" && body !== undefined) cb(Buffer.from(body));
+        if (ev === "end") cb();
+      },
+      destroy: () => {},
+    } as any;
+    await handler!(fakeReq, fakeRes);
+    return { status, body: JSON.parse(Buffer.concat(resChunks).toString("utf8")) };
+  };
+
+  // 404: askAside is absent from the bag.
+  let r = await respond(
+    "POST",
+    "/dsh-oh-my-claude/side-questions",
+    JSON.stringify({ session: "s", question: "q" }),
+  );
+  assert.equal(r.status, 404);
+  assert.equal(r.body.error, "not found");
+
+  // Now register with askAside and sideQuestions in place.
+  const ring = new Map<string, any[]>();
+  let received: { session: string; question: string; withDiff: boolean; path: string } | undefined;
+  const askAside = async (
+    sid: string,
+    question: string,
+    seed: { withDiff: boolean; path: string },
+  ) => {
+    received = { session: sid, question, withDiff: seed.withDiff, path: seed.path };
+    ring.set(sid, (ring.get(sid) ?? []).concat([{ id: "a1", question, pending: false }]));
+    return { ok: true };
+  };
+  // Re-register with the callbacks; registerSessionRoutes is called once per ctx but we pass a new one.
+  // SAFETY: partial fake for tests
+  const ctx2 = {
+    inject: (deps: string[], cb: (host: any) => void) => {
+      cb({
+        webServer: {
+          register: (r: any) => {
+            handler = r.handler as (req: any, res: any) => void;
+            return () => {};
+          },
+        },
+        connection: { requestRejection: () => undefined },
+        sessions: { get: () => undefined },
+        sessionPersistence: { list: async () => [] },
+        effect: (fn: () => void | (() => void)) => fn(),
+      });
+    },
+  } as any;
+  registerSessionRoutes(ctx2, {
+    log: () => {},
+    projectDir: (cwd: string) => [join(tmp, "claude", "projects", projectDirName(cwd))],
+    projectsDir: [join(tmp, "claude", "projects")],
+    startedIds: async () => [],
+    claudeIdOf: (id: string) => id,
+    configDir: join(tmp, "claude"),
+    boxesPath: join(tmp, "boxes.json"),
+    importedDir: join(tmp, "imported"),
+    instanceFor: () => undefined,
+    instanceForHost: () => ({ configDir: join(tmp, "box") }),
+    askAside,
+    sideQuestions: ring,
+  });
+
+  // 400: missing session.
+  r = await respond("POST", "/dsh-oh-my-claude/side-questions", JSON.stringify({ question: "q" }));
+  assert.equal(r.status, 400);
+  assert.equal(r.body.error, "session and question required");
+
+  // 400: missing question.
+  r = await respond("POST", "/dsh-oh-my-claude/side-questions", JSON.stringify({ session: "s" }));
+  assert.equal(r.status, 400);
+  assert.equal(r.body.error, "session and question required");
+
+  // 200: valid body; the callback received session, trimmed question, withDiff, and path.
+  r = await respond(
+    "POST",
+    "/dsh-oh-my-claude/side-questions",
+    JSON.stringify({
+      session: "sid1",
+      question: "  what changed?  ",
+      withDiff: true,
+      path: "a.ts",
+    }),
+  );
+  assert.equal(r.status, 200);
+  assert.equal(r.body.ok, true);
+  assert.equal(received?.session, "sid1");
+  assert.equal(received?.question, "what changed?");
+  assert.equal(received?.withDiff, true);
+  assert.equal(received?.path, "a.ts");
+  assert.equal(ring.get("sid1")?.[0]?.question, "what changed?");
+  console.log("ask-route ok");
+}
+
 // readPickerSettings: the two picker keys out of settings.json, and undefined for anything else.
 {
   const tmp = await mkdtemp(join(tmpdir(), "dsh-picker-test-"));

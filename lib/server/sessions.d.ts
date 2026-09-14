@@ -351,6 +351,15 @@ export interface SessionRouteOptions {
     };
     /** The rules recent approval requests suggest, per session; the Tune tab offers them as chips. */
     permissionAsks?: Map<string, string[]>;
+    /** Ask a side question over HTTP, optionally seeded with the working-tree diff. The answer lands
+     *  in the ring `sideQuestions` serves, so the caller gets only whether the question went out. */
+    askAside?: (sessionId: string, question: string, seed: {
+        withDiff: boolean;
+        path: string;
+    }) => Promise<{
+        ok: boolean;
+        error?: string;
+    }>;
     /** `/btw` side questions and their answers, per session; the client bubble reads them. */
     sideQuestions?: Map<string, AsideEntry[]>;
     /** Sessions whose last turn failed for want of a login, read beside the asides for the card. */
@@ -394,7 +403,7 @@ export interface SessionRouteOptions {
     continueAfterLimit?: boolean;
 }
 /** `projectDir(cwd)` → Claude Code project dir; `startedIds()` → ids the adapter started itself. */
-export declare function registerSessionRoutes(ctx: PluginContext, { log, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, importedDir, sshBoxesPath, onSshBoxes, remoteWorkspacesPath, onRemoteWorkspaces, command, sshHost, turnRecords, dshVersion, liveTurn, idle, toolMode, terminalSync, permissionModes, thinking, rewind, contextUsage, workspaceDiff, mcp, permissionAsks, sideQuestions, loginNeeded, loginDone, logoutDone, liveCount, persistAsides, starters, setStarter, models, reloadPlugins, continueAfterLimit, instanceFor, instanceForHost, onLoginStatus, }: SessionRouteOptions): void;
+export declare function registerSessionRoutes(ctx: PluginContext, { log, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, importedDir, sshBoxesPath, onSshBoxes, remoteWorkspacesPath, onRemoteWorkspaces, command, sshHost, turnRecords, dshVersion, liveTurn, idle, toolMode, terminalSync, permissionModes, thinking, rewind, contextUsage, workspaceDiff, askAside, mcp, permissionAsks, sideQuestions, loginNeeded, loginDone, logoutDone, liveCount, persistAsides, starters, setStarter, models, reloadPlugins, continueAfterLimit, instanceFor, instanceForHost, onLoginStatus, }: SessionRouteOptions): void;
 /**
  * The four files Claude Code merges for one session, highest precedence first. Duplicated in
  * `src/client/settings.ts`: the browser half cannot import server code, and the order is the

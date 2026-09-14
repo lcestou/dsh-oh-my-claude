@@ -1786,6 +1786,40 @@ export interface LiveTurn {
   at: number;
 }
 
+/** Past this the model reads the tree faster than it reads a paste, and the whole context goes out as
+ *  one stdin write with no backpressure guard: `write` (`src/process.ts:1312`) returns true either
+ *  way, so a 200-file tree would ship megabytes on one line and bill a call that overruns the window. */
+const DIFF_CONTEXT_CAP = 32_000;
+
+/** A `get_workspace_diff` answer as the text a side question carries. Hunk headers and raw lines,
+ *  nothing invented; a file with no hunks is named with why, so the reply does not guess. Whole files
+ *  only, in the CLI's own order, up to the cap; the first file always goes even if it alone is over,
+ *  because a context with no diff in it is worse than a long one. */
+export const diffContext = (diff: WorkspaceDiff, path: string): string => {
+  const files = path === "" ? diff.files : diff.files.filter((f) => f.path === path);
+  const parts: string[] = [];
+  let size = 0;
+  for (const f of files) {
+    const body =
+      f.hunks.length === 0
+        ? f.binary
+          ? "binary file"
+          : f.untracked
+            ? "untracked file"
+            : "no hunks"
+        : f.hunks
+            .map((h) => `@@ -${h.oldStart} +${h.newStart} @@\n${h.lines.join("\n")}`)
+            .join("\n");
+    const part = `--- ${f.path}\n${body}`;
+    if (parts.length > 0 && size + part.length > DIFF_CONTEXT_CAP) break;
+    parts.push(part);
+    size += part.length + 2;
+  }
+  if (parts.length < files.length)
+    parts.push(`… diff truncated (${parts.length} of ${files.length} files)`);
+  return parts.join("\n\n");
+};
+
 export class ClaudeCodeAdapter extends LlmAdapter {
   ctx: PluginContext;
   config: Schemastery.TypeT<typeof Config>;
@@ -5381,6 +5415,27 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       rewind: (sessionId: string, uuid: string, dryRun: boolean) =>
         adapter.ownerFor(sessionId).rewind(sessionId, uuid, dryRun),
       permissionAsks: adapter.permissionAsks,
+      askAside: async (sessionId: string, question: string, seed) => {
+        const owner = adapter.ownerFor(sessionId);
+        // Liveness is checked here, not left to askSideQuestion, which would write its own error into
+        // the ring: a recap nobody typed must not leave an error bubble on a session whose process
+        // died. The Ask control shows this text in its own note line instead. This narrows the window,
+        // it does not close it: askSideQuestion pushes its ring entry (src/adapter.ts:2848) before its
+        // own alive re-check, so a process that dies in between still leaves one error bubble.
+        if (!owner.processFor(sessionId)?.alive)
+          return {
+            ok: false,
+            error: "no live Claude process for this session; send a prompt first",
+          };
+        let context: string | undefined;
+        if (seed.withDiff) {
+          const diff = await owner.workspaceDiff(sessionId);
+          if (!diff.ok) return { ok: false, error: diff.error };
+          context = diffContext(diff, seed.path);
+        }
+        owner.askSideQuestion(sessionId, question, context);
+        return { ok: true };
+      },
       sideQuestions: adapter.sideQuestions,
       loginNeeded: adapter.loginNeeded,
       loginDone: (host: string) => adapter.loginDone(host),

@@ -63,6 +63,7 @@ import {
   clientTimeZone,
   killAfterGrace,
   asideAnswerText,
+  diffContext,
 } from "./adapter.js";
 import { PERMISSION_MODES } from "./state.js";
 import {
@@ -75,6 +76,7 @@ import {
   elicitationQuestions,
   elicitationResult,
   isIdleReply,
+  type WorkspaceDiff,
 } from "./process.js";
 import {
   buildRedactor,
@@ -4384,6 +4386,45 @@ console.log("interrupt-on-abort ok");
   assert.equal(asideAnswerText(undefined), undefined, "no response is none");
   assert.equal(asideAnswerText({ other: "x" }), undefined, "missing response field is none");
   console.log("aside-answer-text ok");
+}
+
+// diffContext caps output at DIFF_CONTEXT_CAP, appends a truncated marker when files are dropped,
+// and names each file with no-hunks/binary/untracked when it has no diff to paste.
+{
+  const longLine = "x".repeat(4_500);
+  const makeDiff = (count: number): WorkspaceDiff => ({
+    filesCount: count,
+    linesAdded: count,
+    linesRemoved: 0,
+    files: Array.from({ length: count }, (_, i) => ({
+      path: `file_${String(i).padStart(3, "0")}.ts`,
+      added: 1,
+      removed: 0,
+      binary: false,
+      untracked: false,
+      hunks: [{ oldStart: 1, newStart: 1, lines: [longLine] }],
+    })),
+  });
+  // 300 files each push past the cap; the reply stops before the 8th and appends a marker whose N
+  // matches the number of `--- ` headers in the output.
+  const diff300 = makeDiff(300);
+  const out300 = diffContext(diff300, "");
+  const headerCount = (out300.match(/--- /g) ?? []).length;
+  assert.ok(out300.length <= 32_000 + 4_500 + 30, "300-file output stays under cap plus one file");
+  assert.match(
+    out300,
+    new RegExp(`… diff truncated \\(${headerCount} of 300 files\\)`),
+    "marker N equals the number of `--- ` headers",
+  );
+  // Two files fit comfortably: no truncation marker at all.
+  const diff2 = makeDiff(2);
+  const out2 = diffContext(diff2, "");
+  assert.ok(!/… diff truncated/.test(out2), "a two-file diff has no truncation marker");
+  // Path-filtered: only the matching file goes out, no marker because it is not truncated.
+  const outOne = diffContext(diff300, "file_001.ts");
+  assert.ok(!/… diff truncated/.test(outOne));
+  assert.ok(outOne.startsWith("--- file_001.ts\n"));
+  console.log("diff-context ok");
 }
 
 // --- terminal turns: the watcher starts at a turn's end, reads past its baseline, marks the live

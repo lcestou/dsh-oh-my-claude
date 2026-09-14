@@ -1235,6 +1235,13 @@ export interface SessionRouteOptions {
   };
   /** The rules recent approval requests suggest, per session; the Tune tab offers them as chips. */
   permissionAsks?: Map<string, string[]>;
+  /** Ask a side question over HTTP, optionally seeded with the working-tree diff. The answer lands
+   *  in the ring `sideQuestions` serves, so the caller gets only whether the question went out. */
+  askAside?: (
+    sessionId: string,
+    question: string,
+    seed: { withDiff: boolean; path: string },
+  ) => Promise<{ ok: boolean; error?: string }>;
   /** `/btw` side questions and their answers, per session; the client bubble reads them. */
   sideQuestions?: Map<string, AsideEntry[]>;
   /** Sessions whose last turn failed for want of a login, read beside the asides for the card. */
@@ -1312,6 +1319,7 @@ export function registerSessionRoutes(
     rewind,
     contextUsage,
     workspaceDiff,
+    askAside,
     mcp,
     permissionAsks,
     sideQuestions,
@@ -2193,6 +2201,25 @@ export function registerSessionRoutes(
                 // brand-new tab, which has no key of its own yet, show anything at all.
                 if (body.asDefault !== false) setStarter?.("default", text);
                 return json(res, 200, { ok: true });
+              }
+              // Ask one. `/btw` reaches the adapter through the prompt stream, so this is the only
+              // HTTP way in: the Changes tab's Ask control and the return recap both post here.
+              // `withDiff` seeds the question with the working-tree diff, whole or one path.
+              if (
+                askAside &&
+                req.method === "POST" &&
+                url.pathname === `${ROUTE_PREFIX}/side-questions`
+              ) {
+                const body = await readBody(req);
+                const sid = String(body.session ?? "");
+                const question = String(body.question ?? "").trim();
+                if (!sid || !question)
+                  return json(res, 400, { error: "session and question required" });
+                const reply = await askAside(sid, question, {
+                  withDiff: body.withDiff === true,
+                  path: typeof body.path === "string" ? body.path : "",
+                });
+                return json(res, reply.ok ? 200 : 409, reply);
               }
               if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/side-questions`) {
                 const sid = url.searchParams.get("session");

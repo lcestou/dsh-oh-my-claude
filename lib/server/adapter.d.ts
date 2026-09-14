@@ -632,6 +632,11 @@ export interface LiveTurn {
     effort?: string;
     at: number;
 }
+/** A `get_workspace_diff` answer as the text a side question carries. Hunk headers and raw lines,
+ *  nothing invented; a file with no hunks is named with why, so the reply does not guess. Whole files
+ *  only, in the CLI's own order, up to the cap; the first file always goes even if it alone is over,
+ *  because a context with no diff in it is worse than a long one. */
+export declare const diffContext: (diff: WorkspaceDiff, path: string) => string;
 export declare class ClaudeCodeAdapter extends LlmAdapter {
     ctx: PluginContext;
     config: Schemastery.TypeT<typeof Config>;
