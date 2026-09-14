@@ -31,7 +31,7 @@ import {
   inputStyle,
   openHere,
   pill,
-  CLAUDE_ORANGE,
+  PANEL_ACCENT,
   maskEmail,
   resumeCommand,
   saveBlob,
@@ -3056,7 +3056,7 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
             border: "none",
             borderRadius: 999,
             background: open ? T.hoverSolid : "transparent",
-            color: CLAUDE_ORANGE,
+            color: PANEL_ACCENT,
             lineHeight: 1,
             display: "inline-flex",
             alignItems: "center",
@@ -3089,7 +3089,7 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
             openPanel();
           }}
         >
-          <Spark size={15} />
+          <Spark size={15} color="currentColor" />
           {blank && restorable > 0 && !seenRestore && !open && (
             <span
               data-omc-restore-badge=""
@@ -3101,7 +3101,7 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
                 width: 7,
                 height: 7,
                 borderRadius: 999,
-                background: CLAUDE_ORANGE,
+                background: PANEL_ACCENT,
                 boxShadow: "0 0 0 2px var(--dsw-specific-input-major, #fff)",
               }}
             />
@@ -3152,7 +3152,7 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
               style={{
                 display: "flex",
                 flex: "0 0 auto",
-                borderTop: `1px solid color-mix(in srgb, ${CLAUDE_ORANGE} 18%, ${T.border})`,
+                borderTop: `1px solid color-mix(in srgb, ${PANEL_ACCENT} 18%, ${T.border})`,
                 paddingTop: 4,
                 gap: 2,
                 // Wrap rather than scroll sideways: a strip that scrolls hides the tab that did not

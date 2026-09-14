@@ -49,8 +49,8 @@ import {
   btnPrimary,
   DOCK_ATTR,
   ensurePanelStyle,
-  CLAUDE_ORANGE,
-  CLAUDE_SHIMMER,
+  ACCENT,
+  SHIMMER,
   CLAUDE_MARK,
   isRingRoot,
   SessionData,
@@ -71,6 +71,7 @@ import {
   resumeCommand,
   saveBlob,
 } from "./shared.js";
+import { themeOf, hexToRgb, type ThemeGroup } from "./theme.js";
 import { PluginUpdateBadge } from "./update-pill.js";
 import { ReportBlock } from "./report.js";
 import { Spark, sparkNode } from "./spark.js";
@@ -1686,7 +1687,7 @@ function LoginSteps({
         <>
           <div>
             A sign-in tab may have opened by itself; if not, open{" "}
-            <a href={login.url} target="_blank" rel="noreferrer" style={{ color: CLAUDE_ORANGE }}>
+            <a href={login.url} target="_blank" rel="noreferrer" style={{ color: ACCENT }}>
               Claude sign-in
             </a>{" "}
             and approve. If that page shows a code, paste it below; if it says you are all set, this
@@ -1927,7 +1928,7 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
         kind === k
           ? {
               ...btn,
-              background: CLAUDE_ORANGE,
+              background: ACCENT,
               color: T.onBrand,
               border: "1px solid transparent",
               // The label on the orange fill was the row's regular weight, thin against it.
@@ -2365,7 +2366,7 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
                         href={tsLogin.url}
                         target="_blank"
                         rel="noreferrer"
-                        style={{ color: CLAUDE_ORANGE }}
+                        style={{ color: ACCENT }}
                       >
                         Approve this box on your tailnet
                       </a>
@@ -2813,7 +2814,7 @@ function renderUsage(block: HTMLElement, reply: UsageReply) {
     // Label and reset on the left, percent on the right, a thin bar under both: the same shape
     // dsh draws for the context meter below, so the two sections read as one panel.
     const pct = Math.max(0, Math.min(100, w.usedPercent));
-    const tone = pct >= 90 ? T.err : pct >= 70 ? T.warn : CLAUDE_ORANGE;
+    const tone = pct >= 90 ? T.err : pct >= 70 ? T.warn : ACCENT;
     const usageRow = document.createElement("div");
     usageRow.style.cssText =
       "display:grid;grid-template-columns:1fr auto;align-items:baseline;column-gap:12px;row-gap:3px;padding:3px 0";
@@ -2831,7 +2832,7 @@ function renderUsage(block: HTMLElement, reply: UsageReply) {
     bar.setAttribute("aria-label", `${w.label} ${Math.round(pct)}% used`);
     bar.style.cssText = `grid-column:1 / -1;height:4px;border-radius:2px;background:${T.border};overflow:hidden`;
     const fill = document.createElement("div");
-    fill.style.cssText = `height:100%;width:${pct}%;border-radius:2px;background:linear-gradient(90deg,${tone},${pct >= 70 ? tone : CLAUDE_SHIMMER})`;
+    fill.style.cssText = `height:100%;width:${pct}%;border-radius:2px;background:linear-gradient(90deg,${tone},${pct >= 70 ? tone : SHIMMER})`;
     bar.append(fill);
     const when = document.createElement("span");
     when.textContent = resetText(w.resetsAt);
@@ -3005,7 +3006,7 @@ function watchContextMeter(ctx: ClientCtx) {
     // The mark is a drawing, not a letter, so the row centres on it rather than sitting it on a
     // baseline it does not have.
     line.style.cssText = `border-bottom:1px solid ${T.border};margin-bottom:4px;padding-bottom:4px;display:flex;gap:6px;align-items:center`;
-    const mark = sparkNode(12, CLAUDE_SHIMMER);
+    const mark = sparkNode(12, SHIMMER);
     const text = document.createElement("span");
     text.textContent = "Claude usage…";
     line.append(mark, text);
@@ -3073,6 +3074,26 @@ const loadSpinnerSettings = async (): Promise<{
   }
 };
 
+/** A rule that paints only while its theme group is on. The selector is doubled: once for an
+ *  absent `data-omc-theme` (before the hints load every group is on, so the first paint is
+ *  today's) and once for the group's token. `rest` is the part of the selector after the body;
+ *  `claude` false drops the `[data-omc-claude]` condition for rules that never had it. */
+const gated = (group: ThemeGroup, rest: string, claude = true): string => {
+  const body = claude ? "body[data-omc-claude]" : "body";
+  return `${body}:not([data-omc-theme]) ${rest},${body}[data-omc-theme~="${group}"] ${rest}`;
+};
+
+/** Whether a theme group is on right now: absent attribute means on (nothing has loaded yet). */
+const hasTheme = (group: ThemeGroup): boolean => {
+  const v = document.body.getAttribute("data-omc-theme");
+  return v === null || v.split(" ").includes(group);
+};
+/** The page's accent as channels for the spinner's mixing, or `fallback` when none is set yet. */
+const accentRgb = (fallback: Rgb): Rgb => {
+  const v = getComputedStyle(document.documentElement).getPropertyValue("--omc-accent").trim();
+  return /^#[0-9a-f]{6}$/i.test(v) ? hexToRgb(v) : fallback;
+};
+
 /** Wire one turn-status element for a claude-code session: verb + ping-pong spinner + orange gradient. */
 /** Inject (or re-inject after a hot reload) the Claude-orange rule; idempotent by id. Reuses the
  *  element but always rewrites it: a hot reload lands a new bundle in a page still carrying the last
@@ -3112,7 +3133,7 @@ const ensureTurnStatusStyle = () => {
   // clearance, which leaves its pills 653px in a 717px column. dsh's two fill that; ours as a
   // third clips all three to an ellipsis by a few pixels. The pills are centred, so the padding
   // does no aligning; take it down to the row's rounded corners and the three fit.
-  styleEl.textContent = `body[data-omc-claude] [role="status"][aria-live="polite"],[data-dsh-oh-my-claude-turn]{background-image:var(--omc-row-bg,linear-gradient(90deg,${CLAUDE_ORANGE} 0%,${CLAUDE_ORANGE} 40%,${CLAUDE_SHIMMER} 50%,${CLAUDE_ORANGE} 60%,${CLAUDE_ORANGE} 100%))}@keyframes omc-word{from{-webkit-text-fill-color:var(--omc-word-lo)}to{-webkit-text-fill-color:var(--omc-word-hi)}}[data-omc-turn-word]{animation:omc-word 1s ease-in-out 3s infinite alternate}@media (prefers-reduced-motion:reduce){[data-omc-turn-word]{animation:none}}[data-dsh-oh-my-claude-turn]>span[aria-hidden]{display:inline-block;width:1.3em;text-align:start;flex:none}[data-dsh-oh-my-claude-turn]{max-width:100%;min-width:0}[data-omc-turn-detail]{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}[data-omc-login-card] button:hover,[data-omc-login-card] button:focus-visible{color:${CLAUDE_ORANGE};border-color:${CLAUDE_ORANGE}}${controlStatesCss("[data-omc-settings]")}${controlStatesCss('[role="dialog"][aria-label="Oh My Claude"]')}[data-omc-card]:hover{border-color:var(--dsw-alias-label-dimmed,rgba(128,128,128,.5))}[data-omc-card]>button:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#3b82f6);outline-offset:-2px}[data-omc-card]>button:hover{background:none}@keyframes omc-sheen{from{background-position:200% 0}to{background-position:-200% 0}}[data-omc-skeleton]{border-radius:6px;background:linear-gradient(90deg,${T.border} 30%,${T.hover} 50%,${T.border} 70%);background-size:200% 100%;animation:omc-sheen 1.4s linear infinite}@keyframes omc-rise{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}[data-omc-arrived]{animation:omc-rise .18s ease-out}@media (prefers-reduced-motion:reduce){[data-omc-skeleton],[data-omc-arrived]{animation:none}}body[data-omc-claude] [role="tablist"]>[role="tab"][aria-selected="true"]{color:${CLAUDE_ORANGE}}body[data-omc-claude] [role="tablist"]>[role="tab"][aria-selected="true"]::after{background:${CLAUDE_ORANGE}}body[data-omc-claude] [class*="_markdown"] blockquote{border-left-color:${CLAUDE_ORANGE}80}body[data-omc-claude] [class*="_markdown"] hr{background:${CLAUDE_ORANGE}59}body[data-omc-claude] [class*="_markdown"] a{color:${CLAUDE_ORANGE};text-decoration-color:${CLAUDE_ORANGE}66}body[data-omc-claude] [class*="_markdown"] a:hover{color:${CLAUDE_SHIMMER};text-decoration-color:${CLAUDE_SHIMMER}}body[data-omc-claude] [class*="_markdown"] input[type="checkbox"]{accent-color:${CLAUDE_ORANGE}}body[data-omc-claude] [data-workflow-run] button[data-member-status] [data-member-label]{color:${CLAUDE_ORANGE}}body[data-omc-panel-open] [data-width-handle]{pointer-events:none}body[data-omc-panel-open] [class*="_toBottomSlot"],body:has([data-omc-cost-dialog]) [class*="_toBottomSlot"]{opacity:0;pointer-events:none;transition:opacity .1s}@keyframes omc-pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,${CLAUDE_ORANGE} 55%,transparent)}100%{box-shadow:0 0 0 12px transparent}}button[aria-label="Oh My Claude"][data-omc-pulse]{animation:omc-pulse 1.1s ease-out 3}@media (prefers-reduced-motion:reduce){button[aria-label="Oh My Claude"][data-omc-pulse]{animation:none}}body[data-omc-claude] [data-produced-files-row] button{color:${CLAUDE_ORANGE}}body[data-omc-claude] [data-produced-files-row] button:hover{color:${CLAUDE_SHIMMER}}body[data-omc-claude] [data-composer-stats]{padding-left:8px;padding-right:8px}body[data-omc-claude] [class*="_optionLine"]>[class*="_badge"]{background:color-mix(in srgb,${CLAUDE_ORANGE} 16%,transparent);color:${CLAUDE_ORANGE}}[data-omc-cost-over]{color:${CLAUDE_ORANGE}}${RAINBOW_CSS}${COST_DIALOG_CSS}`;
+  styleEl.textContent = `${gated("row", '[role="status"][aria-live="polite"]')},${gated("row", "[data-dsh-oh-my-claude-turn]", false)}{background-image:var(--omc-row-bg,linear-gradient(90deg,var(--omc-accent) 0%,var(--omc-accent) 40%,var(--omc-shimmer) 50%,var(--omc-accent) 60%,var(--omc-accent) 100%))}@keyframes omc-word{from{-webkit-text-fill-color:var(--omc-word-lo)}to{-webkit-text-fill-color:var(--omc-word-hi)}}[data-omc-turn-word]{animation:omc-word 1s ease-in-out 3s infinite alternate}@media (prefers-reduced-motion:reduce){[data-omc-turn-word]{animation:none}}[data-dsh-oh-my-claude-turn]>span[aria-hidden]{display:inline-block;width:1.3em;text-align:start;flex:none}[data-dsh-oh-my-claude-turn]{max-width:100%;min-width:0}[data-omc-turn-detail]{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}${gated("panel", "[data-omc-login-card] button:hover", false)},${gated("panel", "[data-omc-login-card] button:focus-visible", false)}{color:var(--omc-accent);border-color:var(--omc-accent)}${controlStatesCss("[data-omc-settings]")}${controlStatesCss('[role="dialog"][aria-label="Oh My Claude"]')}[data-omc-card]:hover{border-color:var(--dsw-alias-label-dimmed,rgba(128,128,128,.5))}[data-omc-card]>button:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#3b82f6);outline-offset:-2px}[data-omc-card]>button:hover{background:none}@keyframes omc-sheen{from{background-position:200% 0}to{background-position:-200% 0}}[data-omc-skeleton]{border-radius:6px;background:linear-gradient(90deg,${T.border} 30%,${T.hover} 50%,${T.border} 70%);background-size:200% 100%;animation:omc-sheen 1.4s linear infinite}@keyframes omc-rise{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}[data-omc-arrived]{animation:omc-rise .18s ease-out}@media (prefers-reduced-motion:reduce){[data-omc-skeleton],[data-omc-arrived]{animation:none}}${gated("prose", '[role="tablist"]>[role="tab"][aria-selected="true"]')}{color:var(--omc-accent)}${gated("prose", '[role="tablist"]>[role="tab"][aria-selected="true"]::after')}{background:var(--omc-accent)}${gated("prose", '[class*="_markdown"] blockquote')}{border-left-color:color-mix(in srgb,var(--omc-accent) 50.2%,transparent)}${gated("prose", '[class*="_markdown"] hr')}{background:color-mix(in srgb,var(--omc-accent) 34.9%,transparent)}${gated("prose", '[class*="_markdown"] a')}{color:var(--omc-accent);text-decoration-color:color-mix(in srgb,var(--omc-accent) 40%,transparent)}${gated("prose", '[class*="_markdown"] a:hover')}{color:var(--omc-shimmer);text-decoration-color:var(--omc-shimmer)}${gated("prose", '[class*="_markdown"] input[type="checkbox"]')}{accent-color:var(--omc-accent)}${gated("prose", "[data-workflow-run] button[data-member-status] [data-member-label]")}{color:var(--omc-accent)}body[data-omc-panel-open] [data-width-handle]{pointer-events:none}body[data-omc-panel-open] [class*="_toBottomSlot"],body:has([data-omc-cost-dialog]) [class*="_toBottomSlot"]{opacity:0;pointer-events:none;transition:opacity .1s}@keyframes omc-pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--omc-accent) 55%,transparent)}100%{box-shadow:0 0 0 12px transparent}}${gated("panel", 'button[aria-label="Oh My Claude"][data-omc-pulse]', false)}{animation:omc-pulse 1.1s ease-out 3}@media (prefers-reduced-motion:reduce){button[aria-label="Oh My Claude"][data-omc-pulse]{animation:none}}${gated("prose", "[data-produced-files-row] button")}{color:var(--omc-accent)}${gated("prose", "[data-produced-files-row] button:hover")}{color:var(--omc-shimmer)}body[data-omc-claude] [data-composer-stats]{padding-left:8px;padding-right:8px}${gated("prose", '[class*="_optionLine"]>[class*="_badge"]')}{background:color-mix(in srgb,var(--omc-accent) 16%,transparent);color:var(--omc-accent)}[data-omc-cost-over]{color:var(--omc-accent)}${RAINBOW_CSS}${COST_DIALOG_CSS}`;
   document.head.appendChild(styleEl);
 };
 
@@ -3404,15 +3425,16 @@ const wireTurnStatus = (
     // a slow grey pulse, itself pulled toward the warning shade by the thinking ramp. Time, count
     // and the brackets stay dim. Once either ramp is above zero the verb is one flat colour, no
     // shimmer: the CLI's glimmer only draws when neither ramp is up.
+    const claude = accentRgb(palette.claude);
     const tint =
       ti > 0
-        ? mixRgb(palette.claude, palette.warning, ti)
+        ? mixRgb(claude, palette.warning, ti)
         : si > 0
-          ? mixRgb(palette.claude, STALL_RED, si)
+          ? mixRgb(claude, STALL_RED, si)
           : undefined;
     const lo = cssRgb(mixRgb(WORD_GREY_LO, palette.warning, ti));
     const hi = cssRgb(mixRgb(WORD_GREY_HI, palette.warning, ti));
-    const key = `${parts.join("\0")}\0${word}\0${tint ? cssRgb(tint) : ""}\0${lo}\0${hi}\0${ti >= 0.5}`;
+    const key = `${parts.join("\0")}\0${word}\0${cssRgb(claude)}\0${tint ? cssRgb(tint) : ""}\0${lo}\0${hi}\0${ti >= 0.5}`;
     if (key === painted) return;
     painted = key;
     if (tint)
@@ -3569,6 +3591,7 @@ function watchTurnStatus(ctx: ClientCtx) {
     if (el.hasAttribute(TURN_MARK)) return;
     const activeId = activeClaudeSession(ctx);
     if (!activeId) return;
+    if (!hasTheme("row")) return; // the Claude look's status row is off: dsh's own text stays
     spinnerSettings ??= loadSpinnerSettings(); // once per page load
     // The settings load once and resolve for good, so this is a microtask after the first frame —
     // but the await used to be unhandled, so a throw inside `wireTurnStatus` became a rejection
@@ -3762,7 +3785,7 @@ function watchUltrathink(ctx: ClientCtx) {
       stopSweep();
       return;
     }
-    if (activeClaudeSession(ctx) === undefined) {
+    if (activeClaudeSession(ctx) === undefined || !hasTheme("rainbow")) {
       stopSweep();
       clear();
       return;
@@ -3856,18 +3879,19 @@ function watchSessionSpinners(ctx: ClientCtx) {
     // Every other ongoing matrix square — the job-list dot in the session header, and the same dot
     // dsh shows for subagents, plans and schedules — renders inside the open conversation, so it
     // belongs to whichever session is open. Tint those when that session is a Claude mount.
-    const openIsClaude = activeClaudeSession(ctx) !== undefined;
+    const openClaude = activeClaudeSession(ctx) !== undefined;
+    const openIsClaude = openClaude && hasTheme("row");
     for (const dot of document.querySelectorAll<SVGElement>('svg[data-state="ongoing"]')) {
       const inRow = dot.closest('[role="treeitem"]'); // a sidebar session row vs a dot elsewhere
       let want: boolean;
       if (inRow) {
         const title = spinnerRowTitle(dot);
-        want = title !== null && claude.has(title);
+        want = title !== null && claude.has(title) && hasTheme("row");
       } else {
         want = openIsClaude;
       }
       if (want) {
-        dot.style.color = CLAUDE_ORANGE;
+        dot.style.color = ACCENT;
         dot.setAttribute(MARK, "1");
       } else if (dot.hasAttribute(MARK)) {
         dot.style.color = "";
@@ -3881,10 +3905,10 @@ function watchSessionSpinners(ctx: ClientCtx) {
     // draws, and each ask used to run its own subtree query for the same element.
     const box = document.querySelector("[contenteditable]");
     for (const sendBtn of document.querySelectorAll<HTMLElement>('button[class*="_primary"]')) {
-      const sendWant = openIsClaude && inComposer(sendBtn, box);
+      const sendWant = openClaude && hasTheme("send") && inComposer(sendBtn, box);
       if (sendWant) {
-        sendBtn.style.setProperty("--dsw-alias-button-info-fill", CLAUDE_ORANGE);
-        sendBtn.style.setProperty("--dsw-alias-button-info-hover", CLAUDE_SHIMMER);
+        sendBtn.style.setProperty("--dsw-alias-button-info-fill", ACCENT);
+        sendBtn.style.setProperty("--dsw-alias-button-info-hover", SHIMMER);
         sendBtn.setAttribute(SEND_MARK, "1");
       } else if (sendBtn.hasAttribute(SEND_MARK)) {
         sendBtn.style.removeProperty("--dsw-alias-button-info-fill");
@@ -4682,7 +4706,7 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
               style={{
                 display: "inline",
                 fontSize: 14,
-                color: over ? CLAUDE_ORANGE : T.faint,
+                color: over ? ACCENT : T.faint,
                 whiteSpace: "nowrap",
               }}
               {...overAttr}
@@ -5049,6 +5073,17 @@ function useHintFlag(flag: string): [boolean, (on: boolean) => void] {
   return [value === true, (on) => set(on)];
 }
 
+/** Write the Claude look's switches to the page: the group tokens on `<body>` (absent means every
+ *  group on, so the first paint before the hints load is today's paint) and the accent pair on the
+ *  root. Read by the sheets through `[data-omc-theme~="…"]` and `var(--omc-accent)`. */
+function applyTheme(hints: Record<string, boolean | number>): void {
+  const theme = themeOf(hints);
+  document.body.setAttribute("data-omc-theme", theme.groups.join(" "));
+  const root = document.documentElement.style;
+  root.setProperty("--omc-accent", theme.accent);
+  root.setProperty("--omc-shimmer", theme.shimmer);
+}
+
 /** dsh's own settings switch, drawn with its measurements and colour tokens: a 36 by 20 pill with a
  *  16 px thumb that slides 16 px, brand-coloured when on. Its class names are generated per build,
  *  so the look is copied rather than the class borrowed. */
@@ -5097,7 +5132,96 @@ function Switch({
   );
 }
 
-/** The settings switch for the prompt-starter dock, first thing under the section title. */
+/** One theme group's checkbox: checked means on; the flag is the group's off key. */
+function ThemeGroupBox({ flag, group, label }: { flag: string; group: string; label: string }) {
+  const [off, setOff] = useHintFlag(flag);
+  return (
+    <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+      <input
+        type="checkbox"
+        data-omc-theme-group={group}
+        checked={!off}
+        onChange={(e) => setOff(!e.target.checked)}
+      />
+      {label}
+    </label>
+  );
+}
+
+/** The Claude look: the master switch first under the section title, then a fold with one checkbox
+ *  per group and the accent colour. Box-wide in the hints store like the switches under it;
+ *  applyTheme repaints on the hints event the setters dispatch, so nothing here touches the DOM. */
+function ThemeSwitch() {
+  const [off, setOff] = useHintFlag("themeOff");
+  const [accent, setAccent] = useHintValue("themeAccent");
+  const hints: Record<string, boolean | number> = {};
+  if (accent !== undefined) hints.themeAccent = accent;
+  const hex = themeOf(hints).accent;
+  return (
+    <>
+      <div
+        data-omc-theme-switch=""
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+          fontSize: 13,
+          marginBottom: off ? 12 : 4,
+        }}
+      >
+        <div>
+          <div>Claude look</div>
+          <div style={{ color: T.faint, fontSize: 12 }}>
+            Orange accent, the verb status line, links and the panel tint. Off is dsh's own colours.
+          </div>
+        </div>
+        <Switch on={!off} onChange={(next) => setOff(!next)} label="Claude look" />
+      </div>
+      {!off && (
+        <details data-omc-theme-custom="" style={{ marginBottom: 12, fontSize: 13 }}>
+          <summary style={{ cursor: "pointer", color: T.muted }}>Customize</summary>
+          <div
+            style={{ display: "flex", flexDirection: "column", gap: 6, padding: "8px 0 0 16px" }}
+          >
+            <ThemeGroupBox
+              flag="themeRowOff"
+              group="row"
+              label="Status row, verb and running dots"
+            />
+            <ThemeGroupBox flag="themeProseOff" group="prose" label="Links, rules and quotes" />
+            <ThemeGroupBox flag="themeSendOff" group="send" label="Send button" />
+            <ThemeGroupBox flag="themePanelOff" group="panel" label="Panel and spark" />
+            <ThemeGroupBox flag="themeRainbowOff" group="rainbow" label="Rainbow words" />
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+              Accent
+              <input
+                type="color"
+                data-omc-theme-accent=""
+                aria-label="Accent colour"
+                value={hex}
+                // `change`, not `input`: a drag through the picker must not post per frame.
+                onChange={(e) => setAccent(parseInt(e.target.value.slice(1), 16))}
+              />
+              {accent !== undefined && (
+                <button
+                  type="button"
+                  style={btn}
+                  data-omc-theme-reset=""
+                  onClick={() => setAccent(null)}
+                >
+                  Reset
+                </button>
+              )}
+            </label>
+          </div>
+        </details>
+      )}
+    </>
+  );
+}
+
+/** The settings switch for the prompt-starter dock, under the Claude look switch. */
 function StarterSwitch() {
   const [off, setOff] = useHintFlag("starterOff");
   return (
@@ -5563,7 +5687,7 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
               <Spark size={12} />
               <span
                 style={{
-                  color: CLAUDE_ORANGE,
+                  color: ACCENT,
                   fontWeight: 600,
                   fontSize: 12,
                   flex: "0 0 auto",
@@ -5595,7 +5719,7 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
                 aria-label="Copy side question"
                 style={{
                   ...iconBtn,
-                  color: copied === it.id ? CLAUDE_ORANGE : T.muted,
+                  color: copied === it.id ? ACCENT : T.muted,
                   fontSize: 11,
                 }}
               >
@@ -5619,7 +5743,7 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
               // A very tall answer scrolls inside the card rather than pushing the composer down.
               <div style={{ padding: "0 10px 8px 24px", maxHeight: "40vh", overflow: "auto" }}>
                 {it.pending ? (
-                  <div style={{ color: CLAUDE_ORANGE, fontSize: 12, fontStyle: "italic" }}>
+                  <div style={{ color: ACCENT, fontSize: 12, fontStyle: "italic" }}>
                     Claude is thinking…
                   </div>
                 ) : it.error ? (
@@ -5791,6 +5915,18 @@ export function apply(ctx: ClientCtx) {
   watchUltrathink(ctx);
   watchToolFolds();
 
+  // The Claude look: apply the stored switches once the hints load, and again on every change
+  // (a Settings switch dispatches HINTS_EVENT after its POST). Removed with the module, like the
+  // interval in watchTurnStatus, so a hot reload does not stack listeners.
+  const reapplyTheme = () => void loadHints().then(applyTheme, console.error);
+  // The sheets read bare var(--omc-accent); until the hints land nothing has set it and a fresh
+  // page would paint the status row, links and rules unaccented for a fetch. Write the defaults
+  // now, synchronously; the stored switches overwrite them a moment later.
+  applyTheme({});
+  reapplyTheme();
+  window.addEventListener(HINTS_EVENT, reapplyTheme);
+  whenContextGone(() => window.removeEventListener(HINTS_EVENT, reapplyTheme));
+
   const SECTION_LABEL = "Oh My Claude";
 
   /**
@@ -5841,6 +5977,7 @@ export function apply(ctx: ClientCtx) {
             <PluginUpdateBadge />
           </span>
         </div>
+        <ThemeSwitch />
         <StarterSwitch />
         <UpdateNoticeSwitch />
         <WorkspaceModelSwitch />

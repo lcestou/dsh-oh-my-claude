@@ -100,6 +100,8 @@ Colours follow the CLI's spinner: a thinking burst past ten seconds warms the gl
 
 The word `ultrathink`, typed in the composer, waiting in the queue or sent in a message, takes the CLI's rainbow (one colour per letter, red through violet, wrapping), with the CLI's shimmer sweeping over it in the composer; `ultracode` takes the CLI's purple in the composer only, under the CLI's own matcher (a quoted or slash-command occurrence is left plain). Both go through the CSS Highlight API, so neither the composer nor the chat sees a DOM change. The same Claude orange tints the running dot beside each session in the sidebar under Workspaces, but only for Claude sessions: a second watcher (`watchSessionSpinners`) colours the matrix dot for sessions whose provider is `claude-code`, matched by their title in the row, and leaves any other provider's dot dsh's default. A session that changes to another provider mid-flight loses the tint.
 
+All of this colour is the Claude look switch in Settings: off, or off per group, and the status row, links, send button, panel and rainbow fall back to dsh's own; the accent picker there recolours the lot. [The panel](panel.md#claude-look) has the switch.
+
 ## Compaction
 
 The CLI announces compaction with a `compacting` frame, goes silent while it summarises, then emits the boundary; both ends show in the reasoning lane, and a failed compaction is reported.

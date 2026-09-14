@@ -73,6 +73,10 @@ Each row says where its value comes from, `settings.json` or `Claude Code defaul
 
 A Permissions block closes the tab with the three rule lists the CLI answers tool requests from, `allow`, `deny` and `ask`: a row per rule with a Remove button, an add form, and a chip per tool call this session stopped to ask about, already written as the rule that would have answered it (`Bash(npm run:*)` for `npm run build`, the path itself for anything carrying one). Clicking a chip fills the box, so a rule that is too broad is edited before it is saved, and a chip disappears once its rule is in a list. A rule that is not a tool name with an optional specifier is refused here rather than written and ignored at spawn. The suggestions live in memory for the life of the process, ten per session, and are served by `GET /dsh-oh-my-claude/permission-asks?session=`.
 
+## Claude look
+
+Everything the plugin colours Claude-orange is one switch, Claude look, first under the title in Settings → Oh My Claude and on by default. Off, the page shows dsh's own colours: the status row keeps dsh's text, links and rules take dsh's blue and grey, the send button and the panel go back to dsh's brand colour, and `ultrathink` stays plain. A Customize fold under the switch keeps some of it and not the rest, one checkbox per group: the status row with its verb and the running dots, links and rules and quotes, the send button, the panel and spark, rainbow words. An accent colour picker in the same fold replaces the orange everywhere it is on; Reset brings the orange back. Box-wide, in the same store as the switches below it, so it holds across browsers and updates. The cost pill's over-budget colour follows the accent but no group turns it off: it is a warning, not chrome.
+
 ## Prompt starter
 
 A session with no messages yet shows a small card above the composer offering an opening prompt: the one saved for that session, or, on a brand-new tab, the last one saved anywhere. Clicking it fills the composer without sending, so it can be edited first. "Save draft" stores whatever is in the box as that session's opener and as the default the next new session is offered; it reads "Saved" and is greyed while the composer already matches the saved opener. "Forget" clears it after a second click. The card is one row whatever the draft's length: the opener and the hint shrink with an ellipsis, the buttons keep their place, and the row keeps its height, so nothing under it moves. Each button slides in and out over 200 ms (none under reduced motion), reserves the width of its widest label, and the Forget button holds its width while it reads "Sure?". A switch at the top of Settings → Oh My Claude turns the card off for the whole box; it is on by default and the flag lives as `starterOff` in `hints.json` in the plugin's state dir (`GET`/`POST /dsh-oh-my-claude/hints`, a `false` dropping the key). It hides as soon as the session has a message or the composer holds text of its own. Openers live in `starters.json` in the plugin's state dir; the routes are `GET /dsh-oh-my-claude/starter?session=` and `POST` of `{session, text}`. Filling the composer uses `inputActions.setDraft`, which dsh hands to every entry of the composer's dock slot.
@@ -105,7 +109,7 @@ Each archived session row has a menu: download the raw transcript, export it as 
 
 ## Remember model per workspace
 
-A blank Claude session in a workspace opens on the model that workspace last ran, provider unchanged. The switch is Remember model per workspace, at the top of Settings → Oh My Claude.
+A blank Claude session in a workspace opens on the model that workspace last ran, provider unchanged. The switch is Remember model per workspace, under Claude look in Settings → Oh My Claude.
 
 ## Report a problem
 
