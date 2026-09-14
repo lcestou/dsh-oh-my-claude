@@ -3556,8 +3556,8 @@ function watchSessionNotices(ctx: ClientCtx) {
     }
     prev = next;
     // Return recap: a session that stopped working while it was not the one on screen is asked for
-    // one line when it is opened. Off by default; the switch is in Diagnostics beside the notices
-    // one. `recapNext` clears the id as it fires, so a return asks once and a second open of the
+    // one line when it is opened. Off by default; the switch is in Settings, under Oh My Claude.
+    // `recapNext` clears the id as it fires, so a return asks once and a second open of the
     // same session asks nothing. Two things this accepts on purpose: the queue is cleared before
     // `recapOn()` is read, so turning the switch on mid-session waits for the next return rather than
     // firing for a session that already came back, and the fire trusts `snap.current` for the tick it
