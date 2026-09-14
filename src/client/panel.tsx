@@ -42,6 +42,8 @@ import { Tooltip, useAnchoredMaxHeight } from "@deepseek-ai/dsh-client-ui-primit
 import { Spark } from "./spark.js";
 import { ConfirmButton, TuneBody } from "./tune.js";
 import { noticesOn, setNoticesOn, recapOn, setRecapOn } from "./notices.js";
+import { queueDraft } from "./draft.js";
+import { diffQuestion, reviewPrompt } from "../prompts.js";
 import type { FeatureSwitches } from "../switches.js";
 import type { PluginRoster } from "../plugins.js";
 
@@ -1126,11 +1128,46 @@ function DiffCounts({ added, removed }: { added: number; removed: number }) {
 /**
  * "Changes" body rendered inside the Oh My Claude dialog: the CLI's own working-tree
  * diff (`get_workspace_diff`), one row per file with its line counts, a row unfolds its hunks.
+ * Ask sends the diff, whole or one file, as a side question, so the answer arrives beside the
+ * transcript rather than in it. Review writes a prompt into the composer and closes the dialog,
+ * because that one is the turn itself and belongs where the person can edit it before it goes.
  */
-function ChangesBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
+function ChangesBody({
+  sessionId,
+  ctx,
+  onClose,
+}: {
+  sessionId: string;
+  ctx: ClientCtx;
+  onClose: () => void;
+}) {
   const isClaude = activeClaudeSession(ctx) === sessionId;
   const [reply, setReply] = useState<DiffReply | null>(null);
   const [shown, setShown] = useState<string | null>(null);
+  const [asking, setAsking] = useState(false);
+  const [note, setNote] = useState("");
+  const ask = async (path: string) => {
+    setAsking(true);
+    setNote("");
+    try {
+      const r = await fetch(`${ROUTE}/side-questions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          session: sessionId,
+          question: diffQuestion(path),
+          withDiff: true,
+          path,
+        }),
+      });
+      const body = await readJson<{ ok: boolean; error?: string }>(r);
+      setNote(body.ok ? "Asked. The answer docks above the composer." : (body.error ?? "failed"));
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAsking(false);
+    }
+  };
 
   useEffect(() => {
     let live = true;
@@ -1164,6 +1201,16 @@ function ChangesBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
             <span style={{ ...meta, marginLeft: "auto" }}>
               <DiffCounts added={current.added} removed={current.removed} />
             </span>
+            <button
+              type="button"
+              style={btn}
+              data-omc-diff-ask=""
+              title="Ask Claude about this file, off the transcript"
+              disabled={asking}
+              onClick={() => void ask(current.path)}
+            >
+              {asking ? "…" : "Ask"}
+            </button>
           </div>
           {current.hunks.length === 0 ? (
             <span style={{ ...meta, padding: "2px 4px" }}>
@@ -1214,6 +1261,33 @@ function ChangesBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
               </>
             )}
           </span>
+          {reply.filesCount > 0 && (
+            <div style={{ display: "flex", gap: 8, padding: "2px 4px" }}>
+              <button
+                type="button"
+                style={btn}
+                data-omc-diff-ask-all=""
+                title="Ask Claude about all the changes, off the transcript"
+                disabled={asking}
+                onClick={() => void ask("")}
+              >
+                {asking ? "…" : "Ask"}
+              </button>
+              <button
+                type="button"
+                style={btn}
+                data-omc-diff-review=""
+                title="Write a review prompt into the composer"
+                onClick={() => {
+                  queueDraft(sessionId, reviewPrompt(files.map((f) => f.path)));
+                  onClose();
+                }}
+              >
+                Review my changes
+              </button>
+            </div>
+          )}
+          {note && <span style={{ ...meta, padding: "2px 4px" }}>{note}</span>}
           {files.map((f) => (
             <button
               key={f.path}
@@ -3182,7 +3256,7 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
               {tab === "Memory" && <MemoryBody sessionId={sessionId} ctx={ctx} />}
               {tab === "Instructions" && <InstructionsBody sessionId={sessionId} ctx={ctx} />}
               {tab === "Rewind" && <RewindBody sessionId={sessionId} ctx={ctx} onClose={close} />}
-              {tab === "Changes" && <ChangesBody sessionId={sessionId} ctx={ctx} />}
+              {tab === "Changes" && <ChangesBody sessionId={sessionId} ctx={ctx} onClose={close} />}
               {tab === "MCP" && <McpBody sessionId={sessionId} ctx={ctx} onClose={close} />}
               {tab === "Asides" && <AsidesBody sessionId={sessionId} />}
               {tab === "Diagnostics" && <DiagnosticsBody sessionId={sessionId} ctx={ctx} />}
