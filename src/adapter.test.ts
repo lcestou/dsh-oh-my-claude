@@ -11,6 +11,7 @@ import {
   mcpToolsByServer,
   hasPendingTodo,
   ClaudeCodeAdapter,
+  contextSourceOf,
   ADAPTER_CURRENT,
   accessModeOf,
   buildArgs,
@@ -4823,4 +4824,91 @@ console.log("interrupt-on-abort ok");
   a.disposeProcesses();
   assert.equal(a.watchers.size, 0, "dispose closes the watchers");
   console.log("terminal turns adapter ok");
+}
+{
+  // The context switches. dsh injects three kinds of block into every prompt; two of them the
+  // owner can withhold from Settings, and the third is the approval snapshot, which never goes.
+  const instr = message({
+    role: "user",
+    source: { kind: "agent-instructions" },
+    content: [{ type: "text", text: "Instructions from: AGENTS.md\n\nbe lazy" }],
+  });
+  const cat = message({
+    role: "user",
+    source: { kind: "skill-catalog" },
+    content: [{ type: "text", text: "SKILL CATALOG: design-pass, unslop" }],
+  });
+  const snap = message({
+    role: "user",
+    source: { kind: "plugin", plugin: "@deepseek-ai/dsh-system-prompt", form: "snapshot" },
+    content: [{ type: "text", text: "approval policy: ask" }],
+  });
+  const job = message({
+    role: "user",
+    source: { kind: "plugin", plugin: "tool-jobs" },
+    content: [{ type: "text", text: "background job finished" }],
+  });
+  const typed = message({ role: "user", content: "do the thing" });
+
+  assert.equal(contextSourceOf(instr), "instructions");
+  assert.equal(contextSourceOf(cat), "skills");
+  assert.equal(contextSourceOf(snap), "runtime");
+  assert.equal(contextSourceOf(job), undefined, "a job notice is not context, it is the answer");
+  assert.equal(contextSourceOf(typed), undefined, "what the owner typed is never withheld");
+
+  const all = messageList([instr, cat, snap, typed]);
+  const sent = buildPrompt(all);
+  assert.ok(sent.includes("be lazy") && sent.includes("SKILL CATALOG"), "default sends everything");
+
+  const noSkills = buildPrompt(all, new Set(["skills"]));
+  assert.ok(!noSkills.includes("SKILL CATALOG"), "the withheld catalog is gone");
+  assert.ok(noSkills.includes("be lazy"), "and nothing else went with it");
+  assert.ok(noSkills.includes("approval policy: ask"), "the snapshot is not withholdable");
+  assert.ok(noSkills.includes("do the thing"), "the typed turn survives");
+
+  const neither = buildPrompt(all, new Set(["instructions", "skills"]));
+  assert.ok(!neither.includes("be lazy") && !neither.includes("SKILL CATALOG"));
+  assert.ok(neither.includes("do the thing"));
+
+  // A turn whose only message is a withheld block would leave no prompt at all, and the CLI needs
+  // one. Failing the turn is worse than sending the block, so that turn goes out unfiltered.
+  const catOnly = messageList([cat]);
+  assert.ok(
+    buildPrompt(catOnly, new Set(["skills"])).includes("SKILL CATALOG"),
+    "the last block standing is sent rather than losing the turn",
+  );
+
+  // The mid-turn path has no such fallback on purpose: a tool result already carries the turn.
+  const midTurn = messageList([
+    { role: "user", source: { kind: "tool", callId: "x" }, content: [{ type: "tool-result" }] },
+    cat,
+    { role: "user", content: "and also this" },
+  ]);
+  assert.ok(stepContextFor(midTurn).includes("SKILL CATALOG"), "default sends it mid-turn too");
+  const midDropped = stepContextFor(midTurn, new Set(["skills"]));
+  assert.ok(!midDropped.includes("SKILL CATALOG"), "and the switch reaches the mid-turn path");
+  assert.ok(midDropped.includes("and also this"), "a steer typed in the same batch survives");
+}
+{
+  // The seam: `prepare` is what reads hints.json, and nothing above this block touches it. Without
+  // this, an omitted argument in `prepare` leaks every block back into the prompt with a green suite.
+  const hints = joinPath(stateDir("claude-code"), "hints.json");
+  await writeFile(hints, '{"dshContextSkillsOff":true}');
+  // SAFETY: partial fake for tests; PluginContext requires many fields not used here
+  const adapter = new ClaudeCodeAdapter({ on() {} } as unknown as PluginContext, Config({}));
+  const prep = await adapter.prepare({
+    messages: messageList([
+      {
+        role: "user",
+        source: { kind: "skill-catalog" },
+        content: [{ type: "text", text: "CATALOG" }],
+      },
+      { role: "user", content: "do the thing" },
+    ]),
+  } as never);
+  await writeFile(hints, "{}");
+  assert.deepEqual([...(prep.drops ?? [])], ["skills"], "prepare read the switch off disk");
+  assert.ok(!(prep.input ?? "").includes("CATALOG"), "and the built input has no catalog in it");
+  assert.ok((prep.input ?? "").includes("do the thing"), "the typed turn still reached the CLI");
+  adapter.disposeProcesses();
 }
