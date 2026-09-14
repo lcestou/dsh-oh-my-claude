@@ -366,6 +366,35 @@ export interface WorkspaceDiff {
 }
 /** A `get_workspace_diff` answer as totals, per-file counts and hunks, skipping malformed entries. */
 export declare function decodeWorkspaceDiff(v: JsonValue | undefined): WorkspaceDiff;
+/** The slice of a `list_permission_rules` answer this plugin reports. `text` is the CLI's own
+ *  display line, which is why nothing here re-words a rule. */
+export interface PermissionRules {
+    rules: Array<{
+        behavior: string;
+        source: string;
+        rule: string;
+        text: string;
+    }>;
+    directories: Array<{
+        path: string;
+        source: string;
+    }>;
+    managedOnly: boolean;
+}
+/** A `list_permission_rules` answer as rules, workspace directories and a managed-only flag,
+ *  skipping malformed entries. */
+export declare function decodePermissionRules(v: JsonValue | undefined): PermissionRules;
+/** The slice of a `get_hooks_listing` answer this plugin reports, one row per configured hook. */
+export interface HooksListing {
+    hooks: Array<{
+        event: string;
+        matcher: string;
+        source: string;
+        text: string;
+    }>;
+}
+/** A `get_hooks_listing` answer as per-hook rows, skipping malformed entries. */
+export declare function decodeHooksListing(v: JsonValue | undefined): HooksListing;
 /** One MCP server as `mcp_status` reports it. */
 export interface McpServerStatus {
     name: string;
@@ -375,6 +404,9 @@ export interface McpServerStatus {
     /** Bare tool names this server contributes. Filled from the init frame by the adapter, not by
      *  `mcp_status`, which does not report tools; absent when no init frame has been seen. */
     tools?: string[];
+    /** This server's tools have been pinned back to asking on the live process. The adapter's own
+     *  record, not the CLI's: `mcp_status` reports connection and nothing about permissions. */
+    asking?: boolean;
 }
 /** An `mcp_status` answer as one row per server, with its own error kept when it is not connected. */
 export declare function decodeMcpStatus(v: JsonValue | undefined): McpServerStatus[];
@@ -580,6 +612,11 @@ export declare class ClaudeProcess {
     idleKilled: boolean;
     /** The silence it was allowed before that kill: longer while a tool call is out. */
     idleKilledAfterMs?: number;
+    /** MCP servers this process has been told to ask about, by name. The CLI holds the override in
+     *  its own tool-permission context and offers no read-back, so the only record is the one kept
+     *  where the override was sent from. It hangs off the process for the same reason the override
+     *  does: both end when the process does, so nothing has to remember to clear it. */
+    mcpAsking: Set<string>;
     staleResults: number;
     /** When this turn's prompt was written, for time-to-first-token; 0 once a result has read it. */
     promptSentAt: number;

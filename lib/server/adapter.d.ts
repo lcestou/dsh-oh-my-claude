@@ -1,5 +1,5 @@
 import { type FSWatcher } from "node:fs";
-import type { Spawner, SubprocessHandle, ContextUsage, WorkspaceDiff, McpServerStatus, CliModel } from "./process.js";
+import type { Spawner, SubprocessHandle, ContextUsage, WorkspaceDiff, McpServerStatus, CliModel, PermissionRules, HooksListing } from "./process.js";
 import { LlmAdapter, type ContentBlock, type GenerateOptions, type LlmModelInfo, type LlmResolvedModelInfo, type StreamChunk } from "@deepseek-ai/dsh-llm";
 import z from "@deepseek-ai/schemastery";
 import { type PickerSettings, type RemoteWorkspace } from "./sessions.js";
@@ -223,6 +223,13 @@ export type WorkspaceDiffReply = ({
     ok: true;
     error?: undefined;
 } & WorkspaceDiff) | {
+    ok: false;
+    error: string;
+};
+/** What `/permissions` answers: both lists, or the reason there are none. */
+export type PermissionReadoutReply = ({
+    ok: true;
+} & PermissionRules & HooksListing) | {
     ok: false;
     error: string;
 };
@@ -632,6 +639,11 @@ export interface LiveTurn {
     effort?: string;
     at: number;
 }
+/** A `get_workspace_diff` answer as the text a side question carries. Hunk headers and raw lines,
+ *  nothing invented; a file with no hunks is named with why, so the reply does not guess. Whole files
+ *  only, in the CLI's own order, up to the cap; the first file always goes even if it alone is over,
+ *  because a context with no diff in it is worse than a long one. */
+export declare const diffContext: (diff: WorkspaceDiff, path: string) => string;
 export declare class ClaudeCodeAdapter extends LlmAdapter {
     ctx: PluginContext;
     config: Schemastery.TypeT<typeof Config>;
@@ -864,6 +876,15 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
         ok: boolean;
         error?: string;
     }>;
+    /** Pin one MCP server's tools back to asking, or clear the pin
+     *  (`set_mcp_permission_mode_override`). Tighten-only over this channel: the CLI accepts
+     *  `default`, `auto` and null and rejects the rest without changing state, so this offers the two
+     *  ends. It lives in the process's own tool-permission context, so it dies with the process, and
+     *  it is read only when the session's mode would otherwise auto-allow. */
+    setMcpAsk(sessionId: string, serverName: string, ask: boolean): Promise<{
+        ok: boolean;
+        error?: string;
+    }>;
     /** Ask a session's live process to re-read plugins, commands, agents and their MCP servers from
      *  disk (`reload_plugins`), so an enable, uninstall or marketplace change the CLI just wrote to
      *  settings takes effect now instead of at the next spawn. No live process is not a failure: the
@@ -875,6 +896,10 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     }>;
     /** The CLI's working-tree diff (`get_workspace_diff`) for a session with a live process. */
     workspaceDiff(sessionId: string): Promise<WorkspaceDiffReply>;
+    /** The permission rules and hooks a session's live process actually loaded
+     *  (`list_permission_rules`, `get_hooks_listing`), read-only. Both or neither: the readout is one
+     *  section pair and a half-answer would read as an empty half. */
+    permissionReadout(sessionId: string): Promise<PermissionReadoutReply>;
     /**
      * The CLI's own context breakdown (`/context` in the TUI) for a session with a live process;
      * answered between turns as well as inside one. 5 s: the CLI replies at once when it reads stdin.
@@ -912,7 +937,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * here first, or the panel reports "no live Claude process" for a session that has one.
      */
     ownerFor(sessionId: string): ClaudeCodeAdapter;
-    askSideQuestion(sessionId: string, question: string): void;
+    askSideQuestion(sessionId: string, question: string, context?: string): void;
     /** Save (or clear, when the text is blank) an opening prompt for a session or for `default`. */
     setStarter(key: string, text: string | undefined): void;
     /** Persist a session's aside ring to disk so an answer survives a restart, eviction or hot reload. */

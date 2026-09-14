@@ -34,6 +34,82 @@ export function newlyWaiting(prev: NoticeSnapshot | null, next: NoticeSnapshot):
   return out;
 }
 
+/** The one return shape `recapNext` uses. Kept narrow so the caller reads what it gets without a
+ *  widening cast. */
+export interface RecapStep {
+  /** Session id to the moment it stopped working, so a return can tell a walk away from a glance. */
+  pending: Record<string, number>;
+  fire?: string;
+}
+
+/**
+ * How long a session must have sat finished before returning to it earns a recap, unless the
+ * dropdown in Settings says otherwise. Five minutes, the same bar the CLI's own away summary uses ("shown when you return after being away for 5+ minutes",
+ * `awaySummaryEnabled` in claude 2.1.270). Below it you already know what you left, and the recap is
+ * a model call.
+ */
+export const RECAP_AWAY_MS = 5 * 60_000;
+
+/** What the settings dropdown offers, with `RECAP_AWAY_MS` among them as the default. */
+export const RECAP_AWAY_CHOICES = [60_000, RECAP_AWAY_MS, 15 * 60_000, 30 * 60_000, 60 * 60_000];
+
+/**
+ * The recap queue after this snapshot, and the session to recap now. A session joins the queue when
+ * it stops working while unselected, and leaves it when it becomes the one on screen: that is the
+ * return the recap is named for. Leaving the queue is not the same as firing, though — a return
+ * inside `awayMs` drops the entry silently, because flicking to another tab and back is not
+ * being away. Never persisted, so a reload forgets: a recap of work from before a page load is
+ * history, not a return.
+ */
+export function recapNext(
+  pending: Readonly<Record<string, number>>,
+  waiting: readonly string[],
+  current: string | undefined,
+  now: number,
+  awayMs: number,
+): RecapStep {
+  const next = { ...pending };
+  for (const id of waiting) if (id !== current) next[id] ??= now;
+  if (current !== undefined) {
+    const since = next[current];
+    delete next[current];
+    if (since !== undefined && now - since >= awayMs) return { pending: next, fire: current };
+  }
+  return { pending: next };
+}
+
+/**
+ * The recap's two settings live in the box-wide hints store, like every other row of the settings
+ * section and unlike the notices toggle below, which is browser-local because the notification
+ * permission it depends on is. Nothing here is per-browser: the answer lands in the Asides ring,
+ * which is the box's, so whether to spend the call is the box's question too.
+ *
+ * Reading them is a pure function of a hints object so this module stays free of both the store and
+ * the DOM. `recapOn` absent means off, which is the default a feature that bills a model call gets.
+ */
+export const recapOnIn = (hints: Record<string, boolean | number>): boolean =>
+  hints.recapOn === true;
+
+/**
+ * The chosen bar from the stored value, falling back to the default for anything that is not one of
+ * the offered choices: unset, a stale choice from an older build, or the wrong kind entirely
+ * (`Number` sends a boolean to 0 or 1, neither of which is offered).
+ */
+export const recapAwayIn = (stored: boolean | number | undefined): number => {
+  const ms = Number(stored);
+  return RECAP_AWAY_CHOICES.includes(ms) ? ms : RECAP_AWAY_MS;
+};
+
+/**
+ * What the recap asks, lifted from the CLI's own away summary (claude 2.1.270) so a recap here reads
+ * like a recap there. The word budget keeps it inside the two-line card, "no markdown" matters
+ * because the bubble renders plain text, and the next action is the part worth reading on return.
+ */
+export const RECAP_QUESTION =
+  "The user stepped away and is coming back. Recap in under 40 words, 1-2 plain sentences, no " +
+  "markdown. Lead with the overall goal and current task, then the one next action. Skip root-cause " +
+  "narrative, fix internals, secondary to-dos, and em-dash tangents.";
+
 const MARK = "● ";
 
 /** The tab title with one mark while any session waits, and without it when none does. */

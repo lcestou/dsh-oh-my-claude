@@ -63,6 +63,7 @@ import {
   clientTimeZone,
   killAfterGrace,
   asideAnswerText,
+  diffContext,
 } from "./adapter.js";
 import { PERMISSION_MODES } from "./state.js";
 import {
@@ -75,6 +76,7 @@ import {
   elicitationQuestions,
   elicitationResult,
   isIdleReply,
+  type WorkspaceDiff,
 } from "./process.js";
 import {
   buildRedactor,
@@ -2575,6 +2577,39 @@ console.log("ok");
   a.permissionModes.delete("far");
 }
 {
+  // askSideQuestion accepts an optional `context` argument that is appended to the question sent to
+  // the CLI but never stored in the persisted ring: the ring shows just the question, which is what
+  // the bubble and the Asides tab display.
+  const a = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  a.stateDir = await mkdtemp(joinPath(tmpdir(), "omc-aside-context-"));
+  const wrote: string[] = [];
+  a.processes.set(
+    registryKey("claude-code", "ctx"),
+    fakeProc({ alive: true, write: (line: string) => (wrote.push(line), true) }),
+  );
+  a.askSideQuestion("ctx", "what changed?", "--- a.ts\n@@ -1 +1 @@\n-old\n+new");
+  assert.equal(a.sideQuestions.get("ctx")?.[0]?.error, undefined, "no error on the way out");
+  const parsed = JSON.parse(wrote[0] ?? "{}");
+  assert.equal(
+    parsed.request.question,
+    "what changed?\n\n--- a.ts\n@@ -1 +1 @@\n-old\n+new",
+    "the CLI receives question plus context",
+  );
+  assert.equal(
+    a.sideQuestions.get("ctx")?.[0]?.question,
+    "what changed?",
+    "the ring keeps only the question, not the context",
+  );
+  // Answer it so no 120 s control timer keeps the test process alive.
+  const requestId = String(parsed.request_id);
+  a.resolveControl({
+    type: "control_response",
+    request_id: requestId,
+    response: { request_id: requestId, subtype: "success", response: { response: "a" } },
+  });
+  await new Promise((r) => setTimeout(r, 0));
+}
+{
   const tr = new Translator({ relay: true }) as any;
   const open = (id: any) =>
     tr.translate({
@@ -3850,6 +3885,7 @@ console.log("interrupt-on-abort ok");
     alive: true,
     busy: false,
     controlListener: undefined,
+    mcpAsking: new Set<string>(),
     write(line: string) {
       written.push(line);
       const req = JSON.parse(line);
@@ -3891,11 +3927,39 @@ console.log("interrupt-on-abort ok");
   assert.deepEqual(st, {
     ok: true,
     servers: [
-      { name: "dsh", status: "connected", version: "0.9.0" },
-      { name: "plugin:x", status: "failed", error: "Connection timeout" },
-      { name: "plugin:y", status: "needs-auth", error: "Please log in to your account" },
+      { name: "dsh", status: "connected", version: "0.9.0", asking: false },
+      { name: "plugin:x", status: "failed", error: "Connection timeout", asking: false },
+      {
+        name: "plugin:y",
+        status: "needs-auth",
+        error: "Please log in to your account",
+        asking: false,
+      },
     ],
   });
+
+  // The Always ask pin survives the tab that set it: the record is on the process, so the next read
+  // of the status reports it whoever is asking. Clearing the pin takes it back off.
+  assert.deepEqual(await adapter.setMcpAsk("ms", "dsh", true), { ok: true });
+  assert.deepEqual(JSON.parse(written.at(-1)!).request, {
+    subtype: "set_mcp_permission_mode_override",
+    serverName: "dsh",
+    mode: "default",
+  });
+  let after = await adapter.mcpStatus("ms");
+  assert.deepEqual(
+    after.ok ? after.servers.map((s) => [s.name, s.asking]) : [],
+    [
+      ["dsh", true],
+      ["plugin:x", false],
+      ["plugin:y", false],
+    ],
+    "only the pinned server reads as asking",
+  );
+  assert.deepEqual(await adapter.setMcpAsk("ms", "dsh", false), { ok: true });
+  after = await adapter.mcpStatus("ms");
+  assert.equal(after.ok ? after.servers[0]?.asking : undefined, false, "clearing the pin shows");
+
   assert.deepEqual(await adapter.mcpReconnect("ms", "dsh"), { ok: true });
   assert.deepEqual(JSON.parse(written.at(-1)!).request, {
     subtype: "mcp_reconnect",
@@ -4351,6 +4415,44 @@ console.log("interrupt-on-abort ok");
   assert.equal(asideAnswerText(undefined), undefined, "no response is none");
   assert.equal(asideAnswerText({ other: "x" }), undefined, "missing response field is none");
   console.log("aside-answer-text ok");
+}
+
+// diffContext caps output at DIFF_CONTEXT_CAP, appends a truncated marker when files are dropped,
+// and names each file with no-hunks/binary/untracked when it has no diff to paste.
+{
+  const longLine = "x".repeat(4_500);
+  const makeDiff = (count: number): WorkspaceDiff => ({
+    filesCount: count,
+    linesAdded: count,
+    linesRemoved: 0,
+    files: Array.from({ length: count }, (_, i) => ({
+      path: `file_${String(i).padStart(3, "0")}.ts`,
+      added: 1,
+      removed: 0,
+      binary: false,
+      untracked: false,
+      hunks: [{ oldStart: 1, newStart: 1, lines: [longLine] }],
+    })),
+  });
+  // 300 files each push past the cap; the reply stops before the 8th and appends a marker whose N
+  // matches the number of `--- ` headers in the output.
+  const diff300 = makeDiff(300);
+  const out300 = diffContext(diff300, "");
+  // Each file is one 4_500-byte line plus its header, so seven fit under 32_000 and the eighth is
+  // what breaks the cap. The literal is the point: derived from the output, the assertion would hold
+  // for any number the function happened to produce.
+  assert.equal((out300.match(/--- /g) ?? []).length, 7, "seven files fit under the cap");
+  assert.ok(out300.length <= 32_000 + 4_500 + 30, "300-file output stays under cap plus one file");
+  assert.match(out300, /… diff truncated \(7 of 300 files\)/, "marker names the seven it sent");
+  // Two files fit comfortably: no truncation marker at all.
+  const diff2 = makeDiff(2);
+  const out2 = diffContext(diff2, "");
+  assert.ok(!/… diff truncated/.test(out2), "a two-file diff has no truncation marker");
+  // Path-filtered: only the matching file goes out, no marker because it is not truncated.
+  const outOne = diffContext(diff300, "file_001.ts");
+  assert.ok(!/… diff truncated/.test(outOne));
+  assert.ok(outOne.startsWith("--- file_001.ts\n"));
+  console.log("diff-context ok");
 }
 
 // --- terminal turns: the watcher starts at a turn's end, reads past its baseline, marks the live

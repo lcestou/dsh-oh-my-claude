@@ -14,6 +14,8 @@ import type {
   WorkspaceDiff,
   McpServerStatus,
   CliModel,
+  PermissionRules,
+  HooksListing,
 } from "./process.js";
 import {
   LlmAdapter,
@@ -58,6 +60,8 @@ import {
   decodeRewindResult,
   decodeContextUsage,
   decodeWorkspaceDiff,
+  decodePermissionRules,
+  decodeHooksListing,
   decodeMcpStatus,
   decodeCliModels,
   elicitationQuestions,
@@ -509,6 +513,10 @@ export type ContextUsageReply =
 /** What the diff route reports: the CLI's working-tree diff for a live session. */
 export type WorkspaceDiffReply =
   | ({ ok: true; error?: undefined } & WorkspaceDiff)
+  | { ok: false; error: string };
+/** What `/permissions` answers: both lists, or the reason there are none. */
+export type PermissionReadoutReply =
+  | ({ ok: true } & PermissionRules & HooksListing)
   | { ok: false; error: string };
 /** What the MCP route reports: the servers Claude's process has, as `mcp_status` lists them. */
 export type McpStatusReply =
@@ -1786,6 +1794,40 @@ export interface LiveTurn {
   at: number;
 }
 
+/** Past this the model reads the tree faster than it reads a paste, and the whole context goes out as
+ *  one stdin write with no backpressure guard: `write` (`src/process.ts:1312`) returns true either
+ *  way, so a 200-file tree would ship megabytes on one line and bill a call that overruns the window. */
+const DIFF_CONTEXT_CAP = 32_000;
+
+/** A `get_workspace_diff` answer as the text a side question carries. Hunk headers and raw lines,
+ *  nothing invented; a file with no hunks is named with why, so the reply does not guess. Whole files
+ *  only, in the CLI's own order, up to the cap; the first file always goes even if it alone is over,
+ *  because a context with no diff in it is worse than a long one. */
+export const diffContext = (diff: WorkspaceDiff, path: string): string => {
+  const files = path === "" ? diff.files : diff.files.filter((f) => f.path === path);
+  const parts: string[] = [];
+  let size = 0;
+  for (const f of files) {
+    const body =
+      f.hunks.length === 0
+        ? f.binary
+          ? "binary file"
+          : f.untracked
+            ? "untracked file"
+            : "no hunks"
+        : f.hunks
+            .map((h) => `@@ -${h.oldStart} +${h.newStart} @@\n${h.lines.join("\n")}`)
+            .join("\n");
+    const part = `--- ${f.path}\n${body}`;
+    if (parts.length > 0 && size + part.length > DIFF_CONTEXT_CAP) break;
+    parts.push(part);
+    size += part.length + 2;
+  }
+  if (parts.length < files.length)
+    parts.push(`… diff truncated (${parts.length} of ${files.length} files)`);
+  return parts.join("\n\n");
+};
+
 export class ClaudeCodeAdapter extends LlmAdapter {
   ctx: PluginContext;
   config: Schemastery.TypeT<typeof Config>;
@@ -2691,7 +2733,13 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     if (!proc?.alive) return { ok: false, error: "no live Claude process for this session" };
     const reply = await this.control(proc, { subtype: "mcp_status" }, 10_000);
     if (!reply.ok) return { ok: false, error: reply.error };
-    const servers = decodeMcpStatus(reply.response);
+    // `asking` is ours, not the CLI's: `mcp_status` reports connection, never the permission
+    // override. Stamped on every row so the panel's button reads the process rather than the memory
+    // of the tab that clicked it.
+    const servers = decodeMcpStatus(reply.response).map((s) => ({
+      ...s,
+      asking: proc.mcpAsking.has(s.name),
+    }));
     // `mcp_status` does not report tools; the init frame does. Without one the field stays absent,
     // which the panel reads as "unknown" rather than as "this server contributes nothing".
     const tools = this.sessionTools.get(sessionId);
@@ -2717,6 +2765,33 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     return reply.ok ? { ok: true } : { ok: false, error: reply.error };
   }
 
+  /** Pin one MCP server's tools back to asking, or clear the pin
+   *  (`set_mcp_permission_mode_override`). Tighten-only over this channel: the CLI accepts
+   *  `default`, `auto` and null and rejects the rest without changing state, so this offers the two
+   *  ends. It lives in the process's own tool-permission context, so it dies with the process, and
+   *  it is read only when the session's mode would otherwise auto-allow. */
+  async setMcpAsk(
+    sessionId: string,
+    serverName: string,
+    ask: boolean,
+  ): Promise<{ ok: boolean; error?: string }> {
+    const proc = this.processes.get(registryKey(this.providerId, sessionId));
+    if (!proc?.alive) return { ok: false, error: "no live Claude process for this session" };
+    const reply = await this.control(
+      proc,
+      { subtype: "set_mcp_permission_mode_override", serverName, mode: ask ? "default" : null },
+      10_000,
+    );
+    if (!reply.ok) return { ok: false, error: reply.error };
+    // Recorded only once the process took it, so the panel never lights a button for an override
+    // that was refused. This is what `mcpStatus` reads back: without it the lit state would live in
+    // whichever tab did the clicking, and a refresh or a second browser would show the server as
+    // auto-allowing while it is in fact asking.
+    if (ask) proc.mcpAsking.add(serverName);
+    else proc.mcpAsking.delete(serverName);
+    return { ok: true };
+  }
+
   /** Ask a session's live process to re-read plugins, commands, agents and their MCP servers from
    *  disk (`reload_plugins`), so an enable, uninstall or marketplace change the CLI just wrote to
    *  settings takes effect now instead of at the next spawn. No live process is not a failure: the
@@ -2735,6 +2810,27 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const reply = await this.control(proc, { subtype: "get_workspace_diff" }, 10_000);
     if (!reply.ok) return { ok: false, error: reply.error };
     return { ok: true, ...decodeWorkspaceDiff(reply.response) };
+  }
+
+  /** The permission rules and hooks a session's live process actually loaded
+   *  (`list_permission_rules`, `get_hooks_listing`), read-only. Both or neither: the readout is one
+   *  section pair and a half-answer would read as an empty half. */
+  async permissionReadout(sessionId: string): Promise<PermissionReadoutReply> {
+    const proc = this.processes.get(registryKey(this.providerId, sessionId));
+    if (!proc?.alive) return { ok: false, error: "no live Claude process for this session" };
+    const [rules, hooks] = await Promise.all([
+      this.control(proc, { subtype: "list_permission_rules" }, 10_000),
+      this.control(proc, { subtype: "get_hooks_listing" }, 10_000),
+    ]);
+    if (!rules.ok) return { ok: false, error: rules.error };
+    if (!hooks.ok) return { ok: false, error: hooks.error };
+    // Both decoders take `undefined` without throwing, so a payload the CLI reshapes reads as an
+    // empty list rather than a 500. `// SAFETY:` is for assertions and there are none here.
+    return {
+      ok: true,
+      ...decodePermissionRules(rules.response),
+      ...decodeHooksListing(hooks.response),
+    };
   }
 
   /**
@@ -2836,7 +2932,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     return mounts?.get(this.sessionProvider(sessionId) ?? "") ?? this;
   }
 
-  askSideQuestion(sessionId: string, question: string) {
+  askSideQuestion(sessionId: string, question: string, context?: string) {
     const q = question.trim();
     const entry: AsideEntry = {
       id: `omc-${randomUUID()}`,
@@ -2862,8 +2958,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       this.persistAsides(sessionId);
       return;
     }
+    // The ring keeps `q`, which is what the bubble and the Asides tab show. `context` (a diff, today)
+    // is sent to the CLI and dropped: a persisted ring is not the place for a copy of the tree.
+    const asked = context === undefined || context === "" ? q : `${q}\n\n${context}`;
     void owner
-      .control(proc, { subtype: "side_question", question: q, history: [] }, ASIDE_TIMEOUT_MS)
+      .control(proc, { subtype: "side_question", question: asked, history: [] }, ASIDE_TIMEOUT_MS)
       .then((reply) => {
         entry.pending = false;
         if (!reply.ok) {
@@ -5370,14 +5469,39 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       },
       contextUsage: (sessionId: string) => adapter.ownerFor(sessionId).contextUsage(sessionId),
       workspaceDiff: (sessionId: string) => adapter.ownerFor(sessionId).workspaceDiff(sessionId),
+      permissionReadout: (sessionId: string) =>
+        adapter.ownerFor(sessionId).permissionReadout(sessionId),
       mcp: {
         status: (sessionId: string) => adapter.ownerFor(sessionId).mcpStatus(sessionId),
         reconnect: (sessionId: string, serverName: string) =>
           adapter.ownerFor(sessionId).mcpReconnect(sessionId, serverName),
+        ask: (sessionId: string, serverName: string, ask: boolean) =>
+          adapter.ownerFor(sessionId).setMcpAsk(sessionId, serverName, ask),
       },
       rewind: (sessionId: string, uuid: string, dryRun: boolean) =>
         adapter.ownerFor(sessionId).rewind(sessionId, uuid, dryRun),
       permissionAsks: adapter.permissionAsks,
+      askAside: async (sessionId: string, question: string, seed) => {
+        const owner = adapter.ownerFor(sessionId);
+        // Liveness is checked here, not left to askSideQuestion, which would write its own error into
+        // the ring: a recap nobody typed must not leave an error bubble on a session whose process
+        // died. The Ask control shows this text in its own note line instead. This narrows the window,
+        // it does not close it: askSideQuestion pushes its ring entry (src/adapter.ts:2848) before its
+        // own alive re-check, so a process that dies in between still leaves one error bubble.
+        if (!owner.processFor(sessionId)?.alive)
+          return {
+            ok: false,
+            error: "no live Claude process for this session; send a prompt first",
+          };
+        let context: string | undefined;
+        if (seed.withDiff) {
+          const diff = await owner.workspaceDiff(sessionId);
+          if (!diff.ok) return { ok: false, error: diff.error };
+          context = diffContext(diff, seed.path);
+        }
+        owner.askSideQuestion(sessionId, question, context);
+        return { ok: true };
+      },
       sideQuestions: adapter.sideQuestions,
       loginNeeded: adapter.loginNeeded,
       loginDone: (host: string) => adapter.loginDone(host),

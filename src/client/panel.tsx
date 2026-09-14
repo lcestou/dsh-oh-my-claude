@@ -42,8 +42,11 @@ import { Tooltip, useAnchoredMaxHeight } from "@deepseek-ai/dsh-client-ui-primit
 import { Spark } from "./spark.js";
 import { ConfirmButton, TuneBody } from "./tune.js";
 import { noticesOn, setNoticesOn } from "./notices.js";
+import { queueDraft } from "./draft.js";
+import { diffQuestion, reviewPrompt } from "../prompts.js";
 import type { FeatureSwitches } from "../switches.js";
 import type { PluginRoster } from "../plugins.js";
+import type { PermissionRules, HooksListing } from "../process.js";
 
 // Module-level variable so reopening lands on the last picked tab.
 let lastTab = "Memory";
@@ -1126,16 +1129,57 @@ function DiffCounts({ added, removed }: { added: number; removed: number }) {
 /**
  * "Changes" body rendered inside the Oh My Claude dialog: the CLI's own working-tree
  * diff (`get_workspace_diff`), one row per file with its line counts, a row unfolds its hunks.
+ * Ask sends the diff, whole or one file, as a side question, so the answer arrives beside the
+ * transcript rather than in it, and closes the dialog on the way so the answer is not behind it.
+ * Review writes a prompt into the composer and closes the dialog,
+ * because that one is the turn itself and belongs where the person can edit it before it goes.
  */
-function ChangesBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
+function ChangesBody({
+  sessionId,
+  ctx,
+  onClose,
+}: {
+  sessionId: string;
+  ctx: ClientCtx;
+  onClose: () => void;
+}) {
   const isClaude = activeClaudeSession(ctx) === sessionId;
   const [reply, setReply] = useState<DiffReply | null>(null);
   const [shown, setShown] = useState<string | null>(null);
+  // Which Ask is in flight, by path ("" is the whole tree), so pressing one does not blank the other.
+  const [asking, setAsking] = useState<string | null>(null);
+  const [note, setNote] = useState("");
+  const ask = async (path: string) => {
+    setAsking(path);
+    setNote("");
+    try {
+      const r = await fetch(`${ROUTE}/side-questions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          session: sessionId,
+          question: diffQuestion(path),
+          withDiff: true,
+          path,
+        }),
+      });
+      const body = await readJson<{ ok: boolean; error?: string }>(r);
+      // On success the dialog gets out of the way: the answer docks above the composer, which this
+      // panel covers. A failure keeps it open, because the message is the only place the error shows.
+      if (body.ok) onClose();
+      else setNote(body.error ?? "failed");
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAsking(null);
+    }
+  };
 
   useEffect(() => {
     let live = true;
     setReply(null);
     setShown(null);
+    setNote("");
     fetch(`${ROUTE}/diff?session=${encodeURIComponent(sessionId)}`)
       .then((r) => readJson<DiffReply>(r))
       .then((b) => live && setReply(b))
@@ -1150,6 +1194,9 @@ function ChangesBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
   const current = files.find((f) => f.path === shown);
   return (
     <div style={bodyFlow}>
+      {/* Above the branches, not below them: Ask is pressed from the file list and from a file's own
+          header, and a line appended after the list sits below the fold on any real diff. */}
+      {note !== "" && <span style={{ ...meta, padding: "2px 4px" }}>{note}</span>}
       {reply === null ? (
         <span style={stateText}>Loading…</span>
       ) : !reply.ok ? (
@@ -1157,13 +1204,30 @@ function ChangesBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
       ) : current ? (
         <>
           <div style={{ display: "flex", gap: 8, alignItems: "center", padding: "2px 4px" }}>
-            <button type="button" style={btn} onClick={() => setShown(null)}>
+            <button
+              type="button"
+              style={btn}
+              onClick={() => {
+                setShown(null);
+                setNote("");
+              }}
+            >
               ‹ Back
             </button>
             <span style={{ fontSize: 13, fontFamily: "monospace" }}>{current.path}</span>
             <span style={{ ...meta, marginLeft: "auto" }}>
               <DiffCounts added={current.added} removed={current.removed} />
             </span>
+            <button
+              type="button"
+              style={btn}
+              data-omc-diff-ask=""
+              title="Ask Claude about this file, off the transcript"
+              disabled={asking !== null}
+              onClick={() => void ask(current.path)}
+            >
+              {asking === current.path ? "…" : "Ask"}
+            </button>
           </div>
           {current.hunks.length === 0 ? (
             <span style={{ ...meta, padding: "2px 4px" }}>
@@ -1214,6 +1278,32 @@ function ChangesBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
               </>
             )}
           </span>
+          {reply.filesCount > 0 && (
+            <div style={{ display: "flex", gap: 8, padding: "2px 4px" }}>
+              <button
+                type="button"
+                style={btn}
+                data-omc-diff-ask-all=""
+                title="Ask Claude about all the changes, off the transcript"
+                disabled={asking !== null}
+                onClick={() => void ask("")}
+              >
+                {asking === "" ? "…" : "Ask"}
+              </button>
+              <button
+                type="button"
+                style={btn}
+                data-omc-diff-review=""
+                title="Write a review prompt into the composer"
+                onClick={() => {
+                  queueDraft(sessionId, reviewPrompt(files.map((f) => f.path)));
+                  onClose();
+                }}
+              >
+                Review my changes
+              </button>
+            </div>
+          )}
           {files.map((f) => (
             <button
               key={f.path}
@@ -1226,7 +1316,10 @@ function ChangesBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
                 padding: "5px 10px",
                 fontFamily: "monospace",
               }}
-              onClick={() => setShown(f.path)}
+              onClick={() => {
+                setShown(f.path);
+                setNote("");
+              }}
             >
               <span
                 style={{
@@ -1256,6 +1349,14 @@ function ChangesBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
   );
 }
 
+/**
+ * The modes in which the CLI reads a per-server override at all, because they auto-allow an MCP
+ * tool call. `auto` and `dontAsk` rank the same in `src/state.ts`, and leaving `dontAsk` out had the
+ * tab printing "this changes nothing yet" in the one mode where the toggle does the most work.
+ * `acceptEdits` is not here: it auto-allows file edits, not tool calls from a server.
+ */
+const AUTO_ALLOWING = new Set(["auto", "dontAsk", "bypassPermissions"]);
+
 interface McpServer {
   name: string;
   status: string;
@@ -1263,6 +1364,9 @@ interface McpServer {
   error?: string;
   /** Bare tool names the server contributes; absent when the session has seen no init frame. */
   tools?: string[];
+  /** Pinned back to asking on the live process. Comes from the plugin's record of what it sent,
+   *  since the CLI reports connection only, and it is the live process that is asked either way. */
+  asking?: boolean;
 }
 type McpReply = { ok: true; servers: McpServer[] } | { ok: false; error: string };
 /** A server the CLI is configured with, as `GET /mcp-servers/configured` lists it, with its scope. */
@@ -1283,6 +1387,9 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState("");
   const [showAdd, setShowAdd] = useState(false);
+  // The session's own permission mode: whether the Always ask toggle would be inert. Null until
+  // fetched; a failed read leaves it null and the toggle still renders because the mode can change.
+  const [permMode, setPermMode] = useState<PermissionModeState | null>(null);
 
   // The configured list beside the live one: a server added a moment ago has no process yet, so
   // it shows here as "starts with the next session" instead of vanishing until Claude restarts,
@@ -1311,6 +1418,19 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
     setNote("");
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- load closes over sessionId only
+  }, [sessionId]);
+  // Fetch the session's permission mode so rows can say whether the toggle is inert. A failed read
+  // leaves permMode null; the row still renders because the mode may change while the tab is open.
+  useEffect(() => {
+    let live = true;
+    setPermMode(null);
+    fetch(`${ROUTE}/permission-mode?session=${encodeURIComponent(sessionId)}`)
+      .then((r) => readJson<PermissionModeState>(r))
+      .then((snap) => live && setPermMode(snap))
+      .catch(() => live && setPermMode(null));
+    return () => {
+      live = false;
+    };
   }, [sessionId]);
   const scopeOf = (name: string) => configured.find((c) => c.name === name)?.scope;
 
@@ -1356,7 +1476,32 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
       setBusy(null);
     }
   };
+  // Toggle one server's Always ask override, in the shape reconnect and remove use: the tab's note
+  // line carries the outcome, and the local record moves only when the process took the change.
+  const setAsk = async (serverName: string, ask: boolean) => {
+    setBusy(serverName);
+    setNote("");
+    try {
+      const r = await readJson<{ ok: boolean; error?: string }>(
+        await fetch(`${ROUTE}/mcp-servers/ask`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ session: sessionId, name: serverName, ask }),
+        }),
+      );
+      if (r.ok) await load();
+      else setNote(`${serverName}: ${r.error ?? "failed"}`);
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
   const servers = reply?.ok ? reply.servers : [];
+  // A mode that would not have auto-allowed the tool reads no override, so the toggles change
+  // nothing today. They still draw: the mode can change while this tab is open. One line says it
+  // once, because it is a fact about the session and not about any one server.
+  const askIsInert = permMode !== null && !AUTO_ALLOWING.has(permMode.mode);
   // Configured but not in the process: the plugin-served `plugin:` names never appear in a config
   // file, so the match is by plain name.
   const pendingRows = configured.filter((c) => !servers.some((s) => s.name === c.name));
@@ -1428,6 +1573,23 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
               </span>
               {scopeOf(s.name) && <span style={pill(T.faint)}>{scopeOf(s.name)}</span>}
               <span style={{ ...meta, flex: "none" }}>{s.status}</span>
+              {/* A tighten-only toggle: on sends default (ask), off sends null (clear). What it
+                  reads is the plugin's record on the live process, so a refresh or a second browser
+                  sees the same thing; the CLI offers no read-back of its own. */}
+              <button
+                type="button"
+                // Filled while it is on. `aria-pressed` alone tells a screen reader and nobody
+                // else, and this is a button that changes what the session does the next time a
+                // tool runs, so it has to read as on from across the row.
+                style={s.asking === true ? btnPrimary : btn}
+                aria-pressed={s.asking === true}
+                aria-label={`Always ask: ${s.name}`}
+                data-omc-mcp-ask=""
+                disabled={busy !== null}
+                onClick={() => setAsk(s.name, s.asking !== true)}
+              >
+                Always ask
+              </button>
               {s.status !== "needs-auth" && (
                 <button
                   type="button"
@@ -1459,6 +1621,13 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
                 {s.tools.join(" · ")}
               </div>
             ) : null}
+            {/* When the override is set and the session would otherwise auto-allow, say what it
+                does. The CLI keeps it in state that dies with the process, so the note says so. */}
+            {s.asking === true && !askIsInert && (
+              <div style={{ padding: "0 6px 4px 22px", color: T.muted, fontSize: 12 }}>
+                Tools from this server ask, until this session's Claude restarts.
+              </div>
+            )}
           </div>
         ))
       )}
@@ -1495,6 +1664,11 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
           </div>
         </div>
       ))}
+      {askIsInert && servers.length > 0 && (
+        <span style={{ ...meta, padding: "2px 4px", marginTop: 8 }}>
+          This session already asks before an MCP tool runs, so Always ask changes nothing yet.
+        </span>
+      )}
       {note && <span style={{ ...meta, padding: "2px 4px", marginTop: 8 }}>{note}</span>}
     </div>
   );
@@ -1592,6 +1766,121 @@ function SessionNotices() {
 }
 
 /**
+ * The line a readout section shows in place of its list: no process to ask, the read still out, or
+ * the reason it failed. Both sections show it, because both come from the one fetch.
+ */
+function ReadoutState({
+  running,
+  error,
+  reply,
+}: {
+  running: boolean;
+  error: string;
+  reply: PermissionsReply | null;
+}) {
+  if (!running)
+    return (
+      <span style={{ ...meta, padding: "2px 4px", fontSize: 12 }}>
+        Claude is not running for this session.
+      </span>
+    );
+  if (error !== "") return <span style={errText}>{error}</span>;
+  if (reply === null) return <span style={stateText}>Loading…</span>;
+  return null;
+}
+
+/**
+ * The fold both readout lists share: eight rows, a button past that, and back to eight. Returns how
+ * many to show, whether that is all of them, and the button to draw when there is more than a fold.
+ */
+function useFold(total: number) {
+  const [shown, setShown] = useState(8);
+  const allShown = shown >= total;
+  const button =
+    total > 8 ? (
+      <button
+        type="button"
+        style={{ ...btn, fontSize: 12, margin: "2px 10px" }}
+        onClick={() => setShown(allShown ? 8 : total)}
+      >
+        {allShown ? "Show fewer" : `Show all ${total}`}
+      </button>
+    ) : null;
+  return { shown, allShown, button };
+}
+
+/** Sort rank for permission behaviour: deny before ask before allow. */
+const ruleRank = (r: string): number => (r === "deny" ? 0 : r === "ask" ? 1 : 2);
+
+/**
+ * The permission rules readout: one row per rule, behaviour as a pill, the CLI's own display text
+ * in mono, the source beside it. The eight it shows folded are the deny and ask rules first, so what
+ * a fold hides is an allow rule for as long as there are fewer than eight restrictions; unfolded it
+ * is the CLI's own order, which is the order the rules are applied in.
+ */
+function RulesList({ rules }: { rules: PermissionRules["rules"] }) {
+  const { shown, allShown, button } = useFold(rules.length);
+  // Deny first, then ask, then allow — within each group the CLI's own order is preserved.
+  const visible = allShown
+    ? rules
+    : [...rules].toSorted((a, b) => ruleRank(a.behavior) - ruleRank(b.behavior)).slice(0, shown);
+  return (
+    <div>
+      {visible.map((r, i) => (
+        <div
+          key={i}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "3px 10px",
+            fontSize: 12,
+          }}
+        >
+          <span
+            style={pill(r.behavior === "allow" ? T.ok : r.behavior === "deny" ? T.err : T.warn)}
+          >
+            {r.behavior}
+          </span>
+          <span style={{ flex: 1, fontFamily: T.mono, fontSize: 11 }}>{r.text}</span>
+          <span style={{ ...meta, flex: "none" }}>{r.source}</span>
+        </div>
+      ))}
+      {button}
+    </div>
+  );
+}
+
+/** The hooks readout: one row per hook, the event and the command in mono, the matcher and the
+ *  source beside them, in the order the CLI listed them. */
+function HooksList({ hooks }: { hooks: HooksListing["hooks"] }) {
+  const { shown, button } = useFold(hooks.length);
+  const visible = hooks.slice(0, shown);
+  return (
+    <div>
+      {visible.map((h, i) => (
+        <div
+          key={i}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "3px 10px",
+            fontSize: 12,
+          }}
+        >
+          <span style={{ flex: "none", fontFamily: T.mono, fontSize: 11 }}>{h.event}</span>
+          {h.matcher !== "" && <span style={{ ...meta, flex: "none" }}>{h.matcher}</span>}
+          <span style={{ flex: 1, fontFamily: T.mono, fontSize: 11 }}>{h.text}</span>
+          <span style={{ ...meta, flex: "none" }}>{h.source}</span>
+        </div>
+      ))}
+      {button}
+    </div>
+  );
+}
+
+/**
  * "Diagnostics" body in the Oh My Claude dialog: runtime status, config file parse errors,
  * MCP servers that are not connected with their errors, and a doctor output button.
  */
@@ -1603,6 +1892,8 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
   const [reconnecting, setReconnecting] = useState<string | null>(null);
   const [audit, setAudit] = useState<DeniedTurn[] | null>(null);
   const [auditError, setAuditError] = useState("");
+  const [permissions, setPermissions] = useState<PermissionsReply | null>(null);
+  const [permissionsError, setPermissionsError] = useState("");
   const [doctorOutput, setDoctorOutput] = useState<string | null>(null);
   const [doctorError, setDoctorError] = useState("");
   const [doctorBusy, setDoctorBusy] = useState(false);
@@ -1637,6 +1928,22 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
       live = false;
     };
   }, [sessionId]);
+
+  useEffect(() => {
+    if (!running) return;
+    let live = true;
+    // Clear both first: the error is read before the reply, so a failure left over from the previous
+    // process would outlive the read that replaced it.
+    setPermissions(null);
+    setPermissionsError("");
+    fetch(`${ROUTE}/permissions?session=${encodeURIComponent(sessionId)}`)
+      .then((r) => readJson<PermissionsReply>(r))
+      .then((b) => live && setPermissions(b))
+      .catch((e: Error) => live && setPermissionsError(e.message));
+    return () => {
+      live = false;
+    };
+  }, [running, sessionId]);
 
   const reconnect = async (serverName: string) => {
     setReconnecting(serverName);
@@ -1963,6 +2270,55 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
               </div>
             ))
           )}
+
+          {/* The rules and hooks the live process loaded, read-only: this tab reports them,
+              the CLI owns them. Headings paint whether or not the read lands, so a failed one
+              says which section is missing rather than leaving a bare error line. */}
+          <div data-omc-permission-rules="">
+            <span style={{ ...meta, padding: "2px 4px", display: "block", marginTop: 8 }}>
+              Permission rules
+              {permissions?.ok && ` · ${permissions.rules.length}`}
+              {permissions?.ok && permissions.managedOnly && (
+                <span style={{ marginLeft: 4 }}>managed</span>
+              )}
+            </span>
+            <ReadoutState running={running} error={permissionsError} reply={permissions} />
+            {permissions?.ok &&
+              (permissions.rules.length === 0 ? (
+                <span style={{ ...meta, padding: "2px 4px", fontSize: 12 }}>
+                  This session loaded no permission rules.
+                </span>
+              ) : (
+                <>
+                  <RulesList rules={permissions.rules} />
+                  {permissions.directories.length > 0 && (
+                    <span style={{ ...meta, padding: "2px 4px", fontSize: 12 }}>
+                      {permissions.directories.length}{" "}
+                      {permissions.directories.length === 1
+                        ? "workspace directory"
+                        : "workspace directories"}
+                      {permissions.directories.length <= 3 &&
+                        `: ${permissions.directories.map((d) => d.path).join(", ")}`}
+                    </span>
+                  )}
+                </>
+              ))}
+          </div>
+          <div data-omc-hooks="">
+            <span style={{ ...meta, padding: "2px 4px", display: "block", marginTop: 8 }}>
+              Hooks
+              {permissions?.ok && ` · ${permissions.hooks.length}`}
+            </span>
+            <ReadoutState running={running} error={permissionsError} reply={permissions} />
+            {permissions?.ok &&
+              (permissions.hooks.length === 0 ? (
+                <span style={{ ...meta, padding: "2px 4px", fontSize: 12 }}>
+                  This session loaded no hooks.
+                </span>
+              ) : (
+                <HooksList hooks={permissions.hooks} />
+              ))}
+          </div>
 
           {/* Doctor button */}
           <div style={{ padding: "6px 10px", marginTop: 8, borderTop: `1px solid ${T.border}` }}>
@@ -2324,6 +2680,10 @@ interface PermissionModeState {
   live?: boolean;
   error?: string;
 }
+/** What `GET /permissions` reports: the rules and hooks the session's live process loaded. */
+/** What `GET /permissions` returns on success. A failure answers 409, which `readJson` throws, so
+ *  the failed arm never reaches state: the reason lands in `permissionsError` instead. */
+type PermissionsReply = { ok: true } & PermissionRules & HooksListing;
 
 // The three dsh presets in strict id→label order (kept for text-fallback trigger lookup).
 const PRESETS = [
@@ -3138,7 +3498,7 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
               {tab === "Memory" && <MemoryBody sessionId={sessionId} ctx={ctx} />}
               {tab === "Instructions" && <InstructionsBody sessionId={sessionId} ctx={ctx} />}
               {tab === "Rewind" && <RewindBody sessionId={sessionId} ctx={ctx} onClose={close} />}
-              {tab === "Changes" && <ChangesBody sessionId={sessionId} ctx={ctx} />}
+              {tab === "Changes" && <ChangesBody sessionId={sessionId} ctx={ctx} onClose={close} />}
               {tab === "MCP" && <McpBody sessionId={sessionId} ctx={ctx} onClose={close} />}
               {tab === "Asides" && <AsidesBody sessionId={sessionId} />}
               {tab === "Diagnostics" && <DiagnosticsBody sessionId={sessionId} ctx={ctx} />}

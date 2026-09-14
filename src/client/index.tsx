@@ -78,7 +78,19 @@ import { Spark, sparkNode } from "./spark.js";
 import { AccessShield, OhMyClaudeControl } from "./panel.js";
 import { ConfirmButton } from "./tune.js";
 import { AddWorkspaceFlow, canBrowseDirs, OPEN_EVENT } from "./picker.js";
-import { markTitle, newlyWaiting, noticesOn, type NoticeSnapshot } from "./notices.js";
+import { takeDraft, subscribeDraft, noteDraft, draftPending } from "./draft.js";
+import {
+  markTitle,
+  newlyWaiting,
+  noticesOn,
+  recapNext,
+  recapOnIn,
+  recapAwayIn,
+  RECAP_AWAY_MS,
+  RECAP_AWAY_CHOICES,
+  RECAP_QUESTION,
+  type NoticeSnapshot,
+} from "./notices.js";
 import { SETTINGS_SCOPES, SCOPE_LABELS, overrideNote } from "./settings.js";
 import type { SettingsScope, SettingsScopeInfo } from "./settings.js";
 export { type SessionData, isOwnedActive, fmtCost, fmtDuration, cacheShare };
@@ -3529,6 +3541,15 @@ const wireTurnStatus = (
 function watchSessionNotices(ctx: ClientCtx) {
   let prev: NoticeSnapshot | null = null;
   const waiting = new Set<string>();
+  let recapPending: Record<string, number> = {};
+  // The recap's two settings, kept beside the tick rather than read in it: the tick is synchronous
+  // and the store is a fetch. Re-read on the same event the settings switches dispatch, so flipping
+  // the switch reaches this watcher without a reload.
+  let hints: Record<string, boolean | number> = {};
+  const readHints = () => void loadHints().then((h) => (hints = h));
+  readHints();
+  window.addEventListener(HINTS_EVENT, readHints);
+  whenContextGone(() => window.removeEventListener(HINTS_EVENT, readHints));
   const tick = () => {
     const snap = ctx.sessions.list.getSnapshot();
     if (!snap) return;
@@ -3538,12 +3559,51 @@ function watchSessionNotices(ctx: ClientCtx) {
     for (const [id, s] of Object.entries(snap.byId))
       byId[id] = { running: s.running, completed: s.completed, displayTitle: s.displayTitle };
     const next: NoticeSnapshot = { byId, current: snap.current };
-    for (const id of newlyWaiting(prev, next)) {
-      if (!isClaudeSession(ctx, id)) continue; // other providers are not this plugin's to announce
+    const stopped = newlyWaiting(prev, next).filter((id) => isClaudeSession(ctx, id));
+    for (const id of stopped) {
       waiting.add(id);
       notifyWaiting(ctx, id, snap.byId[id]?.displayTitle ?? id);
     }
     prev = next;
+    // Return recap: a session that stopped working while it was not the one on screen is asked for
+    // one line when it is opened. Off by default; the switch is in Settings, under Oh My Claude.
+    // `recapNext` clears the id as it fires, so a return asks once and a second open of the
+    // same session asks nothing. Two things this accepts on purpose: the queue is cleared before
+    // `recapOn()` is read, so turning the switch on mid-session waits for the next return rather than
+    // firing for a session that already came back, and the fire trusts `snap.current` for the tick it
+    // runs in, so a current that lags the screen by a tick can bill a recap for a session nobody left.
+    // A spurious title mark is free; a spurious recap is a model call, which is why the switch is off
+    // until asked for.
+    const step = recapNext(
+      recapPending,
+      stopped,
+      snap.current,
+      Date.now(),
+      recapAwayIn(hints.recapAwayMs),
+    );
+    recapPending = step.pending;
+    // Three reasons not to spend the call, all of them the CLI's own: the switch is off, there is
+    // half a prompt in the composer so the person is already saying what they want, or the session
+    // picked up a new turn while the tick was deciding and the recap would describe stale work.
+    if (
+      step.fire !== undefined &&
+      recapOnIn(hints) &&
+      !draftPending() &&
+      snap.byId[step.fire]?.running !== true
+    ) {
+      const session = step.fire;
+      void fetch(`${ROUTE}/side-questions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        // `recap: true` lets the route drop this when another tab already asked for the same
+        // return. Every open tab runs this watcher with its own queue, so the tab is not the place
+        // the count can be held.
+        body: JSON.stringify({ session, question: RECAP_QUESTION, recap: true }),
+      }).catch(() => {
+        // A recap nobody typed stays quiet when it fails. The route refuses before the ring is
+        // touched when there is no live process, so there is nothing to clean up here either.
+      });
+    }
     // Reading it clears it: the open session, and everything else once the tab is looked at again.
     if (snap.current !== undefined) waiting.delete(snap.current);
     if (!document.hidden) waiting.clear();
@@ -5302,6 +5362,82 @@ function WorkspaceModelSwitch() {
   );
 }
 
+/**
+ * The settings switch for the one-line recap on returning to a finished session, and the away bar
+ * under it. Both are hints: the answer lands in the Asides ring, which is the box's, so whether to
+ * spend the call is the box's question and not this browser's.
+ */
+function ReturnRecapSwitch() {
+  const [on, setOn] = useHintFlag("recapOn");
+  const [stored, setStored] = useHintValue("recapAwayMs");
+  const away = recapAwayIn(stored);
+  return (
+    <>
+      <div
+        data-omc-recap-switch=""
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+          fontSize: 13,
+          marginBottom: on ? 4 : 12,
+        }}
+      >
+        <div>
+          <div>Return recap</div>
+          <div style={{ color: T.faint, fontSize: 12 }}>
+            One line on what Claude did while you were on another session, asked when you come back
+            to one that finished without you. Costs a model call each time.
+          </div>
+        </div>
+        <Switch on={on} onChange={setOn} label="Return recap" />
+      </div>
+      {/* Only with the feature on: a bar for something that never fires is a question about nothing. */}
+      {on && (
+        <label
+          data-omc-recap-away=""
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            fontSize: 13,
+            marginBottom: 12,
+            paddingLeft: 16,
+          }}
+        >
+          <span style={{ color: T.muted }}>Away at least</span>
+          <select
+            style={select}
+            aria-label="Away time before a recap"
+            value={String(away)}
+            // The default is stored as absence, so a box that never touched this reads the default
+            // even if it moves later.
+            onChange={(e) => {
+              const next = Number(e.target.value);
+              setStored(next === RECAP_AWAY_MS ? null : next);
+            }}
+          >
+            {RECAP_AWAY_CHOICES.map((ms) => (
+              <option key={ms} value={String(ms)}>
+                {awayLabel(ms)}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+    </>
+  );
+}
+
+/** Minutes or hours, with the default named so picking it back is one choice rather than a button. */
+const awayLabel = (ms: number): string => {
+  const minutes = ms / 60_000;
+  const text =
+    minutes >= 60 ? `${minutes / 60} hour` : `${minutes} minute${minutes === 1 ? "" : "s"}`;
+  return ms === RECAP_AWAY_MS ? `${text} (default)` : text;
+};
+
 /** Box-wide spend warning: a dollar figure that turns the cost pill orange once a session passes it. */
 function SpendGuardField() {
   const [stored, setStored] = useHintValue("spendWarnUsd");
@@ -5448,6 +5584,36 @@ function StarterSlot({
       setDraft={(text) => inputActions.setDraft(text)}
     />
   );
+}
+
+/** Renderless: writes a draft the panel queued into the composer. The panel has no `setDraft` of its
+ *  own, and this slot does, so Review my changes crosses here. */
+function DraftRelay({
+  sessionId,
+  inputActions,
+  useInput,
+}: {
+  sessionId?: string;
+  inputActions?: { setDraft: (text: string) => void };
+  useInput?: <T>(select: (state: { draft: string }) => T) => T;
+}) {
+  // Mirrored out for the recap watcher, which is an interval and so cannot call a hook. Cleared on
+  // unmount: a composer that is gone has no text in it, and a stale value would mute every recap.
+  const draft = useInput?.((state) => state.draft) ?? "";
+  useEffect(() => {
+    noteDraft(draft);
+    return () => noteDraft("");
+  }, [draft]);
+  useEffect(() => {
+    if (sessionId === undefined || inputActions === undefined) return;
+    const flush = () => {
+      const text = takeDraft(sessionId);
+      if (text !== undefined) inputActions.setDraft(text);
+    };
+    flush(); // queued before this mounted, e.g. the panel closed on the same click
+    return subscribeDraft(flush);
+  }, [sessionId, inputActions]);
+  return null;
 }
 
 /** One `/btw` side question as the client bubble draws it (mirrors the adapter's `AsideEntry`). */
@@ -5981,6 +6147,7 @@ export function apply(ctx: ClientCtx) {
         <StarterSwitch />
         <UpdateNoticeSwitch />
         <WorkspaceModelSwitch />
+        <ReturnRecapSwitch />
         <SpendGuardField />
         <TerminalSyncSwitch />
         {error && <p style={{ color: T.err, fontSize: 13 }}>{error}</p>}
@@ -6065,6 +6232,10 @@ export function apply(ctx: ClientCtx) {
     ctx.slots.register(
       { name: "conversation.input.dock", id: "claude-starter", order: 44 },
       (props) => <StarterSlot {...props} ctx={ctx} />,
+    );
+    ctx.slots.register(
+      { name: "conversation.input.dock", id: "claude-draft-relay", order: 43 },
+      (props) => <DraftRelay {...props} />,
     );
     // The tool headers' icons are cloned out of this hidden sheet; it rides along with the dock
     // because that is mounted wherever a conversation is, which is the only place headers exist.

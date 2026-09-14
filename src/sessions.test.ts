@@ -21,6 +21,7 @@ import {
   readHints,
 } from "./sessions.js";
 import { projectDirName } from "./adapter.js";
+import type { McpStatusReply, PermissionReadoutReply } from "./adapter.js";
 import type { InstructionFile } from "./instructions.js";
 import type { TranscriptListItem } from "./transcript.js";
 
@@ -521,6 +522,450 @@ import type { TranscriptListItem } from "./transcript.js";
   );
   assert.ok(r.mtime > 0, "the mtime the read answered is accepted");
   assert.equal(JSON.parse(await readFile(userSettings, "utf8")).a, 3);
+}
+
+type RouteReply = { status: number; body: Record<string, any> };
+
+/**
+ * Drives one route handler with a fake req/res pair and hands back the status beside the parsed
+ * body. The status is half of what the route tests assert: a 400, a 404 and a 409 all carry an
+ * `error`, so a test that reads the text alone passes on the wrong one. Takes a getter rather than
+ * the handler, because every block below registers its routes twice - once without the bag entry to
+ * prove the 404, once with it - and the second registration replaces the handler the first captured.
+ */
+const responder =
+  (handler: () => ((req: any, res: any) => void) | undefined) =>
+  async (method: string, url: string, body?: string): Promise<RouteReply> => {
+    const resChunks: Buffer[] = [];
+    let status = 0;
+    // SAFETY: partial fake for tests
+    const fakeRes = {
+      writeHead: (s: number, _h: Record<string, string>) => {
+        status = s;
+      },
+      end: (b: Buffer | string) => {
+        if (typeof b === "string") resChunks.push(Buffer.from(b));
+        else resChunks.push(b);
+      },
+    } as any;
+    // SAFETY: partial fake for tests
+    const fakeReq = {
+      method,
+      url,
+      on: (ev: string, cb: (c?: Buffer) => void) => {
+        if (ev === "data" && body !== undefined) cb(Buffer.from(body));
+        if (ev === "end") cb();
+      },
+      destroy: () => {},
+    } as any;
+    await handler()!(fakeReq, fakeRes);
+    return { status, body: JSON.parse(Buffer.concat(resChunks).toString("utf8")) };
+  };
+
+// POST /side-questions: 400 when session or question is missing, 404 when askAside is absent,
+// and 200 that proves the callback received the parsed body.
+{
+  const tmp = await mkdtemp(join(tmpdir(), "dsh-side-question-test-"));
+  let handler: ((req: any, res: any) => void) | undefined;
+  // SAFETY: partial fake for tests
+  const ctx = {
+    inject: (deps: string[], cb: (host: any) => void) => {
+      cb({
+        webServer: {
+          register: (r: any) => {
+            handler = r.handler as (req: any, res: any) => void;
+            return () => {};
+          },
+        },
+        connection: { requestRejection: () => undefined },
+        sessions: { get: () => undefined },
+        sessionPersistence: { list: async () => [] },
+        effect: (fn: () => void | (() => void)) => fn(),
+      });
+    },
+  } as any;
+  registerSessionRoutes(ctx, {
+    log: () => {},
+    projectDir: (cwd: string) => [join(tmp, "claude", "projects", projectDirName(cwd))],
+    projectsDir: [join(tmp, "claude", "projects")],
+    startedIds: async () => [],
+    claudeIdOf: (id: string) => id,
+    configDir: join(tmp, "claude"),
+    boxesPath: join(tmp, "boxes.json"),
+    importedDir: join(tmp, "imported"),
+    instanceFor: () => undefined,
+    instanceForHost: () => ({ configDir: join(tmp, "box") }),
+  });
+  assert.ok(handler);
+
+  const respond = responder(() => handler);
+
+  // 404: askAside is absent from the bag.
+  let r = await respond(
+    "POST",
+    "/dsh-oh-my-claude/side-questions",
+    JSON.stringify({ session: "s", question: "q" }),
+  );
+  assert.equal(r.status, 404);
+  assert.equal(r.body.error, "not found");
+
+  // Now register with askAside and sideQuestions in place.
+  const ring = new Map<string, any[]>();
+  let received: { session: string; question: string; withDiff: boolean; path: string } | undefined;
+  const askAside = async (
+    sid: string,
+    question: string,
+    seed: { withDiff: boolean; path: string },
+  ) => {
+    received = { session: sid, question, withDiff: seed.withDiff, path: seed.path };
+    ring.set(sid, (ring.get(sid) ?? []).concat([{ id: "a1", question, pending: false }]));
+    return { ok: true };
+  };
+  // Re-register with the callbacks; registerSessionRoutes is called once per ctx but we pass a new one.
+  // SAFETY: partial fake for tests
+  const ctx2 = {
+    inject: (deps: string[], cb: (host: any) => void) => {
+      cb({
+        webServer: {
+          register: (r: any) => {
+            handler = r.handler as (req: any, res: any) => void;
+            return () => {};
+          },
+        },
+        connection: { requestRejection: () => undefined },
+        sessions: { get: () => undefined },
+        sessionPersistence: { list: async () => [] },
+        effect: (fn: () => void | (() => void)) => fn(),
+      });
+    },
+  } as any;
+  registerSessionRoutes(ctx2, {
+    log: () => {},
+    projectDir: (cwd: string) => [join(tmp, "claude", "projects", projectDirName(cwd))],
+    projectsDir: [join(tmp, "claude", "projects")],
+    startedIds: async () => [],
+    claudeIdOf: (id: string) => id,
+    configDir: join(tmp, "claude"),
+    boxesPath: join(tmp, "boxes.json"),
+    importedDir: join(tmp, "imported"),
+    instanceFor: () => undefined,
+    instanceForHost: () => ({ configDir: join(tmp, "box") }),
+    askAside,
+    sideQuestions: ring,
+  });
+
+  // 400: missing session.
+  r = await respond("POST", "/dsh-oh-my-claude/side-questions", JSON.stringify({ question: "q" }));
+  assert.equal(r.status, 400);
+  assert.equal(r.body.error, "session and question required");
+
+  // 400: missing question.
+  r = await respond("POST", "/dsh-oh-my-claude/side-questions", JSON.stringify({ session: "s" }));
+  assert.equal(r.status, 400);
+  assert.equal(r.body.error, "session and question required");
+
+  // 400: a JSON object where a string belongs. Coerced with String() it would read
+  // "[object Object]", pass the non-empty check and reach the ring as a question nobody wrote.
+  r = await respond(
+    "POST",
+    "/dsh-oh-my-claude/side-questions",
+    JSON.stringify({ session: {}, question: ["a", "b"] }),
+  );
+  assert.equal(r.status, 400);
+  assert.equal(r.body.error, "session and question required");
+
+  // 200: valid body; the callback received session, trimmed question, withDiff, and path.
+  r = await respond(
+    "POST",
+    "/dsh-oh-my-claude/side-questions",
+    JSON.stringify({
+      session: "sid1",
+      question: "  what changed?  ",
+      withDiff: true,
+      path: "a.ts",
+    }),
+  );
+  assert.equal(r.status, 200);
+  assert.equal(r.body.ok, true);
+  assert.equal(received?.session, "sid1");
+  assert.equal(received?.question, "what changed?");
+  assert.equal(received?.withDiff, true);
+  assert.equal(received?.path, "a.ts");
+  assert.equal(ring.get("sid1")?.[0]?.question, "what changed?");
+
+  // What askAside was handed since the last look, clearing as it reads. A plain re-read would not
+  // do: assigning `received = undefined` narrows it for the rest of the block, and the compiler has
+  // no way to know the next request writes it again from inside the callback.
+  const took = () => {
+    const seen = received;
+    received = undefined;
+    return seen;
+  };
+
+  // A recap is asked once per session however many tabs notice the same return. The second post
+  // answers ok so the tab that lost has nothing to report, but it never reaches askAside.
+  took();
+  const recap = JSON.stringify({ session: "sid2", question: "recap", recap: true });
+  r = await respond("POST", "/dsh-oh-my-claude/side-questions", recap);
+  assert.equal(r.body.duplicate, undefined, "the first tab's recap goes out");
+  assert.equal(took()?.session, "sid2");
+  r = await respond("POST", "/dsh-oh-my-claude/side-questions", recap);
+  assert.equal(r.status, 200);
+  assert.equal(r.body.duplicate, true, "the second tab's copy is dropped");
+  assert.equal(took(), undefined, "and never reaches askAside");
+
+  // Another session is another return: the guard is per session, not a lock on the feature.
+  r = await respond(
+    "POST",
+    "/dsh-oh-my-claude/side-questions",
+    JSON.stringify({ session: "sid3", question: "recap", recap: true }),
+  );
+  assert.equal(r.body.duplicate, undefined);
+  assert.equal(took()?.session, "sid3");
+
+  // Only recaps are deduplicated. A question someone typed twice was meant twice.
+  const typed = JSON.stringify({ session: "sid2", question: "again?" });
+  await respond("POST", "/dsh-oh-my-claude/side-questions", typed);
+  took();
+  r = await respond("POST", "/dsh-oh-my-claude/side-questions", typed);
+  assert.equal(r.body.duplicate, undefined);
+  assert.equal(took()?.question, "again?", "a typed repeat goes out both times");
+  console.log("ask-route ok");
+}
+
+// GET /permissions: 400 when session is missing, 404 when permissionReadout is absent,
+// and 200 that returns both lists with decoded content.
+{
+  const tmp = await mkdtemp(join(tmpdir(), "dsh-permissions-test-"));
+  let handler: ((req: any, res: any) => void) | undefined;
+  // SAFETY: partial fake for tests
+  const ctx = {
+    inject: (deps: string[], cb: (host: any) => void) => {
+      cb({
+        webServer: {
+          register: (r: any) => {
+            handler = r.handler as (req: any, res: any) => void;
+            return () => {};
+          },
+        },
+        connection: { requestRejection: () => undefined },
+        sessions: { get: () => undefined },
+        sessionPersistence: { list: async () => [] },
+        effect: (fn: () => void | (() => void)) => fn(),
+      });
+    },
+  } as any;
+  registerSessionRoutes(ctx, {
+    log: () => {},
+    projectDir: (cwd: string) => [join(tmp, "claude", "projects", projectDirName(cwd))],
+    projectsDir: [join(tmp, "claude", "projects")],
+    startedIds: async () => [],
+    claudeIdOf: (id: string) => id,
+    configDir: join(tmp, "claude"),
+    boxesPath: join(tmp, "boxes.json"),
+    importedDir: join(tmp, "imported"),
+    instanceFor: () => undefined,
+    instanceForHost: () => ({ configDir: join(tmp, "box") }),
+  });
+  assert.ok(handler);
+
+  const respond = responder(() => handler);
+
+  // 404: permissionReadout is absent from the bag.
+  let r = await respond("GET", "/dsh-oh-my-claude/permissions?session=sid1");
+  assert.equal(r.status, 404);
+  assert.equal(r.body.error, "permission readout not available");
+
+  // Now register with permissionReadout in place.
+  const permissionReadout = async (sid: string): Promise<PermissionReadoutReply> => ({
+    ok: true,
+    rules: [{ behavior: "allow", source: "project", rule: "ReadFile", text: "Allow reading" }],
+    directories: [{ path: "/home/user/proj", source: "workspace" }],
+    managedOnly: false,
+    hooks: [{ event: "PreToolUse", matcher: "Bash", source: "", text: `Before bash in ${sid}` }],
+  });
+  // Re-register with the callback; registerSessionRoutes is called once per ctx but we pass a new one.
+  // SAFETY: partial fake for tests
+  const ctx2 = {
+    inject: (deps: string[], cb: (host: any) => void) => {
+      cb({
+        webServer: {
+          register: (r: any) => {
+            handler = r.handler as (req: any, res: any) => void;
+            return () => {};
+          },
+        },
+        connection: { requestRejection: () => undefined },
+        sessions: { get: () => undefined },
+        sessionPersistence: { list: async () => [] },
+        effect: (fn: () => void | (() => void)) => fn(),
+      });
+    },
+  } as any;
+  registerSessionRoutes(ctx2, {
+    log: () => {},
+    projectDir: (cwd: string) => [join(tmp, "claude", "projects", projectDirName(cwd))],
+    projectsDir: [join(tmp, "claude", "projects")],
+    startedIds: async () => [],
+    claudeIdOf: (id: string) => id,
+    configDir: join(tmp, "claude"),
+    boxesPath: join(tmp, "boxes.json"),
+    importedDir: join(tmp, "imported"),
+    instanceFor: () => undefined,
+    instanceForHost: () => ({ configDir: join(tmp, "box") }),
+    permissionReadout,
+  });
+
+  // 400: missing session.
+  r = await respond("GET", "/dsh-oh-my-claude/permissions");
+  assert.equal(r.status, 400);
+  assert.equal(r.body.error, "session param required");
+
+  // 200: valid request; the callback returned both lists.
+  r = await respond("GET", "/dsh-oh-my-claude/permissions?session=sid1");
+  assert.equal(r.status, 200);
+  assert.equal(r.body.ok, true);
+  assert.equal(r.body.rules.length, 1);
+  assert.equal(r.body.rules[0].behavior, "allow");
+  assert.equal(r.body.directories.length, 1);
+  assert.equal(r.body.managedOnly, false);
+  assert.equal(r.body.hooks.length, 1);
+  assert.equal(r.body.hooks[0].event, "PreToolUse");
+  console.log("permissions-route ok");
+}
+
+// POST /mcp-servers/ask: 400 when session or name is missing, 404 when mcp.ask is absent,
+// and 200 that proves the callback received session, name and the boolean.
+{
+  const tmp = await mkdtemp(join(tmpdir(), "dsh-mcp-ask-test-"));
+  let handler: ((req: any, res: any) => void) | undefined;
+  // SAFETY: partial fake for tests
+  const ctx = {
+    inject: (deps: string[], cb: (host: any) => void) => {
+      cb({
+        webServer: {
+          register: (r: any) => {
+            handler = r.handler as (req: any, res: any) => void;
+            return () => {};
+          },
+        },
+        connection: { requestRejection: () => undefined },
+        sessions: { get: () => undefined },
+        sessionPersistence: { list: async () => [] },
+        effect: (fn: () => void | (() => void)) => fn(),
+      });
+    },
+  } as any;
+  registerSessionRoutes(ctx, {
+    log: () => {},
+    projectDir: (cwd: string) => [join(tmp, "claude", "projects", projectDirName(cwd))],
+    projectsDir: [join(tmp, "claude", "projects")],
+    startedIds: async () => [],
+    claudeIdOf: (id: string) => id,
+    configDir: join(tmp, "claude"),
+    boxesPath: join(tmp, "boxes.json"),
+    importedDir: join(tmp, "imported"),
+    instanceFor: () => undefined,
+    instanceForHost: () => ({ configDir: join(tmp, "box") }),
+  });
+  assert.ok(handler);
+
+  const respond = responder(() => handler);
+
+  // 404: mcp is absent from the bag.
+  let r = await respond(
+    "POST",
+    "/dsh-oh-my-claude/mcp-servers/ask",
+    JSON.stringify({ session: "s", name: "n", ask: true }),
+  );
+  assert.equal(r.status, 404);
+  assert.equal(r.body.error, "not found");
+
+  // Now register with mcp.ask in place.
+  let receivedMcpAsk: { session: string; name: string; ask: boolean } | undefined;
+  const mcp = {
+    status: async (): Promise<McpStatusReply> => ({ ok: true, servers: [] }),
+    reconnect: async () => ({ ok: true }),
+    ask: async (sid: string, name: string, ask: boolean) => {
+      receivedMcpAsk = { session: sid, name, ask };
+      return { ok: true };
+    },
+  };
+  // Re-register with the callback; registerSessionRoutes is called once per ctx but we pass a new one.
+  // SAFETY: partial fake for tests
+  const ctx2 = {
+    inject: (deps: string[], cb: (host: any) => void) => {
+      cb({
+        webServer: {
+          register: (r: any) => {
+            handler = r.handler as (req: any, res: any) => void;
+            return () => {};
+          },
+        },
+        connection: { requestRejection: () => undefined },
+        sessions: { get: () => undefined },
+        sessionPersistence: { list: async () => [] },
+        effect: (fn: () => void | (() => void)) => fn(),
+      });
+    },
+  } as any;
+  registerSessionRoutes(ctx2, {
+    log: () => {},
+    projectDir: (cwd: string) => [join(tmp, "claude", "projects", projectDirName(cwd))],
+    projectsDir: [join(tmp, "claude", "projects")],
+    startedIds: async () => [],
+    claudeIdOf: (id: string) => id,
+    configDir: join(tmp, "claude"),
+    boxesPath: join(tmp, "boxes.json"),
+    importedDir: join(tmp, "imported"),
+    instanceFor: () => undefined,
+    instanceForHost: () => ({ configDir: join(tmp, "box") }),
+    mcp,
+  });
+
+  // 400: missing session.
+  r = await respond(
+    "POST",
+    "/dsh-oh-my-claude/mcp-servers/ask",
+    JSON.stringify({ name: "n", ask: true }),
+  );
+  assert.equal(r.status, 400);
+  assert.equal(r.body.error, "session and name required");
+
+  // 400: missing name.
+  r = await respond(
+    "POST",
+    "/dsh-oh-my-claude/mcp-servers/ask",
+    JSON.stringify({ session: "s", ask: true }),
+  );
+  assert.equal(r.status, 400);
+  assert.equal(r.body.error, "session and name required");
+
+  // 200: valid body with ask true; the callback received session, name and true.
+  r = await respond(
+    "POST",
+    "/dsh-oh-my-claude/mcp-servers/ask",
+    JSON.stringify({ session: "sid1", name: "my-server", ask: true }),
+  );
+  assert.equal(r.status, 200);
+  assert.equal(r.body.ok, true);
+  assert.equal(receivedMcpAsk?.session, "sid1");
+  assert.equal(receivedMcpAsk?.name, "my-server");
+  assert.equal(receivedMcpAsk?.ask, true);
+
+  // 200: valid body with ask false (missing asks defaults to false per the side-questions pattern).
+  r = await respond(
+    "POST",
+    "/dsh-oh-my-claude/mcp-servers/ask",
+    JSON.stringify({ session: "sid2", name: "other" }),
+  );
+  assert.equal(r.status, 200);
+  assert.equal(r.body.ok, true);
+  assert.equal(receivedMcpAsk?.session, "sid2");
+  assert.equal(receivedMcpAsk?.name, "other");
+  assert.equal(receivedMcpAsk?.ask, false);
+
+  console.log("mcp-ask-route ok");
 }
 
 // readPickerSettings: the two picker keys out of settings.json, and undefined for anything else.

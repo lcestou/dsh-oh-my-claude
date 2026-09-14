@@ -108,6 +108,7 @@ import type {
   RewindReply,
   ContextUsageReply,
   WorkspaceDiffReply,
+  PermissionReadoutReply,
   McpStatusReply,
   AsideEntry,
   LiveTurn,
@@ -1228,13 +1229,28 @@ export interface SessionRouteOptions {
   contextUsage?: (sessionId: string) => Promise<ContextUsageReply>;
   /** The CLI's working-tree diff for a session with a live process. */
   workspaceDiff?: (sessionId: string) => Promise<WorkspaceDiffReply>;
+  /** Permission rules and hooks for a session with a live process. */
+  permissionReadout?: (sessionId: string) => Promise<PermissionReadoutReply>;
   /** MCP servers of a session's live process, and a reconnect for one of them. */
   mcp?: {
     status: (sessionId: string) => Promise<McpStatusReply>;
     reconnect: (sessionId: string, name: string) => Promise<{ ok: boolean; error?: string }>;
+    /** Pin one MCP server's tools back to asking, or clear the pin. */
+    ask: (
+      sessionId: string,
+      name: string,
+      ask: boolean,
+    ) => Promise<{ ok: boolean; error?: string }>;
   };
   /** The rules recent approval requests suggest, per session; the Tune tab offers them as chips. */
   permissionAsks?: Map<string, string[]>;
+  /** Ask a side question over HTTP, optionally seeded with the working-tree diff. The answer lands
+   *  in the ring `sideQuestions` serves, so the caller gets only whether the question went out. */
+  askAside?: (
+    sessionId: string,
+    question: string,
+    seed: { withDiff: boolean; path: string },
+  ) => Promise<{ ok: boolean; error?: string }>;
   /** `/btw` side questions and their answers, per session; the client bubble reads them. */
   sideQuestions?: Map<string, AsideEntry[]>;
   /** Sessions whose last turn failed for want of a login, read beside the asides for the card. */
@@ -1282,6 +1298,29 @@ async function sessionTranscript(
   return undefined;
 }
 
+/**
+ * When each session last had a recap asked for it, so the second tab asking for the same return is
+ * dropped instead of billed. The watcher that fires a recap runs in every open tab, and its queue is
+ * in-memory and per-tab: a laptop and a phone both looking at the box both notice the same return
+ * and both post. Only the server sees both, so the guard lives here.
+ *
+ * A minute is enough and needs nothing from the client: two tabs noticing one return post within a
+ * second or two of each other, and a second recap cannot be *earned* faster than the away bar, whose
+ * smallest offered value is a minute. Nothing expires it on a timer — a stale entry is one number,
+ * and the write path sweeps what it passes.
+ */
+const RECAP_GAP_MS = 60_000;
+const recapAsked = new Map<string, number>();
+
+/** True when this session already had one within the gap. Records the ask when it does not. */
+function recapIsRepeat(sessionId: string, now: number): boolean {
+  const last = recapAsked.get(sessionId);
+  if (last !== undefined && now - last < RECAP_GAP_MS) return true;
+  for (const [id, at] of recapAsked) if (now - at >= RECAP_GAP_MS) recapAsked.delete(id);
+  recapAsked.set(sessionId, now);
+  return false;
+}
+
 /** `projectDir(cwd)` → Claude Code project dir; `startedIds()` → ids the adapter started itself. */
 export function registerSessionRoutes(
   ctx: PluginContext,
@@ -1312,6 +1351,8 @@ export function registerSessionRoutes(
     rewind,
     contextUsage,
     workspaceDiff,
+    permissionReadout,
+    askAside,
     mcp,
     permissionAsks,
     sideQuestions,
@@ -2194,6 +2235,34 @@ export function registerSessionRoutes(
                 if (body.asDefault !== false) setStarter?.("default", text);
                 return json(res, 200, { ok: true });
               }
+              // Ask one. `/btw` reaches the adapter through the prompt stream, so this is the only
+              // HTTP way in: the Changes tab's Ask control and the return recap both post here.
+              // `withDiff` seeds the question with the working-tree diff, whole or one path.
+              if (
+                askAside &&
+                req.method === "POST" &&
+                url.pathname === `${ROUTE_PREFIX}/side-questions`
+              ) {
+                const body = await readBody(req);
+                const { session: sid, question: raw } = body;
+                // Typed, not coerced: `String({})` is `"[object Object]"`, which passes a non-empty
+                // check and reaches the aside ring as a question nobody wrote.
+                if (typeof sid !== "string" || typeof raw !== "string")
+                  return json(res, 400, { error: "session and question required" });
+                const question = raw.trim();
+                if (sid === "" || question === "")
+                  return json(res, 400, { error: "session and question required" });
+                // A recap says so, and only a recap is deduplicated: a question someone typed twice
+                // was meant twice. `ok` either way — the caller wanted a recap for this return and
+                // there is one; it simply belongs to whichever tab asked first.
+                if (body.recap === true && recapIsRepeat(sid, Date.now()))
+                  return json(res, 200, { ok: true, duplicate: true });
+                const reply = await askAside(sid, question, {
+                  withDiff: body.withDiff === true,
+                  path: typeof body.path === "string" ? body.path : "",
+                });
+                return json(res, reply.ok ? 200 : 409, reply);
+              }
               if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/side-questions`) {
                 const sid = url.searchParams.get("session");
                 if (!sid) return json(res, 400, { error: "session param required" });
@@ -2235,6 +2304,14 @@ export function registerSessionRoutes(
                 const reply = await workspaceDiff(sid);
                 return json(res, reply.ok ? 200 : 409, reply);
               }
+              if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/permissions`) {
+                const sid = url.searchParams.get("session");
+                if (!sid) return json(res, 400, { error: "session param required" });
+                if (!permissionReadout)
+                  return json(res, 404, { error: "permission readout not available" });
+                const reply = await permissionReadout(sid);
+                return json(res, reply.ok ? 200 : 409, reply);
+              }
               if (mcp && req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/mcp-servers`) {
                 const sid = url.searchParams.get("session");
                 if (!sid) return json(res, 400, { error: "session param required" });
@@ -2250,6 +2327,17 @@ export function registerSessionRoutes(
                 if (typeof session !== "string" || typeof name !== "string")
                   return json(res, 400, { error: "session and name required" });
                 const reply = await mcp.reconnect(session, name);
+                return json(res, reply.ok ? 200 : 409, reply);
+              }
+              if (
+                mcp &&
+                req.method === "POST" &&
+                url.pathname === `${ROUTE_PREFIX}/mcp-servers/ask`
+              ) {
+                const { session, name, ask } = await readBody(req);
+                if (typeof session !== "string" || typeof name !== "string")
+                  return json(res, 400, { error: "session and name required" });
+                const reply = await mcp.ask(session, name, ask === true);
                 return json(res, reply.ok ? 200 : 409, reply);
               }
               // Add a server: `claude mcp add-json`, run in the session's own directory so a

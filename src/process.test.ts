@@ -8,7 +8,9 @@ import {
   controlRequestLine,
   decodeCliModels,
   decodeContextUsage,
+  decodeHooksListing,
   decodeMcpStatus,
+  decodePermissionRules,
   decodeRewindResult,
   decodeTitle,
   decodeWorkspaceDiff,
@@ -332,6 +334,126 @@ import {
   const funcParsed = JSON.parse(funcLine);
   assert.equal("fn" in funcParsed.response.error, false);
   assert.equal(funcParsed.response.error.str, "text");
+}
+
+// Permission rules: text is description.prefix + " " + description.emphasis when both strings,
+// else rule. Malformed entries drop without throwing; missing state means empty lists.
+{
+  const out = decodePermissionRules({
+    state: {
+      rules: [
+        {
+          behavior: "allow",
+          source: "project",
+          rule: "ReadFile",
+          description: { prefix: "Allow", emphasis: "reading" },
+          editability: "editable",
+        },
+        { behavior: "deny", source: "global", rule: "EditFile" },
+        { behavior: "ask", source: "user", rule: "Bash", description: { prefix: "Run" } },
+        { behavior: "ask", description: { prefix: "X", emphasis: "Y" } },
+        "junk",
+        null,
+      ],
+      workspaceDirectories: [
+        { path: "/home/user/proj", source: "workspace" },
+        { path: "/tmp/build", source: "cache" },
+        { source: "no-path" },
+      ],
+      originalCwd: "/home/user/proj",
+      managedOnly: true,
+    },
+  });
+  assert.equal(out.rules.length, 4);
+  assert.deepEqual(out.rules[0], {
+    behavior: "allow",
+    source: "project",
+    rule: "ReadFile",
+    text: "Allow reading",
+  });
+  assert.deepEqual(out.rules[1], {
+    behavior: "deny",
+    source: "global",
+    rule: "EditFile",
+    text: "EditFile",
+  });
+  assert.deepEqual(out.rules[2], { behavior: "ask", source: "user", rule: "Bash", text: "Bash" });
+  assert.deepEqual(out.rules[3], { behavior: "ask", source: "", rule: "", text: "X Y" });
+  assert.equal(out.directories.length, 2);
+  assert.deepEqual(out.directories[0], { path: "/home/user/proj", source: "workspace" });
+  assert.deepEqual(out.directories[1], { path: "/tmp/build", source: "cache" });
+  assert.equal(out.managedOnly, true);
+
+  // Empty state yields empty lists; managedOnly defaults to false.
+  const empty = decodePermissionRules({});
+  assert.deepEqual(empty, { rules: [], directories: [], managedOnly: false });
+
+  // Non-object input is a no-op.
+  assert.deepEqual(decodePermissionRules(undefined), {
+    rules: [],
+    directories: [],
+    managedOnly: false,
+  });
+  assert.deepEqual(decodePermissionRules("x"), {
+    rules: [],
+    directories: [],
+    managedOnly: false,
+  });
+}
+
+// Hooks listing: text prefers displayText over commandText; source prefers sourceLabel.
+// Malformed entries drop without throwing; missing hooks means empty list.
+{
+  const out = decodeHooksListing({
+    events: [{ name: "PreToolUse", hookCount: 2 }],
+    hooks: [
+      {
+        event: "PreToolUse",
+        matcher: "Bash",
+        source: "project",
+        sourceLabel: "proj hook",
+        displayText: "Before bash",
+        commandText: "cmd",
+        editable: true,
+      },
+      {
+        event: "PostToolUse",
+        matcher: "",
+        source: "global",
+        displayText: "",
+        commandText: "fallback text",
+      },
+      { event: "SessionInit", source: "user", commandText: "init hook" },
+      { event: "PreToolUse" },
+      "junk",
+      null,
+    ],
+  });
+  assert.equal(out.hooks.length, 4);
+  assert.deepEqual(out.hooks[0], {
+    event: "PreToolUse",
+    matcher: "Bash",
+    source: "proj hook",
+    text: "Before bash",
+  });
+  assert.deepEqual(out.hooks[1], {
+    event: "PostToolUse",
+    matcher: "",
+    source: "global",
+    text: "fallback text",
+  });
+  assert.deepEqual(out.hooks[2], {
+    event: "SessionInit",
+    matcher: "",
+    source: "user",
+    text: "init hook",
+  });
+  assert.deepEqual(out.hooks[3], { event: "PreToolUse", matcher: "", source: "", text: "" });
+
+  // No hooks key at all is an empty list, not undefined.
+  const empty = decodeHooksListing({ events: [] });
+  assert.deepEqual(empty, { hooks: [] });
+  assert.deepEqual(decodeHooksListing(undefined), { hooks: [] });
 }
 
 console.log("process ok");
