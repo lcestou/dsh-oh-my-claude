@@ -1,6 +1,6 @@
 // Offline self-check: bun src/client/notices.test.ts. No DOM, no server.
 import assert from "node:assert/strict";
-import { markTitle, newlyWaiting, recapNext, stripMark } from "./notices.js";
+import { markTitle, newlyWaiting, recapNext, RECAP_AWAY_MS, stripMark } from "./notices.js";
 
 const snap = (byId: Record<string, { running?: boolean; completed?: boolean }>, current?: string) =>
   ({ byId, current }) as const;
@@ -61,30 +61,47 @@ assert.deepEqual(newlyWaiting(snap({ a: { running: true } }), snap({ a: { runnin
 // The once-only sequence, run as a sequence: each tick feeds the pending list the last one returned,
 // which is what the caller does. Hardcoding each tick's input would pass even if the queue leaked.
 {
-  let step = recapNext([], [], undefined); // first tick: nothing has stopped yet
-  assert.deepEqual(step, { pending: [] });
-  step = recapNext(step.pending, ["a"], "b"); // "a" stops while "b" is on screen
-  assert.deepEqual(step, { pending: ["a"] }, "queued, not fired");
-  step = recapNext(step.pending, [], "a"); // the return
-  assert.deepEqual(step, { pending: [], fire: "a" }, "fires once, queue cleared");
-  step = recapNext(step.pending, [], "a"); // still looking at it
-  assert.deepEqual(step, { pending: [] }, "a second tick on the same session asks nothing");
+  const t0 = 1_000_000;
+  const back = t0 + RECAP_AWAY_MS; // long enough away to have earned one
+  let step = recapNext({}, [], undefined, t0); // first tick: nothing has stopped yet
+  assert.deepEqual(step, { pending: {} });
+  step = recapNext(step.pending, ["a"], "b", t0); // "a" stops while "b" is on screen
+  assert.deepEqual(step, { pending: { a: t0 } }, "queued at the moment it stopped, not fired");
+  step = recapNext(step.pending, ["a"], "b", t0 + 5_000); // still stopped, still away
+  assert.deepEqual(
+    step,
+    { pending: { a: t0 } },
+    "the queued moment is the first one, not the last",
+  );
+  step = recapNext(step.pending, [], "a", back); // the return
+  assert.deepEqual(step, { pending: {}, fire: "a" }, "fires once, queue cleared");
+  step = recapNext(step.pending, [], "a", back); // still looking at it
+  assert.deepEqual(step, { pending: {} }, "a second tick on the same session asks nothing");
+}
+
+// Under the away bar: the entry is dropped, and dropped is not fired. A glance is not a return.
+{
+  const t0 = 1_000_000;
+  const step = recapNext({ a: t0 }, [], "a", t0 + RECAP_AWAY_MS - 1);
+  assert.deepEqual(step, { pending: {} }, "a return inside the bar clears without firing");
+}
+
+// The bar itself fires: a check that reads `>` instead of `>=` fails here.
+{
+  const t0 = 1_000_000;
+  assert.deepEqual(recapNext({ a: t0 }, [], "a", t0 + RECAP_AWAY_MS), { pending: {}, fire: "a" });
 }
 
 // A session that stops while it IS current never enters pending and never fires.
 {
-  assert.deepEqual(recapNext([], ["a"], "a"), {
-    pending: [],
-  });
-  assert.deepEqual(recapNext([], [], "a"), {
-    pending: [],
-  });
+  assert.deepEqual(recapNext({}, ["a"], "a", 1), { pending: {} });
+  assert.deepEqual(recapNext({}, [], "a", 1), { pending: {} });
 }
 
 // current: undefined fires nothing; pending survives until a current arrives.
 {
-  assert.deepEqual(recapNext(["a", "b"], [], undefined), {
-    pending: ["a", "b"],
+  assert.deepEqual(recapNext({ a: 1, b: 2 }, [], undefined, 9_000_000), {
+    pending: { a: 1, b: 2 },
   });
 }
 

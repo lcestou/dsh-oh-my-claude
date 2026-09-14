@@ -78,7 +78,7 @@ import { Spark, sparkNode } from "./spark.js";
 import { AccessShield, OhMyClaudeControl } from "./panel.js";
 import { ConfirmButton } from "./tune.js";
 import { AddWorkspaceFlow, canBrowseDirs, OPEN_EVENT } from "./picker.js";
-import { takeDraft, subscribeDraft } from "./draft.js";
+import { takeDraft, subscribeDraft, noteDraft, draftPending } from "./draft.js";
 import {
   markTitle,
   newlyWaiting,
@@ -3539,7 +3539,7 @@ const wireTurnStatus = (
 function watchSessionNotices(ctx: ClientCtx) {
   let prev: NoticeSnapshot | null = null;
   const waiting = new Set<string>();
-  let recapPending: string[] = [];
+  let recapPending: Record<string, number> = {};
   const tick = () => {
     const snap = ctx.sessions.list.getSnapshot();
     if (!snap) return;
@@ -3564,9 +3564,17 @@ function watchSessionNotices(ctx: ClientCtx) {
     // runs in, so a current that lags the screen by a tick can bill a recap for a session nobody left.
     // A spurious title mark is free; a spurious recap is a model call, which is why the switch is off
     // until asked for.
-    const step = recapNext(recapPending, stopped, snap.current);
+    const step = recapNext(recapPending, stopped, snap.current, Date.now());
     recapPending = step.pending;
-    if (step.fire !== undefined && recapOn()) {
+    // Three reasons not to spend the call, all of them the CLI's own: the switch is off, there is
+    // half a prompt in the composer so the person is already saying what they want, or the session
+    // picked up a new turn while the tick was deciding and the recap would describe stale work.
+    if (
+      step.fire !== undefined &&
+      recapOn() &&
+      !draftPending() &&
+      snap.byId[step.fire]?.running !== true
+    ) {
       const session = step.fire;
       void fetch(`${ROUTE}/side-questions`, {
         method: "POST",
@@ -5526,10 +5534,19 @@ function StarterSlot({
 function DraftRelay({
   sessionId,
   inputActions,
+  useInput,
 }: {
   sessionId?: string;
   inputActions?: { setDraft: (text: string) => void };
+  useInput?: <T>(select: (state: { draft: string }) => T) => T;
 }) {
+  // Mirrored out for the recap watcher, which is an interval and so cannot call a hook. Cleared on
+  // unmount: a composer that is gone has no text in it, and a stale value would mute every recap.
+  const draft = useInput?.((state) => state.draft) ?? "";
+  useEffect(() => {
+    noteDraft(draft);
+    return () => noteDraft("");
+  }, [draft]);
   useEffect(() => {
     if (sessionId === undefined || inputActions === undefined) return;
     const flush = () => {

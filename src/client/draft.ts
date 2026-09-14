@@ -23,6 +23,18 @@ export const takeDraft = (session: string): string | undefined => {
   return text;
 };
 
+// The other direction: what is in the composer right now, mirrored out of the dock entry that can
+// read it. `useInput` is a hook, so only a slot component sees the draft; the recap watcher is a
+// plain interval and cannot. One tab, never persisted, empty when no composer is mounted.
+let typed = "";
+
+export const noteDraft = (text: string): void => {
+  typed = text;
+};
+
+/** Whether the person is mid-sentence in the composer. The CLI skips its own away summary on this. */
+export const draftPending = (): boolean => typed.trim() !== "";
+
 export const subscribeDraft = (fn: () => void): (() => void) => {
   subs.add(fn);
   return () => subs.delete(fn);

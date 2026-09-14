@@ -37,25 +37,42 @@ export function newlyWaiting(prev: NoticeSnapshot | null, next: NoticeSnapshot):
 /** The one return shape `recapNext` uses. Kept narrow so the caller reads what it gets without a
  *  widening cast. */
 export interface RecapStep {
-  pending: string[];
+  /** Session id to the moment it stopped working, so a return can tell a walk away from a glance. */
+  pending: Record<string, number>;
   fire?: string;
 }
 
 /**
+ * How long a session must have sat finished before returning to it earns a recap. Five minutes, the
+ * same bar the CLI's own away summary uses ("shown when you return after being away for 5+ minutes",
+ * `awaySummaryEnabled` in claude 2.1.270). Below it you already know what you left, and the recap is
+ * a model call.
+ */
+export const RECAP_AWAY_MS = 5 * 60_000;
+
+/**
  * The recap queue after this snapshot, and the session to recap now. A session joins the queue when
  * it stops working while unselected, and leaves it when it becomes the one on screen: that is the
- * return the recap is named for. Never persisted, so a reload forgets: a recap of work from before a
- * page load is history, not a return.
+ * return the recap is named for. Leaving the queue is not the same as firing, though — a return
+ * inside `RECAP_AWAY_MS` drops the entry silently, because flicking to another tab and back is not
+ * being away. Never persisted, so a reload forgets: a recap of work from before a page load is
+ * history, not a return.
  */
 export function recapNext(
-  pending: readonly string[],
+  pending: Readonly<Record<string, number>>,
   waiting: readonly string[],
   current: string | undefined,
+  now: number,
 ): RecapStep {
-  const next = new Set(pending);
-  for (const id of waiting) if (id !== current) next.add(id);
-  if (current !== undefined && next.delete(current)) return { pending: [...next], fire: current };
-  return { pending: [...next] };
+  const next = { ...pending };
+  for (const id of waiting) if (id !== current) next[id] ??= now;
+  if (current !== undefined) {
+    const since = next[current];
+    delete next[current];
+    if (since !== undefined && now - since >= RECAP_AWAY_MS)
+      return { pending: next, fire: current };
+  }
+  return { pending: next };
 }
 
 const RECAP_KEY = "omc.returnRecap";
@@ -77,8 +94,15 @@ export const setRecapOn = (on: boolean): void => {
   }
 };
 
-/** What the recap asks. One line, because the answer docks in a card two lines tall. */
-export const RECAP_QUESTION = "One line: what did you do in this session since my last message?";
+/**
+ * What the recap asks, lifted from the CLI's own away summary (claude 2.1.270) so a recap here reads
+ * like a recap there. The word budget keeps it inside the two-line card, "no markdown" matters
+ * because the bubble renders plain text, and the next action is the part worth reading on return.
+ */
+export const RECAP_QUESTION =
+  "The user stepped away and is coming back. Recap in under 40 words, 1-2 plain sentences, no " +
+  "markdown. Lead with the overall goal and current task, then the one next action. Skip root-cause " +
+  "narrative, fix internals, secondary to-dos, and em-dash tangents.";
 
 const MARK = "● ";
 
