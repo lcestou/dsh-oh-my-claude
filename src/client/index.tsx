@@ -4012,6 +4012,13 @@ function watchUltrathink(ctx: ClientCtx) {
   if (!pageIsDark()) document.documentElement.style.setProperty("--omc-ultracode", ULTRACODE_LIGHT);
   // A message sent mid-turn waits under `data-pending-steering` until the CLI takes it, and only
   // then becomes an input-message anchor; it is a person's words either way, so both are hosts.
+  //
+  // The anchor key is `${turn}:${kind}${id}`, so the turn number leads and the kind is reached
+  // through the colon. Read off a live 0.1.6 page on 2026-09-15: 88 keys, among them
+  // `13:input-message9176508b-ece4-4d04-9f5f-427b5de867bc`, `14:assistant-step1:1` and
+  // `12:turn-process1`. Substring, not prefix, and the same on 0.1.5. A `^=` form was briefly added
+  // here on the belief that 0.1.6 had moved the kind to the front; it matched nothing, because
+  // `locationIdentity` in dsh-client-ui-chat builds a different string than this attribute carries.
   const HOSTS =
     '[data-composer-input], [data-pending-steering], [data-chat-anchor-key*=":input-message"]';
   const clear = () => {

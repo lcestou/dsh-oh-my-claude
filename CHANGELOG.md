@@ -6,6 +6,19 @@ Only 1.0.0 reached npm. Everything below it was released from the repository whi
 
 ## [Unreleased]
 
+### Fixed
+
+- The six Claude permission rows reach dsh's access-shield menu again on dsh 0.1.6, which renders
+  that menu into a portal on `document.body` instead of inline under its trigger. The plugin looked
+  in one of those two places, so the upgrade left the shield offering dsh's own three presets and no
+  way to pick a Claude mode. It now looks in both, so dsh 0.1.5 keeps working. A portalled menu is
+  also placed by height, measured once when it opens, so the menu asks dsh to measure again once the
+  six rows are in and it opens where dsh's own menus do.
+- Installing the plugin no longer prints four unmet peer dependency warnings. dsh supplies its own
+  packages to a plugin through a shared fallback directory, so pnpm running in the profile is right
+  that they are absent and wrong that it is a problem. The dsh peers are marked optional, which is
+  how dsh's larger plugins declare theirs.
+
 ## [1.1.1] - 2026-09-14
 
 ### Fixed
