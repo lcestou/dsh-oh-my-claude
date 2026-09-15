@@ -2,24 +2,26 @@
 
 Notable changes to Oh My Claude. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-Only 1.0.0 reached npm. Everything below it was released from the repository while the plugin was still private, and the sections are reconstructed from the commits.
+Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the repository while the plugin was still private, and those sections are reconstructed from the commits.
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-09-15
+
 ### Fixed
 
+- The six Claude permission rows reach dsh's access-shield menu again on dsh 0.1.6, which renders
+  that menu into a portal on `document.body` instead of inline under its trigger. The plugin looked
+  in one of those two places, so the upgrade left the shield offering dsh's own three presets and no
+  way to pick a Claude mode. It now looks in both, so dsh 0.1.5 keeps working. dsh places a
+  portalled menu by its height, measured once when it opens, so the plugin asks for a second
+  measurement after the six rows are in and the menu lands where dsh's own menus do.
 - A session in a remote workspace no longer opens with Claude asking you to restart a tool server.
   The dsh MCP bridge is served on this box's loopback port, which a `claude` running over SSH cannot
   reach, and the switch that skipped it was per provider while a remote workspace makes a session
   remote under the local provider. A turn that runs on a box now skips the bridge and its
-  system-prompt guidance together; `dshTools` stays on for local sessions, so the advice to turn it
-  off box-wide is gone from the docs.
-- The six Claude permission rows reach dsh's access-shield menu again on dsh 0.1.6, which renders
-  that menu into a portal on `document.body` instead of inline under its trigger. The plugin looked
-  in one of those two places, so the upgrade left the shield offering dsh's own three presets and no
-  way to pick a Claude mode. It now looks in both, so dsh 0.1.5 keeps working. A portalled menu is
-  also placed by height, measured once when it opens, so the menu asks dsh to measure again once the
-  six rows are in and it opens where dsh's own menus do.
+  system-prompt guidance together. `dshTools` stays on for local sessions, and the docs stop
+  advising you to turn it off box-wide.
 - Installing the plugin no longer prints four unmet peer dependency warnings. dsh supplies its own
   packages to a plugin through a shared fallback directory, so pnpm running in the profile is right
   that they are absent and wrong that it is a problem. The dsh peers are marked optional, which is
