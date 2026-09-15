@@ -673,6 +673,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
         key: string;
     };
     warnedNoSeam: boolean;
+    /** Set once a session read has thrown, so the line lands one time and not per routed message. */
+    warnedNoSessionRead: boolean;
     loggedVersion: boolean;
     /** Probe targets already written to resume.log, so the line lands once per binary, not per turn. */
     probeTraced: Set<string>;
@@ -1219,7 +1221,9 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      *  rate_limit_event says whether credits cover the overflow. */
     continueAfterLimit(sessionId: string, probe?: typeof readUsage): Promise<void>;
     /** The provider a session last selected, from its own log; undefined when it never picked one
-     *  (dsh's default applies) or the session cannot be read. */
+     *  (dsh's default applies) or the session cannot be read. The read is deprecated in dsh 0.1.6, and
+     *  a dsh that drops it would answer undefined for every session, which routes remote workspaces to
+     *  the local mount instead of failing. Too quiet to debug from the symptom, so it says so once. */
     sessionProvider(sessionId: string): string | undefined;
     clearLimitWait(sessionId: string): void;
     /** Claude finished a turn of its own (a background task it launched completed) while dsh was

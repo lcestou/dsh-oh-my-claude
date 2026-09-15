@@ -1938,6 +1938,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   limitTimers: Map<string, ReturnType<typeof setTimeout>>;
   mcp?: { base: string; key: string };
   warnedNoSeam = false;
+  /** Set once a session read has thrown, so the line lands one time and not per routed message. */
+  warnedNoSessionRead = false;
   loggedVersion = false;
   /** Probe targets already written to resume.log, so the line lands once per binary, not per turn. */
   probeTraced = new Set<string>();
@@ -4991,12 +4993,21 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   }
 
   /** The provider a session last selected, from its own log; undefined when it never picked one
-   *  (dsh's default applies) or the session cannot be read. */
+   *  (dsh's default applies) or the session cannot be read. The read is deprecated in dsh 0.1.6, and
+   *  a dsh that drops it would answer undefined for every session, which routes remote workspaces to
+   *  the local mount instead of failing. Too quiet to debug from the symptom, so it says so once. */
   sessionProvider(sessionId: string): string | undefined {
     try {
       const session = this.ctx?.sessions?.get?.(asSessionId(sessionId));
       return session ? lastSelectedProvider(session.snapshotEvents()) : undefined;
-    } catch {
+    } catch (error) {
+      if (!this.warnedNoSessionRead) {
+        this.warnedNoSessionRead = true;
+        this.log(
+          "warn",
+          `session read unavailable, provider routing falls back: ${errorText(error)}`,
+        );
+      }
       return undefined;
     }
   }
