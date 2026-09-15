@@ -3045,6 +3045,19 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
           errWrap.className = "omc-access-err";
           Object.assign(errWrap.style, { ...meta, color: T.err });
           viewport.appendChild(errWrap);
+
+          // A portalled menu is positioned from JavaScript: dsh measures its height once, on open,
+          // and clamps `top` so the box sits inside a 12px margin. Six rows where it measured three
+          // left the menu starting at the three-row position and running off the bottom of the
+          // window, and its own max-height caps the height without moving a box that starts too
+          // low. Scroll and resize are the two events that recompute it, so one resize hands the
+          // job back to dsh's own maths instead of a second copy of it here. dsh 0.1.5 hangs the
+          // menu inline off the trigger and positions it in CSS, where a taller menu already grows
+          // the right way, so the event is only worth the other listeners it wakes when the menu
+          // is the portalled kind.
+          if (dshMenu.parentElement === document.body) {
+            window.dispatchEvent(new Event("resize"));
+          }
         }
       });
       menuObserver.observe(parent, { childList: true, subtree: true });
