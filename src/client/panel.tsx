@@ -2841,7 +2841,9 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
         // of the body per mutation is the whole transcript. Menus other plugins portal there are
         // dropped by the preset-label check below, which is what identifies ours either way.
         const menus = [
+          // dsh 0.1.5: inline, hung off the trigger inside the modes box.
           ...parent.querySelectorAll<HTMLElement>('[role="menu"]'),
+          // dsh 0.1.6 and later: portalled, a direct child of the body.
           ...document.body.querySelectorAll<HTMLElement>(':scope > [role="menu"]'),
         ];
         if (menus.length === 0) return;
@@ -3071,9 +3073,12 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
         const restoreTarget = labelSpan();
         if (restoreTarget && lastDshLabelText) restoreTarget.textContent = lastDshLabelText;
         if (lastDshAriaLabel) trigger.setAttribute("aria-label", lastDshAriaLabel);
-        // If a marked menu is currently open, unhide original wraps and remove ours.
+        // If a marked menu is currently open, unhide original wraps and remove ours. Both places
+        // are checked for the same reason the injection above checks both, and in the same order.
         const markedMenu =
+          // dsh 0.1.5: inline.
           parent.querySelector<HTMLElement>('[role="menu"][data-dsh-oh-my-claude]') ??
+          // dsh 0.1.6 and later: portalled to the body.
           document.body.querySelector<HTMLElement>(':scope > [role="menu"][data-dsh-oh-my-claude]');
         if (markedMenu) {
           const vp = markedMenu.querySelector<HTMLElement>('[role="presentation"]') ?? markedMenu;

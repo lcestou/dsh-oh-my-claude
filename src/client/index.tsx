@@ -4012,12 +4012,20 @@ function watchUltrathink(ctx: ClientCtx) {
   if (!pageIsDark()) document.documentElement.style.setProperty("--omc-ultracode", ULTRACODE_LIGHT);
   // A message sent mid-turn waits under `data-pending-steering` until the CLI takes it, and only
   // then becomes an input-message anchor; it is a person's words either way, so both are hosts.
-  // dsh 0.1.6 builds that anchor key as `${kind}:${turn}:${step}` (dsh-client-ui-chat), so the key
-  // leads with the kind and the `:input-message` form matches nothing: measured on the live page,
-  // zero nodes. Both forms are listed rather than the new one alone, since the key that carries a
-  // leading colon is what 0.1.5 is presumed to render and a dead clause costs one selector.
-  const HOSTS =
-    '[data-composer-input], [data-pending-steering], [data-chat-anchor-key^="input-message"], [data-chat-anchor-key*=":input-message"]';
+  // The anchor clause appears twice on purpose: dsh changed the key's shape in 0.1.6 and the
+  // plugin runs on both versions, so each form is tagged with the version that renders it.
+  const HOSTS = [
+    "[data-composer-input]",
+    "[data-pending-steering]",
+    // dsh 0.1.6 and later: `locationIdentity` builds the key as `${kind}:${turn}:${step}`
+    // (dsh-client-ui-chat), so the kind leads and there is nothing before it to match.
+    '[data-chat-anchor-key^="input-message"]',
+    // dsh 0.1.5: the form this plugin shipped against, where something precedes the kind and the
+    // key therefore carries a leading colon. Measured against a live 0.1.6 page it matches zero
+    // nodes, which is how the sent-message half of the paint went quiet on upgrade. Kept anyway:
+    // a clause that matches nothing costs one selector, and dropping it strands 0.1.5.
+    '[data-chat-anchor-key*=":input-message"]',
+  ].join(", ");
   const clear = () => {
     for (const key of [...names, ...shimmerNames]) registry.delete(key);
   };
