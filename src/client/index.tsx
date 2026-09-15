@@ -4012,8 +4012,12 @@ function watchUltrathink(ctx: ClientCtx) {
   if (!pageIsDark()) document.documentElement.style.setProperty("--omc-ultracode", ULTRACODE_LIGHT);
   // A message sent mid-turn waits under `data-pending-steering` until the CLI takes it, and only
   // then becomes an input-message anchor; it is a person's words either way, so both are hosts.
+  // dsh 0.1.6 builds that anchor key as `${kind}:${turn}:${step}` (dsh-client-ui-chat), so the key
+  // leads with the kind and the `:input-message` form matches nothing: measured on the live page,
+  // zero nodes. Both forms are listed rather than the new one alone, since the key that carries a
+  // leading colon is what 0.1.5 is presumed to render and a dead clause costs one selector.
   const HOSTS =
-    '[data-composer-input], [data-pending-steering], [data-chat-anchor-key*=":input-message"]';
+    '[data-composer-input], [data-pending-steering], [data-chat-anchor-key^="input-message"], [data-chat-anchor-key*=":input-message"]';
   const clear = () => {
     for (const key of [...names, ...shimmerNames]) registry.delete(key);
   };
