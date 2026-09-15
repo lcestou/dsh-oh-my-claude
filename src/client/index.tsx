@@ -4012,20 +4012,15 @@ function watchUltrathink(ctx: ClientCtx) {
   if (!pageIsDark()) document.documentElement.style.setProperty("--omc-ultracode", ULTRACODE_LIGHT);
   // A message sent mid-turn waits under `data-pending-steering` until the CLI takes it, and only
   // then becomes an input-message anchor; it is a person's words either way, so both are hosts.
-  // The anchor clause appears twice on purpose: dsh changed the key's shape in 0.1.6 and the
-  // plugin runs on both versions, so each form is tagged with the version that renders it.
-  const HOSTS = [
-    "[data-composer-input]",
-    "[data-pending-steering]",
-    // dsh 0.1.6 and later: `locationIdentity` builds the key as `${kind}:${turn}:${step}`
-    // (dsh-client-ui-chat), so the kind leads and there is nothing before it to match.
-    '[data-chat-anchor-key^="input-message"]',
-    // dsh 0.1.5: the form this plugin shipped against, where something precedes the kind and the
-    // key therefore carries a leading colon. Measured against a live 0.1.6 page it matches zero
-    // nodes, which is how the sent-message half of the paint went quiet on upgrade. Kept anyway:
-    // a clause that matches nothing costs one selector, and dropping it strands 0.1.5.
-    '[data-chat-anchor-key*=":input-message"]',
-  ].join(", ");
+  //
+  // The anchor key is `${turn}:${kind}${id}`, so the turn number leads and the kind is reached
+  // through the colon. Read off a live 0.1.6 page on 2026-09-15: 88 keys, among them
+  // `13:input-message9176508b-ece4-4d04-9f5f-427b5de867bc`, `14:assistant-step1:1` and
+  // `12:turn-process1`. Substring, not prefix, and the same on 0.1.5. A `^=` form was briefly added
+  // here on the belief that 0.1.6 had moved the kind to the front; it matched nothing, because
+  // `locationIdentity` in dsh-client-ui-chat builds a different string than this attribute carries.
+  const HOSTS =
+    '[data-composer-input], [data-pending-steering], [data-chat-anchor-key*=":input-message"]';
   const clear = () => {
     for (const key of [...names, ...shimmerNames]) registry.delete(key);
   };
