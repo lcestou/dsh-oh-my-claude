@@ -2833,7 +2833,17 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
         // it, so gating on that attribute skipped every injection and left dsh's three presets in
         // place of our six Claude rows. `parent` is the small modes box, not the composer, so one
         // selector per mutation costs nothing.
-        const menus = Array.from(parent.querySelectorAll<HTMLElement>('[role="menu"]'));
+        //
+        // Both places dsh can put the open menu: inline under the trigger, or — from 0.1.6, which
+        // renders it through `createPortal(menu, document.body)` — as a direct child of the body.
+        // Looking in one place only left 0.1.6 showing dsh's three presets. Body is searched one
+        // level deep, never by subtree: the portalled node is the menu itself, and a subtree scan
+        // of the body per mutation is the whole transcript. Menus other plugins portal there are
+        // dropped by the preset-label check below, which is what identifies ours either way.
+        const menus = [
+          ...parent.querySelectorAll<HTMLElement>('[role="menu"]'),
+          ...document.body.querySelectorAll<HTMLElement>(':scope > [role="menu"]'),
+        ];
         if (menus.length === 0) return;
         for (const dshMenu of menus) {
           // Our own rows, not the attribute, say whether this menu is done: dsh re-renders the menu
@@ -2846,6 +2856,11 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
           if (!hasPreset) continue;
 
           dshMenu.setAttribute("data-dsh-oh-my-claude", "1");
+          // dsh re-renders the open menu through the same element, which drops our rows. Inline
+          // that lands in `parent`; portalled it lands in the body, where only direct children are
+          // watched, so the menu itself is the target that sees it. Re-observing the same node is
+          // a no-op, and the `[data-mode]` check above stops our own appends looping back.
+          menuObserver.observe(dshMenu, { childList: true, subtree: true });
 
           // Take template from the first itemWrap (parent of the first menuitem).
           const firstItemWrap = menuItems[0]?.parentElement;
@@ -3033,6 +3048,7 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
         }
       });
       menuObserver.observe(parent, { childList: true, subtree: true });
+      menuObserver.observe(document.body, { childList: true });
 
       return () => {
         labelObserver.disconnect();
@@ -3043,9 +3059,9 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
         if (restoreTarget && lastDshLabelText) restoreTarget.textContent = lastDshLabelText;
         if (lastDshAriaLabel) trigger.setAttribute("aria-label", lastDshAriaLabel);
         // If a marked menu is currently open, unhide original wraps and remove ours.
-        const markedMenu = parent.querySelector<HTMLElement>(
-          '[role="menu"][data-dsh-oh-my-claude]',
-        );
+        const markedMenu =
+          parent.querySelector<HTMLElement>('[role="menu"][data-dsh-oh-my-claude]') ??
+          document.body.querySelector<HTMLElement>(':scope > [role="menu"][data-dsh-oh-my-claude]');
         if (markedMenu) {
           const vp = markedMenu.querySelector<HTMLElement>('[role="presentation"]') ?? markedMenu;
           for (const wrap of vp.querySelectorAll<HTMLElement>("[class*='itemWrap']")) {
