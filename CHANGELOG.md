@@ -8,6 +8,12 @@ Only 1.0.0 reached npm. Everything below it was released from the repository whi
 
 ### Fixed
 
+- A session in a remote workspace no longer opens with Claude asking you to restart a tool server.
+  The dsh MCP bridge is served on this box's loopback port, which a `claude` running over SSH cannot
+  reach, and the switch that skipped it was per provider while a remote workspace makes a session
+  remote under the local provider. A turn that runs on a box now skips the bridge and its
+  system-prompt guidance together; `dshTools` stays on for local sessions, so the advice to turn it
+  off box-wide is gone from the docs.
 - The six Claude permission rows reach dsh's access-shield menu again on dsh 0.1.6, which renders
   that menu into a portal on `document.body` instead of inline under its trigger. The plugin looked
   in one of those two places, so the upgrade left the shield offering dsh's own three presets and no
