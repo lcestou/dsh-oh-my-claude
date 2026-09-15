@@ -2394,6 +2394,29 @@ console.log("ok");
   assert.equal(ClaudeCodeAdapter.prototype.sessionProvider.call(none, "s"), undefined);
   const gone = { ctx: { sessions: { get: () => undefined } } };
   assert.equal(ClaudeCodeAdapter.prototype.sessionProvider.call(gone, "s"), undefined);
+  // A read that throws (a dsh that dropped snapshotEvents) answers undefined, which routes every
+  // remote session to the local mount; that is logged once, not per routed message.
+  const warned: string[] = [];
+  const broken = {
+    warnedNoSessionRead: false,
+    log: (level: string, message: string) => warned.push(`${level}: ${message}`),
+    ctx: {
+      sessions: {
+        get: () => ({
+          snapshotEvents: () => {
+            throw new Error("snapshotEvents is not a function");
+          },
+        }),
+      },
+    },
+  };
+  assert.equal(ClaudeCodeAdapter.prototype.sessionProvider.call(broken, "s"), undefined);
+  assert.equal(ClaudeCodeAdapter.prototype.sessionProvider.call(broken, "s"), undefined);
+  assert.equal(warned.length, 1);
+  assert.match(
+    warned[0] ?? "",
+    /^warn: session read unavailable.*snapshotEvents is not a function/,
+  );
   console.log("session-provider ok");
 }
 {
