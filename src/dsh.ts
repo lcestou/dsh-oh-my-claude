@@ -64,9 +64,10 @@ export interface Session {
   readonly header: SessionHeader;
   readonly id: SessionId;
   readonly firstLiveSeq: number;
-  eventAt(seq: number): SessionEvent | undefined;
+  /** Deprecated in dsh 0.1.6, which permits existing calls and prohibits new ones. The five reads
+   * left in the adapter are tracked in notes; `eventAt` and `ownEvents` are gone from this mirror
+   * because nothing here ever called them. */
   snapshotEvents(fromSeq?: number, toSeqExclusive?: number): readonly SessionEvent[];
-  ownEvents(): readonly SessionEvent[];
   isOwnSeq(seq: number): boolean;
   get seq(): number;
   append<T extends string>(
