@@ -6,6 +6,15 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Added
+
+- A card above the composer when a newer Claude Code is out for the box a session runs on, with an
+  Update button that runs `claude update` there from dsh, an Always update link, and a dismiss that
+  holds until the next release. The same button sits on each Boxes row in Settings. Under Tune: a
+  Release channel row, an Update on its own switch and the history of runs; in Settings, a switch
+  for the whole feature. A headless `claude -p` never updates itself, so until now a box relied on
+  the terminal for it.
+
 ## [1.1.2] - 2026-09-15
 
 ### Fixed
