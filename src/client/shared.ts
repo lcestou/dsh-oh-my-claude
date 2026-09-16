@@ -1,5 +1,5 @@
 import type { CSSProperties, ReactNode } from "react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 
 export const ROUTE = "/dsh-oh-my-claude";
 /** "m*****@gmail.com": first letter, stars, then the domain. Every surface that shows the login
@@ -527,6 +527,40 @@ export const activeClaudeSession = (ctx: ClientCtx): string | undefined => {
   if (!id) return undefined;
   return isClaudeSession(ctx, id) ? id : undefined;
 };
+
+/**
+ * `activeClaudeSession(ctx) === sessionId`, as a render that follows the model picker.
+ *
+ * A component that reads `activeClaudeSession` during render only learns of a model switch when
+ * something else re-renders the slot, which on a fresh session is the first keystroke in the
+ * composer (owner, 2026-09-16: the ✻ button stayed away after picking a Claude model until typing
+ * began). The picker writes the session's model directory store and dsh's list store, so the
+ * render subscribes to both; either one changing re-reads the answer.
+ */
+export function useActiveClaude(ctx: ClientCtx, sessionId: string): boolean {
+  const subscribe = useCallback(
+    (fn: () => void) => {
+      const offs: Array<() => void> = [];
+      try {
+        offs.push(ctx.modelDirectories.directoryFor(sessionId).store.subscribe(fn));
+      } catch {
+        // Unbound in this tab (see claudeProviderOf); the list store below still carries the
+        // cold selection, which is all the read can see for such a session anyway.
+      }
+      try {
+        const off = ctx.sessions.list.subscribe?.(fn);
+        if (off) offs.push(off);
+      } catch {
+        // A disposed context: the read side retires the bundle on its own.
+      }
+      return () => {
+        for (const off of offs) off();
+      };
+    },
+    [ctx, sessionId],
+  );
+  return useSyncExternalStore(subscribe, () => activeClaudeSession(ctx) === sessionId);
+}
 /** The open Claude session's own provider id (e.g. `claude-code` or `claude-code-prod`), else undefined. */
 export const activeClaudeProvider = (ctx: ClientCtx): string | undefined => {
   const id = openSessionId(ctx);
@@ -666,6 +700,9 @@ export interface ClientCtx {
     // (dsh-api-session-controller); the snapshot stores one per live session keyed by sessionId.
     // `completed` is dsh's own "finished while not selected and not yet opened" bit.
     list: {
+      // A `SnapshotStore` (dsh-client-store): `subscribe` is what `useSyncExternalStore` needs
+      // for a render to follow the store instead of waiting for dsh to re-render the slot.
+      subscribe?: (fn: () => void) => () => void;
       getSnapshot: () => {
         byId: Record<
           string,

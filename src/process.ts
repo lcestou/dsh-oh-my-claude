@@ -750,6 +750,8 @@ export interface CliModel {
   value: string;
   resolvedModel: string;
   displayName: string;
+  /** The CLI picker's one-line blurb ("Opus 5 with 1M context · Best for everyday, complex tasks"). */
+  description?: string;
   efforts: string[];
 }
 /** A `list_models` answer: what `claude --model` accepts for this login, aliases included. */
@@ -759,14 +761,16 @@ export function decodeCliModels(v: JsonValue | undefined): CliModel[] {
   if (Array.isArray(r.models))
     for (const m of r.models) {
       if (!isRecord(m) || typeof m.value !== "string") continue;
-      out.push({
+      const row: CliModel = {
         value: m.value,
         resolvedModel: typeof m.resolvedModel === "string" ? m.resolvedModel : m.value,
         displayName: typeof m.displayName === "string" ? m.displayName : m.value,
         efforts: Array.isArray(m.supportedEffortLevels)
           ? m.supportedEffortLevels.filter((e): e is string => typeof e === "string")
           : [],
-      });
+      };
+      if (typeof m.description === "string") row.description = m.description;
+      out.push(row);
     }
   return out;
 }
