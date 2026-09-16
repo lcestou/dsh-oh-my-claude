@@ -4328,6 +4328,80 @@ console.log("interrupt-on-abort ok");
   console.log("cli-models ok");
 }
 
+// The live steer path: a text-only message goes to stdin at once; a message carrying a file or an
+// image is not written and not marked sent, and only parks the step so dsh delivers it whole at
+// the CLI's next tool result (2026-09-16: a zip on a mid-turn message arrived as its text alone).
+{
+  const handlers: Record<string, (session: unknown, event: unknown) => void> = {};
+  const adapter = new ClaudeCodeAdapter(
+    fakeCtx({
+      on(name: string, fn: (session: unknown, event: unknown) => void) {
+        handlers[name] = fn;
+      },
+    }),
+    Config({}),
+  );
+  const writes: string[] = [];
+  const proc = {
+    alive: true,
+    busy: true,
+    relays: new Map(),
+    sent: new Set<string>(),
+    steerPending: false,
+    write(line: string) {
+      writes.push(line);
+      return true;
+    },
+  };
+  adapter.processes.set(registryKey("claude-code", "s"), fakeProc(proc));
+  const steer = (content: object[]) => {
+    writes.length = 0;
+    proc.sent.clear();
+    proc.steerPending = false;
+    handlers["session/event"]?.(
+      { id: "s" },
+      {
+        type: "agent/inbox/spliced",
+        data: {
+          target: "next-step",
+          inserted: [{ role: "user", source: { kind: "user", rpcId: "r1" }, content }],
+        },
+      },
+    );
+  };
+  const text = { type: "text", text: "also check /tmp" };
+  const file = {
+    type: "file",
+    attachment: { attachmentId: "sha256:abc", name: "a.zip", bytes: 3 },
+  };
+  const image = {
+    type: "image",
+    attachment: { attachmentId: "sha256:def", mediaType: "image/png" },
+  };
+
+  steer([text]);
+  assert.equal(writes.length, 1, "text only: written at once");
+  assert.ok(writes[0]?.includes("also check /tmp"));
+  assert.ok(proc.sent.has("r1"), "text only: marked sent");
+  assert.equal(proc.steerPending, true, "text only: the step parks at the next tool result");
+
+  steer([file, text]);
+  assert.equal(writes.length, 0, "file and text: nothing goes over stdin");
+  assert.equal(proc.sent.size, 0, "file and text: not marked sent, so the boundary delivers it");
+  assert.equal(proc.steerPending, true, "file and text: the step still parks");
+
+  steer([image, text]);
+  assert.equal(writes.length, 0, "image and text: nothing goes over stdin");
+  assert.equal(proc.sent.size, 0, "image and text: not marked sent");
+  assert.equal(proc.steerPending, true, "image and text: the step still parks");
+
+  steer([file]);
+  assert.equal(writes.length, 0, "file alone: nothing to write");
+  assert.equal(proc.sent.size, 0, "file alone: not marked sent");
+  assert.equal(proc.steerPending, false, "file alone: no text, so nothing parks (as before)");
+  console.log("live-steer ok");
+}
+
 // capacity split: prepareCall reports the window (the ring reads it), resolveModel does not
 // (dsh-compaction-basic reads that one, and silence there is what keeps it from compacting on top
 // of Claude Code's own compaction). Identity and reasoning survive on both.
