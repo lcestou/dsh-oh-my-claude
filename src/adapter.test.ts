@@ -4550,9 +4550,11 @@ console.log("interrupt-on-abort ok");
   adapter.continuationFor(opts("u", hi("q2")));
   assert.equal(busy.steerPending, true, "a busy process keeps its flag: its own turn parks on it");
 
+  // busy false, as a process resumed after a park is (the turn's finally cleared it): with busy
+  // true the guard alone would keep the flag, and the assertion would prove nothing about order.
   const parkedProc = {
     ...idle,
-    busy: true,
+    busy: false,
     sent: new Set<string>(),
     steerPending: true,
     parked: "steer" as const,
