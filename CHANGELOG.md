@@ -8,6 +8,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- A file or image attached to a message sent while a turn runs now reaches Claude: the message
+  waits for the CLI's next tool result and arrives whole, with the file's `[File …]` handle. It
+  used to arrive as its text alone and was then marked as delivered, so the attachment never came.
+
 - The ✻ button comes up the moment a Claude model is picked on a new session, instead of on the
   first keystroke in the composer.
 - The model picker names its rows one way: a CLI row that lands on a model the plugin knows takes
