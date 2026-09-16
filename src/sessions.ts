@@ -1385,7 +1385,7 @@ export function registerSessionRoutes(
   // SAFETY: the two symbol keys are this plugin's own, declared in dsh.ts; nothing else writes them.
   const g = globalThis as typeof globalThis & {
     [CLAUDE_UPDATERS]?: Map<string, ClaudeUpdater>;
-    [CLAUDE_UPDATE_TICK]?: ReturnType<typeof setInterval>;
+    [CLAUDE_UPDATE_TICK]?: { timer: ReturnType<typeof setInterval>; tick: () => Promise<void> };
   };
   const updaters = (g[CLAUDE_UPDATERS] ??= new Map<string, ClaudeUpdater>());
   /** The updater for `host` ("" for this box), built on first sight. */
@@ -1441,10 +1441,17 @@ export function registerSessionRoutes(
           .catch((e) => log("warn", `claude update on ${u.state().label}: ${errorText(e)}`));
     }
   };
-  if (boxOfSession && !g[CLAUDE_UPDATE_TICK]) {
-    setTimeout(() => void tick(), 60_000).unref?.();
-    g[CLAUDE_UPDATE_TICK] = setInterval(() => void tick(), 30 * 60_000);
-    g[CLAUDE_UPDATE_TICK].unref?.();
+  // The interval calls through the global, so a re-registration in one process (a re-mount after a
+  // config change) swaps in its own `tick`, with its own `command` and env, instead of the first one's.
+  if (boxOfSession) {
+    const held = g[CLAUDE_UPDATE_TICK];
+    if (held) held.tick = tick;
+    else {
+      setTimeout(() => void g[CLAUDE_UPDATE_TICK]?.tick(), 60_000).unref?.();
+      const timer = setInterval(() => void g[CLAUDE_UPDATE_TICK]?.tick(), 30 * 60_000);
+      timer.unref?.();
+      g[CLAUDE_UPDATE_TICK] = { timer, tick };
+    }
   }
   /** The box a request is about: the session's own mount when it named one, else this instance. */
   const boxOf = (url: URL): MountBox =>
@@ -2329,8 +2336,11 @@ export function registerSessionRoutes(
                 if (!box) return json(res, 404, { error: "no updater" });
                 const u = updaterFor(box.host, box.label);
                 if (req.method === "GET") {
+                  // A Boxes row (`host=`) never probes inside the request: the tick keeps every
+                  // saved box fresh, and a remote probe here would hold Settings open for it.
                   const stale = (u.state().checkedAt ?? 0) < Date.now() - 30 * 60_000;
-                  if (url.searchParams.get("now") === "1" || stale) await u.check();
+                  if (url.searchParams.get("now") === "1" || (stale && hostParam === null))
+                    await u.check();
                   return json(res, 200, { ...u.state(), switchedOff: await updatesOff() });
                 }
                 if (req.method === "POST") {

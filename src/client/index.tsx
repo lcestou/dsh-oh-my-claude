@@ -6488,6 +6488,7 @@ function ClaudeUpdateCard({
       .catch((e: Error) => fail(e.message));
   };
   const dismiss = () => {
+    onAct();
     if (phase === "idle")
       void fetch(url, {
         method: "POST",
@@ -6628,8 +6629,10 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
    *  installed, skipped or set to install on its own. */
   const [claudeUpdate, setClaudeUpdate] = useState<ClaudeUpdateCardData | null>(null);
   // Once the card has been clicked it owns its own life: the server answers null the moment
-  // `installed` moves, and the person still has to read what happened.
-  const actedRef = useRef(false);
+  // `installed` moves, and the person still has to read what happened. Holds the release acted
+  // on; the poll drops it when the server stops naming that release (installed, skipped) or names
+  // a newer one, so a dismissal cannot flicker back on the one poll that raced the skip.
+  const actedRef = useRef<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   // Only the newest card starts open; the rest fold to their header row, so a stack of answers costs
   // the composer one line each rather than a screen. A click flips a card either way.
@@ -6661,8 +6664,9 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
           const nextNeed = body.loginNeeded ?? null;
           setNeed((cur) => (sameNeed(cur, nextNeed) ? cur : nextNeed));
           const nextUpd = body.claudeUpdate ?? null;
+          if (nextUpd === null || nextUpd.latest !== actedRef.current) actedRef.current = null;
           setClaudeUpdate((cur) =>
-            actedRef.current ? cur : sameCard(cur, nextUpd) ? cur : nextUpd,
+            actedRef.current !== null ? cur : sameCard(cur, nextUpd) ? cur : nextUpd,
           );
         }
         // A fresh array every three seconds re-rendered the dock in every conversation forever,
@@ -6744,12 +6748,9 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
           update={claudeUpdate}
           sessionId={sessionId}
           onAct={() => {
-            actedRef.current = true;
+            actedRef.current = claudeUpdate.latest;
           }}
-          onGone={() => {
-            actedRef.current = false;
-            setClaudeUpdate(null);
-          }}
+          onGone={() => setClaudeUpdate(null)}
         />
       )}
       {loginCard && (
