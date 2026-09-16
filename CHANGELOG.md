@@ -8,6 +8,14 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- The ✻ button comes up the moment a Claude model is picked on a new session, instead of on the
+  first keystroke in the composer.
+- The model picker names its rows one way: a CLI row that lands on a model the plugin knows takes
+  that model's name ("Claude Opus 5 (1M context)" rather than "Opus (1M context)" above a second
+  "Claude Opus 5"), and carries the CLI's own blurb under it. The CLI's lineup is kept on disk per
+  box, so a fresh dsh-web lists the same rows before any session has run there, rather than a
+  lineup without the 1M variants that showed a session's raw model id in the composer seat.
+
 - The Boxes rows in Settings keep their buttons centred on the row and beside the text: a row with
   three buttons (Log out, Update, Remove) wraps its status line at a separator instead of dropping
   the buttons under it, and the status dot stays on the first line.

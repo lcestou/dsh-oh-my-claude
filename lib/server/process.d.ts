@@ -434,6 +434,8 @@ export interface CliModel {
     value: string;
     resolvedModel: string;
     displayName: string;
+    /** The CLI picker's one-line blurb ("Opus 5 with 1M context · Best for everyday, complex tasks"). */
+    description?: string;
     efforts: string[];
 }
 /** A `list_models` answer: what `claude --model` accepts for this login, aliases included. */

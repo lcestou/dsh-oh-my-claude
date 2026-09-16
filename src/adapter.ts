@@ -562,13 +562,27 @@ type EffortCaps = { supported?: boolean } & Partial<
   Record<(typeof EFFORTS_ALL)[number], EffortLevelCaps>
 >;
 const EFFORTS_45 = ["low", "medium", "high"];
-const M = (id: string, label: string, contextWindow: number, efforts: readonly string[]) => ({
-  provider: "claude-code",
-  id,
-  name: label,
-  contextWindow,
-  efforts,
-});
+/** One picker row. `description` is dsh's own optional field, drawn under the name; only the CLI's
+ *  rows carry one, and a row without one has no key, since dsh validates the shape it is given. */
+interface CatalogModel {
+  provider: string;
+  id: string;
+  name: string;
+  contextWindow: number;
+  efforts: readonly string[];
+  description?: string;
+}
+const M = (
+  id: string,
+  label: string,
+  contextWindow: number,
+  efforts: readonly string[],
+  description?: string,
+): CatalogModel => {
+  const row: CatalogModel = { provider: "claude-code", id, name: label, contextWindow, efforts };
+  if (description !== undefined) row.description = description;
+  return row;
+};
 
 // The floor a brand-new box falls back to when the Models API is unreachable and no catalog has
 // ever been cached to disk yet. Once a fetch succeeds its result is persisted and seeds later boots,
@@ -790,7 +804,18 @@ export function mergeCatalog(
     // id, so both states offer the same ids; `default` and a `[1m]` variant have none to take.
     const stable =
       c.value === "default" || c.resolvedModel.endsWith("[1m]") ? undefined : known?.id;
-    return { row: M(stable ?? c.value, c.displayName, window, c.efforts), match: c.resolvedModel };
+    // The CLI names its rows for a terminal picker that shows nothing else ("Opus (1M context)",
+    // "Fable", "Sonnet"), and the known rows that follow here read "Claude Opus 5"; two spellings
+    // in one menu read as two lineups (owner, 2026-09-16). A row landing on a known model takes
+    // that model's name, with the window named the way the CLI names it; Default keeps its own.
+    const label =
+      c.value === "default" || known === undefined
+        ? c.displayName
+        : `${known.name}${c.resolvedModel.endsWith("[1m]") ? " (1M context)" : ""}`;
+    return {
+      row: M(stable ?? c.value, label, window, c.efforts, c.description),
+      match: c.resolvedModel,
+    };
   });
   // A known model follows unless a CLI row already carries its exact id. A `[1m]` variant or the
   // `default` alias resolving to it keeps its own id, so it does not cover the plain one: a session
@@ -852,13 +877,15 @@ export async function getCatalog(fetchImpl = fetch, cli: CliModel[] = [], picker
 }
 
 /** The provider-scoped half of a model entry; every Claude model takes text and images. */
-function modelInfo(provider: string, model: { id?: string; name?: string }) {
-  return {
+function modelInfo(provider: string, model: { id?: string; name?: string; description?: string }) {
+  const info: LlmModelInfo = {
     provider,
     id: model.id ?? "",
     name: model.name ?? "",
     inputModalities: ["text", "image"] as const,
   };
+  if (model.description !== undefined) info.description = model.description;
+  return info;
 }
 
 /** Exact model metadata. `id` must echo the requested id: dsh-llm normalizeModelInfo rejects mismatches. */
@@ -2029,6 +2056,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         : `Oh My Claude (${this.providerId.slice("claude-code".length).slice(1)})`);
     this.settingsNs = `llm-${this.providerId}`;
     this.stateDir = stateDir(this.providerId);
+    this.cliSeed = this.seedCliModels();
     // With the switch on the CLI runs against the mirror, so `claudeHome` — the path every read in
     // this plugin resolves against — is the mirror too: its settings and login are the real files,
     // read through their links, and only `projects/` is the plugin's own. It needs `stateDir`,
@@ -2182,6 +2210,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       throw new Error(
         `not logged in on ${this.config.sshHost || hostname()}. Log in under Settings, Oh My Claude, Boxes`,
       );
+    await this.cliSeed;
     const models = await getCatalog(undefined, this.cliModels, await this.pickerSettings());
     return models.map((m) => modelInfo(provider, m));
   }
@@ -2882,6 +2911,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    * and known models in place.
    */
   cliModelsAt = 0;
+  /** The disk seed, awaited by the first listing so a boot never answers from the floor by a race. */
+  private cliSeed: Promise<void>;
   async refreshCliModels(proc: ClaudeProcess): Promise<boolean> {
     if (Date.now() - this.cliModelsAt < CATALOG_TTL_MS) return false;
     this.cliModelsAt = Date.now();
@@ -2893,7 +2924,36 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const models = decodeCliModels(reply.response);
     if (models.length === 0) return false;
     this.cliModels = models;
+    void this.persistCliModels(models);
     return true;
+  }
+  /**
+   * The CLI's lineup is kept on disk, per box, so a fresh dsh-web lists the same rows before any
+   * process has answered `list_models`. Without it the first listing lacks every `[1m]` alias, and
+   * dsh loads one catalog per host generation: a session bound to `claude-fable-5-1[1m]` then shows
+   * the raw id in the composer seat and stays that way until the page reloads.
+   */
+  private cliModelsPath() {
+    return join(this.stateDir, "cli-models.json");
+  }
+  private async persistCliModels(models: CliModel[]) {
+    try {
+      await mkdir(this.stateDir, { recursive: true });
+      await writeFile(this.cliModelsPath(), JSON.stringify(models));
+    } catch {
+      /* read-only state dir or full disk: the live answer still served this boot */
+    }
+  }
+  /** Seed from the last answer, unless a process has already answered this boot. */
+  async seedCliModels() {
+    try {
+      const rows = decodeCliModels({
+        models: JSON.parse(await readFile(this.cliModelsPath(), "utf8")),
+      });
+      if (rows.length > 0 && this.cliModels.length === 0) this.cliModels = rows;
+    } catch {
+      /* no cache yet or unreadable: the API and known models answer until a process does */
+    }
   }
 
   /** Get the current model catalog for advisor selection. */

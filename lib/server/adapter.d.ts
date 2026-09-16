@@ -269,20 +269,18 @@ type EffortLevelCaps = {
 type EffortCaps = {
     supported?: boolean;
 } & Partial<Record<(typeof EFFORTS_ALL)[number], EffortLevelCaps>>;
-declare const M: (id: string, label: string, contextWindow: number, efforts: readonly string[]) => {
+/** One picker row. `description` is dsh's own optional field, drawn under the name; only the CLI's
+ *  rows carry one, and a row without one has no key, since dsh validates the shape it is given. */
+interface CatalogModel {
     provider: string;
     id: string;
     name: string;
     contextWindow: number;
     efforts: readonly string[];
-};
-export declare const KNOWN_MODELS: {
-    provider: string;
-    id: string;
-    name: string;
-    contextWindow: number;
-    efforts: readonly string[];
-}[];
+    description?: string;
+}
+declare const M: (id: string, label: string, contextWindow: number, efforts: readonly string[], description?: string) => CatalogModel;
+export declare const KNOWN_MODELS: CatalogModel[];
 /**
  * The Models API dates some ids (`claude-haiku-4-5-20251001`) and leaves others alone
  * (`claude-opus-5`), while the list above and the CLI's own picker use the undated form. The CLI
@@ -317,20 +315,8 @@ export declare function modelFromApi(m: {
 /** Record what a session answered. A missing or nonsense figure leaves the last good one standing. */
 export declare const noteLiveWindow: (modelId: string | undefined, maxTokens: number | undefined) => void;
 export declare const liveWindowFor: (modelId: string) => number | undefined;
-export declare function mergeCatalog(cli: CliModel[], base: ReturnType<typeof M>[], picker?: PickerSettings): {
-    provider: string;
-    id: string;
-    name: string;
-    contextWindow: number;
-    efforts: readonly string[];
-}[];
-export declare function getCatalog(fetchImpl?: typeof fetch, cli?: CliModel[], picker?: PickerSettings): Promise<{
-    provider: string;
-    id: string;
-    name: string;
-    contextWindow: number;
-    efforts: readonly string[];
-}[]>;
+export declare function mergeCatalog(cli: CliModel[], base: ReturnType<typeof M>[], picker?: PickerSettings): CatalogModel[];
+export declare function getCatalog(fetchImpl?: typeof fetch, cli?: CliModel[], picker?: PickerSettings): Promise<CatalogModel[]>;
 /** Exact model metadata. `id` must echo the requested id: dsh-llm normalizeModelInfo rejects mismatches. */
 export declare function resolveModelInfo(provider: string, modelId: string, models?: ReturnType<typeof M>[]): LlmResolvedModelInfo;
 /** Deterministic UUID for a dsh session id, so a reopened dsh session resumes the same Claude session. */
@@ -764,12 +750,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     /** A box without a login lists nothing: dsh's catalog drops a provider whose listing throws into
      *  its "could not load" row with a Retry, which is the honest picker for a box no turn can use.
      *  The row names the fix; Retry after the login brings the models back. */
-    listModels(provider: string): Promise<{
-        provider: string;
-        id: string;
-        name: string;
-        inputModalities: readonly ["text", "image"];
-    }[]>;
+    listModels(provider: string): Promise<LlmModelInfo[]>;
     /** After a `result` frame: remember a login failure for the card, and name the box's providers
      *  logged out so the picker stops offering them; a turn that succeeded clears both. */
     noteTurnLogin(sessionId: string, result: ResultFrame): void;
@@ -931,7 +912,19 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * and known models in place.
      */
     cliModelsAt: number;
+    /** The disk seed, awaited by the first listing so a boot never answers from the floor by a race. */
+    private cliSeed;
     refreshCliModels(proc: ClaudeProcess): Promise<boolean>;
+    /**
+     * The CLI's lineup is kept on disk, per box, so a fresh dsh-web lists the same rows before any
+     * process has answered `list_models`. Without it the first listing lacks every `[1m]` alias, and
+     * dsh loads one catalog per host generation: a session bound to `claude-fable-5-1[1m]` then shows
+     * the raw id in the composer seat and stays that way until the page reloads.
+     */
+    private cliModelsPath;
+    private persistCliModels;
+    /** Seed from the last answer, unless a process has already answered this boot. */
+    seedCliModels(): Promise<void>;
     /** Get the current model catalog for advisor selection. */
     getAdvisorModels(): Promise<Array<{
         id: string;

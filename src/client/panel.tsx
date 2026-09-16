@@ -20,6 +20,7 @@ import {
   matchesQuery,
   activeClaudeSession,
   claudeProviderOf,
+  useActiveClaude,
   boxQuery,
   boxParam,
   type ClientCtx,
@@ -3285,7 +3286,9 @@ function AsidesBody({ sessionId }: { sessionId: string }) {
  * dialog whose body is each legacy control's dialog content, moved verbatim into a body component.
  */
 export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").RestoreButtonProps) {
-  const isMine = activeClaudeSession(ctx) === sessionId;
+  // Subscribed, not read: the button must come up on the picker change itself, and this slot is
+  // not re-rendered for one (see useActiveClaude).
+  const isMine = useActiveClaude(ctx, sessionId);
   // `open` is what is mounted, `shown` is what the transition draws. A close flips `shown` first
   // and unmounts a duration later, so the panel fades out instead of blinking away.
   const [open, setOpen] = useState(false);

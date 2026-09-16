@@ -4160,26 +4160,48 @@ console.log("interrupt-on-abort ok");
       displayName: "Default",
       efforts: ["low", "high"],
     },
-    { value: "sonnet", resolvedModel: "claude-sonnet-5", displayName: "Sonnet", efforts: [] },
+    {
+      value: "sonnet",
+      resolvedModel: "claude-sonnet-5",
+      displayName: "Sonnet",
+      description: "Sonnet 5 · Efficient for routine tasks",
+      efforts: [],
+    },
     {
       value: "haiku",
       resolvedModel: "claude-haiku-4-5-20251001",
       displayName: "Haiku",
       efforts: [],
     },
+    {
+      value: "opus[1m]",
+      resolvedModel: "claude-opus-5[1m]",
+      displayName: "Opus (1M context)",
+      efforts: [],
+    },
+    { value: "custom", resolvedModel: "claude-next-9", displayName: "Next", efforts: [] },
   ];
   const merged = mergeCatalog(cli, KNOWN_MODELS);
   assert.deepEqual(
-    merged.slice(0, 3).map((m) => [m.id, m.name, m.contextWindow, m.efforts]),
+    merged.slice(0, 5).map((m) => [m.id, m.name, m.contextWindow, m.efforts]),
     [
       ["default", "Default", 1_000_000, ["low", "high"]],
-      ["claude-sonnet-5", "Sonnet", 1_000_000, []],
-      ["claude-haiku-4-5", "Haiku", 200_000, []],
+      ["claude-sonnet-5", "Claude Sonnet 5", 1_000_000, []],
+      ["claude-haiku-4-5", "Claude Haiku 4.5", 200_000, []],
+      ["opus[1m]", "Claude Opus 5 (1M context)", 1_000_000, []],
+      ["custom", "Next", 200_000, []],
     ],
-    "an alias landing on a known model takes that model's id, so the lineup is the same set " +
-      "whether or not the CLI has answered yet",
+    "an alias landing on a known model takes that model's id and name, so the lineup is one set " +
+      "and one spelling whether or not the CLI has answered yet; Default and an unknown row keep " +
+      "the CLI's own label",
   );
-  const rest = merged.slice(3).map((m) => m.id);
+  assert.equal(
+    merged[1]?.description,
+    "Sonnet 5 · Efficient for routine tasks",
+    "the CLI's blurb rides along for dsh's picker to draw under the name",
+  );
+  assert.ok(!("description" in merged[2]!), "no blurb, no key: dsh validates the shape");
+  const rest = merged.slice(5).map((m) => m.id);
   assert.ok(
     rest.includes("claude-opus-5"),
     "default resolves to the 1M variant and keeps the id `default`, so the plain id stays for " +
@@ -4294,6 +4316,15 @@ console.log("interrupt-on-abort ok");
   assert.equal(first?.id, "opus[1m]");
   const prepared = await adapter.prepareCall("claude-code", "opus[1m]");
   assert.equal(prepared.model.context?.contextWindow, 1_000_000);
+  // The answer is kept per box: a fresh adapter lists the same row before any process answers.
+  await new Promise((r) => setTimeout(r, 20));
+  const fresh = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  assert.equal(
+    (await fresh.listModels("claude-code"))[0]?.id,
+    "opus[1m]",
+    "the CLI lineup seeds the next boot from disk",
+  );
+  assert.equal(fresh.cliModelsAt, 0, "a seed is not an answer: the first process is still asked");
   console.log("cli-models ok");
 }
 
