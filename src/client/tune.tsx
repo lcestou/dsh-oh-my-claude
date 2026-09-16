@@ -8,6 +8,7 @@ import {
   readJson,
   ROUTE,
   inputStyle,
+  btn,
   select,
   useNarrow,
   claudeProviderOf,
@@ -21,6 +22,7 @@ import {
 } from "../permissions.js";
 import { SCOPE_LABELS, type SettingsScopeInfo } from "./settings.js";
 import type { ToolMode, ToolModeInfo } from "../rows-probe.js";
+import type { ClaudeUpdateState } from "../claude-update.js";
 
 /** What the usage route answers about extra usage. */
 interface UsageReply {
@@ -327,6 +329,13 @@ export function TuneBody({
   const [toolMode, setToolMode] = useState<ToolModeInfo | null>(null);
   const [toolModeErr, setToolModeErr] = useState("");
   const [thinkErr, setThinkErr] = useState("");
+  // The Claude Code updater for this session's box: the switch, the history and Check now. The
+  // plugin holds it under its state dir, not settings.json: the CLI has no such key, and a
+  // headless claude never updates itself.
+  const [upd, setUpd] = useState<ClaudeUpdateState | null>(null);
+  const [updBusy, setUpdBusy] = useState(false);
+  const [updErr, setUpdErr] = useState("");
+  const [checkLine, setCheckLine] = useState("");
 
   useEffect(() => {
     let live = true;
@@ -346,6 +355,10 @@ export function TuneBody({
       .then((r) => readJson<{ tokens: number | null | undefined }>(r))
       .then((b) => live && setThinkBudget(b.tokens))
       .catch(() => {});
+    fetch(`${ROUTE}/claude-update?session=${encodeURIComponent(sessionId)}`)
+      .then((r) => readJson<ClaudeUpdateState>(r))
+      .then((s) => live && setUpd(s))
+      .catch((e: Error) => live && setUpdErr(e.message));
     return () => {
       live = false;
     };
@@ -432,6 +445,47 @@ export function TuneBody({
     const failure = await apply((text) => updateSettings(text, key, value));
     if (failure) setError(failure);
   };
+
+  /** The updater route for this session's box; `extra` is `&now=1` for a forced refresh. */
+  const updateUrl = (extra = "") =>
+    `${ROUTE}/claude-update?session=${encodeURIComponent(sessionId)}${extra}`;
+  const postUpdate = async (body: { auto?: boolean; skip?: string; run?: true }) => {
+    setUpdBusy(true);
+    setUpdErr("");
+    try {
+      const r = await fetch(updateUrl(), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      setUpd(await readJson<ClaudeUpdateState>(r));
+    } catch (e) {
+      setUpdErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setUpdBusy(false);
+    }
+  };
+  /** A refresh of installed and latest, never an install: the route reads the pointer on `now=1`. */
+  const checkNow = async () => {
+    setUpdBusy(true);
+    setUpdErr("");
+    setCheckLine("");
+    try {
+      const s = await readJson<ClaudeUpdateState>(await fetch(updateUrl("&now=1")));
+      setUpd(s);
+      setCheckLine(
+        s.latest
+          ? `Installed ${s.installed ?? "unknown"}, newest ${s.latest}`
+          : "Could not reach downloads.claude.ai",
+      );
+    } catch (e) {
+      setUpdErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setUpdBusy(false);
+    }
+  };
+  const updWhere = upd && upd.host ? upd.label : "this box";
+  const history = (upd?.log ?? []).slice(-10).toReversed();
 
   /** Ride the control-request seam the CLI's own thinking hotkey uses: it lands on the running
    *  session at once, so there is no file to re-read and no next-spawn wait. Needs a live process. */
@@ -978,6 +1032,82 @@ export function TuneBody({
           </span>
         </>
       ) : null}
+
+      {/* Updates: the plugin's own rows except the channel, which is a settings.json key the CLI's
+          own updater reads too. A headless claude never updates itself, so the checks and the
+          card's switch live here. */}
+      <span data-omc-updates="" style={{ ...meta, padding: "10px 4px 2px", whiteSpace: "normal" }}>
+        Updates on {updWhere}. Headless Claude Code never updates itself; this dsh checks every 30
+        minutes and offers the card, or installs on its own.
+      </span>
+      <div style={rowStyle}>
+        <span style={labelStyle}>Release channel</span>
+        <div style={controlStyle}>
+          <select
+            value={settings.autoUpdatesChannel ?? ""}
+            disabled={busy}
+            aria-label="Release channel"
+            onChange={(e) => void write("autoUpdatesChannel", e.target.value || undefined)}
+            style={{
+              ...select,
+              flex: narrow ? "1 1 auto" : "0 0 auto",
+              minWidth: narrow ? 0 : 160,
+            }}
+          >
+            <option value="">Default (latest)</option>
+            <option value="latest">Latest</option>
+            <option value="stable">Stable, about a week behind</option>
+            <option value="rc">Release candidate</option>
+          </select>
+        </div>
+        <span style={sourceStyle}>{source(settings.autoUpdatesChannel !== undefined)}</span>
+        <span style={{ ...meta, flexBasis: "100%", whiteSpace: "normal" }}>
+          Which releases the update card offers. Stable skips releases with known regressions.
+        </span>
+      </div>
+      <div style={rowStyle} data-omc-update-auto="">
+        <span style={labelStyle}>Update on its own</span>
+        <div style={controlStyle}>
+          <input
+            type="checkbox"
+            checked={upd?.auto === true}
+            disabled={upd === null || upd.off !== undefined || updBusy}
+            aria-label="Update on its own"
+            onChange={(e) => void postUpdate({ auto: e.target.checked })}
+          />
+        </div>
+        <span style={sourceStyle}>plugin state</span>
+        <span style={{ ...meta, flexBasis: "100%", whiteSpace: "normal" }}>
+          {upd?.off
+            ? `Off: ${upd.off} is set.`
+            : "Install a new release as soon as this dsh sees one, without the card. Sessions already running finish on their version."}
+        </span>
+      </div>
+      <div style={rowStyle} data-omc-update-history="">
+        <span style={labelStyle}>History</span>
+        <div style={controlStyle}>
+          <button
+            type="button"
+            style={btn}
+            disabled={upd === null || updBusy}
+            onClick={() => void checkNow()}
+          >
+            Check now
+          </button>
+          {checkLine ? <span style={meta}>{checkLine}</span> : null}
+        </div>
+        <ul style={{ listStyle: "none", margin: 0, padding: 0, flexBasis: "100%", fontSize: 12 }}>
+          {history.length === 0 ? <li style={meta}>No updates from here yet.</li> : null}
+          {history.map((e) => (
+            <li key={e.at} style={{ color: e.ok ? T.text : T.err }}>
+              {e.to ?? "?"} from {e.from ?? "?"} · {new Date(e.at).toLocaleString()} ·{" "}
+              {e.by === "button" ? "you" : "automatic"}
+              {!e.ok && e.note ? ` · ${e.note}` : ""}
+            </li>
+          ))}
+        </ul>
+        {updErr ? <span style={errText}>{updErr}</span> : null}
+      </div>
 
       <PermissionsBlock
         file={file}

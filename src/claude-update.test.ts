@@ -284,8 +284,11 @@ assert.equal(lastLine("x".repeat(300), undefined)?.length, 200);
   const p1 = u.runUpdate("button");
   const p2 = u.runUpdate("auto");
   assert.equal(p1 === p2, true, "concurrent calls share the same promise");
-  await Promise.resolve();
-  assert.equal(u.state().busy, true);
+  assert.equal(
+    u.state().busy,
+    true,
+    "busy before the first await, so a GET right after the POST sees it",
+  );
   const entry = await p1;
   assert.equal(u.state().busy, false);
   assert.equal(u.state().installed, "2.1.274");

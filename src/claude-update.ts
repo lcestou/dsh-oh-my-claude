@@ -366,7 +366,11 @@ export class ClaudeUpdater {
 
   /** Run `claude update` on the box; a second caller while one runs gets the same promise. */
   runUpdate(by: "button" | "auto"): Promise<ClaudeUpdateEntry> {
-    this.running ??= this.runOnce(by).finally(() => {
+    if (this.running) return this.running;
+    // `busy` flips before the first await: the POST route answers `state()` right after calling
+    // this, and the card's first GET must not read the previous entry as this run's outcome.
+    this.stateValue = { ...this.stateValue, busy: true };
+    this.running = this.runOnce(by).finally(() => {
       this.running = undefined;
     });
     return this.running;
@@ -374,7 +378,6 @@ export class ClaudeUpdater {
 
   private async runOnce(by: "button" | "auto"): Promise<ClaudeUpdateEntry> {
     await this.loadPromise;
-    this.stateValue = { ...this.stateValue, busy: true };
     try {
       const from = this.stateValue.installed;
       const r = await this.opts.exec(["update"], 180_000);
