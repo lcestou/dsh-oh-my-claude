@@ -434,6 +434,9 @@ export declare function attachmentNotes(turns: LooseMessage[], images: readonly 
 export declare function accessModeOf(messages: LooseMessage[] | undefined): string | undefined;
 /** The CLI's permission mode for a turn: the configured one, or the one dsh's access mode maps to. */
 export declare function permissionModeFor(config: Schemastery.TypeT<typeof Config>, accessMode: string | undefined): string;
+/** Forget what was probed on `host` ("" for this box): after `claude update` there, the flag set
+ *  and the denials belong to a binary that is gone, and the next spawn probes the new one. */
+export declare function forgetCliProbe(host: string): void;
 /** The flag in `error: unknown option '--x'`, however the CLI wrapped the line. */
 export declare function unknownFlagIn(text: string): string | undefined;
 /** Record a flag the target's CLI refused. False when it was already known bad, which is what stops

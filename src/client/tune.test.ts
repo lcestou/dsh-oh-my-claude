@@ -170,6 +170,25 @@ import { isFable, noTrailers, readTunables, updateSettings } from "./tune.js";
   assert.equal(isFable(true), false, "a boolean is no model id");
 }
 
+// The release channel takes the CLI's three values, and Default removes the key.
+{
+  assert.equal(readTunables('{"autoUpdatesChannel":"stable"}').autoUpdatesChannel, "stable");
+  assert.equal(readTunables('{"autoUpdatesChannel":"rc"}').autoUpdatesChannel, "rc");
+  assert.equal(readTunables('{"autoUpdatesChannel":"nightly"}').autoUpdatesChannel, undefined);
+  assert.equal(readTunables('{"autoUpdatesChannel":true}').autoUpdatesChannel, undefined);
+  const set = updateSettings("{}", "autoUpdatesChannel", "stable");
+  assert.equal(set.error, undefined);
+  assert.equal(JSON.parse(set.text).autoUpdatesChannel, "stable");
+  const cleared = updateSettings(
+    '{"autoUpdatesChannel":"stable","other":1}',
+    "autoUpdatesChannel",
+    undefined,
+  );
+  assert.equal(cleared.error, undefined);
+  assert.ok(!("autoUpdatesChannel" in JSON.parse(cleared.text)), "key removed, not nulled");
+  assert.equal(JSON.parse(cleared.text).other, 1);
+}
+
 console.log("tune ok");
 
 /** The written document, or the refusal as a thrown error: every block below expects a write. */

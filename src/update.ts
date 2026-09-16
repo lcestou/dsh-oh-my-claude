@@ -8,7 +8,7 @@ const REGISTRY = "https://registry.npmjs.org";
 
 /** `a` and `b` as `[major, minor, patch]`; anything after a `-` (a prerelease tag) ranks below the
  *  same numbers without one, and a string that is not a version compares as nothing. */
-function parse(v: string): [number, number, number, boolean] | undefined {
+export function parse(v: string): [number, number, number, boolean] | undefined {
   const m = /^v?(\d+)\.(\d+)\.(\d+)(-[0-9A-Za-z.-]+)?$/.exec(v.trim());
   if (!m) return undefined;
   return [Number(m[1]), Number(m[2]), Number(m[3]), m[4] !== undefined];

@@ -73,6 +73,7 @@ import {
 } from "./shared.js";
 import { themeOf, hexToRgb, type ThemeGroup } from "./theme.js";
 import { PluginUpdateBadge } from "./update-pill.js";
+import { isNewer } from "../update.js";
 import { ReportBlock } from "./report.js";
 import { Spark, sparkNode } from "./spark.js";
 import { AccessShield, OhMyClaudeControl } from "./panel.js";
@@ -2040,6 +2041,9 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
                   onAct={() => logout("")}
                 />
               )}
+              {me.binary && (
+                <BoxUpdateButton host="" label="this box" disabled={busy} onDone={refresh} />
+              )}
             </>
           }
         >
@@ -2101,6 +2105,9 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
                     disabled={busy}
                     onAct={() => logout(b.host)}
                   />
+                )}
+                {up && st.binary && (
+                  <BoxUpdateButton host={b.host} label={b.name} disabled={busy} onDone={refresh} />
                 )}
                 <ConfirmButton
                   label="Remove"
@@ -5919,6 +5926,36 @@ function UpdateNoticeSwitch() {
   );
 }
 
+/** The settings switch for the whole Claude Code update feature. The flag lives in the box's hints
+ *  store and the server reads it before every check: off means no pointer read, no card and no
+ *  install, on every box; the Tune rows keep showing the history. */
+function ClaudeUpdateSwitch() {
+  const [off, setOff] = useHintFlag("claudeUpdateOff");
+  return (
+    <div
+      data-omc-claude-update-switch=""
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
+        fontSize: 13,
+        marginBottom: 12,
+      }}
+    >
+      <div>
+        <div>Claude Code updates</div>
+        <div style={{ color: T.faint, fontSize: 12 }}>
+          The card above the composer when a newer Claude Code is out for a session's box, the
+          half-hourly check behind it, and Update on its own under Tune. Off means no check and no
+          card.
+        </div>
+      </div>
+      <Switch on={!off} onChange={(next) => setOff(!next)} label="Claude Code updates" />
+    </div>
+  );
+}
+
 /** The settings switch for remembering which Claude model a workspace last ran. */
 function WorkspaceModelSwitch() {
   const [off, setOff] = useHintFlag("workspaceModelOff");
@@ -6217,6 +6254,114 @@ interface AsideItem {
  * CLI returns off the transcript. Pending cards read as thinking; each is dismissed on its own. The
  * server keeps only the last few per session, so the list stays short.
  */
+/** The updater's answer as the Boxes rows read it: the two versions, whether a run is on, its log. */
+interface BoxUpdateState {
+  installed: string | null;
+  latest?: string;
+  busy: boolean;
+  log: Array<{ ok: boolean; to: string | null; note?: string }>;
+}
+
+/** The Update button on a Boxes row, beside Log out, for a box the server sees behind: the same
+ *  run the card above the composer starts, from Settings, so a box with no session open (an ssh
+ *  box someone else uses) can still be brought up to date from here. Reads the box's state once on
+ *  mount, shows nothing while the box is current, and follows a run through the GET every 3 s. */
+function BoxUpdateButton({
+  host,
+  label,
+  disabled,
+  onDone,
+}: {
+  host: string;
+  label: string;
+  disabled: boolean;
+  /** A run landed: the row's version pill comes from the status probe, so the caller re-probes. */
+  onDone: () => void;
+}) {
+  const [state, setState] = useState<BoxUpdateState | null>(null);
+  const [phase, setPhase] = useState<"idle" | "busy" | "done" | "declined" | "failed">("idle");
+  const [note, setNote] = useState("");
+  const url = `${ROUTE}/claude-update?host=${encodeURIComponent(host)}`;
+  useEffect(() => {
+    let live = true;
+    fetch(url)
+      .then((r) => readJson<BoxUpdateState>(r))
+      .then((s) => live && setState(s))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [url]);
+  useEffect(() => {
+    if (phase !== "busy") return;
+    let live = true;
+    const startedAt = Date.now();
+    const tick = async () => {
+      try {
+        const s = await readJson<BoxUpdateState>(await fetch(url));
+        if (!live) return;
+        if (s.busy) {
+          if (Date.now() - startedAt > 200_000) {
+            setNote("No answer from this dsh in 200 s.");
+            setPhase("failed");
+          }
+          return;
+        }
+        const last = s.log[s.log.length - 1];
+        setState(s);
+        setNote(last?.note ?? "");
+        setPhase(!last ? "failed" : last.ok ? "done" : last.to !== null ? "declined" : "failed");
+        if (last?.ok) onDone();
+      } catch {
+        // a missed poll is retried on the next tick
+      }
+    };
+    const id = setInterval(() => void tick(), 3000);
+    return () => {
+      live = false;
+      clearInterval(id);
+    };
+  }, [phase, url, onDone]);
+  if (!state || !state.latest || !state.installed || !isNewer(state.installed, state.latest))
+    return null;
+  const run = () => {
+    setPhase("busy");
+    void fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ run: true }),
+    }).catch((e: Error) => {
+      setNote(e.message);
+      setPhase("failed");
+    });
+  };
+  const text =
+    phase === "busy"
+      ? "Updating…"
+      : phase === "done"
+        ? `Updated to ${state.installed}`
+        : phase === "declined"
+          ? "Not updated"
+          : phase === "failed"
+            ? "Retry update"
+            : `Update to ${state.latest}`;
+  return (
+    <button
+      type="button"
+      style={btn}
+      data-omc-box-update={host || "this-box"}
+      data-omc-update-phase={phase}
+      disabled={disabled || phase === "busy" || phase === "done" || phase === "declined"}
+      aria-busy={phase === "busy" ? "true" : undefined}
+      aria-label={`${text}: run claude update on ${label}`}
+      title={note || `Run claude update on ${label}`}
+      onClick={run}
+    >
+      {text}
+    </button>
+  );
+}
+
 /** Mirrors the server's LoginNeed: the box the failed turn ran on (empty for this box) and its name. */
 interface LoginNeed {
   host: string;
@@ -6224,6 +6369,21 @@ interface LoginNeed {
 }
 const sameNeed = (a: LoginNeed | null, b: LoginNeed | null): boolean =>
   a === b || (a !== null && b !== null && a.host === b.host && a.label === b.label);
+
+/** Mirrors the server's `ClaudeUpdateCard`: the box a session runs on and the two versions. */
+interface ClaudeUpdateCardData {
+  host: string;
+  label: string;
+  installed: string;
+  latest: string;
+}
+const sameCard = (a: ClaudeUpdateCardData | null, b: ClaudeUpdateCardData | null): boolean =>
+  a === b ||
+  (a !== null &&
+    b !== null &&
+    a.host === b.host &&
+    a.installed === b.installed &&
+    a.latest === b.latest);
 
 /** The card above the composer after a turn failed for want of a login on its box: the same login
  *  the Boxes row runs, here so nobody has to find Settings. It only ever follows a failed turn, so a
@@ -6282,6 +6442,179 @@ function LoginCard({ need, onDismiss }: { need: LoginNeed; onDismiss: () => void
   );
 }
 
+/** One run of `claude update` as the GET answers it in the box's log. */
+interface UpdateOutcome {
+  ok: boolean;
+  from: string | null;
+  to: string | null;
+  note?: string;
+}
+
+/** The card above the composer when a newer Claude Code is out for the box this session runs on.
+ *  A headless claude never updates itself, so the button runs `claude update` there from dsh. The
+ *  POST answers at once and the card follows the run through the GET every 3 s, since a request
+ *  held open for the download would be cut by the reverse proxy this box is reached through. Once
+ *  clicked the card owns its own life until ×: the dock's poll would otherwise take it down the
+ *  moment `installed` moves, before anyone has read what happened. */
+function ClaudeUpdateCard({
+  update,
+  sessionId,
+  onAct,
+  onGone,
+}: {
+  update: ClaudeUpdateCardData;
+  sessionId: string;
+  onAct: () => void;
+  onGone: () => void;
+}) {
+  const [phase, setPhase] = useState<"idle" | "busy" | "done" | "declined" | "failed">("idle");
+  const [outcome, setOutcome] = useState<UpdateOutcome | null>(null);
+  const where = update.host ? update.label : "this box";
+  const Where = update.host ? update.label : "This box";
+  const url = `${ROUTE}/claude-update?session=${encodeURIComponent(sessionId)}`;
+  const fail = (note: string) => {
+    setOutcome({ ok: false, from: update.installed, to: null, note });
+    setPhase("failed");
+  };
+  const start = (body: { run: true; auto?: true }) => {
+    onAct();
+    setPhase("busy");
+    void fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    })
+      .then((r) => readJson<{ busy: boolean }>(r))
+      .catch((e: Error) => fail(e.message));
+  };
+  const dismiss = () => {
+    onAct();
+    if (phase === "idle")
+      void fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ skip: update.latest }),
+      }).catch(() => {});
+    onGone();
+  };
+  // Follow the run: the GET until `busy` is false, then the newest log entry is the outcome.
+  useEffect(() => {
+    if (phase !== "busy") return;
+    let live = true;
+    const startedAt = Date.now();
+    const tick = async () => {
+      try {
+        const s = await readJson<{ busy: boolean; log: UpdateOutcome[] }>(await fetch(url));
+        if (!live) return;
+        if (s.busy) {
+          if (Date.now() - startedAt > 200_000) fail("No answer from this dsh in 200 s.");
+          return;
+        }
+        const last = s.log[s.log.length - 1];
+        if (!last) return fail("No run was recorded.");
+        setOutcome(last);
+        setPhase(last.ok ? "done" : last.to !== null && last.note ? "declined" : "failed");
+      } catch {
+        // a missed poll is retried on the next tick
+      }
+    };
+    const id = setInterval(() => void tick(), 3000);
+    return () => {
+      live = false;
+      clearInterval(id);
+    };
+  }, [phase, url]);
+  const text =
+    phase === "done"
+      ? `Updated ${where} to ${outcome?.to ?? update.latest}. New sessions there use it; ones already running finish on ${update.installed}.`
+      : phase === "declined"
+        ? `Claude Code declined: ${outcome?.note ?? "no reason given"}`
+        : phase === "failed"
+          ? `Update failed: ${outcome?.note ?? "no answer"}`
+          : `Claude Code ${update.latest} is out. ${Where} runs ${update.installed}.`;
+  const label =
+    phase === "busy"
+      ? "Updating…"
+      : phase === "done"
+        ? "Updated"
+        : phase === "declined"
+          ? "Not updated"
+          : phase === "failed"
+            ? "Retry"
+            : "Update";
+  return (
+    <div
+      data-omc-update-card={update.latest}
+      data-omc-update-phase={phase}
+      role="status"
+      style={{
+        boxSizing: "border-box",
+        background: "var(--dsw-specific-tip, var(--dsw-alias-bg-base, transparent))",
+        border: "0.5px solid var(--dsw-alias-border-l1, rgba(217,119,87,.4))",
+        borderRadius: "12px 12px 0 0",
+        padding: "8px 10px",
+        fontSize: 13,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <Spark size={14} />
+        <span
+          style={{
+            flex: 1,
+            color: phase === "failed" ? T.err : phase === "declined" ? T.faint : undefined,
+          }}
+        >
+          {text}
+        </span>
+        <button
+          type="button"
+          style={btn}
+          data-testid="dsh-oh-my-claude-card-update"
+          disabled={phase === "busy" || phase === "done" || phase === "declined"}
+          aria-busy={phase === "busy" ? "true" : undefined}
+          onClick={() => start({ run: true })}
+        >
+          {label}
+        </button>
+        {phase === "idle" && (
+          <button
+            type="button"
+            aria-label="Update on its own from now on"
+            title="Install every new release without asking, from now on"
+            onClick={() => start({ run: true, auto: true })}
+            style={{
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+              padding: "0 2px",
+              color: T.faint,
+              textDecoration: "underline",
+              fontSize: 12,
+            }}
+          >
+            Always update
+          </button>
+        )}
+        <button
+          type="button"
+          aria-label={phase === "idle" ? "Dismiss until the next release" : "Close"}
+          title={phase === "idle" ? "Dismiss until the next release" : "Close"}
+          onClick={dismiss}
+          style={{
+            background: "none",
+            border: "none",
+            cursor: "pointer",
+            padding: "0 2px",
+            color: T.faint,
+          }}
+        >
+          ×
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   const [items, setItems] = useState<AsideItem[]>([]);
   // What the poll compares its answer against, without listing `items` as a dependency of its effect.
@@ -6292,6 +6625,14 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
    *  clears it on the server. Dismissal is this tab's alone. */
   const [need, setNeed] = useState<LoginNeed | null>(null);
   const [needDismissed, setNeedDismissed] = useState<string | null>(null);
+  /** A newer Claude Code for the box this session runs on, from the same poll; null once it is
+   *  installed, skipped or set to install on its own. */
+  const [claudeUpdate, setClaudeUpdate] = useState<ClaudeUpdateCardData | null>(null);
+  // Once the card has been clicked it owns its own life: the server answers null the moment
+  // `installed` moves, and the person still has to read what happened. Holds the release acted
+  // on; the poll drops it when the server stops naming that release (installed, skipped) or names
+  // a newer one, so a dismissal cannot flicker back on the one poll that raced the skip.
+  const actedRef = useRef<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   // Only the newest card starts open; the rest fold to their header row, so a stack of answers costs
   // the composer one line each rather than a screen. A click flips a card either way.
@@ -6312,12 +6653,21 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
         if (!r.ok) return;
         // SAFETY: our own JSON route; the union names both shapes the caller checks.
         const body = (await r.json()) as
-          | { items: AsideItem[]; loginNeeded?: LoginNeed | null }
+          | {
+              items: AsideItem[];
+              loginNeeded?: LoginNeed | null;
+              claudeUpdate?: ClaudeUpdateCardData | null;
+            }
           | { error: string };
         if ("error" in body) return;
         if (alive) {
           const nextNeed = body.loginNeeded ?? null;
           setNeed((cur) => (sameNeed(cur, nextNeed) ? cur : nextNeed));
+          const nextUpd = body.claudeUpdate ?? null;
+          if (nextUpd === null || nextUpd.latest !== actedRef.current) actedRef.current = null;
+          setClaudeUpdate((cur) =>
+            actedRef.current !== null ? cur : sameCard(cur, nextUpd) ? cur : nextUpd,
+          );
         }
         // A fresh array every three seconds re-rendered the dock in every conversation forever,
         // answer or no answer; only a list that actually moved is worth a render.
@@ -6353,7 +6703,7 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
   // which only exist for a Claude session, so an empty list is the only reason to hide it. Reading
   // the provider binding at render blinked the card out whenever the binding reloaded.
   const loginCard = need && needDismissed !== need.host ? need : null;
-  if (shown.length === 0 && !loginCard) return null;
+  if (shown.length === 0 && !loginCard && !claudeUpdate) return null;
 
   const dismissAside = (id: string) => {
     // Hide now, but tell the server to drop it so the next poll (or a remount) does not bring it back.
@@ -6393,6 +6743,16 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
 
   return (
     <div {...{ [DOCK_ATTR]: "1" }} style={DOCK_CARD}>
+      {claudeUpdate && (
+        <ClaudeUpdateCard
+          update={claudeUpdate}
+          sessionId={sessionId}
+          onAct={() => {
+            actedRef.current = claudeUpdate.latest;
+          }}
+          onGone={() => setClaudeUpdate(null)}
+        />
+      )}
       {loginCard && (
         <LoginCard need={loginCard} onDismiss={() => setNeedDismissed(loginCard.host)} />
       )}
@@ -6736,6 +7096,7 @@ export function apply(ctx: ClientCtx) {
         <ThemeSwitch />
         <StarterSwitch />
         <UpdateNoticeSwitch />
+        <ClaudeUpdateSwitch />
         <WorkspaceModelSwitch />
         {/* The three switches that start off sit together at the end, so the card reads as what the
             plugin does by default first, then what you can add to it. */}
