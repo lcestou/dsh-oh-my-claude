@@ -443,11 +443,20 @@ function Card({ id, title, summary, actions, open, onToggle, children }: CardPro
           }}
         >
           {actions && (
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, paddingTop: 10 }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "flex-end",
+                alignItems: "center",
+                gap: 8,
+                // The same air above the button as below it, where the first row's hairline sits.
+                padding: "12px 0",
+              }}
+            >
               {actions}
             </div>
           )}
-          <div style={{ marginTop: actions ? 4 : 10 }}>{children}</div>
+          <div style={{ marginTop: actions ? 0 : 10 }}>{children}</div>
         </div>
       )}
     </section>
@@ -1536,9 +1545,17 @@ function BoxRow({
   children?: ReactNode;
 }) {
   const dot = tone === "ok" ? T.ok : tone === "err" ? T.err : T.faint;
+  // The actions sit centred on the two-line block (title, status), not hung from its top line; a
+  // row with a note or an open login form below keeps them at the top, beside the part they act on.
+  const tall = Boolean(note || children);
   return (
-    <div data-testid={testId} style={{ ...row, alignItems: "flex-start", flexWrap: "wrap" }}>
-      <div style={{ flex: "1 1 260px", minWidth: 0 }}>
+    <div
+      data-testid={testId}
+      style={{ ...row, alignItems: tall ? "flex-start" : "center", flexWrap: "wrap", rowGap: 8 }}
+    >
+      {/* The text column gives way first: three buttons beside a wrapped status line beat three
+          buttons on a line of their own under an unbroken one. */}
+      <div style={{ flex: "1 1 160px", minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 8, minWidth: 0 }}>
           <span style={{ color: T.text, fontWeight: 600, fontSize: 13 }}>{title}</span>
           {kind && (
@@ -1560,7 +1577,7 @@ function BoxRow({
             ...meta,
             marginTop: 3,
             display: "flex",
-            alignItems: "center",
+            alignItems: "flex-start",
             gap: 6,
             whiteSpace: "normal",
             lineHeight: "18px",
@@ -1570,19 +1587,38 @@ function BoxRow({
             <span
               aria-hidden="true"
               style={{
-                width: 7,
-                height: 7,
+                width: 8,
+                height: 8,
                 borderRadius: "50%",
                 background: dot,
                 flex: "0 0 auto",
+                // Centred on the first 18 px line, and staying there when the facts wrap.
+                marginTop: 5,
               }}
             />
           )}
-          <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>
+          {/* A fact never breaks inside itself ("Claude Code 2.1.273" stays one piece); a narrow
+              row wraps between facts, at a dot. */}
+          <span style={{ minWidth: 0 }}>
             {facts.map((f, i) => (
               <span key={i}>
+                {/* The space after the dot is the one place the line may break. */}
                 {i > 0 && <span style={{ margin: "0 6px", opacity: 0.6 }}>·</span>}
-                {f}
+                {i > 0 && " "}
+                {/* A fact wider than the whole column gets an ellipsis rather than running under
+                    the buttons. */}
+                <span
+                  style={{
+                    whiteSpace: "nowrap",
+                    display: "inline-block",
+                    maxWidth: "100%",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    verticalAlign: "bottom",
+                  }}
+                >
+                  {f}
+                </span>
               </span>
             ))}
           </span>
@@ -1593,7 +1629,17 @@ function BoxRow({
         {children}
       </div>
       {actions && (
-        <div style={{ display: "flex", gap: 6, flex: "0 0 auto", alignSelf: "flex-start" }}>
+        <div
+          style={{
+            display: "flex",
+            gap: 6,
+            flex: "0 1 auto",
+            flexWrap: "wrap",
+            justifyContent: "flex-end",
+            alignSelf: tall ? "flex-start" : "center",
+            marginLeft: "auto",
+          }}
+        >
           {actions}
         </div>
       )}
@@ -2476,7 +2522,7 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
           </div>
         </>
       ) : (
-        <div style={{ ...row, flexWrap: "wrap", paddingTop: 12 }}>
+        <div style={{ ...row, flexWrap: "wrap" }}>
           <p style={{ ...meta, whiteSpace: "normal", flex: "1 1 220px", margin: 0 }}>
             An ssh box shows up in the model picker; a linked dsh shows its sessions in the archive.
           </p>
@@ -2492,14 +2538,14 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
         aria-disabled={ssh.length === 0}
         style={{
           borderTop: `1px solid ${T.border}`,
-          marginTop: 12,
+          // No margin of its own: the row above already keeps 12 px to this line.
           paddingTop: 12,
           opacity: ssh.length > 0 ? 1 : 0.45,
           transition: "opacity 120ms ease",
         }}
       >
         <h3 style={h3}>Remote workspaces</h3>
-        <p style={{ margin: "2px 0 4px", color: T.muted, fontSize: 13 }}>
+        <p style={{ margin: "2px 0 12px", color: T.muted, fontSize: 13 }}>
           A folder on an ssh box, pinned as a workspace. Sessions there run that box's Claude on its
           files; nothing is copied.
         </p>
@@ -2526,7 +2572,7 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
             }
           />
         ))}
-        <div style={{ ...row, flexWrap: "wrap", paddingTop: 4 }}>
+        <div style={{ ...row, flexWrap: "wrap" }}>
           <p style={{ ...meta, whiteSpace: "normal", flex: "1 1 220px", margin: 0 }}>
             {canAdd
               ? "Add one from the sidebar's Add workspace button: it browses whichever box you pick."
@@ -3378,7 +3424,7 @@ const ensureTurnStatusStyle = () => {
   // clearance, which leaves its pills 653px in a 717px column. dsh's two fill that; ours as a
   // third clips all three to an ellipsis by a few pixels. The pills are centred, so the padding
   // does no aligning; take it down to the row's rounded corners and the three fit.
-  styleEl.textContent = `${gated("row", '[role="status"][aria-live="polite"]')},${gated("row", "[data-dsh-oh-my-claude-turn]", false)}{background-image:var(--omc-row-bg,linear-gradient(90deg,var(--omc-accent) 0%,var(--omc-accent) 40%,var(--omc-shimmer) 50%,var(--omc-accent) 60%,var(--omc-accent) 100%))}@keyframes omc-word{from{-webkit-text-fill-color:var(--omc-word-lo)}to{-webkit-text-fill-color:var(--omc-word-hi)}}[data-omc-turn-word]{animation:omc-word 1s ease-in-out 3s infinite alternate}@media (prefers-reduced-motion:reduce){[data-omc-turn-word]{animation:none}}[data-dsh-oh-my-claude-turn]>span[aria-hidden]{display:inline-block;width:1.3em;text-align:start;flex:none}[data-dsh-oh-my-claude-turn]{max-width:100%;min-width:0}[data-omc-turn-detail]{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}${gated("panel", "[data-omc-login-card] button:hover", false)},${gated("panel", "[data-omc-login-card] button:focus-visible", false)}{color:var(--omc-accent);border-color:var(--omc-accent)}${controlStatesCss("[data-omc-settings]")}${controlStatesCss('[role="dialog"][aria-label="Oh My Claude"]')}[data-omc-card]:hover{border-color:var(--dsw-alias-label-dimmed,rgba(128,128,128,.5))}[data-omc-card]>button:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#3b82f6);outline-offset:-2px}[data-omc-card]>button:hover{background:none}@keyframes omc-sheen{from{background-position:200% 0}to{background-position:-200% 0}}[data-omc-skeleton]{border-radius:6px;background:linear-gradient(90deg,${T.border} 30%,${T.hover} 50%,${T.border} 70%);background-size:200% 100%;animation:omc-sheen 1.4s linear infinite}@keyframes omc-rise{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}[data-omc-arrived]{animation:omc-rise .18s ease-out}@media (prefers-reduced-motion:reduce){[data-omc-skeleton],[data-omc-arrived]{animation:none}}${gated("prose", '[role="tablist"]>[role="tab"][aria-selected="true"]')}{color:var(--omc-accent)}${gated("prose", '[role="tablist"]>[role="tab"][aria-selected="true"]::after')}{background:var(--omc-accent)}${gated("prose", '[class*="_markdown"] blockquote')}{border-left-color:color-mix(in srgb,var(--omc-accent) 50.2%,transparent)}${gated("prose", '[class*="_markdown"] hr')}{background:color-mix(in srgb,var(--omc-accent) 34.9%,transparent)}${gated("prose", '[class*="_markdown"] a')}{color:var(--omc-accent);text-decoration-color:color-mix(in srgb,var(--omc-accent) 40%,transparent)}${gated("prose", '[class*="_markdown"] a:hover')}{color:var(--omc-shimmer);text-decoration-color:var(--omc-shimmer)}${gated("prose", '[class*="_markdown"] input[type="checkbox"]')}{accent-color:var(--omc-accent)}${gated("prose", "[data-workflow-run] button[data-member-status] [data-member-label]")}{color:var(--omc-accent)}body[data-omc-panel-open] [data-width-handle]{pointer-events:none}body[data-omc-panel-open] [class*="_toBottomSlot"],body:has([data-omc-cost-dialog]) [class*="_toBottomSlot"]{opacity:0;pointer-events:none;transition:opacity .1s}@keyframes omc-pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--omc-accent) 55%,transparent)}100%{box-shadow:0 0 0 12px transparent}}${gated("panel", 'button[aria-label="Oh My Claude"][data-omc-pulse]', false)}{animation:omc-pulse 1.1s ease-out 3}@media (prefers-reduced-motion:reduce){button[aria-label="Oh My Claude"][data-omc-pulse]{animation:none}}${gated("prose", "[data-produced-files-row] button")}{color:var(--omc-accent)}${gated("prose", "[data-produced-files-row] button:hover")}{color:var(--omc-shimmer)}body[data-omc-claude] [data-composer-stats]{padding-left:8px;padding-right:8px}${gated("prose", '[class*="_optionLine"]>[class*="_badge"]')}{background:color-mix(in srgb,var(--omc-accent) 16%,transparent);color:var(--omc-accent)}[data-omc-cost-over]{color:var(--omc-accent)}${gated("row", 'svg[data-state="ongoing"]')}{--dsh-state-ongoing:var(--omc-accent)}${RAINBOW_CSS}${COST_DIALOG_CSS}`;
+  styleEl.textContent = `${gated("row", '[role="status"][aria-live="polite"]')},${gated("row", "[data-dsh-oh-my-claude-turn]", false)}{background-image:var(--omc-row-bg,linear-gradient(90deg,var(--omc-accent) 0%,var(--omc-accent) 40%,var(--omc-shimmer) 50%,var(--omc-accent) 60%,var(--omc-accent) 100%))}@keyframes omc-word{from{-webkit-text-fill-color:var(--omc-word-lo)}to{-webkit-text-fill-color:var(--omc-word-hi)}}[data-omc-turn-word]{animation:omc-word 1s ease-in-out 3s infinite alternate}@media (prefers-reduced-motion:reduce){[data-omc-turn-word]{animation:none}}[data-dsh-oh-my-claude-turn]>span[aria-hidden]{display:inline-block;width:1.3em;text-align:start;flex:none}[data-dsh-oh-my-claude-turn]{max-width:100%;min-width:0}[data-omc-turn-detail]{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}${gated("panel", "[data-omc-login-card] button:hover", false)},${gated("panel", "[data-omc-login-card] button:focus-visible", false)},${gated("panel", "[data-omc-update-card] button:not(:disabled):hover", false)},${gated("panel", "[data-omc-update-card] button:focus-visible", false)}{color:var(--omc-accent)!important;border-color:var(--omc-accent)!important}${controlStatesCss("[data-omc-settings]")}${controlStatesCss('[role="dialog"][aria-label="Oh My Claude"]')}${/* !important: the buttons carry their border inline (`btn`), which beats any sheet rule. */ ""}${gated("panel", '[data-omc-settings] button:not([role="switch"]):not([aria-expanded]):not(:disabled):hover', false)},${gated("panel", '[data-omc-settings] button:not([role="switch"]):not([aria-expanded]):focus-visible', false)},${gated("panel", '[role="dialog"][aria-label="Oh My Claude"] button:not([role="switch"]):not([aria-expanded]):not(:disabled):hover', false)},${gated("panel", '[role="dialog"][aria-label="Oh My Claude"] button:not([role="switch"]):not([aria-expanded]):focus-visible', false)}{color:var(--omc-accent)!important;border-color:var(--omc-accent)!important}[data-omc-card]:hover{border-color:var(--dsw-alias-label-dimmed,rgba(128,128,128,.5))}[data-omc-card]>button:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#3b82f6);outline-offset:-2px}[data-omc-card]>button:hover{background:none}@keyframes omc-sheen{from{background-position:200% 0}to{background-position:-200% 0}}[data-omc-skeleton]{border-radius:6px;background:linear-gradient(90deg,${T.border} 30%,${T.hover} 50%,${T.border} 70%);background-size:200% 100%;animation:omc-sheen 1.4s linear infinite}@keyframes omc-rise{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}[data-omc-arrived]{animation:omc-rise .18s ease-out}@media (prefers-reduced-motion:reduce){[data-omc-skeleton],[data-omc-arrived]{animation:none}}${gated("prose", '[role="tablist"]>[role="tab"][aria-selected="true"]')}{color:var(--omc-accent)}${gated("prose", '[role="tablist"]>[role="tab"][aria-selected="true"]::after')}{background:var(--omc-accent)}${gated("prose", '[class*="_markdown"] blockquote')}{border-left-color:color-mix(in srgb,var(--omc-accent) 50.2%,transparent)}${gated("prose", '[class*="_markdown"] hr')}{background:color-mix(in srgb,var(--omc-accent) 34.9%,transparent)}${gated("prose", '[class*="_markdown"] a')}{color:var(--omc-accent);text-decoration-color:color-mix(in srgb,var(--omc-accent) 40%,transparent)}${gated("prose", '[class*="_markdown"] a:hover')}{color:var(--omc-shimmer);text-decoration-color:var(--omc-shimmer)}${gated("prose", '[class*="_markdown"] input[type="checkbox"]')}{accent-color:var(--omc-accent)}${gated("prose", "[data-workflow-run] button[data-member-status] [data-member-label]")}{color:var(--omc-accent)}body[data-omc-panel-open] [data-width-handle]{pointer-events:none}body[data-omc-panel-open] [class*="_toBottomSlot"],body:has([data-omc-cost-dialog]) [class*="_toBottomSlot"]{opacity:0;pointer-events:none;transition:opacity .1s}@keyframes omc-pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--omc-accent) 55%,transparent)}100%{box-shadow:0 0 0 12px transparent}}${gated("panel", 'button[aria-label="Oh My Claude"][data-omc-pulse]', false)}{animation:omc-pulse 1.1s ease-out 3}@media (prefers-reduced-motion:reduce){button[aria-label="Oh My Claude"][data-omc-pulse]{animation:none}}${gated("prose", "[data-produced-files-row] button")}{color:var(--omc-accent)}${gated("prose", "[data-produced-files-row] button:hover")}{color:var(--omc-shimmer)}body[data-omc-claude] [data-composer-stats]{padding-left:8px;padding-right:8px}${gated("prose", '[class*="_optionLine"]>[class*="_badge"]')}{background:color-mix(in srgb,var(--omc-accent) 16%,transparent);color:var(--omc-accent)}[data-omc-cost-over]{color:var(--omc-accent)}${gated("row", 'svg[data-state="ongoing"]')}{--dsh-state-ongoing:var(--omc-accent)}${RAINBOW_CSS}${COST_DIALOG_CSS}`;
   document.head.appendChild(styleEl);
 };
 

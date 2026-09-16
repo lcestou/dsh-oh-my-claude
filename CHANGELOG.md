@@ -6,6 +6,15 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Fixed
+
+- The Boxes rows in Settings keep their buttons centred on the row and beside the text: a row with
+  three buttons (Log out, Update, Remove) wraps its status line at a separator instead of dropping
+  the buttons under it, and the status dot stays on the first line.
+- Buttons in the Settings section and the ✻ panel take the accent colour on hover and focus, as
+  the login card's already did; the buttons carry their border inline, so no hover rule had ever
+  reached them.
+
 ### Added
 
 - A card above the composer when a newer Claude Code is out for the box a session runs on, with an
