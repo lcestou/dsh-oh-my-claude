@@ -1,3 +1,6 @@
+/** `a` and `b` as `[major, minor, patch]`; anything after a `-` (a prerelease tag) ranks below the
+ *  same numbers without one, and a string that is not a version compares as nothing. */
+export declare function parse(v: string): [number, number, number, boolean] | undefined;
 /** True when `latest` is a release after `current`. Unparseable input on either side is "no". */
 export declare function isNewer(current: string, latest: string): boolean;
 /** The profile the plugin is installed under, read off its own path: dsh installs plugins into

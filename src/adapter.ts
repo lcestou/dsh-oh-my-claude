@@ -1213,6 +1213,12 @@ const rowsSupported = (): Promise<RowsSupport> => (rowsProbe ??= probeRawToolRow
  * it printed is better evidence than the probe, so it is remembered and the flag is never sent to
  * that binary again. */
 const deniedFlags = new Map<string, Set<string>>();
+/** Forget what was probed on `host` ("" for this box): after `claude update` there, the flag set
+ *  and the denials belong to a binary that is gone, and the next spawn probes the new one. */
+export function forgetCliProbe(host: string): void {
+  for (const map of [cliProbes, deniedFlags])
+    for (const key of map.keys()) if (key.startsWith(`${host}::`)) map.delete(key);
+}
 /** Every flag buildArgs guards with supports(). An unprobed binary is assumed to have all of them;
  * this list is what "all of them" means once one has to be taken away. */
 const GUARDED_FLAGS = [
@@ -5727,6 +5733,11 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       },
       sideQuestions: adapter.sideQuestions,
       loginNeeded: adapter.loginNeeded,
+      boxOfSession: (sid) => {
+        const label = adapter.hostLabelFor(sid);
+        return { host: label ?? "", label: label ?? hostname() };
+      },
+      claudeUpdated: forgetCliProbe,
       loginDone: (host: string) => adapter.loginDone(host),
       logoutDone: (host: string) => adapter.logoutBox(host),
       liveCount: (host: string) => adapter.liveCount(host),

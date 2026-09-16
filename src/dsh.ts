@@ -10,6 +10,9 @@ export const ADAPTER_CURRENT = Symbol.for("dsh-oh-my-claude.adapter");
 export const RESUME_TIMER = Symbol.for("dsh-oh-my-claude.resume-timer");
 /** One interval per dsh process that puts loaded sessions' transcripts under watch. */
 export const WATCH_SWEEP = Symbol.for("dsh-oh-my-claude.watch-sweep");
+/** One map per dsh process of Claude Code updaters by box host, and the timer that ticks them. */
+export const CLAUDE_UPDATERS = Symbol.for("dsh-oh-my-claude.claude-updaters");
+export const CLAUDE_UPDATE_TICK = Symbol.for("dsh-oh-my-claude.claude-update-tick");
 /** Symbol for the Claude process registry on globalThis (adopted processes across hot reloads). */
 export const PROCESS_REGISTRY = Symbol.for("dsh-oh-my-claude.processes");
 /** Per-session turn accounting on globalThis: the route registered at boot must read the buffer a hot-reloaded adapter fills. */

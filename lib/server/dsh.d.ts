@@ -5,6 +5,9 @@ export declare const ADAPTER_CURRENT: unique symbol;
 export declare const RESUME_TIMER: unique symbol;
 /** One interval per dsh process that puts loaded sessions' transcripts under watch. */
 export declare const WATCH_SWEEP: unique symbol;
+/** One map per dsh process of Claude Code updaters by box host, and the timer that ticks them. */
+export declare const CLAUDE_UPDATERS: unique symbol;
+export declare const CLAUDE_UPDATE_TICK: unique symbol;
 /** Symbol for the Claude process registry on globalThis (adopted processes across hot reloads). */
 export declare const PROCESS_REGISTRY: unique symbol;
 /** Per-session turn accounting on globalThis: the route registered at boot must read the buffer a hot-reloaded adapter fills. */

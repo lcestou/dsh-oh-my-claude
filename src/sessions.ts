@@ -29,6 +29,7 @@ import {
 } from "./transcript.js";
 import { shq, sshArgs } from "./process.js";
 import { isNewer, latestVersion, profileFromPath, updateCommand } from "./update.js";
+import { cardFor, ClaudeUpdater, newer, type Exec } from "./claude-update.js";
 import {
   classifyReach,
   loginUrlIn,
@@ -63,7 +64,7 @@ import {
   type ScheduledTasksReply,
   type ScheduledTasksError,
 } from "./scheduled-tasks.js";
-import { asSessionId } from "./dsh.js";
+import { asSessionId, CLAUDE_UPDATERS, CLAUDE_UPDATE_TICK } from "./dsh.js";
 import { buildAddServer, isMcpName, scopeNeedsCwd } from "./mcp-add-remove.js";
 import { buildReport, type PrivateValues, type ReportInput } from "./report.js";
 import {
@@ -1256,6 +1257,10 @@ export interface SessionRouteOptions {
   sideQuestions?: Map<string, AsideEntry[]>;
   /** Sessions whose last turn failed for want of a login, read beside the asides for the card. */
   loginNeeded?: Map<string, LoginNeed>;
+  /** The box a session runs on, for the update card and the Tune rows: this box when `host` is empty. */
+  boxOfSession?: (sessionId: string) => { host: string; label: string };
+  /** A box's `claude` moved on: forget its flag probe so the next spawn reads the new binary. */
+  claudeUpdated?: (host: string) => void;
   /** A panel login on a box (this box when empty) succeeded: clear its cards, relist its models. */
   loginDone?: (host: string) => void;
   /** Log out on a box: kill its live Claude processes so nothing keeps answering on a gone login. */
@@ -1358,6 +1363,8 @@ export function registerSessionRoutes(
     permissionAsks,
     sideQuestions,
     loginNeeded,
+    boxOfSession,
+    claudeUpdated,
     loginDone,
     logoutDone,
     liveCount,
@@ -1372,6 +1379,66 @@ export function registerSessionRoutes(
     onLoginStatus,
   }: SessionRouteOptions,
 ): void {
+  // Claude Code updaters, one per box, on globalThis so a second registration in one process reuses
+  // them rather than a stale closure (the WATCH_SWEEP pattern in adapter.ts). A headless claude never
+  // updates itself; the tick below is the plugin standing in for the CLI's own terminal updater.
+  // SAFETY: the two symbol keys are this plugin's own, declared in dsh.ts; nothing else writes them.
+  const g = globalThis as typeof globalThis & {
+    [CLAUDE_UPDATERS]?: Map<string, ClaudeUpdater>;
+    [CLAUDE_UPDATE_TICK]?: ReturnType<typeof setInterval>;
+  };
+  const updaters = (g[CLAUDE_UPDATERS] ??= new Map<string, ClaudeUpdater>());
+  /** The updater for `host` ("" for this box), built on first sight. */
+  const updaterFor = (host: string, label: string): ClaudeUpdater => {
+    const have = updaters.get(host);
+    if (have) return have;
+    const cli = command ?? "claude";
+    const exec: Exec = host
+      ? (args, timeoutMs) =>
+          run(
+            "ssh",
+            sshArgs(host, `${shq(cli)} ${args.map(shq).join(" ")}`),
+            undefined,
+            undefined,
+            timeoutMs,
+          )
+      : (args, timeoutMs) => run(cli, args, cliEnvFor(configDir), undefined, timeoutMs);
+    const made = new ClaudeUpdater({
+      dir: STATE_DIR,
+      host,
+      label,
+      settingsPath: host ? undefined : settingsPath,
+      env: host ? {} : cliEnvFor(configDir),
+      exec,
+      onUpdated: claudeUpdated,
+    });
+    updaters.set(host, made);
+    return made;
+  };
+  /** Every box: this one plus each saved ssh box; a box removed in Settings drops out. */
+  const tick = async () => {
+    const boxes = sshBoxesPath ? await readSshBoxes(sshBoxesPath) : [];
+    const keep = new Set([""]);
+    updaterFor("", hostname());
+    for (const b of boxes) {
+      keep.add(b.host);
+      updaterFor(b.host, b.name);
+    }
+    for (const host of updaters.keys()) if (!keep.has(host)) updaters.delete(host);
+    for (const u of updaters.values()) {
+      const state = await u.check().catch(() => undefined);
+      // The one place an install starts without a click.
+      if (state && state.auto && newer(state) && !state.busy)
+        void u
+          .runUpdate("auto")
+          .catch((e) => log("warn", `claude update on ${u.state().label}: ${errorText(e)}`));
+    }
+  };
+  if (boxOfSession && !g[CLAUDE_UPDATE_TICK]) {
+    setTimeout(() => void tick(), 60_000).unref?.();
+    g[CLAUDE_UPDATE_TICK] = setInterval(() => void tick(), 30 * 60_000);
+    g[CLAUDE_UPDATE_TICK].unref?.();
+  }
   /** The box a request is about: the session's own mount when it named one, else this instance. */
   const boxOf = (url: URL): MountBox =>
     instanceFor?.(url.searchParams.get("provider")) ?? { configDir, command, sshHost };
@@ -2229,6 +2296,43 @@ export function registerSessionRoutes(
                   return json(res, 200, next);
                 }
               }
+              // The Claude Code updater for the box a session runs on: its state for the Tune rows,
+              // a refresh (`now=1`, never an install), the switch, a dismissal, and the button. The
+              // button answers at once with `busy: true` and the card follows through this GET: this
+              // dsh is reached through a reverse proxy from outside the box, and a request held open
+              // for a 230 MB download would be cut by its idle timeout.
+              if (url.pathname === `${ROUTE_PREFIX}/claude-update`) {
+                const sid = url.searchParams.get("session");
+                if (!sid) return json(res, 400, { error: "session param required" });
+                if (!boxOfSession) return json(res, 404, { error: "no updater" });
+                const box = boxOfSession(sid);
+                const u = updaterFor(box.host, box.label);
+                if (req.method === "GET") {
+                  const stale = (u.state().checkedAt ?? 0) < Date.now() - 30 * 60_000;
+                  if (url.searchParams.get("now") === "1" || stale) await u.check();
+                  return json(res, 200, u.state());
+                }
+                if (req.method === "POST") {
+                  const body = await readBody(req);
+                  let acted = false;
+                  if (typeof body.auto === "boolean") {
+                    await u.setAuto(body.auto);
+                    acted = true;
+                  }
+                  if (typeof body.skip === "string") {
+                    await u.skip(body.skip);
+                    acted = true;
+                  }
+                  if (body.run === true) {
+                    void u
+                      .runUpdate("button")
+                      .catch((e) => log("warn", `claude update on ${box.label}: ${errorText(e)}`));
+                    acted = true;
+                  }
+                  if (!acted) return json(res, 400, { error: "auto, skip or run required" });
+                  return json(res, 200, u.state());
+                }
+              }
               // The model a workspace last ran, written by the adapter at turn start and applied by
               // the client on a blank session; POST with a null or absent model forgets it.
               if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/workspace-model`) {
@@ -2307,7 +2411,12 @@ export function registerSessionRoutes(
                 const sid = url.searchParams.get("session");
                 if (!sid) return json(res, 400, { error: "session param required" });
                 const items: AsideEntry[] = sideQuestions?.get(sid) ?? [];
-                return json(res, 200, { items, loginNeeded: loginNeeded?.get(sid) ?? null });
+                const box = boxOfSession?.(sid);
+                return json(res, 200, {
+                  items,
+                  loginNeeded: loginNeeded?.get(sid) ?? null,
+                  claudeUpdate: box ? cardFor(updaters.get(box.host)?.state()) : null,
+                });
               }
               // Dismiss is server-side so a closed card stays closed: a client-only hide is lost on the
               // next remount and the entry, still in the ring, would poll back into view. It marks
