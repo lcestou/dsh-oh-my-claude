@@ -69,6 +69,8 @@ export type JsonDoc = { [key: string]: JsonValue };
 export type Route = {
   fetch(): Promise<Reply>;
   fulfill(how: { response?: Reply; json: JsonDoc }): Promise<void>;
+  /** The request being answered; a check on one URL for GET and POST reads the method. */
+  request(): { method(): string };
 };
 export type Reply = { json(): Promise<JsonDoc> };
 
