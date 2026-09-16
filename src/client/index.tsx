@@ -449,13 +449,14 @@ function Card({ id, title, summary, actions, open, onToggle, children }: CardPro
                 justifyContent: "flex-end",
                 alignItems: "center",
                 gap: 8,
-                paddingTop: 10,
+                // The same air above the button as below it, where the first row's hairline sits.
+                padding: "12px 0",
               }}
             >
               {actions}
             </div>
           )}
-          <div style={{ marginTop: actions ? 4 : 10 }}>{children}</div>
+          <div style={{ marginTop: actions ? 0 : 10 }}>{children}</div>
         </div>
       )}
     </section>
@@ -2508,7 +2509,7 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
           </div>
         </>
       ) : (
-        <div style={{ ...row, flexWrap: "wrap", paddingTop: 12 }}>
+        <div style={{ ...row, flexWrap: "wrap" }}>
           <p style={{ ...meta, whiteSpace: "normal", flex: "1 1 220px", margin: 0 }}>
             An ssh box shows up in the model picker; a linked dsh shows its sessions in the archive.
           </p>
@@ -2558,7 +2559,7 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
             }
           />
         ))}
-        <div style={{ ...row, flexWrap: "wrap", paddingTop: 4 }}>
+        <div style={{ ...row, flexWrap: "wrap" }}>
           <p style={{ ...meta, whiteSpace: "normal", flex: "1 1 220px", margin: 0 }}>
             {canAdd
               ? "Add one from the sidebar's Add workspace button: it browses whichever box you pick."
