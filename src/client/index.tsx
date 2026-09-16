@@ -5919,6 +5919,36 @@ function UpdateNoticeSwitch() {
   );
 }
 
+/** The settings switch for the whole Claude Code update feature. The flag lives in the box's hints
+ *  store and the server reads it before every check: off means no pointer read, no card and no
+ *  install, on every box; the Tune rows keep showing the history. */
+function ClaudeUpdateSwitch() {
+  const [off, setOff] = useHintFlag("claudeUpdateOff");
+  return (
+    <div
+      data-omc-claude-update-switch=""
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
+        fontSize: 13,
+        marginBottom: 12,
+      }}
+    >
+      <div>
+        <div>Claude Code updates</div>
+        <div style={{ color: T.faint, fontSize: 12 }}>
+          The card above the composer when a newer Claude Code is out for a session's box, the
+          half-hourly check behind it, and Update on its own under Tune. Off means no check and no
+          card.
+        </div>
+      </div>
+      <Switch on={!off} onChange={(next) => setOff(!next)} label="Claude Code updates" />
+    </div>
+  );
+}
+
 /** The settings switch for remembering which Claude model a workspace last ran. */
 function WorkspaceModelSwitch() {
   const [off, setOff] = useHintFlag("workspaceModelOff");
@@ -6950,6 +6980,7 @@ export function apply(ctx: ClientCtx) {
         <ThemeSwitch />
         <StarterSwitch />
         <UpdateNoticeSwitch />
+        <ClaudeUpdateSwitch />
         <WorkspaceModelSwitch />
         {/* The three switches that start off sit together at the end, so the card reads as what the
             plugin does by default first, then what you can add to it. */}

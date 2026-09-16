@@ -1415,8 +1415,15 @@ export function registerSessionRoutes(
     updaters.set(host, made);
     return made;
   };
+  /** The Settings switch for the whole feature (`claudeUpdateOff` in the hints store): off means
+   *  no check, no card and no install; the Tune rows still show the history. */
+  const updatesOff = async (): Promise<boolean> =>
+    sshBoxesPath
+      ? (await readHints(join(dirname(sshBoxesPath), "hints.json"))).claudeUpdateOff === true
+      : false;
   /** Every box: this one plus each saved ssh box; a box removed in Settings drops out. */
   const tick = async () => {
+    if (await updatesOff()) return;
     const boxes = sshBoxesPath ? await readSshBoxes(sshBoxesPath) : [];
     const keep = new Set([""]);
     updaterFor("", hostname());
@@ -2310,7 +2317,7 @@ export function registerSessionRoutes(
                 if (req.method === "GET") {
                   const stale = (u.state().checkedAt ?? 0) < Date.now() - 30 * 60_000;
                   if (url.searchParams.get("now") === "1" || stale) await u.check();
-                  return json(res, 200, u.state());
+                  return json(res, 200, { ...u.state(), switchedOff: await updatesOff() });
                 }
                 if (req.method === "POST") {
                   const body = await readBody(req);
@@ -2412,10 +2419,12 @@ export function registerSessionRoutes(
                 if (!sid) return json(res, 400, { error: "session param required" });
                 const items: AsideEntry[] = sideQuestions?.get(sid) ?? [];
                 const box = boxOfSession?.(sid);
+                // The hints file is read only while a card would show, not on every 3 s poll.
+                const card = box ? cardFor(updaters.get(box.host)?.state()) : null;
                 return json(res, 200, {
                   items,
                   loginNeeded: loginNeeded?.get(sid) ?? null,
-                  claudeUpdate: box ? cardFor(updaters.get(box.host)?.state()) : null,
+                  claudeUpdate: card && !(await updatesOff()) ? card : null,
                 });
               }
               // Dismiss is server-side so a closed card stays closed: a client-only hide is lost on the

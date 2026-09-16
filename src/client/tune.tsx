@@ -24,6 +24,9 @@ import { SCOPE_LABELS, type SettingsScopeInfo } from "./settings.js";
 import type { ToolMode, ToolModeInfo } from "../rows-probe.js";
 import type { ClaudeUpdateState } from "../claude-update.js";
 
+/** The GET's reply: the box's state plus whether the Settings switch has the feature off. */
+type UpdateReply = ClaudeUpdateState & { switchedOff?: boolean };
+
 /** What the usage route answers about extra usage. */
 interface UsageReply {
   extraUsage?: boolean;
@@ -332,7 +335,7 @@ export function TuneBody({
   // The Claude Code updater for this session's box: the switch, the history and Check now. The
   // plugin holds it under its state dir, not settings.json: the CLI has no such key, and a
   // headless claude never updates itself.
-  const [upd, setUpd] = useState<ClaudeUpdateState | null>(null);
+  const [upd, setUpd] = useState<UpdateReply | null>(null);
   const [updBusy, setUpdBusy] = useState(false);
   const [updErr, setUpdErr] = useState("");
   const [checkLine, setCheckLine] = useState("");
@@ -356,7 +359,7 @@ export function TuneBody({
       .then((b) => live && setThinkBudget(b.tokens))
       .catch(() => {});
     fetch(`${ROUTE}/claude-update?session=${encodeURIComponent(sessionId)}`)
-      .then((r) => readJson<ClaudeUpdateState>(r))
+      .then((r) => readJson<UpdateReply>(r))
       .then((s) => live && setUpd(s))
       .catch((e: Error) => live && setUpdErr(e.message));
     return () => {
@@ -458,7 +461,7 @@ export function TuneBody({
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
       });
-      setUpd(await readJson<ClaudeUpdateState>(r));
+      setUpd(await readJson<UpdateReply>(r));
     } catch (e) {
       setUpdErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -471,7 +474,7 @@ export function TuneBody({
     setUpdErr("");
     setCheckLine("");
     try {
-      const s = await readJson<ClaudeUpdateState>(await fetch(updateUrl("&now=1")));
+      const s = await readJson<UpdateReply>(await fetch(updateUrl("&now=1")));
       setUpd(s);
       setCheckLine(
         s.latest
@@ -1071,7 +1074,7 @@ export function TuneBody({
           <input
             type="checkbox"
             checked={upd?.auto === true}
-            disabled={upd === null || upd.off !== undefined || updBusy}
+            disabled={upd === null || upd.off !== undefined || upd.switchedOff === true || updBusy}
             aria-label="Update on its own"
             onChange={(e) => void postUpdate({ auto: e.target.checked })}
           />
@@ -1080,7 +1083,9 @@ export function TuneBody({
         <span style={{ ...meta, flexBasis: "100%", whiteSpace: "normal" }}>
           {upd?.off
             ? `Off: ${upd.off} is set.`
-            : "Install a new release as soon as this dsh sees one, without the card. Sessions already running finish on their version."}
+            : upd?.switchedOff
+              ? "Off: the Claude Code updates switch under Settings is off."
+              : "Install a new release as soon as this dsh sees one, without the card. Sessions already running finish on their version."}
         </span>
       </div>
       <div style={rowStyle} data-omc-update-history="">
