@@ -443,7 +443,15 @@ function Card({ id, title, summary, actions, open, onToggle, children }: CardPro
           }}
         >
           {actions && (
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, paddingTop: 10 }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "flex-end",
+                alignItems: "center",
+                gap: 8,
+                paddingTop: 10,
+              }}
+            >
               {actions}
             </div>
           )}
