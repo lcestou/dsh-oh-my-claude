@@ -1536,9 +1536,17 @@ function BoxRow({
   children?: ReactNode;
 }) {
   const dot = tone === "ok" ? T.ok : tone === "err" ? T.err : T.faint;
+  // The actions sit centred on the two-line block (title, status), not hung from its top line; a
+  // row with a note or an open login form below keeps them at the top, beside the part they act on.
+  const tall = Boolean(note || children);
   return (
-    <div data-testid={testId} style={{ ...row, alignItems: "flex-start", flexWrap: "wrap" }}>
-      <div style={{ flex: "1 1 260px", minWidth: 0 }}>
+    <div
+      data-testid={testId}
+      style={{ ...row, alignItems: tall ? "flex-start" : "center", flexWrap: "wrap", rowGap: 8 }}
+    >
+      {/* The text column gives way first: three buttons beside a wrapped status line beat three
+          buttons on a line of their own under an unbroken one. */}
+      <div style={{ flex: "1 1 160px", minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 8, minWidth: 0 }}>
           <span style={{ color: T.text, fontWeight: 600, fontSize: 13 }}>{title}</span>
           {kind && (
@@ -1560,7 +1568,7 @@ function BoxRow({
             ...meta,
             marginTop: 3,
             display: "flex",
-            alignItems: "center",
+            alignItems: "flex-start",
             gap: 6,
             whiteSpace: "normal",
             lineHeight: "18px",
@@ -1575,14 +1583,20 @@ function BoxRow({
                 borderRadius: "50%",
                 background: dot,
                 flex: "0 0 auto",
+                // Centred on the first line, and staying there when the facts wrap.
+                marginTop: 5.5,
               }}
             />
           )}
-          <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>
+          {/* A fact never breaks inside itself ("Claude Code 2.1.273" stays one piece); a narrow
+              row wraps between facts, at a dot. */}
+          <span style={{ minWidth: 0 }}>
             {facts.map((f, i) => (
               <span key={i}>
+                {/* The space after the dot is the one place the line may break. */}
                 {i > 0 && <span style={{ margin: "0 6px", opacity: 0.6 }}>·</span>}
-                {f}
+                {i > 0 && " "}
+                <span style={{ whiteSpace: "nowrap" }}>{f}</span>
               </span>
             ))}
           </span>
@@ -1593,7 +1607,17 @@ function BoxRow({
         {children}
       </div>
       {actions && (
-        <div style={{ display: "flex", gap: 6, flex: "0 0 auto", alignSelf: "flex-start" }}>
+        <div
+          style={{
+            display: "flex",
+            gap: 6,
+            flex: "0 1 auto",
+            flexWrap: "wrap",
+            justifyContent: "flex-end",
+            alignSelf: tall ? "flex-start" : "center",
+            marginLeft: "auto",
+          }}
+        >
           {actions}
         </div>
       )}
