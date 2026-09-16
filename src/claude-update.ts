@@ -233,7 +233,9 @@ let updatesChain = Promise.resolve();
  * `recursive: true` when it does not exist yet.
  */
 export function writeUpdates(dir: string, key: string, data: ClaudeUpdates): Promise<void> {
-  updatesChain = updatesChain.then(async () => {
+  // The caller sees a failed write; the chain does not, or one full disk would fail every write
+  // after it (the `holdsChain` idiom in state.ts).
+  const write = updatesChain.then(async () => {
     const file: ClaudeUpdatesFile = {};
     // Other boxes' records are carried across unread; `readUpdates` checks a record when it is
     // asked for, so a malformed one costs its own box, not the file.
@@ -249,7 +251,8 @@ export function writeUpdates(dir: string, key: string, data: ClaudeUpdates): Pro
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, "claude-updates.json"), JSON.stringify(file, null, 2) + "\n");
   });
-  return updatesChain;
+  updatesChain = write.catch(() => {});
+  return write;
 }
 
 /** True when `state` has a newer release available and neither disable knob is on. */

@@ -165,6 +165,13 @@ assert.equal(lastLine("x".repeat(300), undefined)?.length, 200);
 
   await writeFile(join(dir, "claude-updates.json"), "[]");
   assert.deepEqual(await readUpdates(dir, "this-box"), { log: [] });
+
+  // A write that fails rejects its caller and leaves the chain usable: `dir` is a file here.
+  const blocked = join(dir, "not-a-dir");
+  await writeFile(blocked, "x");
+  await assert.rejects(writeUpdates(blocked, "this-box", { log: [e1] }));
+  await writeUpdates(dir, "after", { log: [e1] });
+  assert.deepEqual(await readUpdates(dir, "after"), { log: [e1] });
 }
 
 // G. newer / cardFor: baseline, undefined state, off knob, no latest, null installed, same version, skipped, auto.
