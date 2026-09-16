@@ -2041,7 +2041,9 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
                   onAct={() => logout("")}
                 />
               )}
-              {me.binary && <BoxUpdateButton host="" label="this box" disabled={busy} />}
+              {me.binary && (
+                <BoxUpdateButton host="" label="this box" disabled={busy} onDone={refresh} />
+              )}
             </>
           }
         >
@@ -2105,7 +2107,7 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
                   />
                 )}
                 {up && st.binary && (
-                  <BoxUpdateButton host={b.host} label={b.name} disabled={busy} />
+                  <BoxUpdateButton host={b.host} label={b.name} disabled={busy} onDone={refresh} />
                 )}
                 <ConfirmButton
                   label="Remove"
@@ -6268,10 +6270,13 @@ function BoxUpdateButton({
   host,
   label,
   disabled,
+  onDone,
 }: {
   host: string;
   label: string;
   disabled: boolean;
+  /** A run landed: the row's version pill comes from the status probe, so the caller re-probes. */
+  onDone: () => void;
 }) {
   const [state, setState] = useState<BoxUpdateState | null>(null);
   const [phase, setPhase] = useState<"idle" | "busy" | "done" | "declined" | "failed">("idle");
@@ -6306,6 +6311,7 @@ function BoxUpdateButton({
         setState(s);
         setNote(last?.note ?? "");
         setPhase(!last ? "failed" : last.ok ? "done" : last.to !== null ? "declined" : "failed");
+        if (last?.ok) onDone();
       } catch {
         // a missed poll is retried on the next tick
       }
@@ -6315,7 +6321,7 @@ function BoxUpdateButton({
       live = false;
       clearInterval(id);
     };
-  }, [phase, url]);
+  }, [phase, url, onDone]);
   if (!state || !state.latest || !state.installed || !isNewer(state.installed, state.latest))
     return null;
   const run = () => {
