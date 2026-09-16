@@ -2309,10 +2309,24 @@ export function registerSessionRoutes(
               // dsh is reached through a reverse proxy from outside the box, and a request held open
               // for a 230 MB download would be cut by its idle timeout.
               if (url.pathname === `${ROUTE_PREFIX}/claude-update`) {
+                // A session names its box; the Boxes rows in Settings name a host outright ("" for
+                // this box), so a box no session is open on can still be updated from there.
+                const hostParam = url.searchParams.get("host");
                 const sid = url.searchParams.get("session");
-                if (!sid) return json(res, 400, { error: "session param required" });
-                if (!boxOfSession) return json(res, 404, { error: "no updater" });
-                const box = boxOfSession(sid);
+                const saved =
+                  hostParam && sshBoxesPath
+                    ? (await readSshBoxes(sshBoxesPath)).find((b) => b.host === hostParam)
+                    : undefined;
+                if (hostParam && !saved) return json(res, 404, { error: "no such box" });
+                if (hostParam === null && !sid)
+                  return json(res, 400, { error: "session or host param required" });
+                const box =
+                  hostParam !== null
+                    ? { host: hostParam, label: saved?.name ?? hostname() }
+                    : sid && boxOfSession
+                      ? boxOfSession(sid)
+                      : undefined;
+                if (!box) return json(res, 404, { error: "no updater" });
                 const u = updaterFor(box.host, box.label);
                 if (req.method === "GET") {
                   const stale = (u.state().checkedAt ?? 0) < Date.now() - 30 * 60_000;

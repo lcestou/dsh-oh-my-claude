@@ -73,6 +73,7 @@ import {
 } from "./shared.js";
 import { themeOf, hexToRgb, type ThemeGroup } from "./theme.js";
 import { PluginUpdateBadge } from "./update-pill.js";
+import { isNewer } from "../update.js";
 import { ReportBlock } from "./report.js";
 import { Spark, sparkNode } from "./spark.js";
 import { AccessShield, OhMyClaudeControl } from "./panel.js";
@@ -2040,6 +2041,7 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
                   onAct={() => logout("")}
                 />
               )}
+              {me.binary && <BoxUpdateButton host="" label="this box" disabled={busy} />}
             </>
           }
         >
@@ -2101,6 +2103,9 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
                     disabled={busy}
                     onAct={() => logout(b.host)}
                   />
+                )}
+                {up && st.binary && (
+                  <BoxUpdateButton host={b.host} label={b.name} disabled={busy} />
                 )}
                 <ConfirmButton
                   label="Remove"
@@ -6247,6 +6252,110 @@ interface AsideItem {
  * CLI returns off the transcript. Pending cards read as thinking; each is dismissed on its own. The
  * server keeps only the last few per session, so the list stays short.
  */
+/** The updater's answer as the Boxes rows read it: the two versions, whether a run is on, its log. */
+interface BoxUpdateState {
+  installed: string | null;
+  latest?: string;
+  busy: boolean;
+  log: Array<{ ok: boolean; to: string | null; note?: string }>;
+}
+
+/** The Update button on a Boxes row, beside Log out, for a box the server sees behind: the same
+ *  run the card above the composer starts, from Settings, so a box with no session open (an ssh
+ *  box someone else uses) can still be brought up to date from here. Reads the box's state once on
+ *  mount, shows nothing while the box is current, and follows a run through the GET every 3 s. */
+function BoxUpdateButton({
+  host,
+  label,
+  disabled,
+}: {
+  host: string;
+  label: string;
+  disabled: boolean;
+}) {
+  const [state, setState] = useState<BoxUpdateState | null>(null);
+  const [phase, setPhase] = useState<"idle" | "busy" | "done" | "declined" | "failed">("idle");
+  const [note, setNote] = useState("");
+  const url = `${ROUTE}/claude-update?host=${encodeURIComponent(host)}`;
+  useEffect(() => {
+    let live = true;
+    fetch(url)
+      .then((r) => readJson<BoxUpdateState>(r))
+      .then((s) => live && setState(s))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [url]);
+  useEffect(() => {
+    if (phase !== "busy") return;
+    let live = true;
+    const startedAt = Date.now();
+    const tick = async () => {
+      try {
+        const s = await readJson<BoxUpdateState>(await fetch(url));
+        if (!live) return;
+        if (s.busy) {
+          if (Date.now() - startedAt > 200_000) {
+            setNote("No answer from this dsh in 200 s.");
+            setPhase("failed");
+          }
+          return;
+        }
+        const last = s.log[s.log.length - 1];
+        setState(s);
+        setNote(last?.note ?? "");
+        setPhase(!last ? "failed" : last.ok ? "done" : last.to !== null ? "declined" : "failed");
+      } catch {
+        // a missed poll is retried on the next tick
+      }
+    };
+    const id = setInterval(() => void tick(), 3000);
+    return () => {
+      live = false;
+      clearInterval(id);
+    };
+  }, [phase, url]);
+  if (!state || !state.latest || !state.installed || !isNewer(state.installed, state.latest))
+    return null;
+  const run = () => {
+    setPhase("busy");
+    void fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ run: true }),
+    }).catch((e: Error) => {
+      setNote(e.message);
+      setPhase("failed");
+    });
+  };
+  const text =
+    phase === "busy"
+      ? "Updating…"
+      : phase === "done"
+        ? `Updated to ${state.installed}`
+        : phase === "declined"
+          ? "Not updated"
+          : phase === "failed"
+            ? "Retry update"
+            : `Update to ${state.latest}`;
+  return (
+    <button
+      type="button"
+      style={btn}
+      data-omc-box-update={host || "this-box"}
+      data-omc-update-phase={phase}
+      disabled={disabled || phase === "busy" || phase === "done" || phase === "declined"}
+      aria-busy={phase === "busy" ? "true" : undefined}
+      aria-label={`${text}: run claude update on ${label}`}
+      title={note || `Run claude update on ${label}`}
+      onClick={run}
+    >
+      {text}
+    </button>
+  );
+}
+
 /** Mirrors the server's LoginNeed: the box the failed turn ran on (empty for this box) and its name. */
 interface LoginNeed {
   host: string;
@@ -6584,7 +6693,7 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
   // which only exist for a Claude session, so an empty list is the only reason to hide it. Reading
   // the provider binding at render blinked the card out whenever the binding reloaded.
   const loginCard = need && needDismissed !== need.host ? need : null;
-  if (shown.length === 0 && !loginCard) return null;
+  if (shown.length === 0 && !loginCard && !claudeUpdate) return null;
 
   const dismissAside = (id: string) => {
     // Hide now, but tell the server to drop it so the next poll (or a remount) does not bring it back.
