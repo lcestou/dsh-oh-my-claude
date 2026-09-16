@@ -69,6 +69,7 @@
         "src/sessions.ts",
         "src/scheduled-tasks.ts",
         "src/state.ts",
+        "src/claude-update.ts",
         "src/usage.ts",
         "src/translator.ts",
         "src/client/shared.ts"
@@ -91,6 +92,7 @@
         "src/sessions.ts",
         "src/scheduled-tasks.ts",
         "src/state.ts",
+        "src/claude-update.ts",
         "src/usage.ts",
         "src/translator.ts"
       ],
@@ -118,6 +120,7 @@
         "src/sessions.ts",
         "src/scheduled-tasks.ts",
         "src/state.ts",
+        "src/claude-update.ts",
         "src/usage.ts",
         "src/translator.ts"
       ],
