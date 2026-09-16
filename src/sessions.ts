@@ -1447,14 +1447,14 @@ export function registerSessionRoutes(
     const held = g[CLAUDE_UPDATE_TICK];
     // Nothing in a tick throws today (every read catches), but a timer callback has no caller to
     // reject to, so the one that ever does is logged rather than left as an unhandled rejection.
-    const run = () =>
+    const fire = () =>
       void g[CLAUDE_UPDATE_TICK]
         ?.tick()
         .catch((e) => log("warn", `claude update tick: ${errorText(e)}`));
     if (held) held.tick = tick;
     else {
-      setTimeout(run, 60_000).unref?.();
-      const timer = setInterval(run, 30 * 60_000);
+      setTimeout(fire, 60_000).unref?.();
+      const timer = setInterval(fire, 30 * 60_000);
       timer.unref?.();
       g[CLAUDE_UPDATE_TICK] = { timer, tick };
     }
