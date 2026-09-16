@@ -237,7 +237,8 @@ export const row: CSSProperties = {
   display: "flex",
   gap: 12,
   alignItems: "center",
-  padding: "9px 0",
+  // 12, not 9: a 38 px button 9 px from the hairline above and below reads as touching it.
+  padding: "12px 0",
   borderTop: `1px solid ${T.border}`,
 };
 /** dsh's own settings-card buttons (ui-settings-plugins, 2026-09-13): the secondary is a hairline
