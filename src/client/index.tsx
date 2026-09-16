@@ -2525,14 +2525,14 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
         aria-disabled={ssh.length === 0}
         style={{
           borderTop: `1px solid ${T.border}`,
-          marginTop: 12,
+          // No margin of its own: the row above already keeps 12 px to this line.
           paddingTop: 12,
           opacity: ssh.length > 0 ? 1 : 0.45,
           transition: "opacity 120ms ease",
         }}
       >
         <h3 style={h3}>Remote workspaces</h3>
-        <p style={{ margin: "2px 0 4px", color: T.muted, fontSize: 13 }}>
+        <p style={{ margin: "2px 0 12px", color: T.muted, fontSize: 13 }}>
           A folder on an ssh box, pinned as a workspace. Sessions there run that box's Claude on its
           files; nothing is copied.
         </p>
