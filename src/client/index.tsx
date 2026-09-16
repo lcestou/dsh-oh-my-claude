@@ -1587,13 +1587,13 @@ function BoxRow({
             <span
               aria-hidden="true"
               style={{
-                width: 7,
-                height: 7,
+                width: 8,
+                height: 8,
                 borderRadius: "50%",
                 background: dot,
                 flex: "0 0 auto",
-                // Centred on the first line, and staying there when the facts wrap.
-                marginTop: 5.5,
+                // Centred on the first 18 px line, and staying there when the facts wrap.
+                marginTop: 5,
               }}
             />
           )}
@@ -1605,7 +1605,20 @@ function BoxRow({
                 {/* The space after the dot is the one place the line may break. */}
                 {i > 0 && <span style={{ margin: "0 6px", opacity: 0.6 }}>·</span>}
                 {i > 0 && " "}
-                <span style={{ whiteSpace: "nowrap" }}>{f}</span>
+                {/* A fact wider than the whole column gets an ellipsis rather than running under
+                    the buttons. */}
+                <span
+                  style={{
+                    whiteSpace: "nowrap",
+                    display: "inline-block",
+                    maxWidth: "100%",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    verticalAlign: "bottom",
+                  }}
+                >
+                  {f}
+                </span>
               </span>
             ))}
           </span>
