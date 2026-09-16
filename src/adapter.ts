@@ -4390,11 +4390,16 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       return { mode: "steer", proc: live, options };
     const messages =
       (held?.sent.size ?? 0) > 0 ? dropSent(options.messages, held?.sent) : options.messages;
+    // A fresh turn: a steer flag left by the last turn's final tool call would park this one at
+    // its first tool result for nothing, and re-read the batch after the last assistant message.
+    // A busy process owns its flag: it is mid-turn with a steer already on stdin, and this call
+    // is about to be refused as "already running".
+    if (held && !held.busy) held.steerPending = false;
     return { mode: "prompt", options: { ...options, messages } };
   }
 
   /** First write of a turn: relay results, unsent steers, or the prompt itself. */
-  openTurn(cont: Continuation, proc: ClaudeProcess, prep: TurnPrep) {
+  async openTurn(cont: Continuation, proc: ClaudeProcess, prep: TurnPrep) {
     if (cont.mode === "relay") {
       const relays = [...proc.relays.values()];
       proc.relays.clear();
@@ -4413,7 +4418,14 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         if (m.role !== "user" || m.source?.kind !== "user" || !rpcId || proc.sent.has(rpcId))
           continue;
         const text = textOf(m.content);
-        if (text && proc.write(buildInput(text, []))) proc.sent.add(rpcId);
+        if (!text) continue;
+        // dsh has projected a file into its handle by now; an image is still a block. It is loaded
+        // and noted the way a prompt's are (inline bytes, plus the saved-copy line so Claude can
+        // read it again later), so a steer deferred by the live path arrives whole.
+        const images = await this.loadImages(imageRefs([m]), cont.options.signal);
+        const notes = attachmentNotes([m], images);
+        const body = notes ? `${text}\n\n${notes}` : text;
+        if (proc.write(buildInput(body, images))) proc.sent.add(rpcId);
       }
       return;
     }
@@ -4924,7 +4936,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       }
       // Before the prompt, never inside a turn: a reconnect is a control request on the same stdin.
       if (cont.mode === "prompt" && !wakeOnly) await this.reconnectIfStale(proc, options.sessionId);
-      if (!wakeOnly) this.openTurn(cont, proc, prep);
+      if (!wakeOnly) await this.openTurn(cont, proc, prep);
       this.armIdle(options.sessionId, proc);
       for (;;) {
         const event = await proc.nextEvent();

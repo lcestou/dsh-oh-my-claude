@@ -4402,6 +4402,168 @@ console.log("interrupt-on-abort ok");
   console.log("live-steer ok");
 }
 
+// The boundary steer path and the fresh-turn reset. At a step boundary dsh has already turned a
+// file block into its `[File …]` handle text, so it goes through as text; an image is loaded and
+// noted the way a prompt's is; and a fresh turn clears a steer flag left by the last turn, unless
+// the process is still busy with a turn of its own.
+{
+  const writes: string[] = [];
+  const adapter = new ClaudeCodeAdapter(
+    fakeCtx({
+      on() {},
+      attachments: {
+        readImage: async () => ({ data: new Uint8Array([0, 1, 2]).buffer }),
+      },
+    }),
+    Config({}),
+  );
+  const proc = {
+    alive: true,
+    busy: true,
+    relays: new Map(),
+    sent: new Set<string>(),
+    steerPending: false,
+    parked: "steer" as "steer" | undefined,
+    write(line: string) {
+      writes.push(line);
+      return true;
+    },
+  };
+  // SAFETY: openTurn reads only input and drops off the prep; the rest is the spawn path's.
+  const prep = { input: "{}", args: [], cwd: "/tmp", spec: emptySpec } as unknown as TurnPrep;
+  // SAFETY: the session options carry dsh's branded id; continuationFor and openTurn read only
+  // these two fields of them.
+  const opts = (sessionId: string, messages: LooseMessage[]) =>
+    ({ sessionId, messages }) as unknown as Parameters<ClaudeCodeAdapter["continuationFor"]>[0];
+  const line = () => {
+    // SAFETY: the line is what buildInput wrote; the assertions below read its shape.
+    const parsed = JSON.parse(writes[0] ?? "{}") as {
+      message?: {
+        content?: Array<{
+          type: string;
+          text?: string;
+          source?: { media_type?: string; data?: string };
+        }>;
+      };
+    };
+    return parsed.message?.content ?? [];
+  };
+  const run = async (content: object[], rpcId: string) => {
+    writes.length = 0;
+    proc.parked = "steer";
+    await adapter.openTurn(
+      {
+        mode: "steer",
+        proc: fakeProc(proc),
+        options: opts(
+          "s",
+          messageList([
+            {
+              role: "user",
+              source: { kind: "user", rpcId: "p0" },
+              content: [{ type: "text", text: "go" }],
+            },
+            { role: "assistant", content: [{ type: "text", text: "on it" }] },
+            { role: "user", source: { kind: "user", rpcId }, content },
+          ]),
+        ),
+      },
+      fakeProc(proc),
+      prep,
+    );
+  };
+
+  const handle =
+    '[File "a.zip" (3 bytes, sha256:abc): verbatim read-only copy saved at "/x/a.zip"]';
+  await run([{ type: "text", text: handle }], "r1");
+  assert.equal(writes.length, 1, "handle text: one write");
+  assert.deepEqual(
+    line(),
+    [{ type: "text", text: handle }],
+    "handle text: the one text block, as is",
+  );
+  assert.ok(proc.sent.has("r1"), "handle text: marked sent");
+  assert.equal(proc.parked, undefined, "steer mode clears parked");
+
+  const image = {
+    type: "image",
+    attachment: { attachmentId: "sha256:def", mediaType: "image/png" },
+  };
+  await run([image, { type: "text", text: "look" }], "r2");
+  assert.equal(writes.length, 1, "image and text: one write");
+  const blocks = line();
+  assert.equal(blocks.length, 2, "image and text: a text block and an image block");
+  assert.ok(blocks[0]?.text?.startsWith("look"), "image and text: the steer's text first");
+  assert.ok(blocks[0]?.text?.includes('saved at "'), "image and text: the saved-copy note follows");
+  assert.ok(blocks[0]?.text?.includes(".png"), "image and text: the copy carries the extension");
+  assert.equal(blocks[1]?.type, "image");
+  assert.equal(blocks[1]?.source?.media_type, "image/png");
+  assert.equal(blocks[1]?.source?.data, "AAEC", "image and text: the bytes inline, base64");
+  assert.ok(proc.sent.has("r2"), "image and text: marked sent");
+
+  const noStore = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  writes.length = 0;
+  proc.parked = "steer";
+  await noStore.openTurn(
+    {
+      mode: "steer",
+      proc: fakeProc(proc),
+      options: opts(
+        "s",
+        messageList([
+          { role: "assistant", content: [{ type: "text", text: "on it" }] },
+          {
+            role: "user",
+            source: { kind: "user", rpcId: "r3" },
+            content: [image, { type: "text", text: "look" }],
+          },
+        ]),
+      ),
+    },
+    fakeProc(proc),
+    prep,
+  );
+  assert.equal(writes.length, 1, "no attachment store: still one write");
+  assert.deepEqual(line(), [{ type: "text", text: "look" }], "no attachment store: the text alone");
+  assert.ok(proc.sent.has("r3"), "no attachment store: marked sent");
+
+  // The fresh-turn reset, in continuationFor.
+  const idle = {
+    alive: true,
+    busy: false,
+    relays: new Map(),
+    sent: new Set<string>(),
+    steerPending: true,
+    parked: undefined,
+  };
+  adapter.processes.set(registryKey("claude-code", "t"), fakeProc(idle));
+  const hi = (rpcId: string) =>
+    messageList([
+      { role: "user", source: { kind: "user", rpcId }, content: [{ type: "text", text: "hi" }] },
+    ]);
+  const fresh = adapter.continuationFor(opts("t", hi("q1")));
+  assert.equal(fresh.mode, "prompt");
+  assert.equal(idle.steerPending, false, "a fresh turn clears the last turn's stale steer flag");
+
+  const busy = { ...idle, busy: true, sent: new Set<string>(), steerPending: true };
+  adapter.processes.set(registryKey("claude-code", "u"), fakeProc(busy));
+  adapter.continuationFor(opts("u", hi("q2")));
+  assert.equal(busy.steerPending, true, "a busy process keeps its flag: its own turn parks on it");
+
+  const parkedProc = {
+    ...idle,
+    busy: true,
+    sent: new Set<string>(),
+    steerPending: true,
+    parked: "steer" as const,
+  };
+  adapter.processes.set(registryKey("claude-code", "v"), fakeProc(parkedProc));
+  const cont = adapter.continuationFor(opts("v", hi("q3")));
+  assert.equal(cont.mode, "steer", "a parked process continues its turn");
+  assert.equal(parkedProc.steerPending, true, "and steer mode leaves the flag alone");
+  console.log("boundary-steer ok");
+}
+
 // capacity split: prepareCall reports the window (the ring reads it), resolveModel does not
 // (dsh-compaction-basic reads that one, and silence there is what keeps it from compacting on top
 // of Claude Code's own compaction). Identity and reasoning survive on both.
