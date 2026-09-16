@@ -48,6 +48,8 @@ export interface Tunables {
   "attribution.commit"?: string;
   "attribution.pr"?: string;
   "attribution.sessionUrl"?: boolean;
+  /** The release channel the CLI's updater and the plugin's update card follow. */
+  autoUpdatesChannel?: "latest" | "stable" | "rc";
 }
 type TuneKey = keyof Tunables;
 /** A settings document as this tab handles it: every key open, since it edits a dozen and keeps
@@ -178,6 +180,9 @@ export function readTunables(text: string): Tunables {
     if (attribution.sessionUrl === true || attribution.sessionUrl === false)
       out["attribution.sessionUrl"] = attribution.sessionUrl;
   }
+  const channel = obj.autoUpdatesChannel;
+  if (channel === "latest" || channel === "stable" || channel === "rc")
+    out.autoUpdatesChannel = channel;
   return out;
 }
 
