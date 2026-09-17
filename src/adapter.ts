@@ -30,6 +30,7 @@ import {
   createUserMessage,
 } from "@deepseek-ai/dsh-llm";
 import z from "@deepseek-ai/schemastery";
+import { type FirstPartyProbe, probeFirstParty, wantsFirstParty } from "./first-party.js";
 import {
   CONTEXT_SIZE_KEYS,
   contextDrops,
@@ -785,6 +786,29 @@ export const proxyBaseUrl = (raw: string | undefined): string | undefined => {
     return raw;
   }
 };
+/**
+ * Whether this box's base URL reaches Anthropic, asked once per dsh process.
+ *
+ * On the process rather than on the adapter: dsh builds the adapter more than once at boot, and
+ * the question is about the box, not about an instance. The promise is memoised, not its answer,
+ * so the turns that start while the first request is in flight all wait on that one request.
+ * An unanswered probe is retried by the next turn, since a proxy that was still starting up is
+ * the likeliest reason for it.
+ */
+const FIRST_PARTY_PROBE = Symbol.for("dsh-oh-my-claude.firstPartyProbe");
+const detectFirstParty = async (): Promise<FirstPartyProbe> => {
+  const baseUrl = proxyBaseUrl(process.env.ANTHROPIC_BASE_URL);
+  if (!baseUrl) return false; // no proxy in front: the flag changes nothing either way
+  // SAFETY: this plugin's own key on globalThis, typed here once, as the timers below are
+  const store = globalThis as typeof globalThis & {
+    [FIRST_PARTY_PROBE]?: Promise<FirstPartyProbe>;
+  };
+  const asked = (store[FIRST_PARTY_PROBE] ??= probeFirstParty(baseUrl));
+  const answer = await asked;
+  if (answer === undefined) store[FIRST_PARTY_PROBE] = undefined;
+  return answer;
+};
+
 /** Record what a session answered. A missing or nonsense figure leaves the last good one standing. */
 export const noteLiveWindow = (modelId: string | undefined, maxTokens: number | undefined) => {
   if (modelId === undefined || maxTokens === undefined || !Number.isFinite(maxTokens)) return;
@@ -2538,7 +2562,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // this file, and a stale set is a switch that visibly does nothing.
     const hints = await readHints(join(this.stateDir, "hints.json"));
     const drops = contextDrops(hints);
-    this.proxyFirstParty = hints.proxyFirstParty === true;
+    this.proxyFirstParty = wantsFirstParty(hints, await detectFirstParty());
     const turns = selectTurns(options.messages, session?.resuming ?? false);
     let prompt = buildPrompt(turns, drops);
     const stdin = usesStdin(cli.flags);
@@ -2940,8 +2964,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    * and known models in place.
    */
   cliModelsAt = 0;
-  /** The Settings switch "Proxy reaches Anthropic" (`proxyFirstParty` in the hints store), read
-   *  with the other hints before each spawn. */
+  /** The Settings control "Proxy reaches Anthropic" (the `proxyFirstParty` pair in the hints
+   *  store) resolved against what the endpoint answered, read with the other hints before each
+   *  spawn. On auto, which is the default, the endpoint decides; a chosen setting outranks it. */
   proxyFirstParty = false;
   /** The disk seed, awaited by the first listing so a boot never answers from the floor by a race. */
   private cliSeed: Promise<void>;
@@ -3137,7 +3162,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       // spec's `firstParty`), so the note says that instead of naming a switch that is on. Read
       // here, not from `proxyFirstParty`, which only refreshes when some session starts a turn.
       const hints = await readHints(join(this.stateDir, "hints.json"));
-      if (hints.proxyFirstParty === true) usage.followsNext = true;
+      if (wantsFirstParty(hints, await detectFirstParty())) usage.followsNext = true;
     }
     return { ok: true, ...usage };
   }

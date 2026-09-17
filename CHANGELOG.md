@@ -6,7 +6,36 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Added
+
+- A switch for the footer cost readout, in the plugin's settings, on unless it is turned off. The
+  turn records behind it are kept either way, so the figure is whole again the moment the switch
+  comes back.
+
+### Changed
+
+- The cost pill reads `$28.84 · $7.78 last`; the cached-token count that used to close it has moved
+  into the panel behind it. dsh's own neighbouring pill already reports the session's tokens and
+  cache hit rate, and ours was the longest pill in the row.
+
+- The cost panel is capped at 320px rather than 440px, so the API-rate footnote wraps instead of
+  setting the panel's width. It stood half again as wide as dsh's stats panel beside it.
+
 ### Fixed
+
+- The cost readout sits in dsh's footer row as a pill again on dsh 0.1.6-alpha.2, which stopped
+  marking that row. It had fallen back to the older shape and rendered as loose text behind a bar,
+  outside the row; as a pill it also takes dsh's own phone behaviour, shortening to the icon alone.
+
+- The Claude usage block and the context breakdown are back in dsh's context-meter panel on dsh
+  0.1.6-alpha.2, which moved that panel out of the ring's own corner of the page and into a
+  portal on `<body>`. The ring's hover bubble was never affected.
+
+- The Oh My Claude control, the access shield and the Claude look all come back on dsh
+  0.1.6-alpha.2. dsh moved two things the plugin reads: the open session left the session list
+  snapshot (`current`) for the main view's own retention, and session navigation left the Session
+  Controller (`sessions.open`) for `uiWorkspace.openSession`. Both old and new shapes are read, so
+  the same build serves dsh 0.1.5 and 0.1.6.
 
 - The context popover and the line under dsh's ring write a million-token window as `1M`; it read
   `1000k`.
@@ -46,11 +75,17 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Added
 
-- Proxy reaches Anthropic, a switch in Settings for a box whose `ANTHROPIC_BASE_URL` is a proxy in
-  front of api.anthropic.com. Claude Code assumes 200k for its 1M models behind any other host
-  (and stops compacting Fable); the switch starts sessions with the CLI's own flag for that case,
-  and the context popover names it when it sees a session in that state. A session already
-  running follows on its next message. Off by default, nothing changes without a base URL.
+- Proxy reaches Anthropic, a setting for a box whose `ANTHROPIC_BASE_URL` is a proxy in front of
+  api.anthropic.com. Claude Code assumes 200k for its 1M models behind any other host (and stops
+  compacting Fable); on such a box, sessions start with the CLI's own flag for a proxy that
+  forwards, and the context popover names it when it sees a session in that state. A session
+  already running follows on its next message.
+
+  Auto, On or Off, and Auto is the default: it asks the base URL once per dsh run, with no key
+  attached, and takes Anthropic's own authentication error and request id as the answer — a proxy
+  that forwards passes both through, a gateway routing to another provider does not, and a proxy
+  that cannot be reached is left alone rather than assumed. On and Off are answers a person gave,
+  so detection never overrides one. Nothing changes without a base URL.
 - A Changelog card in Settings → Oh My Claude, above Report a problem and collapsed. It lists what
   the last five versions added, changed and fixed, read from the plugin's own `CHANGELOG.md` when
   the card opens, with the installed version marked. The file now ships in the npm package; an

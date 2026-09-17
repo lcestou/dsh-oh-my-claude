@@ -63,6 +63,8 @@ import {
   claudeProviderOf,
   type ClientCtx,
   openHere,
+  openSession,
+  openSessionId,
   maskEmail,
   numberOr,
   whenContextGone,
@@ -784,7 +786,7 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
         const state = await dir.load?.();
         const model = state?.groups.find((g) => g.id === provider)?.models[0]?.id;
         if (model && dir.select) await dir.select({ provider, model });
-        ctx.sessions.open(r.s.id);
+        openSession(ctx, r.s.id);
         close?.();
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
@@ -3309,6 +3311,31 @@ function watchContextMeter(ctx: ClientCtx) {
     const button = arc.closest("button");
     if (button?.getAttribute("aria-label") !== label) button?.setAttribute("aria-label", label);
   };
+  /**
+   * The meter's open panel when dsh renders it away from the ring.
+   *
+   * Up to dsh 0.1.5 the panel was a sibling of the ring button, which is what `isRingRoot` tests.
+   * 0.1.6-alpha.2 portals it to `<body>` instead, so that test can never match and the usage block
+   * stopped appearing. The panel is claimed here by the ring's own button: it is open
+   * (`aria-expanded`), and dsh labels the panel with the same phrase as the button minus the
+   * percentage, so the button's label contains the panel's. That pair travels with dsh's
+   * translations, unlike the generated class names on either node.
+   *
+   * The sibling path above stays until 0.1.5 is no longer supported; dropping that support means
+   * deleting the two `isRingRoot` dialog lines and this call's companion comment, not this one.
+   */
+  const portalPanel = (): HTMLElement | null => {
+    const trigger = arc?.closest("button");
+    if (!trigger || trigger.getAttribute("aria-expanded") !== "true") return null;
+    const label = trigger.getAttribute("aria-label");
+    if (!label) return null;
+    for (const panel of document.querySelectorAll<HTMLElement>('[role="dialog"]')) {
+      if (panel.contains(trigger)) continue; // the ring sits inside no panel of its own
+      const own = panel.getAttribute("aria-label");
+      if (own && own !== label && label.includes(own)) return panel;
+    }
+    return null;
+  };
   const scan = (root: ParentNode) => {
     // Looked for only until it is found. The ring outlives every burst that follows, and this query
     // would otherwise run over each of them for an element already in hand.
@@ -3335,6 +3362,8 @@ function watchContextMeter(ctx: ClientCtx) {
       const tip = root.closest<HTMLElement>('[role="tooltip"]');
       if (tip && isRingRoot(tip.parentElement)) bubble(tip);
     }
+    const portal = portalPanel();
+    if (portal) attach(portal);
   };
   // Scoped to the burst: the ring's dialog and tooltip are rare nodes, and the body-wide pair of
   // attribute queries this used to run every dirty frame cost 0.4 ms on a conversation of 30k nodes
@@ -3922,7 +3951,7 @@ function notifyWaiting(ctx: ClientCtx, id: string, title: string) {
   const note = new Notification(title, { body: "Claude is waiting.", tag: `omc-${id}` });
   note.addEventListener("click", () => {
     window.focus();
-    ctx.sessions.open(id);
+    openSession(ctx, id);
     note.close();
   });
 }
@@ -4707,6 +4736,10 @@ interface TurnsReply {
 const MODULE_ROOT = /(?:^|\s)[\w-]*_root(?:\s|$)/;
 /** dsh's `StatsLine` separator: a direct child of the row, `aria-hidden`, and a literal bar. */
 const STATS_SEP = ':scope > span[aria-hidden="true"][class$="_sep"]';
+/** The readout's own wrapper in dsh's row, so a later hook can clear an earlier one's node. */
+const COST_SLOT = "data-omc-cost-slot";
+/** One of dsh's stats pills as the row holds it: an anchor span wrapping a popover button. */
+const STATS_PILL = ':scope > span > button[aria-haspopup="dialog"]';
 
 /**
  * dsh's own stats row, the div the cost line is appended to. dsh builds it in `StatsLine` as a
@@ -4719,6 +4752,11 @@ export const isStatsRow = (el: HTMLElement): boolean => {
   // dsh 0.1.5 draws the row as pills and marks it (`StatsPills`, ui-chat); the shape checks below
   // are for the earlier row of groups with a bar between them.
   if (el.hasAttribute("data-composer-stats")) return true;
+  // dsh 0.1.6-alpha.2 draws the same pills and dropped the marker, so the row is recognised by the
+  // shape instead: anchor spans holding one popover pill each. Asked for as direct children, which
+  // is what keeps the footer that wraps the row from matching too — appending into that footer is
+  // how the readout ended up outside the row, as loose text behind a bar.
+  if (el.querySelector(STATS_PILL)) return true;
   // The class comes before the text, and the text is only read for a div that has it. Both old and
   // new dsh draw the row as a `_root` module div, and `textContent` on a div that is not one builds
   // the whole subtree's text: over every div in a long conversation that alone was 20 ms a call.
@@ -4781,6 +4819,10 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
     `spendWarnUsd${sessionId.replaceAll("-", "")}`,
   );
   const line = numberOr(sessionLine) ?? numberOr(boxLine);
+  // The footer pill is on unless the box turned it off, so an absent key still shows it. Only the
+  // readout goes: the turn records behind it are collected either way, and the figure is back the
+  // moment the switch returns.
+  const [costOff] = useHintFlag("costOff");
 
   // dsh's current session blinks: a child session takes the slot for a moment, and a model
   // directory mid-rebind answers no provider at all. A blank answer used to read as "not mine" and
@@ -4789,7 +4831,7 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   // reached the screen used to latch this ref anyway — so a render for another session could leave
   // the cost of this one on the row.
   const mineRef = useRef(false);
-  const current = ctx.sessions.list.getSnapshot()?.current;
+  const current = openSessionId(ctx);
   const mine =
     activeClaudeSession(ctx) === sessionId
       ? true
@@ -4800,9 +4842,8 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
     mineRef.current = mine;
   });
   const total = turns.reduce((s, r) => s + r.costUsd, 0);
-  const totalCacheRead = turns.reduce((s, r) => s + r.cacheRead, 0);
   const last = turns[turns.length - 1];
-  const text = mine && total > 0 && last ? costText(total, last.costUsd, totalCacheRead) : "";
+  const text = mine && !costOff && total > 0 && last ? costText(total, last.costUsd) : "";
   // Past the line the pill turns orange and the tooltip leads with the fact; every wording says
   // API-rate, since a subscription login is not billed by this figure.
   const over = mine && total > 0 && line !== undefined && total >= line;
@@ -4957,7 +4998,14 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
           -1,
         );
         if (marked?.isConnected) return marked;
-        return [...root.querySelectorAll<HTMLDivElement>("div")].filter(isStatsRow).at(-1);
+        const divs = [...root.querySelectorAll<HTMLDivElement>("div")];
+        // A div holding dsh's own pills is the row itself; the containers around it can pass the
+        // looser shape test, and appending into one of those is how the readout ended up beside
+        // the row rather than in it. The looser test still answers for a dsh that draws no pills.
+        return (
+          divs.filter((div) => div.querySelector(STATS_PILL)).at(-1) ??
+          divs.filter(isStatsRow).at(-1)
+        );
       };
       const statsRow =
         lastRow && isStatsRow(lastRow)
@@ -4970,6 +5018,11 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
         return;
       }
       inline = document.createElement("span");
+      // Named so a hook can clear what an earlier one left. `drop` only ever knew the node in
+      // hand, so a readout appended into a row dsh then replaced — or into a container that read
+      // as the row before the pills arrived — stayed in the page, out of sight, for the tab's life.
+      inline.setAttribute(COST_SLOT, "");
+      for (const stale of document.querySelectorAll(`[${COST_SLOT}]`)) stale.remove();
       inline.style.whiteSpace = "nowrap";
       body = document.createElement("span");
       // The pill row: an anchor span holding a pill (button or span) whose first span is the
@@ -4977,9 +5030,16 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
       // padding, radius and colour whatever the module hash is in this build. It is a button, as
       // dsh's are: the hover rule is `button._pill:hover`, a span never lights up, and a phone has
       // no hover at all — the tap opens the dialog, which is where the detail lives.
-      const proto = statsRow.hasAttribute("data-composer-stats")
-        ? statsRow.firstElementChild?.firstElementChild
-        : null;
+      // 0.1.5 marks the row and its first pill is the first grandchild; 0.1.6-alpha.2 drops the
+      // marker but draws the same anchor-and-pill pair, so an unmarked row is asked for the pill
+      // by shape. Copying its classes is also what gives the readout dsh's own phone behaviour:
+      // the label carries `overflow:hidden;text-overflow:ellipsis` under a button capped at the
+      // row's width, so it shortens as the row narrows and ends as the icon alone.
+      const proto =
+        statsRow.querySelector(STATS_PILL) ??
+        (statsRow.hasAttribute("data-composer-stats")
+          ? statsRow.firstElementChild?.firstElementChild
+          : null);
       if (proto?.parentElement) {
         pad = "";
         inline.className = proto.parentElement.className;
@@ -5479,6 +5539,25 @@ function useHintValue(
     });
   };
   return [value, set];
+}
+
+/**
+ * Write several hints as one request.
+ *
+ * Two `set` calls in a row are two reads and two writes of the same file, and the second read can
+ * predate the first write: picking Off wrote the off flag over a snapshot that still held the on
+ * flag, so both came back set and the control stayed On. Keys that answer one question travel
+ * together.
+ */
+function writeHints(next: Record<string, boolean | number | null>): void {
+  void fetch(`${ROUTE}/hints`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(next),
+  }).finally(() => {
+    hintsOnce = undefined;
+    window.dispatchEvent(new Event(HINTS_EVENT));
+  });
 }
 
 /** One boolean flag from the hints store; `false` clears the key. */
@@ -6070,9 +6149,21 @@ function ClaudeUpdateSwitch() {
   );
 }
 
-/** The settings switch for a proxy in front of api.anthropic.com. */
+/**
+ * The settings control for a proxy in front of api.anthropic.com: Auto, On or Off.
+ *
+ * Auto asks the base URL itself — a proxy that forwards answers an unauthenticated request with
+ * Anthropic's own error and request id — so the common case needs no decision. The other two are
+ * answers a person gave, and detection never overrides one: an endpoint that starts reading as
+ * Anthropic must not turn this back on for someone who turned it off.
+ */
 function ProxyFirstPartySwitch() {
-  const [on, setOn] = useHintFlag("proxyFirstParty");
+  const [on] = useHintFlag("proxyFirstParty");
+  const [off] = useHintFlag("proxyFirstPartyOff");
+  const mode = on ? "on" : off ? "off" : "auto";
+  // Both keys in one write: `false` clears a key, and the pair only ever holds the chosen answer.
+  const choose = (next: string) =>
+    writeHints({ proxyFirstParty: next === "on", proxyFirstPartyOff: next === "off" });
   return (
     <>
       <div
@@ -6089,11 +6180,24 @@ function ProxyFirstPartySwitch() {
         <div>
           <div>Proxy reaches Anthropic</div>
           <div style={{ color: T.faint, fontSize: 12 }}>
-            Turn on if Claude Code runs through a local proxy in front of Anthropic, such as
-            Headroom or a logging relay, and a 1M model shows a 200k window.
+            For a Claude Code that runs through a proxy in front of Anthropic, such as Headroom or a
+            logging relay, where a 1M model otherwise shows a 200k window. Auto asks the proxy and
+            follows its answer; On and Off are kept whatever it answers.
           </div>
         </div>
-        <Switch on={on} onChange={setOn} label="Proxy reaches Anthropic" />
+        <select
+          data-omc-proxy-first-party-mode=""
+          aria-label="Proxy reaches Anthropic"
+          value={mode}
+          onChange={(e) => choose(e.target.value)}
+          // `0 0 auto` and a floor: the row is flex, and a shrinkable select next to the long
+          // description collapsed until only the first letter of "Auto" showed.
+          style={{ ...select, flex: "0 0 auto", minWidth: 104, maxWidth: 104 }}
+        >
+          <option value="auto">Auto</option>
+          <option value="on">On</option>
+          <option value="off">Off</option>
+        </select>
       </div>
       <details data-omc-proxy-details="" style={{ marginBottom: 12, fontSize: 13 }}>
         <summary style={{ cursor: "pointer", color: T.muted }}>Details</summary>
@@ -6102,8 +6206,11 @@ function ProxyFirstPartySwitch() {
           models that hold 1M: Opus 5, Opus 4.8 and Sonnet 5 compact early, and Fable stops
           compacting. On, sessions start with Claude Code's own flag for a proxy that forwards to
           Anthropic, run at 1M and compact against it; a session already running follows on its next
-          message. Leave it off for a gateway that routes elsewhere (Bedrock, Vertex). Without a
-          base URL it changes nothing.
+          message. Auto asks the base URL once per dsh run, with no key attached: a proxy that
+          forwards hands back Anthropic's own authentication error and request id, which a gateway
+          routing elsewhere (Bedrock, Vertex) does not, and a proxy that cannot be reached is left
+          alone rather than assumed. Choose Off for such a gateway, or to hold a session at the
+          window the CLI guesses. Without a base URL none of it changes anything.
         </div>
       </details>
     </>
@@ -6133,6 +6240,33 @@ function WorkspaceModelSwitch() {
         </div>
       </div>
       <Switch on={!off} onChange={(next) => setOff(!next)} label="Remember model per workspace" />
+    </div>
+  );
+}
+
+/** The settings switch for the cost pill in dsh's footer row. On unless it is turned off. */
+function CostSwitch() {
+  const [off, setOff] = useHintFlag("costOff");
+  return (
+    <div
+      data-omc-cost-switch=""
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
+        fontSize: 13,
+        marginBottom: 12,
+      }}
+    >
+      <div>
+        <div>Claude cost in the footer</div>
+        <div style={{ color: T.faint, fontSize: 12 }}>
+          What the session has spent at API rates, beside dsh's own stats. The figure is still
+          recorded with the switch off; only the pill and its panel go away.
+        </div>
+      </div>
+      <Switch on={!off} onChange={(next) => setOff(!next)} label="Claude cost in the footer" />
     </div>
   );
 }
@@ -7131,14 +7265,13 @@ const fmtTtft = (ms?: number): string => {
   return `, ${shown} to first token`;
 };
 
-/** `$18.21 · $0.42 last`: the session total, newest turn, and cached tokens. The Claude mark
- *  goes in front of it by whoever draws it: the spark SVG in the pill, the glyph in a text row. */
-const costText = (total: number, last: number, cacheRead: number = 0) => {
-  let text = `${fmtCost(total)} · ${fmtCost(last)} last`;
-  const cached = formatCacheRead(cacheRead);
-  if (cached) text += ` · ${cached} cached`;
-  return text;
-};
+/** `$18.21 · $0.42 last`: the session total and the newest turn. The Claude mark goes in front of
+ *  it by whoever draws it: the spark SVG in the pill, the glyph in a text row.
+ *
+ *  The cached-token count used to close the line, which made this the longest pill in dsh's row —
+ *  and dsh's own neighbouring pill already reports the session's tokens and cache hit rate. The
+ *  dialog behind the pill still breaks the cache reads and writes out in full. */
+const costText = (total: number, last: number) => `${fmtCost(total)} · ${fmtCost(last)} last`;
 
 /** A token count for the dialog: `0` rather than the readout's blank for none. */
 const fmtTokens = (n: number): string => formatCacheRead(n) || "0";
@@ -7179,9 +7312,13 @@ export const costDetails = (turns: TurnRecord[]): [string, string][] => {
 };
 
 /** dsh's `stat-dialog.module.css` (ui-chat), rule for rule, on this plugin's own hooks: the hashed
- *  class names change with every dsh build, the design tokens do not. */
+ *  class names change with every dsh build, the design tokens do not.
+ *
+ *  The cap is 320px rather than dsh's own so the API-rate footnote wraps instead of setting the
+ *  width: at 440 it was the widest line in the dialog and made this panel half again as wide as
+ *  the stats dialog beside it (440 against 300, measured on dsh 0.1.6-alpha.2). */
 const COST_DIALOG_CSS =
-  "[data-omc-cost-dialog]{z-index:1100;box-sizing:border-box;background:var(--dsw-specific-menu);--dsw-elevation-stroke-color:var(--dsw-alias-border-l1);width:max-content;min-width:min(300px,100vw - 24px);max-width:min(440px,100vw - 24px);box-shadow:var(--dsw-elevation-prominent);color:var(--dsw-alias-label-secondary);cursor:default;border:0;border-radius:12px;padding:16px;font-size:12px;line-height:18px;position:fixed}" +
+  "[data-omc-cost-dialog]{z-index:1100;box-sizing:border-box;background:var(--dsw-specific-menu);--dsw-elevation-stroke-color:var(--dsw-alias-border-l1);width:max-content;min-width:min(300px,100vw - 24px);max-width:min(320px,100vw - 24px);box-shadow:var(--dsw-elevation-prominent);color:var(--dsw-alias-label-secondary);cursor:default;border:0;border-radius:12px;padding:16px;font-size:12px;line-height:18px;position:fixed}" +
   "[data-omc-cost-title]{color:var(--dsw-alias-label-primary);justify-content:space-between;gap:16px;margin-bottom:8px;font-weight:500;display:flex}" +
   "[data-omc-cost-title-label]{align-items:center;gap:6px;min-width:0;display:inline-flex}" +
   "[data-omc-cost-title-label] svg{flex:none;width:14px;height:14px}" +
@@ -7341,13 +7478,17 @@ export function apply(ctx: ClientCtx) {
         <StarterSwitch />
         <UpdateNoticeSwitch />
         <ClaudeUpdateSwitch />
+        <CostSwitch />
         <WorkspaceModelSwitch />
-        {/* The three switches that start off sit together at the end, so the card reads as what the
-            plugin does by default first, then what you can add to it. */}
+        {/* The switches that start off sit together after the ones that start on, so the card reads
+            as what the plugin does by default first, then what you can add to it. The proxy control
+            keeps company with them rather than with the spend field it used to precede: it answers
+            a switch's question, not a number's. Terminal mirror stays last, on its own, because it
+            is the one experiment here. */}
         <ContextSwitch ctx={ctx} />
-        <ProxyFirstPartySwitch />
         <ReturnRecapSwitch />
         <SpendGuardField />
+        <ProxyFirstPartySwitch />
         <TerminalSyncSwitch />
         {error && <p style={{ color: T.err, fontSize: 13 }}>{error}</p>}
         {boxes !== null && (

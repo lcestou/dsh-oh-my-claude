@@ -916,8 +916,9 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * and known models in place.
      */
     cliModelsAt: number;
-    /** The Settings switch "Proxy reaches Anthropic" (`proxyFirstParty` in the hints store), read
-     *  with the other hints before each spawn. */
+    /** The Settings control "Proxy reaches Anthropic" (the `proxyFirstParty` pair in the hints
+     *  store) resolved against what the endpoint answered, read with the other hints before each
+     *  spawn. On auto, which is the default, the endpoint decides; a chosen setting outranks it. */
     proxyFirstParty: boolean;
     /** The disk seed, awaited by the first listing so a boot never answers from the floor by a race. */
     private cliSeed;
