@@ -364,6 +364,9 @@ export interface ContextUsage {
     /** Set when the CLI's window is below the plugin's table for this model while
      *  `ANTHROPIC_BASE_URL` points off api.anthropic.com: the base URL, for the popover's notice. */
     assumedBehind?: string;
+    /** With `assumedBehind`: the Proxy reaches Anthropic switch is on and this process predates it,
+     *  so the session's next turn replaces the process and the guess ends there. */
+    followsNext?: true;
 }
 export declare function decodeContextUsage(v: JsonValue | undefined): ContextUsage;
 /** The `title` of a `generate_session_title` answer, trimmed; undefined when absent or empty. */

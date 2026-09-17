@@ -3131,8 +3131,14 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const behind = proxyBaseUrl(process.env.ANTHROPIC_BASE_URL);
     const guessed = usage.autocompact === "auto" || usage.autocompact === "model-default";
     const local = !this.config.sshHost && !remoteWorkspaceFor(proc.cwd);
-    if (behind && local && guessed && usage.maxTokens > 0 && usage.maxTokens < known)
+    if (behind && local && guessed && usage.maxTokens > 0 && usage.maxTokens < known) {
       usage.assumedBehind = behind;
+      // The switch is already on and this process predates it: its next turn replaces it (the
+      // spec's `firstParty`), so the note says that instead of naming a switch that is on. Read
+      // here, not from `proxyFirstParty`, which only refreshes when some session starts a turn.
+      const hints = await readHints(join(this.stateDir, "hints.json"));
+      if (hints.proxyFirstParty === true) usage.followsNext = true;
+    }
     return { ok: true, ...usage };
   }
 

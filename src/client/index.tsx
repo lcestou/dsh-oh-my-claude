@@ -2778,6 +2778,7 @@ type ContextReply =
       percentage: number;
       model?: string;
       assumedBehind?: string;
+      followsNext?: true;
     }
   | { ok: false; error: string };
 // The breakdown is re-read whenever dsh re-renders the meter's dialog, which is on every repaint of
@@ -2866,7 +2867,9 @@ function renderContext(el: HTMLElement, reply: ContextReply) {
     note.setAttribute("data-omc-context-assumed", "");
     note.setAttribute("role", "note");
     note.style.cssText = `font-size:12px;color:${T.faint};margin-top:4px`;
-    note.textContent = `Assumed ${kTokens(reply.maxTokens)}: Claude Code does not treat the proxy at ${reply.assumedBehind} as Anthropic. If it forwards there, turn on Proxy reaches Anthropic in Settings → Oh My Claude; this session follows on its next message.`;
+    note.textContent = reply.followsNext
+      ? `Assumed ${kTokens(reply.maxTokens)} for now: Proxy reaches Anthropic is on, and this session moves to its full window on its next message.`
+      : `Assumed ${kTokens(reply.maxTokens)}: Claude Code does not treat the proxy at ${reply.assumedBehind} as Anthropic. If it forwards there, turn on Proxy reaches Anthropic in Settings → Oh My Claude; this session follows on its next message.`;
   }
   // The bar spans the whole window, so the empty tail is the room left. Segments are sized against
   // `maxTokens` rather than against each other, which is what makes the filled part read as the
@@ -6071,28 +6074,39 @@ function ClaudeUpdateSwitch() {
 function ProxyFirstPartySwitch() {
   const [on, setOn] = useHintFlag("proxyFirstParty");
   return (
-    <div
-      data-omc-proxy-first-party-switch=""
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: 12,
-        fontSize: 13,
-        marginBottom: 12,
-      }}
-    >
-      <div>
-        <div>Proxy reaches Anthropic</div>
-        <div style={{ color: T.faint, fontSize: 12 }}>
-          ANTHROPIC_BASE_URL names a proxy that forwards to api.anthropic.com. Claude Code then runs
-          1M models at 1M and compacts against it; off, it assumes 200k behind a proxy. A session
-          already running follows on its next message. Without a base URL the CLI already treats the
-          API as Anthropic, so the switch changes nothing there.
+    <>
+      <div
+        data-omc-proxy-first-party-switch=""
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+          fontSize: 13,
+          marginBottom: 4,
+        }}
+      >
+        <div>
+          <div>Proxy reaches Anthropic</div>
+          <div style={{ color: T.faint, fontSize: 12 }}>
+            Turn on if Claude Code runs through a local proxy in front of Anthropic, such as
+            Headroom or a logging relay, and a 1M model shows a 200k window.
+          </div>
         </div>
+        <Switch on={on} onChange={setOn} label="Proxy reaches Anthropic" />
       </div>
-      <Switch on={on} onChange={setOn} label="Proxy reaches Anthropic" />
-    </div>
+      <details data-omc-proxy-details="" style={{ marginBottom: 12, fontSize: 13 }}>
+        <summary style={{ cursor: "pointer", color: T.muted }}>Details</summary>
+        <div style={{ color: T.faint, fontSize: 12, padding: "8px 0 0 16px" }}>
+          When ANTHROPIC_BASE_URL names any host but api.anthropic.com, Claude Code assumes 200k for
+          models that hold 1M: Opus 5 and Sonnet 5 compact early, and Fable stops compacting. On,
+          sessions start with Claude Code's own flag for a proxy that forwards to Anthropic, run at
+          1M and compact against it; a session already running follows on its next message. Leave it
+          off for a gateway that routes elsewhere (Bedrock, Vertex). Without a base URL it changes
+          nothing.
+        </div>
+      </details>
+    </>
   );
 }
 
