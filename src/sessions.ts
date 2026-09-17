@@ -2317,6 +2317,9 @@ export function registerSessionRoutes(
                   thoughtMs: live.thoughtMs,
                   thoughtAgoMs: live.thoughtAt !== undefined ? now - live.thoughtAt : undefined,
                   effort: live.effort,
+                  // The dsh tool a parked turn is waiting on and for how long; absent otherwise.
+                  relayName: live.relay?.name,
+                  relayMs: live.relay ? now - live.relay.at : undefined,
                 });
               }
               if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/turns`) {

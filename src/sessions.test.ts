@@ -21,7 +21,7 @@ import {
   readHints,
 } from "./sessions.js";
 import { projectDirName } from "./adapter.js";
-import type { McpStatusReply, PermissionReadoutReply } from "./adapter.js";
+import type { LiveTurn, McpStatusReply, PermissionReadoutReply } from "./adapter.js";
 import type { InstructionFile } from "./instructions.js";
 import type { TranscriptListItem } from "./transcript.js";
 
@@ -832,6 +832,73 @@ const responder =
   assert.equal(r.body.hooks.length, 1);
   assert.equal(r.body.hooks[0].event, "PreToolUse");
   console.log("permissions-route ok");
+}
+
+// GET /live-turn: `{}` when no turn is running; with a turn parked on a dsh tool, the tool's name
+// and how long the relay has been out, so the status row can say what the turn is waiting on.
+{
+  const tmp = await mkdtemp(join(tmpdir(), "dsh-live-turn-test-"));
+  let handler: ((req: any, res: any) => void) | undefined;
+  // SAFETY: partial fake for tests
+  const ctx = {
+    inject: (deps: string[], cb: (host: any) => void) => {
+      cb({
+        webServer: {
+          register: (r: any) => {
+            handler = r.handler as (req: any, res: any) => void;
+            return () => {};
+          },
+        },
+        connection: { requestRejection: () => undefined },
+        sessions: { get: () => undefined },
+        sessionPersistence: { list: async () => [] },
+        effect: (fn: () => void | (() => void)) => fn(),
+      });
+    },
+  } as any;
+  const liveTurn = new Map<string, LiveTurn>([
+    ["waiting", { at: 1, output: 120, tool: true, relay: { name: "bash", at: Date.now() - 5000 } }],
+    ["writing", { at: 1, output: 40 }],
+  ]);
+  registerSessionRoutes(ctx, {
+    log: () => {},
+    projectDir: (cwd: string) => [join(tmp, "claude", "projects", projectDirName(cwd))],
+    projectsDir: [join(tmp, "claude", "projects")],
+    startedIds: async () => [],
+    claudeIdOf: (id: string) => id,
+    configDir: join(tmp, "claude"),
+    boxesPath: join(tmp, "boxes.json"),
+    importedDir: join(tmp, "imported"),
+    instanceFor: () => undefined,
+    instanceForHost: () => ({ configDir: join(tmp, "box") }),
+    liveTurn,
+  });
+  assert.ok(handler);
+  const respond = responder(() => handler);
+
+  let r = await respond("GET", "/dsh-oh-my-claude/live-turn");
+  assert.equal(r.status, 400, "no session param");
+
+  r = await respond("GET", "/dsh-oh-my-claude/live-turn?session=nobody");
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body, {}, "no turn running: an empty reply");
+
+  r = await respond("GET", "/dsh-oh-my-claude/live-turn?session=waiting");
+  assert.equal(r.status, 200);
+  assert.equal(r.body.tokens, 120);
+  assert.equal(r.body.tool, true);
+  assert.equal(r.body.relayName, "bash", "the dsh tool the turn is parked on");
+  assert.ok(
+    r.body.relayMs >= 5000 && r.body.relayMs < 6000,
+    `how long the relay has been out, got ${r.body.relayMs}`,
+  );
+
+  r = await respond("GET", "/dsh-oh-my-claude/live-turn?session=writing");
+  assert.equal(r.status, 200);
+  assert.equal(r.body.tokens, 40);
+  assert.equal(r.body.relayName, undefined, "no relay out: no name");
+  assert.equal(r.body.relayMs, undefined, "and no age");
+  console.log("live-turn-route ok");
 }
 
 // POST /mcp-servers/ask: 400 when session or name is missing, 404 when mcp.ask is absent,
