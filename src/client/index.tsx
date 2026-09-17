@@ -75,6 +75,7 @@ import {
 import { themeOf, hexToRgb, type ThemeGroup } from "./theme.js";
 import { PluginUpdateBadge } from "./update-pill.js";
 import { isNewer } from "../update.js";
+import { livingModelId } from "../model-ids.js";
 import { ReportBlock } from "./report.js";
 import { Spark, sparkNode } from "./spark.js";
 import { AccessShield, OhMyClaudeControl } from "./panel.js";
@@ -5193,6 +5194,54 @@ function WorkspaceModelMemory({ sessionId, ctx }: { sessionId: string; ctx: Clie
 }
 
 /**
+ * Put a session whose model id the lineup no longer has onto the form it still offers. The CLI
+ * renames its picker rows between releases (2.1.274 lists Fable as `claude-fable-5-1` where 2.1.273
+ * listed `claude-fable-5-1[1m]`), and a session keeps the id it was given in its own log, so its
+ * composer seat read `claude-code/claude-fable-5-1[1m]`: dsh names a selection by finding it in the
+ * catalog and prints the raw pair when it is not there (owner, 2026-09-17). Same model, new
+ * spelling, so the repair is a plain select; never while a turn runs, since a model change makes the
+ * next turn respawn the process. An id with no living form is left alone.
+ */
+function StaleModelRepair({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
+  useEffect(() => {
+    let dir: ReturnType<ClientCtx["modelDirectories"]["directoryFor"]>;
+    try {
+      dir = ctx.modelDirectories.directoryFor(sessionId);
+    } catch {
+      return; // unbound in this tab (see claudeProviderOf)
+    }
+    let settled = false;
+    const repair = guard(() => {
+      if (settled) return;
+      const snap = dir.store.getSnapshot();
+      const cur = snap.current;
+      if (!cur?.provider.startsWith("claude-code")) return;
+      const offered = snap.groups?.find((g) => g.id === cur.provider)?.models.map((m) => m.id);
+      if (!offered || offered.length === 0) return; // the catalog has not loaded yet
+      if (offered.includes(cur.model)) {
+        settled = true;
+        return;
+      }
+      if (ctx.sessions.list.getSnapshot()?.byId[sessionId]?.running) return;
+      settled = true;
+      const living = livingModelId(cur.model, offered);
+      if (living && dir.select)
+        void dir.select({ provider: cur.provider, model: living }).catch(() => {});
+    });
+    repair();
+    // The directory store for the catalog arriving, the list store for the turn ending: a session
+    // found mid-turn is repaired the moment it stops running.
+    const offDir = dir.store.subscribe(repair);
+    const offList = ctx.sessions.list.subscribe?.(repair);
+    return () => {
+      offDir();
+      offList?.();
+    };
+  }, [ctx, sessionId]);
+  return null;
+}
+
+/**
  * The prompt starter: a card above the composer on a session that has not been used yet, offering the
  * opening line saved for this session — or, on a brand-new tab, the last one saved anywhere — and
  * writing it into the composer without sending it, so it can be edited first. The card also saves the
@@ -7343,6 +7392,12 @@ export function apply(ctx: ClientCtx) {
       { name: "conversation.input.dock", id: "claude-workspace-model", order: 47 },
       (props) =>
         props.sessionId ? <WorkspaceModelMemory sessionId={props.sessionId} ctx={ctx} /> : null,
+    );
+    // Renderless: moves a session off a model id the CLI has since renamed.
+    ctx.slots.register(
+      { name: "conversation.input.dock", id: "claude-stale-model", order: 49 },
+      (props) =>
+        props.sessionId ? <StaleModelRepair sessionId={props.sessionId} ctx={ctx} /> : null,
     );
     return null;
   });

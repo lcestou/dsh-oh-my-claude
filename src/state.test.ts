@@ -1,4 +1,5 @@
 // Offline self-check: bun src/state.test.ts. No CLI, no network.
+import { livingModelId } from "./model-ids.js";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -230,6 +231,34 @@ assert.equal(starters.get("default"), "what changed?");
 console.log("starters ok");
 // Workspace models: remember which Claude model a workspace last ran; cleared when blank or absent.
 const wsDir = await mkdtemp(join(tmpdir(), "omc-ws-"));
+// A remembered id the CLI has since renamed lands on the form the lineup still has.
+{
+  const offered = [
+    "default",
+    "opus[1m]",
+    "claude-fable-5-1",
+    "claude-sonnet-5",
+    "claude-haiku-4-5",
+  ];
+  assert.equal(livingModelId("claude-fable-5-1", offered), "claude-fable-5-1", "offered as it is");
+  assert.equal(livingModelId("opus[1m]", offered), "opus[1m]", "a 1M alias still offered stays");
+  assert.equal(
+    livingModelId("claude-fable-5-1[1m]", offered),
+    "claude-fable-5-1",
+    "the 1M row the CLI dropped lands on the plain id",
+  );
+  assert.equal(
+    livingModelId("claude-haiku-4-5-20251001", offered),
+    "claude-haiku-4-5",
+    "a dated id lands on the undated one",
+  );
+  assert.equal(
+    livingModelId("sonnet[1m]", offered),
+    undefined,
+    "no living form: nothing is applied",
+  );
+  assert.equal(livingModelId("claude-gone-9", offered), undefined);
+}
 let wsModels = await loadWorkspaceModels(wsDir);
 assert.equal(wsModels.size, 0, "empty dir loads empty map");
 await saveWorkspaceModel(wsDir, "/w/a", "claude-opus-5", 10);

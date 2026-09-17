@@ -8,6 +8,13 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- A new session no longer opens on a model id the picker cannot name. A workspace remembers the
+  model it last ran, and Claude Code renames its picker rows between releases (2.1.274 lists Fable
+  as `claude-fable-5-1` where 2.1.273 listed `claude-fable-5-1[1m]`), so the remembered id could be
+  one no menu has and the composer showed `claude-code/claude-fable-5-1[1m]`. The remembered id is
+  now answered as the form the lineup still offers, or not at all, and a session already on a
+  renamed id is moved to the living form when it is opened (once its turn, if any, has ended).
+
 - The Claude Code update card above the composer folds like a side-question card: a header line
   with the label, a chevron and the close at the far right, and the sentence and buttons under
   it, hidden on a click on the header and back on the next. On a phone the sentence takes its own
