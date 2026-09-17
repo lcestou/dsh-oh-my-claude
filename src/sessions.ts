@@ -2,6 +2,7 @@
 // one into a cold dsh session whose id is the Claude session id, so the adapter resumes it as-is.
 // Served under /dsh-oh-my-claude/*, guarded by dsh's own request policy (trusted host + login cookie).
 // This is an I/O boundary: HTTP bodies, probe output and JSON files are decoded here.
+import { livingModelId } from "./model-ids.js";
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -99,7 +100,6 @@ import {
   STATE_DIR,
   isPermissionMode,
   loadContextSizes,
-  livingModelId,
   loadWorkspaceModels,
   saveWorkspaceModel,
 } from "./state.js";

@@ -1,4 +1,5 @@
 // Offline self-check: bun src/state.test.ts. No CLI, no network.
+import { livingModelId } from "./model-ids.js";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -24,7 +25,6 @@ import {
   loadTerminalSync,
   saveTerminalSync,
   TERMINAL_SYNC_FILE,
-  livingModelId,
   loadWorkspaceModels,
   saveWorkspaceModel,
   loadContextSizes,
