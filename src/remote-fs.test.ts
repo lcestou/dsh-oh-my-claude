@@ -161,15 +161,17 @@ import type { SubprocessHandle } from "./process.js";
 // copyToAt streams a local file to a box over stdin and answers the far path. No host here: the
 // runner is a fake that records what it was handed and plays the far shell's part.
 {
-  const script = copyScript("ab12cd34-my file.zip");
+  const script = copyScript("ab12cd34-my file.zip", 34);
   assert.ok(
     script.startsWith('d="$HOME"/.local/state/dsh-oh-my-claude/attachments && mkdir -p "$d"'),
     "the far dir is under the far $HOME, left for the far shell to expand",
   );
   assert.ok(script.includes(`p="$d"/'ab12cd34-my file.zip'`), "the name is single-quoted");
   assert.ok(
-    script.includes('cat > "$p.tmp.$$" && mv -- "$p.tmp.$$" "$p"'),
-    "bytes go through a temp file, so a dropped stream leaves no short file under the real name",
+    script.includes(
+      't="$p.tmp.$$"; cat > "$t" && [ "$(($(wc -c < "$t")))" -eq 34 ] && mv -- "$t" "$p" || { rm -f -- "$t";',
+    ),
+    "the temp file takes the real name only at its full size, and a short one is removed",
   );
   assert.ok(script.includes('if [ -e "$p" ]; then cat >/dev/null;'), "an existing file is kept");
   assert.ok(script.endsWith('printf %s "$p"'), "the script's answer is the absolute far path");
@@ -233,7 +235,10 @@ import type { SubprocessHandle } from "./process.js";
     calls[0]?.script.startsWith("printf '\u0001omc\u0001'; d="),
     "the marker is printed first",
   );
-  assert.ok(calls[0]?.script.endsWith(copyScript("x.bin")), "the script run is copyScript's");
+  assert.ok(
+    calls[0]?.script.endsWith(copyScript("x.bin", payload.length)),
+    "the script run is copyScript's",
+  );
   assert.deepEqual(
     calls[0]?.received,
     payload,

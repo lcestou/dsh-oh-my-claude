@@ -1541,11 +1541,12 @@ export function registerSessionRoutes(
   };
   if (remoteWorkspacesPath !== undefined) {
     const seedPath = remoteWorkspacesPath;
-    void withRwFile(() => readRemoteWorkspaces(seedPath))
-      .then((ws) => {
-        remoteWorkspaces = ws;
-      })
-      .catch((e: unknown) => log("warn", `remote workspaces: ${errorText(e)}`));
+    void withRwFile(async () => {
+      // The adapter's redirect map is fed from here and nowhere else, in the chain's order: a
+      // second read of its own could land after a reconcile and put a dropped row back.
+      remoteWorkspaces = await readRemoteWorkspaces(seedPath);
+      await onRemoteWorkspaces?.(remoteWorkspaces);
+    }).catch((e: unknown) => log("warn", `remote workspaces: ${errorText(e)}`));
   }
   /**
    * Where a cwd-scoped read has to run, and under which path.

@@ -94,13 +94,16 @@ export declare function homeAt(box: FsBox): Promise<string>;
 export declare function removeAt(box: FsBox, path: string): Promise<void>;
 /**
  * Write stdin to `<attachments>/<name>` on the box and print the absolute path it has there. The
- * bytes go through a temp file, so a dropped connection leaves a `.tmp` and never a short file
- * under the real name. A file already there is kept and stdin is drained, so ssh still exits 0.
+ * bytes go through a temp file that takes the real name only once it holds `bytes` bytes: a read
+ * that failed on this side ends the stream early and cleanly, which the far `cat` cannot tell from
+ * a whole file, and a short copy under the real name would be kept as "already there" for good. A
+ * short temp file is removed and the script fails. A file already there is kept and stdin is
+ * drained, so ssh still exits 0.
  *
  * ponytail: a file that is already there is still streamed and thrown away; asking first would
  * cost a second connection per new file, and the caller remembers what it has copied.
  */
-export declare const copyScript: (name: string) => string;
+export declare const copyScript: (name: string, bytes: number) => string;
 /** Runs one script on a box with its stdin open; the default is this plugin's `ssh`. A seam for the test. */
 type RunWithStdin = (host: string, script: string) => SubprocessHandle;
 /**

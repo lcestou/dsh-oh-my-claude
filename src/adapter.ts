@@ -45,7 +45,6 @@ import {
   type PickerSettings,
   readHints,
   readPickerSettings,
-  readRemoteWorkspaces,
   readSshBoxes,
   registerSessionRoutes,
   type RemoteWorkspace,
@@ -1232,7 +1231,7 @@ export function attachmentNotes(turns: LooseMessage[], images: readonly LoadedIm
  *  path. The other form, "was uploaded, but … cannot access a readable path", has no path and
  *  does not match. */
 const FILE_HANDLE =
-  /\[File ("(?:[^"\\]|\\.)*") \(\d+ bytes, sha256:([0-9a-f]{8})\): verbatim read-only copy saved at ("(?:[^"\\]|\\.)*")\./g;
+  /(\[File ("(?:[^"\\]|\\.)*") \(\d+ bytes, sha256:([0-9a-f]{8})\): verbatim read-only copy saved at )("(?:[^"\\]|\\.)*")\./g;
 /** How long one attachment may take to reach a box: before a prompt, and at a step boundary,
  *  where the CLI sits parked waiting for the line this holds up. */
 const COPY_CAP_MS = 300_000;
@@ -1251,7 +1250,7 @@ export async function relayFileHandles(
   log: (level: string, message: string) => void = () => {},
 ): Promise<string> {
   const farOf = new Map<string, string>();
-  for (const [, quotedName, sha, quotedPath] of text.matchAll(FILE_HANDLE)) {
+  for (const [, , quotedName, sha, quotedPath] of text.matchAll(FILE_HANDLE)) {
     if (!quotedName || !sha || !quotedPath || farOf.has(quotedPath)) continue;
     try {
       // The sha keeps two files that share a name apart on the box.
@@ -1262,10 +1261,14 @@ export async function relayFileHandles(
     }
   }
   if (farOf.size === 0) return text;
-  return text.replace(FILE_HANDLE, (whole: string, _name: string, _sha: string, quoted: string) => {
-    const far = farOf.get(quoted);
-    return far === undefined ? whole : whole.replace(quoted, () => JSON.stringify(far));
-  });
+  // Rebuilt from the handle's own head, not searched for inside it: a file name may hold any text.
+  return text.replace(
+    FILE_HANDLE,
+    (whole: string, head: string, _name: string, _sha: string, quoted: string) => {
+      const far = farOf.get(quoted);
+      return far === undefined ? whole : `${head}${JSON.stringify(far)}.`;
+    },
+  );
 }
 
 /** The images of a turn, newest MAX_IMAGES kept, for the stdin line that carries them. */
@@ -6057,9 +6060,7 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
         reconcileSshBoxes(ctx, config, boxes, sshMounts, sshAdapters, (l, m) => adapter.log(l, m)),
       )
       .catch((e) => adapter.log("warn", `ssh boxes: ${errorText(e)}`));
-    // Load the remote-workspace redirects so a box session lands in its real remote path at boot.
-    void readRemoteWorkspaces(join(STATE_DIR, "remote-workspaces.json"))
-      .then(setRemoteWorkspaces)
-      .catch((e) => adapter.log("warn", `remote workspaces: ${errorText(e)}`));
+    // The remote-workspace redirects are fed by the routes above (`onRemoteWorkspaces`), seed read
+    // included: one feed on one chain, so a row the reconcile dropped cannot be read back in here.
   }
 }

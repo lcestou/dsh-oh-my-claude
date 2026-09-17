@@ -1475,8 +1475,8 @@ const responder =
   await access(kept);
   assert.deepEqual(
     published,
-    [["w-kept"]],
-    "the adapter's redirect map was told once, not per read",
+    [["w-kept", "w-ghost"], ["w-kept"]],
+    "the redirect map gets the seed, then the reconciled list, and nothing per read",
   );
   console.log("remote-workspace sync ok");
 }

@@ -69,7 +69,7 @@ Removing a box removes the workspaces pinned to it, and its row says how many be
 
 dsh's Files panel lists the stand-in folder, which is empty by design. The session's files are on the box.
 
-A file or image attached to a message in a session that runs on a box is copied there first, over the same ssh, into `~/.local/state/dsh-oh-my-claude/attachments/` on the box. dsh saves an attachment on this PC and writes that path into the `[File …]` handle Claude reads; the plugin swaps in the path on the box, and does the same for the saved copy an image's note names. A file that cannot be copied keeps its original handle, and Claude reports the path as unreadable. Copies on the box are never cleaned up by the plugin.
+A file or image attached to a message in a session that runs on a box is copied there first, over the same ssh, into `~/.local/state/dsh-oh-my-claude/attachments/` on the box. dsh saves an attachment on this PC and writes that path into the `[File …]` handle Claude reads; the plugin swaps in the path on the box, and does the same for the saved copy an image's note names. A file that cannot be copied keeps its original handle, and Claude reports the path as unreadable; an image that cannot be copied still reaches Claude inline, with no saved-copy path to read it from again. The copy on the box takes its name only once it holds every byte, so a transfer cut short leaves nothing behind under that name. Copies on the box are never cleaned up by the plugin.
 
 ### What runs where
 
