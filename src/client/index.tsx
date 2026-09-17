@@ -6427,6 +6427,9 @@ const iconBtn = {
   flex: "0 0 auto",
 } as const;
 
+/** How long the update card stays after a success before closing on its own. */
+const CLOSE_AFTER_S = 10;
+
 /** Mirrors the server's `ClaudeUpdateCard`: the box a session runs on and the two versions. */
 interface ClaudeUpdateCardData {
   host: string;
@@ -6605,20 +6608,65 @@ function ClaudeUpdateCard({
   // fold; a reload opens it again, and the close is what records a skip until the next release.
   const [open, setOpen] = useState(true);
   const toggle = () => setOpen((o) => !o);
+  // After a success the card closes on its own: a thin accent bar along its bottom edge drains
+  // over CLOSE_AFTER_S seconds so the close is seen coming without a number ticking, the pointer
+  // over the card holds it while the text is read, and the card fades for a moment rather than
+  // popping out. A decline or a failure stays until it is read and closed.
+  const [closeIn, setCloseIn] = useState<number | null>(null);
+  const [held, setHeld] = useState(false);
+  const [leaving, setLeaving] = useState(false);
+  const goneRef = useRef(onGone);
+  goneRef.current = onGone;
+  useEffect(() => {
+    if (phase !== "done") return;
+    setCloseIn(CLOSE_AFTER_S);
+  }, [phase]);
+  useEffect(() => {
+    if (closeIn === null || held) return;
+    if (closeIn === 0) {
+      setLeaving(true);
+      const id = setTimeout(() => goneRef.current(), 250);
+      return () => clearTimeout(id);
+    }
+    const id = setTimeout(() => setCloseIn(closeIn - 1), 1000);
+    return () => clearTimeout(id);
+  }, [closeIn, held]);
   return (
     <div
       data-omc-update-card={update.latest}
       data-omc-update-phase={phase}
       role="status"
+      onMouseEnter={() => setHeld(true)}
+      onMouseLeave={() => setHeld(false)}
       style={{
+        position: "relative",
         boxSizing: "border-box",
         background: "var(--dsw-specific-tip, var(--dsw-alias-bg-base, transparent))",
         border: "0.5px solid var(--dsw-alias-border-l1, rgba(217,119,87,.4))",
         borderRadius: "12px 12px 0 0",
         overflow: "hidden",
         fontSize: 13,
+        opacity: leaving ? 0 : 1,
+        transition: "opacity .25s ease",
       }}
     >
+      {closeIn !== null && (
+        <div
+          data-omc-update-closing={closeIn}
+          aria-hidden="true"
+          title={held ? "Held while the pointer is here" : `Closes in ${closeIn} s`}
+          style={{
+            position: "absolute",
+            left: 0,
+            bottom: 0,
+            height: 2,
+            width: `${(closeIn / CLOSE_AFTER_S) * 100}%`,
+            background: ACCENT,
+            // One second per step, linear, so the steps read as one steady drain.
+            transition: held ? "none" : "width 1s linear",
+          }}
+        />
+      )}
       {/* The header is the fold toggle; the close beside it stops the click so it does not also
           fold the card. A div, not a button: a button cannot hold one. */}
       <div
@@ -6765,7 +6813,11 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
           const nextNeed = body.loginNeeded ?? null;
           setNeed((cur) => (sameNeed(cur, nextNeed) ? cur : nextNeed));
           const nextUpd = body.claudeUpdate ?? null;
-          if (nextUpd === null || nextUpd.latest !== actedRef.current) actedRef.current = null;
+          // A card that was acted on stays until it says it is gone (its own countdown after a
+          // success, the close otherwise): the server stops naming the release the moment the
+          // install lands, and dropping the card on that poll left "Updated" on screen for a
+          // blink. Only a newer release takes it over.
+          if (nextUpd !== null && nextUpd.latest !== actedRef.current) actedRef.current = null;
           setClaudeUpdate((cur) =>
             actedRef.current !== null ? cur : sameCard(cur, nextUpd) ? cur : nextUpd,
           );
