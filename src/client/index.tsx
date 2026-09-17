@@ -3310,6 +3310,31 @@ function watchContextMeter(ctx: ClientCtx) {
     const button = arc.closest("button");
     if (button?.getAttribute("aria-label") !== label) button?.setAttribute("aria-label", label);
   };
+  /**
+   * The meter's open panel when dsh renders it away from the ring.
+   *
+   * Up to dsh 0.1.5 the panel was a sibling of the ring button, which is what `isRingRoot` tests.
+   * 0.1.6-alpha.2 portals it to `<body>` instead, so that test can never match and the usage block
+   * stopped appearing. The panel is claimed here by the ring's own button: it is open
+   * (`aria-expanded`), and dsh labels the panel with the same phrase as the button minus the
+   * percentage, so the button's label contains the panel's. That pair travels with dsh's
+   * translations, unlike the generated class names on either node.
+   *
+   * The sibling path above stays until 0.1.5 is no longer supported; dropping that support means
+   * deleting the two `isRingRoot` dialog lines and this call's companion comment, not this one.
+   */
+  const portalPanel = (): HTMLElement | null => {
+    const trigger = arc?.closest("button");
+    if (!trigger || trigger.getAttribute("aria-expanded") !== "true") return null;
+    const label = trigger.getAttribute("aria-label");
+    if (!label) return null;
+    for (const panel of document.querySelectorAll<HTMLElement>('[role="dialog"]')) {
+      if (panel.contains(trigger)) continue; // the ring sits inside no panel of its own
+      const own = panel.getAttribute("aria-label");
+      if (own && own !== label && label.includes(own)) return panel;
+    }
+    return null;
+  };
   const scan = (root: ParentNode) => {
     // Looked for only until it is found. The ring outlives every burst that follows, and this query
     // would otherwise run over each of them for an element already in hand.
@@ -3336,6 +3361,8 @@ function watchContextMeter(ctx: ClientCtx) {
       const tip = root.closest<HTMLElement>('[role="tooltip"]');
       if (tip && isRingRoot(tip.parentElement)) bubble(tip);
     }
+    const portal = portalPanel();
+    if (portal) attach(portal);
   };
   // Scoped to the burst: the ring's dialog and tooltip are rare nodes, and the body-wide pair of
   // attribute queries this used to run every dirty frame cost 0.4 ms on a conversation of 30k nodes

@@ -8,6 +8,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- The Claude usage block and the context breakdown are back in dsh's context-meter panel on dsh
+  0.1.6-alpha.2, which moved that panel out of the ring's own corner of the page and into a
+  portal on `<body>`. The ring's hover bubble was never affected.
+
 - The Oh My Claude control, the access shield and the Claude look all come back on dsh
   0.1.6-alpha.2. dsh moved two things the plugin reads: the open session left the session list
   snapshot (`current`) for the main view's own retention, and session navigation left the Session
