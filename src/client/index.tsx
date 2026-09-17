@@ -7395,7 +7395,7 @@ export function apply(ctx: ClientCtx) {
     );
     // Renderless: moves a session off a model id the CLI has since renamed.
     ctx.slots.register(
-      { name: "conversation.input.dock", id: "claude-stale-model", order: 48 },
+      { name: "conversation.input.dock", id: "claude-stale-model", order: 49 },
       (props) =>
         props.sessionId ? <StaleModelRepair sessionId={props.sessionId} ctx={ctx} /> : null,
     );
