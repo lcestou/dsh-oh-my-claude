@@ -6,7 +6,7 @@ import { type ContextSizes, type ContextSource } from "./context-sources.js";
 import { type PickerSettings, type RemoteWorkspace } from "./sessions.js";
 import { readUsage } from "./usage.js";
 import { type ClaudeEvent, ClaudeProcess } from "./process.js";
-import type { Agent, ImageAttachmentRef, JsonValue, PluginContext, SessionController, SessionId, SubprocessRuntime } from "./dsh.js";
+import type { Agent, ImageAttachmentRef, JsonValue, PluginContext, ResolvedAgent, SessionController, SessionId, SubprocessRuntime } from "./dsh.js";
 import { ADAPTER_CURRENT } from "./dsh.js";
 import { type ToolMode, type ToolModeInfo } from "./rows-probe.js";
 import { type FsBox } from "./remote-fs.js";
@@ -581,6 +581,12 @@ export declare function toolResultFor(messages: LooseMessage[] | undefined, id: 
 } | undefined;
 /** Messages dsh delivered after the last assistant step. */
 export declare function afterLastAssistant(messages: LooseMessage[] | undefined): LooseMessage[];
+/** The Agent inside what dsh's session controller answered for a cold resume. dsh 0.1.6 wraps it
+ *  (`{ agent }`, or `{ error }` when the session cannot be resumed) where 0.1.5 handed back the
+ *  Agent; read as the Agent, the wrapper has no `followup`, and every wake of an unloaded session
+ *  failed on it from the day 0.1.6 was installed. The controller's error is thrown so the caller
+ *  reports it like any other failed resume. */
+export declare function resolvedAgent(found: ResolvedAgent): Agent;
 /** Notice this plugin drops into a session's inbox to open a turn after Claude replied on its own. */
 export declare const WAKE_TEXT = "Claude Code finished a background task and replied.";
 /** Sent as a real prompt after dsh restarts mid-turn: the process is gone, Claude must carry on. */

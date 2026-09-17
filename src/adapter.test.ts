@@ -38,6 +38,7 @@ import {
   noteLiveWindow,
   proxyBaseUrl,
   resolveModelInfo,
+  resolvedAgent,
   selectTurns,
   relayBlocks,
   toolResultFor,
@@ -2557,6 +2558,20 @@ console.log("ok");
   };
   await a.wake("s1", fakeProc({ busy: false }));
   assert.equal(sent.length, 2, "resume failure is logged, not thrown");
+  // dsh 0.1.6 answers the cold resume with its agent controller's own result, `{ agent }` or
+  // `{ error }`, where 0.1.5 (the fake above) answered the Agent. Read as the Agent the wrapper has
+  // no `followup`, and no unloaded session was woken from the 0.1.6 install on (resume.log,
+  // 2026-09-15 to 09-17: "agent.followup is not a function" after every "agent resumed").
+  (a as any).sessionController = { resolveAgent: async () => ({ agent }) };
+  assert.equal(await a.wake("s1", fakeProc({ busy: false })), true, "0.1.6 wrapper: woken");
+  assert.equal(sent.length, 3, "0.1.6 wrapper: the notice reaches the agent inside it");
+  (a as any).sessionController = { resolveAgent: async () => ({ error: new Error("owned") }) };
+  assert.equal(await a.wake("s1", fakeProc({ busy: false })), false, "0.1.6 error: not woken");
+  assert.equal(sent.length, 3, "0.1.6 error: reported as a failed resume, nothing sent");
+  assert.equal(resolvedAgent(agent), agent, "0.1.5 shape: the Agent itself");
+  assert.equal(resolvedAgent({ agent }), agent, "0.1.6 shape: the Agent inside the wrapper");
+  assert.throws(() => resolvedAgent({ error: "gone" }), /gone/, "a bare error value still throws");
+  sent.length = 2; // the counts below predate these cases
   // The restart notice asks the model to carry on. A mirrored session's context is a conversation
   // someone is holding in a terminal, and nudging one made it read that conversation as its own
   // instructions: it wrote a feature being discussed there, committed it, and switched the branch of
