@@ -46,6 +46,7 @@ import {
   forkTranscriptText,
   userPromptCount,
   dropSent,
+  steerKey,
   afterLastAssistant,
   wakeOnlyTurn,
   WAKE_TEXT,
@@ -1496,6 +1497,7 @@ console.log("ok");
       content: [{ type: "text", text: "also check /tmp" }],
     },
     {
+      id: "s1",
       role: "user",
       source: { kind: "subagent-settled" },
       content: [{ type: "text", text: "child done" }],
@@ -1509,6 +1511,9 @@ console.log("ok");
     /\bgo\b/,
     "the turn's original prompt is before the assistant step, not repeated",
   );
+  const dedup = stepContextFor(steered, new Set(), new Set(["s1"]));
+  assert.match(dedup, /also check \/tmp/, "a message not yet sent still rides on the result");
+  assert.doesNotMatch(dedup, /child done/, "a message already written live is not read twice");
   // Typed while the turn ran, `/btw` reaches the plugin as prose; the turn loop pulls it out and
   // asks it as a side question instead of forwarding it to Claude, which does not know the command.
   const withAside = messageList([
@@ -1559,6 +1564,14 @@ console.log("ok");
     dropSent(afterLastAssistant(msgs), new Set(["r2", "r3"])).length,
     0,
     "all already live-sent: no-op turn",
+  );
+  assert.equal(
+    dropSent(
+      messageList([{ id: "n1", role: "user", source: { kind: "agent-message" }, content: [] }]),
+      new Set(["n1"]),
+    ).length,
+    0,
+    "a dsh message marked by id is dropped like a typed steer marked by rpcId",
   );
 }
 {
@@ -4411,6 +4424,112 @@ console.log("interrupt-on-abort ok");
   assert.equal(proc.steerPending, false, "file alone: no text, so nothing parks (as before)");
   console.log("live-steer ok");
 }
+// What dsh sends on its own behalf goes live the same way a typed steer does, marked by its id. On
+// 2026-09-16 three child reports (a send_message relay, two settlement notices) were spliced a few
+// seconds after a typed steer, claimed into a step the plugin ran in steer mode, and never written.
+{
+  const handlers: Record<string, (session: unknown, event: unknown) => void> = {};
+  const adapter = new ClaudeCodeAdapter(
+    fakeCtx({
+      on(name: string, fn: (session: unknown, event: unknown) => void) {
+        handlers[name] = fn;
+      },
+    }),
+    Config({}),
+  );
+  const writes: string[] = [];
+  const proc = {
+    alive: true,
+    busy: true,
+    relays: new Map(),
+    sent: new Set<string>(),
+    steerPending: false,
+    write(line: string) {
+      writes.push(line);
+      return true;
+    },
+  };
+  adapter.processes.set(registryKey("claude-code", "n"), fakeProc(proc));
+  const splice = (inserted: object[]) =>
+    handlers["session/event"]?.(
+      { id: "n" },
+      { type: "agent/inbox/spliced", data: { target: "next-step", inserted } },
+    );
+  const relay = {
+    id: "m1",
+    role: "user",
+    source: { kind: "agent-message", form: "relay", senderSessionId: "c1" },
+    content: [
+      { type: "text", text: "Agent c1 sent a message: " },
+      { type: "text", text: "chunk 4 done, gates green" },
+    ],
+  };
+  const settled = {
+    id: "m2",
+    role: "user",
+    source: { kind: "subagent-settled", form: "notice", senderSessionId: "c1" },
+    content: [
+      {
+        type: "text",
+        text: "Background subagent c1 finished and will do no further work unless you send it more.",
+      },
+      { type: "text", text: "It left no closing message." },
+    ],
+  };
+  const job = {
+    id: "m3",
+    role: "user",
+    source: { kind: "plugin", plugin: "dsh-jobs", form: "notice" },
+    content: [{ type: "text", text: "background job bash-4 finished" }],
+  };
+  splice([relay, settled, job]);
+  assert.equal(writes.length, 3, "three dsh messages: three writes");
+  assert.ok(writes[0]?.includes("chunk 4 done, gates green"), "the relay's body goes over stdin");
+  assert.ok(
+    writes[1]?.includes("finished and will do no further work"),
+    "the settlement notice goes over stdin",
+  );
+  assert.ok(writes[2]?.includes("background job bash-4 finished"), "the job line goes over stdin");
+  assert.deepEqual([...proc.sent], ["m1", "m2", "m3"], "each marked sent by its id");
+  assert.equal(proc.steerPending, true, "the step parks at the next tool result");
+
+  const tool = {
+    id: "m4",
+    role: "user",
+    source: { kind: "tool", callId: "c9" },
+    content: [{ type: "tool-result", toolCallId: "c9", content: [] }],
+  };
+  writes.length = 0;
+  splice([tool, { role: "assistant", content: [{ type: "text", text: "x" }] }]);
+  assert.equal(writes.length, 0, "a tool result or an assistant message never goes over stdin");
+
+  assert.equal(
+    steerKey({ role: "user", source: { kind: "user", rpcId: "r1" }, id: "m5" }),
+    "r1",
+    "a typed steer keeps its rpcId as the key",
+  );
+  assert.equal(
+    steerKey({ role: "user", source: { kind: "subagent-settled" }, id: "m6" }),
+    "m6",
+    "a dsh message is keyed by its id",
+  );
+  assert.equal(
+    steerKey({ role: "user", source: { kind: "tool" }, id: "m7" }),
+    undefined,
+    "a tool result has no key",
+  );
+  assert.equal(
+    steerKey({ role: "assistant", id: "m8" }),
+    undefined,
+    "an assistant message has no key",
+  );
+  assert.equal(
+    steerKey({ role: "user", source: { kind: "user" } }),
+    undefined,
+    "no rpcId and no id: nothing to mark, not forwarded",
+  );
+  console.log("live-dsh-message ok");
+}
 
 // The boundary steer path and the fresh-turn reset. At a step boundary dsh has already turned a
 // file block into its `[File …]` handle text, so it goes through as text; an image is loaded and
@@ -4536,6 +4655,48 @@ console.log("interrupt-on-abort ok");
   assert.equal(writes.length, 1, "no attachment store: still one write");
   assert.deepEqual(line(), [{ type: "text", text: "look" }], "no attachment store: the text alone");
   assert.ok(proc.sent.has("r3"), "no attachment store: marked sent");
+
+  // A dsh message left unsent at the boundary (it arrived while the process was not busy) goes
+  // over stdin here, keyed by its id; one already written live is skipped.
+  writes.length = 0;
+  proc.parked = "steer";
+  proc.sent.add("m1");
+  await adapter.openTurn(
+    {
+      mode: "steer",
+      proc: fakeProc(proc),
+      options: opts(
+        "s",
+        messageList([
+          { role: "assistant", content: [{ type: "text", text: "on it" }] },
+          {
+            id: "m1",
+            role: "user",
+            source: { kind: "agent-message", form: "relay" },
+            content: [
+              { type: "text", text: "Agent c1 sent a message: " },
+              { type: "text", text: "already live" },
+            ],
+          },
+          {
+            id: "m2",
+            role: "user",
+            source: { kind: "subagent-settled", form: "notice" },
+            content: [{ type: "text", text: "Background subagent c1 finished." }],
+          },
+        ]),
+      ),
+    },
+    fakeProc(proc),
+    prep,
+  );
+  assert.equal(writes.length, 1, "boundary: the unsent notice alone is written");
+  assert.deepEqual(
+    line(),
+    [{ type: "text", text: "Background subagent c1 finished." }],
+    "boundary: the notice's text",
+  );
+  assert.ok(proc.sent.has("m2"), "boundary: marked sent by id");
 
   // The fresh-turn reset, in continuationFor.
   const idle = {
