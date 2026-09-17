@@ -1058,6 +1058,13 @@ const textOf = (content: LooseMessage["content"]): string => {
   return content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("\n");
 };
 
+/** The key a message dsh delivered mid-step is marked under once it went over stdin: the prompt's
+ *  rpcId for a typed steer, the message id for anything dsh sends on its own behalf (a child's
+ *  send_message, a settlement notice, a job's finish line). Undefined for what never goes over
+ *  stdin on its own: an assistant turn, a tool result. */
+export const steerKey = (m: LooseMessage): string | undefined =>
+  m.role === "user" && m.source?.kind !== "tool" ? (m.source?.rpcId ?? m.id) : undefined;
+
 const isTurn = (m: LooseMessage) =>
   (m.role === "user" && m.source?.kind !== "tool") || m.role === "assistant";
 
@@ -1815,29 +1822,32 @@ export function wakeOnlyTurn(messages: LooseMessage[] | undefined): boolean {
   return fresh.some(isWake) && !fresh.some((m) => m.source?.kind === "user");
 }
 
-/** Drop user messages Claude already received live on stdin (matched by the prompt's rpcId). */
+/** Drop messages Claude already received live on stdin (matched by `steerKey`). */
 export function dropSent<T extends LooseMessage>(
   messages: T[] | undefined,
   sent: Set<string> | undefined,
 ): T[] {
   if (!sent || sent.size === 0) return messages ?? [];
   return (messages ?? []).filter((m) => {
-    const rpcId = m.source?.rpcId;
-    return !(rpcId && sent.has(rpcId));
+    const key = steerKey(m);
+    return !(key && sent.has(key));
   });
 }
 
 /** What dsh delivered at this step boundary besides the tool result: steers the user sent while
  *  the tool ran, subagent notices, other injections. Claude only sees the tool result, so they
- *  ride along with it. Empty when there is nothing. */
+ *  ride along with it. Empty when there is nothing. A message already written live to stdin is
+ *  skipped, so Claude reads it once. */
 export function stepContextFor(
   messages: LooseMessage[] | undefined,
   drops: ReadonlySet<ContextSource> = new Set(),
+  sent: ReadonlySet<string> = new Set(),
 ): string {
   const parts = [];
   for (const m of afterLastAssistant(messages)) {
     if (m.role !== "user") continue;
     if (m.source?.kind === "tool") continue;
+    if (sent.has(steerKey(m) ?? "")) continue;
     const text = promptTextOf(m, drops);
     if (text) parts.push(text);
   }
@@ -2175,6 +2185,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     }
     // Steers: dsh only delivers them at step boundaries, and a Claude turn has none of its own.
     // Forward them to Claude's stdin as they arrive; the CLI injects them at its next tool call.
+    // Everything dsh splices mid-step goes the same way, whoever sent it: a typed steer, a child's
+    // send_message, a settlement notice, a job's finish line. Left to the boundary, a step parked
+    // on a typed steer forwards only what a person typed and the rest is lost (2026-09-16: three
+    // child reports in one session, each spliced a few seconds after a typed steer).
     ctx.on?.("session/event", (sessionArg, eventArg) => {
       // SAFETY: dsh's session/event carries (session, event); only the spliced-inbox fields are read
       const session = sessionArg as { id?: string };
@@ -2184,9 +2198,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       const proc = this.processes.get(registryKey(this.providerId, session?.id ?? ""));
       if (!proc?.alive || !proc.busy || proc.relays.size > 0) return;
       for (const m of event.data?.inserted ?? []) {
-        const src = m.source;
-        const rpcId = src?.rpcId;
-        if (m.role !== "user" || src?.kind !== "user" || !rpcId) continue;
+        const key = steerKey(m);
+        if (!key) continue;
         const text = textOf(m.content);
         if (!text) continue;
         // A file or image cannot go over stdin from here: dsh projects a file into its `[File …]`
@@ -2200,7 +2213,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
           continue;
         }
         if (proc.write(buildInput(text, []))) {
-          proc.sent.add(rpcId);
+          proc.sent.add(key);
           proc.steerPending = true;
         }
       }
@@ -4487,7 +4500,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     if (cont.mode === "relay") {
       const relays = [...proc.relays.values()];
       proc.relays.clear();
-      const extra = stepContextFor(cont.options.messages, prep.drops); // steers and notices ride on the last result
+      const extra = stepContextFor(cont.options.messages, prep.drops, proc.sent); // steers and notices ride on the last result
       relays.forEach((relay, i) => {
         const result = cont.results[i];
         if (!result) return; // cannot happen: results were built from relays.keys()
@@ -4498,9 +4511,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     if (cont.mode === "steer") {
       proc.parked = undefined;
       for (const m of afterLastAssistant(cont.options.messages)) {
-        const rpcId = m.source?.rpcId;
-        if (m.role !== "user" || m.source?.kind !== "user" || !rpcId || proc.sent.has(rpcId))
-          continue;
+        const key = steerKey(m);
+        if (!key || proc.sent.has(key)) continue;
         const text = textOf(m.content);
         if (!text) continue;
         // dsh has projected a file into its handle by now; an image is still a block. It is loaded
@@ -4509,7 +4521,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         const images = await this.loadImages(imageRefs([m]), cont.options.signal);
         const notes = attachmentNotes([m], images);
         const body = notes ? `${text}\n\n${notes}` : text;
-        if (proc.write(buildInput(body, images))) proc.sent.add(rpcId);
+        if (proc.write(buildInput(body, images))) proc.sent.add(key);
       }
       return;
     }

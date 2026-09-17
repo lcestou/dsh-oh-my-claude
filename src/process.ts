@@ -1405,7 +1405,7 @@ export class ClaudeProcess {
     this.lastUsed = Date.now();
     this.stderr = "";
     this.stray = "";
-    this.sent = new Set(); // rpcIds of steers already forwarded to Claude mid-turn
+    this.sent = new Set(); // steerKeys of messages already forwarded to Claude mid-turn (a typed steer's rpcId, a dsh message's id)
     this.relays = new Map(); // relayed dsh tool call id → { resolve, reject, ... } awaiting dsh's result
     this.exitCode = undefined;
     this.queue = new LineQueue();

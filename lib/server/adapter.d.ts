@@ -378,6 +378,11 @@ export type LooseMessage = {
 /** The browser's IANA zone as dsh stamped it on the latest user prompt; undefined when no
  *  prompt carried one (an API caller, an old log), so clocks fall back to the box's zone. */
 export declare function clientTimeZone(messages: readonly LooseMessage[]): string | undefined;
+/** The key a message dsh delivered mid-step is marked under once it went over stdin: the prompt's
+ *  rpcId for a typed steer, the message id for anything dsh sends on its own behalf (a child's
+ *  send_message, a settlement notice, a job's finish line). Undefined for what never goes over
+ *  stdin on its own: an assistant turn, a tool result. */
+export declare const steerKey: (m: LooseMessage) => string | undefined;
 /**
  * Pick the messages that go into this call. Resuming: only what came after the last assistant turn
  * (the new prompt plus dsh's context injections). Fresh: the whole transcript, since `claude -p` is stateless.
@@ -583,12 +588,13 @@ export declare const RESTART_TEXT = "[Oh My Claude] dsh restarted while this tur
 /** A turn opened by our own wake notice, with no user prompt to send: only drain what Claude
  *  already wrote. A user prompt in the same batch takes precedence and is sent normally. */
 export declare function wakeOnlyTurn(messages: LooseMessage[] | undefined): boolean;
-/** Drop user messages Claude already received live on stdin (matched by the prompt's rpcId). */
+/** Drop messages Claude already received live on stdin (matched by `steerKey`). */
 export declare function dropSent<T extends LooseMessage>(messages: T[] | undefined, sent: Set<string> | undefined): T[];
 /** What dsh delivered at this step boundary besides the tool result: steers the user sent while
  *  the tool ran, subagent notices, other injections. Claude only sees the tool result, so they
- *  ride along with it. Empty when there is nothing. */
-export declare function stepContextFor(messages: LooseMessage[] | undefined, drops?: ReadonlySet<ContextSource>): string;
+ *  ride along with it. Empty when there is nothing. A message already written live to stdin is
+ *  skipped, so Claude reads it once. */
+export declare function stepContextFor(messages: LooseMessage[] | undefined, drops?: ReadonlySet<ContextSource>, sent?: ReadonlySet<string>): string;
 /** A fresh user message that is nothing but `/btw <question>`, and the question it carries. */
 export interface SideQuestion {
     message: LooseMessage;
