@@ -30,6 +30,7 @@ import {
   buildInput,
   buildPrompt,
   attachmentNotes,
+  relayFileHandles,
   claudeSessionId,
   getCatalog,
   modelFromApi,
@@ -4837,6 +4838,146 @@ console.log("interrupt-on-abort ok");
   assert.equal(keepsLiveTurn("parked"), true, "so does a step parked on a steer");
   assert.equal(keepsLiveTurn("finished"), false, "a finished turn drops them");
   assert.equal(keepsLiveTurn("ended"), false, "and so does a process that died under it");
+}
+
+// An attachment follows its turn to the box. dsh saves a file on this PC and names that path in
+// the handle; a claude on another box cannot read it, so the file is copied over and the handle
+// takes the far path. The handle text is dsh-llm's `fileHandleText`, byte for byte.
+{
+  const tail =
+    " Read that path with your file tools when its contents are needed; copy it to a writable location before modifying it.]";
+  const handle = (name: string, sha: string, path: string) =>
+    `[File ${JSON.stringify(name)} (34 bytes, sha256:${sha}): verbatim read-only copy saved at ${JSON.stringify(path)}.${tail}`;
+  const blind =
+    '[File "c.bin" (9 bytes, sha256:0badf00d) was uploaded, but the current execution environment cannot access a readable path.]';
+  const odd = '/store/we"ird\\dir/b.pdf';
+  const text = `see these\n${handle("a.zip", "abc12345", "/store/aa")}\nand ${handle("sub/b.pdf", "def67890", odd)}\n${blind}\n${handle("a.zip", "abc12345", "/store/aa")}`;
+
+  const copies: string[][] = [];
+  const copy = async (local: string, name: string) => {
+    copies.push([local, name]);
+    return `/far/att/${name}`;
+  };
+  const moved = await relayFileHandles(text, copy);
+  assert.deepEqual(
+    copies,
+    [
+      ["/store/aa", "abc12345-a.zip"],
+      [odd, "def67890-b.pdf"],
+    ],
+    "each file is copied once, under its sha and the last segment of its name",
+  );
+  assert.equal(
+    moved,
+    `see these\n${handle("a.zip", "abc12345", "/far/att/abc12345-a.zip")}\nand ${handle("sub/b.pdf", "def67890", "/far/att/def67890-b.pdf")}\n${blind}\n${handle("a.zip", "abc12345", "/far/att/abc12345-a.zip")}`,
+    "every handle names the far path, and nothing else in the text moved",
+  );
+
+  // One file that will not copy keeps its handle; the others still move.
+  const warned: string[] = [];
+  const partly = await relayFileHandles(
+    text,
+    async (local, name) => {
+      if (local === odd) throw new Error("far: Permission denied");
+      return `/far/att/${name}`;
+    },
+    (_level, message) => warned.push(message),
+  );
+  assert.ok(partly.includes(JSON.stringify(odd)), "a failed copy leaves its handle as it was");
+  assert.ok(partly.includes('"/far/att/abc12345-a.zip"'), "and the other handle still moves");
+  assert.equal(warned.length, 1, "the failure is logged once");
+  assert.match(warned[0] ?? "", /Permission denied/);
+
+  // No handle, no copy, and the very same string back.
+  copies.length = 0;
+  const plain = `nothing attached\n${blind}`;
+  assert.equal(await relayFileHandles(plain, copy), plain);
+  assert.equal(copies.length, 0, "the no-path form of the handle is not a file to copy");
+
+  // Through the adapter, at a step boundary on an ssh box: the file's handle and the image's saved
+  // copy both reach the box, under the short cap, and a second steer copies nothing again.
+  const writes: string[] = [];
+  const adapter = new ClaudeCodeAdapter(
+    fakeCtx({
+      on() {},
+      attachments: { readImage: async () => ({ data: new Uint8Array([0, 1, 2]).buffer }) },
+    }),
+    Config({ sshHost: "far" }),
+  );
+  const sent: { host: string; local: string; name: string; capMs: number }[] = [];
+  adapter.copyToBox = async (host, local, name, capMs) => {
+    sent.push({ host, local, name, capMs });
+    return `/home/far/att/${name}`;
+  };
+  const proc = {
+    alive: true,
+    busy: true,
+    relays: new Map(),
+    sent: new Set<string>(),
+    steerPending: false,
+    parked: "steer" as "steer" | undefined,
+    write(line: string) {
+      writes.push(line);
+      return true;
+    },
+  };
+  // SAFETY: openTurn reads only input and drops off the prep; the rest is the spawn path's.
+  const prep = { input: "{}", args: [], cwd: "/tmp", spec: emptySpec } as unknown as TurnPrep;
+  // SAFETY: the session options carry dsh's branded id; openTurn reads only these two fields.
+  const opts = (sessionId: string, messages: LooseMessage[]) =>
+    ({ sessionId, messages }) as unknown as Parameters<ClaudeCodeAdapter["continuationFor"]>[0];
+  const steer = (rpcId: string) =>
+    adapter.openTurn(
+      {
+        mode: "steer",
+        proc: fakeProc(proc),
+        options: opts(
+          "box-steer",
+          messageList([
+            { role: "assistant", content: [{ type: "text", text: "on it" }] },
+            {
+              role: "user",
+              source: { kind: "user", rpcId },
+              content: [
+                { type: "text", text: handle("a.zip", "abc12345", "/store/aa") },
+                {
+                  type: "image",
+                  attachment: { attachmentId: "sha256:feed01", mediaType: "image/png" },
+                },
+              ],
+            },
+          ]),
+        ),
+      },
+      fakeProc(proc),
+      prep,
+    );
+  await steer("b1");
+  assert.equal(writes.length, 1, "on a box: one write");
+  assert.ok(
+    writes[0]?.includes('\\"/home/far/att/abc12345-a.zip\\"'),
+    "on a box: the file handle names the far path",
+  );
+  assert.ok(
+    writes[0]?.includes('saved at \\"/home/far/att/feed01.png\\"'),
+    "on a box: the image note names the far copy",
+  );
+  assert.ok(!writes[0]?.includes("/store/aa"), "on a box: this PC's path is gone from the line");
+  assert.deepEqual(
+    sent.map((s) => [s.host, s.name, s.capMs]),
+    [
+      ["far", "abc12345-a.zip", 30_000],
+      ["far", "feed01.png", 30_000],
+    ],
+    "both go to the turn's box under the step-boundary cap",
+  );
+  await steer("b2");
+  assert.equal(sent.length, 2, "what is already on the box is not copied again");
+  assert.ok(
+    writes[1]?.includes("/home/far/att/abc12345-a.zip"),
+    "and is still named by its far path",
+  );
+  console.log("attachments-to-box ok");
 }
 
 // capacity split: prepareCall reports the window (the ring reads it), resolveModel does not

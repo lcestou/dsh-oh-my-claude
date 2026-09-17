@@ -429,6 +429,14 @@ type LoadedImage = {
  * block with a line naming its stored path before any provider sees the turn.
  */
 export declare function attachmentNotes(turns: LooseMessage[], images: readonly LoadedImage[]): string;
+/**
+ * The text with every file handle pointed at the box's own copy. dsh saves an attachment on this
+ * PC and names that path in the handle, which a `claude` running on another box cannot read, so
+ * each file is handed to `copy` (local path and a far name in, far path out) and its handle takes
+ * the path that comes back. A copy that fails leaves its handle as it was, and Claude then says
+ * the path is unreadable, which is what happened to every handle before this.
+ */
+export declare function relayFileHandles(text: string, copy: (localPath: string, farName: string) => Promise<string>, log?: (level: string, message: string) => void): Promise<string>;
 /** dsh's access-mode switch arrives as text in the runtime-context injection; the last snapshot wins. */
 export declare function accessModeOf(messages: LooseMessage[] | undefined): string | undefined;
 /** The CLI's permission mode for a turn: the configured one, or the one dsh's access mode maps to. */
@@ -852,7 +860,17 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      *  decides image-or-text by the name. Written once per attachment; a failure just leaves the
      *  image inline-only, as before. */
     keepImageCopy(ref: ImageAttachmentRef, data: ArrayBuffer): Promise<string | undefined>;
-    loadImages(refs: ImageAttachmentRef[], signal: AbortSignal | undefined): Promise<LoadedImage[]>;
+    /** The copy itself, as a field so the offline suite can stand in for the ssh. */
+    copyToBox: (host: string, localPath: string, farName: string, capMs: number) => Promise<string>;
+    /** Far paths of what this process has already copied, by box and local path.
+     *  ponytail: never forgotten, so a copy deleted on the box stays "there" until dsh restarts. */
+    private onBoxAlready;
+    /** One attachment's path on `host`, copied there the first time it is asked for. */
+    onBox(host: string, localPath: string, farName: string, capMs: number): Promise<string>;
+    /** `host` is the box the turn runs on, when it is not this PC: the saved copy the note names has
+     *  to be on that box, so it is copied there, and an image that would not copy gets no note (it
+     *  still rides inline) rather than one naming a path that box's claude cannot read. */
+    loadImages(refs: ImageAttachmentRef[], signal: AbortSignal | undefined, host?: string, capMs?: number): Promise<LoadedImage[]>;
     /** A dsh fork of a Claude session becomes a Claude fork: the parent's transcript is copied under
      *  the new id, cut at the forked turn. True when a copy was made. */
     forkTranscript(options: GenerateOptions, cwd: string, id: string): Promise<boolean>;
