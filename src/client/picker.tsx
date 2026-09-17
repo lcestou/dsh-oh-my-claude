@@ -79,6 +79,8 @@ export const baseName = (path: string): string => segments(path).at(-1) ?? "";
 
 /** What Settings dispatches to open this dialog; see the takeover effect below. */
 export const OPEN_EVENT = "omc-add-workspace";
+/** What this dialog dispatches once a remote workspace is saved, so the Settings card lists it. */
+export const RW_EVENT = "omc-remote-workspaces";
 
 /** dsh's own dialog copy, and its English fallback when the locale service is not mounted. */
 const DIALOG_EN = {
@@ -228,6 +230,8 @@ export function AddWorkspaceFlow({ ctx }: { ctx: ClientCtx }) {
       body: JSON.stringify({ name: baseName(target) || host, host, remoteCwd: target }),
     })
       .then((r) => readJson<{ workspace?: unknown }>(r))
+      // After the answer, so the row is in the file by the time the card asks for it.
+      .then(() => window.dispatchEvent(new Event(RW_EVENT)))
       .then(done)
       .catch(failed);
   };

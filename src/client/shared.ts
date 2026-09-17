@@ -793,7 +793,11 @@ export interface ClientCtx {
     };
   };
   workspaces: {
-    list: { getSnapshot: () => { items: Array<{ path: string; workspaceId: string }> } };
+    list: {
+      getSnapshot: () => { items: Array<{ path: string; workspaceId: string }> };
+      /** dsh's own sidebar reconciles on this; the Boxes card refetches its rows on it. */
+      subscribe: (fn: () => void) => () => void;
+    };
     /** Adopt an existing directory as a workspace, which is what dsh's own picker calls. */
     create: (input: { path: string }) => Promise<{ workspaceId: string }>;
   };
