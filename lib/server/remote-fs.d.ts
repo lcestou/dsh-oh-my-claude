@@ -1,3 +1,4 @@
+import { type SubprocessHandle } from "./process.js";
 /** The part of a mount this module needs: an empty `sshHost` means this PC. */
 export interface FsBox {
     sshHost?: string;
@@ -91,3 +92,22 @@ export declare function writeAt(box: FsBox, path: string, text: string): Promise
 export declare function homeAt(box: FsBox): Promise<string>;
 /** Delete the file; a file that was already gone is not an error. */
 export declare function removeAt(box: FsBox, path: string): Promise<void>;
+/**
+ * Write stdin to `<attachments>/<name>` on the box and print the absolute path it has there. The
+ * bytes go through a temp file, so a dropped connection leaves a `.tmp` and never a short file
+ * under the real name. A file already there is kept and stdin is drained, so ssh still exits 0.
+ *
+ * ponytail: a file that is already there is still streamed and thrown away; asking first would
+ * cost a second connection per new file, and the caller remembers what it has copied.
+ */
+export declare const copyScript: (name: string) => string;
+/** Runs one script on a box with its stdin open; the default is this plugin's `ssh`. A seam for the test. */
+type RunWithStdin = (host: string, script: string) => SubprocessHandle;
+/**
+ * Stream one local file to the box and answer the absolute path it has there. The bytes ride
+ * stdin, not the command line the way `writeAt`'s do, so a 34 MB zip costs one connection and
+ * meets no argument-length limit. The answer is read after the marker, as every script's is: a
+ * login shell that prints a banner would otherwise end up in front of the path.
+ */
+export declare function copyToAt(box: FsBox, localPath: string, name: string, timeoutMs?: number, run?: RunWithStdin): Promise<string>;
+export {};
