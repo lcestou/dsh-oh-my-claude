@@ -588,18 +588,18 @@ const M = (
 // ever been cached to disk yet. Once a fetch succeeds its result is persisted and seeds later boots,
 // so this list only matters on the first offline boot. Ids are what `claude --model` accepts.
 //
-// The window here is the one the CLI manages a session against, which is not always the window the
-// model can hold. Claude Code 2.1.270 names four models whose table row reads `window:1e6` and
-// whose sessions still run at 200,000 unless 1M is turned on with the `[1m]` suffix or the beta
-// header: `new Set(["claude-sonnet-4-6","claude-opus-4-6","claude-opus-4-8","claude-opus-5"])`,
-// where the resolver falls through to its `I1 = 200000`. Declaring 1M for those made dsh's context
-// ring read 17% while the CLI's own count said 83% of the window it compacts on. Any figure here is
-// a guess until a session answers; `liveWindows` below replaces it with what the CLI reports.
+// The window here is the one the CLI manages a session against on a first-party login, read off
+// Claude Code 2.1.274's own model table (`context:{window:1e6,native_1m:!0}` for Fable 5.1, Fable 5,
+// Opus 5, Opus 4.8, Opus 4.7 and Sonnet 5; `window:200000` for the rest). Behind a proxy the CLI
+// demotes every 1M row to 200,000 (`dXn`: "declared 1M, believed 200k" unless the base URL is
+// api.anthropic.com or `_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL` is set), and `contextUsage`
+// reports that as `assumedBehind`. Any figure here is a guess until a session answers;
+// `liveWindows` below replaces it with what the CLI reports.
 export const KNOWN_MODELS = [
   M("claude-fable-5-1", "Claude Fable 5.1", 1_000_000, EFFORTS_ALL),
   M("claude-fable-5", "Claude Fable 5", 1_000_000, EFFORTS_ALL),
-  M("claude-opus-5", "Claude Opus 5", 200_000, EFFORTS_ALL),
-  M("claude-opus-4-8", "Claude Opus 4.8", 200_000, EFFORTS_ALL),
+  M("claude-opus-5", "Claude Opus 5", 1_000_000, EFFORTS_ALL),
+  M("claude-opus-4-8", "Claude Opus 4.8", 1_000_000, EFFORTS_ALL),
   M("claude-opus-4-7", "Claude Opus 4.7", 1_000_000, EFFORTS_ALL),
   M("claude-opus-4-6", "Claude Opus 4.6", 200_000, ["low", "medium", "high", "max"]),
   M("claude-sonnet-5", "Claude Sonnet 5", 1_000_000, EFFORTS_ALL),
@@ -772,6 +772,17 @@ const bareId = (id: string) => {
  */
 const liveWindows = new Map<string, number>();
 const windowKey = (id: string) => stableModelId(strip(id));
+/** The base URL when it names a host the CLI does not treat as first-party, else undefined. The
+ *  test is the CLI's own (`av()` in 2.1.274: `new URL(e).host` against `["api.anthropic.com"]`),
+ *  `host` with its port included, so this fires exactly when the CLI demotes. */
+export const proxyBaseUrl = (raw: string | undefined): string | undefined => {
+  if (!raw) return undefined;
+  try {
+    return new URL(raw).host === "api.anthropic.com" ? undefined : raw;
+  } catch {
+    return raw;
+  }
+};
 /** Record what a session answered. A missing or nonsense figure leaves the last good one standing. */
 export const noteLiveWindow = (modelId: string | undefined, maxTokens: number | undefined) => {
   if (modelId === undefined || maxTokens === undefined || !Number.isFinite(maxTokens)) return;
@@ -2523,7 +2534,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     }
     // One small file read per turn, next to a process spawn. No cache: the Settings card writes
     // this file, and a stale set is a switch that visibly does nothing.
-    const drops = contextDrops(await readHints(join(this.stateDir, "hints.json")));
+    const hints = await readHints(join(this.stateDir, "hints.json"));
+    const drops = contextDrops(hints);
+    this.proxyFirstParty = hints.proxyFirstParty === true;
     const turns = selectTurns(options.messages, session?.resuming ?? false);
     let prompt = buildPrompt(turns, drops);
     const stdin = usesStdin(cli.flags);
@@ -2920,6 +2933,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    * and known models in place.
    */
   cliModelsAt = 0;
+  /** The Settings switch "Proxy reaches Anthropic" (`proxyFirstParty` in the hints store), read
+   *  with the other hints before each spawn. */
+  proxyFirstParty = false;
   /** The disk seed, awaited by the first listing so a boot never answers from the floor by a race. */
   private cliSeed: Promise<void>;
   async refreshCliModels(proc: ClaudeProcess): Promise<boolean> {
@@ -3097,6 +3113,19 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // mid-session banks under the model it switched to, and the ring follows on the next turn.
     noteLiveWindow(proc.spec?.model, usage.maxTokens);
     noteLiveWindow(usage.model, usage.maxTokens);
+    // The CLI's guess, when it is one: below the table's window for this model, from one of the
+    // two sources the demotion produces (`auto` for Fable, `model-default` for Opus 5 and Sonnet
+    // 5; `settings` and `env` are a window the user chose), while this box's base URL is a proxy
+    // and the CLI runs on this box: a session on an ssh box or a remote workspace runs under that
+    // box's env, which this process cannot see. The popover names the switch that fixes it.
+    const known = usage.model
+      ? (KNOWN_MODELS.find((m) => m.id === windowKey(usage.model ?? ""))?.contextWindow ?? 0)
+      : 0;
+    const behind = proxyBaseUrl(process.env.ANTHROPIC_BASE_URL);
+    const guessed = usage.autocompact === "auto" || usage.autocompact === "model-default";
+    const local = !this.config.sshHost && !remoteWorkspaceFor(proc.cwd);
+    if (behind && local && guessed && usage.maxTokens > 0 && usage.maxTokens < known)
+      usage.assumedBehind = behind;
     return { ok: true, ...usage };
   }
 
@@ -3415,6 +3444,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       over.CLAUDE_CONFIG_DIR = this.claudeHome;
     const token = this.providerId === "claude-code" ? readSshToken(STATE_DIR, THIS_BOX) : undefined;
     if (token) over.CLAUDE_CODE_OAUTH_TOKEN = token;
+    // Claude Code 2.1.274 believes a native-1M model holds 200,000 when ANTHROPIC_BASE_URL names
+    // any host but api.anthropic.com, and with that guess it either caps the session there (Opus 5,
+    // Sonnet 5) or stops compacting altogether (Fable). This is the CLI's own flag for "the proxy
+    // is Anthropic"; it changes nothing when no base URL is set.
+    if (this.proxyFirstParty) over._CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL = "1";
     return Object.keys(over).length === 0 ? undefined : over;
   }
 

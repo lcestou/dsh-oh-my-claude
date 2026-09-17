@@ -546,6 +546,9 @@ export interface ContextUsage {
   percentage: number;
   model?: string;
   autocompact?: string;
+  /** Set when the CLI's window is below the plugin's table for this model while
+   *  `ANTHROPIC_BASE_URL` points off api.anthropic.com: the base URL, for the popover's notice. */
+  assumedBehind?: string;
 }
 export function decodeContextUsage(v: JsonValue | undefined): ContextUsage {
   const r = typeof v === "object" && v !== null && !Array.isArray(v) ? v : {};
