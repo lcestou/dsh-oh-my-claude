@@ -33,6 +33,9 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Changed
 
+- The icon tile on dsh's changed-files card takes the accent colour in a Claude session, with the
+  links and rules group; it stayed dsh's blue beside an orange chat.
+
 - The proxy control takes its width from the word it shows, so Off and On sit narrower than Auto
   instead of every state holding the widest one's box.
 
