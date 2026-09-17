@@ -63,6 +63,7 @@ import {
   claudeProviderOf,
   type ClientCtx,
   openHere,
+  openSession,
   maskEmail,
   numberOr,
   whenContextGone,
@@ -784,7 +785,7 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
         const state = await dir.load?.();
         const model = state?.groups.find((g) => g.id === provider)?.models[0]?.id;
         if (model && dir.select) await dir.select({ provider, model });
-        ctx.sessions.open(r.s.id);
+        openSession(ctx, r.s.id);
         close?.();
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
@@ -3922,7 +3923,7 @@ function notifyWaiting(ctx: ClientCtx, id: string, title: string) {
   const note = new Notification(title, { body: "Claude is waiting.", tag: `omc-${id}` });
   note.addEventListener("click", () => {
     window.focus();
-    ctx.sessions.open(id);
+    openSession(ctx, id);
     note.close();
   });
 }

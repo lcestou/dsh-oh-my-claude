@@ -8,6 +8,12 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- The Oh My Claude control, the access shield and the Claude look all come back on dsh
+  0.1.6-alpha.2. dsh moved two things the plugin reads: the open session left the session list
+  snapshot (`current`) for the main view's own retention, and session navigation left the Session
+  Controller (`sessions.open`) for `uiWorkspace.openSession`. Both old and new shapes are read, so
+  the same build serves dsh 0.1.5 and 0.1.6.
+
 - The context popover and the line under dsh's ring write a million-token window as `1M`; it read
   `1000k`.
 - Opus 5 and Opus 4.8 are listed at 1M before a session has answered, as Claude Code 2.1.274's own
