@@ -43,6 +43,7 @@ The scripts under `tools/playwright/` are development checks only; nothing in th
 - `keyword-paint.ts <token>` types `ultracode` and `ultrathink` into the composer and reads the highlight registry back.
 - `update-pill.ts <token> <dir>` rewrites the box's own status reply so npm appears to hold a newer plugin, then clicks the pill and reads the clipboard at a desktop and a phone width.
 - `context-rows.ts <token> <session pattern> <workspace>` opens a session and reads the computed display of every chat row, so it can tell a folded row from one that was never logged.
+- `context-assumed.ts <token>` stubs the `/context` reply with and without `assumedBehind`, opens the ring popover each time, and fails unless the proxy note appears in the first and not in the second.
 - `add-workspace.ts <token>` clicks dsh's sidebar "+" and fails if dsh's own directory dialog answers instead of ours, which is how the takeover reads when it stops engaging. `DSH_ORIGIN` runs it through a reverse proxy instead of loopback, and `DSH_HMR=1` adds a second click after a client rebuild, so a tab left open across a plugin build is covered too.
 - `cost-pill.ts`, `usage-popover.ts`, `shield-rows.ts`, `mcp-preset.ts`, `login-card.ts`, `starter-switch.ts`, `composer-shots.ts`, `terminal-mirror.ts` and `qol.ts` each drive one feature the same way; the header comment of each says what it asserts.
 

@@ -2866,7 +2866,7 @@ function renderContext(el: HTMLElement, reply: ContextReply) {
     note.setAttribute("data-omc-context-assumed", "");
     note.setAttribute("role", "note");
     note.style.cssText = `font-size:12px;color:${T.faint};margin-top:4px`;
-    note.textContent = `Window assumed at ${kTokens(reply.maxTokens)}: Claude Code does not treat the proxy at ${reply.assumedBehind} as Anthropic, so a 1M model runs as ${kTokens(reply.maxTokens)} here. If the proxy forwards to Anthropic, turn on Proxy reaches Anthropic under Settings → Oh My Claude; it applies to sessions started after that.`;
+    note.textContent = `Assumed ${kTokens(reply.maxTokens)}: Claude Code does not treat the proxy at ${reply.assumedBehind} as Anthropic. If it forwards there, turn on Proxy reaches Anthropic in Settings → Oh My Claude (applies to new sessions).`;
   }
   // The bar spans the whole window, so the empty tail is the room left. Segments are sized against
   // `maxTokens` rather than against each other, which is what makes the filled part read as the
