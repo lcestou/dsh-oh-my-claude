@@ -4573,6 +4573,56 @@ console.log("interrupt-on-abort ok");
   const cont = adapter.continuationFor(opts("v", hi("q3")));
   assert.equal(cont.mode, "steer", "a parked process continues its turn");
   assert.equal(parkedProc.steerPending, true, "and steer mode leaves the flag alone");
+
+  // Every step dsh opens has already drawn what was spliced before it (dsh claims the whole
+  // next-step inbox first), so openTurn clears the park flag in relay and steer mode alike. Left
+  // set across a relay boundary it parked the step into an empty inbox: dsh closed the turn and
+  // Claude worked on unseen (2026-09-16, 17:39 and 21:56).
+  const resolved: string[] = [];
+  const relayed = {
+    ...idle,
+    busy: true,
+    sent: new Set<string>(),
+    steerPending: true,
+    relays: new Map([
+      [
+        "r1",
+        {
+          type: "dsh_relay",
+          id: "r1",
+          name: "bash",
+          args: {},
+          resolve: (v: { text: string }) => resolved.push(v.text),
+          reject: () => {},
+        },
+      ],
+    ]),
+  };
+  await adapter.openTurn(
+    {
+      mode: "relay",
+      proc: fakeProc(relayed),
+      options: opts("w", []),
+      results: [{ text: "started background job bash-1" }],
+    },
+    fakeProc(relayed),
+    prep,
+  );
+  assert.equal(relayed.steerPending, false, "a relay boundary clears the park flag");
+  assert.deepEqual(
+    resolved,
+    ["started background job bash-1"],
+    "and the relay still gets its result",
+  );
+  assert.equal(relayed.relays.size, 0, "and the relay map is emptied");
+
+  const resumed = { ...idle, busy: true, sent: new Set<string>(), steerPending: true };
+  await adapter.openTurn(
+    { mode: "steer", proc: fakeProc(resumed), options: opts("x", []) },
+    fakeProc(resumed),
+    prep,
+  );
+  assert.equal(resumed.steerPending, false, "a steer-mode step clears it too");
   console.log("boundary-steer ok");
 }
 

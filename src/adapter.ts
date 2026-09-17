@@ -4476,6 +4476,14 @@ export class ClaudeCodeAdapter extends LlmAdapter {
 
   /** First write of a turn: relay results, unsent steers, or the prompt itself. */
   async openTurn(cont: Continuation, proc: ClaudeProcess, prep: TurnPrep) {
+    // dsh claims its whole next-step inbox before it opens a step, so by now everything spliced
+    // earlier is drawn, and a park flag left from the step before has nothing left to do. Left set,
+    // the CLI's next tool result parked the step into an empty inbox: dsh closed the turn as
+    // completed and the CLI ran the rest of its turn with `busy` false, every dsh call declined
+    // into the bridge, no card and no text until the next prompt resumed it (owner, 2026-09-16
+    // 17:39 and 21:56, a message sent seconds before a dsh tool call both times). A fresh prompt
+    // clears the flag in continuationFor; relay and steer mode clear it here.
+    if (cont.mode !== "prompt") proc.steerPending = false;
     if (cont.mode === "relay") {
       const relays = [...proc.relays.values()];
       proc.relays.clear();
