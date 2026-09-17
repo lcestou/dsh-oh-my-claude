@@ -68,6 +68,7 @@
     "!src/**/*.test.ts",
     "lib",
     "README.md",
+    "CHANGELOG.md",
     "cordis.patch.yml"
   ],
   "dsh": {

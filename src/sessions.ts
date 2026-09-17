@@ -68,6 +68,7 @@ import {
 import { asSessionId, CLAUDE_UPDATERS, CLAUDE_UPDATE_TICK } from "./dsh.js";
 import { buildAddServer, isMcpName, scopeNeedsCwd } from "./mcp-add-remove.js";
 import { buildReport, type PrivateValues, type ReportInput } from "./report.js";
+import { parseChangelog } from "./changelog.js";
 import {
   deleteSshToken,
   readSshToken,
@@ -208,19 +209,21 @@ const run = (
     ),
   );
 
-// Source runs from src/, the tsc build from lib/server/: the plugin's package.json is one or
-// two levels up, so try the nearer one first and fall back to the farther.
-const packageJson: unknown = JSON.parse(
-  await readFile(new URL("../package.json", import.meta.url), "utf8").catch(() =>
-    readFile(new URL("../../package.json", import.meta.url), "utf8"),
-  ),
-);
+/** A file at the plugin's root. Source runs from src/, the tsc build from lib/server/, so the
+ *  root is one or two levels up: try the nearer first and fall back to the farther. */
+const readPluginFile = (name: string): Promise<string> =>
+  readFile(new URL(`../${name}`, import.meta.url), "utf8").catch(() =>
+    readFile(new URL(`../../${name}`, import.meta.url), "utf8"),
+  );
+const packageJson: unknown = JSON.parse(await readPluginFile("package.json"));
 const PLUGIN_VERSION =
   isJsonObject(packageJson) && typeof packageJson.version === "string" ? packageJson.version : "";
 const PLUGIN_NAME =
   isJsonObject(packageJson) && typeof packageJson.name === "string" ? packageJson.name : "";
 /** Mirrors bugs.url in package.json; the report's Open issue link. */
 const ISSUES_URL = "https://github.com/lcestou/dsh-oh-my-claude/issues/new";
+/** How many releases the Settings card lists; the rest is a link to the file on GitHub. */
+const CHANGELOG_RELEASES = 5;
 /** The one `dsh plugin ... update` line for this install; the profile is read off this file's path. */
 const UPDATE_COMMAND = updateCommand(PLUGIN_NAME, profileFromPath(import.meta.url));
 /** The box-wide booleans and non-negative numbers under `hints.json`: one-time hints and the
@@ -2179,6 +2182,17 @@ export function registerSessionRoutes(
                 // `ok` is what the tab keys its render on; without it the reply reads as the
                 // failure shape and the tab draws an empty error line instead of the report.
                 return json(res, 200, { ok: true, runtime, configFiles, session });
+              }
+              // Read on every open and never cached: a dev checkout shows an edit at once, and an
+              // install shows the notes for the version it runs. A missing file (an install from
+              // before the file shipped in the package) is an empty list, which the card names.
+              if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/changelog`) {
+                const text = await readPluginFile("CHANGELOG.md").catch(() => "");
+                return json(res, 200, {
+                  ok: true,
+                  version: PLUGIN_VERSION,
+                  releases: parseChangelog(text).slice(0, CHANGELOG_RELEASES),
+                });
               }
               if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/report`) {
                 const box = boxOf(url);
