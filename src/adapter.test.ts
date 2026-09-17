@@ -45,6 +45,7 @@ import {
   stepContextFor,
   forkTranscriptText,
   userPromptCount,
+  keepsLiveTurn,
   dropSent,
   steerKey,
   afterLastAssistant,
@@ -4785,6 +4786,42 @@ console.log("interrupt-on-abort ok");
   );
   assert.equal(resumed.steerPending, false, "a steer-mode step clears it too");
   console.log("boundary-steer ok");
+
+  // A relay that comes back takes its name off the status row: the entry stays (the turn is still
+  // running), only `relay` goes. And a step's end keeps the entry only when it parked the CLI.
+  relayed.relays.set("r2", {
+    type: "dsh_relay",
+    id: "r2",
+    name: "job_output",
+    args: {},
+    resolve: (v: { text: string }) => resolved.push(v.text),
+    reject: () => {},
+  });
+  adapter.liveTurn.set("w", { at: 1, tool: true, relay: { name: "job_output", at: 1 } });
+  await adapter.openTurn(
+    {
+      mode: "relay",
+      proc: fakeProc(relayed),
+      options: opts("w", []),
+      results: [{ text: "done" }],
+    },
+    fakeProc(relayed),
+    prep,
+  );
+  assert.equal(
+    adapter.liveTurn.get("w")?.relay,
+    undefined,
+    "a relay that came back leaves the row",
+  );
+  assert.equal(adapter.liveTurn.get("w")?.tool, true, "and the turn's other figures stay");
+  assert.equal(
+    keepsLiveTurn("relayed"),
+    true,
+    "a step parked on a dsh tool keeps the row's figures",
+  );
+  assert.equal(keepsLiveTurn("parked"), true, "so does a step parked on a steer");
+  assert.equal(keepsLiveTurn("finished"), false, "a finished turn drops them");
+  assert.equal(keepsLiveTurn("ended"), false, "and so does a process that died under it");
 }
 
 // capacity split: prepareCall reports the window (the ring reads it), resolveModel does not

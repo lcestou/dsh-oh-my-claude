@@ -244,6 +244,11 @@ type SessionOptions = GenerateOptions & { sessionId: SessionId };
 type ControlRequestEvent = Extract<ClaudeEvent, { type: "control_request" }>;
 /** How a turn ended, as the turn loop tracks it. */
 type Outcome = "continue" | "finished" | "parked" | "retry" | "relayed" | "ended" | undefined;
+/** Whether a step's end keeps the status row's live figures: only when the step parked the CLI
+ *  mid-turn (on a dsh tool dsh is running, or on a steer), since dsh calls back within the same
+ *  turn. Every other outcome is the turn ending. */
+export const keepsLiveTurn = (outcome: string | undefined): boolean =>
+  outcome === "relayed" || outcome === "parked";
 /** How this request continues the session's Claude process; see continuationFor(). */
 type Continuation =
   | { mode: "abandon" | "steer"; proc: ClaudeProcess; options: SessionOptions }
@@ -1970,6 +1975,8 @@ export interface LiveTurn {
   thoughtAt?: number;
   /** The effort dsh asked for this turn, when it asked for one: the CLI's line names it. */
   effort?: string;
+  /** The dsh tool dsh is running for this parked turn, and when the relay went out. */
+  relay?: { name: string; at: number };
   at: number;
 }
 
@@ -4500,6 +4507,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     if (cont.mode === "relay") {
       const relays = [...proc.relays.values()];
       proc.relays.clear();
+      const live = this.liveTurn.get(cont.options.sessionId);
+      if (live) live.relay = undefined;
       const extra = stepContextFor(cont.options.messages, prep.drops, proc.sent); // steers and notices ride on the last result
       relays.forEach((relay, i) => {
         const result = cont.results[i];
@@ -4771,6 +4780,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         };
         if (p.frame) cur.frameAt = Date.now();
         if (p.tool !== undefined) cur.tool = p.tool;
+        if (p.relay !== undefined) cur.relay = { name: p.relay.name, at: Date.now() };
         if (p.thinking !== undefined) cur.thinking = p.thinking;
         // When the burst began, kept here rather than in the tab: a tab opened mid-think must read
         // the true age of the burst, not the time since it first looked.
@@ -5017,9 +5027,12 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         yield* relayBlocks(tr, call);
         proc.relays.set(call.id, call);
       }
+      tr.onProgress?.({ relay: { name: first.name } });
       return "relayed";
     };
     try {
+      // A relay dsh never answered would otherwise hand its figures to the next turn.
+      if (cont.mode === "prompt") this.liveTurn.delete(options.sessionId);
       // A fresh prompt: anything already queued is output from a turn Claude ran while dsh was
       // idle (background task finished). Relay/steer modes are mid-turn; their queue is live.
       proc.staleResults = cont.mode === "prompt" ? (proc.countStaleResults?.() ?? 0) : 0;
@@ -5070,8 +5083,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         if (prep.session) await rememberStarted(prep.session.id, false);
       } else yield { type: "finish", reason: this.endReason(proc, options, proc.idleKilled) };
     } finally {
-      // The turn is over, whichever way: the status row must not keep showing its figures.
-      this.liveTurn.delete(options.sessionId);
+      // The turn is over, whichever way, unless the step only parked the CLI on a dsh tool or a
+      // steer: dsh calls back within the same turn, and the row keeps its figures and names the
+      // wait meanwhile. Every other outcome drops them.
+      if (!keepsLiveTurn(outcome)) this.liveTurn.delete(options.sessionId);
       this.clearIdle(options.sessionId);
       options.signal?.removeEventListener("abort", onAbort);
       for (const c of pending.values()) c.abort();

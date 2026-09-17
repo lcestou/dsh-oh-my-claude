@@ -42,6 +42,10 @@ type SessionOptions = GenerateOptions & {
 type ControlRequestEvent = Extract<ClaudeEvent, {
     type: "control_request";
 }>;
+/** Whether a step's end keeps the status row's live figures: only when the step parked the CLI
+ *  mid-turn (on a dsh tool dsh is running, or on a steer), since dsh calls back within the same
+ *  turn. Every other outcome is the turn ending. */
+export declare const keepsLiveTurn: (outcome: string | undefined) => boolean;
 /** How this request continues the session's Claude process; see continuationFor(). */
 type Continuation = {
     mode: "abandon" | "steer";
@@ -649,6 +653,11 @@ export interface LiveTurn {
     thoughtAt?: number;
     /** The effort dsh asked for this turn, when it asked for one: the CLI's line names it. */
     effort?: string;
+    /** The dsh tool dsh is running for this parked turn, and when the relay went out. */
+    relay?: {
+        name: string;
+        at: number;
+    };
     at: number;
 }
 /** A `get_workspace_diff` answer as the text a side question carries. Hunk headers and raw lines,

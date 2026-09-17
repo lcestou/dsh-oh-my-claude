@@ -45,6 +45,10 @@ export interface TurnProgress {
     tool?: boolean;
     /** A frame of model output arrived; moves the stall clock. */
     frame?: boolean;
+    /** A dsh tool call went out to dsh, by name. */
+    relay?: {
+        name: string;
+    };
 }
 export declare class Translator {
     log: (level: string, msg: string) => void;
