@@ -94,6 +94,14 @@ export type ValidatedRemoteWorkspace = {
 };
 export declare function validateRemoteWorkspaceInput(input: unknown): ValidatedRemoteWorkspace;
 export declare function readRemoteWorkspaces(path: string): Promise<RemoteWorkspace[]>;
+/** The file, minus every row whose dsh workspace is gone. dsh's registry owns which workspaces
+ *  exist (the sidebar's trash deletes there and never here), so a row the registry no longer
+ *  lists is a ghost: dropped, its placeholder removed, the file rewritten. Without a registry (a
+ *  dsh that lacks the service, or a request before it mounts) the file is answered as it is. */
+export declare function syncRemoteWorkspaces(path: string, reg: Pick<WorkspaceRegistry, "get"> | undefined, log?: (level: string, msg: string) => void): Promise<{
+    workspaces: RemoteWorkspace[];
+    dropped: RemoteWorkspace[];
+}>;
 /** `authMethod` a status reports when the login is a token the panel minted, not the CLI's own. */
 export declare const PANEL_TOKEN = "panel token";
 /** What a box's `/status` reports; the panel shows these fields as pills. */

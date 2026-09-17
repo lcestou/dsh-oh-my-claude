@@ -1,7 +1,7 @@
 // Offline self-check: node src/sessions.test.js. No CLI, no network.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -11,6 +11,7 @@ import {
   readPickerSettings,
   readRemoteWorkspaces,
   readSshBoxes,
+  syncRemoteWorkspaces,
   registerSessionRoutes,
   withoutSubagents,
   slugForDir,
@@ -1392,6 +1393,92 @@ const responder =
   assert.ok(big);
   assert.equal(big.title, "what is in this image");
   assert.equal(big.turns, 1);
+}
+
+// The remote-workspace file follows dsh's registry. The sidebar's trash deletes a workspace in the
+// registry and never tells this plugin, so a row whose id the registry no longer has is dropped on
+// the next read: gone from the answer, from the file, and its placeholder dir with it. Without a
+// registry nothing is dropped, since "cannot ask" is not "deleted".
+{
+  const tmp = await mkdtemp(join(tmpdir(), "dsh-rws-sync-test-"));
+  const kept = join(tmp, "remote-workspaces", "box__kept");
+  const ghost = join(tmp, "remote-workspaces", "box__ghost");
+  await mkdir(kept, { recursive: true });
+  await mkdir(ghost, { recursive: true });
+  const rows = [
+    { name: "kept", host: "box", remoteCwd: "/srv/kept", path: kept, workspaceId: "w-kept" },
+    { name: "ghost", host: "box", remoteCwd: "/srv/ghost", path: ghost, workspaceId: "w-ghost" },
+  ];
+  const remoteWorkspacesPath = join(tmp, "remote-workspaces.json");
+  await writeFile(remoteWorkspacesPath, JSON.stringify(rows), "utf8");
+
+  // No registry: the rows come back as they are and the file is left alone.
+  const blind = await syncRemoteWorkspaces(remoteWorkspacesPath, undefined);
+  assert.equal(blind.workspaces.length, 2, "no registry: both rows answered");
+  assert.equal(blind.dropped.length, 0, "no registry: nothing dropped");
+  assert.equal(JSON.parse(await readFile(remoteWorkspacesPath, "utf8")).length, 2);
+
+  const published: string[][] = [];
+  let handler: ((req: any, res: any) => void) | undefined;
+  // SAFETY: partial fake for tests
+  const ctx = {
+    inject: (deps: string[], cb: (host: any) => void) => {
+      cb({
+        webServer: {
+          register: (r: any) => {
+            handler = r.handler as (req: any, res: any) => void;
+            return () => {};
+          },
+        },
+        connection: { requestRejection: () => undefined },
+        sessions: { get: () => undefined },
+        sessionPersistence: { list: async () => [] },
+        // dsh's registry after a sidebar trash: it knows `w-kept` and nothing else.
+        workspaceRegistry: { get: (id: string) => (id === "w-kept" ? { id } : undefined) },
+        effect: (fn: () => void | (() => void)) => fn(),
+      });
+    },
+  } as any;
+  registerSessionRoutes(ctx, {
+    log: () => {},
+    remoteWorkspacesPath,
+    onRemoteWorkspaces: (ws) => {
+      published.push(ws.map((w) => w.workspaceId));
+    },
+    projectDir: (cwd: string) => [join(tmp, "claude", "projects", projectDirName(cwd))],
+    projectsDir: [join(tmp, "claude", "projects")],
+    startedIds: async () => [],
+    claudeIdOf: (id: string) => id,
+    configDir: join(tmp, "claude"),
+    boxesPath: join(tmp, "boxes.json"),
+    importedDir: join(tmp, "imported"),
+    instanceFor: () => undefined,
+    instanceForHost: () => ({ configDir: join(tmp, "box") }),
+  });
+  assert.ok(handler);
+  const respond = responder(() => handler);
+
+  const r = await respond("GET", "/dsh-oh-my-claude/remote-workspaces");
+  assert.equal(r.status, 200);
+  assert.deepEqual(
+    r.body.workspaces.map((w: { workspaceId: string }) => w.workspaceId),
+    ["w-kept"],
+    "GET answers only the row the registry still has",
+  );
+  const onDisk = JSON.parse(await readFile(remoteWorkspacesPath, "utf8"));
+  assert.deepEqual(
+    onDisk.map((w: { workspaceId: string }) => w.workspaceId),
+    ["w-kept"],
+    "the ghost row left the file",
+  );
+  await assert.rejects(access(ghost), "the ghost's placeholder dir is removed");
+  await access(kept);
+  assert.deepEqual(
+    published,
+    [["w-kept"]],
+    "the adapter's redirect map was told once, not per read",
+  );
+  console.log("remote-workspace sync ok");
 }
 
 console.log("sessions ok");
