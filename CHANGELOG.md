@@ -8,6 +8,22 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- A child's report and a subagent's finish notice now reach Claude when they land mid-turn. A
+  message dsh spliced into a running step a few seconds after a typed steer was forwarded only if a
+  person typed it; a child's `send_message`, a settlement notice or a job's finish line in the same
+  step was claimed by dsh and never written to the CLI, and the session went quiet while Claude
+  polled a log for a report that had already arrived (three times on 2026-09-16). Every text
+  message dsh delivers mid-step now goes over stdin the way a typed steer does, marked by its id so
+  it is read once; one carrying a file or image waits for the next tool result, as a typed one does.
+
+- A message sent seconds before Claude called a dsh tool no longer strands the turn. The message
+  set a flag that parks the step at the next tool result so dsh can draw it; when that next tool
+  was a dsh tool, dsh had already drawn the message, the park landed on an empty inbox, and dsh
+  closed the turn while Claude kept working. From then on its subagents and jobs ran with no card
+  and no text, the header still counting them, until the next message resumed the turn and the
+  missing work appeared all at once beneath it (twice on 2026-09-16). The flag is now cleared at
+  every step dsh opens.
+
 - Settings written at the same moment no longer drop one another. The hints store is
   read-modify-write, and two requests that overlapped both read the file before either wrote it, so
   the second put back a map from before the first and every key it had added was gone — a store of
@@ -21,6 +37,11 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
   instead of every state holding the widest one's box.
 
 ### Added
+
+- The status row names the dsh tool a turn is waiting on: `running job_output for 151s`, after the
+  clock and the token count. While dsh ran a tool for Claude the bracket used to empty down to the
+  clock, and the count restarted from zero when the result came back; both now hold through the
+  wait.
 
 - A switch for the footer cost readout, in the plugin's settings, on unless it is turned off. The
   turn records behind it are kept either way, so the figure is whole again the moment the switch
