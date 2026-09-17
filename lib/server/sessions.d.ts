@@ -22,6 +22,7 @@ export declare function parseSettingsText(text: unknown): ParsedSettings;
  *  settings switches. Only `true` and finite non-negative numbers are kept, so a missing or
  *  unreadable file reads as every switch at its default. */
 export declare function readHints(hintsPath: string): Promise<Record<string, boolean | number>>;
+export declare function updateHints(hintsPath: string, patch: Record<string, unknown>): Promise<Record<string, boolean | number>>;
 /** Another dsh server this panel can hop to; `token` is that box's dsh launch token. */
 export interface Box {
     name: string;

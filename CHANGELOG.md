@@ -6,6 +6,20 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Fixed
+
+- Settings written at the same moment no longer drop one another. The hints store is
+  read-modify-write, and two requests that overlapped both read the file before either wrote it, so
+  the second put back a map from before the first and every key it had added was gone — a store of
+  eight switches came back holding one. Requests are applied in turn now, and the file is replaced
+  atomically, so a crash mid-write cannot truncate it either. Two browsers on the same box, which
+  is what box-wide settings invite, was all it took.
+
+### Changed
+
+- The proxy control takes its width from the word it shows, so Off and On sit narrower than Auto
+  instead of every state holding the widest one's box.
+
 ### Added
 
 - A switch for the footer cost readout, in the plugin's settings, on unless it is turned off. The

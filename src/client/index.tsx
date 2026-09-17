@@ -6190,9 +6190,11 @@ function ProxyFirstPartySwitch() {
           aria-label="Proxy reaches Anthropic"
           value={mode}
           onChange={(e) => choose(e.target.value)}
-          // `0 0 auto` and a floor: the row is flex, and a shrinkable select next to the long
-          // description collapsed until only the first letter of "Auto" showed.
-          style={{ ...select, flex: "0 0 auto", minWidth: 104, maxWidth: 104 }}
+          // `0 0 auto` because the row is flex and a shrinkable select collapsed here until only
+          // the first letter of "Auto" showed; `fieldSizing: content` then takes the width from
+          // the word on show rather than from the longest option, so Off sits narrower than Auto.
+          // A browser without it falls back to sizing by the longest option, which is the old look.
+          style={{ ...select, flex: "0 0 auto", fieldSizing: "content", minWidth: 0 }}
         >
           <option value="auto">Auto</option>
           <option value="on">On</option>
