@@ -31,6 +31,7 @@ import {
 } from "@deepseek-ai/dsh-client-ui-primitives";
 import {
   ROUTE,
+  useNarrow,
   fmtCost,
   fmtDuration,
   cacheShare,
@@ -6416,6 +6417,16 @@ interface LoginNeed {
 const sameNeed = (a: LoginNeed | null, b: LoginNeed | null): boolean =>
   a === b || (a !== null && b !== null && a.host === b.host && a.label === b.label);
 
+/** A bare control in a dock card's header: the copy and close buttons, the update card's close. */
+const iconBtn = {
+  background: "none",
+  border: "none",
+  cursor: "pointer",
+  padding: "0 2px",
+  lineHeight: 1,
+  flex: "0 0 auto",
+} as const;
+
 /** Mirrors the server's `ClaudeUpdateCard`: the box a session runs on and the two versions. */
 interface ClaudeUpdateCardData {
   host: string;
@@ -6578,6 +6589,7 @@ function ClaudeUpdateCard({
         : phase === "failed"
           ? `Update failed: ${outcome?.note ?? "no answer"}`
           : `Claude Code ${update.latest} is out. ${Where} runs ${update.installed}.`;
+  const narrow = useNarrow();
   const label =
     phase === "busy"
       ? "Updating…"
@@ -6588,6 +6600,11 @@ function ClaudeUpdateCard({
           : phase === "failed"
             ? "Retry"
             : "Update";
+  // Folded, the card is its header line, the way a side-question card folds: the label, the
+  // chevron and the close. Open, the sentence and the buttons. Nothing is recorded for a
+  // fold; a reload opens it again, and the close is what records a skip until the next release.
+  const [open, setOpen] = useState(true);
+  const toggle = () => setOpen((o) => !o);
   return (
     <div
       data-omc-update-card={update.latest}
@@ -6598,65 +6615,103 @@ function ClaudeUpdateCard({
         background: "var(--dsw-specific-tip, var(--dsw-alias-bg-base, transparent))",
         border: "0.5px solid var(--dsw-alias-border-l1, rgba(217,119,87,.4))",
         borderRadius: "12px 12px 0 0",
-        padding: "8px 10px",
+        overflow: "hidden",
         fontSize: 13,
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        <Spark size={14} />
-        <span
-          style={{
-            flex: 1,
-            color: phase === "failed" ? T.err : phase === "declined" ? T.faint : undefined,
-          }}
-        >
-          {text}
+      {/* The header is the fold toggle; the close beside it stops the click so it does not also
+          fold the card. A div, not a button: a button cannot hold one. */}
+      <div
+        role="button"
+        tabIndex={0}
+        aria-expanded={open}
+        onClick={toggle}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            toggle();
+          }
+        }}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          padding: "6px 8px",
+          cursor: "pointer",
+        }}
+      >
+        <Spark size={12} />
+        {/* The label alone: the sentence lives in the body, where a phone shows it whole. */}
+        <span style={{ color: ACCENT, fontWeight: 600, fontSize: 12, flex: 1 }}>
+          Claude Code update
         </span>
-        <button
-          type="button"
-          style={btn}
-          data-testid="dsh-oh-my-claude-card-update"
-          disabled={phase === "busy" || phase === "done" || phase === "declined"}
-          aria-busy={phase === "busy" ? "true" : undefined}
-          onClick={() => start({ run: true })}
-        >
-          {label}
-        </button>
-        {phase === "idle" && (
-          <button
-            type="button"
-            aria-label="Update on its own from now on"
-            title="Install every new release without asking, from now on"
-            onClick={() => start({ run: true, auto: true })}
-            style={{
-              background: "none",
-              border: "none",
-              cursor: "pointer",
-              padding: "0 2px",
-              color: T.faint,
-              textDecoration: "underline",
-              fontSize: 12,
-            }}
-          >
-            Always update
-          </button>
-        )}
+        <Chevron open={open} />
         <button
           type="button"
           aria-label={phase === "idle" ? "Dismiss until the next release" : "Close"}
           title={phase === "idle" ? "Dismiss until the next release" : "Close"}
-          onClick={dismiss}
-          style={{
-            background: "none",
-            border: "none",
-            cursor: "pointer",
-            padding: "0 2px",
-            color: T.faint,
+          onClick={(e) => {
+            e.stopPropagation();
+            dismiss();
           }}
+          style={{ ...iconBtn, color: T.muted, fontSize: 12 }}
         >
-          ×
+          ✕
         </button>
       </div>
+      {open ? (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            flexWrap: "wrap",
+            // Flush with the spark above, not indented under the label as a side question's
+            // answer is: the buttons are the body, not a quote.
+            padding: "0 8px 8px",
+          }}
+        >
+          {/* On a phone the sentence takes its own line and the buttons the next; wider, one line. */}
+          <span
+            style={{
+              flex: narrow ? "1 1 100%" : 1,
+              minWidth: 0,
+              color: phase === "failed" ? T.err : phase === "declined" ? T.faint : undefined,
+            }}
+          >
+            {text}
+          </span>
+          <button
+            type="button"
+            style={btn}
+            data-testid="dsh-oh-my-claude-card-update"
+            disabled={phase === "busy" || phase === "done" || phase === "declined"}
+            aria-busy={phase === "busy" ? "true" : undefined}
+            onClick={() => start({ run: true })}
+          >
+            {label}
+          </button>
+          {phase === "idle" && (
+            <button
+              type="button"
+              aria-label="Update on its own from now on"
+              title="Install every new release without asking, from now on"
+              onClick={() => start({ run: true, auto: true })}
+              style={{
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                padding: "0 2px",
+                color: T.faint,
+                textDecoration: "underline",
+                fontSize: 12,
+              }}
+            >
+              Always update
+            </button>
+          )}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -6777,15 +6832,6 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
       return next;
     });
   const newest = shown[shown.length - 1]?.id;
-
-  const iconBtn = {
-    background: "none",
-    border: "none",
-    cursor: "pointer",
-    padding: "0 2px",
-    lineHeight: 1,
-    flex: "0 0 auto",
-  } as const;
 
   return (
     <div {...{ [DOCK_ATTR]: "1" }} style={DOCK_CARD}>

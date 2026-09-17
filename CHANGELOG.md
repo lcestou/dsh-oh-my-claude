@@ -8,11 +8,15 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- The Claude Code update card above the composer folds like a side-question card: a header line
+  with the label, a chevron and the close at the far right, and the sentence and buttons under
+  it, hidden on a click on the header and back on the next. On a phone the sentence takes its own
+  line and the buttons the next; it used to squeeze the text into a column a few words wide beside
+  the Update button.
 - A file or image attached to a message sent while a turn runs now reaches Claude: the message
   waits for the CLI's next tool result (or the next prompt, when no tool call follows) and arrives
   whole, with the file's `[File …]` handle. It used to arrive as its text alone and was then
   marked as delivered, so the attachment never came.
-
 - The ✻ button comes up the moment a Claude model is picked on a new session, instead of on the
   first keystroke in the composer.
 - The model picker names its rows one way: a CLI row that lands on a model the plugin knows takes
