@@ -99,6 +99,7 @@ import {
   STATE_DIR,
   isPermissionMode,
   loadContextSizes,
+  livingModelId,
   loadWorkspaceModels,
   saveWorkspaceModel,
 } from "./state.js";
@@ -2381,7 +2382,14 @@ export function registerSessionRoutes(
               if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/workspace-model`) {
                 const cwd = url.searchParams.get("cwd");
                 if (!cwd) return json(res, 400, { error: "cwd param required" });
-                return json(res, 200, (await loadWorkspaceModels(STATE_DIR)).get(cwd) ?? {});
+                const saved = (await loadWorkspaceModels(STATE_DIR)).get(cwd);
+                if (!saved) return json(res, 200, {});
+                // The remembered id may be one the CLI has since renamed; answer the form the
+                // lineup still has, or nothing, never an id the picker cannot name. Without the
+                // catalog (a test harness) the saved id goes out as it is.
+                const offered = models ? (await models()).map((m) => m.id) : undefined;
+                const model = offered ? livingModelId(saved.model, offered) : saved.model;
+                return json(res, 200, model ? { ...saved, model } : {});
               }
               if (req.method === "POST" && url.pathname === `${ROUTE_PREFIX}/workspace-model`) {
                 const body = await readBody(req);
