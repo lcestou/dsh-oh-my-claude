@@ -546,7 +546,7 @@ export const guard = <A extends unknown[]>(fn: (...args: A) => void): ((...args:
  * Both reads stay until 0.1.5 is no longer supported; dropping that support means deleting the
  * `current` line, its type field, and this paragraph.
  */
-const openSessionId = (ctx: ClientCtx): string | undefined => {
+export const openSessionId = (ctx: ClientCtx): string | undefined => {
   if (gone) return undefined;
   try {
     const snap = ctx.sessions.list.getSnapshot();

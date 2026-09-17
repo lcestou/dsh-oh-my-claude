@@ -4,7 +4,7 @@ import { costDetails, isStatsRow } from "./index.js";
 /** The smallest node the predicate reads: dsh's row, its children and its class. */
 function el(
   className: string,
-  children: { className?: string; aria?: string; text?: string }[],
+  children: { className?: string; aria?: string; text?: string; pill?: boolean }[],
   text = "",
   attr = "",
 ): HTMLElement {
@@ -14,8 +14,14 @@ function el(
     hasAttribute: (name: string) => name === attr,
     textContent: text || children.map((c) => c.text ?? "").join(" "),
     children: { length: children.length },
+    // Both row selectors start `:scope > span`, so the pill one is told apart by its button part;
+    // answering either query with the separator made every row with a `_sep` look like a pill row.
     querySelector(selector: string) {
       if (!selector.startsWith(":scope > span")) return null;
+      if (selector.includes("button")) {
+        const pill = children.find((c) => c.pill === true);
+        return pill ? { textContent: pill.text ?? "" } : null;
+      }
       const match = children.find((c) => c.aria === "true" && (c.className ?? "").endsWith("_sep"));
       return match ? { textContent: match.text ?? "" } : null;
     },
@@ -54,6 +60,15 @@ assert.equal(
   isStatsRow(el("bOPqQW_root", [{ text: "1.8M tok · Cache hit 96%" }], "", "data-composer-stats")),
   true,
 );
+
+// dsh 0.1.6-alpha.2's pill row: the same pills with the mark gone, so the pill itself answers.
+assert.equal(
+  isStatsRow(el("bOPqQW_root", [{ text: "2 turns 18 steps · 74 tok/s", pill: true }])),
+  true,
+);
+// The footer that wraps the row holds no pill of its own; appending there is what put the readout
+// outside the row, behind a bar.
+assert.equal(isStatsRow(el("uV2eYG_dock", [{ text: "" }])), false);
 
 const detached = groups("-NDN2W_sep", "|");
 // SAFETY: same fake node as above; the predicate refuses a row React has already dropped

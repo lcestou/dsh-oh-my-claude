@@ -6,7 +6,26 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Added
+
+- A switch for the footer cost readout, in the plugin's settings, on unless it is turned off. The
+  turn records behind it are kept either way, so the figure is whole again the moment the switch
+  comes back.
+
+### Changed
+
+- The cost pill reads `$28.84 · $7.78 last`; the cached-token count that used to close it has moved
+  into the panel behind it. dsh's own neighbouring pill already reports the session's tokens and
+  cache hit rate, and ours was the longest pill in the row.
+
+- The cost panel is capped at 320px rather than 440px, so the API-rate footnote wraps instead of
+  setting the panel's width. It stood half again as wide as dsh's stats panel beside it.
+
 ### Fixed
+
+- The cost readout sits in dsh's footer row as a pill again on dsh 0.1.6-alpha.2, which stopped
+  marking that row. It had fallen back to the older shape and rendered as loose text behind a bar,
+  outside the row; as a pill it also takes dsh's own phone behaviour, shortening to the icon alone.
 
 - The Claude usage block and the context breakdown are back in dsh's context-meter panel on dsh
   0.1.6-alpha.2, which moved that panel out of the ring's own corner of the page and into a
