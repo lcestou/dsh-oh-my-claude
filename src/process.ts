@@ -546,6 +546,12 @@ export interface ContextUsage {
   percentage: number;
   model?: string;
   autocompact?: string;
+  /** Set when the CLI's window is below the plugin's table for this model while
+   *  `ANTHROPIC_BASE_URL` points off api.anthropic.com: the base URL, for the popover's notice. */
+  assumedBehind?: string;
+  /** With `assumedBehind`: the Proxy reaches Anthropic switch is on and this process predates it,
+   *  so the session's next turn replaces the process and the guess ends there. */
+  followsNext?: true;
 }
 export function decodeContextUsage(v: JsonValue | undefined): ContextUsage {
   const r = typeof v === "object" && v !== null && !Array.isArray(v) ? v : {};
@@ -1046,6 +1052,10 @@ export interface ClaudeProcessSpec {
   sessionId: string | null;
   /** Launched with --no-session-persistence: Claude keeps no transcript for this session. */
   temporary: boolean;
+  /** Spawned with the CLI's "the proxy is Anthropic" flag (the Proxy reaches Anthropic switch).
+   *  Present only when on, so a spec saved before the switch existed still keys the same; a flip
+   *  changes the key, and the session's next turn replaces the process, as an effort change does. */
+  firstParty?: true;
 }
 
 /** What the caller wants to know when a Claude process ends, live or after a restart. */

@@ -8,6 +8,11 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- The context popover and the line under dsh's ring write a million-token window as `1M`; it read
+  `1000k`.
+- Opus 5 and Opus 4.8 are listed at 1M before a session has answered, as Claude Code 2.1.274's own
+  table has them. A session's own answer still outranks the table.
+
 - A new session no longer opens on a model id the picker cannot name. A workspace remembers the
   model it last ran, and Claude Code renames its picker rows between releases (2.1.274 lists Fable
   as `claude-fable-5-1` where 2.1.273 listed `claude-fable-5-1[1m]`), so the remembered id could be
@@ -41,6 +46,11 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Added
 
+- Proxy reaches Anthropic, a switch in Settings for a box whose `ANTHROPIC_BASE_URL` is a proxy in
+  front of api.anthropic.com. Claude Code assumes 200k for its 1M models behind any other host
+  (and stops compacting Fable); the switch starts sessions with the CLI's own flag for that case,
+  and the context popover names it when it sees a session in that state. A session already
+  running follows on its next message. Off by default, nothing changes without a base URL.
 - A Changelog card in Settings → Oh My Claude, above Report a problem and collapsed. It lists what
   the last five versions added, changed and fixed, read from the plugin's own `CHANGELOG.md` when
   the card opens, with the installed version marked. The file now ships in the npm package; an
