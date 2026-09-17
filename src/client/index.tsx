@@ -3688,6 +3688,8 @@ const wireTurnStatus = (
   let thoughtMs = -1;
   let thoughtAgoMs = -1;
   let effort = "";
+  let relayName = "";
+  let relayMs = -1;
   // What is on screen: the eased count in characters (the CLI eases its response length, and
   // shows it over four) and the two colour ramps, each chased 10% per 50ms like the CLI does.
   let shownChars = 0;
@@ -3748,6 +3750,10 @@ const wireTurnStatus = (
     if (clock) clock.style.display = time ? "none" : "";
     const shownTokens = Math.round(shownChars / 4);
     if (shownTokens > 0) parts.push(`↓ ${shortCount(shownTokens)} tokens`);
+    // The CLI's gated `running tool for Ns`, with the dsh tool's name in place of "tool": the step
+    // is closed while dsh runs it, so this is the one figure that moves during the wait.
+    if (relayName && relayMs >= 0)
+      parts.push(`running ${relayName} for ${Math.round((relayMs + since) / 1000)}s`);
     // The CLI names the effort after the word when one was asked for, and once a burst closes
     // it says "thought for Ns" for two seconds, never sooner than two seconds after the burst
     // began.
@@ -3822,6 +3828,8 @@ const wireTurnStatus = (
         thoughtMs?: number;
         thoughtAgoMs?: number;
         effort?: string;
+        relayName?: string;
+        relayMs?: number;
       }>(r);
       targetChars = (b.tokens ?? 0) * 4;
       // The ages come from the adapter, which saw the block open and the last frame land; a tab
@@ -3832,6 +3840,8 @@ const wireTurnStatus = (
       thoughtMs = b.thoughtMs ?? -1;
       thoughtAgoMs = b.thoughtAgoMs ?? -1;
       effort = b.effort ?? "";
+      relayName = b.relayName ?? "";
+      relayMs = b.relayMs ?? -1;
       polledAt = Date.now();
     } catch {
       // the row keeps its verb; the bracket is decoration
