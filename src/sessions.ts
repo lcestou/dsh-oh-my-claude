@@ -103,6 +103,7 @@ import {
   loadContextSizes,
   loadWorkspaceModels,
   saveWorkspaceModel,
+  writeJson,
 } from "./state.js";
 import { projectDirName, type LoginNeed } from "./adapter.js";
 import type {
@@ -241,6 +242,40 @@ export async function readHints(hintsPath: string): Promise<Record<string, boole
       else if (typeof v === "number" && Number.isFinite(v) && v >= 0) out[k] = v;
     }
   return out;
+}
+
+/**
+ * Apply one patch to the hints store, serialized against every other patch.
+ *
+ * The store is read-modify-write, and two requests that overlap both read the file before either
+ * writes it: the second write then puts back a map from before the first, and every key the first
+ * added is gone. That is not theoretical — a run of rapid switch changes on 2026-09-17 left the
+ * file holding one key out of eight. Requests queue here instead, and the write goes through
+ * `writeJson` so a crash mid-write cannot truncate the file either.
+ *
+ * `true` and finite non-negative numbers are kept; `false` and `null` drop the key, which is how a
+ * switch returning to its default clears itself. Anything else is ignored, key names included.
+ */
+let hintsChain: Promise<unknown> = Promise.resolve();
+export function updateHints(
+  hintsPath: string,
+  patch: Record<string, unknown>,
+): Promise<Record<string, boolean | number>> {
+  const next = hintsChain.then(async () => {
+    const current = await readHints(hintsPath);
+    const merged = { ...current };
+    for (const [k, v] of Object.entries(patch)) {
+      if (!/^[a-zA-Z][a-zA-Z0-9]{0,40}$/.test(k)) continue;
+      if (v === true) merged[k] = true;
+      else if (typeof v === "number" && Number.isFinite(v) && v >= 0) merged[k] = v;
+      else if (v === false || v === null) delete merged[k];
+    }
+    await writeJson(hintsPath, merged);
+    return merged;
+  });
+  // The chain must survive a failed patch, or one unwritable moment stops every later write.
+  hintsChain = next.catch(() => {});
+  return next;
 }
 
 /** A newer release on npm than the one running, with the command that brings it in. Only this box
@@ -2319,18 +2354,8 @@ export function registerSessionRoutes(
                 const hintsPath = join(dirname(sshBoxesPath), "hints.json");
                 const current = await readHints(hintsPath);
                 if (req.method === "GET") return json(res, 200, current);
-                if (req.method === "POST") {
-                  const body = await readBody(req);
-                  const next = { ...current };
-                  for (const [k, v] of Object.entries(body)) {
-                    if (!/^[a-zA-Z][a-zA-Z0-9]{0,40}$/.test(k)) continue;
-                    if (v === true) next[k] = true;
-                    else if (typeof v === "number" && Number.isFinite(v) && v >= 0) next[k] = v;
-                    else if (v === false || v === null) delete next[k];
-                  }
-                  await writeFile(hintsPath, `${JSON.stringify(next, null, 2)}\n`);
-                  return json(res, 200, next);
-                }
+                if (req.method === "POST")
+                  return json(res, 200, await updateHints(hintsPath, await readBody(req)));
               }
               // The Claude Code updater for the box a session runs on: its state for the Tune rows,
               // a refresh (`now=1`, never an install), the switch, a dismissal, and the button. The

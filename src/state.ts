@@ -59,7 +59,7 @@ export async function trace(fileOrLine: string, maybeLine?: string): Promise<voi
  * writers to one path would otherwise share it, and the loser's rename would find the file the
  * winner already moved.
  */
-async function writeJson(file: string, value: unknown): Promise<void> {
+export async function writeJson(file: string, value: unknown): Promise<void> {
   await mkdir(dirname(file), { recursive: true });
   const tmp = `${file}.tmp-${randomUUID()}`;
   await writeFile(tmp, JSON.stringify(value));

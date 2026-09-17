@@ -10,6 +10,17 @@ export declare const STATE_DIR: string;
 export declare function stateDir(providerId: string): string;
 /** Append one line to the resume trace; best effort, never throws. */
 export declare function trace(fileOrLine: string, maybeLine?: string): Promise<void>;
+/**
+ * Write JSON so a crash mid-write cannot leave half a file behind: into a temp name in the same
+ * directory, then rename over, which is atomic on one filesystem.
+ *
+ * Every store in this module is read-modify-write, and every reader treats an unparseable file as
+ * empty. A truncated write is therefore not the loss of one entry but of the whole ledger: the next
+ * save reads nothing and writes the map back from nothing. The temp name carries a uuid because two
+ * writers to one path would otherwise share it, and the loser's rename would find the file the
+ * winner already moved.
+ */
+export declare function writeJson(file: string, value: unknown): Promise<void>;
 /** Record (or clear) that a session's turn is running; serialized read-modify-write. */
 export declare function markBusy(id: string, on: boolean, path?: string): Promise<void>;
 /** Sessions whose turn the previous dsh process left unfinished; cleared on read. */
