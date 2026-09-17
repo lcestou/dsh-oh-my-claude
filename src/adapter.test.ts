@@ -31,6 +31,7 @@ import {
   buildPrompt,
   attachmentNotes,
   relayFileHandles,
+  isOrphanedStandIn,
   claudeSessionId,
   getCatalog,
   modelFromApi,
@@ -146,6 +147,7 @@ import { tmpdir } from "node:os";
 import { homedir } from "node:os";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { join as joinPath } from "node:path";
+import { STATE_DIR } from "./state.js";
 
 declare module "./adapter.js" {
   interface Translator {
@@ -860,6 +862,25 @@ assert.equal(boxFor("", undefined), undefined, "a local turn in a local workspac
     "a local provider still sends this cwd's turn to the box",
   );
   assert.equal(remoteWorkspaceFor("/home/me/work"), undefined);
+
+  // A stand-in whose row is gone is an orphan: its workspace was removed, dsh kept the session.
+  const standIns = joinPath(STATE_DIR, "remote-workspaces");
+  const kept = joinPath(standIns, "lilly__kept");
+  setRemoteWorkspaces([
+    { name: "kept", host: "lilly", remoteCwd: "/srv/kept", path: kept, workspaceId: "w-2" },
+  ]);
+  assert.equal(
+    isOrphanedStandIn(kept),
+    false,
+    "a stand-in with its row is a live remote workspace",
+  );
+  assert.equal(
+    isOrphanedStandIn(joinPath(standIns, "lilly__gone")),
+    true,
+    "a stand-in with no row is a removed one",
+  );
+  assert.equal(isOrphanedStandIn("/home/me/work"), false, "an ordinary cwd never is");
+  assert.equal(isOrphanedStandIn(standIns), false, "nor is the stand-ins' own parent");
   setRemoteWorkspaces([]);
 }
 

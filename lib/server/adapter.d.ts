@@ -22,6 +22,14 @@ import type { ClaudeProcessSpec, RelayEvent, RelayResult, TurnPrep } from "./pro
 /** Replace the redirect map: the boot read and every panel edit land here. Exported so the offline
  * suite can drive the two lookups below without a dsh mount. */
 export declare function setRemoteWorkspaces(workspaces: RemoteWorkspace[]): void;
+/**
+ * Whether `cwd` is the stand-in of a remote workspace that no longer exists. Removing a box, or
+ * deleting the workspace, drops its row and its stand-in folder, but dsh keeps the sessions and
+ * lists them under Ungrouped with the stand-in as their cwd. A turn there has no box to run on:
+ * spawned here it died on a missing directory as "claude exited -1: no output" (seen live
+ * 2026-09-17), and on an ssh box's own provider it would have run in the far `$HOME` instead.
+ */
+export declare const isOrphanedStandIn: (cwd: string) => boolean;
 /** The real remote path for a placeholder workspace on `host`, or `cwd` unchanged. */
 export declare function remoteCwdFor(host: string, cwd: string): string;
 /** The box a turn runs on: this instance's own host when it has one, else the box a remote-workspace

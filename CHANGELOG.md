@@ -12,7 +12,8 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
   workspace dialog. It used to list it only after a page reload.
 - Removing an ssh box removes the workspaces pinned to it, from the sidebar and from the card. They
   used to stay in the sidebar with no box behind them. The box's row says how many workspaces go
-  with it before you confirm.
+  with it before you confirm. Their sessions stay, under Ungrouped, and say why they cannot run
+  until the same folder is pinned again.
 - A remote workspace deleted from the sidebar's own menu no longer comes back in the Settings card.
   dsh deletes it in its own list and never told the plugin, which kept its record; the plugin now
   checks its records against dsh's list and drops the ones dsh no longer has.

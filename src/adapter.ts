@@ -218,7 +218,22 @@ let remoteWorkspaces: RemoteWorkspace[] = [];
  * suite can drive the two lookups below without a dsh mount. */
 export function setRemoteWorkspaces(workspaces: RemoteWorkspace[]): void {
   remoteWorkspaces = workspaces;
+  remoteWorkspacesKnown = true;
 }
+/** Whether the map above has been fed at all: before the routes' first read lands, an empty map
+ *  means "not read yet", not "no remote workspaces". */
+let remoteWorkspacesKnown = false;
+/** Where every remote workspace's stand-in folder lives. */
+const STAND_INS = join(STATE_DIR, "remote-workspaces");
+/**
+ * Whether `cwd` is the stand-in of a remote workspace that no longer exists. Removing a box, or
+ * deleting the workspace, drops its row and its stand-in folder, but dsh keeps the sessions and
+ * lists them under Ungrouped with the stand-in as their cwd. A turn there has no box to run on:
+ * spawned here it died on a missing directory as "claude exited -1: no output" (seen live
+ * 2026-09-17), and on an ssh box's own provider it would have run in the far `$HOME` instead.
+ */
+export const isOrphanedStandIn = (cwd: string): boolean =>
+  remoteWorkspacesKnown && cwd.startsWith(`${STAND_INS}/`) && remoteWorkspaceFor(cwd) === undefined;
 /** The real remote path for a placeholder workspace on `host`, or `cwd` unchanged. */
 export function remoteCwdFor(host: string, cwd: string): string {
   return remoteWorkspaces.find((w) => w.host === host && w.path === cwd)?.remoteCwd ?? cwd;
@@ -2636,6 +2651,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       this.config.sshHost,
       options.purpose ? undefined : remoteWorkspaceFor(cwd)?.host,
     );
+    if (!options.purpose && isOrphanedStandIn(cwd))
+      throw new LlmError(
+        `This session belongs to a remote workspace that was removed (${basename(cwd)}), so it has no box to run on. Add the same folder on the same box again from the sidebar's Add workspace, and the session continues there.`,
+        "PROVIDER_ERROR",
+      );
     const cli = await probeCli(execFile, this.config.command, targetHost);
     if (!this.loggedVersion) {
       this.loggedVersion = true;
