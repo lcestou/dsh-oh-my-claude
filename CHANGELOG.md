@@ -41,6 +41,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Added
 
+- A Changelog card in Settings → Oh My Claude, above Report a problem and collapsed: what the
+  last five versions added, changed and fixed, read from the plugin's own `CHANGELOG.md` when the
+  card opens, with the installed version marked. The file now ships in the npm package; an
+  install from before this has no copy, and the card says so with a link to the file on GitHub.
 - A card above the composer when a newer Claude Code is out for the box a session runs on, with an
   Update button that runs `claude update` there from dsh, an Always update link, and a dismiss that
   holds until the next release. The same button sits on each Boxes row in Settings. Under Tune: a
