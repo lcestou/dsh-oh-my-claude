@@ -77,6 +77,7 @@ import { PluginUpdateBadge } from "./update-pill.js";
 import { isNewer } from "../update.js";
 import { livingModelId } from "../model-ids.js";
 import { ReportBlock } from "./report.js";
+import { ChangelogBlock } from "./changelog.js";
 import { Spark, sparkNode } from "./spark.js";
 import { AccessShield, OhMyClaudeControl } from "./panel.js";
 import { ConfirmButton } from "./tune.js";
@@ -7254,6 +7255,7 @@ export function apply(ctx: ClientCtx) {
     const [boxes, setBoxes] = useState<BoxData[]>([]);
     const [openBoxes, setOpenBoxes] = useState(true);
     const [openSessions, setOpenSessions] = useState(false);
+    const [openChangelog, setOpenChangelog] = useState(false);
     const [openReport, setOpenReport] = useState(false);
     const [error, setError] = useState("");
     useEffect(() => {
@@ -7310,6 +7312,15 @@ export function apply(ctx: ClientCtx) {
             onToggle={() => setOpenBoxes((v) => !v)}
           />
         )}
+        <Card
+          id="dsh-oh-my-claude-changelog-card"
+          title="Changelog"
+          summary="What the last five versions added, changed and fixed, newest first."
+          open={openChangelog}
+          onToggle={() => setOpenChangelog((v) => !v)}
+        >
+          <ChangelogBlock />
+        </Card>
         <Card
           id="dsh-oh-my-claude-report-card"
           title="Report a problem"

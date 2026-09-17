@@ -133,11 +133,15 @@ Settings → Oh My Claude opens with a runtime line (which `claude`, which accou
 
 Chips filter by box (an unreachable box shows as offline and stays disabled), selects filter by workspace and origin, and a search box narrows to rows whose title, id or path contain every typed word, in any order (`matchesQuery`, checked in `pageSessions.test.ts`); rows are grouped by box, newest first, each tagged `dsh`, `archived` or `terminal` with its workspace. On this box, Open opens the dsh session, Restore unarchives it first, and a terminal transcript is imported: converted to dsh events (prompts, replies, thinking, tool calls and results) so the history renders, with the dsh session taking the Claude session id as its own id, so the next prompt resumes that very Claude session with its full context. The transcript is only read; Claude Code keeps appending to the same file, so the session can be continued from either side. Claude's own subagent sidechains and an unanswered trailing prompt are left out of the copy. A row from another box says "Open on <box>" and sends the browser there with `#claude-session=<id>&cwd=<path>`; that box's panel picks the link up once dsh is ready and opens the session the same way.
 
-Each archived session row has a menu: download the raw transcript, export it as Markdown, or copy the `claude --resume` command. Below the list, Boxes and settings.json are collapsed cards with a one-line summary each. The browser half is `src/client/index.tsx`, built into `lib/client.js` by `bun run build`.
+Each archived session row has a menu: download the raw transcript, export it as Markdown, or copy the `claude --resume` command. Below the list, Boxes, Changelog and Report a problem are collapsed cards with a one-line summary each. The browser half is `src/client/index.tsx`, built into `lib/client.js` by `bun run build`.
 
 ## Remember model per workspace
 
 A blank Claude session in a workspace opens on the model that workspace last ran, provider unchanged. The switch is Remember model per workspace, under Claude look in Settings → Oh My Claude.
+
+## Changelog
+
+Changelog, under Boxes in Settings → Oh My Claude, is a collapsed card listing what the last five versions added, changed and fixed, newest first, with the version this box runs marked. The rows come from the plugin's own `CHANGELOG.md`, read when the card opens, so an install shows the notes for the version it has and nothing is written into the bundle. A link at the bottom opens the whole file on GitHub.
 
 ## Report a problem
 
