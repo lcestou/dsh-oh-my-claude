@@ -3451,7 +3451,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    * this box's panel login as CLAUDE_CODE_OAUTH_TOKEN for the default instance. A second instance
    * keeps its own login, which is what a second instance is for.
    */
-  localEnvOverride(): Record<string, string> | undefined {
+  localEnvOverride(firstParty = this.proxyFirstParty): Record<string, string> | undefined {
     const over: Record<string, string> = {};
     if (this.config.configDir || this.config.ownTranscripts)
       over.CLAUDE_CONFIG_DIR = this.claudeHome;
@@ -3460,19 +3460,23 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // Claude Code 2.1.274 believes a native-1M model holds 200,000 when ANTHROPIC_BASE_URL names
     // any host but api.anthropic.com, and with that guess it either caps the session there (Opus 5,
     // Sonnet 5) or stops compacting altogether (Fable). This is the CLI's own flag for "the proxy
-    // is Anthropic"; it changes nothing when no base URL is set.
-    if (this.proxyFirstParty) over[FIRST_PARTY_FLAG] = "1";
+    // is Anthropic"; it changes nothing when no base URL is set. A session's spawner passes its
+    // spec's `firstParty`, so the env and the spec that keys the process are one snapshot: the
+    // field alone could be flipped by another session's `prepare()` between the two reads, and a
+    // process whose spec says one thing and whose env says the other never gets replaced.
+    if (firstParty) over[FIRST_PARTY_FLAG] = "1";
     return Object.keys(over).length === 0 ? undefined : over;
   }
 
   /** The child env a keeper hands Claude: dsh's environment plus the plugin's additions. */
-  keeperEnv() {
-    return childEnv(process.env, this.localEnvOverride());
+  keeperEnv(firstParty?: boolean) {
+    return childEnv(process.env, this.localEnvOverride(firstParty));
   }
 
   /** Spawner for one session: keeper mode needs the session to place and name the keeper. */
   spawnerFor(sessionId: string | undefined, spec: ClaudeProcessSpec): Spawner {
-    if (this.config.spawn !== "keeper" || !sessionId) return this.spawner();
+    const firstParty = spec.firstParty === true;
+    if (this.config.spawn !== "keeper" || !sessionId) return this.spawner(firstParty);
     const boxHost = this.config.sshHost;
     if (boxHost)
       return (command, args, cwd) =>
@@ -3491,7 +3495,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       return lazyHandle(
         spawnKeeper(
           dir,
-          { command, args, cwd, env: this.keeperEnv(), sessionId, procSpec: spec },
+          { command, args, cwd, env: this.keeperEnv(firstParty), sessionId, procSpec: spec },
           (argv) => launchKeeper(argv, unit),
         ),
       );
@@ -3780,7 +3784,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     return boxFor(this.config.sshHost, cwd ? remoteWorkspaceFor(cwd)?.host : undefined);
   }
 
-  spawner() {
+  spawner(firstParty = this.proxyFirstParty) {
     // A remote instance drives the far `claude` over SSH; no keeper, no seam, its own remote login.
     // A remote-workspace cwd is a local placeholder here; redirect it to the box's real path.
     if (this.config.sshHost) {
@@ -3795,7 +3799,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     }
     // Read per spawn, not once: a login made in the panel applies to the next session started.
     const local: Spawner = (command, args, cwd) =>
-      base(command, args, cwd, this.localEnvOverride());
+      base(command, args, cwd, this.localEnvOverride(firstParty));
     // A remote-workspace cwd runs the far `claude` over SSH on its box, even when this provider is
     // local: otherwise the session sits in the empty local placeholder dir.
     return (command: string, args: string[], cwd: string) => {

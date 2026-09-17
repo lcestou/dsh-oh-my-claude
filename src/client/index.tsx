@@ -6099,11 +6099,11 @@ function ProxyFirstPartySwitch() {
         <summary style={{ cursor: "pointer", color: T.muted }}>Details</summary>
         <div style={{ color: T.faint, fontSize: 12, padding: "8px 0 0 16px" }}>
           When ANTHROPIC_BASE_URL names any host but api.anthropic.com, Claude Code assumes 200k for
-          models that hold 1M: Opus 5 and Sonnet 5 compact early, and Fable stops compacting. On,
-          sessions start with Claude Code's own flag for a proxy that forwards to Anthropic, run at
-          1M and compact against it; a session already running follows on its next message. Leave it
-          off for a gateway that routes elsewhere (Bedrock, Vertex). Without a base URL it changes
-          nothing.
+          models that hold 1M: Opus 5, Opus 4.8 and Sonnet 5 compact early, and Fable stops
+          compacting. On, sessions start with Claude Code's own flag for a proxy that forwards to
+          Anthropic, run at 1M and compact against it; a session already running follows on its next
+          message. Leave it off for a gateway that routes elsewhere (Bedrock, Vertex). Without a
+          base URL it changes nothing.
         </div>
       </details>
     </>

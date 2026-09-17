@@ -1058,9 +1058,9 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * this box's panel login as CLAUDE_CODE_OAUTH_TOKEN for the default instance. A second instance
      * keeps its own login, which is what a second instance is for.
      */
-    localEnvOverride(): Record<string, string> | undefined;
+    localEnvOverride(firstParty?: boolean): Record<string, string> | undefined;
     /** The child env a keeper hands Claude: dsh's environment plus the plugin's additions. */
-    keeperEnv(): Record<string, string>;
+    keeperEnv(firstParty?: boolean): Record<string, string>;
     /** Spawner for one session: keeper mode needs the session to place and name the keeper. */
     spawnerFor(sessionId: string | undefined, spec: ClaudeProcessSpec): Spawner;
     /**
@@ -1098,7 +1098,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * local turn. Mirrors prepare()'s targetHost so a logged-out error names the right machine: a
      * purpose one-shot (title/compaction) always runs on the local claude for the default provider. */
     hostLabelFor(sessionId: string | undefined, purpose?: string): string | undefined;
-    spawner(): Spawner;
+    spawner(firstParty?: boolean): Spawner;
     /** Kill this instance's live processes and drop them from the shared registry: called when an SSH
      * box is removed from the panel, so its remote `claude` sessions do not outlive the mount. */
     disposeProcesses(): void;
