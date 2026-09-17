@@ -690,7 +690,11 @@ assert.equal(proxyBaseUrl("not a url"), "not a url");
   const window = (id: string) => resolveModelInfo("claude-code", id).context?.contextWindow;
   assert.equal(window("claude-opus-5"), 1_000_000, "the table's figure until a session answers");
   noteLiveWindow("claude-opus-5", 500_000);
-  assert.equal(window("claude-opus-5"), 500_000, "a session's own answer is believed over the table");
+  assert.equal(
+    window("claude-opus-5"),
+    500_000,
+    "a session's own answer is believed over the table",
+  );
   // Switching models reads the other model's own answer, not the one just banked.
   assert.equal(window("claude-sonnet-4-6"), 200_000, "another model keeps its own window");
   // The `[1m]` variant and the dated spelling are the same model wearing a different name.

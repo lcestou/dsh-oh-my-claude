@@ -772,6 +772,8 @@ const bareId = (id: string) => {
  */
 const liveWindows = new Map<string, number>();
 const windowKey = (id: string) => stableModelId(strip(id));
+/** Claude Code's env flag for "the base URL is a proxy in front of Anthropic" (`Xo()` in 2.1.274). */
+const FIRST_PARTY_FLAG = "_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL";
 /** The base URL when it names a host the CLI does not treat as first-party, else undefined. The
  *  test is the CLI's own (`av()` in 2.1.274: `new URL(e).host` against `["api.anthropic.com"]`),
  *  `host` with its port included, so this fires exactly when the CLI demotes. */
@@ -3448,7 +3450,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // any host but api.anthropic.com, and with that guess it either caps the session there (Opus 5,
     // Sonnet 5) or stops compacting altogether (Fable). This is the CLI's own flag for "the proxy
     // is Anthropic"; it changes nothing when no base URL is set.
-    if (this.proxyFirstParty) over._CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL = "1";
+    if (this.proxyFirstParty) over[FIRST_PARTY_FLAG] = "1";
     return Object.keys(over).length === 0 ? undefined : over;
   }
 

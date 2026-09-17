@@ -312,6 +312,10 @@ export declare function modelFromApi(m: {
         effort?: EffortCaps;
     };
 }): LlmModelInfo;
+/** The base URL when it names a host the CLI does not treat as first-party, else undefined. The
+ *  test is the CLI's own (`av()` in 2.1.274: `new URL(e).host` against `["api.anthropic.com"]`),
+ *  `host` with its port included, so this fires exactly when the CLI demotes. */
+export declare const proxyBaseUrl: (raw: string | undefined) => string | undefined;
 /** Record what a session answered. A missing or nonsense figure leaves the last good one standing. */
 export declare const noteLiveWindow: (modelId: string | undefined, maxTokens: number | undefined) => void;
 export declare const liveWindowFor: (modelId: string) => number | undefined;
@@ -912,6 +916,9 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * and known models in place.
      */
     cliModelsAt: number;
+    /** The Settings switch "Proxy reaches Anthropic" (`proxyFirstParty` in the hints store), read
+     *  with the other hints before each spawn. */
+    proxyFirstParty: boolean;
     /** The disk seed, awaited by the first listing so a boot never answers from the floor by a race. */
     private cliSeed;
     refreshCliModels(proc: ClaudeProcess): Promise<boolean>;

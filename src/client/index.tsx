@@ -2777,6 +2777,7 @@ type ContextReply =
       maxTokens: number;
       percentage: number;
       model?: string;
+      assumedBehind?: string;
     }
   | { ok: false; error: string };
 // The breakdown is re-read whenever dsh re-renders the meter's dialog, which is on every repaint of
@@ -2799,7 +2800,11 @@ const loadContext = (sessionId: string): Promise<ContextReply> => {
   return reply;
 };
 const kTokens = (n: number) =>
-  n >= 1000 ? `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k` : String(n);
+  n >= 1_000_000
+    ? `${Number((n / 1_000_000).toFixed(1))}M`
+    : n >= 1000
+      ? `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k`
+      : String(n);
 /**
  * Rows worth a line: the ones whose tokens are the conversation. The CLI's `kind` is the authority
  * — it says so in the field's own description, "classify on this, never on the English name" — and
@@ -2854,6 +2859,15 @@ function renderContext(el: HTMLElement, reply: ContextReply) {
   headValue.style.cssText = `font-variant-numeric:tabular-nums;color:${T.faint};white-space:nowrap`;
   headValue.textContent = `${kTokens(reply.totalTokens)} / ${kTokens(reply.maxTokens)}`;
   head.append(headLabel, headValue);
+  // The CLI's window is a guess here, and it says so: name the switch rather than show a second
+  // figure the CLI does not act on.
+  const note = reply.assumedBehind ? document.createElement("div") : null;
+  if (note) {
+    note.setAttribute("data-omc-context-assumed", "");
+    note.setAttribute("role", "note");
+    note.style.cssText = `font-size:12px;color:${T.faint};margin-top:4px`;
+    note.textContent = `Window assumed at ${kTokens(reply.maxTokens)}: Claude Code does not treat the proxy at ${reply.assumedBehind} as Anthropic, so a 1M model runs as ${kTokens(reply.maxTokens)} here. If the proxy forwards to Anthropic, turn on Proxy reaches Anthropic under Settings → Oh My Claude; it applies to sessions started after that.`;
+  }
   // The bar spans the whole window, so the empty tail is the room left. Segments are sized against
   // `maxTokens` rather than against each other, which is what makes the filled part read as the
   // percentage above it.
@@ -2888,7 +2902,7 @@ function renderContext(el: HTMLElement, reply: ContextReply) {
     line.append(label, val);
     legend.append(line);
   });
-  el.append(head, bar, legend);
+  el.append(head, ...(note ? [note] : []), bar, legend);
 }
 
 const extLink = (text: string, href: string): HTMLAnchorElement => {
@@ -6053,6 +6067,35 @@ function ClaudeUpdateSwitch() {
   );
 }
 
+/** The settings switch for a proxy in front of api.anthropic.com. */
+function ProxyFirstPartySwitch() {
+  const [on, setOn] = useHintFlag("proxyFirstParty");
+  return (
+    <div
+      data-omc-proxy-first-party-switch=""
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
+        fontSize: 13,
+        marginBottom: 12,
+      }}
+    >
+      <div>
+        <div>Proxy reaches Anthropic</div>
+        <div style={{ color: T.faint, fontSize: 12 }}>
+          ANTHROPIC_BASE_URL names a proxy that forwards to api.anthropic.com. Claude Code then runs
+          1M models at 1M and compacts against it; off, it assumes 200k behind a proxy. Applies to
+          sessions started after the switch. Without a base URL the CLI already treats the API as
+          Anthropic, so the switch changes nothing there.
+        </div>
+      </div>
+      <Switch on={on} onChange={setOn} label="Proxy reaches Anthropic" />
+    </div>
+  );
+}
+
 /** The settings switch for remembering which Claude model a workspace last ran. */
 function WorkspaceModelSwitch() {
   const [off, setOff] = useHintFlag("workspaceModelOff");
@@ -7288,6 +7331,7 @@ export function apply(ctx: ClientCtx) {
         {/* The three switches that start off sit together at the end, so the card reads as what the
             plugin does by default first, then what you can add to it. */}
         <ContextSwitch ctx={ctx} />
+        <ProxyFirstPartySwitch />
         <ReturnRecapSwitch />
         <SpendGuardField />
         <TerminalSyncSwitch />
