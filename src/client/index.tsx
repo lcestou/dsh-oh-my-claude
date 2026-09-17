@@ -5541,6 +5541,25 @@ function useHintValue(
   return [value, set];
 }
 
+/**
+ * Write several hints as one request.
+ *
+ * Two `set` calls in a row are two reads and two writes of the same file, and the second read can
+ * predate the first write: picking Off wrote the off flag over a snapshot that still held the on
+ * flag, so both came back set and the control stayed On. Keys that answer one question travel
+ * together.
+ */
+function writeHints(next: Record<string, boolean | number | null>): void {
+  void fetch(`${ROUTE}/hints`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(next),
+  }).finally(() => {
+    hintsOnce = undefined;
+    window.dispatchEvent(new Event(HINTS_EVENT));
+  });
+}
+
 /** One boolean flag from the hints store; `false` clears the key. */
 function useHintFlag(flag: string): [boolean, (on: boolean) => void] {
   const [value, set] = useHintValue(flag);
@@ -6130,9 +6149,21 @@ function ClaudeUpdateSwitch() {
   );
 }
 
-/** The settings switch for a proxy in front of api.anthropic.com. */
+/**
+ * The settings control for a proxy in front of api.anthropic.com: Auto, On or Off.
+ *
+ * Auto asks the base URL itself — a proxy that forwards answers an unauthenticated request with
+ * Anthropic's own error and request id — so the common case needs no decision. The other two are
+ * answers a person gave, and detection never overrides one: an endpoint that starts reading as
+ * Anthropic must not turn this back on for someone who turned it off.
+ */
 function ProxyFirstPartySwitch() {
-  const [on, setOn] = useHintFlag("proxyFirstParty");
+  const [on] = useHintFlag("proxyFirstParty");
+  const [off] = useHintFlag("proxyFirstPartyOff");
+  const mode = on ? "on" : off ? "off" : "auto";
+  // Both keys in one write: `false` clears a key, and the pair only ever holds the chosen answer.
+  const choose = (next: string) =>
+    writeHints({ proxyFirstParty: next === "on", proxyFirstPartyOff: next === "off" });
   return (
     <>
       <div
@@ -6149,11 +6180,24 @@ function ProxyFirstPartySwitch() {
         <div>
           <div>Proxy reaches Anthropic</div>
           <div style={{ color: T.faint, fontSize: 12 }}>
-            Turn on if Claude Code runs through a local proxy in front of Anthropic, such as
-            Headroom or a logging relay, and a 1M model shows a 200k window.
+            For a Claude Code that runs through a proxy in front of Anthropic, such as Headroom or a
+            logging relay, where a 1M model otherwise shows a 200k window. Auto asks the proxy and
+            follows its answer; On and Off are kept whatever it answers.
           </div>
         </div>
-        <Switch on={on} onChange={setOn} label="Proxy reaches Anthropic" />
+        <select
+          data-omc-proxy-first-party-mode=""
+          aria-label="Proxy reaches Anthropic"
+          value={mode}
+          onChange={(e) => choose(e.target.value)}
+          // `0 0 auto` and a floor: the row is flex, and a shrinkable select next to the long
+          // description collapsed until only the first letter of "Auto" showed.
+          style={{ ...select, flex: "0 0 auto", minWidth: 104, maxWidth: 104 }}
+        >
+          <option value="auto">Auto</option>
+          <option value="on">On</option>
+          <option value="off">Off</option>
+        </select>
       </div>
       <details data-omc-proxy-details="" style={{ marginBottom: 12, fontSize: 13 }}>
         <summary style={{ cursor: "pointer", color: T.muted }}>Details</summary>
@@ -6162,8 +6206,11 @@ function ProxyFirstPartySwitch() {
           models that hold 1M: Opus 5, Opus 4.8 and Sonnet 5 compact early, and Fable stops
           compacting. On, sessions start with Claude Code's own flag for a proxy that forwards to
           Anthropic, run at 1M and compact against it; a session already running follows on its next
-          message. Leave it off for a gateway that routes elsewhere (Bedrock, Vertex). Without a
-          base URL it changes nothing.
+          message. Auto asks the base URL once per dsh run, with no key attached: a proxy that
+          forwards hands back Anthropic's own authentication error and request id, which a gateway
+          routing elsewhere (Bedrock, Vertex) does not, and a proxy that cannot be reached is left
+          alone rather than assumed. Choose Off for such a gateway, or to hold a session at the
+          window the CLI guesses. Without a base URL none of it changes anything.
         </div>
       </details>
     </>
@@ -7433,12 +7480,15 @@ export function apply(ctx: ClientCtx) {
         <ClaudeUpdateSwitch />
         <CostSwitch />
         <WorkspaceModelSwitch />
-        {/* The three switches that start off sit together at the end, so the card reads as what the
-            plugin does by default first, then what you can add to it. */}
+        {/* The switches that start off sit together after the ones that start on, so the card reads
+            as what the plugin does by default first, then what you can add to it. The proxy control
+            keeps company with them rather than with the spend field it used to precede: it answers
+            a switch's question, not a number's. Terminal mirror stays last, on its own, because it
+            is the one experiment here. */}
         <ContextSwitch ctx={ctx} />
-        <ProxyFirstPartySwitch />
         <ReturnRecapSwitch />
         <SpendGuardField />
+        <ProxyFirstPartySwitch />
         <TerminalSyncSwitch />
         {error && <p style={{ color: T.err, fontSize: 13 }}>{error}</p>}
         {boxes !== null && (
