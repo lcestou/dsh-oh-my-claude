@@ -31,6 +31,7 @@ import {
 } from "@deepseek-ai/dsh-client-ui-primitives";
 import {
   ROUTE,
+  useNarrow,
   fmtCost,
   fmtDuration,
   cacheShare,
@@ -3424,7 +3425,7 @@ const ensureTurnStatusStyle = () => {
   // clearance, which leaves its pills 653px in a 717px column. dsh's two fill that; ours as a
   // third clips all three to an ellipsis by a few pixels. The pills are centred, so the padding
   // does no aligning; take it down to the row's rounded corners and the three fit.
-  styleEl.textContent = `${gated("row", '[role="status"][aria-live="polite"]')},${gated("row", "[data-dsh-oh-my-claude-turn]", false)}{background-image:var(--omc-row-bg,linear-gradient(90deg,var(--omc-accent) 0%,var(--omc-accent) 40%,var(--omc-shimmer) 50%,var(--omc-accent) 60%,var(--omc-accent) 100%))}@keyframes omc-word{from{-webkit-text-fill-color:var(--omc-word-lo)}to{-webkit-text-fill-color:var(--omc-word-hi)}}[data-omc-turn-word]{animation:omc-word 1s ease-in-out 3s infinite alternate}@media (prefers-reduced-motion:reduce){[data-omc-turn-word]{animation:none}}[data-dsh-oh-my-claude-turn]>span[aria-hidden]{display:inline-block;width:1.3em;text-align:start;flex:none}[data-dsh-oh-my-claude-turn]{max-width:100%;min-width:0}[data-omc-turn-detail]{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}${gated("panel", "[data-omc-login-card] button:hover", false)},${gated("panel", "[data-omc-login-card] button:focus-visible", false)},${gated("panel", "[data-omc-update-card] button:not(:disabled):hover", false)},${gated("panel", "[data-omc-update-card] button:focus-visible", false)}{color:var(--omc-accent)!important;border-color:var(--omc-accent)!important}${controlStatesCss("[data-omc-settings]")}${controlStatesCss('[role="dialog"][aria-label="Oh My Claude"]')}${/* !important: the buttons carry their border inline (`btn`), which beats any sheet rule. */ ""}${gated("panel", '[data-omc-settings] button:not([role="switch"]):not([aria-expanded]):not(:disabled):hover', false)},${gated("panel", '[data-omc-settings] button:not([role="switch"]):not([aria-expanded]):focus-visible', false)},${gated("panel", '[role="dialog"][aria-label="Oh My Claude"] button:not([role="switch"]):not([aria-expanded]):not(:disabled):hover', false)},${gated("panel", '[role="dialog"][aria-label="Oh My Claude"] button:not([role="switch"]):not([aria-expanded]):focus-visible', false)}{color:var(--omc-accent)!important;border-color:var(--omc-accent)!important}[data-omc-card]:hover{border-color:var(--dsw-alias-label-dimmed,rgba(128,128,128,.5))}[data-omc-card]>button:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#3b82f6);outline-offset:-2px}[data-omc-card]>button:hover{background:none}@keyframes omc-sheen{from{background-position:200% 0}to{background-position:-200% 0}}[data-omc-skeleton]{border-radius:6px;background:linear-gradient(90deg,${T.border} 30%,${T.hover} 50%,${T.border} 70%);background-size:200% 100%;animation:omc-sheen 1.4s linear infinite}@keyframes omc-rise{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}[data-omc-arrived]{animation:omc-rise .18s ease-out}@media (prefers-reduced-motion:reduce){[data-omc-skeleton],[data-omc-arrived]{animation:none}}${gated("prose", '[role="tablist"]>[role="tab"][aria-selected="true"]')}{color:var(--omc-accent)}${gated("prose", '[role="tablist"]>[role="tab"][aria-selected="true"]::after')}{background:var(--omc-accent)}${gated("prose", '[class*="_markdown"] blockquote')}{border-left-color:color-mix(in srgb,var(--omc-accent) 50.2%,transparent)}${gated("prose", '[class*="_markdown"] hr')}{background:color-mix(in srgb,var(--omc-accent) 34.9%,transparent)}${gated("prose", '[class*="_markdown"] a')}{color:var(--omc-accent);text-decoration-color:color-mix(in srgb,var(--omc-accent) 40%,transparent)}${gated("prose", '[class*="_markdown"] a:hover')}{color:var(--omc-shimmer);text-decoration-color:var(--omc-shimmer)}${gated("prose", '[class*="_markdown"] input[type="checkbox"]')}{accent-color:var(--omc-accent)}${gated("prose", "[data-workflow-run] button[data-member-status] [data-member-label]")}{color:var(--omc-accent)}body[data-omc-panel-open] [data-width-handle]{pointer-events:none}body[data-omc-panel-open] [class*="_toBottomSlot"],body:has([data-omc-cost-dialog]) [class*="_toBottomSlot"]{opacity:0;pointer-events:none;transition:opacity .1s}@keyframes omc-pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--omc-accent) 55%,transparent)}100%{box-shadow:0 0 0 12px transparent}}${gated("panel", 'button[aria-label="Oh My Claude"][data-omc-pulse]', false)}{animation:omc-pulse 1.1s ease-out 3}@media (prefers-reduced-motion:reduce){button[aria-label="Oh My Claude"][data-omc-pulse]{animation:none}}${gated("prose", "[data-produced-files-row] button")}{color:var(--omc-accent)}${gated("prose", "[data-produced-files-row] button:hover")}{color:var(--omc-shimmer)}body[data-omc-claude] [data-composer-stats]{padding-left:8px;padding-right:8px}${gated("prose", '[class*="_optionLine"]>[class*="_badge"]')}{background:color-mix(in srgb,var(--omc-accent) 16%,transparent);color:var(--omc-accent)}[data-omc-cost-over]{color:var(--omc-accent)}${gated("row", 'svg[data-state="ongoing"]')}{--dsh-state-ongoing:var(--omc-accent)}${RAINBOW_CSS}${COST_DIALOG_CSS}`;
+  styleEl.textContent = `${gated("row", '[role="status"][aria-live="polite"]')},${gated("row", "[data-dsh-oh-my-claude-turn]", false)}{background-image:var(--omc-row-bg,linear-gradient(90deg,var(--omc-accent) 0%,var(--omc-accent) 40%,var(--omc-shimmer) 50%,var(--omc-accent) 60%,var(--omc-accent) 100%))}@keyframes omc-word{from{-webkit-text-fill-color:var(--omc-word-lo)}to{-webkit-text-fill-color:var(--omc-word-hi)}}[data-omc-turn-word]{animation:omc-word 1s ease-in-out 3s infinite alternate}@media (prefers-reduced-motion:reduce){[data-omc-turn-word]{animation:none}}[data-dsh-oh-my-claude-turn]>span[aria-hidden]{display:inline-block;width:1.3em;text-align:start;flex:none}[data-dsh-oh-my-claude-turn]{max-width:100%;min-width:0}[data-omc-turn-detail]{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}${gated("panel", "[data-omc-login-card] button:hover", false)},${gated("panel", "[data-omc-login-card] button:focus-visible", false)},${gated("panel", "[data-omc-update-card] button:not(:disabled):hover", false)},${gated("panel", "[data-omc-update-card] button:focus-visible", false)}{color:var(--omc-accent)!important;border-color:var(--omc-accent)!important}${controlStatesCss("[data-omc-settings]")}${controlStatesCss('[role="dialog"][aria-label="Oh My Claude"]')}${/* !important: the buttons carry their border inline (`btn`), which beats any sheet rule. */ ""}${gated("panel", '[data-omc-settings] button:not([role="switch"]):not([aria-expanded]):not(:disabled):hover', false)},${gated("panel", '[data-omc-settings] button:not([role="switch"]):not([aria-expanded]):focus-visible', false)},${gated("panel", '[role="dialog"][aria-label="Oh My Claude"] button:not([role="switch"]):not([aria-expanded]):not(:disabled):hover', false)},${gated("panel", '[role="dialog"][aria-label="Oh My Claude"] button:not([role="switch"]):not([aria-expanded]):focus-visible', false)}{color:var(--omc-accent)!important;border-color:var(--omc-accent)!important}[data-omc-card]:hover{border-color:var(--dsw-alias-label-dimmed,rgba(128,128,128,.5))}[data-omc-card]>button:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#3b82f6);outline-offset:-2px}[data-omc-card]>button:hover{background:none}@keyframes omc-sheen{from{background-position:200% 0}to{background-position:-200% 0}}[data-omc-skeleton]{border-radius:6px;background:linear-gradient(90deg,${T.border} 30%,${T.hover} 50%,${T.border} 70%);background-size:200% 100%;animation:omc-sheen 1.4s linear infinite}@keyframes omc-rise{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}@keyframes omc-drain{from{width:100%}to{width:0}}[data-omc-arrived]{animation:omc-rise .18s ease-out}@media (prefers-reduced-motion:reduce){[data-omc-skeleton],[data-omc-arrived]{animation:none}}${gated("prose", '[role="tablist"]>[role="tab"][aria-selected="true"]')}{color:var(--omc-accent)}${gated("prose", '[role="tablist"]>[role="tab"][aria-selected="true"]::after')}{background:var(--omc-accent)}${gated("prose", '[class*="_markdown"] blockquote')}{border-left-color:color-mix(in srgb,var(--omc-accent) 50.2%,transparent)}${gated("prose", '[class*="_markdown"] hr')}{background:color-mix(in srgb,var(--omc-accent) 34.9%,transparent)}${gated("prose", '[class*="_markdown"] a')}{color:var(--omc-accent);text-decoration-color:color-mix(in srgb,var(--omc-accent) 40%,transparent)}${gated("prose", '[class*="_markdown"] a:hover')}{color:var(--omc-shimmer);text-decoration-color:var(--omc-shimmer)}${gated("prose", '[class*="_markdown"] input[type="checkbox"]')}{accent-color:var(--omc-accent)}${gated("prose", "[data-workflow-run] button[data-member-status] [data-member-label]")}{color:var(--omc-accent)}body[data-omc-panel-open] [data-width-handle]{pointer-events:none}body[data-omc-panel-open] [class*="_toBottomSlot"],body:has([data-omc-cost-dialog]) [class*="_toBottomSlot"]{opacity:0;pointer-events:none;transition:opacity .1s}@keyframes omc-pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--omc-accent) 55%,transparent)}100%{box-shadow:0 0 0 12px transparent}}${gated("panel", 'button[aria-label="Oh My Claude"][data-omc-pulse]', false)}{animation:omc-pulse 1.1s ease-out 3}@media (prefers-reduced-motion:reduce){button[aria-label="Oh My Claude"][data-omc-pulse]{animation:none}}${gated("prose", "[data-produced-files-row] button")}{color:var(--omc-accent)}${gated("prose", "[data-produced-files-row] button:hover")}{color:var(--omc-shimmer)}body[data-omc-claude] [data-composer-stats]{padding-left:8px;padding-right:8px}${gated("prose", '[class*="_optionLine"]>[class*="_badge"]')}{background:color-mix(in srgb,var(--omc-accent) 16%,transparent);color:var(--omc-accent)}[data-omc-cost-over]{color:var(--omc-accent)}${gated("row", 'svg[data-state="ongoing"]')}{--dsh-state-ongoing:var(--omc-accent)}${RAINBOW_CSS}${COST_DIALOG_CSS}`;
   document.head.appendChild(styleEl);
 };
 
@@ -6416,6 +6417,19 @@ interface LoginNeed {
 const sameNeed = (a: LoginNeed | null, b: LoginNeed | null): boolean =>
   a === b || (a !== null && b !== null && a.host === b.host && a.label === b.label);
 
+/** A bare control in a dock card's header: the copy and close buttons, the update card's close. */
+const iconBtn = {
+  background: "none",
+  border: "none",
+  cursor: "pointer",
+  padding: "0 2px",
+  lineHeight: 1,
+  flex: "0 0 auto",
+} as const;
+
+/** How long the update card stays after a success before closing on its own. */
+const CLOSE_AFTER_S = 10;
+
 /** Mirrors the server's `ClaudeUpdateCard`: the box a session runs on and the two versions. */
 interface ClaudeUpdateCardData {
   host: string;
@@ -6578,6 +6592,7 @@ function ClaudeUpdateCard({
         : phase === "failed"
           ? `Update failed: ${outcome?.note ?? "no answer"}`
           : `Claude Code ${update.latest} is out. ${Where} runs ${update.installed}.`;
+  const narrow = useNarrow();
   const label =
     phase === "busy"
       ? "Updating…"
@@ -6588,75 +6603,155 @@ function ClaudeUpdateCard({
           : phase === "failed"
             ? "Retry"
             : "Update";
+  // Folded, the card is its header line, the way a side-question card folds: the label, the
+  // chevron and the close. Open, the sentence and the buttons. Nothing is recorded for a
+  // fold; a reload opens it again, and the close is what records a skip until the next release.
+  const [open, setOpen] = useState(true);
+  const toggle = () => setOpen((o) => !o);
+  // After a success the card closes on its own: a thin accent bar along its bottom edge drains
+  // over CLOSE_AFTER_S seconds as one CSS animation, so the close is seen coming without a number
+  // ticking. The pointer over the card pauses the animation where it is (a paused animation holds
+  // its frame; a transition cut short would jump to its end), and the close fires from the
+  // animation's own end event, so a pause delays it by exactly the pause. The card then fades for
+  // a moment rather than popping out. A decline or a failure stays until it is read and closed.
+  const [held, setHeld] = useState(false);
+  const [leaving, setLeaving] = useState(false);
+  const goneRef = useRef(onGone);
+  goneRef.current = onGone;
+  useEffect(() => {
+    if (!leaving) return;
+    const id = setTimeout(() => goneRef.current(), 250);
+    return () => clearTimeout(id);
+  }, [leaving]);
   return (
     <div
       data-omc-update-card={update.latest}
       data-omc-update-phase={phase}
       role="status"
+      onMouseEnter={() => setHeld(true)}
+      onMouseLeave={() => setHeld(false)}
       style={{
+        position: "relative",
         boxSizing: "border-box",
         background: "var(--dsw-specific-tip, var(--dsw-alias-bg-base, transparent))",
         border: "0.5px solid var(--dsw-alias-border-l1, rgba(217,119,87,.4))",
         borderRadius: "12px 12px 0 0",
-        padding: "8px 10px",
+        overflow: "hidden",
         fontSize: 13,
+        opacity: leaving ? 0 : 1,
+        transition: "opacity .25s ease",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        <Spark size={14} />
-        <span
+      {phase === "done" && (
+        <div
+          data-omc-update-closing={held ? "held" : "running"}
+          aria-hidden="true"
+          title={held ? "Held while the pointer is here" : `Closes in ${CLOSE_AFTER_S} seconds`}
+          onAnimationEnd={() => setLeaving(true)}
           style={{
-            flex: 1,
-            color: phase === "failed" ? T.err : phase === "declined" ? T.faint : undefined,
+            position: "absolute",
+            left: 0,
+            bottom: 0,
+            height: 2,
+            background: ACCENT,
+            animation: `omc-drain ${CLOSE_AFTER_S}s linear forwards`,
+            animationPlayState: held ? "paused" : "running",
           }}
-        >
-          {text}
+        />
+      )}
+      {/* The header is the fold toggle; the close beside it stops the click so it does not also
+          fold the card. A div, not a button: a button cannot hold one. */}
+      <div
+        role="button"
+        tabIndex={0}
+        aria-expanded={open}
+        onClick={toggle}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            toggle();
+          }
+        }}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          padding: "6px 8px",
+          cursor: "pointer",
+        }}
+      >
+        <Spark size={12} />
+        {/* The label alone: the sentence lives in the body, where a phone shows it whole. */}
+        <span style={{ color: ACCENT, fontWeight: 600, fontSize: 12, flex: 1 }}>
+          Claude Code update
         </span>
-        <button
-          type="button"
-          style={btn}
-          data-testid="dsh-oh-my-claude-card-update"
-          disabled={phase === "busy" || phase === "done" || phase === "declined"}
-          aria-busy={phase === "busy" ? "true" : undefined}
-          onClick={() => start({ run: true })}
-        >
-          {label}
-        </button>
-        {phase === "idle" && (
-          <button
-            type="button"
-            aria-label="Update on its own from now on"
-            title="Install every new release without asking, from now on"
-            onClick={() => start({ run: true, auto: true })}
-            style={{
-              background: "none",
-              border: "none",
-              cursor: "pointer",
-              padding: "0 2px",
-              color: T.faint,
-              textDecoration: "underline",
-              fontSize: 12,
-            }}
-          >
-            Always update
-          </button>
-        )}
+        <Chevron open={open} />
         <button
           type="button"
           aria-label={phase === "idle" ? "Dismiss until the next release" : "Close"}
           title={phase === "idle" ? "Dismiss until the next release" : "Close"}
-          onClick={dismiss}
-          style={{
-            background: "none",
-            border: "none",
-            cursor: "pointer",
-            padding: "0 2px",
-            color: T.faint,
+          onClick={(e) => {
+            e.stopPropagation();
+            dismiss();
           }}
+          style={{ ...iconBtn, color: T.muted, fontSize: 12 }}
         >
-          ×
+          ✕
         </button>
       </div>
+      {open ? (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            flexWrap: "wrap",
+            // Flush with the spark above, not indented under the label as a side question's
+            // answer is: the buttons are the body, not a quote.
+            padding: "0 8px 8px",
+          }}
+        >
+          {/* On a phone the sentence takes its own line and the buttons the next; wider, one line. */}
+          <span
+            style={{
+              flex: narrow ? "1 1 100%" : 1,
+              minWidth: 0,
+              color: phase === "failed" ? T.err : phase === "declined" ? T.faint : undefined,
+            }}
+          >
+            {text}
+          </span>
+          <button
+            type="button"
+            style={btn}
+            data-testid="dsh-oh-my-claude-card-update"
+            disabled={phase === "busy" || phase === "done" || phase === "declined"}
+            aria-busy={phase === "busy" ? "true" : undefined}
+            onClick={() => start({ run: true })}
+          >
+            {label}
+          </button>
+          {phase === "idle" && (
+            <button
+              type="button"
+              aria-label="Update on its own from now on"
+              title="Install every new release without asking, from now on"
+              onClick={() => start({ run: true, auto: true })}
+              style={{
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                padding: "0 2px",
+                color: T.faint,
+                textDecoration: "underline",
+                fontSize: 12,
+              }}
+            >
+              Always update
+            </button>
+          )}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -6710,7 +6805,11 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
           const nextNeed = body.loginNeeded ?? null;
           setNeed((cur) => (sameNeed(cur, nextNeed) ? cur : nextNeed));
           const nextUpd = body.claudeUpdate ?? null;
-          if (nextUpd === null || nextUpd.latest !== actedRef.current) actedRef.current = null;
+          // A card that was acted on stays until it says it is gone (its own countdown after a
+          // success, the close otherwise): the server stops naming the release the moment the
+          // install lands, and dropping the card on that poll left "Updated" on screen for a
+          // blink. Only a newer release takes it over.
+          if (nextUpd !== null && nextUpd.latest !== actedRef.current) actedRef.current = null;
           setClaudeUpdate((cur) =>
             actedRef.current !== null ? cur : sameCard(cur, nextUpd) ? cur : nextUpd,
           );
@@ -6777,15 +6876,6 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
       return next;
     });
   const newest = shown[shown.length - 1]?.id;
-
-  const iconBtn = {
-    background: "none",
-    border: "none",
-    cursor: "pointer",
-    padding: "0 2px",
-    lineHeight: 1,
-    flex: "0 0 auto",
-  } as const;
 
   return (
     <div {...{ [DOCK_ATTR]: "1" }} style={DOCK_CARD}>
