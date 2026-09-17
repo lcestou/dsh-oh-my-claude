@@ -1049,6 +1049,10 @@ export interface ClaudeProcessSpec {
   sessionId: string | null;
   /** Launched with --no-session-persistence: Claude keeps no transcript for this session. */
   temporary: boolean;
+  /** Spawned with the CLI's "the proxy is Anthropic" flag (the Proxy reaches Anthropic switch).
+   *  Present only when on, so a spec saved before the switch existed still keys the same; a flip
+   *  changes the key, and the session's next turn replaces the process, as an effort change does. */
+  firstParty?: true;
 }
 
 /** What the caller wants to know when a Claude process ends, live or after a restart. */

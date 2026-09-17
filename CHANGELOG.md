@@ -49,8 +49,8 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 - Proxy reaches Anthropic, a switch in Settings for a box whose `ANTHROPIC_BASE_URL` is a proxy in
   front of api.anthropic.com. Claude Code assumes 200k for its 1M models behind any other host
   (and stops compacting Fable); the switch starts sessions with the CLI's own flag for that case,
-  and the context popover names it when it sees a session in that state. Off by default, nothing
-  changes without a base URL.
+  and the context popover names it when it sees a session in that state. A session already
+  running follows on its next message. Off by default, nothing changes without a base URL.
 - A Changelog card in Settings → Oh My Claude, above Report a problem and collapsed. It lists what
   the last five versions added, changed and fixed, read from the plugin's own `CHANGELOG.md` when
   the card opens, with the installed version marked. The file now ships in the npm package; an

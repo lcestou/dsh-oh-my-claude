@@ -2585,7 +2585,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     });
     // Spec = what a running process was spawned with. `resuming` is deliberately left out: it flips
     // to true after the first turn and must not force a respawn.
-    const spec = {
+    const spec: ClaudeProcessSpec = {
       cwd,
       model,
       effort: options.reasoningEffort ?? null,
@@ -2593,6 +2593,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       sessionId: session?.id ?? null,
       temporary,
     };
+    // An environment is fixed at spawn, so the switch joins the spec: a session already running
+    // when it flips is replaced on its next turn and resumes with the window the switch gives.
+    // Local spawns only; the flag does not ride to a box, whose own environment decides.
+    if (this.proxyFirstParty && !this.config.sshHost && !remoteWorkspaceFor(cwd))
+      spec.firstParty = true;
     return {
       cwd,
       args,

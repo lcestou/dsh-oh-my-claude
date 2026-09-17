@@ -2866,7 +2866,7 @@ function renderContext(el: HTMLElement, reply: ContextReply) {
     note.setAttribute("data-omc-context-assumed", "");
     note.setAttribute("role", "note");
     note.style.cssText = `font-size:12px;color:${T.faint};margin-top:4px`;
-    note.textContent = `Assumed ${kTokens(reply.maxTokens)}: Claude Code does not treat the proxy at ${reply.assumedBehind} as Anthropic. If it forwards there, turn on Proxy reaches Anthropic in Settings → Oh My Claude (applies to new sessions).`;
+    note.textContent = `Assumed ${kTokens(reply.maxTokens)}: Claude Code does not treat the proxy at ${reply.assumedBehind} as Anthropic. If it forwards there, turn on Proxy reaches Anthropic in Settings → Oh My Claude; this session follows on its next message.`;
   }
   // The bar spans the whole window, so the empty tail is the room left. Segments are sized against
   // `maxTokens` rather than against each other, which is what makes the filled part read as the
@@ -6086,9 +6086,9 @@ function ProxyFirstPartySwitch() {
         <div>Proxy reaches Anthropic</div>
         <div style={{ color: T.faint, fontSize: 12 }}>
           ANTHROPIC_BASE_URL names a proxy that forwards to api.anthropic.com. Claude Code then runs
-          1M models at 1M and compacts against it; off, it assumes 200k behind a proxy. Applies to
-          sessions started after the switch. Without a base URL the CLI already treats the API as
-          Anthropic, so the switch changes nothing there.
+          1M models at 1M and compacts against it; off, it assumes 200k behind a proxy. A session
+          already running follows on its next message. Without a base URL the CLI already treats the
+          API as Anthropic, so the switch changes nothing there.
         </div>
       </div>
       <Switch on={on} onChange={setOn} label="Proxy reaches Anthropic" />
