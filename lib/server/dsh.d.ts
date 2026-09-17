@@ -254,9 +254,17 @@ export interface WorkspaceRegistryState {
     archivedSessionIds: readonly SessionId[];
     [key: string]: JsonValue | readonly SessionId[] | undefined;
 }
+/** What `sessionController.resolveAgent` answers. Up to dsh 0.1.5 it was the Agent itself; from
+ *  0.1.6 the service hands back its agent controller's own result, `{ agent }` or `{ error }`, which
+ *  dsh's callers unwrap (`if ("error" in result) throw result.error; return result.agent;`). */
+export type ResolvedAgent = Agent | {
+    agent: Agent;
+} | {
+    error: unknown;
+};
 /** Mirrors: @deepseek-ai/dsh-session/lib/types/index.d.ts (sessionController shape used by adapter) */
 export interface SessionController {
-    resolveAgent(id: string): Promise<Agent>;
+    resolveAgent(id: string): Promise<ResolvedAgent>;
     create(opts: {
         sessionId?: string;
         workspaceId?: WorkspaceId | string;

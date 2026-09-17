@@ -8,6 +8,11 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- A session left idle long enough for dsh to unload it is woken again when Claude finishes a
+  background task on its own. dsh 0.1.6 answers a cold resume with `{ agent }` where 0.1.5 answered
+  the agent, the plugin read the wrapper as the agent, and every such wake failed; the reply sat
+  unseen until the next typed message. Both shapes are read now.
+
 - A child's report and a subagent's finish notice now reach Claude when they land mid-turn. A
   message dsh spliced into a running step a few seconds after a typed steer was forwarded only if a
   person typed it; a child's `send_message`, a settlement notice or a job's finish line in the same

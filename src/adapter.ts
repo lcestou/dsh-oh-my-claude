@@ -98,6 +98,7 @@ import type {
   ImageAttachmentRef,
   JsonValue,
   PluginContext,
+  ResolvedAgent,
   SessionController,
   SessionId,
   SubprocessRuntime,
@@ -1767,6 +1768,17 @@ export function afterLastAssistant(messages: LooseMessage[] | undefined): LooseM
   let last = -1;
   for (let i = 0; i < list.length; i++) if (list[i]?.role === "assistant") last = i;
   return list.slice(last + 1);
+}
+
+/** The Agent inside what dsh's session controller answered for a cold resume. dsh 0.1.6 wraps it
+ *  (`{ agent }`, or `{ error }` when the session cannot be resumed) where 0.1.5 handed back the
+ *  Agent; read as the Agent, the wrapper has no `followup`, and every wake of an unloaded session
+ *  failed on it from the day 0.1.6 was installed. The controller's error is thrown so the caller
+ *  reports it like any other failed resume. */
+export function resolvedAgent(found: ResolvedAgent): Agent {
+  if ("error" in found)
+    throw found.error instanceof Error ? found.error : new Error(String(found.error));
+  return "agent" in found ? found.agent : found;
 }
 
 /** Notice this plugin drops into a session's inbox to open a turn after Claude replied on its own. */
@@ -4408,7 +4420,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     if (agent === undefined && this.sessionController) {
       // Idle for minutes: dsh unloaded the Agent. Resume it the way a typed prompt would.
       try {
-        agent = await this.sessionController.resolveAgent(sessionId);
+        agent = resolvedAgent(await this.sessionController.resolveAgent(sessionId));
         how = "resumed";
       } catch (error) {
         this.log("warn", `wake: could not resume session ${sessionId}: ${errorText(error)}`);
