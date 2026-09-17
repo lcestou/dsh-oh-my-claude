@@ -1181,7 +1181,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      */
     continuationFor(options: SessionOptions, forceFresh?: boolean): Continuation;
     /** First write of a turn: relay results, unsent steers, or the prompt itself. */
-    openTurn(cont: Continuation, proc: ClaudeProcess, prep: TurnPrep): void;
+    openTurn(cont: Continuation, proc: ClaudeProcess, prep: TurnPrep): Promise<void>;
     /**
      * Arm the idle watchdog for a stream: `proc` is killed after `timeoutMs` of silence, which
      * defaults to the configured one. Every event re-arms. Shortly before the kill (60 s, or half the
