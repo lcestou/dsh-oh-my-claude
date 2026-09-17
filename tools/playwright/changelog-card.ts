@@ -85,6 +85,10 @@ expect(
   "no installed pill on 1.1.1",
 );
 expect((await p.locator("[data-omc-changelog-kind]").count()) === 3, "three kind blocks");
+// The visible text, not only the hooks: the kind label, the date and the version string.
+const head = await p.locator('[data-omc-changelog-release="1.1.2"]').innerText();
+for (const word of ["1.1.2", "2026-09-15", "Fixed", "Added"])
+  expect(head.includes(word), `release row shows ${word}`);
 expect((await p.locator("[data-omc-changelog] li").count()) === 4, "four items");
 const codes = await p.locator("[data-omc-changelog] code").allInnerTexts();
 expect(codes.join("|") === "document.body", `one code span (${codes.join("|")})`);

@@ -100,6 +100,7 @@ export function ChangelogBlock() {
                 style={{
                   margin: "4px 0 0",
                   paddingLeft: 18,
+                  listStyleType: "disc",
                   color: T.text,
                   fontSize: 13,
                   lineHeight: 1.5,
