@@ -2870,22 +2870,14 @@ export class ClaudeCodeAdapter extends LlmAdapter {
               } catch (error) {
                 return { kind: "error", text: `/${cmd}: ${errorText(error)}` };
               }
-            // A plugin-sourced message draws as dsh's collapsed context row whatever its form,
-            // which never shows attachment chips. With attachments the line goes as a user turn
-            // instead, so the bubble carries the file or image the way a typed prompt's does.
-            const source =
-              attachments.length > 0
-                ? ({ kind: "user" } as const)
-                : ({
-                    kind: "plugin",
-                    plugin: "dsh-oh-my-claude",
-                    form: "notice",
-                    summary: boundContextSummary(line),
-                  } as const);
+            // The line goes as a user turn, so the transcript shows `/name arguments` as the
+            // bubble the person sent. It went as a plugin-sourced notice before, which dsh draws
+            // as a collapsed context row; the owner found the prompt hard to find in the
+            // transcript that way (2026-09-18). The user form also carries attachment chips.
             target.followup(
               createUserMessage({
                 content: [{ type: "text", text: line }, ...attachments],
-                source,
+                source: { kind: "user" },
               }),
             );
             return {
