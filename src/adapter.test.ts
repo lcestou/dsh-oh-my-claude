@@ -104,6 +104,7 @@ import { elapsedText, formatToolCall, resetClock, tokensText } from "./translato
 import type { FinishReason, LlmFailure, Message, StreamChunk } from "@deepseek-ai/dsh-llm";
 import type { Agent, PluginContext, SubprocessSpawnSpec } from "./dsh.js";
 import type { SubprocessHandle as SeamHandle } from "./dsh.js";
+import { COMMAND_CATALOG } from "./dsh.js";
 
 // Test fakes stand in for dsh services and CLI events. One cast per shape, here, instead of one
 // per fake; every fake is partial on purpose and the test names what it exercises.
@@ -295,6 +296,60 @@ assert.equal(
   buildPrompt(selectTurns(messageList([{ role: "user", content: "hi" }, dshSystem]), false)),
   "hi",
 );
+// A skill dsh knows: dsh injects its body as this user message, tagged by source.kind and name.
+const skill = (name: string): LooseMessage =>
+  message({
+    role: "user",
+    source: { kind: "skill-invocation", name, form: "instructions" },
+    content: [{ type: "text", text: `<skill_content name="${name}">body</skill_content>` }],
+  });
+{
+  // dsh and Claude Code both know these skills, so the CLI lists them; save/restore the global the
+  // CLI writes in bridgeCommands.
+  const saved = (globalThis as { [COMMAND_CATALOG]?: string[] })[COMMAND_CATALOG];
+  try {
+    (globalThis as { [COMMAND_CATALOG]?: string[] })[COMMAND_CATALOG] = ["ic-logos", "commit"];
+    // A skill the CLI lists reaches Claude once: dsh's copy is dropped as a duplicate, the typed line stays.
+    assert.equal(
+      buildPrompt(
+        selectTurns(
+          messageList([{ role: "user", content: "/ic-logos what file" }, skill("ic-logos")]),
+          false,
+        ),
+      ),
+      "/ic-logos what file",
+      "the CLI lists the skill, so dsh's copy of the body stays behind",
+    );
+    // A skill only dsh lists keeps its body: dsh's copy is the only one, so it is not dropped.
+    assert.equal(
+      buildPrompt(
+        selectTurns(
+          messageList([{ role: "user", content: "/dsh-only go" }, skill("dsh-only")]),
+          false,
+        ),
+      ),
+      '/dsh-only go\n\n<skill_content name="dsh-only">body</skill_content>',
+      "a skill the CLI does not list keeps dsh's copy, the only one",
+    );
+    // Mid-step, the same listed skill dropped from the prompt is also dropped from the step context.
+    assert.equal(
+      stepContextFor(
+        messageList([
+          { role: "user", content: "go" },
+          { role: "assistant", content: "on it" },
+          { role: "user", source: { kind: "user", rpcId: "s1" }, content: "/ic-logos again" },
+          skill("ic-logos"),
+        ]),
+      ),
+      "\n\n<user_messages_during_tool_call>\n/ic-logos again\n</user_messages_during_tool_call>",
+      "a skill invoked mid-turn is filtered the same way on the steer path",
+    );
+  } finally {
+    if (saved === undefined)
+      delete (globalThis as { [COMMAND_CATALOG]?: string[] })[COMMAND_CATALOG];
+    else (globalThis as { [COMMAND_CATALOG]?: string[] })[COMMAND_CATALOG] = saved;
+  }
+}
 // image-only / attachment-only user turn: no typed text, but not rejected — synthesize a prompt
 assert.equal(
   buildPrompt([{ role: "user", content: [{ type: "image", attachment: { path: "/x.png" } }] }]),
