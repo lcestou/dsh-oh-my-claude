@@ -6,6 +6,12 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Changed
+
+- The chips dsh draws in a sent bubble, a skill it knows such as `/ic-logos` and a file
+  mention, take the Claude look's accent under the "Links, rules and quotes" group instead of
+  dsh's blue, so a sent skill reads in the same colour as the rest of the Claude chrome.
+
 ### Added
 
 - The Claude Code update card links the version it offers to that release's entry on
