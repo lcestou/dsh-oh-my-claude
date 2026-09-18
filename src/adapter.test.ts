@@ -3869,7 +3869,7 @@ assert.equal(killAfterGrace("node"), true);
     relays: new Map(),
     sent: new Set(["r1"]),
     steerPending: true,
-    parked: undefined as "steer" | undefined,
+    parked: undefined,
   };
   noteInterrupt(held);
   adapter.processes.set(registryKey("claude-code", "s"), fakeProc(held));
@@ -3903,9 +3903,7 @@ assert.equal(killAfterGrace("node"), true);
     "after a Stop the next call is a prompt, not a steer continuation",
   );
   assert.deepEqual(
-    // SAFETY: the dsh-llm types in this tree (0.1.6-alpha.1) do not name rpcId on MessageSource;
-    // the fixtures above set it, and steerKey reads it the same way.
-    cont.options.messages?.map((m) => (m.source as { rpcId?: string })?.rpcId),
+    cont.options.messages?.map((m) => steerKey(m)),
     ["p0", undefined, "r2"],
     "the steer the CLI already has is dropped from the prompt, the new text stays",
   );
