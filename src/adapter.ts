@@ -1059,7 +1059,13 @@ async function claudeSessionExists(home: string, cwd: string, id: string): Promi
 export type LooseMessage = {
   id?: string;
   role?: string;
-  source?: { kind?: string; plugin?: string; rpcId?: string; clientTimeZone?: string };
+  source?: {
+    kind?: string;
+    plugin?: string;
+    rpcId?: string;
+    clientTimeZone?: string;
+    name?: string;
+  };
   content?: string | ContentBlock[];
 };
 
@@ -1152,11 +1158,26 @@ export function contextSizes(turns: LooseMessage[]): ContextSizes {
   return sizes;
 }
 
-/** Prompt text of one dsh message: a withheld block answers empty, and the instruction bundle keeps
- *  losing its CLAUDE.md sections whatever the switches say, since Claude Code loads those itself. */
+/** The CLI's slash-command names, written by `bridgeCommands` into a `globalThis` slot. Both dsh and
+ *  Claude Code can know one of these skills: dsh injects the skill body as a user message, and the
+ *  CLI then matches its own `/name` in that prompt to inject the same body a second time. The CLI's
+ *  copy cannot be stopped from here, so the plugin leaves dsh's behind for a listed skill (seen
+ *  2026-09-18 in transcript 50525676: 4.3 KB from dsh, then 8.7 KB from the CLI, one row after the
+ *  other); a skill the CLI does not list is dsh's only copy, so it stays. Undefined before the
+ *  first init frame writes it. */
+const cliCommands = (): string[] | undefined =>
+  // SAFETY: a plain slot on globalThis, written only in bridgeCommands
+  (globalThis as { [COMMAND_CATALOG]?: string[] })[COMMAND_CATALOG];
+
+/** Prompt text of one dsh message: a withheld block answers empty, a skill-invocation the CLI also
+ *  lists is dsh's duplicate of a body Claude Code injects itself (so it answers empty), and the
+ *  instruction bundle keeps losing its CLAUDE.md sections whatever the switches say, since Claude
+ *  Code loads those itself. */
 const promptTextOf = (m: LooseMessage, drops: ReadonlySet<ContextSource> = new Set()): string => {
   const source = contextSourceOf(m);
   if (source !== undefined && drops.has(source)) return "";
+  if (m.source?.kind === "skill-invocation" && cliCommands()?.includes(m.source?.name ?? ""))
+    return "";
   return m.source?.kind === "agent-instructions"
     ? withoutNativeInstructions(textOf(m.content))
     : textOf(m.content);

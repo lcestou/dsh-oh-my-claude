@@ -384,6 +384,7 @@ export type LooseMessage = {
         plugin?: string;
         rpcId?: string;
         clientTimeZone?: string;
+        name?: string;
     };
     content?: string | ContentBlock[];
 };
