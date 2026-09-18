@@ -8,6 +8,12 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- A dsh-web restart no longer logs you out of the desktop. A keeper whose Claude failed to start
+  (the binary missing, or its folder gone) recorded no Claude pid, the plugin read that back as
+  `-1`, and the next start's cleanup asked whether "pid -1" was alive and then sent it SIGTERM.
+  On Linux `-1` means every process you own, so the signal reached your login session's own
+  manager, which ended the session (2026-09-17, 20:18). Only a positive pid is treated as a
+  process now.
 - The Remote workspaces card in Settings shows a workspace the moment it is added from the Add
   workspace dialog. It used to list it only after a page reload.
 - Removing an ssh box removes the workspaces pinned to it, from the sidebar and from the card. They
