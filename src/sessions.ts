@@ -29,7 +29,14 @@ import {
   type FoldedTranscript,
 } from "./transcript.js";
 import { shq, sshArgs } from "./process.js";
-import { isNewer, latestVersion, profileFromPath, updateCommand } from "./update.js";
+import {
+  atLeast,
+  dshFloor,
+  isNewer,
+  latestRelease,
+  profileFromPath,
+  updateCommand,
+} from "./update.js";
 import { cardFor, ClaudeUpdater, newer, type Exec } from "./claude-update.js";
 import {
   classifyReach,
@@ -216,7 +223,10 @@ const readPluginFile = (name: string): Promise<string> =>
   readFile(new URL(`../${name}`, import.meta.url), "utf8").catch(() =>
     readFile(new URL(`../../${name}`, import.meta.url), "utf8"),
   );
-const packageJson: unknown = JSON.parse(await readPluginFile("package.json"));
+const packageJsonText = await readPluginFile("package.json");
+const packageJson: unknown = JSON.parse(packageJsonText);
+/** The lowest dsh this build runs on, off its own peer range; reported on `/status`. */
+const DSH_FLOOR = dshFloor(packageJsonText);
 const PLUGIN_VERSION =
   isJsonObject(packageJson) && typeof packageJson.version === "string" ? packageJson.version : "";
 const PLUGIN_NAME =
@@ -280,14 +290,20 @@ export function updateHints(
 
 /** A newer release on npm than the one running, with the command that brings it in. Only this box
  *  asks: a remote dsh box answers its own `/status` from its own copy. The Update notice switch
- *  (`updateCheckOff` in the hints store) turns the read off entirely, not just the pill. */
+ *  (`updateCheckOff` in the hints store) turns the read off entirely, not just the pill. A release
+ *  whose dsh floor this box's dsh does not reach is not offered: installing it would replace a
+ *  working plugin with one that refuses to mount, and the box's dsh channel brings the newer dsh
+ *  in its own time. */
 async function pluginUpdate(
   hintsPath: string,
+  dsh: string | null | undefined,
 ): Promise<{ latest: string; update: string } | undefined> {
   if (!PLUGIN_NAME || !PLUGIN_VERSION) return undefined;
   if ((await readHints(hintsPath)).updateCheckOff === true) return undefined;
-  const latest = await latestVersion(PLUGIN_NAME);
-  return latest && isNewer(PLUGIN_VERSION, latest) ? { latest, update: UPDATE_COMMAND } : undefined;
+  const newest = await latestRelease(PLUGIN_NAME);
+  if (!newest || !isNewer(PLUGIN_VERSION, newest.version)) return undefined;
+  if (newest.dshFloor && dsh && !atLeast(dsh, newest.dshFloor)) return undefined;
+  return { latest: newest.version, update: UPDATE_COMMAND };
 }
 
 const MAX_BOXES = 20;
@@ -530,6 +546,9 @@ export interface RuntimeStatus {
   update?: string;
   /** Claude processes still running on the box; they answer on the login they loaded at start. */
   running?: number;
+  /** The dsh this plugin is loaded beside, and the lowest dsh this build runs on. This box only. */
+  dsh?: string | null;
+  dshFloor?: string | null;
 }
 
 /**
@@ -2217,9 +2236,13 @@ export function registerSessionRoutes(
                   runtimeStatus(box.configDir, box.command, box.sshHost),
                   box.sshHost || !sshBoxesPath
                     ? undefined
-                    : pluginUpdate(join(dirname(sshBoxesPath), "hints.json")),
+                    : pluginUpdate(join(dirname(sshBoxesPath), "hints.json"), dshVersion),
                 ]);
                 if (upd) Object.assign(status, upd);
+                if (!box.sshHost) {
+                  status.dsh = dshVersion ?? null;
+                  status.dshFloor = DSH_FLOOR ?? null;
+                }
                 status.running = liveCount?.(box.sshHost ?? "") ?? 0;
                 if (
                   !box.sshHost &&

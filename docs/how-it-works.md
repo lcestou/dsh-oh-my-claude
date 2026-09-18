@@ -162,7 +162,7 @@ The Claude Code terminal UI updates itself; a headless `claude -p`, which is wha
 
 ## Plugin updates
 
-`dsh plugin --profile web update dsh-oh-my-claude` and a restart of `dsh web` bring in a new version. Neither npm nor dsh announces one, so the plugin does: an orange pill with the new version number appears beside the Oh My Claude heading in Settings, and on the panel's Runtime line, once a newer release is on npm (one registry read a day, from the dsh server); a click puts that update command on the clipboard. The Update notice switch at the top of that settings section turns the read off; the pill then only names the running version. A dsh upgrade, as opposed to a plugin one, can call for one repair, described next.
+`dsh plugin --profile web update dsh-oh-my-claude` and a restart of `dsh web` bring in a new version. Neither npm nor dsh announces one, so the plugin does: an orange pill with the new version number appears beside the Oh My Claude heading in Settings, and on the panel's Runtime line, once a newer release is on npm (one registry read a day, from the dsh server); a click puts that update command on the clipboard. The Update notice switch at the top of that settings section turns the read off; the pill then only names the running version. The pill also reads the new release's dsh floor off its package.json on the registry and stays quiet when this box's dsh does not reach it: a plugin that needs a newer dsh than the box has would replace a working one with a broken one. A dsh upgrade, as opposed to a plugin one, can call for one repair, described next.
 
 ## Failed to load history after a dsh upgrade
 

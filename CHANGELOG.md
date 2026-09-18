@@ -6,6 +6,25 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-09-18
+
+### Added
+
+- The update pill reads the newer release's dsh floor off the registry and stays quiet when this
+  box's dsh does not reach it, so an update never replaces a working plugin with one built for a
+  newer dsh. The box's own dsh channel brings the newer dsh in its own time. `/status` names the
+  box's dsh and this build's floor.
+
+### Fixed
+
+- The dsh context card's block sizes, its CLAUDE.md row and the session notices watcher find the
+  open session again on dsh 0.1.6-alpha.2. All three still read the list snapshot's `current`,
+  which that dsh removed, so the card showed no sizes and no CLAUDE.md count, the return recap
+  never fired, and the title's waiting mark did not clear for the session on screen.
+- A keeper whose socket path is over Linux's 108-byte limit now says so in keeper.log and exits
+  before spawning Claude, instead of failing to listen with `EADDRINUSE` and leaving dsh to report
+  "keeper did not answer". Only a state dir nested very deep reaches it.
+
 ## [1.2.0] - 2026-09-18
 
 ### Added

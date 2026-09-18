@@ -531,6 +531,9 @@ interface RuntimeStatus {
   /** A newer plugin release on npm, and the command that installs it. */
   latest?: string;
   update?: string;
+  /** The dsh this plugin is loaded beside, and the lowest dsh this build runs on. */
+  dsh?: string | null;
+  dshFloor?: string | null;
   /** Claude processes still running on the box on a login they loaded at start. */
   running?: number;
   loggedIn?: boolean;
@@ -3931,12 +3934,13 @@ function watchSessionNotices(ctx: ClientCtx) {
   const tick = () => {
     const snap = ctx.sessions.list.getSnapshot();
     if (!snap) return;
+    const current = openSessionId(ctx);
     // Copy the compared fields into fresh rows: dsh's store may reuse row objects between calls, and
     // a shared reference would make every field read `was === now`, so no transition would ever fire.
     const byId: NoticeSnapshot["byId"] = {};
     for (const [id, s] of Object.entries(snap.byId))
       byId[id] = { running: s.running, completed: s.completed, displayTitle: s.displayTitle };
-    const next: NoticeSnapshot = { byId, current: snap.current };
+    const next: NoticeSnapshot = { byId, current };
     const stopped = newlyWaiting(prev, next).filter((id) => isClaudeSession(ctx, id));
     for (const id of stopped) {
       waiting.add(id);
@@ -3948,14 +3952,14 @@ function watchSessionNotices(ctx: ClientCtx) {
     // `recapNext` clears the id as it fires, so a return asks once and a second open of the
     // same session asks nothing. Two things this accepts on purpose: the queue is cleared before
     // `recapOn()` is read, so turning the switch on mid-session waits for the next return rather than
-    // firing for a session that already came back, and the fire trusts `snap.current` for the tick it
-    // runs in, so a current that lags the screen by a tick can bill a recap for a session nobody left.
+    // firing for a session that already came back, and the fire trusts the open session for the tick
+    // it runs in, so one that lags the screen by a tick can bill a recap for a session nobody left.
     // A spurious title mark is free; a spurious recap is a model call, which is why the switch is off
     // until asked for.
     const step = recapNext(
       recapPending,
       stopped,
-      snap.current,
+      current,
       Date.now(),
       recapAwayIn(hints.recapAwayMs),
     );
@@ -3983,7 +3987,7 @@ function watchSessionNotices(ctx: ClientCtx) {
       });
     }
     // Reading it clears it: the open session, and everything else once the tab is looked at again.
-    if (snap.current !== undefined) waiting.delete(snap.current);
+    if (current !== undefined) waiting.delete(current);
     if (!document.hidden) waiting.clear();
     const wanted = markTitle(document.title, waiting.size);
     if (wanted !== document.title) document.title = wanted;
@@ -5797,7 +5801,8 @@ function StarterSwitch() {
 function useContextSizes(ctx: ClientCtx): Record<string, number> | null {
   const [sizes, setSizes] = useState<Record<string, number> | null>(null);
   const snap = ctx.sessions.list.getSnapshot();
-  const cwd = (snap?.current ? snap.byId[snap.current]?.cwd : "") ?? "";
+  const open = openSessionId(ctx);
+  const cwd = (open ? snap?.byId[open]?.cwd : "") ?? "";
   useEffect(() => {
     if (!cwd) return;
     let live = true;
@@ -5826,7 +5831,7 @@ function useContextSizes(ctx: ClientCtx): Record<string, number> | null {
 function useClaudeMd(ctx: ClientCtx): ClaudeMdState | null {
   const [state, setState] = useState<ClaudeMdState | null>(null);
   const snap = ctx.sessions.list.getSnapshot();
-  const id = snap?.current ?? "";
+  const id = openSessionId(ctx) ?? "";
   const cwd = (id ? snap?.byId[id]?.cwd : "") ?? "";
   // A second account or a named ssh box keeps its own settings files, so the box has to be named;
   // `cwd` alone resolves a remote workspace but not which instance the session is bound to.
