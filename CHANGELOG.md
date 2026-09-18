@@ -6,6 +6,12 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Changed
+
+- A Claude command or skill run from dsh's slash menu (`/claude-<name>`) shows in the transcript
+  as the bubble the person sent, `/name arguments`, instead of a collapsed context row. The row
+  was easy to miss when reading back where a turn started.
+
 ### Added
 
 - The Claude Code update card links the version it offers to that release's entry on
