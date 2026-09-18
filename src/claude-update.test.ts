@@ -198,9 +198,17 @@ assert.equal(lastLine("x".repeat(300), undefined)?.length, 200);
     label: "this box",
     installed: "2.1.273",
     latest: "2.1.274",
+    folded: false,
   });
   assert.equal(cardFor(undefined), null);
   assert.equal(cardFor({ ...base, skipped: "2.1.274" }), null);
+  // A fold holds for the release it was made on and opens again for the next one.
+  assert.equal(cardFor({ ...base, folded: "2.1.274" })?.folded, true, "folded for this release");
+  assert.equal(
+    cardFor({ ...base, folded: "2.1.270" })?.folded,
+    false,
+    "a fold on an older release",
+  );
   assert.notEqual(cardFor({ ...base, skipped: "2.1.270" }), null);
   assert.equal(cardFor({ ...base, auto: true }), null);
 }
@@ -284,6 +292,16 @@ assert.equal(lastLine("x".repeat(300), undefined)?.length, 200);
 
   await u.skip("nope");
   assert.equal(u.state().skipped, undefined);
+  // A fold is kept on the box the way a skip is, and cleared with null.
+  await u.fold("nope");
+  assert.equal(u.state().folded, undefined, "a fold on a non-version changes nothing");
+  await u.fold("2.1.274");
+  assert.equal(u.state().folded, "2.1.274");
+  assert.equal((await readUpdates(dir2, "this-box")).folded, "2.1.274", "the fold is persisted");
+  assert.equal(cardFor(u.state())?.folded, true, "the card mounts folded for that release");
+  await u.fold(null);
+  assert.equal(u.state().folded, undefined);
+  assert.equal("folded" in (await readUpdates(dir2, "this-box")), false, "an unfold drops the key");
   await u.skip("2.1.274");
   assert.equal(u.state().skipped, "2.1.274");
   assert.equal(cardFor(u.state()), null);

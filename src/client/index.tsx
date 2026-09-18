@@ -6743,6 +6743,7 @@ interface ClaudeUpdateCardData {
   label: string;
   installed: string;
   latest: string;
+  folded: boolean;
 }
 const sameCard = (a: ClaudeUpdateCardData | null, b: ClaudeUpdateCardData | null): boolean =>
   a === b ||
@@ -6750,7 +6751,13 @@ const sameCard = (a: ClaudeUpdateCardData | null, b: ClaudeUpdateCardData | null
     b !== null &&
     a.host === b.host &&
     a.installed === b.installed &&
-    a.latest === b.latest);
+    a.latest === b.latest &&
+    a.folded === b.folded);
+
+/** The release's entry on Claude Code's changelog page: its anchors are the version with dots as
+ *  hyphens, `#2-1-277`. */
+const claudeReleaseNotes = (version: string): string =>
+  `https://code.claude.com/docs/en/changelog#${version.replace(/\./g, "-")}`;
 
 /** The card above the composer after a turn failed for want of a login on its box: the same login
  *  the Boxes row runs, here so nobody has to find Settings. It only ever follows a failed turn, so a
@@ -6898,7 +6905,7 @@ function ClaudeUpdateCard({
         ? `Claude Code declined: ${outcome?.note ?? "no reason given"}`
         : phase === "failed"
           ? `Update failed: ${outcome?.note ?? "no answer"}`
-          : `Claude Code ${update.latest} is out. ${Where} runs ${update.installed}.`;
+          : null;
   const narrow = useNarrow();
   const label =
     phase === "busy"
@@ -6911,10 +6918,21 @@ function ClaudeUpdateCard({
             ? "Retry"
             : "Update";
   // Folded, the card is its header line, the way a side-question card folds: the label, the
-  // chevron and the close. Open, the sentence and the buttons. Nothing is recorded for a
-  // fold; a reload opens it again, and the close is what records a skip until the next release.
-  const [open, setOpen] = useState(true);
-  const toggle = () => setOpen((o) => !o);
+  // chevron and the close. Open, the sentence and the buttons. A fold is recorded on the box for
+  // this release, beside the skip: a session switch used to remount the card open (owner,
+  // 2026-09-18), and a fold in one tab now reaches the others on the next poll. The close is what
+  // records a skip until the next release.
+  const [open, setOpen] = useState(!update.folded);
+  useEffect(() => setOpen(!update.folded), [update.folded]);
+  const toggle = () => {
+    const next = !open;
+    setOpen(next);
+    void fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ fold: next ? null : update.latest }),
+    }).catch(() => {});
+  };
   // After a success the card closes on its own: a thin accent bar along its bottom edge drains
   // over CLOSE_AFTER_S seconds as one CSS animation, so the close is seen coming without a number
   // ticking. The pointer over the card pauses the animation where it is (a paused animation holds
@@ -7026,7 +7044,22 @@ function ClaudeUpdateCard({
               color: phase === "failed" ? T.err : phase === "declined" ? T.faint : undefined,
             }}
           >
-            {text}
+            {text ?? (
+              <>
+                Claude Code{" "}
+                <a
+                  data-omc-update-notes=""
+                  href={claudeReleaseNotes(update.latest)}
+                  target="_blank"
+                  rel="noreferrer"
+                  title="What changed, on Claude Code's changelog"
+                  style={{ color: ACCENT }}
+                >
+                  {update.latest}
+                </a>{" "}
+                is out. {Where} runs {update.installed}.
+              </>
+            )}
           </span>
           <button
             type="button"

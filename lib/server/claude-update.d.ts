@@ -19,6 +19,9 @@ export interface ClaudeUpdates {
     auto?: true;
     /** The release the card was dismissed for; a newer one shows the card again. */
     skipped?: string;
+    /** The release the card was folded to its header for; a newer one opens it again. Kept here,
+     *  beside `skipped`, so a fold made in one session or tab holds in every other on this box. */
+    folded?: string;
     /** Newest last; at most 50 kept. */
     log: ClaudeUpdateEntry[];
 }
@@ -36,6 +39,7 @@ export interface ClaudeUpdateState {
     busy: boolean;
     auto: boolean;
     skipped?: string;
+    folded?: string;
     log: ClaudeUpdateEntry[];
 }
 /** What the card above the composer needs: only when a release after `installed` is out. */
@@ -44,6 +48,8 @@ export interface ClaudeUpdateCard {
     label: string;
     installed: string;
     latest: string;
+    /** The card was folded for this release; it mounts as its header line. */
+    folded: boolean;
 }
 export type Exec = (args: string[], timeoutMs: number) => Promise<{
     out: string;
@@ -116,9 +122,9 @@ export declare class ClaudeUpdater {
     /** The run in flight, handed to every caller that asks while it lasts. */
     private running?;
     constructor(opts: ClaudeUpdaterOptions);
-    /** Read the persisted record into `auto`, `skipped` and `log`. */
+    /** Read the persisted record into `auto`, `skipped`, `folded` and `log`. */
     private load;
-    /** The three fields the file keeps, out of the state. */
+    /** The four fields the file keeps, out of the state. */
     private record;
     private tick;
     /** The last answer, no I/O. */
@@ -132,5 +138,8 @@ export declare class ClaudeUpdater {
     setAuto(on: boolean): Promise<ClaudeUpdateState>;
     /** Dismiss the card for `version`; refuse when it is not a parseable version. */
     skip(version: string): Promise<ClaudeUpdateState>;
+    /** Fold the card to its header for `version`, or open it again with `null`; a version that
+     *  does not parse changes nothing. */
+    fold(version: string | null): Promise<ClaudeUpdateState>;
 }
 export {};

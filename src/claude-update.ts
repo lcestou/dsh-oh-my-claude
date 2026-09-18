@@ -32,6 +32,9 @@ export interface ClaudeUpdates {
   auto?: true;
   /** The release the card was dismissed for; a newer one shows the card again. */
   skipped?: string;
+  /** The release the card was folded to its header for; a newer one opens it again. Kept here,
+   *  beside `skipped`, so a fold made in one session or tab holds in every other on this box. */
+  folded?: string;
   /** Newest last; at most 50 kept. */
   log: ClaudeUpdateEntry[];
 }
@@ -51,6 +54,7 @@ export interface ClaudeUpdateState {
   busy: boolean;
   auto: boolean;
   skipped?: string;
+  folded?: string;
   log: ClaudeUpdateEntry[];
 }
 
@@ -60,6 +64,8 @@ export interface ClaudeUpdateCard {
   label: string;
   installed: string;
   latest: string;
+  /** The card was folded for this release; it mounts as its header line. */
+  folded: boolean;
 }
 
 export type Exec = (args: string[], timeoutMs: number) => Promise<{ out: string; error?: string }>;
@@ -221,6 +227,7 @@ export async function readUpdates(dir: string, key: string): Promise<ClaudeUpdat
   };
   if (raw.auto === true) result.auto = true;
   if (typeof raw.skipped === "string" && parse(raw.skipped)) result.skipped = raw.skipped;
+  if (typeof raw.folded === "string" && parse(raw.folded)) result.folded = raw.folded;
   return result;
 }
 
@@ -247,6 +254,7 @@ export function writeUpdates(dir: string, key: string, data: ClaudeUpdates): Pro
     const rec: ClaudeUpdates = { log: data.log.slice(-50) };
     if (data.auto) rec.auto = true;
     if (data.skipped !== undefined) rec.skipped = data.skipped;
+    if (data.folded !== undefined) rec.folded = data.folded;
     file[key] = rec;
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, "claude-updates.json"), JSON.stringify(file, null, 2) + "\n");
@@ -273,7 +281,13 @@ export function cardFor(state: ClaudeUpdateState | undefined): ClaudeUpdateCard 
   // `newer` proved `installed` and `latest`; TypeScript cannot see through the call, so read
   // them again with the same checks rather than assert.
   if (state.installed === null || state.latest === undefined) return null;
-  return { host: state.host, label: state.label, installed: state.installed, latest: state.latest };
+  return {
+    host: state.host,
+    label: state.label,
+    installed: state.installed,
+    latest: state.latest,
+    folded: state.folded === state.latest,
+  };
 }
 
 export interface ClaudeUpdaterOptions {
@@ -318,22 +332,24 @@ export class ClaudeUpdater {
     this.loadPromise = this.load();
   }
 
-  /** Read the persisted record into `auto`, `skipped` and `log`. */
+  /** Read the persisted record into `auto`, `skipped`, `folded` and `log`. */
   private async load(): Promise<void> {
     const rec = await readUpdates(this.opts.dir, this.key);
     this.stateValue = {
       ...this.stateValue,
       auto: rec.auto === true,
       skipped: rec.skipped,
+      folded: rec.folded,
       log: rec.log,
     };
   }
 
-  /** The three fields the file keeps, out of the state. */
+  /** The four fields the file keeps, out of the state. */
   private record(): ClaudeUpdates {
     const rec: ClaudeUpdates = { log: this.stateValue.log };
     if (this.stateValue.auto) rec.auto = true;
     if (this.stateValue.skipped !== undefined) rec.skipped = this.stateValue.skipped;
+    if (this.stateValue.folded !== undefined) rec.folded = this.stateValue.folded;
     return rec;
   }
 
@@ -417,6 +433,16 @@ export class ClaudeUpdater {
     await this.loadPromise;
     if (parse(version) === undefined) return this.state();
     this.stateValue = { ...this.stateValue, skipped: version };
+    await writeUpdates(this.opts.dir, this.key, this.record());
+    return this.state();
+  }
+
+  /** Fold the card to its header for `version`, or open it again with `null`; a version that
+   *  does not parse changes nothing. */
+  async fold(version: string | null): Promise<ClaudeUpdateState> {
+    await this.loadPromise;
+    if (version !== null && parse(version) === undefined) return this.state();
+    this.stateValue = { ...this.stateValue, folded: version ?? undefined };
     await writeUpdates(this.opts.dir, this.key, this.record());
     return this.state();
   }

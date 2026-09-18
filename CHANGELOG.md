@@ -6,7 +6,17 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Added
+
+- The Claude Code update card links the version it offers to that release's entry on
+  code.claude.com's changelog, in a new tab, so what changed is one click from the offer.
+
 ### Fixed
+
+- The Claude Code update card stays folded once folded. The fold lived in the card's own
+  state, so switching sessions remounted it open; it is now kept on the box for that release,
+  beside the dismissal, and a fold made in one tab reaches every other tab and session on the
+  box within a few seconds. A newer release opens the card again.
 
 - Stop, then send again within a few seconds: the new turn no longer fails with the CLI's
   `[ede_diagnostic] result_type=user` text. When a steer had been forwarded to the CLI before the

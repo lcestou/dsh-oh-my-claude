@@ -2505,13 +2505,17 @@ export function registerSessionRoutes(
                     await u.skip(body.skip);
                     acted = true;
                   }
+                  if (typeof body.fold === "string" || body.fold === null) {
+                    await u.fold(body.fold);
+                    acted = true;
+                  }
                   if (body.run === true) {
                     void u
                       .runUpdate("button")
                       .catch((e) => log("warn", `claude update on ${box.label}: ${errorText(e)}`));
                     acted = true;
                   }
-                  if (!acted) return json(res, 400, { error: "auto, skip or run required" });
+                  if (!acted) return json(res, 400, { error: "auto, skip, fold or run required" });
                   return json(res, 200, u.state());
                 }
               }
