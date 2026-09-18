@@ -4386,6 +4386,15 @@ console.log("interrupt-on-abort ok");
     "the CLI lineup seeds the next boot from disk",
   );
   assert.equal(fresh.cliModelsAt, 0, "a seed is not an answer: the first process is still asked");
+  // The seed round-trips the CLI's effort levels: the persisted row is keyed `efforts`, the live
+  // answer `supportedEffortLevels`, and a seeded row with neither made dsh refuse the effort a
+  // session still carried after a restart (UNSUPPORTED_REASONING_EFFORT, 2026-09-18).
+  const seeded = await fresh.prepareCall("claude-code", "opus[1m]");
+  assert.deepEqual(
+    seeded.model.reasoning?.efforts.map((e) => e.id),
+    ["max"],
+    "the seed keeps the CLI's effort levels",
+  );
   console.log("cli-models ok");
 }
 

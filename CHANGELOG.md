@@ -8,6 +8,11 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- The first turn after a dsh-web restart no longer fails with `UNSUPPORTED_REASONING_EFFORT`
+  when an effort is selected, and the effort menu is back for every model. The model lineup the
+  CLI answered was kept on disk under one key and read back under another, so after a restart
+  every row seeded with no effort levels until a live process answered again, which the failed
+  turn never let happen.
 - The context meter's breakdown request no longer prints a red 409 in the browser console on
   every session switch. The route answers 200 with `ok: false` when the session is mid-turn or
   has no live process, which is what the client already read.
