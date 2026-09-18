@@ -2611,7 +2611,9 @@ export function registerSessionRoutes(
                 if (!sid) return json(res, 400, { error: "session param required" });
                 if (!contextUsage) return json(res, 404, { error: "context usage not available" });
                 const reply = await contextUsage(sid);
-                return json(res, reply.ok ? 200 : 409, reply);
+                // 200 even when ok is false: the client reads ok, and a 409 here is by design (session
+                // mid-turn or no live process), which Chrome would print in red on every session switch.
+                return json(res, 200, reply);
               }
               if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/diff`) {
                 const sid = url.searchParams.get("session");
