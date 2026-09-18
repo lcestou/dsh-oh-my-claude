@@ -31,6 +31,9 @@ interface KeeperSpec {
   sessionId: string;
 }
 
+/** sun_path is 108 bytes on Linux with the terminator inside it. */
+const SOCKET_PATH_MAX = 107;
+
 function main(dir: string) {
   // SAFETY: spec.json is written by this plugin's spawnKeeper from a typed object moments earlier
   const spec = JSON.parse(readFileSync(join(dir, "spec.json"), "utf8")) as KeeperSpec;
@@ -47,13 +50,16 @@ function main(dir: string) {
       appendFileSync(logPath, `${new Date().toISOString()} ${line}\n`);
     } catch {}
   };
-  // Linux caps a unix socket path at 108 bytes (sun_path). A state dir deep enough to pass that
-  // does not fail as a length error: listen answers EADDRINUSE, and dsh reads the silence as
-  // "keeper did not answer". Refuse before Claude is spawned, with the cause where it is looked
-  // for (2026-09-18: a scratch DSH_OMC_STATE_DIR under a session scratchpad, 159 bytes).
+  // Linux caps a unix socket path at 108 bytes (sun_path), the last one the terminator, so 107
+  // is the longest path that binds. A state dir deep enough to pass that does not fail as a
+  // length error: listen answers EADDRINUSE, and dsh reads the silence as "keeper did not
+  // answer". Refuse before Claude is spawned, with the cause where it is looked for (2026-09-18:
+  // a scratch DSH_OMC_STATE_DIR under a session scratchpad, 159 bytes).
   const sockBytes = Buffer.byteLength(sockPath);
-  if (sockBytes > 100) {
-    log(`socket path is ${sockBytes} bytes, over the 108-byte unix socket limit: ${sockPath}`);
+  if (sockBytes > SOCKET_PATH_MAX) {
+    log(
+      `socket path is ${sockBytes} bytes, over the ${SOCKET_PATH_MAX}-byte unix socket limit: ${sockPath}`,
+    );
     process.exit(78); // EX_CONFIG
   }
 
