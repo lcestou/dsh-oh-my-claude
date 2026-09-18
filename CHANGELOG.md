@@ -21,6 +21,12 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
   open session again on dsh 0.1.6-alpha.2. All three still read the list snapshot's `current`,
   which that dsh removed, so the card showed no sizes and no CLAUDE.md count, the return recap
   never fired, and the title's waiting mark did not clear for the session on screen.
+- An attached image over 2000px on a side no longer breaks the turn once a conversation holds
+  more than twenty images. The API caps each image at 2000px from the twenty-first on, the CLI
+  answered "an image in the conversation could not be processed and was removed", and a wide
+  screenshot in a long design session hit it twice in five minutes. Such an image now goes by
+  path, and the note under the prompt says to Read it, which scales it; smaller images still
+  ride inline as before. Matches the 2000px the CLI applies to everything it ingests itself.
 - A keeper whose socket path is over Linux's 108-byte limit now says so in keeper.log and exits
   before spawning Claude, instead of failing to listen with `EADDRINUSE` and leaving dsh to report
   "keeper did not answer". Only a state dir nested very deep reaches it.

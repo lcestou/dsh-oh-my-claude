@@ -1203,7 +1203,20 @@ export function buildPrompt(
 // Lightweight image ref shape; full ImageAttachmentRef from dsh-attachment has attachmentId too.
 /** An image loaded from dsh's attachment store, ready for the stdin line, plus the path of the
  *  copy kept for Claude's tools when one could be written. */
+/** An image of the turn. `data` is its base64 for the stdin line, or empty when the image rides by
+ *  path only (see `oversize`); `path` is the copy `keepImageCopy` wrote, on the box that runs Claude. */
 type LoadedImage = { mediaType: string; data: string; attachmentId?: string; path?: string };
+
+/** The most pixels a side may have for an image sent inline. The API allows 8000 on a request with
+ *  few images and 2000 once the conversation holds more than twenty, and a long design session
+ *  gets there: the request then fails with "image dimensions exceed max allowed size for
+ *  many-image requests" and the CLI drops the image (2026-09-18, a 2884x156 screenshot as the
+ *  forty-second image). The CLI caps everything it ingests itself at 2000, so this matches it;
+ *  Node has nothing to scale an image with, so an oversize one goes by path and the Read tool,
+ *  which scales, shows it a tool call later. */
+const MAX_IMAGE_SIDE = 2000;
+const oversize = (ref: { width?: number; height?: number }): boolean =>
+  (ref.width ?? 0) > MAX_IMAGE_SIDE || (ref.height ?? 0) > MAX_IMAGE_SIDE;
 
 /** The file extension Claude Code's Read tool needs to treat a copy as an image. */
 const IMAGE_EXT = new Map([
@@ -1233,8 +1246,11 @@ export function attachmentNotes(turns: LooseMessage[], images: readonly LoadedIm
       const path = pathOf.get(ref.attachmentId);
       if (!path) continue;
       const size = ref.width && ref.height ? `, ${ref.width}x${ref.height}px` : "";
+      const label = `[Image ${ref.name ? `"${ref.name}" ` : ""}(${ref.attachmentId})`;
       notes.push(
-        `[Image ${ref.name ? `"${ref.name}" ` : ""}(${ref.attachmentId}): the copy shown above is saved at "${path}" (${ref.mediaType}${size}). Read that path with your file tools when it is needed again, and copy it to a writable location before modifying it.]`,
+        oversize(ref)
+          ? `${label}: not shown inline, it is over ${MAX_IMAGE_SIDE}px on a side, the most the API takes once a conversation holds many images. Read the copy at "${path}" (${ref.mediaType}${size}) with your file tool, which scales it down, and copy it to a writable location before modifying it.]`
+          : `${label}: the copy shown above is saved at "${path}" (${ref.mediaType}${size}). Read that path with your file tools when it is needed again, and copy it to a writable location before modifying it.]`,
       );
     }
   }
@@ -1567,6 +1583,7 @@ export function buildInput(
     source?: { type: string; media_type: string; data: string };
   }> = [{ type: "text", text: prompt }];
   for (const img of images) {
+    if (!img.data) continue; // by path only; `attachmentNotes` says where
     content.push({
       type: "image",
       source: { type: "base64", media_type: img.mediaType, data: img.data },
@@ -2576,9 +2593,15 @@ export class ClaudeCodeAdapter extends LlmAdapter {
             path = undefined;
             this.log("warn", `image ${ref.attachmentId} not on ${host}: ${errorText(error)}`);
           }
+        const byPath = oversize(ref) && path !== undefined;
+        if (byPath)
+          this.log(
+            "info",
+            `image ${ref.attachmentId} is ${ref.width}x${ref.height}, over ${MAX_IMAGE_SIDE}px; sent by path, not inline`,
+          );
         out.push({
           mediaType: ref.mediaType,
-          data: Buffer.from(stored.data).toString("base64"),
+          data: byPath ? "" : Buffer.from(stored.data).toString("base64"),
           attachmentId: ref.attachmentId,
           path,
         });
