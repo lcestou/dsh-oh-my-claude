@@ -4,6 +4,7 @@
 // silent rename or a dropped guard would let malformed CLI output through to the panel unnoticed.
 import assert from "node:assert/strict";
 import {
+  pidAlive,
   controlErrorLine,
   controlRequestLine,
   decodeCliModels,
@@ -481,6 +482,18 @@ import {
   const empty = decodeHooksListing({ events: [] });
   assert.deepEqual(empty, { hooks: [] });
   assert.deepEqual(decodeHooksListing(undefined), { hooks: [] });
+}
+
+// pidAlive answers only about one process. 0 and negatives are process groups (and -1 is every
+// process the user owns): signal 0 to those "succeeds" for a pid nothing runs under, and the
+// orphan kill built on that answer would SIGTERM the whole login session.
+{
+  assert.equal(pidAlive(process.pid), true, "this process is alive");
+  assert.equal(pidAlive(-1), false, "-1 is everyone, not a process");
+  assert.equal(pidAlive(0), false, "0 is our own group, not a process");
+  assert.equal(pidAlive(-process.pid), false, "a negative pid is a group");
+  assert.equal(pidAlive(1.5), false, "not a pid at all");
+  console.log("pid-alive ok");
 }
 
 console.log("process ok");

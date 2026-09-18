@@ -1,7 +1,7 @@
 // Offline self-check: node src/sessions.test.js. No CLI, no network.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -11,6 +11,7 @@ import {
   readPickerSettings,
   readRemoteWorkspaces,
   readSshBoxes,
+  syncRemoteWorkspaces,
   registerSessionRoutes,
   withoutSubagents,
   slugForDir,
@@ -1392,6 +1393,210 @@ const responder =
   assert.ok(big);
   assert.equal(big.title, "what is in this image");
   assert.equal(big.turns, 1);
+}
+
+// The remote-workspace file follows dsh's registry. The sidebar's trash deletes a workspace in the
+// registry and never tells this plugin, so a row whose id the registry no longer has is dropped on
+// the next read: gone from the answer, from the file, and its placeholder dir with it. Without a
+// registry nothing is dropped, since "cannot ask" is not "deleted".
+{
+  const tmp = await mkdtemp(join(tmpdir(), "dsh-rws-sync-test-"));
+  const kept = join(tmp, "remote-workspaces", "box__kept");
+  const ghost = join(tmp, "remote-workspaces", "box__ghost");
+  await mkdir(kept, { recursive: true });
+  await mkdir(ghost, { recursive: true });
+  const rows = [
+    { name: "kept", host: "box", remoteCwd: "/srv/kept", path: kept, workspaceId: "w-kept" },
+    { name: "ghost", host: "box", remoteCwd: "/srv/ghost", path: ghost, workspaceId: "w-ghost" },
+  ];
+  const remoteWorkspacesPath = join(tmp, "remote-workspaces.json");
+  await writeFile(remoteWorkspacesPath, JSON.stringify(rows), "utf8");
+
+  // No registry: the rows come back as they are and the file is left alone.
+  const blind = await syncRemoteWorkspaces(remoteWorkspacesPath, undefined);
+  assert.equal(blind.workspaces.length, 2, "no registry: both rows answered");
+  assert.equal(blind.dropped.length, 0, "no registry: nothing dropped");
+  assert.equal(JSON.parse(await readFile(remoteWorkspacesPath, "utf8")).length, 2);
+
+  const published: string[][] = [];
+  let handler: ((req: any, res: any) => void) | undefined;
+  // SAFETY: partial fake for tests
+  const ctx = {
+    inject: (deps: string[], cb: (host: any) => void) => {
+      cb({
+        webServer: {
+          register: (r: any) => {
+            handler = r.handler as (req: any, res: any) => void;
+            return () => {};
+          },
+        },
+        connection: { requestRejection: () => undefined },
+        sessions: { get: () => undefined },
+        sessionPersistence: { list: async () => [] },
+        // dsh's registry after a sidebar trash: it knows `w-kept` and nothing else.
+        workspaceRegistry: { get: (id: string) => (id === "w-kept" ? { id } : undefined) },
+        effect: (fn: () => void | (() => void)) => fn(),
+      });
+    },
+  } as any;
+  registerSessionRoutes(ctx, {
+    log: () => {},
+    remoteWorkspacesPath,
+    onRemoteWorkspaces: (ws) => {
+      published.push(ws.map((w) => w.workspaceId));
+    },
+    projectDir: (cwd: string) => [join(tmp, "claude", "projects", projectDirName(cwd))],
+    projectsDir: [join(tmp, "claude", "projects")],
+    startedIds: async () => [],
+    claudeIdOf: (id: string) => id,
+    configDir: join(tmp, "claude"),
+    boxesPath: join(tmp, "boxes.json"),
+    importedDir: join(tmp, "imported"),
+    instanceFor: () => undefined,
+    instanceForHost: () => ({ configDir: join(tmp, "box") }),
+  });
+  assert.ok(handler);
+  const respond = responder(() => handler);
+
+  const r = await respond("GET", "/dsh-oh-my-claude/remote-workspaces");
+  assert.equal(r.status, 200);
+  assert.deepEqual(
+    r.body.workspaces.map((w: { workspaceId: string }) => w.workspaceId),
+    ["w-kept"],
+    "GET answers only the row the registry still has",
+  );
+  const onDisk = JSON.parse(await readFile(remoteWorkspacesPath, "utf8"));
+  assert.deepEqual(
+    onDisk.map((w: { workspaceId: string }) => w.workspaceId),
+    ["w-kept"],
+    "the ghost row left the file",
+  );
+  await assert.rejects(access(ghost), "the ghost's placeholder dir is removed");
+  await access(kept);
+  assert.deepEqual(
+    published,
+    [["w-kept", "w-ghost"], ["w-kept"]],
+    "the redirect map gets the seed, then the reconciled list, and nothing per read",
+  );
+  console.log("remote-workspace sync ok");
+}
+
+// Removing a box removes the remote workspaces pinned to it, through the same deletion the card's
+// own Remove does. A row whose dsh delete threw stays whole, file row and placeholder dir both:
+// dsh still draws that workspace, and a row dropped under it would be a sidebar entry nothing
+// redirects and nothing puts back.
+{
+  const tmp = await mkdtemp(join(tmpdir(), "dsh-rws-cascade-test-"));
+  const dirOf = (slug: string) => join(tmp, "remote-workspaces", slug);
+  const row = (id: string, host: string) => ({
+    name: id,
+    host,
+    remoteCwd: `/srv/${id}`,
+    path: dirOf(id),
+    workspaceId: id,
+  });
+  const rows = [row("wa", "hosta"), row("wb1", "hostb"), row("wb2", "hostb")];
+  for (const r of rows) await mkdir(r.path, { recursive: true });
+  const remoteWorkspacesPath = join(tmp, "remote-workspaces.json");
+  const sshBoxesPath = join(tmp, "ssh-boxes.json");
+  await writeFile(remoteWorkspacesPath, JSON.stringify(rows), "utf8");
+  const boxA = { name: "A", host: "hosta" };
+  const boxB = { name: "B", host: "hostb" };
+  await writeFile(sshBoxesPath, JSON.stringify([boxA, boxB]), "utf8");
+
+  const deleted: string[] = [];
+  const failing = new Set<string>(["wb2"]);
+  const mounted: string[][] = [];
+  let handler: ((req: any, res: any) => void) | undefined;
+  // SAFETY: partial fake for tests
+  const ctx = {
+    inject: (deps: string[], cb: (host: any) => void) => {
+      cb({
+        webServer: {
+          register: (r: any) => {
+            handler = r.handler as (req: any, res: any) => void;
+            return () => {};
+          },
+        },
+        connection: { requestRejection: () => undefined },
+        sessions: { get: () => undefined },
+        sessionPersistence: { list: async () => [] },
+        // Every row is a live workspace to dsh; a delete of an id in `failing` throws the way a
+        // failed table write does.
+        workspaceRegistry: {
+          get: (id: string) => ({ id }),
+          delete: async (id: string) => {
+            deleted.push(id);
+            if (failing.has(id)) throw new Error("table write failed");
+            return true;
+          },
+        },
+        effect: (fn: () => void | (() => void)) => fn(),
+      });
+    },
+  } as any;
+  registerSessionRoutes(ctx, {
+    log: () => {},
+    remoteWorkspacesPath,
+    sshBoxesPath,
+    onSshBoxes: (boxes) => {
+      mounted.push(boxes.map((b) => b.host));
+    },
+    projectDir: (cwd: string) => [join(tmp, "claude", "projects", projectDirName(cwd))],
+    projectsDir: [join(tmp, "claude", "projects")],
+    startedIds: async () => [],
+    claudeIdOf: (id: string) => id,
+    configDir: join(tmp, "claude"),
+    boxesPath: join(tmp, "boxes.json"),
+    importedDir: join(tmp, "imported"),
+    instanceFor: () => undefined,
+    instanceForHost: () => ({ configDir: join(tmp, "box") }),
+  });
+  assert.ok(handler);
+  const respond = responder(() => handler);
+  const idsOnDisk = async () =>
+    (await readRemoteWorkspaces(remoteWorkspacesPath)).map((w) => w.workspaceId);
+
+  // Box B goes: wb1 leaves with it, wb2's delete throws so wb2 stays whole, wa is another box's.
+  let r = await respond("PUT", "/dsh-oh-my-claude/ssh-boxes", JSON.stringify({ boxes: [boxA] }));
+  assert.equal(r.status, 200, "the box list is saved even when one workspace would not go");
+  assert.deepEqual(r.body.boxes, [boxA]);
+  assert.deepEqual(deleted, ["wb1", "wb2"], "only the removed box's workspaces are deleted in dsh");
+  assert.deepEqual(await idsOnDisk(), ["wa", "wb2"], "a row whose delete failed stays in the file");
+  await assert.rejects(access(dirOf("wb1")), "the removed workspace's placeholder is gone");
+  await access(dirOf("wb2"));
+  await access(dirOf("wa"));
+  assert.deepEqual(mounted, [["hosta"]], "the mounts are reconciled after the cascade");
+
+  // The same list again removes no box, so it touches no workspace.
+  r = await respond("PUT", "/dsh-oh-my-claude/ssh-boxes", JSON.stringify({ boxes: [boxA] }));
+  assert.equal(r.status, 200);
+  assert.deepEqual(deleted, ["wb1", "wb2"], "no box removed, no workspace deleted");
+
+  // The card's Remove on the stuck row: refused while dsh refuses, gone once dsh lets go.
+  r = await respond(
+    "DELETE",
+    "/dsh-oh-my-claude/remote-workspaces",
+    JSON.stringify({ path: dirOf("wb2") }),
+  );
+  assert.equal(r.status, 502, "a delete dsh refused is an error, not a silent success");
+  assert.match(r.body.error, /still in the sidebar/);
+  assert.deepEqual(await idsOnDisk(), ["wa", "wb2"]);
+  await access(dirOf("wb2"));
+  failing.clear();
+  r = await respond(
+    "DELETE",
+    "/dsh-oh-my-claude/remote-workspaces",
+    JSON.stringify({ path: dirOf("wb2") }),
+  );
+  assert.equal(r.status, 200);
+  assert.deepEqual(
+    r.body.workspaces.map((w: { workspaceId: string }) => w.workspaceId),
+    ["wa"],
+  );
+  assert.deepEqual(await idsOnDisk(), ["wa"]);
+  await assert.rejects(access(dirOf("wb2")));
+  console.log("remote-workspace cascade ok");
 }
 
 console.log("sessions ok");

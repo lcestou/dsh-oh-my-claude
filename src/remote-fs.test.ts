@@ -4,10 +4,12 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, writeFile, mkdir } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
+import { PassThrough, Writable } from "node:stream";
 import {
   ABSENT,
   afterMark,
   childPath,
+  copyScript,
   dirsScript,
   listDirsAt,
   listNamesAt,
@@ -26,7 +28,9 @@ import {
   splitRead,
   writeAt,
   writeScript,
+  copyToAt,
 } from "./remote-fs.js";
+import type { SubprocessHandle } from "./process.js";
 
 // Every path is single-quoted, so a space or a quote in a workspace path stays one argument.
 {
@@ -152,6 +156,128 @@ import {
 // remote branch asks the box for its `$HOME` and is covered by the script tests above.
 {
   assert.equal(await homeAt({}), homedir());
+}
+
+// copyToAt streams a local file to a box over stdin and answers the far path. No host here: the
+// runner is a fake that records what it was handed and plays the far shell's part.
+{
+  const script = copyScript("ab12cd34-my file.zip", 34);
+  assert.ok(
+    script.startsWith('d="$HOME"/.local/state/dsh-oh-my-claude/attachments && mkdir -p "$d"'),
+    "the far dir is under the far $HOME, left for the far shell to expand",
+  );
+  assert.ok(script.includes(`p="$d"/'ab12cd34-my file.zip'`), "the name is single-quoted");
+  assert.ok(
+    script.includes(
+      't="$p.tmp.$$"; cat > "$t" && [ "$(($(wc -c < "$t")))" -eq 34 ] && mv -- "$t" "$p" || { rm -f -- "$t";',
+    ),
+    "the temp file takes the real name only at its full size, and a short one is removed",
+  );
+  assert.ok(script.includes('if [ -e "$p" ]; then cat >/dev/null;'), "an existing file is kept");
+  assert.ok(script.endsWith('printf %s "$p"'), "the script's answer is the absolute far path");
+
+  const tmp = await mkdtemp(join(tmpdir(), "omc-copy-test-"));
+  const local = join(tmp, "payload.bin");
+  const payload = Buffer.from([0, 1, 2, 250, 251, 252, 10, 13, 0]);
+  await writeFile(local, payload);
+  const FAR = "/home/far/.local/state/dsh-oh-my-claude/attachments/x.bin";
+
+  type Play = { stdout: string; stderr?: string; exitCode: number | null; hang?: boolean };
+  const calls: { host: string; script: string; received: Buffer; terminated: boolean }[] = [];
+  /** A far shell that answers `play` once its stdin has ended. */
+  const runner =
+    (play: Play) =>
+    (host: string, script: string): SubprocessHandle => {
+      const chunks: Buffer[] = [];
+      const call = { host, script, received: Buffer.alloc(0), terminated: false };
+      calls.push(call);
+      const stdout = new PassThrough();
+      const stderr = new PassThrough();
+      let settle: (v: { exitCode: number | null; signal: string | null }) => void = () => {};
+      const done = new Promise<{ exitCode: number | null; signal: string | null }>((r) => {
+        settle = r;
+      });
+      const stdin = new Writable({
+        write(chunk: Buffer, _enc, cb) {
+          chunks.push(chunk);
+          cb();
+        },
+        final(cb) {
+          call.received = Buffer.concat(chunks);
+          cb();
+          if (play.hang) return;
+          if (play.stderr) stderr.write(play.stderr);
+          stdout.end(play.stdout);
+          stderr.end();
+          settle({ exitCode: play.exitCode, signal: null });
+        },
+      });
+      return {
+        stdin,
+        stdout,
+        stderr,
+        done,
+        terminate() {
+          call.terminated = true;
+          stdout.end();
+          stderr.end();
+          settle({ exitCode: null, signal: "SIGTERM" });
+        },
+      };
+    };
+
+  // The far shell's banner comes before the marker and must not end up in the path.
+  const ok = runner({ stdout: `Welcome to far!\n\u0001omc\u0001${FAR}`, exitCode: 0 });
+  assert.equal(await copyToAt({ sshHost: "far" }, local, "x.bin", 5_000, ok), FAR);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.host, "far");
+  assert.ok(
+    calls[0]?.script.startsWith("printf '\u0001omc\u0001'; d="),
+    "the marker is printed first",
+  );
+  assert.ok(
+    calls[0]?.script.endsWith(copyScript("x.bin", payload.length)),
+    "the script run is copyScript's",
+  );
+  assert.deepEqual(
+    calls[0]?.received,
+    payload,
+    "the far side received the file's bytes, all of them",
+  );
+
+  // A far failure is named by the box and its stderr, not by a broken pipe.
+  const denied = runner({
+    stdout: "\u0001omc\u0001",
+    stderr: "mkdir: Permission denied\n",
+    exitCode: 1,
+  });
+  await assert.rejects(
+    copyToAt({ sshHost: "far" }, local, "x.bin", 5_000, denied),
+    /far: mkdir: Permission denied$/,
+  );
+  // Exit 0 with no marker is a shell that never reached the script.
+  const mute = runner({ stdout: "Welcome to far!\n", exitCode: 0 });
+  await assert.rejects(
+    copyToAt({ sshHost: "far" }, local, "x.bin", 5_000, mute),
+    /printed no answer/,
+  );
+
+  // Refused before any connection: a name that is not one segment, no box, no local file.
+  const before = calls.length;
+  for (const bad of ["", ".", "..", "a/b", "../x", "a\nb"])
+    await assert.rejects(copyToAt({ sshHost: "far" }, local, bad, 5_000, ok), /is not a file name/);
+  await assert.rejects(copyToAt({}, local, "x.bin", 5_000, ok), /no box to copy to/);
+  await assert.rejects(
+    copyToAt({ sshHost: "far" }, join(tmp, "gone.bin"), "x.bin", 5_000, ok),
+    /ENOENT/,
+  );
+  assert.equal(calls.length, before, "none of the refused calls opened a connection");
+
+  // A far side that never answers is ended at the cap.
+  const stuck = runner({ stdout: "", exitCode: 0, hang: true });
+  await assert.rejects(copyToAt({ sshHost: "far" }, local, "x.bin", 50, stuck));
+  assert.equal(calls.at(-1)?.terminated, true, "the cap terminates the ssh");
+  console.log("copy-to-box ok");
 }
 
 console.log("remote-fs ok");

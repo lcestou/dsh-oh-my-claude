@@ -83,7 +83,7 @@ import { ChangelogBlock } from "./changelog.js";
 import { Spark, sparkNode } from "./spark.js";
 import { AccessShield, OhMyClaudeControl } from "./panel.js";
 import { ConfirmButton } from "./tune.js";
-import { AddWorkspaceFlow, canBrowseDirs, OPEN_EVENT } from "./picker.js";
+import { AddWorkspaceFlow, canBrowseDirs, OPEN_EVENT, RW_EVENT } from "./picker.js";
 import { takeDraft, subscribeDraft, noteDraft, draftPending } from "./draft.js";
 import {
   markTitle,
@@ -1878,17 +1878,45 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
       .then((r) => readJson<RuntimeStatus | null>(r))
       .then(setMe)
       .catch(() => {});
+  /** The remote-workspace rows. Only state setters inside, so an effect may keep the first one. */
+  const loadRws = () => {
+    fetch(`${ROUTE}/remote-workspaces`)
+      .then((r) => readJson<{ workspaces?: RemoteWs[] }>(r))
+      .then((b) => setRws(b.workspaces ?? []))
+      .catch(() => {});
+  };
   useEffect(() => {
     fetch(`${ROUTE}/ssh-boxes`)
       .then((r) => readJson<{ boxes?: SshBoxData[] }>(r))
       .then((b) => setSsh(b.boxes ?? []))
       .catch((e: Error) => setError(e.message));
     void loadMe();
-    fetch(`${ROUTE}/remote-workspaces`)
-      .then((r) => readJson<{ workspaces?: RemoteWs[] }>(r))
-      .then((b) => setRws(b.workspaces ?? []))
-      .catch(() => {});
+    loadRws();
   }, []);
+  // The rows follow dsh's own workspace list, which changes on an add from the picker, a trash in
+  // the sidebar and a box removal alike (the store carries every registry change, dsh's own or this
+  // plugin's route). It also publishes a frame per drag-reorder and per archive, so the ids are
+  // compared before a fetch. The picker's event covers the one gap: dsh's frame for a new
+  // workspace can land before the route has written its row, so the picker says so itself once
+  // its POST has answered.
+  useEffect(() => {
+    let ids = "";
+    const onStore = () => {
+      const next = (ctx.workspaces.list.getSnapshot()?.items ?? [])
+        .map((w) => w.workspaceId)
+        .toSorted()
+        .join("|");
+      if (next === ids) return;
+      ids = next;
+      loadRws();
+    };
+    const off = ctx.workspaces.list.subscribe(onStore);
+    window.addEventListener(RW_EVENT, loadRws);
+    return () => {
+      off();
+      window.removeEventListener(RW_EVENT, loadRws);
+    };
+  }, [ctx]);
 
   const refresh = () => {
     setBusy(true);
@@ -2125,6 +2153,14 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
           facts.push(
             `${st.running} ${st.running === 1 ? "session" : "sessions"} still answering on the old login`,
           );
+        // Said before the click: Remove on a box takes the workspaces pinned to it as well.
+        const onIt = rws.filter((w) => w.host === b.host).length;
+        if (onIt > 0)
+          facts.push(
+            onIt === 1
+              ? "1 workspace on it, removed with the box"
+              : `${onIt} workspaces on it, removed with the box`,
+          );
         return (
           <BoxRow
             key={`ssh:${b.host}`}
@@ -2162,7 +2198,11 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
                 )}
                 <ConfirmButton
                   label="Remove"
-                  ariaLabel={`Remove ${b.name}`}
+                  ariaLabel={
+                    onIt > 0
+                      ? `Remove ${b.name} and its ${onIt} workspace${onIt === 1 ? "" : "s"}`
+                      : `Remove ${b.name}`
+                  }
                   style={btn}
                   disabled={busy}
                   onAct={() => removeSsh(b.host)}

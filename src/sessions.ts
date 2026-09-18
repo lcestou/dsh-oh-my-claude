@@ -482,6 +482,30 @@ export async function readRemoteWorkspaces(path: string): Promise<RemoteWorkspac
   }
 }
 
+/** The file, minus every row whose dsh workspace is gone. dsh's registry owns which workspaces
+ *  exist (the sidebar's trash deletes there and never here), so a row the registry no longer
+ *  lists is a ghost: dropped, its placeholder removed, the file rewritten. Without a registry (a
+ *  dsh that lacks the service, or a request before it mounts) the file is answered as it is. */
+export async function syncRemoteWorkspaces(
+  path: string,
+  reg: Pick<WorkspaceRegistry, "get"> | undefined,
+  log: (level: string, msg: string) => void = () => {},
+): Promise<{ workspaces: RemoteWorkspace[]; dropped: RemoteWorkspace[] }> {
+  const rows = await readRemoteWorkspaces(path);
+  if (!reg) return { workspaces: rows, dropped: [] };
+  // SAFETY: workspaceId came from registry.create and is stored verbatim; get() answers undefined
+  // for an id it does not know, which is the whole test.
+  const dropped = rows.filter((w) => reg.get(w.workspaceId as WorkspaceId) === undefined);
+  if (dropped.length === 0) return { workspaces: rows, dropped };
+  const workspaces = rows.filter((w) => !dropped.includes(w));
+  await writeFile(path, `${JSON.stringify(workspaces, null, 2)}\n`, "utf8");
+  for (const w of dropped) {
+    await rm(w.path, { recursive: true, force: true }).catch(() => {});
+    log("info", `remote workspace ${w.name} on ${w.host} dropped: dsh no longer lists it`);
+  }
+  return { workspaces, dropped };
+}
+
 /** The instance whose local spawns take this box's panel login. */
 const DEFAULT_PROVIDER = "claude-code";
 /** `authMethod` a status reports when the login is a token the panel minted, not the CLI's own. */
@@ -1504,12 +1528,26 @@ export function registerSessionRoutes(
     instanceFor?.(url.searchParams.get("provider")) ?? { configDir, command, sshHost };
   /** The remote workspaces, as the routes below last wrote them; seeded from disk at registration. */
   let remoteWorkspaces: RemoteWorkspace[] = [];
-  if (remoteWorkspacesPath !== undefined)
-    void readRemoteWorkspaces(remoteWorkspacesPath)
-      .then((ws) => {
-        remoteWorkspaces = ws;
-      })
-      .catch((e: unknown) => log("warn", `remote workspaces: ${errorText(e)}`));
+  /** One writer at a time on remote-workspaces.json. POST, DELETE, a box removal and the GET
+   *  reconcile each read the file, change the list and write it back, and the Boxes card refetches
+   *  whenever dsh's workspace store changes, so two of them can overlap; unserialized, the second
+   *  would write back a list that lacks the row the first just added. The seed read rides the same
+   *  chain so it cannot land after a reconcile and put a dropped row back in memory. */
+  let rwChain: Promise<unknown> = Promise.resolve();
+  const withRwFile = <T>(fn: () => Promise<T>): Promise<T> => {
+    const p = rwChain.then(fn, fn);
+    rwChain = p.catch(() => {});
+    return p;
+  };
+  if (remoteWorkspacesPath !== undefined) {
+    const seedPath = remoteWorkspacesPath;
+    void withRwFile(async () => {
+      // The adapter's redirect map is fed from here and nowhere else, in the chain's order: a
+      // second read of its own could land after a reconcile and put a dropped row back.
+      remoteWorkspaces = await readRemoteWorkspaces(seedPath);
+      await onRemoteWorkspaces?.(remoteWorkspaces);
+    }).catch((e: unknown) => log("warn", `remote workspaces: ${errorText(e)}`));
+  }
   /**
    * Where a cwd-scoped read has to run, and under which path.
    *
@@ -1575,11 +1613,45 @@ export function registerSessionRoutes(
   // registry and skipped the workspace attach silently, so the session it had just written was
   // nowhere in the sidebar — hence the live `get` alongside the injected handle.
   let injectedRegistry: WorkspaceRegistry | undefined;
-  ctx.inject?.(["workspaceRegistry"], (host) => {
-    injectedRegistry = host.workspaceRegistry;
-  });
   const workspaceRegistry = (): WorkspaceRegistry | undefined =>
     injectedRegistry ?? ctx.get?.("workspaceRegistry");
+  /** The remote-workspace rows dsh's registry still backs, the file and the adapter's redirect map
+   *  brought in line when a row was dropped. Declared ahead of the inject below, which may call it
+   *  at once. */
+  const reconcileRemoteWorkspaces = (path: string): Promise<RemoteWorkspace[]> =>
+    withRwFile(async () => {
+      const { workspaces, dropped } = await syncRemoteWorkspaces(path, workspaceRegistry(), log);
+      if (dropped.length > 0) {
+        remoteWorkspaces = workspaces;
+        await onRemoteWorkspaces?.(workspaces);
+      }
+      return workspaces;
+    });
+  /** Take one remote workspace out of dsh and off disk; answers whether dsh let it go. A row whose
+   *  registry delete threw stays whole, row and placeholder both: the sidebar still draws it, and
+   *  the reconcile above only ever drops rows the registry lacks, so a row removed here while dsh
+   *  kept its workspace would be a sidebar entry with no redirect that nothing puts back. */
+  const dropRemoteWorkspace = async (w: RemoteWorkspace): Promise<boolean> => {
+    try {
+      // SAFETY: workspaceId was returned by registry.create as a WorkspaceId and stored verbatim;
+      // delete ignores an unknown id, so a stale value is harmless.
+      await workspaceRegistry()?.delete(w.workspaceId as WorkspaceId);
+    } catch (e) {
+      log("warn", `remote-workspace delete: ${errorText(e)}`);
+      return false;
+    }
+    await rm(w.path, { recursive: true, force: true }).catch(() => {});
+    return true;
+  };
+  ctx.inject?.(["workspaceRegistry"], (host) => {
+    injectedRegistry = host.workspaceRegistry;
+    // cordis calls this once the registry is active, its records loaded, so a row it cannot find
+    // was deleted (from the sidebar, while this plugin was not looking) and not merely unread.
+    if (remoteWorkspacesPath !== undefined)
+      void reconcileRemoteWorkspaces(remoteWorkspacesPath).catch((e: unknown) =>
+        log("warn", `remote workspaces sync: ${errorText(e)}`),
+      );
+  });
   ctx.inject?.(["webServer", "connection", "sessions", "sessionPersistence"], (host) => {
     const { webServer, connection, sessions, sessionPersistence } = host;
     if (!webServer || !connection || !sessionPersistence) return;
@@ -2769,7 +2841,39 @@ export function registerSessionRoutes(
                 if (req.method === "PUT") {
                   const v = validateSshBoxes((await readBody(req)).boxes);
                   if (v.error !== undefined) return json(res, 400, { error: v.error });
+                  const before = await readSshBoxes(sshBoxesPath);
                   await writeFile(sshBoxesPath, `${JSON.stringify(v.boxes, null, 2)}\n`, "utf8");
+                  // A box takes its remote workspaces with it: their sessions ran over that box's
+                  // ssh, and the sidebar rows would otherwise outlive the box they were pinned to.
+                  // Same removal the card's own Remove does, one per row, so dsh's store tells every
+                  // tab. The box file is written first: a crash between the two leaves rows for a
+                  // host no box names, which the card still lists and its Remove still clears.
+                  const kept = new Set(v.boxes.map((b) => b.host));
+                  const gone = new Set(before.map((b) => b.host).filter((h) => !kept.has(h)));
+                  if (remoteWorkspacesPath && gone.size > 0) {
+                    const rwPath = remoteWorkspacesPath;
+                    const removed = await withRwFile(async () => {
+                      const existing = await readRemoteWorkspaces(rwPath);
+                      const out: RemoteWorkspace[] = [];
+                      for (const w of existing.filter((row) => gone.has(row.host)))
+                        if (await dropRemoteWorkspace(w)) out.push(w);
+                      if (out.length === 0) return out;
+                      const next = existing.filter((w) => !out.includes(w));
+                      await writeFile(rwPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+                      remoteWorkspaces = next;
+                      await onRemoteWorkspaces?.(next);
+                      return out;
+                    }).catch((e: unknown) => {
+                      // The box is already saved; its workspaces stay listed for a second try.
+                      log("warn", `box removal, remote workspaces: ${errorText(e)}`);
+                      return [];
+                    });
+                    if (removed.length > 0)
+                      log(
+                        "info",
+                        `box removed: ${removed.length} remote workspace(s) went with it`,
+                      );
+                  }
                   // Mount or withdraw the provider instances so the picker matches the saved list
                   // without a dsh restart; a mount failure is reported, the file already saved.
                   let live = true;
@@ -2964,7 +3068,7 @@ export function registerSessionRoutes(
               if (remoteWorkspacesPath && url.pathname === `${ROUTE_PREFIX}/remote-workspaces`) {
                 if (req.method === "GET")
                   return json(res, 200, {
-                    workspaces: await readRemoteWorkspaces(remoteWorkspacesPath),
+                    workspaces: await reconcileRemoteWorkspaces(remoteWorkspacesPath),
                   });
                 if (req.method === "POST") {
                   const reg = workspaceRegistry();
@@ -2985,7 +3089,7 @@ export function registerSessionRoutes(
                   } catch (e) {
                     return json(res, 500, { error: `create workspace: ${errorText(e)}` });
                   }
-                  const existing = await readRemoteWorkspaces(remoteWorkspacesPath);
+                  const rwPath = remoteWorkspacesPath;
                   const entry: RemoteWorkspace = {
                     name,
                     host: boxHost,
@@ -2993,41 +3097,38 @@ export function registerSessionRoutes(
                     path: ws.path,
                     workspaceId: ws.id,
                   };
-                  const next = [...existing.filter((w) => w.path !== ws.path), entry];
-                  await writeFile(
-                    remoteWorkspacesPath,
-                    `${JSON.stringify(next, null, 2)}\n`,
-                    "utf8",
-                  );
-                  // Only after the file took it: a failed write must not leave the routes reading
-                  // a workspace list that nothing on disk agrees with.
-                  remoteWorkspaces = next;
-                  await onRemoteWorkspaces?.(next);
+                  await withRwFile(async () => {
+                    const existing = await readRemoteWorkspaces(rwPath);
+                    const next = [...existing.filter((w) => w.path !== ws.path), entry];
+                    await writeFile(rwPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+                    // Only after the file took it: a failed write must not leave the routes
+                    // reading a workspace list that nothing on disk agrees with.
+                    remoteWorkspaces = next;
+                    await onRemoteWorkspaces?.(next);
+                  });
                   return json(res, 200, { workspace: entry });
                 }
                 if (req.method === "DELETE") {
                   const target = String((await readBody(req)).path ?? "");
-                  const existing = await readRemoteWorkspaces(remoteWorkspacesPath);
-                  const entry = existing.find((w) => w.path === target);
-                  if (entry) {
-                    try {
-                      // SAFETY: workspaceId was returned by registry.create as a WorkspaceId and
-                      // stored verbatim; delete ignores an unknown id, so a stale value is harmless.
-                      await workspaceRegistry()?.delete(entry.workspaceId as WorkspaceId);
-                    } catch (e) {
-                      log("warn", `remote-workspace delete: ${errorText(e)}`);
-                    }
-                    await rm(entry.path, { recursive: true, force: true }).catch(() => {});
-                  }
-                  const next = existing.filter((w) => w.path !== target);
-                  await writeFile(
-                    remoteWorkspacesPath,
-                    `${JSON.stringify(next, null, 2)}\n`,
-                    "utf8",
-                  );
-                  remoteWorkspaces = next;
-                  await onRemoteWorkspaces?.(next);
-                  return json(res, 200, { workspaces: next });
+                  const rwPath = remoteWorkspacesPath;
+                  const out = await withRwFile(async () => {
+                    const existing = await readRemoteWorkspaces(rwPath);
+                    const entry = existing.find((w) => w.path === target);
+                    // A row dsh would not let go of stays in the file (see dropRemoteWorkspace).
+                    if (entry && !(await dropRemoteWorkspace(entry)))
+                      return { workspaces: existing, stuck: entry.name };
+                    const next = existing.filter((w) => w.path !== target);
+                    await writeFile(rwPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+                    remoteWorkspaces = next;
+                    await onRemoteWorkspaces?.(next);
+                    return { workspaces: next, stuck: "" };
+                  });
+                  if (out.stuck)
+                    return json(res, 502, {
+                      error: `dsh refused to delete ${out.stuck}, so it is still in the sidebar. Try again.`,
+                      workspaces: out.workspaces,
+                    });
+                  return json(res, 200, { workspaces: out.workspaces });
                 }
               }
               // Log a box in from the panel: start runs `claude setup-token` there and returns the

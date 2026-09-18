@@ -14,10 +14,12 @@
  * memory file fits in comfortably; swap for a piped stdin the day something megabyte-sized needs it.
  */
 import { execFile } from "node:child_process";
+import { createReadStream } from "node:fs";
 import { mkdir, open, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname } from "node:path";
-import { shq, sshArgs } from "./process.js";
+import { pipeline } from "node:stream/promises";
+import { nodeSpawner, shq, sshArgs, type SubprocessHandle } from "./process.js";
 
 /** The part of a mount this module needs: an empty `sshHost` means this PC. */
 export interface FsBox {
@@ -335,4 +337,75 @@ export async function removeAt(box: FsBox, path: string): Promise<void> {
   }
   const r = await ssh(box.sshHost, removeScript(path));
   if (r.code !== 0) throw transportError(box.sshHost, r);
+}
+
+/** Where an attachment lands on a box: under the far `$HOME`, beside the hold dir this plugin
+ *  already keeps there. Unquoted in the script so the far shell expands it. */
+const FAR_ATTACHMENTS = '"$HOME"/.local/state/dsh-oh-my-claude/attachments';
+
+/** One path segment: what a far file name has to be, so it cannot leave the attachments dir. */
+const isSegment = (name: string): boolean =>
+  name !== "" && name !== "." && name !== ".." && ![...name].some((ch) => ch === "/" || ch < " ");
+
+/**
+ * Write stdin to `<attachments>/<name>` on the box and print the absolute path it has there. The
+ * bytes go through a temp file that takes the real name only once it holds `bytes` bytes: a read
+ * that failed on this side ends the stream early and cleanly, which the far `cat` cannot tell from
+ * a whole file, and a short copy under the real name would be kept as "already there" for good. A
+ * short temp file is removed and the script fails. A file already there is kept and stdin is
+ * drained, so ssh still exits 0.
+ *
+ * ponytail: a file that is already there is still streamed and thrown away; asking first would
+ * cost a second connection per new file, and the caller remembers what it has copied.
+ */
+export const copyScript = (name: string, bytes: number): string =>
+  `d=${FAR_ATTACHMENTS} && mkdir -p "$d" && p="$d"/${shq(name)} && ` +
+  `if [ -e "$p" ]; then cat >/dev/null; else t="$p.tmp.$$"; cat > "$t" && ` +
+  `[ "$(($(wc -c < "$t")))" -eq ${Math.trunc(bytes)} ] && mv -- "$t" "$p" || ` +
+  `{ rm -f -- "$t"; echo "short copy of ${Math.trunc(bytes)} bytes" >&2; exit 1; }; fi && ` +
+  `printf %s "$p"`;
+
+/** Runs one script on a box with its stdin open; the default is this plugin's `ssh`. A seam for the test. */
+type RunWithStdin = (host: string, script: string) => SubprocessHandle;
+
+/**
+ * Stream one local file to the box and answer the absolute path it has there. The bytes ride
+ * stdin, not the command line the way `writeAt`'s do, so a 34 MB zip costs one connection and
+ * meets no argument-length limit. The answer is read after the marker, as every script's is: a
+ * login shell that prints a banner would otherwise end up in front of the path.
+ */
+export async function copyToAt(
+  box: FsBox,
+  localPath: string,
+  name: string,
+  timeoutMs = 300_000,
+  run: RunWithStdin = (host, script) => nodeSpawner("ssh", sshArgs(host, script), "."),
+): Promise<string> {
+  if (!box.sshHost) throw new Error("copyToAt: no box to copy to");
+  if (!isSegment(name)) throw new Error(`copyToAt: "${name}" is not a file name`);
+  // A missing local file fails here, before any connection is opened.
+  const { size } = await stat(localPath);
+  const host = box.sshHost;
+  const child = run(host, `printf ${shq(MARK)}; ${copyScript(name, size)}`);
+  let out = "";
+  let err = "";
+  child.stdout.on("data", (chunk: Buffer | string) => {
+    out += String(chunk);
+  });
+  child.stderr.on("data", (chunk: Buffer | string) => {
+    err += String(chunk);
+  });
+  const timer = setTimeout(() => child.terminate(), timeoutMs);
+  try {
+    // A broken pipe here is the far side's failure, which the exit status and stderr below say
+    // better than EPIPE does.
+    await pipeline(createReadStream(localPath), child.stdin).catch(() => {});
+    const { exitCode } = await child.done;
+    const far = (afterMark(out) ?? "").trim();
+    if (exitCode !== 0 || far === "")
+      throw transportError(host, { code: exitCode ?? 255, out, err: err.trim().slice(0, 300) });
+    return far;
+  } finally {
+    clearTimeout(timer);
+  }
 }

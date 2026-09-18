@@ -45,7 +45,6 @@ import {
   type PickerSettings,
   readHints,
   readPickerSettings,
-  readRemoteWorkspaces,
   readSshBoxes,
   registerSessionRoutes,
   type RemoteWorkspace,
@@ -172,7 +171,7 @@ import {
   mirrorReplyBlocks,
   alreadyShown,
 } from "./transcript.js";
-import { homeAt, readFromAt, sizeAt, type FsBox } from "./remote-fs.js";
+import { copyToAt, homeAt, readFromAt, sizeAt, type FsBox } from "./remote-fs.js";
 import type { FoldedTurn } from "./transcript.js";
 import {
   READY as READY_MARK,
@@ -219,7 +218,22 @@ let remoteWorkspaces: RemoteWorkspace[] = [];
  * suite can drive the two lookups below without a dsh mount. */
 export function setRemoteWorkspaces(workspaces: RemoteWorkspace[]): void {
   remoteWorkspaces = workspaces;
+  remoteWorkspacesKnown = true;
 }
+/** Whether the map above has been fed at all: before the routes' first read lands, an empty map
+ *  means "not read yet", not "no remote workspaces". */
+let remoteWorkspacesKnown = false;
+/** Where every remote workspace's stand-in folder lives. */
+const STAND_INS = join(STATE_DIR, "remote-workspaces");
+/**
+ * Whether `cwd` is the stand-in of a remote workspace that no longer exists. Removing a box, or
+ * deleting the workspace, drops its row and its stand-in folder, but dsh keeps the sessions and
+ * lists them under Ungrouped with the stand-in as their cwd. A turn there has no box to run on:
+ * spawned here it died on a missing directory as "claude exited -1: no output" (seen live
+ * 2026-09-17), and on an ssh box's own provider it would have run in the far `$HOME` instead.
+ */
+export const isOrphanedStandIn = (cwd: string): boolean =>
+  remoteWorkspacesKnown && cwd.startsWith(`${STAND_INS}/`) && remoteWorkspaceFor(cwd) === undefined;
 /** The real remote path for a placeholder workspace on `host`, or `cwd` unchanged. */
 export function remoteCwdFor(host: string, cwd: string): string {
   return remoteWorkspaces.find((w) => w.host === host && w.path === cwd)?.remoteCwd ?? cwd;
@@ -1225,6 +1239,51 @@ export function attachmentNotes(turns: LooseMessage[], images: readonly LoadedIm
     }
   }
   return notes.join("\n");
+}
+
+/** dsh's handle for an attached file, as `fileHandleText` writes it when the stored copy has a
+ *  readable path (dsh-llm 0.1.6): the quoted name, the first eight hex of its sha256, the quoted
+ *  path. The other form, "was uploaded, but … cannot access a readable path", has no path and
+ *  does not match. */
+const FILE_HANDLE =
+  /(\[File ("(?:[^"\\]|\\.)*") \(\d+ bytes, sha256:([0-9a-f]{8})\): verbatim read-only copy saved at )("(?:[^"\\]|\\.)*")\./g;
+/** How long one attachment may take to reach a box: before a prompt, and at a step boundary,
+ *  where the CLI sits parked waiting for the line this holds up. */
+const COPY_CAP_MS = 300_000;
+const STEER_COPY_CAP_MS = 30_000;
+
+/**
+ * The text with every file handle pointed at the box's own copy. dsh saves an attachment on this
+ * PC and names that path in the handle, which a `claude` running on another box cannot read, so
+ * each file is handed to `copy` (local path and a far name in, far path out) and its handle takes
+ * the path that comes back. A copy that fails leaves its handle as it was, and Claude then says
+ * the path is unreadable, which is what happened to every handle before this.
+ */
+export async function relayFileHandles(
+  text: string,
+  copy: (localPath: string, farName: string) => Promise<string>,
+  log: (level: string, message: string) => void = () => {},
+): Promise<string> {
+  const farOf = new Map<string, string>();
+  for (const [, , quotedName, sha, quotedPath] of text.matchAll(FILE_HANDLE)) {
+    if (!quotedName || !sha || !quotedPath || farOf.has(quotedPath)) continue;
+    try {
+      // The sha keeps two files that share a name apart on the box.
+      const farName = `${sha}-${basename(String(JSON.parse(quotedName))) || "file"}`;
+      farOf.set(quotedPath, await copy(String(JSON.parse(quotedPath)), farName));
+    } catch (error: unknown) {
+      log("warn", `attachment ${quotedName} not copied to the box: ${errorText(error)}`);
+    }
+  }
+  if (farOf.size === 0) return text;
+  // Rebuilt from the handle's own head, not searched for inside it: a file name may hold any text.
+  return text.replace(
+    FILE_HANDLE,
+    (whole: string, head: string, _name: string, _sha: string, quoted: string) => {
+      const far = farOf.get(quoted);
+      return far === undefined ? whole : `${head}${JSON.stringify(far)}.`;
+    },
+  );
 }
 
 /** The images of a turn, newest MAX_IMAGES kept, for the stdin line that carries them. */
@@ -2477,9 +2536,30 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     }
   }
 
+  /** The copy itself, as a field so the offline suite can stand in for the ssh. */
+  copyToBox = (host: string, localPath: string, farName: string, capMs: number): Promise<string> =>
+    copyToAt({ sshHost: host }, localPath, farName, capMs);
+  /** Far paths of what this process has already copied, by box and local path.
+   *  ponytail: never forgotten, so a copy deleted on the box stays "there" until dsh restarts. */
+  private onBoxAlready = new Map<string, string>();
+  /** One attachment's path on `host`, copied there the first time it is asked for. */
+  async onBox(host: string, localPath: string, farName: string, capMs: number): Promise<string> {
+    const key = `${host}\n${localPath}`;
+    const known = this.onBoxAlready.get(key);
+    if (known !== undefined) return known;
+    const far = await this.copyToBox(host, localPath, farName, capMs);
+    this.onBoxAlready.set(key, far);
+    return far;
+  }
+
+  /** `host` is the box the turn runs on, when it is not this PC: the saved copy the note names has
+   *  to be on that box, so it is copied there, and an image that would not copy gets no note (it
+   *  still rides inline) rather than one naming a path that box's claude cannot read. */
   async loadImages(
     refs: ImageAttachmentRef[],
     signal: AbortSignal | undefined,
+    host?: string,
+    capMs = COPY_CAP_MS,
   ): Promise<LoadedImage[]> {
     const store = this.ctx.attachments;
     if (!store || refs.length === 0) return [];
@@ -2487,11 +2567,20 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     for (const ref of refs) {
       try {
         const stored = await store.readImage(ref, signal);
+        const kept = await this.keepImageCopy(ref, stored.data);
+        let path = kept;
+        if (kept && host)
+          try {
+            path = await this.onBox(host, kept, basename(kept), capMs);
+          } catch (error: unknown) {
+            path = undefined;
+            this.log("warn", `image ${ref.attachmentId} not on ${host}: ${errorText(error)}`);
+          }
         out.push({
           mediaType: ref.mediaType,
           data: Buffer.from(stored.data).toString("base64"),
           attachmentId: ref.attachmentId,
-          path: await this.keepImageCopy(ref, stored.data),
+          path,
         });
       } catch (error: unknown) {
         this.log(
@@ -2562,6 +2651,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       this.config.sshHost,
       options.purpose ? undefined : remoteWorkspaceFor(cwd)?.host,
     );
+    if (!options.purpose && isOrphanedStandIn(cwd))
+      throw new LlmError(
+        `This session belongs to a remote workspace that was removed (${basename(cwd)}), so it has no box to run on. Add the same folder on the same box again from the sidebar's Add workspace, and the session continues there.`,
+        "PROVIDER_ERROR",
+      );
     const cli = await probeCli(execFile, this.config.command, targetHost);
     if (!this.loggedVersion) {
       this.loggedVersion = true;
@@ -2597,8 +2691,15 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     this.proxyFirstParty = wantsFirstParty(hints, await detectFirstParty());
     const turns = selectTurns(options.messages, session?.resuming ?? false);
     let prompt = buildPrompt(turns, drops);
+    // A turn on a box reads that box's disk, so what was attached here follows it there.
+    if (targetHost)
+      prompt = await relayFileHandles(
+        prompt,
+        (local, farName) => this.onBox(targetHost, local, farName, COPY_CAP_MS),
+        (level, message) => this.log(level, message),
+      );
     const stdin = usesStdin(cli.flags);
-    const images = stdin ? await this.loadImages(imageRefs(turns), options.signal) : [];
+    const images = stdin ? await this.loadImages(imageRefs(turns), options.signal, targetHost) : [];
     // Where each image lives on disk, after the prompt: the inline copy lets Claude see it, the
     // note lets it Read, edit or delegate it.
     const notes = attachmentNotes(turns, images);
@@ -4534,12 +4635,26 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       for (const m of afterLastAssistant(cont.options.messages)) {
         const key = steerKey(m);
         if (!key || proc.sent.has(key)) continue;
-        const text = textOf(m.content);
-        if (!text) continue;
+        const local = textOf(m.content);
+        if (!local) continue;
         // dsh has projected a file into its handle by now; an image is still a block. It is loaded
         // and noted the way a prompt's are (inline bytes, plus the saved-copy line so Claude can
-        // read it again later), so a steer deferred by the live path arrives whole.
-        const images = await this.loadImages(imageRefs([m]), cont.options.signal);
+        // read it again later), so a steer deferred by the live path arrives whole. On a box both
+        // follow the turn there, under the short cap: the CLI is parked on this line.
+        const host = this.hostLabelFor(cont.options.sessionId);
+        const text = host
+          ? await relayFileHandles(
+              local,
+              (path, farName) => this.onBox(host, path, farName, STEER_COPY_CAP_MS),
+              (level, message) => this.log(level, message),
+            )
+          : local;
+        const images = await this.loadImages(
+          imageRefs([m]),
+          cont.options.signal,
+          host,
+          STEER_COPY_CAP_MS,
+        );
         const notes = attachmentNotes([m], images);
         const body = notes ? `${text}\n\n${notes}` : text;
         if (proc.write(buildInput(body, images))) proc.sent.add(key);
@@ -5965,9 +6080,7 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
         reconcileSshBoxes(ctx, config, boxes, sshMounts, sshAdapters, (l, m) => adapter.log(l, m)),
       )
       .catch((e) => adapter.log("warn", `ssh boxes: ${errorText(e)}`));
-    // Load the remote-workspace redirects so a box session lands in its real remote path at boot.
-    void readRemoteWorkspaces(join(STATE_DIR, "remote-workspaces.json"))
-      .then(setRemoteWorkspaces)
-      .catch((e) => adapter.log("warn", `remote workspaces: ${errorText(e)}`));
+    // The remote-workspace redirects are fed by the routes above (`onRemoteWorkspaces`), seed read
+    // included: one feed on one chain, so a row the reconcile dropped cannot be read back in here.
   }
 }
