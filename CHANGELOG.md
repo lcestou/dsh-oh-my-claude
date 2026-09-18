@@ -8,6 +8,9 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- The context meter's breakdown request no longer prints a red 409 in the browser console on
+  every session switch. The route answers 200 with `ok: false` when the session is mid-turn or
+  has no live process, which is what the client already read.
 - A dsh-web restart no longer logs you out of the desktop. A keeper whose Claude failed to start
   (the binary missing, or its folder gone) recorded no Claude pid, the plugin read that back as
   `-1`, and the next start's cleanup asked whether "pid -1" was alive and then sent it SIGTERM.
