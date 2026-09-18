@@ -3353,6 +3353,14 @@ function watchContextMeter(ctx: ClientCtx) {
     const label = `${Math.round(ringPercent)}% of context used`;
     const button = arc.closest("button");
     if (button?.getAttribute("aria-label") !== label) button?.setAttribute("aria-label", label);
+    // dsh also writes its own number as text inside the button, from the same pressure figure
+    // that pins the arc at 100%. On a phone that text sits beside the ring, so it read 100% next
+    // to an arc at 58% (owner, 2026-09-18). Same rewrite; a span whose text is not a bare
+    // percentage is not dsh's number and is left alone.
+    const pct = `${Math.round(ringPercent)}%`;
+    for (const span of button?.querySelectorAll("span") ?? [])
+      if (/^\d{1,3}%$/.test(span.textContent ?? "") && span.textContent !== pct)
+        span.textContent = pct;
   };
   /**
    * The meter's open panel when dsh renders it away from the ring.

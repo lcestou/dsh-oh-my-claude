@@ -24,6 +24,11 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- The percentage dsh prints beside the context ring, visible on a phone, said 100% while the
+  ring and the usage panel said 58%. dsh draws that text from the same pressure figure that pins
+  the ring for a Claude Code session; the plugin already corrected the ring and its label, and now
+  corrects the text too.
+
 - Under the default `spawn: keeper`, a Stop or idle timeout sent the CLI a SIGTERM and nothing
   more, so a `claude` wedged inside an uninterruptible tool outlived both; the keeper now follows
   with a SIGKILL after five seconds, as the plain spawner already did.
