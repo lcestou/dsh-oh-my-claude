@@ -590,6 +590,15 @@ export declare function noticeSource(text: string, goalActive: boolean): {
 };
 /** After an interrupt, kill a process that did not finish in time: only when no keeper owns it. */
 export declare const killAfterGrace: (spawn: string) => boolean;
+/** What an interrupt does to the process's steer state: a steer forwarded before the Stop was
+ *  already handed to the CLI, which runs it as a turn of its own once the interrupt lands (seen
+ *  2026-09-18: `queue-operation dequeue` 7 ms after `[Request interrupted by user]`). Nothing is
+ *  left to park on, and a park flag left set would read the CLI's interrupt echo (a `user` frame)
+ *  as the tool-result boundary, exit the step as parked, and leave the interrupted turn's error
+ *  `result` in the queue for the next prompt to die on. */
+export declare function noteInterrupt(proc: {
+    steerPending: boolean;
+}): void;
 /** Whether an aborted stream should interrupt Claude: always, except a dsh shutdown under a keeper. */
 export declare function interruptOnAbort(kind: string | undefined, spawn: string): boolean;
 /** dsh's tool-result for a relayed call, searched from the newest message back. */
