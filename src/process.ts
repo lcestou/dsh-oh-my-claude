@@ -771,9 +771,15 @@ export function decodeCliModels(v: JsonValue | undefined): CliModel[] {
         value: m.value,
         resolvedModel: typeof m.resolvedModel === "string" ? m.resolvedModel : m.value,
         displayName: typeof m.displayName === "string" ? m.displayName : m.value,
-        efforts: Array.isArray(m.supportedEffortLevels)
-          ? m.supportedEffortLevels.filter((e): e is string => typeof e === "string")
-          : [],
+        // The CLI answers `supportedEffortLevels`; the on-disk seed (`cli-models.json`) holds this
+        // row shape back, keyed `efforts`. Read both, or a restart seeds every row with no efforts
+        // and dsh refuses the effort a session still carries (2026-09-18).
+        efforts: (Array.isArray(m.supportedEffortLevels)
+          ? m.supportedEffortLevels
+          : Array.isArray(m.efforts)
+            ? m.efforts
+            : []
+        ).filter((e): e is string => typeof e === "string"),
       };
       if (typeof m.description === "string") row.description = m.description;
       out.push(row);
