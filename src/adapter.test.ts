@@ -65,6 +65,7 @@ import {
   mergeCatalog,
   parseCatalogCache,
   interruptOnAbort,
+  noteInterrupt,
   noticeSource,
   RECONNECT_TEXT,
   LIMIT_TEXT,
@@ -3845,6 +3846,69 @@ assert.equal(interruptOnAbort("cancelled", "keeper"), true);
 assert.equal(interruptOnAbort(undefined, "keeper"), true);
 assert.equal(killAfterGrace("keeper"), false, "keeper: the idle watchdog owns hung processes");
 assert.equal(killAfterGrace("node"), true);
+// A Stop with a steer already forwarded: the CLI runs that steer as a turn of its own after the
+// interrupt, so there is nothing to park on. Left set, the flag made the CLI's interrupt echo
+// look like a tool-result boundary, the step parked, and the interrupted turn's error result was
+// the first thing the next prompt read (owner, 2026-09-18 15:15 EDT: "[ede_diagnostic]
+// result_type=user" on a re-send five seconds after Stop, fine a few seconds later).
+{
+  const proc = { steerPending: true };
+  noteInterrupt(proc);
+  assert.equal(proc.steerPending, false, "an interrupt clears the park flag");
+  noteInterrupt(proc);
+  assert.equal(proc.steerPending, false, "clearing twice is the same");
+}
+// The next call after the Stop is a prompt, not a steer continuation: the flag is clear and
+// `parked` was never set, so `continuationFor` drops the steer the CLI already has and keeps the
+// new text. This is the incident's message set (one forwarded steer, one new message).
+{
+  const adapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  const held = {
+    alive: true,
+    busy: false,
+    relays: new Map(),
+    sent: new Set(["r1"]),
+    steerPending: true,
+    parked: undefined,
+  };
+  noteInterrupt(held);
+  adapter.processes.set(registryKey("claude-code", "s"), fakeProc(held));
+  const cont = adapter.continuationFor(
+    // SAFETY: the session options carry dsh's branded id; continuationFor reads only these two fields.
+    {
+      sessionId: "s",
+      messages: messageList([
+        {
+          role: "user",
+          source: { kind: "user", rpcId: "p0" },
+          content: [{ type: "text", text: "go" }],
+        },
+        { role: "assistant", content: [{ type: "text", text: "on it" }] },
+        {
+          role: "user",
+          source: { kind: "user", rpcId: "r1" },
+          content: [{ type: "text", text: "talking about mobile" }],
+        },
+        {
+          role: "user",
+          source: { kind: "user", rpcId: "r2" },
+          content: [{ type: "text", text: "for mobile that is" }],
+        },
+      ]),
+    } as unknown as Parameters<ClaudeCodeAdapter["continuationFor"]>[0],
+  );
+  assert.equal(
+    cont.mode,
+    "prompt",
+    "after a Stop the next call is a prompt, not a steer continuation",
+  );
+  assert.deepEqual(
+    cont.options.messages?.map((m) => steerKey(m)),
+    ["p0", undefined, "r2"],
+    "the steer the CLI already has is dropped from the prompt, the new text stays",
+  );
+  assert.equal(held.parked, undefined, "nothing parked");
+}
 console.log("interrupt-on-abort ok");
 
 // contextUsage: decodes the CLI's get_context_usage answer; no live process is a plain error.

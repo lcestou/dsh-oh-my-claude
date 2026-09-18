@@ -1807,6 +1807,15 @@ export function noticeSource(text: string, goalActive: boolean) {
 }
 /** After an interrupt, kill a process that did not finish in time: only when no keeper owns it. */
 export const killAfterGrace = (spawn: string): boolean => spawn !== "keeper";
+/** What an interrupt does to the process's steer state: a steer forwarded before the Stop was
+ *  already handed to the CLI, which runs it as a turn of its own once the interrupt lands (seen
+ *  2026-09-18: `queue-operation dequeue` 7 ms after `[Request interrupted by user]`). Nothing is
+ *  left to park on, and a park flag left set would read the CLI's interrupt echo (a `user` frame)
+ *  as the tool-result boundary, exit the step as parked, and leave the interrupted turn's error
+ *  `result` in the queue for the next prompt to die on. */
+export function noteInterrupt(proc: { steerPending: boolean }): void {
+  proc.steerPending = false;
+}
 /** Whether an aborted stream should interrupt Claude: always, except a dsh shutdown under a keeper. */
 export function interruptOnAbort(kind: string | undefined, spawn: string): boolean {
   return !(kind === "disposed" && spawn === "keeper");
@@ -5071,6 +5080,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       // Ask the CLI to stop; it answers with a result and stays alive for the next turn. Kill only
       // if it does not.
       tr.aborting = true;
+      noteInterrupt(proc);
       if (!proc.write(interruptLine(`interrupt-${randomUUID()}`))) return proc.kill();
       // A process that ignores the interrupt is killed after a grace period, except under a keeper:
       // there the idle watchdog already ends a hung process, and a kill here cost a respawn on

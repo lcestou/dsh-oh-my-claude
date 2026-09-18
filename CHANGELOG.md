@@ -6,6 +6,16 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Fixed
+
+- Stop, then send again within a few seconds: the new turn no longer fails with the CLI's
+  `[ede_diagnostic] result_type=user` text. When a steer had been forwarded to the CLI before the
+  Stop, the plugin still waited to park the step on it, read the CLI's interrupt echo as that
+  boundary, and left the interrupted turn's error result for the next prompt to read first. The
+  interrupt now clears the park flag; the CLI runs the forwarded steer as a turn of its own, and
+  its reply arrives the way a background reply does. An error there is dropped the way a
+  background error is.
+
 ## [1.2.1] - 2026-09-18
 
 ### Added
