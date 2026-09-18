@@ -203,6 +203,15 @@ function main(dir: string) {
         if (!exit) {
           endedBy = "client";
           child.kill("SIGTERM");
+          // The same escalation the plain spawner does (process.ts): a claude inside an
+          // uninterruptible tool ignores SIGTERM, and under a keeper nothing else would end it.
+          const hard = setTimeout(() => {
+            if (!exit) {
+              log("kill: no exit after SIGTERM, SIGKILL");
+              child.kill("SIGKILL");
+            }
+          }, 5000);
+          hard.unref?.();
         }
       }
     });

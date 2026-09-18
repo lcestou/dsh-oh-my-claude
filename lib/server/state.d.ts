@@ -25,11 +25,12 @@ export declare function writeJson(file: string, value: unknown): Promise<void>;
 export declare function markBusy(id: string, on: boolean, path?: string): Promise<void>;
 /** Sessions whose turn the previous dsh process left unfinished; cleared on read. */
 export declare function takeInterrupted(path?: string): Promise<string[]>;
-/** The provider of the last `model/selection` event in a session log, if any. */
-export declare function lastSelectedProvider(events: Iterable<{
+/** The provider of the last `model/selection` event in a session log, if any. Read from the tail,
+ *  so a long log costs the events after its last selection, not all of them. */
+export declare function lastSelectedProvider(events: readonly {
     type: string;
     data?: unknown;
-}>): string | undefined;
+}[]): string | undefined;
 export declare function loadCommandCatalog(dir: string): Promise<string[]>;
 /** Remember the catalog; a write that fails leaves the menu to the next init frame, not an error. */
 export declare function saveCommandCatalog(dir: string, names: string[]): Promise<void>;

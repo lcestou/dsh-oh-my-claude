@@ -6,18 +6,27 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Added
+
+- The Claude Code update card links the version it offers to that release's entry on
+  code.claude.com's changelog, in a new tab, so what changed is one click from the offer.
+
 ### Changed
 
 - A Claude command or skill run from dsh's slash menu (`/claude-<name>`) shows in the transcript
   as the bubble the person sent, `/name arguments`, instead of a collapsed context row. The row
   was easy to miss when reading back where a turn started.
 
-### Added
-
-- The Claude Code update card links the version it offers to that release's entry on
-  code.claude.com's changelog, in a new tab, so what changed is one click from the offer.
+- Each turn read the session's whole event log twice, front to back, to find the open turn and
+  step and the last todo list; both reads now start from the tail and stop at the first hit, so a
+  long session pays for a few events instead of all of them. The model-selection lookup used on
+  a continue-after-limit does the same.
 
 ### Fixed
+
+- Under the default `spawn: keeper`, a Stop or idle timeout sent the CLI a SIGTERM and nothing
+  more, so a `claude` wedged inside an uninterruptible tool outlived both; the keeper now follows
+  with a SIGKILL after five seconds, as the plain spawner already did.
 
 - The Claude Code update card stays folded once folded. The fold lived in the card's own
   state, so switching sessions remounted it open; it is now kept on the box for that release,
@@ -31,6 +40,11 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
   interrupt now clears the park flag; the CLI runs the forwarded steer as a turn of its own, and
   its reply arrives the way a background reply does. An error there is dropped the way a
   background error is.
+
+### Removed
+
+- The `/tailscale/peers` route, which nothing called; the add-box form reads `/tailscale/status`,
+  whose reply carries the peers.
 
 ## [1.2.1] - 2026-09-18
 

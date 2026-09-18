@@ -97,18 +97,19 @@ export async function takeInterrupted(path = BUSY_FILE): Promise<string[]> {
   return Array.isArray(ids) ? ids.filter((x): x is string => typeof x === "string") : [];
 }
 
-/** The provider of the last `model/selection` event in a session log, if any. */
+/** The provider of the last `model/selection` event in a session log, if any. Read from the tail,
+ *  so a long log costs the events after its last selection, not all of them. */
 export function lastSelectedProvider(
-  events: Iterable<{ type: string; data?: unknown }>,
+  events: readonly { type: string; data?: unknown }[],
 ): string | undefined {
-  let provider: string | undefined;
-  for (const e of events) {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i]!;
     if (e.type !== "model/selection" || typeof e.data !== "object" || e.data === null) continue;
     // SAFETY: a non-null object; the one field read is checked for string before use
     const p = (e.data as { provider?: unknown }).provider;
-    if (typeof p === "string") provider = p;
+    if (typeof p === "string") return p;
   }
-  return provider;
+  return undefined;
 }
 
 /**

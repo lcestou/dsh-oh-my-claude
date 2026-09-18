@@ -5,6 +5,7 @@ import { mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  lastSelectedProvider,
   loadPermissionModes,
   savePermissionMode,
   modesUpTo,
@@ -348,4 +349,24 @@ console.log("state.test: ok");
   await writeFile(TERMINAL_SYNC_FILE(dir), "not json");
   assert.equal(await loadTerminalSync(dir), undefined, "a corrupt file is no choice either");
   console.log("terminal sync state ok");
+}
+
+// The last model/selection wins, read from the tail: an older selection and every other event
+// type are passed over, and a log with none answers undefined.
+{
+  const events = [
+    { type: "turn/start", data: { turn: 1 } },
+    { type: "model/selection", data: { provider: "lutechi-llm", model: "x" } },
+    { type: "model/selection", data: { provider: "claude-code", model: "claude-fable-5-1" } },
+    { type: "model/selection", data: { provider: 42 } },
+    { type: "assistant/message", data: {} },
+  ];
+  assert.equal(
+    lastSelectedProvider(events),
+    "claude-code",
+    "the newest selection with a string provider",
+  );
+  assert.equal(lastSelectedProvider(events.slice(0, 1)), undefined, "no selection: undefined");
+  assert.equal(lastSelectedProvider([]), undefined);
+  console.log("last-selected-provider ok");
 }
