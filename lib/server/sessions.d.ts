@@ -123,6 +123,9 @@ export interface RuntimeStatus {
     update?: string;
     /** Claude processes still running on the box; they answer on the login they loaded at start. */
     running?: number;
+    /** The dsh this plugin is loaded beside, and the lowest dsh this build runs on. This box only. */
+    dsh?: string | null;
+    dshFloor?: string | null;
 }
 /** One probe's outcome: the decoded body, or why the box could not be reached. */
 export type Probe<T> = {

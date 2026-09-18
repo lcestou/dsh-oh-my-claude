@@ -47,21 +47,70 @@ type FetchFn = (url: string, init: { signal: AbortSignal }) => Promise<Response>
  *  retry on every panel open. */
 const TTL_OK = 24 * 60 * 60_000;
 const TTL_FAIL = 60 * 60_000;
-const cache = new Map<string, { at: number; ttl: number; value: string | undefined }>();
+/** What the registry said about `name`'s latest release: its version, and the lowest dsh it runs on. */
+export type LatestRelease = { version: string; dshFloor: string | undefined };
+const cache = new Map<string, { at: number; ttl: number; value: LatestRelease | undefined }>();
+
+/** The dsh peer the plugin declares (`@deepseek-ai/dsh-llm`), and its lowest accepted version. */
+const DSH_PEER = "@deepseek-ai/dsh-llm";
+const PEER_RANGE = new RegExp(`"${DSH_PEER}"\\s*:\\s*"[\\^~>=\\s]*([^"\\s]+)"`);
+
+/** The lowest dsh a package.json (or the registry's copy of it) accepts, read off its dsh-llm peer
+ *  range. The range is one bound, `^0.1.6-alpha.2`; the caret, tilde or `>=` in front is dropped
+ *  and what is left must parse as a version. Absent or unreadable: undefined. */
+export function dshFloor(packageJsonText: string): string | undefined {
+  const v = PEER_RANGE.exec(packageJsonText)?.[1];
+  return v && parse(v) ? v : undefined;
+}
+
+/** The dot-separated identifiers after a version's `-`: `0.1.6-alpha.2` gives `["alpha", "2"]`. */
+const prereleaseIds = (v: string) => v.trim().split("-").slice(1).join("-").split(".");
+
+/** True when `version` is `floor` or later, prerelease tags included: `0.1.6-alpha.2` reaches a
+ *  floor of `0.1.6-alpha.1` and not one of `0.1.6`; `0.1.5-rc.2` reaches neither. Identifiers
+ *  after the `-` compare dot by dot, numerically when both sides are numbers, as semver orders
+ *  them. Unparseable input on either side is "no". */
+export function atLeast(version: string, floor: string): boolean {
+  const a = parse(version);
+  const b = parse(floor);
+  if (!a || !b) return false;
+  const [aMaj, aMin, aPat, aPre] = a;
+  const [bMaj, bMin, bPat, bPre] = b;
+  if (aMaj !== bMaj) return aMaj > bMaj;
+  if (aMin !== bMin) return aMin > bMin;
+  if (aPat !== bPat) return aPat > bPat;
+  if (!aPre) return true; // a release reaches any prerelease of its number
+  if (!bPre) return false; // a prerelease never reaches its release
+  const at = prereleaseIds(version);
+  const bt = prereleaseIds(floor);
+  for (let i = 0; i < Math.max(at.length, bt.length); i++) {
+    const x = at[i];
+    const y = bt[i];
+    if (x === undefined) return false; // fewer identifiers ranks lower
+    if (y === undefined) return true;
+    if (x === y) continue;
+    const xn = /^\d+$/.test(x);
+    const yn = /^\d+$/.test(y);
+    if (xn && yn) return Number(x) > Number(y);
+    if (xn !== yn) return yn; // numbers rank below words
+    return x > y;
+  }
+  return true;
+}
 
 /**
- * The newest published version of `name`, or undefined when the registry did not answer in time.
+ * The newest published release of `name`, or undefined when the registry did not answer in time.
  * Memoised per name; `timeoutMs` bounds the one read so a slow registry cannot hold the status route.
  */
-export async function latestVersion(
+export async function latestRelease(
   name: string,
   fetchFn: FetchFn = fetch,
   now = Date.now(),
   timeoutMs = 2500,
-): Promise<string | undefined> {
+): Promise<LatestRelease | undefined> {
   const hit = cache.get(name);
   if (hit && now - hit.at < hit.ttl) return hit.value;
-  let value: string | undefined;
+  let value: LatestRelease | undefined;
   try {
     const r = await fetchFn(`${REGISTRY}/${encodeURIComponent(name)}/latest`, {
       signal: AbortSignal.timeout(timeoutMs),
@@ -70,14 +119,25 @@ export async function latestVersion(
       // ponytail: the `/latest` document's top-level `version` is its first "version" key (the
       // nested maps hold ranges keyed by package name); a regex reads it without a JSON walk.
       // `parse` still has to accept it. Upgrade path: a typed decoder if the document grows one.
-      const v = /"version"\s*:\s*"([^"]+)"/.exec(await r.text())?.[1];
-      if (v && parse(v)) value = v;
+      const text = await r.text();
+      const v = /"version"\s*:\s*"([^"]+)"/.exec(text)?.[1];
+      if (v && parse(v)) value = { version: v, dshFloor: dshFloor(text) };
     }
   } catch {
     // offline, blocked, or slow: the pill just does not show this time
   }
   cache.set(name, { at: now, ttl: value ? TTL_OK : TTL_FAIL, value });
   return value;
+}
+
+/** The newest published version of `name`; see `latestRelease`. */
+export async function latestVersion(
+  name: string,
+  fetchFn: FetchFn = fetch,
+  now = Date.now(),
+  timeoutMs = 2500,
+): Promise<string | undefined> {
+  return (await latestRelease(name, fetchFn, now, timeoutMs))?.version;
 }
 
 /** Test seam: forget what was read. */

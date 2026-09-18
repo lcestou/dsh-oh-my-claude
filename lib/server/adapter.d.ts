@@ -423,6 +423,8 @@ export declare function contextSizes(turns: LooseMessage[]): ContextSizes;
 export declare function buildPrompt(turns: LooseMessage[], drops?: ReadonlySet<ContextSource>): string;
 /** An image loaded from dsh's attachment store, ready for the stdin line, plus the path of the
  *  copy kept for Claude's tools when one could be written. */
+/** An image of the turn. `data` is its base64 for the stdin line, or empty when the image rides by
+ *  path only (see `oversize`); `path` is the copy `keepImageCopy` wrote, on the box that runs Claude. */
 type LoadedImage = {
     mediaType: string;
     data: string;

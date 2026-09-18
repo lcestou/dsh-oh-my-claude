@@ -5207,7 +5207,39 @@ console.log("interrupt-on-abort ok");
   assert.ok(notes.includes('"/state/attachments/abc.png"'), "the note names the kept copy");
   assert.ok(notes.includes('"logo.png"') && notes.includes("4x2px"), "name and size ride along");
   assert.ok(!notes.includes("sha256:def"), "an image with no copy gets no note");
+  assert.ok(notes.includes("shown above"), "a small image was inlined, the note says so");
   assert.equal(attachmentNotes([{ role: "user", content: "plain" }], []), "");
+
+  // Over 2000px on a side the image rides by path only: the stdin line carries no image block
+  // (the API refuses it once the conversation holds many images) and the note says to Read it.
+  const wide: LooseMessage[] = [
+    {
+      role: "user",
+      content: [
+        { type: "text", text: "look" },
+        {
+          type: "image",
+          attachment: {
+            attachmentId: "sha256:wide",
+            mediaType: "image/png",
+            width: 2884,
+            height: 156,
+          },
+        },
+      ],
+    } as LooseMessage,
+  ];
+  const wideNote = attachmentNotes(wide, [
+    { mediaType: "image/png", data: "", attachmentId: "sha256:wide", path: "/state/wide.png" },
+  ]);
+  assert.ok(wideNote.includes("not shown inline") && wideNote.includes("2000px"), wideNote);
+  assert.ok(wideNote.includes('"/state/wide.png"'), "the note still names the copy to Read");
+  const byPath = JSON.parse(buildInput("look", [{ mediaType: "image/png", data: "" }]));
+  assert.deepEqual(
+    byPath.message.content.map((b: { type: string }) => b.type),
+    ["text"],
+    "an image with no data adds no block to the stdin line",
+  );
 }
 
 // MCP headers name the server: a plugin-mounted server drops the `plugin_` prefix and the doubled
