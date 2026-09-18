@@ -2668,7 +2668,7 @@ interface WireguardPeerRow {
 /** `44s ago`, `3m ago`, `never`: a tunnel's last handshake, which is its pulse. */
 const handshakeText = (age: number | null): string =>
   age === null ? "never" : age < 90 ? `${age}s ago` : `${Math.round(age / 60)}m ago`;
-/** A Tailscale peer as `/tailscale/peers` answers it (mirrors reach.ts's `TailscalePeer`). */
+/** A Tailscale peer as `/tailscale/status` lists it (mirrors reach.ts's `TailscalePeer`). */
 interface TailscalePeerRow {
   name: string;
   host: string;

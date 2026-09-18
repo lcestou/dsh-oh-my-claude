@@ -1270,7 +1270,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      *  Called at the top of an open turn (dsh's invariant rejects a `todo/write` outside one), this
      *  re-appends the last todo list so it persists across messages and, because it reads persisted
      *  session events, across a restart too. Source-agnostic: works for dsh's own todo tool.
-     *  ponytail: O(n) scan of session events per turn; cache the last list if long sessions lag. */
+     *  Scans from the tail and stops at the newest list, so a long session pays a few events, not all. */
     restoreTodos(sessionId: string): void;
     /** A usage limit ended the session's turn: once it resets (plus a grace), drop the continue
      *  notice through the same path a restart uses. Persisted so a restart re-arms it. */

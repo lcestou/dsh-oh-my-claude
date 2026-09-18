@@ -42,7 +42,6 @@ import {
   classifyReach,
   loginUrlIn,
   reachScript,
-  tailscalePeers,
   tailscaleStatus,
   validateTailnetJoin,
   wireguardPeers,
@@ -2914,12 +2913,6 @@ export function registerSessionRoutes(
                   }
                   return json(res, 200, { boxes: v.boxes, live });
                 }
-              }
-              // The Tailscale peers this box can see, for the add form: none when tailscale is not
-              // installed or not running, which is not an error, just no picker.
-              if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/tailscale/peers`) {
-                const r = await run("tailscale", ["status", "--json"], undefined, undefined, 5000);
-                return json(res, 200, { peers: r.error ? [] : tailscalePeers(r.out) });
               }
               // This node's tailnet state (or a box's, over ssh, with ?host=): installed, logged in,
               // who it is, and its peers. Not installed is a state, not an error.
