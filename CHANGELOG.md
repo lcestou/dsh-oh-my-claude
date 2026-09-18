@@ -6,6 +6,56 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-09-18
+
+### Added
+
+- The status row names the dsh tool a turn is waiting on: `running job_output for 151s`, after the
+  clock and the token count. While dsh ran a tool for Claude the bracket used to empty down to the
+  clock, and the count restarted from zero when the result came back; both now hold through the
+  wait.
+
+- A switch for the footer cost readout, in the plugin's settings, on unless it is turned off. The
+  turn records behind it are kept either way, so the figure is whole again the moment the switch
+  comes back.
+
+- Proxy reaches Anthropic, a setting for a box whose `ANTHROPIC_BASE_URL` is a proxy in front of
+  api.anthropic.com. Claude Code assumes 200k for its 1M models behind any other host (and stops
+  compacting Fable); on such a box, sessions start with the CLI's own flag for a proxy that
+  forwards, and the context popover names it when it sees a session in that state. A session
+  already running follows on its next message.
+
+  Auto, On or Off, and Auto is the default: it asks the base URL once per dsh run, with no key
+  attached, and takes Anthropic's own authentication error and request id as the answer — a proxy
+  that forwards passes both through, a gateway routing to another provider does not, and a proxy
+  that cannot be reached is left alone rather than assumed. On and Off are answers a person gave,
+  so detection never overrides one. Nothing changes without a base URL.
+- A Changelog card in Settings → Oh My Claude, above Report a problem and collapsed. It lists what
+  the last five versions added, changed and fixed, read from the plugin's own `CHANGELOG.md` when
+  the card opens, with the installed version marked. The file now ships in the npm package; an
+  install from before this has no copy, and the card says so with a link to the file on GitHub.
+- A card above the composer when a newer Claude Code is out for the box a session runs on, with an
+  Update button that runs `claude update` there from dsh, an Always update link, and a dismiss that
+  holds until the next release. The same button sits on each Boxes row in Settings. Under Tune: a
+  Release channel row, an Update on its own switch and the history of runs; in Settings, a switch
+  for the whole feature. A headless `claude -p` never updates itself, so until now a box relied on
+  the terminal for it.
+
+### Changed
+
+- The icon tile on dsh's changed-files card takes the accent colour in a Claude session, with the
+  links and rules group; it stayed dsh's blue beside an orange chat.
+
+- The proxy control takes its width from the word it shows, so Off and On sit narrower than Auto
+  instead of every state holding the widest one's box.
+
+- The cost pill reads `$28.84 · $7.78 last`; the cached-token count that used to close it has moved
+  into the panel behind it. dsh's own neighbouring pill already reports the session's tokens and
+  cache hit rate, and ours was the longest pill in the row.
+
+- The cost panel is capped at 320px rather than 440px, so the API-rate footnote wraps instead of
+  setting the panel's width. It stood half again as wide as dsh's stats panel beside it.
+
 ### Fixed
 
 - The first turn after a dsh-web restart no longer fails with `UNSUPPORTED_REASONING_EFFORT`
@@ -63,36 +113,6 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
   atomically, so a crash mid-write cannot truncate it either. Two browsers on the same box, which
   is what box-wide settings invite, was all it took.
 
-### Changed
-
-- The icon tile on dsh's changed-files card takes the accent colour in a Claude session, with the
-  links and rules group; it stayed dsh's blue beside an orange chat.
-
-- The proxy control takes its width from the word it shows, so Off and On sit narrower than Auto
-  instead of every state holding the widest one's box.
-
-### Added
-
-- The status row names the dsh tool a turn is waiting on: `running job_output for 151s`, after the
-  clock and the token count. While dsh ran a tool for Claude the bracket used to empty down to the
-  clock, and the count restarted from zero when the result came back; both now hold through the
-  wait.
-
-- A switch for the footer cost readout, in the plugin's settings, on unless it is turned off. The
-  turn records behind it are kept either way, so the figure is whole again the moment the switch
-  comes back.
-
-### Changed
-
-- The cost pill reads `$28.84 · $7.78 last`; the cached-token count that used to close it has moved
-  into the panel behind it. dsh's own neighbouring pill already reports the session's tokens and
-  cache hit rate, and ours was the longest pill in the row.
-
-- The cost panel is capped at 320px rather than 440px, so the API-rate footnote wraps instead of
-  setting the panel's width. It stood half again as wide as dsh's stats panel beside it.
-
-### Fixed
-
 - The cost readout sits in dsh's footer row as a pill again on dsh 0.1.6-alpha.2, which stopped
   marking that row. It had fallen back to the older shape and rendered as loose text behind a bar,
   outside the row; as a pill it also takes dsh's own phone behaviour, shortening to the icon alone.
@@ -142,30 +162,6 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 - Buttons in the Settings section and the ✻ panel take the accent colour on hover and focus, as
   the login card's already did; the buttons carry their border inline, so no hover rule had ever
   reached them.
-
-### Added
-
-- Proxy reaches Anthropic, a setting for a box whose `ANTHROPIC_BASE_URL` is a proxy in front of
-  api.anthropic.com. Claude Code assumes 200k for its 1M models behind any other host (and stops
-  compacting Fable); on such a box, sessions start with the CLI's own flag for a proxy that
-  forwards, and the context popover names it when it sees a session in that state. A session
-  already running follows on its next message.
-
-  Auto, On or Off, and Auto is the default: it asks the base URL once per dsh run, with no key
-  attached, and takes Anthropic's own authentication error and request id as the answer — a proxy
-  that forwards passes both through, a gateway routing to another provider does not, and a proxy
-  that cannot be reached is left alone rather than assumed. On and Off are answers a person gave,
-  so detection never overrides one. Nothing changes without a base URL.
-- A Changelog card in Settings → Oh My Claude, above Report a problem and collapsed. It lists what
-  the last five versions added, changed and fixed, read from the plugin's own `CHANGELOG.md` when
-  the card opens, with the installed version marked. The file now ships in the npm package; an
-  install from before this has no copy, and the card says so with a link to the file on GitHub.
-- A card above the composer when a newer Claude Code is out for the box a session runs on, with an
-  Update button that runs `claude update` there from dsh, an Always update link, and a dismiss that
-  holds until the next release. The same button sits on each Boxes row in Settings. Under Tune: a
-  Release channel row, an Update on its own switch and the history of runs; in Settings, a switch
-  for the whole feature. A headless `claude -p` never updates itself, so until now a box relied on
-  the terminal for it.
 
 ## [1.1.2] - 2026-09-15
 

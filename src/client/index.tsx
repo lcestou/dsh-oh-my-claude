@@ -6230,9 +6230,18 @@ function ProxyFirstPartySwitch() {
         <div>
           <div>Proxy reaches Anthropic</div>
           <div style={{ color: T.faint, fontSize: 12 }}>
-            For a Claude Code that runs through a proxy in front of Anthropic, such as Headroom or a
-            logging relay, where a 1M model otherwise shows a 200k window. Auto asks the proxy and
-            follows its answer; On and Off are kept whatever it answers.
+            For a Claude Code that runs through a proxy in front of Anthropic, such as{" "}
+            <a
+              data-omc-headroom-link=""
+              href="https://github.com/headroomlabs-ai/headroom"
+              target="_blank"
+              rel="noreferrer"
+              style={{ color: ACCENT }}
+            >
+              Headroom
+            </a>{" "}
+            or a logging relay, where a 1M model otherwise shows a 200k window. Auto asks the proxy
+            and follows its answer; On and Off are kept whatever it answers.
           </div>
         </div>
         <select
