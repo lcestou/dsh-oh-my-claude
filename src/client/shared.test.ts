@@ -9,6 +9,7 @@ import {
   openSession,
   openSessionId,
   resumeCommand,
+  skillStateFromReply,
 } from "./shared.js";
 
 assert.equal(maskEmail("someone@example.com"), "s******@example.com");
@@ -131,5 +132,25 @@ assert.equal(
     ["c", "d"],
   );
 }
+
+// skillStateFromReply maps each /skill-doctor reply shape to its SkillState.
+assert.deepEqual(skillStateFromReply({ ok: true, report: "Skills loaded" }), {
+  kind: "report",
+  text: "Skills loaded",
+  partial: false,
+});
+assert.deepEqual(skillStateFromReply({ ok: true, report: "u only", partial: true }), {
+  kind: "report",
+  text: "u only",
+  partial: true,
+});
+assert.deepEqual(skillStateFromReply({ ok: false, declined: true, error: "no_user_skills" }), {
+  kind: "declined",
+  text: "no_user_skills",
+});
+assert.deepEqual(skillStateFromReply({ ok: false, error: "boom" }), {
+  kind: "error",
+  text: "boom",
+});
 
 console.log("✓ All login mask checks pass");

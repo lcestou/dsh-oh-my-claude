@@ -37,6 +37,8 @@ import {
   resumeCommand,
   saveBlob,
   groupSkillsByScope,
+  skillStateFromReply,
+  type SkillState,
 } from "./shared.js";
 import { UpdatePill } from "./update-pill.js";
 import { ReportBlock } from "./report.js";
@@ -730,6 +732,8 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   const cwd = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.cwd;
   const [skills, setSkills] = useState<SkillRow[] | null>(null);
   const [query, setQuery] = useState("");
+  const [cost, setCost] = useState<SkillState>({ kind: "idle" });
+  const costAc = useRef<AbortController | null>(null);
   const provider = claudeProviderOf(ctx, sessionId);
   const onBox = provider === undefined ? "" : `provider=${encodeURIComponent(provider)}`;
   const q = [
@@ -748,6 +752,32 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
       .then((b) => mounted.current && setSkills(b.skills ?? []))
       .catch(() => mounted.current && setSkills([]));
   }, [cwd, q]);
+  // Abort a slow /skill-doctor read if the tab is switched away, so no setState lands on an
+  // unmounted body.
+  useEffect(() => () => costAc.current?.abort(), []);
+  const loadCost = useCallback(() => {
+    setCost({ kind: "loading" });
+    costAc.current?.abort();
+    const ac = new AbortController();
+    costAc.current = ac;
+    const timer = setTimeout(() => ac.abort(), 25000);
+    void (async () => {
+      const reply = await readJson<{
+        ok?: boolean;
+        report?: string;
+        declined?: boolean;
+        error?: string;
+        partial?: boolean;
+      }>(
+        await fetch(`${ROUTE}/skill-doctor?session=${encodeURIComponent(sessionId)}`, {
+          signal: ac.signal,
+        }),
+      );
+      if (mounted.current) setCost(skillStateFromReply(reply));
+    })()
+      .catch((e: Error) => mounted.current && setCost({ kind: "error", text: e.message }))
+      .finally(() => clearTimeout(timer));
+  }, [sessionId]);
 
   if (skills === null) return null;
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
@@ -798,6 +828,59 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
           </details>
         );
       })}
+      <details
+        data-omc-skill-doctor-fold=""
+        style={{ marginTop: 8 }}
+        onToggle={(e) => {
+          if (e.currentTarget.open && cost.kind === "idle") loadCost();
+        }}
+      >
+        <summary style={{ ...meta, padding: "2px 4px", cursor: "pointer" }}>Skill costs</summary>
+        <div style={{ ...meta, whiteSpace: "normal", margin: "8px 0" }}>
+          What each Claude Code skill costs in context and how often you have used it. Read from
+          Claude Code&apos;s own /skill-doctor. No message is sent to the model, so this costs no
+          usage.
+        </div>
+        {cost.kind === "loading" && (
+          <div style={{ color: T.muted, fontSize: 13 }}>Reading skills…</div>
+        )}
+        {cost.kind === "error" && (
+          <div style={{ color: T.err, fontSize: 13 }}>
+            Couldn&apos;t read the skill report: {cost.text}
+          </div>
+        )}
+        {cost.kind === "declined" && (
+          <pre
+            data-omc-skill-doctor=""
+            aria-label="Skill report"
+            style={{ ...code, maxHeight: 320, overflow: "auto", margin: 0 }}
+          >
+            {cost.text}
+          </pre>
+        )}
+        {cost.kind === "report" && (
+          <>
+            {cost.partial && (
+              <div style={{ color: T.faint, fontSize: 12, marginBottom: 6 }}>
+                Showing user skills only; this box&apos;s Claude Code is too old to list project
+                skills without writing a transcript.
+              </div>
+            )}
+            <pre
+              data-omc-skill-doctor=""
+              aria-label="Skill costs report"
+              style={{ ...code, maxHeight: 320, overflow: "auto", margin: 0 }}
+            >
+              {cost.text}
+            </pre>
+          </>
+        )}
+        {cost.kind !== "loading" && (
+          <button type="button" onClick={loadCost} style={{ ...btn, marginTop: 8 }}>
+            Refresh
+          </button>
+        )}
+      </details>
     </div>
   );
 }
