@@ -4,7 +4,8 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { execFile } from "node:child_process";
 import { authHeaders, authHeadersFrom } from "./state.js";
-import { errorText, sshArgs } from "./process.js";
+import { errorText, shq, sshArgs } from "./process.js";
+import { cliEnvFor } from "./sessions.js";
 import type { PluginContext } from "./dsh.js";
 
 const USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
@@ -67,6 +68,34 @@ export type UsageReply =
       /** Set only on a 429: ms to wait before the endpoint is worth touching again. */
       retryAfterMs?: number;
     };
+
+/** One driver of the plan-limit usage: the CLI's own name and its percent of the window. */
+export interface UsageDriver {
+  name: string;
+  pct: number;
+}
+/** A "Top skills" / "Top MCP servers" / ... group under one window. */
+export interface UsageDriverGroup {
+  label: string;
+  drivers: UsageDriver[];
+}
+/** One time window of the `/usage` breakdown (e.g. "Last 7d"). */
+export interface UsageBreakdownWindow {
+  label: string;
+  requests: number;
+  sessions: number;
+  groups: UsageDriverGroup[];
+}
+/** What the /breakdown route answers: the windows, or why there are none. */
+export type UsageBreakdownReply =
+  | {
+      ok: true;
+      fetchedAt: number;
+      windows: UsageBreakdownWindow[];
+      host?: string;
+      email?: string | null;
+    }
+  | { ok: false; error: string; host?: string; email?: string | null };
 
 type Rec = Record<string, unknown>;
 const isRec = (v: unknown): v is Rec => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -258,6 +287,75 @@ export async function readUsage(
   }
 }
 
+/**
+ * Parse the text `claude -p "/usage"` prints into its time windows and their driver groups. The
+ * format is the CLI's own (2.1.x); a shape this does not recognise yields [], which the caller
+ * degrades to an empty section rather than an error. Behaviour lines (no "Top " prefix, e.g.
+ * "91% of your usage was at >150k context") are ignored. English number formatting and the CLI's
+ * `·` separator are assumed; a locale change would degrade the same way, not throw.
+ */
+export function parseUsageBreakdown(text: string): UsageBreakdownWindow[] {
+  const windows: UsageBreakdownWindow[] = [];
+  let current: UsageBreakdownWindow | undefined;
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    const head = /^(Last \d+[hdw]) · ([\d,]+) requests · ([\d,]+) sessions$/.exec(line);
+    if (head) {
+      current = {
+        label: head[1] ?? "",
+        requests: Number((head[2] ?? "").replace(/,/g, "")),
+        sessions: Number((head[3] ?? "").replace(/,/g, "")),
+        groups: [],
+      };
+      windows.push(current);
+      continue;
+    }
+    const top = /^Top ([^:]+): (.+)$/.exec(line);
+    if (top && current) {
+      const label = (top[1] ?? "").replace(/^./, (c) => c.toUpperCase());
+      const drivers: UsageDriver[] = [];
+      for (const entry of (top[2] ?? "").split(", ")) {
+        const m = /^(.+) (\d+)%$/.exec(entry.trim());
+        if (m) drivers.push({ name: m[1] ?? "", pct: Number(m[2]) });
+      }
+      if (drivers.length > 0) current.groups.push({ label, drivers });
+    }
+  }
+  return windows.filter((w) => w.groups.length > 0);
+}
+
+/** Run `claude -p "/usage"` on a box and parse its breakdown. Never throws; the panel shows the
+ *  reason. Local via execFile with the box's config dir; an ssh box over ssh with its own login.
+ *  COLUMNS/TERM force a wide, dumb terminal so no "Top …" row wraps and loses its tail. */
+export function readUsageBreakdown(
+  command: string,
+  realHome?: string,
+  sshHost?: string,
+): Promise<UsageBreakdownReply> {
+  return new Promise((resolve) => {
+    const done = (stdout: string) =>
+      resolve({ ok: true, fetchedAt: Date.now(), windows: parseUsageBreakdown(stdout) });
+    const fail = () => resolve({ ok: false, error: "usage breakdown unavailable" });
+    if (sshHost) {
+      const remote = `COLUMNS=1000 TERM=dumb ${shq(command)} -p '/usage'`;
+      execFile(
+        "ssh",
+        sshArgs(sshHost, remote),
+        { timeout: 15_000, maxBuffer: 256 * 1024 },
+        (err, stdout) => (err || !stdout.trim() ? fail() : done(stdout)),
+      );
+      return;
+    }
+    const env = { ...cliEnvFor(realHome), COLUMNS: "1000", TERM: "dumb" };
+    execFile(
+      command,
+      ["-p", "/usage"],
+      { timeout: 15_000, maxBuffer: 256 * 1024, env },
+      (err, stdout) => (err || !stdout.trim() ? fail() : done(stdout)),
+    );
+  });
+}
+
 /** The reset instant of a window still at its cap, or undefined when nothing blocks a request.
  *  A reply that could not be read answers undefined too: the wake then finds out by trying. */
 export function stillLimitedUntil(reply: UsageReply, now = Date.now()): number | undefined {
@@ -275,8 +373,14 @@ export function registerUsageRoute(
   identity: (home?: string, sshHost?: string) => Promise<{ host: string; email: string | null }>,
   options?: {
     home?: string;
-    /** The box a provider runs on: its local config dir, or the ssh host whose own login it uses. */
-    boxFor?: (providerId: string) => { home: string; sshHost?: string } | undefined;
+    /** The account's real config dir for the default box: /usage reads its transcripts, not the mirror. */
+    realHome?: string;
+    /** The default box's `claude` command, for the /usage spawn. */
+    command?: string;
+    /** The box a provider runs on: its config dir, its real config dir, its `claude` command, or the ssh host whose own login it uses. */
+    boxFor?: (
+      providerId: string,
+    ) => { home: string; sshHost?: string; realHome?: string; command?: string } | undefined;
   },
 ) {
   const defaultHome = options?.home;
@@ -319,6 +423,31 @@ export function registerUsageRoute(
     }
     return inFlight.get(key)!;
   };
+  // Breakdown answers are cached per box the same way; a spawn per popover open would be wasteful.
+  const bdCached = new Map<string, { at: number; reply: UsageBreakdownReply }>();
+  const bdInFlight = new Map<string, Promise<UsageBreakdownReply>>();
+  const readBd = (
+    force: boolean,
+    realHome: string,
+    command: string,
+    sshHost?: string,
+  ): Promise<UsageBreakdownReply> => {
+    const key = sshHost ? `ssh:${sshHost}` : realHome;
+    const entry = bdCached.get(key);
+    const age = entry ? Date.now() - entry.at : Infinity;
+    if (entry && age < (force ? FORCE_MIN_AGE_MS : CACHE_MS)) return Promise.resolve(entry.reply);
+    if (!bdInFlight.has(key)) {
+      bdInFlight.set(
+        key,
+        readUsageBreakdown(command, realHome, sshHost).then((reply) => {
+          if (reply.ok || !entry?.reply.ok) bdCached.set(key, { at: Date.now(), reply });
+          bdInFlight.delete(key);
+          return bdCached.get(key)!.reply;
+        }),
+      );
+    }
+    return bdInFlight.get(key)!;
+  };
   ctx.inject?.(["webServer", "connection"], (host) => {
     const { webServer, connection } = host;
     if (!webServer || !connection) return;
@@ -329,7 +458,10 @@ export function registerUsageRoute(
           path: ROUTE,
           handler: async (req: IncomingMessage, res: ServerResponse) => {
             const rejection = connection.requestRejection(req);
-            const send = (status: number, body: UsageReply | { error: string }) => {
+            const send = (
+              status: number,
+              body: UsageReply | UsageBreakdownReply | { error: string },
+            ) => {
               res.writeHead(status, {
                 "content-type": "application/json; charset=utf-8",
                 "cache-control": "no-store",
@@ -344,7 +476,22 @@ export function registerUsageRoute(
               // Resolve the box for the requested provider; fall back to the default instance.
               // An unknown provider id (instance gone after a reload) reads the default instance.
               const provider = url.searchParams.get("provider");
-              const box = (provider && boxFor?.(provider)) || { home: defaultHome ?? "" };
+              const box: { home: string; sshHost?: string; realHome?: string; command?: string } =
+                (provider && boxFor?.(provider)) || { home: defaultHome ?? "" };
+              if (url.pathname.endsWith("/breakdown")) {
+                const bdRealHome = box.realHome ?? options?.realHome ?? box.home;
+                const bdCommand = box.command ?? options?.command ?? "claude";
+                const [reply, who] = await Promise.all([
+                  readBd(force, bdRealHome, bdCommand, box.sshHost),
+                  identity(box.home, box.sshHost),
+                ]);
+                if (reply.ok && reply.windows.length === 0)
+                  log(
+                    "warn",
+                    "usage breakdown: no windows parsed (/usage text format may have changed)",
+                  );
+                return send(200, { ...reply, ...who });
+              }
               // The usage belongs to that box's login; say so, the browser hops between boxes.
               const [reply, who] = await Promise.all([
                 read(force, box.home, box.sshHost),

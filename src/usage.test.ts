@@ -3,7 +3,14 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { UsageCredits } from "./usage.js";
-import { extraUsageOn, readUsage, stillLimitedUntil, usageCredits, usageWindows } from "./usage.js";
+import {
+  extraUsageOn,
+  parseUsageBreakdown,
+  readUsage,
+  stillLimitedUntil,
+  usageCredits,
+  usageWindows,
+} from "./usage.js";
 
 // limits shape: session + weekly + scoped model rows, a repeated kind taking the first only.
 // `is_active` is deliberately not a filter: the endpoint sends false for windows that are running,
@@ -212,3 +219,73 @@ assert.equal(noHeader.ok === false && noHeader.retryAfterMs, 60_000);
   console.log("credits ok");
 }
 console.log("usage ok");
+
+// /usage breakdown: parse the CLI's own text (2.1.x) into windows and driver groups.
+{
+  const text = [
+    "You are currently using your subscription to power your Claude Code usage",
+    "",
+    "Current session: 6% used · resets Sep 19, 3am (America/New_York)",
+    "Current week (all models): 53% used · resets Sep 22, 1pm (America/New_York)",
+    "Current week (Fable): 84% used · resets Sep 22, 1pm (America/New_York)",
+    "",
+    "What's contributing to your limits usage?",
+    "Approximate, based on local sessions on this machine — does not include other devices or claude.ai. Behaviors are independent characteristics, not a breakdown.",
+    "",
+    "Last 24h · 1195 requests · 29 sessions",
+    "  91% of your usage was at >150k context",
+    "  60% of your usage came from sessions active for 8+ hours",
+    "  Top skills: /local-subagent 10%, /unslop 3%, /design-pass 1%",
+    "  Top MCP servers: plugin:context-mode:context-mode 16%, dsh 13%",
+    "",
+    "Last 7d · 9432 requests · 154 sessions",
+    "  77% of your usage was at >150k context",
+    "  54% of your usage came from sessions active for 8+ hours",
+    "  Top skills: /local-subagent 10%, /unslop 3%, /impeccable 2%, /codebase-design 2%, /divi5-skill 1%",
+    "  Top MCP servers: dsh 11%, plugin:context-mode:context-mode 11%",
+  ].join("\n");
+  const wins = parseUsageBreakdown(text);
+  assert.equal(wins.length, 2, "two windows parsed");
+  const [day, week] = wins;
+  if (!day || !week) throw new Error("expected two windows");
+  assert.equal(week.label, "Last 7d", "second window label");
+  assert.equal(week.requests, 9432, "7d requests");
+  assert.equal(week.sessions, 154, "7d sessions");
+  assert.deepEqual(
+    week.groups.map((g) => g.label),
+    ["Skills", "MCP servers"],
+    "7d group labels, Title-cased",
+  );
+  const [skills, mcp] = week.groups;
+  if (!skills || !mcp) throw new Error("expected two groups");
+  assert.deepEqual(
+    skills.drivers,
+    [
+      { name: "/local-subagent", pct: 10 },
+      { name: "/unslop", pct: 3 },
+      { name: "/impeccable", pct: 2 },
+      { name: "/codebase-design", pct: 2 },
+      { name: "/divi5-skill", pct: 1 },
+    ],
+    "7d skills drivers",
+  );
+  assert.deepEqual(
+    mcp.drivers,
+    [
+      { name: "dsh", pct: 11 },
+      { name: "plugin:context-mode:context-mode", pct: 11 },
+    ],
+    "7d MCP-server drivers",
+  );
+  // A behaviour line ("91% of your usage was at >150k context") makes no group.
+  assert.equal(day.label, "Last 24h", "first window label");
+  assert.equal(day.groups.length, 2, "24h has only the two Top groups, not the behaviour lines");
+  // Unrecognised text yields no windows, which the caller degrades to an empty section.
+  assert.deepEqual(parseUsageBreakdown("nothing here"), [], "unknown text yields no windows");
+}
+assert.deepEqual(
+  parseUsageBreakdown("Last 7d · 12 requests · 3 sessions\n"),
+  [],
+  "a window with no Top rows is dropped, not shown empty",
+);
+console.log("usage-breakdown ok");

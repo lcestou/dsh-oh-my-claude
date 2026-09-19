@@ -19,6 +19,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Added
 
+- The context ring popover now shows what is driving your plan limits, by skill, subagent, plugin
+  and MCP server, over the last seven days. It reads Claude Code's own `/usage` on the box, so the
+  figures match what `claude` reports in a terminal.
+
 - The Claude Code update card links the version it offers to that release's entry on
   code.claude.com's changelog, in a new tab, so what changed is one click from the offer.
 - The Plugins roster names any plugin the Claude Code CLI could not load, with the reason, in a

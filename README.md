@@ -91,7 +91,7 @@ Working on the plugin itself? Start at [docs/developing.md](https://github.com/l
 5. Claude's permission prompts, questions and plan reviews become dsh dialogs. [Approvals](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#approvals-and-questions)
 6. One spark button opens Memory, Rewind, Changes, MCP and six more tabs. [The panel](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md)
 7. Cost and cached tokens in dsh's footer, with a spend line that turns the pill orange. [Cost pill](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#cost-pill)
-8. Plan usage (5-hour, weekly, extra usage) in dsh's context ring. [Plan usage](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#plan-usage)
+8. Plan usage (5-hour, weekly, extra usage) in dsh's context ring, plus what drives your limits by skill, subagent, plugin and MCP server. [Plan usage](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#plan-usage)
 9. Restore or import any past Claude transcript, from dsh or from a terminal. [Session browser](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#session-browser)
 10. Claude's slash commands and skills show up in dsh's slash menu as `/claude-<name>`. [Command bridge](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#command-bridge)
 11. Claude gets dsh's subagents, jobs, goals and web search over MCP. [dsh tools over MCP](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#dsh-tools-over-mcp)
