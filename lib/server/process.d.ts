@@ -93,6 +93,13 @@ export type ClaudeEvent = {
     trigger?: string;
     original_model?: string;
     fallback_model?: string;
+    direction?: "retry" | "revert" | "sticky";
+    scope?: "session" | "local";
+    api_refusal_category?: string | null;
+    api_refusal_explanation?: string | null;
+    original_model_name?: string;
+    persisted_as_default?: boolean;
+    choice?: "consent" | "switch_default" | "cancelled";
     prevent_continuation?: boolean;
     tool_name?: string;
     message?: string;

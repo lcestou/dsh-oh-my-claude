@@ -134,6 +134,22 @@ export type ClaudeEvent =
       trigger?: string;
       original_model?: string;
       fallback_model?: string;
+      // subtype "model_refusal_fallback": the safety classifier flagged the message and the turn
+      // fell back to a safer model. `direction` "sticky" = the session model swapped for the rest of
+      // the conversation; "retry"/"revert" are one-off. `scope` "local" = a subagent, a /btw
+      // side-question or a background fork fell back, and the session model is unchanged.
+      direction?: "retry" | "revert" | "sticky";
+      scope?: "session" | "local";
+      // The refusal category ("cyber", "bio", …), an open string; null when neither the API response
+      // nor the fallback block carried one. `api_refusal_explanation` is the model_refusal_no_fallback
+      // sibling's human reason.
+      api_refusal_category?: string | null;
+      api_refusal_explanation?: string | null;
+      // subtype "model_consent_fallback": the usage-credit / switch-default gate (secondary to the
+      // refusal frames). `persisted_as_default` true = the switch became the saved default model.
+      original_model_name?: string;
+      persisted_as_default?: boolean;
+      choice?: "consent" | "switch_default" | "cancelled";
       // subtype "informational": a loop banner. `prevent_continuation` marks the ones that ended
       // the turn early (a Stop hook denying continuation).
       prevent_continuation?: boolean;
