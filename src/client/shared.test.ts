@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import type { ClientCtx } from "./shared.js";
 import {
   claudeProviderOf,
+  groupSkillsByScope,
   maskEmail,
   numberOr,
   openSession,
@@ -107,6 +108,28 @@ assert.equal(
   } as unknown as ClientCtx;
   openSession(ctx, "s1");
   assert.deepEqual(opened, ["uiWorkspace:s1"]);
+}
+
+// groupSkillsByScope sorts each scope into its bucket; an unknown scope falls to plugin.
+{
+  const g = groupSkillsByScope([
+    { scope: "user", name: "a" },
+    { scope: "project", name: "b" },
+    { scope: "plugin:foo", name: "c" },
+    { scope: "something-else", name: "d" },
+  ]);
+  assert.deepEqual(
+    g.user.map((r) => r.name),
+    ["a"],
+  );
+  assert.deepEqual(
+    g.project.map((r) => r.name),
+    ["b"],
+  );
+  assert.deepEqual(
+    g.plugin.map((r) => r.name),
+    ["c", "d"],
+  );
 }
 
 console.log("✓ All login mask checks pass");

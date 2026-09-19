@@ -36,6 +36,7 @@ import {
   maskEmail,
   resumeCommand,
   saveBlob,
+  groupSkillsByScope,
 } from "./shared.js";
 import { UpdatePill } from "./update-pill.js";
 import { ReportBlock } from "./report.js";
@@ -695,31 +696,77 @@ interface SkillRow {
   description: string;
 }
 
+const row = (s: SkillRow) => (
+  <div
+    key={s.path}
+    style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 10px" }}
+    title={s.path}
+  >
+    <span style={{ flex: "none", fontFamily: T.mono, fontSize: 12 }}>{s.name}</span>
+    <span style={pill(T.faint)}>{s.scope}</span>
+    <span
+      style={{
+        flex: 1,
+        minWidth: 0,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+        color: T.muted,
+        fontSize: 12,
+      }}
+    >
+      {s.description}
+    </span>
+  </div>
+);
+
 /**
- * The skills the CLI can reach for this directory, under the plugin roster: the user's, the
- * project's and each installed plugin's, with a filter once there are more than a dozen. Read-only:
- * a skill is reached as its slash command through the command bridge, and edited where it lives.
+ * The Skills tab: every skill the CLI can reach for this directory, grouped by where it comes from,
+ * each scope a collapsible section. Read-only; a skill runs as its slash command through the command
+ * bridge and is edited where it lives. One /skills listing per open, the way the roster is; the box
+ * the session runs on is named in the query, so a remote session lists that box's skills.
  */
-function SkillsBlock({
-  skills,
-  query,
-  setQuery,
-}: {
-  skills: SkillRow[];
-  query: string;
-  setQuery: (q: string) => void;
-}) {
+function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
+  const cwd = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.cwd;
+  const [skills, setSkills] = useState<SkillRow[] | null>(null);
+  const [query, setQuery] = useState("");
+  const provider = claudeProviderOf(ctx, sessionId);
+  const onBox = provider === undefined ? "" : `provider=${encodeURIComponent(provider)}`;
+  const q = [
+    cwd ? `cwd=${encodeURIComponent(cwd)}` : "",
+    `session=${encodeURIComponent(sessionId)}`,
+    onBox,
+  ]
+    .filter((p) => p !== "")
+    .join("&");
+  const mounted = useRef(true);
+  useEffect(() => () => void (mounted.current = false), []);
+  useEffect(() => {
+    if (!cwd) return;
+    fetch(`${ROUTE}/skills?${q}`)
+      .then((r) => readJson<{ skills?: SkillRow[] }>(r))
+      .then((b) => mounted.current && setSkills(b.skills ?? []))
+      .catch(() => mounted.current && setSkills([]));
+  }, [cwd, q]);
+
+  if (skills === null) return null;
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
-  const shown = skills.filter((s) =>
-    words.every((w) => `${s.name} ${s.scope} ${s.description}`.toLowerCase().includes(w)),
-  );
+  const match = (s: SkillRow) =>
+    words.every((w) => `${s.name} ${s.scope} ${s.description}`.toLowerCase().includes(w));
+  const groups = groupSkillsByScope(skills);
+  const sections: { key: "user" | "project" | "plugin"; label: string; rows: SkillRow[] }[] = [
+    { key: "user", label: "User skills", rows: groups.user },
+    { key: "project", label: "Project skills", rows: groups.project },
+    { key: "plugin", label: "Plugin skills", rows: groups.plugin },
+  ];
+  const anyMatch = skills.some(match);
   return (
-    <div data-omc-skills="">
-      <span style={{ ...meta, padding: "2px 4px", display: "block", marginTop: 8 }}>
-        Skills · {skills.length}
-      </span>
+    <div style={bodyFlow} data-omc-skills="">
       {skills.length === 0 && (
-        <span style={{ ...meta, padding: "2px 10px", display: "block", whiteSpace: "normal" }}>
+        <span
+          data-omc-skills-none=""
+          style={{ ...meta, padding: "2px 10px", display: "block", whiteSpace: "normal" }}
+        >
           No skills: none under ~/.claude/skills, this project's .claude/skills, or an installed
           plugin.
         </span>
@@ -734,32 +781,23 @@ function SkillsBlock({
           onChange={(e) => setQuery(e.target.value)}
         />
       )}
-      {shown.length === 0 && skills.length > 0 && (
-        <span style={{ ...meta, padding: "2px 4px" }}>No skill matches</span>
+      {skills.length > 0 && !anyMatch && (
+        <span data-omc-skills-empty="" style={{ ...meta, padding: "2px 4px" }}>
+          No skill matches
+        </span>
       )}
-      {shown.map((s) => (
-        <div
-          key={s.path}
-          style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 10px" }}
-          title={s.path}
-        >
-          <span style={{ flex: "none", fontFamily: T.mono, fontSize: 12 }}>{s.name}</span>
-          <span style={pill(T.faint)}>{s.scope}</span>
-          <span
-            style={{
-              flex: 1,
-              minWidth: 0,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-              color: T.muted,
-              fontSize: 12,
-            }}
-          >
-            {s.description}
-          </span>
-        </div>
-      ))}
+      {sections.map((sec) => {
+        const rows = sec.rows.filter(match);
+        if (rows.length === 0) return null;
+        return (
+          <details key={sec.key} open data-omc-skills-scope={sec.key}>
+            <summary style={{ ...meta, padding: "2px 4px", cursor: "pointer" }}>
+              {sec.label} · {sec.rows.length}
+            </summary>
+            {rows.map(row)}
+          </details>
+        );
+      })}
     </div>
   );
 }
@@ -774,8 +812,6 @@ function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCt
   const [error, setError] = useState("");
   const [roster, setRoster] = useState<PluginRoster | null>(null);
   const [pluginErrors, setPluginErrors] = useState<PluginLoadError[]>([]);
-  const [skills, setSkills] = useState<SkillRow[] | null>(null);
-  const [skillQuery, setSkillQuery] = useState("");
 
   // Every call names the session's own mount, so a session on a box lists and edits that box's
   // CLAUDE.md files rather than this PC's.
@@ -817,15 +853,6 @@ function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCt
   useEffect(() => {
     refreshRoster();
   }, [refreshRoster]);
-  // Skills once per open, the way the roster is: a listing, not a poll.
-  useEffect(() => {
-    if (!cwd) return;
-    fetch(`${ROUTE}/skills?${q}`)
-      .then((r) => readJson<{ skills?: SkillRow[] }>(r))
-      .then((b) => mounted.current && setSkills(b.skills ?? []))
-      .catch(() => mounted.current && setSkills([]));
-  }, [cwd, q]);
-
   const openFile = async (f: InstructionFile) => {
     setError("");
     try {
@@ -957,9 +984,6 @@ function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCt
           ctx={ctx}
           onChanged={refreshRoster}
         />
-      )}
-      {file === null && skills !== null && (
-        <SkillsBlock skills={skills} query={skillQuery} setQuery={setSkillQuery} />
       )}
       {error && <span style={errText}>{error}</span>}
     </div>
@@ -3447,6 +3471,7 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
     ...(blank ? [{ key: "Restore", label: "Restore" }] : []),
     { key: "Memory", label: "Memory" },
     { key: "Instructions", label: "Instructions" },
+    { key: "Skills", label: "Skills" },
     { key: "Rewind", label: "Rewind" },
     { key: "Changes", label: "Changes" },
     { key: "MCP", label: "MCP" },
@@ -3561,6 +3586,7 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
               {tab === "Restore" && <RestoreBody sessionId={sessionId} ctx={ctx} onClose={close} />}
               {tab === "Memory" && <MemoryBody sessionId={sessionId} ctx={ctx} />}
               {tab === "Instructions" && <InstructionsBody sessionId={sessionId} ctx={ctx} />}
+              {tab === "Skills" && <SkillsBody sessionId={sessionId} ctx={ctx} />}
               {tab === "Rewind" && <RewindBody sessionId={sessionId} ctx={ctx} onClose={close} />}
               {tab === "Changes" && <ChangesBody sessionId={sessionId} ctx={ctx} onClose={close} />}
               {tab === "MCP" && <McpBody sessionId={sessionId} ctx={ctx} onClose={close} />}

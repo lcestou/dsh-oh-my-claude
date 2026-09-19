@@ -826,3 +826,20 @@ export interface ClientCtx {
     };
   };
 }
+
+/** The three Skills-tab buckets a skill falls into. */
+type SkillGroups<T> = { user: T[]; project: T[]; plugin: T[] };
+
+/** Split skills into the three Skills-tab sections: `user`, `project`, and everything else (a
+ *  `plugin:<name>` scope) under `plugin`. */
+export function groupSkillsByScope<T extends { scope: string }>(
+  rows: readonly T[],
+): SkillGroups<T> {
+  const out: SkillGroups<T> = { user: [], project: [], plugin: [] };
+  for (const item of rows) {
+    if (item.scope === "user") out.user.push(item);
+    else if (item.scope === "project") out.project.push(item);
+    else out.plugin.push(item);
+  }
+  return out;
+}
