@@ -102,7 +102,7 @@ Working on the plugin itself? Start at [docs/developing.md](https://github.com/l
 16. Pick what dsh adds to your prompts, with the size of each block on the label. [dsh context](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#dsh-context)
 17. A card offers each new Claude Code release for the box a session runs on, and installs it from dsh; a headless `claude -p` never updates itself. [Claude Code updates](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#surviving-claude-code-updates)
 18. What the last five versions changed, read from the plugin's own changelog, in Settings. [Changelog](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#changelog)
-19. Every skill the CLI can reach, grouped by scope, and what each costs in context from the CLI's own `/skill-doctor`. [Skills](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#skills)
+19. Every skill the CLI can reach, grouped by scope, with add, edit and remove for your own and the project's, and what each costs in context from the CLI's own `/skill-doctor`. [Skills](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#skills)
 
 Defaults you never have to touch, such as secret redaction in tool results and surviving the CLI's own updates, are on [How it works](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md).
 

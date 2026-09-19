@@ -19,6 +19,8 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Added
 
+- The Skills tab can now add, edit and remove skills, not only list them. New skill writes a template `SKILL.md` and opens it for editing; Edit and Remove act on your own and the project's skills, while a plugin's stay read-only. A change reaches the running session at once, so a new skill's slash command works without restarting Claude.
+
 - The context ring popover now shows what is driving your plan limits, by skill, subagent, plugin
   and MCP server, over the last seven days. It reads Claude Code's own `/usage` on the box, so the
   figures match what `claude` reports in a terminal.
