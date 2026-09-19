@@ -4494,7 +4494,10 @@ console.log("interrupt-on-abort ok");
     "the allowlist prunes a picker row too",
   );
 
-  const adapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  // A config dir of its own: the picker's settings.json shapes the efforts (a `maxEffortLevel` on
+  // the box would trim ["max"] away) and this block is about the seed, not the box's settings.
+  const cliHome = await mkdtemp(joinPath(tmpdir(), "dsh-cli-models-home-"));
+  const adapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({ configDir: cliHome }));
   let asked = 0;
   const proc: any = {
     alive: true,
@@ -4536,7 +4539,7 @@ console.log("interrupt-on-abort ok");
   assert.equal(prepared.model.context?.contextWindow, 1_000_000);
   // The answer is kept per box: a fresh adapter lists the same row before any process answers.
   await new Promise((r) => setTimeout(r, 20));
-  const fresh = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  const fresh = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({ configDir: cliHome }));
   assert.equal(
     (await fresh.listModels("claude-code"))[0]?.id,
     "opus[1m]",
