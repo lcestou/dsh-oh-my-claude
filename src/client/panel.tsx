@@ -791,6 +791,7 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
     if (!editing) return;
     setBusy("save");
     setErr("");
+    setApplied("");
     try {
       const r = await readJson<{ mtime?: number; live?: boolean }>(
         await fetch(`${ROUTE}/skills/file${box}`, {
@@ -812,6 +813,7 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   const create = async () => {
     setBusy("create");
     setErr("");
+    setApplied("");
     try {
       const r = await readJson<{ path: string; live?: boolean }>(
         await fetch(`${ROUTE}/skills/create${box}`, {
@@ -842,6 +844,7 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   const remove = async (s: SkillRow) => {
     setBusy(s.path);
     setErr("");
+    setApplied("");
     try {
       const r = await readJson<{ live?: boolean }>(
         await fetch(`${ROUTE}/skills/remove${box}`, {
@@ -861,6 +864,7 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   const reload = async () => {
     setBusy("reload");
     setErr("");
+    setApplied("");
     try {
       const r = await readJson<{ live?: boolean }>(
         await fetch(`${ROUTE}/skills/reload${box}`, {

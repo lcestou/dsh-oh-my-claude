@@ -1842,5 +1842,22 @@ console.log("sessions ok");
   );
   assert.equal(r.status, 400);
   assert.equal(r.body.error, "not a listed skill");
+
+  // remove: the created user skill is deleted, and its SKILL.md is gone from disk
+  const dupPath = join(tmp, "claude", "skills", "dup", "SKILL.md");
+  r = await respond(
+    "POST",
+    "/dsh-oh-my-claude/skills/remove",
+    JSON.stringify({ session: "s1", cwd, path: dupPath }),
+  );
+  assert.equal(r.status, 200);
+  assert.equal(r.body.ok, true);
+  assert.equal(
+    await access(dupPath).then(
+      () => "exists",
+      () => "gone",
+    ),
+    "gone",
+  );
   console.log("skills-routes ok");
 }
