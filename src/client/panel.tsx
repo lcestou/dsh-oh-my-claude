@@ -698,35 +698,14 @@ interface SkillRow {
   description: string;
 }
 
-const row = (s: SkillRow) => (
-  <div
-    key={s.path}
-    style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 10px" }}
-    title={s.path}
-  >
-    <span style={{ flex: "none", fontFamily: T.mono, fontSize: 12 }}>{s.name}</span>
-    <span style={pill(T.faint)}>{s.scope}</span>
-    <span
-      style={{
-        flex: 1,
-        minWidth: 0,
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-        whiteSpace: "nowrap",
-        color: T.muted,
-        fontSize: 12,
-      }}
-    >
-      {s.description}
-    </span>
-  </div>
-);
+const writable = (scope: string) => scope === "user" || scope === "project";
 
 /**
  * The Skills tab: every skill the CLI can reach for this directory, grouped by where it comes from,
- * each scope a collapsible section. Read-only; a skill runs as its slash command through the command
- * bridge and is edited where it lives. One /skills listing per open, the way the roster is; the box
- * the session runs on is named in the query, so a remote session lists that box's skills.
+ * each scope a collapsible section. User and project skills are created, edited and removed here; a
+ * plugin's skills are read-only, edited where the plugin ships them. A write asks the live process to
+ * re-read skills (`reload_skills`), so a new skill's /command registers without a respawn. The box the
+ * session runs on is named in the query, so a remote session lists and edits that box's skills.
  */
 function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   const cwd = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.cwd;
@@ -734,6 +713,17 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   const [query, setQuery] = useState("");
   const [cost, setCost] = useState<SkillState>({ kind: "idle" });
   const costAc = useRef<AbortController | null>(null);
+  const [editing, setEditing] = useState<{ path: string; name: string } | null>(null);
+  const [text, setText] = useState("");
+  const [saved, setSaved] = useState("");
+  const [mtime, setMtime] = useState<number | undefined>(undefined);
+  const [busy, setBusy] = useState("");
+  const [err, setErr] = useState("");
+  const [applied, setApplied] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newScope, setNewScope] = useState("user");
+  const [newDesc, setNewDesc] = useState("");
   const provider = claudeProviderOf(ctx, sessionId);
   const onBox = provider === undefined ? "" : `provider=${encodeURIComponent(provider)}`;
   const q = [
@@ -745,15 +735,16 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
     .join("&");
   const mounted = useRef(true);
   useEffect(() => () => void (mounted.current = false), []);
-  useEffect(() => {
+  const refresh = useCallback(() => {
     if (!cwd) return;
     fetch(`${ROUTE}/skills?${q}`)
       .then((r) => readJson<{ skills?: SkillRow[] }>(r))
       .then((b) => mounted.current && setSkills(b.skills ?? []))
       .catch(() => mounted.current && setSkills([]));
   }, [cwd, q]);
-  // Abort a slow /skill-doctor read if the tab is switched away, so no setState lands on an
-  // unmounted body.
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
   useEffect(() => () => costAc.current?.abort(), []);
   const loadCost = useCallback(() => {
     setCost({ kind: "loading" });
@@ -779,7 +770,122 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
       .finally(() => clearTimeout(timer));
   }, [sessionId]);
 
+  const box = boxQuery(ctx, sessionId);
+  const note = (live: boolean) =>
+    setApplied(live ? "Applied to this session." : "Takes effect at the next spawn.");
+  const openEdit = async (path: string, name: string) => {
+    setErr("");
+    try {
+      const body = await readJson<{ text: string; mtime?: number }>(
+        await fetch(`${ROUTE}/skills/file?${q}&path=${encodeURIComponent(path)}`),
+      );
+      setEditing({ path, name });
+      setText(body.text);
+      setSaved(body.text);
+      setMtime(body.mtime);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  };
+  const save = async () => {
+    if (!editing) return;
+    setBusy("save");
+    setErr("");
+    setApplied("");
+    try {
+      const r = await readJson<{ mtime?: number; live?: boolean }>(
+        await fetch(`${ROUTE}/skills/file${box}`, {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ session: sessionId, cwd, path: editing.path, text, mtime }),
+        }),
+      );
+      setSaved(text);
+      setMtime(r.mtime);
+      note(r.live === true);
+      refresh();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy("");
+    }
+  };
+  const create = async () => {
+    setBusy("create");
+    setErr("");
+    setApplied("");
+    try {
+      const r = await readJson<{ path: string; live?: boolean }>(
+        await fetch(`${ROUTE}/skills/create${box}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            session: sessionId,
+            cwd,
+            name: newName,
+            scope: newScope,
+            description: newDesc,
+          }),
+        }),
+      );
+      note(r.live === true);
+      const name = newName;
+      setNewName("");
+      setNewDesc("");
+      refresh();
+      // Open the editor before dropping the form, so the list never flashes between the two.
+      await openEdit(r.path, name);
+      setCreating(false);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy("");
+    }
+  };
+  const remove = async (s: SkillRow) => {
+    setBusy(s.path);
+    setErr("");
+    setApplied("");
+    try {
+      const r = await readJson<{ live?: boolean }>(
+        await fetch(`${ROUTE}/skills/remove${box}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ session: sessionId, cwd, path: s.path }),
+        }),
+      );
+      note(r.live === true);
+      refresh();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy("");
+    }
+  };
+  const reload = async () => {
+    setBusy("reload");
+    setErr("");
+    setApplied("");
+    try {
+      const r = await readJson<{ live?: boolean }>(
+        await fetch(`${ROUTE}/skills/reload${box}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ session: sessionId }),
+        }),
+      );
+      note(r.live === true);
+      refresh();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy("");
+    }
+  };
+
   if (skills === null) return null;
+
+  const nameOk = /^[a-z0-9][a-z0-9-]{0,63}$/.test(newName);
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
   const match = (s: SkillRow) =>
     words.every((w) => `${s.name} ${s.scope} ${s.description}`.toLowerCase().includes(w));
@@ -790,8 +896,188 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
     { key: "plugin", label: "Plugin skills", rows: groups.plugin },
   ];
   const anyMatch = skills.some(match);
+  const small: CSSProperties = { ...btn, flex: "none", padding: "0 6px", fontSize: 11 };
+  const rowNode = (s: SkillRow) => (
+    <div
+      key={s.path}
+      style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 10px" }}
+      title={s.path}
+    >
+      <span style={{ flex: "none", fontFamily: T.mono, fontSize: 12 }}>{s.name}</span>
+      <span style={pill(T.faint)}>{s.scope}</span>
+      <span
+        style={{
+          flex: 1,
+          minWidth: 0,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          color: T.muted,
+          fontSize: 12,
+        }}
+      >
+        {s.description}
+      </span>
+      {writable(s.scope) && (
+        <button
+          type="button"
+          data-omc-skill-edit=""
+          aria-label={`Edit ${s.name}`}
+          style={small}
+          disabled={busy !== ""}
+          onClick={() => openEdit(s.path, s.name)}
+        >
+          Edit
+        </button>
+      )}
+      {writable(s.scope) && (
+        <ConfirmButton
+          label="Remove"
+          ariaLabel={`Remove ${s.name}`}
+          style={small}
+          disabled={busy !== ""}
+          busyLabel={busy === s.path ? "…" : undefined}
+          onAct={() => void remove(s)}
+        />
+      )}
+    </div>
+  );
+
+  if (editing !== null) {
+    const dirty = text !== saved;
+    return (
+      <div style={bodyFlow} data-omc-skills="">
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <button type="button" style={btn} onClick={() => setEditing(null)} disabled={busy !== ""}>
+            ‹ Back
+          </button>
+          <span style={{ flex: 1, minWidth: 0, fontFamily: T.mono, fontSize: 12 }}>
+            {editing.name}
+          </span>
+          <button
+            type="button"
+            style={dirty ? btnPrimary : btn}
+            onClick={save}
+            disabled={busy !== "" || !dirty}
+          >
+            Save
+          </button>
+        </div>
+        <textarea
+          data-omc-skill-editor=""
+          aria-label="Edit SKILL.md"
+          value={text}
+          spellCheck={false}
+          autoFocus
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if ((e.metaKey || e.ctrlKey) && e.key === "Enter") save();
+          }}
+          style={{ ...code, minHeight: 300, resize: "vertical", whiteSpace: "pre-wrap" }}
+        />
+        {applied && (
+          <span data-omc-skill-applied="" style={{ ...meta, padding: "2px 4px" }}>
+            {applied}
+          </span>
+        )}
+        {err && (
+          <span data-omc-skill-error="" style={errText}>
+            {err}
+          </span>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div style={bodyFlow} data-omc-skills="">
+      <div style={{ display: "flex", gap: 6, padding: "2px 4px" }}>
+        {!creating && (
+          <button
+            type="button"
+            data-omc-skill-new=""
+            style={btn}
+            disabled={busy !== ""}
+            onClick={() => {
+              setCreating(true);
+              setErr("");
+            }}
+          >
+            New skill
+          </button>
+        )}
+        <button
+          type="button"
+          data-omc-skill-reload=""
+          style={btn}
+          disabled={busy !== ""}
+          onClick={reload}
+        >
+          {busy === "reload" ? "…" : "Reload"}
+        </button>
+      </div>
+      {creating && (
+        <div
+          data-omc-skill-form=""
+          style={{ display: "flex", flexDirection: "column", gap: 6, padding: "2px 4px" }}
+        >
+          <input
+            type="text"
+            data-omc-skill-name=""
+            aria-label="New skill name"
+            placeholder="skill-name (lowercase, hyphens)"
+            value={newName}
+            onChange={(e) => setNewName(e.currentTarget.value)}
+            disabled={busy !== ""}
+            style={{ ...inputStyle, fontSize: 12 }}
+          />
+          {newName !== "" && !nameOk && (
+            <span data-omc-skill-name-error="" style={{ ...meta, color: T.err }}>
+              A skill name is lowercase letters, digits and hyphens.
+            </span>
+          )}
+          <select
+            data-omc-skill-scope=""
+            value={newScope}
+            onChange={(e) => setNewScope(e.currentTarget.value)}
+            disabled={busy !== ""}
+            style={{ ...select, fontSize: 12 }}
+          >
+            <option value="user">User</option>
+            <option value="project">Project</option>
+          </select>
+          <input
+            type="text"
+            data-omc-skill-desc=""
+            aria-label="New skill description"
+            placeholder="One line: what it does and when to use it"
+            value={newDesc}
+            onChange={(e) => setNewDesc(e.currentTarget.value)}
+            disabled={busy !== ""}
+            style={{ ...inputStyle, fontSize: 12 }}
+          />
+          <div style={{ display: "flex", gap: 6 }}>
+            <button
+              type="button"
+              data-omc-skill-create=""
+              style={btnPrimary}
+              disabled={busy !== "" || !nameOk}
+              onClick={create}
+            >
+              {busy === "create" ? "…" : "Create"}
+            </button>
+            <button
+              type="button"
+              data-omc-skill-cancel=""
+              style={btn}
+              disabled={busy !== ""}
+              onClick={() => setCreating(false)}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
       {skills.length === 0 && (
         <span
           data-omc-skills-none=""
@@ -824,10 +1110,25 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
             <summary style={{ ...meta, padding: "2px 4px", cursor: "pointer" }}>
               {sec.label} · {sec.rows.length}
             </summary>
-            {rows.map(row)}
+            {rows.map(rowNode)}
           </details>
         );
       })}
+      {skills.some((s) => writable(s.scope)) && (
+        <span data-omc-skill-note="" style={{ ...meta, padding: "2px 4px", whiteSpace: "normal" }}>
+          Removing deletes the skill&apos;s folder. Its /command stays until Claude restarts.
+        </span>
+      )}
+      {applied && (
+        <span data-omc-skill-applied="" style={{ ...meta, padding: "2px 4px" }}>
+          {applied}
+        </span>
+      )}
+      {err && (
+        <span data-omc-skill-error="" style={errText}>
+          {err}
+        </span>
+      )}
       <details
         data-omc-skill-doctor-fold=""
         style={{ marginTop: 8 }}

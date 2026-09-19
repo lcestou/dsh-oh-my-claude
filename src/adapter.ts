@@ -3331,6 +3331,18 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     return reply.ok ? { ok: true, live: true } : { ok: false, live: true, error: reply.error };
   }
 
+  /** Ask a session's live process to re-read skills from disk (`reload_skills`), so a skill just
+   *  created, edited or removed applies now. The reply lists the skills and the process emits a
+   *  `commands_changed` frame, which the init handler bridges into dsh's slash menu, so a new
+   *  skill's `/name` registers live. A dead process is not a failure: the next spawn reads the
+   *  file, so `live` is false and there is nothing to say. */
+  async reloadSkills(sessionId: string): Promise<{ ok: boolean; live: boolean; error?: string }> {
+    const proc = this.processes.get(registryKey(this.providerId, sessionId));
+    if (!proc?.alive) return { ok: true, live: false };
+    const reply = await this.control(proc, { subtype: "reload_skills" }, 15_000);
+    return reply.ok ? { ok: true, live: true } : { ok: false, live: true, error: reply.error };
+  }
+
   /** The plugin load errors this session's last init frame reported, for the panel. */
   pluginErrorsFor(sessionId: string): PluginLoadError[] {
     return this.sessionPluginErrors.get(sessionId) ?? [];
@@ -6290,6 +6302,7 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       },
       models: () => adapter.getAdvisorModels(),
       reloadPlugins: (sessionId: string) => adapter.ownerFor(sessionId).reloadPlugins(sessionId),
+      reloadSkills: (sessionId: string) => adapter.ownerFor(sessionId).reloadSkills(sessionId),
       pluginErrors: (sessionId: string) => adapter.ownerFor(sessionId).pluginErrorsFor(sessionId),
       continueAfterLimit: adapter.config.continueAfterLimit,
     });

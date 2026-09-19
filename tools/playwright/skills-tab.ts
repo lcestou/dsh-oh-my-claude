@@ -134,6 +134,28 @@ for (const c of cases) {
   await p.route("**/dsh-oh-my-claude/skill-doctor?*", async (route) => {
     await route.fulfill({ json: c.body });
   });
+  await p.route("**/dsh-oh-my-claude/skills/create*", async (route) => {
+    await route.fulfill({ json: { ok: true, path: "/u/new-skill/SKILL.md", live: true } });
+  });
+  await p.route("**/dsh-oh-my-claude/skills/file*", async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        json: {
+          path: "/u/new-skill/SKILL.md",
+          text: "---\nname: new-skill\ndescription: d\n---\n",
+          mtime: 1,
+        },
+      });
+    } else {
+      await route.fulfill({ json: { ok: true, mtime: 2, live: true } });
+    }
+  });
+  await p.route("**/dsh-oh-my-claude/skills/remove*", async (route) => {
+    await route.fulfill({ json: { ok: true, live: false } });
+  });
+  await p.route("**/dsh-oh-my-claude/skills/reload*", async (route) => {
+    await route.fulfill({ json: { ok: true, live: true } });
+  });
   await p.goto(dshUrl(token), { waitUntil: "networkidle" });
   await p.waitForTimeout(2500);
   // Open a session so the panel has one to read.
@@ -174,6 +196,47 @@ for (const c of cases) {
       .catch(() => {});
     await p.waitForTimeout(300);
   }
+  // The add/edit/remove affordances (report case only, so it runs once).
+  let editOk = true;
+  if (c.name === "report") {
+    const newVisible =
+      (await p.locator("[data-omc-skill-new]").count()) === 1 &&
+      (await p.locator("[data-omc-skill-reload]").count()) === 1;
+    await p
+      .locator("[data-omc-skill-new]")
+      .click()
+      .catch(() => {});
+    await p.waitForTimeout(200);
+    await p
+      .locator("[data-omc-skill-name]")
+      .fill("new-skill")
+      .catch(() => {});
+    await p
+      .locator("[data-omc-skill-create]")
+      .click()
+      .catch(() => {});
+    await p.waitForTimeout(600);
+    const editorVisible = (await p.locator("[data-omc-skill-editor]").count()) === 1;
+    await p
+      .locator('[data-omc-skills=""] button', { hasText: "Back" })
+      .first()
+      .click()
+      .catch(() => {});
+    await p.waitForTimeout(300);
+    const userEdit = await p
+      .locator('[data-omc-skills-scope="user"] [data-omc-skill-edit]')
+      .count();
+    const pluginEdit = await p
+      .locator('[data-omc-skills-scope="plugin"] [data-omc-skill-edit]')
+      .count();
+    const noteOk = (
+      await p
+        .locator("[data-omc-skill-note]")
+        .innerText()
+        .catch(() => "")
+    ).includes("Its /command stays until Claude restarts");
+    editOk = newVisible && editorVisible && userEdit > 0 && pluginEdit === 0 && noteOk;
+  }
   // The Skill costs fold: open it, then read its report.
   await p.locator("[data-omc-skill-doctor-fold] > summary").click();
   await p.waitForTimeout(1500);
@@ -184,9 +247,9 @@ for (const c of cases) {
     .catch(() => "");
   const preCount = await pre.count();
   const hasText = foldText.includes(c.text);
-  const ok = scopesOk && searchOk && hasText && (c.pre ? preCount === 1 : preCount === 0);
+  const ok = scopesOk && searchOk && editOk && hasText && (c.pre ? preCount === 1 : preCount === 0);
   console.log(
-    `${c.name}: scopes=${scopeCounts.join(",")} search=${searchOk} pre=${preCount} hasText=${hasText} -> ${ok ? "PASS" : "FAIL"}`,
+    `${c.name}: scopes=${scopeCounts.join(",")} search=${searchOk} edit=${editOk} pre=${preCount} hasText=${hasText} -> ${ok ? "PASS" : "FAIL"}`,
   );
   if (!ok) failed = true;
   await ctx.close();
