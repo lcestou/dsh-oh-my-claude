@@ -4033,7 +4033,9 @@ function watchSessionNotices(ctx: ClientCtx) {
   let prev: NoticeSnapshot | null = null;
   const waiting = new Set<string>();
   // The `at` of the last fallback announced per session, so a session that fell back once and then
-  // ran clean turns does not re-announce the stale record on every later stop.
+  // ran clean turns does not re-announce the stale record on every later stop. `seenFallback` is in
+  // memory, so a tab reload forgets it; the freshness window (FRESH_MS, beside announceStop) then
+  // stops a record left over from a switch minutes ago from re-announcing on the next clean stop.
   const seenFallback: Record<string, number> = {};
   let recapPending: Record<string, number> = {};
   // The recap's two settings, kept beside the tick rather than read in it: the tick is synchronous
@@ -4123,9 +4125,13 @@ function notifyWaiting(ctx: ClientCtx, id: string, title: string) {
   });
 }
 
-// On a stop, read the session's fallback record once. A fresh one (newer than the last announced)
-// fires the fallback notice and moves the picker; otherwise the generic waiting notice fires. One
-// fetch per stop, never per second.
+// How recent a fallback record must be to announce: a tab reload forgets `seenFallback`, so without
+// this a record left from a switch minutes ago would re-announce on the session's next clean stop.
+const FRESH_MS = 5 * 60_000;
+
+// On a stop, read the session's fallback record once. A fresh one (newer than the last announced,
+// and within FRESH_MS) fires the fallback notice and moves the picker; otherwise the generic
+// waiting notice fires. One fetch per stop, never per second.
 async function announceStop(
   ctx: ClientCtx,
   id: string,
@@ -4142,7 +4148,7 @@ async function announceStop(
   } catch {
     rec = null;
   }
-  if (rec && rec.at > (seen[id] ?? 0)) {
+  if (rec && rec.at > (seen[id] ?? 0) && Date.now() - rec.at < FRESH_MS) {
     seen[id] = rec.at;
     movePickerToFallback(ctx, id, rec);
     notifyFallback(ctx, id, title, rec);
