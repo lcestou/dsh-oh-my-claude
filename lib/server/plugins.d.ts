@@ -33,6 +33,9 @@ export interface PluginLoadError {
  *  clean load has no key and yields `[]`. `typeof` is allowed here (developing.md: the runtime-typeof
  *  rule names only adapter.ts and client/index.tsx). */
 export declare function pluginErrorsOf(value: JsonValue): PluginLoadError[];
+/** Read a numeric field off a control-response object, `undefined` when absent or not a number.
+ *  Lives here so adapter.ts (which forbids `typeof`) can read `reload_plugins`' `error_count`. */
+export declare function numberOf(value: JsonValue | undefined, key: string): number | undefined;
 /** The scopes `claude plugin` writes to; same set the MCP tab uses, named for this surface. */
 declare const PLUGIN_SCOPES: readonly ["user", "project", "local"];
 export type PluginScope = (typeof PLUGIN_SCOPES)[number];

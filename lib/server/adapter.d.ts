@@ -1,5 +1,6 @@
 import { type FSWatcher } from "node:fs";
 import type { Spawner, SubprocessHandle, ContextUsage, WorkspaceDiff, McpServerStatus, CliModel, PermissionRules, HooksListing } from "./process.js";
+import { type PluginLoadError } from "./plugins.js";
 import { LlmAdapter, type ContentBlock, type GenerateOptions, type LlmModelInfo, type LlmResolvedModelInfo, type StreamChunk } from "@deepseek-ai/dsh-llm";
 import z from "@deepseek-ai/schemastery";
 import { type ContextSizes, type ContextSource } from "./context-sources.js";
@@ -921,6 +922,11 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     static readonly OWN_COMMANDS: Set<string>;
     /** dsh session id → the tool names its last init frame reported; absent until one arrives. */
     readonly sessionTools: Map<string, string[]>;
+    /** dsh session id → the plugins its last init frame said the CLI failed to load. Absent until an
+     *  init frame arrives; a clean load clears it.
+     *  ponytail: unbounded like sessionTools, one entry per live session, only overwritten or cleared,
+     *  never accumulated. Prune with the session lifecycle if sessionTools ever gets a prune. */
+    readonly sessionPluginErrors: Map<string, PluginLoadError[]>;
     /**
      * Register Claude Code's slash commands (from the CLI's init frame) as dsh `/commands`. The
      * handler hands the line to Claude as the next prompt, where the CLI expands the skill or
@@ -1023,6 +1029,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
         live: boolean;
         error?: string;
     }>;
+    /** The plugin load errors this session's last init frame reported, for the panel. */
+    pluginErrorsFor(sessionId: string): PluginLoadError[];
     /** The CLI's working-tree diff (`get_workspace_diff`) for a session with a live process. */
     workspaceDiff(sessionId: string): Promise<WorkspaceDiffReply>;
     /** The permission rules and hooks a session's live process actually loaded

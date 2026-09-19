@@ -2,7 +2,8 @@ import type { IncomingMessage } from "node:http";
 import { type Reach } from "./reach.js";
 import type { JsonValue, PluginContext, WorkspaceRegistry } from "./dsh.js";
 import type { ToolMode, ToolModeInfo } from "./rows-probe.js";
-import { EFFORTS_ALL, type LoginNeed } from "./adapter.js";
+import { type PluginLoadError } from "./plugins.js";
+import { type LoginNeed } from "./adapter.js";
 import type { PermissionModeInfo, PermissionModeReply, RewindReply, ContextUsageReply, WorkspaceDiffReply, PermissionReadoutReply, McpStatusReply, AsideEntry, LiveTurn } from "./adapter.js";
 /** Any JSON object, as a request body or a stored file decodes to. */
 type JsonObject = Record<string, JsonValue>;
@@ -197,7 +198,6 @@ interface PickerOption {
     model: string;
     label?: string;
 }
-type EffortLevel = (typeof EFFORTS_ALL)[number];
 /** The two settings.json keys that shape Claude Code's own `/model` picker. */
 export interface PickerSettings {
     /** Allowlist entries: a family alias, a version prefix or a full id. Absent means no allowlist. */
@@ -206,10 +206,6 @@ export interface PickerSettings {
     options: PickerOption[];
     /** The CLI keeps only the Default row and those extra rows. */
     replaceBuiltInOptions: boolean;
-    /** settings.json `maxEffortLevel`: the highest effort the pickers offer. Absent means no cap. */
-    maxEffortLevel?: EffortLevel;
-    /** Per-model `modelSettings.<id>.maxEffortLevel`, which overrides the top level for that model. */
-    modelEffortCaps?: Record<string, EffortLevel>;
 }
 /**
  * Read what settings.json says about the picker. Anything the CLI would ignore is dropped here,
@@ -430,11 +426,14 @@ export interface SessionRouteOptions {
         live: boolean;
         error?: string;
     }>;
+    /** The plugins a session's live process failed to load, from its init frame. Empty when clean or
+     *  when no process has run. */
+    pluginErrors?: (sessionId: string) => PluginLoadError[];
     /** Whether this plugin waits out a usage limit and continues the turn itself. */
     continueAfterLimit?: boolean;
 }
 /** `projectDir(cwd)` → Claude Code project dir; `startedIds()` → ids the adapter started itself. */
-export declare function registerSessionRoutes(ctx: PluginContext, { log, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, importedDir, sshBoxesPath, onSshBoxes, remoteWorkspacesPath, onRemoteWorkspaces, command, sshHost, turnRecords, dshVersion, liveTurn, idle, toolMode, terminalSync, permissionModes, thinking, rewind, contextUsage, workspaceDiff, permissionReadout, askAside, mcp, permissionAsks, sideQuestions, loginNeeded, boxOfSession, claudeUpdated, loginDone, logoutDone, liveCount, persistAsides, starters, setStarter, models, reloadPlugins, continueAfterLimit, instanceFor, instanceForHost, onLoginStatus, }: SessionRouteOptions): void;
+export declare function registerSessionRoutes(ctx: PluginContext, { log, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, importedDir, sshBoxesPath, onSshBoxes, remoteWorkspacesPath, onRemoteWorkspaces, command, sshHost, turnRecords, dshVersion, liveTurn, idle, toolMode, terminalSync, permissionModes, thinking, rewind, contextUsage, workspaceDiff, permissionReadout, askAside, mcp, permissionAsks, sideQuestions, loginNeeded, boxOfSession, claudeUpdated, loginDone, logoutDone, liveCount, persistAsides, starters, setStarter, models, reloadPlugins, pluginErrors, continueAfterLimit, instanceFor, instanceForHost, onLoginStatus, }: SessionRouteOptions): void;
 /**
  * The four files Claude Code merges for one session, highest precedence first. Duplicated in
  * `src/client/settings.ts`: the browser half cannot import server code, and the order is the

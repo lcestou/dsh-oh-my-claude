@@ -56,6 +56,16 @@ export function pluginErrorsOf(value: JsonValue): PluginLoadError[] {
   return out;
 }
 
+/** Read a numeric field off a control-response object, `undefined` when absent or not a number.
+ *  Lives here so adapter.ts (which forbids `typeof`) can read `reload_plugins`' `error_count`. */
+export function numberOf(value: JsonValue | undefined, key: string): number | undefined {
+  if (value === null || value === undefined || typeof value !== "object" || Array.isArray(value))
+    return undefined;
+  // SAFETY: guarded to a non-null, non-array object on the line above
+  const n = (value as Record<string, JsonValue>)[key];
+  return typeof n === "number" ? n : undefined;
+}
+
 /** The scopes `claude plugin` writes to; same set the MCP tab uses, named for this surface. */
 const PLUGIN_SCOPES = ["user", "project", "local"] as const;
 export type PluginScope = (typeof PLUGIN_SCOPES)[number];

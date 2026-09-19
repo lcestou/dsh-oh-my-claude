@@ -17,6 +17,7 @@ import type {
   PermissionRules,
   HooksListing,
 } from "./process.js";
+import { numberOf, type PluginLoadError } from "./plugins.js";
 import {
   LlmAdapter,
   LlmError,
@@ -2857,6 +2858,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   static readonly OWN_COMMANDS = new Set(["temporary", "btw"]);
   /** dsh session id → the tool names its last init frame reported; absent until one arrives. */
   readonly sessionTools = new Map<string, string[]>();
+  /** dsh session id → the plugins its last init frame said the CLI failed to load. Absent until an
+   *  init frame arrives; a clean load clears it.
+   *  ponytail: unbounded like sessionTools, one entry per live session, only overwritten or cleared,
+   *  never accumulated. Prune with the session lifecycle if sessionTools ever gets a prune. */
+  readonly sessionPluginErrors = new Map<string, PluginLoadError[]>();
 
   /**
    * Register Claude Code's slash commands (from the CLI's init frame) as dsh `/commands`. The
@@ -3285,7 +3291,17 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const proc = this.processes.get(registryKey(this.providerId, sessionId));
     if (!proc?.alive) return { ok: true, live: false };
     const reply = await this.control(proc, { subtype: "reload_plugins" }, 15_000);
+    // reload_plugins returns a fresh error_count (probe 2026-09-19), not the detailed array and no
+    // new init frame. Zero means every load error is gone, so clear the banner now; a non-zero
+    // leaves the last init's detail standing until the next spawn carries fresh detail.
+    if (reply.ok && numberOf(reply.response, "error_count") === 0)
+      this.sessionPluginErrors.delete(sessionId);
     return reply.ok ? { ok: true, live: true } : { ok: false, live: true, error: reply.error };
+  }
+
+  /** The plugin load errors this session's last init frame reported, for the panel. */
+  pluginErrorsFor(sessionId: string): PluginLoadError[] {
+    return this.sessionPluginErrors.get(sessionId) ?? [];
   }
 
   /** The CLI's working-tree diff (`get_workspace_diff`) for a session with a live process. */
@@ -5017,10 +5033,14 @@ export class ClaudeCodeAdapter extends LlmAdapter {
             }
           : undefined,
       redact: this.redact,
-      onInit: (names, tools) => {
+      onInit: (names, tools, pluginErrors) => {
         // commands_changed re-sends the command catalog alone, so an empty tool list means "not
         // told", not "no tools": overwriting would drop what the init frame established.
         if (options.sessionId && tools.length > 0) this.sessionTools.set(options.sessionId, tools);
+        // An init frame is authoritative for plugin errors (a clean load sends []), so write whenever
+        // the array is defined; commands_changed passes undefined and is skipped.
+        if (options.sessionId && pluginErrors !== undefined)
+          this.sessionPluginErrors.set(options.sessionId, pluginErrors);
         if (names.length > 0)
           this.bridgeCommands(names, this.ctx?.agents?.get?.(options.sessionId));
       },
@@ -6144,6 +6164,7 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       },
       models: () => adapter.getAdvisorModels(),
       reloadPlugins: (sessionId: string) => adapter.ownerFor(sessionId).reloadPlugins(sessionId),
+      pluginErrors: (sessionId: string) => adapter.ownerFor(sessionId).pluginErrorsFor(sessionId),
       continueAfterLimit: adapter.config.continueAfterLimit,
     });
     // Mount the saved SSH boxes at boot; `sshMounts` is scope-local so a hot reload rebuilds them.
