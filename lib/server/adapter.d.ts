@@ -334,7 +334,7 @@ export declare const liveWindowFor: (modelId: string) => number | undefined;
 export declare function mergeCatalog(cli: CliModel[], base: ReturnType<typeof M>[], picker?: PickerSettings): CatalogModel[];
 export declare function getCatalog(fetchImpl?: typeof fetch, cli?: CliModel[], picker?: PickerSettings): Promise<CatalogModel[]>;
 /** Exact model metadata. `id` must echo the requested id: dsh-llm normalizeModelInfo rejects mismatches. */
-export declare function resolveModelInfo(provider: string, modelId: string, models?: ReturnType<typeof M>[]): LlmResolvedModelInfo;
+export declare function resolveModelInfo(provider: string, modelId: string, models?: ReturnType<typeof M>[], cap?: (typeof EFFORTS_ALL)[number]): LlmResolvedModelInfo;
 /** Deterministic UUID for a dsh session id, so a reopened dsh session resumes the same Claude session. */
 /** Terminal exchanges waiting to be shown in a dsh session, and the one whose turn is open. */
 interface MirrorQueue {

@@ -576,6 +576,16 @@ export function registryKey(providerId: string, sessionId: string): string {
 }
 
 const EFFORTS_ALL = ["low", "medium", "high", "xhigh", "max"] as const;
+/** Trim an efforts list to those at or below `cap`. `"max"` and an absent cap keep everything.
+ *  An id outside the ladder (a future level this build does not know) is left in, never hidden. */
+function capEfforts(efforts: readonly string[], cap?: (typeof EFFORTS_ALL)[number]): string[] {
+  if (cap === undefined || cap === "max") return [...efforts];
+  const ceiling = EFFORTS_ALL.indexOf(cap);
+  return efforts.filter((e) => {
+    const i = EFFORTS_ALL.findIndex((level) => level === e);
+    return i === -1 || i <= ceiling;
+  });
+}
 /** One effort level's capability flag, as the Models API reports it. */
 type EffortLevelCaps = { supported?: boolean };
 /** The effort capability block: an overall flag plus one flag per level. */
@@ -950,6 +960,7 @@ export function resolveModelInfo(
   provider: string,
   modelId: string,
   models: ReturnType<typeof M>[] = catalog.models,
+  cap?: (typeof EFFORTS_ALL)[number],
 ): LlmResolvedModelInfo {
   const pool = [...models, ...KNOWN_MODELS];
   // A session stored before the ids settled asks for the dated one; it still names a model we know.
@@ -968,10 +979,11 @@ export function resolveModelInfo(
     return info;
   }
   info.context = { contextWindow: live ?? found.contextWindow };
-  if (found.efforts.length > 0) {
+  const efforts = capEfforts(found.efforts, cap);
+  if (efforts.length > 0) {
     info.reasoning = {
       // SAFETY: effort ids come from the CLI's own catalog; the brand marks provenance only
-      efforts: found.efforts.map((id) => ({ id: id as ReasoningEffortId, name: id })),
+      efforts: efforts.map((id) => ({ id: id as ReasoningEffortId, name: id })),
     };
   }
   return info;
@@ -2520,7 +2532,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   /** Full metadata for one model, capacity included: the single source both methods above narrow. */
   private async fullModelInfo(provider: string, model: string): Promise<LlmResolvedModelInfo> {
     const models = await getCatalog(undefined, this.cliModels);
-    return resolveModelInfo(provider, model, models);
+    const picker = await this.pickerSettings();
+    const cap = picker?.modelEffortCaps?.[model] ?? picker?.maxEffortLevel;
+    return resolveModelInfo(provider, model, models, cap);
   }
 
   /** Get the effective permission mode for a session, checking for an override first. */
