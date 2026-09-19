@@ -543,6 +543,32 @@ export interface RewindReply extends Partial<RewindResult> {
 export type ContextUsageReply =
   | ({ ok: true; error?: undefined } & ContextUsage)
   | { ok: false; error: string };
+/** What the skill-report route answers. A decline (the CLI's own `no_user_skills` or
+ *  `scan_policy_denied`) and a failure (spawn, timeout, missing binary) both leave `ok` false, but
+ *  the card shows a decline verbatim and wraps a failure, so `declined` tells them apart. `partial`
+ *  is set when the one-shot ran in a scratch cwd (a CLI too old for `--no-session-persistence`), so
+ *  the report lists user skills only. */
+export type SkillDoctorReply = {
+  ok: boolean;
+  report?: string;
+  declined?: boolean;
+  error?: string;
+  partial?: boolean;
+};
+
+/** The CLI's `result` frame (or its absence) as a reply. Pulled out of the spawn so the mapping is
+ *  unit-tested without a process: a decline keeps its text for the card to show verbatim, a missing
+ *  frame is a start failure, and `partial` marks a user-skills-only fallback run. */
+export function skillDoctorReply(
+  result: { is_error?: boolean; result?: unknown } | null,
+  partial: boolean,
+  failure: string,
+): SkillDoctorReply {
+  if (result === null) return { ok: false, error: failure };
+  const report = String(result.result ?? "");
+  if (result.is_error) return { ok: false, declined: true, error: report };
+  return partial ? { ok: true, report, partial: true } : { ok: true, report };
+}
 /** What the diff route reports: the CLI's working-tree diff for a live session. */
 export type WorkspaceDiffReply =
   | ({ ok: true; error?: undefined } & WorkspaceDiff)
@@ -3339,6 +3365,76 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    * The CLI's own context breakdown (`/context` in the TUI) for a session with a live process;
    * answered between turns as well as inside one. 5 s: the CLI replies at once when it reads stdin.
    */
+  /** The CLI's own skill report (`/skill-doctor`, the same code path as `/plugin stats`): what each
+   *  skill costs in context and how often it has run. A throwaway one-shot in the session's
+   *  workspace cwd so project skills show, reading the raw `result` frame; it spends no model tokens
+   *  (the command is synthetic, measured 2026-09-19 returning at 2.3 s with no model turn). Not a
+   *  control request, and not `prepare`'s purpose branch, which forces a scratch cwd. */
+  async skillDoctor(sessionId: string): Promise<SkillDoctorReply> {
+    const cwd = this.sessionCwd(sessionId) ?? process.cwd();
+    const host = boxFor(this.config.sshHost, remoteWorkspaceFor(cwd)?.host);
+    const cli = await probeCli(execFile, this.config.command, host);
+    if (!cli.flags)
+      return { ok: false, error: "skill report failed to start: no claude binary on this box" };
+    // Without --no-session-persistence a one-shot leaves a transcript under the workspace's project
+    // dir; on a CLI too old for the flag, run in a scratch dir instead (user skills only).
+    const persist = supports(cli.flags, "--no-session-persistence");
+    const runCwd = persist ? cwd : await auxCwd();
+    const model =
+      this.processes.get(registryKey(this.providerId, sessionId))?.spec?.model ??
+      this.config.titleModel;
+    // buildArgs' session-title purpose returns exactly the arg list a probe confirmed returns the
+    // report (-p, stream-json in/out, --verbose, --model, --tools "" --max-turns 1, and
+    // --no-session-persistence when supported); `session-title` is a valid purpose, so no new enum.
+    const args = buildArgs({
+      purpose: "session-title",
+      model,
+      config: this.config,
+      flags: cli.flags,
+    });
+    const proc = new ClaudeProcess({
+      args,
+      cwd: runCwd,
+      spec: {
+        cwd: runCwd,
+        model: model ?? "",
+        effort: null,
+        mode: "plan",
+        sessionId: null,
+        temporary: false,
+      },
+      command: this.config.command,
+      spawner: this.spawner(),
+      onExit: () => {},
+    });
+    proc.write(buildInput("/skill-doctor", []));
+    proc.child.stdin.end();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race<SkillDoctorReply>([
+        (async () => {
+          for (;;) {
+            const event = await proc.nextEvent();
+            if (event === null || event.type === "result")
+              return skillDoctorReply(
+                event && event.type === "result" ? event : null,
+                !persist,
+                `skill report failed to start: ${(proc.stderr || proc.stray).trim() || `claude exited ${proc.exitCode}`}`,
+              );
+          }
+        })(),
+        new Promise<SkillDoctorReply>((resolve) => {
+          timer = setTimeout(
+            () => resolve({ ok: false, error: "the skill report timed out" }),
+            20000,
+          );
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+      proc.kill();
+    }
+  }
   async contextUsage(sessionId: string): Promise<ContextUsageReply> {
     const proc = this.processes.get(registryKey(this.providerId, sessionId));
     if (!proc?.alive) return { ok: false, error: "no live Claude process for this session" };

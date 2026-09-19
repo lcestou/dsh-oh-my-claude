@@ -74,6 +74,7 @@ import {
   asideAnswerText,
   diffContext,
   contextSizes,
+  skillDoctorReply,
 } from "./adapter.js";
 import { PERMISSION_MODES } from "./state.js";
 import {
@@ -6111,3 +6112,28 @@ console.log("interrupt-on-abort ok");
   );
   console.log("effort-cap integration ok");
 }
+// skillDoctorReply maps the CLI's result frame to a reply: a clean report, a decline shown
+// verbatim, a missing frame as a start failure, and a scratch-cwd run marked partial.
+{
+  assert.deepEqual(
+    skillDoctorReply({ is_error: false, result: "Skills loaded this session\n  ..." }, false, "x"),
+    { ok: true, report: "Skills loaded this session\n  ..." },
+    "a clean result becomes an ok report",
+  );
+  assert.deepEqual(
+    skillDoctorReply({ is_error: true, result: "No user skills to report." }, false, "x"),
+    { ok: false, declined: true, error: "No user skills to report." },
+    "a decline keeps its text and is marked declined",
+  );
+  assert.deepEqual(
+    skillDoctorReply(null, false, "skill report failed to start: boom"),
+    { ok: false, error: "skill report failed to start: boom" },
+    "no result frame is a start failure",
+  );
+  assert.deepEqual(
+    skillDoctorReply({ is_error: false, result: "t" }, true, "x"),
+    { ok: true, report: "t", partial: true },
+    "a scratch-cwd run is marked partial",
+  );
+}
+console.log("skill-doctor ok");
