@@ -1711,3 +1711,136 @@ console.log("sessions ok");
   assert.equal(r.body.fallback, null, "a session with no fallback answers null");
   console.log("fallback-route ok");
 }
+
+// Skill routes: create validates scope and name and refuses a duplicate; file PUT and remove refuse
+// a path the listing does not name and a plugin-scope skill.
+{
+  const tmp = await mkdtemp(join(tmpdir(), "dsh-skills-edit-test-"));
+  const cwd = "/work/app";
+  // A plugin skill on disk, so the listing carries a plugin-scope entry the guards must refuse.
+  await mkdir(join(tmp, "claude", "plugins"), { recursive: true });
+  await writeFile(
+    join(tmp, "claude", "plugins", "installed_plugins.json"),
+    JSON.stringify({ plugins: { "p@m": [{ installPath: join(tmp, "plug") }] } }),
+    "utf8",
+  );
+  await mkdir(join(tmp, "plug", "skills", "pfoo"), { recursive: true });
+  await writeFile(
+    join(tmp, "plug", "skills", "pfoo", "SKILL.md"),
+    "---\nname: pfoo\ndescription: a plugin skill\n---\nbody\n",
+    "utf8",
+  );
+  const pluginPath = join(tmp, "plug", "skills", "pfoo", "SKILL.md");
+
+  let handler: ((req: any, res: any) => void) | undefined;
+  // SAFETY: partial fake for tests
+  const ctx = {
+    inject: (_deps: string[], cb: (host: any) => void) => {
+      cb({
+        webServer: {
+          register: (r: any) => {
+            handler = r.handler as (req: any, res: any) => void;
+            return () => {};
+          },
+        },
+        connection: { requestRejection: () => undefined },
+        sessions: { get: () => undefined },
+        sessionPersistence: { list: async () => [{ id: "s1", cwd }] },
+        effect: (fn: () => void | (() => void)) => fn(),
+      });
+    },
+  } as any;
+  registerSessionRoutes(ctx, {
+    log: () => {},
+    projectDir: (c: string) => [join(tmp, "claude", "projects", projectDirName(c))],
+    projectsDir: [join(tmp, "claude", "projects")],
+    startedIds: async () => [],
+    claudeIdOf: (id: string) => id,
+    configDir: join(tmp, "claude"),
+    boxesPath: join(tmp, "boxes.json"),
+    importedDir: join(tmp, "imported"),
+    instanceFor: () => undefined,
+    instanceForHost: () => ({ configDir: join(tmp, "box") }),
+    reloadSkills: async () => ({ ok: true, live: true }),
+  });
+  assert.ok(handler);
+  const respond = responder(() => handler);
+
+  // create: a plugin scope is refused
+  let r = await respond(
+    "POST",
+    "/dsh-oh-my-claude/skills/create",
+    JSON.stringify({ session: "s1", cwd, name: "ok-name", scope: "plugin" }),
+  );
+  assert.equal(r.status, 400);
+  assert.equal(r.body.error, "scope is user or project");
+
+  // create: a bad name is refused
+  r = await respond(
+    "POST",
+    "/dsh-oh-my-claude/skills/create",
+    JSON.stringify({ session: "s1", cwd, name: "../x", scope: "user" }),
+  );
+  assert.equal(r.status, 400);
+  assert.equal(
+    r.body.error,
+    "A skill name is lowercase letters, digits and hyphens, e.g. my-skill.",
+  );
+
+  // create: ok, then the same name again is a 409
+  r = await respond(
+    "POST",
+    "/dsh-oh-my-claude/skills/create",
+    JSON.stringify({ session: "s1", cwd, name: "dup", scope: "user", description: "d" }),
+  );
+  assert.equal(r.status, 200);
+  assert.equal(r.body.ok, true);
+  assert.equal(r.body.path, join(tmp, "claude", "skills", "dup", "SKILL.md"));
+  r = await respond(
+    "POST",
+    "/dsh-oh-my-claude/skills/create",
+    JSON.stringify({ session: "s1", cwd, name: "dup", scope: "user" }),
+  );
+  assert.equal(r.status, 409);
+  assert.equal(r.body.error, "A skill called dup already exists in user skills.");
+
+  // file PUT: a path the listing does not name is refused
+  r = await respond(
+    "PUT",
+    "/dsh-oh-my-claude/skills/file",
+    JSON.stringify({ session: "s1", cwd, path: join(tmp, "nope", "SKILL.md"), text: "x" }),
+  );
+  assert.equal(r.status, 400);
+  assert.equal(r.body.error, "not a listed skill");
+
+  // file PUT: a plugin-scope skill is read-only
+  r = await respond(
+    "PUT",
+    "/dsh-oh-my-claude/skills/file",
+    JSON.stringify({ session: "s1", cwd, path: pluginPath, text: "x" }),
+  );
+  assert.equal(r.status, 403);
+  assert.equal(r.body.error, "Plugin skills are read-only; edit them where the plugin ships them.");
+
+  // remove: a plugin-scope skill is read-only
+  r = await respond(
+    "POST",
+    "/dsh-oh-my-claude/skills/remove",
+    JSON.stringify({ session: "s1", cwd, path: pluginPath }),
+  );
+  assert.equal(r.status, 403);
+  assert.equal(
+    r.body.error,
+    "Plugin skills are read-only; remove them where the plugin ships them.",
+  );
+
+  // remove: an unlisted path is refused
+  r = await respond(
+    "POST",
+    "/dsh-oh-my-claude/skills/remove",
+    JSON.stringify({ session: "s1", cwd, path: join(tmp, "nope", "SKILL.md") }),
+  );
+  assert.equal(r.status, 400);
+  assert.equal(r.body.error, "not a listed skill");
+  console.log("skills-routes ok");
+}
