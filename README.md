@@ -33,7 +33,7 @@ The shield is dsh's own control. In a Claude session its rows become Claude's si
 
 <p><img src="https://raw.githubusercontent.com/lcestou/dsh-oh-my-claude/main/docs/media/panel-tabs.gif" width="640" alt="the Oh My Claude panel switching between its Memory, Rewind, Changes and Asides tabs"></p>
 
-One `✻` button beside the composer opens the whole plugin: Memory, Instructions, Rewind, Changes, MCP, Asides, Diagnostics, Tasks and Tune, plus a Restore tab while the session is still blank.
+One `✻` button beside the composer opens the whole plugin: Memory, Instructions, Skills, Rewind, Changes, MCP, Asides, Diagnostics, Tasks and Tune, plus a Restore tab while the session is still blank.
 
 <p><img src="https://raw.githubusercontent.com/lcestou/dsh-oh-my-claude/main/docs/media/panel-changes.png" width="640" alt="the Changes tab listing the working tree diff with per-file line counts"> <img src="https://raw.githubusercontent.com/lcestou/dsh-oh-my-claude/main/docs/media/panel-asides.png" width="640" alt="the Asides tab with a side question expanded above the tab strip"> <img src="https://raw.githubusercontent.com/lcestou/dsh-oh-my-claude/main/docs/media/panel-mcp.png" width="640" alt="the MCP tab's add-server form, filled with a server name, command and argument list"></p>
 
@@ -89,7 +89,7 @@ Working on the plugin itself? Start at [docs/developing.md](https://github.com/l
 3. Restart dsh without killing a running Claude turn. [Restarts](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#restarts)
 4. dsh's access shield sets Claude's six permission modes per session. [Permission mode](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#permission-mode-per-session)
 5. Claude's permission prompts, questions and plan reviews become dsh dialogs. [Approvals](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#approvals-and-questions)
-6. One spark button opens Memory, Rewind, Changes, MCP and six more tabs. [The panel](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md)
+6. One spark button opens Memory, Rewind, Changes, MCP and seven more tabs. [The panel](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md)
 7. Cost and cached tokens in dsh's footer, with a spend line that turns the pill orange. [Cost pill](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#cost-pill)
 8. Plan usage (5-hour, weekly, extra usage) in dsh's context ring, plus what drives your limits by skill, subagent, plugin and MCP server. [Plan usage](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#plan-usage)
 9. Restore or import any past Claude transcript, from dsh or from a terminal. [Session browser](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#session-browser)
@@ -102,7 +102,7 @@ Working on the plugin itself? Start at [docs/developing.md](https://github.com/l
 16. Pick what dsh adds to your prompts, with the size of each block on the label. [dsh context](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#dsh-context)
 17. A card offers each new Claude Code release for the box a session runs on, and installs it from dsh; a headless `claude -p` never updates itself. [Claude Code updates](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#surviving-claude-code-updates)
 18. What the last five versions changed, read from the plugin's own changelog, in Settings. [Changelog](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#changelog)
-19. What each Claude Code skill costs in context and how often you use it, from the CLI's own `/skill-doctor`. [Skill costs](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#skill-costs)
+19. Every skill the CLI can reach, grouped by scope, and what each costs in context from the CLI's own `/skill-doctor`. [Skills](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#skills)
 
 Defaults you never have to touch, such as secret redaction in tool results and surviving the CLI's own updates, are on [How it works](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md).
 

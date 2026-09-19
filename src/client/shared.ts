@@ -826,3 +826,44 @@ export interface ClientCtx {
     };
   };
 }
+
+/** The three Skills-tab buckets a skill falls into. */
+type SkillGroups<T> = { user: T[]; project: T[]; plugin: T[] };
+
+/** Split skills into the three Skills-tab sections: `user`, `project`, and everything else (a
+ *  `plugin:<name>` scope) under `plugin`. */
+export function groupSkillsByScope<T extends { scope: string }>(
+  rows: readonly T[],
+): SkillGroups<T> {
+  const out: SkillGroups<T> = { user: [], project: [], plugin: [] };
+  for (const item of rows) {
+    if (item.scope === "user") out.user.push(item);
+    else if (item.scope === "project") out.project.push(item);
+    else out.plugin.push(item);
+  }
+  return out;
+}
+
+/** The Skill-costs fetch state: idle before the fold opens, then loading, then the CLI's report
+ *  (maybe user-skills-only), its own decline text, or a wrapped failure. */
+export type SkillState =
+  | { kind: "idle" }
+  | { kind: "loading" }
+  | { kind: "report"; text: string; partial: boolean }
+  | { kind: "declined"; text: string }
+  | { kind: "error"; text: string };
+
+/** Map a /skill-doctor reply to a SkillState: an ok report (maybe partial), the CLI's own decline
+ *  text shown verbatim, or a wrapped failure. */
+export function skillStateFromReply(reply: {
+  ok?: boolean;
+  report?: string;
+  declined?: boolean;
+  error?: string;
+  partial?: boolean;
+}): SkillState {
+  if (reply.ok && reply.report !== undefined)
+    return { kind: "report", text: reply.report, partial: reply.partial === true };
+  if (reply.declined) return { kind: "declined", text: reply.error ?? "" };
+  return { kind: "error", text: reply.error ?? "unknown error" };
+}

@@ -3,11 +3,13 @@ import assert from "node:assert/strict";
 import type { ClientCtx } from "./shared.js";
 import {
   claudeProviderOf,
+  groupSkillsByScope,
   maskEmail,
   numberOr,
   openSession,
   openSessionId,
   resumeCommand,
+  skillStateFromReply,
 } from "./shared.js";
 
 assert.equal(maskEmail("someone@example.com"), "s******@example.com");
@@ -108,5 +110,47 @@ assert.equal(
   openSession(ctx, "s1");
   assert.deepEqual(opened, ["uiWorkspace:s1"]);
 }
+
+// groupSkillsByScope sorts each scope into its bucket; an unknown scope falls to plugin.
+{
+  const g = groupSkillsByScope([
+    { scope: "user", name: "a" },
+    { scope: "project", name: "b" },
+    { scope: "plugin:foo", name: "c" },
+    { scope: "something-else", name: "d" },
+  ]);
+  assert.deepEqual(
+    g.user.map((r) => r.name),
+    ["a"],
+  );
+  assert.deepEqual(
+    g.project.map((r) => r.name),
+    ["b"],
+  );
+  assert.deepEqual(
+    g.plugin.map((r) => r.name),
+    ["c", "d"],
+  );
+}
+
+// skillStateFromReply maps each /skill-doctor reply shape to its SkillState.
+assert.deepEqual(skillStateFromReply({ ok: true, report: "Skills loaded" }), {
+  kind: "report",
+  text: "Skills loaded",
+  partial: false,
+});
+assert.deepEqual(skillStateFromReply({ ok: true, report: "u only", partial: true }), {
+  kind: "report",
+  text: "u only",
+  partial: true,
+});
+assert.deepEqual(skillStateFromReply({ ok: false, declined: true, error: "no_user_skills" }), {
+  kind: "declined",
+  text: "no_user_skills",
+});
+assert.deepEqual(skillStateFromReply({ ok: false, error: "boom" }), {
+  kind: "error",
+  text: "boom",
+});
 
 console.log("✓ All login mask checks pass");

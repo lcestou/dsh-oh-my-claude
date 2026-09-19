@@ -6308,109 +6308,6 @@ const ROW_MASK_STYLE_ID = "dsh-oh-my-claude-context-rows";
  * generated class name or on the row's text. Only a session running on this plugin's provider is
  * masked; dsh sends all of it to everyone else, and their rows are true.
  */
-type SkillState =
-  | { kind: "idle" }
-  | { kind: "loading" }
-  | { kind: "report"; text: string; partial: boolean }
-  | { kind: "declined"; text: string }
-  | { kind: "error"; text: string };
-
-/** The CLI's own skill report (`/skill-doctor`), fetched on demand and shown as the CLI's own
- *  fixed-width table. It fetches only when the card is opened, so a closed card costs no spawn, and
- *  aborts a slow read at 25 s so the card never hangs. A decline (the CLI's own words) shows
- *  verbatim; a spawn or timeout failure is wrapped. */
-function SkillDoctorCard({ ctx }: { ctx: ClientCtx }) {
-  const [open, setOpen] = useState(false);
-  const [state, setState] = useState<SkillState>({ kind: "idle" });
-  const session = openSessionId(ctx);
-  const load = useCallback(() => {
-    if (!session) {
-      setState({ kind: "error", text: "open a session first" });
-      return;
-    }
-    setState({ kind: "loading" });
-    const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), 25000);
-    const run = async () => {
-      const reply = await readJson<{
-        ok?: boolean;
-        report?: string;
-        declined?: boolean;
-        error?: string;
-        partial?: boolean;
-      }>(
-        await fetch(`${ROUTE}/skill-doctor?session=${encodeURIComponent(session)}`, {
-          signal: ac.signal,
-        }),
-      );
-      if (reply.ok && reply.report !== undefined)
-        setState({ kind: "report", text: reply.report, partial: reply.partial === true });
-      else if (reply.declined) setState({ kind: "declined", text: reply.error ?? "" });
-      else setState({ kind: "error", text: reply.error ?? "unknown error" });
-    };
-    void run()
-      .catch((e: Error) => setState({ kind: "error", text: e.message }))
-      .finally(() => clearTimeout(timer));
-  }, [session]);
-  const toggle = () => {
-    const next = !open;
-    setOpen(next);
-    if (next && state.kind === "idle") load();
-  };
-  return (
-    <Card
-      id="dsh-oh-my-claude-skill-doctor-card"
-      title="Skill costs"
-      summary="What each Claude Code skill costs in context and how often you have used it."
-      open={open}
-      onToggle={toggle}
-    >
-      <div style={{ ...meta, whiteSpace: "normal", marginBottom: 8 }}>
-        Read from Claude Code's own /skill-doctor. No message is sent to the model, so this costs no
-        usage.
-      </div>
-      {state.kind === "loading" && (
-        <div style={{ color: T.muted, fontSize: 13 }}>Reading skills…</div>
-      )}
-      {state.kind === "error" && (
-        <div style={{ color: T.err, fontSize: 13 }}>
-          Couldn&apos;t read the skill report: {state.text}
-        </div>
-      )}
-      {state.kind === "declined" && (
-        <pre
-          data-omc-skill-doctor=""
-          aria-label="Skill report"
-          style={{ ...code, maxHeight: 320, overflow: "auto", margin: 0 }}
-        >
-          {state.text}
-        </pre>
-      )}
-      {state.kind === "report" && (
-        <>
-          {state.partial && (
-            <div style={{ color: T.faint, fontSize: 12, marginBottom: 6 }}>
-              Showing user skills only; this box&apos;s Claude Code is too old to list project
-              skills without writing a transcript.
-            </div>
-          )}
-          <pre
-            data-omc-skill-doctor=""
-            aria-label="Skill costs report"
-            style={{ ...code, maxHeight: 320, overflow: "auto", margin: 0 }}
-          >
-            {state.text}
-          </pre>
-        </>
-      )}
-      {state.kind !== "loading" && (
-        <button type="button" onClick={load} style={{ ...btn, marginTop: 8 }}>
-          Refresh
-        </button>
-      )}
-    </Card>
-  );
-}
 
 function ContextRowMask({
   sessionId,
@@ -7897,7 +7794,6 @@ export function apply(ctx: ClientCtx) {
             a switch's question, not a number's. Terminal mirror stays last, on its own, because it
             is the one experiment here. */}
         <ContextSwitch ctx={ctx} />
-        <SkillDoctorCard ctx={ctx} />
         <ReturnRecapSwitch />
         <SpendGuardField />
         <ProxyFirstPartySwitch />
