@@ -6217,6 +6217,7 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
           adapter.ownerFor(sessionId).setPermissionMode(sessionId, mode),
       },
       contextUsage: (sessionId: string) => adapter.ownerFor(sessionId).contextUsage(sessionId),
+      skillDoctor: (sessionId: string) => adapter.ownerFor(sessionId).skillDoctor(sessionId),
       workspaceDiff: (sessionId: string) => adapter.ownerFor(sessionId).workspaceDiff(sessionId),
       permissionReadout: (sessionId: string) =>
         adapter.ownerFor(sessionId).permissionReadout(sessionId),
