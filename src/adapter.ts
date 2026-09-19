@@ -575,7 +575,8 @@ export function registryKey(providerId: string, sessionId: string): string {
   return `${providerId}:${sessionId}`;
 }
 
-const EFFORTS_ALL = ["low", "medium", "high", "xhigh", "max"] as const;
+/** The CLI's effort ladder, low to high; `readPickerSettings` validates `maxEffortLevel` against it. */
+export const EFFORTS_ALL = ["low", "medium", "high", "xhigh", "max"] as const;
 /** Trim an efforts list to those at or below `cap`. `"max"` and an absent cap keep everything.
  *  An id outside the ladder (a future level this build does not know) is left in, never hidden. */
 function capEfforts(efforts: readonly string[], cap?: (typeof EFFORTS_ALL)[number]): string[] {

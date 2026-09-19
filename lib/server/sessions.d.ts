@@ -2,7 +2,7 @@ import type { IncomingMessage } from "node:http";
 import { type Reach } from "./reach.js";
 import type { JsonValue, PluginContext, WorkspaceRegistry } from "./dsh.js";
 import type { ToolMode, ToolModeInfo } from "./rows-probe.js";
-import { type LoginNeed } from "./adapter.js";
+import { EFFORTS_ALL, type LoginNeed } from "./adapter.js";
 import type { PermissionModeInfo, PermissionModeReply, RewindReply, ContextUsageReply, WorkspaceDiffReply, PermissionReadoutReply, McpStatusReply, AsideEntry, LiveTurn } from "./adapter.js";
 /** Any JSON object, as a request body or a stored file decodes to. */
 type JsonObject = Record<string, JsonValue>;
@@ -197,11 +197,7 @@ interface PickerOption {
     model: string;
     label?: string;
 }
-/** The CLI's effort ladder, low to high. Source of truth: `EFFORTS_ALL` in `src/adapter.ts:578`;
- *  kept a separate copy here so this module never imports the adapter (that would be a cycle).
- *  Keep the two in sync if the CLI grows a level. */
-declare const EFFORT_LEVELS: readonly ["low", "medium", "high", "xhigh", "max"];
-type EffortLevel = (typeof EFFORT_LEVELS)[number];
+type EffortLevel = (typeof EFFORTS_ALL)[number];
 /** The two settings.json keys that shape Claude Code's own `/model` picker. */
 export interface PickerSettings {
     /** Allowlist entries: a family alias, a version prefix or a full id. Absent means no allowlist. */

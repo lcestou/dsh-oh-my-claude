@@ -111,7 +111,7 @@ import {
   saveWorkspaceModel,
   writeJson,
 } from "./state.js";
-import { projectDirName, type LoginNeed } from "./adapter.js";
+import { EFFORTS_ALL, projectDirName, type LoginNeed } from "./adapter.js";
 import type {
   PermissionModeInfo,
   PermissionModeReply,
@@ -905,13 +905,9 @@ interface PickerOption {
   label?: string;
 }
 
-/** The CLI's effort ladder, low to high. Source of truth: `EFFORTS_ALL` in `src/adapter.ts:578`;
- *  kept a separate copy here so this module never imports the adapter (that would be a cycle).
- *  Keep the two in sync if the CLI grows a level. */
-const EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
-type EffortLevel = (typeof EFFORT_LEVELS)[number];
+type EffortLevel = (typeof EFFORTS_ALL)[number];
 const isEffortLevel = (v: unknown): v is EffortLevel =>
-  typeof v === "string" && EFFORT_LEVELS.some((level) => level === v);
+  typeof v === "string" && EFFORTS_ALL.some((level) => level === v);
 
 /** The two settings.json keys that shape Claude Code's own `/model` picker. */
 export interface PickerSettings {

@@ -272,7 +272,8 @@ export interface PermissionModeReply extends PermissionModeInfo {
     error?: string;
 }
 export declare function registryKey(providerId: string, sessionId: string): string;
-declare const EFFORTS_ALL: readonly ["low", "medium", "high", "xhigh", "max"];
+/** The CLI's effort ladder, low to high; `readPickerSettings` validates `maxEffortLevel` against it. */
+export declare const EFFORTS_ALL: readonly ["low", "medium", "high", "xhigh", "max"];
 /** One effort level's capability flag, as the Models API reports it. */
 type EffortLevelCaps = {
     supported?: boolean;
