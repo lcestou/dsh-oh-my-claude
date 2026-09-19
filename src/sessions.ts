@@ -1751,9 +1751,13 @@ export function registerSessionRoutes(
       if (!reloadPlugins || typeof session !== "string") return false;
       return (await reloadPlugins(session)).live;
     };
+    // A reload the live process refused counts as not applied: the file is written, the next
+    // spawn reads it, and the note says so rather than claiming it landed.
     const applyReloadSkills = async (session: JsonValue | undefined): Promise<boolean> => {
       if (!reloadSkills || typeof session !== "string") return false;
-      return (await reloadSkills(session)).live;
+      const r = await reloadSkills(session);
+      if (!r.ok) log("warn", `reload_skills refused for ${session}: ${r.error ?? "unknown"}`);
+      return r.ok && r.live;
     };
     host.effect?.(
       () =>

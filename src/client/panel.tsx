@@ -829,12 +829,13 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
         }),
       );
       note(r.live === true);
-      setCreating(false);
       const name = newName;
       setNewName("");
       setNewDesc("");
       refresh();
+      // Open the editor before dropping the form, so the list never flashes between the two.
       await openEdit(r.path, name);
+      setCreating(false);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
