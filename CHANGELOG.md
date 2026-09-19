@@ -21,6 +21,9 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 - The Claude Code update card links the version it offers to that release's entry on
   code.claude.com's changelog, in a new tab, so what changed is one click from the offer.
+- The Plugins roster names any plugin the Claude Code CLI could not load, with the reason, in a
+  red block above the plugin rows. The block clears once a plugin reload reports no errors left;
+  until then it shows what the session's last start found.
 
 ### Changed
 
