@@ -1398,6 +1398,9 @@ export interface SessionRouteOptions {
   /** Re-read plugins into a session's live process after a plugin/marketplace mutation, so the
    *  change applies now instead of at the next spawn. `live` is false when there is no process. */
   reloadPlugins?: (sessionId: string) => Promise<{ ok: boolean; live: boolean; error?: string }>;
+  /** Re-read skills into a session's live process after a create, edit or remove, so the change
+   *  applies now instead of at the next spawn. `live` is false when there is no process. */
+  reloadSkills?: (sessionId: string) => Promise<{ ok: boolean; live: boolean; error?: string }>;
   /** The plugins a session's live process failed to load, from its init frame. Empty when clean or
    *  when no process has run. */
   pluginErrors?: (sessionId: string) => PluginLoadError[];

@@ -1054,6 +1054,16 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
         live: boolean;
         error?: string;
     }>;
+    /** Ask a session's live process to re-read skills from disk (`reload_skills`), so a skill just
+     *  created, edited or removed applies now. The reply lists the skills and the process emits a
+     *  `commands_changed` frame, which the init handler bridges into dsh's slash menu, so a new
+     *  skill's `/name` registers live. A dead process is not a failure: the next spawn reads the
+     *  file, so `live` is false and there is nothing to say. */
+    reloadSkills(sessionId: string): Promise<{
+        ok: boolean;
+        live: boolean;
+        error?: string;
+    }>;
     /** The plugin load errors this session's last init frame reported, for the panel. */
     pluginErrorsFor(sessionId: string): PluginLoadError[];
     /** The CLI's working-tree diff (`get_workspace_diff`) for a session with a live process. */
