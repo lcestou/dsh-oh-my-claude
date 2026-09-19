@@ -3110,7 +3110,7 @@ function renderBreakdown(block: HTMLElement, reply: UsageBreakdownReply) {
   block.append(title);
   if (!reply.ok) {
     const p = document.createElement("div");
-    p.textContent = `What's driving your limits: ${reply.error}`;
+    p.textContent = reply.error;
     p.style.cssText = `color:${T.faint};font-size:12px;line-height:18px`;
     block.append(p);
     return;
@@ -3126,7 +3126,7 @@ function renderBreakdown(block: HTMLElement, reply: UsageBreakdownReply) {
   }
   const caption = document.createElement("div");
   caption.style.cssText = `color:${T.faint};font-size:11px;line-height:16px`;
-  caption.textContent = `${win.requests} requests · ${win.sessions} sessions, last 7 days`;
+  caption.textContent = `${win.requests} requests · ${win.sessions} sessions, ${win.label.toLowerCase()}`;
   const note = document.createElement("div");
   note.style.cssText = `color:${T.faint};font-size:11px;line-height:16px;margin-bottom:4px`;
   note.textContent = "Approximate, from this box's local sessions.";
