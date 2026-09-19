@@ -197,6 +197,11 @@ interface PickerOption {
     model: string;
     label?: string;
 }
+/** The CLI's effort ladder, low to high. Source of truth: `EFFORTS_ALL` in `src/adapter.ts:578`;
+ *  kept a separate copy here so this module never imports the adapter (that would be a cycle).
+ *  Keep the two in sync if the CLI grows a level. */
+declare const EFFORT_LEVELS: readonly ["low", "medium", "high", "xhigh", "max"];
+type EffortLevel = (typeof EFFORT_LEVELS)[number];
 /** The two settings.json keys that shape Claude Code's own `/model` picker. */
 export interface PickerSettings {
     /** Allowlist entries: a family alias, a version prefix or a full id. Absent means no allowlist. */
@@ -205,6 +210,10 @@ export interface PickerSettings {
     options: PickerOption[];
     /** The CLI keeps only the Default row and those extra rows. */
     replaceBuiltInOptions: boolean;
+    /** settings.json `maxEffortLevel`: the highest effort the pickers offer. Absent means no cap. */
+    maxEffortLevel?: EffortLevel;
+    /** Per-model `modelSettings.<id>.maxEffortLevel`, which overrides the top level for that model. */
+    modelEffortCaps?: Record<string, EffortLevel>;
 }
 /**
  * Read what settings.json says about the picker. Anything the CLI would ignore is dropped here,

@@ -1067,6 +1067,30 @@ const responder =
   assert.equal(await readPickerSettings(path), undefined, "broken JSON never empties the picker");
 
   assert.equal(await readPickerSettings(join(tmp, "gone.json")), undefined, "missing file");
+
+  await writeFile(path, JSON.stringify({ maxEffortLevel: "high" }));
+  assert.deepEqual(
+    await readPickerSettings(path),
+    { options: [], replaceBuiltInOptions: false, maxEffortLevel: "high" },
+    "a lone maxEffortLevel yields a picker with the cap",
+  );
+
+  await writeFile(
+    path,
+    JSON.stringify({ modelSettings: { "opus-4-5": { maxEffortLevel: "low" } } }),
+  );
+  assert.deepEqual(
+    await readPickerSettings(path),
+    { options: [], replaceBuiltInOptions: false, modelEffortCaps: { "opus-4-5": "low" } },
+    "a lone modelSettings cap yields per-model caps",
+  );
+
+  await writeFile(path, JSON.stringify({ availableModels: ["opus"], maxEffortLevel: "banana" }));
+  assert.deepEqual(
+    await readPickerSettings(path),
+    { options: [], replaceBuiltInOptions: false, availableModels: ["opus"] },
+    "an out-of-enum cap is dropped, the rest stays",
+  );
 }
 
 // settingsScopePath names the file each scope writes, and only project and local need a directory.
