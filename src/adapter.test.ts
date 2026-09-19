@@ -239,6 +239,26 @@ assert.equal(rmi("bogus").context, undefined);
 assert.equal(rmi("claude-fable-5-1").context.contextWindow, 1_000_000);
 assert.equal(rmi("claude-fable-5-1").reasoning.defaultEffort, undefined);
 assert.equal(rmi("claude-fable-5-1").reasoning.efforts.length, 5);
+// maxEffortLevel caps the offered efforts; an absent cap keeps the full ladder.
+assert.deepEqual(
+  resolveModelInfo("claude-code", "claude-fable-5-1", undefined, "medium").reasoning?.efforts,
+  [
+    { id: "low", name: "low" },
+    { id: "medium", name: "medium" },
+  ],
+  "a medium cap trims fable's efforts to low and medium",
+);
+assert.deepEqual(
+  resolveModelInfo("claude-code", "claude-fable-5-1").reasoning?.efforts,
+  [
+    { id: "low", name: "low" },
+    { id: "medium", name: "medium" },
+    { id: "high", name: "high" },
+    { id: "xhigh", name: "xhigh" },
+    { id: "max", name: "max" },
+  ],
+  "no cap keeps the full five-level ladder",
+);
 assert.equal(rmi("claude-haiku-4-5").reasoning, undefined);
 assert.deepEqual(rmi("claude-haiku-4-5").inputModalities, ["text", "image"]);
 
@@ -4441,6 +4461,24 @@ console.log("interrupt-on-abort ok");
     "the row lands last, under its own label",
   );
   assert.ok(appended.length > 1, "the built-in lineup is still there");
+  // maxEffortLevel does not touch the catalog listing: efforts reach the picker only through
+  // resolveModelInfo, so mergeCatalog ignores the cap (the listing drops efforts via modelInfo).
+  const capped = mergeCatalog(cli, KNOWN_MODELS, {
+    ...rows,
+    replaceBuiltInOptions: false,
+    maxEffortLevel: "low",
+  });
+  assert.deepEqual(
+    capped.at(-1),
+    {
+      provider: "claude-code",
+      id: "opus-4-5",
+      name: "Cheap Opus",
+      contextWindow: 200_000,
+      efforts: ["low", "medium", "high"],
+    },
+    "a cap in the picker leaves the listing's efforts untouched",
+  );
   assert.deepEqual(
     mergeCatalog(cli, KNOWN_MODELS, { ...rows, replaceBuiltInOptions: true }).map((m) => m.id),
     ["default", "opus-4-5"],
@@ -4456,7 +4494,10 @@ console.log("interrupt-on-abort ok");
     "the allowlist prunes a picker row too",
   );
 
-  const adapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  // A config dir of its own: the picker's settings.json shapes the efforts (a `maxEffortLevel` on
+  // the box would trim ["max"] away) and this block is about the seed, not the box's settings.
+  const cliHome = await mkdtemp(joinPath(tmpdir(), "dsh-cli-models-home-"));
+  const adapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({ configDir: cliHome }));
   let asked = 0;
   const proc: any = {
     alive: true,
@@ -4498,7 +4539,7 @@ console.log("interrupt-on-abort ok");
   assert.equal(prepared.model.context?.contextWindow, 1_000_000);
   // The answer is kept per box: a fresh adapter lists the same row before any process answers.
   await new Promise((r) => setTimeout(r, 20));
-  const fresh = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  const fresh = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({ configDir: cliHome }));
   assert.equal(
     (await fresh.listModels("claude-code"))[0]?.id,
     "opus[1m]",
@@ -6025,4 +6066,48 @@ console.log("interrupt-on-abort ok");
   assert.equal(allSizes.runtime, "approval policy: ask".length, "runtime reports raw length");
   const keys = Object.keys(contextSizes([typed]));
   assert.equal(keys.length, 0, "a plain typed turn contributes no keys at all");
+}
+
+// Finding H, the wiring proof: the cap must reach the picker THROUGH fullModelInfo, not merely
+// live in the reader. A unit test on resolveModelInfo alone passes even if fullModelInfo never
+// reads the picker, so this drives the whole path with a real capped settings.json on disk.
+// (getCatalog inside fullModelInfo may attempt one 5 s Anthropic fetch when the box has
+// credentials; it is caught and falls back to KNOWN_MODELS, where fable carries all five levels,
+// so the assertion holds either way. If the suite slows noticeably, report it.)
+{
+  const capDir = await mkdtemp(joinPath(tmpdir(), "dsh-effortcap-int-"));
+  await writeFile(joinPath(capDir, "settings.json"), JSON.stringify({ maxEffortLevel: "medium" }));
+  const capAdapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({ configDir: capDir }));
+  const capInfo = await (capAdapter as any).fullModelInfo("claude-code", "claude-fable-5-1");
+  assert.deepEqual(
+    capInfo.reasoning?.efforts,
+    [
+      { id: "low", name: "low" },
+      { id: "medium", name: "medium" },
+    ],
+    "a capped settings.json trims the efforts fullModelInfo returns",
+  );
+
+  const perModelDir = await mkdtemp(joinPath(tmpdir(), "dsh-effortcap-permodel-"));
+  await writeFile(
+    joinPath(perModelDir, "settings.json"),
+    JSON.stringify({
+      maxEffortLevel: "high",
+      modelSettings: { "claude-fable-5-1": { maxEffortLevel: "low" } },
+    }),
+  );
+  const perModelAdapter = new ClaudeCodeAdapter(
+    fakeCtx({ on() {} }),
+    Config({ configDir: perModelDir }),
+  );
+  const perModelInfo = await (perModelAdapter as any).fullModelInfo(
+    "claude-code",
+    "claude-fable-5-1",
+  );
+  assert.deepEqual(
+    perModelInfo.reasoning?.efforts,
+    [{ id: "low", name: "low" }],
+    "a per-model cap overrides the top-level cap for that model",
+  );
+  console.log("effort-cap integration ok");
 }

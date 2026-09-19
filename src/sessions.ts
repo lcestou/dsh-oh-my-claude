@@ -111,7 +111,7 @@ import {
   saveWorkspaceModel,
   writeJson,
 } from "./state.js";
-import { projectDirName, type LoginNeed } from "./adapter.js";
+import { EFFORTS_ALL, projectDirName, type LoginNeed } from "./adapter.js";
 import type {
   PermissionModeInfo,
   PermissionModeReply,
@@ -905,6 +905,10 @@ interface PickerOption {
   label?: string;
 }
 
+type EffortLevel = (typeof EFFORTS_ALL)[number];
+const isEffortLevel = (v: unknown): v is EffortLevel =>
+  typeof v === "string" && EFFORTS_ALL.some((level) => level === v);
+
 /** The two settings.json keys that shape Claude Code's own `/model` picker. */
 export interface PickerSettings {
   /** Allowlist entries: a family alias, a version prefix or a full id. Absent means no allowlist. */
@@ -913,6 +917,10 @@ export interface PickerSettings {
   options: PickerOption[];
   /** The CLI keeps only the Default row and those extra rows. */
   replaceBuiltInOptions: boolean;
+  /** settings.json `maxEffortLevel`: the highest effort the pickers offer. Absent means no cap. */
+  maxEffortLevel?: EffortLevel;
+  /** Per-model `modelSettings.<id>.maxEffortLevel`, which overrides the top level for that model. */
+  modelEffortCaps?: Record<string, EffortLevel>;
 }
 
 /**
@@ -927,7 +935,15 @@ export async function readPickerSettings(path: string): Promise<PickerSettings |
   if (!value) return undefined;
   const picker = value.modelPicker;
   const allowed = value.availableModels;
-  if (!Array.isArray(allowed) && !isJsonObject(picker)) return undefined;
+  const cap = value.maxEffortLevel;
+  const modelSettings = value.modelSettings;
+  if (
+    !Array.isArray(allowed) &&
+    !isJsonObject(picker) &&
+    !isEffortLevel(cap) &&
+    !isJsonObject(modelSettings)
+  )
+    return undefined;
   const out: PickerSettings = { options: [], replaceBuiltInOptions: false };
   if (Array.isArray(allowed))
     out.availableModels = allowed.filter((m): m is string => typeof m === "string");
@@ -940,6 +956,13 @@ export async function readPickerSettings(path: string): Promise<PickerSettings |
         if (typeof row.label === "string") option.label = row.label;
         out.options.push(option);
       }
+  }
+  if (isEffortLevel(cap)) out.maxEffortLevel = cap;
+  if (isJsonObject(modelSettings)) {
+    const caps: Record<string, EffortLevel> = {};
+    for (const [id, cfg] of Object.entries(modelSettings))
+      if (isJsonObject(cfg) && isEffortLevel(cfg.maxEffortLevel)) caps[id] = cfg.maxEffortLevel;
+    if (Object.keys(caps).length > 0) out.modelEffortCaps = caps;
   }
   return out;
 }
