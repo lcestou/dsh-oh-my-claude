@@ -6064,3 +6064,47 @@ console.log("interrupt-on-abort ok");
   const keys = Object.keys(contextSizes([typed]));
   assert.equal(keys.length, 0, "a plain typed turn contributes no keys at all");
 }
+
+// Finding H, the wiring proof: the cap must reach the picker THROUGH fullModelInfo, not merely
+// live in the reader. A unit test on resolveModelInfo alone passes even if fullModelInfo never
+// reads the picker, so this drives the whole path with a real capped settings.json on disk.
+// (getCatalog inside fullModelInfo may attempt one 5 s Anthropic fetch when the box has
+// credentials; it is caught and falls back to KNOWN_MODELS, where fable carries all five levels,
+// so the assertion holds either way. If the suite slows noticeably, report it.)
+{
+  const capDir = await mkdtemp(joinPath(tmpdir(), "dsh-effortcap-int-"));
+  await writeFile(joinPath(capDir, "settings.json"), JSON.stringify({ maxEffortLevel: "medium" }));
+  const capAdapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({ configDir: capDir }));
+  const capInfo = await (capAdapter as any).fullModelInfo("claude-code", "claude-fable-5-1");
+  assert.deepEqual(
+    capInfo.reasoning?.efforts,
+    [
+      { id: "low", name: "low" },
+      { id: "medium", name: "medium" },
+    ],
+    "a capped settings.json trims the efforts fullModelInfo returns",
+  );
+
+  const perModelDir = await mkdtemp(joinPath(tmpdir(), "dsh-effortcap-permodel-"));
+  await writeFile(
+    joinPath(perModelDir, "settings.json"),
+    JSON.stringify({
+      maxEffortLevel: "high",
+      modelSettings: { "claude-fable-5-1": { maxEffortLevel: "low" } },
+    }),
+  );
+  const perModelAdapter = new ClaudeCodeAdapter(
+    fakeCtx({ on() {} }),
+    Config({ configDir: perModelDir }),
+  );
+  const perModelInfo = await (perModelAdapter as any).fullModelInfo(
+    "claude-code",
+    "claude-fable-5-1",
+  );
+  assert.deepEqual(
+    perModelInfo.reasoning?.efforts,
+    [{ id: "low", name: "low" }],
+    "a per-model cap overrides the top-level cap for that model",
+  );
+  console.log("effort-cap integration ok");
+}
