@@ -38,6 +38,36 @@ export type UsageReply = {
     /** Set only on a 429: ms to wait before the endpoint is worth touching again. */
     retryAfterMs?: number;
 };
+/** One driver of the plan-limit usage: the CLI's own name and its percent of the window. */
+export interface UsageDriver {
+    name: string;
+    pct: number;
+}
+/** A "Top skills" / "Top MCP servers" / ... group under one window. */
+export interface UsageDriverGroup {
+    label: string;
+    drivers: UsageDriver[];
+}
+/** One time window of the `/usage` breakdown (e.g. "Last 7d"). */
+export interface UsageBreakdownWindow {
+    label: string;
+    requests: number;
+    sessions: number;
+    groups: UsageDriverGroup[];
+}
+/** What the /breakdown route answers: the windows, or why there are none. */
+export type UsageBreakdownReply = {
+    ok: true;
+    fetchedAt: number;
+    windows: UsageBreakdownWindow[];
+    host?: string;
+    email?: string | null;
+} | {
+    ok: false;
+    error: string;
+    host?: string;
+    email?: string | null;
+};
 /**
  * The usage payload lists `limits` (kind `session`, `weekly_all`, `weekly_scoped` with a model
  * scope, and whatever kinds get added later); older answers carried `five_hour` / `seven_day`
@@ -67,6 +97,18 @@ export type UsageFetch = (url: string, init: {
 /** Read usage with the stored login; never throws, the panel shows the reason instead. An SSH
  *  box's usage is its own account's: its credentials come over ssh, the endpoint is asked from here. */
 export declare function readUsage(fetchImpl?: UsageFetch, home?: string, sshHost?: string): Promise<UsageReply>;
+/**
+ * Parse the text `claude -p "/usage"` prints into its time windows and their driver groups. The
+ * format is the CLI's own (2.1.x); a shape this does not recognise yields [], which the caller
+ * degrades to an empty section rather than an error. Behaviour lines (no "Top " prefix, e.g.
+ * "91% of your usage was at >150k context") are ignored. English number formatting and the CLI's
+ * `·` separator are assumed; a locale change would degrade the same way, not throw.
+ */
+export declare function parseUsageBreakdown(text: string): UsageBreakdownWindow[];
+/** Run `claude -p "/usage"` on a box and parse its breakdown. Never throws; the panel shows the
+ *  reason. Local via execFile with the box's config dir; an ssh box over ssh with its own login.
+ *  COLUMNS/TERM force a wide, dumb terminal so no "Top …" row wraps and loses its tail. */
+export declare function readUsageBreakdown(command: string, realHome?: string, sshHost?: string): Promise<UsageBreakdownReply>;
 /** The reset instant of a window still at its cap, or undefined when nothing blocks a request.
  *  A reply that could not be read answers undefined too: the wake then finds out by trying. */
 export declare function stillLimitedUntil(reply: UsageReply, now?: number): number | undefined;
@@ -76,9 +118,15 @@ export declare function registerUsageRoute(ctx: PluginContext, log: (level: stri
     email: string | null;
 }>, options?: {
     home?: string;
-    /** The box a provider runs on: its local config dir, or the ssh host whose own login it uses. */
+    /** The account's real config dir for the default box: /usage reads its transcripts, not the mirror. */
+    realHome?: string;
+    /** The default box's `claude` command, for the /usage spawn. */
+    command?: string;
+    /** The box a provider runs on: its config dir, its real config dir, its `claude` command, or the ssh host whose own login it uses. */
     boxFor?: (providerId: string) => {
         home: string;
         sshHost?: string;
+        realHome?: string;
+        command?: string;
     } | undefined;
 }): void;
