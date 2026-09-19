@@ -55,13 +55,21 @@ import {
   listDirsAt,
   makeDirAt,
   readAt,
+  readTextAt,
+  removeDirAt,
   writeAt,
   type FsBox,
 } from "./remote-fs.js";
 import type { TranscriptListItem } from "./transcript.js";
 import { deleteMemory, isMemoryName, listMemory } from "./memory.js";
 import { isWritableInstructions, listInstructions } from "./instructions.js";
-import { listSkills } from "./skills.js";
+import {
+  isWritableSkillScope,
+  listSkills,
+  skillTargetPath,
+  skillTemplate,
+  validSkillName,
+} from "./skills.js";
 import { listConfiguredMcp } from "./mcp-config.js";
 import {
   durableTasksPath,
@@ -1494,6 +1502,7 @@ export function registerSessionRoutes(
     setStarter,
     models,
     reloadPlugins,
+    reloadSkills,
     pluginErrors,
     continueAfterLimit,
     instanceFor,
@@ -1742,6 +1751,10 @@ export function registerSessionRoutes(
       if (!reloadPlugins || typeof session !== "string") return false;
       return (await reloadPlugins(session)).live;
     };
+    const applyReloadSkills = async (session: JsonValue | undefined): Promise<boolean> => {
+      if (!reloadSkills || typeof session !== "string") return false;
+      return (await reloadSkills(session)).live;
+    };
     host.effect?.(
       () =>
         webServer.register({
@@ -1970,6 +1983,113 @@ export function registerSessionRoutes(
                 return json(res, 200, {
                   skills: await listSkills(at, await claudeHomeOf(box), box),
                 });
+              }
+              // Create a skill: write a template SKILL.md into <scope>/skills/<name>/, then ask the
+              // live process to re-read skills so the new /command registers now. User and project
+              // scope only; a plugin's skills are edited where the plugin ships them.
+              if (req.method === "POST" && url.pathname === `${ROUTE_PREFIX}/skills/create`) {
+                const body = await readBody(req);
+                const scope = String(body.scope ?? "");
+                if (!isWritableSkillScope(scope))
+                  return json(res, 400, { error: "scope is user or project" });
+                if (typeof body.name !== "string" || !validSkillName(body.name))
+                  return json(res, 400, {
+                    error: "A skill name is lowercase letters, digits and hyphens, e.g. my-skill.",
+                  });
+                const cwd = await knownCwd(body.cwd, sessionPersistence);
+                const { box, cwd: at } = targetOf(url, cwd);
+                const target = skillTargetPath(
+                  scope,
+                  body.name,
+                  await claudeHomeOf(box),
+                  at ?? undefined,
+                );
+                if (target === null)
+                  return json(res, 400, { error: "project skills need a workspace open" });
+                if ((await readTextAt(box, target)) !== null)
+                  return json(res, 409, {
+                    error: `A skill called ${body.name} already exists in ${body.scope} skills.`,
+                  });
+                await writeAt(
+                  box,
+                  target,
+                  skillTemplate(body.name, String(body.description ?? "")),
+                );
+                log("info", `skill ${body.name} created (${body.scope})`);
+                return json(res, 200, {
+                  ok: true,
+                  path: target,
+                  live: await applyReloadSkills(body.session),
+                });
+              }
+              // Read or write one existing SKILL.md, allowlisted against the current listing the way
+              // /instructions/file is: a path the listing does not name is refused, and a plugin
+              // skill cannot be written.
+              if (url.pathname === `${ROUTE_PREFIX}/skills/file`) {
+                const body = req.method === "GET" ? {} : await readBody(req);
+                const cwd = await knownCwd(
+                  url.searchParams.get("cwd") ?? body.cwd,
+                  sessionPersistence,
+                );
+                if (cwd === null)
+                  return json(res, 400, {
+                    error: "cwd must be a directory a dsh session is open in",
+                  });
+                const { box, cwd: at } = targetOf(url, cwd);
+                const skills = await listSkills(at, await claudeHomeOf(box), box);
+                const path = req.method === "GET" ? url.searchParams.get("path") : body.path;
+                const entry = skills.find((s) => s.path === path);
+                if (entry === undefined) return json(res, 400, { error: "not a listed skill" });
+                if (req.method === "GET") {
+                  const read = await readAt(box, entry.path);
+                  return read === null
+                    ? json(res, 404, { error: "not found" })
+                    : json(res, 200, { path: entry.path, text: read.text, mtime: read.mtimeMs });
+                }
+                if (req.method === "PUT") {
+                  if (!isWritableSkillScope(entry.scope))
+                    return json(res, 403, {
+                      error: "Plugin skills are read-only; edit them where the plugin ships them.",
+                    });
+                  if (!entry.path.endsWith("SKILL.md"))
+                    return json(res, 400, { error: "not a SKILL.md" });
+                  if (typeof body.text !== "string")
+                    return json(res, 400, { error: "text required" });
+                  const written = await writeWithBackup(box, entry.path, body.text, mtimeOf(body));
+                  log("info", `skill ${entry.name} saved (${body.text.length} chars)`);
+                  return json(res, 200, {
+                    ...written,
+                    live: await applyReloadSkills(body.session),
+                  });
+                }
+                return json(res, 405, { error: "method not allowed" });
+              }
+              // Remove a skill: delete its whole directory, then re-read. The path must be one the
+              // listing named and a writable scope; the delete target is the listed SKILL.md's
+              // directory, never a raw client value.
+              if (req.method === "POST" && url.pathname === `${ROUTE_PREFIX}/skills/remove`) {
+                const body = await readBody(req);
+                const cwd = await knownCwd(body.cwd, sessionPersistence);
+                if (cwd === null)
+                  return json(res, 400, {
+                    error: "cwd must be a directory a dsh session is open in",
+                  });
+                const { box, cwd: at } = targetOf(url, cwd);
+                const skills = await listSkills(at, await claudeHomeOf(box), box);
+                const entry = skills.find((s) => s.path === body.path);
+                if (entry === undefined) return json(res, 400, { error: "not a listed skill" });
+                if (!isWritableSkillScope(entry.scope))
+                  return json(res, 403, {
+                    error: "Plugin skills are read-only; remove them where the plugin ships them.",
+                  });
+                await removeDirAt(box, dirname(entry.path));
+                log("info", `skill ${entry.name} removed (${entry.scope})`);
+                return json(res, 200, { ok: true, live: await applyReloadSkills(body.session) });
+              }
+              // Pick up skills edited on disk outside the tab, the way the CLI's /reload-skills does.
+              if (req.method === "POST" && url.pathname === `${ROUTE_PREFIX}/skills/reload`) {
+                const body = await readBody(req);
+                return json(res, 200, { ok: true, live: await applyReloadSkills(body.session) });
               }
               // The servers the CLI is configured with for the session's directory, by scope, from
               // the config files rather than `claude mcp list` (which connects to each one).

@@ -92,6 +92,10 @@ export declare function writeAt(box: FsBox, path: string, text: string): Promise
 export declare function homeAt(box: FsBox): Promise<string>;
 /** Delete the file; a file that was already gone is not an error. */
 export declare function removeAt(box: FsBox, path: string): Promise<void>;
+/** Delete a directory and everything under it; a directory already gone is not an error. The caller
+ *  passes a path it resolved from a trusted listing, never a raw client value, so the `rm -rf` target
+ *  is always a skills directory this plugin computed. */
+export declare function removeDirAt(box: FsBox, dir: string): Promise<void>;
 /**
  * Write stdin to `<attachments>/<name>` on the box and print the absolute path it has there. The
  * bytes go through a temp file that takes the real name only once it holds `bytes` bytes: a read
