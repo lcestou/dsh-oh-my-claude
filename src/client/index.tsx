@@ -6266,7 +6266,7 @@ function SkillDoctorCard({ ctx }: { ctx: ClientCtx }) {
       open={open}
       onToggle={toggle}
     >
-      <div style={{ ...meta, marginBottom: 8 }}>
+      <div style={{ ...meta, whiteSpace: "normal", marginBottom: 8 }}>
         Read from Claude Code's own /skill-doctor. No message is sent to the model, so this costs no
         usage.
       </div>
