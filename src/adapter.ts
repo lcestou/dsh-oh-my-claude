@@ -191,8 +191,8 @@ import { buildMirror } from "./claude-home.js";
 export { markBusy, takeInterrupted } from "./state.js";
 export { forkTranscriptText } from "./transcript.js";
 import { anthropicStatus, degradedNote, peekStatus } from "./anthropic-status.js";
-import { Translator } from "./translator.js";
-export { Translator, type TranslatorBlock } from "./translator.js";
+import { Translator, type FallbackRecord } from "./translator.js";
+export { Translator, type TranslatorBlock, type FallbackRecord } from "./translator.js";
 import type {
   ContentBlockType,
   FinishReason,
@@ -2890,6 +2890,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    *  ponytail: unbounded like sessionTools, one entry per live session, only overwritten or cleared,
    *  never accumulated. Prune with the session lifecycle if sessionTools ever gets a prune. */
   readonly sessionPluginErrors = new Map<string, PluginLoadError[]>();
+  /** dsh session id → the model switch its last turn reported (a safety refusal, a primary-model
+   *  fallback, or the usage-credit gate), surfaced through `/side-questions` like `loginNeeded`. One
+   *  entry per live session, overwritten on each switch; the client reads it at the stop transition.
+   *  ponytail: unbounded like `sessionTools`, only overwritten, never accumulated. */
+  readonly sessionFallbacks = new Map<string, FallbackRecord>();
 
   /**
    * Register Claude Code's slash commands (from the CLI's init frame) as dsh `/commands`. The
@@ -5141,6 +5146,16 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         if (names.length > 0)
           this.bridgeCommands(names, this.ctx?.agents?.get?.(options.sessionId));
       },
+      onModel: (rec) => {
+        // Bank the switch for the session so the notice and the picker read it at the stop
+        // transition. `rec` omits sessionId and at; fill them here (the translator has no clock).
+        if (options.sessionId)
+          this.sessionFallbacks.set(options.sessionId, {
+            ...rec,
+            sessionId: options.sessionId,
+            at: Date.now(),
+          });
+      },
       onResult: (summary: TurnRecord) => {
         // ponytail: ring buffer capped at 50 entries per session; now also persisted to disk so it
         // survives a dsh restart — upgrade only if per-turn granularity beyond 50 is needed.
@@ -6254,6 +6269,7 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       },
       sideQuestions: adapter.sideQuestions,
       loginNeeded: adapter.loginNeeded,
+      sessionFallbacks: adapter.sessionFallbacks,
       boxOfSession: (sid) => {
         const label = adapter.hostLabelFor(sid);
         return { host: label ?? "", label: label ?? hostname() };
