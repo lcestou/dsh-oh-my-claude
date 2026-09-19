@@ -3,7 +3,7 @@ import { type Reach } from "./reach.js";
 import type { JsonValue, PluginContext, WorkspaceRegistry } from "./dsh.js";
 import type { ToolMode, ToolModeInfo } from "./rows-probe.js";
 import { type PluginLoadError } from "./plugins.js";
-import { type LoginNeed } from "./adapter.js";
+import { EFFORTS_ALL, type LoginNeed } from "./adapter.js";
 import type { PermissionModeInfo, PermissionModeReply, RewindReply, ContextUsageReply, WorkspaceDiffReply, PermissionReadoutReply, McpStatusReply, AsideEntry, LiveTurn } from "./adapter.js";
 /** Any JSON object, as a request body or a stored file decodes to. */
 type JsonObject = Record<string, JsonValue>;
@@ -198,6 +198,7 @@ interface PickerOption {
     model: string;
     label?: string;
 }
+type EffortLevel = (typeof EFFORTS_ALL)[number];
 /** The two settings.json keys that shape Claude Code's own `/model` picker. */
 export interface PickerSettings {
     /** Allowlist entries: a family alias, a version prefix or a full id. Absent means no allowlist. */
@@ -206,6 +207,10 @@ export interface PickerSettings {
     options: PickerOption[];
     /** The CLI keeps only the Default row and those extra rows. */
     replaceBuiltInOptions: boolean;
+    /** settings.json `maxEffortLevel`: the highest effort the pickers offer. Absent means no cap. */
+    maxEffortLevel?: EffortLevel;
+    /** Per-model `modelSettings.<id>.maxEffortLevel`, which overrides the top level for that model. */
+    modelEffortCaps?: Record<string, EffortLevel>;
 }
 /**
  * Read what settings.json says about the picker. Anything the CLI would ignore is dropped here,
