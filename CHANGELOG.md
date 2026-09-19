@@ -9,6 +9,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 ### Fixed
 
 - A skill both dsh and Claude Code know now reaches Claude once instead of twice. dsh stops sending its own copy when the CLI lists that skill's name, because Claude Code injects the body itself. A skill only dsh knows still reaches Claude, since that copy is the only one.
+- The effort picker now honours settings.json `maxEffortLevel`, so it lists only the levels the CLI will run. Before this it offered every level a model supports and the CLI quietly clamped a pick above the cap, so the picker showed an effort the turn never used.
 
 ### Changed
 
