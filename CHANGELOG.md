@@ -28,6 +28,11 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 - The Plugins roster names any plugin the Claude Code CLI could not load, with the reason, in a
   red block above the plugin rows. The block clears once a plugin reload reports no errors left;
   until then it shows what the session's last start found.
+- A model fallback now surfaces in the session. When Claude's safeguards flag a message and re-run
+  it on another model, the transcript shows a line naming the model that answered and the category
+  that flagged the request, and a desktop notice says the same when the turn ends in a background
+  tab. The model picker moves onto the answering model when the switch sticks for the rest of the
+  conversation, matching the app, and stays put when the fallback was a one-off or a subagent's.
 
 - A Skill costs card in Settings shows what each Claude Code skill costs in context and how often
   you have used it, read from the CLI's own `/skill-doctor`. It runs the command as a throwaway
