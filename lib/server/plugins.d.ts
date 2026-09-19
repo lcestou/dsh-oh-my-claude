@@ -1,3 +1,4 @@
+import type { JsonValue } from "./dsh.js";
 import { type ScopeText } from "./switches.js";
 /** One `enabledPlugins` entry, keyed `plugin-id@marketplace-id`. */
 export interface PluginRow {
@@ -20,6 +21,18 @@ export interface PluginRoster {
     plugins: PluginRow[];
     marketplaces: MarketplaceRow[];
 }
+/** One entry of the init frame's `plugin_errors`: a plugin the CLI could not load, and why.
+ *  `plugin` is the id, or a synthetic `inline[N]` for a `--plugin-dir` load; `message` is a full
+ *  sentence naming the plugin and the reason. Same shape as `plugin_warnings`. */
+export interface PluginLoadError {
+    plugin: string;
+    type: string;
+    message: string;
+}
+/** Parse the init frame's `plugin_errors` into typed rows. Absent or malformed entries drop out; a
+ *  clean load has no key and yields `[]`. `typeof` is allowed here (developing.md: the runtime-typeof
+ *  rule names only adapter.ts and client/index.tsx). */
+export declare function pluginErrorsOf(value: JsonValue): PluginLoadError[];
 /** The scopes `claude plugin` writes to; same set the MCP tab uses, named for this surface. */
 declare const PLUGIN_SCOPES: readonly ["user", "project", "local"];
 export type PluginScope = (typeof PLUGIN_SCOPES)[number];

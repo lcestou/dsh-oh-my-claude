@@ -1,6 +1,7 @@
 import type { StreamChunk, LlmFailure } from "@deepseek-ai/dsh-llm";
 import { type ClaudeEvent, type ClaudeStreamPartial, type ClaudeContentBlock } from "./process.js";
 import { TurnRecord } from "./adapter.js";
+import { type PluginLoadError } from "./plugins.js";
 export declare function capLines(body: string, max?: number): string;
 /**
  * The word joiner that follows the glyph on every tool header we write.
@@ -114,7 +115,7 @@ export declare class Translator {
     /** Injected: mask secret values in tool results before they are shown or appended. */
     redact?: (s: string) => string;
     /** Injected: the CLI's slash-command catalog and tool names from its init frame. */
-    onInit?: (commands: string[], tools: string[]) => void;
+    onInit?: (commands: string[], tools: string[], pluginErrors?: PluginLoadError[]) => void;
     /** Running figures for the turn's status row: the thinking estimate as it climbs, and output tokens
      *  once a usage frame names them. Fired on the frames that carry them, nothing is polled. */
     onProgress?: (progress: TurnProgress) => void;
@@ -160,7 +161,7 @@ export declare class Translator {
         onToolResult?: (callId: string, text: string, isError: boolean, meta?: object) => void;
         onResult?: (summary: TurnRecord) => void;
         redact?: (s: string) => string;
-        onInit?: (commands: string[], tools: string[]) => void;
+        onInit?: (commands: string[], tools: string[], pluginErrors?: PluginLoadError[]) => void;
         onProgress?: (progress: TurnProgress) => void;
         /** The box a remote turn runs on, so a logged-out error names it, not this local host. */
         hostLabel?: string;

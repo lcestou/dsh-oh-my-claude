@@ -27,6 +27,35 @@ export interface PluginRoster {
   marketplaces: MarketplaceRow[];
 }
 
+/** One entry of the init frame's `plugin_errors`: a plugin the CLI could not load, and why.
+ *  `plugin` is the id, or a synthetic `inline[N]` for a `--plugin-dir` load; `message` is a full
+ *  sentence naming the plugin and the reason. Same shape as `plugin_warnings`. */
+export interface PluginLoadError {
+  plugin: string;
+  type: string;
+  message: string;
+}
+
+/** Extract a string field from an untyped init entry, or "" when the value is not a string. */
+const str = (v: unknown): string => (typeof v === "string" ? v : "");
+
+/** Parse the init frame's `plugin_errors` into typed rows. Absent or malformed entries drop out; a
+ *  clean load has no key and yields `[]`. `typeof` is allowed here (developing.md: the runtime-typeof
+ *  rule names only adapter.ts and client/index.tsx). */
+export function pluginErrorsOf(value: JsonValue): PluginLoadError[] {
+  if (!Array.isArray(value)) return [];
+  const out: PluginLoadError[] = [];
+  for (const entry of value) {
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) continue;
+    // SAFETY: guarded to a non-null, non-array object on the line above
+    const row = entry as Record<string, JsonValue>;
+    const message = str(row.message);
+    if (message === "") continue;
+    out.push({ plugin: str(row.plugin), type: str(row.type), message });
+  }
+  return out;
+}
+
 /** The scopes `claude plugin` writes to; same set the MCP tab uses, named for this surface. */
 const PLUGIN_SCOPES = ["user", "project", "local"] as const;
 export type PluginScope = (typeof PLUGIN_SCOPES)[number];

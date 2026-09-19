@@ -75,6 +75,9 @@ export type ClaudeEvent =
       slash_commands?: JsonValue;
       /** subtype "init": every tool name the session has; MCP ones read `mcp__<server>__<tool>`. */
       tools?: JsonValue;
+      /** subtype "init": plugins the CLI could not load, `{plugin,type,message}` each. Present only
+       *  when there are errors; a clean load omits the key. */
+      plugin_errors?: JsonValue;
       /** subtype "compact_boundary": `trigger` and `pre_tokens` always, `post_tokens` and
        *  `duration_ms` when the CLI chose to fill them in. */
       compact_metadata?: Record<string, unknown>;
