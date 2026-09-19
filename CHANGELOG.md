@@ -34,9 +34,11 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
   tab. The model picker moves onto the answering model when the switch sticks for the rest of the
   conversation, matching the app, and stays put when the fallback was a one-off or a subagent's.
 
-- A Skill costs card in Settings shows what each Claude Code skill costs in context and how often
-  you have used it, read from the CLI's own `/skill-doctor`. It runs the command as a throwaway
-  one-shot, so no message reaches the model and the card costs no usage.
+- A Skills tab in the panel gathers every skill the CLI can reach, grouped into User, Project and
+  Plugin sections, and folds in Claude Code's own `/skill-doctor` report of what each costs in
+  context and how often you have used it. The report runs the command as a throwaway one-shot, so no
+  message reaches the model and it costs no usage. This replaces the Skill costs card that sat in
+  Settings and the skills list that sat under the Instructions tab.
 
 ### Changed
 
