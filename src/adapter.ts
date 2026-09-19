@@ -6020,10 +6020,17 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
     );
     // Build a provider→box lookup from the registry so the usage route reads the right login: a
     // second local instance's own dir, or an ssh box's own `~/.claude` over ssh.
-    const usageBoxFor = (providerId: string): { home: string; sshHost?: string } | undefined => {
+    const usageBoxFor = (
+      providerId: string,
+    ): { home: string; sshHost?: string; realHome: string; command: string } | undefined => {
       const other = g[ADAPTER_CURRENT]?.get(providerId);
       return other
-        ? { home: other.claudeHome, sshHost: other.config.sshHost || undefined }
+        ? {
+            home: other.claudeHome,
+            sshHost: other.config.sshHost || undefined,
+            realHome: other.realClaudeHome,
+            command: other.config.command,
+          }
         : undefined;
     };
     // The same registry answers the session routes: a request that names its session's mount reads
@@ -6050,7 +6057,12 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       (level, msg) => adapter.log(level, msg),
       (home?: string, sshHost?: string) =>
         accountIdentity(adapter.config.command, home, sshHost ?? adapter.config.sshHost),
-      { home: claudeHome, boxFor: usageBoxFor },
+      {
+        home: claudeHome,
+        realHome: adapter.realClaudeHome,
+        command: adapter.config.command,
+        boxFor: usageBoxFor,
+      },
     );
     registerSessionRoutes(ctx, {
       log: (level: string, msg: string) => adapter.log(level, msg),
