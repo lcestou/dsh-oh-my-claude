@@ -6,6 +6,7 @@ import {
   formatToolResult,
   HEADER_MARK,
 } from "./translator.js";
+import type { PluginLoadError } from "./plugins.js";
 
 // Every header we write carries the mark right behind its glyph, and nothing else does: the client
 // requires it before it claims a paragraph as a tool header, so prose that opens with one of these
@@ -241,3 +242,41 @@ assert.equal(
 }
 
 console.log("translator format ok");
+
+// init.plugin_errors: the init frame's plugin_errors reach onInit as its third argument; a clean
+// init (no key) clears with []; a commands_changed refresh passes undefined so stored errors are
+// left alone.
+{
+  // SAFETY: the test reaches onInit, a private field, to observe what translate forwards
+  const t = new Translator() as unknown as {
+    onInit?: (c: string[], tools: string[], pe?: PluginLoadError[]) => void;
+    translate: (e: unknown) => void;
+  };
+  let seen: { names: string[]; tools: string[]; pe: PluginLoadError[] | undefined } | undefined;
+  t.onInit = (names, tools, pe) => {
+    seen = { names, tools, pe };
+  };
+  t.translate({
+    type: "system",
+    subtype: "init",
+    slash_commands: ["verify"],
+    tools: [],
+    plugin_errors: [{ plugin: "p", type: "generic-error", message: "boom" }],
+  });
+  assert.deepEqual(
+    seen?.pe,
+    [{ plugin: "p", type: "generic-error", message: "boom" }],
+    "init forwards plugin_errors to onInit",
+  );
+  seen = { names: [], tools: [], pe: undefined };
+  t.translate({ type: "system", subtype: "init", slash_commands: ["verify"], tools: [] });
+  assert.deepEqual(seen?.pe, [], "a clean init forwards [] so a prior error is cleared");
+  seen = { names: [], tools: [], pe: undefined };
+  t.translate({ type: "system", subtype: "commands_changed", commands: ["verify"] });
+  assert.equal(
+    seen?.pe,
+    undefined,
+    "commands_changed forwards undefined, leaving errors untouched",
+  );
+}
+console.log("translator plugin-errors ok");

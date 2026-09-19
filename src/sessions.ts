@@ -100,6 +100,7 @@ import {
   isPluginScope,
   pluginRoster,
   pluginScopeNeedsCwd,
+  type PluginLoadError,
 } from "./plugins.js";
 import {
   CLAUDE_HOME,
@@ -1390,6 +1391,9 @@ export interface SessionRouteOptions {
   /** Re-read plugins into a session's live process after a plugin/marketplace mutation, so the
    *  change applies now instead of at the next spawn. `live` is false when there is no process. */
   reloadPlugins?: (sessionId: string) => Promise<{ ok: boolean; live: boolean; error?: string }>;
+  /** The plugins a session's live process failed to load, from its init frame. Empty when clean or
+   *  when no process has run. */
+  pluginErrors?: (sessionId: string) => PluginLoadError[];
   /** Whether this plugin waits out a usage limit and continues the turn itself. */
   continueAfterLimit?: boolean;
 }
@@ -1478,6 +1482,7 @@ export function registerSessionRoutes(
     setStarter,
     models,
     reloadPlugins,
+    pluginErrors,
     continueAfterLimit,
     instanceFor,
     instanceForHost,
@@ -2095,11 +2100,13 @@ export function registerSessionRoutes(
                   url,
                   await knownCwd(url.searchParams.get("cwd"), sessionPersistence),
                 );
+                const session = url.searchParams.get("session");
                 return json(res, 200, {
                   ok: true,
                   ...pluginRoster(
                     await settingsTexts(box, (await userSettingsPathOf(box)) ?? settingsPath, cwd),
                   ),
+                  pluginErrors: session ? (pluginErrors?.(session) ?? []) : [],
                 });
               }
               // Turn the roster into a manager. The CLI owns the mutation end to end (it resolves

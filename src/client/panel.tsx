@@ -46,7 +46,7 @@ import { noticesOn, setNoticesOn } from "./notices.js";
 import { queueDraft } from "./draft.js";
 import { diffQuestion, reviewPrompt } from "../prompts.js";
 import type { FeatureSwitches } from "../switches.js";
-import type { PluginRoster } from "../plugins.js";
+import type { PluginRoster, PluginLoadError } from "../plugins.js";
 import type { PermissionRules, HooksListing } from "../process.js";
 
 // Module-level variable so reopening lands on the last picked tab.
@@ -556,11 +556,13 @@ type Act = (path: string, body: PluginMutationBody, id: string) => Promise<boole
  */
 function PluginManagerBlock({
   roster,
+  pluginErrors,
   sessionId,
   ctx,
   onChanged,
 }: {
   roster: PluginRoster | null;
+  pluginErrors: PluginLoadError[];
   sessionId: string;
   ctx: ClientCtx;
   onChanged: () => void;
@@ -610,6 +612,19 @@ function PluginManagerBlock({
         Plugins and marketplaces
       </span>
       <div style={{ padding: "2px 10px", fontSize: 12, lineHeight: "1.7" }}>
+        {pluginErrors.length > 0 && (
+          <div data-omc-plugin-errors="" role="alert" style={{ marginBottom: 6 }}>
+            <span style={{ ...meta, color: T.err, padding: "2px 4px", display: "block" }}>
+              Failed to load
+            </span>
+            {pluginErrors.map((e, i) => (
+              <div key={`${e.plugin}:${i}`} style={{ ...line, whiteSpace: "normal", color: T.err }}>
+                {e.plugin && !e.plugin.startsWith("inline") ? `${e.plugin}: ` : ""}
+                {e.message}
+              </div>
+            ))}
+          </div>
+        )}
         {plugins.length === 0 && marketplaces.length === 0 && (
           <span style={{ ...meta, fontSize: 12 }}>
             No settings file names a plugin (enabledPlugins) or a marketplace.
@@ -758,6 +773,7 @@ function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCt
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [roster, setRoster] = useState<PluginRoster | null>(null);
+  const [pluginErrors, setPluginErrors] = useState<PluginLoadError[]>([]);
   const [skills, setSkills] = useState<SkillRow[] | null>(null);
   const [skillQuery, setSkillQuery] = useState("");
 
@@ -765,7 +781,13 @@ function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCt
   // CLAUDE.md files rather than this PC's.
   const provider = claudeProviderOf(ctx, sessionId);
   const onBox = provider === undefined ? "" : `provider=${encodeURIComponent(provider)}`;
-  const q = [cwd ? `cwd=${encodeURIComponent(cwd)}` : "", onBox].filter((p) => p !== "").join("&");
+  const q = [
+    cwd ? `cwd=${encodeURIComponent(cwd)}` : "",
+    `session=${encodeURIComponent(sessionId)}`,
+    onBox,
+  ]
+    .filter((p) => p !== "")
+    .join("&");
   // A fetch in flight when the tab closes must not set state on the unmounted component (React
   // warns, and the stale result would flash if the tab reopened). Both loaders check this first.
   const mounted = useRef(true);
@@ -783,9 +805,13 @@ function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCt
   const refreshRoster = useCallback(() => {
     if (!cwd) return;
     fetch(`${ROUTE}/plugins?${q}`)
-      .then((r) => readJson<PluginRoster>(r))
+      .then((r) => readJson<PluginRoster & { pluginErrors?: PluginLoadError[] }>(r))
       // A roster that will not load is not an instructions error: the file list is still good.
-      .then((b) => mounted.current && setRoster(b))
+      .then((b) => {
+        if (!mounted.current) return;
+        setRoster(b);
+        setPluginErrors(b.pluginErrors ?? []);
+      })
       .catch(() => {});
   }, [cwd, q]);
   useEffect(() => {
@@ -926,6 +952,7 @@ function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCt
       {file === null && (
         <PluginManagerBlock
           roster={roster}
+          pluginErrors={pluginErrors}
           sessionId={sessionId}
           ctx={ctx}
           onChanged={refreshRoster}
