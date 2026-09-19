@@ -119,6 +119,7 @@ import type {
   RewindPrompt,
   RewindReply,
   ContextUsageReply,
+  SkillDoctorReply,
   WorkspaceDiffReply,
   PermissionReadoutReply,
   McpStatusReply,
@@ -1335,6 +1336,8 @@ export interface SessionRouteOptions {
   rewind?: (sessionId: string, uuid: string, dryRun: boolean) => Promise<RewindReply>;
   /** The CLI's own context breakdown for a session with a live process. */
   contextUsage?: (sessionId: string) => Promise<ContextUsageReply>;
+  /** The CLI's own skill report (`/skill-doctor`) for a session, run as a throwaway one-shot. */
+  skillDoctor?: (sessionId: string) => Promise<SkillDoctorReply>;
   /** The CLI's working-tree diff for a session with a live process. */
   workspaceDiff?: (sessionId: string) => Promise<WorkspaceDiffReply>;
   /** Permission rules and hooks for a session with a live process. */
@@ -1465,6 +1468,7 @@ export function registerSessionRoutes(
     thinking,
     rewind,
     contextUsage,
+    skillDoctor,
     workspaceDiff,
     permissionReadout,
     askAside,
@@ -2670,6 +2674,22 @@ export function registerSessionRoutes(
                 // 200 even when ok is false: the client reads ok, and a 409 here is by design (session
                 // mid-turn or no live process), which Chrome would print in red on every session switch.
                 return json(res, 200, reply);
+              }
+              if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/skill-doctor`) {
+                const sid = url.searchParams.get("session");
+                if (!sid) return json(res, 400, { error: "session param required" });
+                if (!skillDoctor) return json(res, 404, { error: "skill report not available" });
+                // 200 even when ok is false: a decline (no skills, scan denied) is an expected
+                // answer, not an HTTP error to print red. try/catch so a throw from the spawn path
+                // returns { ok: false } rather than a 500.
+                try {
+                  return json(res, 200, await skillDoctor(sid));
+                } catch (error) {
+                  return json(res, 200, {
+                    ok: false,
+                    error: `skill report failed: ${errorText(error)}`,
+                  });
+                }
               }
               if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/diff`) {
                 const sid = url.searchParams.get("session");

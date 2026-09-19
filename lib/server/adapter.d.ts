@@ -232,6 +232,25 @@ export type ContextUsageReply = ({
     ok: false;
     error: string;
 };
+/** What the skill-report route answers. A decline (the CLI's own `no_user_skills` or
+ *  `scan_policy_denied`) and a failure (spawn, timeout, missing binary) both leave `ok` false, but
+ *  the card shows a decline verbatim and wraps a failure, so `declined` tells them apart. `partial`
+ *  is set when the one-shot ran in a scratch cwd (a CLI too old for `--no-session-persistence`), so
+ *  the report lists user skills only. */
+export type SkillDoctorReply = {
+    ok: boolean;
+    report?: string;
+    declined?: boolean;
+    error?: string;
+    partial?: boolean;
+};
+/** The CLI's `result` frame (or its absence) as a reply. Pulled out of the spawn so the mapping is
+ *  unit-tested without a process: a decline keeps its text for the card to show verbatim, a missing
+ *  frame is a start failure, and `partial` marks a user-skills-only fallback run. */
+export declare function skillDoctorReply(result: {
+    is_error?: boolean;
+    result?: unknown;
+} | null, partial: boolean, failure: string): SkillDoctorReply;
 /** What the diff route reports: the CLI's working-tree diff for a live session. */
 export type WorkspaceDiffReply = ({
     ok: true;
@@ -1042,6 +1061,12 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * The CLI's own context breakdown (`/context` in the TUI) for a session with a live process;
      * answered between turns as well as inside one. 5 s: the CLI replies at once when it reads stdin.
      */
+    /** The CLI's own skill report (`/skill-doctor`, the same code path as `/plugin stats`): what each
+     *  skill costs in context and how often it has run. A throwaway one-shot in the session's
+     *  workspace cwd so project skills show, reading the raw `result` frame; it spends no model tokens
+     *  (the command is synthetic, measured 2026-09-19 returning at 2.3 s with no model turn). Not a
+     *  control request, and not `prepare`'s purpose branch, which forces a scratch cwd. */
+    skillDoctor(sessionId: string): Promise<SkillDoctorReply>;
     contextUsage(sessionId: string): Promise<ContextUsageReply>;
     /**
      * `/temporary`: toggle "keep no Claude transcript" for the current dsh session. Registered here,

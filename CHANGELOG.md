@@ -29,6 +29,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
   red block above the plugin rows. The block clears once a plugin reload reports no errors left;
   until then it shows what the session's last start found.
 
+- A Skill costs card in Settings shows what each Claude Code skill costs in context and how often
+  you have used it, read from the CLI's own `/skill-doctor`. It runs the command as a throwaway
+  one-shot, so no message reaches the model and the card costs no usage.
+
 ### Changed
 
 - A Claude command or skill run from dsh's slash menu (`/claude-<name>`) shows in the transcript
