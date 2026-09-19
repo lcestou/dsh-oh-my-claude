@@ -12,6 +12,72 @@ const skillsBody: JsonDoc = {
   skills: [
     { name: "unslop", scope: "user", path: "/u/unslop/SKILL.md", description: "cut ai tells" },
     {
+      name: "filler-01",
+      scope: "user",
+      path: "/u/filler-01/SKILL.md",
+      description: "pads the list past the twelve that show the search box",
+    },
+    {
+      name: "filler-02",
+      scope: "user",
+      path: "/u/filler-02/SKILL.md",
+      description: "pads the list past the twelve that show the search box",
+    },
+    {
+      name: "filler-03",
+      scope: "user",
+      path: "/u/filler-03/SKILL.md",
+      description: "pads the list past the twelve that show the search box",
+    },
+    {
+      name: "filler-04",
+      scope: "user",
+      path: "/u/filler-04/SKILL.md",
+      description: "pads the list past the twelve that show the search box",
+    },
+    {
+      name: "filler-05",
+      scope: "user",
+      path: "/u/filler-05/SKILL.md",
+      description: "pads the list past the twelve that show the search box",
+    },
+    {
+      name: "filler-06",
+      scope: "user",
+      path: "/u/filler-06/SKILL.md",
+      description: "pads the list past the twelve that show the search box",
+    },
+    {
+      name: "filler-07",
+      scope: "user",
+      path: "/u/filler-07/SKILL.md",
+      description: "pads the list past the twelve that show the search box",
+    },
+    {
+      name: "filler-08",
+      scope: "user",
+      path: "/u/filler-08/SKILL.md",
+      description: "pads the list past the twelve that show the search box",
+    },
+    {
+      name: "filler-09",
+      scope: "user",
+      path: "/u/filler-09/SKILL.md",
+      description: "pads the list past the twelve that show the search box",
+    },
+    {
+      name: "filler-10",
+      scope: "user",
+      path: "/u/filler-10/SKILL.md",
+      description: "pads the list past the twelve that show the search box",
+    },
+    {
+      name: "filler-11",
+      scope: "user",
+      path: "/u/filler-11/SKILL.md",
+      description: "pads the list past the twelve that show the search box",
+    },
+    {
       name: "design-pass",
       scope: "project",
       path: "/p/design-pass/SKILL.md",
