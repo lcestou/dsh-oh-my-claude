@@ -7,6 +7,7 @@ import {
   HEADER_MARK,
 } from "./translator.js";
 import type { PluginLoadError } from "./plugins.js";
+import type { FallbackRecord } from "./translator.js";
 
 // Every header we write carries the mark right behind its glyph, and nothing else does: the client
 // requires it before it claims a paragraph as a tool header, so prose that opens with one of these
@@ -280,3 +281,96 @@ console.log("translator format ok");
   );
 }
 console.log("translator plugin-errors ok");
+// model_fallback / refusal / consent frames: each draws its reasoning line and fires onModel once
+// with the fields the notice and picker read. Synthetic frames built from the 2.1.277 schemas
+// (byte search, notes/design/2026-09-19-model-fallback.md); the model_fallback frame is the shape
+// the Haiku probe produced live.
+{
+  // SAFETY: the test reaches onModel, a private field, to observe what translate forwards
+  const t = new Translator() as unknown as {
+    onModel?: (rec: Omit<FallbackRecord, "sessionId" | "at">) => void;
+    translate: (e: unknown) => Array<{ block?: { type?: string; text?: string } }>;
+  };
+  const seen: Array<Omit<FallbackRecord, "sessionId" | "at">> = [];
+  t.onModel = (rec) => {
+    seen.push(rec);
+  };
+
+  const refusal = t.translate({
+    type: "system",
+    subtype: "model_refusal_fallback",
+    direction: "sticky",
+    scope: "session",
+    original_model: "Fable 5.1",
+    fallback_model: "Opus 4.8",
+    api_refusal_category: "cyber",
+  });
+  assert.equal(refusal.at(-1)?.block?.type, "reasoning", "refusal line is a reasoning block");
+  assert.equal(
+    refusal.at(-1)?.block?.text,
+    "⚠ Model switched: Fable 5.1 → Opus 4.8 (cyber safeguard)",
+    "sticky refusal line names the category",
+  );
+  assert.equal(
+    seen.at(-1)?.kind,
+    "model_refusal_fallback",
+    "onModel kind is model_refusal_fallback",
+  );
+  assert.equal(seen.at(-1)?.direction, "sticky", "onModel carries direction sticky");
+  assert.equal(seen.at(-1)?.scope, "session", "onModel carries scope session");
+  assert.equal(seen.at(-1)?.category, "cyber", "onModel carries category cyber");
+
+  const noFallback = t.translate({
+    type: "system",
+    subtype: "model_refusal_no_fallback",
+    original_model: "Fable 5.1",
+    api_refusal_category: "cyber",
+  });
+  assert.equal(
+    noFallback.at(-1)?.block?.text,
+    "⛔ Request blocked on Fable 5.1 (cyber safeguard)",
+    "no-fallback line blocks with the category",
+  );
+  assert.equal(
+    seen.at(-1)?.kind,
+    "model_refusal_no_fallback",
+    "onModel kind is model_refusal_no_fallback",
+  );
+  assert.equal(seen.at(-1)?.to, "", "no-fallback record has empty to");
+
+  const consent = t.translate({
+    type: "system",
+    subtype: "model_consent_fallback",
+    original_model_name: "Fable 5",
+    fallback_model: "Opus 5",
+    persisted_as_default: true,
+    content: "Switched to Opus 5 — now your default model",
+  });
+  assert.equal(
+    consent.at(-1)?.block?.text,
+    "⚠ Switched to Opus 5 — now your default model",
+    "consent line uses the CLI content",
+  );
+  assert.equal(
+    seen.at(-1)?.kind,
+    "model_consent_fallback",
+    "onModel kind is model_consent_fallback",
+  );
+  assert.equal(seen.at(-1)?.direction, "sticky", "persisted consent maps to sticky");
+
+  const primary = t.translate({
+    type: "system",
+    subtype: "model_fallback",
+    trigger: "model_not_found",
+    original_model: "claude-nonexistent-9-9",
+    fallback_model: "claude-haiku-4-5-20251001",
+    content: "Switched to Haiku 4.5 because claude-nonexistent-9-9 is not available",
+  });
+  assert.equal(
+    primary.at(-1)?.block?.text,
+    "⚠ Switched to Haiku 4.5 because claude-nonexistent-9-9 is not available",
+    "model_fallback line uses the CLI content",
+  );
+  assert.equal(seen.at(-1)?.kind, "model_fallback", "onModel kind is model_fallback");
+}
+console.log("translator model-fallback ok");

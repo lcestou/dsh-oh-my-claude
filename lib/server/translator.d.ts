@@ -51,6 +51,21 @@ export interface TurnProgress {
         name: string;
     };
 }
+/** A model switch the CLI reported mid-turn, surfaced to the notice and the picker. `direction` and
+ *  `scope` come from `model_refusal_fallback`; `model_fallback` and `model_consent_fallback` leave
+ *  them undefined. The client moves the picker only for a `model_refusal_fallback` that is `sticky`
+ *  and session-scoped. `sessionId` and `at` are filled by the adapter, not the translator. */
+export interface FallbackRecord {
+    sessionId: string;
+    kind: "model_refusal_fallback" | "model_refusal_no_fallback" | "model_fallback" | "model_consent_fallback";
+    from: string;
+    to: string;
+    direction?: "retry" | "revert" | "sticky";
+    scope?: "session" | "local";
+    category?: string;
+    at: number;
+    content?: string;
+}
 export declare class Translator {
     log: (level: string, msg: string) => void;
     unknownSeen: Set<string>;
@@ -119,6 +134,10 @@ export declare class Translator {
     /** Running figures for the turn's status row: the thinking estimate as it climbs, and output tokens
      *  once a usage frame names them. Fired on the frames that carry them, nothing is polled. */
     onProgress?: (progress: TurnProgress) => void;
+    /** Injected: fired when the CLI switched or refused the turn's model, from any fallback frame. The
+     *  adapter banks it; the client fires a notice and moves the picker (only a sticky, session-scoped
+     *  model_refusal_fallback). `sessionId` and `at` are added by the adapter. */
+    onModel?: (rec: Omit<FallbackRecord, "sessionId" | "at">) => void;
     /** Output tokens across every assistant message of this turn so far. A `message_delta` reports
      *  the message it closes, not the turn, so the figure summed here is what the status row shows;
      *  reporting each message's own count made the row drop back to a few hundred at every tool step. */
@@ -148,7 +167,7 @@ export declare class Translator {
      * one callId, which throws in ConversationNodeAssembler and stalls the whole event feed.
      */
     private fireToolCall;
-    constructor({ toolActivity, continueAfterLimit, timeZone, toolTextLimit, relay, dshIds, relayed, log, onToolCall, onToolResult, onResult, redact, onInit, onProgress, hostLabel, statusNote, }?: {
+    constructor({ toolActivity, continueAfterLimit, timeZone, toolTextLimit, relay, dshIds, relayed, log, onToolCall, onToolResult, onResult, redact, onInit, onProgress, onModel, hostLabel, statusNote, }?: {
         toolActivity?: boolean;
         continueAfterLimit?: boolean;
         timeZone?: string;
@@ -163,6 +182,7 @@ export declare class Translator {
         redact?: (s: string) => string;
         onInit?: (commands: string[], tools: string[], pluginErrors?: PluginLoadError[]) => void;
         onProgress?: (progress: TurnProgress) => void;
+        onModel?: (rec: Omit<FallbackRecord, "sessionId" | "at">) => void;
         /** The box a remote turn runs on, so a logged-out error names it, not this local host. */
         hostLabel?: string;
         /** What to append to a 5xx retry line from the Anthropic status page cache. */

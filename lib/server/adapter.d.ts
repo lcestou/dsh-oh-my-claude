@@ -16,8 +16,8 @@ import { sshRunner, type HoldRecord } from "./hold.js";
 import type { RewindResult } from "./process.js";
 export { markBusy, takeInterrupted } from "./state.js";
 export { forkTranscriptText } from "./transcript.js";
-import { Translator } from "./translator.js";
-export { Translator, type TranslatorBlock } from "./translator.js";
+import { Translator, type FallbackRecord } from "./translator.js";
+export { Translator, type TranslatorBlock, type FallbackRecord } from "./translator.js";
 import type { FinishReason } from "@deepseek-ai/dsh-llm";
 import type { ClaudeProcessSpec, RelayEvent, RelayResult, TurnPrep } from "./process.js";
 /** Replace the redirect map: the boot read and every panel edit land here. Exported so the offline
@@ -947,6 +947,11 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      *  ponytail: unbounded like sessionTools, one entry per live session, only overwritten or cleared,
      *  never accumulated. Prune with the session lifecycle if sessionTools ever gets a prune. */
     readonly sessionPluginErrors: Map<string, PluginLoadError[]>;
+    /** dsh session id → the model switch its last turn reported (a safety refusal, a primary-model
+     *  fallback, or the usage-credit gate), surfaced through `/side-questions` like `loginNeeded`. One
+     *  entry per live session, overwritten on each switch; the client reads it at the stop transition.
+     *  ponytail: unbounded like `sessionTools`, only overwritten, never accumulated. */
+    readonly sessionFallbacks: Map<string, FallbackRecord>;
     /**
      * Register Claude Code's slash commands (from the CLI's init frame) as dsh `/commands`. The
      * handler hands the line to Claude as the next prompt, where the CLI expands the skill or

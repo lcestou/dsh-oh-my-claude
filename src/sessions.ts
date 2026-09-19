@@ -124,6 +124,7 @@ import type {
   PermissionReadoutReply,
   McpStatusReply,
   AsideEntry,
+  FallbackRecord,
   LiveTurn,
 } from "./adapter.js";
 
@@ -1366,6 +1367,9 @@ export interface SessionRouteOptions {
   sideQuestions?: Map<string, AsideEntry[]>;
   /** Sessions whose last turn failed for want of a login, read beside the asides for the card. */
   loginNeeded?: Map<string, LoginNeed>;
+  /** dsh session id → the model switch its last turn reported, for the `fallback` field beside the
+   *  card; the notices tick reads it at the stop transition. */
+  sessionFallbacks?: Map<string, FallbackRecord>;
   /** The box a session runs on, for the update card and the Tune rows: this box when `host` is empty. */
   boxOfSession?: (sessionId: string) => { host: string; label: string };
   /** A box's `claude` moved on: forget its flag probe so the next spawn reads the new binary. */
@@ -1476,6 +1480,7 @@ export function registerSessionRoutes(
     permissionAsks,
     sideQuestions,
     loginNeeded,
+    sessionFallbacks,
     boxOfSession,
     claudeUpdated,
     loginDone,
@@ -2644,6 +2649,7 @@ export function registerSessionRoutes(
                   items,
                   loginNeeded: loginNeeded?.get(sid) ?? null,
                   claudeUpdate: card && !(await updatesOff()) ? card : null,
+                  fallback: sessionFallbacks?.get(sid) ?? null,
                 });
               }
               // Dismiss is server-side so a closed card stays closed: a client-only hide is lost on the

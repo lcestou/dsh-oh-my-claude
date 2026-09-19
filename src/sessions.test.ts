@@ -22,7 +22,12 @@ import {
   readHints,
 } from "./sessions.js";
 import { projectDirName } from "./adapter.js";
-import type { LiveTurn, McpStatusReply, PermissionReadoutReply } from "./adapter.js";
+import type {
+  FallbackRecord,
+  LiveTurn,
+  McpStatusReply,
+  PermissionReadoutReply,
+} from "./adapter.js";
 import type { InstructionFile } from "./instructions.js";
 import type { TranscriptListItem } from "./transcript.js";
 
@@ -1647,4 +1652,62 @@ console.log("sessions ok");
   assert.deepStrictEqual(await readHints(hintsPath), { a: true, n: 3.5 });
   const emptyPath = join(dir, "missing.json");
   assert.deepStrictEqual(await readHints(emptyPath), {});
+}
+
+// GET /side-questions carries the session's fallback record in the `fallback` field, and a session
+// with no record answers null. Mirrors the POST block's fake ctx and route registration.
+{
+  const tmp = await mkdtemp(join(tmpdir(), "dsh-fallback-route-test-"));
+  let handler: ((req: any, res: any) => void) | undefined;
+  // SAFETY: partial fake for tests
+  const ctx = {
+    inject: (deps: string[], cb: (host: any) => void) => {
+      cb({
+        webServer: {
+          register: (r: any) => {
+            handler = r.handler as (req: any, res: any) => void;
+            return () => {};
+          },
+        },
+        connection: { requestRejection: () => undefined },
+        sessions: { get: () => undefined },
+        sessionPersistence: { list: async () => [] },
+        effect: (fn: () => void | (() => void)) => fn(),
+      });
+    },
+  } as any;
+  const rec: FallbackRecord = {
+    sessionId: "sid1",
+    kind: "model_refusal_fallback",
+    from: "Fable 5.1",
+    to: "Opus 4.8",
+    direction: "sticky",
+    scope: "session",
+    category: "cyber",
+    at: 1_700_000_000_000,
+  };
+  registerSessionRoutes(ctx, {
+    log: () => {},
+    projectDir: (cwd: string) => [join(tmp, "claude", "projects", projectDirName(cwd))],
+    projectsDir: [join(tmp, "claude", "projects")],
+    startedIds: async () => [],
+    claudeIdOf: (id: string) => id,
+    configDir: join(tmp, "claude"),
+    boxesPath: join(tmp, "boxes.json"),
+    importedDir: join(tmp, "imported"),
+    instanceFor: () => undefined,
+    instanceForHost: () => ({ configDir: join(tmp, "box") }),
+    sessionFallbacks: new Map([["sid1", rec]]),
+  });
+  assert.ok(handler);
+  const respond = responder(() => handler);
+
+  let r = await respond("GET", "/dsh-oh-my-claude/side-questions?session=sid1");
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body.fallback, rec, "the session's fallback record rides the response");
+
+  r = await respond("GET", "/dsh-oh-my-claude/side-questions?session=other");
+  assert.equal(r.status, 200);
+  assert.equal(r.body.fallback, null, "a session with no fallback answers null");
+  console.log("fallback-route ok");
 }
