@@ -78,6 +78,7 @@ import { themeOf, hexToRgb, type ThemeGroup } from "./theme.js";
 import { PluginUpdateBadge } from "./update-pill.js";
 import { isNewer } from "../update.js";
 import { livingModelId } from "../model-ids.js";
+import type { FallbackRecord } from "../translator.js";
 import { ReportBlock } from "./report.js";
 import { ChangelogBlock } from "./changelog.js";
 import { Spark, sparkNode } from "./spark.js";
@@ -4031,6 +4032,9 @@ const wireTurnStatus = (
 function watchSessionNotices(ctx: ClientCtx) {
   let prev: NoticeSnapshot | null = null;
   const waiting = new Set<string>();
+  // The `at` of the last fallback announced per session, so a session that fell back once and then
+  // ran clean turns does not re-announce the stale record on every later stop.
+  const seenFallback: Record<string, number> = {};
   let recapPending: Record<string, number> = {};
   // The recap's two settings, kept beside the tick rather than read in it: the tick is synchronous
   // and the store is a fetch. Re-read on the same event the settings switches dispatch, so flipping
@@ -4053,7 +4057,7 @@ function watchSessionNotices(ctx: ClientCtx) {
     const stopped = newlyWaiting(prev, next).filter((id) => isClaudeSession(ctx, id));
     for (const id of stopped) {
       waiting.add(id);
-      notifyWaiting(ctx, id, snap.byId[id]?.displayTitle ?? id);
+      void announceStop(ctx, id, snap.byId[id]?.displayTitle ?? id, seenFallback);
     }
     prev = next;
     // Return recap: a session that stopped working while it was not the one on screen is asked for
@@ -4117,6 +4121,95 @@ function notifyWaiting(ctx: ClientCtx, id: string, title: string) {
     openSession(ctx, id);
     note.close();
   });
+}
+
+// On a stop, read the session's fallback record once. A fresh one (newer than the last announced)
+// fires the fallback notice and moves the picker; otherwise the generic waiting notice fires. One
+// fetch per stop, never per second.
+async function announceStop(
+  ctx: ClientCtx,
+  id: string,
+  title: string,
+  seen: Record<string, number>,
+) {
+  let rec: FallbackRecord | null = null;
+  try {
+    const r = await fetch(`${ROUTE}/side-questions?session=${encodeURIComponent(id)}`);
+    if (r.ok) {
+      const body = await readJson<{ fallback?: FallbackRecord | null }>(r);
+      rec = body.fallback ?? null;
+    }
+  } catch {
+    rec = null;
+  }
+  if (rec && rec.at > (seen[id] ?? 0)) {
+    seen[id] = rec.at;
+    movePickerToFallback(ctx, id, rec);
+    notifyFallback(ctx, id, title, rec);
+    return;
+  }
+  notifyWaiting(ctx, id, title);
+}
+
+// The notice body: the CLI's own sentence when it sent one, else a plain line that names the model
+// that answered and the safeguard category. Verified against every case in the plan.
+function fallbackNoticeBody(rec: FallbackRecord): string {
+  if (rec.content) return rec.content;
+  const cat = rec.category ?? "safety";
+  const from = rec.from || "the model you picked";
+  const to = rec.to || "another model";
+  if (rec.kind === "model_refusal_no_fallback")
+    return `Blocked on ${from}: ${cat} safeguard, no fallback ran.`;
+  if ((rec.scope ?? "session") === "local")
+    return `${to} answered a subtask (${cat} safeguard on ${from}).`;
+  if (rec.direction === "sticky")
+    return `Answered by ${to}: the request was flagged by the ${cat} safeguard on ${from}.`;
+  if (rec.direction === "revert")
+    return `Fell back to ${to} for one message, then reverted (${cat} safeguard on ${from}).`;
+  return `Answered by ${to} for one message (${cat} safeguard on ${from}); your model is unchanged.`;
+}
+
+function notifyFallback(ctx: ClientCtx, id: string, title: string, rec: FallbackRecord) {
+  // Same guard as notifyWaiting: an ungranted browser gets the title mark alone.
+  if (!noticesOn() || !("Notification" in window) || Notification.permission !== "granted") return;
+  const note = new Notification(title, {
+    body: fallbackNoticeBody(rec),
+    tag: `omc-fallback-${id}`,
+  });
+  note.addEventListener("click", () => {
+    window.focus();
+    openSession(ctx, id);
+    note.close();
+  });
+}
+
+// Move dsh's picker onto the model that answered, only for a sticky, session-scoped safety fallback:
+// retry/revert are one-off, local is a subagent, and the other frame kinds do not swap the session
+// model. Mirrors StaleModelRepair's reads and its not-running guard (a model change respawns the
+// next turn). Matches the app, which keeps the picker on Opus until the person switches back.
+function movePickerToFallback(ctx: ClientCtx, sessionId: string, rec: FallbackRecord) {
+  if (
+    rec.kind !== "model_refusal_fallback" ||
+    rec.direction !== "sticky" ||
+    (rec.scope ?? "session") !== "session" ||
+    !rec.to
+  )
+    return;
+  let dir: ReturnType<ClientCtx["modelDirectories"]["directoryFor"]>;
+  try {
+    dir = ctx.modelDirectories.directoryFor(sessionId);
+  } catch {
+    return; // unbound in this tab
+  }
+  const snap = dir.store.getSnapshot();
+  const cur = snap.current;
+  if (!cur?.provider.startsWith("claude-code")) return;
+  const offered = snap.groups?.find((g) => g.id === cur.provider)?.models.map((m) => m.id);
+  if (!offered || offered.length === 0) return;
+  if (ctx.sessions.list.getSnapshot()?.byId[sessionId]?.running) return;
+  const living = livingModelId(rec.to, offered);
+  if (living && dir.select)
+    void dir.select({ provider: cur.provider, model: living }).catch(() => {});
 }
 
 function watchTurnStatus(ctx: ClientCtx) {
