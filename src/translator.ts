@@ -420,6 +420,26 @@ export interface TurnProgress {
   relay?: { name: string };
 }
 
+/** A model switch the CLI reported mid-turn, surfaced to the notice and the picker. `direction` and
+ *  `scope` come from `model_refusal_fallback`; `model_fallback` and `model_consent_fallback` leave
+ *  them undefined. The client moves the picker only for a `model_refusal_fallback` that is `sticky`
+ *  and session-scoped. `sessionId` and `at` are filled by the adapter, not the translator. */
+export interface FallbackRecord {
+  sessionId: string;
+  kind:
+    | "model_refusal_fallback"
+    | "model_refusal_no_fallback"
+    | "model_fallback"
+    | "model_consent_fallback";
+  from: string;
+  to: string;
+  direction?: "retry" | "revert" | "sticky";
+  scope?: "session" | "local";
+  category?: string;
+  at: number;
+  content?: string;
+}
+
 export class Translator {
   log: (level: string, msg: string) => void;
   unknownSeen: Set<string>; // (where:type) already warned, so schema drift warns once, not per event
@@ -479,6 +499,10 @@ export class Translator {
   /** Running figures for the turn's status row: the thinking estimate as it climbs, and output tokens
    *  once a usage frame names them. Fired on the frames that carry them, nothing is polled. */
   onProgress?: (progress: TurnProgress) => void;
+  /** Injected: fired when the CLI switched or refused the turn's model, from any fallback frame. The
+   *  adapter banks it; the client fires a notice and moves the picker (only a sticky, session-scoped
+   *  model_refusal_fallback). `sessionId` and `at` are added by the adapter. */
+  onModel?: (rec: Omit<FallbackRecord, "sessionId" | "at">) => void;
   /** Output tokens across every assistant message of this turn so far. A `message_delta` reports
    *  the message it closes, not the turn, so the figure summed here is what the status row shows;
    *  reporting each message's own count made the row drop back to a few hundred at every tool step. */
@@ -540,6 +564,7 @@ export class Translator {
     redact,
     onInit,
     onProgress,
+    onModel,
     hostLabel,
     statusNote,
   }: {
@@ -557,6 +582,7 @@ export class Translator {
     redact?: (s: string) => string;
     onInit?: (commands: string[], tools: string[], pluginErrors?: PluginLoadError[]) => void;
     onProgress?: (progress: TurnProgress) => void;
+    onModel?: (rec: Omit<FallbackRecord, "sessionId" | "at">) => void;
     /** The box a remote turn runs on, so a logged-out error names it, not this local host. */
     hostLabel?: string;
     /** What to append to a 5xx retry line from the Anthropic status page cache. */
@@ -591,6 +617,7 @@ export class Translator {
     this.redact = redact;
     this.onInit = onInit;
     this.onProgress = onProgress;
+    this.onModel = onModel;
   }
 
   deltaType(block: TranslatorBlock): "text-delta" | "reasoning-delta" {
@@ -824,10 +851,70 @@ export class Translator {
           const pair = from && to ? `: ${from} → ${to}` : from || to ? `: ${from || to}` : "";
           const why = event.trigger ? ` (${event.trigger})` : "";
           const said = (event.content ?? "").trim();
+          this.onModel?.({ kind: "model_fallback", from, to, content: said || undefined });
           return this.wholeBlock(
             "reasoning",
             said ? `⚠ ${clip(said)}` : `⚠ Model fallback${pair}${why}`,
           );
+        }
+        // The safety classifier flagged the message and the turn fell back to a safer model. This is
+        // the Fable→Opus safeguard switch; it rides the reasoning lane like every other system line.
+        if (event.subtype === "model_refusal_fallback") {
+          const from = event.original_model ?? "";
+          const to = event.fallback_model ?? "";
+          const cat = (event.api_refusal_category ?? "").trim();
+          const said = (event.content ?? "").trim();
+          this.onModel?.({
+            kind: "model_refusal_fallback",
+            from,
+            to,
+            direction: event.direction,
+            scope: event.scope,
+            category: cat || undefined,
+            content: said || undefined,
+          });
+          const pair = from && to ? `: ${from} → ${to}` : from || to ? `: ${from || to}` : "";
+          const why = cat ? ` (${cat} safeguard)` : "";
+          return this.wholeBlock(
+            "reasoning",
+            said ? `⚠ ${clip(said)}` : `⚠ Model switched${pair}${why}`,
+          );
+        }
+        // Flagged, and no fallback ran: the turn ends on a refusal. A `result` frame follows on its
+        // own, so nothing is awaited here; this line is the record of why the turn stopped.
+        if (event.subtype === "model_refusal_no_fallback") {
+          const from = event.original_model ?? "";
+          const cat = (event.api_refusal_category ?? "").trim();
+          const said = (event.content ?? event.api_refusal_explanation ?? "").trim();
+          this.onModel?.({
+            kind: "model_refusal_no_fallback",
+            from,
+            to: "",
+            category: cat || undefined,
+            content: said || undefined,
+          });
+          const why = cat ? ` (${cat} safeguard)` : "";
+          return this.wholeBlock(
+            "reasoning",
+            said ? `⛔ ${clip(said)}` : `⛔ Request blocked${from ? ` on ${from}` : ""}${why}`,
+          );
+        }
+        // The usage-credit / switch-default gate (secondary to the refusal frames). The CLI's own
+        // `content` is the whole line ("Switched to X — now your default model · …").
+        if (event.subtype === "model_consent_fallback") {
+          const from = event.original_model_name || event.original_model || "";
+          const to = event.fallback_model ?? "";
+          const said = (event.content ?? "").trim();
+          this.onModel?.({
+            kind: "model_consent_fallback",
+            from,
+            to,
+            direction: event.persisted_as_default === true ? "sticky" : "revert",
+            scope: "session",
+            content: said || undefined,
+          });
+          const pair = from && to ? `: ${from} → ${to}` : from || to ? `: ${from || to}` : "";
+          return this.wholeBlock("reasoning", said ? `⚠ ${clip(said)}` : `⚠ Model switched${pair}`);
         }
         // The loop's own banner. This box runs many hooks and `info` is documented as transcript
         // only, so only a suggestion or worse is drawn — plus anything that ended the turn early,
