@@ -75,7 +75,7 @@ import {
   saveBlob,
 } from "./shared.js";
 import { themeOf, hexToRgb, type ThemeGroup } from "./theme.js";
-import { PluginUpdateBadge } from "./update-pill.js";
+import { PluginUpdateBadge, StarNudge } from "./update-pill.js";
 import { isNewer } from "../update.js";
 import { livingModelId } from "../model-ids.js";
 import type { FallbackRecord } from "../translator.js";
@@ -5954,6 +5954,14 @@ function ThemeGroupBox({ flag, group, label }: { flag: string; group: string; la
   );
 }
 
+/** The star nudge under the heading, hidden for good once dismissed. The flag is box-wide, not
+ *  per-browser: someone who hid this line meant to hide it, not to hide it on one laptop. */
+function StarLine() {
+  const [off, setOff] = useHintFlag("starOff");
+  if (off) return null;
+  return <StarNudge onDismiss={() => setOff(true)} />;
+}
+
 /** The Claude look: the master switch first under the section title, then a fold with one checkbox
  *  per group and the accent colour. Box-wide in the hints store like the switches under it;
  *  applyTheme repaints on the hints event the setters dispatch, so nothing here touches the DOM. */
@@ -7833,6 +7841,7 @@ export function apply(ctx: ClientCtx) {
             <PluginUpdateBadge />
           </span>
         </div>
+        <StarLine />
         <ThemeSwitch />
         <StarterSwitch />
         <UpdateNoticeSwitch />

@@ -8,6 +8,9 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Added
 
+- A one-line nudge under the Settings heading, with the repo's live star count and a link to it.
+  The `×` hides it for good on the box, which also stops the count being read.
+
 - A session that stops to ask you something now raises a notice, the way one that finishes a turn
   already did. A permission dialog or an MCP question keeps the CLI's stream open, so the session
   still reads as running and nothing fired; a prompt on a tab you were not looking at could sit
