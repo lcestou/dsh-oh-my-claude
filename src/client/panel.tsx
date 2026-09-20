@@ -560,12 +560,14 @@ type Act = (path: string, body: PluginMutationBody, id: string) => Promise<boole
 function PluginManagerBlock({
   roster,
   pluginErrors,
+  pluginWarnings,
   sessionId,
   ctx,
   onChanged,
 }: {
   roster: PluginRoster | null;
   pluginErrors: PluginLoadError[];
+  pluginWarnings: PluginLoadError[];
   sessionId: string;
   ctx: ClientCtx;
   onChanged: () => void;
@@ -624,6 +626,22 @@ function PluginManagerBlock({
               <div key={`${e.plugin}:${i}`} style={{ ...line, whiteSpace: "normal", color: T.err }}>
                 {e.plugin && !e.plugin.startsWith("inline") ? `${e.plugin}: ` : ""}
                 {e.message}
+              </div>
+            ))}
+          </div>
+        )}
+        {pluginWarnings.length > 0 && (
+          <div data-omc-plugin-warnings="" role="status" style={{ marginBottom: 6 }}>
+            <span style={{ ...meta, color: T.warn, padding: "2px 4px", display: "block" }}>
+              Plugin warnings
+            </span>
+            {pluginWarnings.map((w, i) => (
+              <div
+                key={`${w.plugin}:${i}`}
+                style={{ ...line, whiteSpace: "normal", color: T.warn }}
+              >
+                {w.plugin && !w.plugin.startsWith("inline") ? `${w.plugin}: ` : ""}
+                {w.message}
               </div>
             ))}
           </div>
@@ -1196,6 +1214,7 @@ function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCt
   const [error, setError] = useState("");
   const [roster, setRoster] = useState<PluginRoster | null>(null);
   const [pluginErrors, setPluginErrors] = useState<PluginLoadError[]>([]);
+  const [pluginWarnings, setPluginWarnings] = useState<PluginLoadError[]>([]);
 
   // Every call names the session's own mount, so a session on a box lists and edits that box's
   // CLAUDE.md files rather than this PC's.
@@ -1225,12 +1244,17 @@ function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCt
   const refreshRoster = useCallback(() => {
     if (!cwd) return;
     fetch(`${ROUTE}/plugins?${q}`)
-      .then((r) => readJson<PluginRoster & { pluginErrors?: PluginLoadError[] }>(r))
+      .then((r) =>
+        readJson<
+          PluginRoster & { pluginErrors?: PluginLoadError[]; pluginWarnings?: PluginLoadError[] }
+        >(r),
+      )
       // A roster that will not load is not an instructions error: the file list is still good.
       .then((b) => {
         if (!mounted.current) return;
         setRoster(b);
         setPluginErrors(b.pluginErrors ?? []);
+        setPluginWarnings(b.pluginWarnings ?? []);
       })
       .catch(() => {});
   }, [cwd, q]);
@@ -1364,6 +1388,7 @@ function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCt
         <PluginManagerBlock
           roster={roster}
           pluginErrors={pluginErrors}
+          pluginWarnings={pluginWarnings}
           sessionId={sessionId}
           ctx={ctx}
           onChanged={refreshRoster}

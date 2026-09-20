@@ -1412,6 +1412,9 @@ export interface SessionRouteOptions {
   /** The plugins a session's live process failed to load, from its init frame. Empty when clean or
    *  when no process has run. */
   pluginErrors?: (sessionId: string) => PluginLoadError[];
+  /** The plugins a session's live process loaded with a warning, from its init frame. Empty when
+   *  clean or when no process has run. */
+  pluginWarnings?: (sessionId: string) => PluginLoadError[];
   /** Whether this plugin waits out a usage limit and continues the turn itself. */
   continueAfterLimit?: boolean;
 }
@@ -1504,6 +1507,7 @@ export function registerSessionRoutes(
     reloadPlugins,
     reloadSkills,
     pluginErrors,
+    pluginWarnings,
     continueAfterLimit,
     instanceFor,
     instanceForHost,
@@ -2243,6 +2247,7 @@ export function registerSessionRoutes(
                     await settingsTexts(box, (await userSettingsPathOf(box)) ?? settingsPath, cwd),
                   ),
                   pluginErrors: session ? (pluginErrors?.(session) ?? []) : [],
+                  pluginWarnings: session ? (pluginWarnings?.(session) ?? []) : [],
                 });
               }
               // Turn the roster into a manager. The CLI owns the mutation end to end (it resolves

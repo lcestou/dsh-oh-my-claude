@@ -947,6 +947,12 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      *  ponytail: unbounded like sessionTools, one entry per live session, only overwritten or cleared,
      *  never accumulated. Prune with the session lifecycle if sessionTools ever gets a prune. */
     readonly sessionPluginErrors: Map<string, PluginLoadError[]>;
+    /** dsh session id → the plugins its last init frame warned about (loaded, but with a complaint:
+     *  a shadowed default folder, a suppressed server. Absent until an init frame arrives; a clean
+     *  load clears it. reload_plugins carries no warning_count, so unlike errors these refresh only at
+     *  the next spawn's init frame, never on a reload.
+     *  ponytail: unbounded like sessionTools, one entry per live session, only overwritten or cleared. */
+    readonly sessionPluginWarnings: Map<string, PluginLoadError[]>;
     /** dsh session id → the model switch its last turn reported (a safety refusal, a primary-model
      *  fallback, or the usage-credit gate), surfaced through `/side-questions` like `loginNeeded`. One
      *  entry per live session, overwritten on each switch; the client reads it at the stop transition.
@@ -1066,6 +1072,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     }>;
     /** The plugin load errors this session's last init frame reported, for the panel. */
     pluginErrorsFor(sessionId: string): PluginLoadError[];
+    /** The plugin warnings this session's last init frame reported, for the panel. */
+    pluginWarningsFor(sessionId: string): PluginLoadError[];
     /** The CLI's working-tree diff (`get_workspace_diff`) for a session with a live process. */
     workspaceDiff(sessionId: string): Promise<WorkspaceDiffReply>;
     /** The permission rules and hooks a session's live process actually loaded

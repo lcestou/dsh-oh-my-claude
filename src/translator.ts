@@ -495,7 +495,12 @@ export class Translator {
   /** Injected: mask secret values in tool results before they are shown or appended. */
   redact?: (s: string) => string;
   /** Injected: the CLI's slash-command catalog and tool names from its init frame. */
-  onInit?: (commands: string[], tools: string[], pluginErrors?: PluginLoadError[]) => void;
+  onInit?: (
+    commands: string[],
+    tools: string[],
+    pluginErrors?: PluginLoadError[],
+    pluginWarnings?: PluginLoadError[],
+  ) => void;
   /** Running figures for the turn's status row: the thinking estimate as it climbs, and output tokens
    *  once a usage frame names them. Fired on the frames that carry them, nothing is polled. */
   onProgress?: (progress: TurnProgress) => void;
@@ -580,7 +585,12 @@ export class Translator {
     onToolResult?: (callId: string, text: string, isError: boolean, meta?: object) => void;
     onResult?: (summary: TurnRecord) => void;
     redact?: (s: string) => string;
-    onInit?: (commands: string[], tools: string[], pluginErrors?: PluginLoadError[]) => void;
+    onInit?: (
+      commands: string[],
+      tools: string[],
+      pluginErrors?: PluginLoadError[],
+      pluginWarnings?: PluginLoadError[],
+    ) => void;
     onProgress?: (progress: TurnProgress) => void;
     onModel?: (rec: Omit<FallbackRecord, "sessionId" | "at">) => void;
     /** The box a remote turn runs on, so a logged-out error names it, not this local host. */
@@ -696,8 +706,14 @@ export class Translator {
           if (Array.isArray(event.tools))
             for (const t of event.tools) if (String(t) === t) tools.push(t);
           const pluginErrors = pluginErrorsOf(event.plugin_errors ?? null);
-          if (names.length > 0 || tools.length > 0 || pluginErrors.length > 0)
-            this.onInit?.(names, tools, pluginErrors);
+          const pluginWarnings = pluginErrorsOf(event.plugin_warnings ?? null);
+          if (
+            names.length > 0 ||
+            tools.length > 0 ||
+            pluginErrors.length > 0 ||
+            pluginWarnings.length > 0
+          )
+            this.onInit?.(names, tools, pluginErrors, pluginWarnings);
           return [];
         }
         if (event.subtype === "thinking_tokens") {
