@@ -1910,7 +1910,10 @@ export function registerSessionRoutes(
                   return json(res, 400, { error: "cwd must be an absolute path" });
                 // A remote workspace ran its turns on its box, so its transcripts live there; this
                 // route only reaches this box, so an empty list would read as "nothing found".
-                if (workspaceAt(cwd) !== undefined)
+                // Only the workspace scope is refused: a box-wide scan walks this box's own
+                // project directories and never reads `cwd`, so refusing it because the panel's
+                // workspace filter happens to name a remote one blocks a search that would work.
+                if (scope === "workspace" && workspaceAt(cwd) !== undefined)
                   return json(res, 400, { error: "search runs on this box only" });
                 if (searching) return json(res, 429, { error: "a search is already running" });
                 searching = true;
