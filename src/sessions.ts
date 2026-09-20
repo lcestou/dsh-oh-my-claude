@@ -38,6 +38,7 @@ import {
   profileFromPath,
   updateCommand,
 } from "./update.js";
+import { stars } from "./stars.js";
 import { cardFor, ClaudeUpdater, newer, type Exec } from "./claude-update.js";
 import {
   classifyReach,
@@ -343,6 +344,13 @@ async function pluginUpdate(
   return { latest: newest.version, update: UPDATE_COMMAND };
 }
 
+/** The repo's star count for the nudge in Settings, this box only. The dismiss flag (`starOff` in
+ *  the hints store) turns the read off, so a person who hid the line pays no GitHub call. */
+async function pluginStars(hintsPath: string): Promise<number | undefined> {
+  if ((await readHints(hintsPath)).starOff === true) return undefined;
+  return stars();
+}
+
 const MAX_BOXES = 20;
 
 /** Another dsh server this panel can hop to; `token` is that box's dsh launch token. */
@@ -581,6 +589,8 @@ export interface RuntimeStatus {
   /** A newer plugin release on npm, and the command that installs it. This box only. */
   latest?: string;
   update?: string;
+  /** GitHub stargazers_count for this repo; absent when offline, rate-limited or dismissed. This box only. */
+  stars?: number;
   /** Claude processes still running on the box; they answer on the login they loaded at start. */
   running?: number;
   /** The dsh this plugin is loaded beside, and the lowest dsh this build runs on. This box only. */
@@ -1388,6 +1398,11 @@ export interface SessionRouteOptions {
       name: string,
       ask: boolean,
     ) => Promise<{ ok: boolean; error?: string }>;
+    /** Start an OAuth login for one server; the reply carries the sign-in page to open. */
+    authenticate: (
+      sessionId: string,
+      name: string,
+    ) => Promise<{ ok: boolean; authUrl?: string; error?: string }>;
   };
   /** The rules recent approval requests suggest, per session; the Tune tab offers them as chips. */
   permissionAsks?: Map<string, string[]>;
@@ -1442,6 +1457,11 @@ export interface SessionRouteOptions {
   /** The plugins a session's live process loaded with a warning, from its init frame. Empty when
    *  clean or when no process has run. */
   pluginWarnings?: (sessionId: string) => PluginLoadError[];
+  /** Every session holding an open prompt, for the browser's background notices. */
+  awaiting?: () => Record<
+    string,
+    { kind: "approval" | "question" | "plan"; id: string; since: number }
+  >;
   /** Whether this plugin waits out a usage limit and continues the turn itself. */
   continueAfterLimit?: boolean;
 }
@@ -1535,6 +1555,7 @@ export function registerSessionRoutes(
     reloadSkills,
     pluginErrors,
     pluginWarnings,
+    awaiting,
     continueAfterLimit,
     instanceFor,
     instanceForHost,
@@ -2351,6 +2372,13 @@ export function registerSessionRoutes(
                 }
                 return json(res, 200, { scopes });
               }
+              // Sessions holding an open prompt. A session waiting on a permission dialog keeps
+              // its stream open, so it still reads as running and the turn-end notice never fires;
+              // the browser polls this to notice a prompt on a tab nobody is looking at.
+              if (url.pathname === `${ROUTE_PREFIX}/awaiting`) {
+                if (req.method !== "GET") return json(res, 405, { error: "method not allowed" });
+                return json(res, 200, { sessions: awaiting?.() ?? {} });
+              }
               // Which plugins and marketplaces the session's settings load. Beside Instructions in
               // the panel: same question as the CLAUDE.md list, a different set of files.
               if (settingsPath && url.pathname === `${ROUTE_PREFIX}/plugins`) {
@@ -2521,13 +2549,14 @@ export function registerSessionRoutes(
                *  panel token counted as a login, since the CLI's own `auth status` cannot see the
                *  token the default instance injects at spawn. */
               const boxStatus = async (box: MountBox, provider: string | null) => {
-                const [status, upd] = await Promise.all([
+                const hintsPath = sshBoxesPath ? join(dirname(sshBoxesPath), "hints.json") : "";
+                const [status, upd, starCount] = await Promise.all([
                   runtimeStatus(box.configDir, box.command, box.sshHost),
-                  box.sshHost || !sshBoxesPath
-                    ? undefined
-                    : pluginUpdate(join(dirname(sshBoxesPath), "hints.json"), dshVersion),
+                  box.sshHost || !sshBoxesPath ? undefined : pluginUpdate(hintsPath, dshVersion),
+                  box.sshHost || !sshBoxesPath ? undefined : pluginStars(hintsPath),
                 ]);
                 if (upd) Object.assign(status, upd);
+                if (starCount !== undefined) status.stars = starCount;
                 if (!box.sshHost) {
                   status.dsh = dshVersion ?? null;
                   status.dshFloor = DSH_FLOOR ?? null;
@@ -2990,6 +3019,17 @@ export function registerSessionRoutes(
                 if (typeof session !== "string" || typeof name !== "string")
                   return json(res, 400, { error: "session and name required" });
                 const reply = await mcp.ask(session, name, ask === true);
+                return json(res, reply.ok ? 200 : 409, reply);
+              }
+              if (
+                mcp &&
+                req.method === "POST" &&
+                url.pathname === `${ROUTE_PREFIX}/mcp-servers/authenticate`
+              ) {
+                const { session, name } = await readBody(req);
+                if (typeof session !== "string" || typeof name !== "string")
+                  return json(res, 400, { error: "session and name required" });
+                const reply = await mcp.authenticate(session, name);
                 return json(res, reply.ok ? 200 : 409, reply);
               }
               // Add a server: `claude mcp add-json`, run in the session's own directory so a

@@ -963,6 +963,7 @@ const responder =
       receivedMcpAsk = { session: sid, name, ask };
       return { ok: true };
     },
+    authenticate: async () => ({ ok: true }),
   };
   // Re-register with the callback; registerSessionRoutes is called once per ctx but we pass a new one.
   // SAFETY: partial fake for tests

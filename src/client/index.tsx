@@ -75,7 +75,7 @@ import {
   saveBlob,
 } from "./shared.js";
 import { themeOf, hexToRgb, type ThemeGroup } from "./theme.js";
-import { PluginUpdateBadge } from "./update-pill.js";
+import { PluginUpdateBadge, StarNudge } from "./update-pill.js";
 import { isNewer } from "../update.js";
 import { livingModelId } from "../model-ids.js";
 import type { FallbackRecord } from "../translator.js";
@@ -87,7 +87,9 @@ import { ConfirmButton } from "./tune.js";
 import { AddWorkspaceFlow, canBrowseDirs, OPEN_EVENT, RW_EVENT } from "./picker.js";
 import { takeDraft, subscribeDraft, noteDraft, draftPending } from "./draft.js";
 import {
+  awaitingBody,
   markTitle,
+  newlyAwaiting,
   newlyWaiting,
   noticesOn,
   recapNext,
@@ -96,6 +98,7 @@ import {
   RECAP_AWAY_MS,
   RECAP_AWAY_CHOICES,
   RECAP_QUESTION,
+  type AwaitingRow,
   type NoticeSnapshot,
 } from "./notices.js";
 import { SETTINGS_SCOPES, SCOPE_LABELS, overrideNote } from "./settings.js";
@@ -4169,6 +4172,10 @@ function watchSessionNotices(ctx: ClientCtx) {
   // stops a record left over from a switch minutes ago from re-announcing on the next clean stop.
   const seenFallback: Record<string, number> = {};
   let recapPending: Record<string, number> = {};
+  // Last tick's open prompts, for the diff. `null`, not `{}`: the first poll after a page load is
+  // a baseline and must not fire, or a reload while a prompt is open re-announces a question the
+  // person is already reading. Same rule `prev` above follows for `newlyWaiting`.
+  let prevAwaiting: Record<string, AwaitingRow> | null = null;
   // The recap's two settings, kept beside the tick rather than read in it: the tick is synchronous
   // and the store is a fetch. Re-read on the same event the settings switches dispatch, so flipping
   // the switch reaches this watcher without a reload.
@@ -4193,6 +4200,36 @@ function watchSessionNotices(ctx: ClientCtx) {
       void announceStop(ctx, id, snap.byId[id]?.displayTitle ?? id, seenFallback);
     }
     prev = next;
+    // A session waiting on a permission prompt keeps its stream open, so it still reads as running
+    // and `newlyWaiting` never sees it stop. Poll the adapter's own map instead, and only while a
+    // Claude session is running: a running dsh session cannot hold a Claude prompt, and an idle box
+    // should make no requests.
+    const anyClaudeRunning = Object.entries(snap.byId).some(
+      ([id, s]) => s.running === true && isClaudeSession(ctx, id),
+    );
+    if (anyClaudeRunning) {
+      void fetch(`${ROUTE}/awaiting`)
+        .then((r) => readJson<{ sessions?: Record<string, AwaitingRow> }>(r))
+        .then((body) => {
+          const nextAwaiting = body.sessions ?? {};
+          for (const id of newlyAwaiting(prevAwaiting, nextAwaiting, openSessionId(ctx))) {
+            if (!isClaudeSession(ctx, id)) continue;
+            const prompt = nextAwaiting[id];
+            // noUncheckedIndexedAccess makes this read `AwaitingRow | undefined`; a missing row is
+            // not a transition to announce, so skip it rather than pass undefined to `notifyAwaiting`.
+            if (!prompt) continue;
+            waiting.add(id);
+            notifyAwaiting(ctx, id, snap.byId[id]?.displayTitle ?? id, prompt);
+          }
+          prevAwaiting = nextAwaiting;
+        })
+        .catch(() => {
+          // A failed poll says nothing. The next tick asks again; a prompt is not urgent enough to
+          // report a network error over.
+        });
+    } else {
+      prevAwaiting = null; // back to baseline: the next poll seeds it and does not fire
+    }
     // Return recap: a session that stopped working while it was not the one on screen is asked for
     // one line when it is opened. Off by default; the switch is in Settings, under Oh My Claude.
     // `recapNext` clears the id as it fires, so a return asks once and a second open of the
@@ -4249,6 +4286,20 @@ function notifyWaiting(ctx: ClientCtx, id: string, title: string) {
   if (!noticesOn() || !("Notification" in window) || Notification.permission !== "granted") return;
   // `tag` per session: a session that finishes twice replaces its own notice rather than stacking.
   const note = new Notification(title, { body: "Claude is waiting.", tag: `omc-${id}` });
+  note.addEventListener("click", () => {
+    window.focus();
+    openSession(ctx, id);
+    note.close();
+  });
+}
+
+function notifyAwaiting(ctx: ClientCtx, id: string, title: string, prompt: AwaitingRow) {
+  // Permission is only ever asked for from the panel's own toggle, so an ungranted browser is the
+  // normal case here and the title mark carries it alone.
+  if (!noticesOn() || !("Notification" in window) || Notification.permission !== "granted") return;
+  // A tag of its own per prompt: two tabs watching the same prompt collapse to one visible notice,
+  // and a session that asks twice replaces its own rather than stacking.
+  const note = new Notification(title, { body: awaitingBody(prompt.kind), tag: `omc-await-${id}` });
   note.addEventListener("click", () => {
     window.focus();
     openSession(ctx, id);
@@ -6032,6 +6083,14 @@ function ThemeGroupBox({ flag, group, label }: { flag: string; group: string; la
       {label}
     </label>
   );
+}
+
+/** The star nudge under the heading, hidden for good once dismissed. The flag is box-wide, not
+ *  per-browser: someone who hid this line meant to hide it, not to hide it on one laptop. */
+function StarLine() {
+  const [off, setOff] = useHintFlag("starOff");
+  if (off) return null;
+  return <StarNudge onDismiss={() => setOff(true)} />;
 }
 
 /** The Claude look: the master switch first under the section title, then a fold with one checkbox
@@ -7913,6 +7972,7 @@ export function apply(ctx: ClientCtx) {
             <PluginUpdateBadge />
           </span>
         </div>
+        <StarLine />
         <ThemeSwitch />
         <StarterSwitch />
         <UpdateNoticeSwitch />

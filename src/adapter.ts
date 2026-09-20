@@ -74,6 +74,8 @@ import {
   decodePermissionRules,
   decodeHooksListing,
   decodeMcpStatus,
+  mcpAuthUrl,
+  mcpAuthNeedsNothing,
   decodeCliModels,
   elicitationQuestions,
   elicitationResult,
@@ -581,6 +583,9 @@ export type PermissionReadoutReply =
 export type McpStatusReply =
   | { ok: true; error?: undefined; servers: McpServerStatus[] }
   | { ok: false; error: string };
+/** What the MCP login route reports: the sign-in page to open, an already-signed-in success with
+ *  no page, or the reason the CLI refused. */
+export type McpAuthReply = { ok: true; authUrl?: string } | { ok: false; error: string };
 /** What the permission-mode route reports: the mode in force and the stored override. */
 export interface PermissionModeInfo {
   mode: string;
@@ -2901,6 +2906,14 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    *  entry per live session, overwritten on each switch; the client reads it at the stop transition.
    *  ponytail: unbounded like `sessionTools`, only overwritten, never accumulated. */
   readonly sessionFallbacks = new Map<string, FallbackRecord>();
+  /** dsh session id → the prompt this session is waiting on, so a background tab can be told. One
+   *  entry per session, set when a prompt opens and cleared when it settles. In memory on purpose:
+   *  a prompt is live state and a restart re-asks.
+   *  ponytail: unbounded like `sessionTools`, one entry per live session, only overwritten. */
+  readonly awaitingInput = new Map<
+    string,
+    { kind: "approval" | "question" | "plan"; id: string; since: number }
+  >();
 
   /**
    * Register Claude Code's slash commands (from the CLI's init frame) as dsh `/commands`. The
@@ -3294,6 +3307,22 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     return reply.ok ? { ok: true } : { ok: false, error: reply.error };
   }
 
+  /** Start an OAuth login for one MCP server (`mcp_authenticate`). The reply carries the page the
+   *  browser must open; the CLI's own loopback catches the redirect and stores the token, so the
+   *  plugin keeps nothing. The case this gets wrong if written naively: a server whose token is
+   *  still good answers success with no page, which is a login that needed nothing rather than a
+   *  failure. */
+  async mcpAuthenticate(sessionId: string, serverName: string): Promise<McpAuthReply> {
+    const proc = this.processes.get(registryKey(this.providerId, sessionId));
+    if (!proc?.alive) return { ok: false, error: "no live Claude process for this session" };
+    const reply = await this.control(proc, { subtype: "mcp_authenticate", serverName }, 20_000);
+    if (!reply.ok) return { ok: false, error: reply.error };
+    const url = mcpAuthUrl(reply.response);
+    if (url !== undefined) return { ok: true, authUrl: url };
+    if (mcpAuthNeedsNothing(reply.response)) return { ok: true };
+    return { ok: false, error: "the CLI answered without a sign-in page" };
+  }
+
   /** Pin one MCP server's tools back to asking, or clear the pin
    *  (`set_mcp_permission_mode_override`). Tighten-only over this channel: the CLI accepts
    *  `default`, `auto` and null and rejects the rest without changing state, so this offers the two
@@ -3357,6 +3386,14 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   /** The plugin warnings this session's last init frame reported, for the panel. */
   pluginWarningsFor(sessionId: string): PluginLoadError[] {
     return this.sessionPluginWarnings.get(sessionId) ?? [];
+  }
+
+  /** The open prompts, keyed by dsh session id, for the browser's background notices. */
+  awaitingSnapshot(): Record<
+    string,
+    { kind: "approval" | "question" | "plan"; id: string; since: number }
+  > {
+    return Object.fromEntries(this.awaitingInput);
   }
 
   /** The CLI's working-tree diff (`get_workspace_diff`) for a session with a live process. */
@@ -5441,6 +5478,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       this.clearIdle(options.sessionId);
       options.signal?.removeEventListener("abort", onAbort);
       for (const c of pending.values()) c.abort();
+      // Backstop: the clears above run when a decision settles, which needs the answerer to honour
+      // the abort. A stranded controller is harmless; a stranded awaiting entry announces a prompt
+      // that no longer exists, on every reload.
+      this.awaitingInput.delete(options.sessionId);
       proc.busy = false;
       proc.lastUsed = Date.now();
       void this.watchTranscript(options.sessionId, prep.cwd, prep.session?.id);
@@ -5731,6 +5772,17 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const toolUseId = request.tool_use_id ?? requestId;
     const controller = new AbortController();
     pending.set(requestId, controller);
+    const awaitKind: "approval" | "question" | "plan" =
+      toolName === "AskUserQuestion"
+        ? "question"
+        : toolName === "ExitPlanMode"
+          ? "plan"
+          : "approval";
+    this.awaitingInput.set(options.sessionId, {
+      kind: awaitKind,
+      id: requestId,
+      since: Date.now(),
+    });
     const signal = options.signal
       ? AbortSignal.any([options.signal, controller.signal])
       : controller.signal;
@@ -5745,7 +5797,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     this.decide({ toolName, input, request, toolUseId, agent, signal, accessMode: prep.accessMode })
       .then((result) => reply(controlResponseLine(requestId, result)))
       .catch((error) => reply(controlErrorLine(requestId, errorText(error))))
-      .finally(() => pending.delete(requestId));
+      .finally(() => {
+        pending.delete(requestId);
+        const held = this.awaitingInput.get(options.sessionId);
+        if (held?.id === requestId) this.awaitingInput.delete(options.sessionId);
+      });
   }
 
   /**
@@ -5787,6 +5843,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     );
     const controller = new AbortController();
     pending.set(requestId, controller);
+    this.awaitingInput.set(options.sessionId, {
+      kind: "question",
+      id: requestId,
+      since: Date.now(),
+    });
     const signal = options.signal
       ? AbortSignal.any([options.signal, controller.signal])
       : controller.signal;
@@ -5796,7 +5857,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         reply(controlResponseLine(requestId, elicitationResult(request, response, requestId))),
       )
       .catch(() => reply(controlResponseLine(requestId, { action: "cancel" })))
-      .finally(() => pending.delete(requestId));
+      .finally(() => {
+        pending.delete(requestId);
+        const held = this.awaitingInput.get(options.sessionId);
+        if (held?.id === requestId) this.awaitingInput.delete(options.sessionId);
+      });
   }
 
   // SAFETY: destructured from ClaudeCodeControlRequest shape in process.ts
@@ -6269,6 +6334,8 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
           adapter.ownerFor(sessionId).mcpReconnect(sessionId, serverName),
         ask: (sessionId: string, serverName: string, ask: boolean) =>
           adapter.ownerFor(sessionId).setMcpAsk(sessionId, serverName, ask),
+        authenticate: (sessionId: string, serverName: string) =>
+          adapter.ownerFor(sessionId).mcpAuthenticate(sessionId, serverName),
       },
       rewind: (sessionId: string, uuid: string, dryRun: boolean) =>
         adapter.ownerFor(sessionId).rewind(sessionId, uuid, dryRun),
@@ -6321,6 +6388,7 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       pluginErrors: (sessionId: string) => adapter.ownerFor(sessionId).pluginErrorsFor(sessionId),
       pluginWarnings: (sessionId: string) =>
         adapter.ownerFor(sessionId).pluginWarningsFor(sessionId),
+      awaiting: () => adapter.awaitingSnapshot(),
       continueAfterLimit: adapter.config.continueAfterLimit,
     });
     // Mount the saved SSH boxes at boot; `sshMounts` is scope-local so a hot reload rebuilds them.

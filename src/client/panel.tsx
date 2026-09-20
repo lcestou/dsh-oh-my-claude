@@ -38,6 +38,8 @@ import {
   saveBlob,
   groupSkillsByScope,
   skillStateFromReply,
+  parseSkillCosts,
+  sortSkillCosts,
   type SkillState,
 } from "./shared.js";
 import { UpdatePill } from "./update-pill.js";
@@ -718,6 +720,21 @@ interface SkillRow {
 
 const writable = (scope: string) => scope === "user" || scope === "project";
 
+/** The /skill-doctor cost columns, one source of truth for the table header and body. `numeric` is
+ *  true for the four the CLI prints as magnitudes, so they line up right under each other. */
+const costCols: {
+  col: "skill" | "source" | "context" | "tokens" | "uses" | "lastUsed";
+  label: string;
+  numeric: boolean;
+}[] = [
+  { col: "skill", label: "Skill", numeric: false },
+  { col: "source", label: "Source", numeric: false },
+  { col: "context", label: "Context", numeric: true },
+  { col: "tokens", label: "7d tokens", numeric: true },
+  { col: "uses", label: "Uses", numeric: true },
+  { col: "lastUsed", label: "Last used", numeric: true },
+];
+
 /**
  * The Skills tab: every skill the CLI can reach for this directory, grouped by where it comes from,
  * each scope a collapsible section. User and project skills are created, edited and removed here; a
@@ -725,11 +742,16 @@ const writable = (scope: string) => scope === "user" || scope === "project";
  * re-read skills (`reload_skills`), so a new skill's /command registers without a respawn. The box the
  * session runs on is named in the query, so a remote session lists and edits that box's skills.
  */
+
 function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   const cwd = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.cwd;
   const [skills, setSkills] = useState<SkillRow[] | null>(null);
   const [query, setQuery] = useState("");
   const [cost, setCost] = useState<SkillState>({ kind: "idle" });
+  const [costSort, setCostSort] = useState<{
+    col: "skill" | "source" | "context" | "tokens" | "uses" | "lastUsed";
+    dir: "asc" | "desc";
+  }>({ col: "tokens", dir: "desc" });
   const costAc = useRef<AbortController | null>(null);
   const [editing, setEditing] = useState<{ path: string; name: string } | null>(null);
   const [text, setText] = useState("");
@@ -1185,13 +1207,109 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
                 skills without writing a transcript.
               </div>
             )}
-            <pre
-              data-omc-skill-doctor=""
-              aria-label="Skill costs report"
-              style={{ ...code, maxHeight: 320, overflow: "auto", margin: 0 }}
-            >
-              {cost.text}
-            </pre>
+            {(() => {
+              const parsed = parseSkillCosts(cost.text);
+              if (!parsed || parsed.length === 0)
+                return (
+                  <pre
+                    data-omc-skill-doctor=""
+                    aria-label="Skill costs report"
+                    style={{ ...code, maxHeight: 320, overflow: "auto", margin: 0 }}
+                  >
+                    {cost.text}
+                  </pre>
+                );
+              return (
+                <>
+                  <div style={{ maxHeight: 320, overflow: "auto" }}>
+                    <table
+                      data-omc-skill-cost-table=""
+                      aria-label="Skill costs"
+                      style={{ borderCollapse: "collapse", width: "100%" }}
+                    >
+                      <thead>
+                        <tr>
+                          {costCols.map((c) => (
+                            <th
+                              key={c.col}
+                              data-omc-skill-cost-header={c.col}
+                              aria-sort={
+                                costSort.col === c.col
+                                  ? costSort.dir === "asc"
+                                    ? "ascending"
+                                    : "descending"
+                                  : "none"
+                              }
+                              style={{
+                                ...meta,
+                                textAlign: "left",
+                                position: "sticky",
+                                top: 0,
+                                background: T.card,
+                                borderBottom: `1px solid ${T.border}`,
+                                padding: "2px 6px",
+                              }}
+                            >
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setCostSort((prev) =>
+                                    prev.col === c.col
+                                      ? { col: c.col, dir: prev.dir === "asc" ? "desc" : "asc" }
+                                      : { col: c.col, dir: "desc" },
+                                  )
+                                }
+                                style={{
+                                  background: "none",
+                                  border: 0,
+                                  padding: 0,
+                                  margin: 0,
+                                  font: "inherit",
+                                  color: "inherit",
+                                  cursor: "pointer",
+                                }}
+                              >
+                                {c.label}
+                              </button>
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {sortSkillCosts(parsed, costSort.col, costSort.dir).map((row) => (
+                          <tr key={row.skill}>
+                            {costCols.map((c) => {
+                              const cellStyle: CSSProperties = {
+                                ...meta,
+                                color: T.muted,
+                                padding: "2px 6px",
+                              };
+                              if (c.numeric) {
+                                cellStyle.fontFamily = T.mono;
+                                cellStyle.textAlign = "right";
+                              }
+                              return (
+                                <td key={c.col} style={cellStyle}>
+                                  {row[c.col]}
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <span
+                    data-omc-skill-cost-note=""
+                    style={{ ...meta, display: "block", marginTop: 6, whiteSpace: "normal" }}
+                  >
+                    Sorted view of Claude Code&apos;s /skill-doctor. Context is what the
+                    skill&apos;s one-line listing costs every turn; 7d tokens is the last seven days
+                    on this machine.
+                  </span>
+                </>
+              );
+            })()}
           </>
         )}
         {cost.kind !== "loading" && (
@@ -1915,6 +2033,44 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
       setBusy(null);
     }
   };
+  /** After the sign-in page opens, the CLI reconnects the server itself when the browser comes
+   *  back, and says nothing about it. Re-read the status until the row stops needing auth, or give
+   *  up after ninety seconds so a login someone abandoned does not poll forever. */
+  const watchUntilSignedIn = () => {
+    let left = 30;
+    const tick = () => {
+      left -= 1;
+      void load().then(() => {
+        if (left > 0) window.setTimeout(tick, 3000);
+      });
+    };
+    window.setTimeout(tick, 3000);
+  };
+  const login = async (serverName: string) => {
+    setBusy(serverName);
+    setNote("");
+    try {
+      const r = await fetch(`${ROUTE}/mcp-servers/authenticate`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ session: sessionId, name: serverName }),
+      }).then((x) => readJson<{ ok?: boolean; authUrl?: string; error?: string }>(x));
+      if (r.ok === true && r.authUrl !== undefined) {
+        window.open(r.authUrl, "_blank", "noopener");
+        setNote(`${serverName}: approve in the tab that opened; this row updates itself`);
+        watchUntilSignedIn();
+      } else if (r.ok === true) {
+        setNote(`${serverName}: already signed in`);
+        void load();
+      } else {
+        setNote(`${serverName}: ${r.error ?? "login failed"}`);
+      }
+    } catch (e) {
+      setNote(`${serverName}: ${e instanceof Error ? e.message : "login failed"}`);
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const remove = async (serverName: string) => {
     setBusy(serverName);
@@ -2061,6 +2217,18 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
                   {busy === s.name ? "…" : "Reconnect"}
                 </button>
               )}
+              {s.status === "needs-auth" && (
+                <button
+                  type="button"
+                  style={btn}
+                  data-omc-mcp-login=""
+                  aria-label={`Log in: ${s.name}`}
+                  disabled={busy !== null}
+                  onClick={() => void login(s.name)}
+                >
+                  {busy === s.name ? "…" : "Log in"}
+                </button>
+              )}
               <ConfirmButton
                 label="Remove"
                 style={btn}
@@ -2070,11 +2238,19 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
               />
             </div>
             {s.status !== "connected" && (s.error || s.status === "needs-auth") ? (
-              // A server that is down explains itself here; `needs-auth` always says something,
-              // because its row carries no Reconnect and would otherwise be a dead end.
+              // A server that is down explains itself here in the CLI's own words. A `needs-auth`
+              // row adds what to do about it, beside rather than instead of that wording: the CLI
+              // does set an error on these rows ("Please log in to your account"), so a fallback
+              // would never render and the Log in button would stand unexplained.
               <div style={{ padding: "0 6px 4px 22px", color: T.muted, fontSize: 12 }}>
-                {s.error ??
-                  "Needs authentication. Run /mcp in a Claude Code terminal on this box to authenticate this server."}
+                {s.error}
+                {s.status === "needs-auth" ? (
+                  <div style={{ marginTop: 2 }}>
+                    Log in opens the sign-in page in a new tab. The sign-in has to finish in a
+                    browser on the machine running Claude Code, not necessarily this one; the row
+                    updates itself when it lands.
+                  </div>
+                ) : null}
               </div>
             ) : null}
             {s.tools && s.tools.length > 0 ? (

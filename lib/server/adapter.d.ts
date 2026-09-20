@@ -275,6 +275,15 @@ export type McpStatusReply = {
     ok: false;
     error: string;
 };
+/** What the MCP login route reports: the sign-in page to open, an already-signed-in success with
+ *  no page, or the reason the CLI refused. */
+export type McpAuthReply = {
+    ok: true;
+    authUrl?: string;
+} | {
+    ok: false;
+    error: string;
+};
 /** What the permission-mode route reports: the mode in force and the stored override. */
 export interface PermissionModeInfo {
     mode: string;
@@ -958,6 +967,15 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      *  entry per live session, overwritten on each switch; the client reads it at the stop transition.
      *  ponytail: unbounded like `sessionTools`, only overwritten, never accumulated. */
     readonly sessionFallbacks: Map<string, FallbackRecord>;
+    /** dsh session id → the prompt this session is waiting on, so a background tab can be told. One
+     *  entry per session, set when a prompt opens and cleared when it settles. In memory on purpose:
+     *  a prompt is live state and a restart re-asks.
+     *  ponytail: unbounded like `sessionTools`, one entry per live session, only overwritten. */
+    readonly awaitingInput: Map<string, {
+        kind: "approval" | "question" | "plan";
+        id: string;
+        since: number;
+    }>;
     /**
      * Register Claude Code's slash commands (from the CLI's init frame) as dsh `/commands`. The
      * handler hands the line to Claude as the next prompt, where the CLI expands the skill or
@@ -1042,6 +1060,12 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
         ok: boolean;
         error?: string;
     }>;
+    /** Start an OAuth login for one MCP server (`mcp_authenticate`). The reply carries the page the
+     *  browser must open; the CLI's own loopback catches the redirect and stores the token, so the
+     *  plugin keeps nothing. The case this gets wrong if written naively: a server whose token is
+     *  still good answers success with no page, which is a login that needed nothing rather than a
+     *  failure. */
+    mcpAuthenticate(sessionId: string, serverName: string): Promise<McpAuthReply>;
     /** Pin one MCP server's tools back to asking, or clear the pin
      *  (`set_mcp_permission_mode_override`). Tighten-only over this channel: the CLI accepts
      *  `default`, `auto` and null and rejects the rest without changing state, so this offers the two
@@ -1074,6 +1098,12 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     pluginErrorsFor(sessionId: string): PluginLoadError[];
     /** The plugin warnings this session's last init frame reported, for the panel. */
     pluginWarningsFor(sessionId: string): PluginLoadError[];
+    /** The open prompts, keyed by dsh session id, for the browser's background notices. */
+    awaitingSnapshot(): Record<string, {
+        kind: "approval" | "question" | "plan";
+        id: string;
+        since: number;
+    }>;
     /** The CLI's working-tree diff (`get_workspace_diff`) for a session with a live process. */
     workspaceDiff(sessionId: string): Promise<WorkspaceDiffReply>;
     /** The permission rules and hooks a session's live process actually loaded

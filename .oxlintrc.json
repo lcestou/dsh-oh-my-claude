@@ -57,6 +57,7 @@
       "files": [
         "src/anthropic-status.ts",
         "src/process.ts",
+        "src/stars.ts",
         "src/remote-fs.ts",
         "src/hold.ts",
         "src/reach.ts",
