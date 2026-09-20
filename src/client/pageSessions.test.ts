@@ -223,8 +223,8 @@ const many = group(
     });
     assert.deepEqual(
       list.map((r) => r.s.id),
-      ["aa11"],
-      "only the row that is both a deep id and a query match",
+      ["aa11", "cc33"],
+      "a deep search replaces the title filter: cc33 has no `pill` in its title and still shows",
     );
   }
 }

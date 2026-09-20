@@ -613,8 +613,9 @@ export function pageSessions(
     origin: string;
     /** Typed search; see `matchesQuery`. Absent or empty keeps every row. */
     query?: string;
-    /** When set, only sessions whose id is in this set survive, whatever the typed query says.
-     *  A deep transcript search sets it; the typed title filter does not. */
+    /** When set, only sessions whose id is in this set survive, and the typed query stops
+     *  filtering titles: a deep search has already run that query over the messages, and a session
+     *  whose title happens not to hold the phrase is the whole reason to run one. */
     deepIds?: ReadonlySet<string>;
     shown: Record<string, number>;
   },
@@ -626,7 +627,10 @@ export function pageSessions(
     (deepIds === undefined || deepIds.has(s.id)) &&
     (cwd === "all" || s.cwd === cwd) &&
     (origin === "all" || originOf(s) === origin) &&
-    matchesQuery(s, query);
+    // A deep search replaces the title filter rather than narrowing it. Applying both threw every
+    // result away: the typed phrase is in the messages, not the titles, which is the only reason
+    // anyone presses the button. Caught in the browser on 2026-09-20, 59 hits rendering as 0 rows.
+    (deepIds !== undefined || matchesQuery(s, query));
   const cappedList = (pairs: Array<{ g: GroupInfo; s: SessionData }>, key: string) => {
     const sorted = pairs.toSorted((a, b) => b.s.modifiedAt - a.s.modifiedAt);
     matched[key] = sorted.length;
@@ -1104,7 +1108,10 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
       {deepNote !== "" && (
         <p
           data-omc-search-status=""
-          role="status"
+          // No role="status" here. The plugin's own turn-status writer claims every
+          // [role="status"][aria-live="polite"] element on the page and replaces its text with the
+          // running turn's spinner, which ate this line in the browser. aria-live alone announces
+          // it without matching that selector.
           aria-live="polite"
           style={{ ...meta, marginTop: 8 }}
         >
