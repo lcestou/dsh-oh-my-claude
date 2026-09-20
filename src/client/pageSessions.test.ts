@@ -151,4 +151,82 @@ const many = group(
   assert.deepEqual(ids("nothing-here"), []);
 }
 
+// `deepIds` is the id filter a deep transcript search sets; the typed query filter does not.
+{
+  // No `deepIds` at all: the filter is absent, so the answer is exactly what it was before.
+  {
+    const g = group("local", [
+      sess("aa11", 3, { title: "Fix the cost pill", cwd: "/p/app" }),
+      sess("bb22", 2, { title: "Tooltip on the button", cwd: "/p/app" }),
+    ]);
+    const { list } = pageSessions([g], { box: "all", cwd: "all", origin: "all", shown: {} });
+    assert.deepEqual(
+      list.map((r) => r.s.id),
+      ["aa11", "bb22"],
+      "an absent deepIds keeps every row",
+    );
+  }
+
+  // A single id in `deepIds` survives alone, even though every other row would pass the rest.
+  {
+    const g = group("local", [
+      sess("aa11", 3, { title: "Fix the cost pill", cwd: "/p/app" }),
+      sess("bb22", 2, { title: "Tooltip on the button", cwd: "/p/app" }),
+      sess("cc33", 1, { title: "Third row", cwd: "/p/app" }),
+    ]);
+    const { list } = pageSessions([g], {
+      box: "all",
+      cwd: "all",
+      origin: "all",
+      shown: {},
+      deepIds: new Set(["aa11"]),
+    });
+    assert.deepEqual(
+      list.map((r) => r.s.id),
+      ["aa11"],
+      "only the deep id, the rest dropped even though they pass every other filter",
+    );
+  }
+
+  // An empty set returns nothing, not everything: the mistake an undefined-versus-empty mix-up makes.
+  {
+    const g = group("local", [
+      sess("aa11", 3, { title: "Fix the cost pill", cwd: "/p/app" }),
+      sess("bb22", 2, { cwd: "/p/app" }),
+    ]);
+    const { list } = pageSessions([g], {
+      box: "all",
+      cwd: "all",
+      origin: "all",
+      shown: {},
+      deepIds: new Set<string>(),
+    });
+    assert.equal(list.length, 0, "an empty set matches no row, not every row");
+  }
+
+  // Both filters apply together, neither wins over the other. A deep id that also matches the query
+  // survives; a deep id whose title misses the query is dropped by the query; a row that matches the
+  // query but is not a deep id is dropped by the set. Only aa11 passes both.
+  {
+    const g = group("local", [
+      sess("aa11", 3, { title: "Fix the cost pill", cwd: "/p/app" }),
+      sess("bb22", 2, { title: "Tooltip on the pill", cwd: "/p/app" }),
+      sess("cc33", 1, { title: "Third row", cwd: "/p/app" }),
+    ]);
+    const { list } = pageSessions([g], {
+      box: "all",
+      cwd: "all",
+      origin: "all",
+      query: "pill",
+      shown: {},
+      deepIds: new Set(["aa11", "cc33"]),
+    });
+    assert.deepEqual(
+      list.map((r) => r.s.id),
+      ["aa11"],
+      "only the row that is both a deep id and a query match",
+    );
+  }
+}
+
 console.log("pageSessions: ok");

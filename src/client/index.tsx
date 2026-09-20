@@ -613,13 +613,17 @@ export function pageSessions(
     origin: string;
     /** Typed search; see `matchesQuery`. Absent or empty keeps every row. */
     query?: string;
+    /** When set, only sessions whose id is in this set survive, whatever the typed query says.
+     *  A deep transcript search sets it; the typed title filter does not. */
+    deepIds?: ReadonlySet<string>;
     shown: Record<string, number>;
   },
 ) {
-  const { box, cwd, origin, query = "", shown } = filters;
+  const { box, cwd, origin, query = "", shown, deepIds } = filters;
   const hidden: Record<string, number> = {};
   const matched: Record<string, number> = {};
   const keep = (s: SessionData) =>
+    (deepIds === undefined || deepIds.has(s.id)) &&
     (cwd === "all" || s.cwd === cwd) &&
     (origin === "all" || originOf(s) === origin) &&
     matchesQuery(s, query);
@@ -660,6 +664,16 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
   const [cwd, setCwd] = useState("all");
   const [origin, setOrigin] = useState("all");
   const [query, setQuery] = useState("");
+  // A deep search's answer: the matching session ids, each with the snippet the route cut. Null
+  // means no deep search is running or finished, which is the ordinary list. An empty map is a
+  // search that found nothing, which is not the same thing.
+  const [deep, setDeep] = useState<Map<string, { snippet: string; count: number }> | null>(null);
+  const [deepBusy, setDeepBusy] = useState(false);
+  const [deepNote, setDeepNote] = useState("");
+  const [deepScope, setDeepScope] = useState<"workspace" | "box">("workspace");
+  // The ids a deep search keeps, rebuilt only when `deep` changes: a fresh Set on every render
+  // would make the paged list memo recompute each keystroke, so it is keyed on `deep` here.
+  const deepIds = useMemo(() => (deep === null ? undefined : new Set(deep.keys())), [deep]);
   const [busyId, setBusyId] = useState("");
   // How many rows each box shows; every box starts at PAGE and grows by "Load more".
   const [shown, setShown] = useState<Record<string, number>>({});
@@ -737,8 +751,8 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
   // Rows in box order, newest first within each box, capped to that box's `shown` count. `hidden`
   // and `matched` are per box so the footer can offer "Load more"/"Load all" and count the rest.
   const paged = useMemo(
-    () => pageSessions(groups, { box, cwd, origin, query, shown }),
-    [groups, box, cwd, origin, query, shown],
+    () => pageSessions(groups, { box, cwd, origin, query, shown, deepIds }),
+    [groups, box, cwd, origin, query, shown, deepIds],
   );
   const rows = paged.list;
 
@@ -898,6 +912,49 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
     }
   };
 
+  const runDeep = async () => {
+    setDeepBusy(true);
+    setDeepNote("");
+    try {
+      // The route needs an absolute path when the scope is `workspace`; the panel's cwd filter is
+      // the string "all", not a path. Read the workspace the panel is open in the way context-sizes
+      // and claude-md do — the open session's own cwd — and widen to box when there is no path.
+      let scope = deepScope;
+      let cwdParam = cwd === "all" ? "" : cwd;
+      if (scope === "workspace" && cwdParam === "") {
+        const snap = ctx.sessions.list.getSnapshot();
+        const openId = openSessionId(ctx);
+        cwdParam = (openId ? snap?.byId[openId]?.cwd : "") ?? "";
+        if (cwdParam === "") scope = "box";
+      }
+      const url = `${ROUTE}/search?q=${encodeURIComponent(query.trim())}&scope=${scope}&cwd=${encodeURIComponent(cwdParam)}`;
+      const body = await readJson<{
+        hits?: Array<{ id: string; snippet: string; count: number }>;
+        scanned?: number;
+        tookMs?: number;
+        truncated?: boolean;
+        error?: string;
+      }>(await fetch(url));
+      if (body.error !== undefined) {
+        setDeepNote(`Search failed: ${body.error}`);
+        setDeep(null);
+        return;
+      }
+      const hits = body.hits ?? [];
+      setDeep(new Map(hits.map((h) => [h.id, { snippet: h.snippet, count: h.count }])));
+      setDeepNote(
+        hits.length === 0
+          ? `No transcript contains "${query.trim()}". The filter above still searches titles.`
+          : `${hits.length} ${hits.length === 1 ? "session" : "sessions"} match "${query.trim()}" (${body.scanned ?? 0} searched, ${body.tookMs ?? 0} ms)${body.truncated === true ? ", showing the first matches" : ""}`,
+      );
+    } catch (e) {
+      setDeepNote(`Search failed: ${e instanceof Error ? e.message : "unknown error"}`);
+      setDeep(null);
+    } finally {
+      setDeepBusy(false);
+    }
+  };
+
   const known = ctx.sessions.list.getSnapshot()?.byId ?? {};
   const total = groups.reduce((n, g) => n + g.sessions.length, 0);
   // One box (local only, or a self-proxy dropped) needs no per-row origin pill. The merged "all"
@@ -1009,7 +1066,57 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
           aria-label="Search sessions"
           onChange={(e) => setQuery(e.target.value)}
         />
+        <select
+          data-omc-search-scope=""
+          aria-label="Search scope"
+          style={{ ...filterSelect, flexBasis: 150 }}
+          value={deepScope}
+          onChange={(e) => setDeepScope(e.target.value === "box" ? "box" : "workspace")}
+        >
+          <option value="workspace">This workspace</option>
+          <option value="box">This box, every workspace</option>
+        </select>
+        <button
+          type="button"
+          id="dsh-oh-my-claude-search-transcripts"
+          data-omc-search-transcripts=""
+          aria-label="Search inside transcripts"
+          style={btn}
+          disabled={deepBusy || query.trim().length < 2}
+          onClick={() => void runDeep()}
+        >
+          {deepBusy ? "Searching…" : "Search transcripts"}
+        </button>
+        {deep !== null && (
+          <button
+            type="button"
+            data-omc-search-clear=""
+            style={btn}
+            onClick={() => {
+              setDeep(null);
+              setDeepNote("");
+            }}
+          >
+            Back to all sessions
+          </button>
+        )}
       </div>
+      {deepNote !== "" && (
+        <p
+          data-omc-search-status=""
+          role="status"
+          aria-live="polite"
+          style={{ ...meta, marginTop: 8 }}
+        >
+          {deepNote}
+        </p>
+      )}
+      {deep !== null && (
+        <p data-omc-search-caveat="" style={{ ...meta, marginTop: 4 }}>
+          Searches your messages and Claude&apos;s replies. Tool output is not searched. Opening a
+          result shows the whole session.
+        </p>
+      )}
       {error && (
         <p id="dsh-oh-my-claude-error" style={{ color: T.err, fontSize: 13, margin: "8px 0 0" }}>
           {error}
@@ -1073,6 +1180,23 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
                 >
                   {r.s.title || r.s.id}
                 </div>
+                {deep?.get(r.s.id) !== undefined && (
+                  <div
+                    data-omc-search-snippet=""
+                    style={{
+                      ...meta,
+                      marginTop: 3,
+                      whiteSpace: "normal",
+                      overflowWrap: "anywhere",
+                      display: "-webkit-box",
+                      WebkitLineClamp: 2,
+                      WebkitBoxOrient: "vertical",
+                      overflow: "hidden",
+                    }}
+                  >
+                    {deep.get(r.s.id)?.snippet}
+                  </div>
+                )}
                 <div
                   style={{
                     ...meta,

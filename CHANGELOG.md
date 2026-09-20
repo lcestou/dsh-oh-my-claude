@@ -8,6 +8,11 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Added
 
+- The session browser can search inside transcripts, not only their titles. Type a phrase, press
+  Search transcripts, and the list narrows to the sessions that said it, with a snippet under each.
+  The scope dropdown covers this workspace or every workspace on the box. It searches your messages
+  and Claude's replies; tool output is not searched, and the status line says so.
+
 - The Plugins roster names a plugin that loaded with a warning, under the block that names one that
   failed. A warning is the CLI's own wording for a plugin it took but had to work around, such as a
   default folder the manifest shadows. The list refreshes when the session next starts, since the
