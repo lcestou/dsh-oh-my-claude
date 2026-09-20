@@ -2890,6 +2890,12 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    *  ponytail: unbounded like sessionTools, one entry per live session, only overwritten or cleared,
    *  never accumulated. Prune with the session lifecycle if sessionTools ever gets a prune. */
   readonly sessionPluginErrors = new Map<string, PluginLoadError[]>();
+  /** dsh session id → the plugins its last init frame warned about (loaded, but with a complaint:
+   *  a shadowed default folder, a suppressed server. Absent until an init frame arrives; a clean
+   *  load clears it. reload_plugins carries no warning_count, so unlike errors these refresh only at
+   *  the next spawn's init frame, never on a reload.
+   *  ponytail: unbounded like sessionTools, one entry per live session, only overwritten or cleared. */
+  readonly sessionPluginWarnings = new Map<string, PluginLoadError[]>();
   /** dsh session id → the model switch its last turn reported (a safety refusal, a primary-model
    *  fallback, or the usage-credit gate), surfaced through `/side-questions` like `loginNeeded`. One
    *  entry per live session, overwritten on each switch; the client reads it at the stop transition.
@@ -3346,6 +3352,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   /** The plugin load errors this session's last init frame reported, for the panel. */
   pluginErrorsFor(sessionId: string): PluginLoadError[] {
     return this.sessionPluginErrors.get(sessionId) ?? [];
+  }
+
+  /** The plugin warnings this session's last init frame reported, for the panel. */
+  pluginWarningsFor(sessionId: string): PluginLoadError[] {
+    return this.sessionPluginWarnings.get(sessionId) ?? [];
   }
 
   /** The CLI's working-tree diff (`get_workspace_diff`) for a session with a live process. */
@@ -5147,7 +5158,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
             }
           : undefined,
       redact: this.redact,
-      onInit: (names, tools, pluginErrors) => {
+      onInit: (names, tools, pluginErrors, pluginWarnings) => {
         // commands_changed re-sends the command catalog alone, so an empty tool list means "not
         // told", not "no tools": overwriting would drop what the init frame established.
         if (options.sessionId && tools.length > 0) this.sessionTools.set(options.sessionId, tools);
@@ -5155,6 +5166,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         // the array is defined; commands_changed passes undefined and is skipped.
         if (options.sessionId && pluginErrors !== undefined)
           this.sessionPluginErrors.set(options.sessionId, pluginErrors);
+        // reload_plugins carries no warning_count (probe 2026-09-19), so warnings refresh only from
+        // a fresh init frame, never on a reload; a clean load sends [] and clears them.
+        if (options.sessionId && pluginWarnings !== undefined)
+          this.sessionPluginWarnings.set(options.sessionId, pluginWarnings);
         if (names.length > 0)
           this.bridgeCommands(names, this.ctx?.agents?.get?.(options.sessionId));
       },
@@ -6304,6 +6319,8 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       reloadPlugins: (sessionId: string) => adapter.ownerFor(sessionId).reloadPlugins(sessionId),
       reloadSkills: (sessionId: string) => adapter.ownerFor(sessionId).reloadSkills(sessionId),
       pluginErrors: (sessionId: string) => adapter.ownerFor(sessionId).pluginErrorsFor(sessionId),
+      pluginWarnings: (sessionId: string) =>
+        adapter.ownerFor(sessionId).pluginWarningsFor(sessionId),
       continueAfterLimit: adapter.config.continueAfterLimit,
     });
     // Mount the saved SSH boxes at boot; `sshMounts` is scope-local so a hot reload rebuilds them.
