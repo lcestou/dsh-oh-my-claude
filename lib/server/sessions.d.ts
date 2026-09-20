@@ -122,6 +122,8 @@ export interface RuntimeStatus {
     /** A newer plugin release on npm, and the command that installs it. This box only. */
     latest?: string;
     update?: string;
+    /** GitHub stargazers_count for this repo; absent when offline, rate-limited or dismissed. This box only. */
+    stars?: number;
     /** Claude processes still running on the box; they answer on the login they loaded at start. */
     running?: number;
     /** The dsh this plugin is loaded beside, and the lowest dsh this build runs on. This box only. */
@@ -455,11 +457,17 @@ export interface SessionRouteOptions {
     /** The plugins a session's live process loaded with a warning, from its init frame. Empty when
      *  clean or when no process has run. */
     pluginWarnings?: (sessionId: string) => PluginLoadError[];
+    /** Every session holding an open prompt, for the browser's background notices. */
+    awaiting?: () => Record<string, {
+        kind: "approval" | "question" | "plan";
+        id: string;
+        since: number;
+    }>;
     /** Whether this plugin waits out a usage limit and continues the turn itself. */
     continueAfterLimit?: boolean;
 }
 /** `projectDir(cwd)` → Claude Code project dir; `startedIds()` → ids the adapter started itself. */
-export declare function registerSessionRoutes(ctx: PluginContext, { log, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, importedDir, sshBoxesPath, onSshBoxes, remoteWorkspacesPath, onRemoteWorkspaces, command, sshHost, turnRecords, dshVersion, liveTurn, idle, toolMode, terminalSync, permissionModes, thinking, rewind, contextUsage, skillDoctor, workspaceDiff, permissionReadout, askAside, mcp, permissionAsks, sideQuestions, loginNeeded, sessionFallbacks, boxOfSession, claudeUpdated, loginDone, logoutDone, liveCount, persistAsides, starters, setStarter, models, reloadPlugins, reloadSkills, pluginErrors, pluginWarnings, continueAfterLimit, instanceFor, instanceForHost, onLoginStatus, }: SessionRouteOptions): void;
+export declare function registerSessionRoutes(ctx: PluginContext, { log, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, importedDir, sshBoxesPath, onSshBoxes, remoteWorkspacesPath, onRemoteWorkspaces, command, sshHost, turnRecords, dshVersion, liveTurn, idle, toolMode, terminalSync, permissionModes, thinking, rewind, contextUsage, skillDoctor, workspaceDiff, permissionReadout, askAside, mcp, permissionAsks, sideQuestions, loginNeeded, sessionFallbacks, boxOfSession, claudeUpdated, loginDone, logoutDone, liveCount, persistAsides, starters, setStarter, models, reloadPlugins, reloadSkills, pluginErrors, pluginWarnings, awaiting, continueAfterLimit, instanceFor, instanceForHost, onLoginStatus, }: SessionRouteOptions): void;
 /**
  * The four files Claude Code merges for one session, highest precedence first. Duplicated in
  * `src/client/settings.ts`: the browser half cannot import server code, and the order is the

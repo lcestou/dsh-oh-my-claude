@@ -8,6 +8,13 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Added
 
+- A one-line nudge under the Settings heading, with the repo's live star count and a link to it.
+  The `×` hides it for good on the box, which also stops the count being read.
+
+- A session that stops to ask you something now raises a notice, the way one that finishes a turn
+  already did. A permission dialog or an MCP question keeps the CLI's stream open, so the session
+  still reads as running and nothing fired; a prompt on a tab you were not looking at could sit
+  unnoticed. The notice says whether Claude wants approval, an answer, or a look at a plan.
 - An MCP server that needs signing in can be signed in from the MCP tab. The row carries a Log in
   button that opens the server's sign-in page in a new tab and then watches for the server to come
   back; before this the only way through was `/mcp` in a terminal. The sign-in has to finish in a

@@ -2906,6 +2906,14 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    *  entry per live session, overwritten on each switch; the client reads it at the stop transition.
    *  ponytail: unbounded like `sessionTools`, only overwritten, never accumulated. */
   readonly sessionFallbacks = new Map<string, FallbackRecord>();
+  /** dsh session id → the prompt this session is waiting on, so a background tab can be told. One
+   *  entry per session, set when a prompt opens and cleared when it settles. In memory on purpose:
+   *  a prompt is live state and a restart re-asks.
+   *  ponytail: unbounded like `sessionTools`, one entry per live session, only overwritten. */
+  readonly awaitingInput = new Map<
+    string,
+    { kind: "approval" | "question" | "plan"; id: string; since: number }
+  >();
 
   /**
    * Register Claude Code's slash commands (from the CLI's init frame) as dsh `/commands`. The
@@ -3378,6 +3386,14 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   /** The plugin warnings this session's last init frame reported, for the panel. */
   pluginWarningsFor(sessionId: string): PluginLoadError[] {
     return this.sessionPluginWarnings.get(sessionId) ?? [];
+  }
+
+  /** The open prompts, keyed by dsh session id, for the browser's background notices. */
+  awaitingSnapshot(): Record<
+    string,
+    { kind: "approval" | "question" | "plan"; id: string; since: number }
+  > {
+    return Object.fromEntries(this.awaitingInput);
   }
 
   /** The CLI's working-tree diff (`get_workspace_diff`) for a session with a live process. */
@@ -5462,6 +5478,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       this.clearIdle(options.sessionId);
       options.signal?.removeEventListener("abort", onAbort);
       for (const c of pending.values()) c.abort();
+      // Backstop: the clears above run when a decision settles, which needs the answerer to honour
+      // the abort. A stranded controller is harmless; a stranded awaiting entry announces a prompt
+      // that no longer exists, on every reload.
+      this.awaitingInput.delete(options.sessionId);
       proc.busy = false;
       proc.lastUsed = Date.now();
       void this.watchTranscript(options.sessionId, prep.cwd, prep.session?.id);
@@ -5752,6 +5772,17 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const toolUseId = request.tool_use_id ?? requestId;
     const controller = new AbortController();
     pending.set(requestId, controller);
+    const awaitKind: "approval" | "question" | "plan" =
+      toolName === "AskUserQuestion"
+        ? "question"
+        : toolName === "ExitPlanMode"
+          ? "plan"
+          : "approval";
+    this.awaitingInput.set(options.sessionId, {
+      kind: awaitKind,
+      id: requestId,
+      since: Date.now(),
+    });
     const signal = options.signal
       ? AbortSignal.any([options.signal, controller.signal])
       : controller.signal;
@@ -5766,7 +5797,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     this.decide({ toolName, input, request, toolUseId, agent, signal, accessMode: prep.accessMode })
       .then((result) => reply(controlResponseLine(requestId, result)))
       .catch((error) => reply(controlErrorLine(requestId, errorText(error))))
-      .finally(() => pending.delete(requestId));
+      .finally(() => {
+        pending.delete(requestId);
+        const held = this.awaitingInput.get(options.sessionId);
+        if (held?.id === requestId) this.awaitingInput.delete(options.sessionId);
+      });
   }
 
   /**
@@ -5808,6 +5843,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     );
     const controller = new AbortController();
     pending.set(requestId, controller);
+    this.awaitingInput.set(options.sessionId, {
+      kind: "question",
+      id: requestId,
+      since: Date.now(),
+    });
     const signal = options.signal
       ? AbortSignal.any([options.signal, controller.signal])
       : controller.signal;
@@ -5817,7 +5857,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         reply(controlResponseLine(requestId, elicitationResult(request, response, requestId))),
       )
       .catch(() => reply(controlResponseLine(requestId, { action: "cancel" })))
-      .finally(() => pending.delete(requestId));
+      .finally(() => {
+        pending.delete(requestId);
+        const held = this.awaitingInput.get(options.sessionId);
+        if (held?.id === requestId) this.awaitingInput.delete(options.sessionId);
+      });
   }
 
   // SAFETY: destructured from ClaudeCodeControlRequest shape in process.ts
@@ -6344,6 +6388,7 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       pluginErrors: (sessionId: string) => adapter.ownerFor(sessionId).pluginErrorsFor(sessionId),
       pluginWarnings: (sessionId: string) =>
         adapter.ownerFor(sessionId).pluginWarningsFor(sessionId),
+      awaiting: () => adapter.awaitingSnapshot(),
       continueAfterLimit: adapter.config.continueAfterLimit,
     });
     // Mount the saved SSH boxes at boot; `sshMounts` is scope-local so a hot reload rebuilds them.

@@ -6222,3 +6222,25 @@ console.log("interrupt-on-abort ok");
   );
 }
 console.log("skill-doctor ok");
+
+// The awaiting map is what the /awaiting route serves, and the route is a one-line read of this
+// snapshot, so pinning the snapshot pins the wire. A session waiting on a permission dialog keeps
+// its stream open and still reads as running, which is why the browser cannot infer this itself.
+{
+  const a = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  assert.deepEqual(a.awaitingSnapshot(), {}, "nothing waiting on a fresh adapter");
+  a.awaitingInput.set("s1", { kind: "approval", id: "r1", since: 111 });
+  a.awaitingInput.set("s2", { kind: "plan", id: "r2", since: 222 });
+  assert.deepEqual(
+    a.awaitingSnapshot(),
+    { s1: { kind: "approval", id: "r1", since: 111 }, s2: { kind: "plan", id: "r2", since: 222 } },
+    "every waiting session is in the snapshot, keyed by dsh session id",
+  );
+  a.awaitingInput.delete("s1");
+  assert.deepEqual(
+    Object.keys(a.awaitingSnapshot()),
+    ["s2"],
+    "an answered prompt leaves the snapshot",
+  );
+}
+console.log("awaiting ok");

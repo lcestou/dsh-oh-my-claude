@@ -967,6 +967,15 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      *  entry per live session, overwritten on each switch; the client reads it at the stop transition.
      *  ponytail: unbounded like `sessionTools`, only overwritten, never accumulated. */
     readonly sessionFallbacks: Map<string, FallbackRecord>;
+    /** dsh session id → the prompt this session is waiting on, so a background tab can be told. One
+     *  entry per session, set when a prompt opens and cleared when it settles. In memory on purpose:
+     *  a prompt is live state and a restart re-asks.
+     *  ponytail: unbounded like `sessionTools`, one entry per live session, only overwritten. */
+    readonly awaitingInput: Map<string, {
+        kind: "approval" | "question" | "plan";
+        id: string;
+        since: number;
+    }>;
     /**
      * Register Claude Code's slash commands (from the CLI's init frame) as dsh `/commands`. The
      * handler hands the line to Claude as the next prompt, where the CLI expands the skill or
@@ -1089,6 +1098,12 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     pluginErrorsFor(sessionId: string): PluginLoadError[];
     /** The plugin warnings this session's last init frame reported, for the panel. */
     pluginWarningsFor(sessionId: string): PluginLoadError[];
+    /** The open prompts, keyed by dsh session id, for the browser's background notices. */
+    awaitingSnapshot(): Record<string, {
+        kind: "approval" | "question" | "plan";
+        id: string;
+        since: number;
+    }>;
     /** The CLI's working-tree diff (`get_workspace_diff`) for a session with a live process. */
     workspaceDiff(sessionId: string): Promise<WorkspaceDiffReply>;
     /** The permission rules and hooks a session's live process actually loaded
