@@ -32,6 +32,14 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Changed
 
+- "What's driving your limits" has left the plan-usage meter and become **What else drives your
+  usage**, a fold in the Skills tab. Its figures are a rolling seven days of this machine's
+  sessions, while the bars it used to sit under are exact, account-wide and aligned to your reset
+  day; about two of its seven days fall in the previous cycle, so under those bars it read as a
+  breakdown of a number it was not. The Skills tab is the same rolling window throughout. The move
+  also drops its Top skills list, which repeated five rows of the cost table above it, and adds
+  Claude Code's three sentences about how the work was shaped, which the parser used to discard.
+
 - The chips dsh draws in a sent bubble, a skill it knows such as `/ic-logos` and a file
   mention, take the Claude look's accent under the "Links, rules and quotes" group instead of
   dsh's blue, so a sent skill reads in the same colour as the rest of the Claude chrome.

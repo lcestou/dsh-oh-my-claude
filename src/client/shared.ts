@@ -867,3 +867,61 @@ export function skillStateFromReply(reply: {
   if (reply.declined) return { kind: "declined", text: reply.error ?? "" };
   return { kind: "error", text: reply.error ?? "unknown error" };
 }
+
+/** One driver in a usage breakdown: the CLI's name for it and its share of the window. */
+export interface UsageDriver {
+  name: string;
+  pct: number;
+}
+export interface UsageDriverGroup {
+  label: string;
+  drivers: UsageDriver[];
+}
+export interface UsageBreakdownWindow {
+  label: string;
+  requests: number;
+  sessions: number;
+  groups: UsageDriverGroup[];
+  /** The CLI's own sentences about how the work was shaped, verbatim ("83% of your usage was at
+   *  >150k context"). Claude Code calls these independent characteristics rather than a
+   *  breakdown, so they do not add to 100 and are never summed or sorted with the groups. */
+  behaviours: string[];
+}
+export type UsageBreakdownReply =
+  | {
+      ok: true;
+      fetchedAt: number;
+      windows: UsageBreakdownWindow[];
+      host?: string;
+      email?: string | null;
+    }
+  | { ok: false; error: string; host?: string; email?: string | null };
+
+// Per provider: a second account is a second answer. The breakdown is a spawn on the box, so this
+// 60 s memo keeps a popover reopen from re-running `claude -p /usage`.
+//
+// No `force=1` here, unlike loadUsage. On the route, `force` shortens the server cache from five
+// minutes to thirty seconds, which is right for the plan windows (one HTTP call to Anthropic) and
+// wrong for this one: the breakdown spawns `claude -p "/usage"` on the box, measured at 3.6 s on
+// 2026-09-20. With force on, every reopen past this memo's minute paid that spawn again, and a
+// second tab paid it whenever it was first to ask. Without it the server answers from its
+// five-minute cache and the figures, which cover a 24 h and a 7 d window, lose nothing.
+const breakdownCache = new Map<string, { at: number; reply: UsageBreakdownReply }>();
+export const loadBreakdown = async (
+  provider?: string,
+  force = false,
+): Promise<UsageBreakdownReply> => {
+  const key = provider ?? "";
+  const hit = breakdownCache.get(key);
+  if (!force && hit && Date.now() - hit.at < 60_000) return hit.reply;
+  // `force` is the Refresh button and nothing else. An ordinary open answers from whatever the
+  // box already has, however old, because reading this figure spawns a `claude -p "/usage"` and
+  // the wait is what makes the section feel broken.
+  const q = force ? "force=1" : "";
+  const url = provider
+    ? `${ROUTE}/usage/breakdown?${q}${q ? "&" : ""}provider=${encodeURIComponent(provider)}`
+    : `${ROUTE}/usage/breakdown${q ? `?${q}` : ""}`;
+  const reply = await readJson<UsageBreakdownReply>(await fetch(url));
+  breakdownCache.set(key, { at: Date.now(), reply });
+  return reply;
+};

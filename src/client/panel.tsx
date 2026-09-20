@@ -38,7 +38,9 @@ import {
   saveBlob,
   groupSkillsByScope,
   skillStateFromReply,
+  loadBreakdown,
   type SkillState,
+  type UsageBreakdownReply,
 } from "./shared.js";
 import { UpdatePill } from "./update-pill.js";
 import { ReportBlock } from "./report.js";
@@ -730,6 +732,8 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   const [skills, setSkills] = useState<SkillRow[] | null>(null);
   const [query, setQuery] = useState("");
   const [cost, setCost] = useState<SkillState>({ kind: "idle" });
+  const [drivers, setDrivers] = useState<UsageBreakdownReply | null>(null);
+  const [driversBusy, setDriversBusy] = useState(false);
   const costAc = useRef<AbortController | null>(null);
   const [editing, setEditing] = useState<{ path: string; name: string } | null>(null);
   const [text, setText] = useState("");
@@ -787,6 +791,13 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
       .catch((e: Error) => mounted.current && setCost({ kind: "error", text: e.message }))
       .finally(() => clearTimeout(timer));
   }, [sessionId]);
+  const loadDrivers = (force = false) => {
+    setDriversBusy(true);
+    void loadBreakdown(undefined, force)
+      .then(setDrivers)
+      .catch((e: Error) => setDrivers({ ok: false, error: e.message }))
+      .finally(() => setDriversBusy(false));
+  };
 
   const box = boxQuery(ctx, sessionId);
   const note = (live: boolean) =>
@@ -1199,6 +1210,100 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
             Refresh
           </button>
         )}
+      </details>
+      <details
+        data-omc-usage-drivers=""
+        onToggle={(e) => {
+          if (e.currentTarget.open && drivers === null) loadDrivers();
+        }}
+      >
+        <summary style={{ ...meta, padding: "2px 4px", cursor: "pointer" }}>
+          What else drives your usage
+        </summary>
+        <div
+          data-omc-usage-drivers-note=""
+          style={{ ...meta, display: "block", whiteSpace: "normal" }}
+        >
+          Claude Code&apos;s own reading of the last seven days on this box. Approximate, and not
+          aligned to your plan&apos;s reset day.
+        </div>
+        {drivers === null && (
+          <>
+            <div data-omc-skeleton="" style={{ height: 12, width: "45%", margin: "6px 0" }} />
+            <div data-omc-skeleton="" style={{ height: 12, width: "80%", margin: "6px 0" }} />
+            <div data-omc-skeleton="" style={{ height: 12, width: "62%", margin: "6px 0" }} />
+          </>
+        )}
+        {drivers !== null && !drivers.ok && (
+          <div style={{ ...meta, color: T.faint }}>{drivers.error}</div>
+        )}
+        {drivers !== null && drivers.ok && (
+          <>
+            {(() => {
+              const win = drivers.windows.find((w) => w.label === "Last 7d") ?? drivers.windows[0];
+              if (!win)
+                return <div style={{ ...meta, color: T.faint }}>No activity recorded yet.</div>;
+              return (
+                <>
+                  {win.behaviours.map((b) => (
+                    <div
+                      key={b}
+                      data-omc-usage-behaviour=""
+                      style={{ ...meta, display: "block", whiteSpace: "normal", color: T.text }}
+                    >
+                      {b}
+                    </div>
+                  ))}
+                  {win.groups
+                    .filter((g) => g.label !== "Skills")
+                    .map((g) => (
+                      <div key={g.label}>
+                        <div
+                          style={{
+                            ...meta,
+                            color: T.text,
+                            marginTop: 6,
+                            display: "block",
+                          }}
+                        >
+                          {g.label}
+                        </div>
+                        {g.drivers.map((d) => (
+                          <div
+                            key={d.name}
+                            style={{
+                              display: "grid",
+                              gridTemplateColumns: "1fr auto",
+                              columnGap: 12,
+                              alignItems: "baseline",
+                            }}
+                          >
+                            <span>{d.name}</span>
+                            <span style={{ fontVariantNumeric: "tabular-nums", color: T.faint }}>
+                              {d.pct}%
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                  <div data-omc-usage-drivers-window="" style={{ ...meta }}>
+                    {win.requests} requests · {win.sessions} sessions
+                  </div>
+                </>
+              );
+            })()}
+          </>
+        )}
+        <button
+          type="button"
+          data-omc-usage-drivers-refresh=""
+          aria-label="Read the usage drivers again"
+          style={{ ...btn, marginTop: 8 }}
+          disabled={driversBusy}
+          onClick={() => loadDrivers(true)}
+        >
+          {driversBusy ? "Reading…" : "Refresh"}
+        </button>
       </details>
     </div>
   );

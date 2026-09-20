@@ -87,6 +87,11 @@ export interface UsageBreakdownWindow {
   requests: number;
   sessions: number;
   groups: UsageDriverGroup[];
+  /** The CLI's own sentences about how the work was shaped, verbatim, in the order it prints them
+   *  ("83% of your usage was at >150k context"). They are the most useful thing in the report and
+   *  the parser used to drop them. Claude Code calls them independent characteristics rather than
+   *  a breakdown, so they do not add to 100 and must never be summed or sorted with the groups. */
+  behaviours: string[];
 }
 /** What the /breakdown route answers: the windows, or why there are none. */
 export type UsageBreakdownReply =
@@ -290,11 +295,13 @@ export async function readUsage(
 }
 
 /**
- * Parse the text `claude -p "/usage"` prints into its time windows and their driver groups. The
- * format is the CLI's own (2.1.x); a shape this does not recognise yields [], which the caller
- * degrades to an empty section rather than an error. Behaviour lines (no "Top " prefix, e.g.
- * "91% of your usage was at >150k context") are ignored. English number formatting and the CLI's
- * `·` separator are assumed; a locale change would degrade the same way, not throw.
+ * Parse the text `claude -p "/usage"` prints into its time windows, their driver groups and its
+ * behaviour lines. The format is the CLI's own (2.1.x); a shape this does not recognise yields [],
+ * which the caller degrades to an empty section rather than an error. A line under a window header
+ * that is not a "Top …" group is kept verbatim as a behaviour ("91% of your usage was at >150k
+ * context"): those sentences explain a bill that no named driver accounts for. English number
+ * formatting and the CLI's `·` separator are assumed; a locale change would degrade the same way,
+ * not throw.
  */
 export function parseUsageBreakdown(text: string): UsageBreakdownWindow[] {
   const windows: UsageBreakdownWindow[] = [];
@@ -308,6 +315,7 @@ export function parseUsageBreakdown(text: string): UsageBreakdownWindow[] {
         requests: Number((head[2] ?? "").replace(/,/g, "")),
         sessions: Number((head[3] ?? "").replace(/,/g, "")),
         groups: [],
+        behaviours: [],
       };
       windows.push(current);
       continue;
@@ -321,9 +329,13 @@ export function parseUsageBreakdown(text: string): UsageBreakdownWindow[] {
         if (m) drivers.push({ name: m[1] ?? "", pct: Number(m[2]) });
       }
       if (drivers.length > 0) current.groups.push({ label, drivers });
+      continue;
     }
+    // Anything else indented under a window header is one of the CLI's behaviour sentences. It has
+    // to start with a percentage, so a legend or a stray blank cannot be mistaken for one.
+    if (current && /^\d+% of your usage /.test(line)) current.behaviours.push(line);
   }
-  return windows.filter((w) => w.groups.length > 0);
+  return windows.filter((w) => w.groups.length > 0 || w.behaviours.length > 0);
 }
 
 /** Run `claude -p "/usage"` on a box and parse its breakdown. Never throws; the panel shows the
