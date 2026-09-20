@@ -280,6 +280,14 @@ console.log("usage ok");
   // A behaviour line ("91% of your usage was at >150k context") makes no group.
   assert.equal(day.label, "Last 24h", "first window label");
   assert.equal(day.groups.length, 2, "24h has only the two Top groups, not the behaviour lines");
+  assert.deepEqual(
+    day.behaviours,
+    [
+      "91% of your usage was at >150k context",
+      "60% of your usage came from sessions active for 8+ hours",
+    ],
+    "both behaviour sentences are kept verbatim, beside the groups rather than among them",
+  );
   // Unrecognised text yields no windows, which the caller degrades to an empty section.
   assert.deepEqual(parseUsageBreakdown("nothing here"), [], "unknown text yields no windows");
 }

@@ -3,10 +3,12 @@
 // This is an I/O boundary: the payload is undocumented and decoded here into a closed shape.
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { execFile } from "node:child_process";
-import { authHeaders, authHeadersFrom } from "./state.js";
+import { authHeaders, authHeadersFrom, STATE_DIR, writeJson } from "./state.js";
 import { errorText, shq, sshArgs } from "./process.js";
 import { cliEnvFor } from "./sessions.js";
 import type { PluginContext } from "./dsh.js";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 
 const USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 const ROUTE = "/dsh-oh-my-claude/usage";
@@ -85,6 +87,11 @@ export interface UsageBreakdownWindow {
   requests: number;
   sessions: number;
   groups: UsageDriverGroup[];
+  /** The CLI's own sentences about how the work was shaped, verbatim, in the order it prints them
+   *  ("83% of your usage was at >150k context"). They are the most useful thing in the report and
+   *  the parser used to drop them. Claude Code calls them independent characteristics rather than
+   *  a breakdown, so they do not add to 100 and must never be summed or sorted with the groups. */
+  behaviours: string[];
 }
 /** What the /breakdown route answers: the windows, or why there are none. */
 export type UsageBreakdownReply =
@@ -288,11 +295,13 @@ export async function readUsage(
 }
 
 /**
- * Parse the text `claude -p "/usage"` prints into its time windows and their driver groups. The
- * format is the CLI's own (2.1.x); a shape this does not recognise yields [], which the caller
- * degrades to an empty section rather than an error. Behaviour lines (no "Top " prefix, e.g.
- * "91% of your usage was at >150k context") are ignored. English number formatting and the CLI's
- * `·` separator are assumed; a locale change would degrade the same way, not throw.
+ * Parse the text `claude -p "/usage"` prints into its time windows, their driver groups and its
+ * behaviour lines. The format is the CLI's own (2.1.x); a shape this does not recognise yields [],
+ * which the caller degrades to an empty section rather than an error. A line under a window header
+ * that is not a "Top …" group is kept verbatim as a behaviour ("91% of your usage was at >150k
+ * context"): those sentences explain a bill that no named driver accounts for. English number
+ * formatting and the CLI's `·` separator are assumed; a locale change would degrade the same way,
+ * not throw.
  */
 export function parseUsageBreakdown(text: string): UsageBreakdownWindow[] {
   const windows: UsageBreakdownWindow[] = [];
@@ -306,6 +315,7 @@ export function parseUsageBreakdown(text: string): UsageBreakdownWindow[] {
         requests: Number((head[2] ?? "").replace(/,/g, "")),
         sessions: Number((head[3] ?? "").replace(/,/g, "")),
         groups: [],
+        behaviours: [],
       };
       windows.push(current);
       continue;
@@ -319,9 +329,13 @@ export function parseUsageBreakdown(text: string): UsageBreakdownWindow[] {
         if (m) drivers.push({ name: m[1] ?? "", pct: Number(m[2]) });
       }
       if (drivers.length > 0) current.groups.push({ label, drivers });
+      continue;
     }
+    // Anything else indented under a window header is one of the CLI's behaviour sentences. It has
+    // to start with a percentage, so a legend or a stray blank cannot be mistaken for one.
+    if (current && /^\d+% of your usage /.test(line)) current.behaviours.push(line);
   }
-  return windows.filter((w) => w.groups.length > 0);
+  return windows.filter((w) => w.groups.length > 0 || w.behaviours.length > 0);
 }
 
 /** Run `claude -p "/usage"` on a box and parse its breakdown. Never throws; the panel shows the
@@ -423,9 +437,50 @@ export function registerUsageRoute(
     }
     return inFlight.get(key)!;
   };
-  // Breakdown answers are cached per box the same way; a spawn per popover open would be wasteful.
+  // Breakdown answers are cached per box, and unlike the plan windows this cache is also written
+  // to disk. The read is a `claude -p "/usage"` spawn, measured at 3.6 s on the author's box, and
+  // an in-memory cache alone meant every dsh restart threw the answer away and the next person to
+  // open the meter paid the full wait. On disk, a restart costs nothing: the panel opens on the
+  // last known figures and only an explicit Refresh spawns again.
+  const bdFile = join(STATE_DIR, "usage-breakdown.json");
+  /** Bump when the parsed shape changes. An entry written for an older shape is dropped rather
+   *  than served: a persisted cache outlives the code that wrote it, and a reader expecting a
+   *  field the file cannot have is a crash, not a missing line. */
+  const BREAKDOWN_FORMAT = 2;
   const bdCached = new Map<string, { at: number; reply: UsageBreakdownReply }>();
   const bdInFlight = new Map<string, Promise<UsageBreakdownReply>>();
+  let bdLoaded = false;
+  /** Seed the memory cache from disk, once per process. A missing or unreadable file is a miss. */
+  const bdLoad = async (): Promise<void> => {
+    if (bdLoaded) return;
+    bdLoaded = true;
+    // SAFETY: this file is only ever written by `bdSave` below, which serialises exactly this
+    // wrapper; a hand-edited or truncated one throws in JSON.parse and lands in the catch, and a
+    // file whose `shape` is not the current one is dropped unread on the next line.
+    const parsed = await readFile(bdFile, "utf8")
+      .then(
+        (t) =>
+          JSON.parse(t) as {
+            format?: number;
+            entries?: Record<string, { at: number; reply: UsageBreakdownReply }>;
+          },
+      )
+      .catch(() => undefined);
+    if (parsed === undefined || parsed.format !== BREAKDOWN_FORMAT) return;
+    for (const [key, entry] of Object.entries(parsed.entries ?? {}))
+      // Every field tested before it is read. The format marker above rules out an older writer,
+      // not a truncated write or a hand edit, and a throw here rejects the read rather than
+      // degrading to a fresh one: the fold would error instead of simply spawning.
+      if (!bdCached.has(key) && entry?.reply?.ok === true) bdCached.set(key, entry);
+  };
+  const bdSave = () => {
+    void writeJson(bdFile, {
+      format: BREAKDOWN_FORMAT,
+      entries: Object.fromEntries(bdCached),
+    }).catch(() => {
+      // A cache that cannot be written still works in memory; the next restart just pays again.
+    });
+  };
   const readBd = (
     force: boolean,
     realHome: string,
@@ -433,20 +488,27 @@ export function registerUsageRoute(
     sshHost?: string,
   ): Promise<UsageBreakdownReply> => {
     const key = sshHost ? `ssh:${sshHost}` : realHome;
-    const entry = bdCached.get(key);
-    const age = entry ? Date.now() - entry.at : Infinity;
-    if (entry && age < (force ? FORCE_MIN_AGE_MS : CACHE_MS)) return Promise.resolve(entry.reply);
-    if (!bdInFlight.has(key)) {
-      bdInFlight.set(
-        key,
-        readUsageBreakdown(command, realHome, sshHost).then((reply) => {
-          if (reply.ok || !entry?.reply.ok) bdCached.set(key, { at: Date.now(), reply });
-          bdInFlight.delete(key);
-          return bdCached.get(key)!.reply;
-        }),
-      );
-    }
-    return bdInFlight.get(key)!;
+    return bdLoad().then(() => {
+      const entry = bdCached.get(key);
+      // Any cached answer serves an ordinary open, however old: the figures cover 24 hours and
+      // seven days, so a stale one is close enough, and spawning on open is the whole problem.
+      // Only Refresh (`force`) spawns, and even then not twice within FORCE_MIN_AGE_MS.
+      if (entry && (!force || Date.now() - entry.at < FORCE_MIN_AGE_MS)) return entry.reply;
+      if (!bdInFlight.has(key)) {
+        bdInFlight.set(
+          key,
+          readUsageBreakdown(command, realHome, sshHost).then((reply) => {
+            if (reply.ok || !entry?.reply.ok) {
+              bdCached.set(key, { at: Date.now(), reply });
+              if (reply.ok) bdSave();
+            }
+            bdInFlight.delete(key);
+            return bdCached.get(key)!.reply;
+          }),
+        );
+      }
+      return bdInFlight.get(key)!;
+    });
   };
   ctx.inject?.(["webServer", "connection"], (host) => {
     const { webServer, connection } = host;

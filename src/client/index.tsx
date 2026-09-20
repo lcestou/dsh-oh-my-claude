@@ -2912,29 +2912,6 @@ type UsageReply =
       email?: string | null;
     }
   | { ok: false; error: string; windows?: undefined; host?: string; email?: string | null };
-interface UsageDriver {
-  name: string;
-  pct: number;
-}
-interface UsageDriverGroup {
-  label: string;
-  drivers: UsageDriver[];
-}
-interface UsageBreakdownWindow {
-  label: string;
-  requests: number;
-  sessions: number;
-  groups: UsageDriverGroup[];
-}
-type UsageBreakdownReply =
-  | {
-      ok: true;
-      fetchedAt: number;
-      windows: UsageBreakdownWindow[];
-      host?: string;
-      email?: string | null;
-    }
-  | { ok: false; error: string; host?: string; email?: string | null };
 /** "m*****@example.com on <host>" or whichever half is known; the usage is this box's login. */
 const whose = (r: UsageReply): string =>
   [r.email ? maskEmail(r.email) : null, r.host].filter((x): x is string => !!x).join(" on ");
@@ -2963,21 +2940,6 @@ const loadUsage = async (provider?: string): Promise<UsageReply> => {
     : `${ROUTE}/usage?force=1`;
   const reply = await readJson<UsageReply>(await fetch(url));
   usageCache.set(key, { at: Date.now(), reply });
-  return reply;
-};
-
-// Per provider, like loadUsage: a second account is a second answer. The breakdown is a spawn on
-// the box, so this 60 s memo keeps a popover reopen from re-running `claude -p /usage`.
-const breakdownCache = new Map<string, { at: number; reply: UsageBreakdownReply }>();
-const loadBreakdown = async (provider?: string): Promise<UsageBreakdownReply> => {
-  const key = provider ?? "";
-  const hit = breakdownCache.get(key);
-  if (hit && Date.now() - hit.at < 60_000) return hit.reply;
-  const url = provider
-    ? `${ROUTE}/usage/breakdown?force=1&provider=${encodeURIComponent(provider)}`
-    : `${ROUTE}/usage/breakdown?force=1`;
-  const reply = await readJson<UsageBreakdownReply>(await fetch(url));
-  breakdownCache.set(key, { at: Date.now(), reply });
   return reply;
 };
 
@@ -3231,61 +3193,6 @@ function renderUsage(block: HTMLElement, reply: UsageReply) {
   if (reply.credits) block.append(creditsRow(reply.credits));
 }
 
-/** The "what's driving your limits" section: the 7d window's Top-N groups, styled like the plan
- *  rows. Height-capped so a box with many skills or servers cannot push the ring off a phone. */
-function renderBreakdown(block: HTMLElement, reply: UsageBreakdownReply) {
-  block.replaceChildren();
-  block.setAttribute("data-omc-usage-drivers", "");
-  block.setAttribute("role", "group");
-  block.setAttribute("aria-label", "What's driving your limits");
-  block.style.cssText = `margin-top:6px;padding-top:6px;border-top:1px solid ${T.border};max-height:40vh;overflow-y:auto`;
-  const title = document.createElement("div");
-  title.style.cssText = `color:${T.text};font-weight:600`;
-  title.textContent = "What's driving your limits";
-  block.append(title);
-  if (!reply.ok) {
-    const p = document.createElement("div");
-    p.textContent = reply.error;
-    p.style.cssText = `color:${T.faint};font-size:12px;line-height:18px`;
-    block.append(p);
-    return;
-  }
-  // The 7d window matches the weekly ring; fall back to the first window if the CLI omitted it.
-  const win = reply.windows.find((w) => w.label === "Last 7d") ?? reply.windows[0];
-  if (!win || win.groups.length === 0) {
-    const p = document.createElement("div");
-    p.textContent = "No skill or tool activity recorded yet.";
-    p.style.cssText = `color:${T.faint};font-size:12px;line-height:18px`;
-    block.append(p);
-    return;
-  }
-  const caption = document.createElement("div");
-  caption.style.cssText = `color:${T.faint};font-size:11px;line-height:16px`;
-  caption.textContent = `${win.requests} requests · ${win.sessions} sessions, ${win.label.toLowerCase()}`;
-  const note = document.createElement("div");
-  note.style.cssText = `color:${T.faint};font-size:11px;line-height:16px;margin-bottom:4px`;
-  note.textContent = "Approximate, from this box's local sessions.";
-  block.append(caption, note);
-  for (const group of win.groups) {
-    const label = document.createElement("div");
-    label.style.cssText = `color:${T.text};font-weight:500;font-size:12px;margin-top:4px`;
-    label.textContent = group.label;
-    block.append(label);
-    for (const d of group.drivers) {
-      const driverRow = document.createElement("div");
-      driverRow.style.cssText =
-        "display:grid;grid-template-columns:1fr auto;align-items:baseline;column-gap:12px;padding:1px 0";
-      const driverName = document.createElement("span");
-      driverName.style.cssText = "overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
-      driverName.textContent = d.name;
-      const pct = document.createElement("span");
-      pct.style.cssText = `font-variant-numeric:tabular-nums;color:${T.faint}`;
-      pct.textContent = `${d.pct}%`;
-      driverRow.append(driverName, pct);
-      block.append(driverRow);
-    }
-  }
-}
 /**
  * Put the plan usage inside dsh's context-meter popover, above the "N% of context used" line,
  * and one compact line into the ring's hover tooltip.
@@ -3436,8 +3343,9 @@ function watchContextMeter(ctx: ClientCtx) {
     titleText.textContent = "Claude usage";
     title.append(mark, titleText);
     // Account and box on their own caption line: the email plus host wrapped the title before.
+    // Flush left, not indented under the spark: it names the whole section, not the title's icon.
     const caption = document.createElement("div");
-    caption.style.cssText = `color:${T.faint};font-size:11px;line-height:16px;margin:-2px 0 4px 20px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap`;
+    caption.style.cssText = `color:${T.faint};font-size:11px;line-height:16px;margin:-2px 0 4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap`;
     const rows = document.createElement("div");
     rows.textContent = "Loading…";
     rows.style.color = T.faint;
@@ -3447,10 +3355,7 @@ function watchContextMeter(ctx: ClientCtx) {
     breakdown.style.cssText = `margin-top:6px;padding-top:6px;border-top:1px solid ${T.border};color:${T.faint};font-size:12px;line-height:18px`;
     breakdown.textContent = "Context breakdown…";
     // Between the plan bars and the context breakdown: what drives the plan limits (this pass).
-    const drivers = document.createElement("div");
-    drivers.textContent = "Loading…";
-    drivers.style.color = T.faint;
-    block.append(title, caption, rows, drivers, breakdown);
+    block.append(title, caption, rows, breakdown);
     panel.prepend(block);
     const sid = activeClaudeSession(ctx);
     const provider = activeClaudeProvider(ctx);
@@ -3483,10 +3388,6 @@ function watchContextMeter(ctx: ClientCtx) {
       },
       (e: Error) => renderUsage(rows, { ok: false, error: e.message }),
     );
-    loadBreakdown(provider).then(
-      (reply) => renderBreakdown(drivers, reply),
-      (e: Error) => renderBreakdown(drivers, { ok: false, error: e.message }),
-    );
   };
   // The hover tooltip can sit between the button and the dialog at insertion time, so the
   // dialog is matched through its parent rather than as the button's next sibling.
@@ -3497,11 +3398,17 @@ function watchContextMeter(ctx: ClientCtx) {
     if (!activeClaudeSession(ctx)) return;
     const block = document.createElement("div");
     block.setAttribute(MARK, "1");
+    // Bounded, and allowed to wrap. The line this fills reads "Claude 5-hour 13% · weekly 68% ·
+    // weekly (fable) 100% (hostname)", around 430 px of text, and dsh sizes the bubble to its
+    // content: on a phone that pushed the whole tooltip past the edge of the screen. The cap is
+    // ours alone, on the block this plugin prepends, so dsh's own tooltip content is untouched.
+    block.style.cssText = "max-width:min(80vw,420px);white-space:normal;overflow-wrap:anywhere";
     const line = document.createElement("div");
     // The mark is a drawing, not a letter, so the row centres on it rather than sitting it on a
-    // baseline it does not have.
-    line.style.cssText = "display:flex;gap:6px;align-items:center";
+    // baseline it does not have. `flex-start` because a wrapped line is taller than the mark.
+    line.style.cssText = "display:flex;gap:6px;align-items:flex-start";
     const mark = sparkNode(12, SHIMMER);
+    mark.style.flex = "0 0 auto";
     const text = document.createElement("span");
     text.textContent = "Claude usage…";
     line.append(mark, text);

@@ -37,10 +37,30 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- The "What's driving your limits" section opens instantly and no longer waits on Claude Code. It
+  spawns `claude -p "/usage"`, which takes a few seconds, and the answer was kept only in memory,
+  so every dsh restart threw it away and the next person to open the meter waited again with the
+  word "Loading" under the plan bars. The answer is now kept on disk, an open always renders what
+  the box last read, and only the new Refresh control reads again. The one time nothing is cached
+  yet, the section shows skeleton rows rather than the word.
+- The "What's driving your limits" section no longer re-runs Claude Code's `/usage` on the box
+  every time the meter is opened. It asked the route to skip its own five-minute cache, so a reopen
+  past the browser's one-minute memo paid a fresh 3.6 s spawn, and a second tab paid it whenever it
+  asked first. It now reads the cache, and the figures cover 24 hours and 7 days, so nothing is
+  lost by being five minutes old.
+
 - A skill both dsh and Claude Code know now reaches Claude once instead of twice. dsh stops sending its own copy when the CLI lists that skill's name, because Claude Code injects the body itself. A skill only dsh knows still reaches Claude, since that copy is the only one.
 - The effort picker now honours settings.json `maxEffortLevel`, so it lists only the levels the CLI will run. Before this it offered every level a model supports and the CLI quietly clamped a pick above the cap, so the picker showed an effort the turn never used.
 
 ### Changed
+
+- "What's driving your limits" has left the plan-usage meter and become **What else drives your
+  usage**, a fold in the Skills tab. Its figures are a rolling seven days of this machine's
+  sessions, while the bars it used to sit under are exact, account-wide and aligned to your reset
+  day; about two of its seven days fall in the previous cycle, so under those bars it read as a
+  breakdown of a number it was not. The Skills tab is the same rolling window throughout. The move
+  also drops its Top skills list, which repeated five rows of the cost table above it, and adds
+  Claude Code's three sentences about how the work was shaped, which the parser used to discard.
 
 - The chips dsh draws in a sent bubble, a skill it knows such as `/ic-logos` and a file
   mention, take the Claude look's accent under the "Links, rules and quotes" group instead of
