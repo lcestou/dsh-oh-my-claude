@@ -8,6 +8,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Added
 
+- The session browser can search inside transcripts, not only their titles. Type a phrase, press
+  Search transcripts, and the list narrows to the sessions that said it, with a snippet under each.
+  The scope dropdown covers this workspace or every workspace on the box. It searches your messages
+  and Claude's replies; tool output is not searched, and the status line says so.
 - A one-line nudge under the Settings heading, with the repo's live star count and a link to it.
   The `×` hides it for good on the box, which also stops the count being read.
 

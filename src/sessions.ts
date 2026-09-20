@@ -28,6 +28,7 @@ import {
   toSessionEvents,
   type FoldedTranscript,
 } from "./transcript.js";
+import { queryWords, searchTranscript } from "./search.js";
 import { shq, sshArgs } from "./process.js";
 import {
   atLeast,
@@ -144,6 +145,32 @@ const ROUTE_PREFIX = "/dsh-oh-my-claude";
 const BODY_LIMIT = 64 * 1024;
 /** An imported transcript is a whole conversation, not a form field: megabytes, not kilobytes. */
 const IMPORT_LIMIT = 32 * 1024 * 1024;
+/** A search hit, joined to its transcript's listing metadata for the title and modification time. */
+interface SearchHit {
+  id: string;
+  title: string;
+  modifiedAt: number;
+  cwd?: string;
+  count: number;
+  when: number;
+  role: "user" | "assistant";
+  snippet: string;
+}
+/** How many transcript files one scan reads and parses. grep already narrowed the list to files
+ *  that mention the query, but a query can still match hundreds, and reading them all holds them
+ *  all in memory at once; 400 keeps one scan well under the cost of reading every transcript. */
+const SEARCH_MAX_FILES = 400;
+/** Maximum hits returned per search; more matches are dropped and the reply flags this via `truncated`. */
+const SEARCH_LIMIT = 100;
+/** True while a scan is in flight. Two searches at once would put two full scans on the one event
+ *  loop that serves every live turn, so the second is refused with 429 rather than run. */
+let searching = false;
+/** The basename of a path: everything after its last `/`. grep on this box prints `/`-separated
+ *  paths, and a transcript id is the basename without `.jsonl`, so this joins a hit to its listing. */
+const baseName = (path: string): string => {
+  const slash = path.lastIndexOf("/");
+  return slash < 0 ? path : path.slice(slash + 1);
+};
 
 const json = (res: ServerResponse, status: number, value: unknown) => {
   res.writeHead(status, {
@@ -1871,6 +1898,101 @@ export function registerSessionRoutes(
                     workspaceRegistry(),
                   ),
                 );
+              }
+              if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/search`) {
+                const q = url.searchParams.get("q") ?? "";
+                const cwd = url.searchParams.get("cwd") ?? "";
+                const scope = url.searchParams.get("scope") ?? "workspace";
+                const trimmed = q.trim();
+                if (trimmed.length < 2)
+                  return json(res, 400, { error: "query must be at least 2 characters" });
+                if (scope === "workspace" && !validCwd(cwd))
+                  return json(res, 400, { error: "cwd must be an absolute path" });
+                // A remote workspace ran its turns on its box, so its transcripts live there; this
+                // route only reaches this box, so an empty list would read as "nothing found".
+                // Only the workspace scope is refused: a box-wide scan walks this box's own
+                // project directories and never reads `cwd`, so refusing it because the panel's
+                // workspace filter happens to name a remote one blocks a search that would work.
+                if (scope === "workspace" && workspaceAt(cwd) !== undefined)
+                  return json(res, 400, { error: "search runs on this box only" });
+                if (searching) return json(res, 429, { error: "a search is already running" });
+                searching = true;
+                const start = Date.now();
+                try {
+                  // scope=workspace walks this workspace's own project dir. scope=box walks every
+                  // project dir on the box, which means the CHILDREN of the projects roots and not
+                  // the roots themselves: `projectsDir` holds the roots, one per Claude home, and
+                  // `listTranscripts` lists one project dir, never a tree. Passing a root straight
+                  // through made grep recurse and find files while the listing came back empty, so
+                  // every hit was dropped for want of a title and a box-wide search always said
+                  // nothing. Caught live on 2026-09-20: 379 files scanned, 0 hits.
+                  const dirs =
+                    scope === "box"
+                      ? (
+                          await Promise.all(
+                            projectsDir.map(async (root) =>
+                              (await readdir(root, { withFileTypes: true }).catch(() => []))
+                                .filter((entry) => entry.isDirectory())
+                                .map((entry) => join(root, entry.name)),
+                            ),
+                          )
+                        ).flat()
+                      : projectDir(cwd);
+                  // Join each hit to its listing row so id, title and modifiedAt come from the
+                  // directory's `listTranscripts`, not a re-parse of the file.
+                  // `withoutSubagents` is what the browser's own list applies, so a search cannot
+                  // return a row the list would never show and Open could not reach.
+                  const meta = new Map<string, TranscriptListItem>();
+                  for (const dir of dirs)
+                    for (const item of withoutSubagents(await listTranscripts(dir).catch(() => [])))
+                      meta.set(`${item.id}.jsonl`, item);
+                  // grep narrows the file list with a literal word before any transcript is read:
+                  // `-F` keeps a regex-heavy query literal, `-i` case-insensitive, `-l` lists names.
+                  // The longest word is the most selective. A non-zero exit with empty output is
+                  // "nothing matched", a normal empty answer rather than an error.
+                  const words = queryWords(trimmed);
+                  const grepWord = words.reduce(
+                    (longest, w) => (w.length > longest.length ? w : longest),
+                    "",
+                  );
+                  const matched = (await run("grep", ["-rilF", "--", grepWord, ...dirs])).out;
+                  const files = matched.split("\n").filter((line) => line.length > 0);
+                  // One file is one session, so `searchTranscript` already yields one hit per
+                  // session; reading only grep's narrowed set is what keeps this fast.
+                  const filesToSearch = files.slice(0, SEARCH_MAX_FILES);
+                  const hits: SearchHit[] = [];
+                  let scanned = 0;
+                  for (const file of filesToSearch) {
+                    const text = await readFile(file, "utf8").catch(() => "");
+                    if (!text) continue;
+                    scanned += 1;
+                    const hit = searchTranscript(text, words);
+                    if (!hit) continue;
+                    // No listing row means the browser would not show this session either: a
+                    // subagent's own transcript, or a file outside the directories it lists.
+                    const listing = meta.get(baseName(file));
+                    if (listing === undefined) continue;
+                    const entry: SearchHit = {
+                      id: listing.id,
+                      title: listing.title,
+                      modifiedAt: listing.modifiedAt,
+                      count: hit.count,
+                      when: hit.when,
+                      role: hit.role,
+                      snippet: hit.snippet,
+                    };
+                    if (listing.cwd) entry.cwd = listing.cwd;
+                    hits.push(entry);
+                  }
+                  return json(res, 200, {
+                    hits: hits.slice(0, SEARCH_LIMIT),
+                    scanned,
+                    tookMs: Date.now() - start,
+                    truncated: files.length > SEARCH_MAX_FILES || hits.length > SEARCH_LIMIT,
+                  });
+                } finally {
+                  searching = false;
+                }
               }
               // Export: the transcript exactly as it sits on disk, so a re-import is byte-identical.
               // It follows the session's own box, which is how a row from an SSH box downloads.
