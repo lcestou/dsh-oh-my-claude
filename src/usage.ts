@@ -3,10 +3,12 @@
 // This is an I/O boundary: the payload is undocumented and decoded here into a closed shape.
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { execFile } from "node:child_process";
-import { authHeaders, authHeadersFrom } from "./state.js";
+import { authHeaders, authHeadersFrom, STATE_DIR, writeJson } from "./state.js";
 import { errorText, shq, sshArgs } from "./process.js";
 import { cliEnvFor } from "./sessions.js";
 import type { PluginContext } from "./dsh.js";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 
 const USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 const ROUTE = "/dsh-oh-my-claude/usage";
@@ -423,9 +425,34 @@ export function registerUsageRoute(
     }
     return inFlight.get(key)!;
   };
-  // Breakdown answers are cached per box the same way; a spawn per popover open would be wasteful.
+  // Breakdown answers are cached per box, and unlike the plan windows this cache is also written
+  // to disk. The read is a `claude -p "/usage"` spawn, measured at 3.6 s on the author's box, and
+  // an in-memory cache alone meant every dsh restart threw the answer away and the next person to
+  // open the meter paid the full wait. On disk, a restart costs nothing: the panel opens on the
+  // last known figures and only an explicit Refresh spawns again.
+  const bdFile = join(STATE_DIR, "usage-breakdown.json");
   const bdCached = new Map<string, { at: number; reply: UsageBreakdownReply }>();
   const bdInFlight = new Map<string, Promise<UsageBreakdownReply>>();
+  let bdLoaded = false;
+  /** Seed the memory cache from disk, once per process. A missing or unreadable file is a miss. */
+  const bdLoad = async (): Promise<void> => {
+    if (bdLoaded) return;
+    bdLoaded = true;
+    // SAFETY: this file is only ever written by `bdSave` below, which serialises exactly this map;
+    // a hand-edited or truncated one throws in JSON.parse and lands in the catch, and the `ok`
+    // test in the loop drops any entry that survived parsing without the shape it needs.
+    const parsed = await readFile(bdFile, "utf8")
+      .then((t) => JSON.parse(t) as Record<string, { at: number; reply: UsageBreakdownReply }>)
+      .catch(() => undefined);
+    if (parsed === undefined) return;
+    for (const [key, entry] of Object.entries(parsed))
+      if (!bdCached.has(key) && entry.reply.ok) bdCached.set(key, entry);
+  };
+  const bdSave = () => {
+    void writeJson(bdFile, Object.fromEntries(bdCached)).catch(() => {
+      // A cache that cannot be written still works in memory; the next restart just pays again.
+    });
+  };
   const readBd = (
     force: boolean,
     realHome: string,
@@ -433,20 +460,27 @@ export function registerUsageRoute(
     sshHost?: string,
   ): Promise<UsageBreakdownReply> => {
     const key = sshHost ? `ssh:${sshHost}` : realHome;
-    const entry = bdCached.get(key);
-    const age = entry ? Date.now() - entry.at : Infinity;
-    if (entry && age < (force ? FORCE_MIN_AGE_MS : CACHE_MS)) return Promise.resolve(entry.reply);
-    if (!bdInFlight.has(key)) {
-      bdInFlight.set(
-        key,
-        readUsageBreakdown(command, realHome, sshHost).then((reply) => {
-          if (reply.ok || !entry?.reply.ok) bdCached.set(key, { at: Date.now(), reply });
-          bdInFlight.delete(key);
-          return bdCached.get(key)!.reply;
-        }),
-      );
-    }
-    return bdInFlight.get(key)!;
+    return bdLoad().then(() => {
+      const entry = bdCached.get(key);
+      // Any cached answer serves an ordinary open, however old: the figures cover 24 hours and
+      // seven days, so a stale one is close enough, and spawning on open is the whole problem.
+      // Only Refresh (`force`) spawns, and even then not twice within FORCE_MIN_AGE_MS.
+      if (entry && (!force || Date.now() - entry.at < FORCE_MIN_AGE_MS)) return entry.reply;
+      if (!bdInFlight.has(key)) {
+        bdInFlight.set(
+          key,
+          readUsageBreakdown(command, realHome, sshHost).then((reply) => {
+            if (reply.ok || !entry?.reply.ok) {
+              bdCached.set(key, { at: Date.now(), reply });
+              if (reply.ok) bdSave();
+            }
+            bdInFlight.delete(key);
+            return bdCached.get(key)!.reply;
+          }),
+        );
+      }
+      return bdInFlight.get(key)!;
+    });
   };
   ctx.inject?.(["webServer", "connection"], (host) => {
     const { webServer, connection } = host;

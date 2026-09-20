@@ -15,6 +15,12 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- The "What's driving your limits" section opens instantly and no longer waits on Claude Code. It
+  spawns `claude -p "/usage"`, which takes a few seconds, and the answer was kept only in memory,
+  so every dsh restart threw it away and the next person to open the meter waited again with the
+  word "Loading" under the plan bars. The answer is now kept on disk, an open always renders what
+  the box last read, and only the new Refresh control reads again. The one time nothing is cached
+  yet, the section shows skeleton rows rather than the word.
 - The "What's driving your limits" section no longer re-runs Claude Code's `/usage` on the box
   every time the meter is opened. It asked the route to skip its own five-minute cache, so a reopen
   past the browser's one-minute memo paid a fresh 3.6 s spawn, and a second tab paid it whenever it

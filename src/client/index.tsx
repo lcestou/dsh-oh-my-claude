@@ -2842,13 +2842,17 @@ const loadUsage = async (provider?: string): Promise<UsageReply> => {
 // second tab paid it whenever it was first to ask. Without it the server answers from its
 // five-minute cache and the figures, which cover a 24 h and a 7 d window, lose nothing.
 const breakdownCache = new Map<string, { at: number; reply: UsageBreakdownReply }>();
-const loadBreakdown = async (provider?: string): Promise<UsageBreakdownReply> => {
+const loadBreakdown = async (provider?: string, force = false): Promise<UsageBreakdownReply> => {
   const key = provider ?? "";
   const hit = breakdownCache.get(key);
-  if (hit && Date.now() - hit.at < 60_000) return hit.reply;
+  if (!force && hit && Date.now() - hit.at < 60_000) return hit.reply;
+  // `force` is the Refresh button and nothing else. An ordinary open answers from whatever the
+  // box already has, however old, because reading this figure spawns a `claude -p "/usage"` and
+  // the wait is what makes the section feel broken.
+  const q = force ? "force=1" : "";
   const url = provider
-    ? `${ROUTE}/usage/breakdown?provider=${encodeURIComponent(provider)}`
-    : `${ROUTE}/usage/breakdown`;
+    ? `${ROUTE}/usage/breakdown?${q}${q ? "&" : ""}provider=${encodeURIComponent(provider)}`
+    : `${ROUTE}/usage/breakdown${q ? `?${q}` : ""}`;
   const reply = await readJson<UsageBreakdownReply>(await fetch(url));
   breakdownCache.set(key, { at: Date.now(), reply });
   return reply;
@@ -3106,15 +3110,39 @@ function renderUsage(block: HTMLElement, reply: UsageReply) {
 
 /** The "what's driving your limits" section: the 7d window's Top-N groups, styled like the plan
  *  rows. Height-capped so a box with many skills or servers cannot push the ring off a phone. */
-function renderBreakdown(block: HTMLElement, reply: UsageBreakdownReply) {
+function renderBreakdown(
+  block: HTMLElement,
+  reply: UsageBreakdownReply,
+  onRefresh?: () => Promise<UsageBreakdownReply>,
+) {
   block.replaceChildren();
   block.setAttribute("data-omc-usage-drivers", "");
   block.setAttribute("role", "group");
   block.setAttribute("aria-label", "What's driving your limits");
   block.style.cssText = `margin-top:6px;padding-top:6px;border-top:1px solid ${T.border};max-height:40vh;overflow-y:auto`;
   const title = document.createElement("div");
-  title.style.cssText = `color:${T.text};font-weight:600`;
-  title.textContent = "What's driving your limits";
+  title.style.cssText = `display:flex;align-items:baseline;gap:8px;color:${T.text};font-weight:600`;
+  const titleText = document.createElement("span");
+  titleText.textContent = "What's driving your limits";
+  // Reading this figure spawns `claude -p "/usage"` on the box, so nothing here refreshes on its
+  // own: an open shows whatever the box last read and this is the only control that asks again.
+  const again = document.createElement("button");
+  again.type = "button";
+  again.setAttribute("data-omc-usage-drivers-refresh", "");
+  again.setAttribute("aria-label", "Read the usage drivers again");
+  again.textContent = "Refresh";
+  again.style.cssText = `margin-left:auto;background:none;border:none;padding:0;cursor:pointer;font:inherit;font-weight:400;color:${T.faint}`;
+  again.addEventListener("click", () => {
+    if (onRefresh === undefined) return;
+    again.disabled = true;
+    again.textContent = "Reading…";
+    void onRefresh().then(
+      (fresh) => renderBreakdown(block, fresh, onRefresh),
+      (e: Error) => renderBreakdown(block, { ok: false, error: e.message }, onRefresh),
+    );
+  });
+  title.append(titleText);
+  if (onRefresh) title.append(again);
   block.append(title);
   if (!reply.ok) {
     const p = document.createElement("div");
@@ -3321,8 +3349,16 @@ function watchContextMeter(ctx: ClientCtx) {
     breakdown.textContent = "Context breakdown…";
     // Between the plan bars and the context breakdown: what drives the plan limits (this pass).
     const drivers = document.createElement("div");
-    drivers.textContent = "Loading…";
-    drivers.style.color = T.faint;
+    // Skeleton rows, never the word "loading". This is only ever seen once per box, the first
+    // time anyone opens the meter before the cache has been written; after that the cached
+    // answer renders at once. A skeleton reads as "this is coming", the word reads as "stuck".
+    drivers.style.cssText = `margin-top:6px;padding-top:6px;border-top:1px solid ${T.border}`;
+    for (const width of ["45%", "80%", "62%"]) {
+      const bone = document.createElement("div");
+      bone.setAttribute("data-omc-skeleton", "");
+      bone.style.cssText = `height:12px;width:${width};margin:6px 0`;
+      drivers.append(bone);
+    }
     block.append(title, caption, rows, drivers, breakdown);
     panel.prepend(block);
     const sid = activeClaudeSession(ctx);
@@ -3356,9 +3392,10 @@ function watchContextMeter(ctx: ClientCtx) {
       },
       (e: Error) => renderUsage(rows, { ok: false, error: e.message }),
     );
+    const refreshDrivers = () => loadBreakdown(provider, true);
     loadBreakdown(provider).then(
-      (reply) => renderBreakdown(drivers, reply),
-      (e: Error) => renderBreakdown(drivers, { ok: false, error: e.message }),
+      (reply) => renderBreakdown(drivers, reply, refreshDrivers),
+      (e: Error) => renderBreakdown(drivers, { ok: false, error: e.message }, refreshDrivers),
     );
   };
   // The hover tooltip can sit between the button and the dialog at insertion time, so the
