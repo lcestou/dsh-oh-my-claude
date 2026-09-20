@@ -3209,8 +3209,9 @@ function watchContextMeter(ctx: ClientCtx) {
     titleText.textContent = "Claude usage";
     title.append(mark, titleText);
     // Account and box on their own caption line: the email plus host wrapped the title before.
+    // Flush left, not indented under the spark: it names the whole section, not the title's icon.
     const caption = document.createElement("div");
-    caption.style.cssText = `color:${T.faint};font-size:11px;line-height:16px;margin:-2px 0 4px 20px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap`;
+    caption.style.cssText = `color:${T.faint};font-size:11px;line-height:16px;margin:-2px 0 4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap`;
     const rows = document.createElement("div");
     rows.textContent = "Loading…";
     rows.style.color = T.faint;
