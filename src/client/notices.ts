@@ -34,6 +34,48 @@ export function newlyWaiting(prev: NoticeSnapshot | null, next: NoticeSnapshot):
   return out;
 }
 
+/** What kind of answer a session is waiting for. */
+export type AwaitingKind = "approval" | "question" | "plan";
+
+/** One session's open prompt, as the adapter reports it. */
+export interface AwaitingRow {
+  id: string;
+  kind: AwaitingKind;
+}
+
+/**
+ * Background sessions that newly began waiting for an answer since the last tick: present in
+ * `next`, not the same open prompt as last tick (compared by request id, so a prompt re-asked
+ * under a new id is news again), and not the one on screen.
+ *
+ * The first poll of a page load is the baseline and never fires, the same rule `newlyWaiting`
+ * follows: without it, reloading the page while a prompt is open re-announces a question the
+ * person is already looking at.
+ */
+export function newlyAwaiting(
+  prev: Readonly<Record<string, AwaitingRow>> | null,
+  next: Readonly<Record<string, AwaitingRow>>,
+  current: string | undefined,
+): string[] {
+  if (prev === null) return [];
+  const out: string[] = [];
+  for (const [id, row] of Object.entries(next)) {
+    if (id === current) continue;
+    const was = prev[id];
+    if (was !== undefined && was.id === row.id) continue;
+    out.push(id);
+  }
+  return out;
+}
+
+/** The desktop-notice body for each kind of wait. */
+export const awaitingBody = (kind: AwaitingKind): string =>
+  kind === "question"
+    ? "Claude has a question for you."
+    : kind === "plan"
+      ? "Claude wants you to review a plan."
+      : "Claude needs your approval.";
+
 /** The one return shape `recapNext` uses. Kept narrow so the caller reads what it gets without a
  *  widening cast. */
 export interface RecapStep {

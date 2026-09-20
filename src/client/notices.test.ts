@@ -1,7 +1,9 @@
 // Offline self-check: bun src/client/notices.test.ts. No DOM, no server.
 import assert from "node:assert/strict";
 import {
+  awaitingBody,
   markTitle,
+  newlyAwaiting,
   newlyWaiting,
   recapNext,
   recapAwayIn,
@@ -135,5 +137,56 @@ assert.deepEqual(newlyWaiting(snap({ a: { running: true } }), snap({ a: { runnin
   assert.equal(recapAwayIn(7_000), RECAP_AWAY_MS, "a bar nobody offers falls back");
   assert.equal(recapAwayIn(true), RECAP_AWAY_MS, "so does the wrong kind of value");
 }
+
+// Newly awaiting: background sessions that began waiting for an answer since the last tick. The
+// first poll of a page load is the baseline and never fires — the assertion that matters most,
+// since without it a reload re-announces every open prompt.
+assert.deepEqual(newlyAwaiting(null, { a: { id: "r1", kind: "approval" } }, undefined), []);
+
+// A prompt new since the last tick is announced.
+assert.deepEqual(newlyAwaiting({}, { a: { id: "r1", kind: "approval" } }, undefined), ["a"]);
+
+// The same prompt still open is not announced twice: comparing by request id, an unchanged id is
+// not a new wait.
+assert.deepEqual(
+  newlyAwaiting(
+    { a: { id: "r1", kind: "approval" } },
+    { a: { id: "r1", kind: "approval" } },
+    undefined,
+  ),
+  [],
+);
+
+// A prompt re-asked under a new request id is news again, even for the same session.
+assert.deepEqual(
+  newlyAwaiting(
+    { a: { id: "r1", kind: "approval" } },
+    { a: { id: "r2", kind: "approval" } },
+    undefined,
+  ),
+  ["a"],
+);
+
+// The session on screen is never announced; the user is looking at it.
+assert.deepEqual(newlyAwaiting({}, { a: { id: "r1", kind: "question" } }, "a"), []);
+
+// A prompt that has been answered simply disappears and announces nothing.
+assert.deepEqual(newlyAwaiting({ a: { id: "r1", kind: "approval" } }, {}, undefined), []);
+
+// Two sessions waiting at once both come back, in the stable order Object.entries yields.
+assert.deepEqual(
+  newlyAwaiting(
+    {},
+    { a: { id: "r1", kind: "approval" }, b: { id: "r2", kind: "question" } },
+    undefined,
+  ),
+  ["a", "b"],
+);
+
+// The desktop-notice body for each kind of wait, compared against the literal strings rather than
+// a variable, so a changed body fails here and nowhere else.
+assert.equal(awaitingBody("approval"), "Claude needs your approval.");
+assert.equal(awaitingBody("question"), "Claude has a question for you.");
+assert.equal(awaitingBody("plan"), "Claude wants you to review a plan.");
 
 console.log("notices ok");
