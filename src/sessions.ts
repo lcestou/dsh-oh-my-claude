@@ -37,6 +37,7 @@ import {
   profileFromPath,
   updateCommand,
 } from "./update.js";
+import { stars } from "./stars.js";
 import { cardFor, ClaudeUpdater, newer, type Exec } from "./claude-update.js";
 import {
   classifyReach,
@@ -316,6 +317,13 @@ async function pluginUpdate(
   return { latest: newest.version, update: UPDATE_COMMAND };
 }
 
+/** The repo's star count for the nudge in Settings, this box only. The dismiss flag (`starOff` in
+ *  the hints store) turns the read off, so a person who hid the line pays no GitHub call. */
+async function pluginStars(hintsPath: string): Promise<number | undefined> {
+  if ((await readHints(hintsPath)).starOff === true) return undefined;
+  return stars();
+}
+
 const MAX_BOXES = 20;
 
 /** Another dsh server this panel can hop to; `token` is that box's dsh launch token. */
@@ -554,6 +562,8 @@ export interface RuntimeStatus {
   /** A newer plugin release on npm, and the command that installs it. This box only. */
   latest?: string;
   update?: string;
+  /** GitHub stargazers_count for this repo; absent when offline, rate-limited or dismissed. This box only. */
+  stars?: number;
   /** Claude processes still running on the box; they answer on the login they loaded at start. */
   running?: number;
   /** The dsh this plugin is loaded beside, and the lowest dsh this build runs on. This box only. */
@@ -2415,13 +2425,14 @@ export function registerSessionRoutes(
                *  panel token counted as a login, since the CLI's own `auth status` cannot see the
                *  token the default instance injects at spawn. */
               const boxStatus = async (box: MountBox, provider: string | null) => {
-                const [status, upd] = await Promise.all([
+                const hintsPath = sshBoxesPath ? join(dirname(sshBoxesPath), "hints.json") : "";
+                const [status, upd, starCount] = await Promise.all([
                   runtimeStatus(box.configDir, box.command, box.sshHost),
-                  box.sshHost || !sshBoxesPath
-                    ? undefined
-                    : pluginUpdate(join(dirname(sshBoxesPath), "hints.json"), dshVersion),
+                  box.sshHost || !sshBoxesPath ? undefined : pluginUpdate(hintsPath, dshVersion),
+                  box.sshHost || !sshBoxesPath ? undefined : pluginStars(hintsPath),
                 ]);
                 if (upd) Object.assign(status, upd);
+                if (starCount !== undefined) status.stars = starCount;
                 if (!box.sshHost) {
                   status.dsh = dshVersion ?? null;
                   status.dshFloor = DSH_FLOOR ?? null;

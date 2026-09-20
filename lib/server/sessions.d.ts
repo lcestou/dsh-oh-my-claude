@@ -122,6 +122,8 @@ export interface RuntimeStatus {
     /** A newer plugin release on npm, and the command that installs it. This box only. */
     latest?: string;
     update?: string;
+    /** GitHub stargazers_count for this repo; absent when offline, rate-limited or dismissed. This box only. */
+    stars?: number;
     /** Claude processes still running on the box; they answer on the login they loaded at start. */
     running?: number;
     /** The dsh this plugin is loaded beside, and the lowest dsh this build runs on. This box only. */
