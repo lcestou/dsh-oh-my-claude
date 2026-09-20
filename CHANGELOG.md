@@ -8,6 +8,11 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Added
 
+- The Skills tab's Skill costs fold now shows a sortable table instead of Claude Code's raw
+  `/skill-doctor` text. Click a column heading to reorder; it opens on the last seven days' tokens,
+  largest first. Cells sort by the magnitude they name, so 188.5m ranks above 54.3m. A report whose
+  header is not the six known columns still shows as raw text.
+
 - The Plugins roster names a plugin that loaded with a warning, under the block that names one that
   failed. A warning is the CLI's own wording for a plugin it took but had to work around, such as a
   default folder the manifest shadows. The list refreshes when the session next starts, since the
