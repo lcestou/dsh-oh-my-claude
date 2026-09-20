@@ -1245,7 +1245,10 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
                 return <div style={{ ...meta, color: T.faint }}>No activity recorded yet.</div>;
               return (
                 <>
-                  {win.behaviours.map((b) => (
+                  {/* `?? []` because this reply can come from a cache file written by an older
+                      build that had no such field; a bare `.map` threw and React unmounted the
+                      whole fold. Seen on this box 2026-09-20 against a cache from an hour before. */}
+                  {(win.behaviours ?? []).map((b) => (
                     <div
                       key={b}
                       data-omc-usage-behaviour=""

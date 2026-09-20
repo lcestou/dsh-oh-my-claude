@@ -443,6 +443,10 @@ export function registerUsageRoute(
   // open the meter paid the full wait. On disk, a restart costs nothing: the panel opens on the
   // last known figures and only an explicit Refresh spawns again.
   const bdFile = join(STATE_DIR, "usage-breakdown.json");
+  /** Bump when the parsed shape changes. An entry written for an older shape is dropped rather
+   *  than served: a persisted cache outlives the code that wrote it, and a reader expecting a
+   *  field the file cannot have is a crash, not a missing line. */
+  const BREAKDOWN_FORMAT = 2;
   const bdCached = new Map<string, { at: number; reply: UsageBreakdownReply }>();
   const bdInFlight = new Map<string, Promise<UsageBreakdownReply>>();
   let bdLoaded = false;
@@ -450,18 +454,27 @@ export function registerUsageRoute(
   const bdLoad = async (): Promise<void> => {
     if (bdLoaded) return;
     bdLoaded = true;
-    // SAFETY: this file is only ever written by `bdSave` below, which serialises exactly this map;
-    // a hand-edited or truncated one throws in JSON.parse and lands in the catch, and the `ok`
-    // test in the loop drops any entry that survived parsing without the shape it needs.
+    // SAFETY: this file is only ever written by `bdSave` below, which serialises exactly this
+    // wrapper; a hand-edited or truncated one throws in JSON.parse and lands in the catch, and a
+    // file whose `shape` is not the current one is dropped unread on the next line.
     const parsed = await readFile(bdFile, "utf8")
-      .then((t) => JSON.parse(t) as Record<string, { at: number; reply: UsageBreakdownReply }>)
+      .then(
+        (t) =>
+          JSON.parse(t) as {
+            format?: number;
+            entries?: Record<string, { at: number; reply: UsageBreakdownReply }>;
+          },
+      )
       .catch(() => undefined);
-    if (parsed === undefined) return;
-    for (const [key, entry] of Object.entries(parsed))
+    if (parsed === undefined || parsed.format !== BREAKDOWN_FORMAT) return;
+    for (const [key, entry] of Object.entries(parsed.entries ?? {}))
       if (!bdCached.has(key) && entry.reply.ok) bdCached.set(key, entry);
   };
   const bdSave = () => {
-    void writeJson(bdFile, Object.fromEntries(bdCached)).catch(() => {
+    void writeJson(bdFile, {
+      format: BREAKDOWN_FORMAT,
+      entries: Object.fromEntries(bdCached),
+    }).catch(() => {
       // A cache that cannot be written still works in memory; the next restart just pays again.
     });
   };
