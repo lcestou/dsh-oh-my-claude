@@ -1415,6 +1415,11 @@ export interface SessionRouteOptions {
   /** The plugins a session's live process loaded with a warning, from its init frame. Empty when
    *  clean or when no process has run. */
   pluginWarnings?: (sessionId: string) => PluginLoadError[];
+  /** Every session holding an open prompt, for the browser's background notices. */
+  awaiting?: () => Record<
+    string,
+    { kind: "approval" | "question" | "plan"; id: string; since: number }
+  >;
   /** Whether this plugin waits out a usage limit and continues the turn itself. */
   continueAfterLimit?: boolean;
 }
@@ -1508,6 +1513,7 @@ export function registerSessionRoutes(
     reloadSkills,
     pluginErrors,
     pluginWarnings,
+    awaiting,
     continueAfterLimit,
     instanceFor,
     instanceForHost,
@@ -2231,6 +2237,13 @@ export function registerSessionRoutes(
                   scopes.push({ ...file, scope, readOnly: scope === "managed" });
                 }
                 return json(res, 200, { scopes });
+              }
+              // Sessions holding an open prompt. A session waiting on a permission dialog keeps
+              // its stream open, so it still reads as running and the turn-end notice never fires;
+              // the browser polls this to notice a prompt on a tab nobody is looking at.
+              if (url.pathname === `${ROUTE_PREFIX}/awaiting`) {
+                if (req.method !== "GET") return json(res, 405, { error: "method not allowed" });
+                return json(res, 200, { sessions: awaiting?.() ?? {} });
               }
               // Which plugins and marketplaces the session's settings load. Beside Instructions in
               // the panel: same question as the CLAUDE.md list, a different set of files.
