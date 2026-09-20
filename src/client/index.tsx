@@ -3264,11 +3264,17 @@ function watchContextMeter(ctx: ClientCtx) {
     if (!activeClaudeSession(ctx)) return;
     const block = document.createElement("div");
     block.setAttribute(MARK, "1");
+    // Bounded, and allowed to wrap. The line this fills reads "Claude 5-hour 13% · weekly 68% ·
+    // weekly (fable) 100% (hostname)", around 430 px of text, and dsh sizes the bubble to its
+    // content: on a phone that pushed the whole tooltip past the edge of the screen. The cap is
+    // ours alone, on the block this plugin prepends, so dsh's own tooltip content is untouched.
+    block.style.cssText = "max-width:min(80vw,420px);white-space:normal;overflow-wrap:anywhere";
     const line = document.createElement("div");
     // The mark is a drawing, not a letter, so the row centres on it rather than sitting it on a
-    // baseline it does not have.
-    line.style.cssText = "display:flex;gap:6px;align-items:center";
+    // baseline it does not have. `flex-start` because a wrapped line is taller than the mark.
+    line.style.cssText = "display:flex;gap:6px;align-items:flex-start";
     const mark = sparkNode(12, SHIMMER);
+    mark.style.flex = "0 0 auto";
     const text = document.createElement("span");
     text.textContent = "Claude usage…";
     line.append(mark, text);
