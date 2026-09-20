@@ -925,3 +925,109 @@ export const loadBreakdown = async (
   breakdownCache.set(key, { at: Date.now(), reply });
   return reply;
 };
+/** The six columns /skill-doctor prints, in order. A parse that does not find all six on one line
+ *  returns null and the caller keeps showing the raw report, so a CLI table change degrades to the
+ *  text we already show rather than to garbage. */
+export const SKILL_COST_HEADERS = ["skill", "source", "context", "7d tokens", "uses", "last used"];
+
+export interface SkillCostRow {
+  skill: string;
+  source: string;
+  context: string;
+  tokens: string;
+  uses: string;
+  lastUsed: string;
+}
+
+/** Parse the /skill-doctor report into one row per skill, or null when its header row is not the
+ *  six known columns. Rows are the indented lines under the header, and the first blank line ends
+ *  the table: the legend below it is indented two spaces as well, so indentation alone cannot tell
+ *  a row from legend prose. Measured on a live 184-line report, 2.1.278, 2026-09-20: rows are lines
+ *  4 to 176, line 177 is blank, lines 178 to 180 are the indented legend, 181 is blank, 182 to 184
+ *  are the flush-left summary. Column bounds come from the header's own token positions, and the
+ *  CLI pads that header to the widest cell, so a long skill name shifts the header with it. */
+export function parseSkillCosts(text: string): SkillCostRow[] | null {
+  const lines = text.split("\n");
+  const hi = lines.findIndex((l) => SKILL_COST_HEADERS.every((h) => l.includes(h)));
+  if (hi === -1) return null;
+  const header = lines[hi];
+  if (typeof header !== "string") return null;
+  const starts = SKILL_COST_HEADERS.map((h) => header.indexOf(h));
+  if (starts.some((s) => s === -1)) return null;
+  // Columns must start in order; a start at or before the previous one means the header no longer
+  // names all six columns in order, so the parse keeps the raw report instead of slicing garbage.
+  let prev = -1;
+  for (const s of starts) {
+    if (s <= prev) return null;
+    prev = s;
+  }
+  const rows: SkillCostRow[] = [];
+  for (let i = hi + 1; i < lines.length; i++) {
+    const l = lines[i];
+    if (typeof l !== "string") break;
+    if (l.trim() === "") break; // the first blank line after the header ends the table
+    if (!l.startsWith("  ")) break; // the summary is flush-left
+    const cell = (n: number): string => {
+      const end = n + 1 < starts.length ? starts[n + 1] : undefined;
+      return l.slice(starts[n], end).trim();
+    };
+    if (cell(0) === "") continue;
+    rows.push({
+      skill: cell(0),
+      source: cell(1),
+      context: cell(2),
+      tokens: cell(3),
+      uses: cell(4),
+      lastUsed: cell(5),
+    });
+  }
+  return rows;
+}
+
+/** The numeric size of one cost cell, for sorting. Anything the CLI has not shown reads as 0, which
+ *  is a wrong order and never a wrong value; the raw report stays one fold away. */
+function magnitude(cell: string): number {
+  const v = cell.trim();
+  if (v === "" || v === "-") return 0;
+  if (v === "never") return Number.POSITIVE_INFINITY;
+  if (v === "today") return 0;
+  const days = /^(\d+) days?$/.exec(v);
+  if (days !== null) return Number(days[1]);
+  const uses = /^([\d.]+)×$/.exec(v);
+  if (uses !== null) return Number(uses[1]);
+  const num = /^[~<\s]*([\d.]+)([km]?)$/.exec(v);
+  if (num === null) return 0;
+  const base = Number(num[1]);
+  return num[2] === "k" ? base * 1e3 : num[2] === "m" ? base * 1e6 : base;
+}
+
+/** Order rows for the cost table. Text cells sort by the magnitude they name, so 188.5m beats
+ *  54.3m, which a string sort gets backwards. */
+export function sortSkillCosts(
+  rows: SkillCostRow[],
+  col: "skill" | "source" | "context" | "tokens" | "uses" | "lastUsed",
+  dir: "asc" | "desc",
+): SkillCostRow[] {
+  const key = (r: SkillCostRow): string =>
+    col === "skill"
+      ? r.skill
+      : col === "source"
+        ? r.source
+        : col === "context"
+          ? r.context
+          : col === "tokens"
+            ? r.tokens
+            : col === "uses"
+              ? r.uses
+              : r.lastUsed;
+  const sign = dir === "asc" ? 1 : -1;
+  return rows.toSorted((a, b) => {
+    if (col === "skill") return sign * a.skill.localeCompare(b.skill);
+    if (col === "source") return sign * a.source.localeCompare(b.source);
+    // Two `never` cells are both +Infinity and their difference is NaN, which is not a comparator
+    // answer any sort is required to honour. Read equal magnitudes as a tie and let the sort's own
+    // stability keep the report's order.
+    const gap = magnitude(key(a)) - magnitude(key(b));
+    return Number.isNaN(gap) ? 0 : sign * gap;
+  });
+}

@@ -8,6 +8,28 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Added
 
+- The session browser can search inside transcripts, not only their titles. Type a phrase, press
+  Search transcripts, and the list narrows to the sessions that said it, with a snippet under each.
+  The scope dropdown covers this workspace or every workspace on the box. It searches your messages
+  and Claude's replies; tool output is not searched, and the status line says so.
+- A one-line nudge under the Settings heading, with the repo's live star count and a link to it.
+  The `×` hides it for good on the box, which also stops the count being read.
+
+- A session that stops to ask you something now raises a notice, the way one that finishes a turn
+  already did. A permission dialog or an MCP question keeps the CLI's stream open, so the session
+  still reads as running and nothing fired; a prompt on a tab you were not looking at could sit
+  unnoticed. The notice says whether Claude wants approval, an answer, or a look at a plan.
+- An MCP server that needs signing in can be signed in from the MCP tab. The row carries a Log in
+  button that opens the server's sign-in page in a new tab and then watches for the server to come
+  back; before this the only way through was `/mcp` in a terminal. The sign-in has to finish in a
+  browser on the box Claude Code runs on, which the row now says.
+- The Skills tab's Skill costs fold now shows a sortable table instead of Claude Code's raw
+  `/skill-doctor` text. Click a column heading to reorder; it opens on the last seven days' tokens,
+  largest first. Cells sort by the magnitude they name, so 188.5m ranks above 54.3m. A report whose
+  header is not the six known columns still shows as raw text.
+- Concise joins the output styles the Tune tab offers. It is one of Claude Code's four built-in
+  styles and the only one the row left out; it makes Claude answer tersely and skip the preamble.
+
 - The Plugins roster names a plugin that loaded with a warning, under the block that names one that
   failed. A warning is the CLI's own wording for a plugin it took but had to work around, such as a
   default folder the manifest shadows. The list refreshes when the session next starts, since the
