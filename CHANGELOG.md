@@ -8,6 +8,11 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Added
 
+- A session that stops to ask you something now raises a notice, the way one that finishes a turn
+  already did. A permission dialog or an MCP question keeps the CLI's stream open, so the session
+  still reads as running and nothing fired; a prompt on a tab you were not looking at could sit
+  unnoticed. The notice says whether Claude wants approval, an answer, or a look at a plan.
+
 - The Plugins roster names a plugin that loaded with a warning, under the block that names one that
   failed. A warning is the CLI's own wording for a plugin it took but had to work around, such as a
   default folder the manifest shadows. The list refreshes when the session next starts, since the
