@@ -275,6 +275,15 @@ export type McpStatusReply = {
     ok: false;
     error: string;
 };
+/** What the MCP login route reports: the sign-in page to open, an already-signed-in success with
+ *  no page, or the reason the CLI refused. */
+export type McpAuthReply = {
+    ok: true;
+    authUrl?: string;
+} | {
+    ok: false;
+    error: string;
+};
 /** What the permission-mode route reports: the mode in force and the stored override. */
 export interface PermissionModeInfo {
     mode: string;
@@ -1042,6 +1051,12 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
         ok: boolean;
         error?: string;
     }>;
+    /** Start an OAuth login for one MCP server (`mcp_authenticate`). The reply carries the page the
+     *  browser must open; the CLI's own loopback catches the redirect and stores the token, so the
+     *  plugin keeps nothing. The case this gets wrong if written naively: a server whose token is
+     *  still good answers success with no page, which is a login that needed nothing rather than a
+     *  failure. */
+    mcpAuthenticate(sessionId: string, serverName: string): Promise<McpAuthReply>;
     /** Pin one MCP server's tools back to asking, or clear the pin
      *  (`set_mcp_permission_mode_override`). Tighten-only over this channel: the CLI accepts
      *  `default`, `auto` and null and rejects the rest without changing state, so this offers the two

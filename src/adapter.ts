@@ -74,6 +74,8 @@ import {
   decodePermissionRules,
   decodeHooksListing,
   decodeMcpStatus,
+  mcpAuthUrl,
+  mcpAuthNeedsNothing,
   decodeCliModels,
   elicitationQuestions,
   elicitationResult,
@@ -581,6 +583,9 @@ export type PermissionReadoutReply =
 export type McpStatusReply =
   | { ok: true; error?: undefined; servers: McpServerStatus[] }
   | { ok: false; error: string };
+/** What the MCP login route reports: the sign-in page to open, an already-signed-in success with
+ *  no page, or the reason the CLI refused. */
+export type McpAuthReply = { ok: true; authUrl?: string } | { ok: false; error: string };
 /** What the permission-mode route reports: the mode in force and the stored override. */
 export interface PermissionModeInfo {
   mode: string;
@@ -3292,6 +3297,22 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     if (!proc?.alive) return { ok: false, error: "no live Claude process for this session" };
     const reply = await this.control(proc, { subtype: "mcp_reconnect", serverName }, 15_000);
     return reply.ok ? { ok: true } : { ok: false, error: reply.error };
+  }
+
+  /** Start an OAuth login for one MCP server (`mcp_authenticate`). The reply carries the page the
+   *  browser must open; the CLI's own loopback catches the redirect and stores the token, so the
+   *  plugin keeps nothing. The case this gets wrong if written naively: a server whose token is
+   *  still good answers success with no page, which is a login that needed nothing rather than a
+   *  failure. */
+  async mcpAuthenticate(sessionId: string, serverName: string): Promise<McpAuthReply> {
+    const proc = this.processes.get(registryKey(this.providerId, sessionId));
+    if (!proc?.alive) return { ok: false, error: "no live Claude process for this session" };
+    const reply = await this.control(proc, { subtype: "mcp_authenticate", serverName }, 20_000);
+    if (!reply.ok) return { ok: false, error: reply.error };
+    const url = mcpAuthUrl(reply.response);
+    if (url !== undefined) return { ok: true, authUrl: url };
+    if (mcpAuthNeedsNothing(reply.response)) return { ok: true };
+    return { ok: false, error: "the CLI answered without a sign-in page" };
   }
 
   /** Pin one MCP server's tools back to asking, or clear the pin
@@ -6269,6 +6290,8 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
           adapter.ownerFor(sessionId).mcpReconnect(sessionId, serverName),
         ask: (sessionId: string, serverName: string, ask: boolean) =>
           adapter.ownerFor(sessionId).setMcpAsk(sessionId, serverName, ask),
+        authenticate: (sessionId: string, serverName: string) =>
+          adapter.ownerFor(sessionId).mcpAuthenticate(sessionId, serverName),
       },
       rewind: (sessionId: string, uuid: string, dryRun: boolean) =>
         adapter.ownerFor(sessionId).rewind(sessionId, uuid, dryRun),

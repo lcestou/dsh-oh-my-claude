@@ -8,6 +8,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Added
 
+- An MCP server that needs signing in can be signed in from the MCP tab. The row carries a Log in
+  button that opens the server's sign-in page in a new tab and then watches for the server to come
+  back; before this the only way through was `/mcp` in a terminal. The sign-in has to finish in a
+  browser on the box Claude Code runs on, which the row now says.
 - The Skills tab's Skill costs fold now shows a sortable table instead of Claude Code's raw
   `/skill-doctor` text. Click a column heading to reorder; it opens on the last seven days' tokens,
   largest first. Cells sort by the magnitude they name, so 188.5m ranks above 54.3m. A report whose

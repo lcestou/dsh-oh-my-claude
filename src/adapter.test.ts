@@ -87,6 +87,8 @@ import {
   elicitationQuestions,
   elicitationResult,
   isIdleReply,
+  mcpAuthUrl,
+  mcpAuthNeedsNothing,
   type WorkspaceDiff,
 } from "./process.js";
 import {
@@ -4348,6 +4350,89 @@ console.log("interrupt-on-abort ok");
   });
   assert.equal((await adapter.mcpStatus("nope")).ok, false);
   console.log("mcp-status ok");
+}
+
+// mcpAuthenticate: a reply carrying a page reports that page; a success with nothing to do (a still
+// good token) is an ok with no page; anything else is a refusal; a dead session is a refusal. The
+// block above answers one fixed response per request subtype, so it cannot vary the authenticate
+// reply — this block fakes its own process and dispatches that reply by server name.
+{
+  const adapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  const written: string[] = [];
+  const responses: Record<string, any> = {
+    dsh: {
+      authUrl: "https://x/y",
+      requiresUserAction: true,
+      callbackExpected: true,
+      state: "s",
+      callbackPort: 52389,
+    },
+    in: { requiresUserAction: false, callbackExpected: false },
+    empty: {},
+  };
+  const proc: any = {
+    alive: true,
+    busy: false,
+    controlListener: undefined,
+    mcpAsking: new Set<string>(),
+    write(line: string) {
+      written.push(line);
+      const req = JSON.parse(line);
+      // The reply is chosen per server, so a typo in the request's subtype leaves the decoded page
+      // intact and fails only the assertion that reads the request that went out.
+      const response = responses[req.request.serverName] ?? {};
+      setTimeout(() => {
+        proc.controlListener({
+          type: "control_response",
+          request_id: req.request_id,
+          response: {
+            subtype: "success",
+            request_id: req.request_id,
+            response,
+          },
+        });
+      }, 0);
+      return true;
+    },
+  };
+  adapter.processes.set(registryKey(adapter.providerId, "ms"), proc);
+
+  // A reply carrying a page reports that page.
+  assert.deepEqual(await adapter.mcpAuthenticate("ms", "dsh"), {
+    ok: true,
+    authUrl: "https://x/y",
+  });
+  // The request that went out, read the same way the mcp_reconnect assertion reads it: a subtype typo
+  // ships green without this.
+  assert.deepEqual(JSON.parse(written.at(-1)!).request, {
+    subtype: "mcp_authenticate",
+    serverName: "dsh",
+  });
+  // A success with nothing to do is an ok with no page and no error.
+  assert.deepEqual(await adapter.mcpAuthenticate("ms", "in"), { ok: true });
+  // A success carrying neither a page nor a "nothing to do" flag is a refusal.
+  assert.deepEqual(await adapter.mcpAuthenticate("ms", "empty"), {
+    ok: false,
+    error: "the CLI answered without a sign-in page",
+  });
+  // A session with no live process is a refusal.
+  assert.deepEqual(await adapter.mcpAuthenticate("nope", "dsh"), {
+    ok: false,
+    error: "no live Claude process for this session",
+  });
+
+  // The decoders need no process.
+  assert.equal(mcpAuthUrl({ authUrl: "https://x/y" }), "https://x/y", "keeps a non-empty page");
+  assert.equal(mcpAuthUrl({ authUrl: "" }), undefined, "drops an empty page");
+  assert.equal(mcpAuthUrl({}), undefined, "absent page is undefined");
+  assert.equal(mcpAuthUrl(undefined), undefined, "absent reply is undefined");
+  assert.equal(
+    mcpAuthNeedsNothing({ requiresUserAction: false }),
+    true,
+    "success with nothing to do",
+  );
+  assert.equal(mcpAuthNeedsNothing({ requiresUserAction: true }), false, "a page is still needed");
+  assert.equal(mcpAuthNeedsNothing({}), false, "no flag is not 'nothing to do'");
 }
 
 // CLI model picker: list_models entries lead the catalog, a known model whose exact id a CLI row

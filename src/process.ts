@@ -773,6 +773,21 @@ export function decodeMcpStatus(v: JsonValue | undefined): McpServerStatus[] {
   return out;
 }
 
+/** The sign-in page from an `mcp_authenticate` reply, or undefined when the reply does not carry
+ *  one. Probed against 2.1.278 on 2026-09-20. */
+export function mcpAuthUrl(v: JsonValue | undefined): string | undefined {
+  const r = isRecord(v) ? v : {};
+  return typeof r.authUrl === "string" && r.authUrl !== "" ? r.authUrl : undefined;
+}
+
+/** True when the CLI answered success with nothing for the person to do: the server's token is
+ *  still good, so there is no page to open. Distinguishing this from a failure matters, because the
+ *  panel would otherwise tell someone their login failed when they are already signed in. */
+export function mcpAuthNeedsNothing(v: JsonValue | undefined): boolean {
+  const r = isRecord(v) ? v : {};
+  return r.requiresUserAction === false;
+}
+
 /** One entry of the CLI's own model picker, as `list_models` reports it. */
 export interface CliModel {
   value: string;
