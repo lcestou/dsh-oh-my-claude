@@ -6290,6 +6290,8 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
           adapter.ownerFor(sessionId).mcpReconnect(sessionId, serverName),
         ask: (sessionId: string, serverName: string, ask: boolean) =>
           adapter.ownerFor(sessionId).setMcpAsk(sessionId, serverName, ask),
+        authenticate: (sessionId: string, serverName: string) =>
+          adapter.ownerFor(sessionId).mcpAuthenticate(sessionId, serverName),
       },
       rewind: (sessionId: string, uuid: string, dryRun: boolean) =>
         adapter.ownerFor(sessionId).rewind(sessionId, uuid, dryRun),

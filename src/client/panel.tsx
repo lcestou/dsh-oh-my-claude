@@ -1915,6 +1915,44 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
       setBusy(null);
     }
   };
+  /** After the sign-in page opens, the CLI reconnects the server itself when the browser comes
+   *  back, and says nothing about it. Re-read the status until the row stops needing auth, or give
+   *  up after ninety seconds so a login someone abandoned does not poll forever. */
+  const watchUntilSignedIn = () => {
+    let left = 30;
+    const tick = () => {
+      left -= 1;
+      void load().then(() => {
+        if (left > 0) window.setTimeout(tick, 3000);
+      });
+    };
+    window.setTimeout(tick, 3000);
+  };
+  const login = async (serverName: string) => {
+    setBusy(serverName);
+    setNote("");
+    try {
+      const r = await fetch(`${ROUTE}/mcp-servers/authenticate`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ session: sessionId, name: serverName }),
+      }).then((x) => readJson<{ ok?: boolean; authUrl?: string; error?: string }>(x));
+      if (r.ok === true && r.authUrl !== undefined) {
+        window.open(r.authUrl, "_blank", "noopener");
+        setNote(`${serverName}: approve in the tab that opened; this row updates itself`);
+        watchUntilSignedIn();
+      } else if (r.ok === true) {
+        setNote(`${serverName}: already signed in`);
+        void load();
+      } else {
+        setNote(`${serverName}: ${r.error ?? "login failed"}`);
+      }
+    } catch (e) {
+      setNote(`${serverName}: ${e instanceof Error ? e.message : "login failed"}`);
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const remove = async (serverName: string) => {
     setBusy(serverName);
@@ -2061,6 +2099,18 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
                   {busy === s.name ? "…" : "Reconnect"}
                 </button>
               )}
+              {s.status === "needs-auth" && (
+                <button
+                  type="button"
+                  style={btn}
+                  data-omc-mcp-login=""
+                  aria-label={`Log in: ${s.name}`}
+                  disabled={busy !== null}
+                  onClick={() => void login(s.name)}
+                >
+                  {busy === s.name ? "…" : "Log in"}
+                </button>
+              )}
               <ConfirmButton
                 label="Remove"
                 style={btn}
@@ -2070,11 +2120,19 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
               />
             </div>
             {s.status !== "connected" && (s.error || s.status === "needs-auth") ? (
-              // A server that is down explains itself here; `needs-auth` always says something,
-              // because its row carries no Reconnect and would otherwise be a dead end.
+              // A server that is down explains itself here in the CLI's own words. A `needs-auth`
+              // row adds what to do about it, beside rather than instead of that wording: the CLI
+              // does set an error on these rows ("Please log in to your account"), so a fallback
+              // would never render and the Log in button would stand unexplained.
               <div style={{ padding: "0 6px 4px 22px", color: T.muted, fontSize: 12 }}>
-                {s.error ??
-                  "Needs authentication. Run /mcp in a Claude Code terminal on this box to authenticate this server."}
+                {s.error}
+                {s.status === "needs-auth" ? (
+                  <div style={{ marginTop: 2 }}>
+                    Log in opens the sign-in page in a new tab. The sign-in has to finish in a
+                    browser on the machine running Claude Code, not necessarily this one; the row
+                    updates itself when it lands.
+                  </div>
+                ) : null}
               </div>
             ) : null}
             {s.tools && s.tools.length > 0 ? (
