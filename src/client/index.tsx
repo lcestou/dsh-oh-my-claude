@@ -3352,7 +3352,10 @@ function watchContextMeter(ctx: ClientCtx) {
     // Skeleton rows, never the word "loading". This is only ever seen once per box, the first
     // time anyone opens the meter before the cache has been written; after that the cached
     // answer renders at once. A skeleton reads as "this is coming", the word reads as "stuck".
-    drivers.style.cssText = `margin-top:6px;padding-top:6px;border-top:1px solid ${T.border}`;
+    // The same 6 px above and below the bones. Without the bottom padding the last one sits on
+    // the context breakdown's own border-top, which reads as a cut-off block rather than a
+    // loading one; the filled section has its rows' own margin there and does not need it.
+    drivers.style.cssText = `margin-top:6px;padding:6px 0;border-top:1px solid ${T.border}`;
     for (const width of ["45%", "80%", "62%"]) {
       const bone = document.createElement("div");
       bone.setAttribute("data-omc-skeleton", "");
