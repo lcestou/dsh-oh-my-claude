@@ -377,6 +377,12 @@ export interface SessionRouteOptions {
             ok: boolean;
             error?: string;
         }>;
+        /** Start an OAuth login for one server; the reply carries the sign-in page to open. */
+        authenticate: (sessionId: string, name: string) => Promise<{
+            ok: boolean;
+            authUrl?: string;
+            error?: string;
+        }>;
     };
     /** The rules recent approval requests suggest, per session; the Tune tab offers them as chips. */
     permissionAsks?: Map<string, string[]>;

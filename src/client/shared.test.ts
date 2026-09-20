@@ -8,8 +8,10 @@ import {
   numberOr,
   openSession,
   openSessionId,
+  parseSkillCosts,
   resumeCommand,
   skillStateFromReply,
+  sortSkillCosts,
 } from "./shared.js";
 
 assert.equal(maskEmail("someone@example.com"), "s******@example.com");
@@ -152,5 +154,85 @@ assert.deepEqual(skillStateFromReply({ ok: false, error: "boom" }), {
   kind: "error",
   text: "boom",
 });
+
+// parseSkillCosts turns the /skill-doctor raw report into one SkillCostRow per skill; a header that
+// is not the six known columns returns null so the caller keeps the raw report instead of garbage.
+const REPORT = [
+  "Skills loaded this session",
+  "",
+  "  skill                            source          context  7d tokens   uses  last used",
+  "  ask-matt                         userSettings          -          -     0×  never",
+  "  n8n-node-configuration           userSettings       < 20          -     0×  never",
+  "  llm-optim                        userSettings       ~100       1.9m     2×  3 days",
+  "  local-subagent                   userSettings       ~270     188.5m    11×  1 day",
+  "  unslop                           userSettings        ~20      54.3m    35×  today",
+  "  caveman:caveman-evidence-review  plugin              ~35       2.1k     1×  2 days",
+  "  writing-for-agents               userSettings        ~40       1.1m     2×  today",
+  "",
+  "  context = this skill's one-line listing in the system prompt, included every turn",
+  "  (dash = not in the current listing, costs nothing; full SKILL.md loads only when it runs)",
+  "  7d tokens = tokens attributed to the skill over the last 7 days of sessions on this machine",
+  "",
+  "42 skills loaded but never invoked. Each one adds to the system prompt every turn.",
+].join("\n");
+
+const WIDE = [
+  "  skill                                      source           context  7d tokens   uses  last used",
+  "  zz-a-very-long-skill-name-for-width-probe  projectSettings      ~30          -     0×  never",
+].join("\n");
+
+// 1. The report parses and holds exactly the seven skills under the header; the blank line stops the
+//    table before the indented legend.
+const parsed = parseSkillCosts(REPORT);
+assert.notEqual(parsed, null);
+const rows = parsed ?? [];
+assert.equal(rows.length, 7);
+
+// 2. The last row is the last skill, and no row's name ran past the blank line into the legend prose,
+//    whose definition lines carry " = ".
+assert.equal(rows[rows.length - 1]?.skill, "writing-for-agents");
+assert.ok(rows.every((r) => !r.skill.includes(" = ")));
+
+// 3. The first row's cells, including the dash and never placeholders.
+assert.deepEqual(rows[0], {
+  skill: "ask-matt",
+  source: "userSettings",
+  context: "-",
+  tokens: "-",
+  uses: "0×",
+  lastUsed: "never",
+});
+
+// 4. A cell that contains a space survives the fixed-column slice: "< 20" and "3 days".
+assert.equal(rows[1]?.context, "< 20");
+assert.equal(rows[2]?.lastUsed, "3 days");
+
+// 5. A header whose columns no longer line up with the six names is not a table.
+assert.equal(parseSkillCosts(REPORT.replace("7d tokens", "7d toks  ")), null);
+
+// 6. A wide header shifts with its widest row and still parses to one row.
+const wideRows = parseSkillCosts(WIDE) ?? [];
+assert.equal(wideRows.length, 1);
+assert.equal(wideRows[0]?.source, "projectSettings");
+
+// 7. Uses sort by magnitude, so 35× beats 11×.
+assert.equal(sortSkillCosts(rows, "uses", "desc")[0]?.skill, "unslop");
+
+// 8. Token magnitude orders 188.5m above 54.3m, which a string sort gets backwards.
+assert.equal(sortSkillCosts(rows, "tokens", "desc")[0]?.skill, "local-subagent");
+
+// 9. `never` has the largest magnitude, so it sorts last ascending. ask-matt and n8n-node-configuration
+//    are both `never`; a stable sort keeps input order, so n8n lands last. Assert the invariant the
+//    order depends on (a never row is last) rather than one specific never row.
+assert.equal(sortSkillCosts(rows, "lastUsed", "asc").at(-1)?.lastUsed, "never");
+// Both `never` rows tie, and a tie must not be NaN: Infinity minus Infinity is, and no sort owes a
+// NaN comparator an answer. Their order is the report's order, and a today row sorts to the front.
+assert.equal(sortSkillCosts(rows, "lastUsed", "asc")[0]?.lastUsed, "today");
+assert.deepEqual(
+  sortSkillCosts(rows, "lastUsed", "asc")
+    .filter((r) => r.lastUsed === "never")
+    .map((r) => r.skill),
+  ["ask-matt", "n8n-node-configuration"],
+);
 
 console.log("✓ All login mask checks pass");

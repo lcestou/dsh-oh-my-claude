@@ -1371,6 +1371,11 @@ export interface SessionRouteOptions {
       name: string,
       ask: boolean,
     ) => Promise<{ ok: boolean; error?: string }>;
+    /** Start an OAuth login for one server; the reply carries the sign-in page to open. */
+    authenticate: (
+      sessionId: string,
+      name: string,
+    ) => Promise<{ ok: boolean; authUrl?: string; error?: string }>;
   };
   /** The rules recent approval requests suggest, per session; the Tune tab offers them as chips. */
   permissionAsks?: Map<string, string[]>;
@@ -2895,6 +2900,17 @@ export function registerSessionRoutes(
                 if (typeof session !== "string" || typeof name !== "string")
                   return json(res, 400, { error: "session and name required" });
                 const reply = await mcp.ask(session, name, ask === true);
+                return json(res, reply.ok ? 200 : 409, reply);
+              }
+              if (
+                mcp &&
+                req.method === "POST" &&
+                url.pathname === `${ROUTE_PREFIX}/mcp-servers/authenticate`
+              ) {
+                const { session, name } = await readBody(req);
+                if (typeof session !== "string" || typeof name !== "string")
+                  return json(res, 400, { error: "session and name required" });
+                const reply = await mcp.authenticate(session, name);
                 return json(res, reply.ok ? 200 : 409, reply);
               }
               // Add a server: `claude mcp add-json`, run in the session's own directory so a
