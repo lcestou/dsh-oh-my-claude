@@ -2834,14 +2834,21 @@ const loadUsage = async (provider?: string): Promise<UsageReply> => {
 
 // Per provider, like loadUsage: a second account is a second answer. The breakdown is a spawn on
 // the box, so this 60 s memo keeps a popover reopen from re-running `claude -p /usage`.
+//
+// No `force=1` here, unlike loadUsage. On the route, `force` shortens the server cache from five
+// minutes to thirty seconds, which is right for the plan windows (one HTTP call to Anthropic) and
+// wrong for this one: the breakdown spawns `claude -p "/usage"` on the box, measured at 3.6 s on
+// 2026-09-20. With force on, every reopen past this memo's minute paid that spawn again, and a
+// second tab paid it whenever it was first to ask. Without it the server answers from its
+// five-minute cache and the figures, which cover a 24 h and a 7 d window, lose nothing.
 const breakdownCache = new Map<string, { at: number; reply: UsageBreakdownReply }>();
 const loadBreakdown = async (provider?: string): Promise<UsageBreakdownReply> => {
   const key = provider ?? "";
   const hit = breakdownCache.get(key);
   if (hit && Date.now() - hit.at < 60_000) return hit.reply;
   const url = provider
-    ? `${ROUTE}/usage/breakdown?force=1&provider=${encodeURIComponent(provider)}`
-    : `${ROUTE}/usage/breakdown?force=1`;
+    ? `${ROUTE}/usage/breakdown?provider=${encodeURIComponent(provider)}`
+    : `${ROUTE}/usage/breakdown`;
   const reply = await readJson<UsageBreakdownReply>(await fetch(url));
   breakdownCache.set(key, { at: Date.now(), reply });
   return reply;
