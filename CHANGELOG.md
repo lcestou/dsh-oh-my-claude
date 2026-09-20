@@ -12,6 +12,8 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
   button that opens the server's sign-in page in a new tab and then watches for the server to come
   back; before this the only way through was `/mcp` in a terminal. The sign-in has to finish in a
   browser on the box Claude Code runs on, which the row now says.
+- Concise joins the output styles the Tune tab offers. It is one of Claude Code's four built-in
+  styles and the only one the row left out; it makes Claude answer tersely and skip the preamble.
 
 - The Plugins roster names a plugin that loaded with a warning, under the block that names one that
   failed. A warning is the CLI's own wording for a plugin it took but had to work around, such as a
