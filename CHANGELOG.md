@@ -12,6 +12,8 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
   `/skill-doctor` text. Click a column heading to reorder; it opens on the last seven days' tokens,
   largest first. Cells sort by the magnitude they name, so 188.5m ranks above 54.3m. A report whose
   header is not the six known columns still shows as raw text.
+- Concise joins the output styles the Tune tab offers. It is one of Claude Code's four built-in
+  styles and the only one the row left out; it makes Claude answer tersely and skip the preamble.
 
 - The Plugins roster names a plugin that loaded with a warning, under the block that names one that
   failed. A warning is the CLI's own wording for a plugin it took but had to work around, such as a

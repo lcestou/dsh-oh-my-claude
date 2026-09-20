@@ -70,7 +70,7 @@ The Tune tab's first row is the plugin's own, not a `settings.json` key: Tool ac
 
 The rest of the tab holds the `settings.json` keys that change how Claude answers, on the panel that already shows the answer:
 
-- Output style (Default, Explanatory or Learning).
+- Output style (Default, Concise, Explanatory or Learning).
 - Thinking (`alwaysThinkingEnabled`, with `showThinkingSummaries` beside it and disabled while thinking is off) and the auto-compact window in tokens. The auto-compact field commits on blur or Enter, never per keystroke, because every write moves the file's mtime.
 - Prompt cache TTL, `promptCacheTtl` for the main conversation and `subagentPromptCacheTtl` for subagents and background work, each offering Default, 5 minutes or 1 hour, with the trade-off under them: an hour keeps the cache warm across longer breaks and its writes cost more. `CLAUDE_CODE_PROMPT_CACHE_TTL` in the environment beats whatever the tab writes.
 - Advisor (`advisorModel`): Off (key absent, the CLI's default) or a model id from the plugin's catalog. Fable models bill to usage credits and must be enabled from the terminal (`/model fable`) before the tab offers them. An advisor weaker than the main model is not used for the main conversation, though subagents may still use it.
