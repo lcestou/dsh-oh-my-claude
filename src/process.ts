@@ -78,6 +78,9 @@ export type ClaudeEvent =
       /** subtype "init": plugins the CLI could not load, `{plugin,type,message}` each. Present only
        *  when there are errors; a clean load omits the key. */
       plugin_errors?: JsonValue;
+      /** subtype "init": plugins the CLI loaded with a complaint, `{plugin,type,message}` each
+       *  (a shadowed default folder, a suppressed server). Present only when there are warnings. */
+      plugin_warnings?: JsonValue;
       /** subtype "compact_boundary": `trigger` and `pre_tokens` always, `post_tokens` and
        *  `duration_ms` when the CLI chose to fill them in. */
       compact_metadata?: Record<string, unknown>;

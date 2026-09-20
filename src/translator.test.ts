@@ -374,3 +374,49 @@ console.log("translator plugin-errors ok");
   assert.equal(seen.at(-1)?.kind, "model_fallback", "onModel kind is model_fallback");
 }
 console.log("translator model-fallback ok");
+// init.plugin_warnings: the init frame's plugin_warnings reach onInit as its fourth argument,
+// alongside plugin_errors; a clean init clears both with []; a commands_changed refresh passes
+// undefined so stored warnings are left alone. reload carries no warning_count, so warnings refresh
+// only from a fresh init frame.
+{
+  // SAFETY: the test reaches onInit, a private field, to observe what translate forwards
+  const t = new Translator() as unknown as {
+    onInit?: (c: string[], tools: string[], pe?: PluginLoadError[], pw?: PluginLoadError[]) => void;
+    translate: (e: unknown) => void;
+  };
+  let seen: { pe: PluginLoadError[] | undefined; pw: PluginLoadError[] | undefined } | undefined;
+  t.onInit = (_names, _tools, pe, pw) => {
+    seen = { pe, pw };
+  };
+  t.translate({
+    type: "system",
+    subtype: "init",
+    slash_commands: ["verify"],
+    tools: [],
+    plugin_errors: [{ plugin: "p", type: "generic-error", message: "boom" }],
+    plugin_warnings: [
+      { plugin: "w@inline", type: "folder-shadowed-by-manifest", message: "warned" },
+    ],
+  });
+  assert.deepEqual(
+    seen?.pw,
+    [{ plugin: "w@inline", type: "folder-shadowed-by-manifest", message: "warned" }],
+    "init forwards plugin_warnings to onInit",
+  );
+  assert.deepEqual(
+    seen?.pe,
+    [{ plugin: "p", type: "generic-error", message: "boom" }],
+    "the same frame forwards plugin_errors independently",
+  );
+  seen = { pe: undefined, pw: undefined };
+  t.translate({ type: "system", subtype: "init", slash_commands: ["verify"], tools: [] });
+  assert.deepEqual(seen?.pw, [], "a clean init forwards [] so a prior warning is cleared");
+  seen = { pe: undefined, pw: undefined };
+  t.translate({ type: "system", subtype: "commands_changed", commands: ["verify"] });
+  assert.equal(
+    seen?.pw,
+    undefined,
+    "commands_changed forwards undefined, leaving warnings untouched",
+  );
+}
+console.log("translator plugin-warnings ok");
