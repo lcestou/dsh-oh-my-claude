@@ -612,6 +612,7 @@ export function TuneBody({
             }}
           >
             <option value="">Default</option>
+            <option value="Concise">Concise</option>
             <option value="Explanatory">Explanatory</option>
             <option value="Learning">Learning</option>
           </select>
