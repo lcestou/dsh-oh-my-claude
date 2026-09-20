@@ -468,7 +468,10 @@ export function registerUsageRoute(
       .catch(() => undefined);
     if (parsed === undefined || parsed.format !== BREAKDOWN_FORMAT) return;
     for (const [key, entry] of Object.entries(parsed.entries ?? {}))
-      if (!bdCached.has(key) && entry.reply.ok) bdCached.set(key, entry);
+      // Every field tested before it is read. The format marker above rules out an older writer,
+      // not a truncated write or a hand edit, and a throw here rejects the read rather than
+      // degrading to a fresh one: the fold would error instead of simply spawning.
+      if (!bdCached.has(key) && entry?.reply?.ok === true) bdCached.set(key, entry);
   };
   const bdSave = () => {
     void writeJson(bdFile, {
