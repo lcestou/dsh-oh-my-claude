@@ -6,6 +6,13 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Added
+
+- The Plugins roster names a plugin that loaded with a warning, under the block that names one that
+  failed. A warning is the CLI's own wording for a plugin it took but had to work around, such as a
+  default folder the manifest shadows. The list refreshes when the session next starts, since the
+  CLI reports no warning count on a reload.
+
 ### Fixed
 
 - A skill both dsh and Claude Code know now reaches Claude once instead of twice. dsh stops sending its own copy when the CLI lists that skill's name, because Claude Code injects the body itself. A skill only dsh knows still reaches Claude, since that copy is the only one.
