@@ -1223,8 +1223,11 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
       {sections.map((sec) => {
         const rows = sec.rows.filter(match);
         if (rows.length === 0) return null;
+        // Groups start folded so the tab reads as a short list of groups plus Skill costs; a search
+        // opens them to show its matches, and a lone group opens since folding it hides everything.
+        const open = query.trim() !== "" || sections.filter((x) => x.rows.length > 0).length === 1;
         return (
-          <details key={sec.key} open data-omc-skills-scope={sec.key}>
+          <details key={sec.key} open={open} data-omc-skills-scope={sec.key}>
             <summary style={FOLD_HEAD}>
               {sec.label} · {sec.rows.length}
             </summary>
