@@ -17,6 +17,12 @@
 //     with no conversation open counts zero and would cry wolf; `needs` states that.
 //   - A count of zero is the failure being tested for. Never assert a shape a guess invented:
 //     every selector below is one this plugin already depends on somewhere.
+//   - It must be structural, not content-dependent. `[data-ref-chip]` is a hook this plugin really
+//     uses and it was in this list until the first live run, where it read as missing simply
+//     because the open conversation mentioned no skill and no file. A probe that depends on what
+//     someone happened to type reports a breakage that is not one, and a check nobody trusts is
+//     worse than no check. Measured on an open idle conversation, 2026-09-21: markdown 242 nodes,
+//     ring 29, composer input 1, turn status 1, chips 0.
 
 /** Where a probe is meaningful. A probe outside its context is skipped, not failed. */
 export type ContractScope = "always" | "conversation";
@@ -55,13 +61,6 @@ export const DSH_CONTRACT: readonly ContractProbe[] = [
     scope: "always",
     kind: "role",
     selector: 'button[aria-haspopup="dialog"]',
-  },
-  {
-    id: "ref-chip",
-    breaks: "the accent on skill and file chips in sent messages",
-    scope: "conversation",
-    kind: "data",
-    selector: "[data-ref-chip]",
   },
   {
     id: "turn-status",
