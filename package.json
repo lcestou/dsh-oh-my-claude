@@ -1,6 +1,6 @@
 {
   "name": "dsh-oh-my-claude",
-  "version": "1.2.1",
+  "version": "1.3.0",
   "type": "module",
   "description": "Claude Code CLI as an LLM provider for dsh (DeepSeek Harness): live model list, per-session resume, approval relay, images, a memory/rewind/changes panel, and workspaces on remote SSH boxes",
   "keywords": [

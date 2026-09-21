@@ -6,6 +6,8 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-09-21
+
 ### Added
 
 - On a box that has never used the plugin, a small bubble above ✻ says what lives behind it. It goes
@@ -49,9 +51,11 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
   default folder the manifest shadows. The list refreshes when the session next starts, since the
   CLI reports no warning count on a reload.
 - The Skills tab can now add, edit and remove skills, not only list them. New skill writes a template `SKILL.md` and opens it for editing; Edit and Remove act on your own and the project's skills, while a plugin's stay read-only. A change reaches the running session at once, so a new skill's slash command works without restarting Claude.
-- The context ring popover now shows what is driving your plan limits, by skill, subagent, plugin
-  and MCP server, over the last seven days. It reads Claude Code's own `/usage` on the box, so the
-  figures match what `claude` reports in a terminal.
+- **What else drives your usage**, a fold in the Skills tab: which skills, subagents, plugins and
+  MCP servers drove this machine's sessions over the last 24 hours and 7 days, and Claude Code's
+  own sentences about how the work was shaped. It reads Claude Code's `/usage` on the box, so the
+  figures match what `claude` reports in a terminal; the answer is kept on disk, so opening it is
+  instant, and a Refresh control reads again.
 - The Claude Code update card links the version it offers to that release's entry on
   code.claude.com's changelog, in a new tab, so what changed is one click from the offer.
 - The Plugins roster names any plugin the Claude Code CLI could not load, with the reason, in a
@@ -90,13 +94,6 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
   Archived Sessions.
 - A new session's MCP tab says Claude starts on your first message, in muted text, instead of a red
   "no live Claude process".
-- "What's driving your limits" has left the plan-usage meter and become **What else drives your
-  usage**, a fold in the Skills tab. Its figures are a rolling seven days of this machine's
-  sessions, while the bars it used to sit under are exact, account-wide and aligned to your reset
-  day; about two of its seven days fall in the previous cycle, so under those bars it read as a
-  breakdown of a number it was not. The Skills tab is the same rolling window throughout. The move
-  also drops its Top skills list, which repeated five rows of the cost table above it, and adds
-  Claude Code's three sentences about how the work was shaped, which the parser used to discard.
 - The chips dsh draws in a sent bubble, a skill it knows such as `/ic-logos` and a file
   mention, take the Claude look's accent under the "Links, rules and quotes" group instead of
   dsh's blue, so a sent skill reads in the same colour as the rest of the Claude chrome.
@@ -126,17 +123,6 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
   of where it had read up to could land at once, and the older one could win, so the next start
   read from an earlier point and posted those exchanges into the session again. Saves now run one
   at a time, in the order they were made.
-- The "What's driving your limits" section opens instantly and no longer waits on Claude Code. It
-  spawns `claude -p "/usage"`, which takes a few seconds, and the answer was kept only in memory,
-  so every dsh restart threw it away and the next person to open the meter waited again with the
-  word "Loading" under the plan bars. The answer is now kept on disk, an open always renders what
-  the box last read, and only the new Refresh control reads again. The one time nothing is cached
-  yet, the section shows skeleton rows rather than the word.
-- The "What's driving your limits" section no longer re-runs Claude Code's `/usage` on the box
-  every time the meter is opened. It asked the route to skip its own five-minute cache, so a reopen
-  past the browser's one-minute memo paid a fresh 3.6 s spawn, and a second tab paid it whenever it
-  asked first. It now reads the cache, and the figures cover 24 hours and 7 days, so nothing is
-  lost by being five minutes old.
 - A skill both dsh and Claude Code know now reaches Claude once instead of twice. dsh stops sending its own copy when the CLI lists that skill's name, because Claude Code injects the body itself. A skill only dsh knows still reaches Claude, since that copy is the only one.
 - The effort picker now honours settings.json `maxEffortLevel`, so it lists only the levels the CLI will run. Before this it offered every level a model supports and the CLI quietly clamped a pick above the cap, so the picker showed an effort the turn never used.
 - The percentage dsh prints beside the context ring, visible on a phone, said 100% while the
