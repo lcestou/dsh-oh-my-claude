@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { UsageCredits } from "./usage.js";
 import {
   extraUsageOn,
+  parseBreakdownCache,
   parseUsageBreakdown,
   readUsage,
   stillLimitedUntil,
@@ -297,3 +298,44 @@ assert.deepEqual(
   "a window with no Top rows is dropped, not shown empty",
 );
 console.log("usage-breakdown ok");
+
+// The breakdown cache on disk is read by shape, not trusted by a version number. It has already
+// crashed the panel once: a file written before the parser learned to keep the behaviour sentences
+// was read by code that expected them. Each case below is a file the reader must refuse rather
+// than serve, and refusing means the next open reads fresh.
+{
+  const reply = (windows: unknown[]) => ({ ok: true, fetchedAt: 1, windows });
+  const window = {
+    label: "Last 7d",
+    requests: 10,
+    sessions: 2,
+    behaviours: ["78% of your usage was at >150k context"],
+    groups: [{ label: "MCP servers", drivers: [{ name: "dsh", pct: 12 }] }],
+  };
+  const good = JSON.stringify({ entries: { box: { at: 1, reply: reply([window]) } } });
+  const windowsOf = (file: string) => {
+    const r = parseBreakdownCache(file)?.box?.reply;
+    return r?.ok === true ? r.windows : undefined;
+  };
+  assert.equal(windowsOf(good)?.length, 1, "a well-formed file is read");
+
+  // The file that crashed the panel: written before the behaviour field existed. It is read, and
+  // the missing list comes back empty rather than absent, which is what makes it safe: the crash
+  // was a `.map` on a list that was not there, and an empty list renders nothing.
+  const { behaviours: _dropped, ...older } = window;
+  const olderFile = JSON.stringify({ entries: { box: { at: 1, reply: reply([older]) } } });
+  assert.deepEqual(
+    windowsOf(olderFile)?.[0]?.behaviours,
+    [],
+    "an old file's missing list reads as empty, so nothing downstream can call .map on undefined",
+  );
+  assert.equal(parseBreakdownCache('{"entries": {"box": '), undefined, "a torn write is refused");
+  // The validator would pass this entry as `{ at: 1, reply: {} }`; the reader must not serve it.
+  assert.deepEqual(
+    parseBreakdownCache(JSON.stringify({ entries: { box: { at: 1 } } })),
+    {},
+    "an entry with no reply is dropped rather than served as one",
+  );
+  assert.equal(parseBreakdownCache("not json"), undefined, "a file that is not JSON is refused");
+}
+console.log("breakdown-cache ok");
