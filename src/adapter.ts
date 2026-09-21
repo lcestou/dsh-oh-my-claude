@@ -2892,24 +2892,23 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   /** dsh session id → the plugins its last init frame said the CLI failed to load. Absent until an
    *  init frame arrives; a clean load clears it. A session adopted from the keeper after a dsh
    *  restart sees no new init frame, so it reads clean until its next fresh spawn.
-   *  ponytail: unbounded like sessionTools, one entry per live session, only overwritten or cleared,
-   *  never accumulated. Prune with the session lifecycle if sessionTools ever gets a prune. */
+   *  ponytail: one entry per live session, dropped by `forgetSession` when its process goes. */
   readonly sessionPluginErrors = new Map<string, PluginLoadError[]>();
   /** dsh session id → the plugins its last init frame warned about (loaded, but with a complaint:
    *  a shadowed default folder, a suppressed server. Absent until an init frame arrives; a clean
    *  load clears it. reload_plugins carries no warning_count, so unlike errors these refresh only at
    *  the next spawn's init frame, never on a reload.
-   *  ponytail: unbounded like sessionTools, one entry per live session, only overwritten or cleared. */
+   *  ponytail: one entry per live session, dropped by `forgetSession` when its process goes. */
   readonly sessionPluginWarnings = new Map<string, PluginLoadError[]>();
   /** dsh session id → the model switch its last turn reported (a safety refusal, a primary-model
    *  fallback, or the usage-credit gate), surfaced through `/side-questions` like `loginNeeded`. One
    *  entry per live session, overwritten on each switch; the client reads it at the stop transition.
-   *  ponytail: unbounded like `sessionTools`, only overwritten, never accumulated. */
+   *  ponytail: one entry per live session, dropped by `forgetSession` when its process goes. */
   readonly sessionFallbacks = new Map<string, FallbackRecord>();
   /** dsh session id → the prompt this session is waiting on, so a background tab can be told. One
    *  entry per session, set when a prompt opens and cleared when it settles. In memory on purpose:
    *  a prompt is live state and a restart re-asks.
-   *  ponytail: unbounded like `sessionTools`, one entry per live session, only overwritten. */
+   *  ponytail: one entry per live session, dropped by `forgetSession` when its process goes. */
   readonly awaitingInput = new Map<
     string,
     { kind: "approval" | "question" | "plan"; id: string; since: number }
@@ -4217,6 +4216,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       if (!key.startsWith(`${this.providerId}:`)) continue;
       proc.kill();
       this.processes.delete(key);
+      this.forgetSession(this.ownSessionId(key));
     }
     for (const w of this.watchers.values()) {
       if (w.timer) clearTimeout(w.timer);
@@ -4784,6 +4784,29 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     return n;
   }
 
+  /**
+   * Forget everything this adapter remembers about one session, called wherever its process is
+   * dropped. Each of these maps used to grow for the life of the process: a session id was added
+   * and never removed, so a box that opens a few hundred sessions a week carried every one of them
+   * until dsh restarted. Nothing was ever read wrongly, because a dsh session id is not reused, so
+   * the cost was memory alone; it is still a leak, and a one-line forget is cheaper than a comment
+   * admitting it. `liveTurn` and the idle watchdog are deliberately absent: both are cleared by
+   * the turn that owns them, and clearing them from here could drop a turn that is still running.
+   */
+  forgetSession(sessionId: string) {
+    this.sessionTools.delete(sessionId);
+    this.sessionPluginErrors.delete(sessionId);
+    this.sessionPluginWarnings.delete(sessionId);
+    this.sessionFallbacks.delete(sessionId);
+    this.permissionAsks.delete(sessionId);
+    this.awaitingInput.delete(sessionId);
+  }
+
+  /** The session id inside a registry key this adapter owns. */
+  private ownSessionId(key: string): string {
+    return key.slice(`${this.providerId}:`.length);
+  }
+
   evict() {
     const now = Date.now();
     for (const [key, p] of this.processes) {
@@ -4791,6 +4814,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       if (!p.alive || (isSettled(p) && now - p.lastUsed > this.config.processIdleMs)) {
         p.kill();
         this.processes.delete(key);
+        this.forgetSession(this.ownSessionId(key));
       }
     }
     const idle = [...this.processes.entries()]
@@ -4803,6 +4827,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       const [key, p] = next;
       p.kill();
       this.processes.delete(key);
+      this.forgetSession(this.ownSessionId(key));
     }
   }
 

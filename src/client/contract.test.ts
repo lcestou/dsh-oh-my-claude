@@ -15,8 +15,22 @@ const docOf = (counts: Record<string, number>) => ({
 });
 
 const probes: ContractProbe[] = [
-  { id: "always-one", breaks: "a", scope: "always", kind: "role", selector: "#a" },
-  { id: "chat-one", breaks: "b", scope: "conversation", kind: "class", selector: "#b" },
+  {
+    id: "always-one",
+    breaks: "a",
+    scope: "always",
+    kind: "role",
+    selector: "#a",
+    detects: "exact",
+  },
+  {
+    id: "chat-one",
+    breaks: "b",
+    scope: "conversation",
+    kind: "class",
+    selector: "#b",
+    detects: "exact",
+  },
 ];
 
 // Everything present: nothing missing, and the summary counts only what it checked.
@@ -31,7 +45,14 @@ const probes: ContractProbe[] = [
 {
   const two = [
     ...probes,
-    { id: "chat-two", breaks: "c", scope: "conversation", kind: "class", selector: "#c" } as const,
+    {
+      id: "chat-two",
+      breaks: "c",
+      scope: "conversation",
+      kind: "class",
+      selector: "#c",
+      detects: "exact",
+    } as ContractProbe,
   ];
   const r = checkContract(docOf({ "#a": 1, "#c": 9 }), two);
   assert.deepEqual(
@@ -73,6 +94,24 @@ const probes: ContractProbe[] = [
     assert.ok(p.selector.length > 0, `${p.id} has a selector`);
     assert.ok(p.breaks.length > 0, `${p.id} says what breaks`);
   }
+}
+
+// A loose selector cannot tell the right node from any node, which is how every past dsh break
+// went: the thing kept its name and moved. Every probe that claims `exact` must therefore use the
+// selector its feature uses, and the ring is the one that was wrong: `button[aria-haspopup]`
+// matched 28 nodes on a live page against 1 for the arc.
+{
+  const ring = DSH_CONTRACT.find((p) => p.id === "ring-button");
+  assert.ok(ring, "the ring probe is in the list");
+  assert.ok(
+    ring.selector.includes("circle"),
+    "the ring probe names the arc, not merely a button that opens a dialog",
+  );
+  for (const probe of DSH_CONTRACT)
+    assert.ok(
+      probe.detects === "exact" || probe.detects === "presence",
+      `${probe.id} says what a green answer is worth`,
+    );
 }
 
 console.log("contract ok");

@@ -119,6 +119,13 @@ export declare function readUsageBreakdown(command: string, realHome?: string, s
 /** The reset instant of a window still at its cap, or undefined when nothing blocks a request.
  *  A reply that could not be read answers undefined too: the wake then finds out by trying. */
 export declare function stillLimitedUntil(reply: UsageReply, now?: number): number | undefined;
+/** The persisted usage-breakdown cache, or undefined when the file is not the shape the reader
+ *  needs: an older build's, a torn write, a hand edit. Undefined means "no cache", and the next
+ *  open spawns and rewrites it, which is exactly the degradation a stale file should get. */
+export declare function parseBreakdownCache(text: string): Record<string, {
+    at: number;
+    reply: UsageBreakdownReply;
+}> | undefined;
 /** Serve `/dsh-oh-my-claude/usage` (`?force=1` refreshes sooner) from a small cache. */
 export declare function registerUsageRoute(ctx: PluginContext, log: (level: string, msg: string) => void, identity: (home?: string, sshHost?: string) => Promise<{
     host: string;
