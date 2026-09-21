@@ -167,6 +167,7 @@ import {
 } from "./rows-probe.js";
 import { readSshToken, THIS_BOX } from "./ssh-login.js";
 import { CHILD_ENV, childEnv, errorText, resolveCommand } from "./process.js";
+import { bindServerLocale, serverText } from "./locale.js";
 import {
   assistantMessageText,
   foreignTurns,
@@ -1781,8 +1782,6 @@ export function renameTitle(cmd: string, rawInput: string): string | undefined {
   const title = rawInput.trim();
   return title.length > 0 ? title : undefined;
 }
-const PLAN_APPROVE = "Approve";
-const PLAN_KEEP = "Keep planning";
 // Claude Code tool names → dsh tool name that the client-ui-tool presenter recognises.
 // Unknown names fall through to the generic "others" row.
 export const NATIVE_TOOL_MAP = {
@@ -1890,7 +1889,7 @@ export function finishReason(result: ResultFrame, hostLabel?: string): FinishRea
     // Name the box the turn actually ran on: an SSH box or a remote workspace runs the far claude, so
     // the local hostname would point the user at the wrong machine to run `claude auth login` on.
     if (isLoginFailure(result))
-      message = `Claude Code is not logged in on ${hostLabel ?? hostname()}. Use Log in above the composer, or run \`claude auth login\` in a terminal there, then send your message again. (${message})`;
+      message = serverText("loginFailure", { host: hostLabel ?? hostname(), detail: message });
     // The retries before this result already asked the status page; a 5xx that gave up names
     // the incident the page reports, if any, so the failure reads as theirs rather than ours.
     if ((result.api_error_status ?? 0) >= 500) message += degradedNote(peekStatus());
@@ -2470,7 +2469,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   override providerInfo(provider: string) {
     return {
       id: provider,
-      name: this.loggedOut ? `${this.displayName} (not logged in)` : this.displayName,
+      name: this.loggedOut
+        ? `${this.displayName} (${serverText("notLoggedIn")})`
+        : this.displayName,
     };
   }
 
@@ -2496,9 +2497,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       if (who.loggedIn) this.setLoggedIn(true);
     }
     if (this.loggedOut)
-      throw new Error(
-        `not logged in on ${this.config.sshHost || hostname()}. Log in under Settings, Oh My Claude, Boxes`,
-      );
+      throw new Error(serverText("loggedOutError", { host: this.config.sshHost || hostname() }));
     await this.cliSeed;
     const models = await getCatalog(undefined, this.cliModels, await this.pickerSettings());
     return models.map((m) => modelInfo(provider, m));
@@ -3615,7 +3614,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     try {
       const dispose = commands.register({
         name: "temporary",
-        description: "Oh My Claude: keep no Claude transcript for this session (toggle)",
+        description: serverText("temporaryCommand"),
         handler: ({ agent }) => {
           const id = String(agent.id);
           const on = !this.temporary.has(id);
@@ -3846,8 +3845,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     try {
       const dispose = commands.register({
         name: "btw",
-        description: "Oh My Claude: ask Claude a quick side question without interrupting the turn",
-        input: { hint: "<your question>" },
+        description: serverText("btwCommand"),
+        input: { hint: serverText("btwHint") },
         handler: ({ agent, rawInput }) => {
           const question = rawInput.trim();
           if (!question) return { kind: "error", text: "Usage: /btw <your question>" };
@@ -5985,22 +5984,21 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       const plan = String(input.plan ?? "");
       if (plan !== "") {
         const id = `plan-review:${toolUseId}`;
+        // One label for the button and the check below: the stored language may be Chinese.
+        const approveLabel = serverText("planApprove");
         try {
           const response = await this.ctx.userQuestions.ask({
             questions: [
               {
                 id,
-                header: "Plan review",
-                question: "Approve this plan and leave plan mode?",
+                header: serverText("planHeader"),
+                question: serverText("planQuestion"),
                 detail: plan,
                 options: [
-                  { label: PLAN_APPROVE, description: "Leave plan mode and carry the plan out." },
-                  {
-                    label: PLAN_KEEP,
-                    description: "Stay in plan mode; your feedback goes to Claude.",
-                  },
+                  { label: approveLabel, description: serverText("planApproveDetail") },
+                  { label: serverText("planKeep"), description: serverText("planKeepDetail") },
                 ],
-                intent: { kind: "plan-review", approve: PLAN_APPROVE },
+                intent: { kind: "plan-review", approve: approveLabel },
                 multiSelect: false,
               },
             ],
@@ -6009,7 +6007,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
           });
           const item = (response.answers ?? []).find((a) => a.id === id);
           const feedback = item?.custom ?? "";
-          if (item?.selected?.length === 1 && item.selected[0] === PLAN_APPROVE && feedback === "")
+          if (item?.selected?.length === 1 && item.selected[0] === approveLabel && feedback === "")
             return allowResult(toolUseId, input);
           return denyResult(
             toolUseId,
@@ -6245,6 +6243,7 @@ const probeLogin = (adapter: ClaudeCodeAdapter) => {
 
 /** The entry point dsh calls: build the adapter, register its provider and adapter, probe the login, and pin the instance on globalThis so a re-instantiation at boot shares the one already running. */
 export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Config>) {
+  bindServerLocale(ctx.get("settings"));
   const adapter = new ClaudeCodeAdapter(ctx, config);
   const claudeHome = adapter.claudeHome;
   ctx.llm.registerConfigurableProviders([
