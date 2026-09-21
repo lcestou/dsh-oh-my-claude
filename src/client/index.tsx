@@ -6283,7 +6283,7 @@ function ContextFixed({
       <span>
         {label}
         <ContextSize source={source} chars={chars} files={files} />
-        <span style={{ color: T.faint, fontSize: 12 }}> — {why}</span>
+        <span style={{ color: T.faint, fontSize: 12 }}>: {why}</span>
       </span>
     </label>
   );
@@ -7920,7 +7920,7 @@ export function apply(ctx: ClientCtx) {
         {boxes !== null && (
           <Card
             id="dsh-oh-my-claude-sessions-card"
-            title="Archived Sessions"
+            title="Session browser"
             summary="Claude Code transcripts on every box: open one here, import, download, or move."
             open={openSessions}
             onToggle={() => setOpenSessions((v) => !v)}

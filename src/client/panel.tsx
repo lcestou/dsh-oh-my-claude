@@ -2807,7 +2807,7 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
         {contractSummary(contract)}
         {missing.map((m) => (
           <div key={m.id} data-omc-dsh-contract-miss={m.id}>
-            {m.id} — {m.breaks}
+            {m.id}: {m.breaks}
           </div>
         ))}
       </div>
