@@ -1,5 +1,5 @@
 // Browser half: Settings → "Oh My Claude". A branded header, then two cards: Sessions (one
-// transcript list across this box and every saved box — filter by box, workspace, origin; open
+// transcript list across this box and every saved box. Filter by box, workspace, origin; open
 // here or jump to the box) and Boxes (this box as the first row, plus the ssh and linked-dsh
 // machines you add, each probed for claude version and login). Built into lib/client.js by
 // `bun run build`.
@@ -117,7 +117,6 @@ export { type SessionData, isOwnedActive, fmtCost, fmtDuration, cacheShare };
 
 /** Deep link another box's panel sends us to: `#claude-session=<id>&cwd=<path>`. */
 const HASH_KEY = "claude-session";
-/** Format byte sizes for session rows. */
 /** A row's identity in the list: the same transcript id can sit on two boxes. */
 const rowKey = (r: { g: { key: string }; s: { id: string } }): string => `${r.g.key}-${r.s.id}`;
 
@@ -129,6 +128,7 @@ const slugFile = (title: string): string =>
     .replace(/^-|-$/g, "")
     .slice(0, 40) || "claude";
 
+/** A byte count for a session row: whole KB under a megabyte, MB with one decimal above. */
 const size = (bytes: number): string =>
   bytes < 1_000_000 ? `${Math.round(bytes / 1000)} KB` : `${(bytes / 1_000_000).toFixed(1)} MB`;
 /** `/home/me/Projects/app` → `Projects/app`; keeps the full path for the title attribute. */
@@ -138,7 +138,7 @@ const shortPath = (p: string | undefined): string => {
   return parts.length > 2 ? parts.slice(-2).join("/") : p;
 };
 
-/** Plugin name identifier. */
+/** The client bundle's name, exported so dsh can identify this plugin. */
 export const name = "dsh-oh-my-claude-client";
 /** Services injected into the client plugin by dsh. */
 export const inject = ["slots", "sessions", "workspaces", "modelDirectories"];
@@ -147,6 +147,7 @@ type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
 type JsonObject = { [key: string]: Json };
 /** JSON.parse hands back one of six shapes; this tells the plain object apart. */
 const isObj = (v: Json | undefined): v is JsonObject => v instanceof Object && !Array.isArray(v);
+/** Counts items in a parsed value: array length, object keys, or 0 when v is neither. */
 const count = (v: Json | undefined): number =>
   Array.isArray(v) ? v.length : isObj(v) ? Object.keys(v).length : 0;
 
@@ -479,6 +480,7 @@ function Origin({ s }: { s: { dsh?: { archived?: boolean; id?: string }; importe
   if (s.dsh.archived) return <span style={pill(T.warn)}>archived</span>;
   return <span style={pill(T.brand)}>dsh</span>;
 }
+/** Returns a box's origin: terminal, archived or dsh, and terminal when it has no dsh record. */
 const originOf = (s: { dsh?: { archived?: boolean } }): string =>
   !s.dsh ? "terminal" : s.dsh.archived ? "archived" : "dsh";
 
@@ -588,7 +590,7 @@ export interface GroupInfo {
   error?: string;
   sessions: SessionData[];
   box?: BoxData;
-  /** An SSH box: transcripts live on its host, reachable only over ssh — no HTTP box to jump to. */
+  /** An SSH box: transcripts live on its host, reachable only over ssh. No HTTP box to jump to. */
   sshBox?: boolean;
   /** The box's provider id (`claude-code-<slug>`), so a resumed transcript binds back to it. */
   provider?: string;
@@ -781,7 +783,7 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
       // A dsh session that already ran on the box (archived or live): go through the same open path
       // as local. For an owned session `/open` unarchives it via the registry without reading the
       // transcript from this box's disk, then opens under its own durable provider binding. Calling
-      // `sessions.open` alone would leave an archived row archived — the "Restore" no-op just seen.
+      // `sessions.open` alone would leave an archived row archived. The "Restore" no-op just seen.
       if (r.s.dsh?.id) {
         setBusyId(r.s.id);
         setError("");
@@ -848,7 +850,7 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
   };
 
   // Export is a plain file save: the transcript byte for byte, so importing it back is a no-op.
-  // ponytail: one file per ticked row rather than a zip — no archive dependency, and a browser
+  // ponytail: one file per ticked row rather than a zip. No archive dependency, and a browser
   // saves a handful of sequential downloads without a prompt. Zip it if people tick dozens.
   const download = async () => {
     const wanted = rows.filter((r) => picked.has(rowKey(r)));
@@ -925,7 +927,7 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
     try {
       // The route needs an absolute path when the scope is `workspace`; the panel's cwd filter is
       // the string "all", not a path. Read the workspace the panel is open in the way context-sizes
-      // and claude-md do — the open session's own cwd — and widen to box when there is no path.
+      // and claude-md do, using the open session's own cwd, and widen to box when there is no path.
       let scope = deepScope;
       let cwdParam = cwd === "all" ? "" : cwd;
       if (scope === "workspace" && cwdParam === "") {
@@ -1420,8 +1422,8 @@ function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
     setError("");
     const body: SettingsWrite = box ? { text } : { text, scope };
     if (!box && projectCwd !== null) body.cwd = projectCwd;
-    // The file as this tab last read it. The CLI writes settings.json itself — a plugin install, a
-    // /model pick — and a save that ignored that would put the whole file back without it.
+    // The file as this tab last read it. The CLI writes settings.json itself on a plugin
+    // install or a /model pick. A save that ignored that would put the whole file back without it.
     if (file?.mtime !== undefined) body.mtime = file.mtime;
     fetch(settingsUrl, {
       method: "PUT",
@@ -1642,7 +1644,7 @@ interface ProbeEntry {
 type BoxKind = "ssh" | "tailscale" | "wireguard" | "dsh";
 
 /**
- * Every machine, in one place. This box is the first row (auto-detected, not removable — it is the
+ * Every machine, in one place. This box is the first row (auto-detected, not removable. It is the
  * environment the plugin was installed on); the rest you add, in two kinds:
  *  - **SSH** (`ssh`): this dsh drives Claude Code on the box over ssh; it becomes its own entry in
  *    the model picker, nothing runs there but the CLI. Saved in the plugin's own state.
@@ -1830,6 +1832,7 @@ interface LoginRoutes {
 const SSH_LOGIN: LoginRoutes = { base: "ssh-boxes/login", field: "host" };
 const DSH_LOGIN: LoginRoutes = { base: "boxes/login", field: "url" };
 
+/** Login state for one box plus the start and submit handlers; each step POSTs to a login route. */
 function useLoginFlow(onDone: (host: string) => void, routes: LoginRoutes = SSH_LOGIN) {
   const [login, setLogin] = useState<LoginFlow | null>(null);
   const post = (route: string, host: string, extra: Record<string, string> = {}) =>
@@ -1885,6 +1888,7 @@ function useLoginFlow(onDone: (host: string) => void, routes: LoginRoutes = SSH_
   return { login, setLogin, startLogin, submitLogin };
 }
 
+/** Renders one login's steps: the sign-in link, the paste area and the poll. */
 function LoginSteps({
   login,
   setLogin,
@@ -1936,6 +1940,7 @@ function LoginSteps({
   );
 }
 
+/** The Boxes card: this box first, then any added machines, each probed and addable from here. */
 function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
   const [probe, setProbe] = useState<Record<string, ProbeEntry>>({});
   const [self, setSelf] = useState<{ plugin?: string } | null>(null);
@@ -2951,6 +2956,7 @@ const resetText = (at: number | null): string => {
 
 // Per provider: two plugin instances are two accounts, so two answers.
 const usageCache = new Map<string, { at: number; reply: UsageReply }>();
+/** Fetches a provider's usage, cached 60 s, so a repeat call returns the cached value. */
 const loadUsage = async (provider?: string): Promise<UsageReply> => {
   const key = provider ?? "";
   const hit = usageCache.get(key);
@@ -2963,7 +2969,6 @@ const loadUsage = async (provider?: string): Promise<UsageReply> => {
   return reply;
 };
 
-/** Fill a block with the usage rows, styled like the meter's own legend rows. */
 type ContextReply =
   | {
       ok: true;
@@ -2985,6 +2990,7 @@ type ContextReply =
 // the percentage while a turn runs. The promise is cached, not its answer, so the frames that arrive
 // before the first one lands share it instead of each opening a request of their own.
 const contextCache = new Map<string, { at: number; reply: Promise<ContextReply> }>();
+/** Fetches a session's context breakdown, cached 10 s, returning an error when the fetch fails. */
 const loadContext = (sessionId: string): Promise<ContextReply> => {
   const hit = contextCache.get(sessionId);
   if (hit && Date.now() - hit.at < 10_000) return hit.reply;
@@ -3000,6 +3006,7 @@ const loadContext = (sessionId: string): Promise<ContextReply> => {
   contextCache.set(sessionId, { at: Date.now(), reply });
   return reply;
 };
+/** Formats a token count the way the CLI does: `1.2M`, `12.3k` or plain. */
 const kTokens = (n: number) =>
   n >= 1_000_000
     ? `${Number((n / 1_000_000).toFixed(1))}M`
@@ -3007,8 +3014,8 @@ const kTokens = (n: number) =>
       ? `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k`
       : String(n);
 /**
- * Rows worth a line: the ones whose tokens are the conversation. The CLI's `kind` is the authority
- * — it says so in the field's own description, "classify on this, never on the English name" — and
+ * Rows worth a line: the ones whose tokens are the conversation. The CLI's `kind` is the authority.
+ * It says so in the field's own description, "classify on this, never on the English name". And
  * it is what keeps the free space and the compaction buffer out, neither of which is content and
  * neither of which is counted in `totalTokens` either. The name test is the fallback for a CLI too
  * old to send `kind`; it misses the buffer rows, which is what this whole readout used to do.
@@ -3022,7 +3029,7 @@ const isUsedRow = (c: { name: string; deferred: boolean; kind?: string }): boole
  * legend; this keeps that shape over the CLI's categories, which are more numerous and vary with
  * what a session loaded. Position rather than name because the names are the CLI's to change, and a
  * swatch that drifts one hue is a smaller wrong than a classification that reads the name and is
- * believed — the same reason `isUsedRow` asks `kind` instead. The order opens on the neutral grey,
+ * believed, the same reason `isUsedRow` asks `kind` instead. The order opens on the neutral grey,
  * purple and blue dsh itself uses, so the block still reads as part of its meter.
  */
 const SEGMENT_COLORS = [
@@ -3108,6 +3115,7 @@ function renderContext(el: HTMLElement, reply: ContextReply) {
   el.append(head, ...(note ? [note] : []), bar, legend);
 }
 
+/** Builds a link that opens in a new tab (noreferrer noopener) styled in the brand colour. */
 const extLink = (text: string, href: string): HTMLAnchorElement => {
   const a = document.createElement("a");
   a.textContent = text;
@@ -3164,6 +3172,8 @@ function creditsRow(c: UsageCredits): HTMLElement {
   return creditsLine;
 }
 
+/** Fill a block with the usage rows, styled like the meter's own legend rows, or with the error
+ *  text when the reply is not ok. */
 function renderUsage(block: HTMLElement, reply: UsageReply) {
   block.replaceChildren();
   if (!reply.ok) {
@@ -3251,6 +3261,8 @@ let pending: MutationRecord[] = [];
  */
 const PENDING_CAP = 4000;
 let pendingOverflow = false;
+/** Run every frame scan once with the records gathered this frame, or with none after an
+ *  overflow, which a scan reads as "look at the whole body". */
 const flushScans = () => {
   scanQueued = false;
   const records = pendingOverflow ? undefined : pending;
@@ -3258,13 +3270,14 @@ const flushScans = () => {
   pendingOverflow = false;
   for (const scan of frameScans) scan(records);
 };
+/** Subscribes the given MutationObserver to document.body for childList and subtree changes. */
 const observeBody = (observer: MutationObserver) => {
   observer.observe(document.body, { childList: true, subtree: true });
 };
 /**
  * The elements a burst touched: each record's target plus whatever it added. A scan handed these
- * covers the same ground as one over `document.body` — dsh only ever draws through the DOM — at a
- * cost that follows what changed rather than how long the conversation is.
+ * covers the same ground as one over `document.body`, because dsh only ever draws through the DOM.
+ * The cost follows what changed rather than how long the conversation is.
  */
 const changedElements = (records: MutationRecord[]): Set<HTMLElement> => {
   const nodes = new Set<HTMLElement>();
@@ -3284,6 +3297,7 @@ const onBodyMutation = (scan: FrameScan, sync = false): (() => void) => {
   if (bodyObserver) return off;
   // The new bundle registers its own scans; this one's would run on top of them against a context
   // that no longer answers.
+  // When the bundle is replaced, disconnect the observer and clear the scan sets.
   whenContextGone(() => {
     bodyObserver?.disconnect();
     bodyObserver = undefined;
@@ -3292,9 +3306,9 @@ const onBodyMutation = (scan: FrameScan, sync = false): (() => void) => {
   });
   bodyObserver = new MutationObserver((records) => {
     // The records are the point: a sync scan that walks only what changed costs the same on a long
-    // transcript as on a short one. So the observer stays attached across the pass — detaching to
-    // avoid being called back by our own writes threw the records away, and a scan with no records
-    // has nothing to scope itself to. The writes do call this back once more; a scan that already
+    // transcript as on a short one. So the observer stays attached across the pass.
+    // Detaching to avoid being called back by our own writes threw the records away, and a scan
+    // with no records has nothing to scope itself to. The writes do call this back once more;
     // did its work finds nothing to do and the second pass ends there.
     for (const run of syncScans) run(records);
     if (frameScans.size === 0) return;
@@ -3313,7 +3327,7 @@ const onBodyMutation = (scan: FrameScan, sync = false): (() => void) => {
 /**
  * Hide the meter's own context readout, leaving this plugin's block in its place.
  *
- * Selected structurally — every child of the host that is not ours — because dsh's class names are
+ * Selected structurally, every child of the host that is not ours, because dsh's class names are
  * generated and change under us on any upgrade, and there is nothing else in either host to keep:
  * the ring's popover and its hover bubble are both the context readout and nothing more. Re-applied
  * on each attach, since React rebuilds these children whenever it re-renders. Elements are hidden
@@ -3321,8 +3335,8 @@ const onBodyMutation = (scan: FrameScan, sync = false): (() => void) => {
  * through; a bare text node has no style to set, so it goes, and the next re-render restores it.
  *
  * The `hidden` attribute alone does not do it. It works through the user agent's `[hidden]{display:
- * none}`, which any class rule of dsh's outranks — its own header carries `display:flex`, so the row
- * stayed on screen wearing `hidden=""`. The inline `!important` is what actually wins, and the
+ * none}`, which any class rule of dsh's outranks. Its own header carries `display:flex`, so the
+ * row stayed on screen wearing `hidden=""`. The inline `!important` is what actually wins, and the
  * attribute stays for the accessibility tree.
  */
 function hideNativeContext(host: HTMLElement, ours: HTMLElement) {
@@ -3335,12 +3349,13 @@ function hideNativeContext(host: HTMLElement, ours: HTMLElement) {
   }
 }
 
+/** Injects the plugin's usage block into a Claude row, re-hiding it when dsh puts its own back. */
 function watchContextMeter(ctx: ClientCtx) {
   const MARK = "data-dsh-oh-my-claude-usage";
   // The mark goes on the node we inject, never on dsh's node: React owns these children and drops
   // ours whenever it re-renders the panel, and a mark on the host would say "done" forever while
   // the row it names is gone.
-  // Our block, if this host already has one. A host that has it is done — except for the hiding,
+  // Our block, if this host already has one. A host that has it is done, except for the hiding,
   // which is about dsh's children rather than ours: React rebuilds those on every repaint of the
   // percentage, so a readout hidden a moment ago can be back beside a block that never left.
   const HID = "data-dsh-oh-my-claude-replaced";
@@ -3386,7 +3401,7 @@ function watchContextMeter(ctx: ClientCtx) {
         // thing: its count of the session surface it holds, which has never seen the system prompt,
         // the tool schemas or the files the CLI read, and keeps counting turns the CLI compacted
         // away. Two bars disagreeing by tens of thousands of tokens is worse than one, so the
-        // CLI's own answer replaces it — and only when there is an answer, so a session with no
+        // CLI's own answer replaces it, and only when there is an answer, so a session with no
         // live process still gets dsh's estimate rather than nothing.
         if (!reply.ok) return;
         block.setAttribute(HID, "1");
@@ -3472,8 +3487,8 @@ function watchContextMeter(ctx: ClientCtx) {
   /**
    * Fill the ring from the CLI's own occupancy.
    *
-   * dsh draws the arc from `contextPressure`, which is the prompt side of the last usage sample —
-   * input plus both cache counters — over the window. For a Claude Code session that sample is the
+   * dsh draws the arc from `contextPressure`, which is the prompt side of the last usage sample,
+   * input plus both cache counters, over the window. For a Claude Code session that sample is the
    * result frame's, and the CLI sums it across every API call the turn made: a turn of 117 calls
    * reports millions of cache reads, so the arc pins at 100% while the session is a third full. The
    * dash is rewritten with the percentage the CLI reports, which is the number this plugin's popover
@@ -3498,7 +3513,7 @@ function watchContextMeter(ctx: ClientCtx) {
       ringAsked = 0;
     }
     // dsh repaints the arc by rewriting an attribute, which the body observer does not watch, and a
-    // ring already pinned at 100% stops changing altogether — so neither dsh's repaints nor ours can
+    // ring already pinned at 100% stops changing altogether, so neither dsh's repaints nor ours can
     // be the thing that keeps this current. It is re-asked on a clock instead, off the same
     // ten-second cache the popover reads.
     if (Date.now() - ringAsked > 5_000) {
@@ -3580,8 +3595,9 @@ function watchContextMeter(ctx: ClientCtx) {
     if (portal) attach(portal);
   };
   // Scoped to the burst: the ring's dialog and tooltip are rare nodes, and the body-wide pair of
-  // attribute queries this used to run every dirty frame cost 0.4 ms on a conversation of 30k nodes
-  // — paid on every frame of every streaming turn to find, almost always, nothing.
+  // attribute queries this used to run every dirty frame cost 0.4 ms on a 30k-node conversation,
+  // paid on every frame of every streaming turn to find, almost always, nothing.
+  // The per-frame scan: re-check changed elements and repaint the ring.
   onBodyMutation((records) => {
     if (records === undefined) scan(document.body);
     else for (const node of changedElements(records)) scan(node);
@@ -3591,8 +3607,8 @@ function watchContextMeter(ctx: ClientCtx) {
   paintRing();
 }
 
-/** Fetch Claude Code's settings.json text and extract spinnerVerbs if present. */
 let spinnerSettings: Promise<{ verbs: string[]; frameSet: typeof DEFAULT_FRAMES }> | undefined;
+/** Fetch Claude Code's settings.json text and extract spinnerVerbs if present. */
 const loadSpinnerSettings = async (): Promise<{
   verbs: string[];
   frameSet: typeof DEFAULT_FRAMES;
@@ -3639,7 +3655,6 @@ const accentRgb = (fallback: Rgb): Rgb => {
   return /^#[0-9a-f]{6}$/i.test(v) ? hexToRgb(v) : fallback;
 };
 
-/** Wire one turn-status element for a claude-code session: verb + ping-pong spinner + orange gradient. */
 /** Inject (or re-inject after a hot reload) the Claude-orange rule; idempotent by id. Reuses the
  *  element but always rewrites it: a hot reload lands a new bundle in a page still carrying the last
  *  one's sheet, and returning early here left the old rules in force until a hand reload. */
@@ -3656,7 +3671,7 @@ const ensureTurnStatusStyle = () => {
   // from its first paint; the watcher then swaps the text and adds the spinner a frame later.
   //
   // The last two rules recolour the conversation's selected view tab (Chat / Trajectory), which dsh
-  // paints from its blue `--dsw-alias-state-business-primary` — the label and its underline draw
+  // paints from its blue `--dsw-alias-state-business-primary`. The label and its underline draw
   // from the same token but as `color` and `background`, so both are overridden. Gated on the same
   // body attribute, so a session that switches off a Claude mount hands the tab straight back to
   // dsh's blue on the next paint. ponytail: `[role=tablist] > [role=tab]` catches any dsh view-tab
@@ -3666,7 +3681,7 @@ const ensureTurnStatusStyle = () => {
   // blue: a link, with its underline at a lighter weight and the shimmer on hover, and a task
   // checkbox, whose tick is the platform accent. Two in a flat grey: a blockquote's left bar
   // (`--dsw-alias-label-caption`) and a rule's hairline (`--dsw-alias-border-l2`). All are accents
-  // rather than text, so they take the orange — the bar at half strength, the rule at a third of it
+  // rather than text, so they take the orange. The bar is at half strength, the rule at a third,
   // since it runs the whole width and a solid orange band across a message reads as a warning.
   // Code highlighting keeps its own palette: those colours mean token kinds, not the brand. Swept
   // 2026-09-09 with a computed-style pass over the conversation column: nothing else is blue there.
@@ -3676,7 +3691,7 @@ const ensureTurnStatusStyle = () => {
   // The data attributes are dsh's own, the hashed class name is not.
   // The chasing dots dsh draws while something runs (its `StateDot` at `state="ongoing"`: eight
   // rects around a ring, each fading a beat after the last). They stayed dsh's blue wherever they
-  // appear away from the turn status row — the subagent switcher's dropdown is where it shows, since
+  // appear away from the turn status row. The subagent switcher's dropdown is where it shows, since
   // a Claude session's children are listed there with one running dot each. The colour comes from
   // `--dsh-state-ongoing`, which dsh declares on the element itself, so a value inherited from
   // `body` loses to it; the override has to land on the same element. `svg[data-state="ongoing"]`
@@ -3698,6 +3713,7 @@ const VERB_MEMORY_MS = 4000;
 /** A token count the way the CLI's status line writes one: `1.2k` past a thousand, plain below. */
 const shortCount = (n: number): string => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
 
+/** Picks a verb for a running turn, reusing the session's previous one within a short window. */
 const verbFor = (sessionId: string, verbs: string[]): string => {
   const now = Date.now();
   // Every session that ever ran a turn in this tab left an entry behind. They are small, but the
@@ -3727,6 +3743,7 @@ const THINKING_WORDS: [number, string][] = [
   [20_000, "thinking more"],
   [10_000, "still thinking"],
 ];
+/** Returns the CLI wording for a thinking burst of the given length, defaulting to "thinking". */
 const thinkingWord = (ms: number): string =>
   THINKING_WORDS.find(([at]) => ms >= at)?.[1] ?? "thinking";
 
@@ -3748,11 +3765,13 @@ const STALL_RED: Rgb = [171, 43, 63];
 const WORD_GREY_LO: Rgb = [153, 153, 153];
 const WORD_GREY_HI: Rgb = [185, 185, 185];
 const clamp01 = (n: number): number => Math.min(Math.max(n, 0), 1);
+/** Blends two RGB colours by t (0 is a, 1 is b) and rounds each channel. */
 const mixRgb = (a: Rgb, b: Rgb, t: number): Rgb => [
   Math.round(a[0] + (b[0] - a[0]) * t),
   Math.round(a[1] + (b[1] - a[1]) * t),
   Math.round(a[2] + (b[2] - a[2]) * t),
 ];
+/** Serialises an RGB triple as an `rgb(r, g, b)` string. */
 const cssRgb = (c: Rgb): string => `rgb(${c[0]},${c[1]},${c[2]})`;
 /** Dark page or light, from the body's own background: dsh keeps its theme in CSS variables and
  *  exposes no flag, and the luminance of what is actually painted is what the eye compares to. */
@@ -3773,7 +3792,10 @@ const easeChars = (shown: number, target: number): number => {
   const step = abs < 70 ? 3 : abs < 200 ? Math.max(8, Math.ceil(abs * 0.15)) : 50;
   return gap > 0 ? Math.min(shown + step, target) : Math.max(shown - step, target);
 };
+/** No-op frame callback, used where a beat changes nothing and so writes nothing. */
 const noBeat = (): void => undefined;
+/** Wire one turn-status element for a claude-code session: verb, ping-pong spinner and orange
+ *  gradient. */
 const wireTurnStatus = (
   el: HTMLElement,
   sessionId: string,
