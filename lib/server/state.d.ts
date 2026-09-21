@@ -57,7 +57,7 @@ export declare const auxCwd: () => Promise<string>;
  * The Claude session IDs this plugin has started.
  *
  * Read from disk every time rather than cached for the life of the process: the state directory is
- * shared, so a second dsh over the same one — or a hand edit — is invisible to a cache that was
+ * shared, so a second dsh over the same one, or a hand edit, is invisible to a cache that was
  * filled at startup, and the sessions it started would stay hidden from this one's list until a
  * restart. The file holds a few hundred ids at most and is read once per request.
  */
@@ -186,7 +186,7 @@ export declare function saveWatch(dir: string, sessionId: string, record: WatchR
  *  up with `claude /resume` into the dsh session as they land. Off unless the owner turned it on,
  *  and a missing or unreadable file reads as off, so a fresh box does not get it by surprise: the
  *  mirror holds a dsh turn open while it fills, which can leave a typed prompt queued behind it.
- *  Carrying a session between dsh and a terminal does not depend on this and never did — Claude Code
+ *  Carrying a session between dsh and a terminal does not depend on this and never did. Claude Code
  *  writes the transcript itself, so `/resume` sees dsh's turns, and opening a terminal session in dsh
  *  seeds it from that transcript. This flag only governs the live copy in one direction. */
 export declare const TERMINAL_SYNC_FILE: (d: string) => string;

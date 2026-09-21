@@ -48,7 +48,7 @@ export const readScript = (path: string): string =>
   `if [ -e ${shq(path)} ]; then { stat -c %Y -- ${shq(path)} 2>/dev/null || ` +
   `stat -f %m -- ${shq(path)} 2>/dev/null || echo 0; }; cat -- ${shq(path)}; else exit ${ABSENT}; fi`;
 
-/** One name per line, or nothing when the directory is absent — a missing dir lists empty, as locally. */
+/** One name per line, or nothing when the directory is absent. A missing dir lists empty. */
 export const listScript = (dir: string): string =>
   `if [ -d ${shq(dir)} ]; then ls -A -- ${shq(dir)}; fi`;
 
@@ -129,9 +129,9 @@ const transportError = (host: string, r: Ran): Error =>
  *
  * A login shell on the far end runs its rc files before our script, and whatever they print lands
  * on stdout ahead of the answer: an `echo` in someone's `.bashrc` used to be read as the first line
- * of a file read — the mtime — and its banner as the start of `$HOME` or of a file name. The script
- * says where its output begins rather than the reader trusting position, in a control byte no
- * banner emits.
+ * of a file read, which is the mtime, and its banner as the start of `$HOME` or of a file name. The
+ * script says where its output begins rather than the reader trusting position, in a control byte
+ * no banner emits.
  */
 const MARK = "\u0001omc\u0001";
 
@@ -144,7 +144,7 @@ export const afterMark = (out: string): string | null => {
 /**
  * Run `script` on `host` and answer what it printed, with the box's own chatter cut away. Rejects
  * when the marker never arrived: the script did not get as far as its first statement, so `out` is
- * the box talking to itself rather than an answer — and reading that as one is how an unreachable
+ * the box talking to itself rather than an answer, and reading that as one is how an unreachable
  * box shows up as an empty file that the next save then overwrites.
  */
 const ssh = (host: string, script: string, timeout = 15_000): Promise<Ran> =>

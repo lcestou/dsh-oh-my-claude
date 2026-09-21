@@ -147,7 +147,7 @@ export declare class Translator {
     private turnOutput;
     /** This step's own token usage, summed over the assistant messages it covered.
      *
-     *  A step is one `stream()` call, and it ends when tool calls are relayed to dsh — so a step runs
+     *  A step is one `stream()` call, and it ends when tool calls are relayed to dsh, so a step runs
      *  one API call per assistant message and several when the CLI works through its own Read, Bash
      *  and Edit without ever handing dsh a call. `message_delta` reports each of those messages
      *  exactly once and carries all four counters settled, so summing them is what this step really
@@ -218,7 +218,7 @@ export declare class Translator {
      *
      *  Called once per `stream()` call, right before its `finish`. The result frame is only a
      *  fallback: it carries the whole turn's usage, so on a turn of several steps charging it to
-     *  whichever step happened to see it is what left every other step with no sample at all — and
+     *  whichever step happened to see it is what left every other step with no sample at all, and
      *  `deriveTurnTokenUsage` drops the turn's pill unless every step has one. */
     takeStepUsage(): StreamChunk[];
     /** Fold one streaming partial frame into translator state and return the chunks it renders, or [].
@@ -247,8 +247,8 @@ export declare class Translator {
     }): [string, string];
     /** The CLI's per-call progress frame. Two variants reach a headless run: a 30-second heartbeat
      *  carrying the live elapsed time, and a subagent retrying an API failure. A call that finishes
-     *  inside 30 seconds never sends one, so a block here means "this one is genuinely slow" —
-     *  without it a ten-minute Bash call is indistinguishable from a hung process. */
+     *  inside 30 seconds never sends one, so a block here means "this one is genuinely slow".
+     *  Without it a ten-minute Bash call is indistinguishable from a hung process. */
     toolProgress(event: Extract<ClaudeEvent, {
         type: "tool_progress";
     }>): StreamChunk[];

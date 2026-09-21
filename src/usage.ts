@@ -140,8 +140,8 @@ export function usageWindows(payload: unknown): UsageWindow[] {
   let weekly: UsageWindow | undefined;
   const others: UsageWindow[] = [];
   for (const entry of limits) {
-    // `is_active` is not read. The endpoint sends it false for windows that are plainly running —
-    // the 5-hour and weekly rows of a live account both arrive false — and the CLI's own reader
+    // `is_active` is not read. The endpoint sends it false for windows that are plainly
+    // running. The 5-hour and weekly rows of a live account both arrive false, and the CLI's
     // ignores the field entirely, keying off `percent` and `resets_at`. Skipping on it dropped
     // every modern row; the two main ones survived only because the legacy blocks below repeat
     // them, and a per-model weekly, which has no legacy twin, vanished.
