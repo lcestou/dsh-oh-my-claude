@@ -3361,7 +3361,7 @@ function PastGoalRow({ goal }: { goal: DshGoal }) {
 }
 
 /** Both goals and the scheduled tasks: dsh's goal and its past ones from dsh's own log, the goal
- *  the CLI is holding from its transcript, then the tasks. Read-only; dsh's goal is changed from
+ *  the CLI is holding from its transcript when it holds one, then the tasks. Read-only; dsh's goal is changed from
  *  dsh's own controls. */
 function TasksBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   const [data, setData] = useState<ScheduledTasksReply | ScheduledTasksError | null>(null);
@@ -3428,19 +3428,21 @@ function TasksBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
             </div>
           ) : null}
 
-          <span style={{ ...meta, padding: "2px 4px", display: "block", marginTop: 8 }}>
-            Claude Code goal
-          </span>
+          {/* The CLI's own /goal: rarely set from dsh, so the section only appears when it is. */}
           {data.goal ? (
-            <div style={{ padding: "4px 10px", fontSize: 12, lineHeight: "1.5" }}>
-              <div style={{ marginBottom: 4 }}>{data.goal.text}</div>
-              <div style={{ ...meta, fontSize: 11 }}>Proposed {ago(data.goal.at)}</div>
-            </div>
-          ) : (
-            <div style={{ ...meta, padding: "4px 10px", fontSize: 12 }}>
-              No CLI goal in this session.
-            </div>
-          )}
+            <>
+              <span style={{ ...meta, padding: "2px 4px", display: "block", marginTop: 8 }}>
+                Claude Code goal
+              </span>
+              <div
+                data-omc-cli-goal=""
+                style={{ padding: "4px 10px", fontSize: 12, lineHeight: "1.5" }}
+              >
+                <div style={{ marginBottom: 4 }}>{data.goal.text}</div>
+                <div style={{ ...meta, fontSize: 11 }}>Proposed {ago(data.goal.at)}</div>
+              </div>
+            </>
+          ) : null}
 
           <span style={{ ...meta, padding: "2px 4px", display: "block", marginTop: 8 }}>
             Durable tasks

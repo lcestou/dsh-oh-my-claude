@@ -11,6 +11,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 - The Tasks tab shows dsh's own goal next to Claude Code's: the current one with its phase, rounds
   and, when blocked, the reason, and a Past goals fold with every earlier goal the session had and
   how it ended. It is read from dsh's session log, and it shows whether or not Claude is running.
+  Claude Code's own goal appears beside it only when the CLI holds one.
 - The Diagnostics tab opens with a line reading how many of this plugin's assumptions about dsh's
   own markup still hold. Every dsh upgrade that has broken the plugin broke it silently, by moving
   something a selector pointed at, and the cost was never the fix but the days before anyone
