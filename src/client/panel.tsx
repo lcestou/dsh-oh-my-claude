@@ -3778,12 +3778,20 @@ interface PermissionModeState {
  *  the failed arm never reaches state: the reason lands in `permissionsError` instead. */
 type PermissionsReply = { ok: true } & PermissionRules & HooksListing;
 
-// The three dsh presets in strict id→label order (kept for text-fallback trigger lookup).
+// The three dsh presets in strict id→label order (kept for text-fallback trigger lookup), each with
+// every label dsh draws it under: English and dsh's own Chinese (ui-permission-presets). The menu
+// is dsh's, so its rows read in dsh's language; matching the English alone left a Chinese dsh with
+// its three presets and none of the six Claude rows.
 const PRESETS = [
-  { id: "read-only", label: "Read Only" },
-  { id: "workspace-write", label: "Workspace Write" },
-  { id: "danger-full-access", label: "Full access" },
+  { id: "read-only", labels: ["Read Only", "仅可查看"] },
+  { id: "workspace-write", labels: ["Workspace Write", "工作区内修改"] },
+  { id: "danger-full-access", labels: ["Full access", "完全权限"] },
 ] as const;
+
+/** The preset a dsh menu row or trigger names, by its text in either language; undefined for any
+ *  other text. */
+const presetOfText = (text: string | null): (typeof PRESETS)[number] | undefined =>
+  PRESETS.find((p) => p.labels.some((label) => label === text));
 
 // Claude mode → dsh preset it needs.
 const PRESET_FOR_MODE = {
@@ -3834,12 +3842,14 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
       const form = anchorRef.current?.closest("form");
       // SAFETY: querySelectorAll returns NodeList; we cast because the selector is exact.
       const found = Array.from(
-        (form ?? document).querySelectorAll<HTMLButtonElement>('button[aria-label^="Access mode"]'),
+        (form ?? document).querySelectorAll<HTMLButtonElement>(
+          'button[aria-label^="Access mode"], button[aria-label^="访问模式"]',
+        ),
       );
       const trigger =
         found[0] ??
-        Array.from((form ?? document).querySelectorAll<HTMLButtonElement>("button")).find((b) =>
-          PRESETS.some((p) => b.textContent === p.label),
+        Array.from((form ?? document).querySelectorAll<HTMLButtonElement>("button")).find(
+          (b) => presetOfText(b.textContent) !== undefined,
         );
       if (!trigger) return null;
       return trigger;
@@ -3953,7 +3963,7 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
           // showing dsh's presets with no way back to ours until it was closed and reopened.
           if (dshMenu.querySelector("[data-mode]")) continue;
           const menuItems = Array.from(dshMenu.querySelectorAll<HTMLElement>('[role="menuitem"]'));
-          const hasPreset = menuItems.some((el) => PRESETS.some((p) => el.textContent === p.label));
+          const hasPreset = menuItems.some((el) => presetOfText(el.textContent) !== undefined);
           if (!hasPreset) continue;
 
           dshMenu.setAttribute("data-dsh-oh-my-claude", "1");
@@ -3994,8 +4004,7 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
           for (const el of menuItems) {
             const svgEl = el.querySelector<SVGSVGElement>("svg");
             if (!svgEl) continue;
-            // SAFETY: PRESETS has exactly the three dsh preset labels as label values.
-            const presetId = PRESETS.find((p) => p.label === el.textContent)?.id;
+            const presetId = presetOfText(el.textContent)?.id;
             if (presetId) svgByPresetId[presetId] = svgEl.outerHTML;
           }
 
