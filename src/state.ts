@@ -803,7 +803,21 @@ export type WatchRecord = {
   claudeId?: string;
 };
 
+/** Every watch record saved under `dir`, keyed by dsh session id. Waits for any save still queued
+ *  for that directory first, so a reader never sees a baseline older than one already handed to
+ *  `saveWatch`. */
 export async function loadWatches(dir: string): Promise<Map<string, WatchRecord>> {
+  await watchWrites.get(dir);
+  return readWatches(dir);
+}
+
+/** The pending save per state directory. `saveWatch` reads the whole file, changes one entry and
+ *  writes it back, so two saves in flight at once raced: the one that read first could write last
+ *  and put an older baseline back, and the next dsh start re-mirrored exchanges it had already
+ *  shown. Chaining the saves makes the last one called the last one written. */
+const watchWrites = new Map<string, Promise<void>>();
+
+async function readWatches(dir: string): Promise<Map<string, WatchRecord>> {
   const out = new Map<string, WatchRecord>();
   try {
     const parsed: unknown = JSON.parse(await readFile(WATCH_FILE(dir), "utf8"));
@@ -830,14 +844,25 @@ export async function loadWatches(dir: string): Promise<Map<string, WatchRecord>
   return out;
 }
 
+/** Record where a session's watch has read up to. Queued behind any save already pending for
+ *  `dir`, so saves land in the order they were called; the returned promise settles when this one
+ *  has been written. */
 export async function saveWatch(
   dir: string,
   sessionId: string,
   record: WatchRecord,
 ): Promise<void> {
-  const all = await loadWatches(dir);
-  all.set(sessionId, record);
-  await writeJson(WATCH_FILE(dir), Object.fromEntries(all));
+  const next = (watchWrites.get(dir) ?? Promise.resolve()).then(async () => {
+    const all = await readWatches(dir);
+    all.set(sessionId, record);
+    await writeJson(WATCH_FILE(dir), Object.fromEntries(all));
+  });
+  // A failed save must not stall the ones behind it; its caller still sees the rejection.
+  watchWrites.set(
+    dir,
+    next.catch(() => {}),
+  );
+  return next;
 }
 
 /** The terminal mirror: whether the plugin copies exchanges from a terminal that picked this session

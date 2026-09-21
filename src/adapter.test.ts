@@ -6272,3 +6272,17 @@ console.log("awaiting ok");
   assert.equal(a.sessionTools.has("s2"), true, "another session is untouched");
 }
 console.log("forget-session ok");
+
+// Watch saves fired together, as scans and a turn's end do, all land: each one used to read the file,
+// change its entry and write it back, so two in flight at once lost the one that wrote first.
+{
+  const { saveWatch: save, loadWatches: load } = await import("./state.js");
+  const dir = await mkdtemp(joinPath(tmpdir(), "omc-watch-race-"));
+  const saves = [];
+  for (let i = 0; i < 20; i++) saves.push(save(dir, `s${i}`, { path: "/t", seen: i }));
+  const kept = await load(dir); // not awaiting the saves: the load itself waits for them
+  assert.equal(kept.size, 20, "no concurrent save is lost");
+  assert.equal(kept.get("s19")?.seen, 19);
+  await Promise.all(saves);
+}
+console.log("watch-save-race ok");

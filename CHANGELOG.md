@@ -78,6 +78,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- The terminal mirror no longer replays exchanges it already showed after dsh restarts. Two saves
+  of where it had read up to could land at once, and the older one could win, so the next start
+  read from an earlier point and posted those exchanges into the session again. Saves now run one
+  at a time, in the order they were made.
 - The "What's driving your limits" section opens instantly and no longer waits on Claude Code. It
   spawns `claude -p "/usage"`, which takes a few seconds, and the answer was kept only in memory,
   so every dsh restart threw it away and the next person to open the meter waited again with the
