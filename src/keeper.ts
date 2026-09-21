@@ -98,7 +98,7 @@ function main(dir: string) {
     stdio: ["pipe", "pipe", "pipe"],
   });
   // A `claude` that is not on the box's PATH emits `error`, never `exit`. With no listener the
-  // throw would land in the uncaughtException handler above, which stays up while `exit` is unset —
+  // throw would land in the uncaughtException handler above, which stays up while `exit` is unset,
   // leaving a keeper with no child still listening on its socket, taking prompts nothing reads, and
   // surviving every restart. Report it as the exit it is.
   child.on("error", (e: Error) => {

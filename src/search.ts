@@ -2,7 +2,7 @@
 // Searchable text is what a reader sees: the `text` blocks of user and assistant messages and
 // `[image]` for an image block, decided exactly as `textBlocks` in transcript.ts decides it, so a
 // hit always points at words on screen. A `tool_result` block is not text a reader sees, so it is
-// not matched. This is the pure core — no file input or output; the route that walks transcript
+// not matched. This is the pure core, no file input or output; the route that walks transcript
 // files comes later.
 import { truncateBytes } from "./transcript.js";
 
@@ -21,7 +21,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** The text a reader sees in one record: the `text` blocks joined, `[image]` for an image block,
- *  and nothing for a `tool_result` block — exactly `textBlocks` in transcript.ts, minus the block
+ *  and nothing for a `tool_result` block, exactly `textBlocks` in transcript.ts, minus the block
  *  wrappers. A message whose content is neither a string nor a block array yields no text. */
 const blocksOf = (content: unknown): string[] => {
   if (typeof content === "string") return content ? [content] : [];

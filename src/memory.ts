@@ -26,7 +26,7 @@ export function memorySummary(text: string): string {
 /**
  * The memory files with their size, age and summary.
  *
- * ponytail: one read per file, which on a box is one ssh round trip each — they share a control
+ * ponytail: one read per file, which on a box is one ssh round trip each. They share a control
  * socket and run at once, and a memory dir holds tens of files, not thousands. Fold them into a
  * single remote script the day a directory is big enough to feel it.
  */

@@ -27,7 +27,7 @@ export interface Reach {
   detail: string;
 }
 
-/** ssh's own last line for the stage, so the classifier is asserted against the real strings. */
+/** What to do about each failed stage, in the user's terms, with the command that checks it. */
 const STAGE_HINTS = {
   dns: "The name does not resolve here. On a tailnet or VPN, check the tunnel is up (tailscale status, wg show); otherwise check the spelling or use the IP.",
   route:

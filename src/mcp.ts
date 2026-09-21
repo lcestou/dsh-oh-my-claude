@@ -289,8 +289,8 @@ const asRpc = (body: Record<string, JsonValue>): JsonRpcRequest => ({
 });
 
 /**
- * Mount `POST /dsh-oh-my-claude/mcp/<dsh session id>`. Resolves once the web server is up with the
- * base URL and key the adapter must hand to `claude --mcp-config`.
+ * The bridge key: the file's contents when they are a valid key, else a fresh key written to the
+ * file, so the key survives a restart.
  */
 function stableKey(file: string): string {
   try {
