@@ -6,6 +6,12 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Changed
+
+- Every tab of the panel lines up on one side inset, the one dsh's slash menu uses, with the same
+  section labels, 13 px text on a steady line height, and the thin Settings rule under open folds.
+  The MCP add form and the New skill form take the panel's field look.
+
 ## [1.3.0] - 2026-09-21
 
 ### Added
