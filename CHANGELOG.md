@@ -12,6 +12,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
   section labels, 13 px text on a steady line height, and the thin Settings rule under open folds.
   The MCP add form and the New skill form take the panel's field look.
 
+### Fixed
+
+- Scrolling to the end of a panel tab no longer scrolls the chat behind the panel.
+
 ## [1.3.0] - 2026-09-21
 
 ### Added
