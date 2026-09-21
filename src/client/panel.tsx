@@ -4171,6 +4171,19 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
   // The panel, not the trigger: a portal takes it out of the trigger's DOM subtree.
   useDismiss(open, close, panelRef);
 
+  // On open, move focus onto the selected tab so a keyboard user lands inside the panel instead of
+  // on the trigger behind the portal; on close, hand focus back to whatever held it first. No trap:
+  // the panel is not modal and the page around it stays usable.
+  useEffect(() => {
+    if (!open) return;
+    // Record the focused element before focus moves, so close can return it.
+    const before = document.activeElement;
+    document.getElementById(`omc-tab-${tab}`)?.focus();
+    return () => {
+      if (before instanceof HTMLElement && document.contains(before)) before.focus();
+    };
+  }, [open]);
+
   if (!isMine) return null;
   // Restore only fits a blank session; the Restore body hides itself for the same reason.
   const blank = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.blank !== false;
@@ -4354,6 +4367,36 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
               pushes the top up and leaves the strip where the pointer left it. */}
             <div
               role="tablist"
+              // ARIA APG keeps the strip itself out of the Tab order (only the selected tab is
+              // focusable), but this lint rule makes a role="tablist" with a key handler focusable,
+              // so tabIndex={-1} satisfies it without adding a Tab stop of its own.
+              tabIndex={-1}
+              // Arrow keys step the tabs in list order, wrapping at the ends; Home/End jump to the
+              // first and last. Only the selected tab is in the Tab order, so arrows are how a
+              // keyboard user moves. "Next" is next in the list, not the next row, matching ARIA APG.
+              onKeyDown={(e) => {
+                // Only these four keys are ours; every other key keeps its default, so focus can
+                // still leave the strip.
+                if (!["ArrowRight", "ArrowLeft", "Home", "End"].includes(e.key)) return;
+                e.preventDefault();
+                const order = tabs.map((t) => t.key);
+                const index = order.indexOf(tab);
+                const next =
+                  e.key === "ArrowRight"
+                    ? (index + 1) % order.length
+                    : e.key === "ArrowLeft"
+                      ? (index - 1 + order.length) % order.length
+                      : e.key === "Home"
+                        ? 0
+                        : order.length - 1;
+                const key = order[next];
+                // next is always a valid index, so this never fires; it narrows key to string.
+                if (!key) return;
+                lastTab = key;
+                setTab(key);
+                // Reach the button by the id it already carries, not by a ref.
+                document.getElementById(`omc-tab-${key}`)?.focus();
+              }}
               style={{
                 display: "flex",
                 flex: "0 0 auto",
@@ -4374,6 +4417,9 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
                   id={`omc-tab-${t.key}`}
                   aria-controls="omc-tabpanel"
                   aria-selected={tab === t.key}
+                  // Only the selected tab is in the Tab order; arrows move between tabs (the tablist
+                  // handler), so the others stay out of the way.
+                  tabIndex={tab === t.key ? 0 : -1}
                   // The strip sits under the body, so the lit edge is the mirror of a top tab bar:
                   // accent along the bottom, corners rounded on that side only, no box around each
                   // tab (nine bordered boxes read as buttons, not as tabs). Hover is in the sheet.
