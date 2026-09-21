@@ -1,5 +1,6 @@
 // A notice when a session the browser is not showing stops working and waits for the user. The
 // transition logic is here, away from the DOM, so it can be checked without a page.
+import { t } from "./i18n.js";
 
 /** The three fields of dsh's `SessionSummary` this needs. */
 export interface NoticeRow {
@@ -71,10 +72,10 @@ export function newlyAwaiting(
 /** The desktop-notice body for each kind of wait. */
 export const awaitingBody = (kind: AwaitingKind): string =>
   kind === "question"
-    ? "Claude has a question for you."
+    ? t("notice.question")
     : kind === "plan"
-      ? "Claude wants you to review a plan."
-      : "Claude needs your approval.";
+      ? t("notice.plan")
+      : t("notice.approval");
 
 /** The one return shape `recapNext` uses. Kept narrow so the caller reads what it gets without a
  *  widening cast. */

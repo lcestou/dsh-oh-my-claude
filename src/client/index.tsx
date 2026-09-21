@@ -3,6 +3,7 @@
 // here or jump to the box) and Boxes (this box as the first row, plus the ssh and linked-dsh
 // machines you add, each probed for claude version and login). Built into lib/client.js by
 // `bun run build`.
+import { installLocale } from "./i18n.js";
 import type { CSSProperties, FC, ReactNode } from "react";
 import {
   Fragment,
@@ -8078,6 +8079,8 @@ function IdleChip({ sessionId }: { sessionId: string }) {
 /** Wire the plugin into a mounted dsh context: follow deep links and start every watcher, so a
  *  fresh session gets turn status, notices, folds and hints. */
 export function apply(ctx: ClientCtx) {
+  // First, so every string drawn below is already in the language the person picked.
+  whenContextGone(installLocale(ctx));
   followDeepLink(ctx);
   watchContextMeter(ctx);
   watchTurnStatus(ctx);
