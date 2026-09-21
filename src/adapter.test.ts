@@ -905,9 +905,9 @@ assert.ok(probed.flags.has("--effort") && probed.flags.has("--input-format"));
 // empty string is an answer to `??` but not to `||`: reading it as an answer sent the probe to the
 // local claude while the spawn ran on the box, and the box was handed a flag its older CLI exits 1
 // on. A remote-workspace cwd names its box whether or not this instance has one of its own.
-assert.equal(boxFor("", "lilly"), "lilly");
-assert.equal(boxFor(undefined, "lilly"), "lilly");
-assert.equal(boxFor("nova", "lilly"), "nova", "this instance's own box wins");
+assert.equal(boxFor("", "devbox"), "devbox");
+assert.equal(boxFor(undefined, "devbox"), "devbox");
+assert.equal(boxFor("nova", "devbox"), "nova", "this instance's own box wins");
 assert.equal(boxFor("", undefined), undefined, "a local turn in a local workspace stays local");
 
 // The other half of the same choice: which path the turn runs in. A remote workspace's dsh cwd is
@@ -918,35 +918,35 @@ assert.equal(boxFor("", undefined), undefined, "a local turn in a local workspac
   setRemoteWorkspaces([
     {
       name: "app",
-      host: "lilly",
-      remoteCwd: "/home/lilly/projects/app",
-      path: "/state/remote-workspaces/lilly__app",
+      host: "devbox",
+      remoteCwd: "/home/devbox/projects/app",
+      path: "/state/remote-workspaces/devbox__app",
       workspaceId: "w-1",
     },
   ]);
   assert.equal(
-    remoteCwdFor("lilly", "/state/remote-workspaces/lilly__app"),
-    "/home/lilly/projects/app",
+    remoteCwdFor("devbox", "/state/remote-workspaces/devbox__app"),
+    "/home/devbox/projects/app",
     "the placeholder becomes the real remote path",
   );
   assert.equal(
-    remoteCwdFor("nova", "/state/remote-workspaces/lilly__app"),
-    "/state/remote-workspaces/lilly__app",
+    remoteCwdFor("nova", "/state/remote-workspaces/devbox__app"),
+    "/state/remote-workspaces/devbox__app",
     "another box does not inherit this box's redirect",
   );
-  assert.equal(remoteCwdFor("lilly", "/home/me/work"), "/home/me/work", "an ordinary cwd is kept");
+  assert.equal(remoteCwdFor("devbox", "/home/me/work"), "/home/me/work", "an ordinary cwd is kept");
   assert.equal(
-    remoteWorkspaceFor("/state/remote-workspaces/lilly__app")?.host,
-    "lilly",
+    remoteWorkspaceFor("/state/remote-workspaces/devbox__app")?.host,
+    "devbox",
     "a local provider still sends this cwd's turn to the box",
   );
   assert.equal(remoteWorkspaceFor("/home/me/work"), undefined);
 
   // A stand-in whose row is gone is an orphan: its workspace was removed, dsh kept the session.
   const standIns = joinPath(STATE_DIR, "remote-workspaces");
-  const kept = joinPath(standIns, "lilly__kept");
+  const kept = joinPath(standIns, "devbox__kept");
   setRemoteWorkspaces([
-    { name: "kept", host: "lilly", remoteCwd: "/srv/kept", path: kept, workspaceId: "w-2" },
+    { name: "kept", host: "devbox", remoteCwd: "/srv/kept", path: kept, workspaceId: "w-2" },
   ]);
   assert.equal(
     isOrphanedStandIn(kept),
@@ -954,7 +954,7 @@ assert.equal(boxFor("", undefined), undefined, "a local turn in a local workspac
     "a stand-in with its row is a live remote workspace",
   );
   assert.equal(
-    isOrphanedStandIn(joinPath(standIns, "lilly__gone")),
+    isOrphanedStandIn(joinPath(standIns, "devbox__gone")),
     true,
     "a stand-in with no row is a removed one",
   );

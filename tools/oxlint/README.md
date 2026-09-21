@@ -1,11 +1,11 @@
 # oxlint anti-slop rules
 
-`anti-slop/` is the custom oxlint plugin shared with the pewtron repo: fifteen rules against the
+`anti-slop/` is the custom oxlint plugin shared with a sibling project: fifteen rules against the
 shortcuts a model reaches for when it does not understand a value (runtime `typeof` probing,
 `unknown` parameters and returns, chained or uncommented type assertions, widening a known value
 and asserting it back). Wired in `.oxlintrc.json` through `@oxlint/plugins`.
 
-Three deliberate deviations from pewtron:
+Three deliberate deviations from that project:
 
 - `no-object-parameters` is off for the whole repo. React components take a props object by
   contract, and dsh's own adapter and tool APIs pass option objects; the rule cannot tell those

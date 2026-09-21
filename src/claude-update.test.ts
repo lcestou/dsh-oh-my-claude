@@ -126,7 +126,7 @@ assert.equal(lastLine("x".repeat(300), undefined)?.length, 200);
   });
 
   const e2: ClaudeUpdateEntry = { at: 2, from: "2.1.274", to: "2.1.275", by: "auto", ok: true };
-  await writeUpdates(dir, "lilly", { log: [e2] });
+  await writeUpdates(dir, "devbox", { log: [e2] });
   assert.deepEqual(await readUpdates(dir, "this-box"), {
     auto: true,
     skipped: "2.1.274",
