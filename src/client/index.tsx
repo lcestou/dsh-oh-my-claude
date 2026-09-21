@@ -3652,7 +3652,7 @@ function watchContextMeter(ctx: ClientCtx) {
     const dash = `${(arcLength * ringPercent) / 100} ${arcLength}`;
     if (arc.getAttribute("stroke-dasharray") !== dash) arc.setAttribute("stroke-dasharray", dash);
     // The button's label is the same reading spoken aloud, so it moves with the arc.
-    const label = `${Math.round(ringPercent)}% of context used`;
+    const label = t("main.ring.used", { pct: Math.round(ringPercent) });
     const button = arc.closest("button");
     if (button?.getAttribute("aria-label") !== label) button?.setAttribute("aria-label", label);
     // dsh also writes its own number as text inside the button, from the same pressure figure

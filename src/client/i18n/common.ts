@@ -12,6 +12,7 @@ export const en = {
   "common.close": "Close",
   "common.loading": "Loading…",
   "common.retry": "Retry",
+  "common.unknownError": "unknown error",
 } as const;
 
 /** Chinese, one per English key. */
@@ -25,4 +26,5 @@ export const zh = {
   "common.close": "关闭",
   "common.loading": "加载中…",
   "common.retry": "重试",
+  "common.unknownError": "未知错误",
 } satisfies Record<keyof typeof en, string>;

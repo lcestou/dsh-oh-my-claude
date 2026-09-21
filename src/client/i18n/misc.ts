@@ -38,6 +38,14 @@ export const en = {
   "settings.overriddenBy": "{keys} by {file}",
   "settings.overridden": "Overridden here: {clauses}.",
   "settings.clauseSep": "; ",
+  "contract.markdownBody": "Claude-orange links, rules, quotes and checkboxes in messages",
+  "contract.composerInput": "the rainbow keyword paint in the composer",
+  "contract.ringButton": "plan usage in the context ring and its tooltip",
+  "contract.turnStatus": "the status row under a running turn",
+  "contract.notOnScreen": ", {n} not on screen",
+  "contract.nothing": "dsh hooks: nothing to check on this screen",
+  "contract.found": "dsh hooks: {n} of {total} found{tail}",
+  "contract.missing": "dsh hooks: {n} of {total} missing{tail}",
 } as const;
 
 /** Chinese, one per English key. */
@@ -78,4 +86,12 @@ export const zh = {
   "settings.overriddenBy": "{keys} 由{file}设置",
   "settings.overridden": "此处被覆盖：{clauses}。",
   "settings.clauseSep": "；",
+  "contract.markdownBody": "消息里 Claude 橙色的链接、分隔线、引用和复选框",
+  "contract.composerInput": "输入框里的彩虹关键词着色",
+  "contract.ringButton": "上下文圆环里的套餐用量及其提示",
+  "contract.turnStatus": "运行中回合下方的状态行",
+  "contract.notOnScreen": "，{n} 个不在当前画面",
+  "contract.nothing": "dsh 挂钩：当前画面没有可检查的项",
+  "contract.found": "dsh 挂钩：找到 {n}/{total}{tail}",
+  "contract.missing": "dsh 挂钩：缺少 {n}/{total}{tail}",
 } satisfies Record<keyof typeof en, string>;

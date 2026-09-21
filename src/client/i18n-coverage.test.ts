@@ -143,12 +143,64 @@ function scanDom(file: string): Hit[] {
   return hits;
 }
 
+/** Phrases of two or more English words allowed outside t() anywhere in client code, each with the
+ *  reason. Matched by prefix, since a few are long. */
+const ALLOWED_PHRASES = new Map<string, string>([
+  ["The user stepped away and is coming back", "the recap prompt, read by Claude, not a person"],
+  ["markdown. Lead with the overall goal", "the recap prompt, read by Claude, not a person"],
+  ["narrative, fix internals", "the recap prompt, read by Claude, not a person"],
+  ["noreferrer noopener", "a link rel value"],
+  ["Free space", "a CLI category name the code compares against"],
+  ["no live Claude process", "a server error the code matches on"],
+  ["inactive context", "a cordis error the code matches on"],
+  ["Read Only", "dsh's preset label, matched in dsh's own menu"],
+  ["Workspace Write", "dsh's preset label, matched in dsh's own menu"],
+  ["Full access", "dsh's preset label, matched in dsh's own menu"],
+  ["Access mode", "the start of dsh's shield aria-label, matched to find it"],
+  ["last used", "a /skill-doctor column header the parser matches"],
+  ["7d tokens", "a /skill-doctor column header the parser matches"],
+  ["Claude Code", "product name"],
+  ["Oh My Claude", "product name"],
+  ["Bash(npm run:*)", "permission-rule syntax example, typed as written"],
+]);
+
+/** Phrases of two or more English words in any client file that sit outside t(): a helper that
+ *  returns a sentence, a label kept in a variable, a table of messages. Logs, thrown errors,
+ *  comparisons, selectors, CSS and dsh's own fallback dictionary in picker.tsx are skipped. */
+function scanPhrases(file: string): Hit[] {
+  const hits: Hit[] = [];
+  const text = readFileSync(join(DIR, file), "utf8").replace(/\/\*[\s\S]*?\*\//g, (m) =>
+    m.replace(/[^\n]/g, " "),
+  );
+  text.split("\n").forEach((raw, i) => {
+    const line = raw.includes("://") ? raw : raw.replace(/\/\/.*$/, "");
+    if (/console\.|\bdebug\(|new Error\(|throw /.test(line)) return;
+    // picker.tsx mirrors dsh's own directory-browser dictionary as its no-locale fallback.
+    if (file === "picker.tsx" && /^\s*"browser\.[\w]+":/.test(line)) return;
+    if (file === "picker.tsx" && line.includes('|| "Add workspace"')) return;
+    for (const lit of literalsOf(line)) {
+      let s = lit.trim();
+      for (let prev = ""; prev !== s;) {
+        prev = s;
+        s = s.replace(/\$\{[^{}]*\}/g, " ").trim();
+      }
+      if (!/[A-Za-z]{2,}\s+[A-Za-z]{2,}/.test(s)) continue;
+      if (/[[\]=^]|\{[^}]*:|--|var\(|color-mix|\d(px|fr|s|ms)\b|\b(ease|linear|forwards)\b/.test(s))
+        continue;
+      if ([...ALLOWED_PHRASES.keys()].some((k) => s.startsWith(k))) continue;
+      hits.push({ file, line: i + 1, text: s });
+    }
+  });
+  return hits;
+}
+
 const files = readdirSync(DIR).filter(
   (f) => /\.tsx?$/.test(f) && !/\.test\.tsx?$|\.d\.ts$/.test(f),
 );
 const hits = [
   ...files.filter((f) => f.endsWith(".tsx")).flatMap(scanJsx),
   ...files.flatMap(scanDom),
+  ...files.flatMap(scanPhrases),
 ];
 
 // The scanner itself: a planted English label is caught, a translated one and a hook are not.

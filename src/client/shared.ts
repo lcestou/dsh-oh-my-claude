@@ -903,7 +903,7 @@ export function skillStateFromReply(reply: {
   if (reply.ok && reply.report !== undefined)
     return { kind: "report", text: reply.report, partial: reply.partial === true };
   if (reply.declined) return { kind: "declined", text: reply.error ?? "" };
-  return { kind: "error", text: reply.error ?? "unknown error" };
+  return { kind: "error", text: reply.error ?? t("common.unknownError") };
 }
 
 /** One driver in a usage breakdown: the CLI's name for it and its share of the window. */

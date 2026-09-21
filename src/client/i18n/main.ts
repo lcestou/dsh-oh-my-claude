@@ -440,6 +440,7 @@ export const en = {
   "main.section.reportTitle": "Report a problem",
   "main.section.reportSummary":
     "A masked report of this box for a GitHub issue: versions, login state, switches, last error.",
+  "main.ring.used": "{pct}% of context used",
 } as const;
 
 /** Chinese, one per English key. */
@@ -839,4 +840,5 @@ export const zh = {
   "main.section.reportTitle": "报告问题",
   "main.section.reportSummary":
     "为 GitHub issue 生成的本机打码报告：版本、登录状态、开关、最近错误。",
+  "main.ring.used": "已使用 {pct}% 上下文",
 } satisfies Record<keyof typeof en, string>;
