@@ -14,6 +14,6 @@ export const en = {
 /** Chinese, one per English key. */
 export const zh = {
   "picker.thisBox": "本机",
-  "picker.box": "机器",
+  "picker.box": "主机",
   "picker.noListing": "dsh 的目录列表不可用",
 } satisfies Record<keyof typeof en, string>;

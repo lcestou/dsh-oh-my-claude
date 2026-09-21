@@ -97,7 +97,7 @@ subagent-model-selection:       # 让 dsh 子智能体也能使用 Claude Code
 3. 重启 dsh 不会中断正在运行的 Claude 回合。[Restarts](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#restarts)
 4. dsh 的访问权限盾牌按会话设置 Claude 的六种权限模式。[Permission mode](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#permission-mode-per-session)
 5. Claude 的权限请求、提问和计划审阅都变成 dsh 对话框。[Approvals](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#approvals-and-questions)
-6. 一个 spark 按钮打开记忆、回溯、改动、MCP 等十余个标签，全部可以用键盘操作。[The panel](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md)
+6. 一个 ✻ 按钮打开记忆、回溯、改动、MCP 等十余个标签，全部可以用键盘操作。[The panel](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md)
 7. 费用和缓存 token 显示在 dsh 底部，超过设定额度时标签变橙。[Cost pill](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#cost-pill)
 8. 套餐用量（5 小时、每周、额外用量）显示在 dsh 的上下文圆环里，接近上限时变琥珀色，达到上限时变红，并在输入框上方提示。只统计会话所用模型计入的额度，由 Anthropic 判定，所以新模型无需更新插件。[Plan usage](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#plan-usage)
 9. 恢复或导入任何过去的 Claude 记录，无论来自 dsh 还是终端，并可在其中搜索说过的内容。[Session browser](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#session-browser)
@@ -130,7 +130,7 @@ sshHost: ""              # "[user@]host" 通过 ssh 驱动另一台机器上的 
 
 ## 远程主机和账号
 
-用不同的 `configDir` 把插件挂载两次，即可使用两个登录。在 设置 → Oh My Claude → 主机 中列出其他运行 dsh 和本插件的机器，并在它们之间切换。也可以给一台主机起个名字、填上 `user@host`，通过 SSH 驱动那里的 `claude`，远端只需要安装 CLI；Tailscale 和 WireGuard 对等节点会作为可选主机出现。详见 [docs/remote.md](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/remote.md)。
+用不同的 `configDir` 把插件挂载两次，即可使用两个登录。在 设置 → Oh My Claude → 主机 中列出其他运行 dsh 和本插件的主机，并在它们之间切换。也可以给一台主机起个名字、填上 `user@host`，通过 SSH 驱动那里的 `claude`，远端只需要安装 CLI；Tailscale 和 WireGuard 对等节点会作为可选主机出现。详见 [docs/remote.md](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/remote.md)。
 
 ## 它会接触什么
 
@@ -147,7 +147,7 @@ sshHost: ""              # "[user@]host" 通过 ssh 驱动另一台机器上的 
 
 ## 问题与反馈
 
-发现 bug，或有读起来不对的地方？请在 [github.com/lcestou/dsh-oh-my-claude/issues](https://github.com/lcestou/dsh-oh-my-claude/issues) 提交 issue，附上 dsh 和 Claude Code 的版本（`dsh --version`、`claude --version`）以及你期望看到的结果。设置 → Oh My Claude → 反馈问题 会替你写好这份报告。
+发现 bug，或有读起来不对的地方？请在 [github.com/lcestou/dsh-oh-my-claude/issues](https://github.com/lcestou/dsh-oh-my-claude/issues) 提交 issue，附上 dsh 和 Claude Code 的版本（`dsh --version`、`claude --version`）以及你期望看到的结果。设置 → Oh My Claude → 报告问题 会替你写好这份报告。
 
 ## 许可证
 

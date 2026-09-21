@@ -40,10 +40,10 @@ const ZH = {
   planKeep: "继续规划",
   planKeepDetail: "留在计划模式；你的反馈会发给 Claude。",
   loginFailure:
-    "Claude Code 在 {host} 上未登录。请点击输入框上方的登录，或在那台机器的终端里运行 `claude auth login`，然后重新发送消息。（{detail}）",
+    "Claude Code 在 {host} 上未登录。请点击输入框上方的登录，或在那台主机的终端里运行 `claude auth login`，然后重新发送消息。（{detail}）",
   loggedOutError: "在 {host} 上未登录。请在 设置 → Oh My Claude → 主机 中登录",
   temporaryCommand: "Oh My Claude：此会话不保留 Claude 记录（开关）",
-  btwCommand: "Oh My Claude：向 Claude 快速提一个旁支问题，不打断当前回合",
+  btwCommand: "Oh My Claude：向 Claude 快速提一个旁问，不打断当前回合",
   btwHint: "<你的问题>",
 } satisfies Record<ServerKey, string>;
 

@@ -324,14 +324,14 @@ export const en = {
 export const zh = {
   "panel.session.untitled": "未命名 · {id}",
   "panel.retention.default":
-    "Claude Code 会删除超过 {days} 天的 transcript（cleanupPeriodDays，默认值）。",
+    "Claude Code 会删除超过 {days} 天的会话记录（cleanupPeriodDays，默认值）。",
   "panel.retention.scoped":
-    "Claude Code 会删除超过 {days} 天的 transcript（{scope} 设置中的 cleanupPeriodDays）。",
-  "panel.restore.searchPlaceholder": "在 {name} 中搜索 {count} 个 transcript",
-  "panel.restore.searchLabel": "搜索 transcript",
+    "Claude Code 会删除超过 {days} 天的会话记录（{scope} 设置中的 cleanupPeriodDays）。",
+  "panel.restore.searchPlaceholder": "在 {name} 中搜索 {count} 条会话记录",
+  "panel.restore.searchLabel": "搜索记录",
   "panel.restore.empty":
-    "{name} 中没有可恢复的 Claude Code transcript。在此文件夹中（从 dsh 或终端）运行一次会话后，就会出现在这里。",
-  "panel.restore.noMatch": "没有匹配的 transcript",
+    "{name} 中没有可恢复的 Claude Code 会话记录。在此文件夹中（从 dsh 或终端）运行一次会话后，就会出现在这里。",
+  "panel.restore.noMatch": "没有匹配的会话记录",
   "panel.restore.alreadyOpen": "已打开 {n} 个",
 
   "panel.back": "返回",
@@ -342,20 +342,20 @@ export const zh = {
   "panel.scope.local": "本地",
 
   "panel.memory.deleteConfirm": "删除 {file}？MEMORY.md 中对应的那一行也会一并删除。",
-  "panel.memory.noWorkspace": "打开一个工作区以查看其 memory 文件。",
-  "panel.memory.empty": "此工作区还没有 memory 文件。Claude 会在了解项目的过程中写入。",
-  "panel.memory.editorLabel": "Memory 文件",
+  "panel.memory.noWorkspace": "打开一个工作区以查看其记忆文件。",
+  "panel.memory.empty": "此工作区还没有记忆文件。Claude 会在了解项目的过程中写入。",
+  "panel.memory.editorLabel": "记忆文件",
 
-  "panel.plugins.mktSourcePlaceholder": "Marketplace：URL、路径或 owner/repo",
-  "panel.plugins.mktSourceLabel": "Marketplace 来源",
-  "panel.plugins.mktScopeLabel": "Marketplace 范围",
+  "panel.plugins.mktSourcePlaceholder": "插件市场：URL、路径或 owner/repo",
+  "panel.plugins.mktSourceLabel": "插件市场来源",
+  "panel.plugins.mktScopeLabel": "插件市场范围",
   "panel.plugins.actionFailed": "失败",
   "panel.plugins.appliedLive": "已应用到当前会话。",
   "panel.plugins.appliedNext": "将在下次启动时生效。",
-  "panel.plugins.head": "插件与 marketplace",
+  "panel.plugins.head": "插件与插件市场",
   "panel.plugins.loadFailed": "加载失败",
   "panel.plugins.warnings": "插件警告",
-  "panel.plugins.empty": "没有设置文件声明插件（enabledPlugins）或 marketplace。",
+  "panel.plugins.empty": "没有设置文件声明插件（enabledPlugins）或插件市场。",
   "panel.plugins.disable": "停用",
   "panel.plugins.enable": "启用",
   "panel.plugins.on": "开",
@@ -379,7 +379,7 @@ export const zh = {
 
   "panel.asides.emptyBefore": "此会话还没有旁问。用",
   "panel.asides.emptyAfter":
-    " 发起一个。回答会停靠在输入框上方，而不是并入 transcript，并显示在这里。",
+    " 发起一个。回答会停靠在输入框上方，而不是并入会话记录，并显示在这里。",
   "panel.asides.waiting": "等待中",
   "panel.asides.error": "错误",
   "panel.asides.dismissed": "已忽略",
@@ -419,7 +419,7 @@ export const zh = {
   "panel.skills.reportError": "无法读取技能报告：{text}",
   "panel.skills.reportLabel": "技能报告",
   "panel.skills.partialNote":
-    "仅显示用户技能；本机的 Claude Code 版本过旧，无法在不写入 transcript 的情况下列出项目技能。",
+    "仅显示用户技能；本机的 Claude Code 版本过旧，无法在不写入会话记录的情况下列出项目技能。",
   "panel.skills.costsReportLabel": "技能开销报告",
   "panel.skills.costsTableLabel": "技能开销",
   "panel.skills.col.skill": "技能",
@@ -429,7 +429,7 @@ export const zh = {
   "panel.skills.col.uses": "使用次数",
   "panel.skills.col.lastUsed": "上次使用",
   "panel.skills.costNote":
-    "Claude Code /skill-doctor 的排序视图。Context 是该技能的单行说明每轮占用的开销；7d tokens 是本机最近七天的用量。",
+    "Claude Code /skill-doctor 的排序视图。“上下文”是该技能的单行说明每轮占用的开销；“7 天 tokens”是本机最近七天的用量。",
   "panel.skills.driversHead": "还有什么在消耗你的用量",
   "panel.skills.driversNote":
     "Claude Code 对本机最近七天的统计。数值为近似值，且未按你套餐的重置日对齐。",
@@ -454,13 +454,13 @@ export const zh = {
   "panel.rewind.rewindTo": "回溯到：{text}",
   "panel.rewind.checking": "检查中…",
   "panel.rewind.explain":
-    "文件会回退，Claude 会忘记此 prompt 之后的一切。此 dsh transcript 仍会显示发生过的内容。",
+    "文件会回到那时的状态，Claude 会忘记这条提示词之后的一切。此 dsh 会话记录仍会显示发生过的内容。",
   "panel.rewind.action": "回溯",
   "panel.rewind.retentionTail": "早于该时间的 prompt 已不在此处，无法回溯到。",
 
   "panel.changes.ask": "询问",
-  "panel.changes.askFileTitle": "就此文件询问 Claude，不进入 transcript",
-  "panel.changes.askAllTitle": "就全部改动询问 Claude，不进入 transcript",
+  "panel.changes.askFileTitle": "就此文件询问 Claude，不进入会话记录",
+  "panel.changes.askAllTitle": "就全部改动询问 Claude，不进入会话记录",
   "panel.changes.reviewTitle": "在输入框中写入一段审阅 prompt",
   "panel.changes.review": "审阅我的改动",
   "panel.changes.clean": "工作区无改动",
@@ -491,7 +491,7 @@ export const zh = {
   "panel.mcp.loginLabel": "登录：{name}",
   "panel.mcp.login": "登录",
   "panel.mcp.loginHelp":
-    "登录会在新标签页打开登录页面。登录必须在运行 Claude Code 的机器上的浏览器中完成，不一定是这一台；完成后此行会自动更新。",
+    "登录会在新标签页打开登录页面。登录必须在运行 Claude Code 的主机上的浏览器中完成，不一定是这一台；完成后此行会自动更新。",
   "panel.mcp.askNote": "来自此服务器的工具会询问，直到此会话的 Claude 重启。",
   "panel.mcp.startsNext": "下次会话时启动",
   "panel.mcp.inertNote": "此会话在 MCP 工具运行前已经会询问，因此“总是询问”暂时不起作用。",
@@ -526,16 +526,16 @@ export const zh = {
   "panel.diag.loginLabel": "登录：",
   "panel.diag.loggedInFallback": "已登录",
   "panel.diag.notLoggedIn":
-    "未登录 · 在 设置、Oh My Claude、Boxes 中登录，或运行 `claude auth login`",
+    "未登录 · 在 设置 → Oh My Claude → 主机 中登录，或运行 `claude auth login`",
   "panel.diag.configDirLabel": "配置目录：",
   "panel.diag.configFiles": "配置文件",
   "panel.diag.noConfigFiles": "没有配置文件",
   "panel.diag.fileNotFound": "未找到",
   "panel.diag.featureSwitches": "功能开关",
   "panel.diag.retentionDefault":
-    "transcript 保留：{days} 天（未设置 cleanupPeriodDays，使用 CLI 默认值）。清理时会清空 回溯、恢复 和会话浏览器。",
+    "会话记录保留：{days} 天（未设置 cleanupPeriodDays，使用 CLI 默认值）。清理时会清空 回溯、恢复 和会话浏览器。",
   "panel.diag.retentionScoped":
-    "transcript 保留：{days} 天（{scope} 设置中的 cleanupPeriodDays）。清理时会清空 回溯、恢复 和会话浏览器。",
+    "会话记录保留：{days} 天（{scope} 设置中的 cleanupPeriodDays）。清理时会清空 回溯、恢复 和会话浏览器。",
   "panel.diag.bypassDisabled":
     "绕过权限：被 {scope} 设置中的 permissions.disableBypassPermissionsMode 拒绝，因此完全权限不会生效。",
   "panel.diag.bypassAllowed": "绕过权限：允许。",
@@ -582,7 +582,7 @@ export const zh = {
   "panel.tasks.cliGoal": "Claude Code 目标",
   "panel.tasks.proposed": "提出于 {ago}",
   "panel.tasks.durable": "持久任务",
-  "panel.tasks.sessionOnly": "仅限本会话，根据此会话的 transcript 重建；Claude 退出后即消失。",
+  "panel.tasks.sessionOnly": "仅限本会话，根据此会话的会话记录重建；Claude 退出后即消失。",
 
   "panel.mcp.addFailed": "添加服务器失败",
   "panel.mcp.connectorLabel": "连接器",

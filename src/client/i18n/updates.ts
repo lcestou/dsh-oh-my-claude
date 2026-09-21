@@ -36,8 +36,8 @@ export const en = {
 export const zh = {
   "updates.thisBox": "本机",
   "updates.options": "选项",
-  "updates.box": "机器",
-  "updates.boxToUpdate": "要更新的机器",
+  "updates.box": "主机",
+  "updates.boxToUpdate": "要更新的主机",
   "updates.releaseChannel": "发布通道",
   "updates.channelDefault": "默认（最新版）",
   "updates.channelLatest": "最新版",
