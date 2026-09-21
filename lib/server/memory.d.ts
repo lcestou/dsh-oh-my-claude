@@ -20,4 +20,6 @@ export declare function memorySummary(text: string): string;
 export declare function listMemory(box: FsBox, dir: string): Promise<MemoryFile[]>;
 /** Drops every index line that links `name`, so the index stays in step after a delete. */
 export declare function dropIndexLine(index: string, name: string): string;
+/** Remove one memory file and drop its line from the MEMORY.md index. Deleting MEMORY.md itself
+ *  leaves no index to update. */
 export declare function deleteMemory(box: FsBox, dir: string, name: string): Promise<void>;

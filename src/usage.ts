@@ -106,9 +106,13 @@ export type UsageBreakdownReply =
   | { ok: false; error: string; host?: string; email?: string | null };
 
 type Rec = Record<string, unknown>;
+/** True only for a plain object, so a JSON array or null is not treated as a record to read. */
 const isRec = (v: unknown): v is Rec => typeof v === "object" && v !== null && !Array.isArray(v);
+/** A percentage clamped into 0 to 100, or null for anything that is not a finite number. */
 const percentOf = (v: unknown): number | null =>
   typeof v === "number" && Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : null;
+/** A reset time in epoch milliseconds. A number from 1e11 up is already milliseconds and a
+ *  smaller one is seconds; a string is parsed as a date. */
 const resetOf = (v: unknown): number | null => {
   if (typeof v === "number" && Number.isFinite(v)) return v >= 1e11 ? v : v * 1000;
   if (typeof v === "string" && v.trim()) {

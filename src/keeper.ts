@@ -34,6 +34,8 @@ interface KeeperSpec {
 /** sun_path is 108 bytes on Linux with the terminator inside it. */
 const SOCKET_PATH_MAX = 107;
 
+/** The keeper process body, run in the directory `spawnKeeper` prepared. Exits with code 78
+ *  before spawning Claude when the socket path would not fit in `sun_path`. */
 function main(dir: string) {
   // SAFETY: spec.json is written by this plugin's spawnKeeper from a typed object moments earlier
   const spec = JSON.parse(readFileSync(join(dir, "spec.json"), "utf8")) as KeeperSpec;

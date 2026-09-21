@@ -121,11 +121,14 @@ export declare class ClaudeUpdater {
     private loadPromise;
     /** The run in flight, handed to every caller that asks while it lasts. */
     private running?;
+    /** Fill in the settings reader and clock defaults, start as not installed on the latest
+     *  channel, and begin loading the saved record. */
     constructor(opts: ClaudeUpdaterOptions);
     /** Read the persisted record into `auto`, `skipped`, `folded` and `log`. */
     private load;
     /** The four fields the file keeps, out of the state. */
     private record;
+    /** Now in epoch milliseconds, from the injected clock when a test set one. */
     private tick;
     /** The last answer, no I/O. */
     state(): ClaudeUpdateState;
@@ -133,6 +136,9 @@ export declare class ClaudeUpdater {
     check(): Promise<ClaudeUpdateState>;
     /** Run `claude update` on the box; a second caller while one runs gets the same promise. */
     runUpdate(by: "button" | "auto"): Promise<ClaudeUpdateEntry>;
+    /** Run `claude update` and log the result. Success means the installed version moved, whatever
+     *  the CLI printed, and a failed run marks the latest release skipped so it is not offered
+     *  again. */
     private runOnce;
     /** Toggle auto-update on or off and persist the change. */
     setAuto(on: boolean): Promise<ClaudeUpdateState>;

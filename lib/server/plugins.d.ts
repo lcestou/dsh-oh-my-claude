@@ -39,6 +39,7 @@ export declare function numberOf(value: JsonValue | undefined, key: string): num
 /** The scopes `claude plugin` writes to; same set the MCP tab uses, named for this surface. */
 declare const PLUGIN_SCOPES: readonly ["user", "project", "local"];
 export type PluginScope = (typeof PLUGIN_SCOPES)[number];
+/** True only for one of the plugin scopes the CLI accepts, `user`, `project` and `local`. */
 export declare const isPluginScope: (value: unknown) => value is PluginScope;
 /** `user` is global; `project` and `local` write into the session's directory. */
 export declare const pluginScopeNeedsCwd: (scope: PluginScope) => boolean;

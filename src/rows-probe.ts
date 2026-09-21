@@ -61,6 +61,8 @@ interface Catalog {
 }
 
 const T0 = 1_700_000_000_000;
+/** One synthetic log row for the probe, timed at a base plus its sequence number so rows stay
+ *  ordered. */
 const ev = (
   seq: number,
   type: string,

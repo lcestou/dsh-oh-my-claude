@@ -63,6 +63,8 @@ export function dropIndexLine(index: string, name: string): string {
     .join("\n");
 }
 
+/** Remove one memory file and drop its line from the MEMORY.md index. Deleting MEMORY.md itself
+ *  leaves no index to update. */
 export async function deleteMemory(box: FsBox, dir: string, name: string): Promise<void> {
   await removeAt(box, join(dir, name));
   if (name === "MEMORY.md") return;

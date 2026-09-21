@@ -69,6 +69,7 @@ export function readSshToken(stateDir: string, host: string): string | undefined
   }
 }
 
+/** Remove the host's stored SSH token. A token already gone is not an error. */
 export function deleteSshToken(stateDir: string, host: string): void {
   try {
     rmSync(sshTokenPath(stateDir, host));

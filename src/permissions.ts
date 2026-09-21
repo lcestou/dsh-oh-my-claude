@@ -39,6 +39,7 @@ export function suggestRule(toolName: string, input: Record<string, JsonValue>):
  */
 const RULE = /^[A-Za-z][\dA-Za-z_]*(\(.*\))?$/;
 
+/** Parse settings JSON, or undefined when the text is not JSON or not a plain object. */
 const settingsObject = (text: string): Settings | undefined => {
   let parsed: unknown;
   try {
@@ -51,6 +52,8 @@ const settingsObject = (text: string): Settings | undefined => {
   return parsed as Settings;
 };
 
+/** The string rules under `kind`, or an empty list when `permissions` is missing, not an object,
+ *  or not holding an array there. */
 const ruleList = (settings: Settings | undefined, kind: PermissionKind): string[] => {
   const permissions = settings?.permissions;
   if (!(permissions instanceof Object) || Array.isArray(permissions)) return [];

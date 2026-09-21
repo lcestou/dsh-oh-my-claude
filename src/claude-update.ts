@@ -313,6 +313,8 @@ export class ClaudeUpdater {
   /** The run in flight, handed to every caller that asks while it lasts. */
   private running?: Promise<ClaudeUpdateEntry>;
 
+  /** Fill in the settings reader and clock defaults, start as not installed on the latest
+   *  channel, and begin loading the saved record. */
   constructor(opts: ClaudeUpdaterOptions) {
     this.opts = {
       readSettings: (path) => readFile(path, "utf8").catch(() => undefined),
@@ -353,6 +355,7 @@ export class ClaudeUpdater {
     return rec;
   }
 
+  /** Now in epoch milliseconds, from the injected clock when a test set one. */
   private tick(): number {
     return this.opts.now?.() ?? Date.now();
   }
@@ -395,6 +398,9 @@ export class ClaudeUpdater {
     return this.running;
   }
 
+  /** Run `claude update` and log the result. Success means the installed version moved, whatever
+   *  the CLI printed, and a failed run marks the latest release skipped so it is not offered
+   *  again. */
   private async runOnce(by: "button" | "auto"): Promise<ClaudeUpdateEntry> {
     await this.loadPromise;
     try {
