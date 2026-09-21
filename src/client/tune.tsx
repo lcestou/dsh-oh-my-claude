@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 import {
   errText,
+  btn,
+  sectionHead,
   bodyFlow,
   meta,
   T,
@@ -11,6 +13,7 @@ import {
   select,
   useNarrow,
   claudeProviderOf,
+  codeInline,
 } from "./shared.js";
 import type { ClientCtx } from "./shared.js";
 import {
@@ -376,7 +379,7 @@ export function TuneBody({
     return error ? (
       <span style={errText}>{error}</span>
     ) : (
-      <span style={{ ...meta, padding: "2px 4px" }}>Loading…</span>
+      <span style={{ ...meta, padding: "2px 0" }}>Loading…</span>
     );
 
   const settings = readTunables(file.text);
@@ -469,7 +472,7 @@ export function TuneBody({
     display: "flex",
     gap: 12,
     alignItems: "center",
-    padding: "8px 6px",
+    padding: "8px 0",
     borderTop: `1px solid ${T.border}`,
     flexWrap: "wrap",
   };
@@ -512,7 +515,7 @@ export function TuneBody({
 
   return (
     <div style={bodyFlow}>
-      <span style={{ ...meta, padding: "2px 4px", whiteSpace: "normal" }}>
+      <span style={{ ...meta, padding: "2px 0", whiteSpace: "normal" }}>
         Saved to Claude Code's settings.json; each takes effect the next time Claude spawns.
       </span>
       {error ? <span style={errText}>{error}</span> : null}
@@ -715,7 +718,7 @@ export function TuneBody({
         </div>
         <span style={sourceStyle}>{source(settings.subagentPromptCacheTtl !== undefined)}</span>
       </div>
-      <span style={{ ...meta, padding: "0 6px 2px", whiteSpace: "normal" }}>
+      <span style={{ ...meta, padding: "0 0 2px", whiteSpace: "normal" }}>
         An hour keeps the cache warm across longer breaks, and hour-long cache writes are billed at
         a higher rate.
       </span>
@@ -750,18 +753,17 @@ export function TuneBody({
       </div>
       {modelsError && <span style={errText}>Could not read the model list: {modelsError}</span>}
       {creditsError ? (
-        <span style={{ ...meta, padding: "0 6px 2px", whiteSpace: "normal" }}>
+        <span style={{ ...meta, padding: "0 0 2px", whiteSpace: "normal" }}>
           The usage credit state could not be read ({creditsError}), so a Fable advisor stays off
           the list: with credits disabled the CLI refuses to start at all.
         </span>
       ) : extraUsage === false ? (
-        <span style={{ ...meta, padding: "0 6px 2px", whiteSpace: "normal" }}>
+        <span style={{ ...meta, padding: "0 0 2px", whiteSpace: "normal" }}>
           A Fable advisor bills to usage credits, which have to be enabled first. Open a terminal
-          and run <code style={{ background: T.card, padding: "2px 4px" }}>/model fable</code> to
-          review and enable them.
+          and run <code style={codeInline}>/model fable</code> to review and enable them.
         </span>
       ) : null}
-      <span style={{ ...meta, padding: "0 6px 2px", whiteSpace: "normal" }}>
+      <span style={{ ...meta, padding: "0 0 2px", whiteSpace: "normal" }}>
         An advisor weaker than the main model is not used for the main conversation, though
         subagents may still use it.
       </span>
@@ -790,7 +792,7 @@ export function TuneBody({
         </div>
         <span style={sourceStyle}>{source(settings.fallbackModel !== undefined)}</span>
       </div>
-      <span style={{ ...meta, padding: "0 6px 2px", whiteSpace: "normal" }}>
+      <span style={{ ...meta, padding: "0 0 2px", whiteSpace: "normal" }}>
         Where the CLI goes when the main model is overloaded. With none set, an overload ends the
         turn; the swap itself is reported in the reasoning lane when it happens.
       </span>
@@ -842,7 +844,7 @@ export function TuneBody({
         </div>
         <span style={sourceStyle}>{source(settings.dialogExpiry !== undefined)}</span>
       </div>
-      <span style={{ ...meta, padding: "0 6px 2px", whiteSpace: "normal" }}>
+      <span style={{ ...meta, padding: "0 0 2px", whiteSpace: "normal" }}>
         A question left unanswered continues with whatever is selected so far; a permission prompt
         left unanswered is cancelled. At the question default, an unattended session waits forever.
       </span>
@@ -898,7 +900,7 @@ export function TuneBody({
         </div>
         <span style={sourceStyle}>{source(settings.taskOutputMaxChars !== undefined)}</span>
       </div>
-      <span style={{ ...meta, padding: "0 6px 2px", whiteSpace: "normal" }}>
+      <span style={{ ...meta, padding: "0 0 2px", whiteSpace: "normal" }}>
         These two size what Claude receives, between {OUTPUT_MIN} and {OUTPUT_MAX} characters. The
         plugin's own tool text limit sizes only what this panel draws.
       </span>
@@ -983,7 +985,7 @@ export function TuneBody({
               <span style={sourceStyle}>{source(settings[key] !== undefined)}</span>
             </div>
           ))}
-          <span style={{ ...meta, padding: "0 6px 2px", whiteSpace: "normal" }}>
+          <span style={{ ...meta, padding: "0 0 2px", whiteSpace: "normal" }}>
             An empty box writes an empty string, which is how the CLI is told to add nothing. Clear
             the switch above to hand both back to Claude Code's own wording.
           </span>
@@ -1086,27 +1088,22 @@ function PermissionsBlock({
     display: "flex",
     gap: 8,
     alignItems: "center",
-    padding: "4px 4px",
+    padding: "4px 0",
     fontSize: 13,
     color: T.text,
   };
   const small: CSSProperties = {
+    ...btn,
     padding: "2px 8px",
     fontSize: 12,
-    background: "transparent",
-    color: T.text,
-    border: `1px solid ${T.border}`,
-    borderRadius: 3,
     cursor: busy ? "not-allowed" : "pointer",
     opacity: busy ? 0.6 : 1,
   };
 
   return (
     <div style={{ borderTop: `1px solid ${T.border}`, marginTop: 16, paddingTop: 12 }}>
-      <div style={{ fontSize: 13, fontWeight: 600, color: T.text, marginBottom: 4 }}>
-        Permissions
-      </div>
-      <span style={{ ...meta, padding: "0 4px 8px", whiteSpace: "normal" }}>
+      <div style={{ ...sectionHead, paddingTop: 0 }}>Permissions</div>
+      <span style={{ ...meta, display: "block", padding: "0 0 8px", whiteSpace: "normal" }}>
         Rules Claude Code answers a tool request with instead of asking. These are the ones in{" "}
         {SCOPE_LABELS.user}, the file this panel writes; Claude Code also reads the files below it,
         in dsh or in a terminal.

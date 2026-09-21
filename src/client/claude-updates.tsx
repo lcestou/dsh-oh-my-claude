@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 
 import type { ClaudeUpdateState } from "../claude-update.js";
 import { BOXES_EVENT } from "./picker.js";
-import { btn, errText, meta, readJson, ROUTE, select, T } from "./shared.js";
+import { btn, errText, meta, nested, readJson, ROUTE, select, T } from "./shared.js";
 import { Switch } from "./switch.js";
 import { onBox, read, readTunables, updateSettings } from "./tune.js";
 
@@ -189,8 +189,7 @@ export function ClaudeUpdateDetails() {
         flexDirection: "column",
         gap: 10,
         margin: "-4px 0 14px",
-        paddingLeft: 12,
-        borderLeft: `1px solid ${T.border}`,
+        ...nested,
       }}
     >
       <button

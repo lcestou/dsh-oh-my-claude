@@ -6,6 +6,10 @@ import {
   btnPrimary,
   errText,
   stateText,
+  sectionHead,
+  codeInline,
+  nested,
+  PANEL_INSET,
   PANEL_ATTR,
   panelSurface,
   tabStyle,
@@ -305,7 +309,7 @@ function RestoreBody({
       {candidates.length > 8 && (
         <SearchField
           hook="data-omc-restore-search"
-          style={{ margin: "2px 4px 4px" }}
+          style={{ marginBottom: 4 }}
           value={query}
           placeholder={`Search ${candidates.length} transcripts in ${name}`}
           label="Search transcripts"
@@ -313,26 +317,23 @@ function RestoreBody({
         />
       )}
       {candidates.length === 0 && (
-        <span
-          data-omc-restore-empty=""
-          style={{ ...meta, padding: "2px 4px", whiteSpace: "normal" }}
-        >
+        <span data-omc-restore-empty="" style={{ ...meta, padding: "2px 0", whiteSpace: "normal" }}>
           No Claude Code transcripts in {name} to restore. One appears here after a session runs in
           this folder, from dsh or from a terminal.
         </span>
       )}
       {candidates.length > 0 && rest.length === 0 && (
-        <span style={{ ...meta, padding: "2px 4px" }}>No transcript matches</span>
+        <span style={{ ...meta, padding: "2px 0" }}>No transcript matches</span>
       )}
       {rest.map((s) => (
         <TranscriptRow key={s.id} s={s} cwd={cwd} ctx={ctx} onClose={onClose} />
       ))}
       {owned.length > 0 && (
-        <span style={{ fontSize: 11, color: T.faint, padding: "2px 4px" }}>
+        <span style={{ fontSize: 11, color: T.faint, padding: "2px 0" }}>
           {owned.length} already open
         </span>
       )}
-      <span style={{ ...meta, padding: "2px 4px", whiteSpace: "normal" }}>
+      <span style={{ ...meta, padding: "2px 0", whiteSpace: "normal" }}>
         {retentionNote(switches)}
       </span>
     </div>
@@ -575,7 +576,7 @@ function MarketplaceAddForm({ act, busy }: { act: Act; busy: string }) {
         value={source}
         onChange={(e) => setSource(e.currentTarget.value)}
         disabled={busy !== ""}
-        style={{ ...inputStyle, fontSize: 12 }}
+        style={inputStyle}
       />
       <select
         data-omc-plugin-marketplace-scope=""
@@ -583,7 +584,7 @@ function MarketplaceAddForm({ act, busy }: { act: Act; busy: string }) {
         value={scope}
         onChange={(e) => setScope(e.currentTarget.value)}
         disabled={busy !== ""}
-        style={{ ...select, fontSize: 12 }}
+        style={select}
       >
         {PLUGIN_SCOPE_OPTS.map((o) => (
           <option key={o.value} value={o.value}>
@@ -677,13 +678,11 @@ function PluginManagerBlock({
   const small: CSSProperties = { ...btn, flex: "none", padding: "0 6px", fontSize: 11 };
   return (
     <>
-      <span style={{ ...meta, padding: "2px 4px", display: "block", marginTop: 8 }}>
-        Plugins and marketplaces
-      </span>
-      <div style={{ padding: "2px 10px", fontSize: 12, lineHeight: "1.7" }}>
+      <span style={sectionHead}>Plugins and marketplaces</span>
+      <div style={{ padding: "2px 0", fontSize: 12, lineHeight: "1.7" }}>
         {pluginErrors.length > 0 && (
           <div data-omc-plugin-errors="" role="alert" style={{ marginBottom: 6 }}>
-            <span style={{ ...meta, color: T.err, padding: "2px 4px", display: "block" }}>
+            <span style={{ ...meta, color: T.err, padding: "2px 0", display: "block" }}>
               Failed to load
             </span>
             {pluginErrors.map((e, i) => (
@@ -697,7 +696,7 @@ function PluginManagerBlock({
         {pluginWarnings.length > 0 && (
           // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a live notice, not a form result, which is what <output> is for
           <div data-omc-plugin-warnings="" role="status" style={{ marginBottom: 6 }}>
-            <span style={{ ...meta, color: T.warn, padding: "2px 4px", display: "block" }}>
+            <span style={{ ...meta, color: T.warn, padding: "2px 0", display: "block" }}>
               Plugin warnings
             </span>
             {pluginWarnings.map((w, i) => (
@@ -798,6 +797,11 @@ const costCols: {
   { col: "uses", label: "Uses", numeric: true },
   { col: "lastUsed", label: "Last used", numeric: true },
 ];
+
+/** The body of an open fold: in behind the Settings rule, the line set under the marker. */
+const FOLD_BODY: CSSProperties = { ...nested, marginLeft: 3 };
+/** A fold's own title: the section label, kept a list item so the browser still draws its marker. */
+const FOLD_HEAD: CSSProperties = { ...sectionHead, display: "list-item", cursor: "pointer" };
 
 /**
  * The Skills tab: every skill the CLI can reach for this directory, grouped by where it comes from,
@@ -1013,7 +1017,7 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   const rowNode = (s: SkillRow) => (
     <div
       key={s.path}
-      style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 10px" }}
+      style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 0" }}
       title={s.path}
     >
       <span style={{ flex: "none", fontFamily: T.mono, fontSize: 12 }}>{s.name}</span>
@@ -1090,7 +1094,7 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
           style={{ ...code, minHeight: 300, resize: "vertical", whiteSpace: "pre-wrap" }}
         />
         {applied && (
-          <span data-omc-skill-applied="" style={{ ...meta, padding: "2px 4px" }}>
+          <span data-omc-skill-applied="" style={{ ...meta, padding: "2px 0" }}>
             {applied}
           </span>
         )}
@@ -1105,7 +1109,7 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
 
   return (
     <div style={bodyFlow} data-omc-skills="">
-      <div style={{ display: "flex", gap: 6, padding: "2px 4px" }}>
+      <div style={{ display: "flex", gap: 6, paddingBottom: 2 }}>
         {!creating && (
           <button
             type="button"
@@ -1133,7 +1137,7 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
       {creating && (
         <div
           data-omc-skill-form=""
-          style={{ display: "flex", flexDirection: "column", gap: 6, padding: "2px 4px" }}
+          style={{ display: "flex", flexDirection: "column", gap: 6, padding: "2px 0" }}
         >
           <input
             type="text"
@@ -1143,7 +1147,7 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
             value={newName}
             onChange={(e) => setNewName(e.currentTarget.value)}
             disabled={busy !== ""}
-            style={{ ...inputStyle, fontSize: 12 }}
+            style={{ ...inputStyle, flex: "none" }}
           />
           {newName !== "" && !nameOk && (
             <span data-omc-skill-name-error="" style={{ ...meta, color: T.err }}>
@@ -1156,7 +1160,7 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
             value={newScope}
             onChange={(e) => setNewScope(e.currentTarget.value)}
             disabled={busy !== ""}
-            style={{ ...select, fontSize: 12 }}
+            style={{ ...select, flex: "none", maxWidth: "none" }}
           >
             <option value="user">User</option>
             <option value="project">Project</option>
@@ -1169,7 +1173,7 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
             value={newDesc}
             onChange={(e) => setNewDesc(e.currentTarget.value)}
             disabled={busy !== ""}
-            style={{ ...inputStyle, fontSize: 12 }}
+            style={{ ...inputStyle, flex: "none" }}
           />
           <div style={{ display: "flex", gap: 6 }}>
             <button
@@ -1196,7 +1200,7 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
       {skills.length === 0 && (
         <span
           data-omc-skills-none=""
-          style={{ ...meta, padding: "2px 10px", display: "block", whiteSpace: "normal" }}
+          style={{ ...meta, padding: "2px 0", display: "block", whiteSpace: "normal" }}
         >
           No skills: none under ~/.claude/skills, this project's .claude/skills, or an installed
           plugin.
@@ -1205,7 +1209,7 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
       {skills.length > 12 && (
         <SearchField
           hook="data-omc-skills-search"
-          style={{ margin: "2px 4px 4px" }}
+          style={{ margin: "2px 0 4px" }}
           value={query}
           placeholder={`Search ${skills.length} skills`}
           label="Search skills"
@@ -1213,29 +1217,32 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
         />
       )}
       {skills.length > 0 && !anyMatch && (
-        <span data-omc-skills-empty="" style={{ ...meta, padding: "2px 4px" }}>
+        <span data-omc-skills-empty="" style={{ ...meta, padding: "2px 0" }}>
           No skill matches
         </span>
       )}
       {sections.map((sec) => {
         const rows = sec.rows.filter(match);
         if (rows.length === 0) return null;
+        // Groups start folded so the tab reads as a short list of groups plus Skill costs; a search
+        // opens them to show its matches, and a lone group opens since folding it hides everything.
+        const open = query.trim() !== "" || sections.filter((x) => x.rows.length > 0).length === 1;
         return (
-          <details key={sec.key} open data-omc-skills-scope={sec.key}>
-            <summary style={{ ...meta, padding: "2px 4px", cursor: "pointer" }}>
+          <details key={sec.key} open={open} data-omc-skills-scope={sec.key}>
+            <summary style={FOLD_HEAD}>
               {sec.label} · {sec.rows.length}
             </summary>
-            {rows.map(rowNode)}
+            <div style={FOLD_BODY}>{rows.map(rowNode)}</div>
           </details>
         );
       })}
       {skills.some((s) => writable(s.scope)) && (
-        <span data-omc-skill-note="" style={{ ...meta, padding: "2px 4px", whiteSpace: "normal" }}>
+        <span data-omc-skill-note="" style={{ ...meta, padding: "2px 0", whiteSpace: "normal" }}>
           Removing deletes the skill&apos;s folder. Its /command stays until Claude restarts.
         </span>
       )}
       {applied && (
-        <span data-omc-skill-applied="" style={{ ...meta, padding: "2px 4px" }}>
+        <span data-omc-skill-applied="" style={{ ...meta, padding: "2px 0" }}>
           {applied}
         </span>
       )}
@@ -1251,147 +1258,149 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
           if (e.currentTarget.open && cost.kind === "idle") loadCost();
         }}
       >
-        <summary style={{ ...meta, padding: "2px 4px", cursor: "pointer" }}>Skill costs</summary>
-        <div style={{ ...meta, whiteSpace: "normal", margin: "8px 0" }}>
-          What each Claude Code skill costs in context and how often you have used it. Read from
-          Claude Code&apos;s own /skill-doctor. No message is sent to the model, so this costs no
-          usage.
-        </div>
-        {cost.kind === "loading" && (
-          <div style={{ color: T.muted, fontSize: 13 }}>Reading skills…</div>
-        )}
-        {cost.kind === "error" && (
-          <div style={{ color: T.err, fontSize: 13 }}>
-            Couldn&apos;t read the skill report: {cost.text}
+        <summary style={FOLD_HEAD}>Skill costs</summary>
+        <div style={FOLD_BODY}>
+          <div style={{ ...meta, whiteSpace: "normal", margin: "8px 0" }}>
+            What each Claude Code skill costs in context and how often you have used it. Read from
+            Claude Code&apos;s own /skill-doctor. No message is sent to the model, so this costs no
+            usage.
           </div>
-        )}
-        {cost.kind === "declined" && (
-          <pre
-            data-omc-skill-doctor=""
-            aria-label="Skill report"
-            style={{ ...code, maxHeight: 320, overflow: "auto", margin: 0 }}
-          >
-            {cost.text}
-          </pre>
-        )}
-        {cost.kind === "report" && (
-          <>
-            {cost.partial && (
-              <div style={{ color: T.faint, fontSize: 12, marginBottom: 6 }}>
-                Showing user skills only; this box&apos;s Claude Code is too old to list project
-                skills without writing a transcript.
-              </div>
-            )}
-            {(() => {
-              const parsed = parseSkillCosts(cost.text);
-              if (!parsed || parsed.length === 0)
-                return (
-                  <pre
-                    data-omc-skill-doctor=""
-                    aria-label="Skill costs report"
-                    style={{ ...code, maxHeight: 320, overflow: "auto", margin: 0 }}
-                  >
-                    {cost.text}
-                  </pre>
-                );
-              return (
-                <>
-                  <div style={{ maxHeight: 320, overflow: "auto" }}>
-                    <table
-                      data-omc-skill-cost-table=""
-                      aria-label="Skill costs"
-                      style={{ borderCollapse: "collapse", width: "100%" }}
+          {cost.kind === "loading" && (
+            <div style={{ color: T.muted, fontSize: 13 }}>Reading skills…</div>
+          )}
+          {cost.kind === "error" && (
+            <div style={{ color: T.err, fontSize: 13 }}>
+              Couldn&apos;t read the skill report: {cost.text}
+            </div>
+          )}
+          {cost.kind === "declined" && (
+            <pre
+              data-omc-skill-doctor=""
+              aria-label="Skill report"
+              style={{ ...code, maxHeight: 320, overflow: "auto", margin: 0 }}
+            >
+              {cost.text}
+            </pre>
+          )}
+          {cost.kind === "report" && (
+            <>
+              {cost.partial && (
+                <div style={{ color: T.faint, fontSize: 12, marginBottom: 6 }}>
+                  Showing user skills only; this box&apos;s Claude Code is too old to list project
+                  skills without writing a transcript.
+                </div>
+              )}
+              {(() => {
+                const parsed = parseSkillCosts(cost.text);
+                if (!parsed || parsed.length === 0)
+                  return (
+                    <pre
+                      data-omc-skill-doctor=""
+                      aria-label="Skill costs report"
+                      style={{ ...code, maxHeight: 320, overflow: "auto", margin: 0 }}
                     >
-                      <thead>
-                        <tr>
-                          {costCols.map((c) => (
-                            <th
-                              key={c.col}
-                              data-omc-skill-cost-header={c.col}
-                              aria-sort={
-                                costSort.col === c.col
-                                  ? costSort.dir === "asc"
-                                    ? "ascending"
-                                    : "descending"
-                                  : "none"
-                              }
-                              style={{
-                                ...meta,
-                                textAlign: "left",
-                                position: "sticky",
-                                top: 0,
-                                background: T.card,
-                                borderBottom: `1px solid ${T.border}`,
-                                padding: "2px 6px",
-                              }}
-                            >
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  setCostSort((prev) =>
-                                    prev.col === c.col
-                                      ? { col: c.col, dir: prev.dir === "asc" ? "desc" : "asc" }
-                                      : { col: c.col, dir: "desc" },
-                                  )
+                      {cost.text}
+                    </pre>
+                  );
+                return (
+                  <>
+                    <div style={{ maxHeight: 320, overflow: "auto" }}>
+                      <table
+                        data-omc-skill-cost-table=""
+                        aria-label="Skill costs"
+                        style={{ borderCollapse: "collapse", width: "100%" }}
+                      >
+                        <thead>
+                          <tr>
+                            {costCols.map((c) => (
+                              <th
+                                key={c.col}
+                                data-omc-skill-cost-header={c.col}
+                                aria-sort={
+                                  costSort.col === c.col
+                                    ? costSort.dir === "asc"
+                                      ? "ascending"
+                                      : "descending"
+                                    : "none"
                                 }
                                 style={{
-                                  background: "none",
-                                  border: 0,
-                                  padding: 0,
-                                  margin: 0,
-                                  font: "inherit",
-                                  color: "inherit",
-                                  cursor: "pointer",
+                                  ...meta,
+                                  textAlign: "left",
+                                  position: "sticky",
+                                  top: 0,
+                                  background: T.card,
+                                  borderBottom: `1px solid ${T.border}`,
+                                  padding: "2px 6px",
                                 }}
                               >
-                                {c.label}
-                              </button>
-                            </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {sortSkillCosts(parsed, costSort.col, costSort.dir).map((row) => (
-                          <tr key={row.skill}>
-                            {costCols.map((c) => {
-                              const cellStyle: CSSProperties = {
-                                ...meta,
-                                color: T.muted,
-                                padding: "2px 6px",
-                              };
-                              if (c.numeric) {
-                                cellStyle.fontFamily = T.mono;
-                                cellStyle.textAlign = "right";
-                              }
-                              return (
-                                <td key={c.col} style={cellStyle}>
-                                  {row[c.col]}
-                                </td>
-                              );
-                            })}
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setCostSort((prev) =>
+                                      prev.col === c.col
+                                        ? { col: c.col, dir: prev.dir === "asc" ? "desc" : "asc" }
+                                        : { col: c.col, dir: "desc" },
+                                    )
+                                  }
+                                  style={{
+                                    background: "none",
+                                    border: 0,
+                                    padding: 0,
+                                    margin: 0,
+                                    font: "inherit",
+                                    color: "inherit",
+                                    cursor: "pointer",
+                                  }}
+                                >
+                                  {c.label}
+                                </button>
+                              </th>
+                            ))}
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                  <span
-                    data-omc-skill-cost-note=""
-                    style={{ ...meta, display: "block", marginTop: 6, whiteSpace: "normal" }}
-                  >
-                    Sorted view of Claude Code&apos;s /skill-doctor. Context is what the
-                    skill&apos;s one-line listing costs every turn; 7d tokens is the last seven days
-                    on this machine.
-                  </span>
-                </>
-              );
-            })()}
-          </>
-        )}
-        {cost.kind !== "loading" && (
-          <button type="button" onClick={loadCost} style={{ ...btn, marginTop: 8 }}>
-            Refresh
-          </button>
-        )}
+                        </thead>
+                        <tbody>
+                          {sortSkillCosts(parsed, costSort.col, costSort.dir).map((row) => (
+                            <tr key={row.skill}>
+                              {costCols.map((c) => {
+                                const cellStyle: CSSProperties = {
+                                  ...meta,
+                                  color: T.muted,
+                                  padding: "2px 6px",
+                                };
+                                if (c.numeric) {
+                                  cellStyle.fontFamily = T.mono;
+                                  cellStyle.textAlign = "right";
+                                }
+                                return (
+                                  <td key={c.col} style={cellStyle}>
+                                    {row[c.col]}
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <span
+                      data-omc-skill-cost-note=""
+                      style={{ ...meta, display: "block", marginTop: 6, whiteSpace: "normal" }}
+                    >
+                      Sorted view of Claude Code&apos;s /skill-doctor. Context is what the
+                      skill&apos;s one-line listing costs every turn; 7d tokens is the last seven
+                      days on this machine.
+                    </span>
+                  </>
+                );
+              })()}
+            </>
+          )}
+          {cost.kind !== "loading" && (
+            <button type="button" onClick={loadCost} style={{ ...btn, marginTop: 8 }}>
+              Refresh
+            </button>
+          )}
+        </div>
       </details>
       <details
         data-omc-usage-drivers=""
@@ -1399,96 +1408,97 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
           if (e.currentTarget.open && drivers === null) loadDrivers();
         }}
       >
-        <summary style={{ ...meta, padding: "2px 4px", cursor: "pointer" }}>
-          What else drives your usage
-        </summary>
-        <div
-          data-omc-usage-drivers-note=""
-          style={{ ...meta, display: "block", whiteSpace: "normal" }}
-        >
-          Claude Code&apos;s own reading of the last seven days on this box. Approximate, and not
-          aligned to your plan&apos;s reset day.
-        </div>
-        {drivers === null && (
-          <>
-            <div data-omc-skeleton="" style={{ height: 12, width: "45%", margin: "6px 0" }} />
-            <div data-omc-skeleton="" style={{ height: 12, width: "80%", margin: "6px 0" }} />
-            <div data-omc-skeleton="" style={{ height: 12, width: "62%", margin: "6px 0" }} />
-          </>
-        )}
-        {drivers !== null && !drivers.ok && (
-          <div style={{ ...meta, color: T.faint }}>{drivers.error}</div>
-        )}
-        {drivers !== null && drivers.ok && (
-          <>
-            {(() => {
-              const win = drivers.windows.find((w) => w.label === "Last 7d") ?? drivers.windows[0];
-              if (!win)
-                return <div style={{ ...meta, color: T.faint }}>No activity recorded yet.</div>;
-              return (
-                <>
-                  {/* `?? []` because this reply can come from a cache file written by an older
+        <summary style={FOLD_HEAD}>What else drives your usage</summary>
+        <div style={FOLD_BODY}>
+          <div
+            data-omc-usage-drivers-note=""
+            style={{ ...meta, display: "block", whiteSpace: "normal" }}
+          >
+            Claude Code&apos;s own reading of the last seven days on this box. Approximate, and not
+            aligned to your plan&apos;s reset day.
+          </div>
+          {drivers === null && (
+            <>
+              <div data-omc-skeleton="" style={{ height: 12, width: "45%", margin: "6px 0" }} />
+              <div data-omc-skeleton="" style={{ height: 12, width: "80%", margin: "6px 0" }} />
+              <div data-omc-skeleton="" style={{ height: 12, width: "62%", margin: "6px 0" }} />
+            </>
+          )}
+          {drivers !== null && !drivers.ok && (
+            <div style={{ ...meta, color: T.faint }}>{drivers.error}</div>
+          )}
+          {drivers !== null && drivers.ok && (
+            <>
+              {(() => {
+                const win =
+                  drivers.windows.find((w) => w.label === "Last 7d") ?? drivers.windows[0];
+                if (!win)
+                  return <div style={{ ...meta, color: T.faint }}>No activity recorded yet.</div>;
+                return (
+                  <>
+                    {/* `?? []` because this reply can come from a cache file written by an older
                       build that had no such field; a bare `.map` threw and React unmounted the
                       whole fold. Seen on this box 2026-09-20 against a cache from an hour before. */}
-                  {(win.behaviours ?? []).map((b) => (
-                    <div
-                      key={b}
-                      data-omc-usage-behaviour=""
-                      style={{ ...meta, display: "block", whiteSpace: "normal", color: T.text }}
-                    >
-                      {b}
-                    </div>
-                  ))}
-                  {win.groups
-                    .filter((g) => g.label !== "Skills")
-                    .map((g) => (
-                      <div key={g.label}>
-                        <div
-                          style={{
-                            ...meta,
-                            color: T.text,
-                            marginTop: 6,
-                            display: "block",
-                          }}
-                        >
-                          {g.label}
-                        </div>
-                        {g.drivers.map((d) => (
-                          <div
-                            key={d.name}
-                            style={{
-                              display: "grid",
-                              gridTemplateColumns: "1fr auto",
-                              columnGap: 12,
-                              alignItems: "baseline",
-                            }}
-                          >
-                            <span>{d.name}</span>
-                            <span style={{ fontVariantNumeric: "tabular-nums", color: T.faint }}>
-                              {d.pct}%
-                            </span>
-                          </div>
-                        ))}
+                    {(win.behaviours ?? []).map((b) => (
+                      <div
+                        key={b}
+                        data-omc-usage-behaviour=""
+                        style={{ ...meta, display: "block", whiteSpace: "normal", color: T.text }}
+                      >
+                        {b}
                       </div>
                     ))}
-                  <div data-omc-usage-drivers-window="" style={{ ...meta }}>
-                    {win.requests} requests · {win.sessions} sessions
-                  </div>
-                </>
-              );
-            })()}
-          </>
-        )}
-        <button
-          type="button"
-          data-omc-usage-drivers-refresh=""
-          aria-label="Read the usage drivers again"
-          style={{ ...btn, marginTop: 8 }}
-          disabled={driversBusy}
-          onClick={() => loadDrivers(true)}
-        >
-          {driversBusy ? "Reading…" : "Refresh"}
-        </button>
+                    {win.groups
+                      .filter((g) => g.label !== "Skills")
+                      .map((g) => (
+                        <div key={g.label}>
+                          <div
+                            style={{
+                              ...meta,
+                              color: T.text,
+                              marginTop: 6,
+                              display: "block",
+                            }}
+                          >
+                            {g.label}
+                          </div>
+                          {g.drivers.map((d) => (
+                            <div
+                              key={d.name}
+                              style={{
+                                display: "grid",
+                                gridTemplateColumns: "1fr auto",
+                                columnGap: 12,
+                                alignItems: "baseline",
+                              }}
+                            >
+                              <span>{d.name}</span>
+                              <span style={{ fontVariantNumeric: "tabular-nums", color: T.faint }}>
+                                {d.pct}%
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      ))}
+                    <div data-omc-usage-drivers-window="" style={{ ...meta }}>
+                      {win.requests} requests · {win.sessions} sessions
+                    </div>
+                  </>
+                );
+              })()}
+            </>
+          )}
+          <button
+            type="button"
+            data-omc-usage-drivers-refresh=""
+            aria-label="Read the usage drivers again"
+            style={{ ...btn, marginTop: 8 }}
+            disabled={driversBusy}
+            onClick={() => loadDrivers(true)}
+          >
+            {driversBusy ? "Reading…" : "Refresh"}
+          </button>
+        </div>
       </details>
     </div>
   );
@@ -1595,7 +1605,7 @@ function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCt
   // A session dsh reports no directory for has neither instructions nor settings to read.
   if (!cwd)
     return (
-      <span style={{ ...meta, padding: "4px 10px", color: error ? T.err : undefined }}>
+      <span style={{ ...meta, padding: "4px 0", color: error ? T.err : undefined }}>
         {error || "No instructions for this workspace."}
       </span>
     );
@@ -1604,7 +1614,7 @@ function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCt
   return (
     <div style={bodyFlow}>
       {file === null && files.length === 0 && (
-        <span style={{ ...meta, padding: "4px 10px" }}>No instructions for this workspace.</span>
+        <span style={{ ...meta, padding: "4px 0" }}>No instructions for this workspace.</span>
       )}
       {file === null ? (
         files.map((f) => (
@@ -1797,7 +1807,7 @@ function RewindBody({
       )}
       {picked === null ? (
         prompts.length === 0 ? (
-          <span style={{ ...meta, padding: "2px 4px" }}>No completed prompts yet</span>
+          <span style={{ ...meta, padding: "2px 0" }}>No completed prompts yet</span>
         ) : (
           prompts.map((p) => (
             <button
@@ -1829,15 +1839,15 @@ function RewindBody({
         )
       ) : (
         <>
-          <span style={{ fontSize: 13, padding: "2px 4px" }}>Rewind to: {picked.text}</span>
-          <span style={{ ...meta, padding: "2px 4px" }}>
+          <span style={{ fontSize: 13, padding: "2px 0" }}>Rewind to: {picked.text}</span>
+          <span style={{ ...meta, padding: "2px 0" }}>
             {busy && !preview ? "Checking…" : preview ? rewindSummary(preview) : ""}
           </span>
-          <span style={{ ...meta, padding: "2px 4px" }}>
+          <span style={{ ...meta, padding: "2px 0" }}>
             Files go back and Claude forgets everything after this prompt. This dsh transcript keeps
             showing what happened.
           </span>
-          <div style={{ display: "flex", gap: 8, padding: "2px 4px" }}>
+          <div style={{ display: "flex", gap: 8, padding: "2px 0" }}>
             <button type="button" style={btn} disabled={busy} onClick={() => setPicked(null)}>
               ‹ Back
             </button>
@@ -1853,7 +1863,7 @@ function RewindBody({
         </>
       )}
       {picked === null && prompts.length > 0 && (
-        <span style={{ ...meta, padding: "2px 4px", whiteSpace: "normal" }}>
+        <span style={{ ...meta, padding: "2px 0", whiteSpace: "normal" }}>
           {retentionNote(switches)} A prompt older than that is no longer here to rewind to.
         </span>
       )}
@@ -1957,14 +1967,14 @@ function ChangesBody({
     <div style={bodyFlow}>
       {/* Above the branches, not below them: Ask is pressed from the file list and from a file's own
           header, and a line appended after the list sits below the fold on any real diff. */}
-      {note !== "" && <span style={{ ...meta, padding: "2px 4px" }}>{note}</span>}
+      {note !== "" && <span style={{ ...meta, padding: "2px 0" }}>{note}</span>}
       {reply === null ? (
         <span style={stateText}>Loading…</span>
       ) : !reply.ok ? (
         <span style={errText}>{reply.error}</span>
       ) : current ? (
         <>
-          <div style={{ display: "flex", gap: 8, alignItems: "center", padding: "2px 4px" }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", padding: "2px 0" }}>
             <button
               type="button"
               style={btn}
@@ -1991,7 +2001,7 @@ function ChangesBody({
             </button>
           </div>
           {current.hunks.length === 0 ? (
-            <span style={{ ...meta, padding: "2px 4px" }}>
+            <span style={{ ...meta, padding: "2px 0" }}>
               {current.binary ? "Binary file" : current.untracked ? "Untracked file" : "No hunks"}
             </span>
           ) : (
@@ -1999,7 +2009,7 @@ function ChangesBody({
               <pre
                 key={i}
                 style={{
-                  margin: "2px 4px",
+                  margin: "2px 0",
                   padding: 6,
                   fontSize: 12,
                   lineHeight: "16px",
@@ -2029,7 +2039,7 @@ function ChangesBody({
         </>
       ) : (
         <>
-          <span style={{ ...meta, padding: "2px 4px" }}>
+          <span style={{ ...meta, padding: "2px 0" }}>
             {reply.filesCount === 0 ? (
               "Working tree clean"
             ) : (
@@ -2040,7 +2050,7 @@ function ChangesBody({
             )}
           </span>
           {reply.filesCount > 0 && (
-            <div style={{ display: "flex", gap: 8, padding: "2px 4px" }}>
+            <div style={{ display: "flex", gap: 8, padding: "2px 0" }}>
               <button
                 type="button"
                 style={btn}
@@ -2344,11 +2354,11 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
       ) : !reply.ok ? (
         <span style={errText}>{reply.error}</span>
       ) : servers.length === 0 && pendingRows.length === 0 ? (
-        <span style={{ ...meta, padding: "2px 4px" }}>No MCP servers</span>
+        <span style={{ ...meta, padding: "2px 0" }}>No MCP servers</span>
       ) : (
         servers.map((s) => (
           <div key={s.name}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 6px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0" }}>
               <span
                 aria-hidden="true"
                 style={{
@@ -2428,7 +2438,7 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
               // row adds what to do about it, beside rather than instead of that wording: the CLI
               // does set an error on these rows ("Please log in to your account"), so a fallback
               // would never render and the Log in button would stand unexplained.
-              <div style={{ padding: "0 6px 4px 22px", color: T.muted, fontSize: 12 }}>
+              <div style={{ padding: "0 0 4px 16px", color: T.muted, fontSize: 12 }}>
                 {s.error}
                 {s.status === "needs-auth" ? (
                   <div style={{ marginTop: 2 }}>
@@ -2440,14 +2450,14 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
               </div>
             ) : null}
             {s.tools && s.tools.length > 0 ? (
-              <div style={{ padding: "0 6px 4px 22px", color: T.muted, fontSize: 12 }}>
+              <div style={{ padding: "0 0 4px 16px", color: T.muted, fontSize: 12 }}>
                 {s.tools.join(" · ")}
               </div>
             ) : null}
             {/* When the override is set and the session would otherwise auto-allow, say what it
                 does. The CLI keeps it in state that dies with the process, so the note says so. */}
             {s.asking === true && !askIsInert && (
-              <div style={{ padding: "0 6px 4px 22px", color: T.muted, fontSize: 12 }}>
+              <div style={{ padding: "0 0 4px 16px", color: T.muted, fontSize: 12 }}>
                 Tools from this server ask, until this session's Claude restarts.
               </div>
             )}
@@ -2456,7 +2466,7 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
       )}
       {pendingRows.map((c) => (
         <div key={`configured:${c.name}`} data-omc-mcp-pending="">
-          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 6px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0" }}>
             <span
               aria-hidden="true"
               style={{ width: 8, height: 8, borderRadius: 4, flex: "none", background: T.faint }}
@@ -2488,11 +2498,11 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
         </div>
       ))}
       {askIsInert && servers.length > 0 && (
-        <span style={{ ...meta, padding: "2px 4px", marginTop: 8 }}>
+        <span style={{ ...meta, padding: "2px 0", marginTop: 8 }}>
           This session already asks before an MCP tool runs, so Always ask changes nothing yet.
         </span>
       )}
-      {note && <span style={{ ...meta, padding: "2px 4px", marginTop: 8 }}>{note}</span>}
+      {note && <span style={{ ...meta, padding: "2px 0", marginTop: 8 }}>{note}</span>}
     </div>
   );
 }
@@ -2561,15 +2571,13 @@ function SessionNotices() {
         : "Off. The tab title is marked while the page is hidden either way.";
   return (
     <>
-      <span style={{ ...meta, padding: "2px 4px", display: "block", marginTop: 8 }}>
-        Session notices
-      </span>
+      <span style={sectionHead}>Session notices</span>
       <div
         style={{
           display: "flex",
           alignItems: "center",
           gap: 8,
-          padding: "4px 10px",
+          padding: "4px 0",
           fontSize: 12,
           lineHeight: "1.5",
         }}
@@ -2603,7 +2611,7 @@ function ReadoutState({
 }) {
   if (!running)
     return (
-      <span style={{ ...meta, padding: "2px 4px", fontSize: 12 }}>
+      <span style={{ ...meta, padding: "2px 0", fontSize: 12 }}>
         Claude is not running for this session.
       </span>
     );
@@ -2623,7 +2631,7 @@ function useFold(total: number) {
     total > 8 ? (
       <button
         type="button"
-        style={{ ...btn, fontSize: 12, margin: "2px 10px" }}
+        style={{ ...btn, fontSize: 12, margin: "2px 0" }}
         onClick={() => setShown(allShown ? 8 : total)}
       >
         {allShown ? "Show fewer" : `Show all ${total}`}
@@ -2656,7 +2664,7 @@ function RulesList({ rules }: { rules: PermissionRules["rules"] }) {
             display: "flex",
             alignItems: "center",
             gap: 8,
-            padding: "3px 10px",
+            padding: "3px 0",
             fontSize: 12,
           }}
         >
@@ -2688,7 +2696,7 @@ function HooksList({ hooks }: { hooks: HooksListing["hooks"] }) {
             display: "flex",
             alignItems: "center",
             gap: 8,
-            padding: "3px 10px",
+            padding: "3px 0",
             fontSize: 12,
           }}
         >
@@ -2866,7 +2874,7 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
         data-omc-dsh-contract=""
         style={{
           ...meta,
-          padding: "2px 4px",
+          padding: "2px 0",
           display: "block",
           whiteSpace: "normal",
           color: missing.length > 0 ? T.warn : T.faint,
@@ -2888,11 +2896,11 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
         <>
           {data.session && (
             <>
-              <span style={{ ...meta, padding: "2px 4px", display: "block" }}>Session</span>
+              <span style={sectionHead}>Session</span>
               <div
                 data-omc-session-row=""
                 style={{
-                  padding: "4px 10px",
+                  padding: "4px 0",
                   fontSize: 12,
                   lineHeight: "1.5",
                   display: "flex",
@@ -2937,8 +2945,8 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
             </>
           )}
           {/* Runtime */}
-          <span style={{ ...meta, padding: "2px 4px", display: "block" }}>Runtime</span>
-          <div style={{ padding: "4px 10px", fontSize: 12, lineHeight: "1.5" }}>
+          <span style={sectionHead}>Runtime</span>
+          <div style={{ padding: "4px 0", fontSize: 12, lineHeight: "1.5" }}>
             <div>
               Binary:{" "}
               <span style={{ fontFamily: T.mono }}>{data.runtime.binary || "(not found)"}</span>
@@ -2972,19 +2980,18 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
           </div>
 
           {/* Config files */}
-          <span style={{ ...meta, padding: "2px 4px", display: "block", marginTop: 8 }}>
-            Config files
-          </span>
+          <span style={sectionHead}>Config files</span>
           {data.configFiles.length === 0 ? (
-            <span style={{ ...meta, padding: "2px 4px", fontSize: 12 }}>No config files</span>
+            <span style={{ ...meta, padding: "2px 0", fontSize: 12 }}>No config files</span>
           ) : (
             data.configFiles.map((f) => (
               <div
                 key={f.scope}
                 style={{
-                  padding: "4px 10px",
+                  ...nested,
+                  padding: "4px 0 4px 12px",
                   fontSize: 12,
-                  borderLeft: f.parseError ? `2px solid ${T.err}` : "2px solid transparent",
+                  borderLeftColor: f.parseError ? T.err : T.border,
                   color: f.parseError ? T.err : undefined,
                 }}
               >
@@ -2999,13 +3006,11 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
           <SessionNotices />
 
           {/* The three settings that switch a tab off underneath it */}
-          <span style={{ ...meta, padding: "2px 4px", display: "block", marginTop: 8 }}>
-            Feature switches
-          </span>
+          <span style={sectionHead}>Feature switches</span>
           {switches === null ? (
             <span style={stateText}>Loading…</span>
           ) : (
-            <div style={{ padding: "4px 10px", fontSize: 12, lineHeight: "1.5" }}>
+            <div style={{ padding: "4px 0", fontSize: 12, lineHeight: "1.5" }}>
               <div>
                 Transcript retention: {switches.retention.days} days
                 {switches.retention.scope === null
@@ -3045,11 +3050,9 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
           )}
 
           {/* MCP servers that did not come up */}
-          <span style={{ ...meta, padding: "2px 4px", display: "block", marginTop: 8 }}>
-            MCP servers
-          </span>
+          <span style={sectionHead}>MCP servers</span>
           {!running ? (
-            <span style={{ ...meta, padding: "2px 4px", fontSize: 12 }}>
+            <span style={{ ...meta, padding: "2px 0", fontSize: 12 }}>
               Claude is not running for this session.
             </span>
           ) : mcp === null ? (
@@ -3057,7 +3060,7 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
           ) : !mcp.ok ? (
             <span style={errText}>{mcp.error}</span>
           ) : mcp.servers.every((s) => s.status === "connected") ? (
-            <span style={{ ...meta, padding: "2px 4px", fontSize: 12 }}>
+            <span style={{ ...meta, padding: "2px 0", fontSize: 12 }}>
               {mcp.servers.length === 0 ? "No MCP servers" : "All connected"}
             </span>
           ) : (
@@ -3070,7 +3073,7 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
                     display: "flex",
                     alignItems: "baseline",
                     gap: 8,
-                    padding: "4px 10px",
+                    padding: "4px 0",
                     fontSize: 12,
                   }}
                 >
@@ -3094,20 +3097,18 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
           )}
 
           {/* Calls a permission rule refused. The frame names the call, never the rule. */}
-          <span style={{ ...meta, padding: "2px 4px", display: "block", marginTop: 8 }}>
-            Refused calls
-          </span>
+          <span style={sectionHead}>Refused calls</span>
           {auditError ? (
             <span style={errText}>{auditError}</span>
           ) : audit === null ? (
             <span style={stateText}>Loading…</span>
           ) : audit.length === 0 ? (
-            <span style={{ ...meta, padding: "2px 4px", fontSize: 12 }}>
+            <span style={{ ...meta, padding: "2px 0", fontSize: 12 }}>
               No calls were refused in the turns kept for this session.
             </span>
           ) : (
             audit.map((t) => (
-              <div key={t.at} style={{ padding: "4px 10px", fontSize: 12 }}>
+              <div key={t.at} style={{ padding: "4px 0", fontSize: 12 }}>
                 <div style={meta}>{ago(t.at)}</div>
                 {t.denials?.map((label) => (
                   <div key={label} style={{ fontFamily: T.mono, fontSize: 11 }}>
@@ -3122,7 +3123,7 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
               the CLI owns them. Headings paint whether or not the read lands, so a failed one
               says which section is missing rather than leaving a bare error line. */}
           <div data-omc-permission-rules="">
-            <span style={{ ...meta, padding: "2px 4px", display: "block", marginTop: 8 }}>
+            <span style={sectionHead}>
               Permission rules
               {permissions?.ok && ` · ${permissions.rules.length}`}
               {permissions?.ok && permissions.managedOnly && (
@@ -3132,14 +3133,14 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
             <ReadoutState running={running} error={permissionsError} reply={permissions} />
             {permissions?.ok &&
               (permissions.rules.length === 0 ? (
-                <span style={{ ...meta, padding: "2px 4px", fontSize: 12 }}>
+                <span style={{ ...meta, padding: "2px 0", fontSize: 12 }}>
                   This session loaded no permission rules.
                 </span>
               ) : (
                 <>
                   <RulesList rules={permissions.rules} />
                   {permissions.directories.length > 0 && (
-                    <span style={{ ...meta, padding: "2px 4px", fontSize: 12 }}>
+                    <span style={{ ...meta, padding: "2px 0", fontSize: 12 }}>
                       {permissions.directories.length}{" "}
                       {permissions.directories.length === 1
                         ? "workspace directory"
@@ -3152,14 +3153,14 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
               ))}
           </div>
           <div data-omc-hooks="">
-            <span style={{ ...meta, padding: "2px 4px", display: "block", marginTop: 8 }}>
+            <span style={sectionHead}>
               Hooks
               {permissions?.ok && ` · ${permissions.hooks.length}`}
             </span>
             <ReadoutState running={running} error={permissionsError} reply={permissions} />
             {permissions?.ok &&
               (permissions.hooks.length === 0 ? (
-                <span style={{ ...meta, padding: "2px 4px", fontSize: 12 }}>
+                <span style={{ ...meta, padding: "2px 0", fontSize: 12 }}>
                   This session loaded no hooks.
                 </span>
               ) : (
@@ -3168,7 +3169,7 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
           </div>
 
           {/* Doctor button */}
-          <div style={{ padding: "6px 10px", marginTop: 8, borderTop: `1px solid ${T.border}` }}>
+          <div style={{ padding: "6px 0", marginTop: 8, borderTop: `1px solid ${T.border}` }}>
             <button
               type="button"
               style={doctorOutput ? btn : btnPrimary}
@@ -3198,10 +3199,8 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
               </pre>
             )}
           </div>
-          <span style={{ ...meta, padding: "2px 4px", display: "block", marginTop: 8 }}>
-            Report a problem
-          </span>
-          <div style={{ padding: "4px 10px" }}>
+          <span style={sectionHead}>Report a problem</span>
+          <div style={{ padding: "4px 0" }}>
             <ReportBlock sessionId={sessionId} provider={doctorProvider} />
           </div>
         </>
@@ -3259,7 +3258,7 @@ function DshGoalRow({ goal }: { goal: DshGoal }) {
   return (
     <div
       data-omc-dsh-goal={goal.phase}
-      style={{ padding: "4px 10px", fontSize: 12, lineHeight: "1.5" }}
+      style={{ padding: "4px 0", fontSize: 12, lineHeight: "1.5" }}
     >
       <div>
         <span style={{ color: goal.phase === "blocked" ? T.err : T.muted }}>
@@ -3286,8 +3285,8 @@ interface ScheduledTasksError {
 /** One scheduled task, the same row whether it survives a restart or not. */
 function TaskRow({ task }: { task: Task }) {
   return (
-    <div style={{ padding: "4px 10px", fontSize: 12, borderLeft: `2px solid ${T.border}` }}>
-      <div style={{ fontWeight: "bold" }}>{task.name}</div>
+    <div style={{ ...nested, padding: "4px 0 4px 12px", fontSize: 12, lineHeight: "1.5" }}>
+      <div style={{ fontWeight: 600 }}>{task.name}</div>
       {task.description ? <div style={{ ...meta, fontSize: 11 }}>{task.description}</div> : null}
       {task.schedule ? (
         <div style={{ ...meta, fontSize: 11 }}>Schedule: {task.schedule}</div>
@@ -3316,7 +3315,7 @@ function PastGoalRow({ goal }: { goal: DshGoal }) {
           alignItems: "center",
           gap: 6,
           width: "100%",
-          padding: "3px 10px",
+          padding: "3px 0",
           background: "none",
           border: "none",
           font: "inherit",
@@ -3344,7 +3343,7 @@ function PastGoalRow({ goal }: { goal: DshGoal }) {
         <span style={{ ...meta, flex: "0 0 auto" }}>{ago(goal.updatedAt)}</span>
       </button>
       {open ? (
-        <div style={{ padding: "0 10px 4px 24px", fontSize: 12, lineHeight: "1.5" }}>
+        <div style={{ ...nested, margin: "0 0 4px 3px", fontSize: 12, lineHeight: "1.5" }}>
           <div style={{ whiteSpace: "normal" }}>{goal.objective}</div>
           <div style={{ ...meta, fontSize: 11 }}>
             {goal.maxGoalRounds === undefined
@@ -3406,18 +3405,16 @@ function TasksBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
               No goals or scheduled tasks in this session.
             </span>
           ) : null}
-          {dshGoals.length > 0 ? (
-            <span style={{ ...meta, padding: "2px 4px", display: "block" }}>dsh goal</span>
-          ) : null}
+          {dshGoals.length > 0 ? <span style={sectionHead}>dsh goal</span> : null}
           {current ? (
             <DshGoalRow goal={current} />
           ) : dshGoals.length > 0 ? (
-            <div style={{ ...meta, padding: "4px 10px", fontSize: 12 }}>
+            <div style={{ ...meta, padding: "4px 0", fontSize: 12 }}>
               No goal running; the last one ended.
             </div>
           ) : null}
           {past.length > 0 ? (
-            <div data-omc-dsh-goals-past="" style={{ padding: "0 4px" }}>
+            <div data-omc-dsh-goals-past="">
               <button
                 type="button"
                 aria-expanded={pastOpen}
@@ -3425,7 +3422,7 @@ function TasksBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
                 style={{
                   background: "none",
                   border: "none",
-                  padding: "2px 6px",
+                  padding: "2px 0",
                   font: "inherit",
                   fontSize: 12,
                   color: T.muted,
@@ -3443,12 +3440,10 @@ function TasksBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
           {/* The CLI's own /goal: rarely set from dsh, so the section only appears when it is. */}
           {data.goal ? (
             <>
-              <span style={{ ...meta, padding: "2px 4px", display: "block", marginTop: 8 }}>
-                Claude Code goal
-              </span>
+              <span style={sectionHead}>Claude Code goal</span>
               <div
                 data-omc-cli-goal=""
-                style={{ padding: "4px 10px", fontSize: 12, lineHeight: "1.5" }}
+                style={{ padding: "4px 0", fontSize: 12, lineHeight: "1.5" }}
               >
                 <div style={{ marginBottom: 4 }}>{data.goal.text}</div>
                 <div style={{ ...meta, fontSize: 11 }}>Proposed {ago(data.goal.at)}</div>
@@ -3459,13 +3454,11 @@ function TasksBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
           {/* Like the CLI goal, the tasks only take room when there are some. */}
           {data.durable.length > 0 ? (
             <>
-              <span style={{ ...meta, padding: "2px 4px", display: "block", marginTop: 8 }}>
-                Durable tasks
-              </span>
+              <span style={sectionHead}>Durable tasks</span>
               {data.durable.map((t) => (
                 <TaskRow key={t.name} task={t} />
               ))}
-              <div style={{ ...meta, padding: "2px 10px", fontSize: 11, fontFamily: T.mono }}>
+              <div style={{ ...meta, padding: "2px 0", fontSize: 11, fontFamily: T.mono }}>
                 {data.path}
               </div>
             </>
@@ -3473,7 +3466,7 @@ function TasksBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
 
           {data.session.length > 0 ? (
             <>
-              <span style={{ ...meta, padding: "2px 4px", display: "block", marginTop: 8 }}>
+              <span style={sectionHead}>
                 Session-only, reconstructed from this session's transcript; these die when Claude
                 exits.
               </span>
@@ -3507,6 +3500,16 @@ const CONNECTORS: readonly { label: string; name: string; transport: string; url
     url: "https://mcp.hubspot.com/anthropic",
   },
 ];
+
+/** A full-width field of the add form, in the settings field look the rest of the panel uses. */
+const MCP_FIELD: CSSProperties = { ...inputStyle, flex: "none", width: "100%", marginBottom: 4 };
+/** The form's multi-line fields: the same box, two lines tall, padded on every side. */
+const MCP_AREA: CSSProperties = {
+  ...MCP_FIELD,
+  height: 56,
+  padding: "6px 12px",
+  resize: "vertical",
+};
 
 /** The Add form under the server list: name, where it goes, and the fields its transport needs. */
 function McpAddForm({
@@ -3579,14 +3582,14 @@ function McpAddForm({
   };
 
   return (
-    <div style={{ padding: "6px", marginTop: 8, border: `1px solid ${T.border}`, borderRadius: 4 }}>
+    <div style={{ padding: 8, marginTop: 8, border: `1px solid ${T.border}`, borderRadius: 8 }}>
       <select
         data-omc-mcp-connector=""
         aria-label="Connector"
         value={connector}
         onChange={(e) => fillFromConnector(e.currentTarget.value)}
         disabled={busy}
-        style={{ width: "100%", padding: 4, fontSize: 12, marginBottom: 8 }}
+        style={{ ...select, width: "100%", maxWidth: "none", marginBottom: 8 }}
       >
         <option value="">Common connector…</option>
         {CONNECTORS.map((c) => (
@@ -3606,7 +3609,7 @@ function McpAddForm({
           disabled={busy}
           // minWidth:0 lets the input shrink below its content so the two selects stay on the row
           // instead of overflowing the panel's narrow column; flexWrap drops them under it when tight.
-          style={{ flex: 1, minWidth: 120, padding: 4, fontSize: 12 }}
+          style={{ ...inputStyle, minWidth: 120 }}
         />
         <select
           data-omc-mcp-scope=""
@@ -3614,7 +3617,7 @@ function McpAddForm({
           value={scope}
           onChange={(e) => setScope(e.currentTarget.value)}
           disabled={busy}
-          style={{ padding: 4, fontSize: 12 }}
+          style={select}
         >
           <option value="local">Local</option>
           <option value="user">User</option>
@@ -3626,7 +3629,7 @@ function McpAddForm({
           value={transport}
           onChange={(e) => setTransport(e.currentTarget.value)}
           disabled={busy}
-          style={{ padding: 4, fontSize: 12 }}
+          style={select}
         >
           <option value="stdio">Stdio</option>
           <option value="sse">SSE</option>
@@ -3643,7 +3646,7 @@ function McpAddForm({
             value={command}
             onChange={(e) => setCommand(e.currentTarget.value)}
             disabled={busy}
-            style={{ width: "100%", padding: 4, fontSize: 12, marginBottom: 4 }}
+            style={MCP_FIELD}
           />
           <textarea
             data-omc-mcp-add-args=""
@@ -3652,7 +3655,7 @@ function McpAddForm({
             value={args}
             onChange={(e) => setArgs(e.currentTarget.value)}
             disabled={busy}
-            style={{ width: "100%", height: 50, padding: 4, fontSize: 12, marginBottom: 4 }}
+            style={MCP_AREA}
           />
           <textarea
             data-omc-mcp-env=""
@@ -3661,7 +3664,7 @@ function McpAddForm({
             value={env}
             onChange={(e) => setEnv(e.currentTarget.value)}
             disabled={busy}
-            style={{ width: "100%", height: 50, padding: 4, fontSize: 12, marginBottom: 4 }}
+            style={MCP_AREA}
           />
         </>
       ) : (
@@ -3674,7 +3677,7 @@ function McpAddForm({
             value={url}
             onChange={(e) => setUrl(e.currentTarget.value)}
             disabled={busy}
-            style={{ width: "100%", padding: 4, fontSize: 12, marginBottom: 4 }}
+            style={MCP_FIELD}
           />
           <textarea
             data-omc-mcp-headers=""
@@ -3683,7 +3686,7 @@ function McpAddForm({
             value={headers}
             onChange={(e) => setHeaders(e.currentTarget.value)}
             disabled={busy}
-            style={{ width: "100%", height: 50, padding: 4, fontSize: 12, marginBottom: 4 }}
+            style={MCP_AREA}
           />
         </>
       )}
@@ -4215,9 +4218,9 @@ function AsidesBody({ sessionId }: { sessionId: string }) {
   if (items === null) return <span style={stateText}>Loading…</span>;
   if (items.length === 0) {
     return (
-      <div style={{ ...meta, padding: "4px 10px", fontSize: 12, whiteSpace: "normal" }}>
-        No asides in this session. Ask one with <code style={code}>/btw</code>. The answer docks
-        above the composer instead of joining the transcript, and lands here.
+      <div style={{ ...meta, paddingBottom: 4, fontSize: 12, whiteSpace: "normal" }}>
+        No asides in this session. Ask one with <code style={codeInline}>/btw</code>. The answer
+        docks above the composer instead of joining the transcript, and lands here.
       </div>
     );
   }
@@ -4243,7 +4246,7 @@ function AsidesBody({ sessionId }: { sessionId: string }) {
           key={it.id}
           open={i === 0}
           style={{
-            padding: "6px 10px",
+            padding: "6px 0",
             fontSize: 12,
             lineHeight: "1.5",
             borderTop: i === 0 ? "none" : `1px solid ${T.border}`,
@@ -4292,7 +4295,8 @@ function AsidesBody({ sessionId }: { sessionId: string }) {
           </summary>
           <div
             style={{
-              marginTop: 4,
+              ...nested,
+              margin: "4px 0 0 3px",
               maxHeight: "40vh",
               overflow: "auto",
               whiteSpace: "pre-wrap",
@@ -4397,7 +4401,11 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
     const frame = requestAnimationFrame(() => setShown(true));
     return () => cancelAnimationFrame(frame);
   }, [open]);
-  const close = useCallback(() => {
+  // False when an outside click closed the panel: that click already moved focus where the person
+  // wanted it, and pulling it back to the trigger lit up the trigger's tooltip.
+  const refocus = useRef(true);
+  const close = useCallback((how?: "pointer" | "key") => {
+    refocus.current = how !== "pointer";
     setShown(false);
     closeTimer.current = setTimeout(() => setOpen(false), easeMs());
   }, []);
@@ -4414,14 +4422,16 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
 
   // On open, move focus onto the selected tab so a keyboard user lands inside the panel instead of
   // on the trigger behind the portal; on close, hand focus back to whatever held it first. No trap:
-  // the panel is not modal and the page around it stays usable.
+  // the panel is not modal and the page around it stays usable. An outside click is the exception:
+  // focus stays where that click put it.
   useEffect(() => {
     if (!open) return;
     // Record the focused element before focus moves, so close can return it.
     const before = document.activeElement;
     document.getElementById(`omc-tab-${tab}`)?.focus();
     return () => {
-      if (before instanceof HTMLElement && document.contains(before)) before.focus();
+      if (refocus.current && before instanceof HTMLElement && document.contains(before))
+        before.focus();
     };
   }, [open]);
 
@@ -4467,10 +4477,17 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
       };
   // In the card the panel only fades: `useFitAbove` measures the element's bottom
   // on mount, and a 6 px rise still applied at that moment would size it 6 px too tall.
+  // The panel's own type base, so text a tab leaves unsized inherits 13 px on a 1.5 line instead
+  // of dsh's 16/26 body, which spread every wrapped note in the panel over 26 px lines.
   Object.assign(panelStyle, {
+    fontSize: 13,
+    lineHeight: 1.5,
     display: "flex",
     flexDirection: "column",
     overflow: "hidden",
+    // A wheel that reaches the panel's end, or lands on its tab strip, stays here instead of
+    // scrolling the chat behind it.
+    overscrollBehavior: "contain",
     opacity: shown ? 1 : 0,
     transform: shown || card ? "none" : "translateY(6px)",
     transition: `opacity ${easeMs()}ms ease, transform ${easeMs()}ms ease`,
@@ -4629,7 +4646,10 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
                 flex: "1 1 auto",
                 minHeight: 0,
                 overflow: "auto",
-                padding: "4px 0",
+                overscrollBehavior: "contain",
+                // The panel's one inset, top and bottom as well as the sides: every tab's first row, cards and
+                // headings line up on it.
+                padding: PANEL_INSET,
                 width: card || narrow ? undefined : 0,
                 minWidth: card || narrow ? undefined : "100%",
               }}
@@ -4684,8 +4704,11 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
                 display: "flex",
                 flex: "0 0 auto",
                 borderTop: `1px solid color-mix(in srgb, ${PANEL_ACCENT} 18%, ${T.border})`,
+                // On the body's inset, rule included: dsh's own tab strips (the plugin settings
+                // page) keep their underline inside the content column, not edge to edge.
+                marginInline: PANEL_INSET,
                 paddingTop: 4,
-                gap: 2,
+                gap: narrow ? 0 : 2,
                 // Wrap rather than scroll sideways: a strip that scrolls hides the tab that did not
                 // fit, and the panel is anchored to its bottom edge, so a second row grows upward.
                 flexWrap: "wrap",
@@ -4706,7 +4729,13 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
                   // The strip sits under the body, so the lit edge is the mirror of a top tab bar:
                   // accent along the bottom, corners rounded on that side only, no box around each
                   // tab (nine bordered boxes read as buttons, not as tabs). Hover is in the sheet.
-                  style={tabStyle(tab === t.key)}
+                  // 8 px sides on a phone: the strip's inset would otherwise push the last tab
+                  // onto a fourth row at 390 px.
+                  style={
+                    narrow
+                      ? { ...tabStyle(tab === t.key), paddingInline: 8 }
+                      : tabStyle(tab === t.key)
+                  }
                   onClick={() => {
                     lastTab = t.key;
                     setTab(t.key);
