@@ -262,10 +262,12 @@ const readHints = (): Promise<Record<string, boolean | number> | null> =>
   (hintsCache ??= fetch(`${ROUTE}/hints`)
     .then((r) => readJson<Record<string, boolean | number>>(r))
     .catch(() => null));
-/** Mark a hint seen: POST it to the box, and replace this tab's cached hints with that one key so
- *  the next read here sees it without a refetch. A failed POST is ignored. */
+/** Mark a hint seen: POST it to the box, and add it to this tab's cached hints so the next read here
+ *  sees it without a refetch. It is added, not swapped in: replacing the cache with the one key
+ *  used to drop every other hint the tab had read, so a second mark brought the first one back. A
+ *  failed POST is ignored. */
 const markHint = (key: string): void => {
-  hintsCache = Promise.resolve({ [key]: true });
+  hintsCache = (hintsCache ?? Promise.resolve(null)).then((h) => ({ ...h, [key]: true }));
   void fetch(`${ROUTE}/hints`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -4334,6 +4336,25 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
   ).length;
   const [seenRestore, setSeenRestore] = useState(false);
   const [pulse, setPulse] = useState(false);
+  // A first-run pointer at the spark, for a box that has never used the plugin. The box counts as
+  // used once either hint is set, so nobody upgrading sees it: the restore pulse has fired on every
+  // box that has had a transcript to restore. Declared before the pulse effect below, so both read
+  // the hints as they stood on load, before the pulse marks its own.
+  const [tip, setTip] = useState(false);
+  useEffect(() => {
+    let live = true;
+    void readHints().then((h) => {
+      if (live && h !== null && !h.sparkTip && !h.restorePulse) setTip(true);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+  const dropTip = () => {
+    if (!tip) return;
+    setTip(false);
+    markHint("sparkTip");
+  };
   useEffect(() => {
     if (restorable === 0 || entry?.blank === false) return;
     let live = true;
@@ -4512,6 +4533,7 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
               return;
             }
             setSeenRestore(true);
+            dropTip();
             setTab(
               blank && restorable > 0
                 ? "Restore"
@@ -4545,6 +4567,46 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
           )}
         </button>
       </Tooltip>
+      {tip && !open && (
+        <span
+          data-omc-spark-tip=""
+          // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a live notice, not a form result, which is what <output> is for
+          role="status"
+          style={{
+            position: "absolute",
+            bottom: "calc(100% + 8px)",
+            left: 0,
+            zIndex: 100,
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "6px 8px 6px 10px",
+            borderRadius: 10,
+            whiteSpace: "nowrap",
+            fontSize: 12,
+            color: T.text,
+            background: `var(--dsw-specific-menu, ${T.card})`,
+            boxShadow: `var(--dsw-elevation-prominent, 0 10px 28px rgba(0,0,0,.26))`,
+          }}
+        >
+          Memory, skills, rewind and more live here
+          <button
+            type="button"
+            aria-label="Dismiss"
+            title="Dismiss"
+            onClick={dropTip}
+            style={{
+              background: "none",
+              border: "none",
+              padding: "0 2px",
+              cursor: "pointer",
+              color: T.faint,
+            }}
+          >
+            ×
+          </button>
+        </span>
+      )}
       {open &&
         portal(
           card,
