@@ -78,6 +78,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- Adding your first ssh box in Settings now switches Add workspace over to the box picker straight
+  away. The picker read the box list once when the page loaded, so a box added afterwards did not
+  show up until the tab was refreshed. It now rereads the list when Settings saves it, and when the
+  tab comes back into view.
 - The terminal mirror no longer replays exchanges it already showed after dsh restarts. Two saves
   of where it had read up to could land at once, and the older one could win, so the next start
   read from an earlier point and posted those exchanges into the session again. Saves now run one

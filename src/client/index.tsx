@@ -84,7 +84,7 @@ import { ChangelogBlock } from "./changelog.js";
 import { Spark, sparkNode } from "./spark.js";
 import { AccessShield, OhMyClaudeControl } from "./panel.js";
 import { ConfirmButton } from "./tune.js";
-import { AddWorkspaceFlow, canBrowseDirs, OPEN_EVENT, RW_EVENT } from "./picker.js";
+import { AddWorkspaceFlow, BOXES_EVENT, canBrowseDirs, OPEN_EVENT, RW_EVENT } from "./picker.js";
 import { takeDraft, subscribeDraft, noteDraft, draftPending } from "./draft.js";
 import {
   awaitingBody,
@@ -2113,7 +2113,10 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
       body: JSON.stringify({ boxes: next }),
     })
       .then((r) => readJson<{ boxes?: SshBoxData[] }>(r))
-      .then((b) => setSsh(b.boxes ?? []))
+      .then((b) => {
+        setSsh(b.boxes ?? []);
+        window.dispatchEvent(new Event(BOXES_EVENT));
+      })
       .catch((e: Error) => setError(e.message))
       .finally(() => setBusy(false));
   };
