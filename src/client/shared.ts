@@ -140,12 +140,34 @@ export const meta: CSSProperties = { color: T.faint, fontSize: 12, whiteSpace: "
 export const errText: CSSProperties = {
   color: T.err,
   fontSize: 12,
-  padding: "2px 4px",
+  padding: "2px 0",
   whiteSpace: "normal",
   wordBreak: "break-word",
 };
-/** One voice for "Loading…" and empty states: the meta colour, the same inset as a row. */
-export const stateText: CSSProperties = { ...meta, padding: "2px 4px", whiteSpace: "normal" };
+/** One voice for "Loading…" and empty states: the meta colour, flush with the panel's inset. */
+export const stateText: CSSProperties = { ...meta, padding: "2px 0", whiteSpace: "normal" };
+/**
+ * The panel's one horizontal inset, applied once by the tab body and the tab strip: every row,
+ * card, search field and heading lines up on it instead of carrying its own side padding. 10 px
+ * inside the panel's 4 px padding is where dsh's slash menu starts its rows and group labels, and
+ * the plugin panel stands in that menu's place.
+ */
+export const PANEL_INSET = 10;
+/** A section label inside a tab: dsh's menu group label (12 px, weight 500, the secondary label
+ *  colour, 6 px above), so every tab titles its sections the same way. */
+export const sectionHead: CSSProperties = {
+  display: "block",
+  margin: 0,
+  padding: "8px 0 2px",
+  fontSize: 12,
+  fontWeight: 500,
+  lineHeight: "18px",
+  color: T.muted,
+  whiteSpace: "normal",
+};
+/** What belongs to the row or fold above it, set in behind a thin rule: the Settings look for the
+ *  update options, shared so a nested group reads the same wherever it opens. */
+export const nested: CSSProperties = { paddingLeft: 12, borderLeft: `1px solid ${T.border}` };
 
 /** Markers on the panel and the dock, so a check or a style can find them without a class name. */
 export const PANEL_ATTR = "data-omc-panel";
