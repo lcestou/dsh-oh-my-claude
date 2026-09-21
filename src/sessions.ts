@@ -3218,7 +3218,11 @@ export function registerSessionRoutes(
                     encoding: "utf8",
                     mode: 0o600,
                   });
-                  await chmod(boxesPath, 0o600).catch(() => {});
+                  // Logged, not swallowed: if the chmod fails the token stays readable, and a
+                  // hardening step that quietly does nothing is worse than one that says so.
+                  await chmod(boxesPath, 0o600).catch((e: unknown) =>
+                    log("warn", `boxes file left readable by others: ${errorText(e)}`),
+                  );
                   return json(res, 200, { boxes: v.boxes });
                 }
               }
