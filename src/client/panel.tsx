@@ -3299,6 +3299,67 @@ function TaskRow({ task }: { task: Task }) {
   );
 }
 
+/** An earlier dsh goal as one line (phase, objective cut to fit, age) that opens on a click to
+ *  the full row, so a session with many past goals stays a short list. */
+function PastGoalRow({ goal }: { goal: DshGoal }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div data-omc-dsh-goal-past={goal.phase}>
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          width: "100%",
+          padding: "3px 10px",
+          background: "none",
+          border: "none",
+          font: "inherit",
+          fontSize: 12,
+          color: "inherit",
+          textAlign: "left",
+          cursor: "pointer",
+        }}
+      >
+        <span style={{ color: T.faint, flex: "0 0 auto" }}>{open ? "▾" : "▸"}</span>
+        <span style={{ color: goal.phase === "blocked" ? T.err : T.muted, flex: "0 0 auto" }}>
+          {PHASE.get(goal.phase) ?? goal.phase}
+        </span>
+        <span
+          style={{
+            flex: "1 1 auto",
+            minWidth: 0,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {goal.objective}
+        </span>
+        <span style={{ ...meta, flex: "0 0 auto" }}>{ago(goal.updatedAt)}</span>
+      </button>
+      {open ? (
+        <div style={{ padding: "0 10px 4px 24px", fontSize: 12, lineHeight: "1.5" }}>
+          <div style={{ whiteSpace: "normal" }}>{goal.objective}</div>
+          <div style={{ ...meta, fontSize: 11 }}>
+            {goal.maxGoalRounds === undefined
+              ? `${goal.roundsStarted} rounds`
+              : `${goal.roundsStarted} of ${goal.maxGoalRounds} rounds`}
+          </div>
+          {goal.blockedReason ? (
+            <div style={{ color: T.err, fontSize: 11, whiteSpace: "normal" }}>
+              {goal.blockedReason}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 /** Both goals and the scheduled tasks: dsh's goal and its past ones from dsh's own log, the goal
  *  the CLI is holding from its transcript, then the tasks. Read-only; dsh's goal is changed from
  *  dsh's own controls. */
@@ -3363,7 +3424,7 @@ function TasksBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
                 {`${pastOpen ? "▾" : "▸"}\u00a0Past goals`}
                 <span style={meta}> · {past.length}</span>
               </button>
-              {pastOpen && past.map((g) => <DshGoalRow key={g.id} goal={g} />)}
+              {pastOpen && past.map((g) => <PastGoalRow key={g.id} goal={g} />)}
             </div>
           ) : null}
 
