@@ -44,6 +44,7 @@ import {
   type SkillState,
   type UsageBreakdownReply,
 } from "./shared.js";
+import { checkContract, contractMisses, contractSummary } from "./contract.js";
 import { UpdatePill } from "./update-pill.js";
 import { ReportBlock } from "./report.js";
 import { Tooltip, useAnchoredMaxHeight } from "@deepseek-ai/dsh-client-ui-primitives";
@@ -2775,8 +2776,32 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
   };
 
   if (!cwd) return null;
+  // What this plugin assumes about dsh's own markup, checked against the page as it stands. Every
+  // dsh upgrade that has broken this plugin did it silently: a selector matched nothing and a
+  // feature stopped without a word. This turns that into a line worth reading after an upgrade.
+  // It takes no "is a conversation open" flag: the panel's nearest answer is which session is
+  // open, which is true of a new session that renders none of this markup yet.
+  const contract = checkContract(document);
+  const missing = contractMisses(contract);
   return (
     <div style={bodyFlow}>
+      <div
+        data-omc-dsh-contract=""
+        style={{
+          ...meta,
+          padding: "2px 4px",
+          display: "block",
+          whiteSpace: "normal",
+          color: missing.length > 0 ? T.warn : T.faint,
+        }}
+      >
+        {contractSummary(contract)}
+        {missing.map((m) => (
+          <div key={m.id} data-omc-dsh-contract-miss={m.id}>
+            {m.id} — {m.breaks}
+          </div>
+        ))}
+      </div>
       {data === null ? (
         <span style={stateText}>Loading…</span>
       ) : !data.ok ? (
