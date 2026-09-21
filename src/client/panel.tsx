@@ -3281,8 +3281,8 @@ interface ScheduledTasksError {
 /** One scheduled task, the same row whether it survives a restart or not. */
 function TaskRow({ task }: { task: Task }) {
   return (
-    <div style={{ ...nested, padding: "4px 0 4px 12px", fontSize: 12 }}>
-      <div style={{ fontWeight: "bold" }}>{task.name}</div>
+    <div style={{ ...nested, padding: "4px 0 4px 12px", fontSize: 12, lineHeight: "1.5" }}>
+      <div style={{ fontWeight: 600 }}>{task.name}</div>
       {task.description ? <div style={{ ...meta, fontSize: 11 }}>{task.description}</div> : null}
       {task.schedule ? (
         <div style={{ ...meta, fontSize: 11 }}>Schedule: {task.schedule}</div>
@@ -3418,7 +3418,7 @@ function TasksBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
                 style={{
                   background: "none",
                   border: "none",
-                  padding: "2px 6px",
+                  padding: "2px 0",
                   font: "inherit",
                   fontSize: 12,
                   color: T.muted,
@@ -4467,7 +4467,11 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
       };
   // In the card the panel only fades: `useFitAbove` measures the element's bottom
   // on mount, and a 6 px rise still applied at that moment would size it 6 px too tall.
+  // The panel's own type base, so text a tab leaves unsized inherits 13 px on a 1.5 line instead
+  // of dsh's 16/26 body, which spread every wrapped note in the panel over 26 px lines.
   Object.assign(panelStyle, {
+    fontSize: 13,
+    lineHeight: 1.5,
     display: "flex",
     flexDirection: "column",
     overflow: "hidden",
