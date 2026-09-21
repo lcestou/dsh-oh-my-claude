@@ -3360,9 +3360,9 @@ function PastGoalRow({ goal }: { goal: DshGoal }) {
   );
 }
 
-/** Both goals and the scheduled tasks: dsh's goal and its past ones from dsh's own log, the goal
- *  the CLI is holding from its transcript when it holds one, then the tasks. Read-only; dsh's goal is changed from
- *  dsh's own controls. */
+/** Both goals and the scheduled tasks, each section only when it has something: dsh's goal and its
+ *  past ones from dsh's own log, the CLI's goal from its transcript, then the tasks. Read-only;
+ *  dsh's goal is changed from dsh's own controls. With nothing at all, one line says so. */
 function TasksBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   const [data, setData] = useState<ScheduledTasksReply | ScheduledTasksError | null>(null);
   const [pastOpen, setPastOpen] = useState(false);
@@ -3396,14 +3396,24 @@ function TasksBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
         <span style={errText}>{data.error}</span>
       ) : (
         <>
-          <span style={{ ...meta, padding: "2px 4px", display: "block" }}>dsh goal</span>
+          {dshGoals.length === 0 &&
+          !data.goal &&
+          data.durable.length === 0 &&
+          data.session.length === 0 ? (
+            <span data-omc-tasks-empty="" style={stateText}>
+              No goals or scheduled tasks in this session.
+            </span>
+          ) : null}
+          {dshGoals.length > 0 ? (
+            <span style={{ ...meta, padding: "2px 4px", display: "block" }}>dsh goal</span>
+          ) : null}
           {current ? (
             <DshGoalRow goal={current} />
-          ) : (
+          ) : dshGoals.length > 0 ? (
             <div style={{ ...meta, padding: "4px 10px", fontSize: 12 }}>
-              No dsh goal in this session.
+              No goal running; the last one ended.
             </div>
-          )}
+          ) : null}
           {past.length > 0 ? (
             <div data-omc-dsh-goals-past="" style={{ padding: "0 4px" }}>
               <button
@@ -3444,17 +3454,20 @@ function TasksBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
             </>
           ) : null}
 
-          <span style={{ ...meta, padding: "2px 4px", display: "block", marginTop: 8 }}>
-            Durable tasks
-          </span>
-          {data.durable.length === 0 ? (
-            <div style={{ ...meta, padding: "4px 10px", fontSize: 12 }}>
-              <div>Nothing scheduled</div>
-              <div style={{ fontSize: 11, marginTop: 4, fontFamily: T.mono }}>{data.path}</div>
-            </div>
-          ) : (
-            data.durable.map((t) => <TaskRow key={t.name} task={t} />)
-          )}
+          {/* Like the CLI goal, the tasks only take room when there are some. */}
+          {data.durable.length > 0 ? (
+            <>
+              <span style={{ ...meta, padding: "2px 4px", display: "block", marginTop: 8 }}>
+                Durable tasks
+              </span>
+              {data.durable.map((t) => (
+                <TaskRow key={t.name} task={t} />
+              ))}
+              <div style={{ ...meta, padding: "2px 10px", fontSize: 11, fontFamily: T.mono }}>
+                {data.path}
+              </div>
+            </>
+          ) : null}
 
           {data.session.length > 0 ? (
             <>
@@ -3467,10 +3480,6 @@ function TasksBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
               ))}
             </>
           ) : null}
-
-          <div style={{ ...meta, padding: "2px 4px", marginTop: 8, fontSize: 11 }}>
-            Read-only. dsh's goal is set and changed from dsh itself.
-          </div>
         </>
       )}
     </div>
