@@ -337,5 +337,19 @@ console.log("usage-breakdown ok");
     "an entry with no reply is dropped rather than served as one",
   );
   assert.equal(parseBreakdownCache("not json"), undefined, "a file that is not JSON is refused");
+  // A reply present but not ok must never be seeded as a real one. Measured: the validator rejects
+  // `ok: false` outright, and it does not fill a missing `ok` in as true, so the hand check drops
+  // that one. Either way nothing reaches the fold that is not a successful read.
+  const withReply = (r: unknown) => JSON.stringify({ entries: { box: { at: 1, reply: r } } });
+  assert.equal(
+    parseBreakdownCache(withReply({ ok: false, error: "spawn failed" })),
+    undefined,
+    "a failed reply on disk is refused",
+  );
+  assert.deepEqual(
+    parseBreakdownCache(withReply({ fetchedAt: 1, windows: [window] })),
+    {},
+    "a reply with no ok flag is dropped, not promoted to a success",
+  );
 }
 console.log("breakdown-cache ok");
