@@ -1,7 +1,63 @@
 // Strings for the Claude Code update card (src/client/claude-updates.tsx).
 
 /** English. */
-export const en = {} as const;
+export const en = {
+  "updates.thisBox": "This box",
+  "updates.options": "Options",
+  "updates.box": "Box",
+  "updates.boxToUpdate": "Box to update",
+  "updates.releaseChannel": "Release channel",
+  "updates.channelDefault": "Default (latest)",
+  "updates.channelLatest": "Latest",
+  "updates.channelStable": "Stable",
+  "updates.channelStableOption": "Stable, about a week behind",
+  "updates.channelRc": "Release candidate",
+  "updates.channelHelp":
+    "Which releases the update card offers. Stable skips releases with known regressions.",
+  "updates.auto": "Update on its own",
+  "updates.autoOff": "Off: {off} is set.",
+  "updates.autoHelp":
+    "Install a new release as soon as this dsh sees one, without the card. Sessions already running finish on their version.",
+  "updates.installsOnItsOwn": "installs on its own",
+  "updates.byTheCard": "by the card",
+  "updates.runs": "{n} runs",
+  "updates.history": "History",
+  "updates.checkNow": "Check now",
+  "updates.checkLine": "Installed {installed}, newest {latest}",
+  "updates.unknown": "unknown",
+  "updates.checkFailed": "Could not reach downloads.claude.ai",
+  "updates.noHistory": "No updates from here yet.",
+  "updates.historyEntry": "{to} from {from}",
+  "updates.byYou": "you",
+  "updates.byAuto": "automatic",
+} as const;
 
 /** Chinese, one per English key. */
-export const zh = {} satisfies Record<keyof typeof en, string>;
+export const zh = {
+  "updates.thisBox": "本机",
+  "updates.options": "选项",
+  "updates.box": "机器",
+  "updates.boxToUpdate": "要更新的机器",
+  "updates.releaseChannel": "发布通道",
+  "updates.channelDefault": "默认（最新版）",
+  "updates.channelLatest": "最新版",
+  "updates.channelStable": "稳定版",
+  "updates.channelStableOption": "稳定版，落后约一周",
+  "updates.channelRc": "候选版本",
+  "updates.channelHelp": "更新卡片提供哪些版本。稳定版会跳过已知有回归问题的版本。",
+  "updates.auto": "自动更新",
+  "updates.autoOff": "已关闭：设置了 {off}。",
+  "updates.autoHelp": "此 dsh 一发现新版本就自动安装，无需卡片。已在运行的会话仍用原版本完成。",
+  "updates.installsOnItsOwn": "自动安装",
+  "updates.byTheCard": "通过卡片",
+  "updates.runs": "{n} 次运行",
+  "updates.history": "历史",
+  "updates.checkNow": "立即检查",
+  "updates.checkLine": "已安装 {installed}，最新 {latest}",
+  "updates.unknown": "未知",
+  "updates.checkFailed": "无法连接 downloads.claude.ai",
+  "updates.noHistory": "尚无从这里发起的更新。",
+  "updates.historyEntry": "由 {from} 更新到 {to}",
+  "updates.byYou": "你",
+  "updates.byAuto": "自动",
+} satisfies Record<keyof typeof en, string>;

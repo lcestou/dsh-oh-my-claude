@@ -28,6 +28,7 @@ import {
   Modal,
 } from "@deepseek-ai/dsh-client-ui-primitives";
 import type { DirEntry } from "./shared.js";
+import { t as omcT, useLocale } from "./i18n.js";
 
 /** One directory level plus its ancestry, the shape dsh's host listing answers in. */
 export interface Listing {
@@ -277,6 +278,7 @@ export function DirectoryBrowser({
   t,
   footerLead,
 }: DirectoryBrowserProps) {
+  useLocale();
   const [parent, setParent] = useState<Listing | null>(null);
   const [selected, setSelected] = useState<DirEntry | null>(null);
   const [child, setChild] = useState<Listing | null>(null);
@@ -653,9 +655,13 @@ export function DirectoryBrowser({
             <div className={`${P}-crumbBar`}>
               {pathDraft === null ? (
                 <>
-                  {/* English on purpose: dsh's dictionary has no key for this, and its lookup may
-                      answer an unknown key with the key itself rather than falling back. */}
-                  <nav className={`${P}-trail`} aria-label="Folder path" ref={crumbTrailRef}>
+                  {/* dsh's directory-browser dictionary (the `t` prop) has no key for this, so it
+                      reads from the plugin's own dictionary, which falls back to English cleanly. */}
+                  <nav
+                    className={`${P}-trail`}
+                    aria-label={omcT("browser.folderPath")}
+                    ref={crumbTrailRef}
+                  >
                     {crumbs.map((crumb, index) => (
                       <span className={`${P}-crumbSeat`} key={crumb.path}>
                         {index > 0 && (

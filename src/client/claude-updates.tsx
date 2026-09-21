@@ -9,6 +9,7 @@ import { BOXES_EVENT } from "./picker.js";
 import { btn, errText, meta, nested, readJson, ROUTE, select, T } from "./shared.js";
 import { Switch } from "./switch.js";
 import { onBox, read, readTunables, updateSettings } from "./tune.js";
+import { t, useLocale } from "./i18n.js";
 
 /** The updater's reply, plus whether the Settings switch has turned the whole feature off. */
 type UpdateReply = ClaudeUpdateState & { switchedOff?: boolean };
@@ -54,7 +55,8 @@ const pick = { ...select, flex: "0 0 auto", fieldSizing: "content", minWidth: 0 
  * rows rather than hiding them.
  */
 export function ClaudeUpdateDetails() {
-  const [boxes, setBoxes] = useState<UpdateBox[]>([{ name: "This box", host: "" }]);
+  useLocale();
+  const [boxes, setBoxes] = useState<UpdateBox[]>([{ name: t("updates.thisBox"), host: "" }]);
   const [host, setHost] = useState("");
   const [upd, setUpd] = useState<UpdateReply | null>(null);
   const [channel, setChannel] = useState<string | undefined>(undefined);
@@ -69,7 +71,7 @@ export function ClaudeUpdateDetails() {
     const load = () =>
       fetch(`${ROUTE}/ssh-boxes`)
         .then((r) => readJson<{ boxes?: UpdateBox[] }>(r))
-        .then((b) => setBoxes([{ name: "This box", host: "" }, ...(b.boxes ?? [])]))
+        .then((b) => setBoxes([{ name: t("updates.thisBox"), host: "" }, ...(b.boxes ?? [])]))
         .catch(() => {});
     void load();
     window.addEventListener(BOXES_EVENT, load);
@@ -128,8 +130,11 @@ export function ClaudeUpdateDetails() {
       setUpd(s);
       setCheckLine(
         s.latest
-          ? `Installed ${s.installed ?? "unknown"}, newest ${s.latest}`
-          : "Could not reach downloads.claude.ai",
+          ? t("updates.checkLine", {
+              installed: s.installed ?? t("updates.unknown"),
+              latest: s.latest,
+            })
+          : t("updates.checkFailed"),
       );
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -167,17 +172,17 @@ export function ClaudeUpdateDetails() {
   const history = (upd?.log ?? []).slice(-10).toReversed();
   const channelName =
     channel === "stable"
-      ? "Stable"
+      ? t("updates.channelStable")
       : channel === "rc"
-        ? "Release candidate"
+        ? t("updates.channelRc")
         : channel === "latest"
-          ? "Latest"
-          : "Default (latest)";
+          ? t("updates.channelLatest")
+          : t("updates.channelDefault");
   const summary = [
-    boxes.length > 1 ? (box?.name ?? "This box") : null,
+    boxes.length > 1 ? (box?.name ?? t("updates.thisBox")) : null,
     channelName,
-    upd?.auto ? "installs on its own" : "by the card",
-    `${upd?.log.length ?? 0} runs`,
+    upd?.auto ? t("updates.installsOnItsOwn") : t("updates.byTheCard"),
+    t("updates.runs", { n: upd?.log.length ?? 0 }),
   ]
     .filter(Boolean)
     .join(" · ");
@@ -199,14 +204,14 @@ export function ClaudeUpdateDetails() {
         onClick={() => setOpen((v) => !v)}
         style={FOLD}
       >
-        {`${open ? "▾" : "▸"}\u00a0Options`}
+        {`${open ? "▾" : "▸"}\u00a0${t("updates.options")}`}
         <span style={{ ...meta, whiteSpace: "normal" }}> · {summary}</span>
       </button>
       {open && boxes.length > 1 && (
         <div style={row}>
-          <span>Box</span>
+          <span>{t("updates.box")}</span>
           <select
-            aria-label="Box to update"
+            aria-label={t("updates.boxToUpdate")}
             data-omc-update-box=""
             style={pick}
             value={host}
@@ -224,35 +229,33 @@ export function ClaudeUpdateDetails() {
       {open && (
         <>
           <div style={row} data-omc-update-channel="">
-            <span>Release channel</span>
+            <span>{t("updates.releaseChannel")}</span>
             <select
-              aria-label="Release channel"
+              aria-label={t("updates.releaseChannel")}
               style={pick}
               value={channel ?? ""}
               disabled={busy}
               onChange={(e) => void writeChannel(e.target.value || undefined)}
             >
-              <option value="">Default (latest)</option>
-              <option value="latest">Latest</option>
-              <option value="stable">Stable, about a week behind</option>
-              <option value="rc">Release candidate</option>
+              <option value="">{t("updates.channelDefault")}</option>
+              <option value="latest">{t("updates.channelLatest")}</option>
+              <option value="stable">{t("updates.channelStableOption")}</option>
+              <option value="rc">{t("updates.channelRc")}</option>
             </select>
             <span style={{ ...meta, flexBasis: "100%", whiteSpace: "normal" }}>
-              Which releases the update card offers. Stable skips releases with known regressions.
+              {t("updates.channelHelp")}
             </span>
           </div>
           <div style={row} data-omc-update-auto="">
-            <span>Update on its own</span>
+            <span>{t("updates.auto")}</span>
             <Switch
-              label="Update on its own"
+              label={t("updates.auto")}
               on={upd?.auto === true}
               disabled={upd === null || upd.off !== undefined || busy}
               onChange={(next) => void post({ auto: next })}
             />
             <span style={{ ...meta, flexBasis: "100%", whiteSpace: "normal" }}>
-              {upd?.off
-                ? `Off: ${upd.off} is set.`
-                : "Install a new release as soon as this dsh sees one, without the card. Sessions already running finish on their version."}
+              {upd?.off ? t("updates.autoOff", { off: upd.off }) : t("updates.autoHelp")}
             </span>
           </div>
           <div data-omc-update-history="">
@@ -263,8 +266,8 @@ export function ClaudeUpdateDetails() {
                 onClick={() => setHistoryOpen((v) => !v)}
                 style={{ ...FOLD, whiteSpace: "nowrap" }}
               >
-                {historyOpen ? "▾" : "▸"} History
-                <span style={meta}> · {upd?.log.length ?? 0} runs</span>
+                {historyOpen ? "▾" : "▸"} {t("updates.history")}
+                <span style={meta}> · {t("updates.runs", { n: upd?.log.length ?? 0 })}</span>
               </button>
               <button
                 type="button"
@@ -272,17 +275,18 @@ export function ClaudeUpdateDetails() {
                 disabled={upd === null || busy}
                 onClick={() => void checkNow()}
               >
-                Check now
+                {t("updates.checkNow")}
               </button>
             </div>
             {checkLine ? <div style={{ ...meta, marginTop: 4 }}>{checkLine}</div> : null}
             {historyOpen && (
               <ul style={{ listStyle: "none", margin: "6px 0 0", padding: 0, fontSize: 12 }}>
-                {history.length === 0 ? <li style={meta}>No updates from here yet.</li> : null}
+                {history.length === 0 ? <li style={meta}>{t("updates.noHistory")}</li> : null}
                 {history.map((e) => (
                   <li key={e.at} style={{ color: e.ok ? T.text : T.err }}>
-                    {e.to ?? "?"} from {e.from ?? "?"} · {new Date(e.at).toLocaleString()} ·{" "}
-                    {e.by === "button" ? "you" : "automatic"}
+                    {t("updates.historyEntry", { to: e.to ?? "?", from: e.from ?? "?" })} ·{" "}
+                    {new Date(e.at).toLocaleString()} ·{" "}
+                    {e.by === "button" ? t("updates.byYou") : t("updates.byAuto")}
                     {!e.ok && e.note ? ` · ${e.note}` : ""}
                   </li>
                 ))}

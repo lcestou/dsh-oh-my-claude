@@ -24,6 +24,7 @@ import {
 } from "../permissions.js";
 import { SCOPE_LABELS, type SettingsScopeInfo } from "./settings.js";
 import type { ToolMode, ToolModeInfo } from "../rows-probe.js";
+import { t, useLocale } from "./i18n.js";
 
 /** What the usage route answers about extra usage. */
 interface UsageReply {
@@ -94,25 +95,25 @@ export function updateSettings(
     value !== undefined &&
     !(Number.isInteger(value) && Number(value) > 0)
   )
-    return { error: "auto-compact must be a positive whole number of tokens" };
+    return { error: t("tune.errCompact") };
   if (isCacheTtlKey(key) && value !== undefined && cacheTtl(value) === undefined)
-    return { error: "cache TTL must be 5m or 1h" };
+    return { error: t("tune.errCacheTtl") };
   if (isDeadlineKey(key) && value !== undefined && !isDeadline(value))
-    return { error: "deadline must be 60s, 5m, 10m or never" };
+    return { error: t("tune.errDeadline") };
   if (
     isOutputKey(key) &&
     value !== undefined &&
     !(Number.isInteger(value) && Number(value) >= OUTPUT_MIN && Number(value) <= OUTPUT_MAX)
   )
-    return { error: `output limit must be a whole number between ${OUTPUT_MIN} and ${OUTPUT_MAX}` };
+    return { error: t("tune.errOutput", { min: OUTPUT_MIN, max: OUTPUT_MAX }) };
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
   } catch (e) {
-    return { error: e instanceof Error ? e.message : "settings.json is not valid JSON" };
+    return { error: e instanceof Error ? e.message : t("tune.errNotJson") };
   }
   if (!(parsed instanceof Object) || Array.isArray(parsed))
-    return { error: "settings.json must be a JSON object" };
+    return { error: t("tune.errNotObject") };
   // SAFETY: the value parsed as a plain object, which is the shape the route also enforces.
   const obj = parsed as Settings;
   const [outer, inner] = key.split(".");
@@ -199,10 +200,10 @@ export function readTunables(text: string): Tunables {
 
 /** Whether the three attribution fields are all set to say nothing: no commit trailer, no PR
  *  text, no session link. The switch that writes all three reads back from this. */
-export const noTrailers = (t: Tunables): boolean =>
-  t["attribution.commit"] === "" &&
-  t["attribution.pr"] === "" &&
-  t["attribution.sessionUrl"] === false;
+export const noTrailers = (tunables: Tunables): boolean =>
+  tunables["attribution.commit"] === "" &&
+  tunables["attribution.pr"] === "" &&
+  tunables["attribution.sessionUrl"] === false;
 
 /** settings.json as the route reports it. */
 export interface SettingsFile {
@@ -221,10 +222,15 @@ export const read = (provider: string | undefined) =>
   fetch(`${ROUTE}/settings${onBox(provider)}`).then((r) => readJson<SettingsFile>(r));
 
 /** Where a row's value comes from: the file when a key is set, the CLI's own default when not. */
-const source = (set: boolean) => (set ? "settings.json" : "Claude Code default");
+const source = (set: boolean) => (set ? "settings.json" : t("tune.claudeDefault"));
 /** The cursor a row shows: a pointer when its value can change, `not-allowed` when it is locked
  *  to the CLI default. */
 const check = (on: boolean) => (on ? "pointer" : "not-allowed");
+
+/** The shown label for a permission kind; the stored kind ("allow"/"deny"/"ask") is left untouched
+ *  since the CLI reads it, and only the display is translated. */
+const kindLabel = (k: PermissionKind): string =>
+  k === "allow" ? t("tune.kindAllow") : k === "deny" ? t("tune.kindDeny") : t("tune.kindAsk");
 
 /** Edit the file through one mtime-checked read, write and refresh. Answers an error, or nothing. */
 type Apply = (
@@ -256,11 +262,12 @@ export function ConfirmButton({
   disabled: boolean;
   busyLabel?: string;
 }) {
+  useLocale();
   const [armed, setArmed] = useState(false);
   useEffect(() => {
     if (!armed) return;
-    const t = setTimeout(() => setArmed(false), 5000);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setArmed(false), 5000);
+    return () => clearTimeout(timer);
   }, [armed]);
   if (busyLabel !== undefined)
     return (
@@ -277,7 +284,7 @@ export function ConfirmButton({
           : { ...style, transition: ARM_EASE }
       }
       disabled={disabled}
-      aria-label={armed ? `Confirm ${ariaLabel ?? label}` : (ariaLabel ?? label)}
+      aria-label={armed ? t("tune.confirm", { label: ariaLabel ?? label }) : (ariaLabel ?? label)}
       onClick={() => {
         if (!armed) {
           setArmed(true);
@@ -291,21 +298,24 @@ export function ConfirmButton({
           its neighbours stay put when it arms and when it reverts. */}
       <span style={{ display: "inline-grid" }}>
         <span style={{ gridArea: "1 / 1", visibility: armed ? "hidden" : "visible" }}>{label}</span>
-        <span style={{ gridArea: "1 / 1", visibility: armed ? "visible" : "hidden" }}>Sure?</span>
+        <span style={{ gridArea: "1 / 1", visibility: armed ? "visible" : "hidden" }}>
+          {t("tune.sure")}
+        </span>
       </span>
     </button>
   );
 }
 
 /** Live thinking-budget tiers the selector offers, matching Claude Code's own keyword steps. null
- *  keeps the session default; 0 turns extended thinking off. Set live, not saved to settings.json. */
-const THINKING_PRESETS: Array<{ label: string; tokens: number | null }> = [
-  { label: "Session default", tokens: null },
-  { label: "Off", tokens: 0 },
-  { label: "Think · 4k", tokens: 4000 },
-  { label: "Think hard · 10k", tokens: 10000 },
-  { label: "Ultrathink · 32k", tokens: 31999 },
-];
+ *  keeps the session default; 0 turns extended thinking off. Set live, not saved to settings.json.
+ *  `labelKey` names the dictionary entry drawn at render, so a language switch relabels the tiers. */
+const THINKING_PRESETS = [
+  { labelKey: "tune.think.default", tokens: null },
+  { labelKey: "tune.think.off", tokens: 0 },
+  { labelKey: "tune.think.4k", tokens: 4000 },
+  { labelKey: "tune.think.10k", tokens: 10000 },
+  { labelKey: "tune.think.32k", tokens: 31999 },
+] as const;
 
 /** The Tune tab body: the settings.json keys that change how Claude answers, on the surface that
  *  already shows the answer. Each row is a label, a control and where the value comes from; a
@@ -317,6 +327,7 @@ export function TuneBody({
   sessionId: string;
   ctx: ClientCtx;
 }): React.ReactElement {
+  useLocale();
   const provider = claudeProviderOf(ctx, sessionId);
   const narrow = useNarrow();
   const [file, setFile] = useState<SettingsFile | null>(null);
@@ -369,7 +380,7 @@ export function TuneBody({
     fetch(`${ROUTE}/tool-mode`)
       .then((r) => readJson<ToolModeInfo>(r))
       .then((b) => live && setToolMode(b))
-      .catch(() => live && setToolModeErr("could not read the tool activity setting"));
+      .catch(() => live && setToolModeErr(t("tune.errToolMode")));
     return () => {
       live = false;
     };
@@ -379,7 +390,7 @@ export function TuneBody({
     return error ? (
       <span style={errText}>{error}</span>
     ) : (
-      <span style={{ ...meta, padding: "2px 0" }}>Loading…</span>
+      <span style={{ ...meta, padding: "2px 0" }}>{t("common.loading")}</span>
     );
 
   const settings = readTunables(file.text);
@@ -393,7 +404,7 @@ export function TuneBody({
       const fresh = await read(provider);
       if (fresh.mtime !== file.mtime) {
         setFile(fresh);
-        return "settings.json changed on disk; the tab now shows the new values, try again";
+        return t("tune.errChangedOnDisk");
       }
       const next = mutate(fresh.text);
       if (next.error !== undefined) return next.error;
@@ -437,8 +448,8 @@ export function TuneBody({
     if (key === "advisorModel" && isFable(value) && extraUsage !== true) {
       setError(
         creditsError
-          ? `Cannot set a Fable advisor: the usage credit state could not be read (${creditsError}).`
-          : "A Fable advisor bills to usage credits. Enable them from a terminal with /model fable first.",
+          ? t("tune.errFableUnread", { error: creditsError })
+          : t("tune.errFableCredits"),
       );
       return;
     }
@@ -460,7 +471,7 @@ export function TuneBody({
         }),
       );
       if (reply.ok) setThinkBudget(reply.tokens);
-      else setThinkErr(reply.error ?? "could not set the thinking budget");
+      else setThinkErr(reply.error ?? t("tune.errThinkBudget"));
     } catch (e) {
       setThinkErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -515,14 +526,12 @@ export function TuneBody({
 
   return (
     <div style={bodyFlow}>
-      <span style={{ ...meta, padding: "2px 0", whiteSpace: "normal" }}>
-        Saved to Claude Code's settings.json; each takes effect the next time Claude spawns.
-      </span>
+      <span style={{ ...meta, padding: "2px 0", whiteSpace: "normal" }}>{t("tune.savedNote")}</span>
       {error ? <span style={errText}>{error}</span> : null}
 
       <div style={rowStyle} data-omc-tool-mode="">
-        <span style={labelStyle}>Tool activity</span>
-        <div style={controlStyle} role="radiogroup" aria-label="Tool activity">
+        <span style={labelStyle}>{t("tune.toolActivity")}</span>
+        <div style={controlStyle} role="radiogroup" aria-label={t("tune.toolActivity")}>
           {(["inline", "rows"] as const).map((mode) => {
             const locked = mode === "rows" && rowsLocked;
             const usable = toolMode !== null && !locked;
@@ -539,7 +548,9 @@ export function TuneBody({
                   onChange={() => void pickToolMode(mode)}
                   style={{ cursor: check(usable) }}
                 />
-                <span style={{ fontSize: 12 }}>{mode === "inline" ? "Inline" : "Native rows"}</span>
+                <span style={{ fontSize: 12 }}>
+                  {mode === "inline" ? t("tune.toolInline") : t("tune.toolRows")}
+                </span>
               </label>
             );
           })}
@@ -548,18 +559,18 @@ export function TuneBody({
           {toolModeErr
             ? toolModeErr
             : rowsLocked
-              ? `Native rows are off: this dsh will not load a session that holds them (${toolMode?.rows.reason ?? ""}). The switch unlocks by itself on a dsh that does.`
-              : "Inline: text and tool calls show live, in the order they happen. Native rows: dsh's own tool cards, but the chat looks idle while a step runs and the text lands in one bubble under the cards when it settles; each steer starts a new step. Rows can also be refused by a later dsh format migration, as 0.1.5's were (tools/dsh-session-repair.ts mends such logs). Applies from your next message, no restart."}
+              ? t("tune.rowsLocked", { reason: toolMode?.rows.reason ?? "" })
+              : t("tune.toolHelp")}
         </span>
       </div>
 
       <div style={rowStyle}>
-        <span style={labelStyle}>Output style</span>
+        <span style={labelStyle}>{t("tune.outputStyle")}</span>
         <div style={controlStyle}>
           <select
             value={settings.outputStyle ?? ""}
             disabled={busy}
-            aria-label="Output style"
+            aria-label={t("tune.outputStyle")}
             onChange={(e) => void write("outputStyle", e.target.value || undefined)}
             style={{
               ...select,
@@ -567,17 +578,17 @@ export function TuneBody({
               minWidth: narrow ? 0 : 160,
             }}
           >
-            <option value="">Default</option>
-            <option value="Concise">Concise</option>
-            <option value="Explanatory">Explanatory</option>
-            <option value="Learning">Learning</option>
+            <option value="">{t("tune.default")}</option>
+            <option value="Concise">{t("tune.styleConcise")}</option>
+            <option value="Explanatory">{t("tune.styleExplanatory")}</option>
+            <option value="Learning">{t("tune.styleLearning")}</option>
           </select>
         </div>
         <span style={sourceStyle}>{source(settings.outputStyle !== undefined)}</span>
       </div>
 
       <div style={rowStyle}>
-        <span style={labelStyle}>Thinking</span>
+        <span style={labelStyle}>{t("tune.thinking")}</span>
         <div style={controlStyle}>
           <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: check(!busy) }}>
             <input
@@ -587,7 +598,7 @@ export function TuneBody({
               onChange={(e) => void write("alwaysThinkingEnabled", e.target.checked || undefined)}
               style={{ cursor: check(!busy) }}
             />
-            <span style={{ fontSize: 12 }}>Always on</span>
+            <span style={{ fontSize: 12 }}>{t("tune.alwaysOn")}</span>
           </label>
           {/* Summaries are a display choice for thinking that is already on, so the second switch
               only means anything while the first one is set. */}
@@ -607,7 +618,7 @@ export function TuneBody({
               onChange={(e) => void write("showThinkingSummaries", e.target.checked || undefined)}
               style={{ cursor: check(thinking && !busy) }}
             />
-            <span style={{ fontSize: 12 }}>Show summaries</span>
+            <span style={{ fontSize: 12 }}>{t("tune.showSummaries")}</span>
           </label>
         </div>
         <span style={sourceStyle}>
@@ -619,12 +630,12 @@ export function TuneBody({
           thinking hotkey uses, so it lands on the running session at once and resets on respawn.
           Kept apart from the persisted "Thinking" row above, which is a next-spawn default. */}
       <div style={rowStyle}>
-        <span style={labelStyle}>Thinking budget</span>
+        <span style={labelStyle}>{t("tune.thinkingBudget")}</span>
         <div style={controlStyle}>
           <select
             value={thinkBudget == null ? "" : String(thinkBudget)}
             disabled={thinkBusy}
-            aria-label="Thinking budget for this session"
+            aria-label={t("tune.thinkingBudgetAria")}
             onChange={(e) =>
               void setThinking(e.target.value === "" ? null : Number(e.target.value))
             }
@@ -635,19 +646,19 @@ export function TuneBody({
             }}
           >
             {THINKING_PRESETS.map((p) => (
-              <option key={p.label} value={p.tokens == null ? "" : String(p.tokens)}>
-                {p.label}
+              <option key={p.labelKey} value={p.tokens == null ? "" : String(p.tokens)}>
+                {t(p.labelKey)}
               </option>
             ))}
           </select>
         </div>
         <span style={sourceStyle}>
-          {thinkErr ? <span style={{ color: T.err }}>{thinkErr}</span> : "live · this session"}
+          {thinkErr ? <span style={{ color: T.err }}>{thinkErr}</span> : t("tune.liveThisSession")}
         </span>
       </div>
 
       <div style={rowStyle}>
-        <span style={labelStyle}>Auto-compact</span>
+        <span style={labelStyle}>{t("tune.autoCompact")}</span>
         <div style={controlStyle}>
           {/* Committed on blur and on Enter, never per keystroke: every write touches the file and
               moves its mtime, which the next keystroke would then read as someone else's edit. */}
@@ -660,8 +671,8 @@ export function TuneBody({
             step="1000"
             defaultValue={settings.autoCompactWindow ?? ""}
             disabled={busy}
-            placeholder="Claude Code default"
-            aria-label="Auto-compact window in tokens"
+            placeholder={t("tune.claudeDefault")}
+            aria-label={t("tune.autoCompactAria")}
             onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
             onBlur={(e) => {
               const typed = e.target.value.trim();
@@ -670,18 +681,18 @@ export function TuneBody({
             }}
             style={{ ...inputStyle, maxWidth: narrow ? "100%" : 140 }}
           />
-          <span style={{ ...meta }}>tokens</span>
+          <span style={{ ...meta }}>{t("tune.tokens")}</span>
         </div>
         <span style={sourceStyle}>{source(settings.autoCompactWindow !== undefined)}</span>
       </div>
 
       <div style={rowStyle}>
-        <span style={labelStyle}>Cache TTL</span>
+        <span style={labelStyle}>{t("tune.cacheTtl")}</span>
         <div style={controlStyle}>
           <select
             value={settings.promptCacheTtl ?? ""}
             disabled={busy}
-            aria-label="Prompt cache TTL"
+            aria-label={t("tune.promptCacheTtlAria")}
             onChange={(e) => void write("promptCacheTtl", e.target.value || undefined)}
             style={{
               ...select,
@@ -689,21 +700,21 @@ export function TuneBody({
               minWidth: narrow ? 0 : 160,
             }}
           >
-            <option value="">Default</option>
-            <option value="5m">5 minutes</option>
-            <option value="1h">1 hour</option>
+            <option value="">{t("tune.default")}</option>
+            <option value="5m">{t("tune.min5")}</option>
+            <option value="1h">{t("tune.hour1")}</option>
           </select>
         </div>
         <span style={sourceStyle}>{source(settings.promptCacheTtl !== undefined)}</span>
       </div>
 
       <div style={rowStyle}>
-        <span style={labelStyle}>Subagent cache TTL</span>
+        <span style={labelStyle}>{t("tune.subagentCacheTtl")}</span>
         <div style={controlStyle}>
           <select
             value={settings.subagentPromptCacheTtl ?? ""}
             disabled={busy}
-            aria-label="Subagent prompt cache TTL"
+            aria-label={t("tune.subagentPromptCacheTtlAria")}
             onChange={(e) => void write("subagentPromptCacheTtl", e.target.value || undefined)}
             style={{
               ...select,
@@ -711,25 +722,24 @@ export function TuneBody({
               minWidth: narrow ? 0 : 160,
             }}
           >
-            <option value="">Default</option>
-            <option value="5m">5 minutes</option>
-            <option value="1h">1 hour</option>
+            <option value="">{t("tune.default")}</option>
+            <option value="5m">{t("tune.min5")}</option>
+            <option value="1h">{t("tune.hour1")}</option>
           </select>
         </div>
         <span style={sourceStyle}>{source(settings.subagentPromptCacheTtl !== undefined)}</span>
       </div>
       <span style={{ ...meta, padding: "0 0 2px", whiteSpace: "normal" }}>
-        An hour keeps the cache warm across longer breaks, and hour-long cache writes are billed at
-        a higher rate.
+        {t("tune.cacheTtlHelp")}
       </span>
 
       <div style={rowStyle}>
-        <span style={labelStyle}>Advisor</span>
+        <span style={labelStyle}>{t("tune.advisor")}</span>
         <div style={controlStyle}>
           <select
             value={settings.advisorModel ?? ""}
             disabled={busy || models === null}
-            aria-label="Advisor model"
+            aria-label={t("tune.advisorModelAria")}
             onChange={(e) => void write("advisorModel", e.target.value || undefined)}
             style={{
               ...select,
@@ -737,13 +747,13 @@ export function TuneBody({
               minWidth: narrow ? 0 : 160,
             }}
           >
-            <option value="">Off</option>
+            <option value="">{t("tune.off")}</option>
             {models?.map((m) => {
               const blocked = isFable(m.id) && extraUsage !== true;
               return (
                 <option key={m.id} value={m.id} disabled={blocked}>
                   {m.name}
-                  {blocked ? " (needs usage credits)" : ""}
+                  {blocked ? ` ${t("tune.needsCredits")}` : ""}
                 </option>
               );
             })}
@@ -751,30 +761,30 @@ export function TuneBody({
         </div>
         <span style={sourceStyle}>{source(settings.advisorModel !== undefined)}</span>
       </div>
-      {modelsError && <span style={errText}>Could not read the model list: {modelsError}</span>}
+      {modelsError && (
+        <span style={errText}>{t("tune.modelListError", { error: modelsError })}</span>
+      )}
       {creditsError ? (
         <span style={{ ...meta, padding: "0 0 2px", whiteSpace: "normal" }}>
-          The usage credit state could not be read ({creditsError}), so a Fable advisor stays off
-          the list: with credits disabled the CLI refuses to start at all.
+          {t("tune.creditsUnreadable", { error: creditsError })}
         </span>
       ) : extraUsage === false ? (
         <span style={{ ...meta, padding: "0 0 2px", whiteSpace: "normal" }}>
-          A Fable advisor bills to usage credits, which have to be enabled first. Open a terminal
-          and run <code style={codeInline}>/model fable</code> to review and enable them.
+          {t("tune.fableCreditsBefore")} <code style={codeInline}>/model fable</code>{" "}
+          {t("tune.fableCreditsAfter")}
         </span>
       ) : null}
       <span style={{ ...meta, padding: "0 0 2px", whiteSpace: "normal" }}>
-        An advisor weaker than the main model is not used for the main conversation, though
-        subagents may still use it.
+        {t("tune.advisorHelp")}
       </span>
 
       <div style={rowStyle}>
-        <span style={labelStyle}>Fallback model</span>
+        <span style={labelStyle}>{t("tune.fallbackModel")}</span>
         <div style={controlStyle}>
           <select
             value={settings.fallbackModel ?? ""}
             disabled={busy || models === null}
-            aria-label="Fallback model"
+            aria-label={t("tune.fallbackModel")}
             onChange={(e) => void write("fallbackModel", e.target.value || undefined)}
             style={{
               ...select,
@@ -782,7 +792,7 @@ export function TuneBody({
               minWidth: narrow ? 0 : 160,
             }}
           >
-            <option value="">Off</option>
+            <option value="">{t("tune.off")}</option>
             {models?.map((m) => (
               <option key={m.id} value={m.id}>
                 {m.name}
@@ -793,17 +803,16 @@ export function TuneBody({
         <span style={sourceStyle}>{source(settings.fallbackModel !== undefined)}</span>
       </div>
       <span style={{ ...meta, padding: "0 0 2px", whiteSpace: "normal" }}>
-        Where the CLI goes when the main model is overloaded. With none set, an overload ends the
-        turn; the swap itself is reported in the reasoning lane when it happens.
+        {t("tune.fallbackHelp")}
       </span>
 
       <div style={rowStyle}>
-        <span style={labelStyle}>Question deadline</span>
+        <span style={labelStyle}>{t("tune.questionDeadline")}</span>
         <div style={controlStyle}>
           <select
             value={settings.askUserQuestionTimeout ?? ""}
             disabled={busy}
-            aria-label="Idle time before Claude's questions auto-continue"
+            aria-label={t("tune.questionDeadlineAria")}
             onChange={(e) => void write("askUserQuestionTimeout", e.target.value || undefined)}
             style={{
               ...select,
@@ -811,23 +820,23 @@ export function TuneBody({
               minWidth: narrow ? 0 : 160,
             }}
           >
-            <option value="">Default (never)</option>
-            <option value="60s">1 minute</option>
-            <option value="5m">5 minutes</option>
-            <option value="10m">10 minutes</option>
-            <option value="never">Never</option>
+            <option value="">{t("tune.defaultNever")}</option>
+            <option value="60s">{t("tune.min1")}</option>
+            <option value="5m">{t("tune.min5")}</option>
+            <option value="10m">{t("tune.min10")}</option>
+            <option value="never">{t("tune.never")}</option>
           </select>
         </div>
         <span style={sourceStyle}>{source(settings.askUserQuestionTimeout !== undefined)}</span>
       </div>
 
       <div style={rowStyle}>
-        <span style={labelStyle}>Approval deadline</span>
+        <span style={labelStyle}>{t("tune.approvalDeadline")}</span>
         <div style={controlStyle}>
           <select
             value={settings.dialogExpiry ?? ""}
             disabled={busy}
-            aria-label="How long a parked permission prompt waits for an answer"
+            aria-label={t("tune.approvalDeadlineAria")}
             onChange={(e) => void write("dialogExpiry", e.target.value || undefined)}
             style={{
               ...select,
@@ -835,22 +844,21 @@ export function TuneBody({
               minWidth: narrow ? 0 : 160,
             }}
           >
-            <option value="">Default (5 minutes)</option>
-            <option value="60s">1 minute</option>
-            <option value="5m">5 minutes</option>
-            <option value="10m">10 minutes</option>
-            <option value="never">Never</option>
+            <option value="">{t("tune.default5min")}</option>
+            <option value="60s">{t("tune.min1")}</option>
+            <option value="5m">{t("tune.min5")}</option>
+            <option value="10m">{t("tune.min10")}</option>
+            <option value="never">{t("tune.never")}</option>
           </select>
         </div>
         <span style={sourceStyle}>{source(settings.dialogExpiry !== undefined)}</span>
       </div>
       <span style={{ ...meta, padding: "0 0 2px", whiteSpace: "normal" }}>
-        A question left unanswered continues with whatever is selected so far; a permission prompt
-        left unanswered is cancelled. At the question default, an unattended session waits forever.
+        {t("tune.deadlineHelp")}
       </span>
 
       <div style={rowStyle}>
-        <span style={labelStyle}>Bash output</span>
+        <span style={labelStyle}>{t("tune.bashOutput")}</span>
         <div style={controlStyle}>
           <input
             key={file.mtime}
@@ -860,8 +868,8 @@ export function TuneBody({
             step="1000"
             defaultValue={settings.bashOutputMaxChars ?? ""}
             disabled={busy}
-            placeholder="Claude Code default"
-            aria-label="Characters of bash output Claude receives"
+            placeholder={t("tune.claudeDefault")}
+            aria-label={t("tune.bashOutputAria")}
             onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
             onBlur={(e) => {
               const typed = e.target.value.trim();
@@ -870,13 +878,13 @@ export function TuneBody({
             }}
             style={{ ...inputStyle, maxWidth: narrow ? "100%" : 140 }}
           />
-          <span style={{ ...meta }}>characters</span>
+          <span style={{ ...meta }}>{t("tune.characters")}</span>
         </div>
         <span style={sourceStyle}>{source(settings.bashOutputMaxChars !== undefined)}</span>
       </div>
 
       <div style={rowStyle}>
-        <span style={labelStyle}>Task output</span>
+        <span style={labelStyle}>{t("tune.taskOutput")}</span>
         <div style={controlStyle}>
           <input
             key={file.mtime}
@@ -886,8 +894,8 @@ export function TuneBody({
             step="1000"
             defaultValue={settings.taskOutputMaxChars ?? ""}
             disabled={busy}
-            placeholder="Claude Code default"
-            aria-label="Characters of subagent output Claude receives"
+            placeholder={t("tune.claudeDefault")}
+            aria-label={t("tune.taskOutputAria")}
             onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
             onBlur={(e) => {
               const typed = e.target.value.trim();
@@ -896,17 +904,16 @@ export function TuneBody({
             }}
             style={{ ...inputStyle, maxWidth: narrow ? "100%" : 140 }}
           />
-          <span style={{ ...meta }}>characters</span>
+          <span style={{ ...meta }}>{t("tune.characters")}</span>
         </div>
         <span style={sourceStyle}>{source(settings.taskOutputMaxChars !== undefined)}</span>
       </div>
       <span style={{ ...meta, padding: "0 0 2px", whiteSpace: "normal" }}>
-        These two size what Claude receives, between {OUTPUT_MIN} and {OUTPUT_MAX} characters. The
-        plugin's own tool text limit sizes only what this panel draws.
+        {t("tune.outputHelp", { min: OUTPUT_MIN, max: OUTPUT_MAX })}
       </span>
 
       <div style={rowStyle}>
-        <span style={labelStyle}>Attribution</span>
+        <span style={labelStyle}>{t("tune.attribution")}</span>
         <div style={controlStyle}>
           <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: check(!busy) }}>
             <input
@@ -930,7 +937,7 @@ export function TuneBody({
               }
               style={{ cursor: check(!busy) }}
             />
-            <span style={{ fontSize: 12 }}>No AI trailers</span>
+            <span style={{ fontSize: 12 }}>{t("tune.noAiTrailers")}</span>
           </label>
           <button
             type="button"
@@ -945,7 +952,7 @@ export function TuneBody({
               textDecoration: "underline",
             }}
           >
-            {showTrailers ? "Hide custom text" : "Custom text"}
+            {showTrailers ? t("tune.hideCustomText") : t("tune.customText")}
           </button>
         </div>
         <span style={sourceStyle}>
@@ -960,20 +967,20 @@ export function TuneBody({
         <>
           {(
             [
-              ["attribution.commit", "Commit trailer", "Text Claude adds to commits it writes"],
-              ["attribution.pr", "PR text", "Text Claude adds to pull request descriptions"],
+              ["attribution.commit", "tune.commitTrailer", "tune.commitTrailerHint"],
+              ["attribution.pr", "tune.prText", "tune.prTextHint"],
             ] as const
-          ).map(([key, label, hint]) => (
+          ).map(([key, labelKey, hintKey]) => (
             <div key={key} style={rowStyle}>
-              <span style={labelStyle}>{label}</span>
+              <span style={labelStyle}>{t(labelKey)}</span>
               <div style={{ ...controlStyle, flex: "1 1 auto" }}>
                 <input
                   key={`${key}-${file.mtime}`}
                   type="text"
                   defaultValue={settings[key] ?? ""}
                   disabled={busy}
-                  placeholder="Claude Code default"
-                  aria-label={hint}
+                  placeholder={t("tune.claudeDefault")}
+                  aria-label={t(hintKey)}
                   onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
                   onBlur={(e) => {
                     const typed = e.target.value;
@@ -986,8 +993,7 @@ export function TuneBody({
             </div>
           ))}
           <span style={{ ...meta, padding: "0 0 2px", whiteSpace: "normal" }}>
-            An empty box writes an empty string, which is how the CLI is told to add nothing. Clear
-            the switch above to hand both back to Claude Code's own wording.
+            {t("tune.trailerHelp")}
           </span>
         </>
       ) : null}
@@ -1032,6 +1038,7 @@ function PermissionsBlock({
   narrow: boolean;
   busy: boolean;
 }) {
+  useLocale();
   const [kind, setKind] = useState<PermissionKind>("allow");
   const [draft, setDraft] = useState("");
   const [error, setError] = useState("");
@@ -1102,23 +1109,21 @@ function PermissionsBlock({
 
   return (
     <div style={{ borderTop: `1px solid ${T.border}`, marginTop: 16, paddingTop: 12 }}>
-      <div style={{ ...sectionHead, paddingTop: 0 }}>Permissions</div>
+      <div style={{ ...sectionHead, paddingTop: 0 }}>{t("tune.permissions")}</div>
       <span style={{ ...meta, display: "block", padding: "0 0 8px", whiteSpace: "normal" }}>
-        Rules Claude Code answers a tool request with instead of asking. These are the ones in{" "}
-        {SCOPE_LABELS.user}, the file this panel writes; Claude Code also reads the files below it,
-        in dsh or in a terminal.
+        {t("tune.permissionsIntro", { scope: SCOPE_LABELS.user })}
       </span>
       {error ? <span style={{ ...errText, display: "block" }}>{error}</span> : null}
 
       {PERMISSION_KINDS.filter((k) => rules[k].length > 0).map((k) => (
         <div key={k} style={{ marginBottom: 8 }}>
-          <div style={heading}>{k}</div>
+          <div style={heading}>{kindLabel(k)}</div>
           {rules[k].map((rule) => (
             <div key={rule} style={ruleRow}>
               <span style={{ flex: 1, wordBreak: "break-all", fontFamily: T.mono }}>{rule}</span>
               <ConfirmButton
-                label="Remove"
-                ariaLabel={`Remove ${rule}`}
+                label={t("common.remove")}
+                ariaLabel={t("tune.removeRule", { rule })}
                 onAct={() => void change("remove", k, rule)}
                 disabled={busy}
                 style={small}
@@ -1135,7 +1140,7 @@ function PermissionsBlock({
         return (
           <div key={scope.scope} style={{ marginBottom: 8 }}>
             <div style={{ ...heading, textTransform: "none" }}>
-              {SCOPE_LABELS[scope.scope]} · read-only here
+              {SCOPE_LABELS[scope.scope]} · {t("tune.readOnlyHere")}
             </div>
             {kinds.map((k) =>
               theirs[k].map((rule) => (
@@ -1143,7 +1148,7 @@ function PermissionsBlock({
                   <span style={{ flex: 1, wordBreak: "break-all", fontFamily: T.mono }}>
                     {rule}
                   </span>
-                  <span style={{ ...meta, textTransform: "capitalize" }}>{k}</span>
+                  <span style={{ ...meta, textTransform: "capitalize" }}>{kindLabel(k)}</span>
                 </div>
               )),
             )}
@@ -1153,7 +1158,7 @@ function PermissionsBlock({
 
       {unused.length > 0 ? (
         <div style={{ marginBottom: 8 }}>
-          <div style={heading}>Asked about this session</div>
+          <div style={heading}>{t("tune.askedThisSession")}</div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
             {unused.map((rule) => (
               <button
@@ -1185,7 +1190,7 @@ function PermissionsBlock({
       >
         <select
           value={kind}
-          aria-label="Rule kind"
+          aria-label={t("tune.ruleKind")}
           onChange={(e) => {
             // SAFETY: the options are the three kinds, so the value is one of them.
             setKind(e.target.value as PermissionKind);
@@ -1195,14 +1200,14 @@ function PermissionsBlock({
         >
           {PERMISSION_KINDS.map((k) => (
             <option key={k} value={k}>
-              {k}
+              {kindLabel(k)}
             </option>
           ))}
         </select>
         <input
           type="text"
           value={draft}
-          aria-label="Rule"
+          aria-label={t("tune.rule")}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && draft.trim()) void change("add", kind, draft);
@@ -1217,7 +1222,7 @@ function PermissionsBlock({
           disabled={busy || draft.trim() === ""}
           style={{ ...small, padding: "6px 12px", opacity: busy || !draft.trim() ? 0.6 : 1 }}
         >
-          Add
+          {t("tune.add")}
         </button>
       </div>
     </div>
