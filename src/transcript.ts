@@ -686,6 +686,8 @@ const endsTurn = (message: Rec | undefined): boolean => {
   );
 };
 
+const SDK_STAMPS = new Set(["sdk-cli", "sdk-ts", "sdk-py"]);
+
 /**
  * The turns some other entrypoint wrote into a stretch of a session's transcript: a terminal that
  * picked the session up with `claude /resume` stamps every row `entrypoint: cli`, while this
@@ -697,8 +699,6 @@ const endsTurn = (message: Rec | undefined): boolean => {
  * follows wait for the next read, so a reply that writes a sentence, calls a tool, then writes the
  * rest is mirrored whole, not cut at the sentence.
  */
-const SDK_STAMPS = new Set(["sdk-cli", "sdk-ts", "sdk-py"]);
-
 export function foreignTurns(text: string, own: string): ForeignTurns {
   const lines: string[] = [];
   const stamps = new Set<string>();

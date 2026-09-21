@@ -94,10 +94,10 @@ const isRec = (v: unknown): v is Record<string, unknown> =>
 /** The background shell a BashOutput or KillShell call names, under either of the CLI's two keys. */
 const shellId = (inp: Record<string, unknown>): string => asStr(inp.bash_id ?? inp.shell_id);
 
+const MAX_BODY_LINES = 18;
 /** Clamp a fenced body to its first `max` lines, with a count of what was elided. A tool-heavy turn
  *  floods the transcript with full read/bash/diff dumps; the head plus a tail count keeps each row
  *  scannable without hiding that more exists. */
-const MAX_BODY_LINES = 18;
 export function capLines(body: string, max = MAX_BODY_LINES): string {
   const lines = body.split("\n");
   if (lines.length <= max) return body;
@@ -283,6 +283,9 @@ export function formatToolResult(
 /** A token counter off the wire: the number itself, or 0 for anything else a frame might carry. */
 const countOf = (v: unknown): number => (typeof v === "number" && v > 0 ? v : 0);
 
+/** Build a usage StreamChunk from a wire TokenUsage frame. Every counter is written even at zero,
+ *  totalTokens sums input, cache reads, cache writes and output, and reasoning_tokens is clamped to
+ *  output_tokens so a frame that reports more reasoning than output cannot overstate the step. */
 function usageEvent(u: {
   input_tokens?: number;
   output_tokens?: number;
@@ -630,6 +633,8 @@ export class Translator {
     this.onModel = onModel;
   }
 
+  /** The delta chunk kind a block emits. Only a "text" block produces text-delta; any other block
+   *  type produces reasoning-delta, so a block is text-delta only when its type is exactly text. */
   deltaType(block: TranslatorBlock): "text-delta" | "reasoning-delta" {
     return block.blockType === "text" ? "text-delta" : "reasoning-delta";
   }
@@ -687,12 +692,17 @@ export class Translator {
     ];
   }
 
+  /** Emit a whole block at once, block-start then delta then block-end, for text that arrives in one
+   *  piece rather than streamed in fragments. */
   wholeBlock(blockType: string, text: string): StreamChunk[] {
     const { block, events } = this.startBlock(blockType);
     events.push(...this.delta(block, text), ...this.endBlock(block));
     return events;
   }
 
+  /** Map one Claude Code stream-json event into the StreamChunks the client renders, or [] when the
+   *  event carries nothing to show. Handshake and benign events return [], and the many system
+   *  subtypes ride the reasoning lane so they read as model activity rather than as chat text. */
   translate(event: ClaudeEvent): StreamChunk[] {
     // Every frame of model output moves the stall clock the status row reads; the CLI's own line
     // watches its response length for the same purpose.
@@ -1198,6 +1208,9 @@ export class Translator {
   }
 
   // SAFETY: ev is ClaudeStreamPartial from Claude Code stream-json protocol
+  /** Fold one streaming partial frame into translator state and return the chunks it renders, or [].
+   *  Only content_block frames open or append a block; message_delta feeds the running usage count
+   *  the status row reads rather than drawing, and skips a nested agent so its tokens are not added. */
   partial(ev: ClaudeStreamPartial, subagent = false) {
     switch (ev.type) {
       case "message_start": {
@@ -1313,6 +1326,9 @@ export class Translator {
   /** Tracks content_block metadata for native-tool blocks whose input we collect via deltas. */
   readonly cbMeta = new Map<number, { id?: string; name?: string }>();
 
+  /** Open the per-index block for a content_block_start frame and return its start events, or [] when
+   *  the block is hidden. Native-tool input is accumulated until its stop frame, and a dsh tool under
+   *  relay stays hidden, so only visible text, thinking and tool rows get a block-start. */
   openBlock(apiIndex: number, cb: { type?: string; id?: string; name?: string }) {
     let opened: { block: TranslatorBlock; events: StreamChunk[] };
     if (cb.type === "text") opened = this.startBlock("text");
@@ -1522,6 +1538,9 @@ export class Translator {
     return this.endBlock(entry.block);
   }
 
+  /** Render the tool_result blocks of a user event into StreamChunks, or [] when tool activity is
+   *  off. Each result routes to a dsh session row, an inline markdown block, or a compact reasoning
+   *  row, and auto-denied and denied counts are tallied for the result-frame summary. */
   toolResults(content: ClaudeContentBlock[], parentToolUseId: string | null | undefined) {
     this.setToolPending(false);
     if (!this.toolActivity) return [];

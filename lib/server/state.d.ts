@@ -31,9 +31,13 @@ export declare function lastSelectedProvider(events: readonly {
     type: string;
     data?: unknown;
 }[]): string | undefined;
+/** The bridged slash-command names, or an empty list when the file is missing, unreadable or not
+ *  an array. Never throws. */
 export declare function loadCommandCatalog(dir: string): Promise<string[]>;
 /** Remember the catalog; a write that fails leaves the menu to the next init frame, not an error. */
 export declare function saveCommandCatalog(dir: string, names: string[]): Promise<void>;
+/** The saved holds keyed by session id, or an empty record when the file is missing, unreadable
+ *  or not an object. Never throws. */
 export declare function loadHolds(dir: string): Promise<Record<string, unknown>>;
 /** Set one session's hold; serialized read-modify-write. */
 export declare function saveHold(dir: string, sessionId: string, record: unknown): Promise<void>;
@@ -42,6 +46,8 @@ export declare function saveHold(dir: string, sessionId: string, record: unknown
  * old hold's exit arrives, and that exit must not take the new record with it.
  */
 export declare function dropHold(dir: string, sessionId: string, name?: string): Promise<void>;
+/** Each waiting session's reset time, keyed by session id. A missing or corrupt file reads as no
+ *  waits, and an entry whose value is not a number is dropped. Never throws. */
 export declare function loadLimitWaits(dir: string): Promise<Map<string, number>>;
 /** Record (or with `resetAt` undefined, forget) a session's wait; saves serialize. */
 export declare function saveLimitWait(dir: string, sessionId: string, resetAt: number | undefined): Promise<void>;
@@ -88,6 +94,8 @@ export declare function hasPendingNotice(events: Iterable<LooseEvent>, plugin: s
 /** Claude Code permission modes the CLI accepts for `--permission-mode` and `set_permission_mode`. */
 export declare const PERMISSION_MODES: readonly ["default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"];
 export type PermissionMode = (typeof PERMISSION_MODES)[number];
+/** Narrow an unchecked string, from config or a request body, to a mode the CLI accepts.
+ *  The match is exact and case-sensitive. */
 export declare const isPermissionMode: (v: string) => v is PermissionMode;
 /** Modes at or below the given ceiling, in table order. */
 export declare const modesUpTo: (ceiling: PermissionMode) => PermissionMode[];
@@ -147,7 +155,10 @@ export declare function saveContextSizes(dir: string, cwd: string, sizes: Record
 export declare function buildRedactor(env: Record<string, string | undefined>): (s: string) => string;
 /** Tool activity as the Tune switch last set it; absent means the config default. */
 export declare const TOOL_MODE_FILE: (d: string) => string;
+/** The saved tool mode, or undefined when the file is missing, corrupt or names a mode this version
+ *  does not know, so the caller keeps its config default. Never throws. */
 export declare function loadToolMode(dir: string): Promise<ToolMode | undefined>;
+/** Save the tool mode for the next dsh start to read back through `loadToolMode`. */
 export declare const saveToolMode: (dir: string, mode: ToolMode) => Promise<void>;
 /** Where each watched session's transcript stood when it was last read: `{ [dshSessionId]:
  *  { path, seen } }`, so a restart carries on where the watch left off instead of re-showing or
@@ -177,5 +188,6 @@ export declare const TERMINAL_SYNC_FILE: (d: string) => string;
  *  missing or corrupt file so the caller keeps its own default instead of having one asserted over
  *  it: the read is asynchronous, and answering `false` here overwrote a value set meanwhile. */
 export declare function loadTerminalSync(dir: string): Promise<boolean | undefined>;
+/** Save the terminal-mirror switch for the next dsh start to read back through `loadTerminalSync`. */
 export declare const saveTerminalSync: (dir: string, enabled: boolean) => Promise<void>;
 export {};

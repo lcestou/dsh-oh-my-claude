@@ -120,6 +120,8 @@ export function lastSelectedProvider(
  */
 const COMMANDS_FILE = (dir: string) => join(dir, "commands.json");
 
+/** The bridged slash-command names, or an empty list when the file is missing, unreadable or not
+ *  an array. Never throws. */
 export async function loadCommandCatalog(dir: string): Promise<string[]> {
   try {
     const parsed: unknown = JSON.parse(await readFile(COMMANDS_FILE(dir), "utf8"));
@@ -142,6 +144,8 @@ export function saveCommandCatalog(dir: string, names: string[]): Promise<void> 
 const HOLDS_FILE = (dir: string) => join(dir, "holds.json");
 let holdsChain = Promise.resolve();
 
+/** The saved holds keyed by session id, or an empty record when the file is missing, unreadable
+ *  or not an object. Never throws. */
 export async function loadHolds(dir: string): Promise<Record<string, unknown>> {
   try {
     const parsed: unknown = JSON.parse(await readFile(HOLDS_FILE(dir), "utf8"));
@@ -189,6 +193,8 @@ export function dropHold(dir: string, sessionId: string, name?: string): Promise
 const LIMIT_WAITS_FILE = (dir: string) => join(dir, "limit-waits.json");
 let limitChain: Promise<void> = Promise.resolve();
 
+/** Each waiting session's reset time, keyed by session id. A missing or corrupt file reads as no
+ *  waits, and an entry whose value is not a number is dropped. Never throws. */
 export async function loadLimitWaits(dir: string): Promise<Map<string, number>> {
   const map = new Map<string, number>();
   try {
@@ -367,6 +373,8 @@ export const PERMISSION_MODES = [
   "bypassPermissions",
 ] as const;
 export type PermissionMode = (typeof PERMISSION_MODES)[number];
+/** Narrow an unchecked string, from config or a request body, to a mode the CLI accepts.
+ *  The match is exact and case-sensitive. */
 export const isPermissionMode = (v: string): v is PermissionMode =>
   PERMISSION_MODES.some((m) => m === v);
 
@@ -770,6 +778,8 @@ export function buildRedactor(env: Record<string, string | undefined>): (s: stri
 /** Tool activity as the Tune switch last set it; absent means the config default. */
 export const TOOL_MODE_FILE = (d: string) => join(d, "tool-mode.json");
 
+/** The saved tool mode, or undefined when the file is missing, corrupt or names a mode this version
+ *  does not know, so the caller keeps its config default. Never throws. */
 export async function loadToolMode(dir: string): Promise<ToolMode | undefined> {
   try {
     const parsed: unknown = JSON.parse(await readFile(TOOL_MODE_FILE(dir), "utf8"));
@@ -784,6 +794,7 @@ export async function loadToolMode(dir: string): Promise<ToolMode | undefined> {
   }
 }
 
+/** Save the tool mode for the next dsh start to read back through `loadToolMode`. */
 export const saveToolMode = (dir: string, mode: ToolMode): Promise<void> =>
   writeJson(TOOL_MODE_FILE(dir), { mode });
 
@@ -864,5 +875,6 @@ export async function loadTerminalSync(dir: string): Promise<boolean | undefined
   }
 }
 
+/** Save the terminal-mirror switch for the next dsh start to read back through `loadTerminalSync`. */
 export const saveTerminalSync = (dir: string, enabled: boolean): Promise<void> =>
   writeJson(TERMINAL_SYNC_FILE(dir), { enabled });

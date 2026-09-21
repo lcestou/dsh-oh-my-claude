@@ -129,6 +129,17 @@ export interface ForeignTurns {
      *  undefined when the read ends on a settled turn. Live streaming renders this as it grows. */
     running?: FoldedTurn;
 }
+/**
+ * The turns some other entrypoint wrote into a stretch of a session's transcript: a terminal that
+ * picked the session up with `claude /resume` stamps every row `entrypoint: cli`, while this
+ * plugin's child stamps `own`. Rows without the stamp (queue bookkeeping, summaries) never count,
+ * and neither do SDK stamps: another program driving the CLI is not a person to echo, and a CLI
+ * too old to keep the stamp it was given (a remote box's 2.1.123 writes sdk-cli for this plugin's own
+ * child) would otherwise see its own dsh turns come back as terminal ones.
+ * A prompt is running until an assistant row with a terminal `stop_reason` lands; it and what
+ * follows wait for the next read, so a reply that writes a sentence, calls a tool, then writes the
+ * rest is mirrored whole, not cut at the sentence.
+ */
 export declare function foreignTurns(text: string, own: string): ForeignTurns;
 /** A short, stable fingerprint of a turn for dedup: its prompt and the start of its final answer,
  *  both of which the mirrored dsh message also carries, so "has the dsh log already shown this

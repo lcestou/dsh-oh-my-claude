@@ -2,6 +2,9 @@ import type { StreamChunk, LlmFailure } from "@deepseek-ai/dsh-llm";
 import { type ClaudeEvent, type ClaudeStreamPartial, type ClaudeContentBlock } from "./process.js";
 import { TurnRecord } from "./adapter.js";
 import { type PluginLoadError } from "./plugins.js";
+/** Clamp a fenced body to its first `max` lines, with a count of what was elided. A tool-heavy turn
+ *  floods the transcript with full read/bash/diff dumps; the head plus a tail count keeps each row
+ *  scannable without hiding that more exists. */
 export declare function capLines(body: string, max?: number): string;
 /**
  * The word joiner that follows the glyph on every tool header we write.
@@ -188,6 +191,8 @@ export declare class Translator {
         /** What to append to a 5xx retry line from the Anthropic status page cache. */
         statusNote?: (httpStatus: number) => string;
     });
+    /** The delta chunk kind a block emits. Only a "text" block produces text-delta; any other block
+     *  type produces reasoning-delta, so a block is text-delta only when its type is exactly text. */
     deltaType(block: TranslatorBlock): "text-delta" | "reasoning-delta";
     /** Warn once when a CLI event/block type is neither handled nor knowingly ignored, so a Claude
      *  Code stream-json schema change shows up loud in the log instead of as silently dropped output. */
@@ -202,7 +207,12 @@ export declare class Translator {
     delta(block: TranslatorBlock, text: string): StreamChunk[];
     /** Close a block; one that never got text was never announced and closes silently. */
     endBlock(block: TranslatorBlock): StreamChunk[];
+    /** Emit a whole block at once, block-start then delta then block-end, for text that arrives in one
+     *  piece rather than streamed in fragments. */
     wholeBlock(blockType: string, text: string): StreamChunk[];
+    /** Map one Claude Code stream-json event into the StreamChunks the client renders, or [] when the
+     *  event carries nothing to show. Handshake and benign events return [], and the many system
+     *  subtypes ride the reasoning lane so they read as model activity rather than as chat text. */
     translate(event: ClaudeEvent): StreamChunk[];
     /** One summed usage chunk for the step that is ending, or nothing when none can be proven.
      *
@@ -211,12 +221,18 @@ export declare class Translator {
      *  whichever step happened to see it is what left every other step with no sample at all — and
      *  `deriveTurnTokenUsage` drops the turn's pill unless every step has one. */
     takeStepUsage(): StreamChunk[];
+    /** Fold one streaming partial frame into translator state and return the chunks it renders, or [].
+     *  Only content_block frames open or append a block; message_delta feeds the running usage count
+     *  the status row reads rather than drawing, and skips a nested agent so its tokens are not added. */
     partial(ev: ClaudeStreamPartial, subagent?: boolean): StreamChunk[];
     /** Tracks content_block metadata for native-tool blocks whose input we collect via deltas. */
     readonly cbMeta: Map<number, {
         id?: string;
         name?: string;
     }>;
+    /** Open the per-index block for a content_block_start frame and return its start events, or [] when
+     *  the block is hidden. Native-tool input is accumulated until its stop frame, and a dsh tool under
+     *  relay stays hidden, so only visible text, thinking and tool rows get a block-start. */
     openBlock(apiIndex: number, cb: {
         type?: string;
         id?: string;
@@ -250,5 +266,8 @@ export declare class Translator {
     endThinking(): StreamChunk[];
     /** Close the elapsed-time block a slow call opened, whichever way its result is drawn. */
     endHeartbeat(toolUseId: string): StreamChunk[];
+    /** Render the tool_result blocks of a user event into StreamChunks, or [] when tool activity is
+     *  off. Each result routes to a dsh session row, an inline markdown block, or a compact reasoning
+     *  row, and auto-denied and denied counts are tallied for the result-frame summary. */
     toolResults(content: ClaudeContentBlock[], parentToolUseId: string | null | undefined): StreamChunk[];
 }
