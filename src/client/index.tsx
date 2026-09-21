@@ -85,7 +85,9 @@ import { Spark, sparkNode } from "./spark.js";
 import { AccessShield, OhMyClaudeControl, sessionLabel } from "./panel.js";
 import { ConfirmButton } from "./tune.js";
 import { AddWorkspaceFlow, BOXES_EVENT, canBrowseDirs, OPEN_EVENT, RW_EVENT } from "./picker.js";
+import { ClaudeUpdateDetails } from "./claude-updates.js";
 import { SearchField } from "./search-field.js";
+import { Switch } from "./switch.js";
 import { takeDraft, subscribeDraft, noteDraft, draftPending } from "./draft.js";
 import {
   awaitingBody,
@@ -6009,54 +6011,6 @@ function applyTheme(hints: Record<string, boolean | number>): void {
   root.setProperty("--omc-shimmer", theme.shimmer);
 }
 
-/** dsh's own settings switch, drawn with its measurements and colour tokens: a 36 by 20 pill with a
- *  16 px thumb that slides 16 px, brand-coloured when on. Its class names are generated per build,
- *  so the look is copied rather than the class borrowed. */
-function Switch({
-  on,
-  onChange,
-  label,
-}: {
-  on: boolean;
-  onChange: (next: boolean) => void;
-  label: string;
-}) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={on}
-      aria-label={label}
-      onClick={() => onChange(!on)}
-      style={{
-        boxSizing: "border-box",
-        position: "relative",
-        flex: "0 0 auto",
-        width: 36,
-        height: 20,
-        padding: 2,
-        border: 0,
-        borderRadius: 10,
-        background: on ? "var(--dsw-alias-brand-primary)" : "var(--dsw-alias-border-l3)",
-        cursor: "pointer",
-        transition: "background 120ms ease",
-      }}
-    >
-      <span
-        style={{
-          display: "block",
-          width: 16,
-          height: 16,
-          borderRadius: "50%",
-          background: "var(--dsw-alias-label-primary-foreground)",
-          transform: on ? "translateX(16px)" : "none",
-          transition: "transform 120ms ease",
-        }}
-      />
-    </button>
-  );
-}
-
 /** One theme group's checkbox: checked means on; the flag is the group's off key. */
 function ThemeGroupBox({ flag, group, label }: { flag: string; group: string; label: string }) {
   const [off, setOff] = useHintFlag(flag);
@@ -6112,7 +6066,7 @@ function ThemeSwitch() {
         <Switch on={!off} onChange={(next) => setOff(!next)} label="Claude look" />
       </div>
       {!off && (
-        <details data-omc-theme-custom="" style={{ marginBottom: 12, fontSize: 13 }}>
+        <details data-omc-theme-custom="" style={NESTED}>
           <summary style={{ cursor: "pointer", color: T.muted }}>Customize</summary>
           <div
             style={{ display: "flex", flexDirection: "column", gap: 6, padding: "8px 0 0 16px" }}
@@ -6400,7 +6354,7 @@ function ContextSwitch({ ctx }: { ctx: ClientCtx }) {
         <Switch on={on} onChange={setOn} label="dsh context" />
       </div>
       {!off && (
-        <details data-omc-context-custom="" style={{ marginBottom: 12, fontSize: 13 }}>
+        <details data-omc-context-custom="" style={NESTED}>
           <summary style={{ cursor: "pointer", color: T.muted }}>Customize</summary>
           <div
             style={{ display: "flex", flexDirection: "column", gap: 6, padding: "8px 0 0 16px" }}
@@ -6561,33 +6515,44 @@ function UpdateNoticeSwitch() {
   );
 }
 
-/** The settings switch for the whole Claude Code update feature. The flag lives in the box's hints
- *  store and the server reads it before every check: off means no pointer read, no card and no
- *  install, on every box; the Tune rows keep showing the history. */
+/** A fold nested under a Settings row: indented behind a thin rule, the look the update options
+ *  have, so what belongs to the row above reads as its child. */
+const NESTED: CSSProperties = {
+  marginBottom: 12,
+  fontSize: 13,
+  paddingLeft: 12,
+  borderLeft: `1px solid ${T.border}`,
+};
+
+/** The settings switch for the whole Claude Code update feature, with its channel, auto-update and
+ *  history under it while it is on. The flag lives in the box's hints store and the server reads it
+ *  before every check: off means no pointer read, no card and no install, on every box. */
 function ClaudeUpdateSwitch() {
   const [off, setOff] = useHintFlag("claudeUpdateOff");
   return (
-    <div
-      data-omc-claude-update-switch=""
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: 12,
-        fontSize: 13,
-        marginBottom: 12,
-      }}
-    >
-      <div>
-        <div>Claude Code updates</div>
-        <div style={{ color: T.faint, fontSize: 12 }}>
-          The card above the composer when a newer Claude Code is out for a session's box, the
-          half-hourly check behind it, and Update on its own under Tune. Off means no check and no
-          card.
+    <>
+      <div
+        data-omc-claude-update-switch=""
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+          fontSize: 13,
+          marginBottom: 12,
+        }}
+      >
+        <div>
+          <div>Claude Code updates</div>
+          <div style={{ color: T.faint, fontSize: 12 }}>
+            The card above the composer when a newer Claude Code is out for a session's box, and the
+            half-hourly check behind it. Off means no check and no card.
+          </div>
         </div>
+        <Switch on={!off} onChange={(next) => setOff(!next)} label="Claude Code updates" />
       </div>
-      <Switch on={!off} onChange={(next) => setOff(!next)} label="Claude Code updates" />
-    </div>
+      {!off && <ClaudeUpdateDetails />}
+    </>
   );
 }
 
@@ -6652,7 +6617,7 @@ function ProxyFirstPartySwitch() {
           <option value="off">Off</option>
         </select>
       </div>
-      <details data-omc-proxy-details="" style={{ marginBottom: 12, fontSize: 13 }}>
+      <details data-omc-proxy-details="" style={NESTED}>
         <summary style={{ cursor: "pointer", color: T.muted }}>Details</summary>
         <div style={{ color: T.faint, fontSize: 12, padding: "8px 0 0 16px" }}>
           When ANTHROPIC_BASE_URL names any host but api.anthropic.com, Claude Code assumes 200k for

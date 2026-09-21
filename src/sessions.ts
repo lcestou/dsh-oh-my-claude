@@ -3268,8 +3268,15 @@ export function registerSessionRoutes(
                 }
               }
               if (sshBoxesPath && url.pathname === `${ROUTE_PREFIX}/ssh-boxes`) {
+                // Each row carries the provider id its box mounts under, so a client that edits a
+                // box's settings.json (the update channel in Settings) can name the mount.
                 if (req.method === "GET")
-                  return json(res, 200, { boxes: await readSshBoxes(sshBoxesPath) });
+                  return json(res, 200, {
+                    boxes: (await readSshBoxes(sshBoxesPath)).map((b) => ({
+                      ...b,
+                      provider: sshBoxProviderId(b.name),
+                    })),
+                  });
                 if (req.method === "PUT") {
                   const v = validateSshBoxes((await readBody(req)).boxes);
                   if (v.error !== undefined) return json(res, 400, { error: v.error });

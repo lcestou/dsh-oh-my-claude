@@ -58,6 +58,11 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Changed
 
+- Claude Code update settings moved out of the Tune tab into Settings, under the Claude Code updates
+  switch they depend on: the release channel, Update on its own, Check now and the run history.
+  They sit behind one Options line that shows the current choices and opens on a click, and show
+  at all only while the switch is on. With more than one box, a picker chooses which box they apply
+  to. The Tune tab now holds only how Claude answers.
 - The panel's tabs work from the keyboard. The strip is one stop in the tab order, the arrow keys,
   Home and End move between tabs, and opening the panel moves focus into it rather than leaving
   Tab to walk the page behind.
