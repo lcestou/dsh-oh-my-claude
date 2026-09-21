@@ -307,7 +307,7 @@ export async function readHints(hintsPath: string): Promise<Record<string, boole
  *
  * The store is read-modify-write, and two requests that overlap both read the file before either
  * writes it: the second write then puts back a map from before the first, and every key the first
- * added is gone. That is not theoretical — a run of rapid switch changes on 2026-09-17 left the
+ * added is gone. That is not theoretical. A run of rapid switch changes on 2026-09-17 left the
  * file holding one key out of eight. Requests queue here instead, and the write goes through
  * `writeJson` so a crash mid-write cannot truncate the file either.
  *
@@ -859,7 +859,8 @@ async function listAllTranscripts(
 
 // A self-contained lister that runs on an SSH box over `node -e`: walk `~/.claude/projects`, peek the
 // head of each transcript (bounded to 256 KB so only metadata crosses the wire, never a whole pasted
-// image) and emit `TranscriptListItem[]` as JSON — the same shape `listTranscripts` builds locally, so
+// image) and emit `TranscriptListItem[]` as JSON. That matches the shape `listTranscripts`
+// builds locally, so a box's rows read like this box's.
 // a box's rows read like this box's. Double quotes only, so `shq` wraps it in single quotes without
 // escaping. Node is present wherever `claude` runs, so no extra install; a box without it just errors.
 export const SSH_TRANSCRIPT_LISTER = `(function(){
@@ -1053,8 +1054,8 @@ const mtimeOf = (body: Record<string, unknown>): number | undefined =>
 /**
  * Keep the previous copy as .bak, write to a temp file, rename over: never a half-written file.
  * `expect` is the mtime the editor read, when it sent one: a file that has moved since is someone
- * else's edit — the CLI rewriting settings.json while the tab sat open, or a second tab — and a
- * whole-file write would put it back the way this tab last saw it.
+ * else's edit, and a whole-file write would put it back the way this tab last saw it. That edit
+ * is the CLI rewriting settings.json while the tab sat open, or a second tab.
  */
 async function writeWithBackup(
   box: FsBox,
@@ -1089,7 +1090,7 @@ async function writeWithBackup(
 /**
  * A dsh subagent run lives inside its parent conversation; dsh refuses to open it standalone
  * ("subagent Sessions require their durable parent address"), so it has no working row in any
- * listing — this cwd's, every cwd's, or a box's.
+ * listing: not this cwd's, not every cwd's, not a box's.
  */
 export const withoutSubagents = <T extends { id: string; dsh?: { subagent?: boolean } }>(
   rows: T[],
@@ -1169,9 +1170,9 @@ const idIn = (text: string): string | undefined =>
   /"sessionId"\s*:\s*"([0-9a-f-]{36})"/.exec(text.slice(0, 8192))?.[1];
 
 /**
- * Whether that id is already in use here — a live dsh session, a transcript under any project dir,
- * or an earlier import. An import that reused one would shadow the real conversation, so it takes a
- * fresh id instead; the original still sits inside the file's own records.
+ * Whether that id is already in use here: by a live dsh session, a transcript under any project
+ * dir, or an earlier import. An import that reused one would shadow the real conversation, so it
+ * takes a fresh id instead; the original still sits inside the file's own records.
  */
 async function idTaken(
   live: (id: string) => boolean,
@@ -1332,8 +1333,8 @@ const claudeHomeOf = async (box: MountBox): Promise<string> =>
 
 /**
  * Where that box keeps a workspace's transcripts and its auto-memory. The same directory the
- * adapter's own `projectDir` names for this PC, resolved against the box's `~/.claude` instead —
- * the cwd is already the remote path, since it is the directory the session runs in.
+ * adapter's own `projectDir` names for this PC, resolved against the box's `~/.claude` instead.
+ * The cwd is already the remote path, since it is the directory the session runs in.
  */
 const projectDirAt = async (box: MountBox, cwd: string): Promise<string> =>
   join(await claudeHomeOf(box), "projects", projectDirName(cwd));
@@ -1526,7 +1527,7 @@ async function sessionTranscript(
  *
  * A minute is enough and needs nothing from the client: two tabs noticing one return post within a
  * second or two of each other, and a second recap cannot be *earned* faster than the away bar, whose
- * smallest offered value is a minute. Nothing expires it on a timer — a stale entry is one number,
+ * smallest offered value is a minute. Nothing expires it on a timer. A stale entry is one number,
  * and the write path sweeps what it passes.
  */
 const RECAP_GAP_MS = 60_000;
@@ -1767,9 +1768,9 @@ export function registerSessionRoutes(
   const userSettingsPathOf = async (box: MountBox): Promise<string | undefined> =>
     box.sshHost ? `${await claudeHomeOf(box)}/settings.json` : settingsPath;
   // Optional: stock dsh has it; without it archived sessions list but cannot be restored. The
-  // routes can serve before it mounts — a request in the first seconds after a restart found no
+  // routes can serve before it mounts. A request in the first seconds after a restart found no
   // registry and skipped the workspace attach silently, so the session it had just written was
-  // nowhere in the sidebar — hence the live `get` alongside the injected handle.
+  // nowhere in the sidebar. Hence the live `get` alongside the injected handle.
   let injectedRegistry: WorkspaceRegistry | undefined;
   /** The workspace registry dsh provides, whether injected or looked up on demand, so routes can
    *  serve even before it mounts. */
@@ -1830,8 +1831,8 @@ export function registerSessionRoutes(
     };
     // Every `claude plugin` and `claude mcp` mutation below runs this instance's binary against
     // this instance's config dir, while the rosters they act on are read from the session's own
-    // box. On a session running over ssh that pairing writes this PC and leaves the box alone —
-    // the roster then re-reads remote and still shows the old state, so the panel reports nothing
+    // box. On a session running over ssh that pairing writes this PC and leaves the box alone.
+    // The roster then re-reads remote and still shows the old state, so the panel reports nothing
     // happened while the wrong machine changed. Refuse instead, until the verbs run over ssh.
     // The cwd matters as much as the named provider: a remote workspace's directory is on its box
     // whichever model the session runs, so a local mount would happily run the verb here, against a
@@ -1839,7 +1840,7 @@ export function registerSessionRoutes(
     const notOnBox = (url: URL, what: string, cwd: string | null = null): string | undefined =>
       targetOf(url, cwd).box.sshHost ? `${what} do not reach an SSH box yet` : undefined;
     // The CLI wrote the plugin change to settings; ask this session's live process to re-read it so
-    // it applies now. Returns whether a live process took it — false (next spawn) when none is up.
+    // it applies now. Returns whether a live process took it. False (next spawn) when none is up.
     const applyReload = async (session: JsonValue | undefined): Promise<boolean> => {
       if (!reloadPlugins || typeof session !== "string") return false;
       return (await reloadPlugins(session)).live;
@@ -2088,8 +2089,8 @@ export function registerSessionRoutes(
                 return json(res, 404, { error: "transcript not found" });
               }
               // Import: a transcript file from anywhere lands in the plugin's own state dir under a
-              // free id, and the merged list picks it up. `projects/` is left alone on purpose —
-              // the CLI owns that directory, and a foreign session has no cwd it ever ran in.
+              // free id, and the merged list picks it up. `projects/` is left alone on purpose.
+              // The CLI owns that directory, and a foreign session has no cwd it ever ran in.
               if (
                 importedDir &&
                 req.method === "POST" &&
@@ -2952,7 +2953,7 @@ export function registerSessionRoutes(
                 if (sid === "" || question === "")
                   return json(res, 400, { error: "session and question required" });
                 // A recap says so, and only a recap is deduplicated: a question someone typed twice
-                // was meant twice. `ok` either way — the caller wanted a recap for this return and
+                // was meant twice. `ok` either way. The caller wanted a recap for this return and
                 // there is one; it simply belongs to whichever tab asked first.
                 if (body.recap === true && recapIsRepeat(sid, Date.now()))
                   return json(res, 200, { ok: true, duplicate: true });
@@ -2978,7 +2979,7 @@ export function registerSessionRoutes(
               }
               // Dismiss is server-side so a closed card stays closed: a client-only hide is lost on the
               // next remount and the entry, still in the ring, would poll back into view. It marks
-              // rather than deletes — the answer stays readable in the panel's Asides tab, which is
+              // rather than deletes. The answer stays readable in the panel's Asides tab, which is
               // the point of persisting asides at all; the bubble is what the user closed, not the
               // record.
               if (
@@ -3563,7 +3564,6 @@ export function registerSessionRoutes(
               // stores the minted token. The host must be a saved box, so this cannot ssh
               // elsewhere; an empty host is this box, run under a local PTY, and its token goes to
               // the default instance's local spawns.
-              /** A finished login: store its token and flip the row's status, or hand back its error. */
               /** The box's own `claude auth status`, the proof a login took once its process exits. */
               const verifyLogin = (loginHost: string) => async () => {
                 const cli = command ?? "claude";
@@ -3573,8 +3573,8 @@ export function registerSessionRoutes(
                     : await run("ssh", sshArgs(loginHost, `${shq(cli)} auth status`));
                 return authFromStatus(st.out).loggedIn;
               };
-              /** Record a finished SSH login — forget the cached identity, tell the panel the box is
-               *  logged in and relist — or hand back its error when it did not finish. */
+              /** Record a finished SSH login: forget the cached identity, tell the panel the box is
+               *  logged in, and relist. A login that did not finish hands back its error. */
               const storeLogin = (loginHost: string, loginBoxes: SshBox[], fin: LoginOutcome) => {
                 if (!fin.done) return { done: false, error: fin.error };
                 forgetIdentity();
@@ -3824,7 +3824,6 @@ export function registerSessionRoutes(
   });
 }
 
-/** The settings files the CLI merges, highest precedence first. */
 /** One settings file as the Diagnostics tab reports it: where it is, and why the CLI refuses it. */
 interface DiagnosticFile {
   scope: SettingsScope;

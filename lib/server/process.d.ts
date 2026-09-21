@@ -23,7 +23,7 @@ export declare const CHILD_ENV: {
     CLAUDE_CODE_ENTRYPOINT: string;
 };
 /** The environment a Claude child runs with: dsh's own, then the plugin's additions, then whatever
- *  the caller passes. CHILD_ENV beats the inherited value on purpose — an `MCP_TOOL_TIMEOUT` that
+ *  the caller passes. CHILD_ENV beats the inherited value on purpose. An `MCP_TOOL_TIMEOUT` that
  *  happens to be in dsh's environment would otherwise cut relayed dsh tools short in one spawn mode
  *  and not the other. A caller that means to override still wins, which is the escape hatch. */
 export declare function childEnv(base: NodeJS.ProcessEnv, override?: Record<string, string>): Record<string, string>;
@@ -365,9 +365,9 @@ export declare function decodeRewindResult(v: JsonValue | undefined): RewindResu
 /**
  * A running total read as one turn's own share: the rise since the previous result, or the whole
  * figure when the total started over. `total_cost_usd` and `duration_api_ms` climb for the life of
- * a CLI process — "each result carries the running total so far, so read the latest result rather
- * than summing across results" — and a new process, a resume or a mid-session `/clear` starts them
- * again from zero, which arrives here as a figure below the last one.
+ * a CLI process, and a new process, a resume or a mid-session `/clear` starts them
+ * again from zero, which arrives here as a figure below the last one. Each result carries the
+ * running total so far, so read the latest result rather than summing across results.
  */
 export declare const turnDelta: (total: number, soFar: number) => number;
 /** What a breakdown row is. The CLI's own words for the field: "'used' content occupies the window;
@@ -741,10 +741,6 @@ export declare class ClaudeProcess {
     kill(): void;
     /** Queue a synthetic event for the turn loop (the MCP bridge relaying a dsh tool call). */
     inject(event: ClaudeEvent): void;
-    /** How many `result` events sit in the queue with no turn reading them. Claude Code runs a turn
-     *  of its own when a background task it started finishes; with dsh idle, that whole turn is
-     *  buffered here and the next prompt would end on its stale result, leaving every later reply
-     *  one prompt behind. */
     /** A `result` line while no turn is reading: Claude just finished a turn of its own. Tell the
      *  adapter (`onIdleResult`) so it can open a dsh turn and show the reply now. */
     noteIdleResult(line: string): void;

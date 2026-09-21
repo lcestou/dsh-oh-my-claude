@@ -234,7 +234,7 @@ export declare function readPickerSettings(path: string): Promise<PickerSettings
 /**
  * A dsh subagent run lives inside its parent conversation; dsh refuses to open it standalone
  * ("subagent Sessions require their durable parent address"), so it has no working row in any
- * listing — this cwd's, every cwd's, or a box's.
+ * listing: not this cwd's, not every cwd's, not a box's.
  */
 export declare const withoutSubagents: <T extends {
     id: string;
