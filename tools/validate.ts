@@ -100,6 +100,32 @@ if (results.every((r) => r.ok) && (await step("build", "bun", "run", "build"))) 
   if (found) console.error(`\n─── conflict markers ───\n${out.slice(0, 2000)}\n`);
 }
 
+// 6. NO EM DASHES IN PUBLISHED PROSE. The house style bans them in anything a person reads, and a
+// rule that lives only in a writing skill reaches only the writer who loaded it: on 2026-09-21 ten
+// sat in the docs and changelog, written by workers and by a one-pass reconstruction from commit
+// subjects, none of which had the skill. So the gate checks the published prose itself. Same
+// inverted-exit reasoning as the conflict-marker step above. Code files are left to review for
+// now: a comment is not published prose, and telling a comment from a string a person reads is
+// more than a grep can do.
+{
+  const start = Date.now();
+  const { code, out } = await run([
+    "git",
+    "grep",
+    "-nI",
+    "-e",
+    "\u2014",
+    "--",
+    "README.md",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "docs/",
+  ]);
+  const found = code === 0;
+  results.push({ name: "no em dashes in docs", ok: !found, ms: Date.now() - start });
+  if (found) console.error(`\n─── em dashes in published prose ───\n${out.slice(0, 2000)}\n`);
+}
+
 const pad = Math.max(...results.map((r) => r.name.length));
 console.log("");
 for (const r of results)
