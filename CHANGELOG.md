@@ -6,6 +6,13 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Added
+
+- Chinese. Everything the plugin draws follows dsh's language setting (Settings → General →
+  Language), or the browser's language when none is picked, and switches without a reload. The
+  plan review dialog, the not logged in tag and the login message follow the stored setting. A
+  Chinese README sits beside the English one.
+
 ### Fixed
 
 - Runs under DSH Desktop. The plugin finds `claude` in the usual install folders when dsh starts
