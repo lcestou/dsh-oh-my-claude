@@ -37,11 +37,11 @@
 
 这个盾牌是 dsh 自带的控件。在 Claude 会话里，它的各项变成 Claude 的六种权限模式，每项都标出它对应的 dsh 访问级别。
 
-<p><img src="https://raw.githubusercontent.com/lcestou/dsh-oh-my-claude/main/docs/media/panel-tabs.gif" width="640" alt="Oh My Claude 面板在记忆、回退、变更和旁支问题标签之间切换"></p>
+<p><img src="https://raw.githubusercontent.com/lcestou/dsh-oh-my-claude/main/docs/media/panel-tabs.gif" width="640" alt="Oh My Claude 面板在记忆、回溯、改动和旁问标签之间切换"></p>
 
-输入框旁的一个 `✻` 按钮打开整个插件：记忆、说明、技能、回退、变更、MCP、旁支问题、诊断、任务和调整；会话还是空白时另有一个恢复标签。
+输入框旁的一个 `✻` 按钮打开整个插件：记忆、说明、技能、回溯、改动、MCP、旁问、诊断、任务和调校；会话还是空白时另有一个恢复标签。
 
-<p><img src="https://raw.githubusercontent.com/lcestou/dsh-oh-my-claude/main/docs/media/panel-changes.png" width="640" alt="变更标签列出工作区差异及每个文件的行数"> <img src="https://raw.githubusercontent.com/lcestou/dsh-oh-my-claude/main/docs/media/panel-asides.png" width="640" alt="旁支问题标签，一个问题在标签栏上方展开"> <img src="https://raw.githubusercontent.com/lcestou/dsh-oh-my-claude/main/docs/media/panel-mcp.png" width="640" alt="MCP 标签的添加服务器表单，已填好名称、命令和参数"></p>
+<p><img src="https://raw.githubusercontent.com/lcestou/dsh-oh-my-claude/main/docs/media/panel-changes.png" width="640" alt="改动标签列出工作区差异及每个文件的行数"> <img src="https://raw.githubusercontent.com/lcestou/dsh-oh-my-claude/main/docs/media/panel-asides.png" width="640" alt="旁问标签，一个问题在标签栏上方展开"> <img src="https://raw.githubusercontent.com/lcestou/dsh-oh-my-claude/main/docs/media/panel-mcp.png" width="640" alt="MCP 标签的添加服务器表单，已填好名称、命令和参数"></p>
 
 <p><img src="https://raw.githubusercontent.com/lcestou/dsh-oh-my-claude/main/docs/media/cost-row.png" width="640" alt="dsh 底部统计行，末尾是 Claude 会话费用和缓存 token 数"></p>
 
@@ -97,7 +97,7 @@ subagent-model-selection:       # 让 dsh 子智能体也能使用 Claude Code
 3. 重启 dsh 不会中断正在运行的 Claude 回合。[Restarts](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#restarts)
 4. dsh 的访问权限盾牌按会话设置 Claude 的六种权限模式。[Permission mode](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#permission-mode-per-session)
 5. Claude 的权限请求、提问和计划审阅都变成 dsh 对话框。[Approvals](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#approvals-and-questions)
-6. 一个 spark 按钮打开记忆、回退、变更、MCP 等十余个标签，全部可以用键盘操作。[The panel](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md)
+6. 一个 spark 按钮打开记忆、回溯、改动、MCP 等十余个标签，全部可以用键盘操作。[The panel](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md)
 7. 费用和缓存 token 显示在 dsh 底部，超过设定额度时标签变橙。[Cost pill](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#cost-pill)
 8. 套餐用量（5 小时、每周、额外用量）显示在 dsh 的上下文圆环里，接近上限时变琥珀色，达到上限时变红，并在输入框上方提示。只统计会话所用模型计入的额度，由 Anthropic 判定，所以新模型无需更新插件。[Plan usage](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#plan-usage)
 9. 恢复或导入任何过去的 Claude 记录，无论来自 dsh 还是终端，并可在其中搜索说过的内容。[Session browser](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#session-browser)
@@ -118,7 +118,7 @@ subagent-model-selection:       # 让 dsh 子智能体也能使用 Claude Code
 
 ## 配置
 
-设置分两类。设置 → Oh My Claude 下和面板调整标签里的开关立即生效，并保存在本机，所以每个浏览器看到的都一样。下面这些键在安装时配置：写在 profile 的 `cordis.patch.yml` 中该 bundle 行的 `config:` 下，dsh 下次加载插件时生效，重启 dsh 即可。dsh 自己的插件页面会列出这个插件并提供开关，但没有这些键的表单。最常改的三个键：
+设置分两类。设置 → Oh My Claude 下和面板调校标签里的开关立即生效，并保存在本机，所以每个浏览器看到的都一样。下面这些键在安装时配置：写在 profile 的 `cordis.patch.yml` 中该 bundle 行的 `config:` 下，dsh 下次加载插件时生效，重启 dsh 即可。dsh 自己的插件页面会列出这个插件并提供开关，但没有这些键的表单。最常改的三个键：
 
 ```yaml
 permissionMode: dsh      # 跟随会话的盾牌（默认），或固定为 CLI 的六种模式之一
