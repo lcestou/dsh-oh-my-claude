@@ -356,7 +356,7 @@ console.log("state.test: ok");
 {
   const events = [
     { type: "turn/start", data: { turn: 1 } },
-    { type: "model/selection", data: { provider: "lutechi-llm", model: "x" } },
+    { type: "model/selection", data: { provider: "local-llm", model: "x" } },
     { type: "model/selection", data: { provider: "claude-code", model: "claude-fable-5-1" } },
     { type: "model/selection", data: { provider: 42 } },
     { type: "assistant/message", data: {} },
