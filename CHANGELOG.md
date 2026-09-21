@@ -8,6 +8,8 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Added
 
+- On a box that has never used the plugin, a small bubble above ✻ says what lives behind it. It goes
+  for good on the first open or its ×, and a box that already used the plugin never shows it.
 - Plan limit warnings. When a limit the session's model counts against is close, the usage ring
   turns amber, and red once it is reached, with a one-line notice above the composer saying which
   limit and when it resets. The grading is Anthropic's own, a per-model limit such as the weekly
@@ -108,6 +110,8 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- The restore pulse on ✻ could fire a second time in the same tab, because marking one hint as seen
+  dropped the others the tab had already read.
 - The dsh hooks line in Diagnostics no longer turns amber on a blank session. It checked for the
   context ring, which dsh only draws once a session has context.
 - The ✻ panel no longer runs under dsh's top strip in a short window. On a new session the
