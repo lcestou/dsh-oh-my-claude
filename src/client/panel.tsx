@@ -205,10 +205,14 @@ const workspaceName = (cwd: string): string => cwd.split("/").filter(Boolean).at
  * read answers nothing, so no hint fires on a box that cannot remember it fired.
  */
 let hintsCache: Promise<Record<string, boolean | number> | null> | undefined;
+/** Returns the cached `GET /hints` answer, fetched once and kept; resolves null on a failed
+ *  read, so a box that cannot remember is treated as no hints rather than an error. */
 const readHints = (): Promise<Record<string, boolean | number> | null> =>
   (hintsCache ??= fetch(`${ROUTE}/hints`)
     .then((r) => readJson<Record<string, boolean | number>>(r))
     .catch(() => null));
+/** Mark a hint seen: POST it to the box, and replace this tab's cached hints with that one key so
+ *  the next read here sees it without a refetch. A failed POST is ignored. */
 const markHint = (key: string): void => {
   hintsCache = Promise.resolve({ [key]: true });
   void fetch(`${ROUTE}/hints`, {
@@ -218,7 +222,8 @@ const markHint = (key: string): void => {
   }).catch(() => {});
 };
 
-/** "Restore Claude session" body rendered inside the Oh My Claude dialog. */
+/** "Restore Claude session" body inside the Oh My Claude dialog. Nothing when the session
+ * already has content or the workspace has no directory to restore into. */
 function RestoreBody({
   sessionId,
   ctx,
@@ -493,11 +498,6 @@ const shortPath = (path: string, cwd: string): string =>
     ? `./${path.slice(cwd.length + 1)}`
     : path.replace(/^\/home\/[^/]+\//, "~/");
 
-/**
- * "Instructions" body rendered inside the Oh My Claude dialog: lists the CLAUDE.md hierarchy
- * the session loaded (managed, user, project, local files plus @imports), and opens each in
- * an editor. Managed files open read-only. Same save/delete routes as Memory, path-checked.
- */
 /** The one plugin scope not `user`-global reads and writes into a directory. */
 const PLUGIN_SCOPE_OPTS = [
   { value: "user", label: "User" },
@@ -727,6 +727,7 @@ interface SkillRow {
   description: string;
 }
 
+/** True for a skill scope this tab can edit (user or project), so plugin skills draw read-only. */
 const writable = (scope: string) => scope === "user" || scope === "project";
 
 /** The /skill-doctor cost columns, one source of truth for the table header and body. `numeric` is
@@ -1438,6 +1439,11 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   );
 }
 
+/**
+ * "Instructions" body rendered inside the Oh My Claude dialog: lists the CLAUDE.md hierarchy
+ * the session loaded (managed, user, project, local files plus @imports), and opens each in
+ * an editor. Managed files open read-only. Same save/delete routes as Memory, path-checked.
+ */
 function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   const cwd = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.cwd;
   const [files, setFiles] = useState<InstructionFile[]>([]);
@@ -1650,6 +1656,8 @@ interface RewindReply {
   deletions?: number;
 }
 
+/** Formats the rewind preview: the reply's error string, or a tally of files changed plus
+ *  insertions and deletions. */
 const rewindSummary = (r: RewindReply) =>
   r.error
     ? r.error
@@ -2575,7 +2583,7 @@ const ruleRank = (r: string): number => (r === "deny" ? 0 : r === "ask" ? 1 : 2)
  */
 function RulesList({ rules }: { rules: PermissionRules["rules"] }) {
   const { shown, allShown, button } = useFold(rules.length);
-  // Deny first, then ask, then allow — within each group the CLI's own order is preserved.
+  // Deny first, then ask, then allow. Within each group the CLI's own order is preserved.
   const visible = allShown
     ? rules
     : [...rules].toSorted((a, b) => ruleRank(a.behavior) - ruleRank(b.behavior)).slice(0, shown);
@@ -3510,9 +3518,11 @@ const MODE_LABELS = {
 } satisfies Record<string, string>;
 
 // Narrowed indexers so callers can use arbitrary strings without widening the object type.
+/** The dsh permission preset that matches a Claude mode. */
 const presetForMode = (m: string): string =>
   // SAFETY: PRESET_FOR_MODE has exactly the six Claude modes as keys; all paths below pass a known key.
   PRESET_FOR_MODE[m as keyof typeof PRESET_FOR_MODE];
+/** How a Claude mode is labelled in the menu. */
 const modeLabel = (m: string): string =>
   // SAFETY: MODE_LABELS has exactly the six Claude modes as keys; all paths below pass a known key.
   MODE_LABELS[m as keyof typeof MODE_LABELS];
@@ -3631,8 +3641,8 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
         // place of our six Claude rows. `parent` is the small modes box, not the composer, so one
         // selector per mutation costs nothing.
         //
-        // Both places dsh can put the open menu: inline under the trigger, or — from 0.1.6, which
-        // renders it through `createPortal(menu, document.body)` — as a direct child of the body.
+        // Both places dsh can put the open menu: inline under the trigger, or as a direct child
+        // of the body from 0.1.6, which renders it through `createPortal(menu, document.body)`.
         // Looking in one place only left 0.1.6 showing dsh's three presets. Body is searched one
         // level deep, never by subtree: the portalled node is the menu itself, and a subtree scan
         // of the body per mutation is the whole transcript. Menus other plugins portal there are
@@ -3959,6 +3969,8 @@ const asidePill = (color: string): CSSProperties => ({
   whiteSpace: "nowrap",
 });
 
+/** The Asides tab: this session's `/btw` questions and answers, newest first. Renders an error
+ *  line, a loading line, or an empty note when there are none. */
 function AsidesBody({ sessionId }: { sessionId: string }) {
   const [items, setItems] = useState<AsideRow[] | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
