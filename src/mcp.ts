@@ -61,6 +61,7 @@ interface OpenSessionArgs {
   agentPreset?: JsonValue;
 }
 
+/** The value when it is a string, else undefined; never a coerced value. */
 const str = (v: JsonValue | undefined): string | undefined =>
   typeof v === "string" ? v : undefined;
 
@@ -139,6 +140,8 @@ export interface JsonRpcReply {
   error?: { code: number; message: string };
 }
 
+/** The JSON-RPC reply for a failed call: a result with `isError` set and the error's text, under
+ *  the request's own id. */
 const errorReply = (id: JsonValue | undefined, e: unknown): JsonRpcReply => ({
   jsonrpc: "2.0",
   id,
@@ -250,6 +253,8 @@ export async function handleRpc(
   }
 }
 
+/** Write a JSON response. An undefined value ends with an empty body rather than the text
+ *  `null`. */
 const send = (res: ServerResponse, status: number, value?: unknown) => {
   res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" });
   res.end(value === undefined ? "" : JSON.stringify(value));
@@ -284,8 +289,8 @@ const asRpc = (body: Record<string, JsonValue>): JsonRpcRequest => ({
 });
 
 /**
- * Mount `POST /dsh-oh-my-claude/mcp/<dsh session id>`. Resolves once the web server is up with the
- * base URL and key the adapter must hand to `claude --mcp-config`.
+ * The bridge key: the file's contents when they are a valid key, else a fresh key written to the
+ * file, so the key survives a restart.
  */
 function stableKey(file: string): string {
   try {

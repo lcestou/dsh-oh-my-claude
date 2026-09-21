@@ -98,7 +98,7 @@ const ruleDirs = (cwd: string, claudeHome: string): string[] => [
  * How many reads may be in flight at once.
  *
  * On an ssh box every read is a channel on the shared connection, and sshd's default MaxSessions is
- * 10 — open more and the extras are refused, which would read as a missing file. Six leaves room for
+ * 10. Open more and the extras are refused, which would read as a missing file. Six leaves room for
  * the session pipe and the status probe to keep working while a panel loads.
  * ponytail: a fixed cap, not a pool shared with the rest of the plugin's ssh; raise it only
  * alongside the box's MaxSessions.
@@ -119,9 +119,10 @@ const inFlight = async <T>(items: string[], limit: number, job: (item: string) =
 
 /**
  * Whether a listed file may be written back. The list doubles as the write allowlist, and a `@`
- * line puts any absolute path a repo names on it — a cloned `CLAUDE.md` holding `@~/.ssh/authorized_keys`
- * would otherwise offer that file as an editable row. The CLI loads instructions as markdown, so a
- * path that is not a `.md` file is never one this panel should be rewriting.
+ * line puts any absolute path a repo names on it. A cloned `CLAUDE.md` holding
+ * `@~/.ssh/authorized_keys` would otherwise offer that file as an editable row. The CLI loads
+ * instructions as markdown, so a path that is not a `.md` file is never one this panel should be
+ * rewriting.
  */
 export const isWritableInstructions = (path: string): boolean => path.endsWith(".md");
 
@@ -140,9 +141,9 @@ export async function listInstructions(
   const seen = new Set<string>();
 
   // One read serves both the listing and the imports it pulls in, which is a round trip rather
-  // than two for a box across ssh. Anything that will not read as a file — absent, a directory,
-  // unreadable — is skipped: this walk is discovery, and the status panel is where a box that
-  // cannot be reached is reported.
+  // than two for a box across ssh. Anything that will not read as a file is skipped. A file that
+  // is absent, a directory or unreadable does not count. This walk is discovery, and the status
+  // panel is where a box that cannot be reached is reported.
   const reads = new Map<string, Promise<FileRead | null>>();
   const readOnce = (at: string): Promise<FileRead | null> => {
     let job = reads.get(at);
@@ -163,7 +164,7 @@ export async function listInstructions(
   };
 
   // The walk below is a chain of awaits, so on an ssh box it used to spend one full round trip per
-  // ancestor file with the connection idle in between — about 25 of them in a row, 0.09s each on a
+  // ancestor file with the connection idle in between, about 25 of them in a row, 0.09s each on a
   // LAN even with the shared connection. The paths it will ask for are known before it starts, so
   // they go out together first and the walk reads their answers; it still visits them in load
   // order, and a path the prefetch did not know (a rules file, an `@` import) is fetched when it

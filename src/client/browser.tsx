@@ -123,6 +123,8 @@ export interface DraftReading {
   /** The final segment that prefix-filters `listing`, null when it does not answer that directory. */
   tail: string | null;
 }
+/** A draft path split into its directory and the tail that prefix-filters the listing; the tail
+ *  null unless the directory is the current level or one the scan just landed in. */
 export function readDraft(listing: Listing, draft: string, scanned: Scanned | null): DraftReading {
   const directory = draftDirectory(listing, draft);
   if (directory === null) return { directory: null, tail: null };
@@ -156,6 +158,8 @@ export function visibleEntries(
 }
 
 const P = "omc-db";
+/** Joins the class names, dropping every falsy entry, so a call with only false, null or undefined
+ *  returns an empty string rather than a stray space. */
 const cls = (...names: (string | false | null | undefined)[]): string =>
   names.filter(Boolean).join(" ");
 

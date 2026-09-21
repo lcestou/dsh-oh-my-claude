@@ -47,7 +47,7 @@ export const CHILD_ENV = {
 };
 
 /** The environment a Claude child runs with: dsh's own, then the plugin's additions, then whatever
- *  the caller passes. CHILD_ENV beats the inherited value on purpose — an `MCP_TOOL_TIMEOUT` that
+ *  the caller passes. CHILD_ENV beats the inherited value on purpose. An `MCP_TOOL_TIMEOUT` that
  *  happens to be in dsh's environment would otherwise cut relayed dsh tools short in one spawn mode
  *  and not the other. A caller that means to override still wins, which is the escape hatch. */
 export function childEnv(base: NodeJS.ProcessEnv, override?: Record<string, string>) {
@@ -338,7 +338,7 @@ export function nodeSpawner(
     stderr: child.stderr,
     done: new Promise((resolve) => {
       // Node emits `error` on the child for ENOENT, EACCES and a failed fork, and an EventEmitter
-      // `error` with no listener throws — a `claude` that is not on PATH would take the whole dsh
+      // `error` with no listener throws. A `claude` that is not on PATH would take the whole dsh
       // host down with it, every session, not just this one. It reads as an exit here instead.
       child.on("error", (e: Error) => resolve({ exitCode: -1, signal: e.message }));
       child.on("close", (exitCode, signal) => resolve({ exitCode, signal }));
@@ -445,8 +445,8 @@ const SSH_CONTROL_DIR = controlSocketDir(process.env.XDG_RUNTIME_DIR, STATE_DIR,
  * prompt. ConnectTimeout bounds the handshake.
  *
  * ControlMaster shares one connection between all of them. Opening the panel on a box costs about
- * 33 remote reads — 25 of them the CLAUDE.md walk alone, one per ancestor directory probe — and
- * without multiplexing each pays a full TCP connect, key exchange and auth: seconds of dead panel
+ * 33 remote reads. The CLAUDE.md walk alone is 25 of them, one probe per ancestor directory.
+ * Without multiplexing each pays a full TCP connect, key exchange and auth: seconds of dead panel
  * on a LAN, more over a WAN. With it the first read pays that once and the rest reuse the socket,
  * which ControlPersist keeps for a minute after the last one closes.
  *
@@ -564,9 +564,9 @@ export function decodeRewindResult(v: JsonValue | undefined): RewindResult {
 /**
  * A running total read as one turn's own share: the rise since the previous result, or the whole
  * figure when the total started over. `total_cost_usd` and `duration_api_ms` climb for the life of
- * a CLI process — "each result carries the running total so far, so read the latest result rather
- * than summing across results" — and a new process, a resume or a mid-session `/clear` starts them
- * again from zero, which arrives here as a figure below the last one.
+ * a CLI process, and a new process, a resume or a mid-session `/clear` starts them
+ * again from zero, which arrives here as a figure below the last one. Each result carries the
+ * running total so far, so read the latest result rather than summing across results.
  */
 export const turnDelta = (total: number, soFar: number): number =>
   total >= soFar ? total - soFar : Math.max(0, total);
@@ -643,8 +643,12 @@ export interface WorkspaceDiff {
     hunks: Array<{ oldStart: number; newStart: number; lines: string[] }>;
   }>;
 }
+/** True only for a non-null, non-array object, so a decoded CLI answer can be read by key without a
+ *  guard on every field. */
 const isRecord = (v: JsonValue | undefined): v is Record<string, JsonValue> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
+/** Return the number as-is, or 0 when the CLI omitted or mis-typed the field, so a missing count
+ *  reads as zero rather than NaN. */
 const num = (x: JsonValue | undefined) => (typeof x === "number" ? x : 0);
 /** A `get_workspace_diff` answer as totals, per-file counts and hunks, skipping malformed entries. */
 export function decodeWorkspaceDiff(v: JsonValue | undefined): WorkspaceDiff {
@@ -860,6 +864,8 @@ type SchemaProp = {
   title?: string;
   description?: string;
 };
+/** Pull a schema's top-level properties out of an MCP elicitation request, or undefined when it has
+ *  no usable properties or more than 20. */
 function schemaProps(schema: JsonValue | undefined): SchemaProp[] | undefined {
   const s = isRecord(schema) ? schema : {};
   const props = isRecord(s.properties) ? s.properties : undefined;
@@ -1044,6 +1050,8 @@ export class LineQueue {
   waiters: Array<(line: string | typeof TIMEOUT | null) => void>;
   closed: boolean;
 
+  /** Start with no queued lines, no waiters and no close flag; every field stays empty until the
+   *  first push. */
   constructor() {
     this.lines = [];
     this.waiters = [];
@@ -1053,6 +1061,8 @@ export class LineQueue {
   get size(): number {
     return this.lines.length;
   }
+  /** Hand a line to the earliest waiter if one is waiting, else buffer it, so a line never arrives
+   *  before its reader. */
   push(line: string | ClaudeEvent | Record<string, unknown>) {
     const w = this.waiters.shift();
     if (w && line !== null) {
@@ -1062,10 +1072,14 @@ export class LineQueue {
       this.lines.push(line);
     }
   }
+  /** Mark the queue closed and resolve every pending waiter with null, so a stopped child's
+   *  readers see the end. */
   close() {
     this.closed = true;
     for (const w of this.waiters.splice(0)) w(null);
   }
+  /** Resolve with the next queued line, a timeout after `timeoutMs` with nothing, or null once the
+   *  queue is closed. */
   next(timeoutMs?: number): Promise<string | typeof TIMEOUT | null> {
     if (this.lines.length > 0) {
       const line = this.lines.shift();
@@ -1133,6 +1147,7 @@ export interface KeeperPaths {
   spec: string;
   info: string;
 }
+/** The keeper's socket, spec and info files, all one level under the keeper's directory. */
 const keeperPaths = (dir: string): KeeperPaths => ({
   dir,
   sock: join(dir, "keeper.sock"),
@@ -1341,6 +1356,8 @@ export function readKeeperSpec(dir: string): KeeperSpec | undefined {
 /** Launch the keeper in its own systemd user scope when possible (a service restart's cgroup kill
  *  then misses it), else as a detached process with its own group. */
 export function launchKeeper(argv: string[], unit: string): void {
+  /** Launch the keeper fully detached with stdio discarded, so it survives the parent that started
+   *  it. */
   const detached = () => {
     const c = spawn(argv[0] ?? process.execPath, argv.slice(1), {
       detached: true,
@@ -1451,6 +1468,8 @@ export class ClaudeProcess {
   /** Sees every `control_response` line as it arrives, even between turns; true means consumed. */
   controlListener?: (event: ClaudeEvent) => boolean;
 
+  /** Spawn the child Claude and feed its stdout into the line queue, noting idle completion replies
+   *  so the adapter can open a dsh turn. */
   constructor({
     args,
     cwd,
@@ -1501,6 +1520,8 @@ export class ClaudeProcess {
     );
   }
 
+  /** When the child ends, reject every relayed tool call as failed, close the queue and run the
+   *  exit callback. */
   closed(code: number, onExit: ClaudeProcessOnExit | undefined) {
     this.exitCode = code;
     this.queue.close();
@@ -1510,16 +1531,20 @@ export class ClaudeProcess {
     onExit?.(this);
   }
 
+  /** True while the child has not exited, so a write to a finished process is refused. */
   get alive() {
     return this.exitCode === undefined;
   }
 
+  /** Write a stdin line to the child, returning false when it has exited, so a line to a dead
+   *  process is not silently dropped. */
   write(line: string): boolean {
     if (!this.alive) return false;
     this.child.stdin.write(line);
     return true;
   }
 
+  /** Terminate the child while it is alive, so killing an already-dead process is a no-op. */
   kill() {
     if (this.alive) this.child.terminate();
   }
@@ -1529,10 +1554,6 @@ export class ClaudeProcess {
     this.queue.push(event);
   }
 
-  /** How many `result` events sit in the queue with no turn reading them. Claude Code runs a turn
-   *  of its own when a background task it started finishes; with dsh idle, that whole turn is
-   *  buffered here and the next prompt would end on its stale result, leaving every later reply
-   *  one prompt behind. */
   /** A `result` line while no turn is reading: Claude just finished a turn of its own. Tell the
    *  adapter (`onIdleResult`) so it can open a dsh turn and show the reply now. */
   noteIdleResult(line: string) {
@@ -1549,6 +1570,8 @@ export class ClaudeProcess {
     }
   }
 
+  /** Count buffered `result` events with no turn reading them, so the loop can tell a real reply
+   *  from a stale background-task completion. */
   countStaleResults() {
     let n = 0;
     for (const line of this.queue.lines) {
@@ -1566,8 +1589,9 @@ export class ClaudeProcess {
    *  process ended, `{ type: "timeout" }` when `timeoutMs` passed first. */
   async nextEvent(timeoutMs?: number): Promise<ClaudeEvent | null> {
     // The deadline is fixed when the wait starts, not renewed per line: a child printing text that
-    // is not JSON — a warning, a progress bar, a shell banner — would otherwise hand this loop a
-    // fresh timeout on every line and hold a call that is never going to answer open forever.
+    // is not JSON would otherwise hand this loop a fresh timeout on every line and hold a call
+    // that is never going to answer open forever. A warning, a progress bar or a shell banner
+    // would each do it.
     const deadline = timeoutMs === undefined ? undefined : Date.now() + timeoutMs;
     for (;;) {
       const left = deadline === undefined ? undefined : Math.max(0, deadline - Date.now());

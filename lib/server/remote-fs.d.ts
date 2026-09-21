@@ -18,7 +18,7 @@ export declare const isEnoent: (e: unknown) => boolean;
  * each and fall back to an unknown time rather than failing the read.
  */
 export declare const readScript: (path: string) => string;
-/** One name per line, or nothing when the directory is absent — a missing dir lists empty, as locally. */
+/** One name per line, or nothing when the directory is absent. A missing dir lists empty. */
 export declare const listScript: (dir: string) => string;
 /**
  * One directory level for the workspace picker: the level it resolved to, then the box's `$HOME`,

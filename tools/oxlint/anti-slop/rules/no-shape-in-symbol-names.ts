@@ -3,6 +3,9 @@ import type { ESTree } from "@oxlint/plugins";
 
 const FORBIDDEN_SYMBOL_NAME = "shape";
 
+/** Return true when a symbol name contains the substring `shape` case-insensitively, the structural
+ *  descriptor the rule forbids.
+ */
 function containsForbiddenSymbolName(name: string): boolean {
   return name.toLowerCase().includes(FORBIDDEN_SYMBOL_NAME);
 }

@@ -40,6 +40,9 @@ console.log(
     : "FAIL",
 );
 // Round trip through the store: off, reload, still off; on, reload, still on.
+/** Reload the settings card and return the starter switch state, so the round-trip proves the
+ *  toggle persists across a reload.
+ */
 const state = async () => {
   await p.goto(dshUrl(token), { waitUntil: "networkidle" });
   await p.waitForTimeout(1500);

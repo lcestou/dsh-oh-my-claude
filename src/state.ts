@@ -115,11 +115,13 @@ export function lastSelectedProvider(
 /**
  * The Claude Code slash commands the CLI's last init frame named, kept so a dsh restart can put
  * them back. The catalog arrives once per spawned process, and a restart adopts the running Claude
- * rather than spawning a new one — so without this file every bridged command (`/claude-llama` and
+ * rather than spawning a new one, so without this file every bridged command (`/claude-llama` and
  * the rest) vanished from the menu until the next cold start.
  */
 const COMMANDS_FILE = (dir: string) => join(dir, "commands.json");
 
+/** The bridged slash-command names, or an empty list when the file is missing, unreadable or not
+ *  an array. Never throws. */
 export async function loadCommandCatalog(dir: string): Promise<string[]> {
   try {
     const parsed: unknown = JSON.parse(await readFile(COMMANDS_FILE(dir), "utf8"));
@@ -142,6 +144,8 @@ export function saveCommandCatalog(dir: string, names: string[]): Promise<void> 
 const HOLDS_FILE = (dir: string) => join(dir, "holds.json");
 let holdsChain = Promise.resolve();
 
+/** The saved holds keyed by session id, or an empty record when the file is missing, unreadable
+ *  or not an object. Never throws. */
 export async function loadHolds(dir: string): Promise<Record<string, unknown>> {
   try {
     const parsed: unknown = JSON.parse(await readFile(HOLDS_FILE(dir), "utf8"));
@@ -189,6 +193,8 @@ export function dropHold(dir: string, sessionId: string, name?: string): Promise
 const LIMIT_WAITS_FILE = (dir: string) => join(dir, "limit-waits.json");
 let limitChain: Promise<void> = Promise.resolve();
 
+/** Each waiting session's reset time, keyed by session id. A missing or corrupt file reads as no
+ *  waits, and an entry whose value is not a number is dropped. Never throws. */
 export async function loadLimitWaits(dir: string): Promise<Map<string, number>> {
   const map = new Map<string, number>();
   try {
@@ -223,7 +229,7 @@ let startedChain: Promise<void> = Promise.resolve();
  * The Claude session IDs this plugin has started.
  *
  * Read from disk every time rather than cached for the life of the process: the state directory is
- * shared, so a second dsh over the same one — or a hand edit — is invisible to a cache that was
+ * shared, so a second dsh over the same one, or a hand edit, is invisible to a cache that was
  * filled at startup, and the sessions it started would stay hidden from this one's list until a
  * restart. The file holds a few hundred ids at most and is read once per request.
  */
@@ -367,6 +373,8 @@ export const PERMISSION_MODES = [
   "bypassPermissions",
 ] as const;
 export type PermissionMode = (typeof PERMISSION_MODES)[number];
+/** Narrow an unchecked string, from config or a request body, to a mode the CLI accepts.
+ *  The match is exact and case-sensitive. */
 export const isPermissionMode = (v: string): v is PermissionMode =>
   PERMISSION_MODES.some((m) => m === v);
 
@@ -770,6 +778,8 @@ export function buildRedactor(env: Record<string, string | undefined>): (s: stri
 /** Tool activity as the Tune switch last set it; absent means the config default. */
 export const TOOL_MODE_FILE = (d: string) => join(d, "tool-mode.json");
 
+/** The saved tool mode, or undefined when the file is missing, corrupt or names a mode this version
+ *  does not know, so the caller keeps its config default. Never throws. */
 export async function loadToolMode(dir: string): Promise<ToolMode | undefined> {
   try {
     const parsed: unknown = JSON.parse(await readFile(TOOL_MODE_FILE(dir), "utf8"));
@@ -784,6 +794,7 @@ export async function loadToolMode(dir: string): Promise<ToolMode | undefined> {
   }
 }
 
+/** Save the tool mode for the next dsh start to read back through `loadToolMode`. */
 export const saveToolMode = (dir: string, mode: ToolMode): Promise<void> =>
   writeJson(TOOL_MODE_FILE(dir), { mode });
 
@@ -803,7 +814,23 @@ export type WatchRecord = {
   claudeId?: string;
 };
 
+/** Every watch record saved under `dir`, keyed by dsh session id. Waits for any save still queued
+ *  for that directory first, so a reader never sees a baseline older than one already handed to
+ *  `saveWatch`. */
 export async function loadWatches(dir: string): Promise<Map<string, WatchRecord>> {
+  await watchWrites.get(dir);
+  return readWatches(dir);
+}
+
+/** The pending save per state directory. `saveWatch` reads the whole file, changes one entry and
+ *  writes it back, so two saves in flight at once raced: the one that read first could write last
+ *  and put an older baseline back, and the next dsh start re-mirrored exchanges it had already
+ *  shown. Chaining the saves makes the last one called the last one written. */
+const watchWrites = new Map<string, Promise<void>>();
+
+/** The watch file as read right now, with no wait for pending saves; `saveWatch` reads through
+ *  this inside its own queue. A missing or corrupt file, or a malformed entry, reads as nothing. */
+async function readWatches(dir: string): Promise<Map<string, WatchRecord>> {
   const out = new Map<string, WatchRecord>();
   try {
     const parsed: unknown = JSON.parse(await readFile(WATCH_FILE(dir), "utf8"));
@@ -830,21 +857,32 @@ export async function loadWatches(dir: string): Promise<Map<string, WatchRecord>
   return out;
 }
 
+/** Record where a session's watch has read up to. Queued behind any save already pending for
+ *  `dir`, so saves land in the order they were called; the returned promise settles when this one
+ *  has been written. */
 export async function saveWatch(
   dir: string,
   sessionId: string,
   record: WatchRecord,
 ): Promise<void> {
-  const all = await loadWatches(dir);
-  all.set(sessionId, record);
-  await writeJson(WATCH_FILE(dir), Object.fromEntries(all));
+  const next = (watchWrites.get(dir) ?? Promise.resolve()).then(async () => {
+    const all = await readWatches(dir);
+    all.set(sessionId, record);
+    await writeJson(WATCH_FILE(dir), Object.fromEntries(all));
+  });
+  // A failed save must not stall the ones behind it; its caller still sees the rejection.
+  watchWrites.set(
+    dir,
+    next.catch(() => {}),
+  );
+  return next;
 }
 
 /** The terminal mirror: whether the plugin copies exchanges from a terminal that picked this session
  *  up with `claude /resume` into the dsh session as they land. Off unless the owner turned it on,
  *  and a missing or unreadable file reads as off, so a fresh box does not get it by surprise: the
  *  mirror holds a dsh turn open while it fills, which can leave a typed prompt queued behind it.
- *  Carrying a session between dsh and a terminal does not depend on this and never did — Claude Code
+ *  Carrying a session between dsh and a terminal does not depend on this and never did. Claude Code
  *  writes the transcript itself, so `/resume` sees dsh's turns, and opening a terminal session in dsh
  *  seeds it from that transcript. This flag only governs the live copy in one direction. */
 export const TERMINAL_SYNC_FILE = (d: string) => join(d, "terminal-sync.json");
@@ -864,5 +902,6 @@ export async function loadTerminalSync(dir: string): Promise<boolean | undefined
   }
 }
 
+/** Save the terminal-mirror switch for the next dsh start to read back through `loadTerminalSync`. */
 export const saveTerminalSync = (dir: string, enabled: boolean): Promise<void> =>
   writeJson(TERMINAL_SYNC_FILE(dir), { enabled });

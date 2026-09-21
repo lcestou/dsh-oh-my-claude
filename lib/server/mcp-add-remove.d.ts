@@ -8,6 +8,7 @@ declare const MCP_SCOPES: readonly ["user", "local", "project"];
 export type McpScope = (typeof MCP_SCOPES)[number];
 /** A scope other than `user` writes into a directory, so the route needs the session's cwd. */
 export declare const scopeNeedsCwd: (scope: McpScope) => boolean;
+/** True only for one of the MCP scopes the CLI accepts, `user`, `local` and `project`. */
 export declare function isMcpScope(value: unknown): value is McpScope;
 /**
  * The CLI's own name rule: `mcp remove` and `mcp add-json` take the name as one argv word, so a

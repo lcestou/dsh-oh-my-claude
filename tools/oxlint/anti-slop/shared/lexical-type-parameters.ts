@@ -2,12 +2,18 @@ import type { ESTree } from "@oxlint/plugins";
 
 type VisitorKeys = Readonly<Record<string, readonly string[]>>;
 
+/** Type-guard an AST value onto ESTree.Node by checking it carries a string `type` field, since the
+ *  walker hands this raw `any` straight from oxlint's visitor map.
+ */
 function isNode(value: unknown): value is ESTree.Node {
   return (
     typeof value === "object" && value !== null && "type" in value && typeof value.type === "string"
   );
 }
 
+/** Recurse the AST child map collecting the names of `infer T` type parameters, because a mapped or
+ *  conditional type can shadow a module alias with one.
+ */
 function collectInferTypeParameterNames(
   node: ESTree.Node,
   visitorKeys: VisitorKeys,

@@ -10,6 +10,9 @@ const b = await launch();
 
 type Reads = Record<string, string>;
 
+/** Read the computed colours the Claude look paints for one color scheme, dark or light, and return
+ *  them as JSON so a theme change can be diffed before and after.
+ */
 async function readScheme(colorScheme: "dark" | "light"): Promise<Reads> {
   const ctx = await b.newContext({ viewport: { width: 1400, height: 900 }, colorScheme });
   const p = await ctx.newPage();

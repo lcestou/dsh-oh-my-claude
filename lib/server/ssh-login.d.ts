@@ -9,6 +9,7 @@ export declare const THIS_BOX = "";
 export declare function sshTokenPath(stateDir: string, host: string): string;
 /** The stored login token for a host, or undefined if the box was never logged in from the panel. */
 export declare function readSshToken(stateDir: string, host: string): string | undefined;
+/** Remove the host's stored SSH token. A token already gone is not an error. */
 export declare function deleteSshToken(stateDir: string, host: string): void;
 /** A process to start: the binary and its argument list. */
 export interface Invocation {

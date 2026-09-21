@@ -1,5 +1,5 @@
 // Browser half: Settings → "Oh My Claude". A branded header, then two cards: Sessions (one
-// transcript list across this box and every saved box — filter by box, workspace, origin; open
+// transcript list across this box and every saved box. Filter by box, workspace, origin; open
 // here or jump to the box) and Boxes (this box as the first row, plus the ssh and linked-dsh
 // machines you add, each probed for claude version and login). Built into lib/client.js by
 // `bun run build`.
@@ -117,7 +117,6 @@ export { type SessionData, isOwnedActive, fmtCost, fmtDuration, cacheShare };
 
 /** Deep link another box's panel sends us to: `#claude-session=<id>&cwd=<path>`. */
 const HASH_KEY = "claude-session";
-/** Format byte sizes for session rows. */
 /** A row's identity in the list: the same transcript id can sit on two boxes. */
 const rowKey = (r: { g: { key: string }; s: { id: string } }): string => `${r.g.key}-${r.s.id}`;
 
@@ -129,6 +128,7 @@ const slugFile = (title: string): string =>
     .replace(/^-|-$/g, "")
     .slice(0, 40) || "claude";
 
+/** A byte count for a session row: whole KB under a megabyte, MB with one decimal above. */
 const size = (bytes: number): string =>
   bytes < 1_000_000 ? `${Math.round(bytes / 1000)} KB` : `${(bytes / 1_000_000).toFixed(1)} MB`;
 /** `/home/me/Projects/app` → `Projects/app`; keeps the full path for the title attribute. */
@@ -138,7 +138,7 @@ const shortPath = (p: string | undefined): string => {
   return parts.length > 2 ? parts.slice(-2).join("/") : p;
 };
 
-/** Plugin name identifier. */
+/** The client bundle's name, exported so dsh can identify this plugin. */
 export const name = "dsh-oh-my-claude-client";
 /** Services injected into the client plugin by dsh. */
 export const inject = ["slots", "sessions", "workspaces", "modelDirectories"];
@@ -147,6 +147,7 @@ type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
 type JsonObject = { [key: string]: Json };
 /** JSON.parse hands back one of six shapes; this tells the plain object apart. */
 const isObj = (v: Json | undefined): v is JsonObject => v instanceof Object && !Array.isArray(v);
+/** Counts items in a parsed value: array length, object keys, or 0 when v is neither. */
 const count = (v: Json | undefined): number =>
   Array.isArray(v) ? v.length : isObj(v) ? Object.keys(v).length : 0;
 
@@ -479,6 +480,7 @@ function Origin({ s }: { s: { dsh?: { archived?: boolean; id?: string }; importe
   if (s.dsh.archived) return <span style={pill(T.warn)}>archived</span>;
   return <span style={pill(T.brand)}>dsh</span>;
 }
+/** Returns a box's origin: terminal, archived or dsh, and terminal when it has no dsh record. */
 const originOf = (s: { dsh?: { archived?: boolean } }): string =>
   !s.dsh ? "terminal" : s.dsh.archived ? "archived" : "dsh";
 
@@ -588,7 +590,7 @@ export interface GroupInfo {
   error?: string;
   sessions: SessionData[];
   box?: BoxData;
-  /** An SSH box: transcripts live on its host, reachable only over ssh — no HTTP box to jump to. */
+  /** An SSH box: transcripts live on its host, reachable only over ssh. No HTTP box to jump to. */
   sshBox?: boolean;
   /** The box's provider id (`claude-code-<slug>`), so a resumed transcript binds back to it. */
   provider?: string;
@@ -781,7 +783,7 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
       // A dsh session that already ran on the box (archived or live): go through the same open path
       // as local. For an owned session `/open` unarchives it via the registry without reading the
       // transcript from this box's disk, then opens under its own durable provider binding. Calling
-      // `sessions.open` alone would leave an archived row archived — the "Restore" no-op just seen.
+      // `sessions.open` alone would leave an archived row archived. The "Restore" no-op just seen.
       if (r.s.dsh?.id) {
         setBusyId(r.s.id);
         setError("");
@@ -848,7 +850,7 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
   };
 
   // Export is a plain file save: the transcript byte for byte, so importing it back is a no-op.
-  // ponytail: one file per ticked row rather than a zip — no archive dependency, and a browser
+  // ponytail: one file per ticked row rather than a zip. No archive dependency, and a browser
   // saves a handful of sequential downloads without a prompt. Zip it if people tick dozens.
   const download = async () => {
     const wanted = rows.filter((r) => picked.has(rowKey(r)));
@@ -925,7 +927,7 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
     try {
       // The route needs an absolute path when the scope is `workspace`; the panel's cwd filter is
       // the string "all", not a path. Read the workspace the panel is open in the way context-sizes
-      // and claude-md do — the open session's own cwd — and widen to box when there is no path.
+      // and claude-md do, using the open session's own cwd, and widen to box when there is no path.
       let scope = deepScope;
       let cwdParam = cwd === "all" ? "" : cwd;
       if (scope === "workspace" && cwdParam === "") {
@@ -1420,8 +1422,8 @@ function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
     setError("");
     const body: SettingsWrite = box ? { text } : { text, scope };
     if (!box && projectCwd !== null) body.cwd = projectCwd;
-    // The file as this tab last read it. The CLI writes settings.json itself — a plugin install, a
-    // /model pick — and a save that ignored that would put the whole file back without it.
+    // The file as this tab last read it. The CLI writes settings.json itself on a plugin
+    // install or a /model pick. A save that ignored that would put the whole file back without it.
     if (file?.mtime !== undefined) body.mtime = file.mtime;
     fetch(settingsUrl, {
       method: "PUT",
@@ -1643,7 +1645,7 @@ interface ProbeEntry {
 type BoxKind = "ssh" | "tailscale" | "wireguard" | "dsh";
 
 /**
- * Every machine, in one place. This box is the first row (auto-detected, not removable — it is the
+ * Every machine, in one place. This box is the first row (auto-detected, not removable. It is the
  * environment the plugin was installed on); the rest you add, in two kinds:
  *  - **SSH** (`ssh`): this dsh drives Claude Code on the box over ssh; it becomes its own entry in
  *    the model picker, nothing runs there but the CLI. Saved in the plugin's own state.
@@ -1831,6 +1833,7 @@ interface LoginRoutes {
 const SSH_LOGIN: LoginRoutes = { base: "ssh-boxes/login", field: "host" };
 const DSH_LOGIN: LoginRoutes = { base: "boxes/login", field: "url" };
 
+/** Login state for one box plus the start and submit handlers; each step POSTs to a login route. */
 function useLoginFlow(onDone: (host: string) => void, routes: LoginRoutes = SSH_LOGIN) {
   const [login, setLogin] = useState<LoginFlow | null>(null);
   const post = (route: string, host: string, extra: Record<string, string> = {}) =>
@@ -1886,6 +1889,7 @@ function useLoginFlow(onDone: (host: string) => void, routes: LoginRoutes = SSH_
   return { login, setLogin, startLogin, submitLogin };
 }
 
+/** Renders one login's steps: the sign-in link, the paste area and the poll. */
 function LoginSteps({
   login,
   setLogin,
@@ -1937,6 +1941,7 @@ function LoginSteps({
   );
 }
 
+/** The Boxes card: this box first, then any added machines, each probed and addable from here. */
 function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
   const [probe, setProbe] = useState<Record<string, ProbeEntry>>({});
   const [self, setSelf] = useState<{ plugin?: string } | null>(null);
@@ -2952,6 +2957,7 @@ const resetText = (at: number | null): string => {
 
 // Per provider: two plugin instances are two accounts, so two answers.
 const usageCache = new Map<string, { at: number; reply: UsageReply }>();
+/** Fetches a provider's usage, cached 60 s, so a repeat call returns the cached value. */
 const loadUsage = async (provider?: string): Promise<UsageReply> => {
   const key = provider ?? "";
   const hit = usageCache.get(key);
@@ -2964,7 +2970,6 @@ const loadUsage = async (provider?: string): Promise<UsageReply> => {
   return reply;
 };
 
-/** Fill a block with the usage rows, styled like the meter's own legend rows. */
 type ContextReply =
   | {
       ok: true;
@@ -2986,6 +2991,7 @@ type ContextReply =
 // the percentage while a turn runs. The promise is cached, not its answer, so the frames that arrive
 // before the first one lands share it instead of each opening a request of their own.
 const contextCache = new Map<string, { at: number; reply: Promise<ContextReply> }>();
+/** Fetches a session's context breakdown, cached 10 s, returning an error when the fetch fails. */
 const loadContext = (sessionId: string): Promise<ContextReply> => {
   const hit = contextCache.get(sessionId);
   if (hit && Date.now() - hit.at < 10_000) return hit.reply;
@@ -3001,6 +3007,7 @@ const loadContext = (sessionId: string): Promise<ContextReply> => {
   contextCache.set(sessionId, { at: Date.now(), reply });
   return reply;
 };
+/** Formats a token count the way the CLI does: `1.2M`, `12.3k` or plain. */
 const kTokens = (n: number) =>
   n >= 1_000_000
     ? `${Number((n / 1_000_000).toFixed(1))}M`
@@ -3008,8 +3015,8 @@ const kTokens = (n: number) =>
       ? `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k`
       : String(n);
 /**
- * Rows worth a line: the ones whose tokens are the conversation. The CLI's `kind` is the authority
- * — it says so in the field's own description, "classify on this, never on the English name" — and
+ * Rows worth a line: the ones whose tokens are the conversation. The CLI's `kind` is the authority.
+ * It says so in the field's own description, "classify on this, never on the English name". And
  * it is what keeps the free space and the compaction buffer out, neither of which is content and
  * neither of which is counted in `totalTokens` either. The name test is the fallback for a CLI too
  * old to send `kind`; it misses the buffer rows, which is what this whole readout used to do.
@@ -3023,7 +3030,7 @@ const isUsedRow = (c: { name: string; deferred: boolean; kind?: string }): boole
  * legend; this keeps that shape over the CLI's categories, which are more numerous and vary with
  * what a session loaded. Position rather than name because the names are the CLI's to change, and a
  * swatch that drifts one hue is a smaller wrong than a classification that reads the name and is
- * believed — the same reason `isUsedRow` asks `kind` instead. The order opens on the neutral grey,
+ * believed, the same reason `isUsedRow` asks `kind` instead. The order opens on the neutral grey,
  * purple and blue dsh itself uses, so the block still reads as part of its meter.
  */
 const SEGMENT_COLORS = [
@@ -3109,6 +3116,7 @@ function renderContext(el: HTMLElement, reply: ContextReply) {
   el.append(head, ...(note ? [note] : []), bar, legend);
 }
 
+/** Builds a link that opens in a new tab (noreferrer noopener) styled in the brand colour. */
 const extLink = (text: string, href: string): HTMLAnchorElement => {
   const a = document.createElement("a");
   a.textContent = text;
@@ -3165,6 +3173,8 @@ function creditsRow(c: UsageCredits): HTMLElement {
   return creditsLine;
 }
 
+/** Fill a block with the usage rows, styled like the meter's own legend rows, or with the error
+ *  text when the reply is not ok. */
 function renderUsage(block: HTMLElement, reply: UsageReply) {
   block.replaceChildren();
   if (!reply.ok) {
@@ -3252,6 +3262,8 @@ let pending: MutationRecord[] = [];
  */
 const PENDING_CAP = 4000;
 let pendingOverflow = false;
+/** Run every frame scan once with the records gathered this frame, or with none after an
+ *  overflow, which a scan reads as "look at the whole body". */
 const flushScans = () => {
   scanQueued = false;
   const records = pendingOverflow ? undefined : pending;
@@ -3259,13 +3271,14 @@ const flushScans = () => {
   pendingOverflow = false;
   for (const scan of frameScans) scan(records);
 };
+/** Subscribes the given MutationObserver to document.body for childList and subtree changes. */
 const observeBody = (observer: MutationObserver) => {
   observer.observe(document.body, { childList: true, subtree: true });
 };
 /**
  * The elements a burst touched: each record's target plus whatever it added. A scan handed these
- * covers the same ground as one over `document.body` — dsh only ever draws through the DOM — at a
- * cost that follows what changed rather than how long the conversation is.
+ * covers the same ground as one over `document.body`, because dsh only ever draws through the DOM.
+ * The cost follows what changed rather than how long the conversation is.
  */
 const changedElements = (records: MutationRecord[]): Set<HTMLElement> => {
   const nodes = new Set<HTMLElement>();
@@ -3285,6 +3298,7 @@ const onBodyMutation = (scan: FrameScan, sync = false): (() => void) => {
   if (bodyObserver) return off;
   // The new bundle registers its own scans; this one's would run on top of them against a context
   // that no longer answers.
+  // When the bundle is replaced, disconnect the observer and clear the scan sets.
   whenContextGone(() => {
     bodyObserver?.disconnect();
     bodyObserver = undefined;
@@ -3293,9 +3307,9 @@ const onBodyMutation = (scan: FrameScan, sync = false): (() => void) => {
   });
   bodyObserver = new MutationObserver((records) => {
     // The records are the point: a sync scan that walks only what changed costs the same on a long
-    // transcript as on a short one. So the observer stays attached across the pass — detaching to
-    // avoid being called back by our own writes threw the records away, and a scan with no records
-    // has nothing to scope itself to. The writes do call this back once more; a scan that already
+    // transcript as on a short one. So the observer stays attached across the pass.
+    // Detaching to avoid being called back by our own writes threw the records away, and a scan
+    // with no records has nothing to scope itself to. The writes do call this back once more;
     // did its work finds nothing to do and the second pass ends there.
     for (const run of syncScans) run(records);
     if (frameScans.size === 0) return;
@@ -3314,7 +3328,7 @@ const onBodyMutation = (scan: FrameScan, sync = false): (() => void) => {
 /**
  * Hide the meter's own context readout, leaving this plugin's block in its place.
  *
- * Selected structurally — every child of the host that is not ours — because dsh's class names are
+ * Selected structurally, every child of the host that is not ours, because dsh's class names are
  * generated and change under us on any upgrade, and there is nothing else in either host to keep:
  * the ring's popover and its hover bubble are both the context readout and nothing more. Re-applied
  * on each attach, since React rebuilds these children whenever it re-renders. Elements are hidden
@@ -3322,8 +3336,8 @@ const onBodyMutation = (scan: FrameScan, sync = false): (() => void) => {
  * through; a bare text node has no style to set, so it goes, and the next re-render restores it.
  *
  * The `hidden` attribute alone does not do it. It works through the user agent's `[hidden]{display:
- * none}`, which any class rule of dsh's outranks — its own header carries `display:flex`, so the row
- * stayed on screen wearing `hidden=""`. The inline `!important` is what actually wins, and the
+ * none}`, which any class rule of dsh's outranks. Its own header carries `display:flex`, so the
+ * row stayed on screen wearing `hidden=""`. The inline `!important` is what actually wins, and the
  * attribute stays for the accessibility tree.
  */
 function hideNativeContext(host: HTMLElement, ours: HTMLElement) {
@@ -3336,12 +3350,13 @@ function hideNativeContext(host: HTMLElement, ours: HTMLElement) {
   }
 }
 
+/** Injects the plugin's usage block into a Claude row, re-hiding it when dsh puts its own back. */
 function watchContextMeter(ctx: ClientCtx) {
   const MARK = "data-dsh-oh-my-claude-usage";
   // The mark goes on the node we inject, never on dsh's node: React owns these children and drops
   // ours whenever it re-renders the panel, and a mark on the host would say "done" forever while
   // the row it names is gone.
-  // Our block, if this host already has one. A host that has it is done — except for the hiding,
+  // Our block, if this host already has one. A host that has it is done, except for the hiding,
   // which is about dsh's children rather than ours: React rebuilds those on every repaint of the
   // percentage, so a readout hidden a moment ago can be back beside a block that never left.
   const HID = "data-dsh-oh-my-claude-replaced";
@@ -3387,7 +3402,7 @@ function watchContextMeter(ctx: ClientCtx) {
         // thing: its count of the session surface it holds, which has never seen the system prompt,
         // the tool schemas or the files the CLI read, and keeps counting turns the CLI compacted
         // away. Two bars disagreeing by tens of thousands of tokens is worse than one, so the
-        // CLI's own answer replaces it — and only when there is an answer, so a session with no
+        // CLI's own answer replaces it, and only when there is an answer, so a session with no
         // live process still gets dsh's estimate rather than nothing.
         if (!reply.ok) return;
         block.setAttribute(HID, "1");
@@ -3473,8 +3488,8 @@ function watchContextMeter(ctx: ClientCtx) {
   /**
    * Fill the ring from the CLI's own occupancy.
    *
-   * dsh draws the arc from `contextPressure`, which is the prompt side of the last usage sample —
-   * input plus both cache counters — over the window. For a Claude Code session that sample is the
+   * dsh draws the arc from `contextPressure`, which is the prompt side of the last usage sample,
+   * input plus both cache counters, over the window. For a Claude Code session that sample is the
    * result frame's, and the CLI sums it across every API call the turn made: a turn of 117 calls
    * reports millions of cache reads, so the arc pins at 100% while the session is a third full. The
    * dash is rewritten with the percentage the CLI reports, which is the number this plugin's popover
@@ -3499,7 +3514,7 @@ function watchContextMeter(ctx: ClientCtx) {
       ringAsked = 0;
     }
     // dsh repaints the arc by rewriting an attribute, which the body observer does not watch, and a
-    // ring already pinned at 100% stops changing altogether — so neither dsh's repaints nor ours can
+    // ring already pinned at 100% stops changing altogether, so neither dsh's repaints nor ours can
     // be the thing that keeps this current. It is re-asked on a clock instead, off the same
     // ten-second cache the popover reads.
     if (Date.now() - ringAsked > 5_000) {
@@ -3581,8 +3596,9 @@ function watchContextMeter(ctx: ClientCtx) {
     if (portal) attach(portal);
   };
   // Scoped to the burst: the ring's dialog and tooltip are rare nodes, and the body-wide pair of
-  // attribute queries this used to run every dirty frame cost 0.4 ms on a conversation of 30k nodes
-  // — paid on every frame of every streaming turn to find, almost always, nothing.
+  // attribute queries this used to run every dirty frame cost 0.4 ms on a 30k-node conversation,
+  // paid on every frame of every streaming turn to find, almost always, nothing.
+  // The per-frame scan: re-check changed elements and repaint the ring.
   onBodyMutation((records) => {
     if (records === undefined) scan(document.body);
     else for (const node of changedElements(records)) scan(node);
@@ -3592,8 +3608,8 @@ function watchContextMeter(ctx: ClientCtx) {
   paintRing();
 }
 
-/** Fetch Claude Code's settings.json text and extract spinnerVerbs if present. */
 let spinnerSettings: Promise<{ verbs: string[]; frameSet: typeof DEFAULT_FRAMES }> | undefined;
+/** Fetch Claude Code's settings.json text and extract spinnerVerbs if present. */
 const loadSpinnerSettings = async (): Promise<{
   verbs: string[];
   frameSet: typeof DEFAULT_FRAMES;
@@ -3640,7 +3656,6 @@ const accentRgb = (fallback: Rgb): Rgb => {
   return /^#[0-9a-f]{6}$/i.test(v) ? hexToRgb(v) : fallback;
 };
 
-/** Wire one turn-status element for a claude-code session: verb + ping-pong spinner + orange gradient. */
 /** Inject (or re-inject after a hot reload) the Claude-orange rule; idempotent by id. Reuses the
  *  element but always rewrites it: a hot reload lands a new bundle in a page still carrying the last
  *  one's sheet, and returning early here left the old rules in force until a hand reload. */
@@ -3657,7 +3672,7 @@ const ensureTurnStatusStyle = () => {
   // from its first paint; the watcher then swaps the text and adds the spinner a frame later.
   //
   // The last two rules recolour the conversation's selected view tab (Chat / Trajectory), which dsh
-  // paints from its blue `--dsw-alias-state-business-primary` — the label and its underline draw
+  // paints from its blue `--dsw-alias-state-business-primary`. The label and its underline draw
   // from the same token but as `color` and `background`, so both are overridden. Gated on the same
   // body attribute, so a session that switches off a Claude mount hands the tab straight back to
   // dsh's blue on the next paint. ponytail: `[role=tablist] > [role=tab]` catches any dsh view-tab
@@ -3667,7 +3682,7 @@ const ensureTurnStatusStyle = () => {
   // blue: a link, with its underline at a lighter weight and the shimmer on hover, and a task
   // checkbox, whose tick is the platform accent. Two in a flat grey: a blockquote's left bar
   // (`--dsw-alias-label-caption`) and a rule's hairline (`--dsw-alias-border-l2`). All are accents
-  // rather than text, so they take the orange — the bar at half strength, the rule at a third of it
+  // rather than text, so they take the orange. The bar is at half strength, the rule at a third,
   // since it runs the whole width and a solid orange band across a message reads as a warning.
   // Code highlighting keeps its own palette: those colours mean token kinds, not the brand. Swept
   // 2026-09-09 with a computed-style pass over the conversation column: nothing else is blue there.
@@ -3677,7 +3692,7 @@ const ensureTurnStatusStyle = () => {
   // The data attributes are dsh's own, the hashed class name is not.
   // The chasing dots dsh draws while something runs (its `StateDot` at `state="ongoing"`: eight
   // rects around a ring, each fading a beat after the last). They stayed dsh's blue wherever they
-  // appear away from the turn status row — the subagent switcher's dropdown is where it shows, since
+  // appear away from the turn status row. The subagent switcher's dropdown is where it shows, since
   // a Claude session's children are listed there with one running dot each. The colour comes from
   // `--dsh-state-ongoing`, which dsh declares on the element itself, so a value inherited from
   // `body` loses to it; the override has to land on the same element. `svg[data-state="ongoing"]`
@@ -3699,6 +3714,7 @@ const VERB_MEMORY_MS = 4000;
 /** A token count the way the CLI's status line writes one: `1.2k` past a thousand, plain below. */
 const shortCount = (n: number): string => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
 
+/** Picks a verb for a running turn, reusing the session's previous one within a short window. */
 const verbFor = (sessionId: string, verbs: string[]): string => {
   const now = Date.now();
   // Every session that ever ran a turn in this tab left an entry behind. They are small, but the
@@ -3728,6 +3744,7 @@ const THINKING_WORDS: [number, string][] = [
   [20_000, "thinking more"],
   [10_000, "still thinking"],
 ];
+/** Returns the CLI wording for a thinking burst of the given length, defaulting to "thinking". */
 const thinkingWord = (ms: number): string =>
   THINKING_WORDS.find(([at]) => ms >= at)?.[1] ?? "thinking";
 
@@ -3748,12 +3765,15 @@ const SPINNER_LIGHT = {
 const STALL_RED: Rgb = [171, 43, 63];
 const WORD_GREY_LO: Rgb = [153, 153, 153];
 const WORD_GREY_HI: Rgb = [185, 185, 185];
+/** `n` held inside 0 to 1. */
 const clamp01 = (n: number): number => Math.min(Math.max(n, 0), 1);
+/** Blends two RGB colours by t (0 is a, 1 is b) and rounds each channel. */
 const mixRgb = (a: Rgb, b: Rgb, t: number): Rgb => [
   Math.round(a[0] + (b[0] - a[0]) * t),
   Math.round(a[1] + (b[1] - a[1]) * t),
   Math.round(a[2] + (b[2] - a[2]) * t),
 ];
+/** Serialises an RGB triple as an `rgb(r, g, b)` string. */
 const cssRgb = (c: Rgb): string => `rgb(${c[0]},${c[1]},${c[2]})`;
 /** Dark page or light, from the body's own background: dsh keeps its theme in CSS variables and
  *  exposes no flag, and the luminance of what is actually painted is what the eye compares to. */
@@ -3774,7 +3794,10 @@ const easeChars = (shown: number, target: number): number => {
   const step = abs < 70 ? 3 : abs < 200 ? Math.max(8, Math.ceil(abs * 0.15)) : 50;
   return gap > 0 ? Math.min(shown + step, target) : Math.max(shown - step, target);
 };
+/** No-op frame callback, used where a beat changes nothing and so writes nothing. */
 const noBeat = (): void => undefined;
+/** Wire one turn-status element for a claude-code session: verb, ping-pong spinner and orange
+ *  gradient. */
 const wireTurnStatus = (
   el: HTMLElement,
   sessionId: string,
@@ -3840,11 +3863,13 @@ const wireTurnStatus = (
     // and nothing else; 1s notices an unmounted row soon enough at an eighth of the wakeups.
     reduced ? 1000 : 120,
   );
-  // The row can outlive the bundle that wired it — a rebuild disposes the context while the turn is
-  // still running — and a connected row never trips the check above, so each reload used to leave
+  // The row can outlive the bundle that wired it, since a rebuild disposes the context while the
+  // turn is still running. A connected row never trips the check above, so each reload left
   // one more beat animating the same spinner. The wired mark and the spinner go back with it: both
   // live on dsh's element, which outlives this bundle, and a row still wearing the mark is one the
   // next bundle refuses to wire.
+  // Tear down this row: stop the spinner beat and poll, remove the wired mark and spinner, so a
+  // row that outlives its bundle leaves nothing animating.
   whenContextGone(() => {
     stop();
     el.removeAttribute(TURN_MARK);
@@ -4208,6 +4233,8 @@ function watchSessionNotices(ctx: ClientCtx) {
   whenContextGone(() => clearInterval(beat));
 }
 
+/** Post a 'Claude is waiting' notification for a stopped session, or none when notifications are
+ *  off or ungranted, leaving the title mark to carry it. */
 function notifyWaiting(ctx: ClientCtx, id: string, title: string) {
   // Permission is only ever asked for from the panel's own toggle, so an ungranted browser is the
   // normal case here and the title mark carries it alone.
@@ -4221,6 +4248,8 @@ function notifyWaiting(ctx: ClientCtx, id: string, title: string) {
   });
 }
 
+/** Post a notification for a session waiting on a permission prompt, using the prompt kind in the
+ *  body; returns without one when notifications are off or ungranted. */
 function notifyAwaiting(ctx: ClientCtx, id: string, title: string, prompt: AwaitingRow) {
   // Permission is only ever asked for from the panel's own toggle, so an ungranted browser is the
   // normal case here and the title mark carries it alone.
@@ -4239,9 +4268,9 @@ function notifyAwaiting(ctx: ClientCtx, id: string, title: string, prompt: Await
 // this a record left from a switch minutes ago would re-announce on the session's next clean stop.
 const FRESH_MS = 5 * 60_000;
 
-// On a stop, read the session's fallback record once. A fresh one (newer than the last announced,
-// and within FRESH_MS) fires the fallback notice and moves the picker; otherwise the generic
-// waiting notice fires. One fetch per stop, never per second.
+/** On a stop, read the session's fallback record once. A fresh one (newer than the last announced,
+ *  and within FRESH_MS) fires the fallback notice and moves the picker; otherwise the generic
+ *  waiting notice fires. One fetch per stop, never per second. */
 async function announceStop(
   ctx: ClientCtx,
   id: string,
@@ -4267,8 +4296,8 @@ async function announceStop(
   notifyWaiting(ctx, id, title);
 }
 
-// The notice body: the CLI's own sentence when it sent one, else a plain line that names the model
-// that answered and the safeguard category. Verified against every case in the plan.
+/** The notice body: the CLI's own sentence when it sent one, else a plain line that names the model
+ *  that answered and the safeguard category. Verified against every case in the plan. */
 function fallbackNoticeBody(rec: FallbackRecord): string {
   if (rec.content) return rec.content;
   const cat = rec.category ?? "safety";
@@ -4285,6 +4314,8 @@ function fallbackNoticeBody(rec: FallbackRecord): string {
   return `Answered by ${to} for one message (${cat} safeguard on ${from}); your model is unchanged.`;
 }
 
+/** Post the fallback notice body for a session that fell back, with the same permission guard as
+ *  notifyWaiting, so an ungranted browser gets the title mark alone. */
 function notifyFallback(ctx: ClientCtx, id: string, title: string, rec: FallbackRecord) {
   // Same guard as notifyWaiting: an ungranted browser gets the title mark alone.
   if (!noticesOn() || !("Notification" in window) || Notification.permission !== "granted") return;
@@ -4299,10 +4330,11 @@ function notifyFallback(ctx: ClientCtx, id: string, title: string, rec: Fallback
   });
 }
 
-// Move dsh's picker onto the model that answered, only for a sticky, session-scoped safety fallback:
-// retry/revert are one-off, local is a subagent, and the other frame kinds do not swap the session
-// model. Mirrors StaleModelRepair's reads and its not-running guard (a model change respawns the
-// next turn). Matches the app, which keeps the picker on Opus until the person switches back.
+/** Move dsh's picker onto the model that answered, only for a sticky, session-scoped safety
+ *  fallback: retry/revert are one-off, local is a subagent, and the other frame kinds do not swap
+ *  the session model. Mirrors StaleModelRepair's reads and its not-running guard (a model change
+ *  respawns the next turn). Matches the app, which keeps the picker on Opus until the person
+ *  switches back. */
 function movePickerToFallback(ctx: ClientCtx, sessionId: string, rec: FallbackRecord) {
   if (
     rec.kind !== "model_refusal_fallback" ||
@@ -4328,6 +4360,8 @@ function movePickerToFallback(ctx: ClientCtx, sessionId: string, rec: FallbackRe
     void dir.select({ provider: cur.provider, model: living }).catch(() => {});
 }
 
+/** Wire a running turn's status: attach dsh's [role=status][aria-live=polite] element to this
+ *  session, keep the body marked to the active Claude session, and tear both down on unmount. */
 function watchTurnStatus(ctx: ClientCtx) {
   ensureTurnStatusStyle(); // a hot reload drops the old module's style tag but keeps marked elements
   // Keep a body flag in step with the open session so the first-paint colour rule applies before
@@ -4353,8 +4387,8 @@ function watchTurnStatus(ctx: ClientCtx) {
     if (!activeId) return;
     if (!hasTheme("row")) return; // the Claude look's status row is off: dsh's own text stays
     spinnerSettings ??= loadSpinnerSettings(); // once per page load
-    // The settings load once and resolve for good, so this is a microtask after the first frame —
-    // but the await used to be unhandled, so a throw inside `wireTurnStatus` became a rejection
+    // The settings load once and resolve for good, so this is a microtask after the first frame.
+    // The await used to be unhandled, so a throw inside `wireTurnStatus` became a rejection
     // `guard` never saw: the spinner simply never appeared, with nothing on the console to say why.
     void spinnerSettings.then((settings) => {
       if (el.isConnected) wireTurnStatus(el, activeId, settings.verbs, settings.frameSet);
@@ -4381,7 +4415,7 @@ function watchTurnStatus(ctx: ClientCtx) {
  * sidebar row dot and the job/subagent/plan dots inside the open conversation, leaving every other
  * provider dsh's own colour. dsh colours the `ongoing` dot from the
  * `--dsh-state-ongoing` custom property; an inline `color` on the svg overrides it, and clearing it
- * hands the row straight back to dsh — so a session that switches off a Claude mount reverts on the
+ * hands the row straight back to dsh. A session that switches off a Claude mount reverts on the
  * next pass.
  *
  * The row carries no session id in the DOM, so a running dot is matched to a session by the title
@@ -4389,15 +4423,15 @@ function watchTurnStatus(ctx: ClientCtx) {
  * ponytail: title match, not id; two running sessions with the same title share a tint. Swap for a
  * per-row id the day dsh puts one on the row.
  */
-// The title span sits next to the slot that holds the dot; the dot's nearest span ancestor is that
-// slot, so its next sibling is the title. Structural, so no hashed class name is needed.
+/** The title span sits next to the slot that holds the dot; the dot's nearest span ancestor is that
+ *  slot, so its next sibling is the title. Structural, so no hashed class name is needed. */
 const spinnerRowTitle = (dot: Element): string | null =>
   dot.closest("span")?.nextElementSibling?.textContent?.trim() ?? null;
 
-// The composer's primary send/stop button shares the local CSS-module class `_primary` with one
-// button in a settings view, so class alone is not enough. The real one shares an ancestor with the
-// message box (a contenteditable). Walk up until an ancestor holds one; null means it is not the
-// composer button. Structural, so no hashed class is needed.
+/** The composer's primary send/stop button shares the local CSS-module class `_primary` with one
+ *  button in a settings view, so class alone is not enough. The real one shares an ancestor with
+ *  the message box (a contenteditable). Walk up until an ancestor holds one; null means it is not
+ *  the composer button. Structural, so no hashed class is needed. */
 const inComposer = (node: Element, box: Element | null): boolean => {
   // `contains` per level, against a message box the caller looked up once. The walk used to run a
   // fresh subtree query at every ancestor, which is the whole document by the time it reaches the
@@ -4457,6 +4491,8 @@ interface RainbowChar {
   index: number;
 }
 
+/** Build a text range over the one character a rainbow match covers, so the highlight spans exactly
+ *  that glyph. */
 const rangeOf = (c: RainbowChar): Range => {
   const r = document.createRange();
   r.setStart(c.node, c.offset);
@@ -4617,6 +4653,8 @@ function watchUltrathink(ctx: ClientCtx) {
   document.addEventListener("input", request, true);
   document.addEventListener("visibilitychange", request);
   request();
+  // On teardown, disconnect the sweep observer and listeners and stop the shimmer, so an unmounted
+  // ultrathink sweep makes no more queries.
   whenContextGone(() => {
     obs.disconnect();
     document.removeEventListener("input", request, true);
@@ -4626,6 +4664,8 @@ function watchUltrathink(ctx: ClientCtx) {
   });
 }
 
+/** Tint this session's running Claude mounts' spinners orange, rescanning every second while the
+ *  tab is visible, waking on visibilitychange, and leaving other providers' spinners alone. */
 function watchSessionSpinners(ctx: ClientCtx) {
   const MARK = "data-omc-spinner";
   const SEND_MARK = "data-omc-send";
@@ -4643,9 +4683,10 @@ function watchSessionSpinners(ctx: ClientCtx) {
     // visibility listener below runs it once the moment the tab comes back.
     if (document.hidden) return;
     const claude = claudeRunningTitles();
-    // Every other ongoing matrix square — the job-list dot in the session header, and the same dot
-    // dsh shows for subagents, plans and schedules — renders inside the open conversation, so it
-    // belongs to whichever session is open. Tint those when that session is a Claude mount.
+    // Every other ongoing matrix square renders inside the open conversation. That set is the
+    // job-list dot in the session header and the same dot dsh shows for subagents, plans and
+    // schedules, so it belongs to whichever session is open. Tint those when that session is a
+    // Claude mount.
     const openClaude = activeClaudeSession(ctx) !== undefined;
     const openIsClaude = openClaude && hasTheme("row");
     for (const dot of document.querySelectorAll<SVGElement>('svg[data-state="ongoing"]')) {
@@ -4695,6 +4736,8 @@ function watchSessionSpinners(ctx: ClientCtx) {
   const beat = setInterval(guard(scan), 1000);
   const wake = guard(scan);
   document.addEventListener("visibilitychange", wake);
+  // On teardown, stop the scan beat and the visibility wake, so nothing rescans once the context
+  // is gone.
   whenContextGone(() => {
     clearInterval(beat);
     document.removeEventListener("visibilitychange", wake);
@@ -4702,7 +4745,7 @@ function watchSessionSpinners(ctx: ClientCtx) {
 }
 
 /** Fold a native-tool code block into a one-line disclosure. dsh renders a tool step as a `<p>` whose
- *  text is an icon plus the tool's name (`❯ Bash`, `▤ Read` — set by the translator) followed by its
+ *  text is an icon plus the tool's name (`❯ Bash`, `▤ Read`), set by the translator, followed by
  *  `.md-code-block` fence, both children of `._markdown`. Collapsed, the fence hides; hovering the
  *  header swaps its icon for dsh's chevron, and clicking toggles it. The marker is the leading glyph:
  *  only a header that starts with one of the translator's tool icons folds, so Claude's own prose code
@@ -4746,8 +4789,8 @@ const SPRITES = {
 
 /** The hidden sprite sheet: one rendered copy of each dsh icon, cloned into the tool headers by the
  *  fold scan. Rendering them as ordinary children of a mounted component is what lets this plugin use
- *  dsh's React icons from plain DOM code — no react-dom import, no portal, and the sheet costs one
- *  hidden div per session. */
+ *  dsh's React icons from plain DOM code, no react-dom import and no portal. The sheet costs
+ *  one hidden div per session. */
 function ToolIconSprites() {
   return (
     <span hidden>
@@ -4760,23 +4803,25 @@ function ToolIconSprites() {
   );
 }
 
+/** Create or overwrite the tool-fold stylesheet, always rewriting it, so a hot reload's stale rules
+ *  never survive in a page that still carries the old bundle. */
 const ensureFoldStyle = () => {
   // Reuse the element but always rewrite it. A hot reload drops a new bundle into a page that still
   // carries the previous one's sheet, so returning early here left the old rules in force and the new
-  // build's markup styled by them — which looks like the feature half-shipped until the tab is
+  // build's markup styled by them, which looks like the feature half-shipped until the tab is
   // reloaded by hand.
   const existing = document.getElementById("dsh-oh-my-claude-fold");
   const el = existing instanceof HTMLStyleElement ? existing : document.createElement("style");
   el.id = "dsh-oh-my-claude-fold";
-  // The header reads as dsh's muted tool text — its secondary content size and label colour — and sits
-  // flush-left like any prose line. The leading span is a fixed 16px box holding both glyphs stacked, so the row never
-  // shifts: the tool icon is the resting state and the chevron sits on top of it at opacity 0, the two
+  // The header reads as dsh's muted tool text, taking its secondary content size and label colour.
+  // It sits flush-left like any prose line. The leading span is a fixed 16px box of both glyphs
+  // stacked, so the row never shifts: the tool icon rests and the chevron sits on top
   // cross-fading on hover. This is how dsh draws its own tool rows (`iconIdle`/`chevronHover` in
-  // dsh-client-ui-tool), down to the secondary label colour, and the chevron never rotates — expanding
+  // dsh-client-ui-tool), secondary label colour, and the chevron never rotates. Expanding
   // is shown by the fence appearing, not by the marker turning. A `flat` header has no fence under it
   // (`▤ Read \`path\`` is the whole step), so it takes the muted type and the icon but neither the
   // pointer nor the chevron: there is nothing to disclose. The `body` prefix stays out of `lead` on
-  // purpose — pasted into a descendant position it would read as a `body` inside a `p` and match
+  // purpose. Pasted into a descendant position it would read as a `body` inside a `p` and match
   // nothing, which is what silently killed the hover swap.
   const head = `body[data-omc-claude] p[${HEAD_MARK}]`;
   const fold = `${head}:not([${HEAD_MARK}="flat"])`;
@@ -4805,7 +4850,7 @@ const ensureFoldStyle = () => {
     // The line has to clear the leading box: dsh's paragraph line-height is set from a 13px font, and
     // a 16px icon sitting in it puts the glyph into the row above.
     `${head}{font-size:var(--dsh-content-font-size-secondary,13px);line-height:calc(${box} + 4px);color:var(--dsw-alias-label-secondary);padding-left:calc(${box} + 6px);text-indent:calc(0px - ${box} - 6px);margin-bottom:4px}`,
-    // `text-indent` inherits, and dsh renders inline code as an inline-block — a block container, so
+    // `text-indent` inherits, and dsh renders inline code as an inline-block, a block container, so
     // the hanging indent applies a second time inside the chip and drags the path left over the verb.
     `${head} *{text-indent:0}`,
     `${fold}{cursor:pointer;user-select:none}`,
@@ -4828,7 +4873,7 @@ const ensureFoldStyle = () => {
     // Rows stack the way dsh's own tool rows do: one tight step between rows rather than a
     // paragraph's worth, and an expanded block sits against the header it belongs to. The step has
     // to be the header's own `margin-bottom`: dsh wraps each row in its own markdown container, so
-    // two rows are never siblings and a `+` rule between them can never match — that margin
+    // two rows are never siblings and a `+` rule between them can never match. That margin
     // collapses through the wrapper and is the whole gap. Zero it and the rows sit flush.
     `${head}+.md-code-block{margin-top:4px;margin-bottom:0}`,
     `${head}+.md-code-block+${head}{margin-top:8px}`,
@@ -4857,14 +4902,15 @@ const leadFor = (glyph: string): HTMLElement | null => {
   return span;
 };
 
+let foldClicksBound = false;
 /** One delegated listener pair toggles a header. Bound once per bundle and dropped when this bundle
  *  retires: a flag on documentElement outlives the reload the listeners do not, which left a tab
  *  answering clicks from whichever bundle loaded first and every later one silently unbound. */
-let foldClicksBound = false;
 const bindFoldClicks = () => {
   if (foldClicksBound) return;
   foldClicksBound = true;
   const stop = new AbortController();
+  // On teardown, abort the fold-click listeners, so a retired bundle stops answering header clicks.
   whenContextGone(() => {
     stop.abort();
   });
@@ -4978,6 +5024,8 @@ const dotHeader = (head: HTMLElement): void => {
   node.replaceWith(frag);
 };
 
+/** Wire tool-step folding: ensure the fold styles, bind the delegated header-click listeners, and
+ *  scan existing steps so already-open tool rows can fold. */
 function watchToolFolds() {
   ensureFoldStyle();
   ensurePanelStyle(); // the aside dock shares the panel's hover and focus rules
@@ -4996,7 +5044,7 @@ function watchToolFolds() {
     // React reuses a `<p>` node across renders: the paragraph that held a tool header one frame
     // can hold prose the next. It rewrites the text (`textContent` on a node with our extra span
     // takes the wipe-and-append path, so the lead span goes with it) but never touches our
-    // attributes — leaving a prose line wearing the header type, taking clicks, and hiding the
+    // attributes, leaving a prose line wearing the header type, taking clicks, and hiding the
     // fence under it for good. A paragraph that no longer leads with a glyph gives its marks back.
     if (glyph === "") {
       if (head.hasAttribute(HEAD_MARK)) {
@@ -5007,8 +5055,8 @@ function watchToolFolds() {
     }
     // State first, icon second. The state attribute is what hides the fence, and a header that has
     // to wait for the sprite sheet would otherwise sit unmarked with its whole block on screen.
-    // A header folded before its icon lands still opens on click or Enter — setFoldState is what
-    // gives it the role and the tab stop — so the only thing missing for that frame is the glyph.
+    // A header folded before its icon lands still opens on click or Enter. `setFoldState` is what
+    // gives it the role and the tab stop, so the only thing missing for that frame is the glyph.
     const foldable = head.nextElementSibling?.classList.contains("md-code-block") === true;
     const state = head.getAttribute(HEAD_MARK);
     // A header can start flat and gain its fence a moment later while the step streams in, so the
@@ -5047,9 +5095,9 @@ function watchToolFolds() {
     dotHeader(head);
   };
   const MARKDOWN_P = '[class*="_markdown"] p';
-  // What a burst touched, as headers. A record's target is the node whose children changed — the
-  // paragraph itself when React rewrites its text, the markdown container when a step gains its
-  // fence — and its added nodes are whole blocks that may hold headers of their own.
+  // What a burst touched, as headers. A record's target is the node whose children changed,
+  // either the paragraph itself when React rewrites its text or the markdown container when a
+  // step gains its fence. Its added nodes are whole blocks that may hold headers of their own.
   const headsIn = (records: MutationRecord[]): Set<HTMLElement> => {
     const heads = new Set<HTMLElement>();
     const take = (node: Node) => {
@@ -5126,7 +5174,7 @@ export const isStatsRow = (el: HTMLElement): boolean => {
   if (el.hasAttribute("data-composer-stats")) return true;
   // dsh 0.1.6-alpha.2 draws the same pills and dropped the marker, so the row is recognised by the
   // shape instead: anchor spans holding one popover pill each. Asked for as direct children, which
-  // is what keeps the footer that wraps the row from matching too — appending into that footer is
+  // is what keeps the footer that wraps the row from matching too. Appending into that footer is
   // how the readout ended up outside the row, as loose text behind a bar.
   if (el.querySelector(STATS_PILL)) return true;
   // The class comes before the text, and the text is only read for a div that has it. Both old and
@@ -5149,7 +5197,7 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   useEffect(() => {
     // No `activeClaudeSession` gate here. It reads the session's provider binding, which is briefly
     // undefined during a restart or a rebind; an effect that ran in that window returned before
-    // installing the interval and, with `[ctx, sessionId]` stable, never ran again — so the cost never
+    // installing the interval, with `[ctx, sessionId]` stable, never ran again. So the cost never
     // appeared for that tab until it was reloaded. This is the same fault the `/btw` card had (#210).
     // The route is per-session and the render below decides whether to draw, so polling unconditionally
     // costs one request per ten seconds and removes the dead window.
@@ -5200,7 +5248,7 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   // directory mid-rebind answers no provider at all. A blank answer used to read as "not mine" and
   // took the cost off the row under the pointer, so only another session's id gives it up.
   // Derived during render, committed after it: React throws renders away, and one that never
-  // reached the screen used to latch this ref anyway — so a render for another session could leave
+  // reached the screen used to latch this ref anyway. So a render for another session could leave
   // the cost of this one on the row.
   const mineRef = useRef(false);
   const current = openSessionId(ctx);
@@ -5315,7 +5363,7 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
     // document; look for it until found (one conversation is on screen at a time).
     // `inline?.isConnected`, not `inline`: dsh re-renders this row on every step and React drops
     // the span we appended. Holding the detached node as proof it is hooked left the cost gone for
-    // good — the row has to be hooked again each time it loses ours.
+    // good. The row has to be hooked again each time it loses ours.
     // `localStorage.setItem("omc-debug", "1")` prints every hook, drop and repaint to the console;
     // the row lives in someone else's DOM, so this is the only way to watch what removed it.
     const debug = (...args: unknown[]) => {
@@ -5340,8 +5388,8 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
         // Already in the row: rewrite what it says instead of building it again. Only what
         // changed: the observer above reports every childList mutation, and a `textContent` write
         // replaces the text node even when the string is the same, so an unconditional write here
-        // called this back on every frame — 35 mutations a second under an idle pill, measured
-        // 2026-09-10 — for nothing.
+        // called this back on every frame, 35 mutations a second under an idle pill, measured
+        // 2026-09-10, for nothing.
         if (trigger) {
           const expanded = String(openRef.current);
           if (trigger.getAttribute("aria-label") !== titleRef.current)
@@ -5359,8 +5407,8 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
       }
       if (inline) debug("row dropped our span; hooking again");
       // Three tries, cheapest first. The row dsh re-rendered is usually the same element with new
-      // children, so the one it was last found in is tried first. When dsh replaces the element —
-      // which it does on a settled step, and that is exactly when this runs — the footer it hangs
+      // children, so the one it was last found in is tried first. When dsh replaces the element,
+      // which it does on a settled step, and that is exactly when this runs, the footer it hangs
       // in is still the same node, so the second try searches that instead of the document. Only a
       // conversation that was never hooked, or a footer that went away, pays for the full walk.
       // dsh 0.1.5 marks the row, so ask for it by name first: one indexed attribute query against
@@ -5391,8 +5439,8 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
       }
       inline = document.createElement("span");
       // Named so a hook can clear what an earlier one left. `drop` only ever knew the node in
-      // hand, so a readout appended into a row dsh then replaced — or into a container that read
-      // as the row before the pills arrived — stayed in the page, out of sight, for the tab's life.
+      // hand, so a readout appended into a row dsh then replaced, or into a container that read
+      // as the row before the pills arrived, stayed in the page, out of sight, for the tab's life.
       inline.setAttribute(COST_SLOT, "");
       for (const stale of document.querySelectorAll(`[${COST_SLOT}]`)) stale.remove();
       inline.style.whiteSpace = "nowrap";
@@ -5401,7 +5449,7 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
       // label. Ours borrows the three class names from dsh's first pill, so it takes the same
       // padding, radius and colour whatever the module hash is in this build. It is a button, as
       // dsh's are: the hover rule is `button._pill:hover`, a span never lights up, and a phone has
-      // no hover at all — the tap opens the dialog, which is where the detail lives.
+      // no hover at all. The tap opens the dialog, which is where the detail lives.
       // 0.1.5 marks the row and its first pill is the first grandchild; 0.1.6-alpha.2 drops the
       // marker but draws the same anchor-and-pill pair, so an unmarked row is asked for the pill
       // by shape. Copying its classes is also what gives the readout dsh's own phone behaviour:
@@ -5694,7 +5742,7 @@ function StaleModelRepair({ sessionId, ctx }: { sessionId: string; ctx: ClientCt
 
 /**
  * The prompt starter: a card above the composer on a session that has not been used yet, offering the
- * opening line saved for this session — or, on a brand-new tab, the last one saved anywhere — and
+ * opening line saved for this session, or on a brand-new tab the last one saved anywhere, and
  * writing it into the composer without sending it, so it can be edited first. The card also saves the
  * current draft as the opener, and forgets it again. It hides the moment the session has a message or
  * the composer has text, so it never sits between the user and a prompt they are already writing.
@@ -5851,6 +5899,8 @@ function StarterCard({
  *  instead of shoving them. Closed, a negative margin swallows the row gap the empty wrapper would
  *  still claim, and `visibility` drops it from the tab order, delayed on close so the slide is seen. */
 const SLIDE_MS = globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? 0 : 200;
+/** Reveal a starter-row chip with a slide animation, collapsing its neighbour via a zero-width
+ *  column and dropping it from the tab order when closed. */
 function Slide({ open, children }: { open: boolean; children: ReactNode }) {
   return (
     <span
@@ -5876,6 +5926,8 @@ let statusOnce: Promise<boolean> | undefined;
 /** One read of the store shared by every hook on the page: a Settings open mounts five readers and
  *  every cost pill two, so the fetch is memoised until a write dispatches the event. */
 let hintsOnce: Promise<Record<string, boolean | number>> | undefined;
+/** Fetch and parse the box-wide hints store once, memoising the promise and retrying on failure
+ *  rather than caching the empty result. */
 const loadHints = (): Promise<Record<string, boolean | number>> =>
   (hintsOnce ??= fetch(`${ROUTE}/hints`)
     .then((r) => readJson<Record<string, boolean | number>>(r))
@@ -5883,6 +5935,8 @@ const loadHints = (): Promise<Record<string, boolean | number>> =>
       hintsOnce = undefined; // a failed read is retried by the next reader, not cached
       return {};
     }));
+/** One box-wide hint and its setter. Undefined until the first load. The setter posts to the box,
+ *  null clears the hint, and every other reader in this tab re-reads once it lands. */
 function useHintValue(
   key: string,
 ): [boolean | number | undefined, (next: boolean | number | null) => void] {
@@ -6535,8 +6589,8 @@ function ClaudeUpdateSwitch() {
 /**
  * The settings control for a proxy in front of api.anthropic.com: Auto, On or Off.
  *
- * Auto asks the base URL itself — a proxy that forwards answers an unauthenticated request with
- * Anthropic's own error and request id — so the common case needs no decision. The other two are
+ * Auto asks the base URL itself, so the common case needs no decision: a proxy that forwards
+ * answers an unauthenticated request with Anthropic's own error and request id. The other two are
  * answers a person gave, and detection never overrides one: an endpoint that starts reading as
  * Anthropic must not turn this back on for someone who turned it off.
  */
@@ -7049,6 +7103,8 @@ interface LoginNeed {
   host: string;
   label: string;
 }
+/** Compare two LoginNeeds by identity or by matching host and label, so a re-rendered need counts
+ *  the same one. */
 const sameNeed = (a: LoginNeed | null, b: LoginNeed | null): boolean =>
   a === b || (a !== null && b !== null && a.host === b.host && a.label === b.label);
 
@@ -7091,6 +7147,8 @@ interface ClaudeUpdateCardData {
   latest: string;
   folded: boolean;
 }
+/** Compare two update-card data objects by identity or by host, installed and latest versions, so a
+ *  re-rendered card matches the last drawn one. */
 const sameCard = (a: ClaudeUpdateCardData | null, b: ClaudeUpdateCardData | null): boolean =>
   a === b ||
   (a !== null &&
@@ -7440,6 +7498,8 @@ function ClaudeUpdateCard({
   );
 }
 
+/** Render this session's aside items as a collapsible stack, polling `/side-questions` every few
+ *  seconds: questions, a login need and a Claude update card, or nothing when the poll is empty. */
 function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   const [items, setItems] = useState<AsideItem[]>([]);
   // What the poll compares its answer against, without listing `items` as a dependency of its effect.
@@ -7465,7 +7525,7 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
   const visibleRef = useRef(true);
 
   useEffect(() => {
-    // Poll this session's asides unconditionally — do NOT gate on `activeClaudeSession`. That reads
+    // Poll this session's asides unconditionally. Do NOT gate on `activeClaudeSession`. That reads
     // the session's provider binding, which is briefly undefined during a restart/reattach; gating
     // the poll on it here meant that if the effect ran in that window the interval never installed
     // and, with deps `[ctx, sessionId]` stable, never retried, so the card died for good ("gone with
@@ -7696,7 +7756,7 @@ const fmtTtft = (ms?: number): string => {
 /** `$18.21 · $0.42 last`: the session total and the newest turn. The Claude mark goes in front of
  *  it by whoever draws it: the spark SVG in the pill, the glyph in a text row.
  *
- *  The cached-token count used to close the line, which made this the longest pill in dsh's row —
+ *  The cached-token count used to close the line, which made this the longest pill in dsh's row,
  *  and dsh's own neighbouring pill already reports the session's tokens and cache hit rate. The
  *  dialog behind the pill still breaks the cache reads and writes out in full. */
 const costText = (total: number, last: number) => `${fmtCost(total)} · ${fmtCost(last)} last`;
@@ -7706,7 +7766,7 @@ const fmtTokens = (n: number): string => formatCacheRead(n) || "0";
 
 /**
  * The rows of the cost dialog, label and value, from the session's turn records.
- * ponytail: the token rows are the result frame's `usage`, which is the main agent loop only —
+ * ponytail: the token rows are the result frame's `usage`, which is the main agent loop only.
  * a Task subagent's tokens are not in them, while the cost above them covers the whole pipeline.
  * The frame's `modelUsage` has the pipeline totals per model; read those instead the day the gap
  * between the money and the tokens beside it matters.
@@ -7830,6 +7890,8 @@ function IdleChip({ sessionId }: { sessionId: string }) {
   );
 }
 
+/** Wire the plugin into a mounted dsh context: follow deep links and start every watcher, so a
+ *  fresh session gets turn status, notices, folds and hints. */
 export function apply(ctx: ClientCtx) {
   followDeepLink(ctx);
   watchContextMeter(ctx);

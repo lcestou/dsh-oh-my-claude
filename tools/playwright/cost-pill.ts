@@ -40,6 +40,9 @@ async function openCostSession(p: Page): Promise<boolean> {
   return false;
 }
 
+/** Drive one environment's cost pill through hover, click and escape, logging its attributes and
+ *  dialogs so a phone and desktop are each exercised.
+ */
 async function check(p: Page, tag: string): Promise<void> {
   const pill = p.locator("[data-omc-cost-pill]").first();
   console.log(`${tag} pill:`, await pill.count(), JSON.stringify(await pill.innerText()));

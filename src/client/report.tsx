@@ -8,6 +8,8 @@ interface Props {
   provider?: string;
 }
 
+/** The "Report a problem" block: fetches the server-built report for this session, shows it for
+ *  editing and copies it or opens an issue with it. */
 export function ReportBlock({ sessionId, provider }: Props) {
   const [text, setText] = useState("");
   const [issues, setIssues] = useState("");

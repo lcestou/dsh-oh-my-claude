@@ -28,10 +28,14 @@ const sh = (line: string, timeout = 180_000) =>
   remoteHost
     ? spawnSync("ssh", [remoteHost, line], { encoding: "utf8", timeout })
     : spawnSync("sh", ["-c", line], { encoding: "utf8", timeout, env: TERMINAL_ENV });
+/** Shell-quote a string by wrapping it in single quotes and doubling internal ones, so a command
+ *  argument cannot break out.
+ */
 const q = (s: string) => `'${s.replaceAll("'", "'\\''")}'`;
 const WORD = `KUMQUAT${Date.now() % 1000}`;
 const sessionsRoot = join(homedir(), ".dsh", "sessions");
 const projects = join(homedir(), ".claude", "projects");
+/** Resolve after a number of milliseconds, the polling delay the mirror waits use. */
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** In remote mode only the workspace that stands for that box's directory holds the session; its
@@ -62,6 +66,9 @@ function transcriptOf(dshId: string): { path: string; cwd: string } | undefined 
   return undefined;
 }
 
+/** Count the plugin's own assistant reply rows in a transcript, locally by reading the file or
+ *  remotely by grepping over ssh, to detect whether a mirror added a Claude run.
+ */
 const ownReplies = (path: string) =>
   remoteHost
     ? Number(sh(`grep -c '"entrypoint":"dsh-oh-my-claude"' ${path} || true`).stdout.trim()) || 0
@@ -111,6 +118,9 @@ const wsStore = JSON.parse(
 const wsTitles = new Set(
   Object.values(wsStore.tables?.workspaces ?? {}).flatMap((w) => (w.title ? [w.title] : [])),
 );
+/** Click the first session row under a workspace header by reading the tree, returning false when
+ *  the workspace has no session, so a workspace is selected reliably.
+ */
 const clickFirstSessionUnder = async (workspace: string): Promise<boolean> => {
   const items = p.locator('[role="treeitem"]');
   const texts = await items.allInnerTexts();
@@ -165,6 +175,7 @@ if (!process.env.PW_SESSION || process.env.PW_NEW) {
   await p.waitForTimeout(2000);
 }
 const composer = p.locator('textarea, [contenteditable="true"]').first();
+/** Fill the composer with text and submit it, the one way this check types into dsh. */
 const send = async (text: string) => {
   await composer.fill(text);
   await p.keyboard.press("Enter");
@@ -175,6 +186,9 @@ await send(`Reply with the single word OK. (${NONCE})`);
 // The first turn names the session and writes its transcript; wait for our own reply row.
 // The session's id: the dsh log that holds the nonce the first message carried. Newest-by-mtime
 // is not it: a workspace click can leave a blank session behind that is newer than the one typed in.
+/** Find the session log that carries the nonce the first message carried, newest-by-mtime excluded,
+ *  so the check targets the session really typed in rather than a blank one left behind.
+ */
 const withNonce = (): string | undefined => {
   for (const ws of readdirSync(sessionsRoot)) {
     if (wsKey && !ws.includes(wsKey)) continue;

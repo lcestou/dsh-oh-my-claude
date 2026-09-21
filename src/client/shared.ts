@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 
 export const ROUTE = "/dsh-oh-my-claude";
 /** "m*****@gmail.com": first letter, stars, then the domain. Every surface that shows the login
- *  masks it — the panel and the diagnostics rows get screen-shared. */
+ *  masks it. The panel and the diagnostics rows get screen-shared. */
 export const maskEmail = (email: string): string => {
   const at = email.indexOf("@");
   if (at < 1) return email;
@@ -38,6 +38,8 @@ export const cacheShare = ({
   return Math.max(0, Math.min(1, cacheRead / denom));
 };
 
+/** A past time as `min ago` under an hour, `h ago` under a day and a calendar date after that,
+ *  reading future times as now. */
 export const ago = (ms: number): string => {
   const s = Math.max(0, (Date.now() - ms) / 1000);
   if (s < 3600) return `${Math.max(1, Math.round(s / 60))} min ago`;
@@ -45,10 +47,6 @@ export const ago = (ms: number): string => {
   return new Date(ms).toLocaleDateString();
 };
 
-/** The CLI's keyword matcher (`SOt`) for a composer keyword such as `ultracode`: no match when the
- *  text is a slash command, inside quotes, backticks, brackets or a tag, glued to a path or flag
- *  character, or followed by a dotted member. A keyword typed as an example is not a trigger, so
- *  it is not painted. */
 const KEYWORD_PAIRS = new Map<string, string>([
   ["`", "`"],
   ['"', '"'],
@@ -58,7 +56,13 @@ const KEYWORD_PAIRS = new Map<string, string>([
   ["(", ")"],
   ["'", "'"],
 ]);
+/** A letter, digit or underscore. A closing quote followed by one is an apostrophe inside a
+ *  word, so the quoted span stays open. */
 const wordy = (ch: string | undefined): boolean => ch !== undefined && /[\p{L}\p{N}_]/u.test(ch);
+/** The CLI's keyword matcher (`SOt`) for a composer keyword such as `ultracode`: no match when the
+ *  text is a slash command, inside quotes, backticks, brackets or a tag, glued to a path or flag
+ *  character, or followed by a dotted member. A keyword typed as an example is not a trigger, so
+ *  it is not painted. */
 export const keywordMatches = (text: string, word: string): { start: number; end: number }[] => {
   const out: { start: number; end: number }[] = [];
   if (!new RegExp(word, "i").test(text) || text.startsWith("/")) return out;
@@ -143,6 +147,9 @@ export const errText: CSSProperties = {
 /** One voice for "Loading…" and empty states: the meta colour, the same inset as a row. */
 export const stateText: CSSProperties = { ...meta, padding: "2px 4px", whiteSpace: "normal" };
 
+/** Markers on the panel and the dock, so a check or a style can find them without a class name. */
+export const PANEL_ATTR = "data-omc-panel";
+export const DOCK_ATTR = "data-omc-dock";
 /**
  * The panel's own surface: dsh's layer colour warmed with a few percent of Claude's orange, so the
  * panel reads as Claude's and stands off the dark chrome instead of vanishing into it. The edge
@@ -150,8 +157,6 @@ export const stateText: CSSProperties = { ...meta, padding: "2px 4px", whiteSpac
  * and the shadow gains a faint warm ring so the float reads on both themes. `color-mix` keeps every
  * value derived from the theme token rather than a picked hex, so light and dark both hold.
  */
-export const PANEL_ATTR = "data-omc-panel";
-export const DOCK_ATTR = "data-omc-dock";
 export const panelSurface: CSSProperties = {
   background: `color-mix(in srgb, ${PANEL_ACCENT} 7%, ${T.card})`,
   border: `1px solid color-mix(in srgb, ${PANEL_ACCENT} 34%, ${T.border})`,
@@ -271,6 +276,8 @@ export const controlStatesCss = (scope: string): string =>
   `${scope} button:not([role="switch"]):focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#3b82f6);outline-offset:1px}` +
   `${scope} input:not([type="checkbox"]):not([type="file"]):focus-visible,${scope} select:focus-visible,${scope} textarea:focus-visible{border-color:var(--dsw-alias-brand-primary,#3b82f6);outline:none}` +
   `${scope} input:disabled,${scope} select:disabled{color:var(--dsw-alias-label-tertiary,rgba(128,128,128,.7));cursor:default}`;
+/** Shared capsule styling for a labelled chip: a small rounded pill whose border and text take
+ *  `color`, reused for the status stamps the plugin puts on rows. */
 export const pill = (color: string): CSSProperties => ({
   display: "inline-block",
   padding: "1px 8px",
@@ -409,7 +416,8 @@ async function openHere(
     }
     // Unarchiving/importing lands server-side; the client's session store learns of the session
     // through its own subscription a beat later. Opening an id the store does not know yet is a
-    // no-op — the restored session would never come to the foreground — so wait briefly for it.
+    // no-op. The restored session would never come to the foreground on its own, so
+    // wait briefly for it.
     for (let i = 0; i < 40 && !known()[id]; i++) await new Promise((r) => setTimeout(r, 50));
     // If it never appeared (server-side open/import error), `open` below is a no-op and the row just
     // does nothing; leave a breadcrumb so a stuck restore is diagnosable rather than silent.
@@ -458,13 +466,16 @@ export const isRingRoot = (el: HTMLElement | null) =>
  * The mount a session runs on (`claude-code`, `claude-code-nova`, …), else undefined.
  *
  * This is the one session→box primitive every box-aware read keys off. dsh's model directory holds
- * the session's selection from the moment the session exists — the picker writes it, no turn is
- * needed — so a brand-new tab on a box's model already resolves to that box, which the spawn-time
+ * the session's selection from the moment the session exists. The picker writes it with no turn
+ * needed, so a brand-new tab on a box's model already resolves to that box, which the spawn-time
  * `targetHost` cannot do. `SessionHeader` carries no provider and a remote cwd can equal a local
  * one, so this is also the only way to tell a box session from a local one.
  */
 const claudeMount = (provider: string | undefined): string | undefined =>
   provider?.startsWith("claude-code") === true ? provider : undefined;
+/** The Claude mount for a session, open or not: read the live model directory first and the list
+ *  projection after, so a sidebar session this tab never opened still resolves, undefined for a
+ *  non-Claude session. */
 export const claudeProviderOf = (ctx: ClientCtx, id: string): string | undefined => {
   try {
     const live = claudeMount(
@@ -503,7 +514,7 @@ export const isClaudeSession = (ctx: ClientCtx, id: string): boolean =>
  * dsh disposes a plugin's context when it loads a new bundle, but this module's timers and body
  * observer belong to the old bundle and keep running: every read of a disposed context throws
  * `cannot get required service "sessions" in inactive context`, once a second, forever, and one
- * more loop joins the flood with each reload. The first such throw retires this bundle instead —
+ * more loop joins the flood with each reload. The first such throw retires this bundle instead.
  * the reads answer undefined and the loops that registered here stop.
  */
 let gone = false;
@@ -513,16 +524,19 @@ export const whenContextGone = (fn: () => void): void => {
   if (gone) fn();
   else goneWatchers.add(fn);
 };
+/** Mark this bundle disposed and run the watchers registered through `whenContextGone` once, so
+ *  loops bound to the dead context stop reading it. */
 const retire = (): void => {
   gone = true;
   for (const fn of goneWatchers) fn();
   goneWatchers.clear();
 };
 /**
- * Wrap a loop body — an interval tick, a registered scan — so the first disposed-context throw
- * retires this bundle instead of reaching the console. Any read of any service throws once the
- * context is gone, so the catch belongs at the loop's edge rather than at each read: guarding one
- * read only moves the flood to the next line. A throw that is not the context dying is rethrown.
+ * Wrap a loop body, whether an interval tick or a registered scan, so the first
+ * disposed-context throw retires this bundle instead of reaching the console. Any
+ * read of any service throws once the context is gone, so the catch belongs at the
+ * loop's edge rather than at each read: guarding one read only moves the flood to the
+ * next line. A throw that is not the context dying is rethrown.
  */
 export const guard = <A extends unknown[]>(fn: (...args: A) => void): ((...args: A) => void) => {
   return (...args) => {
@@ -538,8 +552,8 @@ export const guard = <A extends unknown[]>(fn: (...args: A) => void): ((...args:
 /**
  * The session the main view is showing, across both shapes dsh has had for it.
  *
- * Up to 0.1.5 the list snapshot carried `current`. 0.1.6-alpha.2 removed it — "navigation belongs
- * to view owners" — and the main view instead retains its session through the Session Controller,
+ * Up to 0.1.5 the list snapshot carried `current`. 0.1.6-alpha.2 removed it, "navigation belongs
+ * to view owners", and the main view instead retains its session through the Session Controller,
  * which shows up on the row as `retainedBy.mainView`. Exactly one row carries it, so the scan is
  * over a handful of sessions and runs only when `current` is absent.
  *
@@ -773,7 +787,7 @@ export interface ClientCtx {
         >;
         phase?: string;
         // dsh 0.1.5 and earlier: the selected session. Gone in 0.1.6-alpha.2, where the doc on
-        // `ISessions.list` reads "navigation belongs to view owners" — see `openSessionId`.
+        // `ISessions.list` reads "navigation belongs to view owners". See `openSessionId`.
         current?: string;
       };
     };
@@ -907,6 +921,8 @@ export type UsageBreakdownReply =
 // second tab paid it whenever it was first to ask. Without it the server answers from its
 // five-minute cache and the figures, which cover a 24 h and a 7 d window, lose nothing.
 const breakdownCache = new Map<string, { at: number; reply: UsageBreakdownReply }>();
+/** The usage breakdown for a provider, remembered in this tab for a minute. `force` skips that and
+ *  asks the box to read again, which spawns `claude -p "/usage"` there. */
 export const loadBreakdown = async (
   provider?: string,
   force = false,

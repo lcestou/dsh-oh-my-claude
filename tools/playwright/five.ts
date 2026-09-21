@@ -23,6 +23,9 @@ await p.locator('button[aria-label="Oh My Claude"]').click();
 await p.waitForTimeout(800);
 
 const failures: string[] = [];
+/** Record a named failure when a condition is false, so a run of the five features prints every
+ *  broken control at once.
+ */
 const expect = (cond: boolean, what: string) => {
   if (!cond) failures.push(what);
 };

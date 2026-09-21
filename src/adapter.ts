@@ -242,7 +242,7 @@ export function remoteCwdFor(host: string, cwd: string): string {
   return remoteWorkspaces.find((w) => w.host === host && w.path === cwd)?.remoteCwd ?? cwd;
 }
 /** The box a turn runs on: this instance's own host when it has one, else the box a remote-workspace
- * cwd belongs to. The choice is by truthiness because `sshHost` defaults to `""`, not undefined —
+ * cwd belongs to. The choice is by truthiness because `sshHost` defaults to `""`, not undefined.
  * `??` treats that empty string as an answer, which is how a local provider's turn came to probe the
  * local binary for flags while its spawn ran on the box (2026-09-09: `--forward-subagent-text`, a
  * flag this box's CLI has and the box's 2.1.123 does not). */
@@ -291,6 +291,8 @@ interface Decision {
 /** A live process always carries the prep it was spawned with; acquire() sets it before use. */
 /** A process parked on a relayed tool call or a steer is mid-turn, not idle. */
 const isSettled = (p: ClaudeProcess) => !p.busy && p.relays.size === 0 && !p.parked;
+
+/** Throw rather than return a null prep: a process is assumed to carry the turn state acquire() set, so a missing one means it was used out of order. */
 function requirePrep(proc: ClaudeProcess): TurnPrep {
   if (!proc.prep) throw new LlmError("claude process has no turn state", "PROVIDER_ERROR");
   return proc.prep;
@@ -603,6 +605,7 @@ export interface PermissionModeReply extends PermissionModeInfo {
   error?: string;
 }
 
+/** The key every live process is stored under, `providerId` then `sessionId`; a session id must not contain a colon or it would collide with this separator. */
 export function registryKey(providerId: string, sessionId: string): string {
   return `${providerId}:${sessionId}`;
 }
@@ -636,6 +639,8 @@ interface CatalogModel {
   efforts: readonly string[];
   description?: string;
 }
+
+/** Build one KNOWN_MODELS row: the provider is always claude-code, so callers pass only the id, label, context window and efforts, filling description when given. */
 const M = (
   id: string,
   label: string,
@@ -827,7 +832,7 @@ const bareId = (id: string) => {
  * Both sources above answer a different question than the one dsh's context ring asks. The Models
  * API sends `max_input_tokens` and `KNOWN_MODELS` is a baked-in copy of the same figure: what the
  * model can hold. What the ring needs is what the CLI manages the session against, and the two part
- * company — Opus 5 holds a million and runs at 200,000 until 1M is turned on. Only a session knows
+ * company. Opus 5 holds a million and runs at 200,000 until 1M is turned on. Only a session knows
  * which it got, so the figure is taken from that session's own `get_context_usage` and kept per
  * model id for every later read.
  *
@@ -835,6 +840,8 @@ const bareId = (id: string) => {
  * the table above answers. Write it next to the catalog cache the day that gap is worth a file.
  */
 const liveWindows = new Map<string, number>();
+
+/** The liveWindows key: strip any ANSI codes and resolve to the stable id, so a window looked up by the CLI's raw model id matches the normalized one stored here. */
 const windowKey = (id: string) => stableModelId(strip(id));
 /** Claude Code's env flag for "the base URL is a proxy in front of Anthropic" (`Xo()` in 2.1.274). */
 const FIRST_PARTY_FLAG = "_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL";
@@ -859,6 +866,8 @@ export const proxyBaseUrl = (raw: string | undefined): string | undefined => {
  * the likeliest reason for it.
  */
 const FIRST_PARTY_PROBE = Symbol.for("dsh-oh-my-claude.firstPartyProbe");
+
+/** Ask once per dsh process whether this box is first-party, memoised on globalThis (the adapter is built more than once at boot) and retried while unanswered, so a proxy still starting does not fail the turn. */
 const detectFirstParty = async (): Promise<FirstPartyProbe> => {
   const baseUrl = proxyBaseUrl(process.env.ANTHROPIC_BASE_URL);
   if (!baseUrl) return false; // no proxy in front: the flag changes nothing either way
@@ -906,7 +915,7 @@ export function mergeCatalog(
     const window = c.resolvedModel.endsWith("[1m]") ? 1_000_000 : (known?.contextWindow ?? 200_000);
     // The CLI is asked for its picker once a process is live, so before that answer the lineup
     // spells a model `claude-haiku-4-5` and after it `haiku`. Anything holding an id across that
-    // moment — a dsh subagent allowlist, a stored session model — reads the other spelling as a
+    // moment, a dsh subagent allowlist or a stored session model, reads the other spelling as a
     // model that is gone. A row landing on a model this catalog already knows takes that model's
     // id, so both states offer the same ids; `default` and a `[1m]` variant have none to take.
     const stable =
@@ -1096,7 +1105,8 @@ export function projectDirName(cwd: string): string {
 }
 
 /**
- * Checks if a Claude Code session transcript exists on disk.
+ * Whether this session has a saved transcript on disk: true when the `.jsonl` file is there,
+ * false when the read fails, so a caller can skip a session that never wrote one.
  */
 async function claudeSessionExists(home: string, cwd: string, id: string): Promise<boolean> {
   try {
@@ -1135,6 +1145,7 @@ export function clientTimeZone(messages: readonly LooseMessage[]): string | unde
   return undefined;
 }
 
+/** Join a message's text blocks on newlines, or return a string content as-is; non-text blocks (images, tool calls) are dropped and undefined content becomes empty. */
 const textOf = (content: LooseMessage["content"]): string => {
   if (!Array.isArray(content)) return content ?? "";
   return content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("\n");
@@ -1147,6 +1158,8 @@ const textOf = (content: LooseMessage["content"]): string => {
 export const steerKey = (m: LooseMessage): string | undefined =>
   m.role === "user" && m.source?.kind !== "tool" ? (m.source?.rpcId ?? m.id) : undefined;
 
+/** A message the prompt builder treats as conversation: a user message that is not a tool result,
+ * and every assistant message. Tool-result rows are left out. */
 const isTurn = (m: LooseMessage) =>
   (m.role === "user" && m.source?.kind !== "tool") || m.role === "assistant";
 
@@ -1292,6 +1305,10 @@ type LoadedImage = { mediaType: string; data: string; attachmentId?: string; pat
  *  Node has nothing to scale an image with, so an oversize one goes by path and the Read tool,
  *  which scales, shows it a tool call later. */
 const MAX_IMAGE_SIDE = 2000;
+
+/** True when either side of an image exceeds `MAX_IMAGE_SIDE`, the most the API accepts inline
+ *  once a conversation holds many images. Such an image is not sent inline at all. The prompt names
+ *  its saved path instead, and Claude reads it with its file tool, which scales it down. */
 const oversize = (ref: { width?: number; height?: number }): boolean =>
   (ref.width ?? 0) > MAX_IMAGE_SIDE || (ref.height ?? 0) > MAX_IMAGE_SIDE;
 
@@ -1435,10 +1452,12 @@ const cliProbes = new Map<string, Promise<{ flags: Set<string> | null; version: 
  * remote box runs `claude`, never a second dsh, so there is nothing per-mount to ask.
  */
 let rowsProbe: Promise<RowsSupport> | undefined;
+
+/** Probe whether this target supports raw tool rows once and cache the answer, so repeated callers share one ssh probe instead of one per session. */
 const rowsSupported = (): Promise<RowsSupport> => (rowsProbe ??= probeRawToolRows());
-/** Flags a target's binary rejected at runtime, per probe key. A probe can be wrong — a box's CLI
+/** Flags a target's binary rejected at runtime, per probe key. A probe can be wrong. A box's CLI
  * updates under us, `--help` comes back empty over a stalled ssh and every flag then reads as
- * supported — and the CLI's answer to a flag it does not have is exit 1 before the first frame. What
+ * supported, and the CLI's answer to a flag it does not have is exit 1 before the first frame. What
  * it printed is better evidence than the probe, so it is remembered and the flag is never sent to
  * that binary again. */
 const deniedFlags = new Map<string, Set<string>>();
@@ -1778,8 +1797,8 @@ export const NATIVE_TOOL_MAP = {
   // Same presenter as Edit: the client draws both from a diff, and the input shape only differs in
   // carrying several edits.
   MultiEdit: "edit",
-  // The rest of Claude's own tools. They have no dsh row variant — dsh classifies anything outside
-  // its own table as `others` — but the inline markdown path keys its icon, name and renderer off
+  // The rest of Claude's own tools. They have no dsh row variant. dsh classifies anything outside
+  // its own table as `others`, but the inline markdown path keys its icon, name and renderer off
   // this name, and without an entry each of these printed as a raw JSON dump under a sparkle.
   TodoWrite: "todo_write",
   Task: "task",
@@ -1811,7 +1830,9 @@ export interface IdleTarget {
   idleKilled: boolean;
   /** How long the silence that killed it was allowed to run, so the error can name that number. */
   idleKilledAfterMs?: number;
+  /** Stop the process. The idle watchdog calls this once a turn has been silent past its limit. */
   kill(): void;
+  /** The idle watchdog feeds a stream event through here so it can measure how long the silence has run. */
   inject(event: ClaudeEvent): void;
 }
 
@@ -1912,6 +1933,9 @@ export function noteInterrupt(proc: { steerPending: boolean }): void {
 export function interruptOnAbort(kind: string | undefined, spawn: string): boolean {
   return !(kind === "disposed" && spawn === "keeper");
 }
+
+/** The `kind` in an abort signal's `{ kind }` reason, which is disposed, aborted or cancelled, or
+ * undefined for a plain abort, so a caller can tell a dispose from a user cancel. */
 function abortKind(signal: AbortSignal | undefined): string | undefined {
   if (!signal?.aborted) return undefined;
   const reason: unknown = signal.reason;
@@ -1987,6 +2011,8 @@ const STREAM_IDLE_MS = 500;
 /** The same interval for a box reached over ssh, which pays a process per read and has no inotify to
  *  wake the render in between, so it trades a slower fill for a fraction of the round trips. */
 const STREAM_IDLE_REMOTE_MS = 1500;
+
+/** How long the stream waits idle before settling: longer for a remote box, where a blank costs a round trip, than for a local one. */
 const idleFor = (box: FsBox): number => (box.sshHost ? STREAM_IDLE_REMOTE_MS : STREAM_IDLE_MS);
 /** A terminal turn that never ends (an abandoned or crashed `claude`) would hold its dsh turn open
  *  forever; after this the render settles what it has and closes. */
@@ -2004,6 +2030,9 @@ export const RESTART_TEXT =
 const RESUME_DELAY_MS = 10_000;
 /** Slack after a usage limit's reset instant before the continue notice goes out. */
 const LIMIT_GRACE_MS = 5_000;
+
+/** A message that is our own wake notice, a plugin user message whose text is exactly WAKE_TEXT,
+ * so wakeOnlyTurn can treat it apart from a real user prompt. */
 const isWake = (m: LooseMessage) =>
   m.role === "user" &&
   m.source?.kind === "plugin" &&
@@ -2132,6 +2161,7 @@ export function* relayBlocks(tr: Translator, call: RelayEvent): IterableIterator
 // ---------------------------------------------------------------------------
 // Adapter
 
+/** A process spec as a string, so two specs compare by content when deciding to reuse a process. */
 const specKey = (spec: ClaudeProcessSpec) => JSON.stringify(spec);
 
 /** Whether a todo list still has work on it. A list of nothing but completed items is finished,
@@ -2147,8 +2177,8 @@ export function hasPendingTodo(todos: JsonValue[]): boolean {
 
 /**
  * The provider dsh talks to. It owns one Claude Code process per session, converts a dsh turn
- * into stdin lines and the CLI's stream-json back into dsh events, and keeps the state — turn
- * records, permission modes, keepers — that has to survive a restart.
+ * into stdin lines and the CLI's stream-json back into dsh events, and keeps the state that has to
+ * survive a restart, the turn records, permission modes and keepers.
  */
 /** The running turn's figures for the status row; see `TurnProgress` in translator.ts. */
 export interface LiveTurn {
@@ -2203,6 +2233,7 @@ export const diffContext = (diff: WorkspaceDiff, path: string): string => {
   return parts.join("\n\n");
 };
 
+/** The LlmAdapter that drives the logged-in Claude Code CLI: it owns the live `claude` processes, bridges dsh's commands and routes into them, and mirrors their transcript back into dsh. */
 export class ClaudeCodeAdapter extends LlmAdapter {
   ctx: PluginContext;
   config: Schemastery.TypeT<typeof Config>;
@@ -2278,6 +2309,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   displayName: string;
   settingsNs: string;
   stateDir: string;
+  /** Attach the mounted context and config, then load every persisted store (permission modes, tool modes, terminal sync, turn records, asides, starters and limit waits) so a resumed adapter reads as it left off. */
   constructor(ctx: PluginContext, config: Schemastery.TypeT<typeof Config>) {
     super();
     this.ctx = ctx;
@@ -2300,8 +2332,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     this.settingsNs = `llm-${this.providerId}`;
     this.stateDir = stateDir(this.providerId);
     this.cliSeed = this.seedCliModels();
-    // With the switch on the CLI runs against the mirror, so `claudeHome` — the path every read in
-    // this plugin resolves against — is the mirror too: its settings and login are the real files,
+    // With the switch on the CLI runs against the mirror, so `claudeHome`, the path every read in
+    // this plugin resolves against, is the mirror too: its settings and login are the real files,
     // read through their links, and only `projects/` is the plugin's own. It needs `stateDir`,
     // which is why it lands here rather than beside `realClaudeHome`.
     if (config.ownTranscripts)
@@ -2367,8 +2399,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     };
     this.processes = registry[PROCESS_REGISTRY] ??= new Map(); // providerId:sessionId → ClaudeProcess
     // Shared across mounts, like the processes above: the panel sets a session's permission mode
-    // through the default instance's route, and the mount that spawns that session — an SSH box's,
-    // for a session on that box's model — is the one that reads it back. A per-instance map left
+    // through the default instance's route, and the mount that spawns that session, an SSH box's,
+    // for a session on that box's model, is the one that reads it back. A per-instance map left
     // the box spawning under the config default while the shield reported the chosen mode.
     this.permissionModes = registry[PERMISSION_MODE_OVERRIDES] ??= new Map();
     this.turnBuffer = registry[TURN_RECORDS] ??= new Map();
@@ -2433,6 +2465,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     }
   }
 
+  /** The provider's display name, suffixed "(not logged in)" while the adapter is logged out, so a settings dropdown shows login state. */
   override providerInfo(provider: string) {
     return {
       id: provider,
@@ -2612,6 +2645,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     return permissionModeFor(this.config, accessMode);
   }
 
+  /** The working directory a session runs in, read from its header, or undefined when the session is unknown or its header throws (a detached session cannot be read). */
   sessionCwd(sessionId: string): string | undefined {
     try {
       return this.ctx.sessions.get(asSessionId(sessionId))?.header?.cwd;
@@ -2620,6 +2654,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     }
   }
 
+  /** Emit a names-prefixed log line at the given level, swallowing the error cordis throws when the
+   * logger is reached from an inactive scope. A log line is not worth crashing on. */
   log(level: string, message: string) {
     try {
       this.ctx.logger[level]?.(`dsh-oh-my-claude: ${message}`);
@@ -2958,8 +2994,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       // where `/claude-llama` read as some other command entirely. The prefix is the fallback.
       //
       // Two ways a taken name hurts, so both are guarded. dsh's registry throws when a second host
-      // owns a name, which the catch below turns into the prefixed registration. Its menu throws —
-      // and blanks, all 200 names at once (2026-09-05) — when a host command shadows a client
+      // owns a name, which the catch below turns into the prefixed registration. Its menu throws
+      // and blanks, all 200 names at once (2026-09-05), when a host command shadows a client
       // contribution the registry cannot see, so those names never take the bare form at all.
       const prefixed = `${BRIDGE_PREFIX}${cmd}`;
       const dshName = CLIENT_COMMANDS.has(cmd) ? prefixed : cmd;
@@ -3032,7 +3068,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     //
     // The file is the union of what it already held and what this instance bridged, never one
     // frame's own list. Two things write it: `commands_changed` re-sends the catalog mid-session,
-    // and a temporary session's Claude carries a catalog of its own — either can name one command,
+    // and a temporary session's Claude carries a catalog of its own, either can name one command,
     // and dsh re-instantiates this plugin at boot, so a second instance starts with an empty
     // `bridged` map. Both wrote a menu of one over a menu of 152.
     void loadCommandCatalog(this.stateDir).then((saved) =>
@@ -3063,6 +3099,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     return this.accessModes.get(sessionId) ?? null;
   }
 
+  /** The permission mode a session may use now: its stored override on top of the shield's access mode, with the config default as the floor and every mode up to the ceiling allowed. */
   permissionModeInfo(sessionId: string): PermissionModeInfo {
     const override = this.permissionModes.get(sessionId) ?? null;
     const accessMode = this.currentAccessMode(sessionId);
@@ -3245,6 +3282,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   proxyFirstParty = false;
   /** The disk seed, awaited by the first listing so a boot never answers from the floor by a race. */
   private cliSeed: Promise<void>;
+  /** Ask a live CLI for its model lineup once per TTL window and cache it, so the listing has rows before the next list_models answers; false when throttled, declined, or empty. */
   async refreshCliModels(proc: ClaudeProcess): Promise<boolean> {
     if (Date.now() - this.cliModelsAt < CATALOG_TTL_MS) return false;
     this.cliModelsAt = Date.now();
@@ -3268,6 +3306,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   private cliModelsPath() {
     return join(this.stateDir, "cli-models.json");
   }
+  /** Persist the CLI's model list to disk under the state dir; a read-only state dir or full disk is swallowed, since the live answer still serves this boot. */
   private async persistCliModels(models: CliModel[]) {
     try {
       await mkdir(this.stateDir, { recursive: true });
@@ -3525,6 +3564,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       proc.kill();
     }
   }
+  /** Ask the CLI how many tokens this session's context window holds, bank the figure for dsh's context ring under both the spec and CLI model names, and flag an assumed-behind window when this box runs behind a proxy. */
   async contextUsage(sessionId: string): Promise<ContextUsageReply> {
     const proc = this.processes.get(registryKey(this.providerId, sessionId));
     if (!proc?.alive) return { ok: false, error: "no live Claude process for this session" };
@@ -3614,6 +3654,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     return g[ADAPTER_CURRENT]?.get("claude-code") ?? this;
   }
 
+  /** The live process for a session, by exact registry key, else by the `:sessionId` suffix so a session survives across mounts; undefined when none is alive. */
   processFor(sessionId: string): ClaudeProcess | undefined {
     const own = this.processes.get(registryKey(this.providerId, sessionId));
     if (own !== undefined) return own;
@@ -3627,8 +3668,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    *
    * The panel's routes are registered once, by the default mount, but a session on an SSH box's
    * model runs under that box's instance. A control request written from the wrong instance is
-   * never answered — `resolveControl` only knows the waiters of the adapter whose stream loop reads
-   * that process — so every route that asks a session's process something has to be dispatched
+   * never answered. `resolveControl` only knows the waiters of the adapter whose stream loop reads
+   * that process, so every route that asks a session's process something has to be dispatched
    * here first, or the panel reports "no live Claude process" for a session that has one.
    */
   ownerFor(sessionId: string): ClaudeCodeAdapter {
@@ -3646,6 +3687,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     return mounts?.get(this.sessionProvider(sessionId) ?? "") ?? this;
   }
 
+  /** Record a side question in the session's aside ring (evicting the oldest session when the ring is full) and send it to the CLI through the mount that owns the process; the answer or error is written back onto the ring. */
   askSideQuestion(sessionId: string, question: string, context?: string) {
     const q = question.trim();
     const entry: AsideEntry = {
@@ -3725,6 +3767,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     return this.toolModeInfo();
   }
 
+  /** The terminal-sync flag for the info route, surfaced to the panel's status line. */
   terminalSyncInfo() {
     return { enabled: this.terminalSync };
   }
@@ -3796,6 +3839,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     return { ok: true, tokens, live: true };
   }
 
+  /** Register the /btw command that asks Claude a quick side question without interrupting the turn; a no-op once that command is already bridged. */
   registerAsideCommand(commands: NonNullable<PluginContext["commands"]>) {
     if (this.bridged.has("btw")) return;
     try {
@@ -4205,6 +4249,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     return boxFor(this.config.sshHost, cwd ? remoteWorkspaceFor(cwd)?.host : undefined);
   }
 
+  /** The function that spawns a session's claude: over SSH for an ssh box, over SSH on the box for a remote-workspace cwd, else the local seam or node spawner with this box's login. */
   spawner(firstParty = this.proxyFirstParty) {
     // A remote instance drives the far `claude` over SSH; no keeper, no seam, its own remote login.
     // A remote-workspace cwd is a local placeholder here; redirect it to the box's real path.
@@ -4257,6 +4302,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     this.streaming.clear();
   }
 
+  /** The stream entry point: answer a session-title request directly, run a one-shot when there is no resume path, otherwise delegate to the persistent turn loop. */
   async *stream(options: GenerateOptions): AsyncGenerator<StreamChunk> {
     if (options.purpose === "session-title" && options.sessionId) {
       const title = await this.titleFromCli(options.sessionId, titleInput(options.messages));
@@ -4277,7 +4323,6 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   // ── persistent path ──────────────────────────────────────────────────────
 
   /** Reuse the session's process when its spec still matches; otherwise replace it. */
-  // SAFETY: options from dsh LlmAdapter.generate(); forceFresh is optional bool flag
   async acquire(options: SessionOptions, forceFresh?: boolean) {
     const prep = await this.prepare(options, { forceFresh });
     if (prep.input === null) return { prep, proc: null }; // text-mode CLI: fall back to one-shot semantics
@@ -4309,7 +4354,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const key = specKey(prep.spec);
     const key2 = registryKey(this.providerId, options.sessionId);
     let proc = this.processes.get(key2);
-    // A turn is in flight on this session and this caller is not its continuation — a mid-turn
+    // A turn is in flight on this session and this caller is not its continuation. A mid-turn
     // relay or steer arrives with `cont.proc` and never reaches here. Killing the process would
     // end that running turn to make room for this one, so the second caller is refused instead;
     // `busy` is cleared in the turn loop's `finally`, so a failed turn does not wedge the session.
@@ -4525,7 +4570,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         const e = events[i];
         if (e?.type !== "assistant/message" && e?.type !== "user/message") continue;
         // SAFETY: dsh event data is JsonValue; the boundary decode reads the text blocks of either
-        // shape — an assistant message nests them under `message`, a user message carries them flat.
+        // shape, an assistant message nests them under `message`, a user message carries them flat.
         const data = e.data as { message?: { content?: unknown }; content?: unknown };
         const text = assistantMessageText(data.message?.content ?? data.content);
         if (text) parts.push(text);
@@ -4562,6 +4607,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     }
   }
 
+  /** Scan a session's transcript once for new child turns and mirror them; while a turn streams, only wake the render until the exchange settles instead of re-posting what the render already showed. */
   async scanOnce(sessionId: string, w: TranscriptWatch): Promise<void> {
     let found;
     try {
@@ -4575,8 +4621,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     }
     // A turn is streaming from `w.seen`: its render loop owns showing it, so this scan only wakes the
     // render until that exchange settles, which it has once a completed turn stands at the baseline.
-    // Asking instead for "nothing running any more" never came true while the owner kept working —
-    // their next prompt is itself a running turn — so the baseline froze, every later scan returned
+    // Asking instead for "nothing running any more" never came true while the owner kept working.
+    // Their next prompt is itself a running turn, so the baseline froze, every later scan returned
     // here, and nothing they typed was mirrored until STREAM_MAX_MS forced the stream shut and the
     // completed path re-posted the exchange the stream had already shown.
     // The baseline moves by `firstEnd`, past the streamed exchange alone: `consumed` would jump any
@@ -4833,6 +4879,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     return key.slice(`${this.providerId}:`.length);
   }
 
+  /** Kill this adapter's own settled processes that have been idle past the threshold and forget their sessions, leaving the rest sorted last-used so an eviction can pick the oldest. */
   evict() {
     const now = Date.now();
     for (const [key, p] of this.processes) {
@@ -4866,7 +4913,6 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    * - `abandon`: parked on relays but dsh moved on without their results: reject them, start over.
    * - `prompt`: a normal turn; steers Claude already got live are dropped from the prompt.
    */
-  // SAFETY: mirrors acquire() shape for the turn loop
   continuationFor(options: SessionOptions, forceFresh?: boolean): Continuation {
     const held = this.processes.get(registryKey(this.providerId, options.sessionId));
     const live = held?.alive && !forceFresh ? held : undefined;
@@ -5020,7 +5066,6 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   }
 
   /** Why a turn that neither finished nor parked ended. */
-  // SAFETY: returns FinishReason shape for the adapter loop
   endReason(proc: ClaudeProcess, options: SessionOptions, idle: boolean): FinishReason {
     if (options.signal?.aborted)
       return { kind: "aborted", failure: { message: "aborted", code: "ABORTED" } };
@@ -5041,6 +5086,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     };
   }
 
+  /** The persistent turn loop: drive one session's turn end to end. Stream the chunks, relay
+   * tool calls, honor interrupts and usage limits, and yield the finish. */
   async *turn(options: SessionOptions, forceFresh?: boolean): AsyncGenerator<StreamChunk> {
     const asides = sideQuestionsIn(options.messages).filter(
       (a) => a.message.source?.rpcId === undefined || !this.asked.has(a.message.source.rpcId),
@@ -5273,14 +5320,14 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       },
       onResult: (summary: TurnRecord) => {
         // ponytail: ring buffer capped at 50 entries per session; now also persisted to disk so it
-        // survives a dsh restart — upgrade only if per-turn granularity beyond 50 is needed.
+        // survives a dsh restart. Upgrade only if per-turn granularity beyond 50 is needed.
         // Time-to-first-token: prompt write to first chunk. Guard against a wake-only turn (no
         // prompt sent) and a clock that ran backwards; reset so the next turn measures its own.
         if (firstChunkAt > 0 && proc.promptSentAt > 0 && firstChunkAt >= proc.promptSentAt)
           summary.ttftMs = firstChunkAt - proc.promptSentAt;
         proc.promptSentAt = 0;
         // `total_cost_usd` and `duration_api_ms` arrive as running totals, not this turn's figures.
-        // Every reader sums these records — the footer pill, the cost dialog, the /turns route — so
+        // Every reader sums these records: the footer pill, the cost dialog, the /turns route. So
         // the difference is taken here, once, and what is stored is the turn's own.
         const costSoFar = summary.costUsd;
         const apiMsSoFar = summary.apiMs;
@@ -5513,7 +5560,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       } else if (this.dropRejectedFlag(proc, options)) {
         // Last branch of the chain: nothing above claimed the turn, so the process died under it.
         // The CLI refused a flag the probe credited it with, exiting on argv before its first
-        // frame — nothing streamed, so running the turn again without that flag is a recovery, not
+        // frame. Nothing streamed, so running the turn again without that flag is a recovery, not
         // a repeat. Placed here rather than under a test on `outcome` because "died under us" is
         // exactly what reaching this branch means.
         outcome = "retry";
@@ -5663,6 +5710,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     }
   }
 
+  /** Cancel and forget a session's limit-wait timer, if any, so a usage reset does not fire it twice. */
   clearLimitWait(sessionId: string) {
     const timer = this.limitTimers.get(sessionId);
     if (!timer) return;
@@ -5681,7 +5729,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   ): Promise<boolean> {
     if (proc?.busy) return false;
     // Not while the terminal mirror is on, whatever the notice would say. Every wake opens a real
-    // turn, and a real turn runs the model against the session's context — which, for a mirrored
+    // turn, and a real turn runs the model against the session's context, which, for a mirrored
     // session, is a conversation someone is holding in a terminal. Measured here on 2026-09-11: a
     // restart nudged one, it read the terminal's discussion of a feature as its own instructions,
     // wrote the feature, committed it, and switched the branch of a checkout two other sessions were
@@ -5915,7 +5963,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       });
   }
 
-  // SAFETY: destructured from ClaudeCodeControlRequest shape in process.ts
+  /** Answer one of Claude's tool permission requests. AskUserQuestion and ExitPlanMode go to dsh's
+   *  question dialog, full access allows everything else, and the rest go to dsh's approval
+   *  prompt. A dialog that cannot be shown, or is cancelled, answers deny with the reason. */
   async decide({ toolName, input, request, toolUseId, agent, signal, accessMode }: Decision) {
     if (toolName === "AskUserQuestion") {
       const questions = parseQuestions(input, toolUseId);
@@ -6004,6 +6054,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
 
   // ── one-shot path (aux calls, text-mode CLI, no session id) ──────────────
 
+  /** Run one request on a fresh CLI process that exits after its answer, for side calls such as a
+   *  session title. No tool activity is shown, and a permission or control request is refused
+   *  rather than asked, since nobody is watching a side call. */
   async *oneShot(options: GenerateOptions): AsyncGenerator<StreamChunk> {
     const { cwd, args, session, input } = await this.prepare(options);
     const proc = new ClaudeProcess({
@@ -6087,9 +6140,10 @@ interface SshBoxMount {
 /**
  * Bring the mounted SSH-box instances in line with `boxes`: mount one per new box, withdraw the ones
  * no longer listed (and kill their sessions). Each box becomes an independent `claude-code-<slug>`
- * that drives `claude` on its host over ssh with its own remote login — the same shape a hand-written
- * mount would have, but built from the plugin's own state file so the panel owns the list and no dsh
- * config is edited. The provider registrations are live handles, so a box appears in or leaves the
+ * that drives `claude` on its host over ssh with its own remote login, the same shape a
+ * hand-written mount would have, but built from the plugin's own state file so the panel owns
+ * the list and no dsh config is edited.
+ * The provider registrations are live handles, so a box appears in or leaves the
  * model picker without a dsh restart.
  *
  * `mounts` is scope-local, rebuilt on every `apply()`: cordis disposes a plugin scope's registrations
@@ -6172,6 +6226,7 @@ const probeLogin = (adapter: ClaudeCodeAdapter) => {
     .catch(() => {});
 };
 
+/** The entry point dsh calls: build the adapter, register its provider and adapter, probe the login, and pin the instance on globalThis so a re-instantiation at boot shares the one already running. */
 export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Config>) {
   const adapter = new ClaudeCodeAdapter(ctx, config);
   const claudeHome = adapter.claudeHome;

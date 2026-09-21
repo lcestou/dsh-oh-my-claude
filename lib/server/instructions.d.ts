@@ -27,9 +27,10 @@ export declare function importsIn(text: string): string[];
 export declare const instructionCandidates: (cwd: string, claudeHome: string) => string[];
 /**
  * Whether a listed file may be written back. The list doubles as the write allowlist, and a `@`
- * line puts any absolute path a repo names on it — a cloned `CLAUDE.md` holding `@~/.ssh/authorized_keys`
- * would otherwise offer that file as an editable row. The CLI loads instructions as markdown, so a
- * path that is not a `.md` file is never one this panel should be rewriting.
+ * line puts any absolute path a repo names on it. A cloned `CLAUDE.md` holding
+ * `@~/.ssh/authorized_keys` would otherwise offer that file as an editable row. The CLI loads
+ * instructions as markdown, so a path that is not a `.md` file is never one this panel should be
+ * rewriting.
  */
 export declare const isWritableInstructions: (path: string) => boolean;
 /**

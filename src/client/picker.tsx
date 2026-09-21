@@ -57,6 +57,8 @@ interface BoxRow {
   host: string;
 }
 
+/** Splits a path on `/` and drops the empty pieces, so a leading or doubled slash does not feed a
+ *  blank segment to the ancestry chain. */
 const segments = (p: string): string[] => p.split("/").filter(Boolean);
 
 /**
