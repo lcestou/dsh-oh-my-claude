@@ -75,6 +75,7 @@ import {
 } from "./skills.js";
 import { listConfiguredMcp } from "./mcp-config.js";
 import {
+  dshGoalsFrom,
   durableTasksPath,
   goalFrom,
   readDurableTasks,
@@ -3791,6 +3792,15 @@ export function registerSessionRoutes(
                 return json(res, 405, { error: "method not allowed" });
               }
               if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/scheduled-tasks`) {
+                // dsh's goal lives in its own session log, not the transcript, as `goal/change`
+                // records; a session not loaded here, or an inactive scope, has none to show.
+                const dshGoalsOf = (id: string) => {
+                  try {
+                    return dshGoalsFrom(ctx.sessions.get(asSessionId(id))?.snapshotEvents() ?? []);
+                  } catch {
+                    return [];
+                  }
+                };
                 const sid = url.searchParams.get("session");
                 if (!sid) return json(res, 400, { error: "session param required" });
                 const cwd = await sessionCwd(sid, sessionPersistence);
@@ -3811,6 +3821,7 @@ export function registerSessionRoutes(
                     durable,
                     session: folded ? sessionTasksFrom(folded) : [],
                     goal: folded ? goalFrom(folded) : null,
+                    dshGoals: dshGoalsOf(sid),
                     path: durableTasksPath(at),
                   };
                   return json(res, 200, reply);

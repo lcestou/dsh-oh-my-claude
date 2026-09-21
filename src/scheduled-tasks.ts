@@ -16,12 +16,27 @@ export interface ScheduledTask {
   durable?: boolean;
 }
 
+/** One dsh goal as its latest `goal/change` record left it. dsh's own phases are active, paused,
+ *  complete and blocked; `cleared` is this fold's name for a goal a clear record removed. */
+export interface DshGoal {
+  id: string;
+  objective: string;
+  phase: string;
+  roundsStarted: number;
+  maxGoalRounds?: number;
+  blockedReason?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
 /** The body of GET /scheduled-tasks. */
 export interface ScheduledTasksReply {
   ok: true;
   durable: ScheduledTask[];
   session: ScheduledTask[];
   goal: { text: string; at: number } | null;
+  /** dsh's own goals for the session, newest first; the first is current unless it has ended. */
+  dshGoals: DshGoal[];
   path: string;
 }
 
@@ -133,6 +148,44 @@ export function sessionTasksFrom(folded: FoldedTranscript): ScheduledTask[] {
         if (task) live.set(task.name, task);
       }
   return [...live.values()];
+}
+
+/**
+ * Fold a dsh session's `goal/change` records into one entry per goal, newest first. dsh writes a
+ * full snapshot on every change (create, edit, pause, resume, complete, block) and a separate clear
+ * record naming the goal it removed, which marks that goal `cleared` here. A record of another shape
+ * is skipped rather than trusted, since the log is dsh's and its format can move.
+ */
+export function dshGoalsFrom(events: readonly { type: string; data?: unknown }[]): DshGoal[] {
+  const byId = new Map<string, DshGoal>();
+  for (const e of events) {
+    if (e.type !== "goal/change" || !isRec(e.data)) continue;
+    const d = e.data;
+    if (d.operation === "clear") {
+      const ref = isRec(d.cleared) ? d.cleared : undefined;
+      const held = typeof ref?.id === "string" ? byId.get(ref.id) : undefined;
+      if (held) {
+        held.phase = "cleared";
+        if (typeof d.clearedAt === "number") held.updatedAt = d.clearedAt;
+      }
+      continue;
+    }
+    const g = isRec(d.goal) ? d.goal : undefined;
+    if (!g || typeof g.id !== "string" || typeof g.objective !== "string") continue;
+    if (typeof g.phase !== "string") continue;
+    const entry: DshGoal = {
+      id: g.id,
+      objective: g.objective,
+      phase: g.phase,
+      roundsStarted: typeof d.roundsStarted === "number" ? d.roundsStarted : 0,
+      createdAt: typeof d.createdAt === "number" ? d.createdAt : 0,
+      updatedAt: typeof d.updatedAt === "number" ? d.updatedAt : 0,
+    };
+    if (typeof g.maxGoalRounds === "number") entry.maxGoalRounds = g.maxGoalRounds;
+    if (typeof g.blockedReason === "string") entry.blockedReason = g.blockedReason;
+    byId.set(g.id, entry);
+  }
+  return [...byId.values()].toSorted((a, b) => b.createdAt - a.createdAt);
 }
 
 /**

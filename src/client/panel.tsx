@@ -3223,7 +3223,56 @@ interface ScheduledTasksReply {
   durable: Task[];
   session: Task[];
   goal: { text: string; at: number } | null;
+  dshGoals: DshGoal[];
   path: string;
+}
+
+/** One of the session's dsh goals, as the route folds dsh's own log. */
+interface DshGoal {
+  id: string;
+  objective: string;
+  phase: string;
+  roundsStarted: number;
+  maxGoalRounds?: number;
+  blockedReason?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** How a goal's phase reads on its row: dsh's word, capitalised, with a mark a glance can take in. */
+const PHASE = new Map([
+  ["active", "● Active"],
+  ["paused", "‖ Paused"],
+  ["blocked", "■ Blocked"],
+  ["complete", "✓ Complete"],
+  ["cleared", "○ Cleared"],
+]);
+
+/** One dsh goal: its phase and objective, then rounds and age, and why it stopped when blocked. */
+function DshGoalRow({ goal }: { goal: DshGoal }) {
+  const rounds =
+    goal.maxGoalRounds === undefined
+      ? `${goal.roundsStarted} rounds`
+      : `${goal.roundsStarted} of ${goal.maxGoalRounds} rounds`;
+  return (
+    <div
+      data-omc-dsh-goal={goal.phase}
+      style={{ padding: "4px 10px", fontSize: 12, lineHeight: "1.5" }}
+    >
+      <div>
+        <span style={{ color: goal.phase === "blocked" ? T.err : T.muted }}>
+          {PHASE.get(goal.phase) ?? goal.phase}
+        </span>{" "}
+        · {goal.objective}
+      </div>
+      <div style={{ ...meta, fontSize: 11 }}>
+        {rounds} · updated {ago(goal.updatedAt)}
+      </div>
+      {goal.blockedReason ? (
+        <div style={{ color: T.err, fontSize: 11, whiteSpace: "normal" }}>{goal.blockedReason}</div>
+      ) : null}
+    </div>
+  );
 }
 
 /** Error from GET /scheduled-tasks. */
@@ -3250,14 +3299,15 @@ function TaskRow({ task }: { task: Task }) {
   );
 }
 
-/** Scheduled tasks and the goal the CLI is holding. Read-only: it shows what the CLI decided. */
+/** Both goals and the scheduled tasks: dsh's goal and its past ones from dsh's own log, the goal
+ *  the CLI is holding from its transcript, then the tasks. Read-only; dsh's goal is changed from
+ *  dsh's own controls. */
 function TasksBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
-  const running = activeClaudeSession(ctx) === sessionId;
   const [data, setData] = useState<ScheduledTasksReply | ScheduledTasksError | null>(null);
+  const [pastOpen, setPastOpen] = useState(false);
 
   useEffect(() => {
-    // The route reads the running session's transcript; with none there is nothing to list.
-    if (!running) return;
+    // dsh's goal is there with or without a running CLI; the CLI's half is empty without one.
     let live = true;
     fetch(
       `${ROUTE}/scheduled-tasks?session=${encodeURIComponent(sessionId)}${boxParam(ctx, sessionId)}`,
@@ -3268,9 +3318,14 @@ function TasksBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
     return () => {
       live = false;
     };
-  }, [running, sessionId]);
+  }, [sessionId]);
 
-  if (!running) return null;
+  const dshGoals = data?.ok ? data.dshGoals : [];
+  const current =
+    dshGoals[0] && ["active", "paused", "blocked"].includes(dshGoals[0].phase)
+      ? dshGoals[0]
+      : undefined;
+  const past = current ? dshGoals.slice(1) : dshGoals;
 
   return (
     <div style={bodyFlow}>
@@ -3280,7 +3335,41 @@ function TasksBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
         <span style={errText}>{data.error}</span>
       ) : (
         <>
-          <span style={{ ...meta, padding: "2px 4px", display: "block" }}>Goal</span>
+          <span style={{ ...meta, padding: "2px 4px", display: "block" }}>dsh goal</span>
+          {current ? (
+            <DshGoalRow goal={current} />
+          ) : (
+            <div style={{ ...meta, padding: "4px 10px", fontSize: 12 }}>
+              No dsh goal in this session.
+            </div>
+          )}
+          {past.length > 0 ? (
+            <div data-omc-dsh-goals-past="" style={{ padding: "0 4px" }}>
+              <button
+                type="button"
+                aria-expanded={pastOpen}
+                onClick={() => setPastOpen((v) => !v)}
+                style={{
+                  background: "none",
+                  border: "none",
+                  padding: "2px 6px",
+                  font: "inherit",
+                  fontSize: 12,
+                  color: T.muted,
+                  cursor: "pointer",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {`${pastOpen ? "▾" : "▸"}\u00a0Past goals`}
+                <span style={meta}> · {past.length}</span>
+              </button>
+              {pastOpen && past.map((g) => <DshGoalRow key={g.id} goal={g} />)}
+            </div>
+          ) : null}
+
+          <span style={{ ...meta, padding: "2px 4px", display: "block", marginTop: 8 }}>
+            Claude Code goal
+          </span>
           {data.goal ? (
             <div style={{ padding: "4px 10px", fontSize: 12, lineHeight: "1.5" }}>
               <div style={{ marginBottom: 4 }}>{data.goal.text}</div>
@@ -3317,8 +3406,7 @@ function TasksBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
           ) : null}
 
           <div style={{ ...meta, padding: "2px 4px", marginTop: 8, fontSize: 11 }}>
-            Read-only in this release. dsh keeps its own goal, which it does not expose to a plugin
-            to read, so only the CLI's side is shown here.
+            Read-only. dsh's goal is set and changed from dsh itself.
           </div>
         </>
       )}
