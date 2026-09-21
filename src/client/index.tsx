@@ -3,7 +3,7 @@
 // here or jump to the box) and Boxes (this box as the first row, plus the ssh and linked-dsh
 // machines you add, each probed for claude version and login). Built into lib/client.js by
 // `bun run build`.
-import { installLocale } from "./i18n.js";
+import { installLocale, t, useLocale } from "./i18n.js";
 import type { CSSProperties, FC, ReactNode } from "react";
 import {
   Fragment,
@@ -402,6 +402,7 @@ function Chevron({ open }: { open: boolean }) {
 
 /** Collapsible card: title, a one-line summary that stays visible when closed, optional actions. */
 function Card({ id, title, summary, actions, open, onToggle, children }: CardProps) {
+  useLocale();
   // dsh's own plugin-settings card (ui-settings-plugins, 2026-09-13): name over description on the
   // left, chevron on the right that turns when open, the body under a hairline. Measurements and
   // tokens copied rather than the class borrowed, since dsh's class names change per build.
@@ -423,7 +424,7 @@ function Card({ id, title, summary, actions, open, onToggle, children }: CardPro
         type="button"
         onClick={onToggle}
         aria-expanded={open}
-        aria-label={`${open ? "Hide" : "Show"} ${title}`}
+        aria-label={t(open ? "main.card.hide" : "main.card.show", { title })}
         style={{
           appearance: "none",
           width: "100%",
@@ -481,9 +482,10 @@ function Card({ id, title, summary, actions, open, onToggle, children }: CardPro
 
 /** Where a transcript lives: terminal only, a live dsh session, or an archived one. */
 function Origin({ s }: { s: { dsh?: { archived?: boolean; id?: string }; imported?: boolean } }) {
-  if (s.imported) return <span style={pill(T.brand)}>imported</span>;
-  if (!s.dsh) return <span style={pill(T.faint)}>terminal</span>;
-  if (s.dsh.archived) return <span style={pill(T.warn)}>archived</span>;
+  useLocale();
+  if (s.imported) return <span style={pill(T.brand)}>{t("main.origin.imported")}</span>;
+  if (!s.dsh) return <span style={pill(T.faint)}>{t("main.origin.terminal")}</span>;
+  if (s.dsh.archived) return <span style={pill(T.warn)}>{t("main.origin.archived")}</span>;
   return <span style={pill(T.brand)}>dsh</span>;
 }
 /** Returns a box's origin: terminal, archived or dsh, and terminal when it has no dsh record. */
@@ -510,7 +512,13 @@ export function summarize(settings: JsonObject | undefined): Array<[string, stri
           : 0)
       );
     }, 0);
-    out.push(["hooks", `${hooks} on ${events.length} event${events.length === 1 ? "" : "s"}`]);
+    out.push([
+      "hooks",
+      t(events.length === 1 ? "main.summary.hooksOnOne" : "main.summary.hooksOnOther", {
+        hooks,
+        events: events.length,
+      }),
+    ]);
   }
   const p = settings.permissions;
   if (isObj(p)) {
@@ -521,10 +529,15 @@ export function summarize(settings: JsonObject | undefined): Array<[string, stri
     if (parts.length) out.push(["permissions", parts.join(" · ")]);
   }
   if (count(settings.env) > 0)
-    out.push(["env", `${count(settings.env)} var${count(settings.env) === 1 ? "" : "s"}`]);
+    out.push([
+      "env",
+      t(count(settings.env) === 1 ? "main.summary.varsOne" : "main.summary.varsOther", {
+        n: count(settings.env),
+      }),
+    ]);
   if (count(settings.enabledPlugins) > 0)
-    out.push(["plugins", `${count(settings.enabledPlugins)} enabled`]);
-  if (settings.statusLine) out.push(["statusLine", "set"]);
+    out.push(["plugins", t("main.summary.enabled", { n: count(settings.enabledPlugins) })]);
+  if (settings.statusLine) out.push(["statusLine", t("main.summary.set")]);
   return out;
 }
 
@@ -669,6 +682,7 @@ export function pageSessions(
  * from another box jumps to that box with a deep link its panel understands.
  */
 function Sessions({ ctx, boxes, close }: SessionsProps) {
+  useLocale();
   const [local, setLocal] = useState<{ host?: string; sessions?: SessionData[] } | null>(null);
   const [remote, setRemote] = useState<RemoteSessionData[]>([]);
   const [ssh, setSsh] = useState<SshSessionData[]>([]);
@@ -728,7 +742,7 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
         // Name is the host, not a fixed "This box": the plugin runs on whatever box, so the label
         // must read as that box's name. A "· here" marker in the chip says which one is local.
         key: "local",
-        name: local.host ?? "This box",
+        name: local.host ?? t("main.sessions.thisBox"),
         host: local.host,
         ok: true,
         sessions: local.sessions ?? [],
@@ -744,7 +758,11 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
         name: b.name,
         host: r?.host,
         ok: r?.ok === true,
-        error: r ? r.error : remoteLoading ? "checking…" : "unchecked",
+        error: r
+          ? r.error
+          : remoteLoading
+            ? t("main.sessions.checking")
+            : t("main.sessions.unchecked"),
         sessions: r?.sessions ?? [],
         box: b,
       });
@@ -755,7 +773,7 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
         name: s.name,
         host: s.host,
         ok: s.ok === true,
-        error: s.ok ? undefined : (s.error ?? "unreachable"),
+        error: s.ok ? undefined : (s.error ?? t("main.sessions.unreachable")),
         sessions: s.sessions ?? [],
         sshBox: true,
         provider: s.provider,
@@ -808,7 +826,7 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
       // fall back to a clear message rather than resuming it against the local claude.
       const provider = r.g.provider;
       if (!provider) {
-        setError(`Pick ${r.g.name}'s model in the composer to open this session.`);
+        setError(t("main.sessions.pickModel", { name: r.g.name }));
         return;
       }
       setBusyId(r.s.id);
@@ -860,7 +878,7 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
   // saves a handful of sequential downloads without a prompt. Zip it if people tick dozens.
   const download = async () => {
     const wanted = rows.filter((r) => picked.has(rowKey(r)));
-    setMoving(`Downloading ${wanted.length}…`);
+    setMoving(t("main.sessions.downloading", { n: wanted.length }));
     setError("");
     try {
       for (const r of wanted) {
@@ -896,7 +914,7 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
       else if (action === "resume") {
         const host = r.g.sshBox ? r.g.host : undefined;
         await navigator.clipboard.writeText(resumeCommand(r.s.id, r.s.cwd, host));
-        setMoving("Copied");
+        setMoving(t("common.copied"));
         setTimeout(() => setMoving(""), 1600);
       }
     } catch (e) {
@@ -906,7 +924,7 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
 
   const importFiles = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
-    setMoving(`Importing ${files.length}…`);
+    setMoving(t("main.sessions.importing", { n: files.length }));
     setError("");
     try {
       for (const f of Array.from(files)) {
@@ -917,7 +935,8 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
             body: JSON.stringify({ text: await f.text() }),
           }),
         );
-        if (!body.id) throw new Error(`${f.name}: ${body.error ?? "import failed"}`);
+        if (!body.id)
+          throw new Error(`${f.name}: ${body.error ?? t("main.sessions.importFailed")}`);
       }
       load();
     } catch (e) {
@@ -951,7 +970,7 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
         error?: string;
       }>(await fetch(url));
       if (body.error !== undefined) {
-        setDeepNote(`Search failed: ${body.error}`);
+        setDeepNote(t("main.sessions.searchFailed", { error: body.error }));
         setDeep(null);
         return;
       }
@@ -959,11 +978,21 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
       setDeep(new Map(hits.map((h) => [h.id, { snippet: h.snippet, count: h.count }])));
       setDeepNote(
         hits.length === 0
-          ? `No transcript contains "${query.trim()}". The filter above still searches titles.`
-          : `${hits.length} ${hits.length === 1 ? "session" : "sessions"} match "${query.trim()}" (${body.scanned ?? 0} searched, ${body.tookMs ?? 0} ms)${body.truncated === true ? ", showing the first matches" : ""}`,
+          ? t("main.sessions.deepNone", { q: query.trim() })
+          : t(hits.length === 1 ? "main.sessions.deepHitsOne" : "main.sessions.deepHitsOther", {
+              n: hits.length,
+              q: query.trim(),
+              scanned: body.scanned ?? 0,
+              ms: body.tookMs ?? 0,
+              more: body.truncated === true ? t("main.sessions.deepMore") : "",
+            }),
       );
     } catch (e) {
-      setDeepNote(`Search failed: ${e instanceof Error ? e.message : "unknown error"}`);
+      setDeepNote(
+        t("main.sessions.searchFailed", {
+          error: e instanceof Error ? e.message : t("main.sessions.unknownError"),
+        }),
+      );
       setDeep(null);
     } finally {
       setDeepBusy(false);
@@ -984,8 +1013,8 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
         style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}
       >
         <div style={meta}>
-          {loading ? "Loading…" : `${rows.length} shown · ${total} total`}
-          {remoteLoading ? " · checking boxes…" : ""}
+          {loading ? t("common.loading") : t("main.sessions.count", { shown: rows.length, total })}
+          {remoteLoading ? t("main.sessions.checkingBoxes") : ""}
         </div>
         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
           {moving && <span style={meta}>{moving}</span>}
@@ -997,7 +1026,7 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
               disabled={moving !== ""}
               onClick={() => void download()}
             >
-              Download {picked.size}
+              {t("main.sessions.download", { n: picked.size })}
             </button>
           )}
           <input
@@ -1016,13 +1045,13 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
             type="button"
             style={btn}
             disabled={moving !== ""}
-            title="Add a .jsonl transcript from another box; it lands in this plugin's own store."
+            title={t("main.sessions.importTitle")}
             onClick={() => fileInput.current?.click()}
           >
-            Import
+            {t("main.sessions.import")}
           </button>
           <button type="button" style={btn} disabled={loading} onClick={load}>
-            Refresh
+            {t("main.sessions.refresh")}
           </button>
         </div>
       </div>
@@ -1035,14 +1064,14 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
           style={filterSelect}
           value={box}
           onChange={(e) => setBox(e.target.value)}
-          title="Box"
+          title={t("main.sessions.box")}
         >
-          <option value="all">All boxes</option>
+          <option value="all">{t("main.sessions.allBoxes")}</option>
           {groups.map((g) => (
             <option key={g.key} value={g.key} disabled={!g.ok} title={g.ok ? g.host : g.error}>
               {g.name}
-              {g.key === "local" ? " · here" : ""}
-              {g.ok ? ` · ${g.sessions.length}` : " · offline"}
+              {g.key === "local" ? t("main.sessions.here") : ""}
+              {g.ok ? ` · ${g.sessions.length}` : t("main.sessions.offline")}
             </option>
           ))}
         </select>
@@ -1051,9 +1080,9 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
           style={filterSelect}
           value={cwd}
           onChange={(e) => setCwd(e.target.value)}
-          title="Workspace"
+          title={t("main.sessions.workspace")}
         >
-          <option value="all">All workspaces</option>
+          <option value="all">{t("main.sessions.allWorkspaces")}</option>
           {cwds.map((c) => (
             <option key={c} value={c} title={c}>
               {shortPath(c)}
@@ -1065,12 +1094,12 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
           style={{ ...filterSelect, flexBasis: 120 }}
           value={origin}
           onChange={(e) => setOrigin(e.target.value)}
-          title="Origin"
+          title={t("main.sessions.origin")}
         >
-          <option value="all">Any origin</option>
-          <option value="dsh">In dsh</option>
-          <option value="archived">Archived</option>
-          <option value="terminal">Terminal only</option>
+          <option value="all">{t("main.sessions.anyOrigin")}</option>
+          <option value="dsh">{t("main.sessions.inDsh")}</option>
+          <option value="archived">{t("main.sessions.archived")}</option>
+          <option value="terminal">{t("main.sessions.terminalOnly")}</option>
         </select>
         <SearchField
           id="dsh-oh-my-claude-session-search"
@@ -1078,30 +1107,30 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
           // for a section at phone width, and a fixed minimum spilled past the card's edge.
           style={{ flex: "2 1 200px", minWidth: "min(160px, 100%)" }}
           value={query}
-          placeholder="Search title, id or path"
-          label="Search sessions"
+          placeholder={t("main.sessions.searchPlaceholder")}
+          label={t("main.sessions.searchLabel")}
           onChange={setQuery}
         />
         <select
           data-omc-search-scope=""
-          aria-label="Search scope"
+          aria-label={t("main.sessions.searchScope")}
           style={{ ...filterSelect, flexBasis: 150 }}
           value={deepScope}
           onChange={(e) => setDeepScope(e.target.value === "box" ? "box" : "workspace")}
         >
-          <option value="workspace">This workspace</option>
-          <option value="box">This box, every workspace</option>
+          <option value="workspace">{t("main.sessions.scopeWorkspace")}</option>
+          <option value="box">{t("main.sessions.scopeBox")}</option>
         </select>
         <button
           type="button"
           id="dsh-oh-my-claude-search-transcripts"
           data-omc-search-transcripts=""
-          aria-label="Search inside transcripts"
+          aria-label={t("main.sessions.searchInside")}
           style={btn}
           disabled={deepBusy || query.trim().length < 2}
           onClick={() => void runDeep()}
         >
-          {deepBusy ? "Searching…" : "Search transcripts"}
+          {deepBusy ? t("main.sessions.searching") : t("main.sessions.searchTranscripts")}
         </button>
         {deep !== null && (
           <button
@@ -1113,7 +1142,7 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
               setDeepNote("");
             }}
           >
-            Back to all sessions
+            {t("main.sessions.backToAll")}
           </button>
         )}
       </div>
@@ -1132,8 +1161,7 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
       )}
       {deep !== null && (
         <p data-omc-search-caveat="" style={{ ...meta, marginTop: 4 }}>
-          Searches your messages and Claude&apos;s replies. Tool output is not searched. Opening a
-          result shows the whole session.
+          {t("main.sessions.caveat")}
         </p>
       )}
       {error && (
@@ -1143,7 +1171,7 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
       )}
       {!loading && rows.length === 0 && (
         <p id="dsh-oh-my-claude-empty" style={{ ...meta, marginTop: 10 }}>
-          No Claude Code sessions match
+          {t("main.sessions.empty")}
         </p>
       )}
       {loading && <SkeletonRows rows={4} />}
@@ -1155,14 +1183,14 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
             (isLocal || isSsh) && Boolean(known[r.s.dsh?.id ?? r.s.id]) && !r.s.dsh?.archived;
           const busy = busyId === r.s.id;
           const label = busy
-            ? "Opening…"
+            ? t("main.sessions.opening")
             : !isLocal && !isSsh
-              ? `Open on ${r.g.name}`
+              ? t("main.sessions.openOn", { name: r.g.name })
               : opened
-                ? "Show"
+                ? t("main.sessions.show")
                 : r.s.dsh?.archived
-                  ? "Restore"
-                  : "Open";
+                  ? t("main.sessions.restore")
+                  : t("main.sessions.open");
           return (
             <div
               key={rowKey(r)}
@@ -1174,7 +1202,7 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
                   box's disk, and its own panel is where it downloads from. */}
               <input
                 type="checkbox"
-                aria-label={`Select ${sessionLabel(r.s)}`}
+                aria-label={t("main.sessions.select", { name: sessionLabel(r.s) })}
                 disabled={!isLocal && !isSsh}
                 checked={picked.has(rowKey(r))}
                 onChange={(e) =>
@@ -1250,7 +1278,7 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
                   )}
                   <span style={{ flex: "0 0 auto" }}>
                     {ago(r.s.modifiedAt)} · {r.s.turns}
-                    {r.s.turnsPartial ? "+" : ""} prompts · {size(r.s.bytes)} ·{" "}
+                    {r.s.turnsPartial ? "+" : ""} {t("main.sessions.prompts")} · {size(r.s.bytes)} ·{" "}
                     <span style={{ fontFamily: T.mono }}>{r.s.id.slice(0, 8)}</span>
                   </span>
                 </div>
@@ -1270,9 +1298,9 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
                   onClose={() => setMenuFor("")}
                   selectedId=""
                   items={[
-                    { id: "jsonl", label: "Download .jsonl" },
-                    { id: "md", label: "Export as Markdown" },
-                    { id: "resume", label: "Copy resume command" },
+                    { id: "jsonl", label: t("main.sessions.downloadJsonl") },
+                    { id: "md", label: t("main.sessions.exportMarkdown") },
+                    { id: "resume", label: t("main.sessions.copyResume") },
                   ]}
                   onSelect={(id) => void rowAction(r, id)}
                   side="top"
@@ -1280,7 +1308,7 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
                   anchor={
                     <button
                       type="button"
-                      aria-label="More actions"
+                      aria-label={t("main.sessions.moreActions")}
                       aria-haspopup="menu"
                       aria-expanded={menuFor === rowKey(r)}
                       data-omc-row-menu=""
@@ -1305,7 +1333,7 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
               style={btn}
               onClick={() => setShown((m) => ({ ...m, [moreKey]: (m[moreKey] ?? PAGE) + PAGE }))}
             >
-              Load {Math.min(PAGE, more)} more
+              {t("main.sessions.loadMore", { n: Math.min(PAGE, more) })}
             </button>
             {grown && (
               <button
@@ -1315,7 +1343,7 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
                   setShown((m) => ({ ...m, [moreKey]: paged.matched[moreKey] ?? PAGE }))
                 }
               >
-                Load all {paged.matched[moreKey] ?? ""}
+                {t("main.sessions.loadAll", { n: paged.matched[moreKey] ?? "" })}
               </button>
             )}
           </div>
@@ -1356,6 +1384,7 @@ interface SettingsEditorProps {
  * directory here to resolve a project against.
  */
 function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
+  useLocale();
   const [scope, setScope] = useState<SettingsScope>("user");
   const [cwd, setCwd] = useState<string | null>(null);
   const [scopes, setScopes] = useState<SettingsScopeInfo[]>([]);
@@ -1414,7 +1443,7 @@ function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
   const parsed = useMemo<{ value?: JsonObject; error?: string }>(() => {
     try {
       const value: Json = JSON.parse(text);
-      if (!isObj(value)) return { error: "settings.json must be a JSON object" };
+      if (!isObj(value)) return { error: t("main.settings.mustBeObject") };
       return { value };
     } catch (e) {
       return { error: e instanceof Error ? e.message : String(e) };
@@ -1442,7 +1471,10 @@ function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
         setFile((f) => ({ ...f, text, exists: true, mtime: b.mtime }));
         setEditing(false);
         setSaved(
-          `Saved ${new Date(b.mtime ?? 0).toLocaleTimeString()} · previous copy in ${b.backup ?? "?"}`,
+          t("main.settings.saved", {
+            time: new Date(b.mtime ?? 0).toLocaleTimeString(),
+            backup: b.backup ?? "?",
+          }),
         );
       })
       .catch((e: Error) => setError(e.message))
@@ -1463,8 +1495,8 @@ function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
     ? facts.length
       ? facts.map(([k, v]) => `${k} ${v}`).join(" · ")
       : file.exists
-        ? "empty"
-        : "not created yet"
+        ? t("main.settings.empty")
+        : t("main.settings.notCreated")
     : "";
   const actions = editing ? (
     <>
@@ -1478,7 +1510,7 @@ function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
           setEditing(false);
         }}
       >
-        Cancel
+        {t("common.cancel")}
       </button>
       <button
         id="dsh-oh-my-claude-settings-save"
@@ -1487,13 +1519,13 @@ function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
         disabled={!canSave}
         onClick={save}
       >
-        {busy ? "Saving…" : "Save"}
+        {busy ? t("main.settings.saving") : t("common.save")}
       </button>
     </>
   ) : open ? (
     <>
       <button type="button" style={btn} disabled={busy} onClick={load}>
-        Reload
+        {t("main.settings.reload")}
       </button>
       <button
         id="dsh-oh-my-claude-settings-edit"
@@ -1505,7 +1537,7 @@ function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
           setEditing(true);
         }}
       >
-        Edit
+        {t("main.settings.edit")}
       </button>
     </>
   ) : null;
@@ -1520,17 +1552,14 @@ function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
     >
       <div style={{ ...meta, fontFamily: T.mono, whiteSpace: "normal", marginBottom: 8 }}>
         {file?.path ?? "…"}
-        {file && !file.exists ? " · not created yet" : ""}
+        {file && !file.exists ? t("main.settings.notCreatedDot") : ""}
       </div>
-      <p style={{ margin: "0 0 10px", color: T.muted, fontSize: 13 }}>
-        Claude Code's own settings: hooks, permissions, model, env. Read by every Claude Code
-        process on this box, in dsh or in a terminal. dsh's own hooks and settings are separate.
-      </p>
+      <p style={{ margin: "0 0 10px", color: T.muted, fontSize: 13 }}>{t("main.settings.desc")}</p>
       {!box && (
         <>
           <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 12 }}>
             <label style={{ fontSize: 13, fontWeight: 500 }} htmlFor="dsh-oh-my-claude-scope">
-              Scope
+              {t("main.settings.scope")}
             </label>
             <select
               id="dsh-oh-my-claude-scope"
@@ -1561,7 +1590,7 @@ function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
               (cwdOptions.length > 0 ? (
                 <select
                   data-omc-settings-cwd=""
-                  aria-label="Working directory"
+                  aria-label={t("main.settings.workingDir")}
                   value={projectCwd ?? ""}
                   onChange={(e) => setCwd(e.target.value)}
                   disabled={busy || editing}
@@ -1574,12 +1603,14 @@ function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
                   ))}
                 </select>
               ) : (
-                <span style={{ fontSize: 12, color: T.muted }}>no session open in a directory</span>
+                <span style={{ fontSize: 12, color: T.muted }}>
+                  {t("main.settings.noSessionDir")}
+                </span>
               ))}
           </div>
           {(readOnly || override) && (
             <div style={{ fontSize: 12, color: T.muted, marginBottom: 12 }}>
-              {readOnly ? `${SCOPE_LABELS.managed} is read-only. ` : ""}
+              {readOnly ? t("main.settings.readOnlyManaged", { name: SCOPE_LABELS.managed }) : ""}
               {override}
             </div>
           )}
@@ -1612,14 +1643,17 @@ function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
       <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginTop: 6 }}>
         <span style={{ fontSize: 12, color: parsed.error ? T.err : T.ok }}>
           {parsed.error
-            ? `Invalid JSON: ${parsed.error}`
-            : `Valid JSON · ${Object.keys(parsed.value ?? {}).length} keys${dirty ? " · unsaved changes" : ""}`}
+            ? t("main.settings.invalidJson", { error: parsed.error })
+            : t("main.settings.validJson", {
+                n: Object.keys(parsed.value ?? {}).length,
+                more: dirty ? t("main.settings.unsaved") : "",
+              })}
         </span>
         <span style={{ ...meta, whiteSpace: "normal", textAlign: "right" }}>
           {error ? (
             <span style={{ color: T.err }}>{error}</span>
           ) : (
-            saved || (editing ? "Ctrl+S saves · Cancel discards" : "Read-only until Edit")
+            saved || (editing ? t("main.settings.editHint") : t("main.settings.readOnlyHint"))
           )}
         </span>
       </div>
@@ -1906,24 +1940,24 @@ function LoginSteps({
   setLogin: (next: LoginFlow | null) => void;
   submit: () => void;
 }) {
+  useLocale();
   return (
     <div style={{ ...meta, marginTop: 6, whiteSpace: "normal", overflowWrap: "anywhere" }}>
-      {login.busy && !login.url && <span>starting login…</span>}
+      {login.busy && !login.url && <span>{t("main.login.starting")}</span>}
       {login.url && (
         <>
           <div>
-            A sign-in tab may have opened by itself; if not, open{" "}
+            {t("main.login.openBefore")}
             <a href={login.url} target="_blank" rel="noreferrer" style={{ color: ACCENT }}>
-              Claude sign-in
-            </a>{" "}
-            and approve. If that page shows a code, paste it below; if it says you are all set, this
-            row finishes on its own.
+              {t("main.login.linkText")}
+            </a>
+            {t("main.login.openAfter")}
           </div>
           <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
             <input
               style={inputStyle}
-              placeholder="Paste code"
-              aria-label="Login code"
+              placeholder={t("main.login.pasteCode")}
+              aria-label={t("main.login.codeLabel")}
               data-omc-login-code=""
               value={login.code}
               disabled={login.busy}
@@ -1935,10 +1969,10 @@ function LoginSteps({
               disabled={login.busy || !login.code.trim()}
               onClick={submit}
             >
-              {login.busy ? "…" : "Submit"}
+              {login.busy ? "…" : t("main.login.submit")}
             </button>
             <button type="button" style={btn} onClick={() => setLogin(null)}>
-              Cancel
+              {t("common.cancel")}
             </button>
           </div>
         </>
@@ -1950,6 +1984,7 @@ function LoginSteps({
 
 /** The Boxes card: this box first, then any added machines, each probed and addable from here. */
 function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
+  useLocale();
   const [probe, setProbe] = useState<Record<string, ProbeEntry>>({});
   const [self, setSelf] = useState<{ plugin?: string } | null>(null);
   const [ssh, setSsh] = useState<SshBoxData[]>([]);
@@ -1989,8 +2024,8 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
   // While an approval link is out, look every 3 s for the tailnet to come up; stop once it has.
   useEffect(() => {
     if (!tsLogin?.url || ts?.loggedIn) return;
-    const t = setInterval(loadNets, 3000);
-    return () => clearInterval(t);
+    const timer = setInterval(loadNets, 3000);
+    return () => clearInterval(timer);
   }, [tsLogin?.url, ts?.loggedIn, loadNets]);
   const joinTailnet = () => {
     setTsLogin({ busy: true });
@@ -2179,8 +2214,11 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
     ssh.filter((b) => sshProbe[b.host]?.status?.binary).length;
   const summary =
     total === 0
-      ? "none saved"
-      : `${total} saved · ${busy ? "checking…" : `${reachable} reachable`}`;
+      ? t("main.boxes.noneSaved")
+      : t("main.boxes.summary", {
+          total,
+          status: busy ? t("main.sessions.checking") : t("main.boxes.reachable", { n: reachable }),
+        });
   const seg = (k: BoxKind, label: string) => (
     <button
       type="button"
@@ -2204,14 +2242,14 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
   return (
     <Card
       id="dsh-oh-my-claude-boxes"
-      title="Boxes"
-      summary="Where Claude Code runs: this box, any ssh box, a linked dsh. Each keeps its own login."
+      title={t("main.boxes.title")}
+      summary={t("main.boxes.cardSummary")}
       actions={
         open ? (
           <>
             <span style={{ ...meta, alignSelf: "center", marginRight: "auto" }}>{summary}</span>
             <button type="button" style={btn} disabled={busy || total === 0} onClick={refresh}>
-              {busy ? "Checking…" : "Refresh"}
+              {busy ? t("main.boxes.checkingCap") : t("main.sessions.refresh")}
             </button>
           </>
         ) : null
@@ -2223,25 +2261,29 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
       {me && (
         <BoxRow
           testId="dsh-oh-my-claude-self-box-row"
-          title="This box"
+          title={t("main.sessions.thisBox")}
           kind={me.host}
           tone={!me.binary || !me.loggedIn ? "err" : "ok"}
           facts={[
-            me.binary ? cliVersion(me.version) : bad("Claude Code not on PATH"),
+            me.binary ? cliVersion(me.version) : bad(t("main.boxes.notOnPath")),
             // A token from the earlier setup-token flow is named, since it is the plugin's alone; a
             // login made here or in a terminal is the CLI's own and needs no label.
             <span key="login" data-omc-login-method={me.authMethod}>
               {me.loggedIn
-                ? `${maskEmail(me.email ?? "logged in")}${me.authMethod === "panel token" ? " · panel token" : ""}`
-                : bad("not logged in")}
+                ? `${maskEmail(me.email ?? t("main.boxes.loggedIn"))}${me.authMethod === "panel token" ? t("main.boxes.panelToken") : ""}`
+                : bad(t("main.boxes.notLoggedIn"))}
             </span>,
             // Logged out on disk, but processes started earlier still answer on the login they
             // read then; Log out makes the cut.
             ...(!me.loggedIn && (me.running ?? 0) > 0
               ? [
                   <span key="running" data-omc-running={me.running}>
-                    {me.running} {me.running === 1 ? "session" : "sessions"} still answering on the
-                    old login
+                    {t(
+                      me.running === 1
+                        ? "main.boxes.stillAnsweringOne"
+                        : "main.boxes.stillAnsweringOther",
+                      { n: me.running ?? 0 },
+                    )}
                   </span>,
                 ]
               : []),
@@ -2249,8 +2291,9 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
           note={
             !me.binary && (
               <>
-                Install Claude Code here (<code style={codeInline}>claude</code> on PATH), then
-                refresh.
+                {t("main.boxes.installBefore")}
+                <code style={codeInline}>claude</code>
+                {t("main.boxes.installAfter")}
               </>
             )
           }
@@ -2264,22 +2307,27 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
                   data-testid="dsh-oh-my-claude-this-box-login"
                   onClick={() => startLogin("")}
                 >
-                  Log in
+                  {t("main.boxes.logIn")}
                 </button>
               )}
               {/* One Log out does everything: forgets a stored token, logs the box's Claude Code
                   out, and kills its running sessions. */}
               {(me.loggedIn || (me.running ?? 0) > 0) && (
                 <ConfirmButton
-                  label="Log out"
-                  ariaLabel="Log out: log this box's Claude Code out and stop its running sessions"
+                  label={t("main.boxes.logOut")}
+                  ariaLabel={t("main.boxes.logOutThisAria")}
                   style={btn}
                   disabled={busy}
                   onAct={() => logout("")}
                 />
               )}
               {me.binary && (
-                <BoxUpdateButton host="" label="this box" disabled={busy} onDone={refresh} />
+                <BoxUpdateButton
+                  host=""
+                  label={t("main.boxes.thisBoxLower")}
+                  disabled={busy}
+                  onDone={refresh}
+                />
               )}
             </>
           }
@@ -2294,7 +2342,7 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
         const down = st?.reach && st.reach.stage !== "ok";
         const up = st && !st.error && st.binary;
         const facts: ReactNode[] = !st
-          ? [busy ? "checking…" : "unchecked"]
+          ? [busy ? t("main.sessions.checking") : t("main.sessions.unchecked")]
           : down
             ? [
                 <span key="reach" title={st.reach?.detail}>
@@ -2304,20 +2352,23 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
             : st.error
               ? [bad(st.error)]
               : [
-                  st.binary ? cliVersion(st.version) : bad("no claude"),
-                  st.loggedIn ? maskEmail(st.email ?? "logged in") : bad("not logged in"),
+                  st.binary ? cliVersion(st.version) : bad(t("main.boxes.noClaude")),
+                  st.loggedIn
+                    ? maskEmail(st.email ?? t("main.boxes.loggedIn"))
+                    : bad(t("main.boxes.notLoggedIn")),
                 ];
         if (st && up && !st.loggedIn && (st.running ?? 0) > 0)
           facts.push(
-            `${st.running} ${st.running === 1 ? "session" : "sessions"} still answering on the old login`,
+            t(
+              st.running === 1 ? "main.boxes.stillAnsweringOne" : "main.boxes.stillAnsweringOther",
+              { n: st.running ?? 0 },
+            ),
           );
         // Said before the click: Remove on a box takes the workspaces pinned to it as well.
         const onIt = rws.filter((w) => w.host === b.host).length;
         if (onIt > 0)
           facts.push(
-            onIt === 1
-              ? "1 workspace on it, removed with the box"
-              : `${onIt} workspaces on it, removed with the box`,
+            t(onIt === 1 ? "main.boxes.wsOnItOne" : "main.boxes.wsOnItOther", { n: onIt }),
           );
         return (
           <BoxRow
@@ -2337,15 +2388,15 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
                     disabled={busy}
                     onClick={() => startLogin(b.host)}
                   >
-                    Log in
+                    {t("main.boxes.logIn")}
                   </button>
                 )}
                 {/* The same Log out this box has: `claude auth logout` over ssh, its running
                     sessions stopped, any leftover token forgotten. */}
                 {up && (st.loggedIn || (st.running ?? 0) > 0) && (
                   <ConfirmButton
-                    label="Log out"
-                    ariaLabel={`Log out ${b.name}: log its Claude Code out and stop its running sessions`}
+                    label={t("main.boxes.logOut")}
+                    ariaLabel={t("main.boxes.logOutBoxAria", { name: b.name })}
                     style={btn}
                     disabled={busy}
                     onAct={() => logout(b.host)}
@@ -2355,11 +2406,16 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
                   <BoxUpdateButton host={b.host} label={b.name} disabled={busy} onDone={refresh} />
                 )}
                 <ConfirmButton
-                  label="Remove"
+                  label={t("common.remove")}
                   ariaLabel={
                     onIt > 0
-                      ? `Remove ${b.name} and its ${onIt} workspace${onIt === 1 ? "" : "s"}`
-                      : `Remove ${b.name}`
+                      ? t(
+                          onIt === 1
+                            ? "main.boxes.removeWithWsOne"
+                            : "main.boxes.removeWithWsOther",
+                          { name: b.name, n: onIt },
+                        )
+                      : t("main.boxes.removeBox", { name: b.name })
                   }
                   style={btn}
                   disabled={busy}
@@ -2380,17 +2436,19 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
         const r = ok ? st.status : undefined;
         const skew = r?.plugin && self && r.plugin !== self.plugin;
         const facts: ReactNode[] = !st
-          ? [busy ? "checking…" : "unchecked"]
+          ? [busy ? t("main.sessions.checking") : t("main.sessions.unchecked")]
           : !ok
-            ? [bad(st.error ?? "unreachable")]
+            ? [bad(st.error ?? t("main.sessions.unreachable"))]
             : r
               ? [
                   r.host ?? "",
-                  r.binary ? cliVersion(r.version) : bad("no claude"),
-                  r.loggedIn ? maskEmail(r.email ?? "logged in") : bad("not logged in"),
+                  r.binary ? cliVersion(r.version) : bad(t("main.boxes.noClaude")),
+                  r.loggedIn
+                    ? maskEmail(r.email ?? t("main.boxes.loggedIn"))
+                    : bad(t("main.boxes.notLoggedIn")),
                   <span key="plugin" style={skew ? { color: T.warn } : undefined}>
-                    plugin {r.plugin ?? "?"}
-                    {skew ? ` ≠ ${self?.plugin} here` : ""}
+                    {t("main.boxes.pluginVer", { ver: r.plugin ?? "?" })}
+                    {skew ? t("main.boxes.pluginSkew", { ver: self?.plugin ?? "" }) : ""}
                   </span>,
                 ]
               : [];
@@ -2399,7 +2457,7 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
             key={`dsh:${b.url}`}
             testId="dsh-oh-my-claude-box-row"
             title={b.name}
-            kind={`link · ${b.url}`}
+            kind={`${t("main.boxes.kindLink")} · ${b.url}`}
             tone={!st ? "faint" : ok && r?.binary && r.loggedIn ? "ok" : "err"}
             facts={facts}
             actions={
@@ -2413,13 +2471,13 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
                     disabled={busy}
                     onClick={() => dsh.startLogin(b.url)}
                   >
-                    Log in
+                    {t("main.boxes.logIn")}
                   </button>
                 )}
                 {r?.loggedIn && (
                   <ConfirmButton
-                    label="Log out"
-                    ariaLabel={`Log out ${b.name}: log its Claude Code out and stop its running sessions`}
+                    label={t("main.boxes.logOut")}
+                    ariaLabel={t("main.boxes.logOutBoxAria", { name: b.name })}
                     style={btn}
                     disabled={busy}
                     onAct={() => logoutDsh(b.url)}
@@ -2431,17 +2489,17 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
                   disabled={busy || !ok}
                   onClick={() => setOpenSettingsUrl(openSettingsUrl === b.url ? null : b.url)}
                 >
-                  Edit settings
+                  {t("main.boxes.editSettings")}
                 </button>
                 <ConfirmButton
-                  label="Remove"
-                  ariaLabel={`Remove ${b.name}`}
+                  label={t("common.remove")}
+                  ariaLabel={t("main.boxes.removeBox", { name: b.name })}
                   style={btn}
                   disabled={busy}
                   onAct={() => removeDsh(b.url)}
                 />
                 <button type="button" style={btnPrimary} onClick={() => jump(b)}>
-                  Open
+                  {t("main.sessions.open")}
                 </button>
               </>
             }
@@ -2476,12 +2534,12 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
               {seg("ssh", "SSH")}
               {seg("tailscale", "Tailscale")}
               {seg("wireguard", "WireGuard")}
-              {seg("dsh", "Link")}
+              {seg("dsh", t("main.boxes.segLink"))}
             </div>
             <input
               style={{ ...inputStyle, flex: "0 1 140px" }}
-              placeholder="Name"
-              aria-label="Box name"
+              placeholder={t("main.boxes.name")}
+              aria-label={t("main.boxes.boxName")}
               data-omc-box-name=""
               value={draft.name}
               onChange={(e) => setDraft({ ...draft, name: e.target.value })}
@@ -2489,8 +2547,8 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
             {kind === "ssh" ? (
               <input
                 style={{ ...inputStyle, flex: "1 1 240px" }}
-                placeholder="user@host or ssh alias"
-                aria-label="SSH host"
+                placeholder={t("main.boxes.sshHostPlaceholder")}
+                aria-label={t("main.boxes.sshHostLabel")}
                 data-omc-ssh-host=""
                 value={draft.host}
                 onChange={(e) => setDraft({ ...draft, host: e.target.value })}
@@ -2500,7 +2558,7 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
                 {ts?.loggedIn && (
                   <select
                     style={{ ...select, flex: "0 1 220px" }}
-                    aria-label="Tailscale peer"
+                    aria-label={t("main.boxes.tsPeerLabel")}
                     value={pickedPeer?.host ?? ""}
                     onChange={(e) => {
                       const peer = ts.peers.find((p) => p.host === e.target.value) ?? null;
@@ -2509,20 +2567,20 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
                         setDraft({ ...draft, name: draft.name || peer.name, host: peer.host });
                     }}
                   >
-                    <option value="">Pick a peer…</option>
+                    <option value="">{t("main.boxes.pickPeer")}</option>
                     {ts.peers.map((p) => (
                       <option key={p.host} value={p.host} disabled={peerIsSaved(p, ssh)}>
                         {p.online ? "●" : "○"} {p.name}
                         {p.os ? ` · ${p.os}` : ""}
-                        {peerIsSaved(p, ssh) ? " · saved" : ""}
+                        {peerIsSaved(p, ssh) ? t("main.boxes.peerSaved") : ""}
                       </option>
                     ))}
                   </select>
                 )}
                 <input
                   style={{ ...inputStyle, flex: "1 1 220px" }}
-                  placeholder="user@name.tailnet.ts.net or 100.x.y.z"
-                  aria-label="Tailscale host"
+                  placeholder={t("main.boxes.tsHostPlaceholder")}
+                  aria-label={t("main.boxes.tsHostLabel")}
                   data-omc-tailscale-host=""
                   value={draft.host}
                   onChange={(e) => {
@@ -2536,7 +2594,7 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
                 {wg && wg.peers.length > 0 && (
                   <select
                     style={{ ...select, flex: "0 1 220px" }}
-                    aria-label="WireGuard peer"
+                    aria-label={t("main.boxes.wgPeerLabel")}
                     // Reflects what the host field holds, with or without a user in front of it.
                     value={
                       wg.peers.find(
@@ -2548,18 +2606,19 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
                       if (peer) setDraft({ ...draft, host: peer.host });
                     }}
                   >
-                    <option value="">Pick a peer…</option>
+                    <option value="">{t("main.boxes.pickPeer")}</option>
                     {wg.peers.map((p) => (
                       <option key={`${p.iface}:${p.host}`} value={p.host}>
-                        {p.host} · {p.iface} · handshake {handshakeText(p.handshakeAge)}
+                        {p.host} · {p.iface} · {t("main.boxes.handshake")}{" "}
+                        {handshakeText(p.handshakeAge)}
                       </option>
                     ))}
                   </select>
                 )}
                 <input
                   style={{ ...inputStyle, flex: "1 1 220px" }}
-                  placeholder="user@10.x.y.z (the tunnel address)"
-                  aria-label="Tunnel address"
+                  placeholder={t("main.boxes.wgHostPlaceholder")}
+                  aria-label={t("main.boxes.tunnelAddr")}
                   data-omc-wireguard-host=""
                   value={draft.host}
                   onChange={(e) => setDraft({ ...draft, host: e.target.value })}
@@ -2570,7 +2629,7 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
                 <input
                   style={{ ...inputStyle, flex: "1 1 260px" }}
                   placeholder="https://dsh.other-box.lan"
-                  aria-label="dsh URL"
+                  aria-label={t("main.boxes.dshUrl")}
                   data-omc-dsh-url=""
                   value={draft.url}
                   onChange={(e) => setDraft({ ...draft, url: e.target.value })}
@@ -2579,8 +2638,8 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
                   style={{ ...inputStyle, flex: "1 1 200px" }}
                   type="password"
                   autoComplete="off"
-                  placeholder="dsh token (optional)"
-                  aria-label="dsh token"
+                  placeholder={t("main.boxes.dshTokenPlaceholder")}
+                  aria-label={t("main.boxes.dshToken")}
                   data-omc-dsh-token=""
                   value={draft.token}
                   onChange={(e) => setDraft({ ...draft, token: e.target.value })}
@@ -2596,11 +2655,11 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
                 (kind !== "dsh" ? !draft.host.trim() : !draft.url.trim())
               }
             >
-              Add
+              {t("main.boxes.add")}
             </button>
             {total > 0 && (
               <button type="button" style={btn} onClick={() => setAdding(false)}>
-                Cancel
+                {t("common.cancel")}
               </button>
             )}
           </form>
@@ -2617,29 +2676,27 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
               }}
             >
               {ts === null ? (
-                "Checking this node's tailnet…"
+                t("main.boxes.tsChecking")
               ) : !ts.installed ? (
                 <>
-                  <span style={{ color: T.faint }}>not installed</span>
-                  Install Tailscale on this box first (tailscale.com/download); the box side needs
-                  it too.
+                  <span style={{ color: T.faint }}>{t("main.boxes.notInstalled")}</span>
+                  {t("main.boxes.tsInstallHint")}
                 </>
               ) : ts.loggedIn ? (
                 <>
-                  <span style={{ color: T.ok }}>on the tailnet</span>
+                  <span style={{ color: T.ok }}>{t("main.boxes.onTailnet")}</span>
                   {ts.self && (
                     <span style={{ fontFamily: T.mono }}>{ts.self.host || ts.self.name}</span>
                   )}
-                  {ts.peers.length === 0 &&
-                    "No peers yet: bring the box onto the tailnet and Refresh."}
+                  {ts.peers.length === 0 && t("main.boxes.noPeersYet")}
                 </>
               ) : (
                 <>
-                  <span style={{ color: T.warn }}>not connected</span>
+                  <span style={{ color: T.warn }}>{t("main.boxes.notConnected")}</span>
                   <input
                     style={{ ...inputStyle, flex: "1 1 200px", fontSize: 12 }}
-                    placeholder="Login server (Headscale), else Tailscale"
-                    aria-label="Login server"
+                    placeholder={t("main.boxes.loginServerPlaceholder")}
+                    aria-label={t("main.boxes.loginServer")}
                     data-omc-tailscale-login-server=""
                     value={tsServer.loginServer}
                     onChange={(e) => setTsServer({ ...tsServer, loginServer: e.target.value })}
@@ -2648,8 +2705,8 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
                     style={{ ...inputStyle, flex: "1 1 160px", fontSize: 12 }}
                     type="password"
                     autoComplete="off"
-                    placeholder="Pre-auth key (optional)"
-                    aria-label="Pre-auth key"
+                    placeholder={t("main.boxes.preAuthPlaceholder")}
+                    aria-label={t("main.boxes.preAuthKey")}
                     data-omc-tailscale-auth-key=""
                     value={tsServer.authKey}
                     onChange={(e) => setTsServer({ ...tsServer, authKey: e.target.value })}
@@ -2662,9 +2719,9 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
                         rel="noreferrer"
                         style={{ color: ACCENT }}
                       >
-                        Approve this box on your tailnet
+                        {t("main.boxes.approveTailnet")}
                       </a>
-                      <span>waiting for the approval…</span>
+                      <span>{t("main.boxes.waitingApproval")}</span>
                     </>
                   ) : (
                     <button
@@ -2673,7 +2730,7 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
                       disabled={tsLogin?.busy}
                       onClick={joinTailnet}
                     >
-                      {tsLogin?.busy ? "Asking…" : "Connect"}
+                      {tsLogin?.busy ? t("main.boxes.asking") : t("main.boxes.connect")}
                     </button>
                   )}
                   {tsLogin?.error && <span style={{ color: T.err }}>{tsLogin.error}</span>}
@@ -2684,8 +2741,8 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
           {kind === "tailscale" && pickedPeer && (
             <div style={{ ...meta, whiteSpace: "normal", marginTop: 4 }}>
               {pickedPeer.tailscaleSsh
-                ? `${pickedPeer.name} runs Tailscale SSH: no key to copy, ssh signs in with your tailnet identity.`
-                : `${pickedPeer.name} needs an SSH key of yours, or Tailscale SSH turned on there (tailscale up --ssh).`}
+                ? t("main.boxes.peerTsSsh", { name: pickedPeer.name })
+                : t("main.boxes.peerNeedsKey", { name: pickedPeer.name })}
             </div>
           )}
           {kind === "wireguard" && (
@@ -2701,52 +2758,40 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
               }}
             >
               {wg === null ? (
-                "Checking WireGuard…"
+                t("main.boxes.wgChecking")
               ) : !wg.installed ? (
                 <>
-                  <span style={{ color: T.faint }}>not installed</span>
-                  Install wireguard-tools and bring a tunnel up (wg-quick up); its peer address is
-                  the host.
+                  <span style={{ color: T.faint }}>{t("main.boxes.notInstalled")}</span>
+                  {t("main.boxes.wgInstallHint")}
                 </>
               ) : wg.peers.length === 0 ? (
                 <>
-                  <span style={{ color: T.warn }}>no tunnel up</span>
-                  {wg.error
-                    ? wg.error
-                    : "Bring one up with wg-quick, or type the peer's tunnel address."}
+                  <span style={{ color: T.warn }}>{t("main.boxes.noTunnel")}</span>
+                  {wg.error ? wg.error : t("main.boxes.wgNoTunnelHint")}
                 </>
               ) : (
                 <>
                   <span style={{ color: T.ok }}>
-                    {wg.peers.length === 1 ? "1 peer" : `${wg.peers.length} peers`}
+                    {wg.peers.length === 1
+                      ? t("main.boxes.peersOne")
+                      : t("main.boxes.peersOther", { n: wg.peers.length })}
                   </span>
-                  The tunnel address is the host; ssh still needs your key on the box.
+                  {t("main.boxes.wgTunnelHint")}
                 </>
               )}
             </div>
           )}
           <div style={{ ...meta, whiteSpace: "normal", marginTop: 4 }}>
-            {kind !== "dsh" ? (
-              <>
-                This dsh drives Claude Code on the box over ssh (key-based, or Tailscale SSH), and
-                the box shows up in the model picker. Log in from its row once it is added.
-              </>
-            ) : (
-              <>
-                The box runs its own dsh with this plugin: its sessions show in the archive and Open
-                hops there. The token is its dsh launch token, needed only when this browser has
-                never logged into it.
-              </>
-            )}
+            {kind !== "dsh" ? t("main.boxes.sshExplain") : t("main.boxes.dshExplain")}
           </div>
         </>
       ) : (
         <div style={{ ...row, flexWrap: "wrap" }}>
           <p style={{ ...meta, whiteSpace: "normal", flex: "1 1 220px", margin: 0 }}>
-            An ssh box shows up in the model picker; a linked dsh shows its sessions in the archive.
+            {t("main.boxes.addHint")}
           </p>
           <button type="button" style={btn} disabled={busy} onClick={() => setAdding(true)}>
-            Add a box…
+            {t("main.boxes.addBox")}
           </button>
         </div>
       )}
@@ -2763,10 +2808,9 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
           transition: "opacity 120ms ease",
         }}
       >
-        <h3 style={h3}>Remote workspaces</h3>
+        <h3 style={h3}>{t("main.boxes.remoteWsTitle")}</h3>
         <p style={{ margin: "2px 0 12px", color: T.muted, fontSize: 13 }}>
-          A folder on an ssh box, pinned as a workspace. Sessions there run that box's Claude on its
-          files; nothing is copied.
+          {t("main.boxes.remoteWsDesc")}
         </p>
         {rws.map((w) => (
           <BoxRow
@@ -2782,8 +2826,8 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
             ]}
             actions={
               <ConfirmButton
-                label="Remove"
-                ariaLabel={`Remove ${w.name}`}
+                label={t("common.remove")}
+                ariaLabel={t("main.boxes.removeBox", { name: w.name })}
                 style={btn}
                 disabled={busy}
                 onAct={() => removeRw(w.path)}
@@ -2794,10 +2838,10 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
         <div style={{ ...row, flexWrap: "wrap" }}>
           <p style={{ ...meta, whiteSpace: "normal", flex: "1 1 220px", margin: 0 }}>
             {canAdd
-              ? "Add one from the sidebar's Add workspace button: it browses whichever box you pick."
+              ? t("main.boxes.rwAddSidebar")
               : ssh.length === 0
-                ? "Needs an ssh box above first."
-                : "The sidebar's Add workspace button browses the box you pick once dsh can list its folders."}
+                ? t("main.boxes.rwNeedsBox")
+                : t("main.boxes.rwSidebarWhenReady")}
           </p>
           <button
             type="button"
@@ -2805,7 +2849,7 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
             disabled={!canAdd}
             onClick={() => document.dispatchEvent(new Event(OPEN_EVENT))}
           >
-            Add workspace…
+            {t("main.boxes.addWorkspace")}
           </button>
         </div>
       </div>
@@ -2838,7 +2882,11 @@ interface WireguardPeerRow {
 }
 /** `44s ago`, `3m ago`, `never`: a tunnel's last handshake, which is its pulse. */
 const handshakeText = (age: number | null): string =>
-  age === null ? "never" : age < 90 ? `${age}s ago` : `${Math.round(age / 60)}m ago`;
+  age === null
+    ? t("main.boxes.never")
+    : age < 90
+      ? t("main.boxes.secAgo", { n: age })
+      : t("main.boxes.minAgo", { n: Math.round(age / 60) });
 /** A Tailscale peer as `/tailscale/status` lists it (mirrors reach.ts's `TailscalePeer`). */
 interface TailscalePeerRow {
   name: string;
@@ -2855,19 +2903,19 @@ const peerIsSaved = (peer: TailscalePeerRow, boxes: Array<{ host: string }>): bo
 const reachLabel = (stage: string): string => {
   switch (stage) {
     case "dns":
-      return "name not found";
+      return t("main.boxes.reachDns");
     case "route":
-      return "unreachable";
+      return t("main.sessions.unreachable");
     case "hostkey":
-      return "host key";
+      return t("main.boxes.reachHostkey");
     case "auth":
-      return "key refused";
+      return t("main.boxes.reachAuth");
     case "policy":
-      return "tailnet policy";
+      return t("main.boxes.reachPolicy");
     case "shell":
-      return "shell error";
+      return t("main.boxes.reachShell");
     case "no-cli":
-      return "no claude";
+      return t("main.boxes.noClaude");
     default:
       return stage;
   }
@@ -2951,20 +2999,30 @@ type UsageReply =
     }
   | { ok: false; error: string; windows?: undefined; host?: string; email?: string | null };
 /** "m*****@example.com on <host>" or whichever half is known; the usage is this box's login. */
-const whose = (r: UsageReply): string =>
-  [r.email ? maskEmail(r.email) : null, r.host].filter((x): x is string => !!x).join(" on ");
+const whose = (r: UsageReply): string => {
+  const email = r.email ? maskEmail(r.email) : "";
+  const host = r.host ?? "";
+  if (email && host) return t("main.usage.whoOn", { email, host });
+  return email || host;
+};
 
 /** "in 2 h 10 min" inside a day, else weekday and time. */
 const resetText = (at: number | null): string => {
   if (at === null) return "";
   const ms = at - Date.now();
-  if (ms <= 0) return "resets now";
+  if (ms <= 0) return t("main.usage.resetsNow");
   if (ms < 86_400_000) {
     const h = Math.floor(ms / 3_600_000);
     const m = Math.round((ms % 3_600_000) / 60_000);
-    return `resets in ${h ? `${h} h ` : ""}${m} min`;
+    return h ? t("main.usage.resetsInH", { h, m }) : t("main.usage.resetsInM", { m });
   }
-  return `resets ${new Date(at).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })}`;
+  return t("main.usage.resetsAt", {
+    when: new Date(at).toLocaleString(undefined, {
+      weekday: "short",
+      hour: "numeric",
+      minute: "2-digit",
+    }),
+  });
 };
 
 // Per provider: two plugin instances are two accounts, so two answers.
@@ -3060,14 +3118,14 @@ const SEGMENT_COLORS = [
 function renderContext(el: HTMLElement, reply: ContextReply) {
   el.replaceChildren();
   if (!reply.ok) {
-    el.textContent = `Context breakdown: ${reply.error}`;
+    el.textContent = t("main.usage.contextBreakdownErr", { error: reply.error });
     return;
   }
   const rows = reply.categories.filter((c) => c.tokens > 0 && isUsedRow(c));
   const head = document.createElement("div");
   head.style.cssText = `display:flex;justify-content:space-between;gap:12px;color:${T.text}`;
   const headLabel = document.createElement("span");
-  headLabel.textContent = `${Math.round(reply.percentage)}% of context used`;
+  headLabel.textContent = t("main.usage.contextUsed", { pct: Math.round(reply.percentage) });
   // The model whose window that percentage is against, so a session that switched models says so
   // rather than leaving the reader to assume the one they picked first.
   if (reply.model) {
@@ -3088,8 +3146,11 @@ function renderContext(el: HTMLElement, reply: ContextReply) {
     note.setAttribute("role", "note");
     note.style.cssText = `font-size:12px;color:${T.faint};margin-top:4px`;
     note.textContent = reply.followsNext
-      ? `Assumed ${kTokens(reply.maxTokens)} for now: Proxy reaches Anthropic is on, and this session moves to its full window on its next message.`
-      : `Assumed ${kTokens(reply.maxTokens)}: Claude Code does not treat the proxy at ${reply.assumedBehind} as Anthropic. If it forwards there, turn on Proxy reaches Anthropic in Settings → Oh My Claude; this session follows on its next message.`;
+      ? t("main.usage.assumedNow", { max: kTokens(reply.maxTokens) })
+      : t("main.usage.assumedBehind", {
+          max: kTokens(reply.maxTokens),
+          host: reply.assumedBehind ?? "",
+        });
   }
   // The bar spans the whole window, so the empty tail is the room left. Segments are sized against
   // `maxTokens` rather than against each other, which is what makes the filled part read as the
@@ -3099,7 +3160,10 @@ function renderContext(el: HTMLElement, reply: ContextReply) {
   bar.setAttribute("role", "img");
   bar.setAttribute(
     "aria-label",
-    `${Math.round(reply.percentage)}% of the context window used: ${rows.map((c) => `${c.name} ${kTokens(c.tokens)}`).join(", ")}`,
+    t("main.usage.contextBarLabel", {
+      pct: Math.round(reply.percentage),
+      rows: rows.map((c) => `${c.name} ${kTokens(c.tokens)}`).join(", "),
+    }),
   );
   const legend = document.createElement("div");
   rows.forEach((c, i) => {
@@ -3163,12 +3227,12 @@ function creditsRow(c: UsageCredits): HTMLElement {
   creditsLine.style.cssText =
     "display:grid;grid-template-columns:1fr auto;align-items:baseline;column-gap:12px;row-gap:3px;padding:3px 0";
   const label = document.createElement("span");
-  label.textContent = "Extra usage";
+  label.textContent = t("main.usage.extraUsage");
   label.style.cssText = `color:${T.text};font-weight:500`;
   const capped = c.enabled && c.capped;
   const amount = c.used ? ` · ${c.used}${c.limit ? ` / ${c.limit}` : ""}` : "";
   const value = document.createElement("span");
-  value.textContent = `${capped ? "Limit reached" : c.enabled ? "On" : "Off"}${amount}`;
+  value.textContent = `${capped ? t("main.usage.limitReached") : c.enabled ? t("main.usage.on") : t("main.usage.off")}${amount}`;
   value.style.cssText = `font-variant-numeric:tabular-nums;font-weight:600;color:${capped ? T.err : T.text}`;
   creditsLine.append(label, value);
   // No caption at all when the API neither explains credits nor lets this account buy them.
@@ -3178,7 +3242,7 @@ function creditsRow(c: UsageCredits): HTMLElement {
     if (c.note) appendNote(caption, c.note);
     if (c.canPurchase) {
       if (c.note) caption.append(" ");
-      caption.append(extLink("Buy credits", "https://claude.ai/settings/usage"));
+      caption.append(extLink(t("main.usage.buyCredits"), "https://claude.ai/settings/usage"));
     }
     creditsLine.append(caption);
   }
@@ -3191,7 +3255,7 @@ function renderUsage(block: HTMLElement, reply: UsageReply) {
   block.replaceChildren();
   if (!reply.ok) {
     const p = document.createElement("div");
-    p.textContent = `Claude usage: ${reply.error}`;
+    p.textContent = t("main.usage.usageErr", { error: reply.error });
     p.style.color = T.faint;
     block.append(p);
     return;
@@ -3215,7 +3279,10 @@ function renderUsage(block: HTMLElement, reply: UsageReply) {
     bar.setAttribute("aria-valuenow", String(Math.round(pct)));
     bar.setAttribute("aria-valuemin", "0");
     bar.setAttribute("aria-valuemax", "100");
-    bar.setAttribute("aria-label", `${w.label} ${Math.round(pct)}% used`);
+    bar.setAttribute(
+      "aria-label",
+      t("main.usage.barLabel", { label: w.label, pct: Math.round(pct) }),
+    );
     bar.style.cssText = `grid-column:1 / -1;height:4px;border-radius:2px;background:${T.border};overflow:hidden`;
     const fill = document.createElement("div");
     fill.style.cssText = `height:100%;width:${pct}%;border-radius:2px;background:linear-gradient(90deg,${tone},${pct >= 70 ? tone : SHIMMER})`;
@@ -3228,7 +3295,7 @@ function renderUsage(block: HTMLElement, reply: UsageReply) {
   }
   if (reply.windows.length === 0) {
     const p = document.createElement("div");
-    p.textContent = "Claude usage: no limits reported";
+    p.textContent = t("main.usage.noLimits");
     p.style.color = T.faint;
     block.append(p);
   }
@@ -3388,20 +3455,20 @@ function watchContextMeter(ctx: ClientCtx) {
     title.style.cssText = `display:flex;align-items:center;gap:6px;color:${T.text};font-weight:600`;
     const mark = sparkNode(13);
     const titleText = document.createElement("span");
-    titleText.textContent = "Claude usage";
+    titleText.textContent = t("main.usage.title");
     title.append(mark, titleText);
     // Account and box on their own caption line: the email plus host wrapped the title before.
     // Flush left, not indented under the spark: it names the whole section, not the title's icon.
     const caption = document.createElement("div");
     caption.style.cssText = `color:${T.faint};font-size:11px;line-height:16px;margin:-2px 0 4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap`;
     const rows = document.createElement("div");
-    rows.textContent = "Loading…";
+    rows.textContent = t("common.loading");
     rows.style.color = T.faint;
     // Below the plan bars: the CLI's own context breakdown for this session (item 30), one row
     // per category that holds tokens, deferred tool schemas folded out since they are not in context.
     const breakdown = document.createElement("div");
     breakdown.style.cssText = `margin-top:6px;padding-top:6px;border-top:1px solid ${T.border};color:${T.faint};font-size:12px;line-height:18px`;
-    breakdown.textContent = "Context breakdown…";
+    breakdown.textContent = t("main.usage.contextBreakdownLoading");
     // Between the plan bars and the context breakdown: what drives the plan limits (this pass).
     block.append(title, caption, rows, breakdown);
     panel.prepend(block);
@@ -3458,7 +3525,7 @@ function watchContextMeter(ctx: ClientCtx) {
     const mark = sparkNode(12, SHIMMER);
     mark.style.flex = "0 0 auto";
     const text = document.createElement("span");
-    text.textContent = "Claude usage…";
+    text.textContent = t("main.usage.titleLoading");
     line.append(mark, text);
     // The context sentence dsh's bubble carries, over the CLI's own count rather than dsh's, for
     // the same reason the dialog's breakdown replaces its readout: the two measure different
@@ -3470,12 +3537,19 @@ function watchContextMeter(ctx: ClientCtx) {
     loadUsage(activeClaudeProvider(ctx)).then(
       (reply) => {
         const who = reply.host ? ` (${reply.host})` : "";
-        text.textContent = reply.ok
-          ? `Claude ${reply.windows.map((w) => `${w.label.toLowerCase()} ${Math.round(w.usedPercent)}%`).join(" · ") || "usage: no limits"}${who}`
-          : `Claude usage: ${reply.error}`;
+        if (!reply.ok) {
+          text.textContent = t("main.usage.usageErr", { error: reply.error });
+          return;
+        }
+        const windows = reply.windows
+          .map((w) => `${w.label.toLowerCase()} ${Math.round(w.usedPercent)}%`)
+          .join(" · ");
+        text.textContent = windows
+          ? t("main.usage.bubbleWindows", { windows, who })
+          : t("main.usage.bubbleNoLimits", { who });
       },
       (e: Error) => {
-        text.textContent = `Claude usage: ${e.message}`;
+        text.textContent = t("main.usage.usageErr", { error: e.message });
       },
     );
     const sid = activeClaudeSession(ctx);
@@ -3485,7 +3559,11 @@ function watchContextMeter(ctx: ClientCtx) {
           ctxLine.remove();
           return;
         }
-        ctxLine.textContent = `${Math.round(reply.percentage)}% of context used · ${kTokens(reply.totalTokens)} / ${kTokens(reply.maxTokens)}`;
+        ctxLine.textContent = t("main.usage.contextUsedTokens", {
+          pct: Math.round(reply.percentage),
+          used: kTokens(reply.totalTokens),
+          max: kTokens(reply.maxTokens),
+        });
         block.setAttribute(HID, "1");
         hideNativeContext(tip, block);
       });
@@ -3783,15 +3861,19 @@ const DETAIL_MARK = "data-omc-turn-detail";
 /** The CLI's own wording ladder for a thinking burst (2.1.268, `gr()` in its spinner), by how long
  *  the burst has run; it warms the colour from the first step. Same marks here so the row reads
  *  the way a terminal user already knows it. */
-const THINKING_WORDS: [number, string][] = [
-  [45_000, "almost done thinking"],
-  [30_000, "thinking some more"],
-  [20_000, "thinking more"],
-  [10_000, "still thinking"],
-];
-/** Returns the CLI wording for a thinking burst of the given length, defaulting to "thinking". */
+/** Returns the CLI wording for a thinking burst of the given length, defaulting to "thinking". The
+ *  thresholds mirror the CLI's `gr()` ladder (2.1.268); the words are read from the dictionary at
+ *  call time so a language switch reaches them, not baked into a module-load constant. */
 const thinkingWord = (ms: number): string =>
-  THINKING_WORDS.find(([at]) => ms >= at)?.[1] ?? "thinking";
+  ms >= 45_000
+    ? t("main.turn.thinkingAlmostDone")
+    : ms >= 30_000
+      ? t("main.turn.thinkingSomeMore")
+      : ms >= 20_000
+        ? t("main.turn.thinkingMore")
+        : ms >= 10_000
+          ? t("main.turn.thinkingStill")
+          : t("main.turn.thinking");
 
 type Rgb = readonly [number, number, number];
 /** The CLI's spinner colours (2.1.268 themes). `claude` is the same in both; the shimmer and the
@@ -3812,11 +3894,11 @@ const WORD_GREY_LO: Rgb = [153, 153, 153];
 const WORD_GREY_HI: Rgb = [185, 185, 185];
 /** `n` held inside 0 to 1. */
 const clamp01 = (n: number): number => Math.min(Math.max(n, 0), 1);
-/** Blends two RGB colours by t (0 is a, 1 is b) and rounds each channel. */
-const mixRgb = (a: Rgb, b: Rgb, t: number): Rgb => [
-  Math.round(a[0] + (b[0] - a[0]) * t),
-  Math.round(a[1] + (b[1] - a[1]) * t),
-  Math.round(a[2] + (b[2] - a[2]) * t),
+/** Blends two RGB colours by f (0 is a, 1 is b) and rounds each channel. */
+const mixRgb = (a: Rgb, b: Rgb, f: number): Rgb => [
+  Math.round(a[0] + (b[0] - a[0]) * f),
+  Math.round(a[1] + (b[1] - a[1]) * f),
+  Math.round(a[2] + (b[2] - a[2]) * f),
 ];
 /** Serialises an RGB triple as an `rgb(r, g, b)` string. */
 const cssRgb = (c: Rgb): string => `rgb(${c[0]},${c[1]},${c[2]})`;
@@ -4034,21 +4116,24 @@ const wireTurnStatus = (
     // what left the row reading just the verb when the read came back empty.
     if (clock) clock.style.display = time ? "none" : "";
     const shownTokens = Math.round(shownChars / 4);
-    if (shownTokens > 0) parts.push(`↓ ${shortCount(shownTokens)} tokens`);
+    if (shownTokens > 0) parts.push(t("main.turn.tokens", { n: shortCount(shownTokens) }));
     // The CLI's gated `running tool for Ns`, with the dsh tool's name in place of "tool": the step
     // is closed while dsh runs it, so this is the one figure that moves during the wait.
     if (relayName && relayMs >= 0)
-      parts.push(`running ${relayName} for ${Math.round((relayMs + since) / 1000)}s`);
+      parts.push(
+        t("main.turn.runningFor", { name: relayName, n: Math.round((relayMs + since) / 1000) }),
+      );
     // The CLI names the effort after the word when one was asked for, and once a burst closes
     // it says "thought for Ns" for two seconds, never sooner than two seconds after the burst
     // began.
     let word = "";
-    if (burst >= 0) word = `${thinkingWord(burst)}${effort ? ` with ${effort} effort` : ""}`;
+    if (burst >= 0)
+      word = `${thinkingWord(burst)}${effort ? t("main.turn.withEffort", { effort }) : ""}`;
     else if (thoughtAgoMs >= 0) {
       const closedFor = thoughtAgoMs + since;
       const showAt = Math.max(0, 2000 - thoughtMs);
       if (closedFor >= showAt && closedFor < showAt + 2000)
-        word = `thought for ${Math.max(1, Math.round(thoughtMs / 1000))}s`;
+        word = t("main.turn.thoughtFor", { n: Math.max(1, Math.round(thoughtMs / 1000)) });
     }
     const thinking = burst >= 0;
     // The CLI's colours. Verb and spinner: Claude orange, toward the warning shade by the thinking
@@ -4285,7 +4370,7 @@ function notifyWaiting(ctx: ClientCtx, id: string, title: string) {
   // normal case here and the title mark carries it alone.
   if (!noticesOn() || !("Notification" in window) || Notification.permission !== "granted") return;
   // `tag` per session: a session that finishes twice replaces its own notice rather than stacking.
-  const note = new Notification(title, { body: "Claude is waiting.", tag: `omc-${id}` });
+  const note = new Notification(title, { body: t("main.notice.waiting"), tag: `omc-${id}` });
   note.addEventListener("click", () => {
     window.focus();
     openSession(ctx, id);
@@ -4345,18 +4430,14 @@ async function announceStop(
  *  that answered and the safeguard category. Verified against every case in the plan. */
 function fallbackNoticeBody(rec: FallbackRecord): string {
   if (rec.content) return rec.content;
-  const cat = rec.category ?? "safety";
-  const from = rec.from || "the model you picked";
-  const to = rec.to || "another model";
-  if (rec.kind === "model_refusal_no_fallback")
-    return `Blocked on ${from}: ${cat} safeguard, no fallback ran.`;
-  if ((rec.scope ?? "session") === "local")
-    return `${to} answered a subtask (${cat} safeguard on ${from}).`;
-  if (rec.direction === "sticky")
-    return `Answered by ${to}: the request was flagged by the ${cat} safeguard on ${from}.`;
-  if (rec.direction === "revert")
-    return `Fell back to ${to} for one message, then reverted (${cat} safeguard on ${from}).`;
-  return `Answered by ${to} for one message (${cat} safeguard on ${from}); your model is unchanged.`;
+  const cat = rec.category ?? t("main.fallback.safety");
+  const from = rec.from || t("main.fallback.pickedModel");
+  const to = rec.to || t("main.fallback.anotherModel");
+  if (rec.kind === "model_refusal_no_fallback") return t("main.fallback.blocked", { from, cat });
+  if ((rec.scope ?? "session") === "local") return t("main.fallback.subtask", { to, cat, from });
+  if (rec.direction === "sticky") return t("main.fallback.sticky", { to, cat, from });
+  if (rec.direction === "revert") return t("main.fallback.revert", { to, cat, from });
+  return t("main.fallback.oneMessage", { to, cat, from });
 }
 
 /** Post the fallback notice body for a session that fell back, with the same permission guard as
@@ -5233,6 +5314,7 @@ export const isStatsRow = (el: HTMLElement): boolean => {
 
 /** Cost readout in dsh's footer stats row: only when the open session is a Claude mount. */
 function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
+  useLocale();
   const [turns, setTurns] = useState<TurnRecord[]>([]);
   // What the poll compares against without listing `turns` as a dependency of its effect.
   const turnsRef = useRef<TurnRecord[]>([]);
@@ -5314,10 +5396,15 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   const over = mine && total > 0 && line !== undefined && total >= line;
   const base =
     mine && total > 0 && last
-      ? `Claude cost, API-rate: ${fmtCost(total)} this session, ${fmtCost(last.costUsd)} last turn (${turns.length} turn${turns.length === 1 ? "" : "s"})${fmtTtft(last.ttftMs)}`
+      ? t(turns.length === 1 ? "main.cost.tooltipOne" : "main.cost.tooltipOther", {
+          total: fmtCost(total),
+          last: fmtCost(last.costUsd),
+          n: turns.length,
+          ttft: fmtTtft(last.ttftMs),
+        })
       : "";
   const title =
-    over && line !== undefined ? `over ${fmtCost(line)} this session, API-rate · ${base}` : base;
+    over && line !== undefined ? t("main.cost.tooltipOver", { line: fmtCost(line), base }) : base;
   const [subscription, setSubscription] = useState(false);
   useEffect(() => {
     let live = true;
@@ -5335,12 +5422,12 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
     setGuardDraft(numberOr(sessionLine) === undefined ? "" : String(sessionLine));
   }, [sessionLine]);
   const saveGuard = () => {
-    const t = guardDraft.trim();
-    if (t === "") {
+    const v = guardDraft.trim();
+    if (v === "") {
       setSessionLine(null);
       return;
     }
-    const n = Number(t);
+    const n = Number(v);
     if (Number.isFinite(n) && n >= 0) setSessionLine(n);
     else setGuardDraft(numberOr(sessionLine) === undefined ? "" : String(sessionLine));
   };
@@ -5612,14 +5699,14 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
           ref={panelRef}
           // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a non-modal popover; <dialog> hides unless open and brings its own box
           role="dialog"
-          aria-label="Claude cost"
+          aria-label={t("main.cost.dialogLabel")}
           data-omc-cost-dialog=""
           style={pos ?? MEASURE_STYLE}
         >
           <div data-omc-cost-title="">
             <span data-omc-cost-title-label="">
               <Spark size={14} />
-              Claude cost
+              {t("main.cost.dialogLabel")}
             </span>
             <span data-omc-cost-title-value="">{fmtCost(total)}</span>
           </div>
@@ -5634,16 +5721,18 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
           </dl>
           <div data-omc-cost-guard="">
             <label>
-              Warn at $
+              {t("main.cost.warnAt")}
               <input
                 type="number"
                 min={0}
                 step={1}
                 inputMode="decimal"
-                aria-label="Warn this session at dollars"
+                aria-label={t("main.cost.warnAria")}
                 data-omc-cost-guard-input=""
                 value={guardDraft}
-                placeholder={numberOr(boxLine) === undefined ? "off" : String(boxLine)}
+                placeholder={
+                  numberOr(boxLine) === undefined ? t("main.cost.offPlaceholder") : String(boxLine)
+                }
                 onChange={(e) => setGuardDraft(e.target.value)}
                 onBlur={saveGuard}
                 onKeyDown={(e) => {
@@ -5657,14 +5746,10 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
                 data-omc-cost-guard-clear=""
                 onClick={() => setSessionLine(null)}
               >
-                Clear
+                {t("main.cost.clear")}
               </button>
             )}
-            {subscription && (
-              <p data-omc-cost-note="">
-                Shown at API rates; a subscription login is not billed by it.
-              </p>
-            )}
+            {subscription && <p data-omc-cost-note="">{t("main.cost.subscriptionNote")}</p>}
           </div>
         </div>
       )}
@@ -5803,6 +5888,7 @@ function StarterCard({
   draft: string;
   setDraft: (text: string) => void;
 }) {
+  useLocale();
   const [starter, setStarter] = useState<StarterReply | null>(null);
   const [note, setNote] = useState("");
 
@@ -5823,17 +5909,17 @@ function StarterCard({
   // has to say so, or the opener is quietly gone by the next tab.
   const save = (text: string) => {
     setStarter({ session: text, fallback: text });
-    setNote("Saving…");
+    setNote(t("main.settings.saving"));
     void fetch(`${ROUTE}/starter`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ session: sessionId, text }),
     })
       .then((r) => {
-        setNote(r.ok ? "Saved" : "Save failed");
+        setNote(r.ok ? t("main.starter.saved") : t("main.starter.saveFailed"));
       })
       .catch(() => {
-        setNote("Save failed");
+        setNote(t("main.starter.saveFailed"));
       })
       .finally(() => setTimeout(() => setNote(""), 1600));
   };
@@ -5845,7 +5931,8 @@ function StarterCard({
   if (!blank || starter === null) return null;
   const opener = starter.session || starter.fallback;
   const busy = draft !== "" && draft !== opener; // they are writing something of their own
-  const saveLabel = note !== "" ? note : busy ? "Save draft" : "Saved";
+  const saveLabel =
+    note !== "" ? note : busy ? t("main.starter.saveDraft") : t("main.starter.saved");
 
   const chip: CSSProperties = {
     ...btn,
@@ -5884,9 +5971,7 @@ function StarterCard({
         }}
       >
         {opener === "" || busy ? (
-          <span style={clipped}>
-            Type a prompt to start. Save it here to open the next session with it.
-          </span>
+          <span style={clipped}>{t("main.starter.empty")}</span>
         ) : (
           <>
             <button
@@ -5897,7 +5982,7 @@ function StarterCard({
             >
               {opener}
             </button>
-            <span style={clipped}>fills the composer; edit before sending.</span>
+            <span style={clipped}>{t("main.starter.fills")}</span>
           </>
         )}
         <span style={{ flex: "1 1 auto" }} />
@@ -5906,13 +5991,18 @@ function StarterCard({
             type="button"
             style={chip}
             onClick={() => save(draft)}
-            title="Save what is in the composer as this session's opening prompt"
+            title={t("main.starter.saveTitle")}
             // Greyed while the composer already matches the saved opener, and while a save runs.
             disabled={!busy || note !== ""}
           >
             {/* Every label the chip can show shares one cell, so Saving… and Saved do not resize it. */}
             <span style={{ display: "inline-grid" }}>
-              {["Save draft", "Saving…", "Saved", "Save failed"].map((text) => (
+              {[
+                t("main.starter.saveDraft"),
+                t("main.settings.saving"),
+                t("main.starter.saved"),
+                t("main.starter.saveFailed"),
+              ].map((text) => (
                 <span
                   key={text}
                   style={{
@@ -5928,7 +6018,7 @@ function StarterCard({
         </Slide>
         <Slide open={opener !== ""}>
           <ConfirmButton
-            label="Forget"
+            label={t("main.starter.forget")}
             style={chip}
             disabled={opener === ""}
             onAct={() => save("")}
@@ -6068,6 +6158,7 @@ function ThemeGroupBox({ flag, group, label }: { flag: string; group: string; la
 /** The settings row for plan limit warnings: one switch for both, and a Customize fold to keep one
  *  without the other. On by default; the flags live in the box's hints store like every switch. */
 function LimitWarningsSwitch() {
+  useLocale();
   const [off, setOff] = useHintFlag("limitWarningsOff");
   const [ringOff, setRingOff] = useHintFlag("limitRingOff");
   const [noticeOff, setNoticeOff] = useHintFlag("limitNoticeOff");
@@ -6085,17 +6176,20 @@ function LimitWarningsSwitch() {
         }}
       >
         <div>
-          <div>Plan limit warnings</div>
-          <div style={{ color: T.faint, fontSize: 12 }}>
-            When a plan limit the session's model counts against is close or reached, by Anthropic's
-            own grading.
-          </div>
+          <div>{t("main.settingsUi.limitTitle")}</div>
+          <div style={{ color: T.faint, fontSize: 12 }}>{t("main.settingsUi.limitDesc")}</div>
         </div>
-        <Switch on={!off} onChange={(next) => setOff(!next)} label="Plan limit warnings" />
+        <Switch
+          on={!off}
+          onChange={(next) => setOff(!next)}
+          label={t("main.settingsUi.limitTitle")}
+        />
       </div>
       {!off && (
         <details data-omc-limit-custom="" style={NESTED}>
-          <summary style={{ cursor: "pointer", color: T.muted }}>Customize</summary>
+          <summary style={{ cursor: "pointer", color: T.muted }}>
+            {t("main.settingsUi.customize")}
+          </summary>
           <div
             style={{ display: "flex", flexDirection: "column", gap: 6, padding: "8px 0 0 16px" }}
           >
@@ -6106,9 +6200,9 @@ function LimitWarningsSwitch() {
                 checked={!ringOff}
                 onChange={(e) => setRingOff(!e.target.checked)}
               />
-              Tint the usage ring
+              {t("main.settingsUi.tintRing")}
               <span style={{ color: T.faint, fontSize: 12 }}>
-                amber when close, red at the limit
+                {t("main.settingsUi.tintRingHint")}
               </span>
             </label>
             <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
@@ -6118,8 +6212,10 @@ function LimitWarningsSwitch() {
                 checked={!noticeOff}
                 onChange={(e) => setNoticeOff(!e.target.checked)}
               />
-              Notice above the composer
-              <span style={{ color: T.faint, fontSize: 12 }}>only when a limit is reached</span>
+              {t("main.settingsUi.noticeComposer")}
+              <span style={{ color: T.faint, fontSize: 12 }}>
+                {t("main.settingsUi.noticeHint")}
+              </span>
             </label>
           </div>
         </details>
@@ -6140,6 +6236,7 @@ function StarLine() {
  *  per group and the accent colour. Box-wide in the hints store like the switches under it;
  *  applyTheme repaints on the hints event the setters dispatch, so nothing here touches the DOM. */
 function ThemeSwitch() {
+  useLocale();
   const [off, setOff] = useHintFlag("themeOff");
   const [accent, setAccent] = useHintValue("themeAccent");
   const hints: Record<string, boolean | number> = {};
@@ -6159,34 +6256,50 @@ function ThemeSwitch() {
         }}
       >
         <div>
-          <div>Claude look</div>
-          <div style={{ color: T.faint, fontSize: 12 }}>
-            Orange accent, the verb status line, links and the panel tint. Off is dsh's own colours.
-          </div>
+          <div>{t("main.settingsUi.themeTitle")}</div>
+          <div style={{ color: T.faint, fontSize: 12 }}>{t("main.settingsUi.themeDesc")}</div>
         </div>
-        <Switch on={!off} onChange={(next) => setOff(!next)} label="Claude look" />
+        <Switch
+          on={!off}
+          onChange={(next) => setOff(!next)}
+          label={t("main.settingsUi.themeTitle")}
+        />
       </div>
       {!off && (
         <details data-omc-theme-custom="" style={NESTED}>
-          <summary style={{ cursor: "pointer", color: T.muted }}>Customize</summary>
+          <summary style={{ cursor: "pointer", color: T.muted }}>
+            {t("main.settingsUi.customize")}
+          </summary>
           <div
             style={{ display: "flex", flexDirection: "column", gap: 6, padding: "8px 0 0 16px" }}
           >
+            <ThemeGroupBox flag="themeRowOff" group="row" label={t("main.settingsUi.groupRow")} />
             <ThemeGroupBox
-              flag="themeRowOff"
-              group="row"
-              label="Status row, verb and running dots"
+              flag="themeProseOff"
+              group="prose"
+              label={t("main.settingsUi.groupProse")}
             />
-            <ThemeGroupBox flag="themeProseOff" group="prose" label="Links, rules and quotes" />
-            <ThemeGroupBox flag="themeSendOff" group="send" label="Send button" />
-            <ThemeGroupBox flag="themePanelOff" group="panel" label="Panel and spark" />
-            <ThemeGroupBox flag="themeRainbowOff" group="rainbow" label="Rainbow words" />
+            <ThemeGroupBox
+              flag="themeSendOff"
+              group="send"
+              label={t("main.settingsUi.groupSend")}
+            />
+            <ThemeGroupBox
+              flag="themePanelOff"
+              group="panel"
+              label={t("main.settingsUi.groupPanel")}
+            />
+            <ThemeGroupBox
+              flag="themeRainbowOff"
+              group="rainbow"
+              label={t("main.settingsUi.groupRainbow")}
+            />
             <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
-              Accent
+              {t("main.settingsUi.accent")}
               <input
                 type="color"
                 data-omc-theme-accent=""
-                aria-label="Accent colour"
+                aria-label={t("main.settingsUi.accentColour")}
                 value={hex}
                 // `change`, not `input`: a drag through the picker must not post per frame.
                 onChange={(e) => setAccent(parseInt(e.target.value.slice(1), 16))}
@@ -6198,7 +6311,7 @@ function ThemeSwitch() {
                   data-omc-theme-reset=""
                   onClick={() => setAccent(null)}
                 >
-                  Reset
+                  {t("main.settingsUi.reset")}
                 </button>
               )}
             </label>
@@ -6211,6 +6324,7 @@ function ThemeSwitch() {
 
 /** The settings switch for the prompt-starter dock, under the Claude look switch. */
 function StarterSwitch() {
+  useLocale();
   const [off, setOff] = useHintFlag("starterOff");
   return (
     <div
@@ -6225,12 +6339,14 @@ function StarterSwitch() {
       }}
     >
       <div>
-        <div>Prompt starter</div>
-        <div style={{ color: T.faint, fontSize: 12 }}>
-          Offer a saved opening prompt above the composer on a blank session.
-        </div>
+        <div>{t("main.settingsUi.starterTitle")}</div>
+        <div style={{ color: T.faint, fontSize: 12 }}>{t("main.settingsUi.starterDesc")}</div>
       </div>
-      <Switch on={!off} onChange={(next) => setOff(!next)} label="Prompt starter" />
+      <Switch
+        on={!off}
+        onChange={(next) => setOff(!next)}
+        label={t("main.settingsUi.starterTitle")}
+      />
     </div>
   );
 }
@@ -6302,11 +6418,11 @@ function useClaudeMd(ctx: ClientCtx): ClaudeMdState | null {
  *  have to guess which, and the name is greppable on a box this panel is not open on. */
 function claudeMdWhy(state: ClaudeMdState | null): string {
   const by = state?.disabledBy;
-  if (by === undefined) return "Claude Code loads these itself. The copy dsh sends is dropped.";
+  if (by === undefined) return t("main.settingsUi.claudeMdLoaded");
   const scope = SETTINGS_SCOPES.find((s) => s === by);
   return scope === undefined
-    ? "Off: CLAUDE_CODE_DISABLE_CLAUDE_MDS is set in the environment dsh runs in, not in any settings file."
-    : `Off: ${SCOPE_LABELS[scope]} sets CLAUDE_CODE_DISABLE_CLAUDE_MDS. Nothing from these files reaches the session, since the copy dsh sends is dropped too.`;
+    ? t("main.settingsUi.claudeMdOffEnv")
+    : t("main.settingsUi.claudeMdOffScope", { scope: SCOPE_LABELS[scope] });
 }
 
 /** One measured size, beside the row it belongs to. Thousands are rounded to one decimal because
@@ -6324,14 +6440,18 @@ function ContextSize({
    *  tab already lists. */
   files?: number;
 }) {
+  useLocale();
   if (chars === undefined) return null;
   const shown = chars >= 1000 ? `${(chars / 1000).toFixed(1)}k` : String(chars);
-  const howMany = files === undefined ? "" : `${files} ${files === 1 ? "file" : "files"} · `;
+  const howMany =
+    files === undefined
+      ? ""
+      : t(files === 1 ? "main.settingsUi.filesOne" : "main.settingsUi.filesOther", { n: files });
   return (
     <span data-omc-context-size={source} style={{ color: T.faint, fontSize: 12 }}>
       {" "}
       {howMany}
-      {shown} chars
+      {t("main.settingsUi.chars", { n: shown })}
     </span>
   );
 }
@@ -6410,6 +6530,7 @@ function ContextFixed({
  *  keys go to the box's hints store, and the adapter reads them when it assembles a turn, so a
  *  session already running keeps whatever it was sent before the switch moved. */
 function ContextSwitch({ ctx }: { ctx: ClientCtx }) {
+  useLocale();
   const [on, setOn] = useHintFlag(MASTER_KEY);
   const off = !on;
   const sizes = useContextSizes(ctx);
@@ -6435,81 +6556,77 @@ function ContextSwitch({ ctx }: { ctx: ClientCtx }) {
         }}
       >
         <div>
-          <div>dsh context</div>
-          <div style={{ color: T.faint, fontSize: 12 }}>
-            What dsh adds to every prompt besides what you typed. Off by default, so a new session
-            sees your prompt, its own CLAUDE.md and nothing else. A session already running keeps
-            whatever dsh sent it before the switch moved.
-          </div>
+          <div>{t("main.settingsUi.contextTitle")}</div>
+          <div style={{ color: T.faint, fontSize: 12 }}>{t("main.settingsUi.contextDesc")}</div>
           {/* The sizes are measured before any switch drops a block, so the number holds in both
               states and only the tense changes: off, it is what the switch is already keeping out.
               "Going by" rather than "on", because the switch may have moved since that turn ran. */}
           {savable !== undefined && (
             <div style={{ color: T.faint, fontSize: 12, marginTop: 2 }}>
-              {off ? "Off is saving" : "Off would save"}
-              <ContextSize source="total" chars={savable} /> a turn, going by the last turn in this
-              workspace.
+              {off ? t("main.settingsUi.offIsSaving") : t("main.settingsUi.offWouldSave")}
+              <ContextSize source="total" chars={savable} />
+              {t("main.settingsUi.aTurnGoingBy")}
             </div>
           )}
         </div>
-        <Switch on={on} onChange={setOn} label="dsh context" />
+        <Switch on={on} onChange={setOn} label={t("main.settingsUi.contextTitle")} />
       </div>
       {!off && (
         <details data-omc-context-custom="" style={NESTED}>
-          <summary style={{ cursor: "pointer", color: T.muted }}>Customize</summary>
+          <summary style={{ cursor: "pointer", color: T.muted }}>
+            {t("main.settingsUi.customize")}
+          </summary>
           <div
             style={{ display: "flex", flexDirection: "column", gap: 6, padding: "8px 0 0 16px" }}
           >
-            <div style={{ color: T.muted, fontSize: 12 }}>What dsh adds</div>
+            <div style={{ color: T.muted, fontSize: 12 }}>{t("main.settingsUi.whatDshAdds")}</div>
             <ContextBox
               source="instructions"
               flag={OFF_KEY.instructions}
-              label="Workspace instructions (AGENTS.md)"
+              label={t("main.settingsUi.ctxInstructions")}
               chars={sizes?.instructions}
             />
             <ContextBox
               source="skills"
               flag={OFF_KEY.skills}
-              label="dsh skill catalog"
+              label={t("main.settingsUi.ctxSkills")}
               chars={sizes?.skills}
             />
             <ContextFixed
               source="runtime"
-              label="Runtime snapshot (file and approval policy)"
-              why="Always sent. Without it a session asks for approvals that are auto-rejected."
+              label={t("main.settingsUi.ctxRuntime")}
+              why={t("main.settingsUi.ctxRuntimeWhy")}
               chars={sizes?.runtime}
             />
             <ContextFixed
               source="tools"
-              label="dsh tools guidance"
-              why="Follows the dshTools setting in the plugin config, not this card."
+              label={t("main.settingsUi.ctxTools")}
+              why={t("main.settingsUi.ctxToolsWhy")}
               chars={sizes?.tools}
             />
             <div style={{ color: T.muted, fontSize: 12, marginTop: 6 }}>
-              What Claude Code loads on its own
+              {t("main.settingsUi.whatClaudeLoads")}
             </div>
             <ContextFixed
               source="claudemd"
-              label="Your CLAUDE.md files"
+              label={t("main.settingsUi.ctxClaudeMd")}
               why={claudeMdWhy(claudeMd)}
               chars={claudeMd?.chars}
               files={claudeMd?.files}
               checked={claudeMd?.disabledBy === undefined}
             />
             <div style={{ color: T.muted, fontSize: 12, marginTop: 6 }}>
-              What dsh writes down but never sends
+              {t("main.settingsUi.whatDshWritesNeverSends")}
             </div>
             <ContextFixed
               source="system"
-              label="dsh system prompt"
-              why="dsh records it on the session, this plugin has never passed it to Claude Code."
+              label={t("main.settingsUi.ctxSystem")}
+              why={t("main.settingsUi.ctxSystemWhy")}
               chars={undefined}
               checked={false}
             />
             <div style={{ color: T.faint, fontSize: 12, marginTop: 6 }}>
-              AGENTS.md Claude Code never reads, so a repo whose only instruction file is AGENTS.md
-              goes unguided with that box clear. The skill catalog says nothing a session can use
-              when dsh tools are off, and it is usually the largest block on this list.
+              {t("main.settingsUi.ctxCaption")}
             </div>
           </div>
         </details>
@@ -6591,6 +6708,7 @@ function ContextRowMask({
 /** The settings switch for the update notice. The flag lives in the box's hints store, which the
  *  server reads before it asks npm: off means no registry read at all, not a hidden pill. */
 function UpdateNoticeSwitch() {
+  useLocale();
   const [off, setOff] = useHintFlag("updateCheckOff");
   return (
     <div
@@ -6605,13 +6723,14 @@ function UpdateNoticeSwitch() {
       }}
     >
       <div>
-        <div>Update notice</div>
-        <div style={{ color: T.faint, fontSize: 12 }}>
-          A pill beside the heading above when a newer plugin is on npm. One registry read a day,
-          from this dsh server; off means none.
-        </div>
+        <div>{t("main.settingsUi.updateNoticeTitle")}</div>
+        <div style={{ color: T.faint, fontSize: 12 }}>{t("main.settingsUi.updateNoticeDesc")}</div>
       </div>
-      <Switch on={!off} onChange={(next) => setOff(!next)} label="Update notice" />
+      <Switch
+        on={!off}
+        onChange={(next) => setOff(!next)}
+        label={t("main.settingsUi.updateNoticeTitle")}
+      />
     </div>
   );
 }
@@ -6624,6 +6743,7 @@ const NESTED: CSSProperties = { ...nested, marginBottom: 12, fontSize: 13 };
  *  history under it while it is on. The flag lives in the box's hints store and the server reads it
  *  before every check: off means no pointer read, no card and no install, on every box. */
 function ClaudeUpdateSwitch() {
+  useLocale();
   const [off, setOff] = useHintFlag("claudeUpdateOff");
   return (
     <>
@@ -6639,13 +6759,16 @@ function ClaudeUpdateSwitch() {
         }}
       >
         <div>
-          <div>Claude Code updates</div>
+          <div>{t("main.settingsUi.claudeUpdateTitle")}</div>
           <div style={{ color: T.faint, fontSize: 12 }}>
-            The card above the composer when a newer Claude Code is out for a session's box, and the
-            half-hourly check behind it. Off means no check and no card.
+            {t("main.settingsUi.claudeUpdateDesc")}
           </div>
         </div>
-        <Switch on={!off} onChange={(next) => setOff(!next)} label="Claude Code updates" />
+        <Switch
+          on={!off}
+          onChange={(next) => setOff(!next)}
+          label={t("main.settingsUi.claudeUpdateTitle")}
+        />
       </div>
       {!off && <ClaudeUpdateDetails />}
     </>
@@ -6661,6 +6784,7 @@ function ClaudeUpdateSwitch() {
  * Anthropic must not turn this back on for someone who turned it off.
  */
 function ProxyFirstPartySwitch() {
+  useLocale();
   const [on] = useHintFlag("proxyFirstParty");
   const [off] = useHintFlag("proxyFirstPartyOff");
   const mode = on ? "on" : off ? "off" : "auto";
@@ -6681,9 +6805,9 @@ function ProxyFirstPartySwitch() {
         }}
       >
         <div>
-          <div>Proxy reaches Anthropic</div>
+          <div>{t("main.settingsUi.proxyTitle")}</div>
           <div style={{ color: T.faint, fontSize: 12 }}>
-            For a Claude Code that runs through a proxy in front of Anthropic, such as{" "}
+            {t("main.settingsUi.proxyDescBefore")}
             <a
               data-omc-headroom-link=""
               href="https://github.com/headroomlabs-ai/headroom"
@@ -6692,14 +6816,13 @@ function ProxyFirstPartySwitch() {
               style={{ color: ACCENT }}
             >
               Headroom
-            </a>{" "}
-            or a logging relay, where a 1M model otherwise shows a 200k window. Auto asks the proxy
-            and follows its answer; On and Off are kept whatever it answers.
+            </a>
+            {t("main.settingsUi.proxyDescAfter")}
           </div>
         </div>
         <select
           data-omc-proxy-first-party-mode=""
-          aria-label="Proxy reaches Anthropic"
+          aria-label={t("main.settingsUi.proxyTitle")}
           value={mode}
           onChange={(e) => choose(e.target.value)}
           // `0 0 auto` because the row is flex and a shrinkable select collapsed here until only
@@ -6708,23 +6831,17 @@ function ProxyFirstPartySwitch() {
           // A browser without it falls back to sizing by the longest option, which is the old look.
           style={{ ...select, flex: "0 0 auto", fieldSizing: "content", minWidth: 0 }}
         >
-          <option value="auto">Auto</option>
-          <option value="on">On</option>
-          <option value="off">Off</option>
+          <option value="auto">{t("main.settingsUi.auto")}</option>
+          <option value="on">{t("main.usage.on")}</option>
+          <option value="off">{t("main.usage.off")}</option>
         </select>
       </div>
       <details data-omc-proxy-details="" style={NESTED}>
-        <summary style={{ cursor: "pointer", color: T.muted }}>Details</summary>
+        <summary style={{ cursor: "pointer", color: T.muted }}>
+          {t("main.settingsUi.details")}
+        </summary>
         <div style={{ color: T.faint, fontSize: 12, padding: "8px 0 0 16px" }}>
-          When ANTHROPIC_BASE_URL names any host but api.anthropic.com, Claude Code assumes 200k for
-          models that hold 1M: Opus 5, Opus 4.8 and Sonnet 5 compact early, and Fable stops
-          compacting. On, sessions start with Claude Code's own flag for a proxy that forwards to
-          Anthropic, run at 1M and compact against it; a session already running follows on its next
-          message. Auto asks the base URL once per dsh run, with no key attached: a proxy that
-          forwards hands back Anthropic's own authentication error and request id, which a gateway
-          routing elsewhere (Bedrock, Vertex) does not, and a proxy that cannot be reached is left
-          alone rather than assumed. Choose Off for such a gateway, or to hold a session at the
-          window the CLI guesses. Without a base URL none of it changes anything.
+          {t("main.settingsUi.proxyDetails")}
         </div>
       </details>
     </>
@@ -6733,6 +6850,7 @@ function ProxyFirstPartySwitch() {
 
 /** The settings switch for remembering which Claude model a workspace last ran. */
 function WorkspaceModelSwitch() {
+  useLocale();
   const [off, setOff] = useHintFlag("workspaceModelOff");
   return (
     <div
@@ -6747,19 +6865,21 @@ function WorkspaceModelSwitch() {
       }}
     >
       <div>
-        <div>Remember model per workspace</div>
-        <div style={{ color: T.faint, fontSize: 12 }}>
-          A new Claude session in a workspace opens on the model it last ran there. The provider
-          never changes; only which Claude model.
-        </div>
+        <div>{t("main.settingsUi.wsModelTitle")}</div>
+        <div style={{ color: T.faint, fontSize: 12 }}>{t("main.settingsUi.wsModelDesc")}</div>
       </div>
-      <Switch on={!off} onChange={(next) => setOff(!next)} label="Remember model per workspace" />
+      <Switch
+        on={!off}
+        onChange={(next) => setOff(!next)}
+        label={t("main.settingsUi.wsModelTitle")}
+      />
     </div>
   );
 }
 
 /** The settings switch for the cost pill in dsh's footer row. On unless it is turned off. */
 function CostSwitch() {
+  useLocale();
   const [off, setOff] = useHintFlag("costOff");
   return (
     <div
@@ -6774,13 +6894,10 @@ function CostSwitch() {
       }}
     >
       <div>
-        <div>Claude cost in the footer</div>
-        <div style={{ color: T.faint, fontSize: 12 }}>
-          What the session has spent at API rates, beside dsh's own stats. The figure is still
-          recorded with the switch off; only the pill and its panel go away.
-        </div>
+        <div>{t("main.settingsUi.costTitle")}</div>
+        <div style={{ color: T.faint, fontSize: 12 }}>{t("main.settingsUi.costDesc")}</div>
       </div>
-      <Switch on={!off} onChange={(next) => setOff(!next)} label="Claude cost in the footer" />
+      <Switch on={!off} onChange={(next) => setOff(!next)} label={t("main.settingsUi.costTitle")} />
     </div>
   );
 }
@@ -6791,6 +6908,7 @@ function CostSwitch() {
  * spend the call is the box's question and not this browser's.
  */
 function ReturnRecapSwitch() {
+  useLocale();
   const [on, setOn] = useHintFlag("recapOn");
   const [stored, setStored] = useHintValue("recapAwayMs");
   const away = recapAwayIn(stored);
@@ -6808,13 +6926,10 @@ function ReturnRecapSwitch() {
         }}
       >
         <div>
-          <div>Return recap</div>
-          <div style={{ color: T.faint, fontSize: 12 }}>
-            One line on what Claude did while you were on another session, asked when you come back
-            to one that finished without you. Costs a model call each time.
-          </div>
+          <div>{t("main.settingsUi.recapTitle")}</div>
+          <div style={{ color: T.faint, fontSize: 12 }}>{t("main.settingsUi.recapDesc")}</div>
         </div>
-        <Switch on={on} onChange={setOn} label="Return recap" />
+        <Switch on={on} onChange={setOn} label={t("main.settingsUi.recapTitle")} />
       </div>
       {/* Only with the feature on: a bar for something that never fires is a question about nothing. */}
       {on && (
@@ -6829,10 +6944,10 @@ function ReturnRecapSwitch() {
             paddingLeft: 16,
           }}
         >
-          <span style={{ color: T.muted }}>Away at least</span>
+          <span style={{ color: T.muted }}>{t("main.settingsUi.awayAtLeast")}</span>
           <select
             style={select}
-            aria-label="Away time before a recap"
+            aria-label={t("main.settingsUi.awayAria")}
             value={String(away)}
             // The default is stored as absence, so a box that never touched this reads the default
             // even if it moves later.
@@ -6857,24 +6972,29 @@ function ReturnRecapSwitch() {
 const awayLabel = (ms: number): string => {
   const minutes = ms / 60_000;
   const text =
-    minutes >= 60 ? `${minutes / 60} hour` : `${minutes} minute${minutes === 1 ? "" : "s"}`;
-  return ms === RECAP_AWAY_MS ? `${text} (default)` : text;
+    minutes >= 60
+      ? t("main.settingsUi.hour", { n: minutes / 60 })
+      : t(minutes === 1 ? "main.settingsUi.minuteOne" : "main.settingsUi.minuteOther", {
+          n: minutes,
+        });
+  return ms === RECAP_AWAY_MS ? t("main.settingsUi.defaultSuffix", { text }) : text;
 };
 
 /** Box-wide spend warning: a dollar figure that turns the cost pill orange once a session passes it. */
 function SpendGuardField() {
+  useLocale();
   const [stored, setStored] = useHintValue("spendWarnUsd");
   const [draft, setDraft] = useState("");
   useEffect(() => {
     setDraft(numberOr(stored) === undefined ? "" : String(stored));
   }, [stored]);
   const save = () => {
-    const t = draft.trim();
-    if (t === "") {
+    const v = draft.trim();
+    if (v === "") {
       setStored(null);
       return;
     }
-    const n = Number(t);
+    const n = Number(v);
     if (Number.isFinite(n) && n >= 0) setStored(n);
     else setDraft(numberOr(stored) === undefined ? "" : String(stored));
   };
@@ -6891,11 +7011,8 @@ function SpendGuardField() {
       }}
     >
       <div>
-        <div>Spend warning</div>
-        <div style={{ color: T.faint, fontSize: 12 }}>
-          Turns the cost pill orange once a session passes this API-rate figure. Empty is off. A
-          session can set its own line in the cost dialog.
-        </div>
+        <div>{t("main.settingsUi.spendTitle")}</div>
+        <div style={{ color: T.faint, fontSize: 12 }}>{t("main.settingsUi.spendDesc")}</div>
       </div>
       <label
         style={{
@@ -6911,7 +7028,7 @@ function SpendGuardField() {
           min={0}
           step={1}
           inputMode="decimal"
-          aria-label="Warn per session at dollars"
+          aria-label={t("main.settingsUi.spendAria")}
           data-omc-spend-input=""
           style={{ ...inputStyle, width: 72 }}
           value={draft}
@@ -6929,6 +7046,7 @@ function SpendGuardField() {
 /** The settings switch for terminal sync. Server-held, unlike the starter's client hint: it gates a
  *  watcher the adapter runs, so it reads and writes the plugin's `/terminal-sync` route. */
 function TerminalSyncSwitch() {
+  useLocale();
   const [on, setOn] = useState<boolean | null>(null);
   const [err, setErr] = useState("");
   useEffect(() => {
@@ -6936,7 +7054,7 @@ function TerminalSyncSwitch() {
     fetch(`${ROUTE}/terminal-sync`)
       .then((r) => readJson<{ enabled: boolean }>(r))
       .then((b) => live && setOn(b.enabled))
-      .catch(() => live && setErr("could not read the terminal sync setting"));
+      .catch(() => live && setErr(t("main.settingsUi.terminalReadErr")));
     return () => {
       live = false;
     };
@@ -6970,14 +7088,18 @@ function TerminalSyncSwitch() {
     >
       <div>
         <div>
-          Terminal mirror <span style={{ color: T.err }}>(experimental)</span>
+          {t("main.settingsUi.terminalTitle")}{" "}
+          <span style={{ color: T.err }}>{t("main.settingsUi.experimental")}</span>
         </div>
         <div style={{ color: T.faint, fontSize: 12 }}>
-          {err ||
-            "Copy exchanges from a terminal that picked this session up with claude /resume into this dsh session as they land. Experimental: it holds a turn open while it fills, so a prompt you type can wait behind it. Carrying a session between dsh and a terminal works either way; this only controls the live copy."}
+          {err || t("main.settingsUi.terminalDesc")}
         </div>
       </div>
-      <Switch on={on ?? false} onChange={(next) => void toggle(next)} label="Terminal mirror" />
+      <Switch
+        on={on ?? false}
+        onChange={(next) => void toggle(next)}
+        label={t("main.settingsUi.terminalTitle")}
+      />
     </div>
   );
 }
@@ -7080,6 +7202,7 @@ function BoxUpdateButton({
   /** A run landed: the row's version pill comes from the status probe, so the caller re-probes. */
   onDone: () => void;
 }) {
+  useLocale();
   const [state, setState] = useState<BoxUpdateState | null>(null);
   const [phase, setPhase] = useState<"idle" | "busy" | "done" | "declined" | "failed">("idle");
   const [note, setNote] = useState("");
@@ -7104,7 +7227,7 @@ function BoxUpdateButton({
         if (!live) return;
         if (s.busy) {
           if (Date.now() - startedAt > 200_000) {
-            setNote("No answer from this dsh in 200 s.");
+            setNote(t("main.update.noAnswer200"));
             setPhase("failed");
           }
           return;
@@ -7139,14 +7262,14 @@ function BoxUpdateButton({
   };
   const text =
     phase === "busy"
-      ? "Updating…"
+      ? t("main.update.updating")
       : phase === "done"
-        ? `Updated to ${state.installed}`
+        ? t("main.update.updatedTo", { v: state.installed })
         : phase === "declined"
-          ? "Not updated"
+          ? t("main.update.notUpdated")
           : phase === "failed"
-            ? "Retry update"
-            : `Update to ${state.latest}`;
+            ? t("main.update.retry")
+            : t("main.update.updateTo", { v: state.latest });
   return (
     <button
       type="button"
@@ -7155,8 +7278,8 @@ function BoxUpdateButton({
       data-omc-update-phase={phase}
       disabled={disabled || phase === "busy" || phase === "done" || phase === "declined"}
       aria-busy={phase === "busy" ? "true" : undefined}
-      aria-label={`${text}: run claude update on ${label}`}
-      title={note || `Run claude update on ${label}`}
+      aria-label={t("main.update.runAria", { text, label })}
+      title={note || t("main.update.runTitle", { label })}
       onClick={run}
     >
       {text}
@@ -7254,7 +7377,7 @@ function useBindingLimit(sessionId: string, ctx: ClientCtx) {
         () => {},
       );
     void read();
-    const t = setInterval(read, 60_000);
+    const timer = setInterval(read, 60_000);
     // A model switch changes which limits count, so it rereads at once rather than on the clock;
     // usage itself comes from the route's cache, so this costs no request.
     let off: (() => void) | undefined;
@@ -7265,7 +7388,7 @@ function useBindingLimit(sessionId: string, ctx: ClientCtx) {
     }
     return () => {
       live = false;
-      clearInterval(t);
+      clearInterval(timer);
       off?.();
     };
   }, [sessionId, ctx]);
@@ -7284,6 +7407,7 @@ function LimitCard({
   resetsAt: number | null;
   onDismiss: () => void;
 }) {
+  useLocale();
   return (
     <div
       data-omc-limit-card=""
@@ -7303,7 +7427,7 @@ function LimitCard({
           ●
         </span>
         <span style={{ flex: 1 }}>
-          {label} limit reached
+          {t("main.limit.reached", { label })}
           {resetsAt === null ? (
             ""
           ) : (
@@ -7312,8 +7436,8 @@ function LimitCard({
         </span>
         <button
           type="button"
-          aria-label="Dismiss until the limit resets"
-          title="Dismiss until the limit resets"
+          aria-label={t("main.limit.dismissAria")}
+          title={t("main.limit.dismissAria")}
           onClick={onDismiss}
           style={{
             background: "none",
@@ -7335,9 +7459,10 @@ function LimitCard({
  *  box nobody uses never asks. Once the token is stored the server clears the need and the next poll
  *  takes the card down; until then it says what to do next. */
 function LoginCard({ need, onDismiss }: { need: LoginNeed; onDismiss: () => void }) {
+  useLocale();
   const [done, setDone] = useState(false);
   const { login, setLogin, startLogin, submitLogin } = useLoginFlow(() => setDone(true));
-  const where = need.host ? need.label : "this box";
+  const where = need.host ? need.label : t("main.boxes.thisBoxLower");
   return (
     <div
       data-omc-login-card={need.host || "this-box"}
@@ -7355,7 +7480,7 @@ function LoginCard({ need, onDismiss }: { need: LoginNeed; onDismiss: () => void
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <Spark size={14} />
         <span style={{ flex: 1 }}>
-          {done ? "Logged in. Send your message again." : `Claude Code on ${where} is logged out.`}
+          {done ? t("main.loginCard.loggedIn") : t("main.loginCard.loggedOut", { where })}
         </span>
         {!done && !login && (
           <button
@@ -7364,13 +7489,13 @@ function LoginCard({ need, onDismiss }: { need: LoginNeed; onDismiss: () => void
             data-testid="dsh-oh-my-claude-card-login"
             onClick={() => startLogin(need.host)}
           >
-            Log in
+            {t("main.boxes.logIn")}
           </button>
         )}
         <button
           type="button"
-          aria-label="Dismiss login card"
-          title="Dismiss"
+          aria-label={t("main.loginCard.dismissAria")}
+          title={t("main.loginCard.dismiss")}
           onClick={onDismiss}
           style={{
             background: "none",
@@ -7413,10 +7538,11 @@ function ClaudeUpdateCard({
   onAct: () => void;
   onGone: () => void;
 }) {
+  useLocale();
   const [phase, setPhase] = useState<"idle" | "busy" | "done" | "declined" | "failed">("idle");
   const [outcome, setOutcome] = useState<UpdateOutcome | null>(null);
-  const where = update.host ? update.label : "this box";
-  const Where = update.host ? update.label : "This box";
+  const where = update.host ? update.label : t("main.boxes.thisBoxLower");
+  const Where = update.host ? update.label : t("main.sessions.thisBox");
   const url = `${ROUTE}/claude-update?session=${encodeURIComponent(sessionId)}`;
   const fail = (note: string) => {
     setOutcome({ ok: false, from: update.installed, to: null, note });
@@ -7453,11 +7579,11 @@ function ClaudeUpdateCard({
         const s = await readJson<{ busy: boolean; log: UpdateOutcome[] }>(await fetch(url));
         if (!live) return;
         if (s.busy) {
-          if (Date.now() - startedAt > 200_000) fail("No answer from this dsh in 200 s.");
+          if (Date.now() - startedAt > 200_000) fail(t("main.update.noAnswer200"));
           return;
         }
         const last = s.log[s.log.length - 1];
-        if (!last) return fail("No run was recorded.");
+        if (!last) return fail(t("main.update.noRun"));
         setOutcome(last);
         setPhase(last.ok ? "done" : last.to !== null && last.note ? "declined" : "failed");
       } catch {
@@ -7472,23 +7598,27 @@ function ClaudeUpdateCard({
   }, [phase, url]);
   const text =
     phase === "done"
-      ? `Updated ${where} to ${outcome?.to ?? update.latest}. New sessions there use it; ones already running finish on ${update.installed}.`
+      ? t("main.update.cardDone", {
+          where,
+          to: outcome?.to ?? update.latest,
+          installed: update.installed,
+        })
       : phase === "declined"
-        ? `Claude Code declined: ${outcome?.note ?? "no reason given"}`
+        ? t("main.update.cardDeclined", { note: outcome?.note ?? t("main.update.noReason") })
         : phase === "failed"
-          ? `Update failed: ${outcome?.note ?? "no answer"}`
+          ? t("main.update.cardFailed", { note: outcome?.note ?? t("main.update.noAnswerShort") })
           : null;
   const narrow = useNarrow();
   const label =
     phase === "busy"
-      ? "Updating…"
+      ? t("main.update.updating")
       : phase === "done"
-        ? "Updated"
+        ? t("main.update.updated")
         : phase === "declined"
-          ? "Not updated"
+          ? t("main.update.notUpdated")
           : phase === "failed"
-            ? "Retry"
-            : "Update";
+            ? t("main.update.retryShort")
+            : t("main.update.update");
   // Folded, the card is its header line, the way a side-question card folds: the label, the
   // chevron and the close. Open, the sentence and the buttons. A fold is recorded on the box for
   // this release, beside the skip: a session switch used to remount the card open (owner,
@@ -7552,7 +7682,7 @@ function ClaudeUpdateCard({
         <div
           data-omc-update-closing={held ? "held" : "running"}
           aria-hidden="true"
-          title={held ? "Held while the pointer is here" : `Closes in ${CLOSE_AFTER_S} seconds`}
+          title={held ? t("main.update.held") : t("main.update.closesIn", { n: CLOSE_AFTER_S })}
           onAnimationEnd={() => setLeaving(true)}
           style={{
             position: "absolute",
@@ -7579,14 +7709,14 @@ function ClaudeUpdateCard({
           <Spark size={12} />
           {/* The label alone: the sentence lives in the body, where a phone shows it whole. */}
           <span style={{ color: ACCENT, fontWeight: 600, fontSize: 12, flex: 1 }}>
-            Claude Code update
+            {t("main.update.cardTitle")}
           </span>
           <Chevron open={open} />
         </button>
         <button
           type="button"
-          aria-label={phase === "idle" ? "Dismiss until the next release" : "Close"}
-          title={phase === "idle" ? "Dismiss until the next release" : "Close"}
+          aria-label={phase === "idle" ? t("main.update.dismissNextRelease") : t("common.close")}
+          title={phase === "idle" ? t("main.update.dismissNextRelease") : t("common.close")}
           onClick={() => dismiss()}
           style={{ ...iconBtn, color: T.muted, fontSize: 12 }}
         >
@@ -7615,18 +7745,18 @@ function ClaudeUpdateCard({
           >
             {text ?? (
               <>
-                Claude Code{" "}
+                {t("main.update.outBefore")}
                 <a
                   data-omc-update-notes=""
                   href={claudeReleaseNotes(update.latest)}
                   target="_blank"
                   rel="noreferrer"
-                  title="What changed, on Claude Code's changelog"
+                  title={t("main.update.notesTitle")}
                   style={{ color: ACCENT }}
                 >
                   {update.latest}
-                </a>{" "}
-                is out. {Where} runs {update.installed}.
+                </a>
+                {t("main.update.outAfter", { where: Where, installed: update.installed })}
               </>
             )}
           </span>
@@ -7643,8 +7773,8 @@ function ClaudeUpdateCard({
           {phase === "idle" && (
             <button
               type="button"
-              aria-label="Update on its own from now on"
-              title="Install every new release without asking, from now on"
+              aria-label={t("main.update.alwaysAria")}
+              title={t("main.update.alwaysTitle")}
               onClick={() => start({ run: true, auto: true })}
               style={{
                 background: "none",
@@ -7656,7 +7786,7 @@ function ClaudeUpdateCard({
                 fontSize: 12,
               }}
             >
-              Always update
+              {t("main.update.always")}
             </button>
           )}
         </div>
@@ -7668,6 +7798,7 @@ function ClaudeUpdateCard({
 /** Render this session's aside items as a collapsible stack, polling `/side-questions` every few
  *  seconds: questions, a login need and a Claude update card, or nothing when the poll is empty. */
 function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
+  useLocale();
   const [items, setItems] = useState<AsideItem[]>([]);
   // What the poll compares its answer against, without listing `items` as a dependency of its effect.
   const itemsRef = useRef<AsideItem[]>([]);
@@ -7859,7 +7990,7 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
                     flex: "0 0 auto",
                   }}
                 >
-                  Side question
+                  {t("main.aside.title")}
                 </span>
                 {/* Question rides the bar, truncated, so a collapsed card still says what it asked. */}
                 <span
@@ -7882,19 +8013,19 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
               <button
                 type="button"
                 onClick={() => copy(it)}
-                aria-label="Copy side question"
+                aria-label={t("main.aside.copyAria")}
                 style={{
                   ...iconBtn,
                   color: copied === it.id ? ACCENT : T.muted,
                   fontSize: 11,
                 }}
               >
-                {copied === it.id ? "Copied" : "Copy"}
+                {copied === it.id ? t("common.copied") : t("common.copy")}
               </button>
               <button
                 type="button"
                 onClick={() => dismissAside(it.id)}
-                aria-label="Dismiss side question"
+                aria-label={t("main.aside.dismissAria")}
                 style={{ ...iconBtn, color: T.muted, fontSize: 12 }}
               >
                 ✕
@@ -7905,7 +8036,7 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
               <div style={{ padding: "0 10px 8px 24px", maxHeight: "40vh", overflow: "auto" }}>
                 {it.pending ? (
                   <div style={{ color: ACCENT, fontSize: 12, fontStyle: "italic" }}>
-                    Claude is thinking…
+                    {t("main.aside.thinking")}
                   </div>
                 ) : it.error ? (
                   <div style={{ color: T.err, fontSize: 12 }}>{it.error}</div>
@@ -7936,7 +8067,7 @@ export const formatCacheRead = (tokens: number): string => {
 const fmtTtft = (ms?: number): string => {
   if (ms === undefined || ms <= 0) return "";
   const shown = ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`;
-  return `, ${shown} to first token`;
+  return t("main.cost.ttft", { shown });
 };
 
 /** `$18.21 · $0.42 last`: the session total and the newest turn. The Claude mark goes in front of
@@ -7945,7 +8076,8 @@ const fmtTtft = (ms?: number): string => {
  *  The cached-token count used to close the line, which made this the longest pill in dsh's row,
  *  and dsh's own neighbouring pill already reports the session's tokens and cache hit rate. The
  *  dialog behind the pill still breaks the cache reads and writes out in full. */
-const costText = (total: number, last: number) => `${fmtCost(total)} · ${fmtCost(last)} last`;
+const costText = (total: number, last: number) =>
+  t("main.cost.pill", { total: fmtCost(total), last: fmtCost(last) });
 
 /** A token count for the dialog: `0` rather than the readout's blank for none. */
 const fmtTokens = (n: number): string => formatCacheRead(n) || "0";
@@ -7966,20 +8098,20 @@ export const costDetails = (turns: TurnRecord[]): [string, string][] => {
     cacheWrite: sum((r) => r.cacheWrite),
   };
   const rows: [string, string][] = [
-    ["Last turn", fmtCost(last?.costUsd ?? 0)],
-    ["Turns", String(turns.length)],
-    ["Wall time", fmtDuration(sum((r) => r.durationMs))],
-    ["API time", fmtDuration(sum((r) => r.apiMs))],
-    ["Input", fmtTokens(totals.input)],
-    ["Cache read", fmtTokens(totals.cacheRead)],
+    [t("main.cost.lastTurn"), fmtCost(last?.costUsd ?? 0)],
+    [t("main.cost.turns"), String(turns.length)],
+    [t("main.cost.wallTime"), fmtDuration(sum((r) => r.durationMs))],
+    [t("main.cost.apiTime"), fmtDuration(sum((r) => r.apiMs))],
+    [t("main.cost.input"), fmtTokens(totals.input)],
+    [t("main.cost.cacheRead"), fmtTokens(totals.cacheRead)],
   ];
-  if (totals.cacheWrite > 0) rows.push(["Cache write", fmtTokens(totals.cacheWrite)]);
-  rows.push(["Output", fmtTokens(sum((r) => r.output))]);
+  if (totals.cacheWrite > 0) rows.push([t("main.cost.cacheWrite"), fmtTokens(totals.cacheWrite)]);
+  rows.push([t("main.cost.output"), fmtTokens(sum((r) => r.output))]);
   if (totals.input + totals.cacheRead + totals.cacheWrite > 0)
-    rows.push(["Cache hit", `${Math.round(cacheShare(totals) * 100)}%`]);
+    rows.push([t("main.cost.cacheHit"), `${Math.round(cacheShare(totals) * 100)}%`]);
   if (last?.ttftMs !== undefined && last.ttftMs > 0)
     rows.push([
-      "First token",
+      t("main.cost.firstToken"),
       last.ttftMs < 1000 ? `${Math.round(last.ttftMs)}ms` : `${(last.ttftMs / 1000).toFixed(1)}s`,
     ]);
   return rows;
@@ -8017,6 +8149,7 @@ interface IdleReply {
 
 /** Small chip that warns when the idle watchdog is about to kill the process. */
 function IdleChip({ sessionId }: { sessionId: string }) {
+  useLocale();
   const [deadline, setDeadline] = useState<number | null>(null);
   const visibleRef = useRef(true);
 
@@ -8067,10 +8200,10 @@ function IdleChip({ sessionId }: { sessionId: string }) {
   return (
     <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
       <span style={{ fontSize: 11, color: T.warn, fontFamily: T.mono }}>
-        stopping in {seconds}s
+        {t("main.idle.stopping", { n: seconds })}
       </span>
       <button type="button" style={btn} onClick={extend}>
-        Extend
+        {t("main.idle.extend")}
       </button>
     </span>
   );
@@ -8124,6 +8257,7 @@ export function apply(ctx: ClientCtx) {
   }
 
   function Section(props: { close?: () => void }) {
+    useLocale();
     const [boxes, setBoxes] = useState<BoxData[]>([]);
     const [openBoxes, setOpenBoxes] = useState(true);
     const [openSessions, setOpenSessions] = useState(false);
@@ -8174,8 +8308,8 @@ export function apply(ctx: ClientCtx) {
         {boxes !== null && (
           <Card
             id="dsh-oh-my-claude-sessions-card"
-            title="Session browser"
-            summary="Claude Code transcripts on every box: open one here, import, download, or move."
+            title={t("main.section.sessionsTitle")}
+            summary={t("main.section.sessionsSummary")}
             open={openSessions}
             onToggle={() => setOpenSessions((v) => !v)}
           >
@@ -8193,8 +8327,8 @@ export function apply(ctx: ClientCtx) {
         )}
         <Card
           id="dsh-oh-my-claude-changelog-card"
-          title="Changelog"
-          summary="What the last five versions added, changed and fixed, newest first."
+          title={t("main.section.changelogTitle")}
+          summary={t("main.section.changelogSummary")}
           open={openChangelog}
           onToggle={() => setOpenChangelog((v) => !v)}
         >
@@ -8202,8 +8336,8 @@ export function apply(ctx: ClientCtx) {
         </Card>
         <Card
           id="dsh-oh-my-claude-report-card"
-          title="Report a problem"
-          summary="A masked report of this box for a GitHub issue: versions, login state, switches, last error."
+          title={t("main.section.reportTitle")}
+          summary={t("main.section.reportSummary")}
           open={openReport}
           onToggle={() => setOpenReport((v) => !v)}
         >
