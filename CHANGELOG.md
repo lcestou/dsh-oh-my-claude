@@ -8,6 +8,11 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Added
 
+- The Diagnostics tab opens with a line reading how many of this plugin's assumptions about dsh's
+  own markup still hold. Every dsh upgrade that has broken the plugin broke it silently, by moving
+  something a selector pointed at, and the cost was never the fix but the days before anyone
+  noticed. A break now shows the first time the panel is opened, and names what stopped working.
+
 - The session browser can search inside transcripts, not only their titles. Type a phrase, press
   Search transcripts, and the list narrows to the sessions that said it, with a snippet under each.
   The scope dropdown covers this workspace or every workspace on the box. It searches your messages
