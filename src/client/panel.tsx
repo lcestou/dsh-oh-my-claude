@@ -575,7 +575,7 @@ function MarketplaceAddForm({ act, busy }: { act: Act; busy: string }) {
         value={source}
         onChange={(e) => setSource(e.currentTarget.value)}
         disabled={busy !== ""}
-        style={{ ...inputStyle, fontSize: 12 }}
+        style={inputStyle}
       />
       <select
         data-omc-plugin-marketplace-scope=""
@@ -583,7 +583,7 @@ function MarketplaceAddForm({ act, busy }: { act: Act; busy: string }) {
         value={scope}
         onChange={(e) => setScope(e.currentTarget.value)}
         disabled={busy !== ""}
-        style={{ ...select, fontSize: 12 }}
+        style={select}
       >
         {PLUGIN_SCOPE_OPTS.map((o) => (
           <option key={o.value} value={o.value}>
@@ -1146,7 +1146,7 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
             value={newName}
             onChange={(e) => setNewName(e.currentTarget.value)}
             disabled={busy !== ""}
-            style={{ ...inputStyle, fontSize: 12 }}
+            style={{ ...inputStyle, flex: "none" }}
           />
           {newName !== "" && !nameOk && (
             <span data-omc-skill-name-error="" style={{ ...meta, color: T.err }}>
@@ -1159,7 +1159,7 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
             value={newScope}
             onChange={(e) => setNewScope(e.currentTarget.value)}
             disabled={busy !== ""}
-            style={{ ...select, fontSize: 12 }}
+            style={{ ...select, flex: "none", maxWidth: "none" }}
           >
             <option value="user">User</option>
             <option value="project">Project</option>
@@ -1172,7 +1172,7 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
             value={newDesc}
             onChange={(e) => setNewDesc(e.currentTarget.value)}
             disabled={busy !== ""}
-            style={{ ...inputStyle, fontSize: 12 }}
+            style={{ ...inputStyle, flex: "none" }}
           />
           <div style={{ display: "flex", gap: 6 }}>
             <button
