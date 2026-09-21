@@ -1,6 +1,7 @@
-// The panel dialog is not a composer slot, so it never receives `inputActions.setDraft`
-// (src/client/shared.ts:614). One queued draft crosses the gap: the panel puts text here, a
-// renderless dock entry takes it and writes the composer. Module state, one tab, never persisted.
+// The panel dialog is not a composer slot, so it never receives `inputActions.setDraft`, the
+// setter dsh hands composer slots (see `DshSlots` in shared.ts). One queued draft crosses the gap:
+// the panel puts text here, a renderless dock entry takes it and writes the composer. Module
+// state, one tab, never persisted.
 
 interface Queued {
   session: string;

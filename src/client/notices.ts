@@ -98,7 +98,7 @@ export const RECAP_AWAY_CHOICES = [60_000, RECAP_AWAY_MS, 15 * 60_000, 30 * 60_0
 /**
  * The recap queue after this snapshot, and the session to recap now. A session joins the queue when
  * it stops working while unselected, and leaves it when it becomes the one on screen: that is the
- * return the recap is named for. Leaving the queue is not the same as firing, though — a return
+ * return the recap is named for. Leaving the queue is not the same as firing, though. A return
  * inside `awayMs` drops the entry silently, because flicking to another tab and back is not
  * being away. Never persisted, so a reload forgets: a recap of work from before a page load is
  * history, not a return.
