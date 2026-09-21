@@ -553,11 +553,19 @@ export declare class LineQueue {
     lines: (string | ClaudeEvent | Record<string, unknown>)[];
     waiters: Array<(line: string | typeof TIMEOUT | null) => void>;
     closed: boolean;
+    /** Start with no queued lines, no waiters and no close flag; every field stays empty until the
+     *  first push. */
     constructor();
     /** Lines waiting with no turn reading them. */
     get size(): number;
+    /** Hand a line to the earliest waiter if one is waiting, else buffer it, so a line never arrives
+     *  before its reader. */
     push(line: string | ClaudeEvent | Record<string, unknown>): void;
+    /** Mark the queue closed and resolve every pending waiter with null, so a stopped child's
+     *  readers see the end. */
     close(): void;
+    /** Resolve with the next queued line, a timeout after `timeoutMs` with nothing, or null once the
+     *  queue is closed. */
     next(timeoutMs?: number): Promise<string | typeof TIMEOUT | null>;
 }
 /** Everything one turn needs, as `prepare()` returns it; the process keeps the last one. */
@@ -711,6 +719,8 @@ export declare class ClaudeProcess {
     staleContext: boolean;
     /** Sees every `control_response` line as it arrives, even between turns; true means consumed. */
     controlListener?: (event: ClaudeEvent) => boolean;
+    /** Spawn the child Claude and feed its stdout into the line queue, noting idle completion replies
+     *  so the adapter can open a dsh turn. */
     constructor({ args, cwd, spec, onExit, command, spawner, }: {
         args: string[];
         cwd: string;
@@ -719,9 +729,15 @@ export declare class ClaudeProcess {
         command?: string;
         spawner?: Spawner;
     });
+    /** When the child ends, reject every relayed tool call as failed, close the queue and run the
+     *  exit callback. */
     closed(code: number, onExit: ClaudeProcessOnExit | undefined): void;
+    /** True while the child has not exited, so a write to a finished process is refused. */
     get alive(): boolean;
+    /** Write a stdin line to the child, returning false when it has exited, so a line to a dead
+     *  process is not silently dropped. */
     write(line: string): boolean;
+    /** Terminate the child while it is alive, so killing an already-dead process is a no-op. */
     kill(): void;
     /** Queue a synthetic event for the turn loop (the MCP bridge relaying a dsh tool call). */
     inject(event: ClaudeEvent): void;
@@ -732,6 +748,8 @@ export declare class ClaudeProcess {
     /** A `result` line while no turn is reading: Claude just finished a turn of its own. Tell the
      *  adapter (`onIdleResult`) so it can open a dsh turn and show the reply now. */
     noteIdleResult(line: string): void;
+    /** Count buffered `result` events with no turn reading them, so the loop can tell a real reply
+     *  from a stale background-task completion. */
     countStaleResults(): number;
     /** Next parsed JSON line; plain text lines are kept in `stray` for error messages. Null when the
      *  process ended, `{ type: "timeout" }` when `timeoutMs` passed first. */

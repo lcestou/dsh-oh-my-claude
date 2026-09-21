@@ -67,6 +67,8 @@ export type ValidatedSshBoxes = {
 /** Coerces each entry to a plain object and returns a structured error instead of throwing,
  *  enforcing the box-count cap and per-box name and host rules. */
 export declare function validateSshBoxes(input: unknown): ValidatedSshBoxes;
+/** Read the SSH-boxes file and return the validated list, or [] when it is missing or corrupt, so
+ *  a box list never throws on a gone or malformed file. */
 export declare function readSshBoxes(path: string): Promise<SshBox[]>;
 /** A dsh workspace this plugin points at a directory on an SSH box. dsh stores and stat-checks local
  * paths only, so each remote workspace owns an empty local placeholder dir that dsh adopts as an
@@ -95,7 +97,11 @@ export type ValidatedRemoteWorkspace = {
     error: string;
     value?: undefined;
 };
+/** Clean an add-workspace form into a name, host and absolute remote path, or a structured error,
+ *  so a bad name or relative path cannot seed a placeholder directory. */
 export declare function validateRemoteWorkspaceInput(input: unknown): ValidatedRemoteWorkspace;
+/** Read the placeholder-workspaces file and return its rows, or [] when it is missing, corrupt or
+ *  not an array, so a reconcile never throws on a gone or malformed file. */
 export declare function readRemoteWorkspaces(path: string): Promise<RemoteWorkspace[]>;
 /** The file, minus every row whose dsh workspace is gone. dsh's registry owns which workspaces
  *  exist (the sidebar's trash deletes there and never here), so a row the registry no longer
@@ -488,6 +494,8 @@ export interface SettingsScopeInfo extends SettingsFile {
     scope: SettingsScope;
     readOnly: boolean;
 }
+/** True only when the value is one of the four settings scopes the CLI merges; anything else is an
+ *  unknown scope and is refused rather than written. */
 export declare function isSettingsScope(value: JsonValue | undefined): value is SettingsScope;
 /**
  * The file a scope names. Paths are derived here and never taken from the client: the request

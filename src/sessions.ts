@@ -173,6 +173,9 @@ const baseName = (path: string): string => {
   return slash < 0 ? path : path.slice(slash + 1);
 };
 
+/** Answer an HTTP request as JSON with a no-store cache header. Every route in this file replies
+ *  through it, so no browser or proxy can hand back a stale answer for a state that changes under
+ *  it, such as a session list or a login. */
 const json = (res: ServerResponse, status: number, value: unknown) => {
   res.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
@@ -184,6 +187,8 @@ const json = (res: ServerResponse, status: number, value: unknown) => {
 /** Any JSON object, as a request body or a stored file decodes to. */
 type JsonObject = Record<string, JsonValue>;
 
+/** True only for a non-null, non-array object, so a decoded JSON body that is an array or null is
+ *  treated as empty rather than read by key. */
 const isJsonObject = (v: unknown): v is JsonObject =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
@@ -211,8 +216,12 @@ export const readBody = (req: IncomingMessage, limit = BODY_LIMIT): Promise<Json
     req.on("error", reject);
   });
 
+/** Narrows an unknown value to a string only when it passes the memory-name rules; anything else
+ *  stays unknown, so the caller refuses it rather than using a name it would later reject. */
 const validMemoryName = (name: unknown): name is string =>
   typeof name === "string" && isMemoryName(name);
+/** Narrows an unknown value to a string only when it is a 36-character lowercase-hex UUID; a
+ *  malformed id fails closed and is refused rather than used as a session id. */
 const validId = (id: unknown): id is string => typeof id === "string" && /^[0-9a-f-]{36}$/.test(id);
 
 /** What parseSettingsText hands back: the object, or why the text is not one. */
@@ -401,6 +410,8 @@ export function validateBoxes(input: unknown): ValidatedBoxes {
   return { boxes };
 }
 
+/** Read the local boxes file and return the validated list, or [] when it is missing, corrupt or
+ *  not an array, so a box list never throws on a gone or malformed file. */
 async function readBoxes(path: string): Promise<Box[]> {
   try {
     const v = validateBoxes(JSON.parse(await readFile(path, "utf8")));
@@ -465,6 +476,8 @@ export function validateSshBoxes(input: unknown): ValidatedSshBoxes {
   return { boxes };
 }
 
+/** Read the SSH-boxes file and return the validated list, or [] when it is missing or corrupt, so
+ *  a box list never throws on a gone or malformed file. */
 export async function readSshBoxes(path: string): Promise<SshBox[]> {
   try {
     const v = validateSshBoxes(JSON.parse(await readFile(path, "utf8")));
@@ -509,6 +522,8 @@ export type ValidatedRemoteWorkspace =
   | { value: { name: string; host: string; remoteCwd: string }; error?: undefined }
   | { error: string; value?: undefined };
 
+/** Clean an add-workspace form into a name, host and absolute remote path, or a structured error,
+ *  so a bad name or relative path cannot seed a placeholder directory. */
 export function validateRemoteWorkspaceInput(input: unknown): ValidatedRemoteWorkspace {
   const b = isJsonObject(input) ? input : {};
   const name = String(b.name ?? "").trim();
@@ -525,6 +540,8 @@ export function validateRemoteWorkspaceInput(input: unknown): ValidatedRemoteWor
   return { value: { name, host, remoteCwd } };
 }
 
+/** Read the placeholder-workspaces file and return its rows, or [] when it is missing, corrupt or
+ *  not an array, so a reconcile never throws on a gone or malformed file. */
 export async function readRemoteWorkspaces(path: string): Promise<RemoteWorkspace[]> {
   try {
     const raw = JSON.parse(await readFile(path, "utf8"));
@@ -649,6 +666,8 @@ interface ProbeFetchOpts {
   body?: string;
 }
 
+/** Take only the name=value part of a set-cookie header, dropping the path and expiry, so a launch
+ *  token rides the cookie and nothing else reaches the plugin. */
 const cookieOf = (r: { headers: { get(name: string): string | null } }) =>
   (r.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
 
@@ -664,6 +683,8 @@ export async function probeBox<T = RuntimeStatus>(
 ): Promise<Probe<T>> {
   const { url, token } = box;
   const signal = AbortSignal.timeout(path === "status" ? 6000 : 12000);
+  /** Fetch the box's plugin route with the login cookie and any proxy method or body attached, so
+   *  the same call works with or without a token-injecting proxy in front. */
   const status = (cookie: string) => {
     const fetchHeaders: Record<string, string> = {};
     if (cookie) fetchHeaders.cookie = cookie;
@@ -795,6 +816,8 @@ async function runtimeStatus(
   command = "claude",
   sshHost = "",
 ): Promise<RuntimeStatus> {
+  /** Run a `claude` command on a remote box over ssh, so the status probes answer the box the
+   *  session runs on rather than this one. */
   const remote = (args: string[]) =>
     run("ssh", sshArgs(sshHost, `${shq(command)} ${args.map(shq).join(" ")}`));
   const [which, version, status] = await Promise.all([
@@ -960,6 +983,8 @@ interface PickerOption {
 }
 
 type EffortLevel = (typeof EFFORTS_ALL)[number];
+/** True only when the value is one of the CLI's effort levels; an unknown string is not a level, so
+ *  a settings file cannot offer an effort the picker cannot name. */
 const isEffortLevel = (v: unknown): v is EffortLevel =>
   typeof v === "string" && EFFORTS_ALL.some((level) => level === v);
 
@@ -1087,6 +1112,8 @@ export interface OwnedSession {
 /** dsh 0.1.5's `sessionPersistence.list()` answers snapshots that wrap the header; before that the
  *  entries were the headers. Either way in, a header out. */
 type StoredHeader = { id: string; cwd?: string; origin?: string };
+/** Pull the bare session header out of a persistence entry, unwrapping dsh 0.1.5's wrapped shape so
+ *  both the newest and the oldest entries answer the same header. */
 const headerOf = (entry: StoredHeader | { header: StoredHeader }): StoredHeader => {
   if ("header" in entry && entry.header !== undefined) return entry.header;
   // SAFETY: no `header` member means the entry is the bare header shape of the union
@@ -1112,6 +1139,8 @@ export function dshSessionsFor(
   }
   return map;
 }
+/** Narrows an unknown value to an absolute path string with no NUL; a relative or control-char path
+ *  is refused rather than used as a directory. */
 const validCwd = (cwd: unknown): cwd is string =>
   typeof cwd === "string" && cwd.startsWith("/") && !cwd.includes("\0");
 
@@ -1714,6 +1743,8 @@ export function registerSessionRoutes(
     await mkdir(importedDir, { recursive: true });
     await writeFile(join(importedDir, `${id}.jsonl`), read.text, "utf8");
   };
+  /** Decide which box and path a cwd-scoped read runs against: a remote workspace's real remote
+   *  path, else the request's own mount. */
   const targetOf = <T extends string | null>(url: URL, cwd: T): CwdTarget<T> => {
     const ws = workspaceAt(cwd);
     if (ws === undefined) return { box: boxOf(url), cwd };
@@ -1740,6 +1771,8 @@ export function registerSessionRoutes(
   // registry and skipped the workspace attach silently, so the session it had just written was
   // nowhere in the sidebar — hence the live `get` alongside the injected handle.
   let injectedRegistry: WorkspaceRegistry | undefined;
+  /** The workspace registry dsh provides, whether injected or looked up on demand, so routes can
+   *  serve even before it mounts. */
   const workspaceRegistry = (): WorkspaceRegistry | undefined =>
     injectedRegistry ?? ctx.get?.("workspaceRegistry");
   /** The remote-workspace rows dsh's registry still backs, the file and the adapter's redirect map
@@ -3339,6 +3372,8 @@ export function registerSessionRoutes(
                 child.unref();
                 const link = await new Promise<string | { error: string }>((resolve) => {
                   let text = "";
+                  /** Accumulate the login command's output and resolve as soon as it prints an approval
+                   *  link, so the browser can open it. */
                   const look = (chunk: Buffer | string) => {
                     text += String(chunk);
                     const found = loginUrlIn(text);
@@ -3538,6 +3573,8 @@ export function registerSessionRoutes(
                     : await run("ssh", sshArgs(loginHost, `${shq(cli)} auth status`));
                 return authFromStatus(st.out).loggedIn;
               };
+              /** Record a finished SSH login — forget the cached identity, tell the panel the box is
+               *  logged in and relist — or hand back its error when it did not finish. */
               const storeLogin = (loginHost: string, loginBoxes: SshBox[], fin: LoginOutcome) => {
                 if (!fin.done) return { done: false, error: fin.error };
                 forgetIdentity();
@@ -3812,6 +3849,8 @@ export interface SettingsScopeInfo extends SettingsFile {
   readOnly: boolean;
 }
 
+/** True only when the value is one of the four settings scopes the CLI merges; anything else is an
+ *  unknown scope and is refused rather than written. */
 export function isSettingsScope(value: JsonValue | undefined): value is SettingsScope {
   // SAFETY: the includes() call narrows nothing on its own; the signature is the narrowing.
   return SETTINGS_SCOPES.includes(value as SettingsScope);
