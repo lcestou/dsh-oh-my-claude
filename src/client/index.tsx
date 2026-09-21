@@ -82,7 +82,7 @@ import type { FallbackRecord } from "../translator.js";
 import { ReportBlock } from "./report.js";
 import { ChangelogBlock } from "./changelog.js";
 import { Spark, sparkNode } from "./spark.js";
-import { AccessShield, OhMyClaudeControl } from "./panel.js";
+import { AccessShield, OhMyClaudeControl, sessionLabel } from "./panel.js";
 import { ConfirmButton } from "./tune.js";
 import { AddWorkspaceFlow, canBrowseDirs, OPEN_EVENT, RW_EVENT } from "./picker.js";
 import { takeDraft, subscribeDraft, noteDraft, draftPending } from "./draft.js";
@@ -1165,7 +1165,7 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
                   box's disk, and its own panel is where it downloads from. */}
               <input
                 type="checkbox"
-                aria-label={`Select ${r.s.title || r.s.id}`}
+                aria-label={`Select ${sessionLabel(r.s)}`}
                 disabled={!isLocal && !isSsh}
                 checked={picked.has(rowKey(r))}
                 onChange={(e) =>
@@ -1186,9 +1186,9 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
                     whiteSpace: "nowrap",
                     color: T.text,
                   }}
-                  title={r.s.title || r.s.id}
+                  title={sessionLabel(r.s)}
                 >
-                  {r.s.title || r.s.id}
+                  {sessionLabel(r.s)}
                 </div>
                 {deep?.get(r.s.id) !== undefined && (
                   <div

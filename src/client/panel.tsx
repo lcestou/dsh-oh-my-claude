@@ -100,6 +100,12 @@ function useHeightEase(ref: { current: HTMLElement | null }, active: boolean) {
   }, [ref, active]);
 }
 
+/** A session's display name. The server answers an empty string, not undefined, for a transcript
+ *  it could not title, so this tests for emptiness rather than absence; the fallback is the first
+ *  eight characters of the id, enough to tell sessions apart on one screen. */
+export const sessionLabel = (s: { title?: string; id: string }): string =>
+  s.title?.trim() ? s.title : `Untitled · ${s.id.slice(0, 8)}`;
+
 /** One-row transcript pick inside the compact restore list. */
 function TranscriptRow({
   s,
@@ -112,7 +118,7 @@ function TranscriptRow({
   ctx: ClientCtx;
   onClose: () => void;
 }) {
-  const label = s.title ?? s.id;
+  const label = sessionLabel(s);
   return (
     <button
       type="button"
@@ -2273,6 +2279,10 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
       </div>
       {reply === null ? (
         <span style={stateText}>Loading…</span>
+      ) : !reply.ok && reply.error.startsWith("no live Claude process") ? (
+        <span style={stateText}>
+          Claude starts on your first message. Its MCP servers appear here once it is running.
+        </span>
       ) : !reply.ok ? (
         <span style={errText}>{reply.error}</span>
       ) : servers.length === 0 && pendingRows.length === 0 ? (
