@@ -6066,7 +6066,7 @@ function ThemeSwitch() {
         <Switch on={!off} onChange={(next) => setOff(!next)} label="Claude look" />
       </div>
       {!off && (
-        <details data-omc-theme-custom="" style={{ marginBottom: 12, fontSize: 13 }}>
+        <details data-omc-theme-custom="" style={NESTED}>
           <summary style={{ cursor: "pointer", color: T.muted }}>Customize</summary>
           <div
             style={{ display: "flex", flexDirection: "column", gap: 6, padding: "8px 0 0 16px" }}
@@ -6354,7 +6354,7 @@ function ContextSwitch({ ctx }: { ctx: ClientCtx }) {
         <Switch on={on} onChange={setOn} label="dsh context" />
       </div>
       {!off && (
-        <details data-omc-context-custom="" style={{ marginBottom: 12, fontSize: 13 }}>
+        <details data-omc-context-custom="" style={NESTED}>
           <summary style={{ cursor: "pointer", color: T.muted }}>Customize</summary>
           <div
             style={{ display: "flex", flexDirection: "column", gap: 6, padding: "8px 0 0 16px" }}
@@ -6515,6 +6515,15 @@ function UpdateNoticeSwitch() {
   );
 }
 
+/** A fold nested under a Settings row: indented behind a thin rule, the look the update options
+ *  have, so what belongs to the row above reads as its child. */
+const NESTED: CSSProperties = {
+  marginBottom: 12,
+  fontSize: 13,
+  paddingLeft: 12,
+  borderLeft: `1px solid ${T.border}`,
+};
+
 /** The settings switch for the whole Claude Code update feature, with its channel, auto-update and
  *  history under it while it is on. The flag lives in the box's hints store and the server reads it
  *  before every check: off means no pointer read, no card and no install, on every box. */
@@ -6608,7 +6617,7 @@ function ProxyFirstPartySwitch() {
           <option value="off">Off</option>
         </select>
       </div>
-      <details data-omc-proxy-details="" style={{ marginBottom: 12, fontSize: 13 }}>
+      <details data-omc-proxy-details="" style={NESTED}>
         <summary style={{ cursor: "pointer", color: T.muted }}>Details</summary>
         <div style={{ color: T.faint, fontSize: 12, padding: "8px 0 0 16px" }}>
           When ANTHROPIC_BASE_URL names any host but api.anthropic.com, Claude Code assumes 200k for
