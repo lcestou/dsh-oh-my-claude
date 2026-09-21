@@ -3498,6 +3498,11 @@ function watchContextMeter(ctx: ClientCtx) {
   // The plan limit the ring is tinted for, and when usage and the switches were last read for it.
   let ringLevel: LimitLevel | undefined;
   let ringLimitAsked = 0;
+  let ringModel: string | undefined;
+  // Flipping a warning switch rereads at the next paint rather than a minute later.
+  window.addEventListener(HINTS_EVENT, () => {
+    ringLimitAsked = 0;
+  });
   /**
    * Fill the ring from the CLI's own occupancy.
    *
@@ -3529,7 +3534,13 @@ function watchContextMeter(ctx: ClientCtx) {
       ringLimitAsked = 0;
     }
     // A reached or near plan limit tints the arc, on a slower clock than the fill: usage is cached
-    // for a minute by the route, and the switches change only when someone flips one.
+    // for a minute by the route. A model switch rereads at once from that cache, since it changes
+    // which limits count; picking a model redraws dsh's picker, so a paint follows it.
+    const model = sessionModelOf(ctx, sid);
+    if (model !== ringModel) {
+      ringModel = model;
+      ringLimitAsked = 0;
+    }
     if (Date.now() - ringLimitAsked > 60_000) {
       ringLimitAsked = Date.now();
       void Promise.all([loadHints(), loadUsage(activeClaudeProvider(ctx))]).then(
@@ -7247,9 +7258,18 @@ function useBindingLimit(sessionId: string, ctx: ClientCtx) {
       );
     void read();
     const t = setInterval(read, 60_000);
+    // A model switch changes which limits count, so it rereads at once rather than on the clock;
+    // usage itself comes from the route's cache, so this costs no request.
+    let off: (() => void) | undefined;
+    try {
+      off = ctx.modelDirectories.directoryFor(sessionId).store.subscribe(() => void read());
+    } catch {
+      // Not bound in this tab yet: the clock still covers it.
+    }
     return () => {
       live = false;
       clearInterval(t);
+      off?.();
     };
   }, [sessionId, ctx]);
   return limit;
