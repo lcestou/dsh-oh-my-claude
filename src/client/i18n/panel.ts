@@ -389,7 +389,7 @@ export const zh = {
   "panel.refresh": "刷新",
   "panel.edit": "编辑",
   "panel.dismiss": "忽略",
-  "panel.tip": "记忆、技能、回溯 等都在这里",
+  "panel.tip": "记忆、技能、回溯等都在这里",
 
   "panel.skills.userSkills": "用户技能",
   "panel.skills.projectSkills": "项目技能",
@@ -439,24 +439,24 @@ export const zh = {
   "panel.skills.readingBusy": "读取中…",
 
   "panel.instructions.none": "此工作区没有说明文件。",
-  "panel.instructions.kind.Managed": "受管",
+  "panel.instructions.kind.Managed": "托管",
   "panel.instructions.kind.User": "用户",
   "panel.instructions.kind.Project": "项目",
   "panel.instructions.kind.Local": "本地",
   "panel.instructions.importedFrom": "（来自 {name}）",
-  "panel.instructions.readOnly": "只读（受管）",
+  "panel.instructions.readOnly": "只读（托管）",
   "panel.instructions.editorLabel": "说明文件",
 
   "panel.rewind.summary": "{files} 个文件，+{ins} −{del}",
   "panel.rewind.noCheckpoints":
     "dsh 的环境中设置了 CLAUDE_CODE_DISABLE_FILE_CHECKPOINTING，因此 Claude 不保留文件检查点：回溯只会把对话退回，你的文件保持原样。",
-  "panel.rewind.noPrompts": "还没有已完成的 prompt",
+  "panel.rewind.noPrompts": "还没有已完成的 提示词",
   "panel.rewind.rewindTo": "回溯到：{text}",
   "panel.rewind.checking": "检查中…",
   "panel.rewind.explain":
     "文件会回到那时的状态，Claude 会忘记这条提示词之后的一切。此 dsh 会话记录仍会显示发生过的内容。",
   "panel.rewind.action": "回溯",
-  "panel.rewind.retentionTail": "早于该时间的 prompt 已不在此处，无法回溯到。",
+  "panel.rewind.retentionTail": "早于该时间的 提示词 已不在此处，无法回溯到。",
 
   "panel.changes.ask": "询问",
   "panel.changes.askFileTitle": "就此文件询问 Claude，不进入会话记录",
@@ -500,7 +500,7 @@ export const zh = {
   "panel.notices.noApi": "此浏览器没有通知 API；改由标签页标题显示提示。",
   "panel.notices.blocked": "已在浏览器的站点设置中被拦截；标签页标题仍会显示提示。",
   "panel.notices.on": "对此标签页未显示的会话开启。",
-  "panel.notices.off": "关闭。无论如何，页面隐藏时标签页标题都会标记。",
+  "panel.notices.off": "关闭。无论如何，页面隐藏时标签页标题都会带上标记。",
   "panel.notices.turnOff": "关闭",
   "panel.notices.turnOn": "开启",
 
@@ -554,7 +554,7 @@ export const zh = {
   "panel.diag.refusedCalls": "被拒绝的调用",
   "panel.diag.noRefused": "此会话保留的轮次中没有被拒绝的调用。",
   "panel.diag.permissionRules": "权限规则",
-  "panel.diag.managed": "受管",
+  "panel.diag.managed": "托管",
   "panel.diag.noRules": "此会话未加载任何权限规则。",
   "panel.diag.workspaceDirsOne": "{n} 个工作区目录",
   "panel.diag.workspaceDirsOther": "{n} 个工作区目录",
