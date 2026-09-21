@@ -4,6 +4,9 @@ import type { ESTree, Scope, SourceCode, Variable } from "@oxlint/plugins";
 
 const moduleMockMethods = new Set(["doMock", "mock", "unstable_mockModule"]);
 
+/** Walk scopes upward to find a binding; return null for an unbound name so a bare reference is
+ *  treated as the global.
+ */
 function resolveVariable(
   sourceCode: SourceCode,
   identifier: ESTree.IdentifierReference,
@@ -17,11 +20,17 @@ function resolveVariable(
   return null;
 }
 
+/** Return the name a specifier imports, whether written as `as` or a string, or null when the node
+ *  is not an import specifier.
+ */
 function importedName(node: ESTree.Node): string | null {
   if (node.type !== "ImportSpecifier") return null;
   return node.imported.type === "Identifier" ? node.imported.name : node.imported.value;
 }
 
+/** Return true when an expression is the vitest `vi` or jest `jest` mock object, global or
+ *  imported, so only those drive module mocking.
+ */
 function isTestFrameworkObject(
   sourceCode: SourceCode,
   expression: ESTree.Expression,
@@ -50,6 +59,9 @@ function isTestFrameworkObject(
   });
 }
 
+/** Return true when a call is a `doMock`, `mock`, or `unstable_mockModule` method on the test
+ *  framework's mock object, the pattern the rule bans.
+ */
 function moduleMockCall(sourceCode: SourceCode, callee: ESTree.Expression): boolean {
   if (!("property" in callee) || !("object" in callee) || !("computed" in callee)) return false;
   if (!isTestFrameworkObject(sourceCode, callee.object)) return false;

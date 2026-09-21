@@ -49,14 +49,23 @@ const typeNodeKinds: ReadonlySet<string> = new Set([
   "TSVoidKeyword",
 ]);
 
+/** Narrow a node to TSType by membership in the set of node kinds this rule treats as types; a node
+ *  absent from the set is not one here.
+ */
 function isTypeNode(node: ESTree.Node): node is ESTree.TSType {
   return typeNodeKinds.has(node.type);
 }
 
+/** Return the bare name of a type reference, or null when it is qualified like `a.b.C`, so only a
+ *  single name can resolve to an alias.
+ */
 function typeReferenceName(type: ESTree.TSTypeReference): string | null {
   return type.typeName.type === "Identifier" ? type.typeName.name : null;
 }
 
+/** Walk parents to test whether a node sits inside a `type X = ...` declaration, so an alias is not
+ *  read as consuming itself.
+ */
 function isInsideTypeAliasDeclaration(node: ESTree.Node): boolean {
   let current: ESTree.Node | null = node.parent;
   while (current !== null && current.type !== "Program") {
@@ -66,12 +75,18 @@ function isInsideTypeAliasDeclaration(node: ESTree.Node): boolean {
   return false;
 }
 
+/** Return true when a reference directly consumes a module alias by name and is not inside that
+ *  alias's own declaration, a real external use rather than the definition.
+ */
 function isPlainAliasConsumerUse(node: ESTree.TSType, environment: TypeEnvironment): boolean {
   if (node.type !== "TSTypeReference" || node.typeArguments?.params.length) return false;
   const name = typeReferenceName(node);
   return name !== null && environment.aliases.has(name) && !isInsideTypeAliasDeclaration(node);
 }
 
+/** Decide whether to flag a type, skipping plain alias consumers and anything wrapped in a safe
+ *  dictionary, so only a bare unsafe value reaches the report.
+ */
 function shouldReportType(node: ESTree.TSType, environment: TypeEnvironment): boolean {
   if (isPlainAliasConsumerUse(node, environment)) return false;
   if (classifyUnsafeDictionary(node, environment) === null) return false;

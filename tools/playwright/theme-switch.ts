@@ -13,6 +13,9 @@ const b = await launch();
 const ctx = await b.newContext({ viewport: { width: 1400, height: 900 }, colorScheme: "dark" });
 const p = await ctx.newPage();
 
+/** Navigate to dsh and open the workspace then its first non-empty session, so the theme switch is
+ *  exercised in a real session context.
+ */
 const openSession = async () => {
   await p.goto(dshUrl(token), { waitUntil: "networkidle" });
   await p.waitForTimeout(2500);
@@ -64,6 +67,9 @@ const colours = (page: Page) =>
     host.remove();
     return out;
   });
+/** Open the Oh My Claude settings card through Settings, the entry every theme state check starts
+ *  from.
+ */
 const openSettings = async () => {
   const gear = p.locator('button[aria-label*="Settings" i], a[aria-label*="Settings" i]').first();
   await gear.click();
@@ -74,6 +80,7 @@ const openSettings = async () => {
     .click();
   await p.waitForTimeout(800);
 };
+/** Close the settings card with Escape, returning the page to the session between states. */
 const closeSettings = async () => {
   await p.keyboard.press("Escape");
   await p.waitForTimeout(600);

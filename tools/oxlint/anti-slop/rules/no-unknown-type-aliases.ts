@@ -2,6 +2,9 @@ import { defineRule } from "@oxlint/plugins";
 
 import type { ESTree } from "@oxlint/plugins";
 
+/** Return the identifier an alias type names, or null when it is parenthesized, parameterized,
+ *  qualified, or not a reference, so only a bare alias can be followed.
+ */
 function referencedAliasName(type: ESTree.TSType): string | null {
   if (type.type === "TSParenthesizedType") return referencedAliasName(type.typeAnnotation);
   if (type.type !== "TSTypeReference" || type.typeName.type !== "Identifier") return null;

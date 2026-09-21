@@ -18,6 +18,9 @@ if (await newBtn.count()) {
 }
 const dock = p.locator("[data-omc-dock]").first();
 const composer = p.locator('textarea, [contenteditable="true"]').first();
+/** Measure the dock height and composer position, the two values that must not change when the Save
+ *  draft chip appears.
+ */
 const measure = async () => {
   const d = await dock.boundingBox();
   const c = await composer.boundingBox();
@@ -44,6 +47,9 @@ await p
 await p.waitForTimeout(800);
 const forget = p.getByRole("button", { name: /Forget$/ }).first();
 const saveChip = p.getByRole("button", { name: /Save draft|Saved/ }).first();
+/** Capture the Forget width, Save chip X and dock height together, so the three are compared as one
+ *  snapshot across the save and revert.
+ */
 const at = async () => ({
   forgetW: (await forget.boundingBox())?.width,
   saveX: (await saveChip.boundingBox())?.x,
@@ -76,6 +82,9 @@ const reverted = await at();
 console.log("rest    ", JSON.stringify(rest));
 console.log("armed   ", JSON.stringify(armed));
 console.log("reverted", JSON.stringify(reverted));
+/** Return true when two measurement snapshots are identical for all three values, proving the dock
+ *  and chip held their place.
+ */
 const same = (a: typeof rest, c: typeof rest) =>
   a.forgetW === c.forgetW && a.saveX === c.saveX && a.dockH === c.dockH;
 console.log(

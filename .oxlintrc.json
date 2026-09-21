@@ -41,14 +41,6 @@
   "overrides": [
     {
       "files": [
-        "tools/**"
-      ],
-      "rules": {
-        "anti-slop/require-doc-comment": "off"
-      }
-    },
-    {
-      "files": [
         "src/**/*.test.ts"
       ],
       "rules": {

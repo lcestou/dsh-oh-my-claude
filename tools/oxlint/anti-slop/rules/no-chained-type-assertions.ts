@@ -3,10 +3,16 @@ import type { ESTree } from "@oxlint/plugins";
 
 type TypeAssertionExpression = ESTree.TSAsExpression | ESTree.TSTypeAssertion;
 
+/** Narrow a node to a TypeScript assertion, covering both `as` and the angle-bracket form the
+ *  parser keeps separate.
+ */
 function isTypeAssertionExpression(node: ESTree.Node): node is TypeAssertionExpression {
   return node.type === "TSAsExpression" || node.type === "TSTypeAssertion";
 }
 
+/** Strip surrounding parentheses so a chain like `(x as T)` reads as one assertion, not a wrapper
+ *  breaking the walk.
+ */
 function unwrapParenthesizedExpression(expression: ESTree.Expression): ESTree.Expression {
   let current = expression;
   while (current.type === "ParenthesizedExpression") {
@@ -15,6 +21,9 @@ function unwrapParenthesizedExpression(expression: ESTree.Expression): ESTree.Ex
   return current;
 }
 
+/** Return true when an assertion targets the `const` modifier, which the rule allows even in a
+ *  chain because it keeps precision instead of discarding it.
+ */
 function isConstAssertion(node: TypeAssertionExpression): boolean {
   const { typeAnnotation } = node;
   return (
@@ -24,6 +33,9 @@ function isConstAssertion(node: TypeAssertionExpression): boolean {
   );
 }
 
+/** Return true when this is the top assertion of its chain after skipping parens, so the rule
+ *  reports each chain once, not at every nested assertion.
+ */
 function isOutermostAssertionInChain(node: TypeAssertionExpression): boolean {
   let current: ESTree.Expression = node;
   let parent = node.parent;
@@ -36,6 +48,9 @@ function isOutermostAssertionInChain(node: TypeAssertionExpression): boolean {
   return !isTypeAssertionExpression(parent) || parent.expression !== current;
 }
 
+/** Return true when a chain stacks more than one assertion and at least one is not a `const` cast,
+ *  the case that discards type evidence.
+ */
 function isForbiddenAssertionChain(node: TypeAssertionExpression): boolean {
   let assertionCount = 0;
   let hasNonConstAssertion = false;

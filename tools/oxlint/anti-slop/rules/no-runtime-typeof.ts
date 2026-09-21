@@ -4,6 +4,9 @@ import type { ESTree } from "@oxlint/plugins";
 
 type RuntimeFunction = ESTree.ArrowFunctionExpression | ESTree.Function;
 
+/** Narrow a node to a runtime function (arrow, declaration, or expression), the kind whose return
+ *  type can be a type predicate.
+ */
 function isRuntimeFunction(node: ESTree.Node): node is RuntimeFunction {
   return (
     node.type === "ArrowFunctionExpression" ||
@@ -12,6 +15,9 @@ function isRuntimeFunction(node: ESTree.Node): node is RuntimeFunction {
   );
 }
 
+/** Walk up to test whether a node sits inside a function whose return type is a type predicate, so
+ *  a `typeof` there narrows a value rather than inspecting a representation.
+ */
 function isInsideTypeGuard(node: ESTree.Node): boolean {
   let current: ESTree.Node | null = node.parent;
   while (current !== null && current.type !== "Program") {

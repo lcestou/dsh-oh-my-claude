@@ -85,6 +85,9 @@ console.log(
   checkedCorrect && lastFourDisabled ? "PASS: fold rows correct" : "FAIL: fold rows wrong",
 );
 // Round trip through the store: off, reload, still off; on, reload, still on.
+/** Reload the settings card and return the master switch state, so the round-trip proves a toggle
+ *  persists across a reload rather than living only in the tab.
+ */
 const state = async () => {
   await p.goto(dshUrl(token), { waitUntil: "networkidle" });
   await p.waitForTimeout(1500);

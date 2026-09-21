@@ -12,6 +12,9 @@ const commentOwnerKinds = new Set([
   "VariableDeclaration",
 ]);
 
+/** Return true when an assertion casts to the `const` modifier, which preserves precision and needs
+ *  no safety comment.
+ */
 function isConstAssertion(node: TypeAssertion): boolean {
   return (
     node.typeAnnotation.type === "TSTypeReference" &&
@@ -20,6 +23,10 @@ function isConstAssertion(node: TypeAssertion): boolean {
   );
 }
 
+/** Walk up from an assertion to a containing statement, returning true when a `SAFETY:` comment
+ *  sits within the same statement, and hopping past an export so an exported assertion can be
+ *  justified above the export line.
+ */
 function hasSafetyComment(sourceCode: SourceCode, node: TypeAssertion): boolean {
   let current: ESTree.Node = node;
   while (true) {

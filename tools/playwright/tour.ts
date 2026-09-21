@@ -19,10 +19,19 @@ const workspaceName = process.env.PW_WORKSPACE ?? "";
 // The owner runs dsh dark; PW_LIGHT=1 shoots the light theme instead.
 const scheme = process.env.PW_LIGHT ? "light" : "dark";
 const b = await launch();
+/** Wait a fixed number of milliseconds after a navigation or click, the one delay the shots rely on
+ *  to let the panel render.
+ */
 const wait = (p: Page, ms: number) => p.waitForTimeout(ms);
+/** Select the workspace/session rows matching a text, so a session name can be opened by its
+ *  treeitem label.
+ */
 const rows = (p: Page, text: string) => p.locator('[role="treeitem"]').filter({ hasText: text });
 // Every crop below is measured off a real box. An unrendered locator answers null, and a crop built
 // from one either throws on `.x` or silently shoots the wrong rectangle; name the selector instead.
+/** Return a locator's bounding box, throwing when nothing rendered, so a crop built from a null box
+ *  cannot silently measure the wrong area.
+ */
 const boxOf = async (loc: Locator, what: string): Promise<Box> => {
   const box = await loc.boundingBox();
   if (!box) throw new Error(`no box for ${what}: nothing rendered to measure`);
@@ -30,6 +39,9 @@ const boxOf = async (loc: Locator, what: string): Promise<Box> => {
 };
 // Expand the workspace when one is named, then take the last row matching the session name: a
 // workspace and its session often carry the same text, and the workspace row is always first.
+/** Open the session row named for this run, expanding a named workspace first when the session text
+ *  is shared with it, then clicking the last match.
+ */
 const pick = async (p: Page) => {
   const target = rows(p, sessionName);
   if (workspaceName) {
@@ -43,6 +55,9 @@ const pick = async (p: Page) => {
   await target.last().click({ force: true });
   await wait(p, 3500);
 };
+/** Open a new page at dsh and drive it to a picked session, waiting for the network to idle so the
+ *  panel is ready to shoot.
+ */
 const open = async (ctx: Context) => {
   const p = await ctx.newPage();
   await p.goto(dshUrl(token), { waitUntil: "networkidle" });
@@ -50,12 +65,18 @@ const open = async (ctx: Context) => {
   await pick(p);
   return p;
 };
+/** Write a screenshot to the output directory under a name with a clip, logging the file so a
+ *  failed write is visible in the run.
+ */
 const shot = async (p: Page, name: string, clip: Box) => {
   await p.screenshot({ path: `${out}/${name}.png`, clip });
   console.log("wrote", `${name}.png`);
 };
 // Crop to the panel plus the composer row under it. Reading the dialog's own box keeps the shot
 // right when the panel changes size, which a fixed 760px window did not.
+/** Compute the crop for a panel-plus-composer shot from real boxes, so the frame follows the
+ *  panel's size instead of a fixed window that would miss rows.
+ */
 const composerClip = async (p: Page, h = 420, left = 60): Promise<Box> => {
   const button = await boxOf(p.locator('button[aria-label="Oh My Claude"]'), "the panel button");
   const dialog = await p
@@ -76,10 +97,18 @@ const composerClip = async (p: Page, h = 420, left = 60): Promise<Box> => {
     height: bottom - top + pad + padTop,
   };
 };
+/** Return the selector for the plugin panel dialog, the single anchor every shot and tab targets.
+ */
 const panel = () => '[role="dialog"][aria-label="Oh My Claude"]';
+/** Select a panel tab by its role and visible text, so a tab is clicked by what a reader sees, not
+ *  a generated class.
+ */
 const tab = (p: Page, name: string) => p.locator(`${panel()} [role="tab"]`, { hasText: name });
 // dsh's sidebar width handle overlays the panel at some widths, so every click here is forced past
 // the hit test rather than waiting 30s for an overlay that never moves.
+/** Force-click a locator past any sidebar overlay, so a click does not hang waiting for a hit test
+ *  that never clears.
+ */
 const hit = async (loc: Locator) => {
   await loc.click({ force: true });
 };

@@ -13,6 +13,9 @@ type FunctionWithReturnType =
   | ESTree.TSFunctionType
   | ESTree.TSMethodSignature;
 
+/** Return the single identifier an alias type refers to, or null when it is parenthesized,
+ *  parameterized, qualified, or not a reference, so only bare aliases are followed.
+ */
 function referencedAliasName(type: ESTree.TSType): string | null {
   if (type.type === "TSParenthesizedType") return referencedAliasName(type.typeAnnotation);
   if (type.type !== "TSTypeReference" || type.typeName.type !== "Identifier") return null;

@@ -14,6 +14,9 @@ type ParameterOwner =
   | ESTree.TSFunctionType
   | ESTree.TSMethodSignature;
 
+/** Drain the parameter shapes (property, rest, default) to reach the real type annotation, so an
+ *  `object` on a destructured or defaulted parameter is still caught.
+ */
 function parameterAnnotation(parameter: Parameter): ESTree.TSTypeAnnotation | null | undefined {
   if (parameter.type === "TSParameterProperty") {
     return parameterAnnotation(parameter.parameter);
@@ -27,6 +30,9 @@ function parameterAnnotation(parameter: Parameter): ESTree.TSTypeAnnotation | nu
   return parameter.typeAnnotation;
 }
 
+/** Return the parameter's binding name, or strip a trailing `: object` from a non-identifier so the
+ *  report names the parameter, not the type.
+ */
 function parameterName(parameter: Parameter, sourceCode: SourceCode): string {
   return parameter.type === "Identifier"
     ? parameter.name
