@@ -4689,7 +4689,7 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
                 // page) keep their underline inside the content column, not edge to edge.
                 marginInline: PANEL_INSET,
                 paddingTop: 4,
-                gap: 2,
+                gap: narrow ? 0 : 2,
                 // Wrap rather than scroll sideways: a strip that scrolls hides the tab that did not
                 // fit, and the panel is anchored to its bottom edge, so a second row grows upward.
                 flexWrap: "wrap",
@@ -4710,7 +4710,13 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
                   // The strip sits under the body, so the lit edge is the mirror of a top tab bar:
                   // accent along the bottom, corners rounded on that side only, no box around each
                   // tab (nine bordered boxes read as buttons, not as tabs). Hover is in the sheet.
-                  style={tabStyle(tab === t.key)}
+                  // 8 px sides on a phone: the strip's inset would otherwise push the last tab
+                  // onto a fourth row at 390 px.
+                  style={
+                    narrow
+                      ? { ...tabStyle(tab === t.key), paddingInline: 8 }
+                      : tabStyle(tab === t.key)
+                  }
                   onClick={() => {
                     lastTab = t.key;
                     setTab(t.key);
