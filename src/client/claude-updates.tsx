@@ -30,8 +30,22 @@ const row = {
   fontSize: 13,
 } as const;
 
-/** Both dropdowns one width, so their edges line up; capped at the row on a narrow screen. */
-const pick = { ...select, minWidth: "min(200px, 100%)" };
+/** A fold's toggle: plain text with a triangle, left-aligned, the summary allowed to wrap. */
+const FOLD = {
+  background: "none",
+  border: "none",
+  padding: 0,
+  font: "inherit",
+  fontSize: 13,
+  color: "inherit",
+  cursor: "pointer",
+  textAlign: "left",
+} as const;
+
+/** A dropdown as wide as the choice on show, like the proxy switch's: `0 0 auto` so the flex row
+ *  cannot squeeze it, and `fieldSizing: content` so the width follows the words, not the longest
+ *  option. A browser without it sizes by the longest option. */
+const pick = { ...select, flex: "0 0 auto", fieldSizing: "content", minWidth: 0 } as const;
 
 /**
  * The rows under the Claude Code updates switch. Reads the box list (and rereads it when the Boxes
@@ -48,6 +62,8 @@ export function ClaudeUpdateDetails() {
   const [err, setErr] = useState("");
   const [checkLine, setCheckLine] = useState("");
   const [historyOpen, setHistoryOpen] = useState(false);
+  // Folded by default: open, the rows push the rest of Settings down by a screen's worth.
+  const [open, setOpen] = useState(false);
 
   useEffect(() => {
     const load = () =>
@@ -149,6 +165,22 @@ export function ClaudeUpdateDetails() {
   };
 
   const history = (upd?.log ?? []).slice(-10).toReversed();
+  const channelName =
+    channel === "stable"
+      ? "Stable"
+      : channel === "rc"
+        ? "Release candidate"
+        : channel === "latest"
+          ? "Latest"
+          : "Default (latest)";
+  const summary = [
+    boxes.length > 1 ? (box?.name ?? "This box") : null,
+    channelName,
+    upd?.auto ? "installs on its own" : "by the card",
+    `${upd?.log.length ?? 0} runs`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
   return (
     <div
       data-omc-claude-update-details=""
@@ -161,7 +193,17 @@ export function ClaudeUpdateDetails() {
         borderLeft: `1px solid ${T.border}`,
       }}
     >
-      {boxes.length > 1 && (
+      <button
+        type="button"
+        aria-expanded={open}
+        data-omc-update-options=""
+        onClick={() => setOpen((v) => !v)}
+        style={FOLD}
+      >
+        {`${open ? "▾" : "▸"}\u00a0Options`}
+        <span style={{ ...meta, whiteSpace: "normal" }}> · {summary}</span>
+      </button>
+      {open && boxes.length > 1 && (
         <div style={row}>
           <span>Box</span>
           <select
@@ -180,80 +222,76 @@ export function ClaudeUpdateDetails() {
           </select>
         </div>
       )}
-      <div style={row} data-omc-update-channel="">
-        <span>Release channel</span>
-        <select
-          aria-label="Release channel"
-          style={pick}
-          value={channel ?? ""}
-          disabled={busy}
-          onChange={(e) => void writeChannel(e.target.value || undefined)}
-        >
-          <option value="">Default (latest)</option>
-          <option value="latest">Latest</option>
-          <option value="stable">Stable, about a week behind</option>
-          <option value="rc">Release candidate</option>
-        </select>
-        <span style={{ ...meta, flexBasis: "100%", whiteSpace: "normal" }}>
-          Which releases the update card offers. Stable skips releases with known regressions.
-        </span>
-      </div>
-      <div style={row} data-omc-update-auto="">
-        <span>Update on its own</span>
-        <Switch
-          label="Update on its own"
-          on={upd?.auto === true}
-          disabled={upd === null || upd.off !== undefined || busy}
-          onChange={(next) => void post({ auto: next })}
-        />
-        <span style={{ ...meta, flexBasis: "100%", whiteSpace: "normal" }}>
-          {upd?.off
-            ? `Off: ${upd.off} is set.`
-            : "Install a new release as soon as this dsh sees one, without the card. Sessions already running finish on their version."}
-        </span>
-      </div>
-      <div data-omc-update-history="">
-        <div style={row}>
-          <button
-            type="button"
-            aria-expanded={historyOpen}
-            onClick={() => setHistoryOpen((v) => !v)}
-            style={{
-              background: "none",
-              border: "none",
-              padding: 0,
-              font: "inherit",
-              color: "inherit",
-              cursor: "pointer",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {historyOpen ? "▾" : "▸"} History
-            <span style={meta}> · {upd?.log.length ?? 0} runs</span>
-          </button>
-          <button
-            type="button"
-            style={btn}
-            disabled={upd === null || busy}
-            onClick={() => void checkNow()}
-          >
-            Check now
-          </button>
-        </div>
-        {checkLine ? <div style={{ ...meta, marginTop: 4 }}>{checkLine}</div> : null}
-        {historyOpen && (
-          <ul style={{ listStyle: "none", margin: "6px 0 0", padding: 0, fontSize: 12 }}>
-            {history.length === 0 ? <li style={meta}>No updates from here yet.</li> : null}
-            {history.map((e) => (
-              <li key={e.at} style={{ color: e.ok ? T.text : T.err }}>
-                {e.to ?? "?"} from {e.from ?? "?"} · {new Date(e.at).toLocaleString()} ·{" "}
-                {e.by === "button" ? "you" : "automatic"}
-                {!e.ok && e.note ? ` · ${e.note}` : ""}
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
+      {open && (
+        <>
+          <div style={row} data-omc-update-channel="">
+            <span>Release channel</span>
+            <select
+              aria-label="Release channel"
+              style={pick}
+              value={channel ?? ""}
+              disabled={busy}
+              onChange={(e) => void writeChannel(e.target.value || undefined)}
+            >
+              <option value="">Default (latest)</option>
+              <option value="latest">Latest</option>
+              <option value="stable">Stable, about a week behind</option>
+              <option value="rc">Release candidate</option>
+            </select>
+            <span style={{ ...meta, flexBasis: "100%", whiteSpace: "normal" }}>
+              Which releases the update card offers. Stable skips releases with known regressions.
+            </span>
+          </div>
+          <div style={row} data-omc-update-auto="">
+            <span>Update on its own</span>
+            <Switch
+              label="Update on its own"
+              on={upd?.auto === true}
+              disabled={upd === null || upd.off !== undefined || busy}
+              onChange={(next) => void post({ auto: next })}
+            />
+            <span style={{ ...meta, flexBasis: "100%", whiteSpace: "normal" }}>
+              {upd?.off
+                ? `Off: ${upd.off} is set.`
+                : "Install a new release as soon as this dsh sees one, without the card. Sessions already running finish on their version."}
+            </span>
+          </div>
+          <div data-omc-update-history="">
+            <div style={row}>
+              <button
+                type="button"
+                aria-expanded={historyOpen}
+                onClick={() => setHistoryOpen((v) => !v)}
+                style={{ ...FOLD, whiteSpace: "nowrap" }}
+              >
+                {historyOpen ? "▾" : "▸"} History
+                <span style={meta}> · {upd?.log.length ?? 0} runs</span>
+              </button>
+              <button
+                type="button"
+                style={btn}
+                disabled={upd === null || busy}
+                onClick={() => void checkNow()}
+              >
+                Check now
+              </button>
+            </div>
+            {checkLine ? <div style={{ ...meta, marginTop: 4 }}>{checkLine}</div> : null}
+            {historyOpen && (
+              <ul style={{ listStyle: "none", margin: "6px 0 0", padding: 0, fontSize: 12 }}>
+                {history.length === 0 ? <li style={meta}>No updates from here yet.</li> : null}
+                {history.map((e) => (
+                  <li key={e.at} style={{ color: e.ok ? T.text : T.err }}>
+                    {e.to ?? "?"} from {e.from ?? "?"} · {new Date(e.at).toLocaleString()} ·{" "}
+                    {e.by === "button" ? "you" : "automatic"}
+                    {!e.ok && e.note ? ` · ${e.note}` : ""}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </>
+      )}
       {err ? <span style={errText}>{err}</span> : null}
     </div>
   );
