@@ -28,6 +28,8 @@ export const takeDraft = (session: string): string | undefined => {
 // plain interval and cannot. One tab, never persisted, empty when no composer is mounted.
 let typed = "";
 
+/** Stores the composer's current text for `draftPending` to read, so a non-empty value marks the
+ *  person mid-sentence and the CLI skips its own away summary. */
 export const noteDraft = (text: string): void => {
   typed = text;
 };
@@ -35,6 +37,7 @@ export const noteDraft = (text: string): void => {
 /** Whether the person is mid-sentence in the composer. The CLI skips its own away summary on this. */
 export const draftPending = (): boolean => typed.trim() !== "";
 
+/** Registers `fn` to run when a queued draft is set, returning a function that unsubscribes it. */
 export const subscribeDraft = (fn: () => void): (() => void) => {
   subs.add(fn);
   return () => subs.delete(fn);

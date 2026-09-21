@@ -173,6 +173,8 @@ export const noticesOn = (): boolean => {
   }
 };
 
+/** Writes the session-notices toggle to localStorage, `on` or `off`; browser-local because the
+ *  notification permission it depends on is granted per browser, and a denied write stays off. */
 export const setNoticesOn = (on: boolean): void => {
   try {
     window.localStorage.setItem(KEY, on ? "on" : "off");

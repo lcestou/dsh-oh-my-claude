@@ -9,6 +9,8 @@ import { REPO_URL } from "../stars.js";
 
 const ROUTE = "/dsh-oh-my-claude";
 
+/** The "<version> available" pill: a button whose click copies the update `command` to the
+ *  clipboard and flashes whether it copied or the clipboard refused. */
 export function UpdatePill({ latest, command }: { latest: string; command: string }) {
   const [said, setSaid] = useState<"" | "command copied" | "copy blocked">("");
   const say = (what: "command copied" | "copy blocked") => {
@@ -63,6 +65,8 @@ export function UpdatePill({ latest, command }: { latest: string; command: strin
 let statusOnce:
   | { at: number; p: Promise<{ latest?: string; update?: string; stars?: number }> }
   | undefined;
+/** Fetches the status route once and shares the promise for ten seconds, so the Settings heading
+ *  and the Boxes card that open together do not hit it twice. */
 const loadStatus = (): Promise<{ latest?: string; update?: string; stars?: number }> => {
   if (statusOnce && Date.now() - statusOnce.at < 10_000) return statusOnce.p;
   const p = fetch(`${ROUTE}/status`)

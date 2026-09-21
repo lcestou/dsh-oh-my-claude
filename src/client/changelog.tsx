@@ -30,6 +30,8 @@ function Inline({ text }: { text: string }) {
   );
 }
 
+/** The Changelog block under Settings: fetches the route's parsed releases, draws them and marks
+ *  the version this box runs. */
 export function ChangelogBlock() {
   const [releases, setReleases] = useState<Release[] | null>(null);
   const [version, setVersion] = useState("");

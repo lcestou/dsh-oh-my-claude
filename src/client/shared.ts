@@ -38,6 +38,8 @@ export const cacheShare = ({
   return Math.max(0, Math.min(1, cacheRead / denom));
 };
 
+/** A past time as `min ago` under an hour, `h ago` under a day and a calendar date after that,
+ *  reading future times as now. */
 export const ago = (ms: number): string => {
   const s = Math.max(0, (Date.now() - ms) / 1000);
   if (s < 3600) return `${Math.max(1, Math.round(s / 60))} min ago`;
@@ -45,10 +47,6 @@ export const ago = (ms: number): string => {
   return new Date(ms).toLocaleDateString();
 };
 
-/** The CLI's keyword matcher (`SOt`) for a composer keyword such as `ultracode`: no match when the
- *  text is a slash command, inside quotes, backticks, brackets or a tag, glued to a path or flag
- *  character, or followed by a dotted member. A keyword typed as an example is not a trigger, so
- *  it is not painted. */
 const KEYWORD_PAIRS = new Map<string, string>([
   ["`", "`"],
   ['"', '"'],
@@ -58,7 +56,13 @@ const KEYWORD_PAIRS = new Map<string, string>([
   ["(", ")"],
   ["'", "'"],
 ]);
+/** A letter, digit or underscore. A closing quote followed by one is an apostrophe inside a
+ *  word, so the quoted span stays open. */
 const wordy = (ch: string | undefined): boolean => ch !== undefined && /[\p{L}\p{N}_]/u.test(ch);
+/** The CLI's keyword matcher (`SOt`) for a composer keyword such as `ultracode`: no match when the
+ *  text is a slash command, inside quotes, backticks, brackets or a tag, glued to a path or flag
+ *  character, or followed by a dotted member. A keyword typed as an example is not a trigger, so
+ *  it is not painted. */
 export const keywordMatches = (text: string, word: string): { start: number; end: number }[] => {
   const out: { start: number; end: number }[] = [];
   if (!new RegExp(word, "i").test(text) || text.startsWith("/")) return out;
@@ -271,6 +275,8 @@ export const controlStatesCss = (scope: string): string =>
   `${scope} button:not([role="switch"]):focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#3b82f6);outline-offset:1px}` +
   `${scope} input:not([type="checkbox"]):not([type="file"]):focus-visible,${scope} select:focus-visible,${scope} textarea:focus-visible{border-color:var(--dsw-alias-brand-primary,#3b82f6);outline:none}` +
   `${scope} input:disabled,${scope} select:disabled{color:var(--dsw-alias-label-tertiary,rgba(128,128,128,.7));cursor:default}`;
+/** Shared capsule styling for a labelled chip: a small rounded pill whose border and text take
+ *  `color`, reused for the status stamps the plugin puts on rows. */
 export const pill = (color: string): CSSProperties => ({
   display: "inline-block",
   padding: "1px 8px",
@@ -465,6 +471,9 @@ export const isRingRoot = (el: HTMLElement | null) =>
  */
 const claudeMount = (provider: string | undefined): string | undefined =>
   provider?.startsWith("claude-code") === true ? provider : undefined;
+/** The Claude mount for a session, open or not: read the live model directory first and the list
+ *  projection after, so a sidebar session this tab never opened still resolves, undefined for a
+ *  non-Claude session. */
 export const claudeProviderOf = (ctx: ClientCtx, id: string): string | undefined => {
   try {
     const live = claudeMount(
@@ -513,6 +522,8 @@ export const whenContextGone = (fn: () => void): void => {
   if (gone) fn();
   else goneWatchers.add(fn);
 };
+/** Mark this bundle disposed and run the watchers registered through `whenContextGone` once, so
+ *  loops bound to the dead context stop reading it. */
 const retire = (): void => {
   gone = true;
   for (const fn of goneWatchers) fn();
@@ -907,6 +918,8 @@ export type UsageBreakdownReply =
 // second tab paid it whenever it was first to ask. Without it the server answers from its
 // five-minute cache and the figures, which cover a 24 h and a 7 d window, lose nothing.
 const breakdownCache = new Map<string, { at: number; reply: UsageBreakdownReply }>();
+/** The usage breakdown for a provider, remembered in this tab for a minute. `force` skips that and
+ *  asks the box to read again, which spawns `claude -p "/usage"` there. */
 export const loadBreakdown = async (
   provider?: string,
   force = false,
