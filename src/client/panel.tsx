@@ -4475,6 +4475,9 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
     display: "flex",
     flexDirection: "column",
     overflow: "hidden",
+    // A wheel that reaches the panel's end, or lands on its tab strip, stays here instead of
+    // scrolling the chat behind it.
+    overscrollBehavior: "contain",
     opacity: shown ? 1 : 0,
     transform: shown || card ? "none" : "translateY(6px)",
     transition: `opacity ${easeMs()}ms ease, transform ${easeMs()}ms ease`,
@@ -4633,6 +4636,7 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
                 flex: "1 1 auto",
                 minHeight: 0,
                 overflow: "auto",
+                overscrollBehavior: "contain",
                 // The panel's one side inset: every tab's rows, cards and headings line up on it.
                 padding: `4px ${PANEL_INSET}px`,
                 width: card || narrow ? undefined : 0,
