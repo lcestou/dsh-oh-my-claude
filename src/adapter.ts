@@ -166,7 +166,7 @@ import {
   type ToolModeInfo,
 } from "./rows-probe.js";
 import { readSshToken, THIS_BOX } from "./ssh-login.js";
-import { CHILD_ENV, childEnv, errorText } from "./process.js";
+import { CHILD_ENV, childEnv, errorText, resolveCommand } from "./process.js";
 import {
   assistantMessageText,
   foreignTurns,
@@ -2313,6 +2313,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   constructor(ctx: PluginContext, config: Schemastery.TypeT<typeof Config>) {
     super();
     this.ctx = ctx;
+    config = localConfig(config);
     this.config = config;
     this.providerId = config.providerId;
     // SAFETY: regex only matches 'claude-code' or 'claude-code-…'; the string shape is enforced by the schema default
@@ -6206,6 +6207,22 @@ function reconcileSshBoxes(
     // adopted). A hot reload finds the processes already in the shared registry and skips them.
     void adapter.adoptHolds().catch((e) => log("warn", `hold adoption: ${errorText(e)}`));
   }
+}
+
+/** The config as this box runs it, as a copy. A bare local `command` becomes the absolute path
+ *  `resolveCommand` finds, so a dsh started with a short PATH (DSH Desktop from the macOS Dock)
+ *  still reaches the CLI; a remote one is left alone, the far box has its own PATH. On Windows the
+ *  keeper gives way to a plain child: it needs a Unix socket and `systemd-run`, neither of which
+ *  exists there, so a keeper spawn would fail every turn. */
+export function localConfig<T extends { command: string; sshHost: string; spawn: string }>(
+  config: T,
+  platform: NodeJS.Platform = process.platform,
+  resolve: (command: string) => string = resolveCommand,
+): T {
+  const out = { ...config };
+  if (!out.sshHost) out.command = resolve(out.command);
+  if (platform === "win32" && out.spawn === "keeper") out.spawn = "node";
+  return out;
 }
 
 /** One `claude auth status` at mount, so the picker names a logged-out box before its first turn.

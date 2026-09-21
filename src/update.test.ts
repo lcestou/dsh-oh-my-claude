@@ -38,6 +38,8 @@ assert.equal(
   updateCommand("dsh-oh-my-claude", "web"),
   "dsh plugin --profile web update dsh-oh-my-claude",
 );
+// DSH Desktop owns the `desktop` profile and the CLI refuses it: no command to copy there.
+assert.equal(updateCommand("dsh-oh-my-claude", "desktop"), undefined);
 
 // The registry read: one call per day per name, an hour after a failure, never a throw.
 {

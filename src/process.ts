@@ -1,10 +1,12 @@
 // One long-lived `claude -p --input-format stream-json` process per dsh session, plus the control
 // channel the Agent SDK uses over the same stream: `control_request` lines from the CLI (permission
 // prompts, user questions) answered with `control_response` lines on stdin.
-import { spawn } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
 import { connect } from "node:net";
-import { join } from "node:path";
+import { homedir } from "node:os";
+import { delimiter, join, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import { PassThrough, Writable } from "node:stream";
 import { createInterface } from "node:readline";
 import type { AskUserQuestionItem, JsonValue, SubprocessRuntime } from "./dsh.js";
@@ -53,8 +55,49 @@ export const CHILD_ENV = {
 export function childEnv(base: NodeJS.ProcessEnv, override?: Record<string, string>) {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(base)) if (v !== undefined) env[k] = v;
+  if (process.platform !== "win32") env.PATH = withClaudeDirs(env.PATH);
   Object.assign(env, CHILD_ENV, override ?? {});
   return env;
+}
+
+/** Where Claude Code's installers put `claude` (the native installer, the old local install, Homebrew,
+ *  npm and bun globals, Volta). An app started from the macOS Dock or Finder, DSH Desktop among
+ *  them, gets a PATH of `/usr/bin:/bin:/usr/sbin:/sbin`, which holds none of these. */
+export function claudeDirs(home = homedir()): string[] {
+  return [
+    join(home, ".local", "bin"),
+    join(home, ".claude", "local"),
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    join(home, ".npm-global", "bin"),
+    join(home, ".bun", "bin"),
+    join(home, ".volta", "bin"),
+  ];
+}
+
+/** `path` with every folder from `dirs` it lacks appended, so a name found on the caller's PATH
+ *  keeps winning. Appending also lets an npm-installed `claude`, a `#!/usr/bin/env node` script,
+ *  find the node that sits beside it. */
+export function withClaudeDirs(path: string | undefined, dirs = claudeDirs()): string {
+  const have = (path ?? "").split(delimiter).filter(Boolean);
+  return [...have, ...dirs.filter((d) => !have.includes(d))].join(delimiter);
+}
+
+/** The absolute path of `command` when it is a bare name found on `path` or in `dirs`, else
+ *  `command` unchanged: a path is trusted as given, and a name found nowhere is left for spawn to
+ *  fail on with the usual ENOENT. On Windows a bare name also matches `<name>.exe`. */
+export function resolveCommand(
+  command: string,
+  path = process.env.PATH,
+  dirs = claudeDirs(),
+  exists: (p: string) => boolean = existsSync,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  if (!command || command.includes("/") || command.includes(sep)) return command;
+  const names = platform === "win32" ? [command, `${command}.exe`] : [command];
+  for (const dir of [...(path ?? "").split(delimiter).filter(Boolean), ...dirs])
+    for (const name of names) if (exists(join(dir, name))) return join(dir, name);
+  return command;
 }
 
 /** The child process seam this plugin uses: dsh's own spawner and the node one both answer it. */
@@ -1365,6 +1408,10 @@ export function launchKeeper(argv: string[], unit: string): void {
     });
     c.unref();
   };
+  if (!userScopes()) {
+    detached();
+    return;
+  }
   try {
     const c = spawn(
       "systemd-run",
@@ -1376,6 +1423,30 @@ export function launchKeeper(argv: string[], unit: string): void {
   } catch {
     detached();
   }
+}
+
+let scopes: boolean | undefined;
+/** Whether `systemd-run --user --scope` works here, asked once per process. The binary existing is
+ *  not enough: without a reachable user bus (a container, WSL, an SSH login with no user manager, a
+ *  launcher that clears the environment) it starts, prints "Failed to connect to bus" and exits 1.
+ *  The spawn itself succeeds, so the `error` fallback never fires and the keeper is never started;
+ *  every turn then died as "keeper did not answer" (found 2026-09-21 running dsh under Electron with
+ *  a cleared environment). */
+function userScopes(): boolean {
+  scopes ??= scopesWork();
+  return scopes;
+}
+
+/** The uncached probe behind `userScopes`: a throwaway `true` in a user scope, which only exits 0
+ *  when systemd-run is installed and its user bus answers. A missing binary reads as `null`. */
+export function scopesWork(
+  probe: () => number | null = () =>
+    spawnSync("systemd-run", ["--user", "--scope", "--quiet", "--collect", "true"], {
+      stdio: "ignore",
+      timeout: 5000,
+    }).status,
+): boolean {
+  return probe() === 0;
 }
 
 /**
@@ -1399,7 +1470,9 @@ export async function spawnKeeper(
   } catch {
     // no stale socket
   }
-  const keeperJs = new URL("./keeper.js", import.meta.url).pathname;
+  // fileURLToPath, not `.pathname`: the pathname keeps %20 for a space and a leading slash before a
+  // Windows drive letter, so the keeper script is not found under either.
+  const keeperJs = fileURLToPath(new URL("./keeper.js", import.meta.url));
   launch([process.execPath, keeperJs, dir]);
   return attachKeeper(dir, 8000);
 }

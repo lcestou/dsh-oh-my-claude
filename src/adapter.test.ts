@@ -75,11 +75,16 @@ import {
   diffContext,
   contextSizes,
   skillDoctorReply,
+  localConfig,
 } from "./adapter.js";
 import { PERMISSION_MODES } from "./state.js";
 import {
   CHILD_ENV,
   childEnv,
+  claudeDirs,
+  resolveCommand,
+  scopesWork,
+  withClaudeDirs,
   ClaudeProcess,
   LineQueue,
   TIMEOUT,
@@ -3703,6 +3708,96 @@ console.log("temporary ok");
 }
 console.log("hook-rows ok");
 
+// A short PATH (DSH Desktop started from the macOS Dock) still reaches the CLI, and Windows never
+// takes the keeper, which needs a Unix socket and systemd-run.
+{
+  const dirs = ["/h/.local/bin", "/opt/homebrew/bin"];
+  assert.equal(
+    withClaudeDirs("/usr/bin:/bin", dirs),
+    "/usr/bin:/bin:/h/.local/bin:/opt/homebrew/bin",
+  );
+  assert.equal(
+    withClaudeDirs("/h/.local/bin:/bin", dirs),
+    "/h/.local/bin:/bin:/opt/homebrew/bin",
+    "no duplicates",
+  );
+  assert.equal(withClaudeDirs(undefined, dirs), "/h/.local/bin:/opt/homebrew/bin");
+  const on =
+    (...paths: string[]) =>
+    (p: string) =>
+      paths.includes(p);
+  assert.equal(
+    resolveCommand("claude", "/usr/bin:/bin", dirs, on("/h/.local/bin/claude"), "darwin"),
+    "/h/.local/bin/claude",
+    "found in an installer folder the PATH lacks",
+  );
+  assert.equal(
+    resolveCommand(
+      "claude",
+      "/usr/bin",
+      dirs,
+      on("/usr/bin/claude", "/h/.local/bin/claude"),
+      "darwin",
+    ),
+    "/usr/bin/claude",
+    "the caller's PATH wins over the installer folders",
+  );
+  assert.equal(
+    resolveCommand("claude", "/usr/bin", dirs, on(), "darwin"),
+    "claude",
+    "not found: left for spawn",
+  );
+  assert.equal(
+    resolveCommand("/x/claude", "", dirs, on(), "darwin"),
+    "/x/claude",
+    "a path is trusted",
+  );
+  assert.equal(
+    resolveCommand("", "/usr/bin", dirs, on("/usr/bin/"), "darwin"),
+    "",
+    "empty stays empty",
+  );
+  assert.ok(claudeDirs("/h").includes("/h/.local/bin"));
+
+  const found = () => "/abs/claude";
+  const base = { command: "claude", sshHost: "", spawn: "keeper" };
+  assert.deepEqual(localConfig(base, "darwin", found), { ...base, command: "/abs/claude" });
+  assert.equal(
+    localConfig(base, "darwin", found) === base,
+    false,
+    "a copy, not the caller's object",
+  );
+  assert.equal(base.command, "claude");
+  assert.equal(
+    localConfig({ ...base, sshHost: "u@box" }, "darwin", found).command,
+    "claude",
+    "remote left alone",
+  );
+  assert.equal(localConfig(base, "win32", found).spawn, "node", "Windows drops the keeper");
+  assert.equal(
+    localConfig({ ...base, spawn: "dsh" }, "win32", found).spawn,
+    "dsh",
+    "only keeper is swapped",
+  );
+  assert.equal(localConfig(base, "linux", found).spawn, "keeper");
+}
+
+// A systemd-run that exists but cannot reach its bus exits 1; only a clean 0 counts as working.
+assert.equal(
+  scopesWork(() => 0),
+  true,
+);
+assert.equal(
+  scopesWork(() => 1),
+  false,
+  "installed, no user bus",
+);
+assert.equal(
+  scopesWork(() => null),
+  false,
+  "not installed",
+);
+
 // keeper mode: the default spawn, one keeper dir per provider id and dsh session, stable across calls.
 {
   assert.equal(Config({}).spawn, "keeper");
@@ -3720,7 +3815,8 @@ console.log("hook-rows ok");
   // `spawn: node` while keeper mode ignored it, so the same config behaved two ways.
   const composed = childEnv({ MCP_TOOL_TIMEOUT: "5000", PATH: "/bin", EMPTY: undefined });
   assert.equal(composed.MCP_TOOL_TIMEOUT, "3600000", "plugin value wins over the inherited one");
-  assert.equal(composed.PATH, "/bin", "the rest of the environment is carried through");
+  assert.ok(composed.PATH?.startsWith("/bin:"), "the inherited PATH is carried through, first");
+  assert.equal(composed.PATH, withClaudeDirs("/bin"), "the installer folders follow it");
   assert.equal("EMPTY" in composed, false, "unset variables are dropped, not passed as undefined");
   assert.equal(
     childEnv({}, { MCP_TOOL_TIMEOUT: "1" }).MCP_TOOL_TIMEOUT,

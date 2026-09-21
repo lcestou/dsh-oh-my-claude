@@ -27,6 +27,18 @@ export declare const CHILD_ENV: {
  *  happens to be in dsh's environment would otherwise cut relayed dsh tools short in one spawn mode
  *  and not the other. A caller that means to override still wins, which is the escape hatch. */
 export declare function childEnv(base: NodeJS.ProcessEnv, override?: Record<string, string>): Record<string, string>;
+/** Where Claude Code's installers put `claude` (the native installer, the old local install, Homebrew,
+ *  npm and bun globals, Volta). An app started from the macOS Dock or Finder, DSH Desktop among
+ *  them, gets a PATH of `/usr/bin:/bin:/usr/sbin:/sbin`, which holds none of these. */
+export declare function claudeDirs(home?: string): string[];
+/** `path` with every folder from `dirs` it lacks appended, so a name found on the caller's PATH
+ *  keeps winning. Appending also lets an npm-installed `claude`, a `#!/usr/bin/env node` script,
+ *  find the node that sits beside it. */
+export declare function withClaudeDirs(path: string | undefined, dirs?: string[]): string;
+/** The absolute path of `command` when it is a bare name found on `path` or in `dirs`, else
+ *  `command` unchanged: a path is trusted as given, and a name found nowhere is left for spawn to
+ *  fail on with the usual ENOENT. On Windows a bare name also matches `<name>.exe`. */
+export declare function resolveCommand(command: string, path?: string | undefined, dirs?: string[], exists?: (p: string) => boolean, platform?: NodeJS.Platform): string;
 /** The child process seam this plugin uses: dsh's own spawner and the node one both answer it. */
 export interface SubprocessHandle {
     stdin: import("node:stream").Writable;
@@ -657,6 +669,9 @@ export declare function readKeeperSpec(dir: string): KeeperSpec | undefined;
 /** Launch the keeper in its own systemd user scope when possible (a service restart's cgroup kill
  *  then misses it), else as a detached process with its own group. */
 export declare function launchKeeper(argv: string[], unit: string): void;
+/** The uncached probe behind `userScopes`: a throwaway `true` in a user scope, which only exits 0
+ *  when systemd-run is installed and its user bus answers. A missing binary reads as `null`. */
+export declare function scopesWork(probe?: () => number | null): boolean;
 /**
  * Start a keeper for one Claude process and attach to it. `launch` runs the keeper command line
  * (plain detached spawn, or a systemd user scope so a service restart's cgroup kill misses it).

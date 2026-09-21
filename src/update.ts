@@ -37,7 +37,10 @@ export function profileFromPath(path: string, fallback = "web"): string {
 }
 
 /** The two lines that bring in a new version, as the README's Install section gives them. */
-export function updateCommand(name: string, profile: string): string {
+export function updateCommand(name: string, profile: string): string | undefined {
+  // DSH Desktop owns the `desktop` profile and the dsh CLI refuses it, so a copied command would
+  // only fail; Desktop users update from the app's own Plugin Manager instead.
+  if (profile === "desktop") return undefined;
   return `dsh plugin --profile ${profile} update ${name}`;
 }
 

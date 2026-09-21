@@ -1473,5 +1473,15 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      *  rather than asked, since nobody is watching a side call. */
     oneShot(options: GenerateOptions): AsyncGenerator<StreamChunk>;
 }
+/** The config as this box runs it, as a copy. A bare local `command` becomes the absolute path
+ *  `resolveCommand` finds, so a dsh started with a short PATH (DSH Desktop from the macOS Dock)
+ *  still reaches the CLI; a remote one is left alone, the far box has its own PATH. On Windows the
+ *  keeper gives way to a plain child: it needs a Unix socket and `systemd-run`, neither of which
+ *  exists there, so a keeper spawn would fail every turn. */
+export declare function localConfig<T extends {
+    command: string;
+    sshHost: string;
+    spawn: string;
+}>(config: T, platform?: NodeJS.Platform, resolve?: (command: string) => string): T;
 /** The entry point dsh calls: build the adapter, register its provider and adapter, probe the login, and pin the instance on globalThis so a re-instantiation at boot shares the one already running. */
 export declare function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Config>): void;
