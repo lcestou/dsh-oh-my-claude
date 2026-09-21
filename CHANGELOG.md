@@ -58,6 +58,21 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Changed
 
+- The panel's tabs work from the keyboard. The strip is one stop in the tab order, the arrow keys,
+  Home and End move between tabs, and opening the panel moves focus into it rather than leaving
+  Tab to walk the page behind.
+- The two dock cards, the Claude Code update card and a side question, have a real fold button in
+  their header with Copy and close beside it, where the whole header used to be a clickable div
+  holding buttons, which a screen reader cannot use. The side question's chevron now sits before
+  Copy. The update card also stops its countdown to closing while it has keyboard focus.
+- The Restore, Skills and Session browser searches look like dsh's own: its magnifier inside the
+  field, the base layer behind it, 32 px tall. The Restore and Skills ones had been squeezed to
+  17 px.
+- A session with no title shows as `Untitled · <id>` in Restore and the Session browser, not as a
+  bare date, and the Settings card that lists every session is called Session browser, not
+  Archived Sessions.
+- A new session's MCP tab says Claude starts on your first message, in muted text, instead of a red
+  "no live Claude process".
 - "What's driving your limits" has left the plan-usage meter and become **What else drives your
   usage**, a fold in the Skills tab. Its figures are a rolling seven days of this machine's
   sessions, while the bars it used to sit under are exact, account-wide and aligned to your reset
@@ -78,6 +93,8 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- The dsh hooks line in Diagnostics no longer turns amber on a blank session. It checked for the
+  context ring, which dsh only draws once a session has context.
 - The ✻ panel no longer runs under dsh's top strip in a short window. On a new session the
   composer sits mid-screen, and the panel sized itself to reach the top of the window, while dsh's
   conversation area starts 40 px lower and clipped its first rows, the Restore search among them.
