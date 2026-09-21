@@ -309,7 +309,7 @@ function RestoreBody({
       {candidates.length > 8 && (
         <SearchField
           hook="data-omc-restore-search"
-          style={{ margin: "2px 0 4px" }}
+          style={{ marginBottom: 4 }}
           value={query}
           placeholder={`Search ${candidates.length} transcripts in ${name}`}
           label="Search transcripts"
@@ -1109,7 +1109,7 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
 
   return (
     <div style={bodyFlow} data-omc-skills="">
-      <div style={{ display: "flex", gap: 6, padding: "2px 0" }}>
+      <div style={{ display: "flex", gap: 6, paddingBottom: 2 }}>
         {!creating && (
           <button
             type="button"
@@ -4218,7 +4218,7 @@ function AsidesBody({ sessionId }: { sessionId: string }) {
   if (items === null) return <span style={stateText}>Loading…</span>;
   if (items.length === 0) {
     return (
-      <div style={{ ...meta, padding: "4px 0", fontSize: 12, whiteSpace: "normal" }}>
+      <div style={{ ...meta, paddingBottom: 4, fontSize: 12, whiteSpace: "normal" }}>
         No asides in this session. Ask one with <code style={codeInline}>/btw</code>. The answer
         docks above the composer instead of joining the transcript, and lands here.
       </div>
@@ -4647,8 +4647,9 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
                 minHeight: 0,
                 overflow: "auto",
                 overscrollBehavior: "contain",
-                // The panel's one side inset: every tab's rows, cards and headings line up on it.
-                padding: `4px ${PANEL_INSET}px`,
+                // The panel's one inset, top and bottom as well as the sides: every tab's first row, cards and
+                // headings line up on it.
+                padding: PANEL_INSET,
                 width: card || narrow ? undefined : 0,
                 minWidth: card || narrow ? undefined : "100%",
               }}
