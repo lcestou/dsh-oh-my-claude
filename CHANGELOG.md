@@ -12,14 +12,12 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
   own markup still hold. Every dsh upgrade that has broken the plugin broke it silently, by moving
   something a selector pointed at, and the cost was never the fix but the days before anyone
   noticed. A break now shows the first time the panel is opened, and names what stopped working.
-
 - The session browser can search inside transcripts, not only their titles. Type a phrase, press
   Search transcripts, and the list narrows to the sessions that said it, with a snippet under each.
   The scope dropdown covers this workspace or every workspace on the box. It searches your messages
   and Claude's replies; tool output is not searched, and the status line says so.
 - A one-line nudge under the Settings heading, with the repo's live star count and a link to it.
   The `×` hides it for good on the box, which also stops the count being read.
-
 - A session that stops to ask you something now raises a notice, the way one that finishes a turn
   already did. A permission dialog or an MCP question keeps the CLI's stream open, so the session
   still reads as running and nothing fired; a prompt on a tab you were not looking at could sit
@@ -34,14 +32,56 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
   header is not the six known columns still shows as raw text.
 - Concise joins the output styles the Tune tab offers. It is one of Claude Code's four built-in
   styles and the only one the row left out; it makes Claude answer tersely and skip the preamble.
-
 - The Plugins roster names a plugin that loaded with a warning, under the block that names one that
   failed. A warning is the CLI's own wording for a plugin it took but had to work around, such as a
   default folder the manifest shadows. The list refreshes when the session next starts, since the
   CLI reports no warning count on a reload.
+- The Skills tab can now add, edit and remove skills, not only list them. New skill writes a template `SKILL.md` and opens it for editing; Edit and Remove act on your own and the project's skills, while a plugin's stay read-only. A change reaches the running session at once, so a new skill's slash command works without restarting Claude.
+- The context ring popover now shows what is driving your plan limits, by skill, subagent, plugin
+  and MCP server, over the last seven days. It reads Claude Code's own `/usage` on the box, so the
+  figures match what `claude` reports in a terminal.
+- The Claude Code update card links the version it offers to that release's entry on
+  code.claude.com's changelog, in a new tab, so what changed is one click from the offer.
+- The Plugins roster names any plugin the Claude Code CLI could not load, with the reason, in a
+  red block above the plugin rows. The block clears once a plugin reload reports no errors left;
+  until then it shows what the session's last start found.
+- A model fallback now surfaces in the session. When Claude's safeguards flag a message and re-run
+  it on another model, the transcript shows a line naming the model that answered and the category
+  that flagged the request, and a desktop notice says the same when the turn ends in a background
+  tab. The model picker moves onto the answering model when the switch sticks for the rest of the
+  conversation, matching the app, and stays put when the fallback was a one-off or a subagent's.
+- A Skills tab in the panel gathers every skill the CLI can reach, grouped into User, Project and
+  Plugin sections, and folds in Claude Code's own `/skill-doctor` report of what each costs in
+  context and how often you have used it. The report runs the command as a throwaway one-shot, so no
+  message reaches the model and it costs no usage. This replaces the Skill costs card that sat in
+  Settings and the skills list that sat under the Instructions tab.
+
+### Changed
+
+- "What's driving your limits" has left the plan-usage meter and become **What else drives your
+  usage**, a fold in the Skills tab. Its figures are a rolling seven days of this machine's
+  sessions, while the bars it used to sit under are exact, account-wide and aligned to your reset
+  day; about two of its seven days fall in the previous cycle, so under those bars it read as a
+  breakdown of a number it was not. The Skills tab is the same rolling window throughout. The move
+  also drops its Top skills list, which repeated five rows of the cost table above it, and adds
+  Claude Code's three sentences about how the work was shaped, which the parser used to discard.
+- The chips dsh draws in a sent bubble, a skill it knows such as `/ic-logos` and a file
+  mention, take the Claude look's accent under the "Links, rules and quotes" group instead of
+  dsh's blue, so a sent skill reads in the same colour as the rest of the Claude chrome.
+- A Claude command or skill run from dsh's slash menu (`/claude-<name>`) shows in the transcript
+  as the bubble the person sent, `/name arguments`, instead of a collapsed context row. The row
+  was easy to miss when reading back where a turn started.
+- Each turn read the session's whole event log twice, front to back, to find the open turn and
+  step and the last todo list; both reads now start from the tail and stop at the first hit, so a
+  long session pays for a few events instead of all of them. The model-selection lookup used on
+  a continue-after-limit does the same.
 
 ### Fixed
 
+- The terminal mirror no longer replays exchanges it already showed after dsh restarts. Two saves
+  of where it had read up to could land at once, and the older one could win, so the next start
+  read from an earlier point and posted those exchanges into the session again. Saves now run one
+  at a time, in the order they were made.
 - The "What's driving your limits" section opens instantly and no longer waits on Claude Code. It
   spawns `claude -p "/usage"`, which takes a few seconds, and the answer was kept only in memory,
   so every dsh restart threw it away and the next person to open the meter waited again with the
@@ -53,76 +93,19 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
   past the browser's one-minute memo paid a fresh 3.6 s spawn, and a second tab paid it whenever it
   asked first. It now reads the cache, and the figures cover 24 hours and 7 days, so nothing is
   lost by being five minutes old.
-
 - A skill both dsh and Claude Code know now reaches Claude once instead of twice. dsh stops sending its own copy when the CLI lists that skill's name, because Claude Code injects the body itself. A skill only dsh knows still reaches Claude, since that copy is the only one.
 - The effort picker now honours settings.json `maxEffortLevel`, so it lists only the levels the CLI will run. Before this it offered every level a model supports and the CLI quietly clamped a pick above the cap, so the picker showed an effort the turn never used.
-
-### Changed
-
-- "What's driving your limits" has left the plan-usage meter and become **What else drives your
-  usage**, a fold in the Skills tab. Its figures are a rolling seven days of this machine's
-  sessions, while the bars it used to sit under are exact, account-wide and aligned to your reset
-  day; about two of its seven days fall in the previous cycle, so under those bars it read as a
-  breakdown of a number it was not. The Skills tab is the same rolling window throughout. The move
-  also drops its Top skills list, which repeated five rows of the cost table above it, and adds
-  Claude Code's three sentences about how the work was shaped, which the parser used to discard.
-
-- The chips dsh draws in a sent bubble, a skill it knows such as `/ic-logos` and a file
-  mention, take the Claude look's accent under the "Links, rules and quotes" group instead of
-  dsh's blue, so a sent skill reads in the same colour as the rest of the Claude chrome.
-
-### Added
-
-- The Skills tab can now add, edit and remove skills, not only list them. New skill writes a template `SKILL.md` and opens it for editing; Edit and Remove act on your own and the project's skills, while a plugin's stay read-only. A change reaches the running session at once, so a new skill's slash command works without restarting Claude.
-
-- The context ring popover now shows what is driving your plan limits, by skill, subagent, plugin
-  and MCP server, over the last seven days. It reads Claude Code's own `/usage` on the box, so the
-  figures match what `claude` reports in a terminal.
-
-- The Claude Code update card links the version it offers to that release's entry on
-  code.claude.com's changelog, in a new tab, so what changed is one click from the offer.
-- The Plugins roster names any plugin the Claude Code CLI could not load, with the reason, in a
-  red block above the plugin rows. The block clears once a plugin reload reports no errors left;
-  until then it shows what the session's last start found.
-- A model fallback now surfaces in the session. When Claude's safeguards flag a message and re-run
-  it on another model, the transcript shows a line naming the model that answered and the category
-  that flagged the request, and a desktop notice says the same when the turn ends in a background
-  tab. The model picker moves onto the answering model when the switch sticks for the rest of the
-  conversation, matching the app, and stays put when the fallback was a one-off or a subagent's.
-
-- A Skills tab in the panel gathers every skill the CLI can reach, grouped into User, Project and
-  Plugin sections, and folds in Claude Code's own `/skill-doctor` report of what each costs in
-  context and how often you have used it. The report runs the command as a throwaway one-shot, so no
-  message reaches the model and it costs no usage. This replaces the Skill costs card that sat in
-  Settings and the skills list that sat under the Instructions tab.
-
-### Changed
-
-- A Claude command or skill run from dsh's slash menu (`/claude-<name>`) shows in the transcript
-  as the bubble the person sent, `/name arguments`, instead of a collapsed context row. The row
-  was easy to miss when reading back where a turn started.
-
-- Each turn read the session's whole event log twice, front to back, to find the open turn and
-  step and the last todo list; both reads now start from the tail and stop at the first hit, so a
-  long session pays for a few events instead of all of them. The model-selection lookup used on
-  a continue-after-limit does the same.
-
-### Fixed
-
 - The percentage dsh prints beside the context ring, visible on a phone, said 100% while the
   ring and the usage panel said 58%. dsh draws that text from the same pressure figure that pins
   the ring for a Claude Code session; the plugin already corrected the ring and its label, and now
   corrects the text too.
-
 - Under the default `spawn: keeper`, a Stop or idle timeout sent the CLI a SIGTERM and nothing
   more, so a `claude` wedged inside an uninterruptible tool outlived both; the keeper now follows
   with a SIGKILL after five seconds, as the plain spawner already did.
-
 - The Claude Code update card stays folded once folded. The fold lived in the card's own
   state, so switching sessions remounted it open; it is now kept on the box for that release,
   beside the dismissal, and a fold made in one tab reaches every other tab and session on the
   box within a few seconds. A newer release opens the card again.
-
 - Stop, then send again within a few seconds: the new turn no longer fails with the CLI's
   `[ede_diagnostic] result_type=user` text. When a steer had been forwarded to the CLI before the
   Stop, the plugin still waited to park the step on it, read the CLI's interrupt echo as that
@@ -130,6 +113,18 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
   interrupt now clears the park flag; the CLI runs the forwarded steer as a turn of its own, and
   its reply arrives the way a background reply does. An error there is dropped the way a
   background error is.
+- A request could make ssh run a command on the machine hosting dsh. Two Tailscale routes passed
+  a host from the request straight into `ssh`, and a host of `-oProxyCommand=<command>` is read
+  by ssh as an option that runs the command before connecting anywhere. Anyone who could sign in
+  to dsh could do it, outside every permission mode Claude has. The host is now always a
+  destination, never an option, for every ssh call the plugin makes.
+- The saved-boxes file, which holds each remote dsh's sign-in token, was readable by every
+  account on the machine. It is now readable by its owner only.
+- Memory no longer grows for as long as dsh runs. Several records kept per Claude session were
+  never removed, so a box that opens a few hundred sessions a week carried every one until dsh
+  restarted. They now go with the session's process.
+- Every form field in the panel and in Settings has a name a screen reader announces. Most had
+  only a placeholder, which disappears as soon as someone types.
 
 ### Removed
 
@@ -181,7 +176,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
   already running follows on its next message.
 
   Auto, On or Off, and Auto is the default: it asks the base URL once per dsh run, with no key
-  attached, and takes Anthropic's own authentication error and request id as the answer — a proxy
+  attached, and takes Anthropic's own authentication error and request id as the answer. A proxy
   that forwards passes both through, a gateway routing to another provider does not, and a proxy
   that cannot be reached is left alone rather than assumed. On and Off are answers a person gave,
   so detection never overrides one. Nothing changes without a base URL.
@@ -263,7 +258,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 - Settings written at the same moment no longer drop one another. The hints store is
   read-modify-write, and two requests that overlapped both read the file before either wrote it, so
-  the second put back a map from before the first and every key it had added was gone — a store of
+  the second put back a map from before the first and every key it had added was gone. A store of
   eight switches came back holding one. Requests are applied in turn now, and the file is replaced
   atomically, so a crash mid-write cannot truncate it either. Two browsers on the same box, which
   is what box-wide settings invite, was all it took.
