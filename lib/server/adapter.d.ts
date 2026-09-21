@@ -34,7 +34,7 @@ export declare const isOrphanedStandIn: (cwd: string) => boolean;
 /** The real remote path for a placeholder workspace on `host`, or `cwd` unchanged. */
 export declare function remoteCwdFor(host: string, cwd: string): string;
 /** The box a turn runs on: this instance's own host when it has one, else the box a remote-workspace
- * cwd belongs to. The choice is by truthiness because `sshHost` defaults to `""`, not undefined —
+ * cwd belongs to. The choice is by truthiness because `sshHost` defaults to `""`, not undefined.
  * `??` treats that empty string as an answer, which is how a local provider's turn came to probe the
  * local binary for flags while its spawn ran on the box (2026-09-09: `--forward-subagent-text`, a
  * flag this box's CLI has and the box's 2.1.123 does not). */
@@ -730,8 +730,8 @@ export declare function relayBlocks(tr: Translator, call: RelayEvent): IterableI
 export declare function hasPendingTodo(todos: JsonValue[]): boolean;
 /**
  * The provider dsh talks to. It owns one Claude Code process per session, converts a dsh turn
- * into stdin lines and the CLI's stream-json back into dsh events, and keeps the state — turn
- * records, permission modes, keepers — that has to survive a restart.
+ * into stdin lines and the CLI's stream-json back into dsh events, and keeps the state that has to
+ * survive a restart, the turn records, permission modes and keepers.
  */
 /** The running turn's figures for the status row; see `TurnProgress` in translator.ts. */
 export interface LiveTurn {
@@ -938,7 +938,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     getPermissionMode(sessionId: string, accessMode: string | undefined): string;
     /** The working directory a session runs in, read from its header, or undefined when the session is unknown or its header throws (a detached session cannot be read). */
     sessionCwd(sessionId: string): string | undefined;
-    /** Emit a names-prefixed log line at the given level, swallowing the error cordis throws when the logger is reached from an inactive scope — a log line is not worth crashing on. */
+    /** Emit a names-prefixed log line at the given level, swallowing the error cordis throws when the
+     * logger is reached from an inactive scope. A log line is not worth crashing on. */
     log(level: string, message: string): void;
     /** A copy of the image under the plugin's state dir, named by attachment id with the extension
      *  its media type calls for: dsh's own stored object has no extension, and Claude Code's Read
@@ -1187,8 +1188,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      *
      * The panel's routes are registered once, by the default mount, but a session on an SSH box's
      * model runs under that box's instance. A control request written from the wrong instance is
-     * never answered — `resolveControl` only knows the waiters of the adapter whose stream loop reads
-     * that process — so every route that asks a session's process something has to be dispatched
+     * never answered. `resolveControl` only knows the waiters of the adapter whose stream loop reads
+     * that process, so every route that asks a session's process something has to be dispatched
      * here first, or the panel reports "no live Claude process" for a session that has one.
      */
     ownerFor(sessionId: string): ClaudeCodeAdapter;
@@ -1412,7 +1413,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     dropRejectedFlag(proc: ClaudeProcess, options: SessionOptions): boolean;
     /** Why a turn that neither finished nor parked ended. */
     endReason(proc: ClaudeProcess, options: SessionOptions, idle: boolean): FinishReason;
-    /** The persistent turn loop: drive one session's turn end to end — stream the chunks, relay tool calls, honor interrupts and usage limits, and yield the finish. */
+    /** The persistent turn loop: drive one session's turn end to end. Stream the chunks, relay
+     * tool calls, honor interrupts and usage limits, and yield the finish. */
     turn(options: SessionOptions, forceFresh?: boolean): AsyncGenerator<StreamChunk>;
     /** dsh's todo projection resets to null on every `turn/start`, so the panel empties each message.
      *  Called at the top of an open turn (dsh's invariant rejects a `todo/write` outside one), this
