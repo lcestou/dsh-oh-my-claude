@@ -5,6 +5,10 @@ export interface UsageWindow {
     usedPercent: number;
     /** Epoch ms, or null when the API did not say. */
     resetsAt: number | null;
+    /** The API's own grade for the window (`normal`, `critical`, and whatever it adds), when sent. */
+    severity?: string;
+    /** For a window scoped to one model, that model's display name (`Fable`), as the API names it. */
+    model?: string;
 }
 /** Usage credits ("extra usage") as the panel shows them; the money is already display text. */
 export interface UsageCredits {

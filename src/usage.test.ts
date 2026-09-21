@@ -41,6 +41,29 @@ assert.deepEqual(
     ["Opus daily", 7, null],
   ],
 );
+// The API's own grade and a scoped window's model name pass through; a window without them has neither.
+{
+  const graded = usageWindows({
+    limits: [
+      { kind: "weekly_all", percent: 74, severity: "normal" },
+      {
+        kind: "weekly_scoped",
+        percent: 100,
+        severity: "critical",
+        scope: { model: { id: null, display_name: "Fable" }, surface: null },
+      },
+      { kind: "weekly_scoped", percent: 5, scope: { surface: "code" } },
+    ],
+  });
+  assert.deepEqual(
+    graded.map((x) => [x.label, x.severity, x.model]),
+    [
+      ["Weekly", "normal", undefined],
+      ["Fable weekly", "critical", "Fable"],
+      ["code weekly", undefined, undefined],
+    ],
+  );
+}
 // legacy shape
 assert.deepEqual(usageWindows({ five_hour: { utilization: 50, resets_at: null }, seven_day: {} }), [
   { label: "5-hour", usedPercent: 50, resetsAt: null },
