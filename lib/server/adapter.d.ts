@@ -300,6 +300,7 @@ export interface PermissionModeReply extends PermissionModeInfo {
     live: boolean;
     error?: string;
 }
+/** The key every live process is stored under, `providerId` then `sessionId`; a session id must not contain a colon or it would collide with this separator. */
 export declare function registryKey(providerId: string, sessionId: string): string;
 /** The CLI's effort ladder, low to high; `readPickerSettings` validates `maxEffortLevel` against it. */
 export declare const EFFORTS_ALL: readonly ["low", "medium", "high", "xhigh", "max"];
@@ -321,6 +322,7 @@ interface CatalogModel {
     efforts: readonly string[];
     description?: string;
 }
+/** Build one KNOWN_MODELS row: the provider is always claude-code, so callers pass only the id, label, context window and efforts, filling description when given. */
 declare const M: (id: string, label: string, contextWindow: number, efforts: readonly string[], description?: string) => CatalogModel;
 export declare const KNOWN_MODELS: CatalogModel[];
 /**
@@ -606,7 +608,9 @@ export interface IdleTarget {
     idleKilled: boolean;
     /** How long the silence that killed it was allowed to run, so the error can name that number. */
     idleKilledAfterMs?: number;
+    /** Stop the process. The idle watchdog calls this once a turn has been silent past its limit. */
     kill(): void;
+    /** The idle watchdog feeds a stream event through here so it can measure how long the silence has run. */
     inject(event: ClaudeEvent): void;
 }
 /** `--resume` of a session Claude Code no longer has: a result whose errors name the missing conversation. */
@@ -755,6 +759,7 @@ export interface LiveTurn {
  *  only, in the CLI's own order, up to the cap; the first file always goes even if it alone is over,
  *  because a context with no diff in it is worse than a long one. */
 export declare const diffContext: (diff: WorkspaceDiff, path: string) => string;
+/** The LlmAdapter that drives the logged-in Claude Code CLI: it owns the live `claude` processes, bridges dsh's commands and routes into them, and mirrors their transcript back into dsh. */
 export declare class ClaudeCodeAdapter extends LlmAdapter {
     ctx: PluginContext;
     config: Schemastery.TypeT<typeof Config>;
@@ -839,6 +844,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     displayName: string;
     settingsNs: string;
     stateDir: string;
+    /** Attach the mounted context and config, then load every persisted store (permission modes, tool modes, terminal sync, turn records, asides, starters and limit waits) so a resumed adapter reads as it left off. */
     constructor(ctx: PluginContext, config: Schemastery.TypeT<typeof Config>);
     /** dsh's handle for this instance's route. `replace` re-reads `providerInfo`, which is how a
      *  name change reaches the picker without a restart. */
@@ -850,6 +856,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      *  name at registration, so the route is registered again under the new one. Fed by the mount-time
      *  probe and by every login probe the panel runs, so the picker names a dead box at a glance. */
     setLoggedIn(loggedIn: boolean): void;
+    /** The provider's display name, suffixed "(not logged in)" while the adapter is logged out, so a settings dropdown shows login state. */
     providerInfo(provider: string): {
         id: string;
         name: string;
@@ -929,7 +936,9 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     private fullModelInfo;
     /** Get the effective permission mode for a session, checking for an override first. */
     getPermissionMode(sessionId: string, accessMode: string | undefined): string;
+    /** The working directory a session runs in, read from its header, or undefined when the session is unknown or its header throws (a detached session cannot be read). */
     sessionCwd(sessionId: string): string | undefined;
+    /** Emit a names-prefixed log line at the given level, swallowing the error cordis throws when the logger is reached from an inactive scope — a log line is not worth crashing on. */
     log(level: string, message: string): void;
     /** A copy of the image under the plugin's state dir, named by attachment id with the extension
      *  its media type calls for: dsh's own stored object has no extension, and Claude Code's Read
@@ -1013,6 +1022,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * when it is mounted (a pick there is live at once), else the last runtime-context snapshot.
      */
     currentAccessMode(sessionId: string): string | null;
+    /** The permission mode a session may use now: its stored override on top of the shield's access mode, with the config default as the floor and every mode up to the ceiling allowed. */
     permissionModeInfo(sessionId: string): PermissionModeInfo;
     /**
      * Store a session's permission mode override (null clears it) and, when that session's Claude
@@ -1062,6 +1072,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     proxyFirstParty: boolean;
     /** The disk seed, awaited by the first listing so a boot never answers from the floor by a race. */
     private cliSeed;
+    /** Ask a live CLI for its model lineup once per TTL window and cache it, so the listing has rows before the next list_models answers; false when throttled, declined, or empty. */
     refreshCliModels(proc: ClaudeProcess): Promise<boolean>;
     /**
      * The CLI's lineup is kept on disk, per box, so a fresh dsh-web lists the same rows before any
@@ -1070,6 +1081,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * the raw id in the composer seat and stays that way until the page reloads.
      */
     private cliModelsPath;
+    /** Persist the CLI's model list to disk under the state dir; a read-only state dir or full disk is swallowed, since the live answer still serves this boot. */
     private persistCliModels;
     /** Seed from the last answer, unless a process has already answered this boot. */
     seedCliModels(): Promise<void>;
@@ -1145,6 +1157,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      *  (the command is synthetic, measured 2026-09-19 returning at 2.3 s with no model turn). Not a
      *  control request, and not `prepare`'s purpose branch, which forces a scratch cwd. */
     skillDoctor(sessionId: string): Promise<SkillDoctorReply>;
+    /** Ask the CLI how many tokens this session's context window holds, bank the figure for dsh's context ring under both the spec and CLI model names, and flag an assumed-behind window when this box runs behind a proxy. */
     contextUsage(sessionId: string): Promise<ContextUsageReply>;
     /**
      * `/temporary`: toggle "keep no Claude transcript" for the current dsh session. Registered here,
@@ -1166,6 +1179,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      */
     /** The instance whose aside ring the route and the bubble read: the main mount, else this one. */
     asideOwner(): ClaudeCodeAdapter;
+    /** The live process for a session, by exact registry key, else by the `:sessionId` suffix so a session survives across mounts; undefined when none is alive. */
     processFor(sessionId: string): ClaudeProcess | undefined;
     /**
      * The mount a session belongs to: the one whose live process it is, else the one its selected
@@ -1178,6 +1192,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * here first, or the panel reports "no live Claude process" for a session that has one.
      */
     ownerFor(sessionId: string): ClaudeCodeAdapter;
+    /** Record a side question in the session's aside ring (evicting the oldest session when the ring is full) and send it to the CLI through the mount that owns the process; the answer or error is written back onto the ring. */
     askSideQuestion(sessionId: string, question: string, context?: string): void;
     /** Save (or clear, when the text is blank) an opening prompt for a session or for `default`. */
     setStarter(key: string, text: string | undefined): void;
@@ -1189,6 +1204,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     toolModeInfo(): Promise<ToolModeInfo>;
     /** Set the mode on every mount at once, so a session on a box's model follows the same switch. */
     setToolMode(mode: ToolMode): Promise<ToolModeInfo>;
+    /** The terminal-sync flag for the info route, surfaced to the panel's status line. */
     terminalSyncInfo(): {
         enabled: boolean;
     };
@@ -1214,6 +1230,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
         live: boolean;
         error?: string;
     }>;
+    /** Register the /btw command that asks Claude a quick side question without interrupting the turn; a no-op once that command is already bridged. */
     registerAsideCommand(commands: NonNullable<PluginContext["commands"]>): void;
     /** Two boots closer than this are a crash loop, not a restart. */
     static readonly BOOT_BACKOFF_MS = 60000;
@@ -1271,10 +1288,12 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * local turn. Mirrors prepare()'s targetHost so a logged-out error names the right machine: a
      * purpose one-shot (title/compaction) always runs on the local claude for the default provider. */
     hostLabelFor(sessionId: string | undefined, purpose?: string): string | undefined;
+    /** The function that spawns a session's claude: over SSH for an ssh box, over SSH on the box for a remote-workspace cwd, else the local seam or node spawner with this box's login. */
     spawner(firstParty?: boolean): Spawner;
     /** Kill this instance's live processes and drop them from the shared registry: called when an SSH
      * box is removed from the panel, so its remote `claude` sessions do not outlive the mount. */
     disposeProcesses(): void;
+    /** The stream entry point: answer a session-title request directly, run a one-shot when there is no resume path, otherwise delegate to the persistent turn loop. */
     stream(options: GenerateOptions): AsyncGenerator<StreamChunk>;
     /** Reuse the session's process when its spec still matches; otherwise replace it. */
     acquire(options: SessionOptions, forceFresh?: boolean): Promise<{
@@ -1321,6 +1340,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      *  the other, so once dsh respawns behind a terminal turn its own rows extend that chain; a
      *  terminal that keeps typing forks again, and the next dsh turn takes that fork as the truth. */
     scanTranscript(sessionId: string): Promise<void>;
+    /** Scan a session's transcript once for new child turns and mirror them; while a turn streams, only wake the render until the exchange settles instead of re-posting what the render already showed. */
     scanOnce(sessionId: string, w: TranscriptWatch): Promise<void>;
     /** Open one dsh turn that streams a still-running terminal exchange live: the prompt goes out as a
      *  user message through the followup seam, and the turn loop's `streamMirror` fills its reply as
@@ -1361,6 +1381,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     forgetSession(sessionId: string): void;
     /** The session id inside a registry key this adapter owns. */
     private ownSessionId;
+    /** Kill this adapter's own settled processes that have been idle past the threshold and forget their sessions, leaving the rest sorted last-used so an eviction can pick the oldest. */
     evict(): void;
     /**
      * How this dsh request continues the session's Claude process, if at all:
@@ -1391,6 +1412,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     dropRejectedFlag(proc: ClaudeProcess, options: SessionOptions): boolean;
     /** Why a turn that neither finished nor parked ended. */
     endReason(proc: ClaudeProcess, options: SessionOptions, idle: boolean): FinishReason;
+    /** The persistent turn loop: drive one session's turn end to end — stream the chunks, relay tool calls, honor interrupts and usage limits, and yield the finish. */
     turn(options: SessionOptions, forceFresh?: boolean): AsyncGenerator<StreamChunk>;
     /** dsh's todo projection resets to null on every `turn/start`, so the panel empties each message.
      *  Called at the top of an open turn (dsh's invariant rejects a `todo/write` outside one), this
@@ -1413,6 +1435,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      *  a dsh that drops it would answer undefined for every session, which routes remote workspaces to
      *  the local mount instead of failing. Too quiet to debug from the symptom, so it says so once. */
     sessionProvider(sessionId: string): string | undefined;
+    /** Cancel and forget a session's limit-wait timer, if any, so a usage reset does not fire it twice. */
     clearLimitWait(sessionId: string): void;
     /** Claude finished a turn of its own (a background task it launched completed) while dsh was
      *  idle. Drop a notice into the session's inbox so dsh opens a turn now and the reply shows,
@@ -1442,4 +1465,5 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     }>;
     oneShot(options: GenerateOptions): AsyncGenerator<StreamChunk>;
 }
+/** The entry point dsh calls: build the adapter, register its provider and adapter, probe the login, and pin the instance on globalThis so a re-instantiation at boot shares the one already running. */
 export declare function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Config>): void;
