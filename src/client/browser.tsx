@@ -181,7 +181,7 @@ const CSS = `
 .${P}-editZone:disabled .${P}-editGlyph{color:var(--dsw-alias-label-caption)}
 .${P}-pathInput{box-sizing:border-box;min-width:0;height:22px;color:var(--dsw-alias-label-primary);background:0 0;border:none;outline:none;flex:1 1 0;padding:0;font-size:13px;line-height:20px;font:inherit;font-size:13px}
 .${P}-content{flex-direction:column;flex:1 1 0;min-height:0;padding:16px 16px 16px 24px;display:flex;position:relative}
-.${P}-column{flex-direction:column;flex:1 1 0;gap:2px;min-width:256px;padding-right:8px;display:flex;overflow-y:auto}
+.${P}-column{flex-direction:column;flex:1 1 0;gap:2px;min-width:256px;margin:0;padding:0 8px 0 0;list-style:none;display:flex;overflow-y:auto}
 .${P}-divider{background:var(--dsw-alias-border-l3);flex:none;width:.5px}
 .${P}-rowSeat{flex:none;display:flex}
 .${P}-row{text-align:left;cursor:pointer;background:0 0;border:none;border-radius:6px;flex:none;align-items:center;gap:4px;width:100%;height:28px;padding:4px;display:flex;color:inherit;font:inherit}
@@ -232,11 +232,11 @@ function LevelColumn({
 }) {
   const visible = visibleEntries(entries, selectedPath, showHidden, filterPrefix);
   return (
-    <div className={`${P}-column`} role="list">
+    <ul className={`${P}-column`}>
       {visible.map((entry) => {
         const selected = entry.path === selectedPath;
         return (
-          <span role="listitem" className={`${P}-rowSeat`} key={entry.path}>
+          <li className={`${P}-rowSeat`} key={entry.path}>
             <button
               type="button"
               aria-current={selected || undefined}
@@ -253,10 +253,10 @@ function LevelColumn({
               <span className={`${P}-rowName`}>{entry.name}</span>
               <IconChevronRightOutline14 size={12} className={`${P}-rowChevron`} />
             </button>
-          </span>
+          </li>
         );
       })}
-    </div>
+    </ul>
   );
 }
 
@@ -288,7 +288,7 @@ export function DirectoryBrowser({
   const requestSeq = useRef(0);
   const scanController = useRef<AbortController | null>(null);
   const openGeneration = useRef(0);
-  const crumbTrailRef = useRef<HTMLSpanElement>(null);
+  const crumbTrailRef = useRef<HTMLElement>(null);
   const composingRef = useRef(false);
   useEffect(
     () => () => {
@@ -624,6 +624,7 @@ export function DirectoryBrowser({
         headless
       >
         <style>{CSS}</style>
+        {/* oxlint-disable-next-line jsx-a11y/no-static-element-interactions -- catches Escape bubbling up from the path field inside, not a control of its own */}
         <div
           className={`${P}-scope`}
           data-omc-browser=""
@@ -648,7 +649,9 @@ export function DirectoryBrowser({
             <div className={`${P}-crumbBar`}>
               {pathDraft === null ? (
                 <>
-                  <span className={`${P}-trail`} role="navigation" ref={crumbTrailRef}>
+                  {/* English on purpose: dsh's dictionary has no key for this, and its lookup may
+                      answer an unknown key with the key itself rather than falling back. */}
+                  <nav className={`${P}-trail`} aria-label="Folder path" ref={crumbTrailRef}>
                     {crumbs.map((crumb, index) => (
                       <span className={`${P}-crumbSeat`} key={crumb.path}>
                         {index > 0 && (
@@ -665,7 +668,7 @@ export function DirectoryBrowser({
                         </button>
                       </span>
                     ))}
-                  </span>
+                  </nav>
                   <button
                     type="button"
                     className={`${P}-editZone`}
@@ -694,6 +697,7 @@ export function DirectoryBrowser({
                   className={`${P}-pathInput`}
                   value={pathDraft}
                   aria-label={t("browser.editPath")}
+                  // oxlint-disable-next-line jsx-a11y/no-autofocus -- opened by the person's own click on the path, so focus goes where they asked
                   autoFocus
                   ref={pathInputRef}
                   disabled={parentInert}
@@ -743,12 +747,15 @@ export function DirectoryBrowser({
                 />
               )}
             </div>
-            {loading && slowScan && (
-              <div className={cls(`${P}-status`, `${P}-loadingFloat`)} role="status">
-                {t("browser.loading")}
-              </div>
-            )}
+            {loading &&
+              slowScan && (
+                // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a live notice, not a form result, which is what <output> is for
+                <div className={cls(`${P}-status`, `${P}-loadingFloat`)} role="status">
+                  {t("browser.loading")}
+                </div>
+              )}
             {(parent?.truncated === true || child?.truncated === true) && (
+              // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a live notice, not a form result, which is what <output> is for
               <div className={`${P}-status`} role="status">
                 {t("browser.truncated")}
               </div>
@@ -822,6 +829,7 @@ export function DirectoryBrowser({
             value={folderDraft ?? ""}
             aria-label={t("browser.folderName")}
             placeholder={t("browser.untitledFolder")}
+            // oxlint-disable-next-line jsx-a11y/no-autofocus -- opened by the person's own click, so focus goes where they asked
             autoFocus
             disabled={creatingFolder}
             onChange={(e) => setFolderDraft(e.target.value)}

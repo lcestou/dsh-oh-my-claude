@@ -470,6 +470,7 @@ function MemoryBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
             aria-label="Memory file"
             value={text}
             spellCheck={false}
+            // oxlint-disable-next-line jsx-a11y/no-autofocus -- opened by the person's own click, so focus goes where they asked
             autoFocus
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
@@ -648,6 +649,7 @@ function PluginManagerBlock({
           </div>
         )}
         {pluginWarnings.length > 0 && (
+          // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a live notice, not a form result, which is what <output> is for
           <div data-omc-plugin-warnings="" role="status" style={{ marginBottom: 6 }}>
             <span style={{ ...meta, color: T.warn, padding: "2px 4px", display: "block" }}>
               Plugin warnings
@@ -1032,6 +1034,7 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
           aria-label="Edit SKILL.md"
           value={text}
           spellCheck={false}
+          // oxlint-disable-next-line jsx-a11y/no-autofocus -- opened by the person's own click, so focus goes where they asked
           autoFocus
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
@@ -1616,6 +1619,7 @@ function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCt
             aria-label="Instruction file"
             value={text}
             spellCheck={false}
+            // oxlint-disable-next-line jsx-a11y/no-autofocus -- opened by the person's own click, so focus goes where they asked
             autoFocus
             readOnly={file.kind === "Managed"}
             onChange={(e) => setText(e.target.value)}
@@ -4330,6 +4334,7 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
           card,
           <div
             ref={panelRef}
+            // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a non-modal popover; <dialog> hides unless open and brings its own box
             role="dialog"
             aria-label="Oh My Claude"
             {...{ [PANEL_ATTR]: "1" }}
