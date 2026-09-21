@@ -82,25 +82,36 @@ export interface ContractResult {
 }
 
 /**
- * Run every probe against a document. `inConversation` says whether a session with messages is on
- * screen; without it the conversation-scoped probes are skipped rather than counted as missing,
- * because an empty page answers zero for all of them and would report a breakage that is not one.
+ * Run every probe against a document.
+ *
+ * The conversation-scoped probes calibrate each other rather than trusting a flag from outside.
+ * Whether a conversation is on screen cannot be asked of the panel: the nearest thing it knows is
+ * which session is open, and a session that is open with no messages yet renders none of this
+ * markup, so every probe would read as missing on a brand-new session. Nor can one probe vouch for
+ * the rest, which would be circular.
+ *
+ * So the group is its own control. If every conversation probe finds nothing, there is no
+ * conversation content on screen and they are all skipped. If any one of them finds something,
+ * the page is rendering a conversation and a zero beside it is a real miss. That is only wrong in
+ * the case where dsh moves all of them in one release, which reads as "nothing to check" rather
+ * than as a false alarm, and is the safe way to be wrong.
  */
 export function checkContract(
   doc: Pick<Document, "querySelectorAll">,
-  inConversation: boolean,
   probes: readonly ContractProbe[] = DSH_CONTRACT,
 ): ContractResult[] {
-  return probes.map((probe) => {
-    const skipped = probe.scope === "conversation" && !inConversation;
-    return {
-      id: probe.id,
-      breaks: probe.breaks,
-      kind: probe.kind,
-      count: skipped ? 0 : doc.querySelectorAll(probe.selector).length,
-      skipped,
-    };
-  });
+  const counted = probes.map((probe) => ({
+    probe,
+    count: doc.querySelectorAll(probe.selector).length,
+  }));
+  const anyConversation = counted.some((c) => c.probe.scope === "conversation" && c.count > 0);
+  return counted.map(({ probe, count }) => ({
+    id: probe.id,
+    breaks: probe.breaks,
+    kind: probe.kind,
+    count,
+    skipped: probe.scope === "conversation" && !anyConversation,
+  }));
 }
 
 /** The ones that should have been found and were not. */

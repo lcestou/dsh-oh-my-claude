@@ -21,25 +21,30 @@ const probes: ContractProbe[] = [
 
 // Everything present: nothing missing, and the summary counts only what it checked.
 {
-  const r = checkContract(docOf({ "#a": 1, "#b": 3 }), true, probes);
+  const r = checkContract(docOf({ "#a": 1, "#b": 3 }), probes);
   assert.deepEqual(contractMisses(r), []);
   assert.equal(contractSummary(r), "dsh hooks: 2 of 2 found");
 }
 
-// A selector that finds nothing is the failure this exists to catch.
+// A conversation probe that finds nothing while another finds plenty is the failure this exists
+// to catch: the page is rendering a conversation, so a zero is a real miss and not an empty page.
 {
-  const r = checkContract(docOf({ "#a": 1 }), true, probes);
+  const two = [
+    ...probes,
+    { id: "chat-two", breaks: "c", scope: "conversation", kind: "class", selector: "#c" } as const,
+  ];
+  const r = checkContract(docOf({ "#a": 1, "#c": 9 }), two);
   assert.deepEqual(
     contractMisses(r).map((m) => m.id),
     ["chat-one"],
   );
-  assert.equal(contractSummary(r), "dsh hooks: 1 of 2 missing");
+  assert.equal(contractSummary(r), "dsh hooks: 1 of 3 missing");
 }
 
-// Off a conversation, the chat probe is skipped rather than reported. An empty page answers zero
-// for every selector, so counting it would report a breakage on every screen that has no chat.
+// No conversation content at all: the conversation probes calibrate each other and all skip,
+// rather than every one of them reporting a breakage on a screen that simply has no chat on it.
 {
-  const r = checkContract(docOf({ "#a": 1 }), false, probes);
+  const r = checkContract(docOf({ "#a": 1 }), probes);
   assert.deepEqual(contractMisses(r), [], "a skipped probe is never a miss");
   assert.equal(r.find((x) => x.id === "chat-one")?.skipped, true);
   assert.equal(contractSummary(r), "dsh hooks: 1 of 1 found, 1 not on screen");
@@ -47,8 +52,17 @@ const probes: ContractProbe[] = [
 
 // A screen where nothing can be checked says so rather than claiming everything is well.
 {
-  const r = checkContract(docOf({}), false, [probes[1]!]);
+  const r = checkContract(docOf({}), [probes[1]!]);
   assert.equal(contractSummary(r), "dsh hooks: nothing to check on this screen");
+}
+
+// An always-scoped probe is never calibrated away: it is missing whatever else the page holds.
+{
+  const r = checkContract(docOf({ "#b": 4 }), probes);
+  assert.deepEqual(
+    contractMisses(r).map((m) => m.id),
+    ["always-one"],
+  );
 }
 
 // The shipped list: every entry is distinct, and every selector is one the plugin really uses.

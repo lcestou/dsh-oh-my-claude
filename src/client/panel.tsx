@@ -2779,7 +2779,9 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
   // What this plugin assumes about dsh's own markup, checked against the page as it stands. Every
   // dsh upgrade that has broken this plugin did it silently: a selector matched nothing and a
   // feature stopped without a word. This turns that into a line worth reading after an upgrade.
-  const contract = checkContract(document, running);
+  // It takes no "is a conversation open" flag: the panel's nearest answer is which session is
+  // open, which is true of a new session that renders none of this markup yet.
+  const contract = checkContract(document);
   const missing = contractMisses(contract);
   return (
     <div style={bodyFlow}>
