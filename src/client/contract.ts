@@ -37,6 +37,17 @@ export interface ContractProbe {
   kind: "class" | "role" | "data";
   /** The selector this plugin already uses. */
   selector: string;
+  /**
+   * What a green answer is worth.
+   *
+   * `exact` means the selector picks out the very node the feature needs, so a count above zero
+   * really is the hook still being there. `presence` means the selector is generic enough to match
+   * other nodes too, so it catches the hook disappearing from the page and cannot catch it moving
+   * to a node we no longer reach. That is the weaker half, and it is the half every past break
+   * fell into, so a `presence` probe is a floor and not a guarantee. Prefer `exact`: use whatever
+   * selector the feature itself uses, not a looser one that happens to match it.
+   */
+  detects: "exact" | "presence";
 }
 
 /** Every DOM assumption this plugin makes about dsh's own markup. */
@@ -47,6 +58,7 @@ export const DSH_CONTRACT: readonly ContractProbe[] = [
     scope: "conversation",
     kind: "class",
     selector: '[class*="_markdown"]',
+    detects: "exact",
   },
   {
     id: "composer-input",
@@ -54,20 +66,31 @@ export const DSH_CONTRACT: readonly ContractProbe[] = [
     scope: "always",
     kind: "data",
     selector: "[data-composer-input]",
+    detects: "exact",
   },
   {
     id: "ring-button",
     breaks: "plan usage in the context ring and its tooltip",
     scope: "always",
     kind: "role",
-    selector: 'button[aria-haspopup="dialog"]',
+    // The ring's own arc, not merely a button that opens a dialog. Measured side by side on a
+    // live page, 2026-09-21: the loose form matches 28 nodes and this one matches 1, so the loose
+    // form would have reported the hook found while the ring had moved out from under us. This is
+    // the selector the reader itself uses (`ARC` in index.tsx).
+    selector: 'button[aria-haspopup="dialog"] circle + circle',
+    detects: "exact",
   },
   {
     id: "turn-status",
     breaks: "the status row under a running turn",
     scope: "conversation",
     kind: "role",
+    // dsh gives its turn-status element no hook of its own, so this is the pair the watcher looks
+    // for and nothing narrows it further. Any polite status region on the page satisfies it, which
+    // is why this one is `presence`: it catches the element going away, not the row moving to an
+    // element we no longer style.
     selector: '[role="status"][aria-live="polite"]',
+    detects: "presence",
   },
 ] as const;
 

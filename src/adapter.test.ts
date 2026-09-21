@@ -6244,3 +6244,31 @@ console.log("skill-doctor ok");
   );
 }
 console.log("awaiting ok");
+
+// Forgetting a session: every per-session map is dropped when its process goes. Each of these used
+// to grow for the life of the process, so a box that opens a few hundred sessions a week carried
+// all of them until dsh restarted. Nothing was ever read wrongly, since a dsh session id is not
+// reused; the cost was memory, and the fix is one call beside each `processes.delete`.
+{
+  const a = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  a.sessionTools.set("s1", ["Bash"]);
+  a.sessionPluginErrors.set("s1", []);
+  a.sessionPluginWarnings.set("s1", []);
+  a.permissionAsks.set("s1", ["Bash(ls:*)"]);
+  a.awaitingInput.set("s1", { kind: "approval", id: "r1", since: 1 });
+  a.sessionTools.set("s2", ["Read"]);
+  a.forgetSession("s1");
+  assert.deepEqual(
+    [
+      a.sessionTools.has("s1"),
+      a.sessionPluginErrors.has("s1"),
+      a.sessionPluginWarnings.has("s1"),
+      a.permissionAsks.has("s1"),
+      a.awaitingInput.has("s1"),
+    ],
+    [false, false, false, false, false],
+    "every per-session map drops the id",
+  );
+  assert.equal(a.sessionTools.has("s2"), true, "another session is untouched");
+}
+console.log("forget-session ok");
