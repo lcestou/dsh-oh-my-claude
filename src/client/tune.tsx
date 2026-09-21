@@ -13,6 +13,7 @@ import {
   select,
   useNarrow,
   claudeProviderOf,
+  codeInline,
 } from "./shared.js";
 import type { ClientCtx } from "./shared.js";
 import {
@@ -759,8 +760,7 @@ export function TuneBody({
       ) : extraUsage === false ? (
         <span style={{ ...meta, padding: "0 0 2px", whiteSpace: "normal" }}>
           A Fable advisor bills to usage credits, which have to be enabled first. Open a terminal
-          and run <code style={{ background: T.card, padding: "2px 4px" }}>/model fable</code> to
-          review and enable them.
+          and run <code style={codeInline}>/model fable</code> to review and enable them.
         </span>
       ) : null}
       <span style={{ ...meta, padding: "0 0 2px", whiteSpace: "normal" }}>

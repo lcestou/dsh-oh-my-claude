@@ -7,6 +7,7 @@ import {
   errText,
   stateText,
   sectionHead,
+  codeInline,
   nested,
   PANEL_INSET,
   PANEL_ATTR,
@@ -4218,8 +4219,8 @@ function AsidesBody({ sessionId }: { sessionId: string }) {
   if (items.length === 0) {
     return (
       <div style={{ ...meta, padding: "4px 0", fontSize: 12, whiteSpace: "normal" }}>
-        No asides in this session. Ask one with <code style={code}>/btw</code>. The answer docks
-        above the composer instead of joining the transcript, and lands here.
+        No asides in this session. Ask one with <code style={codeInline}>/btw</code>. The answer
+        docks above the composer instead of joining the transcript, and lands here.
       </div>
     );
   }
