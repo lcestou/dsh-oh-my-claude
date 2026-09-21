@@ -83,6 +83,9 @@ export const baseName = (path: string): string => segments(path).at(-1) ?? "";
 export const OPEN_EVENT = "omc-add-workspace";
 /** What this dialog dispatches once a remote workspace is saved, so the Settings card lists it. */
 export const RW_EVENT = "omc-remote-workspaces";
+/** What the Boxes card dispatches after saving the ssh box list, so this dialog's takeover engages
+ *  for a first box, or lets go after the last, without a reload. */
+export const BOXES_EVENT = "omc-ssh-boxes";
 
 /** dsh's own dialog copy, and its English fallback when the locale service is not mounted. */
 const DIALOG_EN = {
@@ -167,11 +170,25 @@ export function AddWorkspaceFlow({ ctx }: { ctx: ClientCtx }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const t = copyOf(ctx);
 
+  // The list was read once at mount, so a box added in Settings left the takeover off until a
+  // reload. It now rereads when the Boxes card saves, and when the tab comes back into view, which
+  // covers a box added from another tab or device.
   useEffect(() => {
-    fetch(`${ROUTE}/ssh-boxes`)
-      .then((r) => readJson<{ boxes?: BoxRow[] }>(r))
-      .then((b) => setSsh(b.boxes ?? []))
-      .catch(() => {});
+    const load = () =>
+      fetch(`${ROUTE}/ssh-boxes`)
+        .then((r) => readJson<{ boxes?: BoxRow[] }>(r))
+        .then((b) => setSsh(b.boxes ?? []))
+        .catch(() => {});
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void load();
+    };
+    void load();
+    window.addEventListener(BOXES_EVENT, load);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener(BOXES_EVENT, load);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, []);
 
   // Take dsh's button over. A capture listener on the document runs before React's own root
