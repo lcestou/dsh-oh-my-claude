@@ -31,6 +31,13 @@ export const en = {
   "notice.question": "Claude has a question for you.",
   "notice.plan": "Claude wants you to review a plan.",
   "notice.approval": "Claude needs your approval.",
+  "settings.scope.managed": "the managed file",
+  "settings.scope.project": "the project's settings.json",
+  "settings.list": "{rest} and {last}",
+  "settings.listSep": ", ",
+  "settings.overriddenBy": "{keys} by {file}",
+  "settings.overridden": "Overridden here: {clauses}.",
+  "settings.clauseSep": "; ",
 } as const;
 
 /** Chinese, one per English key. */
@@ -64,4 +71,11 @@ export const zh = {
   "notice.question": "Claude 有问题想问你。",
   "notice.plan": "Claude 请你审阅一份计划。",
   "notice.approval": "Claude 需要你批准。",
+  "settings.scope.managed": "托管设置文件",
+  "settings.scope.project": "项目的 settings.json",
+  "settings.list": "{rest}和{last}",
+  "settings.listSep": "、",
+  "settings.overriddenBy": "{keys} 由{file}设置",
+  "settings.overridden": "此处被覆盖：{clauses}。",
+  "settings.clauseSep": "；",
 } satisfies Record<keyof typeof en, string>;
