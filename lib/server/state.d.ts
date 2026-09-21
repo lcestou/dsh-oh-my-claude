@@ -163,6 +163,9 @@ export type WatchRecord = {
     provider?: string;
     claudeId?: string;
 };
+/** Every watch record saved under `dir`, keyed by dsh session id. Waits for any save still queued
+ *  for that directory first, so a reader never sees a baseline older than one already handed to
+ *  `saveWatch`. */
 export declare function loadWatches(dir: string): Promise<Map<string, WatchRecord>>;
 export declare function saveWatch(dir: string, sessionId: string, record: WatchRecord): Promise<void>;
 /** The terminal mirror: whether the plugin copies exchanges from a terminal that picked this session
