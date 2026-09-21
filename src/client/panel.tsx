@@ -51,6 +51,7 @@ import {
 import { checkContract, contractMisses, contractSummary } from "./contract.js";
 import { UpdatePill } from "./update-pill.js";
 import { ReportBlock } from "./report.js";
+import { t, useLocale, type OmcKey } from "./i18n.js";
 import { Tooltip } from "@deepseek-ai/dsh-client-ui-primitives";
 import { Spark } from "./spark.js";
 import { ConfirmButton, TuneBody } from "./tune.js";
@@ -153,7 +154,7 @@ function useHeightEase(ref: { current: HTMLElement | null }, active: boolean) {
  *  it could not title, so this tests for emptiness rather than absence; the fallback is the first
  *  eight characters of the id, enough to tell sessions apart on one screen. */
 export const sessionLabel = (s: { title?: string; id: string }): string =>
-  s.title?.trim() ? s.title : `Untitled · ${s.id.slice(0, 8)}`;
+  s.title?.trim() ? s.title : t("panel.session.untitled", { id: s.id.slice(0, 8) });
 
 /** One-row transcript pick inside the compact restore list. */
 function TranscriptRow({
@@ -167,6 +168,7 @@ function TranscriptRow({
   ctx: ClientCtx;
   onClose: () => void;
 }) {
+  useLocale();
   const label = sessionLabel(s);
   return (
     <button
@@ -226,8 +228,9 @@ function useFeatureSwitches(cwd: string | undefined): FeatureSwitches | null {
 const retentionNote = (s: FeatureSwitches | null): string =>
   s === null
     ? ""
-    : `Claude Code deletes transcripts older than ${s.retention.days} days` +
-      `${s.retention.scope === null ? " (cleanupPeriodDays, its default)" : ` (cleanupPeriodDays in ${s.retention.scope} settings)`}.`;
+    : s.retention.scope === null
+      ? t("panel.retention.default", { days: s.retention.days })
+      : t("panel.retention.scoped", { days: s.retention.days, scope: s.retention.scope });
 
 /**
  * The workspace's Claude Code transcripts, as `GET /sessions?cwd=` lists them; empty until the
@@ -290,6 +293,7 @@ function RestoreBody({
   ctx: ClientCtx;
   onClose: () => void;
 }) {
+  useLocale();
   const entry = ctx.sessions.list.getSnapshot()?.byId[sessionId];
   const cwd = entry?.cwd;
   const transcripts = useTranscripts(cwd);
@@ -311,26 +315,25 @@ function RestoreBody({
           hook="data-omc-restore-search"
           style={{ marginBottom: 4 }}
           value={query}
-          placeholder={`Search ${candidates.length} transcripts in ${name}`}
-          label="Search transcripts"
+          placeholder={t("panel.restore.searchPlaceholder", { count: candidates.length, name })}
+          label={t("panel.restore.searchLabel")}
           onChange={setQuery}
         />
       )}
       {candidates.length === 0 && (
         <span data-omc-restore-empty="" style={{ ...meta, padding: "2px 0", whiteSpace: "normal" }}>
-          No Claude Code transcripts in {name} to restore. One appears here after a session runs in
-          this folder, from dsh or from a terminal.
+          {t("panel.restore.empty", { name })}
         </span>
       )}
       {candidates.length > 0 && rest.length === 0 && (
-        <span style={{ ...meta, padding: "2px 0" }}>No transcript matches</span>
+        <span style={{ ...meta, padding: "2px 0" }}>{t("panel.restore.noMatch")}</span>
       )}
       {rest.map((s) => (
         <TranscriptRow key={s.id} s={s} cwd={cwd} ctx={ctx} onClose={onClose} />
       ))}
       {owned.length > 0 && (
         <span style={{ fontSize: 11, color: T.faint, padding: "2px 0" }}>
-          {owned.length} already open
+          {t("panel.restore.alreadyOpen", { n: owned.length })}
         </span>
       )}
       <span style={{ ...meta, padding: "2px 0", whiteSpace: "normal" }}>
@@ -353,6 +356,7 @@ interface MemoryFile {
  * files (`<project dir>/memory/*.md`, MEMORY.md first) and edits or deletes one in place.
  */
 function MemoryBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
+  useLocale();
   const cwd = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.cwd;
   const [files, setFiles] = useState<MemoryFile[]>([]);
   const [file, setFile] = useState<string | null>(null);
@@ -427,7 +431,7 @@ function MemoryBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
     }
   };
   const remove = async () => {
-    if (!file || !window.confirm(`Delete ${file}? MEMORY.md drops its line too.`)) return;
+    if (!file || !window.confirm(t("panel.memory.deleteConfirm", { file }))) return;
     setBusy(true);
     setError("");
     try {
@@ -443,13 +447,8 @@ function MemoryBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
     }
   };
 
-  if (!cwd) return <span style={stateText}>Open a workspace to see its memory files.</span>;
-  if (files.length === 0)
-    return (
-      <span style={stateText}>
-        No memory files for this workspace yet. Claude writes them as it learns the project.
-      </span>
-    );
+  if (!cwd) return <span style={stateText}>{t("panel.memory.noWorkspace")}</span>;
+  if (files.length === 0) return <span style={stateText}>{t("panel.memory.empty")}</span>;
   const dirty = text !== saved;
   return (
     <div style={bodyFlow}>
@@ -502,11 +501,11 @@ function MemoryBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
         <>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <button type="button" style={btn} onClick={() => setFile(null)} disabled={busy}>
-              ‹ Back
+              ‹ {t("panel.back")}
             </button>
             <span style={{ flex: 1, fontFamily: T.mono, fontSize: 12 }}>{file}</span>
             <button type="button" style={btn} onClick={remove} disabled={busy}>
-              Delete
+              {t("panel.delete")}
             </button>
             <button
               type="button"
@@ -514,12 +513,12 @@ function MemoryBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
               onClick={save}
               disabled={busy || !dirty}
             >
-              Save
+              {t("common.save")}
             </button>
           </div>
           <textarea
             data-omc-memory-editor=""
-            aria-label="Memory file"
+            aria-label={t("panel.memory.editorLabel")}
             value={text}
             spellCheck={false}
             // oxlint-disable-next-line jsx-a11y/no-autofocus -- opened by the person's own click, so focus goes where they asked
@@ -552,15 +551,13 @@ const shortPath = (path: string, cwd: string): string =>
     ? `./${path.slice(cwd.length + 1)}`
     : path.replace(/^\/home\/[^/]+\//, "~/");
 
-/** The one plugin scope not `user`-global reads and writes into a directory. */
-const PLUGIN_SCOPE_OPTS = [
-  { value: "user", label: "User" },
-  { value: "project", label: "Project" },
-  { value: "local", label: "Local" },
-] as const;
+/** The one plugin scope not `user`-global reads and writes into a directory. Labels come from
+ *  `panel.scope.<value>` at render so a language switch reaches them. */
+const PLUGIN_SCOPE_OPTS = ["user", "project", "local"] as const;
 
 /** The Add-marketplace form under the roster: a source and the scope to declare it in. */
 function MarketplaceAddForm({ act, busy }: { act: Act; busy: string }) {
+  useLocale();
   const [source, setSource] = useState("");
   const [scope, setScope] = useState("user");
   const submit = async () => {
@@ -570,8 +567,8 @@ function MarketplaceAddForm({ act, busy }: { act: Act; busy: string }) {
     <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
       <input
         type="text"
-        placeholder="Marketplace: URL, path or owner/repo"
-        aria-label="Marketplace source"
+        placeholder={t("panel.plugins.mktSourcePlaceholder")}
+        aria-label={t("panel.plugins.mktSourceLabel")}
         data-omc-plugin-marketplace-source=""
         value={source}
         onChange={(e) => setSource(e.currentTarget.value)}
@@ -580,15 +577,15 @@ function MarketplaceAddForm({ act, busy }: { act: Act; busy: string }) {
       />
       <select
         data-omc-plugin-marketplace-scope=""
-        aria-label="Marketplace scope"
+        aria-label={t("panel.plugins.mktScopeLabel")}
         value={scope}
         onChange={(e) => setScope(e.currentTarget.value)}
         disabled={busy !== ""}
         style={select}
       >
         {PLUGIN_SCOPE_OPTS.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
+          <option key={o} value={o}>
+            {t(`panel.scope.${o}`)}
           </option>
         ))}
       </select>
@@ -598,7 +595,7 @@ function MarketplaceAddForm({ act, busy }: { act: Act; busy: string }) {
         disabled={busy !== "" || source.trim() === ""}
         onClick={submit}
       >
-        {busy === "mkt-add" ? "…" : "Add"}
+        {busy === "mkt-add" ? "…" : t("panel.add")}
       </button>
     </div>
   );
@@ -637,6 +634,7 @@ function PluginManagerBlock({
   ctx: ClientCtx;
   onChanged: () => void;
 }) {
+  useLocale();
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [applied, setApplied] = useState("");
@@ -652,10 +650,10 @@ function PluginManagerBlock({
         }),
       );
       if (!r.ok) {
-        setError(r.error ?? "failed");
+        setError(r.error ?? t("panel.plugins.actionFailed"));
         return false;
       }
-      setApplied(r.live === true ? "Applied to this session." : "Takes effect at the next spawn.");
+      setApplied(r.live === true ? t("panel.plugins.appliedLive") : t("panel.plugins.appliedNext"));
       onChanged();
       return true;
     } catch (e) {
@@ -678,12 +676,12 @@ function PluginManagerBlock({
   const small: CSSProperties = { ...btn, flex: "none", padding: "0 6px", fontSize: 11 };
   return (
     <>
-      <span style={sectionHead}>Plugins and marketplaces</span>
+      <span style={sectionHead}>{t("panel.plugins.head")}</span>
       <div style={{ padding: "2px 0", fontSize: 12, lineHeight: "1.7" }}>
         {pluginErrors.length > 0 && (
           <div data-omc-plugin-errors="" role="alert" style={{ marginBottom: 6 }}>
             <span style={{ ...meta, color: T.err, padding: "2px 0", display: "block" }}>
-              Failed to load
+              {t("panel.plugins.loadFailed")}
             </span>
             {pluginErrors.map((e, i) => (
               <div key={`${e.plugin}:${i}`} style={{ ...line, whiteSpace: "normal", color: T.err }}>
@@ -697,7 +695,7 @@ function PluginManagerBlock({
           // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a live notice, not a form result, which is what <output> is for
           <div data-omc-plugin-warnings="" role="status" style={{ marginBottom: 6 }}>
             <span style={{ ...meta, color: T.warn, padding: "2px 0", display: "block" }}>
-              Plugin warnings
+              {t("panel.plugins.warnings")}
             </span>
             {pluginWarnings.map((w, i) => (
               <div
@@ -711,9 +709,7 @@ function PluginManagerBlock({
           </div>
         )}
         {plugins.length === 0 && marketplaces.length === 0 && (
-          <span style={{ ...meta, fontSize: 12 }}>
-            No settings file names a plugin (enabledPlugins) or a marketplace.
-          </span>
+          <span style={{ ...meta, fontSize: 12 }}>{t("panel.plugins.empty")}</span>
         )}
         {plugins.map((p) => (
           <div key={p.key} style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -724,9 +720,9 @@ function PluginManagerBlock({
               onClick={() =>
                 act("/plugins/toggle", { key: p.key, scope: p.scope, enable: !p.enabled }, p.key)
               }
-              title={p.enabled ? "disable" : "enable"}
+              title={p.enabled ? t("panel.plugins.disable") : t("panel.plugins.enable")}
             >
-              {busy === p.key ? "…" : p.enabled ? "on" : "off"}
+              {busy === p.key ? "…" : p.enabled ? t("panel.plugins.on") : t("panel.plugins.off")}
             </button>
             <span style={line}>
               {p.key}
@@ -734,7 +730,7 @@ function PluginManagerBlock({
             </span>
             <span style={{ ...meta, flex: "none" }}>{p.scope}</span>
             <ConfirmButton
-              label="Remove"
+              label={t("common.remove")}
               style={small}
               disabled={busy !== ""}
               busyLabel={busy === p.key ? "…" : undefined}
@@ -744,14 +740,14 @@ function PluginManagerBlock({
         ))}
         {marketplaces.map((m) => (
           <div key={m.name} style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <span style={{ ...meta, flex: "none" }}>market</span>
+            <span style={{ ...meta, flex: "none" }}>{t("panel.plugins.marketTag")}</span>
             <span style={line}>
               {m.name} · {m.source}
-              {m.alias === true && " (written as additionalMarketplaces)"}
+              {m.alias === true && t("panel.plugins.aliasNote")}
             </span>
             <span style={{ ...meta, flex: "none" }}>{m.scope}</span>
             <ConfirmButton
-              label="Remove"
+              label={t("common.remove")}
               style={small}
               disabled={busy !== ""}
               busyLabel={busy === m.name ? "…" : undefined}
@@ -764,8 +760,7 @@ function PluginManagerBlock({
         <MarketplaceAddForm act={act} busy={busy} />
         {error !== "" && <span style={{ ...meta, display: "block", marginTop: 4 }}>{error}</span>}
         <span style={{ ...meta, display: "block", marginTop: 4 }}>
-          {applied ||
-            "A change applies to the running session now, or at the next spawn if none is up."}
+          {applied || t("panel.plugins.applyNote")}
         </span>
       </div>
     </>
@@ -784,18 +779,18 @@ interface SkillRow {
 const writable = (scope: string) => scope === "user" || scope === "project";
 
 /** The /skill-doctor cost columns, one source of truth for the table header and body. `numeric` is
- *  true for the four the CLI prints as magnitudes, so they line up right under each other. */
+ *  true for the four the CLI prints as magnitudes, so they line up right under each other. Column
+ *  headers come from `panel.skills.col.<col>` at render so a language switch reaches them. */
 const costCols: {
   col: "skill" | "source" | "context" | "tokens" | "uses" | "lastUsed";
-  label: string;
   numeric: boolean;
 }[] = [
-  { col: "skill", label: "Skill", numeric: false },
-  { col: "source", label: "Source", numeric: false },
-  { col: "context", label: "Context", numeric: true },
-  { col: "tokens", label: "7d tokens", numeric: true },
-  { col: "uses", label: "Uses", numeric: true },
-  { col: "lastUsed", label: "Last used", numeric: true },
+  { col: "skill", numeric: false },
+  { col: "source", numeric: false },
+  { col: "context", numeric: true },
+  { col: "tokens", numeric: true },
+  { col: "uses", numeric: true },
+  { col: "lastUsed", numeric: true },
 ];
 
 /** The body of an open fold: in behind the Settings rule, the line set under the marker. */
@@ -812,6 +807,7 @@ const FOLD_HEAD: CSSProperties = { ...sectionHead, display: "list-item", cursor:
  */
 
 function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
+  useLocale();
   const cwd = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.cwd;
   const [skills, setSkills] = useState<SkillRow[] | null>(null);
   const [query, setQuery] = useState("");
@@ -889,7 +885,7 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
 
   const box = boxQuery(ctx, sessionId);
   const note = (live: boolean) =>
-    setApplied(live ? "Applied to this session." : "Takes effect at the next spawn.");
+    setApplied(live ? t("panel.plugins.appliedLive") : t("panel.plugins.appliedNext"));
   const openEdit = async (path: string, name: string) => {
     setErr("");
     try {
@@ -1008,9 +1004,9 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
     words.every((w) => `${s.name} ${s.scope} ${s.description}`.toLowerCase().includes(w));
   const groups = groupSkillsByScope(skills);
   const sections: { key: "user" | "project" | "plugin"; label: string; rows: SkillRow[] }[] = [
-    { key: "user", label: "User skills", rows: groups.user },
-    { key: "project", label: "Project skills", rows: groups.project },
-    { key: "plugin", label: "Plugin skills", rows: groups.plugin },
+    { key: "user", label: t("panel.skills.userSkills"), rows: groups.user },
+    { key: "project", label: t("panel.skills.projectSkills"), rows: groups.project },
+    { key: "plugin", label: t("panel.skills.pluginSkills"), rows: groups.plugin },
   ];
   const anyMatch = skills.some(match);
   const small: CSSProperties = { ...btn, flex: "none", padding: "0 6px", fontSize: 11 };
@@ -1039,18 +1035,18 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
         <button
           type="button"
           data-omc-skill-edit=""
-          aria-label={`Edit ${s.name}`}
+          aria-label={t("panel.skills.editLabel", { name: s.name })}
           style={small}
           disabled={busy !== ""}
           onClick={() => openEdit(s.path, s.name)}
         >
-          Edit
+          {t("panel.edit")}
         </button>
       )}
       {writable(s.scope) && (
         <ConfirmButton
-          label="Remove"
-          ariaLabel={`Remove ${s.name}`}
+          label={t("common.remove")}
+          ariaLabel={t("panel.skills.removeLabel", { name: s.name })}
           style={small}
           disabled={busy !== ""}
           busyLabel={busy === s.path ? "…" : undefined}
@@ -1066,7 +1062,7 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
       <div style={bodyFlow} data-omc-skills="">
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <button type="button" style={btn} onClick={() => setEditing(null)} disabled={busy !== ""}>
-            ‹ Back
+            ‹ {t("panel.back")}
           </button>
           <span style={{ flex: 1, minWidth: 0, fontFamily: T.mono, fontSize: 12 }}>
             {editing.name}
@@ -1077,12 +1073,12 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
             onClick={save}
             disabled={busy !== "" || !dirty}
           >
-            Save
+            {t("common.save")}
           </button>
         </div>
         <textarea
           data-omc-skill-editor=""
-          aria-label="Edit SKILL.md"
+          aria-label={t("panel.skills.editorLabel")}
           value={text}
           spellCheck={false}
           // oxlint-disable-next-line jsx-a11y/no-autofocus -- opened by the person's own click, so focus goes where they asked
@@ -1121,7 +1117,7 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
               setErr("");
             }}
           >
-            New skill
+            {t("panel.skills.newSkill")}
           </button>
         )}
         <button
@@ -1131,7 +1127,7 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
           disabled={busy !== ""}
           onClick={reload}
         >
-          {busy === "reload" ? "…" : "Reload"}
+          {busy === "reload" ? "…" : t("panel.skills.reload")}
         </button>
       </div>
       {creating && (
@@ -1142,8 +1138,8 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
           <input
             type="text"
             data-omc-skill-name=""
-            aria-label="New skill name"
-            placeholder="skill-name (lowercase, hyphens)"
+            aria-label={t("panel.skills.nameLabel")}
+            placeholder={t("panel.skills.namePlaceholder")}
             value={newName}
             onChange={(e) => setNewName(e.currentTarget.value)}
             disabled={busy !== ""}
@@ -1151,25 +1147,25 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
           />
           {newName !== "" && !nameOk && (
             <span data-omc-skill-name-error="" style={{ ...meta, color: T.err }}>
-              A skill name is lowercase letters, digits and hyphens.
+              {t("panel.skills.nameError")}
             </span>
           )}
           <select
             data-omc-skill-scope=""
-            aria-label="Skill scope"
+            aria-label={t("panel.skills.scopeLabel")}
             value={newScope}
             onChange={(e) => setNewScope(e.currentTarget.value)}
             disabled={busy !== ""}
             style={{ ...select, flex: "none", maxWidth: "none" }}
           >
-            <option value="user">User</option>
-            <option value="project">Project</option>
+            <option value="user">{t("panel.scope.user")}</option>
+            <option value="project">{t("panel.scope.project")}</option>
           </select>
           <input
             type="text"
             data-omc-skill-desc=""
-            aria-label="New skill description"
-            placeholder="One line: what it does and when to use it"
+            aria-label={t("panel.skills.descLabel")}
+            placeholder={t("panel.skills.descPlaceholder")}
             value={newDesc}
             onChange={(e) => setNewDesc(e.currentTarget.value)}
             disabled={busy !== ""}
@@ -1183,7 +1179,7 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
               disabled={busy !== "" || !nameOk}
               onClick={create}
             >
-              {busy === "create" ? "…" : "Create"}
+              {busy === "create" ? "…" : t("panel.skills.create")}
             </button>
             <button
               type="button"
@@ -1192,7 +1188,7 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
               disabled={busy !== ""}
               onClick={() => setCreating(false)}
             >
-              Cancel
+              {t("common.cancel")}
             </button>
           </div>
         </div>
@@ -1202,8 +1198,7 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
           data-omc-skills-none=""
           style={{ ...meta, padding: "2px 0", display: "block", whiteSpace: "normal" }}
         >
-          No skills: none under ~/.claude/skills, this project's .claude/skills, or an installed
-          plugin.
+          {t("panel.skills.empty")}
         </span>
       )}
       {skills.length > 12 && (
@@ -1211,14 +1206,14 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
           hook="data-omc-skills-search"
           style={{ margin: "2px 0 4px" }}
           value={query}
-          placeholder={`Search ${skills.length} skills`}
-          label="Search skills"
+          placeholder={t("panel.skills.searchPlaceholder", { count: skills.length })}
+          label={t("panel.skills.searchLabel")}
           onChange={setQuery}
         />
       )}
       {skills.length > 0 && !anyMatch && (
         <span data-omc-skills-empty="" style={{ ...meta, padding: "2px 0" }}>
-          No skill matches
+          {t("panel.skills.noMatch")}
         </span>
       )}
       {sections.map((sec) => {
@@ -1238,7 +1233,7 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
       })}
       {skills.some((s) => writable(s.scope)) && (
         <span data-omc-skill-note="" style={{ ...meta, padding: "2px 0", whiteSpace: "normal" }}>
-          Removing deletes the skill&apos;s folder. Its /command stays until Claude restarts.
+          {t("panel.skills.removeNote")}
         </span>
       )}
       {applied && (
@@ -1258,25 +1253,23 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
           if (e.currentTarget.open && cost.kind === "idle") loadCost();
         }}
       >
-        <summary style={FOLD_HEAD}>Skill costs</summary>
+        <summary style={FOLD_HEAD}>{t("panel.skills.costs")}</summary>
         <div style={FOLD_BODY}>
           <div style={{ ...meta, whiteSpace: "normal", margin: "8px 0" }}>
-            What each Claude Code skill costs in context and how often you have used it. Read from
-            Claude Code&apos;s own /skill-doctor. No message is sent to the model, so this costs no
-            usage.
+            {t("panel.skills.costsIntro")}
           </div>
           {cost.kind === "loading" && (
-            <div style={{ color: T.muted, fontSize: 13 }}>Reading skills…</div>
+            <div style={{ color: T.muted, fontSize: 13 }}>{t("panel.skills.reading")}</div>
           )}
           {cost.kind === "error" && (
             <div style={{ color: T.err, fontSize: 13 }}>
-              Couldn&apos;t read the skill report: {cost.text}
+              {t("panel.skills.reportError", { text: cost.text })}
             </div>
           )}
           {cost.kind === "declined" && (
             <pre
               data-omc-skill-doctor=""
-              aria-label="Skill report"
+              aria-label={t("panel.skills.reportLabel")}
               style={{ ...code, maxHeight: 320, overflow: "auto", margin: 0 }}
             >
               {cost.text}
@@ -1286,8 +1279,7 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
             <>
               {cost.partial && (
                 <div style={{ color: T.faint, fontSize: 12, marginBottom: 6 }}>
-                  Showing user skills only; this box&apos;s Claude Code is too old to list project
-                  skills without writing a transcript.
+                  {t("panel.skills.partialNote")}
                 </div>
               )}
               {(() => {
@@ -1296,7 +1288,7 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
                   return (
                     <pre
                       data-omc-skill-doctor=""
-                      aria-label="Skill costs report"
+                      aria-label={t("panel.skills.costsReportLabel")}
                       style={{ ...code, maxHeight: 320, overflow: "auto", margin: 0 }}
                     >
                       {cost.text}
@@ -1307,7 +1299,7 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
                     <div style={{ maxHeight: 320, overflow: "auto" }}>
                       <table
                         data-omc-skill-cost-table=""
-                        aria-label="Skill costs"
+                        aria-label={t("panel.skills.costsTableLabel")}
                         style={{ borderCollapse: "collapse", width: "100%" }}
                       >
                         <thead>
@@ -1352,7 +1344,7 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
                                     cursor: "pointer",
                                   }}
                                 >
-                                  {c.label}
+                                  {t(`panel.skills.col.${c.col}`)}
                                 </button>
                               </th>
                             ))}
@@ -1386,9 +1378,7 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
                       data-omc-skill-cost-note=""
                       style={{ ...meta, display: "block", marginTop: 6, whiteSpace: "normal" }}
                     >
-                      Sorted view of Claude Code&apos;s /skill-doctor. Context is what the
-                      skill&apos;s one-line listing costs every turn; 7d tokens is the last seven
-                      days on this machine.
+                      {t("panel.skills.costNote")}
                     </span>
                   </>
                 );
@@ -1397,7 +1387,7 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
           )}
           {cost.kind !== "loading" && (
             <button type="button" onClick={loadCost} style={{ ...btn, marginTop: 8 }}>
-              Refresh
+              {t("panel.refresh")}
             </button>
           )}
         </div>
@@ -1408,14 +1398,13 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
           if (e.currentTarget.open && drivers === null) loadDrivers();
         }}
       >
-        <summary style={FOLD_HEAD}>What else drives your usage</summary>
+        <summary style={FOLD_HEAD}>{t("panel.skills.driversHead")}</summary>
         <div style={FOLD_BODY}>
           <div
             data-omc-usage-drivers-note=""
             style={{ ...meta, display: "block", whiteSpace: "normal" }}
           >
-            Claude Code&apos;s own reading of the last seven days on this box. Approximate, and not
-            aligned to your plan&apos;s reset day.
+            {t("panel.skills.driversNote")}
           </div>
           {drivers === null && (
             <>
@@ -1433,7 +1422,9 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
                 const win =
                   drivers.windows.find((w) => w.label === "Last 7d") ?? drivers.windows[0];
                 if (!win)
-                  return <div style={{ ...meta, color: T.faint }}>No activity recorded yet.</div>;
+                  return (
+                    <div style={{ ...meta, color: T.faint }}>{t("panel.skills.noActivity")}</div>
+                  );
                 return (
                   <>
                     {/* `?? []` because this reply can come from a cache file written by an older
@@ -1481,7 +1472,10 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
                         </div>
                       ))}
                     <div data-omc-usage-drivers-window="" style={{ ...meta }}>
-                      {win.requests} requests · {win.sessions} sessions
+                      {t("panel.skills.driversWindow", {
+                        requests: win.requests,
+                        sessions: win.sessions,
+                      })}
                     </div>
                   </>
                 );
@@ -1491,12 +1485,12 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
           <button
             type="button"
             data-omc-usage-drivers-refresh=""
-            aria-label="Read the usage drivers again"
+            aria-label={t("panel.skills.driversRefreshLabel")}
             style={{ ...btn, marginTop: 8 }}
             disabled={driversBusy}
             onClick={() => loadDrivers(true)}
           >
-            {driversBusy ? "Reading…" : "Refresh"}
+            {driversBusy ? t("panel.skills.readingBusy") : t("panel.refresh")}
           </button>
         </div>
       </details>
@@ -1510,6 +1504,7 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
  * an editor. Managed files open read-only. Same save/delete routes as Memory, path-checked.
  */
 function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
+  useLocale();
   const cwd = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.cwd;
   const [files, setFiles] = useState<InstructionFile[]>([]);
   const [file, setFile] = useState<InstructionFile | null>(null);
@@ -1606,7 +1601,7 @@ function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCt
   if (!cwd)
     return (
       <span style={{ ...meta, padding: "4px 0", color: error ? T.err : undefined }}>
-        {error || "No instructions for this workspace."}
+        {error || t("panel.instructions.none")}
       </span>
     );
   const dirty = text !== saved;
@@ -1614,7 +1609,7 @@ function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCt
   return (
     <div style={bodyFlow}>
       {file === null && files.length === 0 && (
-        <span style={{ ...meta, padding: "4px 0" }}>No instructions for this workspace.</span>
+        <span style={{ ...meta, padding: "4px 0" }}>{t("panel.instructions.none")}</span>
       )}
       {file === null ? (
         files.map((f) => (
@@ -1630,7 +1625,9 @@ function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCt
             }}
             onClick={() => openFile(f)}
           >
-            <span style={{ ...meta, flex: "none", minWidth: 52 }}>{f.kind}</span>
+            <span style={{ ...meta, flex: "none", minWidth: 52 }}>
+              {t(`panel.instructions.kind.${f.kind}`)}
+            </span>
             <span
               style={{
                 flex: 1,
@@ -1647,7 +1644,9 @@ function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCt
             </span>
             {f.importedBy && (
               <span style={{ ...meta, flex: "none", marginLeft: 8 }}>
-                (from {f.importedBy.split("/").pop()})
+                {t("panel.instructions.importedFrom", {
+                  name: f.importedBy.split("/").pop() ?? "",
+                })}
               </span>
             )}
             <span style={{ ...meta, flex: "none", marginLeft: 8 }}>{ago(f.mtime)}</span>
@@ -1657,13 +1656,13 @@ function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCt
         <>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <button type="button" style={btn} onClick={() => setFile(null)} disabled={busy}>
-              ‹ Back
+              ‹ {t("panel.back")}
             </button>
             <span style={{ flex: 1, minWidth: 0, fontFamily: T.mono, fontSize: 12 }}>
               {shortPath(file.path, cwd)}
             </span>
             {file.kind === "Managed" && (
-              <span style={{ ...meta, flex: "none" }}>read-only (managed)</span>
+              <span style={{ ...meta, flex: "none" }}>{t("panel.instructions.readOnly")}</span>
             )}
             {file.kind !== "Managed" && (
               <button
@@ -1672,13 +1671,13 @@ function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCt
                 onClick={save}
                 disabled={busy || !dirty}
               >
-                Save
+                {t("common.save")}
               </button>
             )}
           </div>
           <textarea
             data-omc-instructions-editor=""
-            aria-label="Instruction file"
+            aria-label={t("panel.instructions.editorLabel")}
             value={text}
             spellCheck={false}
             // oxlint-disable-next-line jsx-a11y/no-autofocus -- opened by the person's own click, so focus goes where they asked
@@ -1727,7 +1726,11 @@ interface RewindReply {
 const rewindSummary = (r: RewindReply) =>
   r.error
     ? r.error
-    : `${r.filesChanged?.length ?? 0} files, +${r.insertions ?? 0} −${r.deletions ?? 0}`;
+    : t("panel.rewind.summary", {
+        files: r.filesChanged?.length ?? 0,
+        ins: r.insertions ?? 0,
+        del: r.deletions ?? 0,
+      });
 
 /**
  * "Rewind" body rendered inside the Oh My Claude dialog: lists the session's user prompts,
@@ -1743,6 +1746,7 @@ function RewindBody({
   ctx: ClientCtx;
   onClose: () => void;
 }) {
+  useLocale();
   const cwd = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.cwd;
   const isClaude = activeClaudeSession(ctx) === sessionId;
   const [prompts, setPrompts] = useState<RewindPrompt[]>([]);
@@ -1799,15 +1803,10 @@ function RewindBody({
   const noFiles = switches?.checkpointingDisabled === true;
   return (
     <div style={bodyFlow}>
-      {noFiles && (
-        <span style={errText}>
-          CLAUDE_CODE_DISABLE_FILE_CHECKPOINTING is set in dsh's environment, so Claude keeps no
-          file checkpoints: a rewind moves the conversation back and leaves your files as they are.
-        </span>
-      )}
+      {noFiles && <span style={errText}>{t("panel.rewind.noCheckpoints")}</span>}
       {picked === null ? (
         prompts.length === 0 ? (
-          <span style={{ ...meta, padding: "2px 0" }}>No completed prompts yet</span>
+          <span style={{ ...meta, padding: "2px 0" }}>{t("panel.rewind.noPrompts")}</span>
         ) : (
           prompts.map((p) => (
             <button
@@ -1839,17 +1838,16 @@ function RewindBody({
         )
       ) : (
         <>
-          <span style={{ fontSize: 13, padding: "2px 0" }}>Rewind to: {picked.text}</span>
-          <span style={{ ...meta, padding: "2px 0" }}>
-            {busy && !preview ? "Checking…" : preview ? rewindSummary(preview) : ""}
+          <span style={{ fontSize: 13, padding: "2px 0" }}>
+            {t("panel.rewind.rewindTo", { text: picked.text })}
           </span>
           <span style={{ ...meta, padding: "2px 0" }}>
-            Files go back and Claude forgets everything after this prompt. This dsh transcript keeps
-            showing what happened.
+            {busy && !preview ? t("panel.rewind.checking") : preview ? rewindSummary(preview) : ""}
           </span>
+          <span style={{ ...meta, padding: "2px 0" }}>{t("panel.rewind.explain")}</span>
           <div style={{ display: "flex", gap: 8, padding: "2px 0" }}>
             <button type="button" style={btn} disabled={busy} onClick={() => setPicked(null)}>
-              ‹ Back
+              ‹ {t("panel.back")}
             </button>
             <button
               type="button"
@@ -1857,14 +1855,14 @@ function RewindBody({
               disabled={busy || !preview?.ok}
               onClick={() => run(picked.id, false)}
             >
-              Rewind
+              {t("panel.rewind.action")}
             </button>
           </div>
         </>
       )}
       {picked === null && prompts.length > 0 && (
         <span style={{ ...meta, padding: "2px 0", whiteSpace: "normal" }}>
-          {retentionNote(switches)} A prompt older than that is no longer here to rewind to.
+          {retentionNote(switches)} {t("panel.rewind.retentionTail")}
         </span>
       )}
       {error && <span style={errText}>{error}</span>}
@@ -1914,6 +1912,7 @@ function ChangesBody({
   ctx: ClientCtx;
   onClose: () => void;
 }) {
+  useLocale();
   const isClaude = activeClaudeSession(ctx) === sessionId;
   const [reply, setReply] = useState<DiffReply | null>(null);
   const [shown, setShown] = useState<string | null>(null);
@@ -1938,7 +1937,7 @@ function ChangesBody({
       // On success the dialog gets out of the way: the answer docks above the composer, which this
       // panel covers. A failure keeps it open, because the message is the only place the error shows.
       if (body.ok) onClose();
-      else setNote(body.error ?? "failed");
+      else setNote(body.error ?? t("panel.plugins.actionFailed"));
     } catch (e) {
       setNote(e instanceof Error ? e.message : String(e));
     } finally {
@@ -1969,7 +1968,7 @@ function ChangesBody({
           header, and a line appended after the list sits below the fold on any real diff. */}
       {note !== "" && <span style={{ ...meta, padding: "2px 0" }}>{note}</span>}
       {reply === null ? (
-        <span style={stateText}>Loading…</span>
+        <span style={stateText}>{t("common.loading")}</span>
       ) : !reply.ok ? (
         <span style={errText}>{reply.error}</span>
       ) : current ? (
@@ -1983,7 +1982,7 @@ function ChangesBody({
                 setNote("");
               }}
             >
-              ‹ Back
+              ‹ {t("panel.back")}
             </button>
             <span style={{ fontSize: 13, fontFamily: "monospace" }}>{current.path}</span>
             <span style={{ ...meta, marginLeft: "auto" }}>
@@ -1993,16 +1992,20 @@ function ChangesBody({
               type="button"
               style={btn}
               data-omc-diff-ask=""
-              title="Ask Claude about this file, off the transcript"
+              title={t("panel.changes.askFileTitle")}
               disabled={asking !== null}
               onClick={() => void ask(current.path)}
             >
-              {asking === current.path ? "…" : "Ask"}
+              {asking === current.path ? "…" : t("panel.changes.ask")}
             </button>
           </div>
           {current.hunks.length === 0 ? (
             <span style={{ ...meta, padding: "2px 0" }}>
-              {current.binary ? "Binary file" : current.untracked ? "Untracked file" : "No hunks"}
+              {current.binary
+                ? t("panel.changes.binary")
+                : current.untracked
+                  ? t("panel.changes.untracked")
+                  : t("panel.changes.noHunks")}
             </span>
           ) : (
             current.hunks.map((h, i) => (
@@ -2041,10 +2044,10 @@ function ChangesBody({
         <>
           <span style={{ ...meta, padding: "2px 0" }}>
             {reply.filesCount === 0 ? (
-              "Working tree clean"
+              t("panel.changes.clean")
             ) : (
               <>
-                {reply.filesCount} files,{" "}
+                {t("panel.changes.filesCount", { n: reply.filesCount })}{" "}
                 <DiffCounts added={reply.linesAdded} removed={reply.linesRemoved} />
               </>
             )}
@@ -2055,23 +2058,23 @@ function ChangesBody({
                 type="button"
                 style={btn}
                 data-omc-diff-ask-all=""
-                title="Ask Claude about all the changes, off the transcript"
+                title={t("panel.changes.askAllTitle")}
                 disabled={asking !== null}
                 onClick={() => void ask("")}
               >
-                {asking === "" ? "…" : "Ask"}
+                {asking === "" ? "…" : t("panel.changes.ask")}
               </button>
               <button
                 type="button"
                 style={btn}
                 data-omc-diff-review=""
-                title="Write a review prompt into the composer"
+                title={t("panel.changes.reviewTitle")}
                 onClick={() => {
                   queueDraft(sessionId, reviewPrompt(files.map((f) => f.path)));
                   onClose();
                 }}
               >
-                Review my changes
+                {t("panel.changes.review")}
               </button>
             </div>
           )}
@@ -2105,9 +2108,9 @@ function ChangesBody({
               </span>
               <span style={{ ...meta, flex: "none", marginLeft: 8 }}>
                 {f.untracked ? (
-                  "new"
+                  t("panel.changes.new")
                 ) : f.binary ? (
-                  "binary"
+                  t("panel.changes.binaryShort")
                 ) : (
                   <DiffCounts added={f.added} removed={f.removed} />
                 )}
@@ -2153,6 +2156,7 @@ interface ConfiguredMcpRow {
  * and Remove per row, and an Add form below.
  */
 function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClose: () => void }) {
+  useLocale();
   const isClaude = activeClaudeSession(ctx) === sessionId;
   const [reply, setReply] = useState<McpReply | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -2217,7 +2221,12 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
           body: JSON.stringify({ session: sessionId, name: serverName }),
         }),
       );
-      setNote(r.ok ? `${serverName}: reconnected` : `${serverName}: ${r.error ?? "failed"}`);
+      setNote(
+        t("panel.mcp.nameMsg", {
+          name: serverName,
+          msg: r.ok ? t("panel.mcp.reconnectedMsg") : (r.error ?? t("panel.plugins.actionFailed")),
+        }),
+      );
       await load();
     } catch (e) {
       setNote(e instanceof Error ? e.message : String(e));
@@ -2249,16 +2258,23 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
       }).then((x) => readJson<{ ok?: boolean; authUrl?: string; error?: string }>(x));
       if (r.ok === true && r.authUrl !== undefined) {
         window.open(r.authUrl, "_blank", "noopener");
-        setNote(`${serverName}: approve in the tab that opened; this row updates itself`);
+        setNote(t("panel.mcp.nameMsg", { name: serverName, msg: t("panel.mcp.approveInTab") }));
         watchUntilSignedIn();
       } else if (r.ok === true) {
-        setNote(`${serverName}: already signed in`);
+        setNote(t("panel.mcp.nameMsg", { name: serverName, msg: t("panel.mcp.alreadySignedIn") }));
         void load();
       } else {
-        setNote(`${serverName}: ${r.error ?? "login failed"}`);
+        setNote(
+          t("panel.mcp.nameMsg", { name: serverName, msg: r.error ?? t("panel.mcp.loginFailed") }),
+        );
       }
     } catch (e) {
-      setNote(`${serverName}: ${e instanceof Error ? e.message : "login failed"}`);
+      setNote(
+        t("panel.mcp.nameMsg", {
+          name: serverName,
+          msg: e instanceof Error ? e.message : t("panel.mcp.loginFailed"),
+        }),
+      );
     } finally {
       setBusy(null);
     }
@@ -2276,7 +2292,12 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
         }),
       );
       setNote(
-        r.ok ? `${serverName} removed. ${SPAWN_NOTE}` : `${serverName}: ${r.error ?? "failed"}`,
+        r.ok
+          ? t("panel.mcp.removed", { name: serverName, spawn: spawnNote() })
+          : t("panel.mcp.nameMsg", {
+              name: serverName,
+              msg: r.error ?? t("panel.plugins.actionFailed"),
+            }),
       );
       await load();
     } catch (e) {
@@ -2299,7 +2320,13 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
         }),
       );
       if (r.ok) await load();
-      else setNote(`${serverName}: ${r.error ?? "failed"}`);
+      else
+        setNote(
+          t("panel.mcp.nameMsg", {
+            name: serverName,
+            msg: r.error ?? t("panel.plugins.actionFailed"),
+          }),
+        );
     } catch (e) {
       setNote(e instanceof Error ? e.message : String(e));
     } finally {
@@ -2323,7 +2350,7 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
         style={{ ...btn, marginBottom: 8 }}
         onClick={() => setShowAdd(!showAdd)}
       >
-        {showAdd ? "Cancel" : "Add server"}
+        {showAdd ? t("common.cancel") : t("panel.mcp.addServer")}
       </button>
       {/* Collapsed by row height rather than unmounted: 0fr to 1fr is the one way a grid row
           animates to a height nobody measured, so Cancel slides shut instead of cutting. */}
@@ -2339,22 +2366,20 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
             sessionId={sessionId}
             ctx={ctx}
             onAdded={() => {
-              setNote(SPAWN_NOTE);
+              setNote(spawnNote());
               void loadConfigured();
             }}
           />
         </div>
       </div>
       {reply === null ? (
-        <span style={stateText}>Loading…</span>
+        <span style={stateText}>{t("common.loading")}</span>
       ) : !reply.ok && reply.error.startsWith("no live Claude process") ? (
-        <span style={stateText}>
-          Claude starts on your first message. Its MCP servers appear here once it is running.
-        </span>
+        <span style={stateText}>{t("panel.mcp.notRunning")}</span>
       ) : !reply.ok ? (
         <span style={errText}>{reply.error}</span>
       ) : servers.length === 0 && pendingRows.length === 0 ? (
-        <span style={{ ...meta, padding: "2px 0" }}>No MCP servers</span>
+        <span style={{ ...meta, padding: "2px 0" }}>{t("panel.mcp.none")}</span>
       ) : (
         servers.map((s) => (
           <div key={s.name}>
@@ -2385,7 +2410,7 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
                 {s.version ? <span style={meta}> {s.version}</span> : null}
               </span>
               {scopeOf(s.name) && <span style={pill(T.faint)}>{scopeOf(s.name)}</span>}
-              <span style={{ ...meta, flex: "none" }}>{s.status}</span>
+              <span style={{ ...meta, flex: "none" }}>{mcpStatusLabel(s.status)}</span>
               {/* A tighten-only toggle: on sends default (ask), off sends null (clear). What it
                   reads is the plugin's record on the live process, so a refresh or a second browser
                   sees the same thing; the CLI offers no read-back of its own. */}
@@ -2396,12 +2421,12 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
                 // tool runs, so it has to read as on from across the row.
                 style={s.asking === true ? btnPrimary : btn}
                 aria-pressed={s.asking === true}
-                aria-label={`Always ask: ${s.name}`}
+                aria-label={t("panel.mcp.alwaysAskLabel", { name: s.name })}
                 data-omc-mcp-ask=""
                 disabled={busy !== null}
                 onClick={() => setAsk(s.name, s.asking !== true)}
               >
-                Always ask
+                {t("panel.mcp.alwaysAsk")}
               </button>
               {s.status !== "needs-auth" && (
                 <button
@@ -2410,7 +2435,7 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
                   disabled={busy !== null}
                   onClick={() => reconnect(s.name)}
                 >
-                  {busy === s.name ? "…" : "Reconnect"}
+                  {busy === s.name ? "…" : t("panel.mcp.reconnect")}
                 </button>
               )}
               {s.status === "needs-auth" && (
@@ -2418,15 +2443,15 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
                   type="button"
                   style={btn}
                   data-omc-mcp-login=""
-                  aria-label={`Log in: ${s.name}`}
+                  aria-label={t("panel.mcp.loginLabel", { name: s.name })}
                   disabled={busy !== null}
                   onClick={() => void login(s.name)}
                 >
-                  {busy === s.name ? "…" : "Log in"}
+                  {busy === s.name ? "…" : t("panel.mcp.login")}
                 </button>
               )}
               <ConfirmButton
-                label="Remove"
+                label={t("common.remove")}
                 style={btn}
                 disabled={busy !== null}
                 busyLabel={busy === s.name ? "…" : undefined}
@@ -2441,11 +2466,7 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
               <div style={{ padding: "0 0 4px 16px", color: T.muted, fontSize: 12 }}>
                 {s.error}
                 {s.status === "needs-auth" ? (
-                  <div style={{ marginTop: 2 }}>
-                    Log in opens the sign-in page in a new tab. The sign-in has to finish in a
-                    browser on the machine running Claude Code, not necessarily this one; the row
-                    updates itself when it lands.
-                  </div>
+                  <div style={{ marginTop: 2 }}>{t("panel.mcp.loginHelp")}</div>
                 ) : null}
               </div>
             ) : null}
@@ -2458,7 +2479,7 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
                 does. The CLI keeps it in state that dies with the process, so the note says so. */}
             {s.asking === true && !askIsInert && (
               <div style={{ padding: "0 0 4px 16px", color: T.muted, fontSize: 12 }}>
-                Tools from this server ask, until this session's Claude restarts.
+                {t("panel.mcp.askNote")}
               </div>
             )}
           </div>
@@ -2486,9 +2507,9 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
               <span style={meta}> {c.summary}</span>
             </span>
             <span style={pill(T.faint)}>{c.scope}</span>
-            <span style={{ ...meta, flex: "none" }}>starts with the next session</span>
+            <span style={{ ...meta, flex: "none" }}>{t("panel.mcp.startsNext")}</span>
             <ConfirmButton
-              label="Remove"
+              label={t("common.remove")}
               style={btn}
               disabled={busy !== null}
               busyLabel={busy === c.name ? "…" : undefined}
@@ -2498,9 +2519,7 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
         </div>
       ))}
       {askIsInert && servers.length > 0 && (
-        <span style={{ ...meta, padding: "2px 0", marginTop: 8 }}>
-          This session already asks before an MCP tool runs, so Always ask changes nothing yet.
-        </span>
+        <span style={{ ...meta, padding: "2px 0", marginTop: 8 }}>{t("panel.mcp.inertNote")}</span>
       )}
       {note && <span style={{ ...meta, padding: "2px 0", marginTop: 8 }}>{note}</span>}
     </div>
@@ -2509,9 +2528,17 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
 
 /**
  * A server the config gains or loses is not a server this process has: the CLI reads its MCP
- * config at spawn, so the list on screen only catches up on the next one.
+ * config at spawn, so the list on screen only catches up on the next one. A function, not a const,
+ * so it reads the active language at the moment the note is shown rather than at module load.
  */
-const SPAWN_NOTE = "Saved. Claude picks it up the next time it starts.";
+const spawnNote = (): string => t("panel.mcp.spawnNote");
+
+/** An MCP server's connection status as a word: the three the tab knows, translated; any other the
+ *  CLI reports (a status added later) shows through in the CLI's own word rather than vanishing. */
+const mcpStatusLabel = (status: string): string =>
+  status === "connected" || status === "pending" || status === "needs-auth"
+    ? t(`panel.mcp.status.${status}`)
+    : status;
 
 /** Runtime status, config files, and doctor output. */
 interface DiagnosticsReply {
@@ -2546,6 +2573,7 @@ interface DeniedTurn {
  * is the one people deny for good.
  */
 function SessionNotices() {
+  useLocale();
   const [on, setOn] = useState(noticesOn);
   const supported = "Notification" in window;
   const [permission, setPermission] = useState(supported ? Notification.permission : "denied");
@@ -2563,15 +2591,15 @@ function SessionNotices() {
     else write(true);
   };
   const state = !supported
-    ? "This browser has no notification API; the tab title carries the mark instead."
+    ? t("panel.notices.noApi")
     : permission === "denied"
-      ? "Blocked in the browser's site settings; the tab title still carries the mark."
+      ? t("panel.notices.blocked")
       : on
-        ? "On for sessions this tab is not showing."
-        : "Off. The tab title is marked while the page is hidden either way.";
+        ? t("panel.notices.on")
+        : t("panel.notices.off");
   return (
     <>
-      <span style={sectionHead}>Session notices</span>
+      <span style={sectionHead}>{t("panel.notices.head")}</span>
       <div
         style={{
           display: "flex",
@@ -2588,7 +2616,7 @@ function SessionNotices() {
           disabled={!supported || permission === "denied"}
           onClick={() => (on ? write(false) : enable())}
         >
-          {on ? "Turn off" : "Turn on"}
+          {on ? t("panel.notices.turnOff") : t("panel.notices.turnOn")}
         </button>
         <span>{state}</span>
       </div>
@@ -2609,14 +2637,15 @@ function ReadoutState({
   error: string;
   reply: PermissionsReply | null;
 }) {
+  useLocale();
   if (!running)
     return (
       <span style={{ ...meta, padding: "2px 0", fontSize: 12 }}>
-        Claude is not running for this session.
+        {t("panel.readout.notRunning")}
       </span>
     );
   if (error !== "") return <span style={errText}>{error}</span>;
-  if (reply === null) return <span style={stateText}>Loading…</span>;
+  if (reply === null) return <span style={stateText}>{t("common.loading")}</span>;
   return null;
 }
 
@@ -2625,6 +2654,7 @@ function ReadoutState({
  * many to show, whether that is all of them, and the button to draw when there is more than a fold.
  */
 function useFold(total: number) {
+  useLocale();
   const [shown, setShown] = useState(8);
   const allShown = shown >= total;
   const button =
@@ -2634,7 +2664,7 @@ function useFold(total: number) {
         style={{ ...btn, fontSize: 12, margin: "2px 0" }}
         onClick={() => setShown(allShown ? 8 : total)}
       >
-        {allShown ? "Show fewer" : `Show all ${total}`}
+        {allShown ? t("panel.fold.showFewer") : t("panel.fold.showAll", { total })}
       </button>
     ) : null;
   return { shown, allShown, button };
@@ -2642,6 +2672,13 @@ function useFold(total: number) {
 
 /** Sort rank for permission behaviour: deny before ask before allow. */
 const ruleRank = (r: string): number => (r === "deny" ? 0 : r === "ask" ? 1 : 2);
+
+/** A permission rule's behaviour as a word: the three the CLI uses, translated; any other value
+ *  it reports shows through unchanged rather than as a missing key. */
+const ruleBehaviorLabel = (behavior: string): string =>
+  behavior === "allow" || behavior === "deny" || behavior === "ask"
+    ? t(`panel.rules.behavior.${behavior}`)
+    : behavior;
 
 /**
  * The permission rules readout: one row per rule, behaviour as a pill, the CLI's own display text
@@ -2671,7 +2708,7 @@ function RulesList({ rules }: { rules: PermissionRules["rules"] }) {
           <span
             style={pill(r.behavior === "allow" ? T.ok : r.behavior === "deny" ? T.err : T.warn)}
           >
-            {r.behavior}
+            {ruleBehaviorLabel(r.behavior)}
           </span>
           <span style={{ flex: 1, fontFamily: T.mono, fontSize: 11 }}>{r.text}</span>
           <span style={{ ...meta, flex: "none" }}>{r.source}</span>
@@ -2716,6 +2753,7 @@ function HooksList({ hooks }: { hooks: HooksListing["hooks"] }) {
  * MCP servers that are not connected with their errors, and a doctor output button.
  */
 function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
+  useLocale();
   const cwd = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.cwd;
   const running = activeClaudeSession(ctx) === sessionId;
   const [data, setData] = useState<DiagnosticsReply | DiagnosticsError | null>(null);
@@ -2751,7 +2789,7 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
       .then((r) => readJson<{ turns?: DeniedTurn[] }>(r))
       .then((b) => {
         // Newest first, and only the turns that had a call refused.
-        if (live) setAudit((b.turns ?? []).filter((t) => t.denials?.length).toReversed());
+        if (live) setAudit((b.turns ?? []).filter((turn) => turn.denials?.length).toReversed());
       })
       // An error is not an empty audit: say which one it was.
       .catch((e: Error) => live && setAuditError(e.message));
@@ -2794,7 +2832,7 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
     // A session dsh reports no directory for has nothing to read settings from; say that rather
     // than leaving the tab on "Loading…" for a fetch that will never be made.
     if (!cwd) {
-      setData({ ok: false, error: "This session has no working directory to inspect." });
+      setData({ ok: false, error: t("panel.diag.noWorkdir") });
       return;
     }
     let live = true;
@@ -2856,7 +2894,7 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
       setRowNote("Copied");
       setTimeout(() => setRowNote(""), 1600);
     } catch {
-      setRowNote("Clipboard write failed");
+      setRowNote(t("panel.diag.clipboardFailed"));
     }
   };
 
@@ -2888,15 +2926,15 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
         ))}
       </div>
       {data === null ? (
-        <span style={stateText}>Loading…</span>
+        <span style={stateText}>{t("common.loading")}</span>
       ) : !data.ok ? (
         // A reply of the wrong shape carries no message; an empty red line says nothing at all.
-        <span style={errText}>{data.error || "Diagnostics could not be read."}</span>
+        <span style={errText}>{data.error || t("panel.diag.unreadable")}</span>
       ) : (
         <>
           {data.session && (
             <>
-              <span style={sectionHead}>Session</span>
+              <span style={sectionHead}>{t("panel.diag.session")}</span>
               <div
                 data-omc-session-row=""
                 style={{
@@ -2930,7 +2968,7 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
                   data-omc-export-md=""
                   onClick={() => void exportMd()}
                 >
-                  Export as Markdown
+                  {t("panel.diag.exportMd")}
                 </button>
                 <button
                   type="button"
@@ -2938,22 +2976,26 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
                   data-omc-copy-resume=""
                   onClick={() => void copyResume()}
                 >
-                  {rowNote === "Copied" ? "Copied" : "Copy resume command"}
+                  {rowNote === "Copied" ? t("common.copied") : t("panel.diag.copyResume")}
                 </button>
                 {rowNote !== "" && rowNote !== "Copied" && <span style={errText}>{rowNote}</span>}
               </div>
             </>
           )}
           {/* Runtime */}
-          <span style={sectionHead}>Runtime</span>
+          <span style={sectionHead}>{t("panel.diag.runtime")}</span>
           <div style={{ padding: "4px 0", fontSize: 12, lineHeight: "1.5" }}>
             <div>
-              Binary:{" "}
-              <span style={{ fontFamily: T.mono }}>{data.runtime.binary || "(not found)"}</span>
+              {t("panel.diag.binaryLabel")}{" "}
+              <span style={{ fontFamily: T.mono }}>
+                {data.runtime.binary || t("panel.diag.notFound")}
+              </span>
             </div>
-            <div>Version: {data.runtime.version || "(unknown)"}</div>
             <div>
-              Plugin: {data.runtime.plugin || "(unknown)"}
+              {t("panel.diag.versionLabel")} {data.runtime.version || t("panel.diag.unknown")}
+            </div>
+            <div>
+              {t("panel.diag.pluginLabel")} {data.runtime.plugin || t("panel.diag.unknown")}
               {data.runtime.latest && data.runtime.update && (
                 <span style={{ marginLeft: 6 }}>
                   <UpdatePill latest={data.runtime.latest} command={data.runtime.update} />
@@ -2961,28 +3003,29 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
               )}
             </div>
             <div>
-              Login:{" "}
+              {t("panel.diag.loginLabel")}{" "}
               {data.runtime.loggedIn ? (
                 <span style={{ color: T.ok }}>
-                  {maskEmail(data.runtime.email || "logged in")} · {data.runtime.host}
+                  {maskEmail(data.runtime.email || t("panel.diag.loggedInFallback"))} ·{" "}
+                  {data.runtime.host}
                 </span>
               ) : (
-                <span style={{ color: T.err }}>
-                  not logged in · Log in under Settings, Oh My Claude, Boxes, or run `claude auth
-                  login`
-                </span>
+                <span style={{ color: T.err }}>{t("panel.diag.notLoggedIn")}</span>
               )}
             </div>
             <div>
-              Config dir: <span style={{ fontFamily: T.mono }}>{data.runtime.configDir}</span>
+              {t("panel.diag.configDirLabel")}{" "}
+              <span style={{ fontFamily: T.mono }}>{data.runtime.configDir}</span>
             </div>
             {data.runtime.error && <div style={{ color: T.err }}>{data.runtime.error}</div>}
           </div>
 
           {/* Config files */}
-          <span style={sectionHead}>Config files</span>
+          <span style={sectionHead}>{t("panel.diag.configFiles")}</span>
           {data.configFiles.length === 0 ? (
-            <span style={{ ...meta, padding: "2px 0", fontSize: 12 }}>No config files</span>
+            <span style={{ ...meta, padding: "2px 0", fontSize: 12 }}>
+              {t("panel.diag.noConfigFiles")}
+            </span>
           ) : (
             data.configFiles.map((f) => (
               <div
@@ -2997,7 +3040,9 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
               >
                 <div style={{ ...meta, marginBottom: 2 }}>{f.scope}</div>
                 <div style={{ fontFamily: T.mono, fontSize: 11, marginBottom: 2 }}>{f.path}</div>
-                {!f.exists && <div style={{ ...meta, fontSize: 11 }}>not found</div>}
+                {!f.exists && (
+                  <div style={{ ...meta, fontSize: 11 }}>{t("panel.diag.fileNotFound")}</div>
+                )}
                 {f.parseError && <div style={{ fontSize: 11 }}>{f.parseError}</div>}
               </div>
             ))
@@ -3006,62 +3051,58 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
           <SessionNotices />
 
           {/* The three settings that switch a tab off underneath it */}
-          <span style={sectionHead}>Feature switches</span>
+          <span style={sectionHead}>{t("panel.diag.featureSwitches")}</span>
           {switches === null ? (
-            <span style={stateText}>Loading…</span>
+            <span style={stateText}>{t("common.loading")}</span>
           ) : (
             <div style={{ padding: "4px 0", fontSize: 12, lineHeight: "1.5" }}>
               <div>
-                Transcript retention: {switches.retention.days} days
                 {switches.retention.scope === null
-                  ? " (cleanupPeriodDays unset, so the CLI's default)"
-                  : ` (cleanupPeriodDays in ${switches.retention.scope} settings)`}
-                . Empties Rewind, Restore and the session browser as it sweeps.
+                  ? t("panel.diag.retentionDefault", { days: switches.retention.days })
+                  : t("panel.diag.retentionScoped", {
+                      days: switches.retention.days,
+                      scope: switches.retention.scope,
+                    })}
               </div>
               <div style={{ color: switches.bypassDisabled ? T.err : undefined }}>
-                Bypass permissions:{" "}
                 {switches.bypassDisabled
-                  ? `refused by permissions.disableBypassPermissionsMode in ${switches.bypassDisabled.scope} settings, so Full access does not take`
-                  : "allowed"}
-                .
+                  ? t("panel.diag.bypassDisabled", { scope: switches.bypassDisabled.scope })
+                  : t("panel.diag.bypassAllowed")}
               </div>
               <div style={{ color: switches.checkpointingDisabled ? T.err : undefined }}>
-                File checkpoints:{" "}
                 {switches.checkpointingDisabled
-                  ? "off, CLAUDE_CODE_DISABLE_FILE_CHECKPOINTING is set in dsh's environment, so a rewind cannot put files back"
-                  : "on, so Rewind can put files back"}
-                .
+                  ? t("panel.diag.checkpointsOff")
+                  : t("panel.diag.checkpointsOn")}
               </div>
               <div>
-                At a usage limit:{" "}
-                {switches.usageLimit.plugin
-                  ? "this plugin waits for the reset and continues the turn"
-                  : "nothing continues the turn, its Continue after limit is off"}
-                . Claude Code's own autoContinueAtUsageLimit is{" "}
-                {switches.usageLimit.cli === null
-                  ? "unset"
-                  : switches.usageLimit.cli
-                    ? "on"
-                    : "off"}
-                , and does not act here: it drives the interactive limit dialog, which a headless
-                run has no way to show.
+                {t("panel.diag.usageLimit", {
+                  pluginPart: switches.usageLimit.plugin
+                    ? t("panel.diag.usageLimitPluginWaits")
+                    : t("panel.diag.usageLimitPluginOff"),
+                  cliState:
+                    switches.usageLimit.cli === null
+                      ? t("panel.diag.usageLimitCliUnset")
+                      : switches.usageLimit.cli
+                        ? t("panel.diag.usageLimitCliOn")
+                        : t("panel.diag.usageLimitCliOff"),
+                })}
               </div>
             </div>
           )}
 
           {/* MCP servers that did not come up */}
-          <span style={sectionHead}>MCP servers</span>
+          <span style={sectionHead}>{t("panel.diag.mcpServers")}</span>
           {!running ? (
             <span style={{ ...meta, padding: "2px 0", fontSize: 12 }}>
-              Claude is not running for this session.
+              {t("panel.readout.notRunning")}
             </span>
           ) : mcp === null ? (
-            <span style={stateText}>Loading…</span>
+            <span style={stateText}>{t("common.loading")}</span>
           ) : !mcp.ok ? (
             <span style={errText}>{mcp.error}</span>
           ) : mcp.servers.every((s) => s.status === "connected") ? (
             <span style={{ ...meta, padding: "2px 0", fontSize: 12 }}>
-              {mcp.servers.length === 0 ? "No MCP servers" : "All connected"}
+              {mcp.servers.length === 0 ? t("panel.mcp.none") : t("panel.diag.allConnected")}
             </span>
           ) : (
             mcp.servers
@@ -3079,7 +3120,7 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
                 >
                   <span style={{ flex: "1 1 auto", minWidth: 0 }}>
                     <span style={{ fontFamily: T.mono }}>{s.name}</span>
-                    <span style={{ ...meta, marginLeft: 6 }}>{s.status}</span>
+                    <span style={{ ...meta, marginLeft: 6 }}>{mcpStatusLabel(s.status)}</span>
                     {s.error && (
                       <div style={{ color: T.err, fontSize: 11, marginTop: 2 }}>{s.error}</div>
                     )}
@@ -3090,27 +3131,27 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
                     disabled={reconnecting === s.name}
                     onClick={() => void reconnect(s.name)}
                   >
-                    {reconnecting === s.name ? "…" : "Reconnect"}
+                    {reconnecting === s.name ? "…" : t("panel.mcp.reconnect")}
                   </button>
                 </div>
               ))
           )}
 
           {/* Calls a permission rule refused. The frame names the call, never the rule. */}
-          <span style={sectionHead}>Refused calls</span>
+          <span style={sectionHead}>{t("panel.diag.refusedCalls")}</span>
           {auditError ? (
             <span style={errText}>{auditError}</span>
           ) : audit === null ? (
-            <span style={stateText}>Loading…</span>
+            <span style={stateText}>{t("common.loading")}</span>
           ) : audit.length === 0 ? (
             <span style={{ ...meta, padding: "2px 0", fontSize: 12 }}>
-              No calls were refused in the turns kept for this session.
+              {t("panel.diag.noRefused")}
             </span>
           ) : (
-            audit.map((t) => (
-              <div key={t.at} style={{ padding: "4px 0", fontSize: 12 }}>
-                <div style={meta}>{ago(t.at)}</div>
-                {t.denials?.map((label) => (
+            audit.map((turn) => (
+              <div key={turn.at} style={{ padding: "4px 0", fontSize: 12 }}>
+                <div style={meta}>{ago(turn.at)}</div>
+                {turn.denials?.map((label) => (
                   <div key={label} style={{ fontFamily: T.mono, fontSize: 11 }}>
                     {label}
                   </div>
@@ -3124,29 +3165,39 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
               says which section is missing rather than leaving a bare error line. */}
           <div data-omc-permission-rules="">
             <span style={sectionHead}>
-              Permission rules
+              {t("panel.diag.permissionRules")}
               {permissions?.ok && ` · ${permissions.rules.length}`}
               {permissions?.ok && permissions.managedOnly && (
-                <span style={{ marginLeft: 4 }}>managed</span>
+                <span style={{ marginLeft: 4 }}>{t("panel.diag.managed")}</span>
               )}
             </span>
             <ReadoutState running={running} error={permissionsError} reply={permissions} />
             {permissions?.ok &&
               (permissions.rules.length === 0 ? (
                 <span style={{ ...meta, padding: "2px 0", fontSize: 12 }}>
-                  This session loaded no permission rules.
+                  {t("panel.diag.noRules")}
                 </span>
               ) : (
                 <>
                   <RulesList rules={permissions.rules} />
                   {permissions.directories.length > 0 && (
                     <span style={{ ...meta, padding: "2px 0", fontSize: 12 }}>
-                      {permissions.directories.length}{" "}
-                      {permissions.directories.length === 1
-                        ? "workspace directory"
-                        : "workspace directories"}
-                      {permissions.directories.length <= 3 &&
-                        `: ${permissions.directories.map((d) => d.path).join(", ")}`}
+                      {(() => {
+                        const dirs =
+                          permissions.directories.length === 1
+                            ? t("panel.diag.workspaceDirsOne", {
+                                n: permissions.directories.length,
+                              })
+                            : t("panel.diag.workspaceDirsOther", {
+                                n: permissions.directories.length,
+                              });
+                        return permissions.directories.length <= 3
+                          ? t("panel.diag.dirsWithPaths", {
+                              dirs,
+                              paths: permissions.directories.map((d) => d.path).join(", "),
+                            })
+                          : dirs;
+                      })()}
                     </span>
                   )}
                 </>
@@ -3154,14 +3205,14 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
           </div>
           <div data-omc-hooks="">
             <span style={sectionHead}>
-              Hooks
+              {t("panel.diag.hooks")}
               {permissions?.ok && ` · ${permissions.hooks.length}`}
             </span>
             <ReadoutState running={running} error={permissionsError} reply={permissions} />
             {permissions?.ok &&
               (permissions.hooks.length === 0 ? (
                 <span style={{ ...meta, padding: "2px 0", fontSize: 12 }}>
-                  This session loaded no hooks.
+                  {t("panel.diag.noHooks")}
                 </span>
               ) : (
                 <HooksList hooks={permissions.hooks} />
@@ -3176,7 +3227,7 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
               onClick={runDoctor}
               disabled={doctorBusy}
             >
-              {doctorBusy ? "Running…" : "Run doctor"}
+              {doctorBusy ? t("panel.diag.running") : t("panel.diag.runDoctor")}
             </button>
             {doctorError && (
               <div style={{ color: T.err, fontSize: 12, marginTop: 4 }}>{doctorError}</div>
@@ -3199,7 +3250,7 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
               </pre>
             )}
           </div>
-          <span style={sectionHead}>Report a problem</span>
+          <span style={sectionHead}>{t("panel.diag.reportProblem")}</span>
           <div style={{ padding: "4px 0" }}>
             <ReportBlock sessionId={sessionId} provider={doctorProvider} />
           </div>
@@ -3240,21 +3291,30 @@ interface DshGoal {
   updatedAt: number;
 }
 
-/** How a goal's phase reads on its row: dsh's word, capitalised, with a mark a glance can take in. */
-const PHASE = new Map([
-  ["active", "● Active"],
-  ["paused", "‖ Paused"],
-  ["blocked", "■ Blocked"],
-  ["complete", "✓ Complete"],
-  ["cleared", "○ Cleared"],
+/** How a goal's phase reads on its row: a mark a glance can take in, and dsh's word translated at
+ *  render. The mark stays; only the word switches language. */
+const PHASE = new Map<string, { glyph: string; key: OmcKey }>([
+  ["active", { glyph: "●", key: "panel.tasks.phase.active" }],
+  ["paused", { glyph: "‖", key: "panel.tasks.phase.paused" }],
+  ["blocked", { glyph: "■", key: "panel.tasks.phase.blocked" }],
+  ["complete", { glyph: "✓", key: "panel.tasks.phase.complete" }],
+  ["cleared", { glyph: "○", key: "panel.tasks.phase.cleared" }],
 ]);
+
+/** A goal phase as it reads on its row: the mark plus the translated word, or the raw phase for a
+ *  value dsh added that this map has not caught up with. */
+const phaseLabel = (phase: string): string => {
+  const p = PHASE.get(phase);
+  return p ? `${p.glyph} ${t(p.key)}` : phase;
+};
 
 /** One dsh goal: its phase and objective, then rounds and age, and why it stopped when blocked. */
 function DshGoalRow({ goal }: { goal: DshGoal }) {
+  useLocale();
   const rounds =
     goal.maxGoalRounds === undefined
-      ? `${goal.roundsStarted} rounds`
-      : `${goal.roundsStarted} of ${goal.maxGoalRounds} rounds`;
+      ? t("panel.tasks.rounds", { n: goal.roundsStarted })
+      : t("panel.tasks.roundsOf", { n: goal.roundsStarted, max: goal.maxGoalRounds });
   return (
     <div
       data-omc-dsh-goal={goal.phase}
@@ -3262,12 +3322,12 @@ function DshGoalRow({ goal }: { goal: DshGoal }) {
     >
       <div>
         <span style={{ color: goal.phase === "blocked" ? T.err : T.muted }}>
-          {PHASE.get(goal.phase) ?? goal.phase}
+          {phaseLabel(goal.phase)}
         </span>{" "}
         · {goal.objective}
       </div>
       <div style={{ ...meta, fontSize: 11 }}>
-        {rounds} · updated {ago(goal.updatedAt)}
+        {rounds} · {t("panel.tasks.updated", { ago: ago(goal.updatedAt) })}
       </div>
       {goal.blockedReason ? (
         <div style={{ color: T.err, fontSize: 11, whiteSpace: "normal" }}>{goal.blockedReason}</div>
@@ -3284,16 +3344,19 @@ interface ScheduledTasksError {
 
 /** One scheduled task, the same row whether it survives a restart or not. */
 function TaskRow({ task }: { task: Task }) {
+  useLocale();
   return (
     <div style={{ ...nested, padding: "4px 0 4px 12px", fontSize: 12, lineHeight: "1.5" }}>
       <div style={{ fontWeight: 600 }}>{task.name}</div>
       {task.description ? <div style={{ ...meta, fontSize: 11 }}>{task.description}</div> : null}
       {task.schedule ? (
-        <div style={{ ...meta, fontSize: 11 }}>Schedule: {task.schedule}</div>
+        <div style={{ ...meta, fontSize: 11 }}>
+          {t("panel.tasks.schedule", { schedule: task.schedule })}
+        </div>
       ) : null}
       {task.nextRunAt === undefined ? null : (
         <div style={{ ...meta, fontSize: 11 }}>
-          Next run: {new Date(task.nextRunAt).toLocaleString()}
+          {t("panel.tasks.nextRun", { date: new Date(task.nextRunAt).toLocaleString() })}
         </div>
       )}
     </div>
@@ -3303,6 +3366,7 @@ function TaskRow({ task }: { task: Task }) {
 /** An earlier dsh goal as one line (phase, objective cut to fit, age) that opens on a click to
  *  the full row, so a session with many past goals stays a short list. */
 function PastGoalRow({ goal }: { goal: DshGoal }) {
+  useLocale();
   const [open, setOpen] = useState(false);
   return (
     <div data-omc-dsh-goal-past={goal.phase}>
@@ -3327,7 +3391,7 @@ function PastGoalRow({ goal }: { goal: DshGoal }) {
       >
         <span style={{ color: T.faint, flex: "0 0 auto" }}>{open ? "▾" : "▸"}</span>
         <span style={{ color: goal.phase === "blocked" ? T.err : T.muted, flex: "0 0 auto" }}>
-          {PHASE.get(goal.phase) ?? goal.phase}
+          {phaseLabel(goal.phase)}
         </span>
         <span
           style={{
@@ -3347,8 +3411,8 @@ function PastGoalRow({ goal }: { goal: DshGoal }) {
           <div style={{ whiteSpace: "normal" }}>{goal.objective}</div>
           <div style={{ ...meta, fontSize: 11 }}>
             {goal.maxGoalRounds === undefined
-              ? `${goal.roundsStarted} rounds`
-              : `${goal.roundsStarted} of ${goal.maxGoalRounds} rounds`}
+              ? t("panel.tasks.rounds", { n: goal.roundsStarted })
+              : t("panel.tasks.roundsOf", { n: goal.roundsStarted, max: goal.maxGoalRounds })}
           </div>
           {goal.blockedReason ? (
             <div style={{ color: T.err, fontSize: 11, whiteSpace: "normal" }}>
@@ -3365,6 +3429,7 @@ function PastGoalRow({ goal }: { goal: DshGoal }) {
  *  past ones from dsh's own log, the CLI's goal from its transcript, then the tasks. Read-only;
  *  dsh's goal is changed from dsh's own controls. With nothing at all, one line says so. */
 function TasksBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
+  useLocale();
   const [data, setData] = useState<ScheduledTasksReply | ScheduledTasksError | null>(null);
   const [pastOpen, setPastOpen] = useState(false);
 
@@ -3392,7 +3457,7 @@ function TasksBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   return (
     <div style={bodyFlow}>
       {data === null ? (
-        <span style={stateText}>Loading…</span>
+        <span style={stateText}>{t("common.loading")}</span>
       ) : !data.ok ? (
         <span style={errText}>{data.error}</span>
       ) : (
@@ -3402,15 +3467,15 @@ function TasksBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
           data.durable.length === 0 &&
           data.session.length === 0 ? (
             <span data-omc-tasks-empty="" style={stateText}>
-              No goals or scheduled tasks in this session.
+              {t("panel.tasks.empty")}
             </span>
           ) : null}
-          {dshGoals.length > 0 ? <span style={sectionHead}>dsh goal</span> : null}
+          {dshGoals.length > 0 ? <span style={sectionHead}>{t("panel.tasks.dshGoal")}</span> : null}
           {current ? (
             <DshGoalRow goal={current} />
           ) : dshGoals.length > 0 ? (
             <div style={{ ...meta, padding: "4px 0", fontSize: 12 }}>
-              No goal running; the last one ended.
+              {t("panel.tasks.noGoalRunning")}
             </div>
           ) : null}
           {past.length > 0 ? (
@@ -3430,7 +3495,7 @@ function TasksBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
                   whiteSpace: "nowrap",
                 }}
               >
-                {`${pastOpen ? "▾" : "▸"}\u00a0Past goals`}
+                {`${pastOpen ? "▾" : "▸"}\u00a0${t("panel.tasks.pastGoals")}`}
                 <span style={meta}> · {past.length}</span>
               </button>
               {pastOpen && past.map((g) => <PastGoalRow key={g.id} goal={g} />)}
@@ -3440,13 +3505,15 @@ function TasksBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
           {/* The CLI's own /goal: rarely set from dsh, so the section only appears when it is. */}
           {data.goal ? (
             <>
-              <span style={sectionHead}>Claude Code goal</span>
+              <span style={sectionHead}>{t("panel.tasks.cliGoal")}</span>
               <div
                 data-omc-cli-goal=""
                 style={{ padding: "4px 0", fontSize: 12, lineHeight: "1.5" }}
               >
                 <div style={{ marginBottom: 4 }}>{data.goal.text}</div>
-                <div style={{ ...meta, fontSize: 11 }}>Proposed {ago(data.goal.at)}</div>
+                <div style={{ ...meta, fontSize: 11 }}>
+                  {t("panel.tasks.proposed", { ago: ago(data.goal.at) })}
+                </div>
               </div>
             </>
           ) : null}
@@ -3454,9 +3521,9 @@ function TasksBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
           {/* Like the CLI goal, the tasks only take room when there are some. */}
           {data.durable.length > 0 ? (
             <>
-              <span style={sectionHead}>Durable tasks</span>
-              {data.durable.map((t) => (
-                <TaskRow key={t.name} task={t} />
+              <span style={sectionHead}>{t("panel.tasks.durable")}</span>
+              {data.durable.map((task) => (
+                <TaskRow key={task.name} task={task} />
               ))}
               <div style={{ ...meta, padding: "2px 0", fontSize: 11, fontFamily: T.mono }}>
                 {data.path}
@@ -3466,12 +3533,9 @@ function TasksBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
 
           {data.session.length > 0 ? (
             <>
-              <span style={sectionHead}>
-                Session-only, reconstructed from this session's transcript; these die when Claude
-                exits.
-              </span>
-              {data.session.map((t) => (
-                <TaskRow key={t.name} task={t} />
+              <span style={sectionHead}>{t("panel.tasks.sessionOnly")}</span>
+              {data.session.map((task) => (
+                <TaskRow key={task.name} task={task} />
               ))}
             </>
           ) : null}
@@ -3529,6 +3593,7 @@ function McpAddForm({
   const [env, setEnv] = useState("");
   const [url, setUrl] = useState("");
   const [headers, setHeaders] = useState("");
+  useLocale();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [connector, setConnector] = useState("");
@@ -3556,7 +3621,7 @@ function McpAddForm({
           }),
         }),
       );
-      if (!r.ok) return setError(r.error ?? "failed to add server");
+      if (!r.ok) return setError(r.error ?? t("panel.mcp.addFailed"));
       setName("");
       setCommand("");
       setArgs("");
@@ -3585,13 +3650,13 @@ function McpAddForm({
     <div style={{ padding: 8, marginTop: 8, border: `1px solid ${T.border}`, borderRadius: 8 }}>
       <select
         data-omc-mcp-connector=""
-        aria-label="Connector"
+        aria-label={t("panel.mcp.connectorLabel")}
         value={connector}
         onChange={(e) => fillFromConnector(e.currentTarget.value)}
         disabled={busy}
         style={{ ...select, width: "100%", maxWidth: "none", marginBottom: 8 }}
       >
-        <option value="">Common connector…</option>
+        <option value="">{t("panel.mcp.commonConnector")}</option>
         {CONNECTORS.map((c) => (
           <option key={c.name} value={c.name}>
             {c.label}
@@ -3601,8 +3666,8 @@ function McpAddForm({
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
         <input
           type="text"
-          placeholder="Server name"
-          aria-label="Server name"
+          placeholder={t("panel.mcp.serverName")}
+          aria-label={t("panel.mcp.serverName")}
           data-omc-mcp-server-name=""
           value={name}
           onChange={(e) => setName(e.currentTarget.value)}
@@ -3613,19 +3678,19 @@ function McpAddForm({
         />
         <select
           data-omc-mcp-scope=""
-          aria-label="Scope"
+          aria-label={t("panel.mcp.scopeLabel")}
           value={scope}
           onChange={(e) => setScope(e.currentTarget.value)}
           disabled={busy}
           style={select}
         >
-          <option value="local">Local</option>
-          <option value="user">User</option>
-          <option value="project">Project</option>
+          <option value="local">{t("panel.scope.local")}</option>
+          <option value="user">{t("panel.scope.user")}</option>
+          <option value="project">{t("panel.scope.project")}</option>
         </select>
         <select
           data-omc-mcp-transport=""
-          aria-label="Transport"
+          aria-label={t("panel.mcp.transportLabel")}
           value={transport}
           onChange={(e) => setTransport(e.currentTarget.value)}
           disabled={busy}
@@ -3640,8 +3705,8 @@ function McpAddForm({
         <>
           <input
             type="text"
-            placeholder="Command, e.g. npx"
-            aria-label="Command"
+            placeholder={t("panel.mcp.commandPlaceholder")}
+            aria-label={t("panel.mcp.commandLabel")}
             data-omc-mcp-command=""
             value={command}
             onChange={(e) => setCommand(e.currentTarget.value)}
@@ -3650,8 +3715,8 @@ function McpAddForm({
           />
           <textarea
             data-omc-mcp-add-args=""
-            aria-label="Arguments"
-            placeholder="Args, one per line"
+            aria-label={t("panel.mcp.argsLabel")}
+            placeholder={t("panel.mcp.argsPlaceholder")}
             value={args}
             onChange={(e) => setArgs(e.currentTarget.value)}
             disabled={busy}
@@ -3659,8 +3724,8 @@ function McpAddForm({
           />
           <textarea
             data-omc-mcp-env=""
-            aria-label="Environment variables"
-            placeholder="Env vars: KEY=value, one per line"
+            aria-label={t("panel.mcp.envLabel")}
+            placeholder={t("panel.mcp.envPlaceholder")}
             value={env}
             onChange={(e) => setEnv(e.currentTarget.value)}
             disabled={busy}
@@ -3671,8 +3736,8 @@ function McpAddForm({
         <>
           <input
             type="text"
-            placeholder="URL, http:// or https://"
-            aria-label="URL"
+            placeholder={t("panel.mcp.urlPlaceholder")}
+            aria-label={t("panel.mcp.urlLabel")}
             data-omc-mcp-url=""
             value={url}
             onChange={(e) => setUrl(e.currentTarget.value)}
@@ -3681,8 +3746,8 @@ function McpAddForm({
           />
           <textarea
             data-omc-mcp-headers=""
-            aria-label="Headers"
-            placeholder="Headers: Name: value, one per line"
+            aria-label={t("panel.mcp.headersLabel")}
+            placeholder={t("panel.mcp.headersPlaceholder")}
             value={headers}
             onChange={(e) => setHeaders(e.currentTarget.value)}
             disabled={busy}
@@ -3691,7 +3756,7 @@ function McpAddForm({
         </>
       )}
       <button type="button" style={btnPrimary} disabled={busy || !name} onClick={submit}>
-        {busy ? "Adding…" : "Add"}
+        {busy ? t("panel.mcp.adding") : t("panel.add")}
       </button>
       {error && <span style={{ ...meta, display: "block", marginTop: 4 }}>{error}</span>}
     </div>
@@ -3730,25 +3795,26 @@ const PRESET_FOR_MODE = {
   bypassPermissions: "danger-full-access",
 } satisfies Record<string, string>;
 
-// Labels for the six Claude mode rows and the trigger, in key order.
-const MODE_LABELS = {
-  plan: "Plan · read-only",
-  default: "Ask · workspace",
-  acceptEdits: "Accept edits · workspace",
-  auto: "Auto · full access",
-  dontAsk: "Don't ask · full access",
-  bypassPermissions: "Bypass · full access",
-} satisfies Record<string, string>;
+// The six Claude mode rows and the trigger, in key order; their labels come from
+// `panel.access.mode.<mode>` at build time so the menu reads in the active language.
+const MODE_KEYS = [
+  "plan",
+  "default",
+  "acceptEdits",
+  "auto",
+  "dontAsk",
+  "bypassPermissions",
+] as const;
 
 // Narrowed indexers so callers can use arbitrary strings without widening the object type.
 /** The dsh permission preset that matches a Claude mode. */
 const presetForMode = (m: string): string =>
   // SAFETY: PRESET_FOR_MODE has exactly the six Claude modes as keys; all paths below pass a known key.
   PRESET_FOR_MODE[m as keyof typeof PRESET_FOR_MODE];
-/** How a Claude mode is labelled in the menu. */
+/** How a Claude mode is labelled in the menu, translated; a mode not in `MODE_KEYS` shows raw. */
 const modeLabel = (m: string): string =>
-  // SAFETY: MODE_LABELS has exactly the six Claude modes as keys; all paths below pass a known key.
-  MODE_LABELS[m as keyof typeof MODE_LABELS];
+  // SAFETY: the membership check guarantees `panel.access.mode.<m>` is a defined dictionary key.
+  (MODE_KEYS as readonly string[]).includes(m) ? t(`panel.access.mode.${m}` as OmcKey) : m;
 
 /**
  * Imperative rework: relabels dsh's own trigger and injects Claude-mode rows into its menu.
@@ -3799,13 +3865,16 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
       const reapplyLabel = () => {
         if (!trigger.isConnected || !currentMode) return;
         const refused = bypassRefusedIn !== "" && currentMode === "bypassPermissions";
-        const text = `${modeLabel(currentMode) ?? currentMode}${refused ? " ⚠" : ""}`;
+        const text = `${modeLabel(currentMode)}${refused ? " ⚠" : ""}`;
         const target = labelSpan();
         if (target && target.textContent !== text) {
           lastDshLabelText = target.textContent ?? "";
           target.textContent = text;
         }
-        const newAria = `Claude permission: ${text}${refused ? ", refused by settings" : ""}`;
+        const newAria = t("panel.access.ariaLabel", {
+          text,
+          refused: refused ? t("panel.access.ariaRefused") : "",
+        });
         const aria = trigger.getAttribute("aria-label") ?? "";
         if (aria !== newAria) {
           lastDshAriaLabel = aria;
@@ -3905,7 +3974,7 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
           let checkMark: Element | null = null;
           for (const el of menuItems) {
             const tokens = el.className.split(" ");
-            const found = tokens.find((t) => t.includes("selected"));
+            const found = tokens.find((tok) => tok.includes("selected"));
             if (found) {
               selectedToken = found;
               checkMark = el.querySelector(":scope > svg");
@@ -3916,7 +3985,7 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
           const baseClass = selectedToken
             ? menuItems[0]!.className
                 .split(" ")
-                .filter((t) => t !== selectedToken)
+                .filter((tok) => tok !== selectedToken)
                 .join(" ")
             : menuItems[0]!.className;
 
@@ -3949,10 +4018,8 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
               /* ignore */
             });
 
-          // Append six new wraps in MODE_LABELS key order.
-          // SAFETY: Object.keys on a const object with string keys returns string[].
-          const modeKeys = Object.keys(MODE_LABELS) as string[];
-          for (const m of modeKeys) {
+          // Append six new wraps in MODE_KEYS order.
+          for (const m of MODE_KEYS) {
             // SAFETY: cloneNode on a HTMLElement returns a Node tree rooted at that element.
             const wrap = firstItemWrap.cloneNode(true) as HTMLElement;
             wrap.style.display = ""; // the template was hidden before cloning
@@ -4028,7 +4095,7 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
                 const live = ctx.sessions.binding?.(sessionId)?.session;
                 if (!live) {
                   const errEl = parent.querySelector<HTMLElement>("[data-err]");
-                  if (errEl) errEl.textContent = "this session is not materialized yet";
+                  if (errEl) errEl.textContent = t("panel.access.notMaterialized");
                   return;
                 }
                 live
@@ -4036,7 +4103,9 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
                   .then((reply) => {
                     if (!reply || !reply.ok) {
                       const errEl = parent.querySelector<HTMLElement>("[data-err]");
-                      if (errEl) errEl.textContent = reply?.error?.message ?? "command failed";
+                      if (errEl)
+                        errEl.textContent =
+                          reply?.error?.message ?? t("panel.access.commandFailed");
                     } else {
                       setTimeout(doSet, 700);
                     }
@@ -4060,7 +4129,7 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
           if (bypassRefusedIn !== "") {
             const note = document.createElement("div");
             Object.assign(note.style, { ...meta, color: T.err, padding: "8px 10px" });
-            note.textContent = `Full access is refused by permissions.disableBypassPermissionsMode in ${bypassRefusedIn} settings.`;
+            note.textContent = t("panel.access.fullAccessRefused", { scope: bypassRefusedIn });
             viewport.appendChild(note);
           }
 
@@ -4195,6 +4264,7 @@ const asidePill = (color: string): CSSProperties => ({
 /** The Asides tab: this session's `/btw` questions and answers, newest first. Renders an error
  *  line, a loading line, or an empty note when there are none. */
 function AsidesBody({ sessionId }: { sessionId: string }) {
+  useLocale();
   const [items, setItems] = useState<AsideRow[] | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -4215,12 +4285,12 @@ function AsidesBody({ sessionId }: { sessionId: string }) {
   }, [sessionId]);
 
   if (error !== null) return <span style={errText}>{error}</span>;
-  if (items === null) return <span style={stateText}>Loading…</span>;
+  if (items === null) return <span style={stateText}>{t("common.loading")}</span>;
   if (items.length === 0) {
     return (
       <div style={{ ...meta, paddingBottom: 4, fontSize: 12, whiteSpace: "normal" }}>
-        No asides in this session. Ask one with <code style={codeInline}>/btw</code>. The answer
-        docks above the composer instead of joining the transcript, and lands here.
+        {t("panel.asides.emptyBefore")} <code style={codeInline}>/btw</code>
+        {t("panel.asides.emptyAfter")}
       </div>
     );
   }
@@ -4271,24 +4341,26 @@ function AsidesBody({ sessionId }: { sessionId: string }) {
               }}
             >
               {it.pending ? (
-                <span style={asidePill(T.faint)}>waiting</span>
+                <span style={asidePill(T.faint)}>{t("panel.asides.waiting")}</span>
               ) : it.error !== undefined ? (
-                <span style={asidePill(T.err)}>error</span>
+                <span style={asidePill(T.err)}>{t("panel.asides.error")}</span>
               ) : null}
-              {it.dismissed === true ? <span style={asidePill(T.faint)}>dismissed</span> : null}
+              {it.dismissed === true ? (
+                <span style={asidePill(T.faint)}>{t("panel.asides.dismissed")}</span>
+              ) : null}
               <span style={{ ...meta, fontSize: 11 }}>{ago(it.at)}</span>
               <button
                 type="button"
                 data-omc-aside-copy={it.id}
                 style={{ ...btn, fontSize: 11, padding: "1px 8px", lineHeight: "16px" }}
-                aria-label={copied === it.id ? "Copied" : "Copy aside"}
+                aria-label={copied === it.id ? t("common.copied") : t("panel.asides.copyLabel")}
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
                   copy(it);
                 }}
               >
-                {copied === it.id ? "Copied" : "Copy"}
+                {copied === it.id ? t("common.copied") : t("common.copy")}
               </button>
             </span>
             {it.question}
@@ -4304,7 +4376,7 @@ function AsidesBody({ sessionId }: { sessionId: string }) {
               color: it.error !== undefined ? T.err : T.faint,
             }}
           >
-            {it.pending ? "Waiting for an answer…" : (it.answer ?? it.error ?? "")}
+            {it.pending ? t("panel.asides.waitingAnswer") : (it.answer ?? it.error ?? "")}
           </div>
         </details>
       ))}
@@ -4321,6 +4393,7 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
   // Subscribed, not read: the button must come up on the picker change itself, and this slot is
   // not re-rendered for one (see useActiveClaude).
   const isMine = useActiveClaude(ctx, sessionId);
+  useLocale();
   // `open` is what is mounted, `shown` is what the transition draws. A close flips `shown` first
   // and unmounts a duration later, so the panel fades out instead of blinking away.
   const [open, setOpen] = useState(false);
@@ -4493,22 +4566,24 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
     transition: `opacity ${easeMs()}ms ease, transform ${easeMs()}ms ease`,
   } satisfies CSSProperties);
 
+  // The tab's key is both its React key and its stable `data-omc-label` hook; the visible label
+  // comes from `panel.tab.<key>` at render, so the key stays English while the label translates.
   const tabs = [
-    ...(blank ? [{ key: "Restore", label: "Restore" }] : []),
-    { key: "Memory", label: "Memory" },
-    { key: "Instructions", label: "Instructions" },
-    { key: "Skills", label: "Skills" },
-    { key: "Rewind", label: "Rewind" },
-    { key: "Changes", label: "Changes" },
-    { key: "MCP", label: "MCP" },
-    { key: "Asides", label: "Asides" },
-    { key: "Diagnostics", label: "Diagnostics" },
-    { key: "Tasks", label: "Tasks" },
-    { key: "Tune", label: "Tune" },
+    ...(blank ? [{ key: "Restore" }] : []),
+    { key: "Memory" },
+    { key: "Instructions" },
+    { key: "Skills" },
+    { key: "Rewind" },
+    { key: "Changes" },
+    { key: "MCP" },
+    { key: "Asides" },
+    { key: "Diagnostics" },
+    { key: "Tasks" },
+    { key: "Tune" },
   ] as const;
   // Fall back when an earlier session stored a tab no longer present (e.g. removed Permissions).
-  // SAFETY: tabs is const-as, so t.key is a literal string; the map produces string[].
-  if (!(tabs.map((t) => t.key) as readonly string[]).includes(lastTab)) lastTab = "Memory";
+  // SAFETY: tabs is const-as, so tb.key is a literal string; the map produces string[].
+  if (!(tabs.map((tb) => tb.key) as readonly string[]).includes(lastTab)) lastTab = "Memory";
 
   return (
     <span ref={rootRef} style={{ position: "relative", display: "inline-flex" }}>
@@ -4606,11 +4681,11 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
             boxShadow: `var(--dsw-elevation-prominent, 0 10px 28px rgba(0,0,0,.26))`,
           }}
         >
-          Memory, skills, rewind and more live here
+          {t("panel.tip")}
           <button
             type="button"
-            aria-label="Dismiss"
-            title="Dismiss"
+            aria-label={t("panel.dismiss")}
+            title={t("panel.dismiss")}
             onClick={dropTip}
             style={{
               background: "none",
@@ -4682,7 +4757,7 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
                 // still leave the strip.
                 if (!["ArrowRight", "ArrowLeft", "Home", "End"].includes(e.key)) return;
                 e.preventDefault();
-                const order = tabs.map((t) => t.key);
+                const order = tabs.map((tb) => tb.key);
                 const index = order.indexOf(tab);
                 const next =
                   e.key === "ArrowRight"
@@ -4715,35 +4790,39 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
                 rowGap: 4,
               }}
             >
-              {tabs.map((t) => (
-                <button
-                  key={t.key}
-                  role="tab"
-                  data-omc-label={t.label}
-                  id={`omc-tab-${t.key}`}
-                  aria-controls="omc-tabpanel"
-                  aria-selected={tab === t.key}
-                  // Only the selected tab is in the Tab order; arrows move between tabs (the tablist
-                  // handler), so the others stay out of the way.
-                  tabIndex={tab === t.key ? 0 : -1}
-                  // The strip sits under the body, so the lit edge is the mirror of a top tab bar:
-                  // accent along the bottom, corners rounded on that side only, no box around each
-                  // tab (nine bordered boxes read as buttons, not as tabs). Hover is in the sheet.
-                  // 8 px sides on a phone: the strip's inset would otherwise push the last tab
-                  // onto a fourth row at 390 px.
-                  style={
-                    narrow
-                      ? { ...tabStyle(tab === t.key), paddingInline: 8 }
-                      : tabStyle(tab === t.key)
-                  }
-                  onClick={() => {
-                    lastTab = t.key;
-                    setTab(t.key);
-                  }}
-                >
-                  {t.label}
-                </button>
-              ))}
+              {tabs.map((tabDef) => {
+                // SAFETY: every tabs[].key has a matching panel.tab.<key> entry in the dictionary.
+                const label = t(`panel.tab.${tabDef.key}` as OmcKey);
+                return (
+                  <button
+                    key={tabDef.key}
+                    role="tab"
+                    data-omc-label={tabDef.key}
+                    id={`omc-tab-${tabDef.key}`}
+                    aria-controls="omc-tabpanel"
+                    aria-selected={tab === tabDef.key}
+                    // Only the selected tab is in the Tab order; arrows move between tabs (the tablist
+                    // handler), so the others stay out of the way.
+                    tabIndex={tab === tabDef.key ? 0 : -1}
+                    // The strip sits under the body, so the lit edge is the mirror of a top tab bar:
+                    // accent along the bottom, corners rounded on that side only, no box around each
+                    // tab (nine bordered boxes read as buttons, not as tabs). Hover is in the sheet.
+                    // 8 px sides on a phone: the strip's inset would otherwise push the last tab
+                    // onto a fourth row at 390 px.
+                    style={
+                      narrow
+                        ? { ...tabStyle(tab === tabDef.key), paddingInline: 8 }
+                        : tabStyle(tab === tabDef.key)
+                    }
+                    onClick={() => {
+                      lastTab = tabDef.key;
+                      setTab(tabDef.key);
+                    }}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
             </div>
           </div>,
         )}
