@@ -6,6 +6,8 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-09-21
+
 ### Changed
 
 - Every tab of the panel keeps the same inset on all four sides, the one dsh's slash menu uses,

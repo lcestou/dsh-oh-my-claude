@@ -110,7 +110,7 @@ Defaults you never have to touch, such as secret redaction in tool results and s
 
 ## Configure
 
-Plugin settings live under Settings → Oh My Claude, or as `config:` on the bundle row in the profile's `cordis.patch.yml`. Three keys people change first:
+Settings come in two kinds. The switches under Settings → Oh My Claude and in the panel's Tune tab apply at once and are kept on the box, so every browser sees the same ones. The keys below are install-time: they go as `config:` on the bundle row in the profile's `cordis.patch.yml` and take effect when dsh next loads the plugin, which a dsh restart does. dsh's own Plugins page lists the plugin with an on/off switch but has no form for these keys. Three keys people change first:
 
 ```yaml
 permissionMode: dsh      # follow the session's shield (default), or pin one of the CLI's six modes
