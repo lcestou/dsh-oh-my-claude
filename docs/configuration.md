@@ -1,6 +1,6 @@
 # Configuration
 
-Every key the plugin reads, with its default. All keys are optional; a fresh install with none of them works against a logged-in `claude` on `PATH`. Keys live under Settings → Oh My Claude, or as `config:` on the bundle row if you override it in the profile's `cordis.patch.yml`. Back to the [README](../README.md).
+Every key the plugin reads, with its default. All keys are optional; a fresh install with none of them works against a logged-in `claude` on `PATH`. Keys go as `config:` on the bundle row in the profile's `cordis.patch.yml` and take effect when dsh next loads the plugin, which a dsh restart does; dsh's Plugins page has no form for them. The switches under Settings → Oh My Claude and in the panel's Tune tab are separate: they apply at once and are kept on the box. Back to the [README](../README.md).
 
 ## Keys
 
