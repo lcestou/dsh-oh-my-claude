@@ -71,6 +71,48 @@ const probes: ContractProbe[] = [
   assert.equal(contractSummary(r), "dsh hooks: 1 of 1 found, 1 not on screen");
 }
 
+// The ring is conversation-scoped, so on a blank session it calibrates with the other conversation
+// probes: none of them finds anything, so they all skip and the ring is not reported missing even
+// though its selector matched zero nodes. The composer is still present on a blank session (that is
+// how the first message is typed), so it is the one always-scoped probe that is actually found and
+// the only thing keeping the tally from being empty. Selectors are looked up from the shipped list,
+// not retyped.
+{
+  const composer = DSH_CONTRACT.find((p) => p.id === "composer-input")!;
+  const blank = Object.fromEntries(DSH_CONTRACT.map((p) => [p.selector, 0]));
+  blank[composer.selector] = 1;
+  const r = checkContract(docOf(blank), DSH_CONTRACT);
+  assert.equal(
+    r.find((x) => x.id === "ring-button")?.skipped,
+    true,
+    "the ring skips on a blank session, it does not fail",
+  );
+  assert.deepEqual(
+    contractMisses(r),
+    [],
+    "no conversation probe finds anything, so there is no miss to report",
+  );
+}
+
+// With a conversation on screen the ring is checked, so a zero beside it is a real miss. The markdown
+// and turn-status probes find something, the always-scoped composer finds something, and only the
+// ring finds nothing: it is the sole miss, exactly as a live break would read.
+{
+  const md = DSH_CONTRACT.find((p) => p.id === "markdown-body")!;
+  const turn = DSH_CONTRACT.find((p) => p.id === "turn-status")!;
+  const composer = DSH_CONTRACT.find((p) => p.id === "composer-input")!;
+  const ring = DSH_CONTRACT.find((p) => p.id === "ring-button")!;
+  const r = checkContract(
+    docOf({ [md.selector]: 1, [turn.selector]: 1, [composer.selector]: 1, [ring.selector]: 0 }),
+    DSH_CONTRACT,
+  );
+  assert.deepEqual(
+    contractMisses(r).map((m) => m.id),
+    ["ring-button"],
+    "with a conversation on screen the ring is checked and a zero is a real miss",
+  );
+}
+
 // A screen where nothing can be checked says so rather than claiming everything is well.
 {
   const r = checkContract(docOf({}), [probes[1]!]);

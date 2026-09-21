@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactElement } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -47,11 +47,12 @@ import {
 import { checkContract, contractMisses, contractSummary } from "./contract.js";
 import { UpdatePill } from "./update-pill.js";
 import { ReportBlock } from "./report.js";
-import { Tooltip, useAnchoredMaxHeight } from "@deepseek-ai/dsh-client-ui-primitives";
+import { Tooltip } from "@deepseek-ai/dsh-client-ui-primitives";
 import { Spark } from "./spark.js";
 import { ConfirmButton, TuneBody } from "./tune.js";
 import { noticesOn, setNoticesOn } from "./notices.js";
 import { queueDraft } from "./draft.js";
+import { SearchField } from "./search-field.js";
 import { diffQuestion, reviewPrompt } from "../prompts.js";
 import type { FeatureSwitches } from "../switches.js";
 import type { PluginRoster, PluginLoadError } from "../plugins.js";
@@ -66,6 +67,50 @@ let lastTab = "Memory";
  */
 const easeMs = () =>
   globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? 0 : 140;
+
+/** Space the panel keeps from the edge of whatever clips it, the gap dsh's own menus leave. */
+const FIT_MARGIN = 8;
+
+/**
+ * The panel's max height: `cap`, or the room between its bottom and the top of the nearest
+ * ancestor that clips it, whichever is less. dsh's `useAnchoredMaxHeight` measures to the top of
+ * the window instead, and dsh's conversation scroller starts 40 px down, under its top strip. On a
+ * blank session in a short window the composer sits mid-screen, so the panel reached the window's
+ * top and its first 36 px, the Restore search among them, were cut off. Remeasured on open, on
+ * resize and on any scroll.
+ */
+function useFitAbove(ref: { current: HTMLElement | null }, cap: number, open: boolean): number {
+  const [maxHeight, setMaxHeight] = useState(cap);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (el === null) return;
+    const fit = () => {
+      let top = 0;
+      for (let a = el.parentElement; a; a = a.parentElement) {
+        const c = getComputedStyle(a);
+        if (c.overflowX !== "visible" || c.overflowY !== "visible")
+          top = Math.max(top, a.getBoundingClientRect().top);
+      }
+      // max-height sizes the content box, so the panel's own padding and border come off too.
+      const own = getComputedStyle(el);
+      const frame =
+        parseFloat(own.paddingTop) +
+        parseFloat(own.paddingBottom) +
+        parseFloat(own.borderTopWidth) +
+        parseFloat(own.borderBottomWidth);
+      const room = el.getBoundingClientRect().bottom - top - FIT_MARGIN - frame;
+      setMaxHeight(Math.min(cap, Math.max(0, room)));
+    };
+    fit();
+    window.addEventListener("resize", fit);
+    window.addEventListener("scroll", fit, true);
+    return () => {
+      window.removeEventListener("resize", fit);
+      window.removeEventListener("scroll", fit, true);
+    };
+  }, [ref, cap, open]);
+  return maxHeight;
+}
 
 /**
  * Ease the panel between heights instead of snapping. Its height is whatever the open tab's body
@@ -100,6 +145,12 @@ function useHeightEase(ref: { current: HTMLElement | null }, active: boolean) {
   }, [ref, active]);
 }
 
+/** A session's display name. The server answers an empty string, not undefined, for a transcript
+ *  it could not title, so this tests for emptiness rather than absence; the fallback is the first
+ *  eight characters of the id, enough to tell sessions apart on one screen. */
+export const sessionLabel = (s: { title?: string; id: string }): string =>
+  s.title?.trim() ? s.title : `Untitled · ${s.id.slice(0, 8)}`;
+
 /** One-row transcript pick inside the compact restore list. */
 function TranscriptRow({
   s,
@@ -112,7 +163,7 @@ function TranscriptRow({
   ctx: ClientCtx;
   onClose: () => void;
 }) {
-  const label = s.title ?? s.id;
+  const label = sessionLabel(s);
   return (
     <button
       type="button"
@@ -250,14 +301,13 @@ function RestoreBody({
     <div style={bodyFlow}>
       {/* Eight rows show; the search is how the rest are reached, so it appears once there are more. */}
       {candidates.length > 8 && (
-        <input
-          type="search"
-          data-omc-restore-search=""
-          style={{ ...inputStyle, margin: "2px 4px 4px" }}
+        <SearchField
+          hook="data-omc-restore-search"
+          style={{ margin: "2px 4px 4px" }}
           value={query}
           placeholder={`Search ${candidates.length} transcripts in ${name}`}
-          aria-label="Search transcripts"
-          onChange={(e) => setQuery(e.target.value)}
+          label="Search transcripts"
+          onChange={setQuery}
         />
       )}
       {candidates.length === 0 && (
@@ -469,6 +519,7 @@ function MemoryBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
             aria-label="Memory file"
             value={text}
             spellCheck={false}
+            // oxlint-disable-next-line jsx-a11y/no-autofocus -- opened by the person's own click, so focus goes where they asked
             autoFocus
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
@@ -642,6 +693,7 @@ function PluginManagerBlock({
           </div>
         )}
         {pluginWarnings.length > 0 && (
+          // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a live notice, not a form result, which is what <output> is for
           <div data-omc-plugin-warnings="" role="status" style={{ marginBottom: 6 }}>
             <span style={{ ...meta, color: T.warn, padding: "2px 4px", display: "block" }}>
               Plugin warnings
@@ -1027,6 +1079,7 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
           aria-label="Edit SKILL.md"
           value={text}
           spellCheck={false}
+          // oxlint-disable-next-line jsx-a11y/no-autofocus -- opened by the person's own click, so focus goes where they asked
           autoFocus
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
@@ -1148,13 +1201,13 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
         </span>
       )}
       {skills.length > 12 && (
-        <input
-          type="search"
-          style={{ ...inputStyle, margin: "2px 4px 4px" }}
+        <SearchField
+          hook="data-omc-skills-search"
+          style={{ margin: "2px 4px 4px" }}
           value={query}
           placeholder={`Search ${skills.length} skills`}
-          aria-label="Search skills"
-          onChange={(e) => setQuery(e.target.value)}
+          label="Search skills"
+          onChange={setQuery}
         />
       )}
       {skills.length > 0 && !anyMatch && (
@@ -1616,6 +1669,7 @@ function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCt
             aria-label="Instruction file"
             value={text}
             spellCheck={false}
+            // oxlint-disable-next-line jsx-a11y/no-autofocus -- opened by the person's own click, so focus goes where they asked
             autoFocus
             readOnly={file.kind === "Managed"}
             onChange={(e) => setText(e.target.value)}
@@ -2281,6 +2335,10 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
       </div>
       {reply === null ? (
         <span style={stateText}>Loading…</span>
+      ) : !reply.ok && reply.error.startsWith("no live Claude process") ? (
+        <span style={stateText}>
+          Claude starts on your first message. Its MCP servers appear here once it is running.
+        </span>
       ) : !reply.ok ? (
         <span style={errText}>{reply.error}</span>
       ) : servers.length === 0 && pendingRows.length === 0 ? (
@@ -2815,7 +2873,7 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
         {contractSummary(contract)}
         {missing.map((m) => (
           <div key={m.id} data-omc-dsh-contract-miss={m.id}>
-            {m.id} — {m.breaks}
+            {m.id}: {m.breaks}
           </div>
         ))}
       </div>
@@ -4136,7 +4194,7 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
   const [card, setCard] = useState<HTMLElement | null>(null);
   // Phone sheet (fallback only): fixed, above the control, wherever the composer sits.
   const [above, setAbove] = useState(0);
-  const maxHeight = useAnchoredMaxHeight(panelRef, 400, open);
+  const maxHeight = useFitAbove(panelRef, 400, open);
   useHeightEase(panelRef, open);
 
   // dsh's chat width handles sit at the edges of the conversation column, outside this panel's
@@ -4172,6 +4230,19 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
 
   // The panel, not the trigger: a portal takes it out of the trigger's DOM subtree.
   useDismiss(open, close, panelRef);
+
+  // On open, move focus onto the selected tab so a keyboard user lands inside the panel instead of
+  // on the trigger behind the portal; on close, hand focus back to whatever held it first. No trap:
+  // the panel is not modal and the page around it stays usable.
+  useEffect(() => {
+    if (!open) return;
+    // Record the focused element before focus moves, so close can return it.
+    const before = document.activeElement;
+    document.getElementById(`omc-tab-${tab}`)?.focus();
+    return () => {
+      if (before instanceof HTMLElement && document.contains(before)) before.focus();
+    };
+  }, [open]);
 
   if (!isMine) return null;
   // Restore only fits a blank session; the Restore body hides itself for the same reason.
@@ -4213,7 +4284,7 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
         ...panelSurface,
         borderRadius: 10,
       };
-  // In the card the panel only fades: dsh's `useAnchoredMaxHeight` measures the element's bottom
+  // In the card the panel only fades: `useFitAbove` measures the element's bottom
   // on mount, and a 6 px rise still applied at that moment would size it 6 px too tall.
   Object.assign(panelStyle, {
     display: "flex",
@@ -4319,6 +4390,7 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
           card,
           <div
             ref={panelRef}
+            // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a non-modal popover; <dialog> hides unless open and brings its own box
             role="dialog"
             aria-label="Oh My Claude"
             {...{ [PANEL_ATTR]: "1" }}
@@ -4356,6 +4428,36 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
               pushes the top up and leaves the strip where the pointer left it. */}
             <div
               role="tablist"
+              // ARIA APG keeps the strip itself out of the Tab order (only the selected tab is
+              // focusable), but this lint rule makes a role="tablist" with a key handler focusable,
+              // so tabIndex={-1} satisfies it without adding a Tab stop of its own.
+              tabIndex={-1}
+              // Arrow keys step the tabs in list order, wrapping at the ends; Home/End jump to the
+              // first and last. Only the selected tab is in the Tab order, so arrows are how a
+              // keyboard user moves. "Next" is next in the list, not the next row, matching ARIA APG.
+              onKeyDown={(e) => {
+                // Only these four keys are ours; every other key keeps its default, so focus can
+                // still leave the strip.
+                if (!["ArrowRight", "ArrowLeft", "Home", "End"].includes(e.key)) return;
+                e.preventDefault();
+                const order = tabs.map((t) => t.key);
+                const index = order.indexOf(tab);
+                const next =
+                  e.key === "ArrowRight"
+                    ? (index + 1) % order.length
+                    : e.key === "ArrowLeft"
+                      ? (index - 1 + order.length) % order.length
+                      : e.key === "Home"
+                        ? 0
+                        : order.length - 1;
+                const key = order[next];
+                // next is always a valid index, so this never fires; it narrows key to string.
+                if (!key) return;
+                lastTab = key;
+                setTab(key);
+                // Reach the button by the id it already carries, not by a ref.
+                document.getElementById(`omc-tab-${key}`)?.focus();
+              }}
               style={{
                 display: "flex",
                 flex: "0 0 auto",
@@ -4376,6 +4478,9 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
                   id={`omc-tab-${t.key}`}
                   aria-controls="omc-tabpanel"
                   aria-selected={tab === t.key}
+                  // Only the selected tab is in the Tab order; arrows move between tabs (the tablist
+                  // handler), so the others stay out of the way.
+                  tabIndex={tab === t.key ? 0 : -1}
                   // The strip sits under the body, so the lit edge is the mirror of a top tab bar:
                   // accent along the bottom, corners rounded on that side only, no box around each
                   // tab (nine bordered boxes read as buttons, not as tabs). Hover is in the sheet.

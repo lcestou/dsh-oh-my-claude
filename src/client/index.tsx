@@ -82,9 +82,10 @@ import type { FallbackRecord } from "../translator.js";
 import { ReportBlock } from "./report.js";
 import { ChangelogBlock } from "./changelog.js";
 import { Spark, sparkNode } from "./spark.js";
-import { AccessShield, OhMyClaudeControl } from "./panel.js";
+import { AccessShield, OhMyClaudeControl, sessionLabel } from "./panel.js";
 import { ConfirmButton } from "./tune.js";
-import { AddWorkspaceFlow, canBrowseDirs, OPEN_EVENT, RW_EVENT } from "./picker.js";
+import { AddWorkspaceFlow, BOXES_EVENT, canBrowseDirs, OPEN_EVENT, RW_EVENT } from "./picker.js";
+import { SearchField } from "./search-field.js";
 import { takeDraft, subscribeDraft, noteDraft, draftPending } from "./draft.js";
 import {
   awaitingBody,
@@ -1066,14 +1067,15 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
           <option value="archived">Archived</option>
           <option value="terminal">Terminal only</option>
         </select>
-        <input
+        <SearchField
           id="dsh-oh-my-claude-session-search"
-          type="search"
-          style={{ ...inputStyle, flex: "2 1 200px", minWidth: 160 }}
+          // 160 px, or the card's whole width when that is less: dsh's Settings leaves about 100 px
+          // for a section at phone width, and a fixed minimum spilled past the card's edge.
+          style={{ flex: "2 1 200px", minWidth: "min(160px, 100%)" }}
           value={query}
           placeholder="Search title, id or path"
-          aria-label="Search sessions"
-          onChange={(e) => setQuery(e.target.value)}
+          label="Search sessions"
+          onChange={setQuery}
         />
         <select
           data-omc-search-scope=""
@@ -1167,7 +1169,7 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
                   box's disk, and its own panel is where it downloads from. */}
               <input
                 type="checkbox"
-                aria-label={`Select ${r.s.title || r.s.id}`}
+                aria-label={`Select ${sessionLabel(r.s)}`}
                 disabled={!isLocal && !isSsh}
                 checked={picked.has(rowKey(r))}
                 onChange={(e) =>
@@ -1188,9 +1190,9 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
                     whiteSpace: "nowrap",
                     color: T.text,
                   }}
-                  title={r.s.title || r.s.id}
+                  title={sessionLabel(r.s)}
                 >
-                  {r.s.title || r.s.id}
+                  {sessionLabel(r.s)}
                 </div>
                 {deep?.get(r.s.id) !== undefined && (
                   <div
@@ -1583,6 +1585,7 @@ function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
           id="dsh-oh-my-claude-settings-text"
           value={text}
           spellCheck={false}
+          // oxlint-disable-next-line jsx-a11y/no-autofocus -- opened by the person's own click, so focus goes where they asked
           autoFocus
           onChange={(e) => setText(e.target.value)}
           onKeyDown={onKeyDown}
@@ -2113,7 +2116,10 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
       body: JSON.stringify({ boxes: next }),
     })
       .then((r) => readJson<{ boxes?: SshBoxData[] }>(r))
-      .then((b) => setSsh(b.boxes ?? []))
+      .then((b) => {
+        setSsh(b.boxes ?? []);
+        window.dispatchEvent(new Event(BOXES_EVENT));
+      })
       .catch((e: Error) => setError(e.message))
       .finally(() => setBusy(false));
   };
@@ -5564,6 +5570,7 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
       {open && (
         <div
           ref={panelRef}
+          // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a non-modal popover; <dialog> hides unless open and brings its own box
           role="dialog"
           aria-label="Claude cost"
           data-omc-cost-dialog=""
@@ -6337,7 +6344,7 @@ function ContextFixed({
       <span>
         {label}
         <ContextSize source={source} chars={chars} files={files} />
-        <span style={{ color: T.faint, fontSize: 12 }}> — {why}</span>
+        <span style={{ color: T.faint, fontSize: 12 }}>: {why}</span>
       </span>
     </label>
   );
@@ -7116,6 +7123,24 @@ const iconBtn = {
   flex: "0 0 auto",
 } as const;
 
+/** A dock card's fold toggle: a real button laid out as the header bar it replaced. The resets take
+ *  back what a `<button>` brings (border, background, font, centred text), and `minWidth: 0` lets a
+ *  long label truncate instead of pushing the close off the card. */
+const HEADER_TOGGLE = {
+  display: "flex",
+  alignItems: "center",
+  gap: 6,
+  flex: 1,
+  minWidth: 0,
+  margin: 0,
+  background: "none",
+  border: "none",
+  font: "inherit",
+  color: "inherit",
+  textAlign: "left",
+  cursor: "pointer",
+} as const;
+
 /** How long the update card stays after a success before closing on its own. */
 const CLOSE_AFTER_S = 10;
 
@@ -7154,6 +7179,7 @@ function LoginCard({ need, onDismiss }: { need: LoginNeed; onDismiss: () => void
   return (
     <div
       data-omc-login-card={need.host || "this-box"}
+      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a live notice, not a form result, which is what <output> is for
       role="status"
       style={{
         boxSizing: "border-box",
@@ -7319,10 +7345,11 @@ function ClaudeUpdateCard({
   };
   // After a success the card closes on its own: a thin accent bar along its bottom edge drains
   // over CLOSE_AFTER_S seconds as one CSS animation, so the close is seen coming without a number
-  // ticking. The pointer over the card pauses the animation where it is (a paused animation holds
-  // its frame; a transition cut short would jump to its end), and the close fires from the
-  // animation's own end event, so a pause delays it by exactly the pause. The card then fades for
-  // a moment rather than popping out. A decline or a failure stays until it is read and closed.
+  // ticking. The pointer over the card, or focus inside it, pauses the animation where it is (a
+  // paused animation holds its frame; a transition cut short would jump to its end), and the close
+  // fires from the animation's own end event, so a pause delays it by exactly the pause. The card
+  // then fades for a moment rather than popping out. A decline or a failure stays until it is read
+  // and closed.
   const [held, setHeld] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const goneRef = useRef(onGone);
@@ -7333,12 +7360,20 @@ function ClaudeUpdateCard({
     return () => clearTimeout(id);
   }, [leaving]);
   return (
+    // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- hover and focus only pause the auto-dismiss; every action is a real button inside
     <div
       data-omc-update-card={update.latest}
       data-omc-update-phase={phase}
+      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a live notice, not a form result, which is what <output> is for
       role="status"
       onMouseEnter={() => setHeld(true)}
       onMouseLeave={() => setHeld(false)}
+      // Focus holds the card too, so someone tabbing to its buttons is not raced by the timer.
+      onFocus={() => setHeld(true)}
+      onBlur={(e) => {
+        if (!(e.relatedTarget instanceof Node && e.currentTarget.contains(e.relatedTarget)))
+          setHeld(false);
+      }}
       style={{
         position: "relative",
         boxSizing: "border-box",
@@ -7368,41 +7403,29 @@ function ClaudeUpdateCard({
           }}
         />
       )}
-      {/* The header is the fold toggle; the close beside it stops the click so it does not also
-          fold the card. A div, not a button: a button cannot hold one. */}
-      <div
-        role="button"
-        tabIndex={0}
-        aria-expanded={open}
-        onClick={toggle}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            toggle();
-          }
-        }}
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 6,
-          padding: "6px 8px",
-          cursor: "pointer",
-        }}
-      >
-        <Spark size={12} />
-        {/* The label alone: the sentence lives in the body, where a phone shows it whole. */}
-        <span style={{ color: ACCENT, fontWeight: 600, fontSize: 12, flex: 1 }}>
-          Claude Code update
-        </span>
-        <Chevron open={open} />
+      {/* The header row holds two siblings, the fold toggle and the close, so neither button sits
+          inside the other. The row keeps the old 6 px gap and 8 px right edge; the toggle carries
+          the rest of the old padding so the whole bar left of the close is still one click. */}
+      <div style={{ display: "flex", alignItems: "center", gap: 6, paddingRight: 8 }}>
+        <button
+          type="button"
+          aria-expanded={open}
+          data-omc-update-toggle=""
+          onClick={toggle}
+          style={{ ...HEADER_TOGGLE, padding: "6px 0 6px 8px" }}
+        >
+          <Spark size={12} />
+          {/* The label alone: the sentence lives in the body, where a phone shows it whole. */}
+          <span style={{ color: ACCENT, fontWeight: 600, fontSize: 12, flex: 1 }}>
+            Claude Code update
+          </span>
+          <Chevron open={open} />
+        </button>
         <button
           type="button"
           aria-label={phase === "idle" ? "Dismiss until the next release" : "Close"}
           title={phase === "idle" ? "Dismiss until the next release" : "Close"}
-          onClick={(e) => {
-            e.stopPropagation();
-            dismiss();
-          }}
+          onClick={() => dismiss()}
           style={{ ...iconBtn, color: T.muted, fontSize: 12 }}
         >
           ✕
@@ -7635,59 +7658,49 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
               overflow: "hidden",
             }}
           >
-            {/* Header is the collapse toggle; the copy/dismiss controls sit beside it and stop the
-                click so they do not also fold the card. A div (not a button) avoids nesting buttons. */}
-            <div
-              role="button"
-              tabIndex={0}
-              aria-expanded={open}
-              onClick={() => toggle(it.id)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
-                  toggle(it.id);
-                }
-              }}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                padding: "6px 8px",
-                cursor: "pointer",
-              }}
-            >
-              <Spark size={12} />
-              <span
-                style={{
-                  color: ACCENT,
-                  fontWeight: 600,
-                  fontSize: 12,
-                  flex: "0 0 auto",
-                }}
-              >
-                Side question
-              </span>
-              {/* Question rides the bar, truncated, so a collapsed card still says what it asked. */}
-              <span
-                style={{
-                  color: T.muted,
-                  fontSize: 12,
-                  flex: "1 1 auto",
-                  minWidth: 0,
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {it.question}
-              </span>
-              <span style={{ color: T.faint, fontSize: 11, flex: "0 0 auto" }}>{ago(it.at)}</span>
+            {/* The header row holds the fold toggle and, beside it, Copy and close, so no button sits
+                inside another. The chevron ends the toggle, just before the actions, as on the
+                update card. The toggle carries the old left padding so the bar is one click. */}
+            <div style={{ display: "flex", alignItems: "center", gap: 6, paddingRight: 8 }}>
               <button
                 type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  copy(it);
-                }}
+                aria-expanded={open}
+                data-omc-aside-toggle={it.id}
+                onClick={() => toggle(it.id)}
+                style={{ ...HEADER_TOGGLE, padding: "6px 0 6px 8px" }}
+              >
+                <Spark size={12} />
+                <span
+                  style={{
+                    color: ACCENT,
+                    fontWeight: 600,
+                    fontSize: 12,
+                    flex: "0 0 auto",
+                  }}
+                >
+                  Side question
+                </span>
+                {/* Question rides the bar, truncated, so a collapsed card still says what it asked. */}
+                <span
+                  style={{
+                    color: T.muted,
+                    fontSize: 12,
+                    flex: "1 1 auto",
+                    minWidth: 0,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {it.question}
+                </span>
+                <span style={{ color: T.faint, fontSize: 11, flex: "0 0 auto" }}>{ago(it.at)}</span>
+                {/* Up when collapsed, down when open, the same convention as the queue dock. */}
+                <Chevron open={open} />
+              </button>
+              <button
+                type="button"
+                onClick={() => copy(it)}
                 aria-label="Copy side question"
                 style={{
                   ...iconBtn,
@@ -7697,14 +7710,9 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
               >
                 {copied === it.id ? "Copied" : "Copy"}
               </button>
-              {/* Up when collapsed, down when open. Same convention as the queue dock. */}
-              <Chevron open={open} />
               <button
                 type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  dismissAside(it.id);
-                }}
+                onClick={() => dismissAside(it.id)}
                 aria-label="Dismiss side question"
                 style={{ ...iconBtn, color: T.muted, fontSize: 12 }}
               >
@@ -7982,7 +7990,7 @@ export function apply(ctx: ClientCtx) {
         {boxes !== null && (
           <Card
             id="dsh-oh-my-claude-sessions-card"
-            title="Archived Sessions"
+            title="Session browser"
             summary="Claude Code transcripts on every box: open one here, import, download, or move."
             open={openSessions}
             onToggle={() => setOpenSessions((v) => !v)}
