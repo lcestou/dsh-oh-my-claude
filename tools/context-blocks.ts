@@ -37,6 +37,9 @@ const EventSchema = z.object({
   data: DataSchema,
 });
 
+/** Return the path to the largest session log under a session directory, so the check runs against
+ *  the most complete log; null when there is none.
+ */
 async function largestIn(dir: string): Promise<string | null> {
   const entries = await readdir(dir, { withFileTypes: true });
   let best: string | null = null;
@@ -60,6 +63,9 @@ async function largestIn(dir: string): Promise<string | null> {
 type Triple = { kind: string; plugin: string; form: string };
 type Stats = { size: number; count: number; sample: string; triple: Triple };
 
+/** Run the inventory: classify every (kind, plugin, form) block in the log and assert the
+ *  classifier matches the expected labels, exiting 1 on any mismatch.
+ */
 async function main(): Promise<void> {
   const arg = process.argv[2];
   const sessionsRoot = join(process.env.DSH_HOME ?? join(homedir(), ".dsh"), "sessions");

@@ -41,6 +41,9 @@ export type TypeEnvironment = {
   readonly shadowedBuiltIns: ReadonlySet<string>;
 };
 
+/** Unwrap an export to its underlying declaration, so an exported type alias or interface is seen
+ *  the same as a bare one.
+ */
 function declaredStatement(statement: ESTree.Statement): ESTree.Node | null {
   return statement.type === "ExportNamedDeclaration" ||
     statement.type === "ExportDefaultDeclaration"
@@ -48,6 +51,9 @@ function declaredStatement(statement: ESTree.Statement): ESTree.Node | null {
     : statement;
 }
 
+/** Scan a program to build the alias, interface and shadowed-builtin tables a rule needs, recording
+ *  the first definition of each name so re-imports are marked as shadowing a built-in.
+ */
 export function createTypeEnvironment(program: ESTree.Program): TypeEnvironment {
   const aliases = new Map<string, ESTree.TSTypeAliasDeclaration>();
   const interfaces = new Map<string, ESTree.TSInterfaceDeclaration[]>();
@@ -94,14 +100,23 @@ export function createTypeEnvironment(program: ESTree.Program): TypeEnvironment 
   return { aliases, interfaces, shadowedBuiltIns };
 }
 
+/** Return the bare identifier of a type reference, or null when it is qualified, so only
+ *  single-name references are resolved against the environment.
+ */
 function typeReferenceName(type: ESTree.TSTypeReference): string | null {
   return type.typeName.type === "Identifier" ? type.typeName.name : null;
 }
 
+/** Return true when a name is a standard helper not shadowed by a local import or alias, so a
+ *  redefined `Record` is not treated as the built-in.
+ */
 function isBuiltIn(name: string, environment: TypeEnvironment): boolean {
   return BUILT_INS.has(name) && !environment.shadowedBuiltIns.has(name);
 }
 
+/** Return true when a reference keeps a generic name but supplies no type arguments, i.e. it is
+ *  used unapplied and should not be resolved further.
+ */
 function isUnappliedReferenceTo(type: ESTree.TSType, name: string): boolean {
   const unwrapped = unwrapTransparentType(type);
   return (
@@ -113,6 +128,9 @@ function isUnappliedReferenceTo(type: ESTree.TSType, name: string): boolean {
   );
 }
 
+/** Strip parentheses and identity wrappers like `Readonly` or `Partial` so the underlying type is
+ *  what is classified, not the wrapper.
+ */
 function unwrapTransparentType(type: ESTree.TSType): ESTree.TSType {
   let current = type;
   while (
@@ -124,10 +142,16 @@ function unwrapTransparentType(type: ESTree.TSType): ESTree.TSType {
   return current;
 }
 
+/** Return true when a type is `never` after dropping transparent wrappers, the marker of a member
+ *  that carries no value.
+ */
 function isNeverType(type: ESTree.TSType): boolean {
   return unwrapTransparentType(type).type === "TSNeverKeyword";
 }
 
+/** Return true when a property member is optional and typed `never`, which behaves like no member
+ *  at all for emptiness.
+ */
 function isEffectivelyEmptyMember(member: ESTree.TSSignature): boolean {
   return (
     member.type === "TSPropertySignature" &&
@@ -138,10 +162,16 @@ function isEffectivelyEmptyMember(member: ESTree.TSSignature): boolean {
   );
 }
 
+/** Return true when a type literal has no members or only optional `never` members, so it holds no
+ *  value contract.
+ */
 function isEffectivelyEmptyTypeLiteral(type: ESTree.TSTypeLiteral): boolean {
   return type.members.length === 0 || type.members.every(isEffectivelyEmptyMember);
 }
 
+/** Return true when a single, non-extending interface declares no members or only empty ones,
+ *  treating it as an empty dictionary.
+ */
 function isEffectivelyEmptyInterface(
   declarations: readonly ESTree.TSInterfaceDeclaration[],
 ): boolean {
@@ -154,6 +184,9 @@ function isEffectivelyEmptyInterface(
   );
 }
 
+/** Resolve a type argument through chained alias substitutions with a visited set, so a circular
+ *  alias resolves to itself instead of looping.
+ */
 function resolvedSubstitutionArgument(
   type: ESTree.TSType,
   base: TypeAliasEnvironment,
@@ -170,6 +203,9 @@ function resolvedSubstitutionArgument(
   return resolvedSubstitutionArgument(substitution, base, nextResolving);
 }
 
+/** Build the substitution map binding an alias's parameters to the supplied type arguments, or null
+ *  when a parameter has no argument or default.
+ */
 function aliasSubstitution(
   alias: ESTree.TSTypeAliasDeclaration,
   type: ESTree.TSTypeReference,
@@ -186,6 +222,9 @@ function aliasSubstitution(
   return next;
 }
 
+/** Return the unsafe value kind a type exposes (unknown, any, object, empty-object, union),
+ *  recursing through wrappers, aliases and interfaces, or null when it is safe.
+ */
 function unsafeDirectValue(
   type: ESTree.TSType,
   environment: TypeEnvironment,
@@ -242,6 +281,9 @@ function unsafeDirectValue(
   return unsafeDirectValue(alias.typeAnnotation, environment, nextSubstitutions, nextResolving);
 }
 
+/** Return the value types a dictionary type carries, from index signatures, mapped types, `Record`,
+ *  `Pick`, `Omit` or resolved aliases.
+ */
 function dictionaryValueTypes(
   type: ESTree.TSType,
   environment: TypeEnvironment,
@@ -303,6 +345,9 @@ function dictionaryValueTypes(
   return dictionaryValueTypes(alias.typeAnnotation, environment, nextSubstitutions, nextResolving);
 }
 
+/** Classify a dictionary value type as an unsafe escape hatch, or null when it carries a concrete
+ *  value contract.
+ */
 export function classifyUnsafeDictionaryValue(
   valueType: ESTree.TSType,
   environment: TypeEnvironment,
@@ -311,6 +356,9 @@ export function classifyUnsafeDictionaryValue(
   return unsafeValue === null ? null : { kind: "unsafe-dictionary", unsafeValue };
 }
 
+/** Classify a dictionary type as unsafe when any of its value types is an unsafe escape hatch, or
+ *  null when all values are concrete.
+ */
 export function classifyUnsafeDictionary(
   type: ESTree.TSType,
   environment: TypeEnvironment,
@@ -327,6 +375,9 @@ export function classifyUnsafeDictionary(
   return null;
 }
 
+/** Return true when a type resolves to one or more dictionary value types, the test for whether it
+ *  is a dictionary at all.
+ */
 function resolvesToDictionary(
   type: ESTree.TSType,
   environment: TypeEnvironment,
@@ -336,6 +387,9 @@ function resolvesToDictionary(
   return dictionaryValueTypes(type, environment, substitutions, resolvingAliases).length > 0;
 }
 
+/** Classify the target a type widens to (unknown, object, anonymous object, open dictionary, or
+ *  generic container), or null when it is not a widening target.
+ */
 export function classifyWideningTarget(
   type: ESTree.TSType,
   environment: TypeEnvironment,
@@ -379,6 +433,9 @@ export function classifyWideningTarget(
   return resolved;
 }
 
+/** Return true when a mapped type's key constraint is a broad string, number, symbol, or
+ *  `PropertyKey`, the shape that accepts any key.
+ */
 function isBroadMappedKey(
   type: ESTree.TSType,
   environment: TypeEnvironment,
@@ -405,6 +462,9 @@ function isBroadMappedKey(
   return name === "PropertyKey" && isBuiltIn(name, environment);
 }
 
+/** Classify the broad target an alias resolves to through its substitutions, following nested
+ *  aliases with a cycle guard, or null when it is not broad.
+ */
 function classifyAliasBroadTarget(
   type: ESTree.TSType,
   environment: TypeEnvironment,
@@ -456,6 +516,9 @@ function classifyAliasBroadTarget(
   );
 }
 
+/** Return true when an expression is a literal or a freshly constructed value that still carries
+ *  type evidence, after dropping its wrappers.
+ */
 export function isKnownEvidenceExpression(expression: ESTree.Expression): boolean {
   let current = expression;
   while (

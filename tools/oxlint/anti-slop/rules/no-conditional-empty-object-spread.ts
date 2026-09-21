@@ -1,6 +1,8 @@
 import { defineRule } from "@oxlint/plugins";
 import type { ESTree } from "@oxlint/plugins";
 
+/** Strip parentheses around a node so a spread argument is read as the conditional, not a wrapper.
+ */
 function unwrapParentheses(node: ESTree.Expression): ESTree.Expression {
   let current = node;
   while (current.type === "ParenthesizedExpression") {
@@ -9,10 +11,16 @@ function unwrapParentheses(node: ESTree.Expression): ESTree.Expression {
   return current;
 }
 
+/** Return true when a node is an object literal with no properties, the branch whose spread adds
+ *  nothing.
+ */
 function isEmptyObjectExpression(node: ESTree.Expression): boolean {
   return node.type === "ObjectExpression" && node.properties.length === 0;
 }
 
+/** Return true when a spread argument is a conditional with an empty object on either branch, the
+ *  pattern that hides omission behind a spread.
+ */
 function isConditionalEmptyObjectSpread(node: ESTree.Expression): boolean {
   const conditional = unwrapParentheses(node);
   return (

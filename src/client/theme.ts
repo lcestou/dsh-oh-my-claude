@@ -10,6 +10,8 @@ const OFF_KEY = {
   rainbow: "themeRainbowOff",
 } satisfies Record<ThemeGroup, string>;
 
+/** True only when the value is an integer in the 0 to 0xffffff range, so a boolean, a fraction or
+ *  an out-of-range number is rejected as a hex accent and the default is used instead. */
 const isColourInt = (v: boolean | number | undefined): v is number =>
   Number.isInteger(v) && Number(v) >= 0 && Number(v) <= 0xffffff;
 

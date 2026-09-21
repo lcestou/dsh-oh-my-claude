@@ -14,6 +14,7 @@ export type McpScope = (typeof MCP_SCOPES)[number];
 /** A scope other than `user` writes into a directory, so the route needs the session's cwd. */
 export const scopeNeedsCwd = (scope: McpScope): boolean => scope !== "user";
 
+/** True only for one of the MCP scopes the CLI accepts, `user`, `local` and `project`. */
 export function isMcpScope(value: unknown): value is McpScope {
   return MCP_SCOPES.some((scope) => scope === value);
 }
@@ -60,6 +61,7 @@ const pairs = (
   return out;
 };
 
+/** True for the shape `pairs` returns when a line does not parse. */
 const isError = (value: object): value is { error: string } => "error" in value;
 
 /** The form the browser posts. Every field arrives as text; nothing here is trusted. */

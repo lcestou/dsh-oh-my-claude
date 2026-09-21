@@ -33,6 +33,9 @@ await p
 await p.waitForTimeout(1500);
 
 const failures: string[] = [];
+/** Record a named failure when a condition is false, so a run prints every broken control at once
+ *  instead of stopping on the first.
+ */
 const expect = (cond: boolean, what: string) => {
   if (!cond) failures.push(what);
 };

@@ -69,12 +69,21 @@ type Catalog = {
 };
 
 const args = process.argv.slice(2);
+/** Return true when a flag is present on the command line, the first of three tiny argument
+ *  helpers.
+ */
 const flag = (name: string) => args.includes(name);
+/** Return the value following an option flag, or undefined when it is absent, so `--dsh x` reads as
+ *  `x`.
+ */
 const opt = (name: string) => {
   const i = args.indexOf(name);
   return i === -1 ? undefined : args[i + 1];
 };
 
+/** Narrow `T | undefined` to `T` so a defined value can be passed where the type requires it,
+ *  without an `as` assertion.
+ */
 const defined = <T>(x: T | undefined): x is T => x !== undefined;
 
 /** Drop unadvertised tool rows from a v0 event list and keep every seq reference consistent. */
@@ -192,6 +201,9 @@ export function repair(rows: Row[]): { rows: Row[]; droppedCalls: number } {
   return { rows: out, droppedCalls: dropIds.size };
 }
 
+/** Decode a zstd-compressed session log into its header and rows, throwing on an empty file that
+ *  has no header line.
+ */
 function readLog(file: string): { header: Header; rows: Row[] } {
   const text = execFileSync("zstd", ["-dc", "--", file], { maxBuffer: 1 << 30 }).toString("utf8");
   // SAFETY: every line of a dsh session log is one JSON object with a `type`; a row that is not one
@@ -212,6 +224,9 @@ function readLog(file: string): { header: Header; rows: Row[] } {
 const frame = (text: string) =>
   execFileSync("zstd", ["-q", "-c"], { input: text, maxBuffer: 1 << 30 });
 
+/** Write a repaired log as two zstd frames (header then rows), moving the original aside as a
+ *  timestamped backup first.
+ */
 function writeLog(file: string, header: Header, rows: Row[]) {
   const body = rows.map((r) => JSON.stringify(r)).join("\n") + "\n";
   const tmp = file + ".repair-tmp";
@@ -220,6 +235,9 @@ function writeLog(file: string, header: Header, rows: Row[]) {
   renameSync(tmp, file);
 }
 
+/** Resolve the npm prefix holding dsh 0.1.5+, from `--dsh` or the `dsh` on PATH, so the catalog is
+ *  found at dsh's own install layout.
+ */
 function dshPrefix(): string {
   const given = opt("--dsh");
   if (given) return resolve(given);
@@ -229,6 +247,9 @@ function dshPrefix(): string {
   return resolve(dirname(real), "..", "..", "..", "..", "..");
 }
 
+/** Import dsh's session-format catalog module by path, failing with a clear message when dsh 0.1.5+
+ *  is not installed at the prefix.
+ */
 async function loadCatalog(prefix: string): Promise<Catalog> {
   const p = join(
     prefix,
@@ -260,6 +281,9 @@ function migrate(catalog: Catalog, header: Header, rows: Row[]): string | undefi
   }
 }
 
+/** Return the v0 session logs that still need repair, skipping any directory that already has a
+ *  migrated v+ file.
+ */
 function findLogs(): string[] {
   const root = join(process.env.DSH_HOME ?? join(homedir(), ".dsh"), "sessions");
   const logs = [];
@@ -276,6 +300,9 @@ function findLogs(): string[] {
   return logs;
 }
 
+/** Build an event row with a seq, time and data for the self-check, the shape dsh's migration chain
+ *  expects.
+ */
 const ev = (seq: number, type: string, data: Data, extra: Partial<Row> = {}): Row => ({
   type,
   seq,
@@ -283,6 +310,9 @@ const ev = (seq: number, type: string, data: Data, extra: Partial<Row> = {}): Ro
   data,
   ...extra,
 });
+/** Build an assistant message row for the self-check, tagged as a model with placeholder provider
+ *  and model.
+ */
 const msg = (id: string, content: Block[]) => ({
   role: "assistant",
   id,
@@ -290,6 +320,9 @@ const msg = (id: string, content: Block[]) => ({
   content,
 });
 
+/** Assert the repair drops exactly the orphaned call, its result and the prune that shadowed them,
+ *  and keeps the seq slots contiguous.
+ */
 function selfCheck() {
   const rows: Row[] = [
     ev(0, "turn/start", { turn: 1 }),
@@ -386,6 +419,9 @@ function selfCheck() {
   console.log("dsh-session-repair self-check ok");
 }
 
+/** Run the repair over one log or all of them, printing how many migrate as-is, are repairable, or
+ *  stay refused, and applying changes only with `--apply`.
+ */
 async function main() {
   if (flag("--self-check")) return selfCheck();
   const apply = flag("--apply");

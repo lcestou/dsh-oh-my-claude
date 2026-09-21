@@ -63,18 +63,26 @@ type SettingsValue = string | number | boolean | null | undefined | Settings;
 type Settings = { [key: string]: SettingsValue };
 /** The CLI's own pair of cache TTLs; anything else is not a value its resolver understands. */
 const cacheTtl = (value: SettingsValue) => (value === "5m" || value === "1h" ? value : undefined);
+/** True only for the two prompt-cache-TTL keys, so validation applies the CLI's own `5m`/`1h`
+ *  rule to just those and leaves every other row to its own check. */
 const isCacheTtlKey = (key: TuneKey) =>
   key === "promptCacheTtl" || key === "subagentPromptCacheTtl";
 
 /** The CLI's deadline enum, shared by both waiting rows. `never` is a value, not an absent key. */
 const DEADLINES = ["60s", "5m", "10m", "never"] as const;
+/** True only when the value equals one of the four deadline strings, so a non-string or an
+ *  unknown string fails the deadline check. */
 const isDeadline = (value: SettingsValue) => DEADLINES.some((d) => d === value);
+/** True only for the two deadline keys, so validation checks just those against the `60s`, `5m`,
+ *  `10m`, `never` set and leaves the rest to its own check. */
 const isDeadlineKey = (key: TuneKey) => key === "askUserQuestionTimeout" || key === "dialogExpiry";
 
 /** What the CLI clamps the two output sizes to; a value outside it is silently pulled back in,
  *  so the row refuses it here instead of showing a number the model will never see. */
 const OUTPUT_MIN = 4000;
 const OUTPUT_MAX = 128_000;
+/** True only for the two output-size keys, so validation applies the 4000 to 128000 range to just
+ *  those and leaves every other row to its own check. */
 const isOutputKey = (key: TuneKey) => key === "bashOutputMaxChars" || key === "taskOutputMaxChars";
 
 /** Set a key, or drop it when the control returns to the CLI's own default (an absent key). */
@@ -209,32 +217,31 @@ interface SettingsFile {
 /** Every settings call carries the session's own mount, so a session on a box edits that box's file. */
 const onBox = (provider: string | undefined) =>
   provider === undefined ? "" : `?provider=${encodeURIComponent(provider)}`;
+/** The current settings.json for the Tune tab, fetched for the session's provider when one is
+ *  given and resolved as a SettingsFile. */
 const read = (provider: string | undefined) =>
   fetch(`${ROUTE}/settings${onBox(provider)}`).then((r) => readJson<SettingsFile>(r));
 
 /** Where a row's value comes from: the file when a key is set, the CLI's own default when not. */
 const source = (set: boolean) => (set ? "settings.json" : "Claude Code default");
+/** The cursor a row shows: a pointer when its value can change, `not-allowed` when it is locked
+ *  to the CLI default. */
 const check = (on: boolean) => (on ? "pointer" : "not-allowed");
 
-/**
- * "Tune" body inside the ✻ panel: the settings.json keys that change how Claude answers, on the
- * surface that already shows the answer. Each row is label, control, and where the value comes
- * from; a change lands in settings.json and takes effect the next time Claude spawns.
- */
 /** Edit the file through one mtime-checked read, write and refresh. Answers an error, or nothing. */
 type Apply = (
   mutate: (text: string) => { text: string; error?: undefined } | { error: string },
 ) => Promise<string | undefined>;
 
+const ARM_EASE = "color 150ms ease, border-color 150ms ease";
 /**
  * A destructive button that asks before it acts. The first click arms it and the label becomes
  * "Sure?"; the second click within five seconds runs `onAct`, and anything slower disarms it. No
  * dialog: these rows are dense and a modal over a list of plugins costs more than the mistake it
- * prevents — the point is only that Remove is never one stray click away from uninstalling.
+ * prevents. The point is only that Remove is never one stray click away from uninstalling.
  * Shared by every remove in the plugin's UI: plugins, marketplaces, MCP servers, boxes, remote
  * workspaces, permission rules and the saved opener.
  */
-const ARM_EASE = "color 150ms ease, border-color 150ms ease";
 export function ConfirmButton({
   label,
   ariaLabel,
@@ -302,6 +309,9 @@ const THINKING_PRESETS: Array<{ label: string; tokens: number | null }> = [
   { label: "Ultrathink · 32k", tokens: 31999 },
 ];
 
+/** The Tune tab body: the settings.json keys that change how Claude answers, on the surface that
+ *  already shows the answer. Each row is a label, a control and where the value comes from; a
+ *  change writes back to settings.json and takes effect the next time Claude spawns. */
 export function TuneBody({
   sessionId,
   ctx,

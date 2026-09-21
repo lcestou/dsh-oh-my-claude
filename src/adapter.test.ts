@@ -6273,8 +6273,8 @@ console.log("awaiting ok");
 }
 console.log("forget-session ok");
 
-// Watch saves fired together, as scans and a turn's end do, all land: each one used to read the file,
-// change its entry and write it back, so two in flight at once lost the one that wrote first.
+// Watch saves fired together, as scans and a turn's end do, all land. Each one used to read the
+// file, change its entry and write it back, so two in flight at once lost the one that wrote first.
 {
   const { saveWatch: save, loadWatches: load } = await import("./state.js");
   const dir = await mkdtemp(joinPath(tmpdir(), "omc-watch-race-"));

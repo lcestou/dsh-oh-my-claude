@@ -60,6 +60,7 @@ export function holdName(providerId: string, sessionId: string, stamp = Date.now
   return `${h}-${stamp.toString(36)}`;
 }
 
+/** A hold's directory on the box, shell-quoted for the script it goes into. */
 const dirOf = (name: string) => `${HOLD_ROOT}/${shq(name)}`;
 
 /**
@@ -144,6 +145,7 @@ export const reattachDelay = (attempt: number): number => Math.min(2000 * 2 ** a
 /** Runs one script on the box; the default is this plugin's `ssh`. A seam for the test. */
 export type RunOnBox = (script: string) => SubprocessHandle;
 
+/** The real `RunOnBox`: the script runs on `host` over this plugin's ssh options. */
 export const sshRunner =
   (host: string): RunOnBox =>
   (script) =>

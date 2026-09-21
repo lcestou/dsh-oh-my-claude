@@ -17,11 +17,12 @@ const TITLE_BYTES = 80;
 /** A decoded transcript line: any JSON object. Fields are read with narrowing, never assumed. */
 type Rec = Record<string, unknown>;
 
+/** True only for a plain object, so an array or null is never read as a transcript row. */
 const isRec = (v: unknown): v is Rec => typeof v === "object" && v !== null && !Array.isArray(v);
 
 /**
  * Claude's own tool name as dsh's presenter table keys it. Live, the translator maps `Bash` to
- * `bash` before the row is written, but a resumed transcript carries Claude's PascalCase verbatim —
+ * `bash` before the row is written, but a resumed transcript carries Claude's PascalCase verbatim.
  * and dsh's `TOOL_VARIANTS` is lowercase-keyed, so every native tool degraded to a generic sparkle
  * row on resume while the same tool rendered properly live.
  */
@@ -41,6 +42,7 @@ const stripBom = (text: string): string => (text.charCodeAt(0) === 0xfe_ff ? tex
  *  field, and `"queued"` rows (a person's prompt held while the CLI was busy), still count. */
 const isSystemPrompt = (rec: Rec): boolean => rec.promptSource === "system";
 
+/** One JSONL line as a row, or undefined for a line that is not JSON or not an object. */
 const parseLine = (line: string): Rec | undefined => {
   try {
     const v: unknown = JSON.parse(line);
@@ -50,6 +52,7 @@ const parseLine = (line: string): Rec | undefined => {
   }
 };
 
+/** A row's timestamp in epoch milliseconds, or `fallback` when it has none that parses. */
 const timeOf = (rec: Rec | undefined, fallback: number): number => {
   const t = Date.parse(typeof rec?.timestamp === "string" ? rec.timestamp : "");
   return Number.isFinite(t) ? t : fallback;
@@ -85,6 +88,8 @@ export function truncateBytes(text: string, max: number): string {
   return buf.toString("utf8", 0, end);
 }
 
+/** A session title from a prompt: its first line with system reminders removed and whitespace
+ *  collapsed, cut to TITLE_BYTES. */
 const titleFrom = (text: string): string =>
   truncateBytes(
     (
@@ -112,7 +117,7 @@ async function peek(
   // `rl.close()` once the running byte total passed the cap, which was both slow and wrong:
   // `close()` does not stop the iterator, so every line already buffered in the current chunk was
   // still yielded. A 42 MB transcript returned 77 lines by the cap arithmetic and 89 in practice,
-  // and the surplus moved with the chunk boundary — so `turns` for a capped file was not stable
+  // and the surplus moved with the chunk boundary, so `turns` for a capped file was not stable
   // between two peeks of the same bytes. Reading the head once and splitting it is deterministic
   // and, measured over 187 transcripts, 88 ms became 24 ms.
   const fh = await open(path, "r");
@@ -179,8 +184,8 @@ export async function listTranscripts(
     return [];
   }
   // ONE FILE AT A TIME WAS THE WHOLE COST HERE. Every transcript needs a `stat` and a bounded
-  // `peek`, and awaiting them in a plain loop made 187 files into 374 sequential round-trips —
-  // 160 ms on a warm cache for one project dir, and `listAllTranscripts` pays it per dir. The
+  // `peek`, and awaiting them in a plain loop made 187 files into 374 sequential round-trips.
+  // That is 160 ms on a warm cache for one project dir, and `listAllTranscripts` pays it per dir.
   // work per file is independent, so it runs in batches instead. BATCHED rather than one big
   // `Promise.all`: the caller already fans out across every project dir at once, and an
   // unbounded map would multiply that into hundreds of open descriptors for no extra speed.
@@ -212,7 +217,7 @@ export async function listTranscripts(
     let head = await peek(path);
     let found = scan(head.lines, info.mtimeMs);
     // A SECOND LOOK, ONLY WHEN THE FIRST ONE FOUND NOTHING. A transcript can open with a single
-    // enormous record — a pasted image, a dumped file — and push its first real user turn past the
+    // enormous record, a pasted image or a dumped file, and push its first real user turn past the
     // head bound, which makes a real session look empty and drops it from the list entirely. Nine
     // of 194 transcripts on this box do exactly that. Re-reading a larger head costs nothing in
     // the common case because the common case never reaches this line.
@@ -247,6 +252,8 @@ export type SeedBlock =
   | { type: "reasoning"; text: string }
   | { type: "tool-call"; id: string; name: string; arguments: string };
 
+/** The text blocks of a message, with an image kept as the word `[image]` and every other block
+ *  type dropped. An empty string gives no block. */
 const textBlocks = (content: unknown): Array<{ type: "text"; text: string }> => {
   if (typeof content === "string") return content ? [{ type: "text", text: content }] : [];
   if (!Array.isArray(content)) return [];
@@ -259,6 +266,7 @@ const textBlocks = (content: unknown): Array<{ type: "text"; text: string }> => 
   return out;
 };
 
+/** A tool result as one text block cut to RESULT_TEXT_LIMIT bytes, or none if it has no text. */
 const resultBlocks = (content: unknown): Array<{ type: "text"; text: string }> => {
   const blocks = textBlocks(content);
   const text = blocks.map((b) => b.text).join("\n");
@@ -274,8 +282,8 @@ const agentIdOf = (result: unknown): string | undefined => {
 /**
  * What a subagent said, from its own transcript: its assistant text, its tool calls left out.
  *
- * This is what the live view shows — the CLI forwards a subagent's messages as whole assistant
- * messages and the translator folds them into one reasoning row each (`↳ subagent`) — so a resumed
+ * This is what the live view shows. The CLI forwards a subagent's messages as whole assistant
+ * messages and the translator folds them into one reasoning row each (`↳ subagent`), so a resumed
  * Task reads the way the same run did while it was running instead of a call with nothing between
  * it and its result.
  */
@@ -349,15 +357,15 @@ export interface FoldedTranscript {
  * with their tool calls and results. Unfinished trailing prompts are dropped; the seed must end on
  * a completed turn.
  *
- * A subagent's own records are not folded here. On 2.1 they are not in this file at all — they live
- * in `<session>/subagents/agent-<id>.jsonl` and are attached by `attachSubagents` — and the inline
+ * A subagent's own records are not folded here. On 2.1 they are not in this file at all. They live
+ * in `<session>/subagents/agent-<id>.jsonl` and are attached by `attachSubagents`. The inline
  * `isSidechain` records older transcripts carry are skipped, because the turn they belong to is the
  * Task call that spawned them rather than a prompt of the user's own.
  */
 /** Text the owner typed while the CLI was busy. Claude Code records it as a `queue-operation` row
  *  rather than a user row: no `entrypoint`, no `message`, just the text. Both the fold and the
  *  foreign-row filter below key off those fields, so a message queued mid-turn reached dsh by no
- *  route at all — neither the mirror nor the seed a terminal-only session is opened from. Measured on
+ *  route at all. A terminal-only session opens from neither the mirror nor the seed. Measured on
  *  a real transcript 2026-09-11: 68 `enqueue` rows, of which 25 never appeared as a user row. */
 const queuedPrompt = (rec: Rec): string | undefined => {
   if (rec.type !== "queue-operation" || rec.operation !== "enqueue") return undefined;
@@ -375,7 +383,7 @@ const queueKey = (text: string): string => text.trim().slice(0, 200);
  *  different replies, which is what makes a mirrored conversation read as though it jumped around.
  *  Measured on this session: 85 enqueue rows, 46 of them also a user row. The user row is the
  *  canonical one, since it sits where the CLI actually delivered the message, so the queue row is
- *  skipped wherever its text turns up there — and kept where it does not, which is the case this
+ *  skipped wherever its text turns up there, and kept where it does not, which is the case this
  *  reads queue rows for at all. */
 const deliveredAsPrompt = (text: string): Set<string> => {
   const out = new Set<string>();
@@ -418,7 +426,7 @@ export function foldTranscript(text: string): FoldedTranscript {
       // as a retraction both lost real messages: the CLI writes `remove` when it *delivers* a queued
       // message, under `absorbed_mid_turn`, under `delivered_to_agent`, and under no reason at all.
       // Counted across every transcript on this box: 2046 removals, of which 1238 are absorbed, 3
-      // are delivered_to_agent and 805 carry no reason — and of those 805, 439 hold text that never
+      // are delivered_to_agent and 805 carry no reason, and of those 805, 439 hold text that never
       // appears as a user row anywhere, which is the signature of a message delivered mid-turn. Not
       // one removal in 2046 names a retraction. Showing a line someone took back is a cosmetic
       // oddity; dropping one is the failure this reads queue rows to prevent, so nothing is dropped.
@@ -599,7 +607,7 @@ export function toSessionEvents(folded: FoldedTranscript): SeedEvent[] {
           name: c.name,
           arguments: JSON.stringify(c.arguments),
         });
-        // A call with no result in the file never returned — the session was killed mid-tool, or
+        // A call with no result in the file never returned. The session was killed mid-tool, or
         // the transcript was cut. dsh needs a result for every call, but seeding a settled empty
         // one erased the single fact worth keeping: that this is where the session died.
         const r = s.results.get(c.id) ?? {
@@ -664,10 +672,11 @@ export interface ForeignTurns {
   running?: FoldedTurn;
 }
 
+/** Whether a user row's content is a prompt: a string, or blocks with no tool result among them. */
 const isPromptContent = (content: unknown): boolean =>
   typeof content === "string" ||
   (Array.isArray(content) && !content.some((b) => isRec(b) && b.type === "tool_result"));
-/** Stop reasons that end a Claude turn; `tool_use` does not — the assistant resumes after the tool. */
+/** Stop reasons that end a Claude turn; `tool_use` does not. The assistant resumes after it. */
 const TERMINAL_STOPS = new Set(["end_turn", "stop_sequence", "max_tokens"]);
 /** Whether an assistant row closes the turn it belongs to. The CLI splits one turn into several
  *  assistant rows (thinking, text, then a tool call), and stamps every row before a tool with
@@ -686,6 +695,8 @@ const endsTurn = (message: Rec | undefined): boolean => {
   );
 };
 
+const SDK_STAMPS = new Set(["sdk-cli", "sdk-ts", "sdk-py"]);
+
 /**
  * The turns some other entrypoint wrote into a stretch of a session's transcript: a terminal that
  * picked the session up with `claude /resume` stamps every row `entrypoint: cli`, while this
@@ -697,8 +708,6 @@ const endsTurn = (message: Rec | undefined): boolean => {
  * follows wait for the next read, so a reply that writes a sentence, calls a tool, then writes the
  * rest is mirrored whole, not cut at the sentence.
  */
-const SDK_STAMPS = new Set(["sdk-cli", "sdk-ts", "sdk-py"]);
-
 export function foreignTurns(text: string, own: string): ForeignTurns {
   const lines: string[] = [];
   const stamps = new Set<string>();
@@ -710,8 +719,8 @@ export function foreignTurns(text: string, own: string): ForeignTurns {
   for (const l of text.split("\n")) {
     const e = parseLine(l);
     // A queued message carries no stamp to judge it by, only its text. Nothing this plugin drives
-    // queues anything — dsh sends one prompt per turn over stream-json, and the queue is the
-    // terminal's own — so a queue row is a person at a terminal, which is exactly what to mirror.
+    // queues anything. dsh sends one prompt per turn over stream-json, and the queue is the
+    // terminal's own, so a queue row is a person at a terminal, which is exactly what to mirror.
     const queued = e ? queuedPrompt(e) : undefined;
     if (queued !== undefined && !delivered.has(queueKey(queued))) {
       pending = { at: offset, line: lines.length };
@@ -769,7 +778,7 @@ export function assistantMessageText(content: unknown): string {
  *  does not mirror it twice. The prompt and the reply land in dsh as two separate messages, so one
  *  string spanning both can never be found in either: the fingerprint that did exactly that matched
  *  nothing at all, and every re-read mirrored the exchange again. Both halves are checked, and both
- *  must be present, because dropping an exchange that was not really shown is the worse mistake — a
+ *  must be present, because dropping an exchange that was not really shown is the worse mistake. A
  *  tool-heavy reply can open with the same rendered line as another, so the reply alone is not enough
  *  to tell two exchanges apart. `shown` must carry the text of recent user *and* assistant messages. */
 export function alreadyShown(turn: FoldedTurn, shown: string, limit: number): boolean {
@@ -795,8 +804,8 @@ export function mirrorReply(turn: FoldedTurn, limit: number): string {
   return `${truncateBytes(md, MIRROR_REPLY_BYTES)}\n\n… cut here; the whole exchange is in the transcript.`;
 }
 
-/** The reply as one markdown chunk per rendered block — a text block, or a tool call with its
- *  result — in order. Live streaming yields the chunks a running turn has gained since the last
+/** The reply as one markdown chunk per rendered block, a text block or a tool call with its
+ *  result, in order. Live streaming yields the chunks a running turn has gained since the last
  *  render, so a long turn fills into one dsh turn step by step instead of landing all at once. */
 export function mirrorReplyBlocks(turn: FoldedTurn, limit: number): string[] {
   const parts: string[] = [];
@@ -815,8 +824,8 @@ export function mirrorReplyBlocks(turn: FoldedTurn, limit: number): string[] {
           // arguments that are not JSON have no path to read
         }
         // The call is one block and its output is the next. The CLI writes the call row when it makes
-        // the call and the result row only when the tool returns — a median of 1.5s apart on this box
-        // and minutes for a slow command — so pairing them into a single block left the tab blank for
+        // the call and result row only when the tool returns. A median of 1.5s apart on this box
+        // and minutes for a slow command, so pairing them into a block left the tab blank for
         // the whole run, showing nothing of what was already known to be running. Two blocks also keep
         // the live render append-only: a block that has been shown is never rewritten, only followed
         // by its output when that lands. Joined for a settled turn, the rendered text is unchanged.

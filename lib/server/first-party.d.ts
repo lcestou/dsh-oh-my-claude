@@ -27,8 +27,8 @@ export type ProbeBody = ReturnType<typeof ProbeBody>;
 export type FirstPartyProbe = boolean | undefined;
 /**
  * Whether a parsed probe answer is Anthropic's: an Anthropic request id in the header or the body,
- * or failing both, the error shape the API documents. The id is the strong evidence — a gateway
- * that fronts another provider mints its own — so it is asked for first.
+ * or failing both, the error shape the API documents. The id is asked for first because it is the
+ * strong evidence: a gateway that fronts another provider mints its own error shape.
  */
 export declare const readsAsAnthropic: (body: ProbeBody, requestIdHeader: string) => boolean;
 /**
@@ -36,7 +36,7 @@ export declare const readsAsAnthropic: (body: ProbeBody, requestIdHeader: string
  *
  * The request carries no key on purpose: the 401 that comes back is the evidence, and a proxy
  * that forwards passes Anthropic's own 401 through untouched. A timeout, a refused connection or
- * an unreadable answer is `undefined` rather than `false` — "not asked" is not "not Anthropic",
+ * an unreadable answer is `undefined` rather than `false`. "Not asked" is not "not Anthropic",
  * and the caller leaves the flag off either way but can ask again later.
  */
 export declare function probeFirstParty(baseUrl: string, fetchImpl?: typeof fetch, timeoutMs?: number): Promise<FirstPartyProbe>;
@@ -51,7 +51,7 @@ export declare const firstPartyMode: (hints: Record<string, boolean | number>) =
 /**
  * Whether to set the flag for a local spawn.
  *
- * A choice someone made is kept whatever the endpoint says — detection never turns a switch back
+ * A choice someone made is kept whatever the endpoint says. Detection never turns a switch back
  * on that was turned off, which is the whole reason the third state exists. `auto` follows the
  * probe, and an unanswered probe leaves the flag off: the cost of missing it is a smaller context
  * window, the cost of claiming it wrongly is a session that believes a gateway can serve 1M.

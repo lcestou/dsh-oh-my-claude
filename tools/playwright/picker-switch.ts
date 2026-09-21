@@ -23,12 +23,18 @@ console.log("url:", p.url());
 const trigger = p.locator('button[aria-label^="Select model"]').first();
 const button = p.locator('button[aria-label="Oh My Claude"]');
 // dsh's picker is two levels: the trigger opens Model and Effort, and Model opens the groups.
+/** Open the model picker's Model submenu by clicking the trigger then the Model menu item, the
+ *  two-level path the picker uses.
+ */
 const openPicker = async () => {
   await trigger.click();
   await p.waitForTimeout(500);
   await p.locator('[role="menu"] [role="menuitem"]', { hasText: "Model" }).first().click();
   await p.waitForTimeout(600);
 };
+/** Select the radio rows inside a model group matched by name or pattern, so a provider row is
+ *  picked by its label.
+ */
 const groupRows = (group: string | RegExp) =>
   p.locator('[role="group"]', { hasText: group }).first().locator('[role="menuitemradio"]');
 
@@ -46,6 +52,9 @@ for (let i = 0; i < (await groups.count()); i++) {
 // rather than written here, because a provider id is whatever the person running the check chose.
 // Escaped, so the id is matched as the literal text it is: a provider named `a.b` must not match
 // `axb`, and one holding an unclosed `[` must not throw and fail the whole check.
+/** Escape regex metacharacters in a provider id so it is matched as literal text and an unclosed
+ *  bracket cannot throw.
+ */
 const literal = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const otherName = new RegExp(literal(process.env.OMC_OTHER_PROVIDER ?? "local-llm"));
 const other = (await groupRows(otherName).count())

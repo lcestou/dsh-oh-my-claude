@@ -29,6 +29,7 @@ export interface PrivateValues {
   email?: string | null;
 }
 
+/** True only for a plain object, so a JSON array or null is not mistaken for a package record. */
 const isJsonObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 

@@ -41,8 +41,8 @@ export type SeedBlock = {
 /**
  * What a subagent said, from its own transcript: its assistant text, its tool calls left out.
  *
- * This is what the live view shows — the CLI forwards a subagent's messages as whole assistant
- * messages and the translator folds them into one reasoning row each (`↳ subagent`) — so a resumed
+ * This is what the live view shows. The CLI forwards a subagent's messages as whole assistant
+ * messages and the translator folds them into one reasoning row each (`↳ subagent`), so a resumed
  * Task reads the way the same run did while it was running instead of a call with nothing between
  * it and its result.
  */
@@ -129,6 +129,17 @@ export interface ForeignTurns {
      *  undefined when the read ends on a settled turn. Live streaming renders this as it grows. */
     running?: FoldedTurn;
 }
+/**
+ * The turns some other entrypoint wrote into a stretch of a session's transcript: a terminal that
+ * picked the session up with `claude /resume` stamps every row `entrypoint: cli`, while this
+ * plugin's child stamps `own`. Rows without the stamp (queue bookkeeping, summaries) never count,
+ * and neither do SDK stamps: another program driving the CLI is not a person to echo, and a CLI
+ * too old to keep the stamp it was given (a remote box's 2.1.123 writes sdk-cli for this plugin's own
+ * child) would otherwise see its own dsh turns come back as terminal ones.
+ * A prompt is running until an assistant row with a terminal `stop_reason` lands; it and what
+ * follows wait for the next read, so a reply that writes a sentence, calls a tool, then writes the
+ * rest is mirrored whole, not cut at the sentence.
+ */
 export declare function foreignTurns(text: string, own: string): ForeignTurns;
 /** A short, stable fingerprint of a turn for dedup: its prompt and the start of its final answer,
  *  both of which the mirrored dsh message also carries, so "has the dsh log already shown this
@@ -140,7 +151,7 @@ export declare function assistantMessageText(content: unknown): string;
  *  does not mirror it twice. The prompt and the reply land in dsh as two separate messages, so one
  *  string spanning both can never be found in either: the fingerprint that did exactly that matched
  *  nothing at all, and every re-read mirrored the exchange again. Both halves are checked, and both
- *  must be present, because dropping an exchange that was not really shown is the worse mistake — a
+ *  must be present, because dropping an exchange that was not really shown is the worse mistake. A
  *  tool-heavy reply can open with the same rendered line as another, so the reply alone is not enough
  *  to tell two exchanges apart. `shown` must carry the text of recent user *and* assistant messages. */
 export declare function alreadyShown(turn: FoldedTurn, shown: string, limit: number): boolean;
@@ -148,8 +159,8 @@ export declare function alreadyShown(turn: FoldedTurn, shown: string, limit: num
  *  order, tool calls and their results drawn the way the inline translator draws them in a live
  *  turn, text as it is. Thinking stays out, as it does live. Results are cut at `limit` bytes. */
 export declare function mirrorReply(turn: FoldedTurn, limit: number): string;
-/** The reply as one markdown chunk per rendered block — a text block, or a tool call with its
- *  result — in order. Live streaming yields the chunks a running turn has gained since the last
+/** The reply as one markdown chunk per rendered block, a text block or a tool call with its
+ *  result, in order. Live streaming yields the chunks a running turn has gained since the last
  *  render, so a long turn fills into one dsh turn step by step instead of landing all at once. */
 export declare function mirrorReplyBlocks(turn: FoldedTurn, limit: number): string[];
 /**

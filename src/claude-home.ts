@@ -10,7 +10,7 @@
 //
 // A symlink that has become a real file is the one thing that can fork: the CLI replaced the file
 // rather than writing through the link (a temp file plus a rename does exactly that). The next
-// build copies such a file back over the real one — keeping a `.bak` — and restores the link, so
+// build copies such a file back over the real one, keeping a `.bak`, and restores the link, so
 // the real `~/.claude` stays the box's single source of truth for the login and the settings.
 import {
   copyFileSync,
@@ -78,7 +78,7 @@ export function buildMirror(
   if (!existsSync(realHome)) return mirror;
   const { link, repair } = mirrorPlan(readdirSync(realHome), mirrorState(mirror));
   for (const name of repair) {
-    // The CLI replaced the link with a file of its own, so that file — not the real one — holds
+    // The CLI replaced the link with a file of its own, so that file, not the real one, holds
     // what it last wrote. Put it back where the rest of the box reads it, then relink.
     const from = join(mirror, name);
     const to = join(realHome, name);

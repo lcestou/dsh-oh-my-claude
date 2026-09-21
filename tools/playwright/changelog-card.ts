@@ -34,10 +34,16 @@ const RELEASES = [
 ];
 
 const failures: string[] = [];
+/** Record a named failure when a condition is false, so a run prints every broken assertion at once
+ *  instead of stopping on the first.
+ */
 const expect = (cond: boolean, what: string) => {
   if (!cond) failures.push(what);
 };
 
+/** Open the Oh My Claude settings card in a given page, the shared entry both changelog legs run
+ *  from.
+ */
 const openSettings = async (p: Page) => {
   await p.goto(dshUrl(token), { waitUntil: "networkidle" });
   await p.waitForTimeout(2000);

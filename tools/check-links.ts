@@ -17,6 +17,9 @@ const pages = [
 
 // GitHub's heading slug: lowercase, drop everything but letters, digits, spaces, hyphens and
 // underscores, spaces to hyphens, then -1, -2 for a repeated heading.
+/** Turn markdown headings into GitHub-style slugs (lowercase, strip non-alphanumerics except spaces
+ *  and hyphens, suffix a count for repeats) so link fragments can be matched.
+ */
 const slugsOf = (markdown: string): Set<string> => {
   const seen = new Map<string, number>();
   const out = new Set<string>();
@@ -35,6 +38,9 @@ const slugsOf = (markdown: string): Set<string> => {
   return out;
 };
 
+/** Extract every link target from markdown, from both `[text](url)` and `href="..."` forms,
+ *  flattening to a list.
+ */
 const linksIn = (markdown: string): string[] => {
   const out: string[] = [];
   for (const m of markdown.matchAll(/\]\(([^)\s]+)\)|href="([^"]+)"/g))

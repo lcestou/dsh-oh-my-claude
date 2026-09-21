@@ -1,5 +1,8 @@
 import type { ESTree, Scope, SourceCode, Variable } from "@oxlint/plugins";
 
+/** Walk the scope chain upward from an identifier to its binding, returning null when the name
+ *  resolves to nothing so a bare `Reflect` counts as the global.
+ */
 function resolveVariable(
   sourceCode: SourceCode,
   identifier: ESTree.IdentifierReference,
@@ -13,6 +16,9 @@ function resolveVariable(
   return null;
 }
 
+/** Return true when an expression names `Reflect` and resolves to the global, not a local shadow,
+ *  the only `Reflect` this rule treats as the builtin.
+ */
 function isGlobalReflect(sourceCode: SourceCode, expression: ESTree.Expression): boolean {
   if (expression.type !== "Identifier" || expression.name !== "Reflect") return false;
   if (sourceCode.isGlobalReference(expression)) return true;

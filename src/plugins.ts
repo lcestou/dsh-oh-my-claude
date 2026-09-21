@@ -70,6 +70,7 @@ export function numberOf(value: JsonValue | undefined, key: string): number | un
 const PLUGIN_SCOPES = ["user", "project", "local"] as const;
 export type PluginScope = (typeof PLUGIN_SCOPES)[number];
 
+/** True only for one of the plugin scopes the CLI accepts, `user`, `project` and `local`. */
 export const isPluginScope = (value: unknown): value is PluginScope =>
   PLUGIN_SCOPES.some((scope) => scope === value);
 
@@ -92,6 +93,7 @@ export const isPluginId = (value: unknown): value is string =>
 export const isMarketplaceSource = (value: unknown): value is string =>
   typeof value === "string" && value.trim().length > 0 && !value.trim().startsWith("-");
 
+/** The value as a record, or null for an array or a scalar. */
 const object = (value: JsonValue | undefined): Record<string, JsonValue> | null => {
   if (!(value instanceof Object) || Array.isArray(value)) return null;
   // SAFETY: the guard above leaves only the object arm of JsonValue, whose values are JsonValue.

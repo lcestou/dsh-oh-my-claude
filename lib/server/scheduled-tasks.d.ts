@@ -30,7 +30,7 @@ export declare const durableTasksPath: (cwd: string) => string;
  * The durable tasks of a project, read from the box the session runs on. A missing file is no
  * tasks, which is the ordinary case; a file that exists and does not parse is an error the tab must
  * show, because silently reading it as empty would say "nothing is scheduled" about a file nobody
- * could read — and a box that cannot be reached throws for the same reason.
+ * could read, and a box that cannot be reached throws for the same reason.
  */
 export declare function readDurableTasks(box: FsBox, cwd: string): Promise<ScheduledTask[]>;
 /**

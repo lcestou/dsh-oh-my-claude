@@ -26,7 +26,7 @@ export function memorySummary(text: string): string {
 /**
  * The memory files with their size, age and summary.
  *
- * ponytail: one read per file, which on a box is one ssh round trip each — they share a control
+ * ponytail: one read per file, which on a box is one ssh round trip each. They share a control
  * socket and run at once, and a memory dir holds tens of files, not thousands. Fold them into a
  * single remote script the day a directory is big enough to feel it.
  */
@@ -63,6 +63,8 @@ export function dropIndexLine(index: string, name: string): string {
     .join("\n");
 }
 
+/** Remove one memory file and drop its line from the MEMORY.md index. Deleting MEMORY.md itself
+ *  leaves no index to update. */
 export async function deleteMemory(box: FsBox, dir: string, name: string): Promise<void> {
   await removeAt(box, join(dir, name));
   if (name === "MEMORY.md") return;

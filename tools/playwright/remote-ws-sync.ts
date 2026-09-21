@@ -18,6 +18,9 @@ const ROW = '[data-testid="dsh-oh-my-claude-remote-ws-row"]';
 const failures: string[] = [];
 
 type Reply = { status: number; text: string };
+/** Fetch the remote-workspaces route from the page with a method and optional body, returning the
+ *  status and text without trusting the shape.
+ */
 const call = (p: Page, method: string, body?: Record<string, string>): Promise<Reply> =>
   p.evaluate(
     async ([m, json]) => {
@@ -35,6 +38,9 @@ const sweep = async (p: Page) => {
   for (const w of rows.filter((row) => row.name === NAME))
     await call(p, "DELETE", { path: w.path });
 };
+/** Open the Remote workspaces card through Settings, unboxing the Boxes card first when its heading
+ *  is absent, and record a failure when it will not open.
+ */
 const openCard = async (p: Page) => {
   await p
     .locator('button[aria-label*="Settings" i], a[aria-label*="Settings" i]')

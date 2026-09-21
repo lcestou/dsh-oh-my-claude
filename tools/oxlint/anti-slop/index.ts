@@ -14,6 +14,7 @@ import { noUnknownReturnsRule } from "./rules/no-unknown-returns.js";
 import { noUnknownTypeAliasesRule } from "./rules/no-unknown-type-aliases.js";
 import { noUnsafeDictionaryTypeRule } from "./rules/no-unsafe-dictionary-type.js";
 import { noWidenThenAssertRule } from "./rules/no-widen-then-assert.js";
+import { requireDocCommentRule } from "./rules/require-doc-comment.js";
 import { requireFieldLabelRule } from "./rules/require-field-label.js";
 import { requireSafetyCommentForTypeAssertionRule } from "./rules/require-safety-comment-for-type-assertion.js";
 
@@ -35,6 +36,7 @@ const antiSlopPlugin = eslintCompatPlugin({
     "no-unknown-returns": noUnknownReturnsRule,
     "no-unknown-type-aliases": noUnknownTypeAliasesRule,
     "no-widen-then-assert": noWidenThenAssertRule,
+    "require-doc-comment": requireDocCommentRule,
     "require-field-label": requireFieldLabelRule,
     "require-safety-comment-for-type-assertion": requireSafetyCommentForTypeAssertionRule,
   },

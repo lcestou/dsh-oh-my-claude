@@ -12,6 +12,9 @@ import type { ESTree, Scope, SourceCode, Variable } from "@oxlint/plugins";
 
 type FunctionExpression = ESTree.ArrowFunctionExpression | ESTree.Function;
 
+/** Strip the wrappers that hide the real value (parentheses, `as`, `satisfies`, angle assertions,
+ *  non-null) so widening is judged on what flows, not how it is annotated.
+ */
 function unwrapExpression(expression: ESTree.Expression): ESTree.Expression {
   let current = expression;
   while (
@@ -26,6 +29,9 @@ function unwrapExpression(expression: ESTree.Expression): ESTree.Expression {
   return current;
 }
 
+/** Walk scopes upward to find a binding; return null for an unbound name so a bare identifier is
+ *  not mistaken for a known value.
+ */
 function resolveVariable(
   sourceCode: SourceCode,
   identifier: ESTree.IdentifierReference,
@@ -39,6 +45,9 @@ function resolveVariable(
   return null;
 }
 
+/** Return the declarator for a variable declared exactly once, or null when it has zero or several
+ *  definitions, so only a single-source binding is traced.
+ */
 function variableDeclarator(variable: Variable): ESTree.VariableDeclarator | null {
   if (variable.defs.length !== 1) return null;
   const [definition] = variable.defs;
@@ -47,6 +56,9 @@ function variableDeclarator(variable: Variable): ESTree.VariableDeclarator | nul
     : null;
 }
 
+/** Return true when a binding is a `const` with no write references, so its initializer is the only
+ *  value and cannot be reassigned under us.
+ */
 function isStableConstVariable(variable: Variable, declarator: ESTree.VariableDeclarator): boolean {
   return (
     declarator.parent.type === "VariableDeclaration" &&
@@ -55,6 +67,9 @@ function isStableConstVariable(variable: Variable, declarator: ESTree.VariableDe
   );
 }
 
+/** Return true when an expression carries concrete type evidence, following a stable `const`
+ *  binding to its initializer once; a reassignable or unknown binding yields nothing.
+ */
 function hasKnownEvidence(
   sourceCode: SourceCode,
   expression: ESTree.Expression,
@@ -77,6 +92,9 @@ function hasKnownEvidence(
   return hasKnownEvidence(sourceCode, declarator.init, visitedVariables);
 }
 
+/** Classify the type an annotation widens to, or null when there is no annotation, so an
+ *  unannotated binding is not reported.
+ */
 function annotationTarget(
   annotation: ESTree.TSTypeAnnotation | null | undefined,
   environment: TypeEnvironment,
@@ -86,6 +104,9 @@ function annotationTarget(
     : classifyWideningTarget(annotation.typeAnnotation, environment);
 }
 
+/** Walk parents to the nearest function so a return value can be named after its function; null
+ *  when the node escapes all functions.
+ */
 function enclosingFunction(node: ESTree.Node): FunctionExpression | null {
   let current: ESTree.Node | null = node.parent;
   while (current !== null && current.type !== "Program") {
@@ -101,12 +122,18 @@ function enclosingFunction(node: ESTree.Node): FunctionExpression | null {
   return null;
 }
 
+/** Return the source text of a property key (identifier name, literal value, or raw text) for a
+ *  stable subject name in a report.
+ */
 function sourceKeyName(sourceCode: SourceCode, key: ESTree.PropertyKey): string {
   if (key.type === "Identifier" || key.type === "PrivateIdentifier") return key.name;
   if (key.type === "Literal") return String(key.value);
   return sourceCode.getText(key);
 }
 
+/** Return a readable name for a function owner, falling back to `anonymous function` when it has
+ *  none, so a report names the binding, not the node.
+ */
 function functionName(sourceCode: SourceCode, owner: FunctionExpression | null): string {
   if (owner === null) return "anonymous function";
   if (owner.id !== null) return owner.id.name;
@@ -117,15 +144,24 @@ function functionName(sourceCode: SourceCode, owner: FunctionExpression | null):
   return "anonymous function";
 }
 
+/** Return true when the expression is an empty object literal after unwrapping, the one case where
+ *  flowing into a dictionary is not evidence loss.
+ */
 function isEmptyObjectExpression(expression: ESTree.Expression): boolean {
   const unwrapped = unwrapExpression(expression);
   return unwrapped.type === "ObjectExpression" && unwrapped.properties.length === 0;
 }
 
+/** Return true when the widening target is an open dictionary or generic container, the case the
+ *  empty-object exemption protects.
+ */
 function isDictionaryAccumulatorTarget(destination: WideningTarget): boolean {
   return destination.kind === "open dictionary" || destination.kind === "generic container";
 }
 
+/** Return true when the parent is a type assertion, so a nested assertion is skipped and only the
+ *  outermost is reported.
+ */
 function hasParentAssertion(node: ESTree.Node): boolean {
   return node.parent?.type === "TSAsExpression" || node.parent?.type === "TSTypeAssertion";
 }

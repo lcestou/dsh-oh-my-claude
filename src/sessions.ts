@@ -173,6 +173,9 @@ const baseName = (path: string): string => {
   return slash < 0 ? path : path.slice(slash + 1);
 };
 
+/** Answer an HTTP request as JSON with a no-store cache header. Every route in this file replies
+ *  through it, so no browser or proxy can hand back a stale answer for a state that changes under
+ *  it, such as a session list or a login. */
 const json = (res: ServerResponse, status: number, value: unknown) => {
   res.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
@@ -184,6 +187,8 @@ const json = (res: ServerResponse, status: number, value: unknown) => {
 /** Any JSON object, as a request body or a stored file decodes to. */
 type JsonObject = Record<string, JsonValue>;
 
+/** True only for a non-null, non-array object, so a decoded JSON body that is an array or null is
+ *  treated as empty rather than read by key. */
 const isJsonObject = (v: unknown): v is JsonObject =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
@@ -211,8 +216,12 @@ export const readBody = (req: IncomingMessage, limit = BODY_LIMIT): Promise<Json
     req.on("error", reject);
   });
 
+/** Narrows an unknown value to a string only when it passes the memory-name rules; anything else
+ *  stays unknown, so the caller refuses it rather than using a name it would later reject. */
 const validMemoryName = (name: unknown): name is string =>
   typeof name === "string" && isMemoryName(name);
+/** Narrows an unknown value to a string only when it is a 36-character lowercase-hex UUID; a
+ *  malformed id fails closed and is refused rather than used as a session id. */
 const validId = (id: unknown): id is string => typeof id === "string" && /^[0-9a-f-]{36}$/.test(id);
 
 /** What parseSettingsText hands back: the object, or why the text is not one. */
@@ -293,19 +302,19 @@ export async function readHints(hintsPath: string): Promise<Record<string, boole
   return out;
 }
 
+let hintsChain: Promise<unknown> = Promise.resolve();
 /**
  * Apply one patch to the hints store, serialized against every other patch.
  *
  * The store is read-modify-write, and two requests that overlap both read the file before either
  * writes it: the second write then puts back a map from before the first, and every key the first
- * added is gone. That is not theoretical — a run of rapid switch changes on 2026-09-17 left the
+ * added is gone. That is not theoretical. A run of rapid switch changes on 2026-09-17 left the
  * file holding one key out of eight. Requests queue here instead, and the write goes through
  * `writeJson` so a crash mid-write cannot truncate the file either.
  *
  * `true` and finite non-negative numbers are kept; `false` and `null` drop the key, which is how a
  * switch returning to its default clears itself. Anything else is ignored, key names included.
  */
-let hintsChain: Promise<unknown> = Promise.resolve();
 export function updateHints(
   hintsPath: string,
   patch: Record<string, unknown>,
@@ -401,6 +410,8 @@ export function validateBoxes(input: unknown): ValidatedBoxes {
   return { boxes };
 }
 
+/** Read the local boxes file and return the validated list, or [] when it is missing, corrupt or
+ *  not an array, so a box list never throws on a gone or malformed file. */
 async function readBoxes(path: string): Promise<Box[]> {
   try {
     const v = validateBoxes(JSON.parse(await readFile(path, "utf8")));
@@ -465,6 +476,8 @@ export function validateSshBoxes(input: unknown): ValidatedSshBoxes {
   return { boxes };
 }
 
+/** Read the SSH-boxes file and return the validated list, or [] when it is missing or corrupt, so
+ *  a box list never throws on a gone or malformed file. */
 export async function readSshBoxes(path: string): Promise<SshBox[]> {
   try {
     const v = validateSshBoxes(JSON.parse(await readFile(path, "utf8")));
@@ -509,6 +522,8 @@ export type ValidatedRemoteWorkspace =
   | { value: { name: string; host: string; remoteCwd: string }; error?: undefined }
   | { error: string; value?: undefined };
 
+/** Clean an add-workspace form into a name, host and absolute remote path, or a structured error,
+ *  so a bad name or relative path cannot seed a placeholder directory. */
 export function validateRemoteWorkspaceInput(input: unknown): ValidatedRemoteWorkspace {
   const b = isJsonObject(input) ? input : {};
   const name = String(b.name ?? "").trim();
@@ -525,6 +540,8 @@ export function validateRemoteWorkspaceInput(input: unknown): ValidatedRemoteWor
   return { value: { name, host, remoteCwd } };
 }
 
+/** Read the placeholder-workspaces file and return its rows, or [] when it is missing, corrupt or
+ *  not an array, so a reconcile never throws on a gone or malformed file. */
 export async function readRemoteWorkspaces(path: string): Promise<RemoteWorkspace[]> {
   try {
     const raw = JSON.parse(await readFile(path, "utf8"));
@@ -649,6 +666,8 @@ interface ProbeFetchOpts {
   body?: string;
 }
 
+/** Take only the name=value part of a set-cookie header, dropping the path and expiry, so a launch
+ *  token rides the cookie and nothing else reaches the plugin. */
 const cookieOf = (r: { headers: { get(name: string): string | null } }) =>
   (r.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
 
@@ -664,6 +683,8 @@ export async function probeBox<T = RuntimeStatus>(
 ): Promise<Probe<T>> {
   const { url, token } = box;
   const signal = AbortSignal.timeout(path === "status" ? 6000 : 12000);
+  /** Fetch the box's plugin route with the login cookie and any proxy method or body attached, so
+   *  the same call works with or without a token-injecting proxy in front. */
   const status = (cookie: string) => {
     const fetchHeaders: Record<string, string> = {};
     if (cookie) fetchHeaders.cookie = cookie;
@@ -795,6 +816,8 @@ async function runtimeStatus(
   command = "claude",
   sshHost = "",
 ): Promise<RuntimeStatus> {
+  /** Run a `claude` command on a remote box over ssh, so the status probes answer the box the
+   *  session runs on rather than this one. */
   const remote = (args: string[]) =>
     run("ssh", sshArgs(sshHost, `${shq(command)} ${args.map(shq).join(" ")}`));
   const [which, version, status] = await Promise.all([
@@ -836,7 +859,8 @@ async function listAllTranscripts(
 
 // A self-contained lister that runs on an SSH box over `node -e`: walk `~/.claude/projects`, peek the
 // head of each transcript (bounded to 256 KB so only metadata crosses the wire, never a whole pasted
-// image) and emit `TranscriptListItem[]` as JSON — the same shape `listTranscripts` builds locally, so
+// image) and emit `TranscriptListItem[]` as JSON. That matches the shape `listTranscripts`
+// builds locally, so a box's rows read like this box's.
 // a box's rows read like this box's. Double quotes only, so `shq` wraps it in single quotes without
 // escaping. Node is present wherever `claude` runs, so no extra install; a box without it just errors.
 export const SSH_TRANSCRIPT_LISTER = `(function(){
@@ -960,6 +984,8 @@ interface PickerOption {
 }
 
 type EffortLevel = (typeof EFFORTS_ALL)[number];
+/** True only when the value is one of the CLI's effort levels; an unknown string is not a level, so
+ *  a settings file cannot offer an effort the picker cannot name. */
 const isEffortLevel = (v: unknown): v is EffortLevel =>
   typeof v === "string" && EFFORTS_ALL.some((level) => level === v);
 
@@ -1028,8 +1054,8 @@ const mtimeOf = (body: Record<string, unknown>): number | undefined =>
 /**
  * Keep the previous copy as .bak, write to a temp file, rename over: never a half-written file.
  * `expect` is the mtime the editor read, when it sent one: a file that has moved since is someone
- * else's edit — the CLI rewriting settings.json while the tab sat open, or a second tab — and a
- * whole-file write would put it back the way this tab last saw it.
+ * else's edit, and a whole-file write would put it back the way this tab last saw it. That edit
+ * is the CLI rewriting settings.json while the tab sat open, or a second tab.
  */
 async function writeWithBackup(
   box: FsBox,
@@ -1064,7 +1090,7 @@ async function writeWithBackup(
 /**
  * A dsh subagent run lives inside its parent conversation; dsh refuses to open it standalone
  * ("subagent Sessions require their durable parent address"), so it has no working row in any
- * listing — this cwd's, every cwd's, or a box's.
+ * listing: not this cwd's, not every cwd's, not a box's.
  */
 export const withoutSubagents = <T extends { id: string; dsh?: { subagent?: boolean } }>(
   rows: T[],
@@ -1087,6 +1113,8 @@ export interface OwnedSession {
 /** dsh 0.1.5's `sessionPersistence.list()` answers snapshots that wrap the header; before that the
  *  entries were the headers. Either way in, a header out. */
 type StoredHeader = { id: string; cwd?: string; origin?: string };
+/** Pull the bare session header out of a persistence entry, unwrapping dsh 0.1.5's wrapped shape so
+ *  both the newest and the oldest entries answer the same header. */
 const headerOf = (entry: StoredHeader | { header: StoredHeader }): StoredHeader => {
   if ("header" in entry && entry.header !== undefined) return entry.header;
   // SAFETY: no `header` member means the entry is the bare header shape of the union
@@ -1112,6 +1140,8 @@ export function dshSessionsFor(
   }
   return map;
 }
+/** Narrows an unknown value to an absolute path string with no NUL; a relative or control-char path
+ *  is refused rather than used as a directory. */
 const validCwd = (cwd: unknown): cwd is string =>
   typeof cwd === "string" && cwd.startsWith("/") && !cwd.includes("\0");
 
@@ -1140,9 +1170,9 @@ const idIn = (text: string): string | undefined =>
   /"sessionId"\s*:\s*"([0-9a-f-]{36})"/.exec(text.slice(0, 8192))?.[1];
 
 /**
- * Whether that id is already in use here — a live dsh session, a transcript under any project dir,
- * or an earlier import. An import that reused one would shadow the real conversation, so it takes a
- * fresh id instead; the original still sits inside the file's own records.
+ * Whether that id is already in use here: by a live dsh session, a transcript under any project
+ * dir, or an earlier import. An import that reused one would shadow the real conversation, so it
+ * takes a fresh id instead; the original still sits inside the file's own records.
  */
 async function idTaken(
   live: (id: string) => boolean,
@@ -1303,8 +1333,8 @@ const claudeHomeOf = async (box: MountBox): Promise<string> =>
 
 /**
  * Where that box keeps a workspace's transcripts and its auto-memory. The same directory the
- * adapter's own `projectDir` names for this PC, resolved against the box's `~/.claude` instead —
- * the cwd is already the remote path, since it is the directory the session runs in.
+ * adapter's own `projectDir` names for this PC, resolved against the box's `~/.claude` instead.
+ * The cwd is already the remote path, since it is the directory the session runs in.
  */
 const projectDirAt = async (box: MountBox, cwd: string): Promise<string> =>
   join(await claudeHomeOf(box), "projects", projectDirName(cwd));
@@ -1497,7 +1527,7 @@ async function sessionTranscript(
  *
  * A minute is enough and needs nothing from the client: two tabs noticing one return post within a
  * second or two of each other, and a second recap cannot be *earned* faster than the away bar, whose
- * smallest offered value is a minute. Nothing expires it on a timer — a stale entry is one number,
+ * smallest offered value is a minute. Nothing expires it on a timer. A stale entry is one number,
  * and the write path sweeps what it passes.
  */
 const RECAP_GAP_MS = 60_000;
@@ -1714,6 +1744,8 @@ export function registerSessionRoutes(
     await mkdir(importedDir, { recursive: true });
     await writeFile(join(importedDir, `${id}.jsonl`), read.text, "utf8");
   };
+  /** Decide which box and path a cwd-scoped read runs against: a remote workspace's real remote
+   *  path, else the request's own mount. */
   const targetOf = <T extends string | null>(url: URL, cwd: T): CwdTarget<T> => {
     const ws = workspaceAt(cwd);
     if (ws === undefined) return { box: boxOf(url), cwd };
@@ -1736,10 +1768,12 @@ export function registerSessionRoutes(
   const userSettingsPathOf = async (box: MountBox): Promise<string | undefined> =>
     box.sshHost ? `${await claudeHomeOf(box)}/settings.json` : settingsPath;
   // Optional: stock dsh has it; without it archived sessions list but cannot be restored. The
-  // routes can serve before it mounts — a request in the first seconds after a restart found no
+  // routes can serve before it mounts. A request in the first seconds after a restart found no
   // registry and skipped the workspace attach silently, so the session it had just written was
-  // nowhere in the sidebar — hence the live `get` alongside the injected handle.
+  // nowhere in the sidebar. Hence the live `get` alongside the injected handle.
   let injectedRegistry: WorkspaceRegistry | undefined;
+  /** The workspace registry dsh provides, whether injected or looked up on demand, so routes can
+   *  serve even before it mounts. */
   const workspaceRegistry = (): WorkspaceRegistry | undefined =>
     injectedRegistry ?? ctx.get?.("workspaceRegistry");
   /** The remote-workspace rows dsh's registry still backs, the file and the adapter's redirect map
@@ -1797,8 +1831,8 @@ export function registerSessionRoutes(
     };
     // Every `claude plugin` and `claude mcp` mutation below runs this instance's binary against
     // this instance's config dir, while the rosters they act on are read from the session's own
-    // box. On a session running over ssh that pairing writes this PC and leaves the box alone —
-    // the roster then re-reads remote and still shows the old state, so the panel reports nothing
+    // box. On a session running over ssh that pairing writes this PC and leaves the box alone.
+    // The roster then re-reads remote and still shows the old state, so the panel reports nothing
     // happened while the wrong machine changed. Refuse instead, until the verbs run over ssh.
     // The cwd matters as much as the named provider: a remote workspace's directory is on its box
     // whichever model the session runs, so a local mount would happily run the verb here, against a
@@ -1806,7 +1840,7 @@ export function registerSessionRoutes(
     const notOnBox = (url: URL, what: string, cwd: string | null = null): string | undefined =>
       targetOf(url, cwd).box.sshHost ? `${what} do not reach an SSH box yet` : undefined;
     // The CLI wrote the plugin change to settings; ask this session's live process to re-read it so
-    // it applies now. Returns whether a live process took it — false (next spawn) when none is up.
+    // it applies now. Returns whether a live process took it. False (next spawn) when none is up.
     const applyReload = async (session: JsonValue | undefined): Promise<boolean> => {
       if (!reloadPlugins || typeof session !== "string") return false;
       return (await reloadPlugins(session)).live;
@@ -2055,8 +2089,8 @@ export function registerSessionRoutes(
                 return json(res, 404, { error: "transcript not found" });
               }
               // Import: a transcript file from anywhere lands in the plugin's own state dir under a
-              // free id, and the merged list picks it up. `projects/` is left alone on purpose —
-              // the CLI owns that directory, and a foreign session has no cwd it ever ran in.
+              // free id, and the merged list picks it up. `projects/` is left alone on purpose.
+              // The CLI owns that directory, and a foreign session has no cwd it ever ran in.
               if (
                 importedDir &&
                 req.method === "POST" &&
@@ -2919,7 +2953,7 @@ export function registerSessionRoutes(
                 if (sid === "" || question === "")
                   return json(res, 400, { error: "session and question required" });
                 // A recap says so, and only a recap is deduplicated: a question someone typed twice
-                // was meant twice. `ok` either way — the caller wanted a recap for this return and
+                // was meant twice. `ok` either way. The caller wanted a recap for this return and
                 // there is one; it simply belongs to whichever tab asked first.
                 if (body.recap === true && recapIsRepeat(sid, Date.now()))
                   return json(res, 200, { ok: true, duplicate: true });
@@ -2945,7 +2979,7 @@ export function registerSessionRoutes(
               }
               // Dismiss is server-side so a closed card stays closed: a client-only hide is lost on the
               // next remount and the entry, still in the ring, would poll back into view. It marks
-              // rather than deletes — the answer stays readable in the panel's Asides tab, which is
+              // rather than deletes. The answer stays readable in the panel's Asides tab, which is
               // the point of persisting asides at all; the bubble is what the user closed, not the
               // record.
               if (
@@ -3339,6 +3373,8 @@ export function registerSessionRoutes(
                 child.unref();
                 const link = await new Promise<string | { error: string }>((resolve) => {
                   let text = "";
+                  /** Accumulate the login command's output and resolve as soon as it prints an approval
+                   *  link, so the browser can open it. */
                   const look = (chunk: Buffer | string) => {
                     text += String(chunk);
                     const found = loginUrlIn(text);
@@ -3528,7 +3564,6 @@ export function registerSessionRoutes(
               // stores the minted token. The host must be a saved box, so this cannot ssh
               // elsewhere; an empty host is this box, run under a local PTY, and its token goes to
               // the default instance's local spawns.
-              /** A finished login: store its token and flip the row's status, or hand back its error. */
               /** The box's own `claude auth status`, the proof a login took once its process exits. */
               const verifyLogin = (loginHost: string) => async () => {
                 const cli = command ?? "claude";
@@ -3538,6 +3573,8 @@ export function registerSessionRoutes(
                     : await run("ssh", sshArgs(loginHost, `${shq(cli)} auth status`));
                 return authFromStatus(st.out).loggedIn;
               };
+              /** Record a finished SSH login: forget the cached identity, tell the panel the box is
+               *  logged in, and relist. A login that did not finish hands back its error. */
               const storeLogin = (loginHost: string, loginBoxes: SshBox[], fin: LoginOutcome) => {
                 if (!fin.done) return { done: false, error: fin.error };
                 forgetIdentity();
@@ -3787,7 +3824,6 @@ export function registerSessionRoutes(
   });
 }
 
-/** The settings files the CLI merges, highest precedence first. */
 /** One settings file as the Diagnostics tab reports it: where it is, and why the CLI refuses it. */
 interface DiagnosticFile {
   scope: SettingsScope;
@@ -3812,6 +3848,8 @@ export interface SettingsScopeInfo extends SettingsFile {
   readOnly: boolean;
 }
 
+/** True only when the value is one of the four settings scopes the CLI merges; anything else is an
+ *  unknown scope and is refused rather than written. */
 export function isSettingsScope(value: JsonValue | undefined): value is SettingsScope {
   // SAFETY: the includes() call narrows nothing on its own; the signature is the narrowing.
   return SETTINGS_SCOPES.includes(value as SettingsScope);

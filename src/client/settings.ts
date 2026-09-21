@@ -30,6 +30,8 @@ export const SCOPE_LABELS = {
   user: "~/.claude/settings.json",
 } satisfies { [K in SettingsScope]: string };
 
+/** The top-level keys of a settings document, or an empty array when the text is invalid JSON or
+ *  not an object, so a hand-edited file contributes no keys instead of throwing. */
 const topLevelKeys = (text: string): string[] => {
   try {
     const value: unknown = JSON.parse(text);
@@ -39,6 +41,8 @@ const topLevelKeys = (text: string): string[] => {
   }
 };
 
+/** Lists the words in English, joining with commas and a final `and`, so one word returns itself
+ *  and an empty list returns an empty string. */
 const listed = (words: readonly string[]): string =>
   words.length < 2 ? (words[0] ?? "") : `${words.slice(0, -1).join(", ")} and ${words.at(-1)}`;
 

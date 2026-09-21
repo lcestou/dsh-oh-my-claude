@@ -23,6 +23,18 @@ export declare function parseSettingsText(text: unknown): ParsedSettings;
  *  settings switches. Only `true` and finite non-negative numbers are kept, so a missing or
  *  unreadable file reads as every switch at its default. */
 export declare function readHints(hintsPath: string): Promise<Record<string, boolean | number>>;
+/**
+ * Apply one patch to the hints store, serialized against every other patch.
+ *
+ * The store is read-modify-write, and two requests that overlap both read the file before either
+ * writes it: the second write then puts back a map from before the first, and every key the first
+ * added is gone. That is not theoretical. A run of rapid switch changes on 2026-09-17 left the
+ * file holding one key out of eight. Requests queue here instead, and the write goes through
+ * `writeJson` so a crash mid-write cannot truncate the file either.
+ *
+ * `true` and finite non-negative numbers are kept; `false` and `null` drop the key, which is how a
+ * switch returning to its default clears itself. Anything else is ignored, key names included.
+ */
 export declare function updateHints(hintsPath: string, patch: Record<string, unknown>): Promise<Record<string, boolean | number>>;
 /** Another dsh server this panel can hop to; `token` is that box's dsh launch token. */
 export interface Box {
@@ -67,6 +79,8 @@ export type ValidatedSshBoxes = {
 /** Coerces each entry to a plain object and returns a structured error instead of throwing,
  *  enforcing the box-count cap and per-box name and host rules. */
 export declare function validateSshBoxes(input: unknown): ValidatedSshBoxes;
+/** Read the SSH-boxes file and return the validated list, or [] when it is missing or corrupt, so
+ *  a box list never throws on a gone or malformed file. */
 export declare function readSshBoxes(path: string): Promise<SshBox[]>;
 /** A dsh workspace this plugin points at a directory on an SSH box. dsh stores and stat-checks local
  * paths only, so each remote workspace owns an empty local placeholder dir that dsh adopts as an
@@ -95,7 +109,11 @@ export type ValidatedRemoteWorkspace = {
     error: string;
     value?: undefined;
 };
+/** Clean an add-workspace form into a name, host and absolute remote path, or a structured error,
+ *  so a bad name or relative path cannot seed a placeholder directory. */
 export declare function validateRemoteWorkspaceInput(input: unknown): ValidatedRemoteWorkspace;
+/** Read the placeholder-workspaces file and return its rows, or [] when it is missing, corrupt or
+ *  not an array, so a reconcile never throws on a gone or malformed file. */
 export declare function readRemoteWorkspaces(path: string): Promise<RemoteWorkspace[]>;
 /** The file, minus every row whose dsh workspace is gone. dsh's registry owns which workspaces
  *  exist (the sidebar's trash deletes there and never here), so a row the registry no longer
@@ -228,7 +246,7 @@ export declare function readPickerSettings(path: string): Promise<PickerSettings
 /**
  * A dsh subagent run lives inside its parent conversation; dsh refuses to open it standalone
  * ("subagent Sessions require their durable parent address"), so it has no working row in any
- * listing — this cwd's, every cwd's, or a box's.
+ * listing: not this cwd's, not every cwd's, not a box's.
  */
 export declare const withoutSubagents: <T extends {
     id: string;
@@ -488,6 +506,8 @@ export interface SettingsScopeInfo extends SettingsFile {
     scope: SettingsScope;
     readOnly: boolean;
 }
+/** True only when the value is one of the four settings scopes the CLI merges; anything else is an
+ *  unknown scope and is refused rather than written. */
 export declare function isSettingsScope(value: JsonValue | undefined): value is SettingsScope;
 /**
  * The file a scope names. Paths are derived here and never taken from the client: the request

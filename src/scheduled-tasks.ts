@@ -32,6 +32,7 @@ export interface ScheduledTasksError {
 }
 
 type Rec = Record<string, unknown>;
+/** True only for a plain object, so a JSON array or null is not treated as a task record. */
 const isRec = (v: unknown): v is Rec => typeof v === "object" && v !== null && !Array.isArray(v);
 /** The first of these keys the record carries as a string, else undefined. */
 const str = (rec: Rec, ...keys: string[]): string | undefined => {
@@ -41,6 +42,8 @@ const str = (rec: Rec, ...keys: string[]): string | undefined => {
   }
   return undefined;
 };
+/** The first finite number among the keys, or the millisecond instant of an ISO string under one
+ *  of them. */
 const num = (rec: Rec, ...keys: string[]): number | undefined => {
   for (const key of keys) {
     const value = rec[key];
@@ -78,7 +81,7 @@ const taskFrom = (raw: unknown, durable: boolean): ScheduledTask | undefined => 
  * The durable tasks of a project, read from the box the session runs on. A missing file is no
  * tasks, which is the ordinary case; a file that exists and does not parse is an error the tab must
  * show, because silently reading it as empty would say "nothing is scheduled" about a file nobody
- * could read — and a box that cannot be reached throws for the same reason.
+ * could read, and a box that cannot be reached throws for the same reason.
  */
 export async function readDurableTasks(box: FsBox, cwd: string): Promise<ScheduledTask[]> {
   const text = await readTextAt(box, durableTasksPath(cwd));

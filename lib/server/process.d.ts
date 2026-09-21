@@ -23,7 +23,7 @@ export declare const CHILD_ENV: {
     CLAUDE_CODE_ENTRYPOINT: string;
 };
 /** The environment a Claude child runs with: dsh's own, then the plugin's additions, then whatever
- *  the caller passes. CHILD_ENV beats the inherited value on purpose — an `MCP_TOOL_TIMEOUT` that
+ *  the caller passes. CHILD_ENV beats the inherited value on purpose. An `MCP_TOOL_TIMEOUT` that
  *  happens to be in dsh's environment would otherwise cut relayed dsh tools short in one spawn mode
  *  and not the other. A caller that means to override still wins, which is the escape hatch. */
 export declare function childEnv(base: NodeJS.ProcessEnv, override?: Record<string, string>): Record<string, string>;
@@ -365,9 +365,9 @@ export declare function decodeRewindResult(v: JsonValue | undefined): RewindResu
 /**
  * A running total read as one turn's own share: the rise since the previous result, or the whole
  * figure when the total started over. `total_cost_usd` and `duration_api_ms` climb for the life of
- * a CLI process — "each result carries the running total so far, so read the latest result rather
- * than summing across results" — and a new process, a resume or a mid-session `/clear` starts them
- * again from zero, which arrives here as a figure below the last one.
+ * a CLI process, and a new process, a resume or a mid-session `/clear` starts them
+ * again from zero, which arrives here as a figure below the last one. Each result carries the
+ * running total so far, so read the latest result rather than summing across results.
  */
 export declare const turnDelta: (total: number, soFar: number) => number;
 /** What a breakdown row is. The CLI's own words for the field: "'used' content occupies the window;
@@ -553,11 +553,19 @@ export declare class LineQueue {
     lines: (string | ClaudeEvent | Record<string, unknown>)[];
     waiters: Array<(line: string | typeof TIMEOUT | null) => void>;
     closed: boolean;
+    /** Start with no queued lines, no waiters and no close flag; every field stays empty until the
+     *  first push. */
     constructor();
     /** Lines waiting with no turn reading them. */
     get size(): number;
+    /** Hand a line to the earliest waiter if one is waiting, else buffer it, so a line never arrives
+     *  before its reader. */
     push(line: string | ClaudeEvent | Record<string, unknown>): void;
+    /** Mark the queue closed and resolve every pending waiter with null, so a stopped child's
+     *  readers see the end. */
     close(): void;
+    /** Resolve with the next queued line, a timeout after `timeoutMs` with nothing, or null once the
+     *  queue is closed. */
     next(timeoutMs?: number): Promise<string | typeof TIMEOUT | null>;
 }
 /** Everything one turn needs, as `prepare()` returns it; the process keeps the last one. */
@@ -711,6 +719,8 @@ export declare class ClaudeProcess {
     staleContext: boolean;
     /** Sees every `control_response` line as it arrives, even between turns; true means consumed. */
     controlListener?: (event: ClaudeEvent) => boolean;
+    /** Spawn the child Claude and feed its stdout into the line queue, noting idle completion replies
+     *  so the adapter can open a dsh turn. */
     constructor({ args, cwd, spec, onExit, command, spawner, }: {
         args: string[];
         cwd: string;
@@ -719,19 +729,23 @@ export declare class ClaudeProcess {
         command?: string;
         spawner?: Spawner;
     });
+    /** When the child ends, reject every relayed tool call as failed, close the queue and run the
+     *  exit callback. */
     closed(code: number, onExit: ClaudeProcessOnExit | undefined): void;
+    /** True while the child has not exited, so a write to a finished process is refused. */
     get alive(): boolean;
+    /** Write a stdin line to the child, returning false when it has exited, so a line to a dead
+     *  process is not silently dropped. */
     write(line: string): boolean;
+    /** Terminate the child while it is alive, so killing an already-dead process is a no-op. */
     kill(): void;
     /** Queue a synthetic event for the turn loop (the MCP bridge relaying a dsh tool call). */
     inject(event: ClaudeEvent): void;
-    /** How many `result` events sit in the queue with no turn reading them. Claude Code runs a turn
-     *  of its own when a background task it started finishes; with dsh idle, that whole turn is
-     *  buffered here and the next prompt would end on its stale result, leaving every later reply
-     *  one prompt behind. */
     /** A `result` line while no turn is reading: Claude just finished a turn of its own. Tell the
      *  adapter (`onIdleResult`) so it can open a dsh turn and show the reply now. */
     noteIdleResult(line: string): void;
+    /** Count buffered `result` events with no turn reading them, so the loop can tell a real reply
+     *  from a stale background-task completion. */
     countStaleResults(): number;
     /** Next parsed JSON line; plain text lines are kept in `stray` for error messages. Null when the
      *  process ended, `{ type: "timeout" }` when `timeoutMs` passed first. */

@@ -63,6 +63,7 @@ export declare function parseHoldLine(line: string, ready: boolean): HoldLine | 
 export declare const reattachDelay: (attempt: number) => number;
 /** Runs one script on the box; the default is this plugin's `ssh`. A seam for the test. */
 export type RunOnBox = (script: string) => SubprocessHandle;
+/** The real `RunOnBox`: the script runs on `host` over this plugin's ssh options. */
 export declare const sshRunner: (host: string) => RunOnBox;
 /**
  * The handle `ClaudeProcess` talks to. Attaches now, reattaches from the current offset whenever
