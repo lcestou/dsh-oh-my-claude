@@ -2814,7 +2814,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // prompt exactly when this bridge is passed, so the size readout has to ask the same question
     // rather than a similar-looking one. A turn that runs on a box gets no bridge: its URL is this
     // dsh's loopback port, which the far side cannot reach, and `dshTools` is per mount while a
-    // remote workspace makes a session remote under the local mount (measured on lilly 2026-09-15:
+    // remote workspace makes a session remote under the local mount (measured on a remote box 2026-09-15:
     // Claude spent its first reply asking for a tool server that was never reachable).
     const mcpBridge =
       this.mcp && options.sessionId && !options.purpose && this.config.dshTools && !targetHost

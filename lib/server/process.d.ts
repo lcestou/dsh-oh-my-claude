@@ -300,7 +300,21 @@ export declare const seamSpawner: (subprocess: Pick<SubprocessRuntime, "spawn">)
 export declare function shq(value: string): string;
 /** The local `ssh` argv that runs `script` on `host`. BatchMode: key auth only, so a missing key or
  * unknown host fails fast instead of hanging on a prompt. */
+/**
+ * The argument list for `ssh <host> <script>`.
+ *
+ * `--` ends ssh's own option parsing, so the host is always a destination and never an option.
+ * Without it, a host that starts with a dash is read as a flag: `-oProxyCommand=<cmd>` makes ssh
+ * run `<cmd>` on this machine before it connects anywhere, which is a local command run by anyone
+ * who can pass dsh's login, outside every permission mode Claude has. Two routes took the host
+ * straight from the request. The check below refuses such a host outright rather than relying on
+ * `--` alone, because a refused request says what went wrong and a quietly failed connect does not.
+ * Found by a security review, 2026-09-21.
+ */
 export declare function sshArgs(host: string, script: string): string[];
+/** A destination ssh can be given safely: `host`, `user@host` or `user@host:port`-free forms,
+ *  and never anything ssh would read as an option or that carries whitespace or a control. */
+export declare function isSshHost(host: string): boolean;
 /**
  * Where the multiplex sockets live, or nothing when no directory can hold one.
  *

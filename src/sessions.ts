@@ -10,6 +10,7 @@ import { homedir, hostname, release, userInfo } from "node:os";
 import { constants } from "node:fs";
 import {
   access,
+  chmod,
   readdir,
   readFile,
   writeFile,
@@ -3209,7 +3210,19 @@ export function registerSessionRoutes(
                 if (req.method === "PUT") {
                   const v = validateBoxes((await readBody(req)).boxes);
                   if (v.error !== undefined) return json(res, 400, { error: v.error });
-                  await writeFile(boxesPath, `${JSON.stringify(v.boxes, null, 2)}\n`, "utf8");
+                  // Owner-only. A saved box carries that remote dsh's launch token in plain text,
+                  // and the default mode left it readable by every account on the machine, which
+                  // is a login to the other box for any of them. `mode` applies on create only, so
+                  // `chmod` follows for a file an older build already wrote as 0664.
+                  await writeFile(boxesPath, `${JSON.stringify(v.boxes, null, 2)}\n`, {
+                    encoding: "utf8",
+                    mode: 0o600,
+                  });
+                  // Logged, not swallowed: if the chmod fails the token stays readable, and a
+                  // hardening step that quietly does nothing is worse than one that says so.
+                  await chmod(boxesPath, 0o600).catch((e: unknown) =>
+                    log("warn", `boxes file left readable by others: ${errorText(e)}`),
+                  );
                   return json(res, 200, { boxes: v.boxes });
                 }
               }

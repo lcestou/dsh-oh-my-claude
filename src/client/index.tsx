@@ -1675,7 +1675,7 @@ function BoxRow({
 }: {
   testId: string;
   title: string;
-  /** The transport and address: `ssh · lilly`, `link · http://…`, or this box's hostname. */
+  /** The transport and address: `ssh · devbox`, `link · http://…`, or this box's hostname. */
   kind?: string;
   /** The dot: green when the box can take a turn, red when something stops it, grey while unknown;
    *  none for a row that has no state of its own. */

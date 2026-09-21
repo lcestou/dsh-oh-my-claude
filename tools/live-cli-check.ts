@@ -7,7 +7,7 @@
 // box was resolved from an empty sshHost. This runs against the real binaries.
 //
 //   bun tools/live-cli-check.ts                 # flag audit: local, plus every box a remote workspace names
-//   bun tools/live-cli-check.ts lilly nova      # those hosts instead
+//   bun tools/live-cli-check.ts devbox nova      # those hosts instead
 //   bun tools/live-cli-check.ts --live          # also run one real `claude -p` turn per target (spends tokens)
 //
 // TypeScript, unlike its neighbours under `tools/`, because it is the one check that imports the
