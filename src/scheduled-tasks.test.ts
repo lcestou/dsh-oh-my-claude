@@ -4,7 +4,7 @@ import { mkdtemp, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { foldTranscript } from "./transcript.js";
-import { goalFrom, readDurableTasks, sessionTasksFrom } from "./scheduled-tasks.js";
+import { dshGoalsFrom, goalFrom, readDurableTasks, sessionTasksFrom } from "./scheduled-tasks.js";
 
 /** A transcript of one prompt and one assistant step making the given tool calls. */
 const transcript = (calls: Array<{ name: string; input: Record<string, unknown> }>) =>
@@ -96,6 +96,47 @@ const transcript = (calls: Array<{ name: string; input: Record<string, unknown> 
   ]);
   await writeFile(path, JSON.stringify([{ name: "bare list", schedule: "@daily" }]));
   assert.equal((await readDurableTasks({}, dir))[0]?.name, "bare list");
+}
+
+// dsh's goals: one entry per goal from its latest snapshot, a clear marks it cleared, newest first,
+// and a record of another shape is skipped.
+{
+  const snap = (id: string, phase: string, at: number, extra: Record<string, unknown> = {}) => ({
+    type: "goal/change",
+    data: {
+      kind: "goal/change",
+      version: 1,
+      operation: "create",
+      goal: { id, revision: 1, objective: `goal ${id}`, phase, ...extra },
+      roundsStarted: 2,
+      createdAt: at,
+      updatedAt: at + 5,
+    },
+  });
+  const goals = dshGoalsFrom([
+    snap("a", "active", 100, { maxGoalRounds: 3 }),
+    { type: "user/message", data: {} },
+    snap("a", "paused", 100),
+    snap("b", "blocked", 200, { blockedReason: "no network" }),
+    {
+      type: "goal/change",
+      data: { operation: "clear", cleared: { id: "a", revision: 2 }, clearedAt: 300 },
+    },
+    { type: "goal/change", data: { operation: "edit", goal: { id: 7 } } },
+  ]);
+  assert.deepEqual(
+    goals.map((g) => [g.id, g.phase]),
+    [
+      ["b", "blocked"],
+      ["a", "cleared"],
+    ],
+    "newest first, latest phase, clear marks cleared",
+  );
+  assert.equal(goals[0]?.blockedReason, "no network");
+  assert.equal(goals[1]?.updatedAt, 300, "a clear's time becomes the goal's last change");
+  assert.equal(goals[1]?.maxGoalRounds, undefined, "the later snapshot without a cap replaces it");
+  assert.equal(goals[0]?.roundsStarted, 2);
+  assert.deepEqual(dshGoalsFrom([]), []);
 }
 
 console.log("scheduled-tasks: ok");

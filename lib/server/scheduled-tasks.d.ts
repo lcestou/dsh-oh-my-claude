@@ -8,6 +8,18 @@ export interface ScheduledTask {
     nextRunAt?: number;
     durable?: boolean;
 }
+/** One dsh goal as its latest `goal/change` record left it. dsh's own phases are active, paused,
+ *  complete and blocked; `cleared` is this fold's name for a goal a clear record removed. */
+export interface DshGoal {
+    id: string;
+    objective: string;
+    phase: string;
+    roundsStarted: number;
+    maxGoalRounds?: number;
+    blockedReason?: string;
+    createdAt: number;
+    updatedAt: number;
+}
 /** The body of GET /scheduled-tasks. */
 export interface ScheduledTasksReply {
     ok: true;
@@ -17,6 +29,8 @@ export interface ScheduledTasksReply {
         text: string;
         at: number;
     } | null;
+    /** dsh's own goals for the session, newest first; the first is current unless it has ended. */
+    dshGoals: DshGoal[];
     path: string;
 }
 /** The same route when it could not answer. */
@@ -40,6 +54,16 @@ export declare function readDurableTasks(box: FsBox, cwd: string): Promise<Sched
  * because the file above already lists it.
  */
 export declare function sessionTasksFrom(folded: FoldedTranscript): ScheduledTask[];
+/**
+ * Fold a dsh session's `goal/change` records into one entry per goal, newest first. dsh writes a
+ * full snapshot on every change (create, edit, pause, resume, complete, block) and a separate clear
+ * record naming the goal it removed, which marks that goal `cleared` here. A record of another shape
+ * is skipped rather than trusted, since the log is dsh's and its format can move.
+ */
+export declare function dshGoalsFrom(events: readonly {
+    type: string;
+    data?: unknown;
+}[]): DshGoal[];
 /**
  * The goal the CLI is holding, which it keeps nowhere but the transcript: on resume it recovers one
  * by reading its own messages backwards. The last proposal wins, and its step's time is when it was

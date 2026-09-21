@@ -3223,7 +3223,56 @@ interface ScheduledTasksReply {
   durable: Task[];
   session: Task[];
   goal: { text: string; at: number } | null;
+  dshGoals: DshGoal[];
   path: string;
+}
+
+/** One of the session's dsh goals, as the route folds dsh's own log. */
+interface DshGoal {
+  id: string;
+  objective: string;
+  phase: string;
+  roundsStarted: number;
+  maxGoalRounds?: number;
+  blockedReason?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** How a goal's phase reads on its row: dsh's word, capitalised, with a mark a glance can take in. */
+const PHASE = new Map([
+  ["active", "● Active"],
+  ["paused", "‖ Paused"],
+  ["blocked", "■ Blocked"],
+  ["complete", "✓ Complete"],
+  ["cleared", "○ Cleared"],
+]);
+
+/** One dsh goal: its phase and objective, then rounds and age, and why it stopped when blocked. */
+function DshGoalRow({ goal }: { goal: DshGoal }) {
+  const rounds =
+    goal.maxGoalRounds === undefined
+      ? `${goal.roundsStarted} rounds`
+      : `${goal.roundsStarted} of ${goal.maxGoalRounds} rounds`;
+  return (
+    <div
+      data-omc-dsh-goal={goal.phase}
+      style={{ padding: "4px 10px", fontSize: 12, lineHeight: "1.5" }}
+    >
+      <div>
+        <span style={{ color: goal.phase === "blocked" ? T.err : T.muted }}>
+          {PHASE.get(goal.phase) ?? goal.phase}
+        </span>{" "}
+        · {goal.objective}
+      </div>
+      <div style={{ ...meta, fontSize: 11 }}>
+        {rounds} · updated {ago(goal.updatedAt)}
+      </div>
+      {goal.blockedReason ? (
+        <div style={{ color: T.err, fontSize: 11, whiteSpace: "normal" }}>{goal.blockedReason}</div>
+      ) : null}
+    </div>
+  );
 }
 
 /** Error from GET /scheduled-tasks. */
@@ -3250,14 +3299,76 @@ function TaskRow({ task }: { task: Task }) {
   );
 }
 
-/** Scheduled tasks and the goal the CLI is holding. Read-only: it shows what the CLI decided. */
+/** An earlier dsh goal as one line (phase, objective cut to fit, age) that opens on a click to
+ *  the full row, so a session with many past goals stays a short list. */
+function PastGoalRow({ goal }: { goal: DshGoal }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div data-omc-dsh-goal-past={goal.phase}>
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          width: "100%",
+          padding: "3px 10px",
+          background: "none",
+          border: "none",
+          font: "inherit",
+          fontSize: 12,
+          color: "inherit",
+          textAlign: "left",
+          cursor: "pointer",
+        }}
+      >
+        <span style={{ color: T.faint, flex: "0 0 auto" }}>{open ? "▾" : "▸"}</span>
+        <span style={{ color: goal.phase === "blocked" ? T.err : T.muted, flex: "0 0 auto" }}>
+          {PHASE.get(goal.phase) ?? goal.phase}
+        </span>
+        <span
+          style={{
+            flex: "1 1 auto",
+            minWidth: 0,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {goal.objective}
+        </span>
+        <span style={{ ...meta, flex: "0 0 auto" }}>{ago(goal.updatedAt)}</span>
+      </button>
+      {open ? (
+        <div style={{ padding: "0 10px 4px 24px", fontSize: 12, lineHeight: "1.5" }}>
+          <div style={{ whiteSpace: "normal" }}>{goal.objective}</div>
+          <div style={{ ...meta, fontSize: 11 }}>
+            {goal.maxGoalRounds === undefined
+              ? `${goal.roundsStarted} rounds`
+              : `${goal.roundsStarted} of ${goal.maxGoalRounds} rounds`}
+          </div>
+          {goal.blockedReason ? (
+            <div style={{ color: T.err, fontSize: 11, whiteSpace: "normal" }}>
+              {goal.blockedReason}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** Both goals and the scheduled tasks, each section only when it has something: dsh's goal and its
+ *  past ones from dsh's own log, the CLI's goal from its transcript, then the tasks. Read-only;
+ *  dsh's goal is changed from dsh's own controls. With nothing at all, one line says so. */
 function TasksBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
-  const running = activeClaudeSession(ctx) === sessionId;
   const [data, setData] = useState<ScheduledTasksReply | ScheduledTasksError | null>(null);
+  const [pastOpen, setPastOpen] = useState(false);
 
   useEffect(() => {
-    // The route reads the running session's transcript; with none there is nothing to list.
-    if (!running) return;
+    // dsh's goal is there with or without a running CLI; the CLI's half is empty without one.
     let live = true;
     fetch(
       `${ROUTE}/scheduled-tasks?session=${encodeURIComponent(sessionId)}${boxParam(ctx, sessionId)}`,
@@ -3268,9 +3379,14 @@ function TasksBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
     return () => {
       live = false;
     };
-  }, [running, sessionId]);
+  }, [sessionId]);
 
-  if (!running) return null;
+  const dshGoals = data?.ok ? data.dshGoals : [];
+  const current =
+    dshGoals[0] && ["active", "paused", "blocked"].includes(dshGoals[0].phase)
+      ? dshGoals[0]
+      : undefined;
+  const past = current ? dshGoals.slice(1) : dshGoals;
 
   return (
     <div style={bodyFlow}>
@@ -3280,29 +3396,78 @@ function TasksBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
         <span style={errText}>{data.error}</span>
       ) : (
         <>
-          <span style={{ ...meta, padding: "2px 4px", display: "block" }}>Goal</span>
-          {data.goal ? (
-            <div style={{ padding: "4px 10px", fontSize: 12, lineHeight: "1.5" }}>
-              <div style={{ marginBottom: 4 }}>{data.goal.text}</div>
-              <div style={{ ...meta, fontSize: 11 }}>Proposed {ago(data.goal.at)}</div>
-            </div>
-          ) : (
+          {dshGoals.length === 0 &&
+          !data.goal &&
+          data.durable.length === 0 &&
+          data.session.length === 0 ? (
+            <span data-omc-tasks-empty="" style={stateText}>
+              No goals or scheduled tasks in this session.
+            </span>
+          ) : null}
+          {dshGoals.length > 0 ? (
+            <span style={{ ...meta, padding: "2px 4px", display: "block" }}>dsh goal</span>
+          ) : null}
+          {current ? (
+            <DshGoalRow goal={current} />
+          ) : dshGoals.length > 0 ? (
             <div style={{ ...meta, padding: "4px 10px", fontSize: 12 }}>
-              No CLI goal in this session.
+              No goal running; the last one ended.
             </div>
-          )}
+          ) : null}
+          {past.length > 0 ? (
+            <div data-omc-dsh-goals-past="" style={{ padding: "0 4px" }}>
+              <button
+                type="button"
+                aria-expanded={pastOpen}
+                onClick={() => setPastOpen((v) => !v)}
+                style={{
+                  background: "none",
+                  border: "none",
+                  padding: "2px 6px",
+                  font: "inherit",
+                  fontSize: 12,
+                  color: T.muted,
+                  cursor: "pointer",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {`${pastOpen ? "▾" : "▸"}\u00a0Past goals`}
+                <span style={meta}> · {past.length}</span>
+              </button>
+              {pastOpen && past.map((g) => <PastGoalRow key={g.id} goal={g} />)}
+            </div>
+          ) : null}
 
-          <span style={{ ...meta, padding: "2px 4px", display: "block", marginTop: 8 }}>
-            Durable tasks
-          </span>
-          {data.durable.length === 0 ? (
-            <div style={{ ...meta, padding: "4px 10px", fontSize: 12 }}>
-              <div>Nothing scheduled</div>
-              <div style={{ fontSize: 11, marginTop: 4, fontFamily: T.mono }}>{data.path}</div>
-            </div>
-          ) : (
-            data.durable.map((t) => <TaskRow key={t.name} task={t} />)
-          )}
+          {/* The CLI's own /goal: rarely set from dsh, so the section only appears when it is. */}
+          {data.goal ? (
+            <>
+              <span style={{ ...meta, padding: "2px 4px", display: "block", marginTop: 8 }}>
+                Claude Code goal
+              </span>
+              <div
+                data-omc-cli-goal=""
+                style={{ padding: "4px 10px", fontSize: 12, lineHeight: "1.5" }}
+              >
+                <div style={{ marginBottom: 4 }}>{data.goal.text}</div>
+                <div style={{ ...meta, fontSize: 11 }}>Proposed {ago(data.goal.at)}</div>
+              </div>
+            </>
+          ) : null}
+
+          {/* Like the CLI goal, the tasks only take room when there are some. */}
+          {data.durable.length > 0 ? (
+            <>
+              <span style={{ ...meta, padding: "2px 4px", display: "block", marginTop: 8 }}>
+                Durable tasks
+              </span>
+              {data.durable.map((t) => (
+                <TaskRow key={t.name} task={t} />
+              ))}
+              <div style={{ ...meta, padding: "2px 10px", fontSize: 11, fontFamily: T.mono }}>
+                {data.path}
+              </div>
+            </>
+          ) : null}
 
           {data.session.length > 0 ? (
             <>
@@ -3315,11 +3480,6 @@ function TasksBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
               ))}
             </>
           ) : null}
-
-          <div style={{ ...meta, padding: "2px 4px", marginTop: 8, fontSize: 11 }}>
-            Read-only in this release. dsh keeps its own goal, which it does not expose to a plugin
-            to read, so only the CLI's side is shown here.
-          </div>
         </>
       )}
     </div>
