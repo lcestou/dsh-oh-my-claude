@@ -2543,8 +2543,8 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
                 <input
                   style={{ ...inputStyle, flex: "1 1 220px" }}
                   placeholder="user@10.x.y.z (the tunnel address)"
-                  aria-label="SSH host"
-                  data-omc-ssh-host=""
+                  aria-label="Tunnel address"
+                  data-omc-wireguard-host=""
                   value={draft.host}
                   onChange={(e) => setDraft({ ...draft, host: e.target.value })}
                 />
