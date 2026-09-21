@@ -19,6 +19,8 @@ import {
   toJsonValue,
   toolResultText,
   turnDelta,
+  isSshHost,
+  sshArgs,
 } from "./process.js";
 
 // A rewind answer: canRewind is true only for the literal true, and the string list drops non-strings.
@@ -494,6 +496,28 @@ import {
   assert.equal(pidAlive(-process.pid), false, "a negative pid is a group");
   assert.equal(pidAlive(1.5), false, "not a pid at all");
   console.log("pid-alive ok");
+}
+
+// ssh host injection. A host that starts with a dash is read by ssh as an option, and
+// `-oProxyCommand=<cmd>` runs `<cmd>` on this machine before connecting anywhere. Two routes passed
+// a request field straight through as the host. Both defences are pinned: the host is refused, and
+// `--` sits before it, so even a host that slipped past the check would be a destination.
+{
+  const evil = "-oProxyCommand=touch /tmp/pwned;false";
+  assert.equal(isSshHost(evil), false, "a dash-led host is refused");
+  assert.throws(
+    () => sshArgs(evil, "true"),
+    /not an ssh host/,
+    "sshArgs will not build the command",
+  );
+  for (const bad of ["", " box", "box\nmore", "a\0b", "-p22"])
+    assert.equal(isSshHost(bad), false, `refused: ${JSON.stringify(bad)}`);
+  for (const good of ["box", "user@box", "box.lan", "10.0.0.5", "user@host.example.com"])
+    assert.equal(isSshHost(good), true, `accepted: ${good}`);
+  const args = sshArgs("user@box", "echo hi");
+  const at = args.indexOf("user@box");
+  assert.equal(args[at - 1], "--", "option parsing ends immediately before the host");
+  assert.equal(args.at(-1), "echo hi", "the script stays last");
 }
 
 console.log("process ok");

@@ -18,7 +18,7 @@ let failed = false;
 
 for (const box of [
   { host: "", label: "this box", expect: /This box runs 2\.1\.273/, mode: "done" },
-  { host: "lilly", label: "lilly", expect: /lilly runs 2\.1\.273/, mode: "done" },
+  { host: "devbox", label: "devbox", expect: /devbox runs 2\.1\.273/, mode: "done" },
   { host: "", label: "this box", expect: /This box runs 2\.1\.273/, mode: "declined" },
   { host: "", label: "this box", expect: /This box runs 2\.1\.273/, mode: "dismiss" },
 ] as const) {

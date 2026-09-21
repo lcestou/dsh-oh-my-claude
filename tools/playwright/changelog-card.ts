@@ -4,7 +4,7 @@
 // no-file line with the same link. The route is answered from here with a fixture, so the client
 // half is checked whether or not the server behind the page has the route; the real route is
 // exercised by `bun src/changelog.test.ts` and by opening the card on a restarted dsh.
-// Usage: PLAYWRIGHT_ROOT=~/Projects/pewtron bun tools/playwright/changelog-card.ts <token> [/tmp/pw]
+// Usage: PLAYWRIGHT_ROOT=<a project with Playwright> bun tools/playwright/changelog-card.ts <token> [/tmp/pw]
 import { dshUrl, launch, type Page } from "./pw.js";
 
 const [token, out = "/tmp/pw"] = process.argv.slice(2);
