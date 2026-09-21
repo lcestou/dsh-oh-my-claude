@@ -64,6 +64,8 @@ export type ValidatedSshBoxes = {
     error: string;
     boxes?: undefined;
 };
+/** Coerces each entry to a plain object and returns a structured error instead of throwing,
+ *  enforcing the box-count cap and per-box name and host rules. */
 export declare function validateSshBoxes(input: unknown): ValidatedSshBoxes;
 export declare function readSshBoxes(path: string): Promise<SshBox[]>;
 /** A dsh workspace this plugin points at a directory on an SSH box. dsh stores and stat-checks local
@@ -177,6 +179,9 @@ export interface AccountIdentity {
 }
 /** A panel login or logout changed who a box is: the next ask reads the CLI again. */
 export declare function forgetIdentity(): void;
+/** Answers who is logged in on a box, shelling out to `claude auth status` (over ssh for a remote
+ *  box, where a local configDir is meaningless) and caching the answer per config dir for ten
+ *  minutes. */
 export declare function accountIdentity(command?: string, configDir?: string, sshHost?: string): Promise<AccountIdentity>;
 /**
  * The environment for a `claude` call on this box. `CLAUDE_CONFIG_DIR` is exported only when the
@@ -251,6 +256,8 @@ type StoredHeader = {
     cwd?: string;
     origin?: string;
 };
+/** Builds a lookup that indexes each session under both its dsh id and its claude id, so a session
+ *  is found by whichever id a caller has. */
 export declare function dshSessionsFor(entries: readonly (StoredHeader | {
     header: StoredHeader;
 })[], cwd: string | null, claudeIdOf: (id: string) => string, archived?: Set<string>): Map<string, OwnedSession>;

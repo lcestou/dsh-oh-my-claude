@@ -1551,6 +1551,8 @@ function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
             {(scope === "project" || scope === "local") &&
               (cwdOptions.length > 0 ? (
                 <select
+                  data-omc-settings-cwd=""
+                  aria-label="Working directory"
                   value={projectCwd ?? ""}
                   onChange={(e) => setCwd(e.target.value)}
                   disabled={busy || editing}
@@ -1909,6 +1911,8 @@ function LoginSteps({
             <input
               style={inputStyle}
               placeholder="Paste code"
+              aria-label="Login code"
+              data-omc-login-code=""
               value={login.code}
               disabled={login.busy}
               onChange={(e) => setLogin({ ...login, code: e.target.value })}
@@ -2461,6 +2465,8 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
             <input
               style={{ ...inputStyle, flex: "0 1 140px" }}
               placeholder="Name"
+              aria-label="Box name"
+              data-omc-box-name=""
               value={draft.name}
               onChange={(e) => setDraft({ ...draft, name: e.target.value })}
             />
@@ -2468,6 +2474,8 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
               <input
                 style={{ ...inputStyle, flex: "1 1 240px" }}
                 placeholder="user@host or ssh alias"
+                aria-label="SSH host"
+                data-omc-ssh-host=""
                 value={draft.host}
                 onChange={(e) => setDraft({ ...draft, host: e.target.value })}
               />
@@ -2498,6 +2506,8 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
                 <input
                   style={{ ...inputStyle, flex: "1 1 220px" }}
                   placeholder="user@name.tailnet.ts.net or 100.x.y.z"
+                  aria-label="Tailscale host"
+                  data-omc-tailscale-host=""
                   value={draft.host}
                   onChange={(e) => {
                     setPickedPeer(null);
@@ -2533,6 +2543,8 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
                 <input
                   style={{ ...inputStyle, flex: "1 1 220px" }}
                   placeholder="user@10.x.y.z (the tunnel address)"
+                  aria-label="SSH host"
+                  data-omc-ssh-host=""
                   value={draft.host}
                   onChange={(e) => setDraft({ ...draft, host: e.target.value })}
                 />
@@ -2542,6 +2554,8 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
                 <input
                   style={{ ...inputStyle, flex: "1 1 260px" }}
                   placeholder="https://dsh.other-box.lan"
+                  aria-label="dsh URL"
+                  data-omc-dsh-url=""
                   value={draft.url}
                   onChange={(e) => setDraft({ ...draft, url: e.target.value })}
                 />
@@ -2550,6 +2564,8 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
                   type="password"
                   autoComplete="off"
                   placeholder="dsh token (optional)"
+                  aria-label="dsh token"
+                  data-omc-dsh-token=""
                   value={draft.token}
                   onChange={(e) => setDraft({ ...draft, token: e.target.value })}
                 />
@@ -2607,6 +2623,8 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
                   <input
                     style={{ ...inputStyle, flex: "1 1 200px", fontSize: 12 }}
                     placeholder="Login server (Headscale), else Tailscale"
+                    aria-label="Login server"
+                    data-omc-tailscale-login-server=""
                     value={tsServer.loginServer}
                     onChange={(e) => setTsServer({ ...tsServer, loginServer: e.target.value })}
                   />
@@ -2615,6 +2633,8 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
                     type="password"
                     autoComplete="off"
                     placeholder="Pre-auth key (optional)"
+                    aria-label="Pre-auth key"
+                    data-omc-tailscale-auth-key=""
                     value={tsServer.authKey}
                     onChange={(e) => setTsServer({ ...tsServer, authKey: e.target.value })}
                   />

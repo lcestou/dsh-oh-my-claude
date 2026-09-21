@@ -435,6 +435,8 @@ export type ValidatedSshBoxes =
   | { boxes: SshBox[]; error?: undefined }
   | { error: string; boxes?: undefined };
 
+/** Coerces each entry to a plain object and returns a structured error instead of throwing,
+ *  enforcing the box-count cap and per-box name and host rules. */
 export function validateSshBoxes(input: unknown): ValidatedSshBoxes {
   if (!Array.isArray(input)) return { error: "SSH boxes must be an array" };
   if (input.length > MAX_BOXES) return { error: `at most ${MAX_BOXES} SSH boxes` };
@@ -748,6 +750,9 @@ const identityCache = new Map<string, { at: number; value: AccountIdentity }>();
 export function forgetIdentity(): void {
   identityCache.clear();
 }
+/** Answers who is logged in on a box, shelling out to `claude auth status` (over ssh for a remote
+ *  box, where a local configDir is meaningless) and caching the answer per config dir for ten
+ *  minutes. */
 export async function accountIdentity(
   command = "claude",
   configDir?: string,
@@ -1088,6 +1093,8 @@ const headerOf = (entry: StoredHeader | { header: StoredHeader }): StoredHeader 
   return entry as StoredHeader;
 };
 
+/** Builds a lookup that indexes each session under both its dsh id and its claude id, so a session
+ *  is found by whichever id a caller has. */
 export function dshSessionsFor(
   entries: readonly (StoredHeader | { header: StoredHeader })[],
   cwd: string | null,

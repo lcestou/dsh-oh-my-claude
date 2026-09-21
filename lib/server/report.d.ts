@@ -29,5 +29,10 @@ export interface PrivateValues {
 }
 /** The `version` of a parsed package.json, or null; lives here because adapter.ts may not typeof. */
 export declare function versionOf(pkg: unknown): string | null;
+/** Strips private values from report text, but only replaces a home path at a path boundary (so
+ *  `/home/alice2` is not turned into `~2`) and only the username and hostname as whole words, to
+ *  avoid false positives. */
 export declare function redact(text: string, p: PrivateValues, keepHost: boolean): string;
+/** Assembles the report lines and redacts them before returning, so one tested function owns what
+ *  may leave the box. */
 export declare function buildReport(input: ReportInput, p: PrivateValues, keepHost: boolean): string;

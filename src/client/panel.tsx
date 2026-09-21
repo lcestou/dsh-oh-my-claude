@@ -460,6 +460,8 @@ function MemoryBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
             </button>
           </div>
           <textarea
+            data-omc-memory-editor=""
+            aria-label="Memory file"
             value={text}
             spellCheck={false}
             autoFocus
@@ -515,12 +517,16 @@ function MarketplaceAddForm({ act, busy }: { act: Act; busy: string }) {
       <input
         type="text"
         placeholder="Marketplace: URL, path or owner/repo"
+        aria-label="Marketplace source"
+        data-omc-plugin-marketplace-source=""
         value={source}
         onChange={(e) => setSource(e.currentTarget.value)}
         disabled={busy !== ""}
         style={{ ...inputStyle, fontSize: 12 }}
       />
       <select
+        data-omc-plugin-marketplace-scope=""
+        aria-label="Marketplace scope"
         value={scope}
         onChange={(e) => setScope(e.currentTarget.value)}
         disabled={busy !== ""}
@@ -1090,6 +1096,7 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
           )}
           <select
             data-omc-skill-scope=""
+            aria-label="Skill scope"
             value={newScope}
             onChange={(e) => setNewScope(e.currentTarget.value)}
             disabled={busy !== ""}
@@ -1599,6 +1606,8 @@ function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCt
             )}
           </div>
           <textarea
+            data-omc-instructions-editor=""
+            aria-label="Instruction file"
             value={text}
             spellCheck={false}
             autoFocus
@@ -3344,6 +3353,8 @@ function McpAddForm({
   return (
     <div style={{ padding: "6px", marginTop: 8, border: `1px solid ${T.border}`, borderRadius: 4 }}>
       <select
+        data-omc-mcp-connector=""
+        aria-label="Connector"
         value={connector}
         onChange={(e) => fillFromConnector(e.currentTarget.value)}
         disabled={busy}
@@ -3360,6 +3371,8 @@ function McpAddForm({
         <input
           type="text"
           placeholder="Server name"
+          aria-label="Server name"
+          data-omc-mcp-server-name=""
           value={name}
           onChange={(e) => setName(e.currentTarget.value)}
           disabled={busy}
@@ -3368,6 +3381,8 @@ function McpAddForm({
           style={{ flex: 1, minWidth: 120, padding: 4, fontSize: 12 }}
         />
         <select
+          data-omc-mcp-scope=""
+          aria-label="Scope"
           value={scope}
           onChange={(e) => setScope(e.currentTarget.value)}
           disabled={busy}
@@ -3378,6 +3393,8 @@ function McpAddForm({
           <option value="project">Project</option>
         </select>
         <select
+          data-omc-mcp-transport=""
+          aria-label="Transport"
           value={transport}
           onChange={(e) => setTransport(e.currentTarget.value)}
           disabled={busy}
@@ -3393,12 +3410,16 @@ function McpAddForm({
           <input
             type="text"
             placeholder="Command, e.g. npx"
+            aria-label="Command"
+            data-omc-mcp-command=""
             value={command}
             onChange={(e) => setCommand(e.currentTarget.value)}
             disabled={busy}
             style={{ width: "100%", padding: 4, fontSize: 12, marginBottom: 4 }}
           />
           <textarea
+            data-omc-mcp-add-args=""
+            aria-label="Arguments"
             placeholder="Args, one per line"
             value={args}
             onChange={(e) => setArgs(e.currentTarget.value)}
@@ -3406,6 +3427,8 @@ function McpAddForm({
             style={{ width: "100%", height: 50, padding: 4, fontSize: 12, marginBottom: 4 }}
           />
           <textarea
+            data-omc-mcp-env=""
+            aria-label="Environment variables"
             placeholder="Env vars: KEY=value, one per line"
             value={env}
             onChange={(e) => setEnv(e.currentTarget.value)}
@@ -3418,12 +3441,16 @@ function McpAddForm({
           <input
             type="text"
             placeholder="URL, http:// or https://"
+            aria-label="URL"
+            data-omc-mcp-url=""
             value={url}
             onChange={(e) => setUrl(e.currentTarget.value)}
             disabled={busy}
             style={{ width: "100%", padding: 4, fontSize: 12, marginBottom: 4 }}
           />
           <textarea
+            data-omc-mcp-headers=""
+            aria-label="Headers"
             placeholder="Headers: Name: value, one per line"
             value={headers}
             onChange={(e) => setHeaders(e.currentTarget.value)}

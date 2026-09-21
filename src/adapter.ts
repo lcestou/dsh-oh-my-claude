@@ -878,6 +878,10 @@ export const noteLiveWindow = (modelId: string | undefined, maxTokens: number | 
   if (maxTokens <= 0) return;
   liveWindows.set(windowKey(modelId), maxTokens);
 };
+/** The context window a live session last reported for this model, which beats the catalog's
+ *  figure because it is what this box's CLI actually runs with (a proxy can demote a 1M model to
+ *  200k). Keyed by the stable id, so an alias and its dated spelling share one answer. Undefined
+ *  until some session has reported it. */
 export const liveWindowFor = (modelId: string): number | undefined =>
   liveWindows.get(windowKey(modelId));
 /** The three forms an entry takes: a family alias, a version prefix, or the whole id. */
@@ -886,6 +890,9 @@ const allows = (entry: string, id: string) => {
   const have = bareId(id);
   return have === want || have.startsWith(`${want}-`);
 };
+/** Merges the CLI's model rows into the catalog, giving each known model a single stable id and
+ *  name so the picker offers the same lineup whether or not the CLI has yet learned the model's
+ *  short spelling. */
 export function mergeCatalog(
   cli: CliModel[],
   base: ReturnType<typeof M>[],
@@ -944,6 +951,8 @@ export function mergeCatalog(
   // Two aliases can resolve to one model, and they now share its id; the first listed wins.
   return [...new Map(rows.map((r) => [r.row.id, r.row])).values()];
 }
+/** Serves the model catalog from cache, fetching Anthropic's API when the cache is stale, and
+ *  keeps the last good catalog on any failure so the picker never goes empty. */
 export async function getCatalog(fetchImpl = fetch, cli: CliModel[] = [], picker?: PickerSettings) {
   await seedFromDisk();
   if (Date.now() - catalog.at < CATALOG_TTL_MS) return mergeCatalog(cli, catalog.models, picker);
@@ -1073,6 +1082,8 @@ interface TranscriptWatch {
   again?: boolean;
 }
 
+/** Turns a dsh session id into a Claude Code–style session id so the transcript path computed from
+ *  it matches the one the CLI actually wrote. */
 export function claudeSessionId(sessionId: string): string {
   const h = createHash("sha256").update(`dsh-llm-claude:${sessionId}`).digest("hex");
   const variant = ((parseInt(h.charAt(16), 16) & 0x3) | 0x8).toString(16);
@@ -1555,6 +1566,19 @@ const DSH_TOOLS_GUIDANCE = [
   "see it.",
 ].join(" ");
 
+/**
+ * The argument list for one `claude -p` spawn: every flag this plugin sends, in one place.
+ *
+ * Almost every flag is guarded by `supports`, which asks what this particular CLI binary
+ * advertises, so an older Claude Code on a remote box is never handed a flag it would refuse and
+ * die on; the feature quietly goes without instead. The one exception worth knowing is
+ * `--tools default`, which looks redundant and is not: without it the CLI keeps
+ * `AskUserQuestion` out of `-p` runs, so Claude could never ask the person anything.
+ *
+ * An auxiliary call, a title or a compaction, returns early with one turn, no tools and no session
+ * of its own, and never carries a permission mode, allowed tools, budget or resume. Everything
+ * after that early return applies only to a real conversation turn.
+ */
 export function buildArgs({
   model,
   reasoningEffort,
@@ -1837,6 +1861,8 @@ export function isLoginFailure(result: ResultFrame): boolean {
   );
 }
 
+/** On an error result it builds the message a person sees: it names the box the turn ran on and,
+ *  for a 5xx, appends the incident the status page reports so the failure reads as the provider's. */
 export function finishReason(result: ResultFrame, hostLabel?: string): FinishReason {
   if (result.is_error) {
     let message = resultMessage(result);

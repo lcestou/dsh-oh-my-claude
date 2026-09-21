@@ -593,6 +593,8 @@ export interface ContextUsage {
    *  so the session's next turn replaces the process and the guess ends there. */
   followsNext?: true;
 }
+/** Decodes a `get_context_usage` answer, returning an all-zero report when the payload is missing
+ *  or not an object rather than throwing. */
 export function decodeContextUsage(v: JsonValue | undefined): ContextUsage {
   const r = typeof v === "object" && v !== null && !Array.isArray(v) ? v : {};
   const categories: ContextUsage["categories"] = [];

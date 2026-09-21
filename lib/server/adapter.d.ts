@@ -360,8 +360,17 @@ export declare function modelFromApi(m: {
 export declare const proxyBaseUrl: (raw: string | undefined) => string | undefined;
 /** Record what a session answered. A missing or nonsense figure leaves the last good one standing. */
 export declare const noteLiveWindow: (modelId: string | undefined, maxTokens: number | undefined) => void;
+/** The context window a live session last reported for this model, which beats the catalog's
+ *  figure because it is what this box's CLI actually runs with (a proxy can demote a 1M model to
+ *  200k). Keyed by the stable id, so an alias and its dated spelling share one answer. Undefined
+ *  until some session has reported it. */
 export declare const liveWindowFor: (modelId: string) => number | undefined;
+/** Merges the CLI's model rows into the catalog, giving each known model a single stable id and
+ *  name so the picker offers the same lineup whether or not the CLI has yet learned the model's
+ *  short spelling. */
 export declare function mergeCatalog(cli: CliModel[], base: ReturnType<typeof M>[], picker?: PickerSettings): CatalogModel[];
+/** Serves the model catalog from cache, fetching Anthropic's API when the cache is stale, and
+ *  keeps the last good catalog on any failure so the picker never goes empty. */
 export declare function getCatalog(fetchImpl?: typeof fetch, cli?: CliModel[], picker?: PickerSettings): Promise<CatalogModel[]>;
 /** Exact model metadata. `id` must echo the requested id: dsh-llm normalizeModelInfo rejects mismatches. */
 export declare function resolveModelInfo(provider: string, modelId: string, models?: ReturnType<typeof M>[], cap?: (typeof EFFORTS_ALL)[number]): LlmResolvedModelInfo;
@@ -401,6 +410,8 @@ interface TranscriptWatch {
     scanning?: boolean;
     again?: boolean;
 }
+/** Turns a dsh session id into a Claude Code–style session id so the transcript path computed from
+ *  it matches the one the CLI actually wrote. */
 export declare function claudeSessionId(sessionId: string): string;
 /** Claude Code stores transcripts under ~/.claude/projects/<cwd with non-alphanumerics as '-'>/<id>.jsonl */
 export declare function projectDirName(cwd: string): string;
@@ -506,6 +517,19 @@ export declare function probeCli(exec?: ExecLike, command?: string, host?: strin
 export declare const supports: (flags: Set<string> | null | undefined, flag: string) => boolean;
 /** Text mode when the CLI lacks --input-format: prompt goes positional, images are dropped. */
 export declare const usesStdin: (flags: Set<string> | null | undefined) => boolean;
+/**
+ * The argument list for one `claude -p` spawn: every flag this plugin sends, in one place.
+ *
+ * Almost every flag is guarded by `supports`, which asks what this particular CLI binary
+ * advertises, so an older Claude Code on a remote box is never handed a flag it would refuse and
+ * die on; the feature quietly goes without instead. The one exception worth knowing is
+ * `--tools default`, which looks redundant and is not: without it the CLI keeps
+ * `AskUserQuestion` out of `-p` runs, so Claude could never ask the person anything.
+ *
+ * An auxiliary call, a title or a compaction, returns early with one turn, no tools and no session
+ * of its own, and never carries a permission mode, allowed tools, budget or resume. Everything
+ * after that early return applies only to a real conversation turn.
+ */
 export declare function buildArgs({ model, reasoningEffort, system, purpose, config, session, accessMode, flags, promptText, mcp, temporary, permissionMode, }: Pick<GenerateOptions, "reasoningEffort" | "system" | "purpose"> & {
     model: string | undefined;
     config: Schemastery.TypeT<typeof Config>;
@@ -600,6 +624,8 @@ export interface ResultFrame {
  *  API's 401 once a stored token has been revoked. The one test both the error text and the login
  *  card key on, so they cannot disagree about what counts. */
 export declare function isLoginFailure(result: ResultFrame): boolean;
+/** On an error result it builds the message a person sees: it names the box the turn ran on and,
+ *  for a 5xx, appends the incident the status page reports so the failure reads as the provider's. */
 export declare function finishReason(result: ResultFrame, hostLabel?: string): FinishReason;
 /**
  * Incremental translator from Claude Code stream-json lines to dsh StreamChunks.

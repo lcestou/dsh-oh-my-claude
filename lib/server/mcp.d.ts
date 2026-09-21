@@ -51,6 +51,9 @@ export interface BridgeOptions {
     /** Path of a file holding the bridge key; created once, reused across restarts. */
     keyFile?: string;
 }
+/** Wires the MCP bridge into the web server once the required services are injected, and keeps the
+ *  bridge key stable across dsh restarts so a keeper-mode claude that outlived dsh still
+ *  authenticates. */
 export declare function registerMcpBridge(ctx: PluginContext, { log, version, relay, keyFile }: BridgeOptions): Promise<{
     base: string;
     key: string;
