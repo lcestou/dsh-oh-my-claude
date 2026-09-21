@@ -78,6 +78,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- The ✻ panel no longer runs under dsh's top strip in a short window. On a new session the
+  composer sits mid-screen, and the panel sized itself to reach the top of the window, while dsh's
+  conversation area starts 40 px lower and clipped its first rows, the Restore search among them.
+  It now stops 8 px short of whatever clips it.
 - Adding your first ssh box in Settings now switches Add workspace over to the box picker straight
   away. The picker read the box list once when the page loaded, so a box added afterwards did not
   show up until the tab was refreshed. It now rereads the list when Settings saves it, and when the

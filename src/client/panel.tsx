@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactElement } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -47,7 +47,7 @@ import {
 import { checkContract, contractMisses, contractSummary } from "./contract.js";
 import { UpdatePill } from "./update-pill.js";
 import { ReportBlock } from "./report.js";
-import { Tooltip, useAnchoredMaxHeight } from "@deepseek-ai/dsh-client-ui-primitives";
+import { Tooltip } from "@deepseek-ai/dsh-client-ui-primitives";
 import { Spark } from "./spark.js";
 import { ConfirmButton, TuneBody } from "./tune.js";
 import { noticesOn, setNoticesOn } from "./notices.js";
@@ -67,6 +67,50 @@ let lastTab = "Memory";
  */
 const easeMs = () =>
   globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? 0 : 140;
+
+/** Space the panel keeps from the edge of whatever clips it, the gap dsh's own menus leave. */
+const FIT_MARGIN = 8;
+
+/**
+ * The panel's max height: `cap`, or the room between its bottom and the top of the nearest
+ * ancestor that clips it, whichever is less. dsh's `useAnchoredMaxHeight` measures to the top of
+ * the window instead, and dsh's conversation scroller starts 40 px down, under its top strip. On a
+ * blank session in a short window the composer sits mid-screen, so the panel reached the window's
+ * top and its first 36 px, the Restore search among them, were cut off. Remeasured on open, on
+ * resize and on any scroll.
+ */
+function useFitAbove(ref: { current: HTMLElement | null }, cap: number, open: boolean): number {
+  const [maxHeight, setMaxHeight] = useState(cap);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (el === null) return;
+    const fit = () => {
+      let top = 0;
+      for (let a = el.parentElement; a; a = a.parentElement) {
+        const c = getComputedStyle(a);
+        if (c.overflowX !== "visible" || c.overflowY !== "visible")
+          top = Math.max(top, a.getBoundingClientRect().top);
+      }
+      // max-height sizes the content box, so the panel's own padding and border come off too.
+      const own = getComputedStyle(el);
+      const frame =
+        parseFloat(own.paddingTop) +
+        parseFloat(own.paddingBottom) +
+        parseFloat(own.borderTopWidth) +
+        parseFloat(own.borderBottomWidth);
+      const room = el.getBoundingClientRect().bottom - top - FIT_MARGIN - frame;
+      setMaxHeight(Math.min(cap, Math.max(0, room)));
+    };
+    fit();
+    window.addEventListener("resize", fit);
+    window.addEventListener("scroll", fit, true);
+    return () => {
+      window.removeEventListener("resize", fit);
+      window.removeEventListener("scroll", fit, true);
+    };
+  }, [ref, cap, open]);
+  return maxHeight;
+}
 
 /**
  * Ease the panel between heights instead of snapping. Its height is whatever the open tab's body
@@ -4150,7 +4194,7 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
   const [card, setCard] = useState<HTMLElement | null>(null);
   // Phone sheet (fallback only): fixed, above the control, wherever the composer sits.
   const [above, setAbove] = useState(0);
-  const maxHeight = useAnchoredMaxHeight(panelRef, 400, open);
+  const maxHeight = useFitAbove(panelRef, 400, open);
   useHeightEase(panelRef, open);
 
   // dsh's chat width handles sit at the edges of the conversation column, outside this panel's
@@ -4240,7 +4284,7 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
         ...panelSurface,
         borderRadius: 10,
       };
-  // In the card the panel only fades: dsh's `useAnchoredMaxHeight` measures the element's bottom
+  // In the card the panel only fades: `useFitAbove` measures the element's bottom
   // on mount, and a 6 px rise still applied at that moment would size it 6 px too tall.
   Object.assign(panelStyle, {
     display: "flex",
