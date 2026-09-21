@@ -31,4 +31,22 @@ assert.deepEqual(worstLimit([weekly, session, fable], "claude-opus-5"), {
 assert.equal(worstLimit([weekly, fable], "claude-opus-5"), undefined, "Fable full, Opus fine");
 assert.equal(worstLimit([{ label: "x", usedPercent: 9, resetsAt: null }], "m"), undefined);
 
+// Whole words only: a short name does not match inside a longer word, and a name of two words needs both.
+assert.equal(bindsModel({ ...fable, model: "Opus" }, "claude-opusplus-1"), false);
+assert.equal(bindsModel({ ...fable, model: "Sonnet" }, "claude-sonnet-4-5"), true);
+assert.equal(bindsModel({ ...fable, model: "Opus Pro" }, "claude-opus-5"), false);
+assert.equal(
+  bindsModel({ ...fable, model: "" }, "claude-opus-5"),
+  false,
+  "an empty name binds nothing",
+);
+
+// Two critical windows: the one that resets later is the one holding the session up.
+{
+  const soon = { ...session, severity: "critical", resetsAt: 10 };
+  const late = { ...weekly, severity: "critical", resetsAt: 99 };
+  assert.equal(worstLimit([soon, late], "claude-opus-5")?.window, late);
+  assert.equal(worstLimit([late, soon], "claude-opus-5")?.window, late, "order does not decide");
+}
+
 console.log("limits ok");
