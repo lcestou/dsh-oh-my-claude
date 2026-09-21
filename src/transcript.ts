@@ -17,6 +17,7 @@ const TITLE_BYTES = 80;
 /** A decoded transcript line: any JSON object. Fields are read with narrowing, never assumed. */
 type Rec = Record<string, unknown>;
 
+/** True only for a plain object, so an array or null is never read as a transcript row. */
 const isRec = (v: unknown): v is Rec => typeof v === "object" && v !== null && !Array.isArray(v);
 
 /**
@@ -41,6 +42,7 @@ const stripBom = (text: string): string => (text.charCodeAt(0) === 0xfe_ff ? tex
  *  field, and `"queued"` rows (a person's prompt held while the CLI was busy), still count. */
 const isSystemPrompt = (rec: Rec): boolean => rec.promptSource === "system";
 
+/** One JSONL line as a row, or undefined for a line that is not JSON or not an object. */
 const parseLine = (line: string): Rec | undefined => {
   try {
     const v: unknown = JSON.parse(line);
@@ -50,6 +52,7 @@ const parseLine = (line: string): Rec | undefined => {
   }
 };
 
+/** A row's timestamp in epoch milliseconds, or `fallback` when it has none that parses. */
 const timeOf = (rec: Rec | undefined, fallback: number): number => {
   const t = Date.parse(typeof rec?.timestamp === "string" ? rec.timestamp : "");
   return Number.isFinite(t) ? t : fallback;
@@ -85,6 +88,8 @@ export function truncateBytes(text: string, max: number): string {
   return buf.toString("utf8", 0, end);
 }
 
+/** A session title from a prompt: its first line with system reminders removed and whitespace
+ *  collapsed, cut to TITLE_BYTES. */
 const titleFrom = (text: string): string =>
   truncateBytes(
     (
@@ -247,6 +252,8 @@ export type SeedBlock =
   | { type: "reasoning"; text: string }
   | { type: "tool-call"; id: string; name: string; arguments: string };
 
+/** The text blocks of a message, with an image kept as the word `[image]` and every other block
+ *  type dropped. An empty string gives no block. */
 const textBlocks = (content: unknown): Array<{ type: "text"; text: string }> => {
   if (typeof content === "string") return content ? [{ type: "text", text: content }] : [];
   if (!Array.isArray(content)) return [];
@@ -259,6 +266,7 @@ const textBlocks = (content: unknown): Array<{ type: "text"; text: string }> => 
   return out;
 };
 
+/** A tool result as one text block cut to RESULT_TEXT_LIMIT bytes, or none if it has no text. */
 const resultBlocks = (content: unknown): Array<{ type: "text"; text: string }> => {
   const blocks = textBlocks(content);
   const text = blocks.map((b) => b.text).join("\n");
@@ -664,6 +672,7 @@ export interface ForeignTurns {
   running?: FoldedTurn;
 }
 
+/** Whether a user row's content is a prompt: a string, or blocks with no tool result among them. */
 const isPromptContent = (content: unknown): boolean =>
   typeof content === "string" ||
   (Array.isArray(content) && !content.some((b) => isRec(b) && b.type === "tool_result"));

@@ -114,6 +114,8 @@ export interface ClaudeUpdaterOptions {
     now?: () => number;
     readSettings?: (path: string) => Promise<string | undefined>;
 }
+/** Keeps one box's Claude Code current: reads the release channel, checks for a newer version,
+ *  runs `claude update` from a button or on its own, and keeps the log of runs on disk. */
 export declare class ClaudeUpdater {
     private readonly opts;
     private readonly key;

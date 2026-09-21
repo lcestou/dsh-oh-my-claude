@@ -828,6 +828,8 @@ export async function loadWatches(dir: string): Promise<Map<string, WatchRecord>
  *  shown. Chaining the saves makes the last one called the last one written. */
 const watchWrites = new Map<string, Promise<void>>();
 
+/** The watch file as read right now, with no wait for pending saves; `saveWatch` reads through
+ *  this inside its own queue. A missing or corrupt file, or a malformed entry, reads as nothing. */
 async function readWatches(dir: string): Promise<Map<string, WatchRecord>> {
   const out = new Map<string, WatchRecord>();
   try {

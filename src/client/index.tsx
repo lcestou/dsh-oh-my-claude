@@ -3764,6 +3764,7 @@ const SPINNER_LIGHT = {
 const STALL_RED: Rgb = [171, 43, 63];
 const WORD_GREY_LO: Rgb = [153, 153, 153];
 const WORD_GREY_HI: Rgb = [185, 185, 185];
+/** `n` held inside 0 to 1. */
 const clamp01 = (n: number): number => Math.min(Math.max(n, 0), 1);
 /** Blends two RGB colours by t (0 is a, 1 is b) and rounds each channel. */
 const mixRgb = (a: Rgb, b: Rgb, t: number): Rgb => [

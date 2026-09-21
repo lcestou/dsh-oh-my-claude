@@ -302,6 +302,7 @@ export async function readHints(hintsPath: string): Promise<Record<string, boole
   return out;
 }
 
+let hintsChain: Promise<unknown> = Promise.resolve();
 /**
  * Apply one patch to the hints store, serialized against every other patch.
  *
@@ -314,7 +315,6 @@ export async function readHints(hintsPath: string): Promise<Record<string, boole
  * `true` and finite non-negative numbers are kept; `false` and `null` drop the key, which is how a
  * switch returning to its default clears itself. Anything else is ignored, key names included.
  */
-let hintsChain: Promise<unknown> = Promise.resolve();
 export function updateHints(
   hintsPath: string,
   patch: Record<string, unknown>,

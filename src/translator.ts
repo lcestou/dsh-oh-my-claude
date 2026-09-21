@@ -14,6 +14,7 @@ import { pluginErrorsOf, type PluginLoadError } from "./plugins.js";
 // stream-json → dsh chunks (moved from src/adapter.ts)
 
 const TOOL_TEXT_LIMIT = 600;
+/** Cut text to `n` characters with an ellipsis, or return it whole when it fits. */
 const clip = (s: string, n = TOOL_TEXT_LIMIT): string => (s.length > n ? `${s.slice(0, n)}…` : s);
 const DENIED_RE = /requires? approval|permission (was )?denied|not allowed/i;
 /** Auto mode's own refusal: the CLI's classifier names a reason in brackets, and nothing a dsh
@@ -73,6 +74,7 @@ const EXT_LANG = {
   lua: "lua",
 } satisfies Record<string, string>;
 
+/** The fence language for a file path's extension, or "" when EXT_LANG does not know it. */
 const langOf = (path: string): string => {
   const m = /\.([a-z0-9]+)$/i.exec(path);
   const ext = m?.[1]?.toLowerCase() ?? "";
@@ -87,7 +89,9 @@ const fence = (body: string, lang = ""): string => {
   return `${ticks}${lang}\n${body}\n${ticks}`;
 };
 
+/** The value when it is a string, else "", so a missing tool input field reads as empty. */
 const asStr = (v: unknown): string => (typeof v === "string" ? v : "");
+/** True only for a plain object, so an array or null is never read as a record. */
 const isRec = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
@@ -124,6 +128,7 @@ const TOOL_ICON = new Map<string, string>([
   ["enter_plan_mode", "☰"],
   ["slash_command", "⌘"],
 ]);
+/** The string with its first character upper-cased; an empty string stays empty. */
 const cap = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
 
 /**
@@ -346,6 +351,7 @@ const TASK_TERMINAL = new Set(["completed", "failed", "killed"]);
  *  finishes quickly never draws a line at all. */
 const HEARTBEAT_STEPS = [30, 60, 120, 300, 600];
 const HEARTBEAT_REPEAT = 300;
+/** The next heartbeat mark after `elapsed` seconds. */
 const nextHeartbeat = (elapsed: number): number =>
   HEARTBEAT_STEPS.find((s) => s > elapsed) ??
   (Math.floor(elapsed / HEARTBEAT_REPEAT) + 1) * HEARTBEAT_REPEAT;
@@ -365,6 +371,7 @@ export function elapsedText(seconds: number): string {
 const THINK_FLOOR = 1000;
 const THINK_STEPS = [THINK_FLOOR, 2000, 5000, 10_000, 20_000];
 const THINK_REPEAT = 20_000;
+/** The next thinking mark after `tokens`. */
 const nextThinkStep = (tokens: number): number =>
   THINK_STEPS.find((s) => s > tokens) ?? (Math.floor(tokens / THINK_REPEAT) + 1) * THINK_REPEAT;
 
@@ -443,6 +450,8 @@ export interface FallbackRecord {
   content?: string;
 }
 
+/** Turns one CLI process's stream-json events into dsh stream chunks, and keeps the per-turn state
+ *  that needs: open blocks, streamed ids, tool rows, usage and the result summary. */
 export class Translator {
   log: (level: string, msg: string) => void;
   unknownSeen: Set<string>; // (where:type) already warned, so schema drift warns once, not per event
@@ -557,6 +566,8 @@ export class Translator {
     return seq;
   }
 
+  /** Every option is optional: a bare Translator shows tool activity, relays nothing and reports
+   *  to no callbacks, which is what a one-shot call wants. */
   constructor({
     toolActivity = true,
     continueAfterLimit = false,
@@ -1379,6 +1390,8 @@ export class Translator {
     return opened.events;
   }
 
+  /** A whole assistant message as chunks. A subagent's message folds into one reasoning row, and
+   *  the echo of a message that already streamed as deltas is dropped. */
   assistant(
     content: ClaudeContentBlock[],
     parentToolUseId: string | null | undefined,

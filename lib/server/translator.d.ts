@@ -69,6 +69,8 @@ export interface FallbackRecord {
     at: number;
     content?: string;
 }
+/** Turns one CLI process's stream-json events into dsh stream chunks, and keeps the per-turn state
+ *  that needs: open blocks, streamed ids, tool rows, usage and the result summary. */
 export declare class Translator {
     log: (level: string, msg: string) => void;
     unknownSeen: Set<string>;
@@ -170,6 +172,8 @@ export declare class Translator {
      * one callId, which throws in ConversationNodeAssembler and stalls the whole event feed.
      */
     private fireToolCall;
+    /** Every option is optional: a bare Translator shows tool activity, relays nothing and reports
+     *  to no callbacks, which is what a one-shot call wants. */
     constructor({ toolActivity, continueAfterLimit, timeZone, toolTextLimit, relay, dshIds, relayed, log, onToolCall, onToolResult, onResult, redact, onInit, onProgress, onModel, hostLabel, statusNote, }?: {
         toolActivity?: boolean;
         continueAfterLimit?: boolean;
@@ -238,6 +242,8 @@ export declare class Translator {
         id?: string;
         name?: string;
     }): StreamChunk[];
+    /** A whole assistant message as chunks. A subagent's message folds into one reasoning row, and
+     *  the echo of a message that already streamed as deltas is dropped. */
     assistant(content: ClaudeContentBlock[], parentToolUseId: string | null | undefined, id?: string): StreamChunk[];
     /** dsh tools reached over the MCP bridge (subagents, jobs...) render as visible text rows, the
      *  rest as collapsed reasoning. Returns [block kind, lead text]. */

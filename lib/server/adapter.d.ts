@@ -1454,6 +1454,9 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * a browser) and a schema dsh cannot present are declined with a reasoning line saying so.
      */
     elicit(request: NonNullable<ControlRequestEvent["request"]>, requestId: string, options: SessionOptions, proc: ClaudeProcess, pending: Map<string, AbortController>, tr: Translator): AsyncGenerator<StreamChunk, void, unknown>;
+    /** Answer one of Claude's tool permission requests. AskUserQuestion and ExitPlanMode go to dsh's
+     *  question dialog, full access allows everything else, and the rest go to dsh's approval
+     *  prompt. A dialog that cannot be shown, or is cancelled, answers deny with the reason. */
     decide({ toolName, input, request, toolUseId, agent, signal, accessMode }: Decision): Promise<{
         behavior: "allow";
         updatedInput: unknown;
@@ -1465,6 +1468,9 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
         toolUseID: string;
         decisionClassification: "user_reject";
     }>;
+    /** Run one request on a fresh CLI process that exits after its answer, for side calls such as a
+     *  session title. No tool activity is shown, and a permission or control request is refused
+     *  rather than asked, since nobody is watching a side call. */
     oneShot(options: GenerateOptions): AsyncGenerator<StreamChunk>;
 }
 /** The entry point dsh calls: build the adapter, register its provider and adapter, probe the login, and pin the instance on globalThis so a re-instantiation at boot shares the one already running. */

@@ -35,15 +35,25 @@
     "jsx-a11y/no-autofocus": "off",
     "jsx-a11y/no-static-element-interactions": "off",
     "jsx-a11y/no-noninteractive-element-interactions": "off",
-    "anti-slop/require-field-label": "error"
+    "anti-slop/require-field-label": "error",
+    "anti-slop/require-doc-comment": "error"
   },
   "overrides": [
+    {
+      "files": [
+        "tools/**"
+      ],
+      "rules": {
+        "anti-slop/require-doc-comment": "off"
+      }
+    },
     {
       "files": [
         "src/**/*.test.ts"
       ],
       "rules": {
         "anti-slop/require-safety-comment-for-type-assertion": "off",
+        "anti-slop/require-doc-comment": "off",
         "anti-slop/no-chained-type-assertions": "off",
         "anti-slop/no-unknown-parameters": "off",
         "anti-slop/no-known-value-widening": "off",

@@ -2161,6 +2161,7 @@ export function* relayBlocks(tr: Translator, call: RelayEvent): IterableIterator
 // ---------------------------------------------------------------------------
 // Adapter
 
+/** A process spec as a string, so two specs compare by content when deciding to reuse a process. */
 const specKey = (spec: ClaudeProcessSpec) => JSON.stringify(spec);
 
 /** Whether a todo list still has work on it. A list of nothing but completed items is finished,
@@ -4322,7 +4323,6 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   // ── persistent path ──────────────────────────────────────────────────────
 
   /** Reuse the session's process when its spec still matches; otherwise replace it. */
-  // SAFETY: options from dsh LlmAdapter.generate(); forceFresh is optional bool flag
   async acquire(options: SessionOptions, forceFresh?: boolean) {
     const prep = await this.prepare(options, { forceFresh });
     if (prep.input === null) return { prep, proc: null }; // text-mode CLI: fall back to one-shot semantics
@@ -4913,7 +4913,6 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    * - `abandon`: parked on relays but dsh moved on without their results: reject them, start over.
    * - `prompt`: a normal turn; steers Claude already got live are dropped from the prompt.
    */
-  // SAFETY: mirrors acquire() shape for the turn loop
   continuationFor(options: SessionOptions, forceFresh?: boolean): Continuation {
     const held = this.processes.get(registryKey(this.providerId, options.sessionId));
     const live = held?.alive && !forceFresh ? held : undefined;
@@ -5067,7 +5066,6 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   }
 
   /** Why a turn that neither finished nor parked ended. */
-  // SAFETY: returns FinishReason shape for the adapter loop
   endReason(proc: ClaudeProcess, options: SessionOptions, idle: boolean): FinishReason {
     if (options.signal?.aborted)
       return { kind: "aborted", failure: { message: "aborted", code: "ABORTED" } };
@@ -5965,7 +5963,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       });
   }
 
-  // SAFETY: destructured from ClaudeCodeControlRequest shape in process.ts
+  /** Answer one of Claude's tool permission requests. AskUserQuestion and ExitPlanMode go to dsh's
+   *  question dialog, full access allows everything else, and the rest go to dsh's approval
+   *  prompt. A dialog that cannot be shown, or is cancelled, answers deny with the reason. */
   async decide({ toolName, input, request, toolUseId, agent, signal, accessMode }: Decision) {
     if (toolName === "AskUserQuestion") {
       const questions = parseQuestions(input, toolUseId);
@@ -6054,6 +6054,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
 
   // ── one-shot path (aux calls, text-mode CLI, no session id) ──────────────
 
+  /** Run one request on a fresh CLI process that exits after its answer, for side calls such as a
+   *  session title. No tool activity is shown, and a permission or control request is refused
+   *  rather than asked, since nobody is watching a side call. */
   async *oneShot(options: GenerateOptions): AsyncGenerator<StreamChunk> {
     const { cwd, args, session, input } = await this.prepare(options);
     const proc = new ClaudeProcess({

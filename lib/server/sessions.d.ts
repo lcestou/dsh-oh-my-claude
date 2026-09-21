@@ -23,6 +23,18 @@ export declare function parseSettingsText(text: unknown): ParsedSettings;
  *  settings switches. Only `true` and finite non-negative numbers are kept, so a missing or
  *  unreadable file reads as every switch at its default. */
 export declare function readHints(hintsPath: string): Promise<Record<string, boolean | number>>;
+/**
+ * Apply one patch to the hints store, serialized against every other patch.
+ *
+ * The store is read-modify-write, and two requests that overlap both read the file before either
+ * writes it: the second write then puts back a map from before the first, and every key the first
+ * added is gone. That is not theoretical. A run of rapid switch changes on 2026-09-17 left the
+ * file holding one key out of eight. Requests queue here instead, and the write goes through
+ * `writeJson` so a crash mid-write cannot truncate the file either.
+ *
+ * `true` and finite non-negative numbers are kept; `false` and `null` drop the key, which is how a
+ * switch returning to its default clears itself. Anything else is ignored, key names included.
+ */
 export declare function updateHints(hintsPath: string, patch: Record<string, unknown>): Promise<Record<string, boolean | number>>;
 /** Another dsh server this panel can hop to; `token` is that box's dsh launch token. */
 export interface Box {
