@@ -17,6 +17,8 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 ### Fixed
 
 - Scrolling to the end of a panel tab no longer scrolls the chat behind the panel.
+- Clicking outside the panel to close it no longer sends focus back to the ✻ button, which lit up
+  its tooltip. Escape still returns focus there.
 
 ## [1.3.0] - 2026-09-21
 

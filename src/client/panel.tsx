@@ -4400,7 +4400,11 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
     const frame = requestAnimationFrame(() => setShown(true));
     return () => cancelAnimationFrame(frame);
   }, [open]);
-  const close = useCallback(() => {
+  // False when an outside click closed the panel: that click already moved focus where the person
+  // wanted it, and pulling it back to the trigger lit up the trigger's tooltip.
+  const refocus = useRef(true);
+  const close = useCallback((how?: "pointer" | "key") => {
+    refocus.current = how !== "pointer";
     setShown(false);
     closeTimer.current = setTimeout(() => setOpen(false), easeMs());
   }, []);
@@ -4417,14 +4421,16 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
 
   // On open, move focus onto the selected tab so a keyboard user lands inside the panel instead of
   // on the trigger behind the portal; on close, hand focus back to whatever held it first. No trap:
-  // the panel is not modal and the page around it stays usable.
+  // the panel is not modal and the page around it stays usable. An outside click is the exception:
+  // focus stays where that click put it.
   useEffect(() => {
     if (!open) return;
     // Record the focused element before focus moves, so close can return it.
     const before = document.activeElement;
     document.getElementById(`omc-tab-${tab}`)?.focus();
     return () => {
-      if (before instanceof HTMLElement && document.contains(before)) before.focus();
+      if (refocus.current && before instanceof HTMLElement && document.contains(before))
+        before.focus();
     };
   }, [open]);
 

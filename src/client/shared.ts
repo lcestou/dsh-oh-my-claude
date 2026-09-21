@@ -675,19 +675,20 @@ export type { RestoreButtonProps };
 /** Body of one Oh My Claude tab: plain flow inside the host panel, which owns position and size. */
 export const bodyFlow: CSSProperties = { display: "flex", flexDirection: "column", gap: 4 };
 
-/** Close an open popover on an outside click or Escape. */
+/** Close an open popover on an outside click or Escape, telling `close` which one it was: after a
+ *  click the person has already put focus where they want it, after Escape nothing has. */
 export function useDismiss(
   open: boolean,
-  close: () => void,
+  close: (how: "pointer" | "key") => void,
   root: { current: HTMLElement | null },
 ) {
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
-      if (e.target instanceof Node && !root.current?.contains(e.target)) close();
+      if (e.target instanceof Node && !root.current?.contains(e.target)) close("pointer");
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") close();
+      if (e.key === "Escape") close("key");
     };
     document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);
