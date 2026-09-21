@@ -6,6 +6,31 @@ Working on the plugin: install from a checkout, the lint contract, the gate and 
 
 Install from a checkout instead of npm: `dsh plugin --profile web add link:/path/to/oh-my-claude`. The source is strict TypeScript under `src/`; dsh loads the compiled output in `lib/`, so run `bun run build` after every edit. `lib/client.js` hot-reloads into every open tab the moment it is written; a change under `lib/server` needs a restart of `dsh web`. `lib/server` comes from `tsc`, `lib/client.js` from `bun build` of `src/client/index.tsx`; both are committed, so a plain install has them. `bun run validate` runs the whole gate: format, lint (oxlint with the anti-slop rules in `tools/oxlint`), tests, dead code, build, typecheck and a conflict-marker scan.
 
+## What this plugin may lean on in dsh
+
+Two kinds of coupling, and only one of them is safe.
+
+**Named slots fail loudly.** dsh exposes 83 of them and this plugin mounts into seven. If dsh
+renames one, the plugin does not load and says which service it waited for: ugly, immediate, and
+nothing is half-broken. Prefer a slot wherever one exists. dsh publishes no slot reference, so the
+list is derived from the installed bundles; the command to regenerate it, the audit of what has no
+slot, and the version it was taken against are in `notes/reference/dsh-slots.md`.
+
+A name that looks like a slot is not one until something calls `slots.register` or `slots.inject`
+with it. `status.running` and its siblings read like slots and are status labels.
+
+**Selectors over dsh's own markup fail silently, and always have.** Every dsh upgrade that has
+broken this plugin broke it the same way: the thing kept its name and changed its shape.
+`resolveAgent` went from answering an `Agent` to answering `{ agent } | { error }`. The
+access-shield menu moved to a portal on `document.body`. A chat anchor key gained a leading kind,
+so `*=":input-message"` matched nothing. Nothing threw, nothing logged, and one was found days
+later by grepping a log for a line that had stopped appearing.
+
+Two rules follow. Accept both shapes when you learn of one, which is what those fixes did. And add
+a probe to `src/client/contract.ts` for any selector a feature depends on, so Diagnostics reports
+it missing the first time the panel opens after an upgrade. A probe must be structural: one that
+depends on what someone typed cries wolf, which is why the skill-chip hook is not in that list.
+
 ## Lint contract
 
 Read before writing code. The anti-slop rules in `.oxlintrc.json` fail the build and cost a worker 25 check runs on 2026-09-05.
