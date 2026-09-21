@@ -73,6 +73,7 @@ import {
   controlStatesCss,
   resumeCommand,
   saveBlob,
+  nested,
 } from "./shared.js";
 import { themeOf, hexToRgb, type ThemeGroup } from "./theme.js";
 import { PluginUpdateBadge, StarNudge } from "./update-pill.js";
@@ -6616,12 +6617,7 @@ function UpdateNoticeSwitch() {
 
 /** A fold nested under a Settings row: indented behind a thin rule, the look the update options
  *  have, so what belongs to the row above reads as its child. */
-const NESTED: CSSProperties = {
-  marginBottom: 12,
-  fontSize: 13,
-  paddingLeft: 12,
-  borderLeft: `1px solid ${T.border}`,
-};
+const NESTED: CSSProperties = { ...nested, marginBottom: 12, fontSize: 13 };
 
 /** The settings switch for the whole Claude Code update feature, with its channel, auto-update and
  *  history under it while it is on. The flag lives in the box's hints store and the server reads it
