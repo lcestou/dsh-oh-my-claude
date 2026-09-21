@@ -41,9 +41,10 @@ for (let i = 0; i < (await groups.count()); i++) {
   for (const n of names) console.log("  ", n.replace(/\n/g, " · "));
 }
 
-// Another provider's row first: the local llama one when the box has it, else the first group
-// that is not one of this plugin's mounts.
-const otherName = /lutechi-llm/;
+// Another provider's row first: the one named in OMC_OTHER_PROVIDER when the box has it, else the
+// first group that is not one of this plugin's mounts. The name is read from the environment
+// rather than written here, because a provider id is whatever the person running the check chose.
+const otherName = new RegExp(process.env.OMC_OTHER_PROVIDER ?? "local-llm");
 const other = (await groupRows(otherName).count())
   ? groupRows(otherName)
   : groups.first().locator('[role="menuitemradio"]');
