@@ -395,6 +395,8 @@ export interface ContextUsage {
      *  so the session's next turn replaces the process and the guess ends there. */
     followsNext?: true;
 }
+/** Decodes a `get_context_usage` answer, returning an all-zero report when the payload is missing
+ *  or not an object rather than throwing. */
 export declare function decodeContextUsage(v: JsonValue | undefined): ContextUsage;
 /** The `title` of a `generate_session_title` answer, trimmed; undefined when absent or empty. */
 export declare function decodeTitle(v: JsonValue | undefined): string | undefined;

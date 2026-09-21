@@ -56,6 +56,8 @@ export interface TailscaleState {
     };
     peers: TailscalePeer[];
 }
+/** Parses `tailscale status --json` output, returning undefined on anything it cannot read and
+ *  deriving login state from the 'Running' backend state. */
 export declare function tailscaleStatus(text: string): TailscaleState | undefined;
 /** The approval link `tailscale login` prints, once it does. */
 export declare const loginUrlIn: (text: string) => string | undefined;
@@ -91,6 +93,8 @@ export interface ValidatedTailnetJoin {
     value?: TailnetJoin;
     error?: string;
 }
+/** Validates a tailnet join, treating an empty or absent field as unset so it passes, and
+ *  pattern-checking only the values that are present. */
 export declare function validateTailnetJoin(raw: {
     loginServer?: unknown;
     authKey?: unknown;

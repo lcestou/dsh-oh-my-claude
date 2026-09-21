@@ -300,6 +300,9 @@ function stableKey(file: string): string {
   return k;
 }
 
+/** Wires the MCP bridge into the web server once the required services are injected, and keeps the
+ *  bridge key stable across dsh restarts so a keeper-mode claude that outlived dsh still
+ *  authenticates. */
 export function registerMcpBridge(
   ctx: PluginContext,
   { log, version, relay, keyFile }: BridgeOptions,

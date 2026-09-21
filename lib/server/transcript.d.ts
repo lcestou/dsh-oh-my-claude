@@ -93,6 +93,9 @@ export interface FoldedTranscript {
     /** Task call id to the subagent that answered it, for the records kept in a file of their own. */
     agents: Map<string, string>;
 }
+/** Folds raw transcript lines into turns, dropping injected noise (slash-command echoes, hook
+ *  output) but never a message the CLI removed: it keeps such a line and folds it at its own prompt
+ *  arrival rather than showing a retraction. */
 export declare function foldTranscript(text: string): FoldedTranscript;
 /** One dsh session event as the seed writes it: the shapes dsh persists itself. */
 export interface SeedEvent {

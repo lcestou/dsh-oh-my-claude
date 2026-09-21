@@ -152,6 +152,8 @@ export interface TailscaleState {
   peers: TailscalePeer[];
 }
 
+/** Parses `tailscale status --json` output, returning undefined on anything it cannot read and
+ *  deriving login state from the 'Running' backend state. */
 export function tailscaleStatus(text: string): TailscaleState | undefined {
   let parsed: unknown;
   try {
@@ -238,6 +240,8 @@ export interface ValidatedTailnetJoin {
   error?: string;
 }
 
+/** Validates a tailnet join, treating an empty or absent field as unset so it passes, and
+ *  pattern-checking only the values that are present. */
 export function validateTailnetJoin(raw: {
   loginServer?: unknown;
   authKey?: unknown;

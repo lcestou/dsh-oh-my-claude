@@ -43,6 +43,9 @@ function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/** Strips private values from report text, but only replaces a home path at a path boundary (so
+ *  `/home/alice2` is not turned into `~2`) and only the username and hostname as whole words, to
+ *  avoid false positives. */
 export function redact(text: string, p: PrivateValues, keepHost: boolean): string {
   let out = text;
   // 1. home path and file:// form to ~, both bare and prefixed.
@@ -68,6 +71,8 @@ export function redact(text: string, p: PrivateValues, keepHost: boolean): strin
   return out;
 }
 
+/** Assembles the report lines and redacts them before returning, so one tested function owns what
+ *  may leave the box. */
 export function buildReport(input: ReportInput, p: PrivateValues, keepHost: boolean): string {
   const lines: string[] = [];
   lines.push(`dsh-oh-my-claude ${input.plugin}`);

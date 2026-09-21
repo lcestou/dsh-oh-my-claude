@@ -388,6 +388,9 @@ const deliveredAsPrompt = (text: string): Set<string> => {
   return out;
 };
 
+/** Folds raw transcript lines into turns, dropping injected noise (slash-command echoes, hook
+ *  output) but never a message the CLI removed: it keeps such a line and folds it at its own prompt
+ *  arrival rather than showing a retraction. */
 export function foldTranscript(text: string): FoldedTranscript {
   const turns: FoldedTurn[] = [];
   const delivered = deliveredAsPrompt(text);

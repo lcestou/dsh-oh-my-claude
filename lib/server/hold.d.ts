@@ -55,6 +55,9 @@ export type HoldLine = {
     kind: "exit";
     code: number;
 };
+/** Classifies one line from an attach stream: before the session is ready it recognizes only the
+ *  READY banner and drops everything else, and once ready it reads exit, stderr and output lines,
+ *  defaulting an unreadable exit code to 255. */
 export declare function parseHoldLine(line: string, ready: boolean): HoldLine | undefined;
 /** How long to wait before reattaching after the ssh dropped without an exit line, by try. */
 export declare const reattachDelay: (attempt: number) => number;
