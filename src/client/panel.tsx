@@ -52,6 +52,7 @@ import { Spark } from "./spark.js";
 import { ConfirmButton, TuneBody } from "./tune.js";
 import { noticesOn, setNoticesOn } from "./notices.js";
 import { queueDraft } from "./draft.js";
+import { SearchField } from "./search-field.js";
 import { diffQuestion, reviewPrompt } from "../prompts.js";
 import type { FeatureSwitches } from "../switches.js";
 import type { PluginRoster, PluginLoadError } from "../plugins.js";
@@ -256,14 +257,13 @@ function RestoreBody({
     <div style={bodyFlow}>
       {/* Eight rows show; the search is how the rest are reached, so it appears once there are more. */}
       {candidates.length > 8 && (
-        <input
-          type="search"
-          data-omc-restore-search=""
-          style={{ ...inputStyle, margin: "2px 4px 4px" }}
+        <SearchField
+          hook="data-omc-restore-search"
+          style={{ margin: "2px 4px 4px" }}
           value={query}
           placeholder={`Search ${candidates.length} transcripts in ${name}`}
-          aria-label="Search transcripts"
-          onChange={(e) => setQuery(e.target.value)}
+          label="Search transcripts"
+          onChange={setQuery}
         />
       )}
       {candidates.length === 0 && (
@@ -1157,13 +1157,13 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
         </span>
       )}
       {skills.length > 12 && (
-        <input
-          type="search"
-          style={{ ...inputStyle, margin: "2px 4px 4px" }}
+        <SearchField
+          hook="data-omc-skills-search"
+          style={{ margin: "2px 4px 4px" }}
           value={query}
           placeholder={`Search ${skills.length} skills`}
-          aria-label="Search skills"
-          onChange={(e) => setQuery(e.target.value)}
+          label="Search skills"
+          onChange={setQuery}
         />
       )}
       {skills.length > 0 && !anyMatch && (

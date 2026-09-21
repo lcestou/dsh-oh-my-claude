@@ -85,6 +85,7 @@ import { Spark, sparkNode } from "./spark.js";
 import { AccessShield, OhMyClaudeControl, sessionLabel } from "./panel.js";
 import { ConfirmButton } from "./tune.js";
 import { AddWorkspaceFlow, BOXES_EVENT, canBrowseDirs, OPEN_EVENT, RW_EVENT } from "./picker.js";
+import { SearchField } from "./search-field.js";
 import { takeDraft, subscribeDraft, noteDraft, draftPending } from "./draft.js";
 import {
   awaitingBody,
@@ -1066,14 +1067,15 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
           <option value="archived">Archived</option>
           <option value="terminal">Terminal only</option>
         </select>
-        <input
+        <SearchField
           id="dsh-oh-my-claude-session-search"
-          type="search"
-          style={{ ...inputStyle, flex: "2 1 200px", minWidth: 160 }}
+          // 160 px, or the card's whole width when that is less: dsh's Settings leaves about 100 px
+          // for a section at phone width, and a fixed minimum spilled past the card's edge.
+          style={{ flex: "2 1 200px", minWidth: "min(160px, 100%)" }}
           value={query}
           placeholder="Search title, id or path"
-          aria-label="Search sessions"
-          onChange={(e) => setQuery(e.target.value)}
+          label="Search sessions"
+          onChange={setQuery}
         />
         <select
           data-omc-search-scope=""
