@@ -8,6 +8,12 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Added
 
+- Plan limit warnings. When a limit the session's model counts against is close, the usage ring
+  turns amber, and red once it is reached, with a one-line notice above the composer saying which
+  limit and when it resets. The grading is Anthropic's own, a per-model limit such as the weekly
+  Fable one only counts in a session on that model, and a model or limit added later is covered
+  without an update. On by default, with a Customize fold in Settings to keep only the ring or only
+  the notice; the notice can be dismissed until the limit resets.
 - The Tasks tab shows dsh's own goal next to Claude Code's: the current one with its phase, rounds
   and, when blocked, the reason, and a Past goals fold with every earlier goal the session had and
   how it ended. It is read from dsh's session log, and it shows whether or not Claude is running.

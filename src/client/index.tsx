@@ -86,6 +86,7 @@ import { AccessShield, OhMyClaudeControl, sessionLabel } from "./panel.js";
 import { ConfirmButton } from "./tune.js";
 import { AddWorkspaceFlow, BOXES_EVENT, canBrowseDirs, OPEN_EVENT, RW_EVENT } from "./picker.js";
 import { ClaudeUpdateDetails } from "./claude-updates.js";
+import { type LimitLevel, worstLimit } from "./limits.js";
 import { SearchField } from "./search-field.js";
 import { Switch } from "./switch.js";
 import { takeDraft, subscribeDraft, noteDraft, draftPending } from "./draft.js";
@@ -2926,6 +2927,8 @@ interface UsageWindow {
   label: string;
   usedPercent: number;
   resetsAt: number | null;
+  severity?: string;
+  model?: string;
 }
 interface UsageCredits {
   enabled: boolean;
@@ -3492,6 +3495,9 @@ function watchContextMeter(ctx: ClientCtx) {
   let ringSession: string | undefined;
   let ringPercent: number | undefined;
   let ringAsked = 0;
+  // The plan limit the ring is tinted for, and when usage and the switches were last read for it.
+  let ringLevel: LimitLevel | undefined;
+  let ringLimitAsked = 0;
   /**
    * Fill the ring from the CLI's own occupancy.
    *
@@ -3519,7 +3525,26 @@ function watchContextMeter(ctx: ClientCtx) {
       ringSession = sid;
       ringPercent = undefined;
       ringAsked = 0;
+      ringLevel = undefined;
+      ringLimitAsked = 0;
     }
+    // A reached or near plan limit tints the arc, on a slower clock than the fill: usage is cached
+    // for a minute by the route, and the switches change only when someone flips one.
+    if (Date.now() - ringLimitAsked > 60_000) {
+      ringLimitAsked = Date.now();
+      void Promise.all([loadHints(), loadUsage(activeClaudeProvider(ctx))]).then(
+        ([hints, usage]) => {
+          const off = hints.limitWarningsOff === true || hints.limitRingOff === true;
+          ringLevel =
+            off || !usage.ok
+              ? undefined
+              : worstLimit(usage.windows, sessionModelOf(ctx, sid))?.level;
+          paintRing();
+        },
+      );
+    }
+    const stroke = ringLevel === "critical" ? T.err : ringLevel === "warning" ? T.warn : "";
+    if (arc.style.stroke !== stroke) arc.style.stroke = stroke;
     // dsh repaints the arc by rewriting an attribute, which the body observer does not watch, and a
     // ring already pinned at 100% stops changing altogether, so neither dsh's repaints nor ours can
     // be the thing that keeps this current. It is re-asked on a clock instead, off the same
@@ -6027,6 +6052,69 @@ function ThemeGroupBox({ flag, group, label }: { flag: string; group: string; la
   );
 }
 
+/** The settings row for plan limit warnings: one switch for both, and a Customize fold to keep one
+ *  without the other. On by default; the flags live in the box's hints store like every switch. */
+function LimitWarningsSwitch() {
+  const [off, setOff] = useHintFlag("limitWarningsOff");
+  const [ringOff, setRingOff] = useHintFlag("limitRingOff");
+  const [noticeOff, setNoticeOff] = useHintFlag("limitNoticeOff");
+  return (
+    <>
+      <div
+        data-omc-limit-warnings=""
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+          fontSize: 13,
+          marginBottom: 12,
+        }}
+      >
+        <div>
+          <div>Plan limit warnings</div>
+          <div style={{ color: T.faint, fontSize: 12 }}>
+            When a plan limit the session's model counts against is close or reached, by Anthropic's
+            own grading.
+          </div>
+        </div>
+        <Switch on={!off} onChange={(next) => setOff(!next)} label="Plan limit warnings" />
+      </div>
+      {!off && (
+        <details data-omc-limit-custom="" style={NESTED}>
+          <summary style={{ cursor: "pointer", color: T.muted }}>Customize</summary>
+          <div
+            style={{ display: "flex", flexDirection: "column", gap: 6, padding: "8px 0 0 16px" }}
+          >
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+              <input
+                type="checkbox"
+                data-omc-limit-ring=""
+                checked={!ringOff}
+                onChange={(e) => setRingOff(!e.target.checked)}
+              />
+              Tint the usage ring
+              <span style={{ color: T.faint, fontSize: 12 }}>
+                amber when close, red at the limit
+              </span>
+            </label>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+              <input
+                type="checkbox"
+                data-omc-limit-notice=""
+                checked={!noticeOff}
+                onChange={(e) => setNoticeOff(!e.target.checked)}
+              />
+              Notice above the composer
+              <span style={{ color: T.faint, fontSize: 12 }}>only when a limit is reached</span>
+            </label>
+          </div>
+        </details>
+      )}
+    </>
+  );
+}
+
 /** The star nudge under the heading, hidden for good once dismissed. The flag is box-wide, not
  *  per-browser: someone who hid this line meant to hide it, not to hide it on one laptop. */
 function StarLine() {
@@ -7133,6 +7221,98 @@ const sameCard = (a: ClaudeUpdateCardData | null, b: ClaudeUpdateCardData | null
 const claudeReleaseNotes = (version: string): string =>
   `https://code.claude.com/docs/en/changelog#${version.replace(/\./g, "-")}`;
 
+/** The model a session has picked in dsh's selector, or undefined when dsh has not bound the
+ *  session yet (its model directory throws until then). */
+const sessionModelOf = (ctx: ClientCtx, sessionId: string): string | undefined => {
+  try {
+    return ctx.modelDirectories.directoryFor(sessionId).store.getSnapshot().current?.model;
+  } catch {
+    return undefined;
+  }
+};
+
+/** The loudest plan limit the session's model counts against, rechecked every minute through the
+ *  usage route's own one-minute cache, so a model switched mid-session is picked up on the next
+ *  read. Undefined while nothing binding is past normal, or when usage cannot be read. */
+function useBindingLimit(sessionId: string, ctx: ClientCtx) {
+  const [limit, setLimit] = useState<ReturnType<typeof worstLimit>>(undefined);
+  useEffect(() => {
+    let live = true;
+    const read = () =>
+      loadUsage(claudeProviderOf(ctx, sessionId)).then(
+        (r) =>
+          live &&
+          setLimit(r.ok ? worstLimit(r.windows, sessionModelOf(ctx, sessionId)) : undefined),
+        () => {},
+      );
+    void read();
+    const t = setInterval(read, 60_000);
+    return () => {
+      live = false;
+      clearInterval(t);
+    };
+  }, [sessionId, ctx]);
+  return limit;
+}
+
+/** The one-line notice above the composer when a limit the session's model counts against is
+ *  reached. Dismissing it hides it until that limit resets, box-wide, since the reset is the next
+ *  time the notice could say something new. */
+function LimitCard({
+  label,
+  resetsAt,
+  onDismiss,
+}: {
+  label: string;
+  resetsAt: number | null;
+  onDismiss: () => void;
+}) {
+  return (
+    <div
+      data-omc-limit-card=""
+      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a live notice, not a form result, which is what <output> is for
+      role="status"
+      style={{
+        boxSizing: "border-box",
+        background: "var(--dsw-specific-tip, var(--dsw-alias-bg-base, transparent))",
+        border: "0.5px solid var(--dsw-alias-border-l1, rgba(217,119,87,.4))",
+        borderRadius: "12px 12px 0 0",
+        padding: "8px 10px",
+        fontSize: 13,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ color: T.err, flex: "0 0 auto" }} aria-hidden="true">
+          ●
+        </span>
+        <span style={{ flex: 1 }}>
+          {label} limit reached
+          {resetsAt === null ? (
+            ""
+          ) : (
+            <span style={{ color: T.faint }}> · {resetText(resetsAt)}</span>
+          )}
+        </span>
+        <button
+          type="button"
+          aria-label="Dismiss until the limit resets"
+          title="Dismiss until the limit resets"
+          onClick={onDismiss}
+          style={{
+            background: "none",
+            border: "none",
+            cursor: "pointer",
+            padding: "0 2px",
+            color: T.faint,
+          }}
+        >
+          ×
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /** The card above the composer after a turn failed for want of a login on its box: the same login
  *  the Boxes row runs, here so nobody has to find Settings. It only ever follows a failed turn, so a
  *  box nobody uses never asks. Once the token is stored the server clears the need and the next poll
@@ -7557,12 +7737,23 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
   // Server-side `dismissed` (a closed card, which the route marks and keeps) and the local set (this
   // click, before the next poll confirms it) both hide a card here. The entry itself stays in the ring
   // for the panel's Asides tab.
+  const limit = useBindingLimit(sessionId, ctx);
+  const [warningsOff] = useHintFlag("limitWarningsOff");
+  const [noticeOff] = useHintFlag("limitNoticeOff");
+  const [limitDismissed, setLimitDismissed] = useHintValue("limitNoticeDismissed");
+  const limitCard =
+    limit?.level === "critical" &&
+    !warningsOff &&
+    !noticeOff &&
+    (limit.window.resetsAt === null || limitDismissed !== limit.window.resetsAt)
+      ? limit.window
+      : null;
   const shown = items.filter((it) => !it.dismissed && !dismissed.has(it.id));
   // No `activeClaudeSession` gate here either: the card shows this session's own persisted asides,
   // which only exist for a Claude session, so an empty list is the only reason to hide it. Reading
   // the provider binding at render blinked the card out whenever the binding reloaded.
   const loginCard = need && needDismissed !== need.host ? need : null;
-  if (shown.length === 0 && !loginCard && !claudeUpdate) return null;
+  if (shown.length === 0 && !loginCard && !claudeUpdate && !limitCard) return null;
 
   const dismissAside = (id: string) => {
     // Hide now, but tell the server to drop it so the next poll (or a remount) does not bring it back.
@@ -7605,6 +7796,14 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
       )}
       {loginCard && (
         <LoginCard need={loginCard} onDismiss={() => setNeedDismissed(loginCard.host)} />
+      )}
+      {limitCard && (
+        <LimitCard
+          label={limitCard.label}
+          resetsAt={limitCard.resetsAt}
+          // The reset time is the key: a later limit, or the same one after it resets, shows again.
+          onDismiss={() => limitCard.resetsAt !== null && setLimitDismissed(limitCard.resetsAt)}
+        />
       )}
       {shown.map((it) => {
         const open = (it.id === newest) !== toggled.has(it.id);
@@ -7940,6 +8139,7 @@ export function apply(ctx: ClientCtx) {
         <UpdateNoticeSwitch />
         <ClaudeUpdateSwitch />
         <CostSwitch />
+        <LimitWarningsSwitch />
         <WorkspaceModelSwitch />
         {/* The switches that start off sit together after the ones that start on, so the card reads
             as what the plugin does by default first, then what you can add to it. The proxy control

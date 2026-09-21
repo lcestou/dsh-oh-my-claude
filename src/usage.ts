@@ -34,6 +34,10 @@ export interface UsageWindow {
   usedPercent: number;
   /** Epoch ms, or null when the API did not say. */
   resetsAt: number | null;
+  /** The API's own grade for the window (`normal`, `critical`, and whatever it adds), when sent. */
+  severity?: string;
+  /** For a window scoped to one model, that model's display name (`Fable`), as the API names it. */
+  model?: string;
 }
 
 /** Usage credits ("extra usage") as the panel shows them; the money is already display text. */
@@ -149,8 +153,11 @@ export function usageWindows(payload: unknown): UsageWindow[] {
     const usedPercent = percentOf(entry.percent);
     if (usedPercent === null) continue;
     const resetsAt = resetOf(entry.resets_at);
-    if (entry.kind === "session") session ??= { label: "5-hour", usedPercent, resetsAt };
-    else if (entry.kind === "weekly_all") weekly ??= { label: "Weekly", usedPercent, resetsAt };
+    // The API grades each window itself; its grade is passed on rather than a threshold of ours.
+    const graded = typeof entry.severity === "string" ? { severity: entry.severity } : {};
+    if (entry.kind === "session") session ??= { label: "5-hour", usedPercent, resetsAt, ...graded };
+    else if (entry.kind === "weekly_all")
+      weekly ??= { label: "Weekly", usedPercent, resetsAt, ...graded };
     else if (entry.kind === "weekly_scoped") {
       const scope = isRec(entry.scope) ? entry.scope : {};
       const model = isRec(scope.model) ? scope.model : {};
@@ -160,11 +167,13 @@ export function usageWindows(payload: unknown): UsageWindow[] {
           : typeof scope.surface === "string"
             ? scope.surface
             : "Model";
-      others.push({ label: `${name} weekly`, usedPercent, resetsAt });
+      const scoped: UsageWindow = { label: `${name} weekly`, usedPercent, resetsAt, ...graded };
+      if (typeof model.display_name === "string") scoped.model = model.display_name;
+      others.push(scoped);
     } else if (typeof entry.kind === "string") {
       // A window kind this code has not met yet: show it under its own name rather than hide it.
       const label = entry.kind.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
-      others.push({ label, usedPercent, resetsAt });
+      others.push({ label, usedPercent, resetsAt, ...graded });
     }
   }
   if (session) out.push(session);
