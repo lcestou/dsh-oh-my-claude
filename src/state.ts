@@ -844,6 +844,9 @@ async function readWatches(dir: string): Promise<Map<string, WatchRecord>> {
   return out;
 }
 
+/** Record where a session's watch has read up to. Queued behind any save already pending for
+ *  `dir`, so saves land in the order they were called; the returned promise settles when this one
+ *  has been written. */
 export async function saveWatch(
   dir: string,
   sessionId: string,
