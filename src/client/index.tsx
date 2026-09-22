@@ -914,7 +914,7 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
       else if (action === "resume") {
         const host = r.g.sshBox ? r.g.host : undefined;
         await navigator.clipboard.writeText(resumeCommand(r.s.id, r.s.cwd, host));
-        setMoving(t("common.copied"));
+        setMoving(t("copied"));
         setTimeout(() => setMoving(""), 1600);
       }
     } catch (e) {
@@ -1013,7 +1013,7 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
         style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}
       >
         <div style={meta}>
-          {loading ? t("common.loading") : t("main.sessions.count", { shown: rows.length, total })}
+          {loading ? t("loading") : t("main.sessions.count", { shown: rows.length, total })}
           {remoteLoading ? t("main.sessions.checkingBoxes") : ""}
         </div>
         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
@@ -1510,7 +1510,7 @@ function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
           setEditing(false);
         }}
       >
-        {t("common.cancel")}
+        {t("cancel")}
       </button>
       <button
         id="dsh-oh-my-claude-settings-save"
@@ -1519,7 +1519,7 @@ function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
         disabled={!canSave}
         onClick={save}
       >
-        {busy ? t("main.settings.saving") : t("common.save")}
+        {busy ? t("main.settings.saving") : t("save")}
       </button>
     </>
   ) : open ? (
@@ -1972,7 +1972,7 @@ function LoginSteps({
               {login.busy ? "…" : t("main.login.submit")}
             </button>
             <button type="button" style={btn} onClick={() => setLogin(null)}>
-              {t("common.cancel")}
+              {t("cancel")}
             </button>
           </div>
         </>
@@ -2659,7 +2659,7 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
             </button>
             {total > 0 && (
               <button type="button" style={btn} onClick={() => setAdding(false)}>
-                {t("common.cancel")}
+                {t("cancel")}
               </button>
             )}
           </form>
@@ -3462,7 +3462,7 @@ function watchContextMeter(ctx: ClientCtx) {
     const caption = document.createElement("div");
     caption.style.cssText = `color:${T.faint};font-size:11px;line-height:16px;margin:-2px 0 4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap`;
     const rows = document.createElement("div");
-    rows.textContent = t("common.loading");
+    rows.textContent = t("loading");
     rows.style.color = T.faint;
     // Below the plan bars: the CLI's own context breakdown for this session (item 30), one row
     // per category that holds tokens, deferred tool schemas folded out since they are not in context.
@@ -7725,8 +7725,8 @@ function ClaudeUpdateCard({
         </button>
         <button
           type="button"
-          aria-label={phase === "idle" ? t("main.update.dismissNextRelease") : t("common.close")}
-          title={phase === "idle" ? t("main.update.dismissNextRelease") : t("common.close")}
+          aria-label={phase === "idle" ? t("main.update.dismissNextRelease") : t("close")}
+          title={phase === "idle" ? t("main.update.dismissNextRelease") : t("close")}
           onClick={() => dismiss()}
           style={{ ...iconBtn, color: T.muted, fontSize: 12 }}
         >
@@ -8030,7 +8030,7 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
                   fontSize: 11,
                 }}
               >
-                {copied === it.id ? t("common.copied") : t("common.copy")}
+                {copied === it.id ? t("copied") : t("copy")}
               </button>
               <button
                 type="button"

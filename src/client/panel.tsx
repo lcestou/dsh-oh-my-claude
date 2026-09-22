@@ -513,7 +513,7 @@ function MemoryBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
               onClick={save}
               disabled={busy || !dirty}
             >
-              {t("common.save")}
+              {t("save")}
             </button>
           </div>
           <textarea
@@ -1073,7 +1073,7 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
             onClick={save}
             disabled={busy !== "" || !dirty}
           >
-            {t("common.save")}
+            {t("save")}
           </button>
         </div>
         <textarea
@@ -1188,7 +1188,7 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
               disabled={busy !== ""}
               onClick={() => setCreating(false)}
             >
-              {t("common.cancel")}
+              {t("cancel")}
             </button>
           </div>
         </div>
@@ -1671,7 +1671,7 @@ function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCt
                 onClick={save}
                 disabled={busy || !dirty}
               >
-                {t("common.save")}
+                {t("save")}
               </button>
             )}
           </div>
@@ -1968,7 +1968,7 @@ function ChangesBody({
           header, and a line appended after the list sits below the fold on any real diff. */}
       {note !== "" && <span style={{ ...meta, padding: "2px 0" }}>{note}</span>}
       {reply === null ? (
-        <span style={stateText}>{t("common.loading")}</span>
+        <span style={stateText}>{t("loading")}</span>
       ) : !reply.ok ? (
         <span style={errText}>{reply.error}</span>
       ) : current ? (
@@ -2350,7 +2350,7 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
         style={{ ...btn, marginBottom: 8 }}
         onClick={() => setShowAdd(!showAdd)}
       >
-        {showAdd ? t("common.cancel") : t("panel.mcp.addServer")}
+        {showAdd ? t("cancel") : t("panel.mcp.addServer")}
       </button>
       {/* Collapsed by row height rather than unmounted: 0fr to 1fr is the one way a grid row
           animates to a height nobody measured, so Cancel slides shut instead of cutting. */}
@@ -2373,7 +2373,7 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
         </div>
       </div>
       {reply === null ? (
-        <span style={stateText}>{t("common.loading")}</span>
+        <span style={stateText}>{t("loading")}</span>
       ) : !reply.ok && reply.error.startsWith("no live Claude process") ? (
         <span style={stateText}>{t("panel.mcp.notRunning")}</span>
       ) : !reply.ok ? (
@@ -2645,7 +2645,7 @@ function ReadoutState({
       </span>
     );
   if (error !== "") return <span style={errText}>{error}</span>;
-  if (reply === null) return <span style={stateText}>{t("common.loading")}</span>;
+  if (reply === null) return <span style={stateText}>{t("loading")}</span>;
   return null;
 }
 
@@ -2926,7 +2926,7 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
         ))}
       </div>
       {data === null ? (
-        <span style={stateText}>{t("common.loading")}</span>
+        <span style={stateText}>{t("loading")}</span>
       ) : !data.ok ? (
         // A reply of the wrong shape carries no message; an empty red line says nothing at all.
         <span style={errText}>{data.error || t("panel.diag.unreadable")}</span>
@@ -2976,7 +2976,7 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
                   data-omc-copy-resume=""
                   onClick={() => void copyResume()}
                 >
-                  {rowNote === "Copied" ? t("common.copied") : t("panel.diag.copyResume")}
+                  {rowNote === "Copied" ? t("copied") : t("panel.diag.copyResume")}
                 </button>
                 {rowNote !== "" && rowNote !== "Copied" && <span style={errText}>{rowNote}</span>}
               </div>
@@ -3053,7 +3053,7 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
           {/* The three settings that switch a tab off underneath it */}
           <span style={sectionHead}>{t("panel.diag.featureSwitches")}</span>
           {switches === null ? (
-            <span style={stateText}>{t("common.loading")}</span>
+            <span style={stateText}>{t("loading")}</span>
           ) : (
             <div style={{ padding: "4px 0", fontSize: 12, lineHeight: "1.5" }}>
               <div>
@@ -3097,7 +3097,7 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
               {t("panel.readout.notRunning")}
             </span>
           ) : mcp === null ? (
-            <span style={stateText}>{t("common.loading")}</span>
+            <span style={stateText}>{t("loading")}</span>
           ) : !mcp.ok ? (
             <span style={errText}>{mcp.error}</span>
           ) : mcp.servers.every((s) => s.status === "connected") ? (
@@ -3142,7 +3142,7 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
           {auditError ? (
             <span style={errText}>{auditError}</span>
           ) : audit === null ? (
-            <span style={stateText}>{t("common.loading")}</span>
+            <span style={stateText}>{t("loading")}</span>
           ) : audit.length === 0 ? (
             <span style={{ ...meta, padding: "2px 0", fontSize: 12 }}>
               {t("panel.diag.noRefused")}
@@ -3457,7 +3457,7 @@ function TasksBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   return (
     <div style={bodyFlow}>
       {data === null ? (
-        <span style={stateText}>{t("common.loading")}</span>
+        <span style={stateText}>{t("loading")}</span>
       ) : !data.ok ? (
         <span style={errText}>{data.error}</span>
       ) : (
@@ -4294,7 +4294,7 @@ function AsidesBody({ sessionId }: { sessionId: string }) {
   }, [sessionId]);
 
   if (error !== null) return <span style={errText}>{error}</span>;
-  if (items === null) return <span style={stateText}>{t("common.loading")}</span>;
+  if (items === null) return <span style={stateText}>{t("loading")}</span>;
   if (items.length === 0) {
     return (
       <div style={{ ...meta, paddingBottom: 4, fontSize: 12, whiteSpace: "normal" }}>
@@ -4362,14 +4362,14 @@ function AsidesBody({ sessionId }: { sessionId: string }) {
                 type="button"
                 data-omc-aside-copy={it.id}
                 style={{ ...btn, fontSize: 11, padding: "1px 8px", lineHeight: "16px" }}
-                aria-label={copied === it.id ? t("common.copied") : t("panel.asides.copyLabel")}
+                aria-label={copied === it.id ? t("copied") : t("panel.asides.copyLabel")}
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
                   copy(it);
                 }}
               >
-                {copied === it.id ? t("common.copied") : t("common.copy")}
+                {copied === it.id ? t("copied") : t("copy")}
               </button>
             </span>
             {it.question}

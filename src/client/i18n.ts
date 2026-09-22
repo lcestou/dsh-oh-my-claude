@@ -8,6 +8,7 @@
 // area so two files never collide. Text Claude or the CLI reads (prompts, commands, file names) is
 // never translated here; only what a person reads on screen.
 import { useSyncExternalStore } from "react";
+import * as dshCommon from "./i18n/dsh-common.js";
 import * as common from "./i18n/common.js";
 import * as misc from "./i18n/misc.js";
 import * as main from "./i18n/main.js";
@@ -20,8 +21,8 @@ import * as updates from "./i18n/updates.js";
 /** The namespace this plugin registers under dsh's locale service. */
 export const LOCALE_NS = "oh-my-claude";
 
-/** Every English string, merged from the area files. */
-export const EN = {
+/** The plugin's own English strings, merged from the area files; what gets registered. */
+const OWN_EN = {
   ...common.en,
   ...misc.en,
   ...main.en,
@@ -31,9 +32,13 @@ export const EN = {
   ...picker.en,
   ...updates.en,
 } as const;
+/** Every English string `t()` can answer with: the plugin's own, plus the English fallback for the
+ *  dsh `common` words it borrows (used only when dsh has no locale service). */
+export const EN = { ...dshCommon.en, ...OWN_EN } as const;
 /** Every key the client can ask for. */
 export type OmcKey = keyof typeof EN;
-/** The Chinese strings, one per English key; the compiler refuses a missing or extra key. */
+/** The Chinese strings, one per key the plugin registers; the compiler refuses a missing or extra
+ *  key. The borrowed dsh `common` words are dsh's to translate and are not here. */
 export const ZH = {
   ...common.zh,
   ...misc.zh,
@@ -43,7 +48,7 @@ export const ZH = {
   ...browser.zh,
   ...picker.zh,
   ...updates.zh,
-} satisfies Record<OmcKey, string>;
+} satisfies Record<keyof typeof OWN_EN, string>;
 
 /** Values for `{name}` placeholders. */
 export type Params = Record<string, string | number>;
@@ -82,7 +87,7 @@ export function installLocale(ctx: {
   const svc = ctx.get?.("locale");
   if (!svc) return () => {};
   runtime = svc;
-  const dispose = svc.register(LOCALE_NS, { zh: ZH, en: EN });
+  const dispose = svc.register(LOCALE_NS, { zh: ZH, en: OWN_EN });
   bound = svc.bind(LOCALE_NS);
   return () => {
     dispose?.();

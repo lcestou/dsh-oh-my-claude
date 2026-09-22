@@ -109,7 +109,7 @@ export function ReportBlock({ sessionId, provider }: Props) {
           disabled={text === ""}
           onClick={copy}
         >
-          {copied ? t("common.copied") : t("report.copy")}
+          {copied ? t("copied") : t("report.copy")}
         </button>
         {issues !== "" && issueHref.length <= 7000 ? (
           <a data-omc-report-issue="" target="_blank" rel="noreferrer" style={btn} href={issueHref}>

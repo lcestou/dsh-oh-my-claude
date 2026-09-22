@@ -83,7 +83,7 @@ export function ChangelogBlock() {
     </a>
   );
   if (error) return <p style={errText}>{error}</p>;
-  if (releases === null) return <p style={stateText}>{t("common.loading")}</p>;
+  if (releases === null) return <p style={stateText}>{t("loading")}</p>;
   if (releases.length === 0)
     return (
       <p data-omc-changelog="" style={stateText}>
