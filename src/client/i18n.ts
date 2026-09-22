@@ -117,6 +117,12 @@ export function useLocale(): string {
   return runtime?.getSnapshot().active ?? "en";
 }
 
+/** The active locale id outside React (`en` when dsh has no locale service). A caller that draws
+ *  with it does not follow a switch on its own; it reads again the next time it draws. */
+export function activeLocale(): string {
+  return runtime?.getSnapshot().active ?? "en";
+}
+
 /**
  * Call `fn` each time the active language changes, not on every dictionary registration (which
  * also bumps dsh's revision). For DOM this plugin builds by hand, which `useLocale()` cannot

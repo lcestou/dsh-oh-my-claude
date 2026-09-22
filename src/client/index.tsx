@@ -3,7 +3,7 @@
 // here or jump to the box) and Boxes (this box as the first row, plus the ssh and linked-dsh
 // machines you add, each probed for claude version and login). Built into lib/client.js by
 // `bun run build`.
-import { installLocale, type OmcKey, onLocaleSwitch, t, useLocale } from "./i18n.js";
+import { activeLocale, installLocale, type OmcKey, onLocaleSwitch, t, useLocale } from "./i18n.js";
 import type { CSSProperties, FC, ReactNode } from "react";
 import {
   Fragment,
@@ -345,6 +345,73 @@ const DEFAULT_VERBS = [
   "Wrangling",
   "Zesting",
   "Zigzagging",
+] as const;
+
+/** The Chinese stand-in for the CLI's verbs, which exist only in English and are mostly puns
+ *  (Razzle-dazzling, Flibbertigibbeting) that do not survive translation. Not a translation: the same
+ *  register instead, cheeky and mock-grand, kitchen, magic and workshop, so a Chinese reader gets the
+ *  joke the English one does. */
+const ZH_VERBS = [
+  "琢磨中",
+  "捣鼓中",
+  "鼓捣中",
+  "酝酿中",
+  "盘算中",
+  "掐指一算中",
+  "冥思苦想中",
+  "绞尽脑汁中",
+  "抓耳挠腮中",
+  "炼丹中",
+  "文火慢炖中",
+  "爆炒中",
+  "腌制中",
+  "发酵中",
+  "揉面中",
+  "撒葱花中",
+  "施法中",
+  "念咒中",
+  "画符中",
+  "变戏法中",
+  "搓火球中",
+  "开光中",
+  "算卦中",
+  "观星中",
+  "灵光乍现中",
+  "脑洞大开中",
+  "头脑风暴中",
+  "抽丝剥茧中",
+  "顺藤摸瓜中",
+  "精雕细琢中",
+  "妙笔生花中",
+  "运筹帷幄中",
+  "天马行空中",
+  "左思右想中",
+  "融会贯通中",
+  "化繁为简中",
+  "胸有成竹中",
+  "举一反三中",
+  "画龙点睛中",
+  "整活中",
+  "憋大招中",
+  "打怪升级中",
+  "疯狂输出中",
+  "加载灵感中",
+  "充能中",
+  "量子纠缠中",
+  "转圈圈中",
+  "蹦跶中",
+  "嘀咕中",
+  "叽里咕噜中",
+  "手舞足蹈中",
+  "一本正经中",
+  "搬砖中",
+  "敲敲打打中",
+  "修修补补中",
+  "拼乐高中",
+  "打磨中",
+  "抛光中",
+  "煲汤中",
+  "假装很忙中",
 ] as const;
 
 /** Default ping-pong frames, played forward then reversed (~120 ms per frame). */
@@ -3387,10 +3454,20 @@ const flushScans = () => {
   pendingOverflow = false;
   for (const scan of frameScans) scan(records);
 };
-/** Subscribes the given MutationObserver to document.body for childList and subtree changes. */
+/** Subscribes the given MutationObserver to document.body for added and removed nodes and for text
+ *  rewritten in place. The last one matters: React updates a paragraph whose only child is text by
+ *  setting that text node's value, so a `<p>` reused from prose into a tool header changed without a
+ *  single childList record, and the header stayed bare until a reload swept the page. */
 const observeBody = (observer: MutationObserver) => {
-  observer.observe(document.body, { childList: true, subtree: true });
+  observer.observe(document.body, { childList: true, subtree: true, characterData: true });
 };
+/** The element a record is about: its target, or for a text edit the element holding the text. */
+const recordElement = (rec: MutationRecord): HTMLElement | null =>
+  rec.target instanceof HTMLElement
+    ? rec.target
+    : rec.target.parentElement instanceof HTMLElement
+      ? rec.target.parentElement
+      : null;
 /**
  * The elements a burst touched: each record's target plus whatever it added. A scan handed these
  * covers the same ground as one over `document.body`, because dsh only ever draws through the DOM.
@@ -3399,7 +3476,8 @@ const observeBody = (observer: MutationObserver) => {
 const changedElements = (records: MutationRecord[]): Set<HTMLElement> => {
   const nodes = new Set<HTMLElement>();
   for (const rec of records) {
-    if (rec.target instanceof HTMLElement) nodes.add(rec.target);
+    const el = recordElement(rec);
+    if (el) nodes.add(el);
     for (const node of rec.addedNodes) if (node instanceof HTMLElement) nodes.add(node);
   }
   return nodes;
@@ -3778,31 +3856,32 @@ function watchContextMeter(ctx: ClientCtx) {
   );
 }
 
-let spinnerSettings: Promise<{ verbs: string[]; frameSet: typeof DEFAULT_FRAMES }> | undefined;
-/** Fetch Claude Code's settings.json text and extract spinnerVerbs if present. */
+type SpinnerVerbSetting = { mode: "append" | "replace"; verbs: string[] };
+let spinnerSettings:
+  | Promise<{ setting?: SpinnerVerbSetting; frameSet: typeof DEFAULT_FRAMES }>
+  | undefined;
+/** Fetch Claude Code's settings.json text and extract spinnerVerbs if present. The setting comes
+ *  back unmerged: the defaults it adds to depend on the language when the row is drawn, not when
+ *  the page loaded. */
 const loadSpinnerSettings = async (): Promise<{
-  verbs: string[];
+  setting?: SpinnerVerbSetting;
   frameSet: typeof DEFAULT_FRAMES;
 }> => {
   try {
     const body = await readJson<SettingsFile>(await fetch(`${ROUTE}/settings`));
     const parsed = JSON.parse(body.text);
-    if (!isObj(parsed)) return { verbs: [...DEFAULT_VERBS], frameSet: [...DEFAULT_FRAMES] };
+    if (!isObj(parsed)) return { frameSet: [...DEFAULT_FRAMES] };
     const sv = parsed.spinnerVerbs;
     // SAFETY: spinnerVerbs comes from parsed JSON (a JsonObject); the cast is to read its known keys.
     if (!isObj(sv) || !Array.isArray((sv as { verbs?: unknown }).verbs))
-      return { verbs: [...DEFAULT_VERBS], frameSet: [...DEFAULT_FRAMES] };
+      return { frameSet: [...DEFAULT_FRAMES] };
     // SAFETY: mode is a string key on the JsonObject; we validate the value below.
     const mode = (sv as { mode?: string }).mode;
-    if (mode !== "append" && mode !== "replace")
-      return { verbs: [...DEFAULT_VERBS], frameSet: [...DEFAULT_FRAMES] };
+    if (mode !== "append" && mode !== "replace") return { frameSet: [...DEFAULT_FRAMES] };
     // SAFETY: mode and verbs have been validated above; the cast narrows to the expected shape.
-    return {
-      verbs: mergeVerbs(DEFAULT_VERBS, sv as { mode: "append" | "replace"; verbs: string[] }),
-      frameSet: [...DEFAULT_FRAMES],
-    };
+    return { setting: sv as SpinnerVerbSetting, frameSet: [...DEFAULT_FRAMES] };
   } catch {
-    return { verbs: [...DEFAULT_VERBS], frameSet: [...DEFAULT_FRAMES] };
+    return { frameSet: [...DEFAULT_FRAMES] };
   }
 };
 
@@ -4564,7 +4643,9 @@ function watchTurnStatus(ctx: ClientCtx) {
     // The await used to be unhandled, so a throw inside `wireTurnStatus` became a rejection
     // `guard` never saw: the spinner simply never appeared, with nothing on the console to say why.
     void spinnerSettings.then((settings) => {
-      if (el.isConnected) wireTurnStatus(el, activeId, settings.verbs, settings.frameSet);
+      if (!el.isConnected) return;
+      const defaults = activeLocale().startsWith("zh") ? ZH_VERBS : DEFAULT_VERBS;
+      wireTurnStatus(el, activeId, mergeVerbs(defaults, settings.setting), settings.frameSet);
     }, console.error);
   };
   const scan = (root: HTMLElement) => {
@@ -5282,7 +5363,8 @@ function watchToolFolds() {
       for (const head of node.querySelectorAll<HTMLElement>(MARKDOWN_P)) heads.add(head);
     };
     for (const rec of records) {
-      take(rec.target);
+      const el = recordElement(rec);
+      if (el) take(el);
       for (const node of rec.addedNodes) take(node);
     }
     return heads;

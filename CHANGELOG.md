@@ -17,9 +17,17 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
   the result rows). Bash, Grep, Glob and MCP tool names stay as dsh shows them, in English. The
   status lines the plugin writes into the chat (compaction, retries, model fallbacks, usage limits,
   denied tool calls, "more lines" on long output) and the `/btw` replies follow it too.
+- The usage panel, the context breakdown and the usage report in Settings read in Chinese too,
+  including the sentences Claude Code and the usage API send in English. A sentence from a newer
+  Claude Code shows as sent until it is added.
+- A Chinese set of working verbs for the turn status line, in the same cheeky spirit as Claude
+  Code's English ones (炼丹中, 憋大招中, 叽里咕噜中). Your own `spinnerVerbs` in Claude Code's
+  settings still apply on top of them, or replace them.
 
 ### Fixed
 
+- Tool headers in the chat no longer show up now and then as a plain line with the code block
+  open under it until the tab is reloaded. A paragraph dsh reused for a header was never picked up.
 - Runs under DSH Desktop. The plugin finds `claude` in the usual install folders when dsh starts
   with a short PATH, as an app opened from the macOS Dock does, and the update pill no longer
   offers a `dsh plugin` command Desktop refuses; Desktop updates plugins from its own page.
