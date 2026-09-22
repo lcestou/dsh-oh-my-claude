@@ -4128,6 +4128,8 @@ const wireTurnStatus = (
   sessionId: string,
   verbs: string[],
   frames: readonly string[],
+  /** dsh's own word on whether the session is running, read fresh on every beat. */
+  isRunning: () => boolean = () => true,
 ) => {
   ensureTurnStatusStyle();
   if (el.hasAttribute(TURN_MARK)) return;
@@ -4192,11 +4194,27 @@ const wireTurnStatus = (
         stopTurnLine(el);
         return;
       }
+      // The two signals dsh owns, read every beat. The session summary's `running` drops the
+      // moment a turn ends however it ended, in any language. And a group that is no longer the
+      // newest one belongs to a turn that is over: Send now cuts a turn and starts the next under
+      // the same session, so `running` alone would keep the old line up. The plugin's own turn
+      // record is not used for this: the adapter clears and remakes it at tool boundaries, which
+      // took the line down at 7 s of a 29 s turn (measured 2026-09-22).
+      if (group !== null) {
+        const groups = document.querySelectorAll("button[data-turn-process]");
+        if (!isRunning() || groups[groups.length - 1] !== group) {
+          stop();
+          stopTurnLine(el);
+          return;
+        }
+      }
       // dsh leaves `data-open` on a turn that failed or was stopped, and the live-turn poll cannot
       // tell this group from the next turn under the same session. What holds in every language
       // and every ending: while a turn runs, dsh's own sentence in this button ticks every second
       // ("Deep diving for 12s"); once it stops changing it is a record ("Stopped", "Failed",
-      // "Took 5s"), and the line under it is stale (owner, 2026-09-22, twice).
+      // "Took 5s"), and the line under it is stale (owner, 2026-09-22, twice). Eight seconds,
+      // because the sentence was seen holding one figure for two seconds mid-turn, and the poll
+      // above ends a stopped turn within a second anyway; this is the backstop.
       if (group !== null) {
         const label = group.querySelector(":scope > span:not([data-omc-turn-line])");
         const text = label?.textContent ?? "";
@@ -4204,7 +4222,7 @@ const wireTurnStatus = (
         if (text !== dshLabelText) {
           dshLabelText = text;
           dshLabelAt = now;
-        } else if (dshLabelAt > 0 && now - dshLabelAt > 3500) {
+        } else if (dshLabelAt > 0 && now - dshLabelAt > 8000) {
           stop();
           stopTurnLine(el);
           return;
@@ -4288,11 +4306,6 @@ const wireTurnStatus = (
   /** How long the turn has run, per the last poll. Only read where dsh draws no clock of its own
    *  (0.1.7 and later); -1 until the first answer. */
   let elapsedMs = -1;
-  /** Whether the route has answered with a running turn yet, and how many empty answers have come
-   *  back before the first one. A poll can land before the adapter registers the turn, so an empty
-   *  answer is only an ending once a live one has been seen or three seconds of them have. */
-  let sawLiveTurn = false;
-  let emptyPolls = 0;
   // What is on screen: the eased count in characters (the CLI eases its response length, and
   // shows it over four) and the two colour ramps, each chased 10% per 50ms like the CLI does.
   let shownChars = 0;
@@ -4453,34 +4466,16 @@ const wireTurnStatus = (
       effort = b.effort ?? "";
       relayName = b.relayName ?? "";
       relayMs = b.relayMs ?? -1;
-      const prevElapsed = elapsedMs;
       elapsedMs = b.elapsedMs ?? -1;
       polledAt = Date.now();
       // The adapter drops its turn record the moment a turn ends, however it ended, so an empty
       // answer after a live one is the end of the turn. dsh keeps `data-open` on a failed group,
       // which is why the button's own state cannot be the only signal: a turn that failed left the
       // line saying "Incubating…" under dsh's "Failed" (owner, 2026-09-22).
-      if (b.elapsedMs === undefined) {
-        // Reopening a session re-renders its old groups, and dsh leaves a failed one open, so a
-        // line can be wired over a turn that ended long ago. Three empty answers settle that
-        // without cutting a turn whose record has not appeared yet.
-        emptyPolls += 1;
-        if (sawLiveTurn || emptyPolls >= 3) {
-          stop();
-          stopTurnLine(el);
-        }
-        return;
-      }
-      // The route answers for the session, not for this group. A turn cut short by Send now is
-      // followed by the next one at once, under the same session id, so the answer never goes
-      // empty: the elapsed time simply starts over. Time running backwards is a newer turn, and
-      // this line belongs to the one before it.
-      if (sawLiveTurn && prevElapsed >= 0 && b.elapsedMs + 500 < prevElapsed) {
-        stop();
-        stopTurnLine(el);
-        return;
-      }
-      sawLiveTurn = true;
+      // An empty answer is not an ending: the adapter registers the turn on its first frame and
+      // clears and remakes the record at tool boundaries, so the figures simply pause. The end
+      // of the turn is read off dsh in the beat above.
+      if (b.elapsedMs === undefined) return;
     } catch {
       // the row keeps its verb; the bracket is decoration
     }
@@ -4799,7 +4794,13 @@ function watchTurnStatus(ctx: ClientCtx) {
     void spinnerSettings.then((settings) => {
       if (!el.isConnected) return;
       const defaults = activeLocale().startsWith("zh") ? ZH_VERBS : DEFAULT_VERBS;
-      wireTurnStatus(el, activeId, mergeVerbs(defaults, settings.setting), settings.frameSet);
+      wireTurnStatus(
+        el,
+        activeId,
+        mergeVerbs(defaults, settings.setting),
+        settings.frameSet,
+        () => ctx.sessions.list.getSnapshot()?.byId[activeId]?.running === true,
+      );
     }, console.error);
   };
   const scan = (root: HTMLElement) => {
