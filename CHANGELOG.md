@@ -28,6 +28,9 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
   Code's English ones (炼丹中, 憋大招中, 叽里咕噜中). Your own `spinnerVerbs` in Claude Code's
   settings still apply on top of them, or replace them.
 
+- The plugin carries its own mark and its own name into dsh's Plugins page, where dsh 0.1.7 draws a
+  card per installed plugin. Before this it took the default artwork every plugin without one gets.
+
 ### Fixed
 
 - The turn status line is back on dsh 0.1.7. That release moved the visible line into the button
