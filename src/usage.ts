@@ -38,6 +38,9 @@ export interface UsageWindow {
   severity?: string;
   /** For a window scoped to one model, that model's display name (`Fable`), as the API names it. */
   model?: string;
+  /** Which of the plan's two main windows this is, so the client can name it in the reader's language;
+   *  absent for a model-scoped window (see `model`) and for a kind this code has not met. */
+  kind?: "session" | "weekly";
 }
 
 /** Usage credits ("extra usage") as the panel shows them; the money is already display text. */
@@ -134,10 +137,11 @@ const resetOf = (v: unknown): number | null => {
 export function usageWindows(payload: unknown): UsageWindow[] {
   const row = isRec(payload) ? payload : {};
   const out: UsageWindow[] = [];
-  const legacy = (v: unknown, label: string) => {
+  const legacy = (v: unknown, label: string, kind: "session" | "weekly") => {
     if (!isRec(v)) return;
     const usedPercent = percentOf(v.utilization);
-    if (usedPercent !== null) out.push({ label, usedPercent, resetsAt: resetOf(v.resets_at) });
+    if (usedPercent !== null)
+      out.push({ label, kind, usedPercent, resetsAt: resetOf(v.resets_at) });
   };
   const limits = Array.isArray(row.limits) ? row.limits : [];
   let session: UsageWindow | undefined;
@@ -155,9 +159,10 @@ export function usageWindows(payload: unknown): UsageWindow[] {
     const resetsAt = resetOf(entry.resets_at);
     // The API grades each window itself; its grade is passed on rather than a threshold of ours.
     const graded = typeof entry.severity === "string" ? { severity: entry.severity } : {};
-    if (entry.kind === "session") session ??= { label: "5-hour", usedPercent, resetsAt, ...graded };
+    if (entry.kind === "session")
+      session ??= { label: "5-hour", kind: "session", usedPercent, resetsAt, ...graded };
     else if (entry.kind === "weekly_all")
-      weekly ??= { label: "Weekly", usedPercent, resetsAt, ...graded };
+      weekly ??= { label: "Weekly", kind: "weekly", usedPercent, resetsAt, ...graded };
     else if (entry.kind === "weekly_scoped") {
       const scope = isRec(entry.scope) ? entry.scope : {};
       const model = isRec(scope.model) ? scope.model : {};
@@ -177,9 +182,9 @@ export function usageWindows(payload: unknown): UsageWindow[] {
     }
   }
   if (session) out.push(session);
-  else legacy(row.five_hour, "5-hour");
+  else legacy(row.five_hour, "5-hour", "session");
   if (weekly) out.push(weekly);
-  else legacy(row.seven_day, "Weekly");
+  else legacy(row.seven_day, "Weekly", "weekly");
   out.push(...others);
   return out;
 }

@@ -3,7 +3,7 @@
 // here or jump to the box) and Boxes (this box as the first row, plus the ssh and linked-dsh
 // machines you add, each probed for claude version and login). Built into lib/client.js by
 // `bun run build`.
-import { installLocale, onLocaleSwitch, t, useLocale } from "./i18n.js";
+import { installLocale, type OmcKey, onLocaleSwitch, t, useLocale } from "./i18n.js";
 import type { CSSProperties, FC, ReactNode } from "react";
 import {
   Fragment,
@@ -2979,6 +2979,7 @@ interface UsageWindow {
   resetsAt: number | null;
   severity?: string;
   model?: string;
+  kind?: "session" | "weekly";
 }
 interface UsageCredits {
   enabled: boolean;
@@ -3114,6 +3115,23 @@ const SEGMENT_COLORS = [
   "#6366f1",
 ];
 
+/** The CLI's context category names, which it sends in English only. A name not listed here (one a
+ *  newer CLI adds) shows as sent rather than disappearing. */
+const CATEGORY_KEYS = new Map<string, OmcKey>([
+  ["System prompt", "main.usage.catSystemPrompt"],
+  ["System tools", "main.usage.catSystemTools"],
+  ["MCP tools", "main.usage.catMcpTools"],
+  ["Custom agents", "main.usage.catCustomAgents"],
+  ["Memory files", "main.usage.catMemoryFiles"],
+  ["Skills", "main.usage.catSkills"],
+  ["Messages", "main.usage.catMessages"],
+]);
+/** A context category's name in the reader's language, or the CLI's own name when it is new. */
+const categoryName = (cliName: string): string => {
+  const key = CATEGORY_KEYS.get(cliName);
+  return key ? t(key) : cliName;
+};
+
 /** The meter's own readout, over the CLI's categories: a filled bar and one legend row each. */
 function renderContext(el: HTMLElement, reply: ContextReply) {
   el.replaceChildren();
@@ -3162,7 +3180,7 @@ function renderContext(el: HTMLElement, reply: ContextReply) {
     "aria-label",
     t("main.usage.contextBarLabel", {
       pct: Math.round(reply.percentage),
-      rows: rows.map((c) => `${c.name} ${kTokens(c.tokens)}`).join(", "),
+      rows: rows.map((c) => `${categoryName(c.name)} ${kTokens(c.tokens)}`).join(", "),
     }),
   );
   const legend = document.createElement("div");
@@ -3181,7 +3199,7 @@ function renderContext(el: HTMLElement, reply: ContextReply) {
     dot.style.cssText = `flex:0 0 auto;width:8px;height:8px;border-radius:2px;background:${color}`;
     const rowName = document.createElement("span");
     rowName.style.cssText = "overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
-    rowName.textContent = c.name;
+    rowName.textContent = categoryName(c.name);
     label.append(dot, rowName);
     const val = document.createElement("span");
     val.style.cssText = "font-variant-numeric:tabular-nums;white-space:nowrap";
@@ -3217,6 +3235,14 @@ const appendNote = (el: HTMLElement, note: string) => {
   el.append(note.slice(m.index + whole.length));
 };
 
+/** Anthropic's credits sentence in the reader's language when it is the wording this was written
+ *  against. Other wording shows as the API sent it: a guessed translation of new text would be the
+ *  plugin's account of credits, not Anthropic's. The link inside keeps its address either way. */
+const creditsNote = (note: string): string =>
+  note
+    .replace("Usage credits cover you when you hit your plan limits.", t("main.usage.creditsNote"))
+    .replace("[Learn more](", `[${t("main.usage.learnMore")}](`);
+
 /**
  * Credits sit under the plan windows in the same grammar, but with no bar and no reset: they are a
  * balance, not a window, and a percent here would imply a clock they do not have. The caption is
@@ -3239,7 +3265,7 @@ function creditsRow(c: UsageCredits): HTMLElement {
   if (c.note || c.canPurchase) {
     const caption = document.createElement("span");
     caption.style.cssText = `grid-column:1 / -1;color:${T.faint};font-size:11px;line-height:16px`;
-    if (c.note) appendNote(caption, c.note);
+    if (c.note) appendNote(caption, creditsNote(c.note));
     if (c.canPurchase) {
       if (c.note) caption.append(" ");
       caption.append(extLink(t("main.usage.buyCredits"), "https://claude.ai/settings/usage"));
@@ -3248,6 +3274,17 @@ function creditsRow(c: UsageCredits): HTMLElement {
   }
   return creditsLine;
 }
+
+/** A window's name in the reader's language: the plugin's word for the two plan windows and a
+ *  model's weekly one, and the API's own kind name for a window this code has not met. */
+const windowLabel = (w: UsageWindow): string =>
+  w.kind === "session"
+    ? t("main.usage.window5h")
+    : w.kind === "weekly"
+      ? t("main.usage.windowWeekly")
+      : w.model
+        ? t("main.usage.windowModelWeekly", { model: w.model })
+        : w.label;
 
 /** Fill a block with the usage rows, styled like the meter's own legend rows, or with the error
  *  text when the reply is not ok. */
@@ -3269,7 +3306,7 @@ function renderUsage(block: HTMLElement, reply: UsageReply) {
     usageRow.style.cssText =
       "display:grid;grid-template-columns:1fr auto;align-items:baseline;column-gap:12px;row-gap:3px;padding:3px 0";
     const label = document.createElement("span");
-    label.textContent = w.label;
+    label.textContent = windowLabel(w);
     label.style.cssText = `color:${T.text};font-weight:500`;
     const value = document.createElement("span");
     value.textContent = `${Math.round(pct)}%`;
@@ -3281,7 +3318,7 @@ function renderUsage(block: HTMLElement, reply: UsageReply) {
     bar.setAttribute("aria-valuemax", "100");
     bar.setAttribute(
       "aria-label",
-      t("main.usage.barLabel", { label: w.label, pct: Math.round(pct) }),
+      t("main.usage.barLabel", { label: windowLabel(w), pct: Math.round(pct) }),
     );
     bar.style.cssText = `grid-column:1 / -1;height:4px;border-radius:2px;background:${T.border};overflow:hidden`;
     const fill = document.createElement("div");
@@ -3542,7 +3579,7 @@ function watchContextMeter(ctx: ClientCtx) {
           return;
         }
         const windows = reply.windows
-          .map((w) => `${w.label.toLowerCase()} ${Math.round(w.usedPercent)}%`)
+          .map((w) => `${windowLabel(w).toLowerCase()} ${Math.round(w.usedPercent)}%`)
           .join(" · ");
         text.textContent = windows
           ? t("main.usage.bubbleWindows", { windows, who })
@@ -7957,7 +7994,7 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
       )}
       {limitCard && (
         <LimitCard
-          label={limitCard.label}
+          label={windowLabel(limitCard)}
           resetsAt={limitCard.resetsAt}
           // The reset time is the key: a later limit, or the same one after it resets, shows again.
           onDismiss={() => limitCard.resetsAt !== null && setLimitDismissed(limitCard.resetsAt)}
