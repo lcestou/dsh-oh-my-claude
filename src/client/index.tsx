@@ -15,21 +15,23 @@ import {
   useState,
 } from "react";
 import {
-  IconAgentPresetOutline16,
-  IconApiOutline14,
-  IconBrowseOutline16,
-  IconChecklistOutline14,
-  IconChevronDownOutline14,
-  IconCodeOutline16,
-  IconEditOutline16,
-  IconListPenOutline16,
-  IconSearchOutline16,
-  IconSkillOutline16,
-  IconSparkle16,
   Menu,
   useAnchoredPosition,
   useDismissOnOutsidePointer,
 } from "@deepseek-ai/dsh-client-ui-primitives";
+import {
+  IconAgentPresetOutlineMedium,
+  IconApiOutlineRegular,
+  IconBrowseOutlineMedium,
+  IconChecklistOutlineRegular,
+  IconChevronDownOutlineRegular,
+  IconCodeOutlineMedium,
+  IconEditOutlineMedium,
+  IconListPenOutlineMedium,
+  IconSearchOutlineMedium,
+  IconSkillOutlineMedium,
+  IconSparkleMedium,
+} from "./icons.js";
 import {
   ROUTE,
   useNarrow,
@@ -5029,18 +5031,18 @@ const SPRITE_MARK = "data-omc-sprite"; // on each hidden sprite: its key
  *  row visually the same family instead of inventing a second icon set. `chevron` is the disclosure
  *  marker; dsh's tool rows use the same one, unrotated. */
 const SPRITES = {
-  "❯": IconApiOutline14,
-  "▤": IconBrowseOutline16,
-  "✎": IconEditOutline16,
-  "⌕": IconSearchOutline16,
-  "✳": IconCodeOutline16,
-  "⤓": IconBrowseOutline16,
-  "☑": IconChecklistOutline14,
-  "⚙": IconAgentPresetOutline16,
-  "☰": IconListPenOutline16,
-  "⌘": IconSkillOutline16,
-  "◆": IconSparkle16,
-  chevron: IconChevronDownOutline14,
+  "❯": IconApiOutlineRegular,
+  "▤": IconBrowseOutlineMedium,
+  "✎": IconEditOutlineMedium,
+  "⌕": IconSearchOutlineMedium,
+  "✳": IconCodeOutlineMedium,
+  "⤓": IconBrowseOutlineMedium,
+  "☑": IconChecklistOutlineRegular,
+  "⚙": IconAgentPresetOutlineMedium,
+  "☰": IconListPenOutlineMedium,
+  "⌘": IconSkillOutlineMedium,
+  "◆": IconSparkleMedium,
+  chevron: IconChevronDownOutlineRegular,
 } satisfies Record<string, FC<{ size?: number }>>;
 
 /** The hidden sprite sheet: one rendered copy of each dsh icon, cloned into the tool headers by the

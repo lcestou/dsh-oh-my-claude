@@ -30,6 +30,11 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- Runs on dsh 0.1.7-alpha.1, which renamed every sized icon export in its primitives package. On
+  0.1.7 the old names arrived as undefined and React threw where they were drawn, so the composer
+  cards, the Oh My Claude panel, the directory browser and the add-workspace box list all went
+  missing at once. Each icon now resolves to whichever name the installed dsh has, and 0.1.5 and
+  0.1.6 keep working.
 - The Claude look no longer drops off new sessions until a refresh. One passing error from dsh's
   session list could switch off the plugin's page code for the rest of the tab's life; now only a
   real unload does.

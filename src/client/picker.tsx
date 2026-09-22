@@ -11,7 +11,8 @@
 // With no box saved the takeover never engages and dsh's dialog is left alone.
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useState } from "react";
-import { IconChevronDownOutline14, Menu } from "@deepseek-ai/dsh-client-ui-primitives";
+import { Menu } from "@deepseek-ai/dsh-client-ui-primitives";
+import { IconChevronDownOutlineRegular } from "./icons.js";
 import {
   ROUTE,
   T,
@@ -297,7 +298,7 @@ export function AddWorkspaceFlow({ ctx }: { ctx: ClientCtx }) {
               onClick={() => setMenuOpen((v) => !v)}
             >
               {current?.name}
-              <IconChevronDownOutline14 />
+              <IconChevronDownOutlineRegular />
             </button>
           }
         />

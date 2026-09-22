@@ -2,7 +2,7 @@
 // left, a 32 px field recessed to the base layer, dsh's quieter border. The plugin's three searches
 // were the generic text field, which sat a shade lighter than the panel and, inside a column, had
 // its height taken by `flex: 1` down to 17 px.
-import { IconSearchOutline16 } from "@deepseek-ai/dsh-client-ui-primitives";
+import { IconSearchOutlineMedium } from "./icons.js";
 import type { CSSProperties } from "react";
 
 import { T } from "./shared.js";
@@ -56,7 +56,7 @@ export function SearchField({
       }}
     >
       <span style={{ position: "absolute", left: 12, display: "flex", pointerEvents: "none" }}>
-        <IconSearchOutline16 size={16} />
+        <IconSearchOutlineMedium size={16} />
       </span>
       <input
         type="search"

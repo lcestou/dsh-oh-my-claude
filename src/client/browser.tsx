@@ -17,16 +17,15 @@
 // token, so the dialog follows the theme the way dsh's does.
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Button, Modal } from "@deepseek-ai/dsh-client-ui-primitives";
 import {
-  Button,
-  IconCheckOutline16,
-  IconChevronRightOutline14,
-  IconEditOutline16,
-  IconFolderClose16,
-  IconFolderOpen16,
-  IconPlusOutline16,
-  Modal,
-} from "@deepseek-ai/dsh-client-ui-primitives";
+  IconCheckOutlineMedium,
+  IconChevronRightOutlineRegular,
+  IconEditOutlineMedium,
+  IconFolderCloseMedium,
+  IconFolderOpenMedium,
+  IconPlusOutlineMedium,
+} from "./icons.js";
 import type { DirEntry } from "./shared.js";
 import { t as omcT, useLocale } from "./i18n.js";
 
@@ -251,12 +250,12 @@ function LevelColumn({
               onClick={() => onPick(entry)}
             >
               {selected ? (
-                <IconFolderOpen16 size={16} className={`${P}-rowIconSelected`} />
+                <IconFolderOpenMedium size={16} className={`${P}-rowIconSelected`} />
               ) : (
-                <IconFolderClose16 size={16} className={`${P}-rowIcon`} />
+                <IconFolderCloseMedium size={16} className={`${P}-rowIcon`} />
               )}
               <span className={`${P}-rowName`}>{entry.name}</span>
-              <IconChevronRightOutline14 size={12} className={`${P}-rowChevron`} />
+              <IconChevronRightOutlineRegular size={12} className={`${P}-rowChevron`} />
             </button>
           </li>
         );
@@ -665,7 +664,10 @@ export function DirectoryBrowser({
                     {crumbs.map((crumb, index) => (
                       <span className={`${P}-crumbSeat`} key={crumb.path}>
                         {index > 0 && (
-                          <IconChevronRightOutline14 size={12} className={`${P}-crumbChevron`} />
+                          <IconChevronRightOutlineRegular
+                            size={12}
+                            className={`${P}-crumbChevron`}
+                          />
                         )}
                         <button
                           type="button"
@@ -699,7 +701,7 @@ export function DirectoryBrowser({
                       setPathDraft(base.endsWith(sep) ? base : `${base}${sep}`);
                     }}
                   >
-                    <IconEditOutline16 size={14} className={`${P}-editGlyph`} />
+                    <IconEditOutlineMedium size={14} className={`${P}-editGlyph`} />
                   </button>
                 </>
               ) : (
@@ -780,7 +782,7 @@ export function DirectoryBrowser({
             {footerLead}
             <Button
               variant="outline"
-              icon={<IconPlusOutline16 size={14} />}
+              icon={<IconPlusOutlineMedium size={14} />}
               disabled={parent === null || loading || parentInert || draftPending}
               onClick={() => {
                 setFolderDraft("");
@@ -798,7 +800,7 @@ export function DirectoryBrowser({
               onClick={() => setShowHidden((prev) => !prev)}
             >
               {t("browser.showHidden")}
-              {showHidden && <IconCheckOutline16 size={14} />}
+              {showHidden && <IconCheckOutlineMedium size={14} />}
             </button>
             <span className={`${P}-gap`} />
             <Button
