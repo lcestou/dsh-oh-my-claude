@@ -39,6 +39,8 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 - Picking a permission mode marks the menu at once. The pick used to sit on the old mode for the
   second or so the change takes, which read as a click that had not landed; a change that fails
   now puts the real mode back.
+- A turn that fails stops the status line with it. dsh leaves a failed turn's group open, so the
+  line kept its verb and spinner under dsh's own "Failed" as though the work were still running.
 - The turn status line is back on dsh 0.1.7. That release moved the visible line into the button
   heading each turn's process group and left the old row for screen readers only, so the verb,
   spinner and figures were still being drawn, into a node one pixel tall that nobody could see.

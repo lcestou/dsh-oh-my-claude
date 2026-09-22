@@ -4255,6 +4255,9 @@ const wireTurnStatus = (
   /** How long the turn has run, per the last poll. Only read where dsh draws no clock of its own
    *  (0.1.7 and later); -1 until the first answer. */
   let elapsedMs = -1;
+  /** Whether the route has answered with a running turn yet. A poll before the adapter registers
+   *  the turn answers empty too, and that is not an ending. */
+  let sawLiveTurn = false;
   // What is on screen: the eased count in characters (the CLI eases its response length, and
   // shows it over four) and the two colour ramps, each chased 10% per 50ms like the CLI does.
   let shownChars = 0;
@@ -4417,6 +4420,16 @@ const wireTurnStatus = (
       relayMs = b.relayMs ?? -1;
       elapsedMs = b.elapsedMs ?? -1;
       polledAt = Date.now();
+      // The adapter drops its turn record the moment a turn ends, however it ended, so an empty
+      // answer after a live one is the end of the turn. dsh keeps `data-open` on a failed group,
+      // which is why the button's own state cannot be the only signal: a turn that failed left the
+      // line saying "Incubating…" under dsh's "Failed" (owner, 2026-09-22).
+      if (b.elapsedMs === undefined && sawLiveTurn) {
+        stop();
+        stopTurnLine(el);
+        return;
+      }
+      if (b.elapsedMs !== undefined) sawLiveTurn = true;
     } catch {
       // the row keeps its verb; the bracket is decoration
     }
