@@ -23,7 +23,6 @@ import {
   type PermissionKind,
 } from "../permissions.js";
 import { SCOPE_LABELS, type SettingsScopeInfo } from "./settings.js";
-import type { ToolMode, ToolModeInfo } from "../rows-probe.js";
 import { t, useLocale } from "./i18n.js";
 
 /** What the usage route answers about extra usage. */
@@ -348,8 +347,6 @@ export function TuneBody({
   const [thinkBusy, setThinkBusy] = useState(false);
   // Tool activity for every session: inline text or dsh's native rows. The plugin holds it, not
   // settings.json: the CLI has no such key. Null until the first read answers.
-  const [toolMode, setToolMode] = useState<ToolModeInfo | null>(null);
-  const [toolModeErr, setToolModeErr] = useState("");
   const [thinkErr, setThinkErr] = useState("");
 
   useEffect(() => {
@@ -374,17 +371,6 @@ export function TuneBody({
       live = false;
     };
   }, [sessionId]);
-
-  useEffect(() => {
-    let live = true;
-    fetch(`${ROUTE}/tool-mode`)
-      .then((r) => readJson<ToolModeInfo>(r))
-      .then((b) => live && setToolMode(b))
-      .catch(() => live && setToolModeErr(t("tune.errToolMode")));
-    return () => {
-      live = false;
-    };
-  }, []);
 
   if (!file)
     return error ? (
@@ -506,66 +492,10 @@ export function TuneBody({
   };
   const thinking = settings.alwaysThinkingEnabled === true;
 
-  const pickToolMode = async (mode: ToolMode) => {
-    setToolModeErr("");
-    try {
-      setToolMode(
-        await readJson<ToolModeInfo>(
-          await fetch(`${ROUTE}/tool-mode`, {
-            method: "PUT",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ mode }),
-          }),
-        ),
-      );
-    } catch (e) {
-      setToolModeErr(e instanceof Error ? e.message : String(e));
-    }
-  };
-
-  // Rows are locked, not hidden, on a dsh that refuses to load them: the row says why, and the
-  // same switch works again on a dsh that does, with nothing to update here.
-  const rowsLocked = toolMode?.rows.ok === false;
-
   return (
     <div style={bodyFlow}>
       <span style={{ ...meta, padding: "2px 0", whiteSpace: "normal" }}>{t("tune.savedNote")}</span>
       {error ? <span style={errText}>{error}</span> : null}
-
-      <div style={rowStyle} data-omc-tool-mode="">
-        <span style={labelStyle}>{t("tune.toolActivity")}</span>
-        <div style={controlStyle} role="radiogroup" aria-label={t("tune.toolActivity")}>
-          {(["inline", "rows"] as const).map((mode) => {
-            const locked = mode === "rows" && rowsLocked;
-            const usable = toolMode !== null && !locked;
-            return (
-              <label
-                key={mode}
-                style={{ display: "flex", alignItems: "center", gap: 6, cursor: check(usable) }}
-              >
-                <input
-                  type="radio"
-                  name="omc-tool-mode"
-                  checked={(toolMode?.mode ?? "inline") === mode}
-                  disabled={!usable}
-                  onChange={() => void pickToolMode(mode)}
-                  style={{ cursor: check(usable) }}
-                />
-                <span style={{ fontSize: 12 }}>
-                  {mode === "inline" ? t("tune.toolInline") : t("tune.toolRows")}
-                </span>
-              </label>
-            );
-          })}
-        </div>
-        <span style={{ ...meta, flexBasis: "100%", whiteSpace: "normal" }}>
-          {toolModeErr
-            ? toolModeErr
-            : rowsLocked
-              ? t("tune.rowsLocked", { reason: toolMode?.rows.reason ?? "" })
-              : t("tune.toolHelp")}
-        </span>
-      </div>
 
       <div style={rowStyle}>
         <span style={labelStyle}>{t("tune.outputStyle")}</span>

@@ -361,6 +361,9 @@ export const en = {
   "main.settingsUi.details": "Details",
   "main.settingsUi.proxyDetails":
     "When ANTHROPIC_BASE_URL names any host but api.anthropic.com, Claude Code assumes 200k for models that hold 1M: Opus 5, Opus 4.8 and Sonnet 5 compact early, and Fable stops compacting. On, sessions start with Claude Code's own flag for a proxy that forwards to Anthropic, run at 1M and compact against it; a session already running follows on its next message. Auto asks the base URL once per dsh run, with no key attached: a proxy that forwards hands back Anthropic's own authentication error and request id, which a gateway routing elsewhere (Bedrock, Vertex) does not, and a proxy that cannot be reached is left alone rather than assumed. Choose Off for such a gateway, or to hold a session at the window the CLI guesses. Without a base URL none of it changes anything.",
+  "main.settingsUi.toolRowsTitle": "Native tool rows",
+  "main.settingsUi.toolRowsDesc":
+    "Show Claude's tool calls as dsh's own tool cards, with the text streaming between them, instead of as text inside its message. Box-wide, from your next message. Off is inline text, which never depends on dsh's log format.",
   "main.settingsUi.wsModelTitle": "Remember model per workspace",
   "main.settingsUi.wsModelDesc":
     "A new session in a workspace opens on the Claude it last ran there: the same box and the same model. A blank session you have already switched by hand is left as you set it.",
@@ -801,6 +804,9 @@ export const zh = {
   "main.settingsUi.details": "详情",
   "main.settingsUi.proxyDetails":
     "当 ANTHROPIC_BASE_URL 指向 api.anthropic.com 以外的任何主机时，Claude Code 会对拥有 1M 窗口的模型假定为 200k：Opus 5、Opus 4.8 和 Sonnet 5 会过早压缩，而 Fable 会停止压缩。开启后，会话会带上 Claude Code 自己用于“转发到 Anthropic 的代理”的标志启动，以 1M 运行并据此压缩；已在运行的会话会在下一条消息时跟进。Auto 每次 dsh 运行询问一次 base URL，且不附带任何密钥：转发型代理会回传 Anthropic 自己的认证错误和请求 id，而路由到别处的网关（Bedrock、Vertex）不会，无法连接的代理则保持原样而非假定。对于这类网关，或想把会话保持在 CLI 猜测的窗口，请选择“关”。没有 base URL 时，这些设置都不起作用。",
+  "main.settingsUi.toolRowsTitle": "原生工具卡片",
+  "main.settingsUi.toolRowsDesc":
+    "把 Claude 的工具调用显示为 dsh 自己的工具卡片，文本在卡片之间流式显示，而不是作为消息内的文本。整机生效，从你的下一条消息起。关闭则为内联文本，它从不依赖 dsh 的日志格式。",
   "main.settingsUi.wsModelTitle": "按工作区记住模型",
   "main.settingsUi.wsModelDesc":
     "工作区中的新会话会以它上次运行的 Claude 打开：同一台机器、同一个模型。你已手动切换过的空白会话保持你的选择。",

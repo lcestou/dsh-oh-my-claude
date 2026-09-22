@@ -8,6 +8,9 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Changed
 
+- The inline-or-rows choice for Claude's tool activity moved from the Tune tab to Settings > Oh My
+  Claude, as a Native tool rows switch. It configures the bridge, not Claude Code, which is what
+  Tune is for.
 - Native rows are the default on dsh 0.1.7 and later. There the text streams live between dsh's
   own tool cards and the rows survive a reload, so Claude's tool activity looks like every other
   provider's in dsh. Inline stays the default before 0.1.7, where a step's text lands only when it

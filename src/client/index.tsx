@@ -96,6 +96,7 @@ import { ClaudeUpdateDetails } from "./claude-updates.js";
 import { type LimitLevel, worstLimit } from "./limits.js";
 import { SearchField } from "./search-field.js";
 import { Switch } from "./switch.js";
+import type { ToolMode, ToolModeInfo } from "../rows-probe.js";
 import { takeDraft, subscribeDraft, noteDraft, draftPending } from "./draft.js";
 import {
   awaitingBody,
@@ -7180,6 +7181,75 @@ function WorkspaceModelSwitch() {
   );
 }
 
+/**
+ * The settings switch between dsh's native tool rows and inline text for Claude's tool activity.
+ * A bridge setting, not a Claude Code one, which is why it sits here and not in the Tune tab.
+ * Box-wide, through the plugin's own tool-mode route; the row says why rows are off on a dsh
+ * that will not load them, and is disabled then.
+ */
+function ToolRowsSwitch() {
+  useLocale();
+  const [info, setInfo] = useState<ToolModeInfo | null>(null);
+  const [err, setErr] = useState("");
+  useEffect(() => {
+    let live = true;
+    fetch(`${ROUTE}/tool-mode`)
+      .then((r) => readJson<ToolModeInfo>(r))
+      .then((b) => live && setInfo(b))
+      .catch(() => live && setErr(t("tune.errToolMode")));
+    return () => {
+      live = false;
+    };
+  }, []);
+  const locked = info?.rows.ok === false;
+  const pick = async (mode: ToolMode) => {
+    setErr("");
+    try {
+      setInfo(
+        await readJson<ToolModeInfo>(
+          await fetch(`${ROUTE}/tool-mode`, {
+            method: "PUT",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ mode }),
+          }),
+        ),
+      );
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  };
+  return (
+    <div
+      data-omc-tool-rows-switch=""
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
+        fontSize: 13,
+        marginBottom: 12,
+      }}
+    >
+      <div>
+        <div>{t("main.settingsUi.toolRowsTitle")}</div>
+        <div style={{ color: T.faint, fontSize: 12 }}>
+          {err
+            ? err
+            : locked
+              ? t("tune.rowsLocked", { reason: info?.rows.reason ?? "" })
+              : t("main.settingsUi.toolRowsDesc")}
+        </div>
+      </div>
+      <Switch
+        on={info?.mode === "rows"}
+        disabled={info === null || locked}
+        onChange={(next) => void pick(next ? "rows" : "inline")}
+        label={t("main.settingsUi.toolRowsTitle")}
+      />
+    </div>
+  );
+}
+
 /** The settings switch for the cost pill in dsh's footer row. On unless it is turned off. */
 function CostSwitch() {
   useLocale();
@@ -8893,6 +8963,7 @@ export function apply(ctx: ClientCtx) {
         <CostSwitch />
         <LimitWarningsSwitch />
         <WorkspaceModelSwitch />
+        <ToolRowsSwitch />
         {/* The switches that start off sit together after the ones that start on, so the card reads
             as what the plugin does by default first, then what you can add to it. The proxy control
             keeps company with them rather than with the spend field it used to precede: it answers
