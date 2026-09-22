@@ -8,6 +8,17 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Changed
 
+- Less work per frame and per poll. The status line no longer forces a style recalc or walks the
+  page eight times a second; the row mask for withheld context re-runs only when rows are added,
+  not on every streamed chunk; the cost pill, the send-button tint and the panel's fit-above
+  measurement search a small root instead of the whole page; a hidden tab makes no status request
+  and paints no spinner. On the server, the hints file is parsed once per change, a box's runtime
+  status is remembered for a minute (three processes, or three ssh connections per box, per ask
+  before), the three ssh probes of a box run over one connection, and the steer card's poll no
+  longer reads the whole session log each second.
+
+### Changed
+
 - The inline-or-rows choice for Claude's tool activity moved from the Tune tab to Settings > Oh My
   Claude, as a Native tool rows switch. It configures the bridge, not Claude Code, which is what
   Tune is for.

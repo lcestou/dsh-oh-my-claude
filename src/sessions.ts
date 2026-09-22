@@ -293,17 +293,32 @@ const UPDATE_COMMAND = updateCommand(PLUGIN_NAME, profileFromPath(import.meta.ur
  *  settings switches. Only `true` and finite non-negative numbers are kept, so a missing or
  *  unreadable file reads as every switch at its default. */
 export async function readHints(hintsPath: string): Promise<Record<string, boolean | number>> {
-  const parsed: unknown = await readFile(hintsPath, "utf8")
-    .then((t) => JSON.parse(t))
-    .catch(() => null);
+  // One stat per read instead of a read and a parse: the file is asked for once a second by the
+  // steer card's poll and every three by the update card's, and it changes only when a switch is
+  // flipped. An mtime that has not moved answers from memory; a hand edit moves it and is seen.
+  const mtime = await stat(hintsPath)
+    .then((st) => st.mtimeMs)
+    .catch(() => -1);
+  const cached = hintsCache.get(hintsPath);
+  if (cached && cached.mtime === mtime) return cached.value;
+  const parsed: unknown =
+    mtime < 0
+      ? null
+      : await readFile(hintsPath, "utf8")
+          .then((t) => JSON.parse(t))
+          .catch(() => null);
   const out: Record<string, boolean | number> = {};
   if (isJsonObject(parsed))
     for (const [k, v] of Object.entries(parsed)) {
       if (v === true) out[k] = true;
       else if (typeof v === "number" && Number.isFinite(v) && v >= 0) out[k] = v;
     }
+  hintsCache.set(hintsPath, { mtime, value: out });
   return out;
 }
+/** The last parse of each hints file, keyed by path, with the mtime it was read at. `updateHints`
+ *  refreshes it after every write, since two writes inside one millisecond share an mtime. */
+const hintsCache = new Map<string, { mtime: number; value: Record<string, boolean | number> }>();
 
 let hintsChain: Promise<unknown> = Promise.resolve();
 /**
@@ -332,6 +347,12 @@ export function updateHints(
       else if (v === false || v === null) delete merged[k];
     }
     await writeJson(hintsPath, merged);
+    hintsCache.set(hintsPath, {
+      mtime: await stat(hintsPath)
+        .then((st) => st.mtimeMs)
+        .catch(() => -1),
+      value: merged,
+    });
     return merged;
   });
   // The chain must survive a failed patch, or one unwritable moment stops every later write.
@@ -773,6 +794,7 @@ const identityCache = new Map<string, { at: number; value: AccountIdentity }>();
 /** A panel login or logout changed who a box is: the next ask reads the CLI again. */
 export function forgetIdentity(): void {
   identityCache.clear();
+  statusCache.clear();
 }
 /** Answers who is logged in on a box, shelling out to `claude auth status` (over ssh for a remote
  *  box, where a local configDir is meaningless) and caching the answer per config dir for ten
@@ -819,20 +841,64 @@ async function runtimeStatus(
   command = "claude",
   sshHost = "",
 ): Promise<RuntimeStatus> {
-  /** Run a `claude` command on a remote box over ssh, so the status probes answer the box the
-   *  session runs on rather than this one. */
-  const remote = (args: string[]) =>
-    run("ssh", sshArgs(sshHost, `${shq(command)} ${args.map(shq).join(" ")}`));
-  const [which, version, status] = await Promise.all([
-    sshHost
-      ? run("ssh", sshArgs(sshHost, `command -v ${shq(command)}`))
-      : run(
-          process.platform === "win32" ? "where" : "sh",
-          process.platform === "win32" ? [command] : ["-c", `command -v ${command}`],
-        ),
-    sshHost ? remote(["--version"]) : run(command, ["--version"]),
-    sshHost ? remote(["auth", "status"]) : run(command, ["auth", "status"]),
-  ]);
+  // Three processes a call, over ssh three connections, and the tab asks on load, on every
+  // Diagnostics open and on every Boxes refresh. The answer changes when a login changes or a CLI
+  // updates, both of which clear this through `forgetIdentity`; a minute covers the rest.
+  const key = `${configDir}\0${command}\0${sshHost}`;
+  const hit = statusCache.get(key);
+  if (hit && Date.now() - hit.at < STATUS_TTL_MS) return structuredClone(await hit.value);
+  const value = probeRuntime(configDir, command, sshHost);
+  statusCache.set(key, { at: Date.now(), value });
+  try {
+    return structuredClone(await value);
+  } catch (error) {
+    statusCache.delete(key);
+    throw error;
+  }
+}
+const STATUS_TTL_MS = 60_000;
+/** What one probe command answered: its stdout, and the failure text when it did not run. */
+interface ProbeOutput {
+  out: string;
+  error?: string;
+}
+const statusCache = new Map<string, { at: number; value: Promise<RuntimeStatus> }>();
+/** The probes behind `runtimeStatus`, uncached. */
+async function probeRuntime(
+  configDir: string,
+  command: string,
+  sshHost: string,
+): Promise<RuntimeStatus> {
+  let which: ProbeOutput;
+  let version: ProbeOutput;
+  let status: ProbeOutput;
+  if (sshHost) {
+    // One ssh connection for the three answers, split on a marker the CLI never prints: three
+    // connections per box, per refresh, was the cost that grew with every box added.
+    const sep = "__OMC_SPLIT__";
+    const script = [
+      `command -v ${shq(command)}`,
+      `printf '\\n${sep}\\n'`,
+      `${shq(command)} --version`,
+      `printf '\\n${sep}\\n'`,
+      `${shq(command)} auth status`,
+    ].join("; ");
+    const all = await run("ssh", sshArgs(sshHost, script));
+    const [w = "", v = "", st = ""] = all.out.split(sep);
+    which = { out: w };
+    version = { out: v };
+    if (all.error && !v.trim()) version.error = all.error;
+    status = { out: st };
+  } else {
+    [which, version, status] = await Promise.all([
+      run(
+        process.platform === "win32" ? "where" : "sh",
+        process.platform === "win32" ? [command] : ["-c", `command -v ${command}`],
+      ),
+      run(command, ["--version"]),
+      run(command, ["auth", "status"]),
+    ]);
+  }
   const out: RuntimeStatus = {
     host: sshHost || hostname(),
     plugin: PLUGIN_VERSION,

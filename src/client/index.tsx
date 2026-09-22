@@ -4107,7 +4107,9 @@ const turnStatusRow = (found: HTMLElement): HTMLElement | undefined => {
   if (found.getAttribute("role") !== "status" || found.getAttribute("aria-live") !== "polite")
     return undefined;
   // Clipped to a pixel for screen readers on 0.1.7; a row with a real box is 0.1.6 or earlier and
-  // is the one to paint.
+  // is the one to paint. The class name answers first, since it costs nothing; the measurement,
+  // which forces layout, is only for a row the class does not settle.
+  if (found.className.includes("visuallyHidden")) return undefined;
   return found.getBoundingClientRect().height > 2 ? found : undefined;
 };
 
@@ -4192,6 +4194,8 @@ const wireTurnStatus = (
         stopTurnLine(el);
         return;
       }
+      // Nothing to paint for a tab nobody is looking at; the teardown checks above still run.
+      if (document.hidden) return;
       tick();
       onTick();
     },
@@ -4277,6 +4281,10 @@ const wireTurnStatus = (
   let stallIntensity = 0;
   let lastBeat = Date.now();
   const palette = pageIsDark() ? SPINNER_DARK : SPINNER_LIGHT;
+  // Read once per wired row: `accentRgb` is a getComputedStyle on the root, which forces a style
+  // recalc, and the beat below paints eight times a second. The accent only moves when the Claude
+  // look switch flips, and the next turn's row reads the new one.
+  const claude = accentRgb(palette.claude);
   /** What the bracket last showed, so a beat that changes nothing writes nothing. */
   let painted = "";
   /** Whether the bracket has taken the clock's measured face yet (the guess above until then). */
@@ -4358,7 +4366,6 @@ const wireTurnStatus = (
     // a slow grey pulse, itself pulled toward the warning shade by the thinking ramp. Time, count
     // and the brackets stay dim. Once either ramp is above zero the verb is one flat colour, no
     // shimmer: the CLI's glimmer only draws when neither ramp is up.
-    const claude = accentRgb(palette.claude);
     const tint =
       ti > 0
         ? mixRgb(claude, palette.warning, ti)
@@ -4540,7 +4547,9 @@ function watchSessionNotices(ctx: ClientCtx) {
     const anyClaudeRunning = Object.entries(snap.byId).some(
       ([id, s]) => s.running === true && isClaudeSession(ctx, id),
     );
-    if (anyClaudeRunning) {
+    // A hidden tab keeps its bookkeeping but makes no request: this was the one unconditional
+    // one-a-second poll a background tab still paid.
+    if (anyClaudeRunning && !document.hidden) {
       void fetch(`${ROUTE}/awaiting`)
         .then((r) => readJson<{ sessions?: Record<string, AwaitingRow> }>(r))
         .then((body) => {
@@ -4758,6 +4767,8 @@ function watchTurnStatus(ctx: ClientCtx) {
    *  asking for itself made the scan quadratic in the length of the conversation. */
   let newestGroup: Element | null = null;
   const attach = (found: HTMLElement) => {
+    // A row already wired, or a group already marked done, needs no further look and no layout.
+    if (found.hasAttribute(TURN_MARK) || found.hasAttribute("data-omc-turn-done")) return;
     // Decide before wiring, not after. A reload draws every old group, and dsh leaves a stopped
     // or failed one open, so asking "is it open" wired a verb onto a turn that ended an hour ago
     // and took it down three polls later (owner, 2026-09-22). What is known up front: dsh's own
@@ -5117,7 +5128,10 @@ function watchSessionSpinners(ctx: ClientCtx) {
     // One message-box lookup for the pass: `inComposer` is asked about every primary button dsh
     // draws, and each ask used to run its own subtree query for the same element.
     const box = document.querySelector("[contenteditable]");
-    for (const sendBtn of document.querySelectorAll<HTMLElement>('button[class*="_primary"]')) {
+    // Only the composer's own button is wanted, so only its form is searched: a substring class
+    // match over the whole document, once a second, is the kind of query a browser cannot index.
+    const composerRoot = box?.closest("form") ?? document;
+    for (const sendBtn of composerRoot.querySelectorAll<HTMLElement>('button[class*="_primary"]')) {
       const sendWant = openClaude && hasTheme("send") && inComposer(sendBtn, box);
       if (sendWant) {
         sendBtn.style.setProperty("--dsw-alias-button-info-fill", ACCENT);
@@ -5564,6 +5578,15 @@ const MODULE_ROOT = /(?:^|\s)[\w-]*_root(?:\s|$)/;
 const STATS_SEP = ':scope > span[aria-hidden="true"][class$="_sep"]';
 /** The readout's own wrapper in dsh's row, so a later hook can clear an earlier one's node. */
 const COST_SLOT = "data-omc-cost-slot";
+/** `localStorage["omc-debug"] === "1"`, read once at load: the check used to run on every frame
+ *  the cost hook fired, which is every dirty frame of a streaming turn while the row is lost. */
+const COST_DEBUG = (() => {
+  try {
+    return localStorage.getItem("omc-debug") === "1";
+  } catch {
+    return false;
+  }
+})();
 /** One of dsh's stats pills as the row holds it: an anchor span wrapping a popover button. */
 const STATS_PILL = ':scope > span > button[aria-haspopup="dialog"]';
 /** dsh 0.1.7's compact stats draw each stat as a bare `span` pill in the row, with no anchor span
@@ -5785,8 +5808,7 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
     // the row lives in someone else's DOM, so this is the only way to watch what removed it.
     const debug = (...args: unknown[]) => {
       try {
-        if (localStorage.getItem("omc-debug") === "1")
-          console.debug("[oh-my-claude cost]", ...args);
+        if (COST_DEBUG) console.debug("[oh-my-claude cost]", ...args);
       } catch {
         // a browser that refuses localStorage simply has no debug output
       }
@@ -5859,10 +5881,16 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
           divs.filter(isStatsRow).at(-1)
         );
       };
+      // The anchor is rendered into the composer dock's slot, and the stats row is a child of that
+      // same dock, so the dock is searched before the whole document: the document walk ran on
+      // every dirty frame of a streaming turn for as long as the row was lost.
+      const dock = anchorRef.current?.parentElement?.parentElement ?? undefined;
       const statsRow =
         lastRow && isStatsRow(lastRow)
           ? lastRow
-          : ((lastHost?.isConnected === true ? rowIn(lastHost) : undefined) ?? rowIn(document));
+          : ((lastHost?.isConnected === true ? rowIn(lastHost) : undefined) ??
+            (dock ? rowIn(dock) : undefined) ??
+            rowIn(document));
       lastRow = statsRow;
       lastHost = statsRow?.parentElement ?? lastHost;
       if (!statsRow) {
@@ -6995,15 +7023,23 @@ function ContextRowMask({
   const order = useChat?.((chat) => chat.order) ?? NO_ROWS;
   const nodes = useChat?.((chat) => chat.nodes);
   const mine = sessionId !== undefined && isClaudeSession(ctx, sessionId);
+  // The node map is a new object on every streamed chunk, and the walk below visits every row in
+  // the conversation, so keying the memo on the map made a long turn quadratic in the length of
+  // the transcript. What decides a row's masking is its source kind, fixed when the row is made,
+  // so the walk re-runs when a row is added or removed (`order`) and not when one grows.
+  const nodesRef = useRef(nodes);
+  nodesRef.current = nodes;
+  const haveNodes = nodes !== undefined;
   const masked = useMemo(() => {
-    if (!mine || nodes === undefined) return [];
+    const current = nodesRef.current;
+    if (!mine || current === undefined) return [];
     const drops = contextDrops({
       [MASTER_KEY]: on,
       [OFF_KEY.instructions]: instructionsOff,
       [OFF_KEY.skills]: skillsOff,
     });
-    return maskedRows(order, (key) => nodes.get(key), drops);
-  }, [mine, nodes, order, on, instructionsOff, skillsOff]);
+    return maskedRows(order, (key) => current.get(key), drops);
+  }, [mine, order, haveNodes, on, instructionsOff, skillsOff]);
   useEffect(() => {
     const existing = document.getElementById(ROW_MASK_STYLE_ID);
     const el = existing instanceof HTMLStyleElement ? existing : document.createElement("style");
