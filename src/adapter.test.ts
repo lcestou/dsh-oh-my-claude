@@ -1341,6 +1341,7 @@ const {
   parseQuestions,
   answersFor,
   userTurnLine,
+  decodeCancelled,
   controlResponseLine,
   allowResult,
   denyResult,
@@ -1384,6 +1385,17 @@ const turn = JSON.parse(userTurnLine([{ type: "text", text: "hi" }]));
 assert.equal(turn.type, "user");
 assert.equal(turn.parent_tool_use_id, null);
 assert.equal(turn.message.content[0].text, "hi");
+// No uuid: byte-identical to the line before the steer card existed.
+assert.equal(
+  userTurnLine([{ type: "text", text: "hi" }]),
+  '{"type":"user","session_id":"","message":{"role":"user","content":[{"type":"text","text":"hi"}]},"parent_tool_use_id":null}\n',
+);
+assert.equal(JSON.parse(userTurnLine([{ type: "text", text: "hi" }], "u-1")).uuid, "u-1");
+assert.equal(decodeCancelled({ cancelled: true }), true);
+assert.equal(decodeCancelled({ cancelled: false }), false);
+assert.equal(decodeCancelled({}), false);
+assert.equal(decodeCancelled(null), false);
+assert.equal(decodeCancelled(undefined), false);
 const cr = JSON.parse(controlResponseLine("r1", allowResult("t1", { a: 1 })));
 assert.equal(cr.type, "control_response");
 assert.equal(cr.response.request_id, "r1");
@@ -3061,6 +3073,7 @@ console.log("schema-guard ok");
   assert.equal(written, "hello\n");
   assert.equal(proc.queue.lines.length, 1, "stdout line reached the queue");
   assert.equal(proc.alive, true);
+  assert.equal(proc.steers.size, 0, "a fresh process starts with no pending steers");
   proc.kill();
   await new Promise((r) => setTimeout(r, 20));
   assert.equal(terminated, 1);
