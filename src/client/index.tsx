@@ -70,6 +70,8 @@ import {
   numberOr,
   whenContextGone,
   guard,
+  retire,
+  revive,
   keywordMatches,
   controlStatesCss,
   resumeCommand,
@@ -8610,6 +8612,10 @@ function IdleChip({ sessionId }: { sessionId: string }) {
 /** Wire the plugin into a mounted dsh context: follow deep links and start every watcher, so a
  *  fresh session gets turn status, notices, folds and hints. */
 export function apply(ctx: ClientCtx) {
+  // A context applied after an earlier one of this same module was disposed starts live, and dsh's
+  // own dispose is what ends it.
+  revive();
+  ctx.effect?.(() => retire);
   // First, so every string drawn below is already in the language the person picked.
   whenContextGone(installLocale(ctx));
   followDeepLink(ctx);
