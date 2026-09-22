@@ -4129,6 +4129,17 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
             const pick = (snap: PermissionModeState) => {
               const need = presetForMode(m);
               const have = snap.accessMode;
+              // The label takes the pick at once. What follows is a dsh command, a settle and two
+              // more round trips, over a second in all, and the trigger used to sit on the old mode
+              // for every bit of it, which reads as a click that did not land. A failure below puts
+              // the real mode back.
+              const wasMode = currentMode;
+              currentMode = m;
+              reapplyLabel();
+              const revert = () => {
+                currentMode = wasMode;
+                reapplyLabel();
+              };
               const doSet = () => {
                 const clearDefault =
                   (need === "read-only" && m === "plan") ||
@@ -4142,6 +4153,7 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
                   .then((r) => readJson<PermissionModeState>(r))
                   .then((reply) => {
                     if (reply.error) {
+                      revert();
                       const errEl = parent.querySelector<HTMLElement>("[data-err]");
                       if (errEl) errEl.textContent = reply.error;
                     } else {
@@ -4152,6 +4164,7 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
                     }
                   })
                   .catch((e) => {
+                    revert();
                     const errEl = parent.querySelector<HTMLElement>("[data-err]");
                     if (errEl) errEl.textContent = e instanceof Error ? e.message : String(e);
                   });
@@ -4159,6 +4172,7 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
               if (need !== have) {
                 const live = ctx.sessions.binding?.(sessionId)?.session;
                 if (!live) {
+                  revert();
                   const errEl = parent.querySelector<HTMLElement>("[data-err]");
                   if (errEl) errEl.textContent = t("panel.access.notMaterialized");
                   return;
@@ -4167,6 +4181,7 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
                   .command(`/permission ${need}`)
                   .then((reply) => {
                     if (!reply || !reply.ok) {
+                      revert();
                       const errEl = parent.querySelector<HTMLElement>("[data-err]");
                       if (errEl)
                         errEl.textContent =
@@ -4176,6 +4191,7 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
                     }
                   })
                   .catch((e) => {
+                    revert();
                     const errEl = parent.querySelector<HTMLElement>("[data-err]");
                     if (errEl) errEl.textContent = e instanceof Error ? e.message : String(e);
                   });

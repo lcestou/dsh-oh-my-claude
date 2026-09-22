@@ -2348,6 +2348,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   claudeHome: string;
   /** `~/.claude` itself, which stays the box's login and settings even when transcripts move. */
   realClaudeHome: string;
+  /** The `command` as configured, before this box's path resolution. */
+  configuredCommand: string;
   providerId: string;
   displayName: string;
   settingsNs: string;
@@ -2356,6 +2358,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   constructor(ctx: PluginContext, config: Schemastery.TypeT<typeof Config>) {
     super();
     this.ctx = ctx;
+    // Before `localConfig` turns a bare name into this box's absolute path: a turn that runs
+    // somewhere else needs the name as configured. See `commandFor`.
+    this.configuredCommand = config.command;
     config = localConfig(config);
     this.config = config;
     this.providerId = config.providerId;
@@ -2505,6 +2510,23 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    *  name change reaches the picker without a restart. */
   registration?: { replace: (providers: string[]) => void };
   private loggedOut = false;
+  /** "(not logged in)" after the provider name while the box's claude has no login: dsh copies the
+   *  name at registration, so the route is registered again under the new one. Fed by the mount-time
+   *  probe and by every login probe the panel runs, so the picker names a dead box at a glance. */
+  /**
+   * The binary to name for work on `host`: the command as configured when a turn runs on another
+   * box, this box's resolved absolute path when it runs here.
+   *
+   * `localConfig` resolves a bare `claude` against this box's PATH so a dsh started with a short
+   * one still finds it. That path means nothing on a far box, and sending it there failed the turn
+   * outright: `claude exited 127: env: '/home/lutechi/.local/bin/claude': No such file or
+   * directory` on a remote workspace whose provider is the local mount (owner, 2026-09-22). An SSH
+   * box mount was never affected, since `localConfig` leaves a box's command alone.
+   */
+  commandFor(host: string | undefined): string {
+    return host ? this.configuredCommand : this.config.command;
+  }
+
   /** "(not logged in)" after the provider name while the box's claude has no login: dsh copies the
    *  name at registration, so the route is registered again under the new one. Fed by the mount-time
    *  probe and by every login probe the panel runs, so the picker names a dead box at a glance. */
@@ -2871,7 +2893,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         `This session belongs to a remote workspace that was removed (${basename(cwd)}), so it has no box to run on. Add the same folder on the same box again from the sidebar's Add workspace, and the session continues there.`,
         "PROVIDER_ERROR",
       );
-    const cli = await probeCli(execFile, this.config.command, targetHost);
+    const cli = await probeCli(execFile, this.commandFor(targetHost), targetHost);
     if (!this.loggedVersion) {
       this.loggedVersion = true;
       this.log("info", `claude ${cli.version}, stdin input ${usesStdin(cli.flags) ? "on" : "off"}`);
@@ -3674,7 +3696,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   async skillDoctor(sessionId: string): Promise<SkillDoctorReply> {
     const cwd = this.sessionCwd(sessionId) ?? process.cwd();
     const host = boxFor(this.config.sshHost, remoteWorkspaceFor(cwd)?.host);
-    const cli = await probeCli(execFile, this.config.command, host);
+    const cli = await probeCli(execFile, this.commandFor(host), host);
     if (!cli.flags)
       return { ok: false, error: "skill report failed to start: no claude binary on this box" };
     // Without --no-session-persistence a one-shot leaves a transcript under the workspace's project
@@ -4122,7 +4144,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       // A remote-workspace session runs the far `claude` over SSH: held there, like an SSH box's,
       // rather than under a local keeper that would launch claude in the empty placeholder dir.
       const ws = remoteWorkspaceFor(cwd);
-      if (ws) return this.holdOn(ws.host, ws.remoteCwd, sessionId, spec, command, args);
+      // The far box runs its own `claude`: name it as configured, never this box's absolute path.
+      if (ws)
+        return this.holdOn(ws.host, ws.remoteCwd, sessionId, spec, this.configuredCommand, args);
       // One directory per spawn: a respawn must never share a socket, keeper.json or keeper.log
       // with the keeper it replaces (2026-09-06: a shared directory let a dying keeper answer the
       // new attach, and a boot read the wrong keeper.json and dropped the live one).
@@ -4444,7 +4468,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       const ws = remoteWorkspaceFor(cwd);
       if (ws)
         return sshSpawner(ws.host, () => ws.remoteCwd, readSshToken(STATE_DIR, ws.host))(
-          command,
+          // The far box's own binary, by the configured name: see `commandFor`.
+          this.configuredCommand,
           args,
           cwd,
         );

@@ -33,6 +33,12 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- A session in a remote workspace runs again when the plugin's own mount is the local one. The
+  turn carried this box's absolute path to `claude` to the far box, where it does not exist, and
+  failed with `claude exited 127`. The far box is named the binary as configured and finds its own.
+- Picking a permission mode marks the menu at once. The pick used to sit on the old mode for the
+  second or so the change takes, which read as a click that had not landed; a change that fails
+  now puts the real mode back.
 - The turn status line is back on dsh 0.1.7. That release moved the visible line into the button
   heading each turn's process group and left the old row for screen readers only, so the verb,
   spinner and figures were still being drawn, into a node one pixel tall that nobody could see.

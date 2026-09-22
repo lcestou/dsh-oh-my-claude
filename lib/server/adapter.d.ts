@@ -890,6 +890,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     claudeHome: string;
     /** `~/.claude` itself, which stays the box's login and settings even when transcripts move. */
     realClaudeHome: string;
+    /** The `command` as configured, before this box's path resolution. */
+    configuredCommand: string;
     providerId: string;
     displayName: string;
     settingsNs: string;
@@ -902,6 +904,20 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
         replace: (providers: string[]) => void;
     };
     private loggedOut;
+    /** "(not logged in)" after the provider name while the box's claude has no login: dsh copies the
+     *  name at registration, so the route is registered again under the new one. Fed by the mount-time
+     *  probe and by every login probe the panel runs, so the picker names a dead box at a glance. */
+    /**
+     * The binary to name for work on `host`: the command as configured when a turn runs on another
+     * box, this box's resolved absolute path when it runs here.
+     *
+     * `localConfig` resolves a bare `claude` against this box's PATH so a dsh started with a short
+     * one still finds it. That path means nothing on a far box, and sending it there failed the turn
+     * outright: `claude exited 127: env: '/home/lutechi/.local/bin/claude': No such file or
+     * directory` on a remote workspace whose provider is the local mount (owner, 2026-09-22). An SSH
+     * box mount was never affected, since `localConfig` leaves a box's command alone.
+     */
+    commandFor(host: string | undefined): string;
     /** "(not logged in)" after the provider name while the box's claude has no login: dsh copies the
      *  name at registration, so the route is registered again under the new one. Fed by the mount-time
      *  probe and by every login probe the panel runs, so the picker names a dead box at a glance. */
