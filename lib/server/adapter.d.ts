@@ -96,7 +96,7 @@ export type Config = {
     maxBudgetUsd?: number;
     titleModel: string;
     toolActivity: boolean;
-    toolsInline: boolean;
+    toolsInline?: boolean;
     hookRows: boolean;
     resume: boolean;
     idleTimeoutMs: number;
@@ -1308,6 +1308,15 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     persistAsides(sessionId: string): void;
     /** Inline tool text unless the Tune switch, or failing that the config, asks for rows. */
     toolsInline(): boolean;
+    /**
+     * Whether rows are the default on this dsh, when neither the Tune switch nor the config says.
+     * True on 0.1.7 and later once the probe has passed: there the text streams live between dsh's
+     * cards and the announced rows survive a reload, so the plugin looks like every other provider
+     * in dsh. False before 0.1.7, where a step's text lands only when it settles, and false until
+     * the probe answers, so the first turns of a process never write rows a dsh cannot load. A
+     * dsh that starts refusing the shape locks the probe and this falls back to inline on its own.
+     */
+    private rowsByDefault;
     /** What the Tune switch shows: the mode in force, and whether rows are open to it at all. */
     toolModeInfo(): Promise<ToolModeInfo>;
     /** Set the mode on every mount at once, so a session on a box's model follows the same switch. */
