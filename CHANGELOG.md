@@ -6,6 +6,24 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Added
+
+- Chinese. Everything the plugin draws follows dsh's language setting (Settings → General →
+  Language), or the browser's language when none is picked, and switches without a reload. The
+  plan review dialog, the not logged in tag and the login message follow the stored setting. A
+  Chinese README sits beside the English one.
+
+### Fixed
+
+- Runs under DSH Desktop. The plugin finds `claude` in the usual install folders when dsh starts
+  with a short PATH, as an app opened from the macOS Dock does, and the update pill no longer
+  offers a `dsh plugin` command Desktop refuses; Desktop updates plugins from its own page.
+- On Windows the plugin starts Claude as a plain child instead of through the keeper, which needs a
+  Unix socket and `systemd-run`, so turns no longer fail there.
+- Turns no longer fail with "keeper did not answer" on a Linux box where `systemd-run` is installed
+  but cannot reach the user session (a container, WSL, some SSH logins). The keeper now starts as a
+  detached process there.
+
 ## [1.3.1] - 2026-09-21
 
 ### Changed

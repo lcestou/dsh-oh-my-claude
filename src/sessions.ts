@@ -285,7 +285,8 @@ const ISSUES_URL = "https://github.com/lcestou/dsh-oh-my-claude/issues/new";
 /** How many releases the Settings card lists; the rest is a link to the file on GitHub. The card's
  *  summary line in `src/client/index.tsx` says "five", so a change here changes that too. */
 const CHANGELOG_RELEASES = 5;
-/** The one `dsh plugin ... update` line for this install; the profile is read off this file's path. */
+/** The one `dsh plugin ... update` line for this install; the profile is read off this file's path.
+ *  Undefined under DSH Desktop, which updates plugins from its own manager, so no pill is offered. */
 const UPDATE_COMMAND = updateCommand(PLUGIN_NAME, profileFromPath(import.meta.url));
 /** The box-wide booleans and non-negative numbers under `hints.json`: one-time hints and the
  *  settings switches. Only `true` and finite non-negative numbers are kept, so a missing or
@@ -347,7 +348,7 @@ async function pluginUpdate(
   hintsPath: string,
   dsh: string | null | undefined,
 ): Promise<{ latest: string; update: string } | undefined> {
-  if (!PLUGIN_NAME || !PLUGIN_VERSION) return undefined;
+  if (!PLUGIN_NAME || !PLUGIN_VERSION || !UPDATE_COMMAND) return undefined;
   if ((await readHints(hintsPath)).updateCheckOff === true) return undefined;
   const newest = await latestRelease(PLUGIN_NAME);
   if (!newest || !isNewer(PLUGIN_VERSION, newest.version)) return undefined;

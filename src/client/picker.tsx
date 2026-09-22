@@ -22,6 +22,7 @@ import {
   type UiWorkspaceFace,
 } from "./shared.js";
 import { DirectoryBrowser, type Listing, type Translate } from "./browser.js";
+import { t as omcT, useLocale } from "./i18n.js";
 
 /** dsh's directory UI service, absent on a dsh that mounts no workspace UI. */
 const uiWorkspaceOf = (ctx: ClientCtx): UiWorkspaceFace | undefined =>
@@ -128,7 +129,7 @@ const level = async (
 ): Promise<Listing> => {
   if (host === "") {
     const l = await uiWorkspaceOf(ctx)?.listDirectory(path, signal);
-    if (!l) throw new Error("dsh's directory listing is not available");
+    if (!l) throw new Error(omcT("picker.noListing"));
     return l;
   }
   const r = await fetch(
@@ -143,7 +144,7 @@ const level = async (
 const mkdir = async (ctx: ClientCtx, host: string, path: string, name: string): Promise<string> => {
   if (host === "") {
     const made = uiWorkspaceOf(ctx)?.createDirectory(path, name);
-    if (!made) throw new Error("dsh's directory listing is not available");
+    if (!made) throw new Error(omcT("picker.noListing"));
     return made;
   }
   const r = await fetch(`${ROUTE}/box-dirs?host=${encodeURIComponent(host)}`, {
@@ -160,6 +161,7 @@ const mkdir = async (ctx: ClientCtx, host: string, path: string, name: string): 
  * root-scoped entry stays mounted whether the sidebar is wide or collapsed.
  */
 export function AddWorkspaceFlow({ ctx }: { ctx: ClientCtx }) {
+  useLocale();
   const [ssh, setSsh] = useState<BoxRow[]>([]);
   const [open, setOpen] = useState(false);
   // Empty host means this PC, which is what the dropdown opens on.
@@ -255,7 +257,7 @@ export function AddWorkspaceFlow({ ctx }: { ctx: ClientCtx }) {
       .catch(failed);
   };
 
-  const boxes: BoxRow[] = [{ name: "This box", host: "" }, ...ssh];
+  const boxes: BoxRow[] = [{ name: omcT("picker.thisBox"), host: "" }, ...ssh];
   const current = boxes.find((b) => b.host === host) ?? boxes[0];
   return (
     <DirectoryBrowser
@@ -288,7 +290,7 @@ export function AddWorkspaceFlow({ ctx }: { ctx: ClientCtx }) {
             <button
               type="button"
               style={selectorStyle}
-              aria-label="Box"
+              aria-label={omcT("picker.box")}
               aria-haspopup="menu"
               aria-expanded={menuOpen}
               disabled={busy}

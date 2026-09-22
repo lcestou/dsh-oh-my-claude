@@ -6,22 +6,24 @@
 import { useEffect, useState } from "react";
 import { ACCENT, pill, readJson, T } from "./shared.js";
 import { REPO_URL } from "../stars.js";
+import { t, useLocale } from "./i18n.js";
 
 const ROUTE = "/dsh-oh-my-claude";
 
 /** The "<version> available" pill: a button whose click copies the update `command` to the
  *  clipboard and flashes whether it copied or the clipboard refused. */
 export function UpdatePill({ latest, command }: { latest: string; command: string }) {
-  const [said, setSaid] = useState<"" | "command copied" | "copy blocked">("");
-  const say = (what: "command copied" | "copy blocked") => {
+  useLocale();
+  const [said, setSaid] = useState<"" | "copied" | "blocked">("");
+  const say = (what: "copied" | "blocked") => {
     setSaid(what);
     setTimeout(() => setSaid(""), 1500);
   };
   const copy = () => {
-    if (!navigator.clipboard) return say("copy blocked");
+    if (!navigator.clipboard) return say("blocked");
     navigator.clipboard.writeText(command).then(
-      () => say("command copied"),
-      () => say("copy blocked"),
+      () => say("copied"),
+      () => say("blocked"),
     );
   };
   return (
@@ -35,8 +37,8 @@ export function UpdatePill({ latest, command }: { latest: string; command: strin
         alignItems: "center",
         gap: 4,
       }}
-      title={`${command}\nthen restart dsh. Click to copy the command.`}
-      aria-label={`Plugin ${latest} available. Copy the update command.`}
+      title={t("update.pillTitle", { command })}
+      aria-label={t("update.pillLabel", { latest })}
       data-omc-update={latest}
       onClick={copy}
     >
@@ -55,7 +57,11 @@ export function UpdatePill({ latest, command }: { latest: string; command: strin
         <path d="M5 8.2V2.4M2.4 5 5 2.4 7.6 5" />
         <path d="M1.6 1.2h6.8" />
       </svg>
-      {said || `${latest} available`}
+      {said === "copied"
+        ? t("update.commandCopied")
+        : said === "blocked"
+          ? t("common.copyBlocked")
+          : t("update.available", { latest })}
     </button>
   );
 }
@@ -95,6 +101,7 @@ export function PluginUpdateBadge() {
  *  where the Star button is one click for anyone signed in to github.com. Nobody can star from
  *  here, so this is a link and not a button. Dismissible for good on this box. */
 export function StarNudge({ onDismiss }: { onDismiss: () => void }) {
+  useLocale();
   const [count, setCount] = useState<number | undefined>(undefined);
   useEffect(() => {
     let live = true;
@@ -120,17 +127,17 @@ export function StarNudge({ onDismiss }: { onDismiss: () => void }) {
     >
       <span aria-hidden="true">★</span>
       <span>
-        Like Oh My Claude?{" "}
+        {t("star.like")}{" "}
         <a href={REPO_URL} target="_blank" rel="noreferrer" data-omc-star-link="">
-          Star it on GitHub
+          {t("star.link")}
         </a>
         {count !== undefined ? ` (${count})` : ""}
       </span>
       <button
         type="button"
         data-omc-star-dismiss=""
-        aria-label="Hide the star line"
-        title="Hide this"
+        aria-label={t("star.hideLabel")}
+        title={t("star.hideTitle")}
         onClick={onDismiss}
         style={{
           marginLeft: "auto",

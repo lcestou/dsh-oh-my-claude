@@ -384,6 +384,8 @@ export interface PluginContext {
     get(name: "commands"): PluginContext["commands"];
     get(name: "sessionTitle"): PluginContext["sessionTitle"];
     get(name: "workspaceRegistry"): WorkspaceRegistry | undefined;
+    /** dsh's settings service, narrowed to the locale namespace the server strings read. */
+    get(name: "settings"): import("./locale.js").LocaleSettingsReader | undefined;
     /** dsh-commands (`/name` in the composer); optional so a host without it still mounts the plugin. */
     commands?: {
         register(definition: {

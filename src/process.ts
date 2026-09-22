@@ -2,9 +2,11 @@
 // channel the Agent SDK uses over the same stream: `control_request` lines from the CLI (permission
 // prompts, user questions) answered with `control_response` lines on stdin.
 import { spawn } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
 import { connect } from "node:net";
-import { join } from "node:path";
+import { homedir } from "node:os";
+import { delimiter, join, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import { PassThrough, Writable } from "node:stream";
 import { createInterface } from "node:readline";
 import type { AskUserQuestionItem, JsonValue, SubprocessRuntime } from "./dsh.js";
@@ -53,8 +55,49 @@ export const CHILD_ENV = {
 export function childEnv(base: NodeJS.ProcessEnv, override?: Record<string, string>) {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(base)) if (v !== undefined) env[k] = v;
+  if (process.platform !== "win32") env.PATH = withClaudeDirs(env.PATH);
   Object.assign(env, CHILD_ENV, override ?? {});
   return env;
+}
+
+/** Where Claude Code's installers put `claude` (the native installer, the old local install, Homebrew,
+ *  npm and bun globals, Volta). An app started from the macOS Dock or Finder, DSH Desktop among
+ *  them, gets a PATH of `/usr/bin:/bin:/usr/sbin:/sbin`, which holds none of these. */
+export function claudeDirs(home = homedir()): string[] {
+  return [
+    join(home, ".local", "bin"),
+    join(home, ".claude", "local"),
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    join(home, ".npm-global", "bin"),
+    join(home, ".bun", "bin"),
+    join(home, ".volta", "bin"),
+  ];
+}
+
+/** `path` with every folder from `dirs` it lacks appended, so a name found on the caller's PATH
+ *  keeps winning. Appending also lets an npm-installed `claude`, a `#!/usr/bin/env node` script,
+ *  find the node that sits beside it. */
+export function withClaudeDirs(path: string | undefined, dirs = claudeDirs()): string {
+  const have = (path ?? "").split(delimiter).filter(Boolean);
+  return [...have, ...dirs.filter((d) => !have.includes(d))].join(delimiter);
+}
+
+/** The absolute path of `command` when it is a bare name found on `path` or in `dirs`, else
+ *  `command` unchanged: a path is trusted as given, and a name found nowhere is left for spawn to
+ *  fail on with the usual ENOENT. On Windows a bare name also matches `<name>.exe`. */
+export function resolveCommand(
+  command: string,
+  path = process.env.PATH,
+  dirs = claudeDirs(),
+  exists: (p: string) => boolean = existsSync,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  if (!command || command.includes("/") || command.includes(sep)) return command;
+  const names = platform === "win32" ? [command, `${command}.exe`] : [command];
+  for (const dir of [...(path ?? "").split(delimiter).filter(Boolean), ...dirs])
+    for (const name of names) if (exists(join(dir, name))) return join(dir, name);
+  return command;
 }
 
 /** The child process seam this plugin uses: dsh's own spawner and the node one both answer it. */
@@ -1366,16 +1409,33 @@ export function launchKeeper(argv: string[], unit: string): void {
     c.unref();
   };
   try {
+    const started = Date.now();
     const c = spawn(
       "systemd-run",
       ["--user", "--scope", "--quiet", "--collect", `--unit=${unit}`, ...argv],
       { detached: true, stdio: "ignore" },
     );
     c.on("error", detached);
+    // With --scope, systemd-run runs the keeper itself and lives as long as it does. One that exits
+    // with an error straight away never started it: it is installed but cannot reach the user bus
+    // (a container, WSL, an SSH login with no user manager, a launcher that clears the environment)
+    // and printed "Failed to connect to bus". The spawn succeeded, so `error` never fires; without
+    // this every turn died as "keeper did not answer" (found 2026-09-21 running dsh under Electron
+    // with a cleared environment). Decided on exit, not by a probe up front, so nothing blocks.
+    c.on("exit", (code) => {
+      if (scopeFailed(code, Date.now() - started)) detached();
+    });
     c.unref();
   } catch {
     detached();
   }
+}
+
+/** Whether a `systemd-run --scope` that exited with `code` after `elapsedMs` failed to start the
+ *  keeper rather than outliving it. A keeper stays up at least three seconds after its Claude dies,
+ *  so a non-zero exit inside two seconds is systemd-run refusing, not the keeper ending. */
+export function scopeFailed(code: number | null, elapsedMs: number): boolean {
+  return code !== 0 && code !== null && elapsedMs < 2000;
 }
 
 /**
@@ -1399,7 +1459,9 @@ export async function spawnKeeper(
   } catch {
     // no stale socket
   }
-  const keeperJs = new URL("./keeper.js", import.meta.url).pathname;
+  // fileURLToPath, not `.pathname`: the pathname keeps %20 for a space and a leading slash before a
+  // Windows drive letter, so the keeper script is not found under either.
+  const keeperJs = fileURLToPath(new URL("./keeper.js", import.meta.url));
   launch([process.execPath, keeperJs, dir]);
   return attachKeeper(dir, 8000);
 }

@@ -23,6 +23,7 @@
 //     someone happened to type reports a breakage that is not one, and a check nobody trusts is
 //     worse than no check. Measured on an open idle conversation, 2026-09-21: markdown 242 nodes,
 //     ring 29, composer input 1, turn status 1, chips 0.
+import { t } from "./i18n.js";
 
 /** Where a probe is meaningful. A probe outside its context is skipped, not failed. */
 export type ContractScope = "always" | "conversation";
@@ -54,7 +55,9 @@ export interface ContractProbe {
 export const DSH_CONTRACT: readonly ContractProbe[] = [
   {
     id: "markdown-body",
-    breaks: "Claude-orange links, rules, quotes and checkboxes in messages",
+    get breaks() {
+      return t("contract.markdownBody");
+    },
     scope: "conversation",
     kind: "class",
     selector: '[class*="_markdown"]',
@@ -62,7 +65,9 @@ export const DSH_CONTRACT: readonly ContractProbe[] = [
   },
   {
     id: "composer-input",
-    breaks: "the rainbow keyword paint in the composer",
+    get breaks() {
+      return t("contract.composerInput");
+    },
     scope: "always",
     kind: "data",
     selector: "[data-composer-input]",
@@ -70,7 +75,9 @@ export const DSH_CONTRACT: readonly ContractProbe[] = [
   },
   {
     id: "ring-button",
-    breaks: "plan usage in the context ring and its tooltip",
+    get breaks() {
+      return t("contract.ringButton");
+    },
     scope: "conversation",
     kind: "role",
     // The ring's own arc, not merely a button that opens a dialog. Measured side by side on a
@@ -84,7 +91,9 @@ export const DSH_CONTRACT: readonly ContractProbe[] = [
   },
   {
     id: "turn-status",
-    breaks: "the status row under a running turn",
+    get breaks() {
+      return t("contract.turnStatus");
+    },
     scope: "conversation",
     kind: "role",
     // dsh gives its turn-status element no hook of its own, so this is the pair the watcher looks
@@ -148,9 +157,9 @@ export function contractSummary(results: readonly ContractResult[]): string {
   const checked = results.filter((r) => !r.skipped);
   const missing = contractMisses(results);
   const skipped = results.length - checked.length;
-  const tail = skipped > 0 ? `, ${skipped} not on screen` : "";
-  if (checked.length === 0) return "dsh hooks: nothing to check on this screen";
+  const tail = skipped > 0 ? t("contract.notOnScreen", { n: skipped }) : "";
+  if (checked.length === 0) return t("contract.nothing");
   return missing.length === 0
-    ? `dsh hooks: ${checked.length} of ${checked.length} found${tail}`
-    : `dsh hooks: ${missing.length} of ${checked.length} missing${tail}`;
+    ? t("contract.found", { n: checked.length, total: checked.length, tail })
+    : t("contract.missing", { n: missing.length, total: checked.length, tail });
 }

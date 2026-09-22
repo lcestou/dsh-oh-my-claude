@@ -8,7 +8,7 @@ export declare function isNewer(current: string, latest: string): boolean;
  *  and gets the README's default. */
 export declare function profileFromPath(path: string, fallback?: string): string;
 /** The two lines that bring in a new version, as the README's Install section gives them. */
-export declare function updateCommand(name: string, profile: string): string;
+export declare function updateCommand(name: string, profile: string): string | undefined;
 type FetchFn = (url: string, init: {
     signal: AbortSignal;
 }) => Promise<Response>;

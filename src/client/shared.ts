@@ -1,5 +1,6 @@
 import type { CSSProperties, ReactNode } from "react";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { t } from "./i18n.js";
 
 export const ROUTE = "/dsh-oh-my-claude";
 /** "m*****@gmail.com": first letter, stars, then the domain. Every surface that shows the login
@@ -42,8 +43,8 @@ export const cacheShare = ({
  *  reading future times as now. */
 export const ago = (ms: number): string => {
   const s = Math.max(0, (Date.now() - ms) / 1000);
-  if (s < 3600) return `${Math.max(1, Math.round(s / 60))} min ago`;
-  if (s < 86400) return `${Math.round(s / 3600)} h ago`;
+  if (s < 3600) return t("time.minAgo", { n: Math.max(1, Math.round(s / 60)) });
+  if (s < 86400) return t("time.hAgo", { n: Math.round(s / 3600) });
   return new Date(ms).toLocaleDateString();
 };
 
@@ -902,7 +903,7 @@ export function skillStateFromReply(reply: {
   if (reply.ok && reply.report !== undefined)
     return { kind: "report", text: reply.report, partial: reply.partial === true };
   if (reply.declined) return { kind: "declined", text: reply.error ?? "" };
-  return { kind: "error", text: reply.error ?? "unknown error" };
+  return { kind: "error", text: reply.error ?? t("common.unknownError") };
 }
 
 /** One driver in a usage breakdown: the CLI's name for it and its share of the window. */

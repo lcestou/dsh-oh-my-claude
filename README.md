@@ -1,6 +1,10 @@
 <h1 align="center"><img src="https://raw.githubusercontent.com/lcestou/dsh-oh-my-claude/main/docs/media/spark.svg" alt="" width="22" height="22"> Oh My Claude</h1>
 
 <p align="center">
+  English | <a href="README.zh.md">中文</a>
+</p>
+
+<p align="center">
   <strong>Claude Code, native inside dsh</strong>
 </p>
 
@@ -63,7 +67,11 @@ systemctl --user restart dsh-web.service   # or restart `dsh web` however you ru
 
 The package declares a dsh bundle, so `dsh plugin add` registers it in the profile by itself. After the restart, "Oh My Claude" appears in the model picker with the models your login can use. Pick one and chat.
 
+The plugin speaks English and Chinese and follows dsh's own language setting (Settings → General → Language), switching as soon as you change it.
+
 If the picker lists it as `Oh My Claude (not logged in)`, run `claude auth login` in a terminal on the box that runs dsh, or press Log in under Settings → Oh My Claude → Boxes.
+
+**DSH Desktop** (macOS and Windows) installs and updates plugins from its own Plugins page, not the `dsh plugin` command: add `dsh-oh-my-claude` there and restart when it asks. The plugin looks for `claude` in the usual install folders, since an app started from the Dock does not see your shell's PATH. On Windows it runs Claude as a plain child of dsh, so restarting the app ends a running turn, and the parts that need a Unix shell (Log in from Settings, SSH boxes) are not available. The server half has been run under Electron on Linux the way Desktop runs it; a real Mac or Windows install has not been tried yet.
 
 When a newer version is on npm, an orange pill with the version number appears in Settings and on the panel's Runtime line; a click copies the update command. Details, and the one repair a dsh upgrade can call for, are under [Plugin updates](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#plugin-updates).
 
