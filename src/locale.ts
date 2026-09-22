@@ -7,10 +7,30 @@
 // dsh's settings service). A browser that never picked one follows its own language, which the
 // server cannot see; those readers get English here while the client, which can, shows Chinese.
 
-/** The server's reach into dsh's settings: only the locale namespace, as dsh-client-locale stores it. */
+/**
+ * The server's reach into dsh's settings: only the locale namespace, as dsh-client-locale stores
+ * it. Two shapes, because dsh moved the read: up to 0.1.6 the service answered a namespace by
+ * name, and 0.1.7 replaced that with `describe`, a list of every mounted plugin's live config.
+ * Both are optional here, so a dsh with neither reads as English rather than throwing.
+ */
 export interface LocaleSettingsReader {
-  get(ns: "locale"): { preference?: string } | undefined;
+  get?(ns: "locale"): { preference?: string } | undefined;
+  describe?(options?: { redact?: boolean }): readonly { ns?: unknown; value?: unknown }[];
 }
+
+/** The stored language tag, through whichever read this dsh offers, or undefined for neither. */
+const preferenceOf = (read: LocaleSettingsReader): string | undefined => {
+  const named = read.get?.("locale")?.preference;
+  if (named !== undefined) return named;
+  for (const entry of read.describe?.({ redact: true }) ?? []) {
+    if (entry.ns !== "locale") continue;
+    // SAFETY: the descriptor's value is the entry's live config, which for dsh-client-locale is
+    // `{ preference }`; anything else reads as no preference through the optional chain below.
+    const value = entry.value as { preference?: string } | undefined;
+    if (value?.preference !== undefined) return value.preference;
+  }
+  return undefined;
+};
 
 const EN = {
   notLoggedIn: "not logged in",
@@ -210,7 +230,8 @@ export function bindServerLocale(settings: LocaleSettingsReader | undefined): ()
  *  namespace not registered yet) reads as English. */
 export function serverIsChinese(read: LocaleSettingsReader | undefined = reader): boolean {
   try {
-    return read?.get("locale")?.preference?.toLowerCase().startsWith("zh") ?? false;
+    if (read === undefined) return false;
+    return preferenceOf(read)?.toLowerCase().startsWith("zh") ?? false;
   } catch {
     return false;
   }

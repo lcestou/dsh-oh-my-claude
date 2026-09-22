@@ -46,6 +46,12 @@ export interface RawRowsLog {
  * ask about, and locked rows over a migration a live session never runs.
  */
 export declare const rawRowsLog: (version?: number) => RawRowsLog;
+/**
+ * The log version the installed dsh writes: 3 up to 0.1.6, 4 from 0.1.7. Read off dsh's own
+ * catalog, so a log this plugin writes carries the version the reader expects. Undefined when the
+ * catalog cannot be found or read, which leaves the caller to keep its own default.
+ */
+export declare function currentLogVersion(entry?: string): Promise<number | undefined>;
 /** Feed the synthetic log through dsh's own restore, with the options its load passes. */
 export declare function probeRawToolRows(entry?: string): Promise<RowsSupport>;
 export {};

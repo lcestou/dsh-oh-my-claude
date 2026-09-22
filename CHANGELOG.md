@@ -39,6 +39,13 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 - Picking a permission mode marks the menu at once. The pick used to sit on the old mode for the
   second or so the change takes, which read as a click that had not landed; a change that fails
   now puts the real mode back.
+- A transcript brought in through Import is readable on dsh 0.1.7. Its log was stamped version 3
+  while 0.1.7 writes and expects version 4, and that dsh refuses a file whose name and header
+  disagree. The version is read from dsh itself now.
+- The plugin's own text follows the language setting on dsh 0.1.7 again. That release replaced the
+  settings read the server used, so every server sentence stayed English whatever the setting said.
+- Unarchiving a session on dsh 0.1.7 uses the method that release added for it; the internals the
+  older path reached for are private there.
 - The cost reads last in dsh's stats row again, in dsh's own pill shape. dsh 0.1.7 draws each stat
   as a plain pill rather than a button inside an anchor, which left the cost wearing an icon's
   style: a bordered box with the mark stacked above the figure. Switching Performance and usage

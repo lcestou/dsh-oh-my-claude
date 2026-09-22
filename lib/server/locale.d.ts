@@ -1,8 +1,19 @@
-/** The server's reach into dsh's settings: only the locale namespace, as dsh-client-locale stores it. */
+/**
+ * The server's reach into dsh's settings: only the locale namespace, as dsh-client-locale stores
+ * it. Two shapes, because dsh moved the read: up to 0.1.6 the service answered a namespace by
+ * name, and 0.1.7 replaced that with `describe`, a list of every mounted plugin's live config.
+ * Both are optional here, so a dsh with neither reads as English rather than throwing.
+ */
 export interface LocaleSettingsReader {
-    get(ns: "locale"): {
+    get?(ns: "locale"): {
         preference?: string;
     } | undefined;
+    describe?(options?: {
+        redact?: boolean;
+    }): readonly {
+        ns?: unknown;
+        value?: unknown;
+    }[];
 }
 declare const EN: {
     readonly notLoggedIn: "not logged in";

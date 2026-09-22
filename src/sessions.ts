@@ -105,6 +105,7 @@ import type {
 } from "./dsh.js";
 import { errorText } from "./process.js";
 import { claudeMdDisabledBy, featureSwitches, type ClaudeMdState } from "./switches.js";
+import { currentLogVersion } from "./rows-probe.js";
 import type { ToolMode, ToolModeInfo } from "./rows-probe.js";
 import {
   isMarketplaceSource,
@@ -1249,14 +1250,18 @@ export async function openTranscriptOnce(
   // row runs it: an archived session the store still holds took the early return below and stayed
   // archived, and the client hides archived sessions, so Restore opened nothing.
   const unarchive = async (sessionId: string) => {
-    if (
-      !registry?.enqueueOperation ||
-      !registry.archivedSessionIds.includes(asSessionId(sessionId))
-    )
+    if (!registry?.archivedSessionIds.includes(asSessionId(sessionId))) return;
+    // dsh 0.1.7 made the queue and the state accessors private and published `unarchiveSession`
+    // instead, which is the same edit through the registry's own lock. The old path stays for
+    // 0.1.5 and 0.1.6, which have no such method.
+    if (registry.unarchiveSession) {
+      await registry.unarchiveSession(asSessionId(sessionId));
       return;
+    }
+    if (!registry.enqueueOperation || !registry.requireState || !registry.setState) return;
     await registry.enqueueOperation(async () => {
-      const state = registry.requireState();
-      await registry.setState({
+      const state = registry.requireState!();
+      await registry.setState!({
         ...state,
         archivedSessionIds: state.archivedSessionIds.filter((x) => x !== sessionId),
       });
@@ -1296,7 +1301,11 @@ export async function openTranscriptOnce(
   // answered nothing: the seed was dropped silently, and the client's adopting `sessions.create`
   // then found no stored session and made a blank one under the same id. Write the log here.
   const handle = await ctx.sessionPersistence.create({
-    version: 3,
+    // The version the installed dsh reads: 0.1.7 writes v4 files and refuses one whose header
+    // says 3 ("session generation filename identifies v4, but its header identifies v3"), which
+    // would make every adopted transcript unreadable there. 3 stays the fallback for a dsh whose
+    // catalog cannot be read, which is what 0.1.5 and 0.1.6 want anyway.
+    version: (await currentLogVersion()) ?? 3,
     id: asSessionId(id),
     createdAt: folded.createdAt,
     cwd,
