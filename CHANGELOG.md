@@ -33,6 +33,12 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Changed
 
+- Remember model per workspace remembers the Claude too, not only which Claude model. dsh 0.1.7
+  makes each workspace's blank session ahead of time on the deployment default with no selection
+  of its own, so a workspace that always ran Claude opened on llama and the memory, which only
+  ever changed the model, had nothing to act on. A new session now opens on the box and model the
+  workspace last ran Claude on; a blank you have switched by hand is left as you set it. The first
+  Claude turn in a workspace after this update records the mount, and it sticks from then on.
 - The Claude Code update card is about the Claude Code you picked. It followed the box a session's
   turns run on, which in a remote workspace is that box whichever model is selected, so a session
   deliberately set to this machine's Claude was offered the other one's update. It now reads the

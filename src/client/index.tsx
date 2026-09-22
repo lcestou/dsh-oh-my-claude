@@ -64,6 +64,7 @@ import {
   isClaudeSession,
   activeClaudeProvider,
   claudeProviderOf,
+  claudeMount,
   type ClientCtx,
   openHere,
   openSession,
@@ -6039,28 +6040,43 @@ interface StarterReply {
 const appliedModel = new Set<string>();
 
 /**
- * On a blank session whose provider is already Claude, select the model this workspace last ran.
- * The provider is never changed: the memory is which Claude model, not whether Claude. Once per
- * session id per tab, and never once the session has a message.
+ * On a blank session, select the Claude mount and model this workspace last ran.
+ *
+ * Up to dsh 0.1.6 a new session arrived on whatever the picker last held, so this only had to
+ * choose which Claude model. 0.1.7 makes each workspace's blank session ahead of time on the
+ * deployment default (llama on this box) with no selection of its own, so the memory now sets
+ * the provider as well: a workspace whose last Claude turn ran on a box's mount reopens on that
+ * box, a local one reopens local (owner, 2026-09-22: "it should remember the last one used per
+ * workspace, not reset to llama"). A blank the person has already switched by hand is left
+ * alone, since a picked provider is a `next` selection dsh records. A row written before the
+ * provider was stored names the model only and still needs the session to be Claude already.
+ * Once per session id per tab, and never once the session has a message.
  */
 function WorkspaceModelMemory({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   useEffect(() => {
     const entry = ctx.sessions.list.getSnapshot()?.byId[sessionId];
     if (!entry || entry.blank === false || !entry.cwd) return;
-    const provider = claudeProviderOf(ctx, sessionId);
-    if (!provider || appliedModel.has(sessionId)) return;
+    const current = claudeProviderOf(ctx, sessionId);
+    const picked = entry.projectionValues?.modelSelection?.next?.provider;
+    if (appliedModel.has(sessionId)) return;
     appliedModel.add(sessionId);
     let live = true;
     const runApply = async () => {
       const hints = await loadHints();
       if (hints.workspaceModelOff === true || !live) return;
       const q = `cwd=${encodeURIComponent(entry.cwd ?? "")}`;
-      const saved = await readJson<{ model?: string }>(
+      const saved = await readJson<{ model?: string; provider?: string }>(
         await fetch(`${ROUTE}/workspace-model?${q}`),
       );
       if (!saved.model || !live) return;
+      // The mount to open on: the session's own when it is already Claude, else the remembered
+      // one, and only while nobody has picked a provider for this blank by hand.
+      const provider =
+        current ?? (saved.provider && !picked ? claudeMount(saved.provider) : undefined);
+      if (!provider) return;
       const dir = ctx.modelDirectories.directoryFor(sessionId);
-      if (dir.store.getSnapshot().current?.model === saved.model) return;
+      const now = dir.store.getSnapshot().current;
+      if (now?.provider === provider && now.model === saved.model) return;
       if (dir.select) await dir.select({ provider, model: saved.model });
     };
     // A session dsh has not bound yet throws from directoryFor (see claudeProviderOf); a route

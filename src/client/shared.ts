@@ -494,7 +494,7 @@ export const isRingRoot = (el: HTMLElement | null) =>
  * `targetHost` cannot do. `SessionHeader` carries no provider and a remote cwd can equal a local
  * one, so this is also the only way to tell a box session from a local one.
  */
-const claudeMount = (provider: string | undefined): string | undefined =>
+export const claudeMount = (provider: string | undefined): string | undefined =>
   provider?.startsWith("claude-code") === true ? provider : undefined;
 /** The Claude mount for a session, open or not: read the live model directory first and the list
  *  projection after, so a sidebar session this tab never opened still resolves, undefined for a
