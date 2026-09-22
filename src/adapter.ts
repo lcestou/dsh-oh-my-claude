@@ -6648,6 +6648,7 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       remoteWorkspacesPath: join(STATE_DIR, "remote-workspaces.json"),
       onRemoteWorkspaces: setRemoteWorkspaces,
       command: adapter.config.command,
+      boxCommand: adapter.configuredCommand,
       sshHost: adapter.config.sshHost,
       instanceFor,
       instanceForHost,

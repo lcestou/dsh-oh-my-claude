@@ -33,6 +33,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- An SSH box reports its own Claude Code again. Every box probe was run with this box's resolved
+  path to `claude`, which does not exist there, so a box read as "no claude", its version as
+  unknown, and the update card offered a release it could not compare against. The box is named the
+  binary as configured, the way its turns already were.
 - A session in a remote workspace runs again when the plugin's own mount is the local one. The
   turn carried this box's absolute path to `claude` to the far box, where it does not exist, and
   failed with `claude exited 127`. The far box is named the binary as configured and finds its own.

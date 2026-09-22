@@ -1378,6 +1378,11 @@ export interface SessionRouteOptions {
   /** Refresh the adapter's live placeholder→remote-cwd map after the list changes, without a restart. */
   onRemoteWorkspaces?: (workspaces: RemoteWorkspace[]) => Promise<void> | void;
   command?: string;
+  /** The `command` as configured, before this box's PATH resolution. Work on another box is named
+   *  this: an absolute path found here means nothing there, and probing a box with it left every
+   *  box reading "no claude" and its Claude Code version unknown (owner, 2026-09-22). Defaults to
+   *  `command`. */
+  boxCommand?: string;
   /** Non-empty when this instance drives Claude Code on a remote host over ssh; the status and
    * identity probes run there so the panel reports the remote box, not this one. */
   sshHost?: string;
@@ -1591,6 +1596,7 @@ export function registerSessionRoutes(
     remoteWorkspacesPath,
     onRemoteWorkspaces,
     command,
+    boxCommand,
     sshHost,
     turnRecords,
     dshVersion,
@@ -1647,7 +1653,9 @@ export function registerSessionRoutes(
   const updaterFor = (host: string, label: string): ClaudeUpdater => {
     const have = updaters.get(host);
     if (have) return have;
-    const cli = command ?? "claude";
+    // A box runs its own claude, by the configured name: this box's resolved absolute path
+    // means nothing there, and probing with it left the box reading "no claude".
+    const cli = (host ? (boxCommand ?? command) : command) ?? "claude";
     const exec: Exec = host
       ? (args, timeoutMs) =>
           run(
@@ -3511,7 +3519,7 @@ export function registerSessionRoutes(
               ) {
                 const boxes = await readSshBoxes(sshBoxesPath);
                 const probed = await Promise.all(
-                  boxes.map((b) => runtimeStatus("", command, b.host)),
+                  boxes.map((b) => runtimeStatus("", boxCommand ?? command, b.host)),
                 );
                 // A panel login stores a CLAUDE_CODE_OAUTH_TOKEN the plugin injects at spawn; the box's
                 // own `claude auth status` can't see it, so a stored token counts as logged in here.
@@ -3652,7 +3660,8 @@ export function registerSessionRoutes(
               // the default instance's local spawns.
               /** The box's own `claude auth status`, the proof a login took once its process exits. */
               const verifyLogin = (loginHost: string) => async () => {
-                const cli = command ?? "claude";
+                const cli =
+                  (loginHost === THIS_BOX ? command : (boxCommand ?? command)) ?? "claude";
                 const st =
                   loginHost === THIS_BOX
                     ? await run(cli, ["auth", "status"], cliEnvFor(boxOf(url).configDir))
@@ -3733,7 +3742,8 @@ export function registerSessionRoutes(
                 // as a no-op. `claude auth logout` is non-interactive and answers a box without a
                 // login harmlessly.
                 const logoutBox = boxOf(url);
-                const cli = command ?? "claude";
+                const cli =
+                  (logoutHost === THIS_BOX ? command : (boxCommand ?? command)) ?? "claude";
                 await (logoutHost === THIS_BOX
                   ? run(cli, ["auth", "logout"], cliEnvFor(logoutBox.configDir))
                   : run("ssh", sshArgs(logoutHost, `${shq(cli)} auth logout`)));
