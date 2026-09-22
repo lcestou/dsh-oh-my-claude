@@ -113,6 +113,7 @@ Working on the plugin itself? Start at [docs/developing.md](https://github.com/l
 19. Every skill the CLI can reach, grouped by scope, with add, edit and remove for your own and the project's. What each costs, from the CLI's own `/skill-doctor`, is a table you can sort, beside what else drives your usage: the MCP servers behind the most requests, and how the work was shaped. [Skills](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#skills)
 20. A mark on the browser tab and an optional desktop notice when a session you are not looking at finishes, or stops to ask you something. [Session notices](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#session-notices)
 21. dsh's own goal and every earlier goal of the session, beside Claude Code's goal and its scheduled tasks. [Tasks](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#tasks)
+22. Edit or remove a message you steered in while Claude works, until Claude reads it at its next tool result. [Steering](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#dsh-tools-over-mcp)
 
 Defaults you never have to touch, such as secret redaction in tool results and surviving the CLI's own updates, are on [How it works](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md).
 

@@ -113,6 +113,7 @@ subagent-model-selection:       # 让 dsh 子智能体也能使用 Claude Code
 19. 按范围列出 CLI 能用到的所有技能，你自己的和项目的技能可以添加、编辑和删除。每个技能的开销来自 CLI 自己的 `/skill-doctor`，是一张可排序的表格，旁边还有其他影响用量的因素：请求最多的 MCP 服务器，以及工作的构成。[Skills](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#skills)
 20. 你没在看的会话完成或停下来问你时，浏览器标签页会有标记，还可以选择弹出桌面通知。[Session notices](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#session-notices)
 21. dsh 自己的目标和会话以往的每个目标，与 Claude Code 的目标和定时任务并列显示。[Tasks](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#tasks)
+22. Claude 工作时你插话发送的消息，在 Claude 于下一个工具结果处读取之前，可以编辑或移除。[Steering](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#dsh-tools-over-mcp)
 
 一些你永远不必动的默认行为，比如工具结果中的密钥脱敏和挺过 CLI 自身的更新，见 [How it works](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md)。
 

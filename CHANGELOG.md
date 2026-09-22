@@ -20,6 +20,9 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 - The usage panel, the context breakdown and the usage report in Settings read in Chinese too,
   including the sentences Claude Code and the usage API send in English. A sentence from a newer
   Claude Code shows as sent until it is added.
+- A card above the composer lists the messages you steered in while Claude works, until Claude
+  reads them, with Edit and Remove. A message Claude already has is left alone and the card says
+  so. Queue mode keeps dsh's own editing.
 - A Chinese set of working verbs for the turn status line, in the same cheeky spirit as Claude
   Code's English ones (炼丹中, 憋大招中, 叽里咕噜中). Your own `spinnerVerbs` in Claude Code's
   settings still apply on top of them, or replace them.
