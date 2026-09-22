@@ -16,6 +16,7 @@ import type {
   CliModel,
   PermissionRules,
   HooksListing,
+  WaitingSteer,
 } from "./process.js";
 import { numberOf, type PluginLoadError } from "./plugins.js";
 import {
@@ -200,6 +201,7 @@ export { Translator, type TranslatorBlock, type FallbackRecord } from "./transla
 import type {
   ContentBlockType,
   FinishReason,
+  Message,
   ReasoningEffortId,
   ToolCallId,
 } from "@deepseek-ai/dsh-llm";
@@ -550,6 +552,28 @@ export interface RewindReply extends Partial<RewindResult> {
 export type SteerEditReply =
   | { ok: true }
   | { ok: false; reason: "sent" | "gone" | "error"; error?: string };
+/** What taking steers back answers: the hold to end later and the text the editor starts from. */
+export type HoldReply =
+  | { ok: true; holdId: string; text: string }
+  | { ok: false; reason: "sent" | "gone" | "error"; error?: string };
+/** The steer card's poll: steers still waiting in the CLI, and holds open for an edit. */
+export interface SteerCardState {
+  waiting: Array<{ id: string; text: string; at: number }>;
+  held: Array<{ id: string; text: string }>;
+}
+/** Steers taken back from Claude while someone edits them. */
+interface HeldSteer {
+  /** The dsh messages, oldest first, as they left the inbox; a restore puts these back unchanged. */
+  messages: Message[];
+  /** Their texts one per line, what the editor starts from. */
+  text: string;
+  /** Restores the hold when its card stops polling, so an abandoned edit never loses a message. */
+  timer: ReturnType<typeof setTimeout>;
+}
+/** How long a hold waits for a poll before it goes back to Claude unchanged. The card polls every
+ *  3 s while its tab is visible; a minute covers a tab switch mid-edit without leaving a closed
+ *  tab's message stranded for long. */
+const HOLD_IDLE_MS = 60_000;
 /** What the context route reports: the CLI's own context breakdown for a live session. */
 export type ContextUsageReply =
   | ({ ok: true; error?: undefined } & ContextUsage)
@@ -1935,14 +1959,16 @@ export const killAfterGrace = (spawn: string): boolean => spawn !== "keeper";
 export function noteInterrupt(proc: {
   steerPending: boolean;
   steers?: Map<string, unknown>;
+  forwarded?: number;
 }): void {
   proc.steerPending = false;
   forgetSteers(proc);
 }
 /** Forget the steers a process had waiting: the CLI has taken them or they went with the turn. Tolerates
  *  a process object without the map (the test fakes, a process from before this field existed). */
-export function forgetSteers(proc: { steers?: Map<string, unknown> }): void {
+export function forgetSteers(proc: { steers?: Map<string, unknown>; forwarded?: number }): void {
   proc.steers?.clear();
+  if (proc.forwarded !== undefined) proc.forwarded = 0;
 }
 /** Whether an aborted stream should interrupt Claude: always, except a dsh shutdown under a keeper. */
 export function interruptOnAbort(kind: string | undefined, spawn: string): boolean {
@@ -2303,6 +2329,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   readonly asked = new Set<string>();
   /** `/btw` side questions and their answers, newest last, per session; kept in memory only. */
   readonly sideQuestions = new Map<string, AsideEntry[]>();
+  /** Steers taken back for an edit, per session, keyed by the hold's first message id. */
+  readonly heldSteers = new Map<string, Map<string, HeldSteer>>();
   /** Sessions whose last turn failed for want of a login, and the box that turn ran on. The composer
    *  card reads this beside the asides; a turn that succeeds, or a panel login on that box, clears it.
    *  Memory only: after a restart the next failed turn writes it again. */
@@ -2457,12 +2485,14 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         // message arrived as its text alone, and `sent` then hid it from every later delivery).
         if (Array.isArray(m.content) && m.content.some((b) => b.type !== "text")) {
           proc.steerPending = true;
+          proc.forwarded += 1;
           continue;
         }
         const uuid = randomUUID();
         if (proc.write(buildInput(text, [], uuid))) {
           proc.sent.add(key);
           proc.steerPending = true;
+          proc.forwarded += 1;
           // Only what a person typed is theirs to edit; a child's report or a job line is not.
           if (m.source?.kind === "user" && m.id)
             proc.steers.set(m.id, { uuid, key, text, at: Date.now() });
@@ -3237,66 +3267,122 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     });
   }
 
-  /** The typed steers waiting in this session's CLI queue, oldest first, for the steer card. */
-  steersFor(sessionId: string): Array<{ id: string; text: string; at: number }> {
+  /** What the steer card shows: typed steers still in the CLI's queue, oldest first, and the ones
+   *  taken back for an edit. Each call is the card's poll, so it also re-arms every hold's timer; a
+   *  hold nobody polls for (a closed tab) goes back to Claude unchanged after `HOLD_IDLE_MS`. */
+  steersFor(sessionId: string): SteerCardState {
+    const holds = this.heldSteers.get(sessionId);
+    for (const [holdId, hold] of holds ?? []) {
+      clearTimeout(hold.timer);
+      hold.timer = this.holdTimer(sessionId, holdId);
+    }
     const proc = this.processes.get(registryKey(this.providerId, sessionId));
-    if (!proc?.alive) return [];
-    return [...proc.steers]
-      .map(([id, s]) => ({ id, text: s.text, at: s.at }))
-      .toSorted((a, b) => a.at - b.at);
+    const waiting = proc?.alive
+      ? [...proc.steers]
+          .map(([id, s]) => ({ id, text: s.text, at: s.at }))
+          .toSorted((a, b) => a.at - b.at)
+      : [];
+    return { waiting, held: [...(holds ?? [])].map(([id, h]) => ({ id, text: h.text })) };
+  }
+
+  /** The timer that restores a hold its card stopped polling for. */
+  private holdTimer(sessionId: string, holdId: string): ReturnType<typeof setTimeout> {
+    const timer = setTimeout(() => {
+      void this.releaseHold(sessionId, holdId, "restore").catch(() => {});
+    }, HOLD_IDLE_MS);
+    timer.unref?.();
+    return timer;
   }
 
   /**
-   * Edit (`text`) or remove (`null`) a steer Claude has not read yet. The CLI gives it back first:
-   * `cancel_async_message` answers `cancelled: false` once the CLI has taken it, and then nothing
-   * changes anywhere. Only after a true answer does the new text go to stdin and dsh's pending
-   * message change, so Claude and the chat agree. If dsh claimed the message in the few ms between
-   * (the park), Claude gets the edit while the chat keeps the original.
+   * Take typed steers back from Claude so someone can edit them, several at once when asked (the
+   * card's Edit all, the CLI's up-arrow). Each is cancelled in the CLI first; one the CLI already
+   * took is skipped, and one dsh already drew as sent (the park won the race) goes straight back to
+   * Claude. The rest leave dsh's inbox too, so nothing delivers them while the edit is open, and
+   * wait in a hold until `releaseHold`. When nothing forwarded is left in the CLI's queue the park
+   * flag drops, or the next tool result would end the step on an empty inbox.
    */
-  async editSteer(sessionId: string, id: string, text: string | null): Promise<SteerEditReply> {
+  async holdSteers(sessionId: string, ids: string[]): Promise<HoldReply> {
     const proc = this.processes.get(registryKey(this.providerId, sessionId));
     if (!proc?.alive) return { ok: false, reason: "gone" };
-    const waiting = proc.steers.get(id);
-    if (!waiting) return { ok: false, reason: "sent" };
-    const reply = await this.control(
-      proc,
-      { subtype: "cancel_async_message", message_uuid: waiting.uuid },
-      5_000,
-    );
-    if (!reply.ok) return { ok: false, reason: "error", error: reply.error };
-    if (!decodeCancelled(reply.response)) {
+    const order = ids
+      .map((id) => ({ id, waiting: proc.steers.get(id) }))
+      .filter((e): e is { id: string; waiting: WaitingSteer } => e.waiting !== undefined)
+      .toSorted((a, b) => a.waiting.at - b.waiting.at);
+    if (order.length === 0) return { ok: false, reason: "sent" };
+    const inbox = (await this.agentFor(sessionId))?.agent.inbox;
+    const messages: Message[] = [];
+    const texts: string[] = [];
+    let error: string | undefined;
+    for (const { id, waiting } of order) {
+      const reply = await this.control(
+        proc,
+        { subtype: "cancel_async_message", message_uuid: waiting.uuid },
+        5_000,
+      );
+      if (!reply.ok) {
+        error = reply.error;
+        break;
+      }
       proc.steers.delete(id);
-      return { ok: false, reason: "sent" };
-    }
-    let inbox: Agent["inbox"];
-    try {
-      inbox = this.ctx?.agents?.get?.(asSessionId(sessionId))?.inbox;
-    } catch {
-      inbox = undefined; // scope gone mid-reload: the CLI side still happens
-    }
-    // A park or the turn's end may have run during the await and cleared the map; the steer is out
-    // of the CLI either way now, so only a live turn gets the new text on stdin.
-    const stillWaiting = proc.steers.delete(id);
-    const original = inbox?.nextStep.find((m) => m.id === id);
-    if (text === null) {
-      inbox?.remove(id);
-      return { ok: true };
-    }
-    if (!proc.busy) {
-      // The turn ended while the cancel was in flight. Writing now would start a CLI turn no dsh
-      // step is open for (the busy=false failure noted at openTurn). Hand it back to dsh instead:
-      // out of `sent`, so the next prompt carries the edited message like any other.
+      if (!decodeCancelled(reply.response)) continue; // Claude has it now
+      proc.forwarded = Math.max(0, proc.forwarded - 1);
+      const message = inbox?.nextStep.find((m) => m.id === id);
+      if (!message || !inbox?.remove(id)) {
+        // dsh already drew it as sent: give Claude its copy back so chat and Claude agree. With the
+        // turn over, stdin would start a turn of its own; out of `sent`, dsh's delivery carries it.
+        if (proc.busy && proc.write(buildInput(waiting.text, [], randomUUID()))) {
+          proc.forwarded += 1;
+          proc.steerPending = true;
+        } else proc.sent.delete(waiting.key);
+        continue;
+      }
       proc.sent.delete(waiting.key);
-      if (original) inbox?.replace(id, { ...original, content: [{ type: "text", text }] });
-      return { ok: true };
+      messages.push(message);
+      texts.push(waiting.text);
     }
-    const uuid = randomUUID();
-    if (!proc.write(buildInput(text, [], uuid))) return { ok: false, reason: "gone" };
-    // The listener's contract: a steer on stdin parks the step at the CLI's next tool result.
-    proc.steerPending = true;
-    // Re-listed only while the map still had it; after a park it would show a row dsh has drawn as sent.
-    if (stillWaiting) proc.steers.set(id, { uuid, key: waiting.key, text, at: waiting.at });
-    if (original) inbox?.replace(id, { ...original, content: [{ type: "text", text }] });
+    if (proc.forwarded === 0) proc.steerPending = false;
+    const first = messages[0];
+    if (!first)
+      return error ? { ok: false, reason: "error", error } : { ok: false, reason: "sent" };
+    const text = texts.join("\n");
+    const holds = this.heldSteers.get(sessionId) ?? new Map<string, HeldSteer>();
+    this.heldSteers.set(sessionId, holds);
+    holds.set(first.id, { messages, text, timer: this.holdTimer(sessionId, first.id) });
+    return { ok: true, holdId: first.id, text };
+  }
+
+  /**
+   * End a hold. `restore` puts every held message back as it was, `drop` discards them, and a text
+   * sends one message in their place (the first one's identity, the new words). Going back is dsh's
+   * own steer, so a turn still running forwards it to Claude like any steer and an idle session
+   * starts a turn for it. When the session cannot be reached the hold stays, for a retry.
+   */
+  async releaseHold(
+    sessionId: string,
+    holdId: string,
+    how: "restore" | "drop" | { text: string },
+  ): Promise<SteerEditReply> {
+    const holds = this.heldSteers.get(sessionId);
+    const hold = holds?.get(holdId);
+    if (!holds || !hold) return { ok: false, reason: "gone" };
+    clearTimeout(hold.timer);
+    holds.delete(holdId);
+    if (holds.size === 0) this.heldSteers.delete(sessionId);
+    if (how === "drop") return { ok: true };
+    const agent = (await this.agentFor(sessionId))?.agent;
+    if (!agent?.steer) {
+      const back = this.heldSteers.get(sessionId) ?? new Map<string, HeldSteer>();
+      this.heldSteers.set(sessionId, back);
+      back.set(holdId, { ...hold, timer: this.holdTimer(sessionId, holdId) });
+      return { ok: false, reason: "error", error: "session not reachable" };
+    }
+    const first = hold.messages[0];
+    const out =
+      how === "restore" || !first
+        ? hold.messages
+        : [{ ...first, content: [{ type: "text" as const, text: how.text }] }];
+    for (const m of out) agent.steer(m);
     return { ok: true };
   }
 
@@ -6567,8 +6653,13 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
         adapter.ownerFor(sessionId).rewind(sessionId, uuid, dryRun),
       permissionAsks: adapter.permissionAsks,
       steersFor: (sessionId: string) => adapter.ownerFor(sessionId).steersFor(sessionId),
-      editSteer: (sessionId: string, id: string, text: string | null) =>
-        adapter.ownerFor(sessionId).editSteer(sessionId, id, text),
+      holdSteers: (sessionId: string, ids: string[]) =>
+        adapter.ownerFor(sessionId).holdSteers(sessionId, ids),
+      releaseHold: (
+        sessionId: string,
+        holdId: string,
+        how: "restore" | "drop" | { text: string },
+      ) => adapter.ownerFor(sessionId).releaseHold(sessionId, holdId, how),
       askAside: async (sessionId: string, question: string, seed) => {
         const owner = adapter.ownerFor(sessionId);
         // Liveness is checked here, not left to askSideQuestion, which would write its own error into

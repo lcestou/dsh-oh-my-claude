@@ -18,7 +18,7 @@ export { markBusy, takeInterrupted } from "./state.js";
 export { forkTranscriptText } from "./transcript.js";
 import { Translator, type FallbackRecord } from "./translator.js";
 export { Translator, type TranslatorBlock, type FallbackRecord } from "./translator.js";
-import type { FinishReason } from "@deepseek-ai/dsh-llm";
+import type { FinishReason, Message } from "@deepseek-ai/dsh-llm";
 import type { ClaudeProcessSpec, RelayEvent, RelayResult, TurnPrep } from "./process.js";
 /** Replace the redirect map: the boot read and every panel edit land here. Exported so the offline
  * suite can drive the two lookups below without a dsh mount. */
@@ -233,6 +233,37 @@ export type SteerEditReply = {
     reason: "sent" | "gone" | "error";
     error?: string;
 };
+/** What taking steers back answers: the hold to end later and the text the editor starts from. */
+export type HoldReply = {
+    ok: true;
+    holdId: string;
+    text: string;
+} | {
+    ok: false;
+    reason: "sent" | "gone" | "error";
+    error?: string;
+};
+/** The steer card's poll: steers still waiting in the CLI, and holds open for an edit. */
+export interface SteerCardState {
+    waiting: Array<{
+        id: string;
+        text: string;
+        at: number;
+    }>;
+    held: Array<{
+        id: string;
+        text: string;
+    }>;
+}
+/** Steers taken back from Claude while someone edits them. */
+interface HeldSteer {
+    /** The dsh messages, oldest first, as they left the inbox; a restore puts these back unchanged. */
+    messages: Message[];
+    /** Their texts one per line, what the editor starts from. */
+    text: string;
+    /** Restores the hold when its card stops polling, so an abandoned edit never loses a message. */
+    timer: ReturnType<typeof setTimeout>;
+}
 /** What the context route reports: the CLI's own context breakdown for a live session. */
 export type ContextUsageReply = ({
     ok: true;
@@ -669,11 +700,13 @@ export declare const killAfterGrace: (spawn: string) => boolean;
 export declare function noteInterrupt(proc: {
     steerPending: boolean;
     steers?: Map<string, unknown>;
+    forwarded?: number;
 }): void;
 /** Forget the steers a process had waiting: the CLI has taken them or they went with the turn. Tolerates
  *  a process object without the map (the test fakes, a process from before this field existed). */
 export declare function forgetSteers(proc: {
     steers?: Map<string, unknown>;
+    forwarded?: number;
 }): void;
 /** Whether an aborted stream should interrupt Claude: always, except a dsh shutdown under a keeper. */
 export declare function interruptOnAbort(kind: string | undefined, spawn: string): boolean;
@@ -838,6 +871,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     readonly asked: Set<string>;
     /** `/btw` side questions and their answers, newest last, per session; kept in memory only. */
     readonly sideQuestions: Map<string, AsideEntry[]>;
+    /** Steers taken back for an edit, per session, keyed by the hold's first message id. */
+    readonly heldSteers: Map<string, Map<string, HeldSteer>>;
     /** Sessions whose last turn failed for want of a login, and the box that turn ran on. The composer
      *  card reads this beside the asides; a turn that succeeds, or a panel login on that box, clears it.
      *  Memory only: after a restart the next failed turn writes it again. */
@@ -1062,20 +1097,30 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * to `resolveControl` as they arrive, so this works between turns as well as inside one.
      */
     control(proc: ClaudeProcess, request: Record<string, JsonValue>, timeoutMs?: number): Promise<ControlReply>;
-    /** The typed steers waiting in this session's CLI queue, oldest first, for the steer card. */
-    steersFor(sessionId: string): Array<{
-        id: string;
-        text: string;
-        at: number;
-    }>;
+    /** What the steer card shows: typed steers still in the CLI's queue, oldest first, and the ones
+     *  taken back for an edit. Each call is the card's poll, so it also re-arms every hold's timer; a
+     *  hold nobody polls for (a closed tab) goes back to Claude unchanged after `HOLD_IDLE_MS`. */
+    steersFor(sessionId: string): SteerCardState;
+    /** The timer that restores a hold its card stopped polling for. */
+    private holdTimer;
     /**
-     * Edit (`text`) or remove (`null`) a steer Claude has not read yet. The CLI gives it back first:
-     * `cancel_async_message` answers `cancelled: false` once the CLI has taken it, and then nothing
-     * changes anywhere. Only after a true answer does the new text go to stdin and dsh's pending
-     * message change, so Claude and the chat agree. If dsh claimed the message in the few ms between
-     * (the park), Claude gets the edit while the chat keeps the original.
+     * Take typed steers back from Claude so someone can edit them, several at once when asked (the
+     * card's Edit all, the CLI's up-arrow). Each is cancelled in the CLI first; one the CLI already
+     * took is skipped, and one dsh already drew as sent (the park won the race) goes straight back to
+     * Claude. The rest leave dsh's inbox too, so nothing delivers them while the edit is open, and
+     * wait in a hold until `releaseHold`. When nothing forwarded is left in the CLI's queue the park
+     * flag drops, or the next tool result would end the step on an empty inbox.
      */
-    editSteer(sessionId: string, id: string, text: string | null): Promise<SteerEditReply>;
+    holdSteers(sessionId: string, ids: string[]): Promise<HoldReply>;
+    /**
+     * End a hold. `restore` puts every held message back as it was, `drop` discards them, and a text
+     * sends one message in their place (the first one's identity, the new words). Going back is dsh's
+     * own steer, so a turn still running forwards it to Claude like any steer and an idle session
+     * starts a turn for it. When the session cannot be reached the hold stays, for a retry.
+     */
+    releaseHold(sessionId: string, holdId: string, how: "restore" | "drop" | {
+        text: string;
+    }): Promise<SteerEditReply>;
     /**
      * Rewind a session to one of its user prompts: `rewind_files` (dry run first, from the UI) puts
      * the working tree back, then `rewind_conversation` drops Claude's context after that prompt.

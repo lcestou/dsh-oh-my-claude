@@ -7531,6 +7531,24 @@ interface WaitingSteerRow {
   at: number;
 }
 
+/** Steers taken back from Claude for an edit: one hold, possibly several messages joined. */
+interface HeldSteerRow {
+  id: string;
+  text: string;
+}
+
+/** The steer card's half of the side-questions poll. */
+interface SteerCardData {
+  waiting: WaitingSteerRow[];
+  held: HeldSteerRow[];
+}
+
+/** One request to the steer-edit route, as its validation accepts them. */
+type SteerAction =
+  | { action: "hold" | "remove"; ids: string[] }
+  | { action: "save"; holdId: string; text: string }
+  | { action: "restore" | "drop"; holdId: string };
+
 /** What the steer-edit route answers when it refuses. */
 type SteerEditFailure = { reason?: "sent" | "gone" | "error"; error?: string };
 
@@ -7542,40 +7560,39 @@ const steerFailureText = (f: SteerEditFailure): string =>
       ? t("main.steer.error", { error: f.error ?? t("common.unknownError") })
       : t("main.steer.sent");
 
-/** The card above the composer listing typed steers Claude has not read yet, each with Edit and
- *  Remove. Both go through the plugin's route, which asks the CLI for the message back first, so a
- *  steer Claude already took is refused with dsh's own "may have already started sending" line
- *  rather than changed in the chat alone. `refresh` re-polls at once so the list follows the action. */
+/** The card above the composer for typed steers Claude has not read yet. Edit (or Edit all, joining
+ *  them one per line, as Claude Code's up arrow does) takes them back from Claude first, so nothing
+ *  goes out while the editor is open; Save sends one message with the new text, Cancel or Escape
+ *  puts the originals back, Remove drops them. The editor is drawn from the server's hold, not local
+ *  state, so a refresh mid-edit brings it back. `refresh` re-polls at once so the list follows. */
 function SteerCard({
   steers,
   sessionId,
   refresh,
 }: {
-  steers: WaitingSteerRow[];
+  steers: SteerCardData;
   sessionId: string;
   refresh: () => void;
 }) {
   useLocale();
-  const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
+  // Typed text per hold. A hold's own text seeds it; a poll never overwrites what someone typed.
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [failed, setFailed] = useState<{ id: string; text: string } | null>(null);
 
-  /** Post one edit (`text`) or removal (no text) and re-poll; a refusal leaves its line under the row. */
-  const act = async (id: string, text?: string) => {
+  /** Post one action for the row or hold `id`, then re-poll; a refusal leaves its line under it. */
+  const act = async (id: string, body: SteerAction) => {
     setBusy(id);
     setFailed(null);
     try {
       const r = await fetch(`${ROUTE}/steer-edit`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(
-          text === undefined ? { session: sessionId, id } : { session: sessionId, id, text },
-        ),
+        body: JSON.stringify({ session: sessionId, ...body }),
       });
       // SAFETY: our own JSON route; both answers carry these optional fields
-      const body = (await r.json()) as { ok?: boolean } & SteerEditFailure;
-      if (body.ok) setEditing(null);
-      else setFailed({ id, text: steerFailureText(body) });
+      const reply = (await r.json()) as { ok?: boolean } & SteerEditFailure;
+      if (!reply.ok) setFailed({ id, text: steerFailureText(reply) });
     } catch (e) {
       setFailed({
         id,
@@ -7587,6 +7604,12 @@ function SteerCard({
     }
   };
 
+  /** Send a hold's typed text in its place, unless it is blank. */
+  const save = (holdId: string, fallback: string) => {
+    const text = drafts[holdId] ?? fallback;
+    if (text.trim() !== "") void act(holdId, { action: "save", holdId, text });
+  };
+
   const buttonStyle = {
     background: "none",
     border: "none",
@@ -7595,6 +7618,13 @@ function SteerCard({
     color: T.faint,
     fontSize: 12,
   } as const;
+  /** The line under a row or hold when its last action was refused. */
+  const failure = (id: string) =>
+    failed?.id === id ? (
+      <div role="alert" style={{ color: T.err, fontSize: 12, marginTop: 2 }}>
+        {failed.text}
+      </div>
+    ) : null;
 
   return (
     <section
@@ -7609,114 +7639,138 @@ function SteerCard({
         fontSize: 13,
       }}
     >
-      <div style={{ color: T.faint, fontSize: 12, marginBottom: 4 }}>
-        {t("main.steer.title")} · {t("main.steer.hint")}
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 4 }}>
+        <span style={{ flex: 1, color: T.faint, fontSize: 12 }}>
+          {t("main.steer.title")} ·{" "}
+          {steers.held.length > 0 ? t("main.steer.heldHint") : t("main.steer.hint")}
+        </span>
+        {steers.waiting.length > 1 && (
+          <button
+            type="button"
+            data-omc-steer-edit-all=""
+            aria-label={t("main.steer.editAllAria")}
+            disabled={busy !== null}
+            onClick={() =>
+              void act("all", { action: "hold", ids: steers.waiting.map((w) => w.id) })
+            }
+            style={buttonStyle}
+          >
+            {t("main.steer.editAll")}
+          </button>
+        )}
       </div>
-      {steers.map((s) => {
-        const isEditing = editing?.id === s.id;
-        const disabled = busy === s.id;
+      {failure("all")}
+      {steers.held.map((h) => {
+        const disabled = busy === h.id;
+        const value = drafts[h.id] ?? h.text;
+        return (
+          <div key={h.id} data-omc-steer-hold={h.id} style={{ padding: "4px 0" }}>
+            <textarea
+              data-omc-steer-input=""
+              aria-label={t("main.steer.inputAria")}
+              // oxlint-disable-next-line jsx-a11y/no-autofocus -- opened by the person's own click, so focus goes where they asked
+              autoFocus
+              value={value}
+              disabled={disabled}
+              rows={Math.min(8, Math.max(2, value.split("\n").length))}
+              onChange={(e) => setDrafts((d) => ({ ...d, [h.id]: e.target.value }))}
+              onKeyDown={(e) => {
+                // dsh's QueueDock keys: Enter saves, Shift+Enter is a newline, Escape backs out.
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  void act(h.id, { action: "restore", holdId: h.id });
+                } else if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                  e.preventDefault();
+                  save(h.id, h.text);
+                }
+              }}
+              style={{
+                width: "100%",
+                boxSizing: "border-box",
+                background: T.field,
+                color: T.text,
+                border: `1px solid ${T.border}`,
+                borderRadius: 6,
+                padding: "4px 6px",
+                font: "inherit",
+                resize: "vertical",
+              }}
+            />
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 4, marginTop: 4 }}>
+              <button
+                type="button"
+                data-omc-steer-remove=""
+                aria-label={t("main.steer.removeAria")}
+                disabled={disabled}
+                onClick={() => void act(h.id, { action: "drop", holdId: h.id })}
+                style={buttonStyle}
+              >
+                {t("common.remove")}
+              </button>
+              <button
+                type="button"
+                data-omc-steer-cancel=""
+                disabled={disabled}
+                onClick={() => void act(h.id, { action: "restore", holdId: h.id })}
+                style={buttonStyle}
+              >
+                {t("cancel")}
+              </button>
+              <button
+                type="button"
+                data-omc-steer-save=""
+                disabled={disabled || value.trim() === ""}
+                onClick={() => save(h.id, h.text)}
+                style={{ ...buttonStyle, color: T.text }}
+              >
+                {t("save")}
+              </button>
+            </div>
+            {failure(h.id)}
+          </div>
+        );
+      })}
+      {steers.waiting.map((s) => {
+        const disabled = busy !== null;
         return (
           <div key={s.id} data-omc-steer-row={s.id} style={{ padding: "4px 0" }}>
-            {isEditing ? (
-              <>
-                <textarea
-                  data-omc-steer-input=""
-                  aria-label={t("main.steer.inputAria")}
-                  // oxlint-disable-next-line jsx-a11y/no-autofocus -- opened by the person's own click, so focus goes where they asked
-                  autoFocus
-                  value={editing.text}
-                  disabled={disabled}
-                  rows={Math.min(6, Math.max(2, editing.text.split("\n").length))}
-                  onChange={(e) => setEditing({ id: s.id, text: e.target.value })}
-                  onKeyDown={(e) => {
-                    // dsh's QueueDock keys: Enter saves, Shift+Enter is a newline, Escape backs out.
-                    if (e.key === "Escape") {
-                      e.preventDefault();
-                      setEditing(null);
-                    } else if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-                      e.preventDefault();
-                      if (editing.text.trim() !== "") void act(s.id, editing.text);
-                    }
-                  }}
-                  style={{
-                    width: "100%",
-                    boxSizing: "border-box",
-                    background: T.field,
-                    color: T.text,
-                    border: `1px solid ${T.border}`,
-                    borderRadius: 6,
-                    padding: "4px 6px",
-                    font: "inherit",
-                    resize: "vertical",
-                  }}
-                />
-                <div style={{ display: "flex", justifyContent: "flex-end", gap: 4, marginTop: 4 }}>
-                  <button
-                    type="button"
-                    data-omc-steer-cancel=""
-                    disabled={disabled}
-                    onClick={() => setEditing(null)}
-                    style={buttonStyle}
-                  >
-                    {t("cancel")}
-                  </button>
-                  <button
-                    type="button"
-                    data-omc-steer-save=""
-                    disabled={disabled || editing.text.trim() === ""}
-                    onClick={() => void act(s.id, editing.text)}
-                    style={{ ...buttonStyle, color: T.text }}
-                  >
-                    {t("save")}
-                  </button>
-                </div>
-              </>
-            ) : (
-              <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
-                <span
-                  style={{
-                    flex: 1,
-                    color: T.text,
-                    whiteSpace: "pre-wrap",
-                    overflowWrap: "anywhere",
-                    display: "-webkit-box",
-                    WebkitLineClamp: 3,
-                    WebkitBoxOrient: "vertical",
-                    overflow: "hidden",
-                  }}
-                >
-                  {s.text}
-                </span>
-                <button
-                  type="button"
-                  data-omc-steer-edit=""
-                  aria-label={t("main.steer.editAria")}
-                  disabled={disabled}
-                  onClick={() => {
-                    setFailed(null);
-                    setEditing({ id: s.id, text: s.text });
-                  }}
-                  style={buttonStyle}
-                >
-                  {t("edit")}
-                </button>
-                <button
-                  type="button"
-                  data-omc-steer-remove=""
-                  aria-label={t("main.steer.removeAria")}
-                  disabled={disabled}
-                  onClick={() => void act(s.id)}
-                  style={buttonStyle}
-                >
-                  {t("common.remove")}
-                </button>
-              </div>
-            )}
-            {failed?.id === s.id && (
-              <div role="alert" style={{ color: T.err, fontSize: 12, marginTop: 2 }}>
-                {failed.text}
-              </div>
-            )}
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+              <span
+                style={{
+                  flex: 1,
+                  color: T.text,
+                  whiteSpace: "pre-wrap",
+                  overflowWrap: "anywhere",
+                  display: "-webkit-box",
+                  WebkitLineClamp: 3,
+                  WebkitBoxOrient: "vertical",
+                  overflow: "hidden",
+                }}
+              >
+                {s.text}
+              </span>
+              <button
+                type="button"
+                data-omc-steer-edit=""
+                aria-label={t("main.steer.editAria")}
+                disabled={disabled}
+                onClick={() => void act(s.id, { action: "hold", ids: [s.id] })}
+                style={buttonStyle}
+              >
+                {t("edit")}
+              </button>
+              <button
+                type="button"
+                data-omc-steer-remove=""
+                aria-label={t("main.steer.removeAria")}
+                disabled={disabled}
+                onClick={() => void act(s.id, { action: "remove", ids: [s.id] })}
+                style={buttonStyle}
+              >
+                {t("common.remove")}
+              </button>
+            </div>
+            {failure(s.id)}
           </div>
         );
       })}
@@ -8131,9 +8185,9 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
   const [items, setItems] = useState<AsideItem[]>([]);
   // What the poll compares its answer against, without listing `items` as a dependency of its effect.
   const itemsRef = useRef<AsideItem[]>([]);
-  const [steers, setSteers] = useState<WaitingSteerRow[]>([]);
+  const [steers, setSteers] = useState<SteerCardData>({ waiting: [], held: [] });
   // What the poll compares its steers against, the same way `itemsRef` serves `items`.
-  const steersRef = useRef<WaitingSteerRow[]>([]);
+  const steersRef = useRef<SteerCardData>({ waiting: [], held: [] });
   steersRef.current = steers;
   // The poll itself, so the steer card can re-poll the moment an edit lands instead of in 3 s.
   const pollRef = useRef<() => void>(() => {});
@@ -8175,7 +8229,7 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
               items: AsideItem[];
               loginNeeded?: LoginNeed | null;
               claudeUpdate?: ClaudeUpdateCardData | null;
-              steers?: WaitingSteerRow[];
+              steers?: SteerCardData;
             }
           | { error: string };
         if ("error" in body) return;
@@ -8196,7 +8250,7 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
         // answer or no answer; only a list that actually moved is worth a render.
         const next = body.items ?? [];
         if (alive && JSON.stringify(next) !== JSON.stringify(itemsRef.current)) setItems(next);
-        const nextSteers = body.steers ?? [];
+        const nextSteers = body.steers ?? { waiting: [], held: [] };
         if (alive && JSON.stringify(nextSteers) !== JSON.stringify(steersRef.current))
           setSteers(nextSteers);
       } catch {
@@ -8241,8 +8295,8 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
   // which only exist for a Claude session, so an empty list is the only reason to hide it. Reading
   // the provider binding at render blinked the card out whenever the binding reloaded.
   const loginCard = need && needDismissed !== need.host ? need : null;
-  if (shown.length === 0 && !loginCard && !claudeUpdate && !limitCard && steers.length === 0)
-    return null;
+  const anySteers = steers.waiting.length > 0 || steers.held.length > 0;
+  if (shown.length === 0 && !loginCard && !claudeUpdate && !limitCard && !anySteers) return null;
 
   const dismissAside = (id: string) => {
     // Hide now, but tell the server to drop it so the next poll (or a remount) does not bring it back.
@@ -8391,7 +8445,7 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
           </div>
         );
       })}
-      {steers.length > 0 && (
+      {anySteers && (
         <SteerCard steers={steers} sessionId={sessionId} refresh={() => pollRef.current()} />
       )}
     </div>

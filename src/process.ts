@@ -1526,6 +1526,9 @@ export class ClaudeProcess {
   /** Typed steers written to stdin that the CLI has not taken yet, by dsh message id. Cleared at the
    *  park that absorbs them, at the turn's end and on interrupt; the steer card lists these. */
   steers: Map<string, WaitingSteer> = new Map();
+  /** How many mid-turn messages (typed or not, and file steers waiting to park) the CLI still has to
+   *  take. Holding a steer for an edit lowers it; at zero nothing is left to park on. */
+  forwarded = 0;
   parked: "steer" | undefined = undefined;
   /** The CLI's `dsh` MCP session belongs to a dsh that is gone (adopted after a restart) and the
    *  reconnect after adoption gave up, because dsh had no live agent for the session yet. The next

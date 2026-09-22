@@ -3944,7 +3944,9 @@ console.log("keeper-mode ok");
   console.log("control ok");
 }
 
-// editSteer: the CLI gives a steer back (cancel_async_message) before anything else changes.
+// The steer card's hold: Edit takes steers back from the CLI (cancel_async_message) and out of dsh's
+// inbox, so nothing delivers them mid-edit; the hold then ends as one saved message, the originals
+// restored, or nothing.
 {
   /** A fake live process whose writes are recorded; a control request is answered with `cancelled`. */
   const makeProc = (cancelled: boolean, extra: object = {}) => {
@@ -3953,14 +3955,14 @@ console.log("keeper-mode ok");
       alive: true,
       busy: true,
       controlListener: undefined,
-      steerPending: false,
+      steerPending: true,
+      forwarded: 1,
       sent: new Set(["r1"]),
       steers: new Map([["m1", { uuid: "old", key: "r1", text: "first", at: 5 }]]),
       write(line: string) {
         written.push(line);
         const req = JSON.parse(line);
-        if (req.type === "control_request") {
-          if (typeof proc.beforeReply === "function") proc.beforeReply();
+        if (req.type === "control_request")
           setTimeout(() => {
             // SAFETY: the adapter installs this listener before writing a control request
             (proc.controlListener as (e: object) => void)({
@@ -3969,134 +3971,159 @@ console.log("keeper-mode ok");
               response: { subtype: "success", request_id: req.request_id, response: { cancelled } },
             });
           }, 0);
-        }
         return true;
       },
       ...extra,
     };
     return { proc, written };
   };
-  /** A fake dsh inbox holding one pending steer, recording what the adapter does to it. */
-  const makeInbox = () => {
-    const calls: Array<{ op: string; id: string; text?: string }> = [];
-    return {
-      calls,
+  /** A pending dsh message as the inbox holds it. */
+  const pending = (id: string, rpcId: string, text: string) => ({
+    id,
+    role: "user",
+    source: { kind: "user", rpcId },
+    content: [{ type: "text", text }],
+  });
+  /** A fake dsh agent: its inbox's next-step list, and every message steered back. */
+  const makeAgent = (nextStep: object[]) => {
+    const removed: string[] = [];
+    const steered: Array<{ id: string; text: string }> = [];
+    const agent = {
       inbox: {
-        nextStep: [
-          {
-            id: "m1",
-            role: "user",
-            source: { kind: "user", rpcId: "r1" },
-            content: [{ type: "text", text: "first" }],
-          },
-        ],
-        replace(id: string, m: { content: Array<{ text: string }> }) {
-          calls.push({ op: "replace", id, text: m.content[0]!.text });
-          return true;
-        },
+        nextStep,
+        replace: () => true,
         remove(id: string) {
-          calls.push({ op: "remove", id });
+          removed.push(id);
           return true;
         },
       },
+      steer(m: { id: string; content: Array<{ text: string }> }) {
+        steered.push({ id: m.id, text: m.content[0]!.text });
+      },
     };
+    return { agent, removed, steered };
   };
-  const adapterWith = (inbox: object) =>
-    new ClaudeCodeAdapter(fakeCtx({ on() {}, agents: { get: () => ({ inbox }) } }), Config({}));
+  const adapterWith = (agent: object | undefined) =>
+    new ClaudeCodeAdapter(fakeCtx({ on() {}, agents: { get: () => agent } }), Config({}));
+  // SAFETY: the fixture's own fields, read back
+  const field = <V>(proc: Record<string, unknown>, k: string) => proc[k] as V;
 
-  // H1 + H7: edit while the CLI still holds it.
+  // Edit one, then save: taken back, out of dsh's inbox, the park flag down, then one new message.
   {
-    const { calls, inbox } = makeInbox();
-    const adapter = adapterWith(inbox);
+    const { agent, removed, steered } = makeAgent([pending("m1", "r1", "first")]);
+    const adapter = adapterWith(agent);
     const { proc, written } = makeProc(true);
     adapter.processes.set(registryKey(adapter.providerId, "s1"), fakeProc(proc));
-    assert.deepEqual(await adapter.editSteer("s1", "m1", "second"), { ok: true });
+    assert.deepEqual(await adapter.holdSteers("s1", ["m1"]), {
+      ok: true,
+      holdId: "m1",
+      text: "first",
+    });
     assert.equal(JSON.parse(written[0]!).request.subtype, "cancel_async_message");
     assert.equal(JSON.parse(written[0]!).request.message_uuid, "old");
-    const line = JSON.parse(written[1]!);
-    assert.equal(line.type, "user");
-    assert.equal(line.message.content[0].text, "second");
-    assert.notEqual(line.uuid, "old");
-    // SAFETY: the fixture's map, read back
-    const steers = proc.steers as Map<string, { text: string; uuid: string }>;
-    assert.equal(steers.get("m1")?.text, "second");
-    assert.equal(steers.get("m1")?.uuid, line.uuid);
-    assert.equal(
-      proc.steerPending,
-      true,
-      "the edit parks at the next tool result like the original",
-    );
-    assert.deepEqual(calls, [{ op: "replace", id: "m1", text: "second" }]);
+    assert.deepEqual(removed, ["m1"], "out of dsh's inbox, so nothing delivers it mid-edit");
+    assert.equal(field<Set<string>>(proc, "sent").has("r1"), false);
+    assert.equal(field<number>(proc, "forwarded"), 0);
+    assert.equal(proc.steerPending, false, "nothing left in the CLI to park on");
+    assert.deepEqual(adapter.steersFor("s1"), { waiting: [], held: [{ id: "m1", text: "first" }] });
+    assert.deepEqual(await adapter.releaseHold("s1", "m1", { text: "second" }), { ok: true });
+    assert.deepEqual(steered, [{ id: "m1", text: "second" }]);
+    assert.deepEqual(adapter.steersFor("s1").held, []);
+    assert.equal(written.length, 1, "the save goes through dsh's steer, not straight to stdin");
   }
-  // H2: the CLI already took it.
+  // Edit all: two held as one, joined one per line, and Cancel restores both as they were.
   {
-    const { calls, inbox } = makeInbox();
-    const adapter = adapterWith(inbox);
+    const { agent, steered } = makeAgent([
+      pending("m0", "r0", "zero"),
+      pending("m1", "r1", "first"),
+    ]);
+    const adapter = adapterWith(agent);
+    const { proc } = makeProc(true, { forwarded: 2 });
+    field<Map<string, unknown>>(proc, "steers").set("m0", {
+      uuid: "u0",
+      key: "r0",
+      text: "zero",
+      at: 1,
+    });
+    adapter.processes.set(registryKey(adapter.providerId, "s1"), fakeProc(proc));
+    assert.deepEqual(await adapter.holdSteers("s1", ["m1", "m0"]), {
+      ok: true,
+      holdId: "m0",
+      text: "zero\nfirst",
+    });
+    assert.deepEqual(await adapter.releaseHold("s1", "m0", "restore"), { ok: true });
+    assert.deepEqual(steered, [
+      { id: "m0", text: "zero" },
+      { id: "m1", text: "first" },
+    ]);
+  }
+  // Remove: dropped, nothing goes back.
+  {
+    const { agent, steered } = makeAgent([pending("m1", "r1", "first")]);
+    const adapter = adapterWith(agent);
+    const { proc } = makeProc(true);
+    adapter.processes.set(registryKey(adapter.providerId, "s1"), fakeProc(proc));
+    await adapter.holdSteers("s1", ["m1"]);
+    assert.deepEqual(await adapter.releaseHold("s1", "m1", "drop"), { ok: true });
+    assert.deepEqual(steered, []);
+    assert.deepEqual(await adapter.releaseHold("s1", "m1", "drop"), { ok: false, reason: "gone" });
+  }
+  // The CLI already took it: refused, nothing held, dsh untouched.
+  {
+    const { agent, removed } = makeAgent([pending("m1", "r1", "first")]);
+    const adapter = adapterWith(agent);
     const { proc, written } = makeProc(false);
     adapter.processes.set(registryKey(adapter.providerId, "s1"), fakeProc(proc));
-    assert.deepEqual(await adapter.editSteer("s1", "m1", "second"), { ok: false, reason: "sent" });
+    assert.deepEqual(await adapter.holdSteers("s1", ["m1"]), { ok: false, reason: "sent" });
     assert.equal(written.length, 1, "only the cancel went out");
-    assert.equal((proc.steers as Map<string, unknown>).has("m1"), false);
-    assert.deepEqual(calls, []);
+    assert.deepEqual(removed, []);
+    assert.deepEqual(adapter.steersFor("s1"), { waiting: [], held: [] });
   }
-  // H3: remove.
+  // dsh already drew it as sent (the park won the race): Claude gets its copy back, nothing held.
   {
-    const { calls, inbox } = makeInbox();
-    const adapter = adapterWith(inbox);
+    const { agent } = makeAgent([]);
+    const adapter = adapterWith(agent);
     const { proc, written } = makeProc(true);
     adapter.processes.set(registryKey(adapter.providerId, "s1"), fakeProc(proc));
-    assert.deepEqual(await adapter.editSteer("s1", "m1", null), { ok: true });
-    assert.equal(written.length, 1);
-    assert.equal((proc.steers as Map<string, unknown>).size, 0);
-    assert.deepEqual(calls, [{ op: "remove", id: "m1" }]);
+    assert.deepEqual(await adapter.holdSteers("s1", ["m1"]), { ok: false, reason: "sent" });
+    assert.equal(JSON.parse(written[1]!).message.content[0].text, "first");
+    assert.equal(field<number>(proc, "forwarded"), 1);
+    assert.equal(proc.steerPending, true);
   }
-  // H4: an id the process is not holding, and no process at all.
+  // Something else still forwarded (a child's report): the park flag stays up.
   {
-    const { inbox } = makeInbox();
-    const adapter = adapterWith(inbox);
-    const { proc, written } = makeProc(true);
+    const { agent } = makeAgent([pending("m1", "r1", "first")]);
+    const adapter = adapterWith(agent);
+    const { proc } = makeProc(true, { forwarded: 2 });
     adapter.processes.set(registryKey(adapter.providerId, "s1"), fakeProc(proc));
-    assert.deepEqual(await adapter.editSteer("s1", "nope", "x"), { ok: false, reason: "sent" });
-    assert.equal(written.length, 0);
-    assert.deepEqual(await adapter.editSteer("s9", "m1", "x"), { ok: false, reason: "gone" });
+    await adapter.holdSteers("s1", ["m1"]);
+    assert.equal(proc.steerPending, true);
   }
-  // H5: steersFor lists oldest first.
+  // The session cannot be reached when the hold ends: the hold stays, for a retry.
   {
-    const adapter = adapterWith(makeInbox().inbox);
+    const { agent } = makeAgent([pending("m1", "r1", "first")]);
+    let reachable = true;
+    const adapter = new ClaudeCodeAdapter(
+      fakeCtx({ on() {}, agents: { get: () => (reachable ? agent : undefined) } }),
+      Config({}),
+    );
     const { proc } = makeProc(true);
-    (proc.steers as Map<string, unknown>).set("m0", { uuid: "u0", key: "r0", text: "zero", at: 1 });
     adapter.processes.set(registryKey(adapter.providerId, "s1"), fakeProc(proc));
-    assert.deepEqual(
-      adapter.steersFor("s1").map((s) => s.id),
-      ["m0", "m1"],
-    );
-    assert.deepEqual(adapter.steersFor("s9"), []);
+    await adapter.holdSteers("s1", ["m1"]);
+    reachable = false;
+    const reply = await adapter.releaseHold("s1", "m1", { text: "second" });
+    assert.equal(reply.ok, false);
+    assert.deepEqual(adapter.steersFor("s1").held, [{ id: "m1", text: "first" }]);
+    await adapter.releaseHold("s1", "m1", "drop"); // clear the timer before the suite moves on
   }
-  // H8: the turn ended while the cancel was in flight.
+  // Unknown ids and no process.
   {
-    const { calls, inbox } = makeInbox();
-    const adapter = adapterWith(inbox);
-    const { proc, written } = makeProc(true, { busy: false });
-    adapter.processes.set(registryKey(adapter.providerId, "s1"), fakeProc(proc));
-    assert.deepEqual(await adapter.editSteer("s1", "m1", "second"), { ok: true });
-    assert.equal(written.length, 1, "nothing on stdin after the turn ended");
-    assert.equal(
-      (proc.sent as Set<string>).has("r1"),
-      false,
-      "dsh delivers it with the next prompt",
-    );
-    assert.deepEqual(calls, [{ op: "replace", id: "m1", text: "second" }]);
-  }
-  // H9: a park cleared the map while the cancel was in flight.
-  {
-    const { inbox } = makeInbox();
-    const adapter = adapterWith(inbox);
+    const adapter = adapterWith(makeAgent([]).agent);
     const { proc, written } = makeProc(true);
-    proc.beforeReply = () => (proc.steers as Map<string, unknown>).clear();
     adapter.processes.set(registryKey(adapter.providerId, "s1"), fakeProc(proc));
-    assert.deepEqual(await adapter.editSteer("s1", "m1", "second"), { ok: true });
-    assert.equal(written.length, 2, "the edit still reaches the CLI");
-    assert.equal((proc.steers as Map<string, unknown>).has("m1"), false, "no row comes back");
+    assert.deepEqual(await adapter.holdSteers("s1", ["nope"]), { ok: false, reason: "sent" });
+    assert.equal(written.length, 0);
+    assert.deepEqual(await adapter.holdSteers("s9", ["m1"]), { ok: false, reason: "gone" });
   }
   console.log("steer edit ok");
 }
