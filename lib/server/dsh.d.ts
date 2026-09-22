@@ -97,6 +97,17 @@ export interface Agent {
     readonly session?: Session;
     ctx?: PluginContext;
     followup(message: Message): void;
+    /** Put a message on dsh's steer list: a running turn takes it at its next step, an idle session
+     *  starts a turn for it. Optional because the mirror also types agents built some other way. */
+    steer?(message: Message): void;
+    /** dsh-agent-loop's pending input. Present on a live ReactLoopAgent; optional because the mirror
+     *  also types agents dsh built some other way. `replace` and `remove` answer false once the
+     *  message is no longer pending. */
+    readonly inbox?: {
+        readonly nextStep: readonly Message[];
+        replace(messageId: string, message: Message): boolean;
+        remove(messageId: string): boolean;
+    };
 }
 /** Mirrors: @deepseek-ai/dsh-agent/lib/types/index.d.ts */
 export interface AgentRegistry {

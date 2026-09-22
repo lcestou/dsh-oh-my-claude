@@ -66,6 +66,7 @@ import {
   parseCatalogCache,
   interruptOnAbort,
   noteInterrupt,
+  forgetSteers,
   noticeSource,
   RECONNECT_TEXT,
   LIMIT_TEXT,
@@ -1341,6 +1342,7 @@ const {
   parseQuestions,
   answersFor,
   userTurnLine,
+  decodeCancelled,
   controlResponseLine,
   allowResult,
   denyResult,
@@ -1384,6 +1386,17 @@ const turn = JSON.parse(userTurnLine([{ type: "text", text: "hi" }]));
 assert.equal(turn.type, "user");
 assert.equal(turn.parent_tool_use_id, null);
 assert.equal(turn.message.content[0].text, "hi");
+// No uuid: byte-identical to the line before the steer card existed.
+assert.equal(
+  userTurnLine([{ type: "text", text: "hi" }]),
+  '{"type":"user","session_id":"","message":{"role":"user","content":[{"type":"text","text":"hi"}]},"parent_tool_use_id":null}\n',
+);
+assert.equal(JSON.parse(userTurnLine([{ type: "text", text: "hi" }], "u-1")).uuid, "u-1");
+assert.equal(decodeCancelled({ cancelled: true }), true);
+assert.equal(decodeCancelled({ cancelled: false }), false);
+assert.equal(decodeCancelled({}), false);
+assert.equal(decodeCancelled(null), false);
+assert.equal(decodeCancelled(undefined), false);
 const cr = JSON.parse(controlResponseLine("r1", allowResult("t1", { a: 1 })));
 assert.equal(cr.type, "control_response");
 assert.equal(cr.response.request_id, "r1");
@@ -3061,6 +3074,7 @@ console.log("schema-guard ok");
   assert.equal(written, "hello\n");
   assert.equal(proc.queue.lines.length, 1, "stdout line reached the queue");
   assert.equal(proc.alive, true);
+  assert.equal(proc.steers.size, 0, "a fresh process starts with no pending steers");
   proc.kill();
   await new Promise((r) => setTimeout(r, 20));
   assert.equal(terminated, 1);
@@ -3930,6 +3944,190 @@ console.log("keeper-mode ok");
   console.log("control ok");
 }
 
+// The steer card's hold: Edit takes steers back from the CLI (cancel_async_message) and out of dsh's
+// inbox, so nothing delivers them mid-edit; the hold then ends as one saved message, the originals
+// restored, or nothing.
+{
+  /** A fake live process whose writes are recorded; a control request is answered with `cancelled`. */
+  const makeProc = (cancelled: boolean, extra: object = {}) => {
+    const written: string[] = [];
+    const proc: Record<string, unknown> = {
+      alive: true,
+      busy: true,
+      controlListener: undefined,
+      steerPending: true,
+      forwarded: 1,
+      sent: new Set(["r1"]),
+      steers: new Map([["m1", { uuid: "old", key: "r1", text: "first", at: 5 }]]),
+      write(line: string) {
+        written.push(line);
+        const req = JSON.parse(line);
+        if (req.type === "control_request")
+          setTimeout(() => {
+            // SAFETY: the adapter installs this listener before writing a control request
+            (proc.controlListener as (e: object) => void)({
+              type: "control_response",
+              request_id: req.request_id,
+              response: { subtype: "success", request_id: req.request_id, response: { cancelled } },
+            });
+          }, 0);
+        return true;
+      },
+      ...extra,
+    };
+    return { proc, written };
+  };
+  /** A pending dsh message as the inbox holds it. */
+  const pending = (id: string, rpcId: string, text: string) => ({
+    id,
+    role: "user",
+    source: { kind: "user", rpcId },
+    content: [{ type: "text", text }],
+  });
+  /** A fake dsh agent: its inbox's next-step list, and every message steered back. */
+  const makeAgent = (nextStep: object[]) => {
+    const removed: string[] = [];
+    const steered: Array<{ id: string; text: string }> = [];
+    const agent = {
+      inbox: {
+        nextStep,
+        replace: () => true,
+        remove(id: string) {
+          removed.push(id);
+          return true;
+        },
+      },
+      steer(m: { id: string; content: Array<{ text: string }> }) {
+        steered.push({ id: m.id, text: m.content[0]!.text });
+      },
+    };
+    return { agent, removed, steered };
+  };
+  const adapterWith = (agent: object | undefined) =>
+    new ClaudeCodeAdapter(fakeCtx({ on() {}, agents: { get: () => agent } }), Config({}));
+  // SAFETY: the fixture's own fields, read back
+  const field = <V>(proc: Record<string, unknown>, k: string) => proc[k] as V;
+
+  // Edit one, then save: taken back, out of dsh's inbox, the park flag down, then one new message.
+  {
+    const { agent, removed, steered } = makeAgent([pending("m1", "r1", "first")]);
+    const adapter = adapterWith(agent);
+    const { proc, written } = makeProc(true);
+    adapter.processes.set(registryKey(adapter.providerId, "s1"), fakeProc(proc));
+    assert.deepEqual(await adapter.holdSteers("s1", ["m1"]), {
+      ok: true,
+      holdId: "m1",
+      text: "first",
+    });
+    assert.equal(JSON.parse(written[0]!).request.subtype, "cancel_async_message");
+    assert.equal(JSON.parse(written[0]!).request.message_uuid, "old");
+    assert.deepEqual(removed, ["m1"], "out of dsh's inbox, so nothing delivers it mid-edit");
+    assert.equal(field<Set<string>>(proc, "sent").has("r1"), false);
+    assert.equal(field<number>(proc, "forwarded"), 0);
+    assert.equal(proc.steerPending, false, "nothing left in the CLI to park on");
+    assert.deepEqual(adapter.steersFor("s1"), { waiting: [], held: [{ id: "m1", text: "first" }] });
+    assert.deepEqual(await adapter.releaseHold("s1", "m1", { text: "second" }), { ok: true });
+    assert.deepEqual(steered, [{ id: "m1", text: "second" }]);
+    assert.deepEqual(adapter.steersFor("s1").held, []);
+    assert.equal(written.length, 1, "the save goes through dsh's steer, not straight to stdin");
+  }
+  // Edit all: two held as one, joined one per line, and Cancel restores both as they were.
+  {
+    const { agent, steered } = makeAgent([
+      pending("m0", "r0", "zero"),
+      pending("m1", "r1", "first"),
+    ]);
+    const adapter = adapterWith(agent);
+    const { proc } = makeProc(true, { forwarded: 2 });
+    field<Map<string, unknown>>(proc, "steers").set("m0", {
+      uuid: "u0",
+      key: "r0",
+      text: "zero",
+      at: 1,
+    });
+    adapter.processes.set(registryKey(adapter.providerId, "s1"), fakeProc(proc));
+    assert.deepEqual(await adapter.holdSteers("s1", ["m1", "m0"]), {
+      ok: true,
+      holdId: "m0",
+      text: "zero\nfirst",
+    });
+    assert.deepEqual(await adapter.releaseHold("s1", "m0", "restore"), { ok: true });
+    assert.deepEqual(steered, [
+      { id: "m0", text: "zero" },
+      { id: "m1", text: "first" },
+    ]);
+  }
+  // Remove: dropped, nothing goes back.
+  {
+    const { agent, steered } = makeAgent([pending("m1", "r1", "first")]);
+    const adapter = adapterWith(agent);
+    const { proc } = makeProc(true);
+    adapter.processes.set(registryKey(adapter.providerId, "s1"), fakeProc(proc));
+    await adapter.holdSteers("s1", ["m1"]);
+    assert.deepEqual(await adapter.releaseHold("s1", "m1", "drop"), { ok: true });
+    assert.deepEqual(steered, []);
+    assert.deepEqual(await adapter.releaseHold("s1", "m1", "drop"), { ok: false, reason: "gone" });
+  }
+  // The CLI already took it: refused, nothing held, dsh untouched.
+  {
+    const { agent, removed } = makeAgent([pending("m1", "r1", "first")]);
+    const adapter = adapterWith(agent);
+    const { proc, written } = makeProc(false);
+    adapter.processes.set(registryKey(adapter.providerId, "s1"), fakeProc(proc));
+    assert.deepEqual(await adapter.holdSteers("s1", ["m1"]), { ok: false, reason: "sent" });
+    assert.equal(written.length, 1, "only the cancel went out");
+    assert.deepEqual(removed, []);
+    assert.deepEqual(adapter.steersFor("s1"), { waiting: [], held: [] });
+  }
+  // dsh already drew it as sent (the park won the race): Claude gets its copy back, nothing held.
+  {
+    const { agent } = makeAgent([]);
+    const adapter = adapterWith(agent);
+    const { proc, written } = makeProc(true);
+    adapter.processes.set(registryKey(adapter.providerId, "s1"), fakeProc(proc));
+    assert.deepEqual(await adapter.holdSteers("s1", ["m1"]), { ok: false, reason: "sent" });
+    assert.equal(JSON.parse(written[1]!).message.content[0].text, "first");
+    assert.equal(field<number>(proc, "forwarded"), 1);
+    assert.equal(proc.steerPending, true);
+  }
+  // Something else still forwarded (a child's report): the park flag stays up.
+  {
+    const { agent } = makeAgent([pending("m1", "r1", "first")]);
+    const adapter = adapterWith(agent);
+    const { proc } = makeProc(true, { forwarded: 2 });
+    adapter.processes.set(registryKey(adapter.providerId, "s1"), fakeProc(proc));
+    await adapter.holdSteers("s1", ["m1"]);
+    assert.equal(proc.steerPending, true);
+  }
+  // The session cannot be reached when the hold ends: the hold stays, for a retry.
+  {
+    const { agent } = makeAgent([pending("m1", "r1", "first")]);
+    let reachable = true;
+    const adapter = new ClaudeCodeAdapter(
+      fakeCtx({ on() {}, agents: { get: () => (reachable ? agent : undefined) } }),
+      Config({}),
+    );
+    const { proc } = makeProc(true);
+    adapter.processes.set(registryKey(adapter.providerId, "s1"), fakeProc(proc));
+    await adapter.holdSteers("s1", ["m1"]);
+    reachable = false;
+    const reply = await adapter.releaseHold("s1", "m1", { text: "second" });
+    assert.equal(reply.ok, false);
+    assert.deepEqual(adapter.steersFor("s1").held, [{ id: "m1", text: "first" }]);
+    await adapter.releaseHold("s1", "m1", "drop"); // clear the timer before the suite moves on
+  }
+  // Unknown ids and no process.
+  {
+    const adapter = adapterWith(makeAgent([]).agent);
+    const { proc, written } = makeProc(true);
+    adapter.processes.set(registryKey(adapter.providerId, "s1"), fakeProc(proc));
+    assert.deepEqual(await adapter.holdSteers("s1", ["nope"]), { ok: false, reason: "sent" });
+    assert.equal(written.length, 0);
+    assert.deepEqual(await adapter.holdSteers("s9", ["m1"]), { ok: false, reason: "gone" });
+  }
+  console.log("steer edit ok");
+}
+
 // retarget: a model-only spec change switches the live process with set_model and keeps it; any
 // other change, or a refused request, leaves the process untouched so acquire() respawns.
 {
@@ -4022,6 +4220,16 @@ assert.equal(killAfterGrace("node"), true);
   assert.equal(proc.steerPending, false, "an interrupt clears the park flag");
   noteInterrupt(proc);
   assert.equal(proc.steerPending, false, "clearing twice is the same");
+}
+// The waiting steers go with the interrupt, and a process object without the map is tolerated.
+{
+  const proc = {
+    steerPending: true,
+    steers: new Map([["m1", { uuid: "u", key: "r1", text: "t", at: 1 }]]),
+  };
+  noteInterrupt(proc);
+  assert.equal(proc.steers.size, 0, "an interrupt forgets the waiting steers");
+  forgetSteers({});
 }
 // The next call after the Stop is a prompt, not a steer continuation: the flag is clear and
 // `parked` was never set, so `continuationFor` drops the steer the CLI already has and keeps the
@@ -4803,6 +5011,69 @@ console.log("interrupt-on-abort ok");
   assert.equal(proc.sent.size, 0, "file alone: not marked sent");
   assert.equal(proc.steerPending, false, "file alone: no text, so nothing parks (as before)");
   console.log("live-steer ok");
+}
+// The steer card's side of the listener: a typed steer is recorded with the uuid its line carries,
+// what dsh sends on its own behalf is forwarded but not offered for editing, and the re-insert a
+// card edit causes (dsh's inbox.replace) is not written a second time.
+{
+  const handlers: Record<string, (session: unknown, event: unknown) => void> = {};
+  const adapter = new ClaudeCodeAdapter(
+    fakeCtx({
+      on(name: string, fn: (session: unknown, event: unknown) => void) {
+        handlers[name] = fn;
+      },
+    }),
+    Config({}),
+  );
+  const writes: string[] = [];
+  const proc = {
+    alive: true,
+    busy: true,
+    relays: new Map(),
+    sent: new Set<string>(),
+    steerPending: false,
+    steers: new Map<string, { uuid: string; key: string; text: string; at: number }>(),
+    write(line: string) {
+      writes.push(line);
+      return true;
+    },
+  };
+  adapter.processes.set(registryKey("claude-code", "k"), fakeProc(proc));
+  const splice = (inserted: object[]) =>
+    handlers["session/event"]?.(
+      { id: "k" },
+      { type: "agent/inbox/spliced", data: { target: "next-step", inserted } },
+    );
+  const typed = {
+    id: "m1",
+    role: "user",
+    source: { kind: "user", rpcId: "r1" },
+    content: [{ type: "text", text: "check the README too" }],
+  };
+  splice([typed]);
+  assert.equal(writes.length, 1);
+  assert.equal(proc.steers.get("m1")?.text, "check the README too");
+  assert.equal(proc.steers.get("m1")?.key, "r1");
+  assert.equal(
+    proc.steers.get("m1")?.uuid,
+    JSON.parse(writes[0]!).uuid,
+    "the line carries the uuid",
+  );
+
+  splice([{ ...typed, content: [{ type: "text", text: "check the CHANGELOG instead" }] }]);
+  assert.equal(writes.length, 1, "a replace of a message already forwarded is not written again");
+
+  splice([
+    {
+      id: "m2",
+      role: "user",
+      source: { kind: "agent-message", form: "relay", senderSessionId: "c1" },
+      content: [{ type: "text", text: "chunk done" }],
+    },
+  ]);
+  assert.equal(writes.length, 2, "a child's report is still forwarded");
+  assert.equal(proc.steers.has("m2"), false, "but it is not the person's to edit");
+  console.log("steer-card listener ok");
 }
 // What dsh sends on its own behalf goes live the same way a typed steer does, marked by its id. On
 // 2026-09-16 three child reports (a send_message relay, two settlement notices) were spliced a few

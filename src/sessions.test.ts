@@ -568,6 +568,112 @@ const responder =
     return { status, body: JSON.parse(Buffer.concat(resChunks).toString("utf8")) };
   };
 
+// The steer card's routes: GET /side-questions carries the waiting and held steers, and POST
+// /steer-edit validates its body and passes each action through (remove is a hold and a drop).
+{
+  const tmp = await mkdtemp(join(tmpdir(), "dsh-steer-edit-test-"));
+  let handler: ((req: any, res: any) => void) | undefined;
+  const calls: Array<{ sid: string; op: string; arg: string[] }> = [];
+  // SAFETY: partial fake for tests
+  const ctx = {
+    inject: (deps: string[], cb: (host: any) => void) => {
+      cb({
+        webServer: {
+          register: (r: any) => {
+            handler = r.handler as (req: any, res: any) => void;
+            return () => {};
+          },
+        },
+        connection: { requestRejection: () => undefined },
+        sessions: { get: () => undefined },
+        sessionPersistence: { list: async () => [] },
+        effect: (fn: () => void | (() => void)) => fn(),
+      });
+    },
+  } as any;
+  registerSessionRoutes(ctx, {
+    log: () => {},
+    projectDir: (cwd: string) => [join(tmp, "claude", "projects", projectDirName(cwd))],
+    projectsDir: [join(tmp, "claude", "projects")],
+    startedIds: async () => [],
+    claudeIdOf: (id: string) => id,
+    configDir: join(tmp, "claude"),
+    boxesPath: join(tmp, "boxes.json"),
+    importedDir: join(tmp, "imported"),
+    instanceFor: () => undefined,
+    instanceForHost: () => ({ configDir: join(tmp, "box") }),
+    steersFor: (sid: string) =>
+      sid === "s1"
+        ? { waiting: [{ id: "m1", text: "first", at: 1 }], held: [{ id: "m0", text: "zero" }] }
+        : { waiting: [], held: [] },
+    holdSteers: async (sid: string, ids: string[]) => {
+      calls.push({ sid, op: "hold", arg: ids });
+      return ids.includes("late")
+        ? { ok: false as const, reason: "sent" as const }
+        : { ok: true as const, holdId: ids[0]!, text: "t" };
+    },
+    releaseHold: async (
+      sid: string,
+      holdId: string,
+      how: "restore" | "drop" | { text: string },
+    ) => {
+      calls.push({ sid, op: "release", arg: [holdId, typeof how === "string" ? how : how.text] });
+      return { ok: true as const };
+    },
+  });
+  assert.ok(handler);
+  const respond = responder(() => handler);
+  const post = (body: object) =>
+    respond("POST", "/dsh-oh-my-claude/steer-edit", JSON.stringify(body));
+
+  let r = await respond("GET", "/dsh-oh-my-claude/side-questions?session=s1");
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body.steers, {
+    waiting: [{ id: "m1", text: "first", at: 1 }],
+    held: [{ id: "m0", text: "zero" }],
+  });
+  r = await respond("GET", "/dsh-oh-my-claude/side-questions?session=s2");
+  assert.deepEqual(r.body.steers, { waiting: [], held: [] });
+
+  assert.equal((await post({ action: "hold", ids: ["m1"] })).status, 400, "no session");
+  assert.equal((await post({ session: "s1", action: "hold" })).status, 400, "no ids");
+  assert.equal((await post({ session: "s1", action: "hold", ids: [1] })).status, 400);
+  assert.equal((await post({ session: "s1", action: "save" })).status, 400, "no holdId");
+  assert.equal(
+    (await post({ session: "s1", action: "save", holdId: "m1", text: "  " })).status,
+    400,
+    "blank text is refused, not sent",
+  );
+  assert.equal((await post({ session: "s1", action: "zap", holdId: "m1" })).status, 400);
+  assert.equal(calls.length, 0);
+
+  r = await post({ session: "s1", action: "hold", ids: ["m1", "m2"] });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.holdId, "m1");
+  assert.deepEqual(calls.at(-1), { sid: "s1", op: "hold", arg: ["m1", "m2"] });
+  r = await post({ session: "s1", action: "save", holdId: "m1", text: "second" });
+  assert.equal(r.status, 200);
+  assert.deepEqual(calls.at(-1), { sid: "s1", op: "release", arg: ["m1", "second"] });
+  await post({ session: "s1", action: "restore", holdId: "m1" });
+  assert.deepEqual(calls.at(-1), { sid: "s1", op: "release", arg: ["m1", "restore"] });
+  await post({ session: "s1", action: "drop", holdId: "m1" });
+  assert.deepEqual(calls.at(-1), { sid: "s1", op: "release", arg: ["m1", "drop"] });
+
+  // Remove is a hold and a drop in one request.
+  calls.length = 0;
+  r = await post({ session: "s1", action: "remove", ids: ["m1"] });
+  assert.equal(r.status, 200);
+  assert.deepEqual(
+    calls.map((c) => c.op),
+    ["hold", "release"],
+  );
+  assert.deepEqual(calls[1]!.arg, ["m1", "drop"]);
+
+  r = await post({ session: "s1", action: "hold", ids: ["late"] });
+  assert.equal(r.status, 409);
+  assert.equal(r.body.reason, "sent");
+}
+
 // POST /side-questions: 400 when session or question is missing, 404 when askAside is absent,
 // and 200 that proves the callback received the parsed body.
 {

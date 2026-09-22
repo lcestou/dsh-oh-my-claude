@@ -12,4 +12,5 @@ export const en = {
   close: "Close",
   loading: "Loading…",
   save: "Save",
+  edit: "Edit",
 } as const;

@@ -422,6 +422,39 @@ export interface SessionRouteOptions {
     }>;
     /** `/btw` side questions and their answers, per session; the client bubble reads them. */
     sideQuestions?: Map<string, AsideEntry[]>;
+    /** The steer card's poll: typed steers still in the session's CLI queue, and holds open for an
+     *  edit. Calling it re-arms the holds' idle timers. */
+    steersFor?: (sessionId: string) => {
+        waiting: Array<{
+            id: string;
+            text: string;
+            at: number;
+        }>;
+        held: Array<{
+            id: string;
+            text: string;
+        }>;
+    };
+    /** Take waiting steers back from Claude for an edit; the answer names the hold and its text. */
+    holdSteers?: (sessionId: string, ids: string[]) => Promise<{
+        ok: true;
+        holdId: string;
+        text: string;
+    } | {
+        ok: false;
+        reason: "sent" | "gone" | "error";
+        error?: string;
+    }>;
+    /** End a hold: put it back as it was, drop it, or send one message with new text in its place. */
+    releaseHold?: (sessionId: string, holdId: string, how: "restore" | "drop" | {
+        text: string;
+    }) => Promise<{
+        ok: true;
+    } | {
+        ok: false;
+        reason: "sent" | "gone" | "error";
+        error?: string;
+    }>;
     /** Sessions whose last turn failed for want of a login, read beside the asides for the card. */
     loginNeeded?: Map<string, LoginNeed>;
     /** dsh session id → the model switch its last turn reported, for the `fallback` field beside the
@@ -492,7 +525,7 @@ export interface SessionRouteOptions {
     continueAfterLimit?: boolean;
 }
 /** `projectDir(cwd)` → Claude Code project dir; `startedIds()` → ids the adapter started itself. */
-export declare function registerSessionRoutes(ctx: PluginContext, { log, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, importedDir, sshBoxesPath, onSshBoxes, remoteWorkspacesPath, onRemoteWorkspaces, command, sshHost, turnRecords, dshVersion, liveTurn, idle, toolMode, terminalSync, permissionModes, thinking, rewind, contextUsage, skillDoctor, workspaceDiff, permissionReadout, askAside, mcp, permissionAsks, sideQuestions, loginNeeded, sessionFallbacks, boxOfSession, claudeUpdated, loginDone, logoutDone, liveCount, persistAsides, starters, setStarter, models, reloadPlugins, reloadSkills, pluginErrors, pluginWarnings, awaiting, continueAfterLimit, instanceFor, instanceForHost, onLoginStatus, }: SessionRouteOptions): void;
+export declare function registerSessionRoutes(ctx: PluginContext, { log, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, importedDir, sshBoxesPath, onSshBoxes, remoteWorkspacesPath, onRemoteWorkspaces, command, sshHost, turnRecords, dshVersion, liveTurn, idle, toolMode, terminalSync, permissionModes, thinking, rewind, contextUsage, skillDoctor, workspaceDiff, permissionReadout, askAside, mcp, permissionAsks, sideQuestions, steersFor, holdSteers, releaseHold, loginNeeded, sessionFallbacks, boxOfSession, claudeUpdated, loginDone, logoutDone, liveCount, persistAsides, starters, setStarter, models, reloadPlugins, reloadSkills, pluginErrors, pluginWarnings, awaiting, continueAfterLimit, instanceFor, instanceForHost, onLoginStatus, }: SessionRouteOptions): void;
 /**
  * The four files Claude Code merges for one session, highest precedence first. Duplicated in
  * `src/client/settings.ts`: the browser half cannot import server code, and the order is the
