@@ -107,7 +107,7 @@ export interface SeedEvent {
     sourceEventSeqs?: number[];
 }
 /** dsh session events for folded turns. Shapes follow what dsh writes itself; seqs are contiguous from 0. */
-export declare function toSessionEvents(folded: FoldedTranscript): SeedEvent[];
+export declare function toSessionEvents(folded: FoldedTranscript, logVersion?: number): SeedEvent[];
 /** What another entrypoint wrote into a stretch of transcript: its completed turns, and how many
  *  bytes of the stretch are settled. A prompt still being answered is not settled: `consumed` stops
  *  at its row, so the next read starts there and reports the whole turn once. */

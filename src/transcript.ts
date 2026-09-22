@@ -550,7 +550,7 @@ export interface SeedEvent {
 }
 
 /** dsh session events for folded turns. Shapes follow what dsh writes itself; seqs are contiguous from 0. */
-export function toSessionEvents(folded: FoldedTranscript): SeedEvent[] {
+export function toSessionEvents(folded: FoldedTranscript, logVersion = 3): SeedEvent[] {
   const events: SeedEvent[] = [];
   // Record times are copied from the transcript, where a tool result can be stamped later than the
   // `turn/end` that follows it (Claude writes the result when it arrives, not when the turn closed).
@@ -616,25 +616,37 @@ export function toSessionEvents(folded: FoldedTranscript): SeedEvent[] {
           isError: true,
           time: s.time,
         };
-        const block: ToolResultSeed = {
-          type: "tool-result",
-          toolCallId: c.id,
-          content: r.content,
-        };
-        if (r.isError) block.isError = true;
+        // v4 (dsh 0.1.7) stores the result as a tool-role message with the text as plain blocks
+        // and refuses the wrapper block; up to v3 it is a user message holding that wrapper. See
+        // `toolResultMessage` in rows-probe.ts, which the probe uses for the same choice.
+        let message: SeedEvent["data"];
+        if (logVersion >= 4) {
+          message = {
+            id: `${c.id}:result`,
+            role: "tool",
+            toolCallId: c.id,
+            content: r.content,
+            source: { kind: "tool", callId: c.id },
+          };
+          if (r.isError) Object.assign(message, { isError: true });
+        } else {
+          const block: ToolResultSeed = {
+            type: "tool-result",
+            toolCallId: c.id,
+            content: r.content,
+          };
+          if (r.isError) block.isError = true;
+          message = {
+            id: `${c.id}:result`,
+            role: "user",
+            content: [block],
+            source: { kind: "tool", callId: c.id },
+          };
+        }
         push(
           "tool/result",
           r.time,
-          {
-            turn,
-            step,
-            message: {
-              id: `${c.id}:result`,
-              role: "user",
-              content: [block],
-              source: { kind: "tool", callId: c.id },
-            },
-          },
+          { turn, step, message },
           { surfaceOp: "append", sourceEventSeqs: [callSeq] },
         );
       }

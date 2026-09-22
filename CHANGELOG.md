@@ -6,6 +6,16 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Fixed
+
+- Native rows are available again on dsh 0.1.7. The switch was locked by the plugin's own check,
+  which fed dsh a tool result in the shape dsh 0.1.6 stored and heard that 0.1.7 refuses it; the
+  check and the Import seed now write the shape the installed dsh stores (a tool-role message from
+  v4), and rows mode itself already did, through dsh's own message builder. A rows-mode session
+  written on 0.1.7 reopens there.
+- Remember model per workspace no longer overwrites a provider you pick while a blank session is
+  still loading.
+
 ### Added
 
 - Chinese. Everything the plugin draws follows dsh's language setting (Settings → General →

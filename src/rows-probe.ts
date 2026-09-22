@@ -79,6 +79,40 @@ const ev = (
 });
 
 /**
+ * A tool's result as the log version stores it. Up to v3 (dsh 0.1.6) it is a user message from the
+ * tool source holding one `tool-result` block; from v4 (dsh 0.1.7) it is a first-class message of
+ * its own, `role: "tool"`, the call id on the message and the text as plain blocks, and v4's
+ * loader refuses the wrapper block outright ("content must not contain a released tool-result
+ * wrapper"). The live rows mode gets this right on its own by calling dsh's
+ * `createToolResultMessage`; the probe and the Import seed build the message by hand and have to
+ * pick the shape themselves.
+ */
+export function toolResultMessage(
+  version: number,
+  callId: string,
+  id: string,
+  text: string,
+  isError = false,
+): JsonValue {
+  const content = [{ type: "text", text }];
+  if (version >= 4)
+    return {
+      id,
+      role: "tool",
+      toolCallId: callId,
+      source: { kind: "tool", callId },
+      content,
+      isError,
+    };
+  return {
+    id,
+    role: "user",
+    source: { kind: "tool", callId },
+    content: [{ type: "tool-result", toolCallId: callId, content, isError }],
+  };
+}
+
+/**
  * The current-format log rows mode would write for one turn with one tool: shapes copied from a
  * dsh 0.1.5 v3 log. The call and its result sit inside the step, ahead of the settled message.
  *
@@ -112,23 +146,7 @@ export const rawRowsLog = (version = 3): RawRowsLog => ({
     ev(
       4,
       "tool/result",
-      {
-        turn: 1,
-        step: 1,
-        message: {
-          source: { kind: "tool", callId: "raw" },
-          content: [
-            {
-              type: "tool-result",
-              toolCallId: "raw",
-              content: [{ type: "text", text: "ok" }],
-              isError: false,
-            },
-          ],
-          role: "user",
-          id: "r",
-        },
-      },
+      { turn: 1, step: 1, message: toolResultMessage(version, "raw", "r", "ok") },
       { sourceEventSeqs: [3], surfaceOp: "append" },
     ),
     ev(

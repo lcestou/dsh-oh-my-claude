@@ -6070,9 +6070,14 @@ function WorkspaceModelMemory({ sessionId, ctx }: { sessionId: string; ctx: Clie
       );
       if (!saved.model || !live) return;
       // The mount to open on: the session's own when it is already Claude, else the remembered
-      // one, and only while nobody has picked a provider for this blank by hand.
+      // one, and only while nobody has picked a provider for this blank by hand. Read again here,
+      // not only at mount: the two reads above are async, and a click in the picker during them
+      // is a pick this must not overwrite.
+      const pickedNow =
+        ctx.sessions.list.getSnapshot()?.byId[sessionId]?.projectionValues?.modelSelection?.next
+          ?.provider ?? picked;
       const provider =
-        current ?? (saved.provider && !picked ? claudeMount(saved.provider) : undefined);
+        current ?? (saved.provider && !pickedNow ? claudeMount(saved.provider) : undefined);
       if (!provider) return;
       const dir = ctx.modelDirectories.directoryFor(sessionId);
       const now = dir.store.getSnapshot().current;

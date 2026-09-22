@@ -36,6 +36,16 @@ export interface RawRowsLog {
     rows: LogRow[];
 }
 /**
+ * A tool's result as the log version stores it. Up to v3 (dsh 0.1.6) it is a user message from the
+ * tool source holding one `tool-result` block; from v4 (dsh 0.1.7) it is a first-class message of
+ * its own, `role: "tool"`, the call id on the message and the text as plain blocks, and v4's
+ * loader refuses the wrapper block outright ("content must not contain a released tool-result
+ * wrapper"). The live rows mode gets this right on its own by calling dsh's
+ * `createToolResultMessage`; the probe and the Import seed build the message by hand and have to
+ * pick the shape themselves.
+ */
+export declare function toolResultMessage(version: number, callId: string, id: string, text: string, isError?: boolean): JsonValue;
+/**
  * The current-format log rows mode would write for one turn with one tool: shapes copied from a
  * dsh 0.1.5 v3 log. The call and its result sit inside the step, ahead of the settled message.
  *
