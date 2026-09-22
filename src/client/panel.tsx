@@ -798,6 +798,37 @@ const FOLD_BODY: CSSProperties = { ...nested, marginLeft: 3 };
 /** A fold's own title: the section label, kept a list item so the browser still draws its marker. */
 const FOLD_HEAD: CSSProperties = { ...sectionHead, display: "list-item", cursor: "pointer" };
 
+/** The CLI's "Top …" group headings from `claude -p "/usage"`, as the parser capitalises them. */
+const DRIVER_GROUP_KEYS = new Map<string, OmcKey>([
+  ["Subagents", "panel.skills.groupSubagents"],
+  ["Plugins", "panel.skills.groupPlugins"],
+  ["MCP servers", "panel.skills.groupMcpServers"],
+]);
+
+/** The CLI's usage sentences, one pattern per template it prints (2.1.x). The first group is the
+ *  percentage and the second, when there is one, a skill, agent, plugin or server name, which stays
+ *  as written. A sentence no pattern matches is a template newer than this list and shows as sent. */
+const BEHAVIOUR_KEYS: Array<[RegExp, OmcKey]> = [
+  [/^(\d+)% of your usage hit a >100k-token cache miss$/, "panel.skills.behCacheMiss"],
+  [/^(\d+)% of your usage was at >150k context$/, "panel.skills.behLongContext"],
+  [/^(\d+)% of your usage came from subagent-heavy sessions$/, "panel.skills.behSubagentHeavy"],
+  [/^(\d+)% of your usage was while 4\+ sessions ran in parallel$/, "panel.skills.behParallel"],
+  [/^(\d+)% of your usage came from sessions active for 8\+ hours$/, "panel.skills.behLongRunning"],
+  [/^(\d+)% of your usage came from subagents under "(.+)"$/, "panel.skills.behFromAgent"],
+  [/^(\d+)% of your usage came from the plugin "(.+)"$/, "panel.skills.behFromPlugin"],
+  [/^(\d+)% of your usage came from the MCP server "(.+)"$/, "panel.skills.behFromMcp"],
+  [/^(\d+)% of your usage came from \/(.+)$/, "panel.skills.behFromSkill"],
+];
+
+/** One CLI usage sentence in the reader's language, or as the CLI wrote it when it is new. */
+const behaviourText = (line: string): string => {
+  for (const [re, key] of BEHAVIOUR_KEYS) {
+    const m = re.exec(line);
+    if (m) return t(key, { pct: m[1] ?? "", name: m[2] ?? "" });
+  }
+  return line;
+};
+
 /**
  * The Skills tab: every skill the CLI can reach for this directory, grouped by where it comes from,
  * each scope a collapsible section. User and project skills are created, edited and removed here; a
@@ -1436,7 +1467,7 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
                         data-omc-usage-behaviour=""
                         style={{ ...meta, display: "block", whiteSpace: "normal", color: T.text }}
                       >
-                        {b}
+                        {behaviourText(b)}
                       </div>
                     ))}
                     {win.groups
@@ -1451,7 +1482,10 @@ function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
                               display: "block",
                             }}
                           >
-                            {g.label}
+                            {(() => {
+                              const key = DRIVER_GROUP_KEYS.get(g.label);
+                              return key ? t(key) : g.label;
+                            })()}
                           </div>
                           {g.drivers.map((d) => (
                             <div

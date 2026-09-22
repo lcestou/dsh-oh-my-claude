@@ -151,6 +151,7 @@ const ALLOWED_PHRASES = new Map<string, string>([
   ["narrative, fix internals", "the recap prompt, read by Claude, not a person"],
   ["noreferrer noopener", "a link rel value"],
   ["Free space", "a CLI category name the code compares against"],
+  ["MCP servers", "a CLI /usage group heading, the lookup key for its translation"],
   ["System prompt", "a CLI category name, the lookup key for its translation"],
   ["System tools", "a CLI category name, the lookup key for its translation"],
   ["MCP tools", "a CLI category name, the lookup key for its translation"],
