@@ -3148,7 +3148,7 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
 
           {/* MCP servers that did not come up */}
           <span style={sectionHead}>{t("panel.diag.mcpServers")}</span>
-          {!running ? (
+          {!started ? (
             <span style={{ ...meta, padding: "2px 0", fontSize: 12 }}>
               {t("panel.readout.notRunning")}
             </span>
