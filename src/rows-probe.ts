@@ -113,8 +113,8 @@ export function toolResultMessage(
 }
 
 /**
- * The current-format log rows mode would write for one turn with one tool: shapes copied from a
- * dsh 0.1.5 v3 log. The call and its result sit inside the step, ahead of the settled message.
+ * The current-format log rows mode writes for one turn with one tool: the announcement, the call
+ * and its result sit inside the step, ahead of the settled text message.
  *
  * `version` is the log version the installed dsh writes, not a fixed 3. A fixture stamped below
  * that version is a log needing migration, and dsh 0.1.7's v3-to-v4 migration refuses to run at
@@ -142,15 +142,34 @@ export const rawRowsLog = (version = 3): RawRowsLog => ({
       { content: [{ type: "text", text: "hi" }], source: { kind: "user" }, role: "user", id: "u" },
       { surfaceOp: "append" },
     ),
-    ev(3, "tool/call", { turn: 1, step: 1, callId: "raw", name: "bash", arguments: "{}" }),
+    // The announcement rows mode writes before each call from 2026-09-22 on: one tool-call block
+    // in an assistant message of its own, which is what dsh 0.1.7's loader requires and what
+    // 0.1.5's migration wanted. A log without it is what the repair tool mends.
     ev(
-      4,
-      "tool/result",
-      { turn: 1, step: 1, message: toolResultMessage(version, "raw", "r", "ok") },
-      { sourceEventSeqs: [3], surfaceOp: "append" },
+      3,
+      "assistant/message",
+      {
+        turn: 1,
+        step: 1,
+        message: {
+          role: "assistant",
+          source: { kind: "model", provider: "claude-code", model: "probe" },
+          id: "raw:call",
+          content: [{ type: "tool-call", id: "raw", name: "bash", arguments: "{}" }],
+        },
+        stream: [],
+      },
+      { surfaceOp: "append" },
     ),
+    ev(4, "tool/call", { turn: 1, step: 1, callId: "raw", name: "bash", arguments: "{}" }),
     ev(
       5,
+      "tool/result",
+      { turn: 1, step: 1, message: toolResultMessage(version, "raw", "r", "ok") },
+      { sourceEventSeqs: [4], surfaceOp: "append" },
+    ),
+    ev(
+      6,
       "assistant/message",
       {
         turn: 1,
@@ -173,8 +192,8 @@ export const rawRowsLog = (version = 3): RawRowsLog => ({
       },
       { surfaceOp: "append" },
     ),
-    ev(6, "step/end", { turn: 1, step: 1 }),
-    ev(7, "turn/end", { turn: 1, reason: "done" }),
+    ev(7, "step/end", { turn: 1, step: 1 }),
+    ev(8, "turn/end", { turn: 1, reason: "done" }),
   ],
 });
 

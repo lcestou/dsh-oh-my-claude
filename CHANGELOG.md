@@ -8,6 +8,14 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- Native rows work on dsh 0.1.7 and survive a restart. Rows mode now announces each of Claude's
+  tool calls in a small assistant message before its row, which is what 0.1.7's loader requires
+  and what 0.1.5's migration asked for; the probe that gates the switch writes the same shape, so
+  the switch unlocks on a dsh that loads it. Checked by running a rows turn, restarting dsh and
+  reopening the session from disk: it loads, with one card per call.
+
+### Fixed
+
 - Native rows are locked again on dsh 0.1.7, this time for the real reason. That release loads a
   session with a stricter check than it migrates one with, and the check refuses the raw tool rows
   rows mode writes ("has no advertised tool lifecycle"): two rows-mode sessions failed to load
