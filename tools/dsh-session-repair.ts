@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
-// Repair dsh session logs that dsh 0.1.5+ refuses to migrate.
+// Repair dsh session logs that dsh 0.1.5+ refuses to migrate, and v4 logs that 0.1.7 refuses to
+// load because a rows-mode turn was cut short with a tool call open.
 //
 // Before 2026-09-08 (toolsInline: false) this plugin appended raw `tool/call` and `tool/result`
 // rows for Claude Code's own tools. dsh's v0 -> v3 session migration requires every `tool/call`
@@ -86,7 +87,13 @@ const opt = (name: string) => {
  */
 const defined = <T>(x: T | undefined): x is T => x !== undefined;
 
-/** Drop unadvertised tool rows from a v0 event list and keep every seq reference consistent. */
+/**
+ * Drop unadvertised tool rows and keep every seq reference consistent. A `tool/call` no
+ * `assistant/message` tool-call block advertised is what rows mode wrote for Claude Code's own
+ * tools; dsh 0.1.5's v0 migration refused it, and dsh 0.1.7 refuses it again in v4 logs at load,
+ * as "has no advertised tool lifecycle". The v4 result rows are the same rows to drop, found
+ * through the call id they carry on the message.
+ */
 export function repair(rows: Row[]): { rows: Row[]; droppedCalls: number } {
   const advertised = new Set<string>();
   const dropIds = new Set<string>();
@@ -104,7 +111,8 @@ export function repair(rows: Row[]): { rows: Row[]; droppedCalls: number } {
       drop(e);
       continue;
     }
-    const resultOf = e.data?.message?.source?.callId;
+    const onMessage = e.data?.message?.toolCallId;
+    const resultOf = typeof onMessage === "string" ? onMessage : e.data?.message?.source?.callId;
     if (e.type === "tool/result" && resultOf !== undefined && dropIds.has(resultOf)) {
       drop(e);
       continue;
@@ -269,9 +277,11 @@ async function loadCatalog(prefix: string): Promise<Catalog> {
 /** Feed rows through dsh's migration chain; returns undefined on success, the refusal otherwise. */
 function migrate(catalog: Catalog, header: Header, rows: Row[]): string | undefined {
   try {
+    // The pair dsh's own load passes: "transformed" up to v3, "current" from v4, whose relationship
+    // check is what refuses a raw tool/call (see src/rows-probe.ts).
     const restore = catalog.createRestore(header, {
       recovery: "strict",
-      validation: "transformed",
+      validation: (header.version ?? 0) >= 4 ? "current" : "transformed",
     });
     for (const e of rows) restore.decodeRow(e);
     restore.finish();
@@ -434,7 +444,7 @@ async function main() {
     stuck = 0;
   for (const file of targets) {
     const { header, rows } = readLog(file);
-    if (header.version !== 0) {
+    if (header.version !== 0 && header.version !== 4) {
       console.log(`skip   ${file} (format v${header.version})`);
       continue;
     }
