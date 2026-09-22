@@ -12,6 +12,7 @@ import { probeRawToolRows, rawRowsLog } from "./rows-probe.js";
       "turn/start",
       "step/start",
       "user/message",
+      "assistant/message",
       "tool/call",
       "tool/result",
       "assistant/message",
@@ -19,9 +20,14 @@ import { probeRawToolRows, rawRowsLog } from "./rows-probe.js";
       "turn/end",
     ],
   );
+  const announce = rows.findIndex((r) => r.type === "assistant/message");
   const call = rows.findIndex((r) => r.type === "tool/call");
-  const settled = rows.findIndex((r) => r.type === "assistant/message");
-  assert(call < settled, "the raw call sits ahead of the settled message, as rows mode writes it");
+  const settled = rows.findIndex(
+    (r) =>
+      r.type === "assistant/message" && (r.data as { message: { id: string } }).message.id === "m",
+  );
+  assert(announce < call, "the announcement sits ahead of the call, which is what dsh 0.1.7 loads");
+  assert(call < settled, "the call sits ahead of the settled text message, as rows mode writes it");
 }
 
 {

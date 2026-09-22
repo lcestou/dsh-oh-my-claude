@@ -46,8 +46,8 @@ export interface RawRowsLog {
  */
 export declare function toolResultMessage(version: number, callId: string, id: string, text: string, isError?: boolean): JsonValue;
 /**
- * The current-format log rows mode would write for one turn with one tool: shapes copied from a
- * dsh 0.1.5 v3 log. The call and its result sit inside the step, ahead of the settled message.
+ * The current-format log rows mode writes for one turn with one tool: the announcement, the call
+ * and its result sit inside the step, ahead of the settled text message.
  *
  * `version` is the log version the installed dsh writes, not a fixed 3. A fixture stamped below
  * that version is a log needing migration, and dsh 0.1.7's v3-to-v4 migration refuses to run at
