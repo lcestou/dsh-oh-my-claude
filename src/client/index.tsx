@@ -4192,22 +4192,6 @@ const wireTurnStatus = (
         stopTurnLine(el);
         return;
       }
-      // The two signals dsh owns, read every beat. The session summary's `running` drops the
-      // moment a turn ends however it ended, in any language. And a group that is no longer the
-      // newest one belongs to a turn that is over: Send now cuts a turn and starts the next under
-      // the same session, so `running` alone would keep the old line up. Nothing else decides it:
-      // the plugin's own turn record clears and remakes at tool boundaries (it took the line down
-      // at 7 s of a 29 s turn), and a "sentence stopped ticking" backstop would cut the line under
-      // a turn parked on an approval prompt, whose sentence holds still for as long as the person
-      // takes (review, 2026-09-22).
-      if (group !== null) {
-        const groups = document.querySelectorAll("button[data-turn-process]");
-        if (!isRunning() || groups[groups.length - 1] !== group) {
-          stop();
-          stopTurnLine(el);
-          return;
-        }
-      }
       tick();
       onTick();
     },
@@ -4417,10 +4401,33 @@ const wireTurnStatus = (
     // bracket straight into the verb.
     detailSpan.textContent = parts.length > 0 ? `\u00A0(${parts.join(" · ")})` : "";
   };
+  /**
+   * The two end signals dsh owns, read once a second here rather than on the 120 ms beat: the
+   * session summary's `running`, which drops the moment a turn ends however it ended and in any
+   * language, and whether this group is still the newest in the conversation, since Send now
+   * cuts a turn and starts the next under the same session, where `running` alone would keep the
+   * old line up. The newest-group read walks the document, which is why it is not on the beat.
+   * Nothing else decides the end: the plugin's own turn record clears and remakes at tool
+   * boundaries (it took the line down at 7 s of a 29 s turn), and a "sentence stopped ticking"
+   * backstop would cut the line under a turn parked on an approval prompt (review, 2026-09-22).
+   */
+  const endedPerDsh = (): boolean => {
+    const group = el.closest("button[data-turn-process]");
+    if (group === null) return false;
+    if (!isRunning()) return true;
+    const groups = document.querySelectorAll("button[data-turn-process]");
+    return groups[groups.length - 1] !== group;
+  };
   const poll = async () => {
+    if (!el.isConnected) return;
+    if (endedPerDsh()) {
+      stop();
+      stopTurnLine(el);
+      return;
+    }
     // A hidden tab paints nothing, so its read would be a round trip for no one; the next beat
     // after it is shown again catches up.
-    if (!el.isConnected || document.hidden) return;
+    if (document.hidden) return;
     try {
       const r = await fetch(`${ROUTE}/live-turn?session=${encodeURIComponent(sessionId)}`);
       const b = await readJson<{
@@ -4746,6 +4753,10 @@ function watchTurnStatus(ctx: ClientCtx) {
   markBody();
   const beat = setInterval(guard(markBody), 1000);
   whenContextGone(() => clearInterval(beat));
+  /** The newest process group on the page, read once per scan pass rather than once per
+   *  candidate: a streaming turn dirties the page many times a frame, and each candidate group
+   *  asking for itself made the scan quadratic in the length of the conversation. */
+  let newestGroup: Element | null = null;
   const attach = (found: HTMLElement) => {
     // Decide before wiring, not after. A reload draws every old group, and dsh leaves a stopped
     // or failed one open, so asking "is it open" wired a verb onto a turn that ended an hour ago
@@ -4756,8 +4767,7 @@ function watchTurnStatus(ctx: ClientCtx) {
       const sid = activeClaudeSession(ctx);
       if (!sid) return;
       if (ctx.sessions.list.getSnapshot()?.byId[sid]?.running !== true) return;
-      const groups = document.querySelectorAll("button[data-turn-process]");
-      if (groups[groups.length - 1] !== found) return;
+      if (newestGroup !== found) return;
     }
     const el = turnStatusRow(found);
     if (el === undefined) return;
@@ -4783,6 +4793,11 @@ function watchTurnStatus(ctx: ClientCtx) {
       );
     }, console.error);
   };
+  /** One document walk per mutation batch, shared by every scan in it. */
+  const refreshNewest = () => {
+    const groups = document.querySelectorAll("button[data-turn-process]");
+    newestGroup = groups[groups.length - 1] ?? null;
+  };
   const scan = (root: HTMLElement) => {
     attach(root);
     for (const el of root.querySelectorAll<HTMLElement>(TURN_ROW_SELECTOR)) attach(el);
@@ -4792,9 +4807,11 @@ function watchTurnStatus(ctx: ClientCtx) {
   // (the status row carries a data-attr once wired), so re-scanning the body each frame is safe.
   onBodyMutation((records) => {
     if (!activeClaudeSession(ctx)) return;
+    refreshNewest();
     if (records === undefined) return scan(document.body);
     for (const node of changedElements(records)) scan(node);
   });
+  refreshNewest();
   scan(document.body);
 }
 
