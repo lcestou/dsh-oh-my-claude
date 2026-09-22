@@ -4150,9 +4150,6 @@ const wireTurnStatus = (
   let onTick: () => void = noBeat;
   let frameIndex = 0;
   let direction = 1; // 1 = forward, -1 = reverse
-  /** dsh's own sentence in the group button and when it last changed; see the beat below. */
-  let dshLabelText = "";
-  let dshLabelAt = 0;
 
   const tick = () => {
     const kept = turnVerbs.get(sessionId);
@@ -4197,32 +4194,14 @@ const wireTurnStatus = (
       // The two signals dsh owns, read every beat. The session summary's `running` drops the
       // moment a turn ends however it ended, in any language. And a group that is no longer the
       // newest one belongs to a turn that is over: Send now cuts a turn and starts the next under
-      // the same session, so `running` alone would keep the old line up. The plugin's own turn
-      // record is not used for this: the adapter clears and remakes it at tool boundaries, which
-      // took the line down at 7 s of a 29 s turn (measured 2026-09-22).
+      // the same session, so `running` alone would keep the old line up. Nothing else decides it:
+      // the plugin's own turn record clears and remakes at tool boundaries (it took the line down
+      // at 7 s of a 29 s turn), and a "sentence stopped ticking" backstop would cut the line under
+      // a turn parked on an approval prompt, whose sentence holds still for as long as the person
+      // takes (review, 2026-09-22).
       if (group !== null) {
         const groups = document.querySelectorAll("button[data-turn-process]");
         if (!isRunning() || groups[groups.length - 1] !== group) {
-          stop();
-          stopTurnLine(el);
-          return;
-        }
-      }
-      // dsh leaves `data-open` on a turn that failed or was stopped, and the live-turn poll cannot
-      // tell this group from the next turn under the same session. What holds in every language
-      // and every ending: while a turn runs, dsh's own sentence in this button ticks every second
-      // ("Deep diving for 12s"); once it stops changing it is a record ("Stopped", "Failed",
-      // "Took 5s"), and the line under it is stale (owner, 2026-09-22, twice). Eight seconds,
-      // because the sentence was seen holding one figure for two seconds mid-turn, and the poll
-      // above ends a stopped turn within a second anyway; this is the backstop.
-      if (group !== null) {
-        const label = group.querySelector(":scope > span:not([data-omc-turn-line])");
-        const text = label?.textContent ?? "";
-        const now = Date.now();
-        if (text !== dshLabelText) {
-          dshLabelText = text;
-          dshLabelAt = now;
-        } else if (dshLabelAt > 0 && now - dshLabelAt > 8000) {
           stop();
           stopTurnLine(el);
           return;
