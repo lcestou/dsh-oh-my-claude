@@ -300,7 +300,9 @@ export async function readHints(hintsPath: string): Promise<Record<string, boole
     .then((st) => st.mtimeMs)
     .catch(() => -1);
   const cached = hintsCache.get(hintsPath);
-  if (cached && cached.mtime === mtime) return cached.value;
+  // A copy each time, as the old read built a fresh object: a caller that edits its answer must
+  // not edit the cache.
+  if (cached && cached.mtime === mtime) return { ...cached.value };
   const parsed: unknown =
     mtime < 0
       ? null
@@ -314,7 +316,7 @@ export async function readHints(hintsPath: string): Promise<Record<string, boole
       else if (typeof v === "number" && Number.isFinite(v) && v >= 0) out[k] = v;
     }
   hintsCache.set(hintsPath, { mtime, value: out });
-  return out;
+  return { ...out };
 }
 /** The last parse of each hints file, keyed by path, with the mtime it was read at. `updateHints`
  *  refreshes it after every write, since two writes inside one millisecond share an mtime. */
