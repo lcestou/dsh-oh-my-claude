@@ -30,6 +30,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- Changes, MCP and Diagnostics no longer ask the CLI for anything in a session nobody has prompted
+  yet. There is no Claude running to answer, so the tabs say so straight away instead of firing
+  three requests that can only be refused, and the permission readout says it in words rather than
+  showing the refusal as an error.
 - The cost card and the panel's menus are solid again on dsh 0.1.7, which made its menu fill
   translucent and put the blur behind it. Without that blur the cards read as see-through over the
   chat.

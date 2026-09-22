@@ -24,6 +24,7 @@ import {
   matchesQuery,
   activeClaudeSession,
   claudeProviderOf,
+  hasRunTurn,
   useActiveClaude,
   boxQuery,
   boxParam,
@@ -1984,6 +1985,12 @@ function ChangesBody({
     setReply(null);
     setShown(null);
     setNote("");
+    // A session that has never run has no CLI to ask, and the route can only refuse. Answer it here
+    // so the tab reads the same without the round trip.
+    if (!hasRunTurn(ctx, sessionId)) {
+      setReply(NOT_RUNNING);
+      return;
+    }
     fetch(`${ROUTE}/diff?session=${encodeURIComponent(sessionId)}`)
       .then((r) => readJson<DiffReply>(r))
       .then((b) => live && setReply(b))
@@ -2176,6 +2183,10 @@ interface McpServer {
    *  since the CLI reports connection only, and it is the live process that is asked either way. */
   asking?: boolean;
 }
+/** What the process-only routes answer for a session with no CLI behind it. The tabs match on this
+ *  text to draw their not running line, so a reply made here has to read the same as the server's. */
+const NOT_RUNNING = { ok: false, error: "no live Claude process for this session" } as const;
+
 type McpReply = { ok: true; servers: McpServer[] } | { ok: false; error: string };
 /** A server the CLI is configured with, as `GET /mcp-servers/configured` lists it, with its scope. */
 interface ConfiguredMcpRow {
@@ -2225,6 +2236,11 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
   useEffect(() => {
     setReply(null);
     setNote("");
+    if (!hasRunTurn(ctx, sessionId)) {
+      setReply(NOT_RUNNING);
+      void loadConfigured();
+      return;
+    }
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- load closes over sessionId only
   }, [sessionId]);
@@ -2790,6 +2806,10 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
   useLocale();
   const cwd = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.cwd;
   const running = activeClaudeSession(ctx) === sessionId;
+  // The readout, like the diff and the MCP roster, is answered by the session's own CLI process. A
+  // session nobody has prompted yet has none, so the tab says so instead of asking and waiting on a
+  // refusal.
+  const started = running && hasRunTurn(ctx, sessionId);
   const [data, setData] = useState<DiagnosticsReply | DiagnosticsError | null>(null);
   const [mcp, setMcp] = useState<McpReply | null>(null);
   const [reconnecting, setReconnecting] = useState<string | null>(null);
@@ -2804,10 +2824,12 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
 
   const loadMcp = useCallback(
     () =>
-      fetch(`${ROUTE}/mcp-servers?session=${encodeURIComponent(sessionId)}`)
-        .then((r) => readJson<McpReply>(r))
-        .then(setMcp)
-        .catch((e: Error) => setMcp({ ok: false, error: e.message })),
+      !hasRunTurn(ctx, sessionId)
+        ? Promise.resolve(setMcp(NOT_RUNNING))
+        : fetch(`${ROUTE}/mcp-servers?session=${encodeURIComponent(sessionId)}`)
+            .then((r) => readJson<McpReply>(r))
+            .then(setMcp)
+            .catch((e: Error) => setMcp({ ok: false, error: e.message })),
     [sessionId],
   );
 
@@ -2833,7 +2855,7 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
   }, [sessionId]);
 
   useEffect(() => {
-    if (!running) return;
+    if (!started) return;
     let live = true;
     // Clear both first: the error is read before the reply, so a failure left over from the previous
     // process would outlive the read that replaced it.
@@ -3205,7 +3227,7 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
                 <span style={{ marginLeft: 4 }}>{t("panel.diag.managed")}</span>
               )}
             </span>
-            <ReadoutState running={running} error={permissionsError} reply={permissions} />
+            <ReadoutState running={started} error={permissionsError} reply={permissions} />
             {permissions?.ok &&
               (permissions.rules.length === 0 ? (
                 <span style={{ ...meta, padding: "2px 0", fontSize: 12 }}>
@@ -3242,7 +3264,7 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
               {t("panel.diag.hooks")}
               {permissions?.ok && ` · ${permissions.hooks.length}`}
             </span>
-            <ReadoutState running={running} error={permissionsError} reply={permissions} />
+            <ReadoutState running={started} error={permissionsError} reply={permissions} />
             {permissions?.ok &&
               (permissions.hooks.length === 0 ? (
                 <span style={{ ...meta, padding: "2px 0", fontSize: 12 }}>
