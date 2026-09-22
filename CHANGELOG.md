@@ -8,6 +8,12 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- Native rows are locked again on dsh 0.1.7, this time for the real reason. That release loads a
+  session with a stricter check than it migrates one with, and the check refuses the raw tool rows
+  rows mode writes ("has no advertised tool lifecycle"): two rows-mode sessions failed to load
+  after a restart on 2026-09-22 while the plugin's probe, asking the looser way, said rows were
+  fine. The probe asks the way the installed dsh loads now. `tools/dsh-session-repair.ts` mends
+  such v4 logs the way it mended 0.1.5's: the raw tool rows go, the conversation stays.
 - A Send now button on each waiting message in the steer card. It does what Claude Code's own
   send-now key (Ctrl+Enter) does: stops what Claude is doing and sends the message as the next
   turn instead of waiting for the current step to end. Needs dsh 0.1.7; on an older dsh the button

@@ -216,12 +216,18 @@ export async function probeRawToolRows(entry?: string): Promise<RowsSupport> {
     // tools/dsh-session-repair.ts reads. A dsh that renames it fails on the call below, and the
     // catch answers "rows off" with the message, which is the safe side.
     const { sessionFormatCatalog } = (await import(at)) as { sessionFormatCatalog: Catalog };
-    const { header, rows } = rawRowsLog(sessionFormatCatalog.currentVersion);
-    // The pair dsh-session-persistence-jsonl hands createRestore when it opens a log. "current"
-    // would be stricter than dsh itself and lock rows that load fine.
+    const version = sessionFormatCatalog.currentVersion ?? 3;
+    const { header, rows } = rawRowsLog(version);
+    // The pair dsh-session-persistence-jsonl hands createRestore when it loads a session. Up to
+    // 0.1.6 (v3) that is "transformed", which checks nothing on a current-format log, and
+    // "current" would have locked rows that loaded fine. 0.1.7 (v4) loads with "current", whose
+    // relationship check requires every tool/call to be advertised by an assistant/message block:
+    // a raw row is refused ("has no advertised tool lifecycle"), and two rows-mode sessions were
+    // refused that way on 2026-09-22 while this probe, still asking with "transformed", said rows
+    // were fine. Ask the way the installed dsh loads.
     const restore = sessionFormatCatalog.createRestore(header, {
       recovery: "strict",
-      validation: "transformed",
+      validation: version >= 4 ? "current" : "transformed",
     });
     for (const row of rows) restore.decodeRow(row);
     restore.finish();
