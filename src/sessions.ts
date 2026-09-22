@@ -2794,6 +2794,11 @@ export function registerSessionRoutes(
                 const open = live.thinkingOpen === true && live.thinkingAt !== undefined;
                 return json(res, 200, {
                   tokens: (live.output ?? 0) + (live.thinking ?? 0),
+                  // How long the turn has been running. dsh drew its own clock beside the status
+                  // row up to 0.1.6; 0.1.7 folded it into one sentence inside the turn-process
+                  // button ("Deep diving for 12s"), which the status line replaces, so the figure
+                  // comes from the turn record instead of off the page.
+                  elapsedMs: now - live.at,
                   thinkingMs: open ? now - live.thinkingAt! : undefined,
                   idleMs: live.frameAt !== undefined ? now - live.frameAt : undefined,
                   tool: live.tool === true,

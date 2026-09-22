@@ -3956,7 +3956,7 @@ const ensureTurnStatusStyle = () => {
   // clearance, which leaves its pills 653px in a 717px column. dsh's two fill that; ours as a
   // third clips all three to an ellipsis by a few pixels. The pills are centred, so the padding
   // does no aligning; take it down to the row's rounded corners and the three fit.
-  styleEl.textContent = `${gated("row", '[role="status"][aria-live="polite"]')},${gated("row", "[data-dsh-oh-my-claude-turn]", false)}{background-image:var(--omc-row-bg,linear-gradient(90deg,var(--omc-accent) 0%,var(--omc-accent) 40%,var(--omc-shimmer) 50%,var(--omc-accent) 60%,var(--omc-accent) 100%))}@keyframes omc-word{from{-webkit-text-fill-color:var(--omc-word-lo)}to{-webkit-text-fill-color:var(--omc-word-hi)}}[data-omc-turn-word]{animation:omc-word 1s ease-in-out 3s infinite alternate}@media (prefers-reduced-motion:reduce){[data-omc-turn-word]{animation:none}}[data-dsh-oh-my-claude-turn]>span[aria-hidden]{display:inline-block;width:1.3em;text-align:start;flex:none}[data-dsh-oh-my-claude-turn]{max-width:100%;min-width:0}[data-omc-turn-detail]{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}${gated("panel", "[data-omc-login-card] button:hover", false)},${gated("panel", "[data-omc-login-card] button:focus-visible", false)},${gated("panel", "[data-omc-update-card] button:not(:disabled):hover", false)},${gated("panel", "[data-omc-update-card] button:focus-visible", false)}{color:var(--omc-accent)!important;border-color:var(--omc-accent)!important}${controlStatesCss("[data-omc-settings]")}${controlStatesCss('[role="dialog"][aria-label="Oh My Claude"]')}${/* !important: the buttons carry their border inline (`btn`), which beats any sheet rule. */ ""}${gated("panel", '[data-omc-settings] button:not([role="switch"]):not([aria-expanded]):not(:disabled):hover', false)},${gated("panel", '[data-omc-settings] button:not([role="switch"]):not([aria-expanded]):focus-visible', false)},${gated("panel", '[role="dialog"][aria-label="Oh My Claude"] button:not([role="switch"]):not([aria-expanded]):not(:disabled):hover', false)},${gated("panel", '[role="dialog"][aria-label="Oh My Claude"] button:not([role="switch"]):not([aria-expanded]):focus-visible', false)}{color:var(--omc-accent)!important;border-color:var(--omc-accent)!important}[data-omc-card]:hover{border-color:var(--dsw-alias-label-dimmed,rgba(128,128,128,.5))}[data-omc-card]>button:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#3b82f6);outline-offset:-2px}[data-omc-card]>button:hover{background:none}@keyframes omc-sheen{from{background-position:200% 0}to{background-position:-200% 0}}[data-omc-skeleton]{border-radius:6px;background:linear-gradient(90deg,${T.border} 30%,${T.hover} 50%,${T.border} 70%);background-size:200% 100%;animation:omc-sheen 1.4s linear infinite}@keyframes omc-rise{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}@keyframes omc-drain{from{width:100%}to{width:0}}[data-omc-arrived]{animation:omc-rise .18s ease-out}@media (prefers-reduced-motion:reduce){[data-omc-skeleton],[data-omc-arrived]{animation:none}}${gated("prose", '[role="tablist"]>[role="tab"][aria-selected="true"]')}{color:var(--omc-accent)}${gated("prose", '[role="tablist"]>[role="tab"][aria-selected="true"]::after')}{background:var(--omc-accent)}${gated("prose", '[class*="_markdown"] blockquote')}{border-left-color:color-mix(in srgb,var(--omc-accent) 50.2%,transparent)}${gated("prose", '[class*="_markdown"] hr')}{background:color-mix(in srgb,var(--omc-accent) 34.9%,transparent)}${gated("prose", '[class*="_markdown"] a')}{color:var(--omc-accent);text-decoration-color:color-mix(in srgb,var(--omc-accent) 40%,transparent)}${gated("prose", '[class*="_markdown"] a:hover')}{color:var(--omc-shimmer);text-decoration-color:var(--omc-shimmer)}${gated("prose", '[class*="_markdown"] input[type="checkbox"]')}{accent-color:var(--omc-accent)}${/* The chips dsh draws in a sent bubble for a skill it knows (`/ic-logos`) and for a file mention: its business blue and its link blue. Selected by dsh's own `data-ref-chip` hook, which names the kind, not by the hashed class. */ ""}${gated("prose", "[data-ref-chip]")}{color:var(--omc-accent)}${gated("prose", "[data-ref-chip]:hover")},${gated("prose", "[data-ref-chip]:focus")}{color:var(--omc-shimmer);text-decoration-color:var(--omc-shimmer)}${gated("prose", "[data-ref-chip]:focus-visible")}{box-shadow:0 0 0 2px var(--omc-accent)}${gated("prose", "[data-workflow-run] button[data-member-status] [data-member-label]")}{color:var(--omc-accent)}${/* The icon tile on dsh's changed-files card is dsh's link blue; `data-changed-files` is dsh's own hook, and the class is matched by its module suffix since the prefix is generated per build. */ ""}${gated("prose", '[data-changed-files] [class*="_tile"]')}{background:var(--omc-accent)}body[data-omc-panel-open] [data-width-handle]{pointer-events:none}body[data-omc-panel-open] [class*="_toBottomSlot"],body:has([data-omc-cost-dialog]) [class*="_toBottomSlot"]{opacity:0;pointer-events:none;transition:opacity .1s}@keyframes omc-pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--omc-accent) 55%,transparent)}100%{box-shadow:0 0 0 12px transparent}}${gated("panel", 'button[aria-label="Oh My Claude"][data-omc-pulse]', false)}{animation:omc-pulse 1.1s ease-out 3}@media (prefers-reduced-motion:reduce){button[aria-label="Oh My Claude"][data-omc-pulse]{animation:none}}${gated("prose", "[data-produced-files-row] button")}{color:var(--omc-accent)}${gated("prose", "[data-produced-files-row] button:hover")}{color:var(--omc-shimmer)}body[data-omc-claude] [data-composer-stats]{padding-left:8px;padding-right:8px}${gated("prose", '[class*="_optionLine"]>[class*="_badge"]')}{background:color-mix(in srgb,var(--omc-accent) 16%,transparent);color:var(--omc-accent)}[data-omc-cost-over]{color:var(--omc-accent)}${gated("row", 'svg[data-state="ongoing"]')}{--dsh-state-ongoing:var(--omc-accent)}${RAINBOW_CSS}${COST_DIALOG_CSS}`;
+  styleEl.textContent = `${gated("row", '[role="status"][aria-live="polite"]')},${gated("row", "[data-dsh-oh-my-claude-turn]", false)}{background-image:var(--omc-row-bg,linear-gradient(90deg,var(--omc-accent) 0%,var(--omc-accent) 40%,var(--omc-shimmer) 50%,var(--omc-accent) 60%,var(--omc-accent) 100%))}@keyframes omc-word{from{-webkit-text-fill-color:var(--omc-word-lo)}to{-webkit-text-fill-color:var(--omc-word-hi)}}[data-omc-turn-word]{animation:omc-word 1s ease-in-out 3s infinite alternate}@media (prefers-reduced-motion:reduce){[data-omc-turn-word]{animation:none}}[data-dsh-oh-my-claude-turn]>span[aria-hidden]{display:inline-block;width:1.3em;text-align:start;flex:none}[data-dsh-oh-my-claude-turn]{max-width:100%;min-width:0}[data-omc-turn-detail]{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}button[data-turn-process]:has([data-omc-turn-line])>span:not([data-omc-turn-line]){display:none}[data-omc-turn-line]{background-clip:text;-webkit-background-clip:text;color:transparent;-webkit-text-fill-color:transparent}${gated("panel", "[data-omc-login-card] button:hover", false)},${gated("panel", "[data-omc-login-card] button:focus-visible", false)},${gated("panel", "[data-omc-update-card] button:not(:disabled):hover", false)},${gated("panel", "[data-omc-update-card] button:focus-visible", false)}{color:var(--omc-accent)!important;border-color:var(--omc-accent)!important}${controlStatesCss("[data-omc-settings]")}${controlStatesCss('[role="dialog"][aria-label="Oh My Claude"]')}${/* !important: the buttons carry their border inline (`btn`), which beats any sheet rule. */ ""}${gated("panel", '[data-omc-settings] button:not([role="switch"]):not([aria-expanded]):not(:disabled):hover', false)},${gated("panel", '[data-omc-settings] button:not([role="switch"]):not([aria-expanded]):focus-visible', false)},${gated("panel", '[role="dialog"][aria-label="Oh My Claude"] button:not([role="switch"]):not([aria-expanded]):not(:disabled):hover', false)},${gated("panel", '[role="dialog"][aria-label="Oh My Claude"] button:not([role="switch"]):not([aria-expanded]):focus-visible', false)}{color:var(--omc-accent)!important;border-color:var(--omc-accent)!important}[data-omc-card]:hover{border-color:var(--dsw-alias-label-dimmed,rgba(128,128,128,.5))}[data-omc-card]>button:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#3b82f6);outline-offset:-2px}[data-omc-card]>button:hover{background:none}@keyframes omc-sheen{from{background-position:200% 0}to{background-position:-200% 0}}[data-omc-skeleton]{border-radius:6px;background:linear-gradient(90deg,${T.border} 30%,${T.hover} 50%,${T.border} 70%);background-size:200% 100%;animation:omc-sheen 1.4s linear infinite}@keyframes omc-rise{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}@keyframes omc-drain{from{width:100%}to{width:0}}[data-omc-arrived]{animation:omc-rise .18s ease-out}@media (prefers-reduced-motion:reduce){[data-omc-skeleton],[data-omc-arrived]{animation:none}}${gated("prose", '[role="tablist"]>[role="tab"][aria-selected="true"]')}{color:var(--omc-accent)}${gated("prose", '[role="tablist"]>[role="tab"][aria-selected="true"]::after')}{background:var(--omc-accent)}${gated("prose", '[class*="_markdown"] blockquote')}{border-left-color:color-mix(in srgb,var(--omc-accent) 50.2%,transparent)}${gated("prose", '[class*="_markdown"] hr')}{background:color-mix(in srgb,var(--omc-accent) 34.9%,transparent)}${gated("prose", '[class*="_markdown"] a')}{color:var(--omc-accent);text-decoration-color:color-mix(in srgb,var(--omc-accent) 40%,transparent)}${gated("prose", '[class*="_markdown"] a:hover')}{color:var(--omc-shimmer);text-decoration-color:var(--omc-shimmer)}${gated("prose", '[class*="_markdown"] input[type="checkbox"]')}{accent-color:var(--omc-accent)}${/* The chips dsh draws in a sent bubble for a skill it knows (`/ic-logos`) and for a file mention: its business blue and its link blue. Selected by dsh's own `data-ref-chip` hook, which names the kind, not by the hashed class. */ ""}${gated("prose", "[data-ref-chip]")}{color:var(--omc-accent)}${gated("prose", "[data-ref-chip]:hover")},${gated("prose", "[data-ref-chip]:focus")}{color:var(--omc-shimmer);text-decoration-color:var(--omc-shimmer)}${gated("prose", "[data-ref-chip]:focus-visible")}{box-shadow:0 0 0 2px var(--omc-accent)}${gated("prose", "[data-workflow-run] button[data-member-status] [data-member-label]")}{color:var(--omc-accent)}${/* The icon tile on dsh's changed-files card is dsh's link blue; `data-changed-files` is dsh's own hook, and the class is matched by its module suffix since the prefix is generated per build. */ ""}${gated("prose", '[data-changed-files] [class*="_tile"]')}{background:var(--omc-accent)}body[data-omc-panel-open] [data-width-handle]{pointer-events:none}body[data-omc-panel-open] [class*="_toBottomSlot"],body:has([data-omc-cost-dialog]) [class*="_toBottomSlot"]{opacity:0;pointer-events:none;transition:opacity .1s}@keyframes omc-pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--omc-accent) 55%,transparent)}100%{box-shadow:0 0 0 12px transparent}}${gated("panel", 'button[aria-label="Oh My Claude"][data-omc-pulse]', false)}{animation:omc-pulse 1.1s ease-out 3}@media (prefers-reduced-motion:reduce){button[aria-label="Oh My Claude"][data-omc-pulse]{animation:none}}${gated("prose", "[data-produced-files-row] button")}{color:var(--omc-accent)}${gated("prose", "[data-produced-files-row] button:hover")}{color:var(--omc-shimmer)}body[data-omc-claude] [data-composer-stats]{padding-left:8px;padding-right:8px}${gated("prose", '[class*="_optionLine"]>[class*="_badge"]')}{background:color-mix(in srgb,var(--omc-accent) 16%,transparent);color:var(--omc-accent)}[data-omc-cost-over]{color:var(--omc-accent)}${gated("row", 'svg[data-state="ongoing"]')}{--dsh-state-ongoing:var(--omc-accent)}${RAINBOW_CSS}${COST_DIALOG_CSS}`;
   document.head.appendChild(styleEl);
 };
 
@@ -4053,6 +4053,51 @@ const easeChars = (shown: number, target: number): number => {
 };
 /** No-op frame callback, used where a beat changes nothing and so writes nothing. */
 const noBeat = (): void => undefined;
+/** What a turn's status could be drawn in, on either dsh line: the status row itself up to 0.1.6,
+ *  and from 0.1.7 the button that heads the turn's process group. */
+const TURN_ROW_SELECTOR = '[role="status"][aria-live="polite"], button[data-turn-process]';
+
+/**
+ * The element that shows this turn's status to the eye, or undefined when the candidate shows
+ * nothing.
+ *
+ * Up to dsh 0.1.6 that was the `role="status"` row itself. dsh 0.1.7 moved the sentence into the
+ * button heading the turn's process group ("Deep diving for 12s") and left the status row for
+ * screen readers, clipped to a single pixel: the plugin kept painting the row, so its verb, spinner
+ * and figures went out to assistive tech and nobody could see them (owner, 2026-09-22).
+ *
+ * A finished group is left alone. dsh drops `data-open` from the button once the turn ends and its
+ * label becomes "Took 12s", which is a record of the turn, not a status, and not the plugin's to
+ * overwrite.
+ */
+const turnStatusRow = (found: HTMLElement): HTMLElement | undefined => {
+  if (found.matches("button[data-turn-process]")) {
+    if (found.getAttribute("data-open") !== "true") return undefined;
+    if (found.querySelector(":scope > span:not([data-omc-turn-line])") === null) return undefined;
+    const already = found.querySelector<HTMLElement>(":scope > [data-omc-turn-line]");
+    if (already !== null) return already;
+    const line = document.createElement("span");
+    line.setAttribute("data-omc-turn-line", "1");
+    // A text node the verb is written into: `wireTurnStatus` takes the first one with text in it,
+    // so the seed cannot be blank. It is replaced before the next frame.
+    line.append(document.createTextNode("…"));
+    found.append(line);
+    return line;
+  }
+  if (found.getAttribute("role") !== "status" || found.getAttribute("aria-live") !== "polite")
+    return undefined;
+  // Clipped to a pixel for screen readers on 0.1.7; a row with a real box is 0.1.6 or earlier and
+  // is the one to paint.
+  return found.getBoundingClientRect().height > 2 ? found : undefined;
+};
+
+/** Give a 0.1.7 process group its own sentence back: removing the plugin's line is enough, because
+ *  the rule that hides dsh's own only applies while that line is in the button. Called when the
+ *  turn ends and when the bundle is disposed, and safe to call twice. */
+const stopTurnLine = (el: HTMLElement): void => {
+  if (el.hasAttribute("data-omc-turn-line")) el.remove();
+};
+
 /** Wire one turn-status element for a claude-code session: verb, ping-pong spinner and orange
  *  gradient. */
 const wireTurnStatus = (
@@ -4113,6 +4158,14 @@ const wireTurnStatus = (
         stop();
         return;
       }
+      // 0.1.7 keeps the group's button on screen after the turn, relabelled "Took 12s". That is a
+      // record, not a status, so the plugin's line comes down and dsh's own sentence goes back up.
+      const group = el.closest("button[data-turn-process]");
+      if (group !== null && group.getAttribute("data-open") !== "true") {
+        stop();
+        stopTurnLine(el);
+        return;
+      }
       tick();
       onTick();
     },
@@ -4131,6 +4184,7 @@ const wireTurnStatus = (
     stop();
     el.removeAttribute(TURN_MARK);
     spinner.remove();
+    stopTurnLine(el);
   });
   tick();
 
@@ -4187,6 +4241,9 @@ const wireTurnStatus = (
   let effort = "";
   let relayName = "";
   let relayMs = -1;
+  /** How long the turn has run, per the last poll. Only read where dsh draws no clock of its own
+   *  (0.1.7 and later); -1 until the first answer. */
+  let elapsedMs = -1;
   // What is on screen: the eased count in characters (the CLI eases its response length, and
   // shows it over four) and the two colour ramps, each chased 10% per 50ms like the CLI does.
   let shownChars = 0;
@@ -4240,7 +4297,11 @@ const wireTurnStatus = (
       detailSpan.style.fontSize = face.fontSize;
       detailSpan.style.fontWeight = face.fontWeight;
     }
-    const time = (clock?.textContent ?? "").trim();
+    // dsh 0.1.6 and earlier draw a clock node beside the row and this reads it. 0.1.7 writes the
+    // elapsed time into the same sentence as its own verb ("Deep diving for 12s"), which the verb
+    // above replaces, so there is no node to read and the figure comes from the turn record.
+    const polled = elapsedMs >= 0 ? elapsedMs + since : -1;
+    const time = (clock?.textContent ?? "").trim() || (polled >= 0 ? fmtDuration(polled) : "");
     if (time) parts.push(time);
     // dsh's copy goes quiet only while ours is showing the same figure. Hiding it unconditionally is
     // what left the row reading just the verb when the read came back empty.
@@ -4330,6 +4391,7 @@ const wireTurnStatus = (
         effort?: string;
         relayName?: string;
         relayMs?: number;
+        elapsedMs?: number;
       }>(r);
       targetChars = (b.tokens ?? 0) * 4;
       // The ages come from the adapter, which saw the block open and the last frame land; a tab
@@ -4342,6 +4404,7 @@ const wireTurnStatus = (
       effort = b.effort ?? "";
       relayName = b.relayName ?? "";
       relayMs = b.relayMs ?? -1;
+      elapsedMs = b.elapsedMs ?? -1;
       polledAt = Date.now();
     } catch {
       // the row keeps its verb; the bracket is decoration
@@ -4633,9 +4696,9 @@ function watchTurnStatus(ctx: ClientCtx) {
   markBody();
   const beat = setInterval(guard(markBody), 1000);
   whenContextGone(() => clearInterval(beat));
-  const attach = (el: HTMLElement) => {
-    // Only act on [role="status"][aria-live="polite"] (dsh's turn-status element).
-    if (el.getAttribute("role") !== "status" || el.getAttribute("aria-live") !== "polite") return;
+  const attach = (found: HTMLElement) => {
+    const el = turnStatusRow(found);
+    if (el === undefined) return;
     // The wired mark is read here rather than inside `wireTurnStatus`: everything below allocates a
     // promise, and this runs for every status element on every dirty frame of a running turn.
     if (el.hasAttribute(TURN_MARK)) return;
@@ -4654,8 +4717,7 @@ function watchTurnStatus(ctx: ClientCtx) {
   };
   const scan = (root: HTMLElement) => {
     attach(root);
-    for (const el of root.querySelectorAll<HTMLElement>('[role="status"][aria-live="polite"]'))
-      attach(el);
+    for (const el of root.querySelectorAll<HTMLElement>(TURN_ROW_SELECTOR)) attach(el);
   };
   // Once per dirty frame, and the cheapest check comes first: on a session that is not a Claude
   // mount there is nothing to attach, so bail before the querySelectorAll. attach is idempotent

@@ -30,6 +30,12 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- The turn status line is back on dsh 0.1.7. That release moved the visible line into the button
+  heading each turn's process group and left the old row for screen readers only, so the verb,
+  spinner and figures were still being drawn, into a node one pixel tall that nobody could see.
+  The line now goes in the button beside dsh's own sentence, which is hidden while it is up and
+  comes back the moment the turn ends. The elapsed time in the bracket is read from the turn itself
+  rather than off dsh's clock, which 0.1.7 folded into that same sentence.
 - Changes, MCP and Diagnostics no longer ask the CLI for anything in a session nobody has prompted
   yet. There is no Claude running to answer, so the tabs say so straight away instead of firing
   three requests that can only be refused, and the permission readout says it in words rather than
