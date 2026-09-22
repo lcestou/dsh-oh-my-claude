@@ -8526,7 +8526,7 @@ export const costDetails = (turns: TurnRecord[]): [string, string][] => {
  *  width: at 440 it was the widest line in the dialog and made this panel half again as wide as
  *  the stats dialog beside it (440 against 300, measured on dsh 0.1.6-alpha.2). */
 const COST_DIALOG_CSS =
-  "[data-omc-cost-dialog]{z-index:1100;box-sizing:border-box;background:var(--dsw-specific-menu);--dsw-elevation-stroke-color:var(--dsw-alias-border-l1);width:max-content;min-width:min(300px,100vw - 24px);max-width:min(320px,100vw - 24px);box-shadow:var(--dsw-elevation-prominent);color:var(--dsw-alias-label-secondary);cursor:default;border:0;border-radius:12px;padding:16px;font-size:12px;line-height:18px;position:fixed}" +
+  "[data-omc-cost-dialog]{z-index:1100;box-sizing:border-box;background:var(--dsw-specific-menu);backdrop-filter:var(--dsw-menu-backdrop-filter);--dsw-elevation-stroke-color:var(--dsw-alias-border-l1);width:max-content;min-width:min(300px,100vw - 24px);max-width:min(320px,100vw - 24px);box-shadow:var(--dsw-elevation-prominent);color:var(--dsw-alias-label-secondary);cursor:default;border:0;border-radius:12px;padding:16px;font-size:12px;line-height:18px;position:fixed}" +
   "[data-omc-cost-title]{color:var(--dsw-alias-label-primary);justify-content:space-between;gap:16px;margin-bottom:8px;font-weight:500;display:flex}" +
   "[data-omc-cost-title-label]{align-items:center;gap:6px;min-width:0;display:inline-flex}" +
   "[data-omc-cost-title-label] svg{flex:none;width:14px;height:14px}" +

@@ -30,6 +30,9 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- The cost card and the panel's menus are solid again on dsh 0.1.7, which made its menu fill
+  translucent and put the blur behind it. Without that blur the cards read as see-through over the
+  chat.
 - Runs on dsh 0.1.7-alpha.1, which renamed every sized icon export in its primitives package. On
   0.1.7 the old names arrived as undefined and React threw where they were drawn, so the composer
   cards, the Oh My Claude panel, the directory browser and the add-workspace box list all went

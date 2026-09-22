@@ -4570,6 +4570,10 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
         maxHeight,
         zIndex: 100,
         background: `var(--dsw-specific-menu, ${T.card})`,
+        // dsh 0.1.7 made that fill translucent and leans on the blur behind it; without this the
+        // card reads as see-through over the chat. Older dsh has no such variable and no need
+        // for one: the fill was opaque, and an unset backdrop filter is simply none.
+        backdropFilter: "var(--dsw-menu-backdrop-filter)",
         boxShadow: `var(--dsw-elevation-prominent, 0 10px 28px rgba(0,0,0,.26))`,
         // SAFETY: a custom property is not in CSSProperties; the browser reads it as written.
         ...({ "--dsw-elevation-stroke-color": "var(--dsw-alias-border-l1)" } as CSSProperties),
@@ -4721,6 +4725,7 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
             fontSize: 12,
             color: T.text,
             background: `var(--dsw-specific-menu, ${T.card})`,
+            backdropFilter: "var(--dsw-menu-backdrop-filter)",
             boxShadow: `var(--dsw-elevation-prominent, 0 10px 28px rgba(0,0,0,.26))`,
           }}
         >
