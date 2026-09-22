@@ -13,6 +13,7 @@ export const en = {
   "panel.restore.empty":
     "No Claude Code transcripts in {name} to restore. One appears here after a session runs in this folder, from dsh or from a terminal.",
   "panel.restore.noMatch": "No transcript matches",
+  "panel.restore.showMore": "Show {n} more ({left} left)",
   "panel.restore.alreadyOpen": "{n} already open",
 
   // Shared verbs inside the panel
@@ -344,6 +345,7 @@ export const zh = {
   "panel.restore.empty":
     "{name} 中没有可恢复的 Claude Code 会话记录。在此文件夹中（从 dsh 或终端）运行一次会话后，就会出现在这里。",
   "panel.restore.noMatch": "没有匹配的会话记录",
+  "panel.restore.showMore": "再显示 {n} 条（还有 {left} 条）",
   "panel.restore.alreadyOpen": "已打开 {n} 个",
 
   "panel.back": "返回",

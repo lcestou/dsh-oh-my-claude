@@ -299,6 +299,10 @@ function RestoreBody({
   const cwd = entry?.cwd;
   const transcripts = useTranscripts(cwd);
   const [query, setQuery] = useState("");
+  // How many rows show: eight to start, twenty more per click. A workspace with 146 transcripts
+  // showed eight and nothing said there were more (owner, 2026-09-22); the search is for finding
+  // one, not for reaching the ninth. Reset with the query, so a narrowed list starts short again.
+  const [shown, setShown] = useState(8);
   const switches = useFeatureSwitches(cwd);
 
   // Hide when the session already has content or the workspace is unknown.
@@ -306,7 +310,9 @@ function RestoreBody({
   const owned = transcripts.filter(isOwnedActive);
   const candidates = transcripts.filter((s) => !isOwnedActive(s));
   const name = workspaceName(cwd);
-  const rest = candidates.filter((s) => matchesQuery(s, query)).slice(0, 8);
+  const matches = candidates.filter((s) => matchesQuery(s, query));
+  const rest = matches.slice(0, shown);
+  const more = matches.length - rest.length;
 
   return (
     <div style={bodyFlow}>
@@ -318,7 +324,10 @@ function RestoreBody({
           value={query}
           placeholder={t("panel.restore.searchPlaceholder", { count: candidates.length, name })}
           label={t("panel.restore.searchLabel")}
-          onChange={setQuery}
+          onChange={(next) => {
+            setQuery(next);
+            setShown(8);
+          }}
         />
       )}
       {candidates.length === 0 && (
@@ -332,6 +341,25 @@ function RestoreBody({
       {rest.map((s) => (
         <TranscriptRow key={s.id} s={s} cwd={cwd} ctx={ctx} onClose={onClose} />
       ))}
+      {more > 0 && (
+        <button
+          type="button"
+          data-omc-restore-more=""
+          onClick={() => setShown((n) => n + 20)}
+          style={{
+            background: "none",
+            border: "none",
+            cursor: "pointer",
+            padding: "4px 0",
+            textAlign: "left",
+            font: "inherit",
+            fontSize: 12,
+            color: T.muted,
+          }}
+        >
+          {t("panel.restore.showMore", { n: Math.min(20, more), left: more })}
+        </button>
+      )}
       {owned.length > 0 && (
         <span style={{ fontSize: 11, color: T.faint, padding: "2px 0" }}>
           {t("panel.restore.alreadyOpen", { n: owned.length })}

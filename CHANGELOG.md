@@ -8,6 +8,12 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- The Restore tab reaches every transcript in a workspace. It showed eight and left the rest to
+  the search box, with nothing saying more existed; now a Show more line under the eight brings
+  twenty at a time and says how many are left. Searching starts the list short again.
+
+### Fixed
+
 - Native rows work on dsh 0.1.7 and survive a restart. Rows mode now announces each of Claude's
   tool calls in a small assistant message before its row, which is what 0.1.7's loader requires
   and what 0.1.5's migration asked for; the probe that gates the switch writes the same shape, so
