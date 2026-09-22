@@ -494,7 +494,7 @@ export const isRingRoot = (el: HTMLElement | null) =>
  * `targetHost` cannot do. `SessionHeader` carries no provider and a remote cwd can equal a local
  * one, so this is also the only way to tell a box session from a local one.
  */
-const claudeMount = (provider: string | undefined): string | undefined =>
+export const claudeMount = (provider: string | undefined): string | undefined =>
   provider?.startsWith("claude-code") === true ? provider : undefined;
 /** The Claude mount for a session, open or not: read the live model directory first and the list
  *  projection after, so a sidebar session this tab never opened still resolves, undefined for a
@@ -514,6 +514,27 @@ export const claudeProviderOf = (ctx: ClientCtx, id: string): string | undefined
   // projection so a session can be described without being activated.
   const sel = ctx.sessions.list.getSnapshot()?.byId[id]?.projectionValues?.modelSelection;
   return claudeMount(sel?.next?.provider) ?? claudeMount(sel?.lastUsed?.provider);
+};
+
+/**
+ * Has a turn ever run in this session? dsh records `lastUsed` on the list projection the first time
+ * a model answers, so a session created and left alone has a `next` selection from the picker and
+ * no `lastUsed` at all.
+ *
+ * The routes that ask the CLI itself (the working-tree diff, the MCP roster, the permission
+ * readout) need a live process, and a session that has never run has none: asking is a round trip
+ * whose only possible answer is "not running". This says so without the trip. It is deliberately
+ * not a liveness check: a session that ran before a dsh restart answers true and its tab asks, gets
+ * the refusal and shows the same line, which is right, because only the server knows whether that
+ * process survived. dsh writes `lastUsed` as `null` until a request consumes a selection, so the
+ * field is read for truth rather than for presence, and a turn already in flight answers true
+ * through `running` before any selection is recorded. A session this snapshot does not carry at all
+ * answers true: an unknown session is asked about rather than guessed at.
+ */
+export const hasRunTurn = (ctx: ClientCtx, id: string): boolean => {
+  const summary = ctx.sessions.list.getSnapshot()?.byId[id];
+  if (summary === undefined || summary.running === true) return true;
+  return Boolean(summary.projectionValues?.modelSelection?.lastUsed);
 };
 
 /**

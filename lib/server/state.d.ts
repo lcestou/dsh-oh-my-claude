@@ -128,12 +128,15 @@ export declare function loadStarters(dir: string): Promise<Map<string, string>>;
 export declare function saveStarter(dir: string, key: string, text: string | undefined): Promise<void>;
 export interface WorkspaceModel {
     model: string;
+    /** The Claude mount the model ran on (`claude-code`, or a box's `claude-code-<name>`). Absent
+     *  on rows written before 2026-09-22, which then only name the model. */
+    provider?: string;
     at: number;
 }
 /** `{ [cwd]: { model, at } }`; a row whose model is not a non-empty string is skipped. */
 export declare function loadWorkspaceModels(dir: string): Promise<Map<string, WorkspaceModel>>;
 /** Save the model for one cwd, or forget it when `model` is undefined or blank. */
-export declare function saveWorkspaceModel(dir: string, cwd: string, model: string | undefined, at?: number): Promise<void>;
+export declare function saveWorkspaceModel(dir: string, cwd: string, model: string | undefined, at?: number, provider?: string): Promise<void>;
 export interface WorkspaceContextSizes {
     sizes: Record<string, number>;
     at: number;

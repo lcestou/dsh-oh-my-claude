@@ -628,6 +628,9 @@ let workspaceModelsChain = Promise.resolve();
 
 export interface WorkspaceModel {
   model: string;
+  /** The Claude mount the model ran on (`claude-code`, or a box's `claude-code-<name>`). Absent
+   *  on rows written before 2026-09-22, which then only name the model. */
+  provider?: string;
   at: number;
 }
 
@@ -642,10 +645,12 @@ export async function loadWorkspaceModels(dir: string): Promise<Map<string, Work
         // SAFETY: workspace-models.json rows have model (string) and at (number) fields.
         const row = v as Record<string, unknown>;
         if (typeof row.model !== "string" || row.model.trim() === "") continue;
-        map.set(cwd, {
+        const entry: WorkspaceModel = {
           model: row.model,
           at: typeof row.at === "number" && Number.isFinite(row.at) ? row.at : 0,
-        });
+        };
+        if (typeof row.provider === "string" && row.provider !== "") entry.provider = row.provider;
+        map.set(cwd, entry);
       }
     }
     return map;
@@ -660,6 +665,7 @@ export function saveWorkspaceModel(
   cwd: string,
   model: string | undefined,
   at = Date.now(),
+  provider?: string,
 ): Promise<void> {
   const run = workspaceModelsChain.then(async () => {
     const file = WORKSPACE_MODELS_FILE(dir);
@@ -672,7 +678,11 @@ export function saveWorkspaceModel(
       }
     } catch {}
     if (model === undefined || model.trim() === "") delete obj[cwd];
-    else obj[cwd] = { model, at };
+    else {
+      const row: WorkspaceModel = { model, at };
+      if (provider) row.provider = provider;
+      obj[cwd] = row;
+    }
     await writeJson(file, obj);
   });
   workspaceModelsChain = run.catch(() => {});

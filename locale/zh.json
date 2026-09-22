@@ -1,0 +1,4 @@
+{
+  "title": "Oh My Claude",
+  "description": "把你已登录的 Claude Code CLI 作为模型提供方接入 dsh：模型、会话、技能、MCP 服务器和授权请求，都在 dsh 里使用。"
+}

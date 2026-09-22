@@ -105,6 +105,7 @@ import type {
 } from "./dsh.js";
 import { errorText } from "./process.js";
 import { claudeMdDisabledBy, featureSwitches, type ClaudeMdState } from "./switches.js";
+import { currentLogVersion } from "./rows-probe.js";
 import type { ToolMode, ToolModeInfo } from "./rows-probe.js";
 import {
   isMarketplaceSource,
@@ -1249,14 +1250,18 @@ export async function openTranscriptOnce(
   // row runs it: an archived session the store still holds took the early return below and stayed
   // archived, and the client hides archived sessions, so Restore opened nothing.
   const unarchive = async (sessionId: string) => {
-    if (
-      !registry?.enqueueOperation ||
-      !registry.archivedSessionIds.includes(asSessionId(sessionId))
-    )
+    if (!registry?.archivedSessionIds.includes(asSessionId(sessionId))) return;
+    // dsh 0.1.7 made the queue and the state accessors private and published `unarchiveSession`
+    // instead, which is the same edit through the registry's own lock. The old path stays for
+    // 0.1.5 and 0.1.6, which have no such method.
+    if (registry.unarchiveSession) {
+      await registry.unarchiveSession(asSessionId(sessionId));
       return;
+    }
+    if (!registry.enqueueOperation || !registry.requireState || !registry.setState) return;
     await registry.enqueueOperation(async () => {
-      const state = registry.requireState();
-      await registry.setState({
+      const state = registry.requireState!();
+      await registry.setState!({
         ...state,
         archivedSessionIds: state.archivedSessionIds.filter((x) => x !== sessionId),
       });
@@ -1296,7 +1301,11 @@ export async function openTranscriptOnce(
   // answered nothing: the seed was dropped silently, and the client's adopting `sessions.create`
   // then found no stored session and made a blank one under the same id. Write the log here.
   const handle = await ctx.sessionPersistence.create({
-    version: 3,
+    // The version the installed dsh reads: 0.1.7 writes v4 files and refuses one whose header
+    // says 3 ("session generation filename identifies v4, but its header identifies v3"), which
+    // would make every adopted transcript unreadable there. 3 stays the fallback for a dsh whose
+    // catalog cannot be read, which is what 0.1.5 and 0.1.6 want anyway.
+    version: (await currentLogVersion()) ?? 3,
     id: asSessionId(id),
     createdAt: folded.createdAt,
     cwd,
@@ -1369,6 +1378,11 @@ export interface SessionRouteOptions {
   /** Refresh the adapter's live placeholder→remote-cwd map after the list changes, without a restart. */
   onRemoteWorkspaces?: (workspaces: RemoteWorkspace[]) => Promise<void> | void;
   command?: string;
+  /** The `command` as configured, before this box's PATH resolution. Work on another box is named
+   *  this: an absolute path found here means nothing there, and probing a box with it left every
+   *  box reading "no claude" and its Claude Code version unknown (owner, 2026-09-22). Defaults to
+   *  `command`. */
+  boxCommand?: string;
   /** Non-empty when this instance drives Claude Code on a remote host over ssh; the status and
    * identity probes run there so the panel reports the remote box, not this one. */
   sshHost?: string;
@@ -1582,6 +1596,7 @@ export function registerSessionRoutes(
     remoteWorkspacesPath,
     onRemoteWorkspaces,
     command,
+    boxCommand,
     sshHost,
     turnRecords,
     dshVersion,
@@ -1638,7 +1653,9 @@ export function registerSessionRoutes(
   const updaterFor = (host: string, label: string): ClaudeUpdater => {
     const have = updaters.get(host);
     if (have) return have;
-    const cli = command ?? "claude";
+    // A box runs its own claude, by the configured name: this box's resolved absolute path
+    // means nothing there, and probing with it left the box reading "no claude".
+    const cli = (host ? (boxCommand ?? command) : command) ?? "claude";
     const exec: Exec = host
       ? (args, timeoutMs) =>
           run(
@@ -1708,6 +1725,29 @@ export function registerSessionRoutes(
   /** The box a request is about: the session's own mount when it named one, else this instance. */
   const boxOf = (url: URL): MountBox =>
     instanceFor?.(url.searchParams.get("provider")) ?? { configDir, command, sshHost };
+  /**
+   * The box whose Claude Code an update card is about: the mount the session's model picker names,
+   * so the card and its Update button follow the CLI you chose.
+   *
+   * Not the box the turn runs on. Those differ in a remote workspace, whose turns go to its box
+   * whichever mount answers: keying the card to that made it report a version the person had not
+   * selected, in a session where they had deliberately picked another (owner, 2026-09-22). The
+   * picker is the choice; the card reports on the choice.
+   *
+   * A provider that names no box, and a request that names no provider, both mean this box.
+   */
+  const updateBoxOf = (url: URL, sessionId: string | null) => {
+    const named = url.searchParams.get("provider");
+    if (named !== null) {
+      const host = instanceFor?.(named)?.sshHost ?? "";
+      // The box's saved name when an updater already knows it ("Lilly"), its ssh host otherwise.
+      return host
+        ? { host, label: updaters.get(host)?.state().label ?? host }
+        : { host: "", label: hostname() };
+    }
+    const own = sessionId === null ? undefined : boxOfSession?.(sessionId);
+    return own ?? { host: "", label: hostname() };
+  };
   /** The remote workspaces, as the routes below last wrote them; seeded from disk at registration. */
   let remoteWorkspaces: RemoteWorkspace[] = [];
   /** One writer at a time on remote-workspaces.json. POST, DELETE, a box removal and the GET
@@ -2794,6 +2834,11 @@ export function registerSessionRoutes(
                 const open = live.thinkingOpen === true && live.thinkingAt !== undefined;
                 return json(res, 200, {
                   tokens: (live.output ?? 0) + (live.thinking ?? 0),
+                  // How long the turn has been running. dsh drew its own clock beside the status
+                  // row up to 0.1.6; 0.1.7 folded it into one sentence inside the turn-process
+                  // button ("Deep diving for 12s"), which the status line replaces, so the figure
+                  // comes from the turn record instead of off the page.
+                  elapsedMs: now - live.at,
                   thinkingMs: open ? now - live.thinkingAt! : undefined,
                   idleMs: live.frameAt !== undefined ? now - live.frameAt : undefined,
                   tool: live.tool === true,
@@ -2863,9 +2908,7 @@ export function registerSessionRoutes(
                 const box =
                   hostParam !== null
                     ? { host: hostParam, label: saved?.name ?? hostname() }
-                    : sid && boxOfSession
-                      ? boxOfSession(sid)
-                      : undefined;
+                    : updateBoxOf(url, sid);
                 if (!box) return json(res, 404, { error: "no updater" });
                 const u = updaterFor(box.host, box.label);
                 if (req.method === "GET") {
@@ -2992,9 +3035,9 @@ export function registerSessionRoutes(
                 const sid = url.searchParams.get("session");
                 if (!sid) return json(res, 400, { error: "session param required" });
                 const items: AsideEntry[] = sideQuestions?.get(sid) ?? [];
-                const box = boxOfSession?.(sid);
+                const box = updateBoxOf(url, sid);
                 // The hints file is read only while a card would show, not on every 3 s poll.
-                const card = box ? cardFor(updaters.get(box.host)?.state()) : null;
+                const card = cardFor(updaters.get(box.host)?.state());
                 return json(res, 200, {
                   items,
                   loginNeeded: loginNeeded?.get(sid) ?? null,
@@ -3497,7 +3540,7 @@ export function registerSessionRoutes(
               ) {
                 const boxes = await readSshBoxes(sshBoxesPath);
                 const probed = await Promise.all(
-                  boxes.map((b) => runtimeStatus("", command, b.host)),
+                  boxes.map((b) => runtimeStatus("", boxCommand ?? command, b.host)),
                 );
                 // A panel login stores a CLAUDE_CODE_OAUTH_TOKEN the plugin injects at spawn; the box's
                 // own `claude auth status` can't see it, so a stored token counts as logged in here.
@@ -3638,7 +3681,8 @@ export function registerSessionRoutes(
               // the default instance's local spawns.
               /** The box's own `claude auth status`, the proof a login took once its process exits. */
               const verifyLogin = (loginHost: string) => async () => {
-                const cli = command ?? "claude";
+                const cli =
+                  (loginHost === THIS_BOX ? command : (boxCommand ?? command)) ?? "claude";
                 const st =
                   loginHost === THIS_BOX
                     ? await run(cli, ["auth", "status"], cliEnvFor(boxOf(url).configDir))
@@ -3719,7 +3763,8 @@ export function registerSessionRoutes(
                 // as a no-op. `claude auth logout` is non-interactive and answers a box without a
                 // login harmlessly.
                 const logoutBox = boxOf(url);
-                const cli = command ?? "claude";
+                const cli =
+                  (logoutHost === THIS_BOX ? command : (boxCommand ?? command)) ?? "claude";
                 await (logoutHost === THIS_BOX
                   ? run(cli, ["auth", "logout"], cliEnvFor(logoutBox.configDir))
                   : run("ssh", sshArgs(logoutHost, `${shq(cli)} auth logout`)));

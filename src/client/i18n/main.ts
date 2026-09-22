@@ -363,7 +363,7 @@ export const en = {
     "When ANTHROPIC_BASE_URL names any host but api.anthropic.com, Claude Code assumes 200k for models that hold 1M: Opus 5, Opus 4.8 and Sonnet 5 compact early, and Fable stops compacting. On, sessions start with Claude Code's own flag for a proxy that forwards to Anthropic, run at 1M and compact against it; a session already running follows on its next message. Auto asks the base URL once per dsh run, with no key attached: a proxy that forwards hands back Anthropic's own authentication error and request id, which a gateway routing elsewhere (Bedrock, Vertex) does not, and a proxy that cannot be reached is left alone rather than assumed. Choose Off for such a gateway, or to hold a session at the window the CLI guesses. Without a base URL none of it changes anything.",
   "main.settingsUi.wsModelTitle": "Remember model per workspace",
   "main.settingsUi.wsModelDesc":
-    "A new Claude session in a workspace opens on the model it last ran there. The provider never changes; only which Claude model.",
+    "A new session in a workspace opens on the Claude it last ran there: the same box and the same model. A blank session you have already switched by hand is left as you set it.",
   "main.settingsUi.costTitle": "Claude cost in the footer",
   "main.settingsUi.costDesc":
     "What the session has spent at API rates, beside dsh's own stats. The figure is still recorded with the switch off; only the pill and its panel go away.",
@@ -799,7 +799,7 @@ export const zh = {
     "当 ANTHROPIC_BASE_URL 指向 api.anthropic.com 以外的任何主机时，Claude Code 会对拥有 1M 窗口的模型假定为 200k：Opus 5、Opus 4.8 和 Sonnet 5 会过早压缩，而 Fable 会停止压缩。开启后，会话会带上 Claude Code 自己用于“转发到 Anthropic 的代理”的标志启动，以 1M 运行并据此压缩；已在运行的会话会在下一条消息时跟进。Auto 每次 dsh 运行询问一次 base URL，且不附带任何密钥：转发型代理会回传 Anthropic 自己的认证错误和请求 id，而路由到别处的网关（Bedrock、Vertex）不会，无法连接的代理则保持原样而非假定。对于这类网关，或想把会话保持在 CLI 猜测的窗口，请选择“关”。没有 base URL 时，这些设置都不起作用。",
   "main.settingsUi.wsModelTitle": "按工作区记住模型",
   "main.settingsUi.wsModelDesc":
-    "工作区中的新 Claude 会话会以它上次运行的模型打开。提供方从不改变；只改变使用哪个 Claude 模型。",
+    "工作区中的新会话会以它上次运行的 Claude 打开：同一台机器、同一个模型。你已手动切换过的空白会话保持你的选择。",
   "main.settingsUi.costTitle": "页脚显示 Claude 费用",
   "main.settingsUi.costDesc":
     "会话按 API 价花费的金额，显示在 dsh 自己的统计旁边。关闭开关后仍会记录该数字；只是移除该提示和它的面板。",

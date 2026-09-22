@@ -327,6 +327,11 @@ export interface SessionRouteOptions {
     /** Refresh the adapter's live placeholder→remote-cwd map after the list changes, without a restart. */
     onRemoteWorkspaces?: (workspaces: RemoteWorkspace[]) => Promise<void> | void;
     command?: string;
+    /** The `command` as configured, before this box's PATH resolution. Work on another box is named
+     *  this: an absolute path found here means nothing there, and probing a box with it left every
+     *  box reading "no claude" and its Claude Code version unknown (owner, 2026-09-22). Defaults to
+     *  `command`. */
+    boxCommand?: string;
     /** Non-empty when this instance drives Claude Code on a remote host over ssh; the status and
      * identity probes run there so the panel reports the remote box, not this one. */
     sshHost?: string;
@@ -525,7 +530,7 @@ export interface SessionRouteOptions {
     continueAfterLimit?: boolean;
 }
 /** `projectDir(cwd)` → Claude Code project dir; `startedIds()` → ids the adapter started itself. */
-export declare function registerSessionRoutes(ctx: PluginContext, { log, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, importedDir, sshBoxesPath, onSshBoxes, remoteWorkspacesPath, onRemoteWorkspaces, command, sshHost, turnRecords, dshVersion, liveTurn, idle, toolMode, terminalSync, permissionModes, thinking, rewind, contextUsage, skillDoctor, workspaceDiff, permissionReadout, askAside, mcp, permissionAsks, sideQuestions, steersFor, holdSteers, releaseHold, loginNeeded, sessionFallbacks, boxOfSession, claudeUpdated, loginDone, logoutDone, liveCount, persistAsides, starters, setStarter, models, reloadPlugins, reloadSkills, pluginErrors, pluginWarnings, awaiting, continueAfterLimit, instanceFor, instanceForHost, onLoginStatus, }: SessionRouteOptions): void;
+export declare function registerSessionRoutes(ctx: PluginContext, { log, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, importedDir, sshBoxesPath, onSshBoxes, remoteWorkspacesPath, onRemoteWorkspaces, command, boxCommand, sshHost, turnRecords, dshVersion, liveTurn, idle, toolMode, terminalSync, permissionModes, thinking, rewind, contextUsage, skillDoctor, workspaceDiff, permissionReadout, askAside, mcp, permissionAsks, sideQuestions, steersFor, holdSteers, releaseHold, loginNeeded, sessionFallbacks, boxOfSession, claudeUpdated, loginDone, logoutDone, liveCount, persistAsides, starters, setStarter, models, reloadPlugins, reloadSkills, pluginErrors, pluginWarnings, awaiting, continueAfterLimit, instanceFor, instanceForHost, onLoginStatus, }: SessionRouteOptions): void;
 /**
  * The four files Claude Code merges for one session, highest precedence first. Duplicated in
  * `src/client/settings.ts`: the browser half cannot import server code, and the order is the

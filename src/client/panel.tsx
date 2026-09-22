@@ -24,6 +24,7 @@ import {
   matchesQuery,
   activeClaudeSession,
   claudeProviderOf,
+  hasRunTurn,
   useActiveClaude,
   boxQuery,
   boxParam,
@@ -1984,6 +1985,12 @@ function ChangesBody({
     setReply(null);
     setShown(null);
     setNote("");
+    // A session that has never run has no CLI to ask, and the route can only refuse. Answer it here
+    // so the tab reads the same without the round trip.
+    if (!hasRunTurn(ctx, sessionId)) {
+      setReply(NOT_RUNNING);
+      return;
+    }
     fetch(`${ROUTE}/diff?session=${encodeURIComponent(sessionId)}`)
       .then((r) => readJson<DiffReply>(r))
       .then((b) => live && setReply(b))
@@ -2176,6 +2183,10 @@ interface McpServer {
    *  since the CLI reports connection only, and it is the live process that is asked either way. */
   asking?: boolean;
 }
+/** What the process-only routes answer for a session with no CLI behind it. The tabs match on this
+ *  text to draw their not running line, so a reply made here has to read the same as the server's. */
+const NOT_RUNNING = { ok: false, error: "no live Claude process for this session" } as const;
+
 type McpReply = { ok: true; servers: McpServer[] } | { ok: false; error: string };
 /** A server the CLI is configured with, as `GET /mcp-servers/configured` lists it, with its scope. */
 interface ConfiguredMcpRow {
@@ -2225,6 +2236,11 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
   useEffect(() => {
     setReply(null);
     setNote("");
+    if (!hasRunTurn(ctx, sessionId)) {
+      setReply(NOT_RUNNING);
+      void loadConfigured();
+      return;
+    }
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- load closes over sessionId only
   }, [sessionId]);
@@ -2790,6 +2806,10 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
   useLocale();
   const cwd = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.cwd;
   const running = activeClaudeSession(ctx) === sessionId;
+  // The readout, like the diff and the MCP roster, is answered by the session's own CLI process. A
+  // session nobody has prompted yet has none, so the tab says so instead of asking and waiting on a
+  // refusal.
+  const started = running && hasRunTurn(ctx, sessionId);
   const [data, setData] = useState<DiagnosticsReply | DiagnosticsError | null>(null);
   const [mcp, setMcp] = useState<McpReply | null>(null);
   const [reconnecting, setReconnecting] = useState<string | null>(null);
@@ -2804,10 +2824,12 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
 
   const loadMcp = useCallback(
     () =>
-      fetch(`${ROUTE}/mcp-servers?session=${encodeURIComponent(sessionId)}`)
-        .then((r) => readJson<McpReply>(r))
-        .then(setMcp)
-        .catch((e: Error) => setMcp({ ok: false, error: e.message })),
+      !hasRunTurn(ctx, sessionId)
+        ? Promise.resolve(setMcp(NOT_RUNNING))
+        : fetch(`${ROUTE}/mcp-servers?session=${encodeURIComponent(sessionId)}`)
+            .then((r) => readJson<McpReply>(r))
+            .then(setMcp)
+            .catch((e: Error) => setMcp({ ok: false, error: e.message })),
     [sessionId],
   );
 
@@ -2833,7 +2855,7 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
   }, [sessionId]);
 
   useEffect(() => {
-    if (!running) return;
+    if (!started) return;
     let live = true;
     // Clear both first: the error is read before the reply, so a failure left over from the previous
     // process would outlive the read that replaced it.
@@ -3126,7 +3148,7 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
 
           {/* MCP servers that did not come up */}
           <span style={sectionHead}>{t("panel.diag.mcpServers")}</span>
-          {!running ? (
+          {!started ? (
             <span style={{ ...meta, padding: "2px 0", fontSize: 12 }}>
               {t("panel.readout.notRunning")}
             </span>
@@ -3205,7 +3227,7 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
                 <span style={{ marginLeft: 4 }}>{t("panel.diag.managed")}</span>
               )}
             </span>
-            <ReadoutState running={running} error={permissionsError} reply={permissions} />
+            <ReadoutState running={started} error={permissionsError} reply={permissions} />
             {permissions?.ok &&
               (permissions.rules.length === 0 ? (
                 <span style={{ ...meta, padding: "2px 0", fontSize: 12 }}>
@@ -3242,7 +3264,7 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
               {t("panel.diag.hooks")}
               {permissions?.ok && ` · ${permissions.hooks.length}`}
             </span>
-            <ReadoutState running={running} error={permissionsError} reply={permissions} />
+            <ReadoutState running={started} error={permissionsError} reply={permissions} />
             {permissions?.ok &&
               (permissions.hooks.length === 0 ? (
                 <span style={{ ...meta, padding: "2px 0", fontSize: 12 }}>
@@ -3872,18 +3894,26 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
     const mine = () => activeClaudeSession(ctx) === sessionId;
 
     const build = () => {
-      // Find dsh's trigger by aria-label prefix, fallback to the first matching text button.
-      const form = anchorRef.current?.closest("form");
+      // The composer this shield belongs to, never the whole page. dsh 0.1.7 draws the same
+      // permission control in Settings > General, and the text fallback below matched it: the
+      // shield adopted that trigger and rewrote its label with the session's CLI mode, so the
+      // Settings row read "Full access" whatever the menu had checked (owner, 2026-09-22).
+      const anchor = anchorRef.current;
+      const root =
+        anchor?.closest("form") ??
+        anchor?.closest('[data-composer-card], [class*="composer" i]') ??
+        anchor?.parentElement;
+      if (!root) return null;
       // SAFETY: querySelectorAll returns NodeList; we cast because the selector is exact.
       const found = Array.from(
-        (form ?? document).querySelectorAll<HTMLButtonElement>(
+        root.querySelectorAll<HTMLButtonElement>(
           'button[aria-label^="Access mode"], button[aria-label^="访问模式"]',
         ),
       );
       const trigger =
         found[0] ??
-        Array.from((form ?? document).querySelectorAll<HTMLButtonElement>("button")).find(
-          (b) => presetOfText(b.textContent) !== undefined,
+        Array.from(root.querySelectorAll<HTMLButtonElement>("button")).find(
+          (b) => b.closest('[role="dialog"]') === null && presetOfText(b.textContent) !== undefined,
         );
       if (!trigger) return null;
       return trigger;
@@ -3983,6 +4013,19 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
         // level deep, never by subtree: the portalled node is the menu itself, and a subtree scan
         // of the body per mutation is the whole transcript. Menus other plugins portal there are
         // dropped by the preset-label check below, which is what identifies ours either way.
+        // Only the composer's own menu. dsh 0.1.7 draws the same permission control in Settings >
+        // General and portals its menu to the body with the same three preset labels, so the
+        // label check alone adopted that one too: the six Claude rows landed in the Settings
+        // dropdown and its pick never showed (owner, 2026-09-22). A trigger that says it is
+        // closed has no menu of its own open (0.1.5 sets no such attribute, and an absent one
+        // says nothing), and a dsh modal dialog on screen means the composer is behind it.
+        if (trigger.getAttribute("aria-expanded") === "false") return;
+        if (
+          document.querySelector(
+            '[role="dialog"][aria-modal="true"]:not([aria-label="Oh My Claude"])',
+          ) !== null
+        )
+          return;
         const menus = [
           // dsh 0.1.5: inline, hung off the trigger inside the modes box.
           ...parent.querySelectorAll<HTMLElement>('[role="menu"]'),
@@ -4107,6 +4150,17 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
             const pick = (snap: PermissionModeState) => {
               const need = presetForMode(m);
               const have = snap.accessMode;
+              // The label takes the pick at once. What follows is a dsh command, a settle and two
+              // more round trips, over a second in all, and the trigger used to sit on the old mode
+              // for every bit of it, which reads as a click that did not land. A failure below puts
+              // the real mode back.
+              const wasMode = currentMode;
+              currentMode = m;
+              reapplyLabel();
+              const revert = () => {
+                currentMode = wasMode;
+                reapplyLabel();
+              };
               const doSet = () => {
                 const clearDefault =
                   (need === "read-only" && m === "plan") ||
@@ -4120,6 +4174,7 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
                   .then((r) => readJson<PermissionModeState>(r))
                   .then((reply) => {
                     if (reply.error) {
+                      revert();
                       const errEl = parent.querySelector<HTMLElement>("[data-err]");
                       if (errEl) errEl.textContent = reply.error;
                     } else {
@@ -4130,6 +4185,7 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
                     }
                   })
                   .catch((e) => {
+                    revert();
                     const errEl = parent.querySelector<HTMLElement>("[data-err]");
                     if (errEl) errEl.textContent = e instanceof Error ? e.message : String(e);
                   });
@@ -4137,6 +4193,7 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
               if (need !== have) {
                 const live = ctx.sessions.binding?.(sessionId)?.session;
                 if (!live) {
+                  revert();
                   const errEl = parent.querySelector<HTMLElement>("[data-err]");
                   if (errEl) errEl.textContent = t("panel.access.notMaterialized");
                   return;
@@ -4145,6 +4202,7 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
                   .command(`/permission ${need}`)
                   .then((reply) => {
                     if (!reply || !reply.ok) {
+                      revert();
                       const errEl = parent.querySelector<HTMLElement>("[data-err]");
                       if (errEl)
                         errEl.textContent =
@@ -4154,6 +4212,7 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
                     }
                   })
                   .catch((e) => {
+                    revert();
                     const errEl = parent.querySelector<HTMLElement>("[data-err]");
                     if (errEl) errEl.textContent = e instanceof Error ? e.message : String(e);
                   });
@@ -4570,6 +4629,10 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
         maxHeight,
         zIndex: 100,
         background: `var(--dsw-specific-menu, ${T.card})`,
+        // dsh 0.1.7 made that fill translucent and leans on the blur behind it; without this the
+        // card reads as see-through over the chat. Older dsh has no such variable and no need
+        // for one: the fill was opaque, and an unset backdrop filter is simply none.
+        backdropFilter: "var(--dsw-menu-backdrop-filter)",
         boxShadow: `var(--dsw-elevation-prominent, 0 10px 28px rgba(0,0,0,.26))`,
         // SAFETY: a custom property is not in CSSProperties; the browser reads it as written.
         ...({ "--dsw-elevation-stroke-color": "var(--dsw-alias-border-l1)" } as CSSProperties),
@@ -4721,6 +4784,7 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
             fontSize: 12,
             color: T.text,
             background: `var(--dsw-specific-menu, ${T.card})`,
+            backdropFilter: "var(--dsw-menu-backdrop-filter)",
             boxShadow: `var(--dsw-elevation-prominent, 0 10px 28px rgba(0,0,0,.26))`,
           }}
         >

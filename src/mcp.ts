@@ -101,6 +101,9 @@ async function openSession(
     {
       sessionId,
       requestId: randomUUID(),
+      // Required from dsh 0.1.7: a prompt says whether it queues behind the running turn or
+      // steers into it. A fresh child session has no turn to steer, so it queues.
+      mode: "queue",
       content: [{ type: "text", text: String(args.prompt) }],
     },
     signal,

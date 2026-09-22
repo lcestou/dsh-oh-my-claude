@@ -54,6 +54,8 @@ export interface RawRowsLog {
 }
 /** The slice of dsh's session-format catalog the probe calls: the restore a load runs. */
 interface Catalog {
+  /** The log version this dsh writes. The probe stamps its fixture with it, see `rawRowsLog`. */
+  readonly currentVersion?: number;
   createRestore(
     header: LogHeader,
     options: { recovery: string; validation: string },
@@ -76,12 +78,20 @@ const ev = (
   data,
 });
 
-/** The current-format log rows mode would write for one turn with one tool: shapes copied from a
- *  dsh 0.1.5 v3 log. The call and its result sit inside the step, ahead of the settled message. */
-export const rawRowsLog = (): RawRowsLog => ({
+/**
+ * The current-format log rows mode would write for one turn with one tool: shapes copied from a
+ * dsh 0.1.5 v3 log. The call and its result sit inside the step, ahead of the settled message.
+ *
+ * `version` is the log version the installed dsh writes, not a fixed 3. A fixture stamped below
+ * that version is a log needing migration, and dsh 0.1.7's v3-to-v4 migration refuses to run at
+ * all without a parent's historical child evidence bound to it ("V3 catalog migration requires
+ * explicit historical child facts"). The probe then failed before reaching the row it exists to
+ * ask about, and locked rows over a migration a live session never runs.
+ */
+export const rawRowsLog = (version = 3): RawRowsLog => ({
   header: {
     type: "session",
-    version: 3,
+    version,
     id: "session-00000000-0000-4000-8000-000000000000",
     createdAt: T0,
     cwd: "/",
@@ -161,6 +171,24 @@ const catalogPath = (entry = process.argv[1] ?? ""): string | undefined => {
   }
 };
 
+/**
+ * The log version the installed dsh writes: 3 up to 0.1.6, 4 from 0.1.7. Read off dsh's own
+ * catalog, so a log this plugin writes carries the version the reader expects. Undefined when the
+ * catalog cannot be found or read, which leaves the caller to keep its own default.
+ */
+export async function currentLogVersion(entry?: string): Promise<number | undefined> {
+  const at = catalogPath(entry);
+  if (at === undefined) return undefined;
+  try {
+    // SAFETY: `at` is dsh's own catalog module, checked to exist above, and its export carries the
+    // version it reads and writes. A dsh that renames either answers undefined through the catch.
+    const { sessionFormatCatalog } = (await import(at)) as { sessionFormatCatalog: Catalog };
+    return sessionFormatCatalog.currentVersion;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Feed the synthetic log through dsh's own restore, with the options its load passes. */
 export async function probeRawToolRows(entry?: string): Promise<RowsSupport> {
   const at = catalogPath(entry);
@@ -170,7 +198,7 @@ export async function probeRawToolRows(entry?: string): Promise<RowsSupport> {
     // tools/dsh-session-repair.ts reads. A dsh that renames it fails on the call below, and the
     // catch answers "rows off" with the message, which is the safe side.
     const { sessionFormatCatalog } = (await import(at)) as { sessionFormatCatalog: Catalog };
-    const { header, rows } = rawRowsLog();
+    const { header, rows } = rawRowsLog(sessionFormatCatalog.currentVersion);
     // The pair dsh-session-persistence-jsonl hands createRestore when it opens a log. "current"
     // would be stricter than dsh itself and lock rows that load fine.
     const restore = sessionFormatCatalog.createRestore(header, {

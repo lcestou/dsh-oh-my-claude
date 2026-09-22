@@ -28,8 +28,75 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
   Code's English ones (炼丹中, 憋大招中, 叽里咕噜中). Your own `spinnerVerbs` in Claude Code's
   settings still apply on top of them, or replace them.
 
+- The plugin carries its own mark and its own name into dsh's Plugins page, where dsh 0.1.7 draws a
+  card per installed plugin. Before this it took the default artwork every plugin without one gets.
+
+### Changed
+
+- Remember model per workspace remembers the Claude too, not only which Claude model. dsh 0.1.7
+  makes each workspace's blank session ahead of time on the deployment default with no selection
+  of its own, so a workspace that always ran Claude opened on llama and the memory, which only
+  ever changed the model, had nothing to act on. A new session now opens on the box and model the
+  workspace last ran Claude on; a blank you have switched by hand is left as you set it. The first
+  Claude turn in a workspace after this update records the mount, and it sticks from then on.
+- The Claude Code update card is about the Claude Code you picked. It followed the box a session's
+  turns run on, which in a remote workspace is that box whichever model is selected, so a session
+  deliberately set to this machine's Claude was offered the other one's update. It now reads the
+  model picker, switches with it on the next poll, and its Update button acts on the box the card
+  names. No extra request and no extra probe: the poll was already running and the server answers
+  from the updater its own half-hourly tick keeps fresh.
+
 ### Fixed
 
+- Settings > General > Permission is dsh's own again. dsh 0.1.7 draws the same permission control
+  there as in the composer, and the access shield adopted it too: its six Claude rows appeared in
+  that dropdown and the row kept reading "Full access" whatever was picked. The shield now only
+  touches the control inside its own composer.
+- An SSH box reports its own Claude Code again. Every box probe was run with this box's resolved
+  path to `claude`, which does not exist there, so a box read as "no claude", its version as
+  unknown, and the update card offered a release it could not compare against. The box is named the
+  binary as configured, the way its turns already were.
+- A session in a remote workspace runs again when the plugin's own mount is the local one. The
+  turn carried this box's absolute path to `claude` to the far box, where it does not exist, and
+  failed with `claude exited 127`. The far box is named the binary as configured and finds its own.
+- Picking a permission mode marks the menu at once. The pick used to sit on the old mode for the
+  second or so the change takes, which read as a click that had not landed; a change that fails
+  now puts the real mode back.
+- The result of a tool dsh ran for Claude is read back on dsh 0.1.7, which answers it as a message
+  of its own rather than a block inside a user message. Without this the relay saw no result and
+  the turn waited on one that had already arrived.
+- A transcript brought in through Import is readable on dsh 0.1.7. Its log was stamped version 3
+  while 0.1.7 writes and expects version 4, and that dsh refuses a file whose name and header
+  disagree. The version is read from dsh itself now.
+- The plugin's own text follows the language setting on dsh 0.1.7 again. That release replaced the
+  settings read the server used, so every server sentence stayed English whatever the setting said.
+- Unarchiving a session on dsh 0.1.7 uses the method that release added for it; the internals the
+  older path reached for are private there.
+- The cost reads last in dsh's stats row again, in dsh's own pill shape. dsh 0.1.7 draws each stat
+  as a plain pill rather than a button inside an anchor, which left the cost wearing an icon's
+  style: a bordered box with the mark stacked above the figure. Switching Performance and usage
+  between Compact and Detailed rebuilds that row, and the rebuilt stats landed after the cost,
+  putting it first; it moves back to the end and re-copies dsh's pill style when that happens.
+- A turn that fails stops the status line with it. dsh leaves a failed turn's group open, so the
+  line kept its verb and spinner under dsh's own "Failed" as though the work were still running.
+- The turn status line is back on dsh 0.1.7. That release moved the visible line into the button
+  heading each turn's process group and left the old row for screen readers only, so the verb,
+  spinner and figures were still being drawn, into a node one pixel tall that nobody could see.
+  The line now goes in the button beside dsh's own sentence, which is hidden while it is up and
+  comes back the moment the turn ends. The elapsed time in the bracket is read from the turn itself
+  rather than off dsh's clock, which 0.1.7 folded into that same sentence.
+- Changes, MCP and Diagnostics no longer ask the CLI for anything in a session nobody has prompted
+  yet. There is no Claude running to answer, so the tabs say so straight away instead of firing
+  three requests that can only be refused, and the permission readout says it in words rather than
+  showing the refusal as an error.
+- The cost card and the panel's menus are solid again on dsh 0.1.7, which made its menu fill
+  translucent and put the blur behind it. Without that blur the cards read as see-through over the
+  chat.
+- Runs on dsh 0.1.7-alpha.1, which renamed every sized icon export in its primitives package. On
+  0.1.7 the old names arrived as undefined and React threw where they were drawn, so the composer
+  cards, the Oh My Claude panel, the directory browser and the add-workspace box list all went
+  missing at once. Each icon now resolves to whichever name the installed dsh has, and 0.1.5 and
+  0.1.6 keep working.
 - The Claude look no longer drops off new sessions until a refresh. One passing error from dsh's
   session list could switch off the plugin's page code for the rest of the tab's life; now only a
   real unload does.

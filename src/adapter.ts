@@ -1164,6 +1164,10 @@ export type LooseMessage = {
     name?: string;
   };
   content?: string | ContentBlock[];
+  /** dsh 0.1.7 answers a tool result as its own `role: "tool"` message and carries the call id on
+   *  the message; up to 0.1.6 it was a user message holding a `tool-result` block. */
+  toolCallId?: string;
+  isError?: boolean;
 };
 
 /** The browser's IANA zone as dsh stamped it on the latest user prompt; undefined when no
@@ -1995,7 +1999,14 @@ export function toolResultFor(
   const list = messages ?? [];
   for (let i = list.length - 1; i >= 0; i--) {
     const m = list[i];
-    if (!m || m.role !== "user" || m.source?.kind !== "tool" || !Array.isArray(m.content)) continue;
+    if (!m) continue;
+    // dsh 0.1.7: the result is a message of its own, `role: "tool"`, with the call id on it and
+    // the text in its blocks. `ToolResultBlock` is gone from that release's block map, so the
+    // older read below can never match there.
+    if (m.role === "tool" && m.toolCallId === id)
+      return { text: textOf(m.content), isError: m.isError === true };
+    // dsh 0.1.6 and earlier: a user message from the tool source holding a `tool-result` block.
+    if (m.role !== "user" || m.source?.kind !== "tool" || !Array.isArray(m.content)) continue;
     for (const b of m.content) {
       if (b.type === "tool-result" && b.toolCallId === id)
         return { text: textOf(b.content), isError: b.isError === true };
@@ -2348,6 +2359,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   claudeHome: string;
   /** `~/.claude` itself, which stays the box's login and settings even when transcripts move. */
   realClaudeHome: string;
+  /** The `command` as configured, before this box's path resolution. */
+  configuredCommand: string;
   providerId: string;
   displayName: string;
   settingsNs: string;
@@ -2356,6 +2369,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   constructor(ctx: PluginContext, config: Schemastery.TypeT<typeof Config>) {
     super();
     this.ctx = ctx;
+    // Before `localConfig` turns a bare name into this box's absolute path: a turn that runs
+    // somewhere else needs the name as configured. See `commandFor`.
+    this.configuredCommand = config.command;
     config = localConfig(config);
     this.config = config;
     this.providerId = config.providerId;
@@ -2505,6 +2521,23 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    *  name change reaches the picker without a restart. */
   registration?: { replace: (providers: string[]) => void };
   private loggedOut = false;
+  /** "(not logged in)" after the provider name while the box's claude has no login: dsh copies the
+   *  name at registration, so the route is registered again under the new one. Fed by the mount-time
+   *  probe and by every login probe the panel runs, so the picker names a dead box at a glance. */
+  /**
+   * The binary to name for work on `host`: the command as configured when a turn runs on another
+   * box, this box's resolved absolute path when it runs here.
+   *
+   * `localConfig` resolves a bare `claude` against this box's PATH so a dsh started with a short
+   * one still finds it. That path means nothing on a far box, and sending it there failed the turn
+   * outright: `claude exited 127: env: '/home/lutechi/.local/bin/claude': No such file or
+   * directory` on a remote workspace whose provider is the local mount (owner, 2026-09-22). An SSH
+   * box mount was never affected, since `localConfig` leaves a box's command alone.
+   */
+  commandFor(host: string | undefined): string {
+    return host ? this.configuredCommand : this.config.command;
+  }
+
   /** "(not logged in)" after the provider name while the box's claude has no login: dsh copies the
    *  name at registration, so the route is registered again under the new one. Fed by the mount-time
    *  probe and by every login probe the panel runs, so the picker names a dead box at a glance. */
@@ -2871,7 +2904,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         `This session belongs to a remote workspace that was removed (${basename(cwd)}), so it has no box to run on. Add the same folder on the same box again from the sidebar's Add workspace, and the session continues there.`,
         "PROVIDER_ERROR",
       );
-    const cli = await probeCli(execFile, this.config.command, targetHost);
+    const cli = await probeCli(execFile, this.commandFor(targetHost), targetHost);
     if (!this.loggedVersion) {
       this.loggedVersion = true;
       this.log("info", `claude ${cli.version}, stdin input ${usesStdin(cli.flags) ? "on" : "off"}`);
@@ -3674,7 +3707,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   async skillDoctor(sessionId: string): Promise<SkillDoctorReply> {
     const cwd = this.sessionCwd(sessionId) ?? process.cwd();
     const host = boxFor(this.config.sshHost, remoteWorkspaceFor(cwd)?.host);
-    const cli = await probeCli(execFile, this.config.command, host);
+    const cli = await probeCli(execFile, this.commandFor(host), host);
     if (!cli.flags)
       return { ok: false, error: "skill report failed to start: no claude binary on this box" };
     // Without --no-session-persistence a one-shot leaves a transcript under the workspace's project
@@ -4122,7 +4155,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       // A remote-workspace session runs the far `claude` over SSH: held there, like an SSH box's,
       // rather than under a local keeper that would launch claude in the empty placeholder dir.
       const ws = remoteWorkspaceFor(cwd);
-      if (ws) return this.holdOn(ws.host, ws.remoteCwd, sessionId, spec, command, args);
+      // The far box runs its own `claude`: name it as configured, never this box's absolute path.
+      if (ws)
+        return this.holdOn(ws.host, ws.remoteCwd, sessionId, spec, this.configuredCommand, args);
       // One directory per spawn: a respawn must never share a socket, keeper.json or keeper.log
       // with the keeper it replaces (2026-09-06: a shared directory let a dying keeper answer the
       // new attach, and a boot read the wrong keeper.json and dropped the live one).
@@ -4444,7 +4479,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       const ws = remoteWorkspaceFor(cwd);
       if (ws)
         return sshSpawner(ws.host, () => ws.remoteCwd, readSshToken(STATE_DIR, ws.host))(
-          command,
+          // The far box's own binary, by the configured name: see `commandFor`.
+          this.configuredCommand,
           args,
           cwd,
         );
@@ -4505,9 +4541,19 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       this.ctx?.sessions?.get?.(asSessionId(options.sessionId))?.header?.cwd ?? prep.cwd;
     if (prep.spec.model && !prep.spec.temporary) {
       // One file write per change, not per turn: a long session on one model writes once.
-      if (this.workspaceModelWritten.get(wsCwd) !== prep.spec.model) {
-        this.workspaceModelWritten.set(wsCwd, prep.spec.model);
-        void saveWorkspaceModel(STATE_DIR, wsCwd, prep.spec.model).catch(() => {});
+      // The mount goes with the model: a new session in this workspace opens on both, so a box's
+      // Claude comes back as that box's, and a local one as local (dsh 0.1.7 makes its blank
+      // sessions ahead of time on the deployment default, so nothing else carries a provider over).
+      const written = `${this.providerId}\0${prep.spec.model}`;
+      if (this.workspaceModelWritten.get(wsCwd) !== written) {
+        this.workspaceModelWritten.set(wsCwd, written);
+        void saveWorkspaceModel(
+          STATE_DIR,
+          wsCwd,
+          prep.spec.model,
+          Date.now(),
+          this.providerId,
+        ).catch(() => {});
       }
     }
     // What dsh's blocks cost on this turn, for the numbers on the Settings card. Same rule as the
@@ -5545,7 +5591,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
                 if (!session) return;
                 const callSeq = callSeqs.get(callId);
                 callSeqs.delete(callId);
-                // SAFETY: createToolResultMessage returns a user-role message; session.append validates shape at runtime
+                // SAFETY: createToolResultMessage returns dsh's own tool-result message (a user
+                // message holding a tool-result block up to 0.1.6, a `role: "tool"` message from
+                // 0.1.7); session.append validates the shape at runtime either way
                 const message = createToolResultMessage({
                   callId: callId as any,
                   content: [{ type: "text" as const, text }],
@@ -6433,7 +6481,12 @@ const probeLogin = (adapter: ClaudeCodeAdapter) => {
 export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Config>) {
   // Looked up on every read: `settings` is not in `inject`, so at apply it may not be mounted yet, and
   // a reference taken now stays undefined for the life of the process (every header wrote English).
-  bindServerLocale({ get: (ns) => ctx.get("settings")?.get(ns) });
+  // Both reads are forwarded, and `serverIsChinese` takes whichever this dsh answers: 0.1.6 and
+  // earlier have `get`, 0.1.7 replaced it with `describe`.
+  bindServerLocale({
+    get: (ns) => ctx.get("settings")?.get?.(ns),
+    describe: (options) => ctx.get("settings")?.describe?.(options) ?? [],
+  });
   const adapter = new ClaudeCodeAdapter(ctx, config);
   const claudeHome = adapter.claudeHome;
   ctx.llm.registerConfigurableProviders([
@@ -6605,6 +6658,7 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       remoteWorkspacesPath: join(STATE_DIR, "remote-workspaces.json"),
       onRemoteWorkspaces: setRemoteWorkspaces,
       command: adapter.config.command,
+      boxCommand: adapter.configuredCommand,
       sshHost: adapter.config.sshHost,
       instanceFor,
       instanceForHost,

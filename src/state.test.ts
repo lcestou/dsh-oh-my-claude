@@ -266,6 +266,16 @@ await saveWorkspaceModel(wsDir, "/w/a", "claude-opus-5", 10);
 await saveWorkspaceModel(wsDir, "/w/b", "haiku", 20);
 wsModels = await loadWorkspaceModels(wsDir);
 assert.deepEqual(wsModels.get("/w/a"), { model: "claude-opus-5", at: 10 });
+// The mount rides with the model when given, and a row without one still loads as before.
+await saveWorkspaceModel(wsDir, "/w/c", "claude-opus-5", 30, "claude-code-lilly");
+wsModels = await loadWorkspaceModels(wsDir);
+assert.deepEqual(wsModels.get("/w/c"), {
+  model: "claude-opus-5",
+  provider: "claude-code-lilly",
+  at: 30,
+});
+assert.equal(wsModels.get("/w/a")?.provider, undefined, "older rows carry no provider");
+await saveWorkspaceModel(wsDir, "/w/c", undefined); // back to the two rows the rest expects
 assert.deepEqual(wsModels.get("/w/b"), { model: "haiku", at: 20 });
 await saveWorkspaceModel(wsDir, "/w/b", undefined);
 wsModels = await loadWorkspaceModels(wsDir);

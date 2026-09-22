@@ -256,9 +256,11 @@ export interface WorkspaceRegistry {
     get archivedSessionIds(): readonly SessionId[];
     archiveSession(sessionId: SessionId): Promise<void>;
     resolveByPath(path: string): Promise<Workspace | undefined>;
+    /** dsh 0.1.7's public unarchive. Absent on 0.1.5 and 0.1.6, which need the three below. */
+    unarchiveSession?(sessionId: SessionId): Promise<void>;
     enqueueOperation?<T>(operation: () => Promise<T>): Promise<T>;
-    requireState(): WorkspaceRegistryState;
-    setState(state: WorkspaceRegistryState): Promise<void>;
+    requireState?(): WorkspaceRegistryState;
+    setState?(state: WorkspaceRegistryState): Promise<void>;
 }
 /** The registry's persisted state; only the archived list is read or rewritten here. */
 export interface WorkspaceRegistryState {
@@ -287,6 +289,9 @@ export interface SessionController {
     prompt(request: {
         sessionId: SessionId;
         requestId: string;
+        /** Required from dsh 0.1.7: queue behind the running turn, or steer into it. Optional here
+         *  so the same call types against 0.1.5 and 0.1.6, which have no such field. */
+        mode?: "queue" | "steer";
         content: Array<{
             type: "text";
             text: string;

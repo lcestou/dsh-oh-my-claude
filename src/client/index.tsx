@@ -15,21 +15,23 @@ import {
   useState,
 } from "react";
 import {
-  IconAgentPresetOutline16,
-  IconApiOutline14,
-  IconBrowseOutline16,
-  IconChecklistOutline14,
-  IconChevronDownOutline14,
-  IconCodeOutline16,
-  IconEditOutline16,
-  IconListPenOutline16,
-  IconSearchOutline16,
-  IconSkillOutline16,
-  IconSparkle16,
   Menu,
   useAnchoredPosition,
   useDismissOnOutsidePointer,
 } from "@deepseek-ai/dsh-client-ui-primitives";
+import {
+  IconAgentPresetOutlineMedium,
+  IconApiOutlineRegular,
+  IconBrowseOutlineMedium,
+  IconChecklistOutlineRegular,
+  IconChevronDownOutlineRegular,
+  IconCodeOutlineMedium,
+  IconEditOutlineMedium,
+  IconListPenOutlineMedium,
+  IconSearchOutlineMedium,
+  IconSkillOutlineMedium,
+  IconSparkleMedium,
+} from "./icons.js";
 import {
   ROUTE,
   useNarrow,
@@ -62,6 +64,7 @@ import {
   isClaudeSession,
   activeClaudeProvider,
   claudeProviderOf,
+  claudeMount,
   type ClientCtx,
   openHere,
   openSession,
@@ -3945,8 +3948,11 @@ const ensureTurnStatusStyle = () => {
   // rects around a ring, each fading a beat after the last). They stayed dsh's blue wherever they
   // appear away from the turn status row. The subagent switcher's dropdown is where it shows, since
   // a Claude session's children are listed there with one running dot each. The colour comes from
-  // `--dsh-state-ongoing`, which dsh declares on the element itself, so a value inherited from
-  // `body` loses to it; the override has to land on the same element. `svg[data-state="ongoing"]`
+  // `--dsh-state-ongoing`, which dsh declared on the element itself up to 0.1.6, so a value
+  // inherited from
+  // `body` loses to it; the override has to land on the same element. 0.1.7 dropped that property
+  // and strokes the spinner with `currentColor` instead, so the rule sets `color` as well and one
+  // of the two takes on whichever dsh is installed. `svg[data-state="ongoing"]`
   // does that on dsh's own attribute rather than its hashed class name, and outweighs the single
   // class dsh sets it with, so no `!important` is needed. Under the row switch with the status row,
   // which is the same idea in another place.
@@ -3954,7 +3960,7 @@ const ensureTurnStatusStyle = () => {
   // clearance, which leaves its pills 653px in a 717px column. dsh's two fill that; ours as a
   // third clips all three to an ellipsis by a few pixels. The pills are centred, so the padding
   // does no aligning; take it down to the row's rounded corners and the three fit.
-  styleEl.textContent = `${gated("row", '[role="status"][aria-live="polite"]')},${gated("row", "[data-dsh-oh-my-claude-turn]", false)}{background-image:var(--omc-row-bg,linear-gradient(90deg,var(--omc-accent) 0%,var(--omc-accent) 40%,var(--omc-shimmer) 50%,var(--omc-accent) 60%,var(--omc-accent) 100%))}@keyframes omc-word{from{-webkit-text-fill-color:var(--omc-word-lo)}to{-webkit-text-fill-color:var(--omc-word-hi)}}[data-omc-turn-word]{animation:omc-word 1s ease-in-out 3s infinite alternate}@media (prefers-reduced-motion:reduce){[data-omc-turn-word]{animation:none}}[data-dsh-oh-my-claude-turn]>span[aria-hidden]{display:inline-block;width:1.3em;text-align:start;flex:none}[data-dsh-oh-my-claude-turn]{max-width:100%;min-width:0}[data-omc-turn-detail]{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}${gated("panel", "[data-omc-login-card] button:hover", false)},${gated("panel", "[data-omc-login-card] button:focus-visible", false)},${gated("panel", "[data-omc-update-card] button:not(:disabled):hover", false)},${gated("panel", "[data-omc-update-card] button:focus-visible", false)}{color:var(--omc-accent)!important;border-color:var(--omc-accent)!important}${controlStatesCss("[data-omc-settings]")}${controlStatesCss('[role="dialog"][aria-label="Oh My Claude"]')}${/* !important: the buttons carry their border inline (`btn`), which beats any sheet rule. */ ""}${gated("panel", '[data-omc-settings] button:not([role="switch"]):not([aria-expanded]):not(:disabled):hover', false)},${gated("panel", '[data-omc-settings] button:not([role="switch"]):not([aria-expanded]):focus-visible', false)},${gated("panel", '[role="dialog"][aria-label="Oh My Claude"] button:not([role="switch"]):not([aria-expanded]):not(:disabled):hover', false)},${gated("panel", '[role="dialog"][aria-label="Oh My Claude"] button:not([role="switch"]):not([aria-expanded]):focus-visible', false)}{color:var(--omc-accent)!important;border-color:var(--omc-accent)!important}[data-omc-card]:hover{border-color:var(--dsw-alias-label-dimmed,rgba(128,128,128,.5))}[data-omc-card]>button:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#3b82f6);outline-offset:-2px}[data-omc-card]>button:hover{background:none}@keyframes omc-sheen{from{background-position:200% 0}to{background-position:-200% 0}}[data-omc-skeleton]{border-radius:6px;background:linear-gradient(90deg,${T.border} 30%,${T.hover} 50%,${T.border} 70%);background-size:200% 100%;animation:omc-sheen 1.4s linear infinite}@keyframes omc-rise{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}@keyframes omc-drain{from{width:100%}to{width:0}}[data-omc-arrived]{animation:omc-rise .18s ease-out}@media (prefers-reduced-motion:reduce){[data-omc-skeleton],[data-omc-arrived]{animation:none}}${gated("prose", '[role="tablist"]>[role="tab"][aria-selected="true"]')}{color:var(--omc-accent)}${gated("prose", '[role="tablist"]>[role="tab"][aria-selected="true"]::after')}{background:var(--omc-accent)}${gated("prose", '[class*="_markdown"] blockquote')}{border-left-color:color-mix(in srgb,var(--omc-accent) 50.2%,transparent)}${gated("prose", '[class*="_markdown"] hr')}{background:color-mix(in srgb,var(--omc-accent) 34.9%,transparent)}${gated("prose", '[class*="_markdown"] a')}{color:var(--omc-accent);text-decoration-color:color-mix(in srgb,var(--omc-accent) 40%,transparent)}${gated("prose", '[class*="_markdown"] a:hover')}{color:var(--omc-shimmer);text-decoration-color:var(--omc-shimmer)}${gated("prose", '[class*="_markdown"] input[type="checkbox"]')}{accent-color:var(--omc-accent)}${/* The chips dsh draws in a sent bubble for a skill it knows (`/ic-logos`) and for a file mention: its business blue and its link blue. Selected by dsh's own `data-ref-chip` hook, which names the kind, not by the hashed class. */ ""}${gated("prose", "[data-ref-chip]")}{color:var(--omc-accent)}${gated("prose", "[data-ref-chip]:hover")},${gated("prose", "[data-ref-chip]:focus")}{color:var(--omc-shimmer);text-decoration-color:var(--omc-shimmer)}${gated("prose", "[data-ref-chip]:focus-visible")}{box-shadow:0 0 0 2px var(--omc-accent)}${gated("prose", "[data-workflow-run] button[data-member-status] [data-member-label]")}{color:var(--omc-accent)}${/* The icon tile on dsh's changed-files card is dsh's link blue; `data-changed-files` is dsh's own hook, and the class is matched by its module suffix since the prefix is generated per build. */ ""}${gated("prose", '[data-changed-files] [class*="_tile"]')}{background:var(--omc-accent)}body[data-omc-panel-open] [data-width-handle]{pointer-events:none}body[data-omc-panel-open] [class*="_toBottomSlot"],body:has([data-omc-cost-dialog]) [class*="_toBottomSlot"]{opacity:0;pointer-events:none;transition:opacity .1s}@keyframes omc-pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--omc-accent) 55%,transparent)}100%{box-shadow:0 0 0 12px transparent}}${gated("panel", 'button[aria-label="Oh My Claude"][data-omc-pulse]', false)}{animation:omc-pulse 1.1s ease-out 3}@media (prefers-reduced-motion:reduce){button[aria-label="Oh My Claude"][data-omc-pulse]{animation:none}}${gated("prose", "[data-produced-files-row] button")}{color:var(--omc-accent)}${gated("prose", "[data-produced-files-row] button:hover")}{color:var(--omc-shimmer)}body[data-omc-claude] [data-composer-stats]{padding-left:8px;padding-right:8px}${gated("prose", '[class*="_optionLine"]>[class*="_badge"]')}{background:color-mix(in srgb,var(--omc-accent) 16%,transparent);color:var(--omc-accent)}[data-omc-cost-over]{color:var(--omc-accent)}${gated("row", 'svg[data-state="ongoing"]')}{--dsh-state-ongoing:var(--omc-accent)}${RAINBOW_CSS}${COST_DIALOG_CSS}`;
+  styleEl.textContent = `${gated("row", '[role="status"][aria-live="polite"]:not([class*="visuallyHidden"])')},${gated("row", "[data-dsh-oh-my-claude-turn]", false)}{background-image:var(--omc-row-bg,linear-gradient(90deg,var(--omc-accent) 0%,var(--omc-accent) 40%,var(--omc-shimmer) 50%,var(--omc-accent) 60%,var(--omc-accent) 100%))}@keyframes omc-word{from{-webkit-text-fill-color:var(--omc-word-lo)}to{-webkit-text-fill-color:var(--omc-word-hi)}}[data-omc-turn-word]{animation:omc-word 1s ease-in-out 3s infinite alternate}@media (prefers-reduced-motion:reduce){[data-omc-turn-word]{animation:none}}[data-dsh-oh-my-claude-turn]>span[aria-hidden]{display:inline-block;width:1.3em;text-align:start;flex:none}[data-dsh-oh-my-claude-turn]{max-width:100%;min-width:0}[data-omc-turn-detail]{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}button[data-turn-process]:has([data-omc-turn-line])>span:not([data-omc-turn-line]){display:none}[data-omc-turn-line]{background-clip:text;-webkit-background-clip:text;color:transparent;-webkit-text-fill-color:transparent;background-size:200% 100%;animation:omc-verb-sheen 2.6s linear infinite;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-flex;align-items:center;gap:2px}@keyframes omc-verb-sheen{from{background-position:200% 0}to{background-position:-200% 0}}@media (prefers-reduced-motion:reduce){[data-omc-turn-line]{animation:none}}button[data-turn-process]:has([data-omc-turn-line]){min-width:0;max-width:100%}${gated("panel", "[data-omc-login-card] button:hover", false)},${gated("panel", "[data-omc-login-card] button:focus-visible", false)},${gated("panel", "[data-omc-update-card] button:not(:disabled):hover", false)},${gated("panel", "[data-omc-update-card] button:focus-visible", false)}{color:var(--omc-accent)!important;border-color:var(--omc-accent)!important}${controlStatesCss("[data-omc-settings]")}${controlStatesCss('[role="dialog"][aria-label="Oh My Claude"]')}${/* !important: the buttons carry their border inline (`btn`), which beats any sheet rule. */ ""}${gated("panel", '[data-omc-settings] button:not([role="switch"]):not([aria-expanded]):not(:disabled):hover', false)},${gated("panel", '[data-omc-settings] button:not([role="switch"]):not([aria-expanded]):focus-visible', false)},${gated("panel", '[role="dialog"][aria-label="Oh My Claude"] button:not([role="switch"]):not([aria-expanded]):not(:disabled):hover', false)},${gated("panel", '[role="dialog"][aria-label="Oh My Claude"] button:not([role="switch"]):not([aria-expanded]):focus-visible', false)}{color:var(--omc-accent)!important;border-color:var(--omc-accent)!important}[data-omc-card]:hover{border-color:var(--dsw-alias-label-dimmed,rgba(128,128,128,.5))}[data-omc-card]>button:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#3b82f6);outline-offset:-2px}[data-omc-card]>button:hover{background:none}@keyframes omc-sheen{from{background-position:200% 0}to{background-position:-200% 0}}[data-omc-skeleton]{border-radius:6px;background:linear-gradient(90deg,${T.border} 30%,${T.hover} 50%,${T.border} 70%);background-size:200% 100%;animation:omc-sheen 1.4s linear infinite}@keyframes omc-rise{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}@keyframes omc-drain{from{width:100%}to{width:0}}[data-omc-arrived]{animation:omc-rise .18s ease-out}@media (prefers-reduced-motion:reduce){[data-omc-skeleton],[data-omc-arrived]{animation:none}}${gated("prose", '[role="tablist"]>[role="tab"][aria-selected="true"]')}{color:var(--omc-accent)}${gated("prose", '[role="tablist"]>[role="tab"][aria-selected="true"]::after')}{background:var(--omc-accent)}${gated("prose", '[class*="_markdown"] blockquote')}{border-left-color:color-mix(in srgb,var(--omc-accent) 50.2%,transparent)}${gated("prose", '[class*="_markdown"] hr')}{background:color-mix(in srgb,var(--omc-accent) 34.9%,transparent)}${gated("prose", '[class*="_markdown"] a')}{color:var(--omc-accent);text-decoration-color:color-mix(in srgb,var(--omc-accent) 40%,transparent)}${gated("prose", '[class*="_markdown"] a:hover')}{color:var(--omc-shimmer);text-decoration-color:var(--omc-shimmer)}${gated("prose", '[class*="_markdown"] input[type="checkbox"]')}{accent-color:var(--omc-accent)}${/* The chips dsh draws in a sent bubble for a skill it knows (`/ic-logos`) and for a file mention: its business blue and its link blue. Selected by dsh's own `data-ref-chip` hook, which names the kind, not by the hashed class. */ ""}${gated("prose", "[data-ref-chip]")}{color:var(--omc-accent)}${gated("prose", "[data-ref-chip]:hover")},${gated("prose", "[data-ref-chip]:focus")}{color:var(--omc-shimmer);text-decoration-color:var(--omc-shimmer)}${gated("prose", "[data-ref-chip]:focus-visible")}{box-shadow:0 0 0 2px var(--omc-accent)}${gated("prose", "[data-workflow-run] button[data-member-status] [data-member-label]")}{color:var(--omc-accent)}${/* The icon tile on dsh's changed-files card is dsh's link blue; `data-changed-files` is dsh's own hook, and the class is matched by its module suffix since the prefix is generated per build. */ ""}${gated("prose", '[data-changed-files] [class*="_tile"]')}{background:var(--omc-accent)}body[data-omc-panel-open] [data-width-handle]{pointer-events:none}body[data-omc-panel-open] [class*="_toBottomSlot"],body:has([data-omc-cost-dialog]) [class*="_toBottomSlot"]{opacity:0;pointer-events:none;transition:opacity .1s}@keyframes omc-pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--omc-accent) 55%,transparent)}100%{box-shadow:0 0 0 12px transparent}}${gated("panel", 'button[aria-label="Oh My Claude"][data-omc-pulse]', false)}{animation:omc-pulse 1.1s ease-out 3}@media (prefers-reduced-motion:reduce){button[aria-label="Oh My Claude"][data-omc-pulse]{animation:none}}${gated("prose", "[data-produced-files-row] button")},${gated("prose", "[data-presented-files-row] button")}{color:var(--omc-accent)}${gated("prose", "[data-produced-files-row] button:hover")},${gated("prose", "[data-presented-files-row] button:hover")}{color:var(--omc-shimmer)}body[data-omc-claude] [data-composer-stats]{padding-left:8px;padding-right:8px}${gated("prose", '[class*="_optionLine"]>[class*="_badge"]')}{background:color-mix(in srgb,var(--omc-accent) 16%,transparent);color:var(--omc-accent)}[data-omc-cost-over]{color:var(--omc-accent)}${gated("row", 'svg[data-state="ongoing"]')}{--dsh-state-ongoing:var(--omc-accent);color:var(--omc-accent)}${RAINBOW_CSS}${COST_DIALOG_CSS}`;
   document.head.appendChild(styleEl);
 };
 
@@ -4051,6 +4057,62 @@ const easeChars = (shown: number, target: number): number => {
 };
 /** No-op frame callback, used where a beat changes nothing and so writes nothing. */
 const noBeat = (): void => undefined;
+/** What a turn's status could be drawn in, on either dsh line: the status row itself up to 0.1.6,
+ *  and from 0.1.7 the button that heads the turn's process group. */
+const TURN_ROW_SELECTOR = '[role="status"][aria-live="polite"], button[data-turn-process]';
+
+/**
+ * The element that shows this turn's status to the eye, or undefined when the candidate shows
+ * nothing.
+ *
+ * Up to dsh 0.1.6 that was the `role="status"` row itself. dsh 0.1.7 moved the sentence into the
+ * button heading the turn's process group ("Deep diving for 12s") and left the status row for
+ * screen readers, clipped to a single pixel: the plugin kept painting the row, so its verb, spinner
+ * and figures went out to assistive tech and nobody could see them (owner, 2026-09-22).
+ *
+ * A finished group is left alone. dsh drops `data-open` from the button once the turn ends and its
+ * label becomes "Took 12s", which is a record of the turn, not a status, and not the plugin's to
+ * overwrite.
+ */
+const turnStatusRow = (found: HTMLElement): HTMLElement | undefined => {
+  if (found.matches("button[data-turn-process]")) {
+    if (found.getAttribute("data-open") !== "true") return undefined;
+    const label = found.querySelector<HTMLElement>(":scope > span:not([data-omc-turn-line])");
+    if (label === null) return undefined;
+    const already = found.querySelector<HTMLElement>(":scope > [data-omc-turn-line]");
+    if (already !== null) return already;
+    const line = document.createElement("span");
+    line.setAttribute("data-omc-turn-line", "1");
+    // dsh's sentence is a sibling, not an ancestor, so none of its own type styles are inherited
+    // here: the line would take the button's instead and read at a different size from the one it
+    // replaces. Copied from the node on screen rather than assumed, the way the bracket takes the
+    // clock's face.
+    const face = getComputedStyle(label);
+    line.style.fontSize = face.fontSize;
+    line.style.fontWeight = face.fontWeight;
+    line.style.fontFamily = face.fontFamily;
+    line.style.lineHeight = face.lineHeight;
+    line.style.letterSpacing = face.letterSpacing;
+    // A text node the verb is written into: `wireTurnStatus` takes the first one with text in it,
+    // so the seed cannot be blank. It is replaced before the next frame.
+    line.append(document.createTextNode("…"));
+    found.append(line);
+    return line;
+  }
+  if (found.getAttribute("role") !== "status" || found.getAttribute("aria-live") !== "polite")
+    return undefined;
+  // Clipped to a pixel for screen readers on 0.1.7; a row with a real box is 0.1.6 or earlier and
+  // is the one to paint.
+  return found.getBoundingClientRect().height > 2 ? found : undefined;
+};
+
+/** Give a 0.1.7 process group its own sentence back: removing the plugin's line is enough, because
+ *  the rule that hides dsh's own only applies while that line is in the button. Called when the
+ *  turn ends and when the bundle is disposed, and safe to call twice. */
+const stopTurnLine = (el: HTMLElement): void => {
+  if (el.hasAttribute("data-omc-turn-line")) el.remove();
+};
+
 /** Wire one turn-status element for a claude-code session: verb, ping-pong spinner and orange
  *  gradient. */
 const wireTurnStatus = (
@@ -4111,6 +4173,14 @@ const wireTurnStatus = (
         stop();
         return;
       }
+      // 0.1.7 keeps the group's button on screen after the turn, relabelled "Took 12s". That is a
+      // record, not a status, so the plugin's line comes down and dsh's own sentence goes back up.
+      const group = el.closest("button[data-turn-process]");
+      if (group !== null && group.getAttribute("data-open") !== "true") {
+        stop();
+        stopTurnLine(el);
+        return;
+      }
       tick();
       onTick();
     },
@@ -4129,6 +4199,7 @@ const wireTurnStatus = (
     stop();
     el.removeAttribute(TURN_MARK);
     spinner.remove();
+    stopTurnLine(el);
   });
   tick();
 
@@ -4185,6 +4256,14 @@ const wireTurnStatus = (
   let effort = "";
   let relayName = "";
   let relayMs = -1;
+  /** How long the turn has run, per the last poll. Only read where dsh draws no clock of its own
+   *  (0.1.7 and later); -1 until the first answer. */
+  let elapsedMs = -1;
+  /** Whether the route has answered with a running turn yet, and how many empty answers have come
+   *  back before the first one. A poll can land before the adapter registers the turn, so an empty
+   *  answer is only an ending once a live one has been seen or three seconds of them have. */
+  let sawLiveTurn = false;
+  let emptyPolls = 0;
   // What is on screen: the eased count in characters (the CLI eases its response length, and
   // shows it over four) and the two colour ramps, each chased 10% per 50ms like the CLI does.
   let shownChars = 0;
@@ -4238,7 +4317,11 @@ const wireTurnStatus = (
       detailSpan.style.fontSize = face.fontSize;
       detailSpan.style.fontWeight = face.fontWeight;
     }
-    const time = (clock?.textContent ?? "").trim();
+    // dsh 0.1.6 and earlier draw a clock node beside the row and this reads it. 0.1.7 writes the
+    // elapsed time into the same sentence as its own verb ("Deep diving for 12s"), which the verb
+    // above replaces, so there is no node to read and the figure comes from the turn record.
+    const polled = elapsedMs >= 0 ? elapsedMs + since : -1;
+    const time = (clock?.textContent ?? "").trim() || (polled >= 0 ? fmtDuration(polled) : "");
     if (time) parts.push(time);
     // dsh's copy goes quiet only while ours is showing the same figure. Hiding it unconditionally is
     // what left the row reading just the verb when the read came back empty.
@@ -4328,6 +4411,7 @@ const wireTurnStatus = (
         effort?: string;
         relayName?: string;
         relayMs?: number;
+        elapsedMs?: number;
       }>(r);
       targetChars = (b.tokens ?? 0) * 4;
       // The ages come from the adapter, which saw the block open and the last frame land; a tab
@@ -4340,7 +4424,24 @@ const wireTurnStatus = (
       effort = b.effort ?? "";
       relayName = b.relayName ?? "";
       relayMs = b.relayMs ?? -1;
+      elapsedMs = b.elapsedMs ?? -1;
       polledAt = Date.now();
+      // The adapter drops its turn record the moment a turn ends, however it ended, so an empty
+      // answer after a live one is the end of the turn. dsh keeps `data-open` on a failed group,
+      // which is why the button's own state cannot be the only signal: a turn that failed left the
+      // line saying "Incubating…" under dsh's "Failed" (owner, 2026-09-22).
+      if (b.elapsedMs === undefined) {
+        // Reopening a session re-renders its old groups, and dsh leaves a failed one open, so a
+        // line can be wired over a turn that ended long ago. Three empty answers settle that
+        // without cutting a turn whose record has not appeared yet.
+        emptyPolls += 1;
+        if (sawLiveTurn || emptyPolls >= 3) {
+          stop();
+          stopTurnLine(el);
+        }
+        return;
+      }
+      sawLiveTurn = true;
     } catch {
       // the row keeps its verb; the bracket is decoration
     }
@@ -4631,9 +4732,9 @@ function watchTurnStatus(ctx: ClientCtx) {
   markBody();
   const beat = setInterval(guard(markBody), 1000);
   whenContextGone(() => clearInterval(beat));
-  const attach = (el: HTMLElement) => {
-    // Only act on [role="status"][aria-live="polite"] (dsh's turn-status element).
-    if (el.getAttribute("role") !== "status" || el.getAttribute("aria-live") !== "polite") return;
+  const attach = (found: HTMLElement) => {
+    const el = turnStatusRow(found);
+    if (el === undefined) return;
     // The wired mark is read here rather than inside `wireTurnStatus`: everything below allocates a
     // promise, and this runs for every status element on every dirty frame of a running turn.
     if (el.hasAttribute(TURN_MARK)) return;
@@ -4652,8 +4753,7 @@ function watchTurnStatus(ctx: ClientCtx) {
   };
   const scan = (root: HTMLElement) => {
     attach(root);
-    for (const el of root.querySelectorAll<HTMLElement>('[role="status"][aria-live="polite"]'))
-      attach(el);
+    for (const el of root.querySelectorAll<HTMLElement>(TURN_ROW_SELECTOR)) attach(el);
   };
   // Once per dirty frame, and the cheapest check comes first: on a session that is not a Claude
   // mount there is nothing to attach, so bail before the querySelectorAll. attach is idempotent
@@ -5029,18 +5129,18 @@ const SPRITE_MARK = "data-omc-sprite"; // on each hidden sprite: its key
  *  row visually the same family instead of inventing a second icon set. `chevron` is the disclosure
  *  marker; dsh's tool rows use the same one, unrotated. */
 const SPRITES = {
-  "❯": IconApiOutline14,
-  "▤": IconBrowseOutline16,
-  "✎": IconEditOutline16,
-  "⌕": IconSearchOutline16,
-  "✳": IconCodeOutline16,
-  "⤓": IconBrowseOutline16,
-  "☑": IconChecklistOutline14,
-  "⚙": IconAgentPresetOutline16,
-  "☰": IconListPenOutline16,
-  "⌘": IconSkillOutline16,
-  "◆": IconSparkle16,
-  chevron: IconChevronDownOutline14,
+  "❯": IconApiOutlineRegular,
+  "▤": IconBrowseOutlineMedium,
+  "✎": IconEditOutlineMedium,
+  "⌕": IconSearchOutlineMedium,
+  "✳": IconCodeOutlineMedium,
+  "⤓": IconBrowseOutlineMedium,
+  "☑": IconChecklistOutlineRegular,
+  "⚙": IconAgentPresetOutlineMedium,
+  "☰": IconListPenOutlineMedium,
+  "⌘": IconSkillOutlineMedium,
+  "◆": IconSparkleMedium,
+  chevron: IconChevronDownOutlineRegular,
 } satisfies Record<string, FC<{ size?: number }>>;
 
 /** The hidden sprite sheet: one rendered copy of each dsh icon, cloned into the tool headers by the
@@ -5417,6 +5517,11 @@ const STATS_SEP = ':scope > span[aria-hidden="true"][class$="_sep"]';
 const COST_SLOT = "data-omc-cost-slot";
 /** One of dsh's stats pills as the row holds it: an anchor span wrapping a popover button. */
 const STATS_PILL = ':scope > span > button[aria-haspopup="dialog"]';
+/** dsh 0.1.7's compact stats draw each stat as a bare `span` pill in the row, with no anchor span
+ *  around it and no button; its detailed stats keep the anchor-and-button pair `STATS_PILL` finds.
+ *  Its own class is what the cost pill copies there, and the plugin's own node is excluded by the
+ *  slot attribute it carries. */
+const STATS_PILL_SPAN = ':scope > span[class*="pill" i]:not([data-omc-cost-slot])';
 
 /**
  * dsh's own stats row, the div the cost line is appended to. dsh builds it in `StatsLine` as a
@@ -5666,6 +5771,21 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
         }
         const wanted = `${pad}${textRef.current}`;
         if (body && body.textContent !== wanted) body.textContent = wanted;
+        // The cost reads last in the row, after dsh's own stats. dsh rebuilds those children
+        // whenever their shape changes — switching Performance and usage between Compact and
+        // Detailed is one such rebuild — and the new ones land after this node, which left the
+        // cost reading first (owner, 2026-09-22). Moving it back is one append, and it only runs
+        // on the frame a rebuild happened.
+        const host = inline.parentElement;
+        if (host && inline.nextElementSibling !== null) host.append(inline);
+        // The same rebuild can change the class the pill borrows, so it is re-copied when dsh's
+        // own pill no longer matches.
+        const live = host?.querySelector(STATS_PILL) ?? host?.querySelector(STATS_PILL_SPAN);
+        if (live && trigger && live.className !== trigger.className) {
+          trigger.className = live.className;
+          inline.className =
+            live.parentElement === host ? "" : (live.parentElement?.className ?? "");
+        }
         return;
       }
       if (inline) debug("row dropped our span; hooking again");
@@ -5718,24 +5838,25 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
       // by shape. Copying its classes is also what gives the readout dsh's own phone behaviour:
       // the label carries `overflow:hidden;text-overflow:ellipsis` under a button capped at the
       // row's width, so it shortens as the row narrows and ends as the icon alone.
-      const proto =
-        statsRow.querySelector(STATS_PILL) ??
-        (statsRow.hasAttribute("data-composer-stats")
-          ? statsRow.firstElementChild?.firstElementChild
-          : null);
-      if (proto?.parentElement) {
+      const proto = statsRow.querySelector(STATS_PILL);
+      // 0.1.7's pill is the span itself, so there is no anchor class to copy and the pill class
+      // goes on the trigger. Reading `firstElementChild.firstElementChild` as the prototype, which
+      // is what ran before, picked up that pill's icon instead and dressed the cost readout in an
+      // `svg` class: a bordered box with the mark above the figure (owner, 2026-09-22).
+      const protoSpan = proto === null ? statsRow.querySelector(STATS_PILL_SPAN) : null;
+      if (proto?.parentElement || protoSpan) {
         pad = "";
-        inline.className = proto.parentElement.className;
+        inline.className = proto?.parentElement?.className ?? "";
         trigger = document.createElement("button");
         trigger.type = "button";
-        trigger.className = proto.className;
+        trigger.className = (proto ?? protoSpan)?.className ?? "";
         trigger.setAttribute("data-omc-cost-pill", "");
         trigger.setAttribute("aria-haspopup", "dialog");
         trigger.setAttribute("aria-expanded", String(openRef.current));
         trigger.setAttribute("aria-label", titleRef.current);
         paintOver();
         trigger.addEventListener("click", () => setOpen((was) => !was));
-        body.className = proto.querySelector("span")?.className ?? "";
+        body.className = (proto ?? protoSpan)?.querySelector("span")?.className ?? "";
         body.textContent = textRef.current;
         // dsh's pills lead with a 14px icon in the pill's own text colour; ours is Claude's spark.
         trigger.append(sparkNode(14, "currentColor"), body);
@@ -5919,28 +6040,43 @@ interface StarterReply {
 const appliedModel = new Set<string>();
 
 /**
- * On a blank session whose provider is already Claude, select the model this workspace last ran.
- * The provider is never changed: the memory is which Claude model, not whether Claude. Once per
- * session id per tab, and never once the session has a message.
+ * On a blank session, select the Claude mount and model this workspace last ran.
+ *
+ * Up to dsh 0.1.6 a new session arrived on whatever the picker last held, so this only had to
+ * choose which Claude model. 0.1.7 makes each workspace's blank session ahead of time on the
+ * deployment default (llama on this box) with no selection of its own, so the memory now sets
+ * the provider as well: a workspace whose last Claude turn ran on a box's mount reopens on that
+ * box, a local one reopens local (owner, 2026-09-22: "it should remember the last one used per
+ * workspace, not reset to llama"). A blank the person has already switched by hand is left
+ * alone, since a picked provider is a `next` selection dsh records. A row written before the
+ * provider was stored names the model only and still needs the session to be Claude already.
+ * Once per session id per tab, and never once the session has a message.
  */
 function WorkspaceModelMemory({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   useEffect(() => {
     const entry = ctx.sessions.list.getSnapshot()?.byId[sessionId];
     if (!entry || entry.blank === false || !entry.cwd) return;
-    const provider = claudeProviderOf(ctx, sessionId);
-    if (!provider || appliedModel.has(sessionId)) return;
+    const current = claudeProviderOf(ctx, sessionId);
+    const picked = entry.projectionValues?.modelSelection?.next?.provider;
+    if (appliedModel.has(sessionId)) return;
     appliedModel.add(sessionId);
     let live = true;
     const runApply = async () => {
       const hints = await loadHints();
       if (hints.workspaceModelOff === true || !live) return;
       const q = `cwd=${encodeURIComponent(entry.cwd ?? "")}`;
-      const saved = await readJson<{ model?: string }>(
+      const saved = await readJson<{ model?: string; provider?: string }>(
         await fetch(`${ROUTE}/workspace-model?${q}`),
       );
       if (!saved.model || !live) return;
+      // The mount to open on: the session's own when it is already Claude, else the remembered
+      // one, and only while nobody has picked a provider for this blank by hand.
+      const provider =
+        current ?? (saved.provider && !picked ? claudeMount(saved.provider) : undefined);
+      if (!provider) return;
       const dir = ctx.modelDirectories.directoryFor(sessionId);
-      if (dir.store.getSnapshot().current?.model === saved.model) return;
+      const now = dir.store.getSnapshot().current;
+      if (now?.provider === provider && now.model === saved.model) return;
       if (dir.select) await dir.select({ provider, model: saved.model });
     };
     // A session dsh has not bound yet throws from directoryFor (see claudeProviderOf); a route
@@ -7928,7 +8064,9 @@ function ClaudeUpdateCard({
   const [outcome, setOutcome] = useState<UpdateOutcome | null>(null);
   const where = update.host ? update.label : t("main.boxes.thisBoxLower");
   const Where = update.host ? update.label : t("main.sessions.thisBox");
-  const url = `${ROUTE}/claude-update?session=${encodeURIComponent(sessionId)}`;
+  // `host` is the box this card is about, so its Update button never lands on another one: the
+  // card is drawn from the picked mount, and the run has to follow the card.
+  const url = `${ROUTE}/claude-update?session=${encodeURIComponent(sessionId)}&host=${encodeURIComponent(update.host)}`;
   const fail = (note: string) => {
     setOutcome({ ok: false, from: update.installed, to: null, note });
     setPhase("failed");
@@ -8223,7 +8361,17 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
     let alive = true;
     const fetchItems = async () => {
       try {
-        const r = await fetch(`${ROUTE}/side-questions?session=${encodeURIComponent(sessionId)}`);
+        // `provider` is the mount the model picker names, so the update card reports the Claude
+        // Code that was chosen rather than whichever box this session's turns happen to run on.
+        // Switching model repoints the card on the next poll. The read is one store snapshot on a
+        // poll that was already happening: no extra request, and the server answers it with a map
+        // lookup against updaters its own tick keeps fresh, so nothing here probes a box.
+        const picked = claudeProviderOf(ctx, sessionId);
+        const r = await fetch(
+          `${ROUTE}/side-questions?session=${encodeURIComponent(sessionId)}${
+            picked === undefined ? "" : `&provider=${encodeURIComponent(picked)}`
+          }`,
+        );
         if (!r.ok) return;
         // SAFETY: our own JSON route; the union names both shapes the caller checks.
         const body = (await r.json()) as
@@ -8524,7 +8672,7 @@ export const costDetails = (turns: TurnRecord[]): [string, string][] => {
  *  width: at 440 it was the widest line in the dialog and made this panel half again as wide as
  *  the stats dialog beside it (440 against 300, measured on dsh 0.1.6-alpha.2). */
 const COST_DIALOG_CSS =
-  "[data-omc-cost-dialog]{z-index:1100;box-sizing:border-box;background:var(--dsw-specific-menu);--dsw-elevation-stroke-color:var(--dsw-alias-border-l1);width:max-content;min-width:min(300px,100vw - 24px);max-width:min(320px,100vw - 24px);box-shadow:var(--dsw-elevation-prominent);color:var(--dsw-alias-label-secondary);cursor:default;border:0;border-radius:12px;padding:16px;font-size:12px;line-height:18px;position:fixed}" +
+  "[data-omc-cost-dialog]{z-index:1100;box-sizing:border-box;background:var(--dsw-specific-menu);backdrop-filter:var(--dsw-menu-backdrop-filter);--dsw-elevation-stroke-color:var(--dsw-alias-border-l1);width:max-content;min-width:min(300px,100vw - 24px);max-width:min(320px,100vw - 24px);box-shadow:var(--dsw-elevation-prominent);color:var(--dsw-alias-label-secondary);cursor:default;border:0;border-radius:12px;padding:16px;font-size:12px;line-height:18px;position:fixed}" +
   "[data-omc-cost-title]{color:var(--dsw-alias-label-primary);justify-content:space-between;gap:16px;margin-bottom:8px;font-weight:500;display:flex}" +
   "[data-omc-cost-title-label]{align-items:center;gap:6px;min-width:0;display:inline-flex}" +
   "[data-omc-cost-title-label] svg{flex:none;width:14px;height:14px}" +

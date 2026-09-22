@@ -35,9 +35,23 @@ export interface RawRowsLog {
     header: LogHeader;
     rows: LogRow[];
 }
-/** The current-format log rows mode would write for one turn with one tool: shapes copied from a
- *  dsh 0.1.5 v3 log. The call and its result sit inside the step, ahead of the settled message. */
-export declare const rawRowsLog: () => RawRowsLog;
+/**
+ * The current-format log rows mode would write for one turn with one tool: shapes copied from a
+ * dsh 0.1.5 v3 log. The call and its result sit inside the step, ahead of the settled message.
+ *
+ * `version` is the log version the installed dsh writes, not a fixed 3. A fixture stamped below
+ * that version is a log needing migration, and dsh 0.1.7's v3-to-v4 migration refuses to run at
+ * all without a parent's historical child evidence bound to it ("V3 catalog migration requires
+ * explicit historical child facts"). The probe then failed before reaching the row it exists to
+ * ask about, and locked rows over a migration a live session never runs.
+ */
+export declare const rawRowsLog: (version?: number) => RawRowsLog;
+/**
+ * The log version the installed dsh writes: 3 up to 0.1.6, 4 from 0.1.7. Read off dsh's own
+ * catalog, so a log this plugin writes carries the version the reader expects. Undefined when the
+ * catalog cannot be found or read, which leaves the caller to keep its own default.
+ */
+export declare function currentLogVersion(entry?: string): Promise<number | undefined>;
 /** Feed the synthetic log through dsh's own restore, with the options its load passes. */
 export declare function probeRawToolRows(entry?: string): Promise<RowsSupport>;
 export {};

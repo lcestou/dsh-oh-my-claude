@@ -28,7 +28,7 @@ export const en = {
   "tune.toolInline": "Inline",
   "tune.toolRows": "Native rows",
   "tune.rowsLocked":
-    "Native rows are off: this dsh will not load a session that holds them ({reason}). The switch unlocks by itself on a dsh that does.",
+    "Native rows are off: the rows this plugin writes are in a shape this dsh no longer loads ({reason}), so a session using them would not reopen. A plugin update fixes that, not a dsh one; the switch unlocks by itself once it lands.",
   "tune.toolHelp":
     "Inline: text and tool calls show live, in the order they happen. Native rows: dsh's own tool cards, but the chat looks idle while a step runs and the text lands in one bubble under the cards when it settles; each steer starts a new step. Rows can also be refused by a later dsh format migration, as 0.1.5's were (tools/dsh-session-repair.ts mends such logs). Applies from your next message, no restart.",
   "tune.outputStyle": "Output style",
@@ -136,7 +136,7 @@ export const zh = {
   "tune.toolInline": "内联",
   "tune.toolRows": "原生卡片",
   "tune.rowsLocked":
-    "原生卡片已关闭：此 dsh 无法加载包含它们的会话（{reason}）。在支持的 dsh 上此开关会自动解锁。",
+    "原生卡片已关闭：本插件写入的卡片格式此 dsh 已不再加载（{reason}），使用它们的会话将无法重新打开。这需要插件更新而不是 dsh 更新；更新到位后此开关会自动解锁。",
   "tune.toolHelp":
     "内联：文本和工具调用实时显示，按发生的顺序排列。原生卡片：使用 dsh 自己的工具卡片，但步骤运行时聊天看起来是空闲的，文本会在步骤结束后集中显示在卡片下方的一个气泡里；每次插话都会开始一个新步骤。后续的 dsh 格式迁移也可能拒绝这些卡片，就像 0.1.5 那样（tools/dsh-session-repair.ts 可修复此类日志）。从你的下一条消息起生效，无需重启。",
   "tune.outputStyle": "输出风格",

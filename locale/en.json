@@ -1,0 +1,4 @@
+{
+  "title": "Oh My Claude",
+  "description": "Runs the Claude Code CLI you are already logged into as a model provider: its models, sessions, skills, MCP servers and approvals, inside dsh."
+}
