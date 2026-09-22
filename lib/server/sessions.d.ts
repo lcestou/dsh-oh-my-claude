@@ -450,6 +450,8 @@ export interface SessionRouteOptions {
         reason: "sent" | "gone" | "error";
         error?: string;
     }>;
+    /** Cut the running turn short and send these waiting steers as the next turn. */
+    sendSteerNow?: (sessionId: string, ids: string[]) => Promise<import("./adapter.js").SteerEditReply>;
     /** End a hold: put it back as it was, drop it, or send one message with new text in its place. */
     releaseHold?: (sessionId: string, holdId: string, how: "restore" | "drop" | {
         text: string;
@@ -530,7 +532,7 @@ export interface SessionRouteOptions {
     continueAfterLimit?: boolean;
 }
 /** `projectDir(cwd)` → Claude Code project dir; `startedIds()` → ids the adapter started itself. */
-export declare function registerSessionRoutes(ctx: PluginContext, { log, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, importedDir, sshBoxesPath, onSshBoxes, remoteWorkspacesPath, onRemoteWorkspaces, command, boxCommand, sshHost, turnRecords, dshVersion, liveTurn, idle, toolMode, terminalSync, permissionModes, thinking, rewind, contextUsage, skillDoctor, workspaceDiff, permissionReadout, askAside, mcp, permissionAsks, sideQuestions, steersFor, holdSteers, releaseHold, loginNeeded, sessionFallbacks, boxOfSession, claudeUpdated, loginDone, logoutDone, liveCount, persistAsides, starters, setStarter, models, reloadPlugins, reloadSkills, pluginErrors, pluginWarnings, awaiting, continueAfterLimit, instanceFor, instanceForHost, onLoginStatus, }: SessionRouteOptions): void;
+export declare function registerSessionRoutes(ctx: PluginContext, { log, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, importedDir, sshBoxesPath, onSshBoxes, remoteWorkspacesPath, onRemoteWorkspaces, command, boxCommand, sshHost, turnRecords, dshVersion, liveTurn, idle, toolMode, terminalSync, permissionModes, thinking, rewind, contextUsage, skillDoctor, workspaceDiff, permissionReadout, askAside, mcp, permissionAsks, sideQuestions, steersFor, holdSteers, releaseHold, sendSteerNow, loginNeeded, sessionFallbacks, boxOfSession, claudeUpdated, loginDone, logoutDone, liveCount, persistAsides, starters, setStarter, models, reloadPlugins, reloadSkills, pluginErrors, pluginWarnings, awaiting, continueAfterLimit, instanceFor, instanceForHost, onLoginStatus, }: SessionRouteOptions): void;
 /**
  * The four files Claude Code merges for one session, highest precedence first. Duplicated in
  * `src/client/settings.ts`: the browser half cannot import server code, and the order is the

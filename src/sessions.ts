@@ -1294,7 +1294,9 @@ export async function openTranscriptOnce(
   const folded = await firstTranscript(dirs, id);
   if (folded === undefined) throw new Error("transcript not found");
   if (folded.turns.length === 0) throw new Error("transcript has no completed turn");
-  const seed = toSessionEvents(folded);
+  // The version this dsh writes decides both the header below and the shape of every tool result.
+  const logVersion = (await currentLogVersion()) ?? 3;
+  const seed = toSessionEvents(folded, logVersion);
   // A session's log reaches disk only through the persistence write handle its creator opens
   // (dsh 0.1.5 does this in the agent-loop creation transaction). The store's own
   // prepare/enter/announce/flush owns no handle, so `session/flush` found no writer for this id and
@@ -1305,7 +1307,7 @@ export async function openTranscriptOnce(
     // says 3 ("session generation filename identifies v4, but its header identifies v3"), which
     // would make every adopted transcript unreadable there. 3 stays the fallback for a dsh whose
     // catalog cannot be read, which is what 0.1.5 and 0.1.6 want anyway.
-    version: (await currentLogVersion()) ?? 3,
+    version: logVersion,
     id: asSessionId(id),
     createdAt: folded.createdAt,
     cwd,
@@ -1483,6 +1485,11 @@ export interface SessionRouteOptions {
     | { ok: true; holdId: string; text: string }
     | { ok: false; reason: "sent" | "gone" | "error"; error?: string }
   >;
+  /** Cut the running turn short and send these waiting steers as the next turn. */
+  sendSteerNow?: (
+    sessionId: string,
+    ids: string[],
+  ) => Promise<import("./adapter.js").SteerEditReply>;
   /** End a hold: put it back as it was, drop it, or send one message with new text in its place. */
   releaseHold?: (
     sessionId: string,
@@ -1618,6 +1625,7 @@ export function registerSessionRoutes(
     steersFor,
     holdSteers,
     releaseHold,
+    sendSteerNow,
     loginNeeded,
     sessionFallbacks,
     boxOfSession,
@@ -3064,6 +3072,12 @@ export function registerSessionRoutes(
                   Array.isArray(ids) && ids.length > 0 && ids.every((i) => typeof i === "string")
                     ? ids
                     : undefined;
+                if (action === "sendNow") {
+                  if (!idList) return json(res, 400, { error: "ids required" });
+                  if (!sendSteerNow) return json(res, 404, { error: "send now not available" });
+                  const reply = await sendSteerNow(sid, idList);
+                  return json(res, reply.ok ? 200 : 409, reply);
+                }
                 if (action === "hold" || action === "remove") {
                   if (!idList) return json(res, 400, { error: "ids required" });
                   const held = await holdSteers(sid, idList);

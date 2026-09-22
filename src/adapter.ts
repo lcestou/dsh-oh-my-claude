@@ -3420,6 +3420,36 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   }
 
   /**
+   * Send waiting steers now, the way Claude Code's own send-now key does: take them back from the
+   * CLI, cut the running turn short, and put them to the idle agent, which starts a turn for them.
+   *
+   * The CLI's key (`chat:sendNow`, 2.1.275) interrupts the running turn and lets its queue drain
+   * into the next one; nothing about the messages changes, they stop waiting. dsh's
+   * `agent.cancel({ keepInbox: true })` is the same cut, and it is what makes the plugin send the
+   * CLI its interrupt. The hold comes first so the messages are not in the CLI's own pending list
+   * when the interrupt lands, and they go back through `agent.steer` once the agent is idle, which
+   * the mirror documents as starting a turn. A dsh without `cancel` (0.1.6 and earlier) gets the
+   * steers put back untouched and a refusal that says so.
+   */
+  async sendSteerNow(sessionId: string, ids: string[]): Promise<SteerEditReply> {
+    const held = await this.holdSteers(sessionId, ids);
+    if (!held.ok) return held;
+    const agent = (await this.agentFor(sessionId))?.agent;
+    if (!agent?.cancel || !agent.whenIdle) {
+      await this.releaseHold(sessionId, held.holdId, "restore");
+      return { ok: false, reason: "error", error: "this dsh cannot cut a turn short" };
+    }
+    agent.cancel({ kind: "user" }, { keepInbox: true });
+    // A CLI that ignores the interrupt is killed after INTERRUPT_GRACE_MS by the abort path; this
+    // waits a little past that rather than for ever, then sends anyway.
+    await Promise.race([
+      agent.whenIdle(),
+      new Promise<void>((resolve) => setTimeout(resolve, INTERRUPT_GRACE_MS + 5_000).unref?.()),
+    ]);
+    return this.releaseHold(sessionId, held.holdId, "restore");
+  }
+
+  /**
    * Rewind a session to one of its user prompts: `rewind_files` (dry run first, from the UI) puts
    * the working tree back, then `rewind_conversation` drops Claude's context after that prompt.
    * dsh's own transcript is not touched.
@@ -6709,6 +6739,8 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       steersFor: (sessionId: string) => adapter.ownerFor(sessionId).steersFor(sessionId),
       holdSteers: (sessionId: string, ids: string[]) =>
         adapter.ownerFor(sessionId).holdSteers(sessionId, ids),
+      sendSteerNow: (sessionId: string, ids: string[]) =>
+        adapter.ownerFor(sessionId).sendSteerNow(sessionId, ids),
       releaseHold: (
         sessionId: string,
         holdId: string,

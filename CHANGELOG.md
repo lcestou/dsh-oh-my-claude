@@ -6,6 +6,24 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Fixed
+
+- A Send now button on each waiting message in the steer card. It does what Claude Code's own
+  send-now key (Ctrl+Enter) does: stops what Claude is doing and sends the message as the next
+  turn instead of waiting for the current step to end. Needs dsh 0.1.7; on an older dsh the button
+  says it cannot and leaves the message waiting.
+- The status line under a turn that was stopped or failed no longer keeps going, and no longer
+  comes back with a new verb after it is taken down. dsh leaves such a turn's group open, and the
+  line was rewired on every frame; a group whose sentence has stopped changing is done and stays
+  done.
+- Native rows are available again on dsh 0.1.7. The switch was locked by the plugin's own check,
+  which fed dsh a tool result in the shape dsh 0.1.6 stored and heard that 0.1.7 refuses it; the
+  check and the Import seed now write the shape the installed dsh stores (a tool-role message from
+  v4), and rows mode itself already did, through dsh's own message builder. A rows-mode session
+  written on 0.1.7 reopens there.
+- Remember model per workspace no longer overwrites a provider you pick while a blank session is
+  still loading.
+
 ### Added
 
 - Chinese. Everything the plugin draws follows dsh's language setting (Settings → General →

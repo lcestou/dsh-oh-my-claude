@@ -4077,6 +4077,10 @@ const TURN_ROW_SELECTOR = '[role="status"][aria-live="polite"], button[data-turn
 const turnStatusRow = (found: HTMLElement): HTMLElement | undefined => {
   if (found.matches("button[data-turn-process]")) {
     if (found.getAttribute("data-open") !== "true") return undefined;
+    // A group whose turn ended keeps `data-open` when it failed or was stopped, and the scanner
+    // runs on every frame: without this mark every teardown was followed by a fresh line with a
+    // fresh verb, which is what read as "the verb keeps going" (owner, 2026-09-22, twice).
+    if (found.hasAttribute("data-omc-turn-done")) return undefined;
     const label = found.querySelector<HTMLElement>(":scope > span:not([data-omc-turn-line])");
     if (label === null) return undefined;
     const already = found.querySelector<HTMLElement>(":scope > [data-omc-turn-line]");
@@ -4110,7 +4114,11 @@ const turnStatusRow = (found: HTMLElement): HTMLElement | undefined => {
  *  the rule that hides dsh's own only applies while that line is in the button. Called when the
  *  turn ends and when the bundle is disposed, and safe to call twice. */
 const stopTurnLine = (el: HTMLElement): void => {
-  if (el.hasAttribute("data-omc-turn-line")) el.remove();
+  if (!el.hasAttribute("data-omc-turn-line")) return;
+  // Mark the group before removing the line, so the scan the removal itself triggers finds a
+  // group that is done rather than one that wants wiring.
+  el.closest("button[data-turn-process]")?.setAttribute("data-omc-turn-done", "1");
+  el.remove();
 };
 
 /** Wire one turn-status element for a claude-code session: verb, ping-pong spinner and orange
@@ -4120,6 +4128,8 @@ const wireTurnStatus = (
   sessionId: string,
   verbs: string[],
   frames: readonly string[],
+  /** dsh's own word on whether the session is running, read fresh on every beat. */
+  isRunning: () => boolean = () => true,
 ) => {
   ensureTurnStatusStyle();
   if (el.hasAttribute(TURN_MARK)) return;
@@ -4180,6 +4190,22 @@ const wireTurnStatus = (
         stop();
         stopTurnLine(el);
         return;
+      }
+      // The two signals dsh owns, read every beat. The session summary's `running` drops the
+      // moment a turn ends however it ended, in any language. And a group that is no longer the
+      // newest one belongs to a turn that is over: Send now cuts a turn and starts the next under
+      // the same session, so `running` alone would keep the old line up. Nothing else decides it:
+      // the plugin's own turn record clears and remakes at tool boundaries (it took the line down
+      // at 7 s of a 29 s turn), and a "sentence stopped ticking" backstop would cut the line under
+      // a turn parked on an approval prompt, whose sentence holds still for as long as the person
+      // takes (review, 2026-09-22).
+      if (group !== null) {
+        const groups = document.querySelectorAll("button[data-turn-process]");
+        if (!isRunning() || groups[groups.length - 1] !== group) {
+          stop();
+          stopTurnLine(el);
+          return;
+        }
       }
       tick();
       onTick();
@@ -4259,11 +4285,6 @@ const wireTurnStatus = (
   /** How long the turn has run, per the last poll. Only read where dsh draws no clock of its own
    *  (0.1.7 and later); -1 until the first answer. */
   let elapsedMs = -1;
-  /** Whether the route has answered with a running turn yet, and how many empty answers have come
-   *  back before the first one. A poll can land before the adapter registers the turn, so an empty
-   *  answer is only an ending once a live one has been seen or three seconds of them have. */
-  let sawLiveTurn = false;
-  let emptyPolls = 0;
   // What is on screen: the eased count in characters (the CLI eases its response length, and
   // shows it over four) and the two colour ramps, each chased 10% per 50ms like the CLI does.
   let shownChars = 0;
@@ -4430,18 +4451,10 @@ const wireTurnStatus = (
       // answer after a live one is the end of the turn. dsh keeps `data-open` on a failed group,
       // which is why the button's own state cannot be the only signal: a turn that failed left the
       // line saying "Incubating…" under dsh's "Failed" (owner, 2026-09-22).
-      if (b.elapsedMs === undefined) {
-        // Reopening a session re-renders its old groups, and dsh leaves a failed one open, so a
-        // line can be wired over a turn that ended long ago. Three empty answers settle that
-        // without cutting a turn whose record has not appeared yet.
-        emptyPolls += 1;
-        if (sawLiveTurn || emptyPolls >= 3) {
-          stop();
-          stopTurnLine(el);
-        }
-        return;
-      }
-      sawLiveTurn = true;
+      // An empty answer is not an ending: the adapter registers the turn on its first frame and
+      // clears and remakes the record at tool boundaries, so the figures simply pause. The end
+      // of the turn is read off dsh in the beat above.
+      if (b.elapsedMs === undefined) return;
     } catch {
       // the row keeps its verb; the bracket is decoration
     }
@@ -4733,6 +4746,18 @@ function watchTurnStatus(ctx: ClientCtx) {
   const beat = setInterval(guard(markBody), 1000);
   whenContextGone(() => clearInterval(beat));
   const attach = (found: HTMLElement) => {
+    // Decide before wiring, not after. A reload draws every old group, and dsh leaves a stopped
+    // or failed one open, so asking "is it open" wired a verb onto a turn that ended an hour ago
+    // and took it down three polls later (owner, 2026-09-22). What is known up front: dsh's own
+    // session summary says whether the session is running at all, and only the newest group in
+    // the conversation can be the running turn.
+    if (found.matches("button[data-turn-process]")) {
+      const sid = activeClaudeSession(ctx);
+      if (!sid) return;
+      if (ctx.sessions.list.getSnapshot()?.byId[sid]?.running !== true) return;
+      const groups = document.querySelectorAll("button[data-turn-process]");
+      if (groups[groups.length - 1] !== found) return;
+    }
     const el = turnStatusRow(found);
     if (el === undefined) return;
     // The wired mark is read here rather than inside `wireTurnStatus`: everything below allocates a
@@ -4748,7 +4773,13 @@ function watchTurnStatus(ctx: ClientCtx) {
     void spinnerSettings.then((settings) => {
       if (!el.isConnected) return;
       const defaults = activeLocale().startsWith("zh") ? ZH_VERBS : DEFAULT_VERBS;
-      wireTurnStatus(el, activeId, mergeVerbs(defaults, settings.setting), settings.frameSet);
+      wireTurnStatus(
+        el,
+        activeId,
+        mergeVerbs(defaults, settings.setting),
+        settings.frameSet,
+        () => ctx.sessions.list.getSnapshot()?.byId[activeId]?.running === true,
+      );
     }, console.error);
   };
   const scan = (root: HTMLElement) => {
@@ -6070,9 +6101,14 @@ function WorkspaceModelMemory({ sessionId, ctx }: { sessionId: string; ctx: Clie
       );
       if (!saved.model || !live) return;
       // The mount to open on: the session's own when it is already Claude, else the remembered
-      // one, and only while nobody has picked a provider for this blank by hand.
+      // one, and only while nobody has picked a provider for this blank by hand. Read again here,
+      // not only at mount: the two reads above are async, and a click in the picker during them
+      // is a pick this must not overwrite.
+      const pickedNow =
+        ctx.sessions.list.getSnapshot()?.byId[sessionId]?.projectionValues?.modelSelection?.next
+          ?.provider ?? picked;
       const provider =
-        current ?? (saved.provider && !picked ? claudeMount(saved.provider) : undefined);
+        current ?? (saved.provider && !pickedNow ? claudeMount(saved.provider) : undefined);
       if (!provider) return;
       const dir = ctx.modelDirectories.directoryFor(sessionId);
       const now = dir.store.getSnapshot().current;
@@ -7683,7 +7719,7 @@ interface SteerCardData {
 
 /** One request to the steer-edit route, as its validation accepts them. */
 type SteerAction =
-  | { action: "hold" | "remove"; ids: string[] }
+  | { action: "hold" | "remove" | "sendNow"; ids: string[] }
   | { action: "save"; holdId: string; text: string }
   | { action: "restore" | "drop"; holdId: string };
 
@@ -7906,6 +7942,17 @@ function SteerCard({
                 style={buttonStyle}
               >
                 {t("common.remove")}
+              </button>
+              <button
+                type="button"
+                data-omc-steer-send-now=""
+                aria-label={t("main.steer.sendNowAria")}
+                title={t("main.steer.sendNowTitle")}
+                disabled={disabled}
+                onClick={() => void act(s.id, { action: "sendNow", ids: [s.id] })}
+                style={buttonStyle}
+              >
+                {t("main.steer.sendNow")}
               </button>
             </div>
             {failure(s.id)}
