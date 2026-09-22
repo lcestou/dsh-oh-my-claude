@@ -1455,6 +1455,14 @@ export interface SessionRouteOptions {
   ) => Promise<{ ok: boolean; error?: string }>;
   /** `/btw` side questions and their answers, per session; the client bubble reads them. */
   sideQuestions?: Map<string, AsideEntry[]>;
+  /** Typed steers still waiting in the session's CLI queue; the steer card lists them. */
+  steersFor?: (sessionId: string) => Array<{ id: string; text: string; at: number }>;
+  /** Edit (`text`) or remove (`null`) a waiting steer; the steer card's route calls it. */
+  editSteer?: (
+    sessionId: string,
+    id: string,
+    text: string | null,
+  ) => Promise<{ ok: true } | { ok: false; reason: "sent" | "gone" | "error"; error?: string }>;
   /** Sessions whose last turn failed for want of a login, read beside the asides for the card. */
   loginNeeded?: Map<string, LoginNeed>;
   /** dsh session id → the model switch its last turn reported, for the `fallback` field beside the
@@ -1580,6 +1588,8 @@ export function registerSessionRoutes(
     mcp,
     permissionAsks,
     sideQuestions,
+    steersFor,
+    editSteer,
     loginNeeded,
     sessionFallbacks,
     boxOfSession,
@@ -2977,7 +2987,24 @@ export function registerSessionRoutes(
                   loginNeeded: loginNeeded?.get(sid) ?? null,
                   claudeUpdate: card && !(await updatesOff()) ? card : null,
                   fallback: sessionFallbacks?.get(sid) ?? null,
+                  steers: steersFor?.(sid) ?? [],
                 });
+              }
+              // The steer card: edit or remove a typed steer before Claude reads it. 409 carries the
+              // reason so the card can say "already sent" in the reader's language.
+              if (
+                editSteer &&
+                req.method === "POST" &&
+                url.pathname === `${ROUTE_PREFIX}/steer-edit`
+              ) {
+                const body = await readBody(req);
+                const { session: sid, id, text } = body;
+                if (typeof sid !== "string" || typeof id !== "string" || sid === "" || id === "")
+                  return json(res, 400, { error: "session and id required" });
+                if (text !== undefined && (typeof text !== "string" || text.trim() === ""))
+                  return json(res, 400, { error: "text must be non-empty" });
+                const reply = await editSteer(sid, id, typeof text === "string" ? text : null);
+                return json(res, reply.ok ? 200 : 409, reply);
               }
               // Dismiss is server-side so a closed card stays closed: a client-only hide is lost on the
               // next remount and the entry, still in the ring, would poll back into view. It marks

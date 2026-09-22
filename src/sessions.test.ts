@@ -568,6 +568,92 @@ const responder =
     return { status, body: JSON.parse(Buffer.concat(resChunks).toString("utf8")) };
   };
 
+// The steer card's routes: GET /side-questions carries the waiting steers, and POST /steer-edit
+// validates its body and passes the edit (or, with no text, the removal) through.
+{
+  const tmp = await mkdtemp(join(tmpdir(), "dsh-steer-edit-test-"));
+  let handler: ((req: any, res: any) => void) | undefined;
+  const calls: Array<{ sid: string; id: string; text: string | null }> = [];
+  // SAFETY: partial fake for tests
+  const ctx = {
+    inject: (deps: string[], cb: (host: any) => void) => {
+      cb({
+        webServer: {
+          register: (r: any) => {
+            handler = r.handler as (req: any, res: any) => void;
+            return () => {};
+          },
+        },
+        connection: { requestRejection: () => undefined },
+        sessions: { get: () => undefined },
+        sessionPersistence: { list: async () => [] },
+        effect: (fn: () => void | (() => void)) => fn(),
+      });
+    },
+  } as any;
+  registerSessionRoutes(ctx, {
+    log: () => {},
+    projectDir: (cwd: string) => [join(tmp, "claude", "projects", projectDirName(cwd))],
+    projectsDir: [join(tmp, "claude", "projects")],
+    startedIds: async () => [],
+    claudeIdOf: (id: string) => id,
+    configDir: join(tmp, "claude"),
+    boxesPath: join(tmp, "boxes.json"),
+    importedDir: join(tmp, "imported"),
+    instanceFor: () => undefined,
+    instanceForHost: () => ({ configDir: join(tmp, "box") }),
+    steersFor: (sid: string) => (sid === "s1" ? [{ id: "m1", text: "first", at: 1 }] : []),
+    editSteer: async (sid: string, id: string, text: string | null) => {
+      calls.push({ sid, id, text });
+      return id === "late"
+        ? { ok: false as const, reason: "sent" as const }
+        : { ok: true as const };
+    },
+  });
+  assert.ok(handler);
+  const respond = responder(() => handler);
+
+  let r = await respond("GET", "/dsh-oh-my-claude/side-questions?session=s1");
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body.steers, [{ id: "m1", text: "first", at: 1 }]);
+  r = await respond("GET", "/dsh-oh-my-claude/side-questions?session=s2");
+  assert.deepEqual(r.body.steers, []);
+
+  r = await respond("POST", "/dsh-oh-my-claude/steer-edit", JSON.stringify({ id: "m1" }));
+  assert.equal(r.status, 400);
+  r = await respond("POST", "/dsh-oh-my-claude/steer-edit", JSON.stringify({ session: "s1" }));
+  assert.equal(r.status, 400);
+  r = await respond(
+    "POST",
+    "/dsh-oh-my-claude/steer-edit",
+    JSON.stringify({ session: "s1", id: "m1", text: "   " }),
+  );
+  assert.equal(r.status, 400, "blank text is refused, not treated as a removal");
+  assert.equal(calls.length, 0);
+
+  r = await respond(
+    "POST",
+    "/dsh-oh-my-claude/steer-edit",
+    JSON.stringify({ session: "s1", id: "m1", text: "second" }),
+  );
+  assert.equal(r.status, 200);
+  assert.deepEqual(calls.at(-1), { sid: "s1", id: "m1", text: "second" });
+  r = await respond(
+    "POST",
+    "/dsh-oh-my-claude/steer-edit",
+    JSON.stringify({ session: "s1", id: "m1" }),
+  );
+  assert.equal(r.status, 200);
+  assert.deepEqual(calls.at(-1), { sid: "s1", id: "m1", text: null }, "no text is a removal");
+  r = await respond(
+    "POST",
+    "/dsh-oh-my-claude/steer-edit",
+    JSON.stringify({ session: "s1", id: "late", text: "x" }),
+  );
+  assert.equal(r.status, 409);
+  assert.equal(r.body.reason, "sent");
+}
+
 // POST /side-questions: 400 when session or question is missing, 404 when askAside is absent,
 // and 200 that proves the callback received the parsed body.
 {

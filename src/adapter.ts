@@ -6566,6 +6566,9 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       rewind: (sessionId: string, uuid: string, dryRun: boolean) =>
         adapter.ownerFor(sessionId).rewind(sessionId, uuid, dryRun),
       permissionAsks: adapter.permissionAsks,
+      steersFor: (sessionId: string) => adapter.ownerFor(sessionId).steersFor(sessionId),
+      editSteer: (sessionId: string, id: string, text: string | null) =>
+        adapter.ownerFor(sessionId).editSteer(sessionId, id, text),
       askAside: async (sessionId: string, question: string, seed) => {
         const owner = adapter.ownerFor(sessionId);
         // Liveness is checked here, not left to askSideQuestion, which would write its own error into
