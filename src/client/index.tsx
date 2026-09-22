@@ -4077,6 +4077,10 @@ const TURN_ROW_SELECTOR = '[role="status"][aria-live="polite"], button[data-turn
 const turnStatusRow = (found: HTMLElement): HTMLElement | undefined => {
   if (found.matches("button[data-turn-process]")) {
     if (found.getAttribute("data-open") !== "true") return undefined;
+    // A group whose turn ended keeps `data-open` when it failed or was stopped, and the scanner
+    // runs on every frame: without this mark every teardown was followed by a fresh line with a
+    // fresh verb, which is what read as "the verb keeps going" (owner, 2026-09-22, twice).
+    if (found.hasAttribute("data-omc-turn-done")) return undefined;
     const label = found.querySelector<HTMLElement>(":scope > span:not([data-omc-turn-line])");
     if (label === null) return undefined;
     const already = found.querySelector<HTMLElement>(":scope > [data-omc-turn-line]");
@@ -4110,7 +4114,11 @@ const turnStatusRow = (found: HTMLElement): HTMLElement | undefined => {
  *  the rule that hides dsh's own only applies while that line is in the button. Called when the
  *  turn ends and when the bundle is disposed, and safe to call twice. */
 const stopTurnLine = (el: HTMLElement): void => {
-  if (el.hasAttribute("data-omc-turn-line")) el.remove();
+  if (!el.hasAttribute("data-omc-turn-line")) return;
+  // Mark the group before removing the line, so the scan the removal itself triggers finds a
+  // group that is done rather than one that wants wiring.
+  el.closest("button[data-turn-process]")?.setAttribute("data-omc-turn-done", "1");
+  el.remove();
 };
 
 /** Wire one turn-status element for a claude-code session: verb, ping-pong spinner and orange
@@ -4140,6 +4148,9 @@ const wireTurnStatus = (
   let onTick: () => void = noBeat;
   let frameIndex = 0;
   let direction = 1; // 1 = forward, -1 = reverse
+  /** dsh's own sentence in the group button and when it last changed; see the beat below. */
+  let dshLabelText = "";
+  let dshLabelAt = 0;
 
   const tick = () => {
     const kept = turnVerbs.get(sessionId);
@@ -4180,6 +4191,24 @@ const wireTurnStatus = (
         stop();
         stopTurnLine(el);
         return;
+      }
+      // dsh leaves `data-open` on a turn that failed or was stopped, and the live-turn poll cannot
+      // tell this group from the next turn under the same session. What holds in every language
+      // and every ending: while a turn runs, dsh's own sentence in this button ticks every second
+      // ("Deep diving for 12s"); once it stops changing it is a record ("Stopped", "Failed",
+      // "Took 5s"), and the line under it is stale (owner, 2026-09-22, twice).
+      if (group !== null) {
+        const label = group.querySelector(":scope > span:not([data-omc-turn-line])");
+        const text = label?.textContent ?? "";
+        const now = Date.now();
+        if (text !== dshLabelText) {
+          dshLabelText = text;
+          dshLabelAt = now;
+        } else if (dshLabelAt > 0 && now - dshLabelAt > 3500) {
+          stop();
+          stopTurnLine(el);
+          return;
+        }
       }
       tick();
       onTick();
@@ -4424,6 +4453,7 @@ const wireTurnStatus = (
       effort = b.effort ?? "";
       relayName = b.relayName ?? "";
       relayMs = b.relayMs ?? -1;
+      const prevElapsed = elapsedMs;
       elapsedMs = b.elapsedMs ?? -1;
       polledAt = Date.now();
       // The adapter drops its turn record the moment a turn ends, however it ended, so an empty
@@ -4439,6 +4469,15 @@ const wireTurnStatus = (
           stop();
           stopTurnLine(el);
         }
+        return;
+      }
+      // The route answers for the session, not for this group. A turn cut short by Send now is
+      // followed by the next one at once, under the same session id, so the answer never goes
+      // empty: the elapsed time simply starts over. Time running backwards is a newer turn, and
+      // this line belongs to the one before it.
+      if (sawLiveTurn && prevElapsed >= 0 && b.elapsedMs + 500 < prevElapsed) {
+        stop();
+        stopTurnLine(el);
         return;
       }
       sawLiveTurn = true;
@@ -7688,7 +7727,7 @@ interface SteerCardData {
 
 /** One request to the steer-edit route, as its validation accepts them. */
 type SteerAction =
-  | { action: "hold" | "remove"; ids: string[] }
+  | { action: "hold" | "remove" | "sendNow"; ids: string[] }
   | { action: "save"; holdId: string; text: string }
   | { action: "restore" | "drop"; holdId: string };
 
@@ -7911,6 +7950,17 @@ function SteerCard({
                 style={buttonStyle}
               >
                 {t("common.remove")}
+              </button>
+              <button
+                type="button"
+                data-omc-steer-send-now=""
+                aria-label={t("main.steer.sendNowAria")}
+                title={t("main.steer.sendNowTitle")}
+                disabled={disabled}
+                onClick={() => void act(s.id, { action: "sendNow", ids: [s.id] })}
+                style={buttonStyle}
+              >
+                {t("main.steer.sendNow")}
               </button>
             </div>
             {failure(s.id)}

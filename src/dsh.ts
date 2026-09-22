@@ -110,6 +110,11 @@ export interface Agent {
   /** Put a message on dsh's steer list: a running turn takes it at its next step, an idle session
    *  starts a turn for it. Optional because the mirror also types agents built some other way. */
   steer?(message: Message): void;
+  /** Abort the running turn (dsh 0.1.7). With `keepInbox` the queued and steering messages
+   *  survive for the next turn instead of being dropped. Optional: older dsh has no such call. */
+  cancel?(cause: { kind: "user" }, options?: { keepInbox?: boolean }): void;
+  /** Resolves once no turn or maintenance task is running (dsh 0.1.7). */
+  whenIdle?(): Promise<void>;
   /** dsh-agent-loop's pending input. Present on a live ReactLoopAgent; optional because the mirror
    *  also types agents dsh built some other way. `replace` and `remove` answer false once the
    *  message is no longer pending. */

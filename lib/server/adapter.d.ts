@@ -1142,6 +1142,19 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
         text: string;
     }): Promise<SteerEditReply>;
     /**
+     * Send waiting steers now, the way Claude Code's own send-now key does: take them back from the
+     * CLI, cut the running turn short, and put them to the idle agent, which starts a turn for them.
+     *
+     * The CLI's key (`chat:sendNow`, 2.1.275) interrupts the running turn and lets its queue drain
+     * into the next one; nothing about the messages changes, they stop waiting. dsh's
+     * `agent.cancel({ keepInbox: true })` is the same cut, and it is what makes the plugin send the
+     * CLI its interrupt. The hold comes first so the messages are not in the CLI's own pending list
+     * when the interrupt lands, and they go back through `agent.steer` once the agent is idle, which
+     * the mirror documents as starting a turn. A dsh without `cancel` (0.1.6 and earlier) gets the
+     * steers put back untouched and a refusal that says so.
+     */
+    sendSteerNow(sessionId: string, ids: string[]): Promise<SteerEditReply>;
+    /**
      * Rewind a session to one of its user prompts: `rewind_files` (dry run first, from the UI) puts
      * the working tree back, then `rewind_conversation` drops Claude's context after that prompt.
      * dsh's own transcript is not touched.

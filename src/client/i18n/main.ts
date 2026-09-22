@@ -402,6 +402,10 @@ export const en = {
   "main.steer.title": "Waiting for Claude",
   "main.steer.hint": "Claude reads these after its current step.",
   "main.steer.editAria": "Edit this message",
+  "main.steer.sendNow": "Send now",
+  "main.steer.sendNowAria": "Stop Claude and send this message now",
+  "main.steer.sendNowTitle":
+    "Interrupts what Claude is doing and sends this message as the next turn, like Claude Code's own send-now key.",
   "main.steer.removeAria": "Remove this message",
   "main.steer.inputAria": "Message text",
   "main.steer.heldHint": "Held while you edit. Claude reads it once you save.",
@@ -835,6 +839,10 @@ export const zh = {
   "main.steer.title": "等待 Claude 读取",
   "main.steer.hint": "Claude 会在当前步骤结束后读取这些消息。",
   "main.steer.editAria": "编辑这条消息",
+  "main.steer.sendNow": "立即发送",
+  "main.steer.sendNowAria": "停止 Claude 并立即发送这条消息",
+  "main.steer.sendNowTitle":
+    "中断 Claude 当前的工作，把这条消息作为下一轮发送，与 Claude Code 自己的立即发送快捷键相同。",
   "main.steer.removeAria": "移除这条消息",
   "main.steer.inputAria": "消息内容",
   "main.steer.heldHint": "编辑期间暂不发送。保存后 Claude 才会读取。",

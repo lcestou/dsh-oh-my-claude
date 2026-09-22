@@ -1485,6 +1485,11 @@ export interface SessionRouteOptions {
     | { ok: true; holdId: string; text: string }
     | { ok: false; reason: "sent" | "gone" | "error"; error?: string }
   >;
+  /** Cut the running turn short and send these waiting steers as the next turn. */
+  sendSteerNow?: (
+    sessionId: string,
+    ids: string[],
+  ) => Promise<import("./adapter.js").SteerEditReply>;
   /** End a hold: put it back as it was, drop it, or send one message with new text in its place. */
   releaseHold?: (
     sessionId: string,
@@ -1620,6 +1625,7 @@ export function registerSessionRoutes(
     steersFor,
     holdSteers,
     releaseHold,
+    sendSteerNow,
     loginNeeded,
     sessionFallbacks,
     boxOfSession,
@@ -3066,6 +3072,12 @@ export function registerSessionRoutes(
                   Array.isArray(ids) && ids.length > 0 && ids.every((i) => typeof i === "string")
                     ? ids
                     : undefined;
+                if (action === "sendNow") {
+                  if (!idList) return json(res, 400, { error: "ids required" });
+                  if (!sendSteerNow) return json(res, 404, { error: "send now not available" });
+                  const reply = await sendSteerNow(sid, idList);
+                  return json(res, reply.ok ? 200 : 409, reply);
+                }
                 if (action === "hold" || action === "remove") {
                   if (!idList) return json(res, 400, { error: "ids required" });
                   const held = await holdSteers(sid, idList);
