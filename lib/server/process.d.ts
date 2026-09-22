@@ -669,9 +669,10 @@ export declare function readKeeperSpec(dir: string): KeeperSpec | undefined;
 /** Launch the keeper in its own systemd user scope when possible (a service restart's cgroup kill
  *  then misses it), else as a detached process with its own group. */
 export declare function launchKeeper(argv: string[], unit: string): void;
-/** The uncached probe behind `userScopes`: a throwaway `true` in a user scope, which only exits 0
- *  when systemd-run is installed and its user bus answers. A missing binary reads as `null`. */
-export declare function scopesWork(probe?: () => number | null): boolean;
+/** Whether a `systemd-run --scope` that exited with `code` after `elapsedMs` failed to start the
+ *  keeper rather than outliving it. A keeper stays up at least three seconds after its Claude dies,
+ *  so a non-zero exit inside two seconds is systemd-run refusing, not the keeper ending. */
+export declare function scopeFailed(code: number | null, elapsedMs: number): boolean;
 /**
  * Start a keeper for one Claude process and attach to it. `launch` runs the keeper command line
  * (plain detached spawn, or a systemd user scope so a service restart's cgroup kill misses it).

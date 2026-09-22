@@ -83,7 +83,7 @@ import {
   childEnv,
   claudeDirs,
   resolveCommand,
-  scopesWork,
+  scopeFailed,
   withClaudeDirs,
   ClaudeProcess,
   LineQueue,
@@ -3782,21 +3782,12 @@ console.log("hook-rows ok");
   assert.equal(localConfig(base, "linux", found).spawn, "keeper");
 }
 
-// A systemd-run that exists but cannot reach its bus exits 1; only a clean 0 counts as working.
-assert.equal(
-  scopesWork(() => 0),
-  true,
-);
-assert.equal(
-  scopesWork(() => 1),
-  false,
-  "installed, no user bus",
-);
-assert.equal(
-  scopesWork(() => null),
-  false,
-  "not installed",
-);
+// A systemd-run that exists but cannot reach its bus exits 1 at once: fall back to a detached
+// keeper. A scope that ends later, or cleanly, is the keeper's own life ending.
+assert.equal(scopeFailed(1, 40), true, "installed, no user bus");
+assert.equal(scopeFailed(1, 60_000), false, "the keeper ended after a long life");
+assert.equal(scopeFailed(0, 40), false, "a clean exit is not a refusal");
+assert.equal(scopeFailed(null, 40), false, "killed by a signal");
 
 // keeper mode: the default spawn, one keeper dir per provider id and dsh session, stable across calls.
 {
