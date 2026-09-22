@@ -4985,6 +4985,69 @@ console.log("interrupt-on-abort ok");
   assert.equal(proc.steerPending, false, "file alone: no text, so nothing parks (as before)");
   console.log("live-steer ok");
 }
+// The steer card's side of the listener: a typed steer is recorded with the uuid its line carries,
+// what dsh sends on its own behalf is forwarded but not offered for editing, and the re-insert a
+// card edit causes (dsh's inbox.replace) is not written a second time.
+{
+  const handlers: Record<string, (session: unknown, event: unknown) => void> = {};
+  const adapter = new ClaudeCodeAdapter(
+    fakeCtx({
+      on(name: string, fn: (session: unknown, event: unknown) => void) {
+        handlers[name] = fn;
+      },
+    }),
+    Config({}),
+  );
+  const writes: string[] = [];
+  const proc = {
+    alive: true,
+    busy: true,
+    relays: new Map(),
+    sent: new Set<string>(),
+    steerPending: false,
+    steers: new Map<string, { uuid: string; key: string; text: string; at: number }>(),
+    write(line: string) {
+      writes.push(line);
+      return true;
+    },
+  };
+  adapter.processes.set(registryKey("claude-code", "k"), fakeProc(proc));
+  const splice = (inserted: object[]) =>
+    handlers["session/event"]?.(
+      { id: "k" },
+      { type: "agent/inbox/spliced", data: { target: "next-step", inserted } },
+    );
+  const typed = {
+    id: "m1",
+    role: "user",
+    source: { kind: "user", rpcId: "r1" },
+    content: [{ type: "text", text: "check the README too" }],
+  };
+  splice([typed]);
+  assert.equal(writes.length, 1);
+  assert.equal(proc.steers.get("m1")?.text, "check the README too");
+  assert.equal(proc.steers.get("m1")?.key, "r1");
+  assert.equal(
+    proc.steers.get("m1")?.uuid,
+    JSON.parse(writes[0]!).uuid,
+    "the line carries the uuid",
+  );
+
+  splice([{ ...typed, content: [{ type: "text", text: "check the CHANGELOG instead" }] }]);
+  assert.equal(writes.length, 1, "a replace of a message already forwarded is not written again");
+
+  splice([
+    {
+      id: "m2",
+      role: "user",
+      source: { kind: "agent-message", form: "relay", senderSessionId: "c1" },
+      content: [{ type: "text", text: "chunk done" }],
+    },
+  ]);
+  assert.equal(writes.length, 2, "a child's report is still forwarded");
+  assert.equal(proc.steers.has("m2"), false, "but it is not the person's to edit");
+  console.log("steer-card listener ok");
+}
 // What dsh sends on its own behalf goes live the same way a typed steer does, marked by its id. On
 // 2026-09-16 three child reports (a send_message relay, two settlement notices) were spliced a few
 // seconds after a typed steer, claimed into a step the plugin ran in steer mode, and never written.

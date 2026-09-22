@@ -7622,6 +7622,8 @@ function SteerCard({
                 <textarea
                   data-omc-steer-input=""
                   aria-label={t("main.steer.inputAria")}
+                  // oxlint-disable-next-line jsx-a11y/no-autofocus -- opened by the person's own click, so focus goes where they asked
+                  autoFocus
                   value={editing.text}
                   disabled={disabled}
                   rows={Math.min(6, Math.max(2, editing.text.split("\n").length))}
