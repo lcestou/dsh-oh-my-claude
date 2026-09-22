@@ -42,6 +42,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- Settings > General > Permission is dsh's own again. dsh 0.1.7 draws the same permission control
+  there as in the composer, and the access shield adopted it too: its six Claude rows appeared in
+  that dropdown and the row kept reading "Full access" whatever was picked. The shield now only
+  touches the control inside its own composer.
 - An SSH box reports its own Claude Code again. Every box probe was run with this box's resolved
   path to `claude`, which does not exist there, so a box read as "no claude", its version as
   unknown, and the update card offered a release it could not compare against. The box is named the

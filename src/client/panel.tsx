@@ -3894,18 +3894,26 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
     const mine = () => activeClaudeSession(ctx) === sessionId;
 
     const build = () => {
-      // Find dsh's trigger by aria-label prefix, fallback to the first matching text button.
-      const form = anchorRef.current?.closest("form");
+      // The composer this shield belongs to, never the whole page. dsh 0.1.7 draws the same
+      // permission control in Settings > General, and the text fallback below matched it: the
+      // shield adopted that trigger and rewrote its label with the session's CLI mode, so the
+      // Settings row read "Full access" whatever the menu had checked (owner, 2026-09-22).
+      const anchor = anchorRef.current;
+      const root =
+        anchor?.closest("form") ??
+        anchor?.closest('[data-composer-card], [class*="composer" i]') ??
+        anchor?.parentElement;
+      if (!root) return null;
       // SAFETY: querySelectorAll returns NodeList; we cast because the selector is exact.
       const found = Array.from(
-        (form ?? document).querySelectorAll<HTMLButtonElement>(
+        root.querySelectorAll<HTMLButtonElement>(
           'button[aria-label^="Access mode"], button[aria-label^="访问模式"]',
         ),
       );
       const trigger =
         found[0] ??
-        Array.from((form ?? document).querySelectorAll<HTMLButtonElement>("button")).find(
-          (b) => presetOfText(b.textContent) !== undefined,
+        Array.from(root.querySelectorAll<HTMLButtonElement>("button")).find(
+          (b) => b.closest('[role="dialog"]') === null && presetOfText(b.textContent) !== undefined,
         );
       if (!trigger) return null;
       return trigger;
@@ -4005,6 +4013,19 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
         // level deep, never by subtree: the portalled node is the menu itself, and a subtree scan
         // of the body per mutation is the whole transcript. Menus other plugins portal there are
         // dropped by the preset-label check below, which is what identifies ours either way.
+        // Only the composer's own menu. dsh 0.1.7 draws the same permission control in Settings >
+        // General and portals its menu to the body with the same three preset labels, so the
+        // label check alone adopted that one too: the six Claude rows landed in the Settings
+        // dropdown and its pick never showed (owner, 2026-09-22). A trigger that says it is
+        // closed has no menu of its own open (0.1.5 sets no such attribute, and an absent one
+        // says nothing), and a dsh modal dialog on screen means the composer is behind it.
+        if (trigger.getAttribute("aria-expanded") === "false") return;
+        if (
+          document.querySelector(
+            '[role="dialog"][aria-modal="true"]:not([aria-label="Oh My Claude"])',
+          ) !== null
+        )
+          return;
         const menus = [
           // dsh 0.1.5: inline, hung off the trigger inside the modes box.
           ...parent.querySelectorAll<HTMLElement>('[role="menu"]'),
