@@ -39,6 +39,11 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 - Picking a permission mode marks the menu at once. The pick used to sit on the old mode for the
   second or so the change takes, which read as a click that had not landed; a change that fails
   now puts the real mode back.
+- The cost reads last in dsh's stats row again, in dsh's own pill shape. dsh 0.1.7 draws each stat
+  as a plain pill rather than a button inside an anchor, which left the cost wearing an icon's
+  style: a bordered box with the mark stacked above the figure. Switching Performance and usage
+  between Compact and Detailed rebuilds that row, and the rebuilt stats landed after the cost,
+  putting it first; it moves back to the end and re-copies dsh's pill style when that happens.
 - A turn that fails stops the status line with it. dsh leaves a failed turn's group open, so the
   line kept its verb and spinner under dsh's own "Failed" as though the work were still running.
 - The turn status line is back on dsh 0.1.7. That release moved the visible line into the button

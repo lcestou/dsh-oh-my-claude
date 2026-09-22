@@ -4255,9 +4255,11 @@ const wireTurnStatus = (
   /** How long the turn has run, per the last poll. Only read where dsh draws no clock of its own
    *  (0.1.7 and later); -1 until the first answer. */
   let elapsedMs = -1;
-  /** Whether the route has answered with a running turn yet. A poll before the adapter registers
-   *  the turn answers empty too, and that is not an ending. */
+  /** Whether the route has answered with a running turn yet, and how many empty answers have come
+   *  back before the first one. A poll can land before the adapter registers the turn, so an empty
+   *  answer is only an ending once a live one has been seen or three seconds of them have. */
   let sawLiveTurn = false;
+  let emptyPolls = 0;
   // What is on screen: the eased count in characters (the CLI eases its response length, and
   // shows it over four) and the two colour ramps, each chased 10% per 50ms like the CLI does.
   let shownChars = 0;
@@ -4424,12 +4426,18 @@ const wireTurnStatus = (
       // answer after a live one is the end of the turn. dsh keeps `data-open` on a failed group,
       // which is why the button's own state cannot be the only signal: a turn that failed left the
       // line saying "Incubating…" under dsh's "Failed" (owner, 2026-09-22).
-      if (b.elapsedMs === undefined && sawLiveTurn) {
-        stop();
-        stopTurnLine(el);
+      if (b.elapsedMs === undefined) {
+        // Reopening a session re-renders its old groups, and dsh leaves a failed one open, so a
+        // line can be wired over a turn that ended long ago. Three empty answers settle that
+        // without cutting a turn whose record has not appeared yet.
+        emptyPolls += 1;
+        if (sawLiveTurn || emptyPolls >= 3) {
+          stop();
+          stopTurnLine(el);
+        }
         return;
       }
-      if (b.elapsedMs !== undefined) sawLiveTurn = true;
+      sawLiveTurn = true;
     } catch {
       // the row keeps its verb; the bracket is decoration
     }
@@ -5505,6 +5513,10 @@ const STATS_SEP = ':scope > span[aria-hidden="true"][class$="_sep"]';
 const COST_SLOT = "data-omc-cost-slot";
 /** One of dsh's stats pills as the row holds it: an anchor span wrapping a popover button. */
 const STATS_PILL = ':scope > span > button[aria-haspopup="dialog"]';
+/** dsh 0.1.7 draws each stat as a bare `span` pill in the row, with no anchor span around it
+ *  and no button. Its own class is what the cost pill copies there; the plugin's own node is
+ *  excluded by the slot attribute it carries. */
+const STATS_PILL_SPAN = ':scope > span[class*="pill" i]:not([data-omc-cost-slot])';
 
 /**
  * dsh's own stats row, the div the cost line is appended to. dsh builds it in `StatsLine` as a
@@ -5754,6 +5766,21 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
         }
         const wanted = `${pad}${textRef.current}`;
         if (body && body.textContent !== wanted) body.textContent = wanted;
+        // The cost reads last in the row, after dsh's own stats. dsh rebuilds those children
+        // whenever their shape changes — switching Performance and usage between Compact and
+        // Detailed is one such rebuild — and the new ones land after this node, which left the
+        // cost reading first (owner, 2026-09-22). Moving it back is one append, and it only runs
+        // on the frame a rebuild happened.
+        const host = inline.parentElement;
+        if (host && inline.nextElementSibling !== null) host.append(inline);
+        // The same rebuild can change the class the pill borrows, so it is re-copied when dsh's
+        // own pill no longer matches.
+        const live = host?.querySelector(STATS_PILL) ?? host?.querySelector(STATS_PILL_SPAN);
+        if (live && trigger && live.className !== trigger.className) {
+          trigger.className = live.className;
+          inline.className =
+            live.parentElement === host ? "" : (live.parentElement?.className ?? "");
+        }
         return;
       }
       if (inline) debug("row dropped our span; hooking again");
@@ -5806,24 +5833,25 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
       // by shape. Copying its classes is also what gives the readout dsh's own phone behaviour:
       // the label carries `overflow:hidden;text-overflow:ellipsis` under a button capped at the
       // row's width, so it shortens as the row narrows and ends as the icon alone.
-      const proto =
-        statsRow.querySelector(STATS_PILL) ??
-        (statsRow.hasAttribute("data-composer-stats")
-          ? statsRow.firstElementChild?.firstElementChild
-          : null);
-      if (proto?.parentElement) {
+      const proto = statsRow.querySelector(STATS_PILL);
+      // 0.1.7's pill is the span itself, so there is no anchor class to copy and the pill class
+      // goes on the trigger. Reading `firstElementChild.firstElementChild` as the prototype, which
+      // is what ran before, picked up that pill's icon instead and dressed the cost readout in an
+      // `svg` class: a bordered box with the mark above the figure (owner, 2026-09-22).
+      const protoSpan = proto === null ? statsRow.querySelector(STATS_PILL_SPAN) : null;
+      if (proto?.parentElement || protoSpan) {
         pad = "";
-        inline.className = proto.parentElement.className;
+        inline.className = proto?.parentElement?.className ?? "";
         trigger = document.createElement("button");
         trigger.type = "button";
-        trigger.className = proto.className;
+        trigger.className = (proto ?? protoSpan)?.className ?? "";
         trigger.setAttribute("data-omc-cost-pill", "");
         trigger.setAttribute("aria-haspopup", "dialog");
         trigger.setAttribute("aria-expanded", String(openRef.current));
         trigger.setAttribute("aria-label", titleRef.current);
         paintOver();
         trigger.addEventListener("click", () => setOpen((was) => !was));
-        body.className = proto.querySelector("span")?.className ?? "";
+        body.className = (proto ?? protoSpan)?.querySelector("span")?.className ?? "";
         body.textContent = textRef.current;
         // dsh's pills lead with a 14px icon in the pill's own text colour; ours is Claude's spark.
         trigger.append(sparkNode(14, "currentColor"), body);
