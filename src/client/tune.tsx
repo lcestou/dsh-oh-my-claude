@@ -408,17 +408,20 @@ export function TuneBody({
       }
       const next = mutate(fresh.text);
       if (next.error !== undefined) return next.error;
-      setFile(
-        await readJson<SettingsFile>(
-          await fetch(`${ROUTE}/settings${onBox(provider)}`, {
-            method: "PUT",
-            headers: { "content-type": "application/json" },
-            // The mtime goes with the text: the check above is this tab's, and the file can still
-            // move between that read and this write.
-            body: JSON.stringify({ text: next.text, mtime: fresh.mtime }),
-          }),
-        ),
+      await readJson<{ path: string; mtime: number }>(
+        await fetch(`${ROUTE}/settings${onBox(provider)}`, {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          // The mtime goes with the text: the check above is this tab's, and the file can still
+          // move between that read and this write.
+          body: JSON.stringify({ text: next.text, mtime: fresh.mtime }),
+        }),
       );
+      // The write answers with where it wrote and when (`path`, `backup`, `mtime`), not with the
+      // file, so the tab reads the file back rather than holding that answer as one: taking the
+      // reply as the new state left `text` undefined, every switch drawn from it read as off, and
+      // the real value only appeared when another tab remounted the panel and fetched afresh.
+      setFile(await read(provider));
       return undefined;
     } catch (e) {
       return e instanceof Error ? e.message : String(e);
