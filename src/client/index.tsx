@@ -4073,11 +4073,22 @@ const TURN_ROW_SELECTOR = '[role="status"][aria-live="polite"], button[data-turn
 const turnStatusRow = (found: HTMLElement): HTMLElement | undefined => {
   if (found.matches("button[data-turn-process]")) {
     if (found.getAttribute("data-open") !== "true") return undefined;
-    if (found.querySelector(":scope > span:not([data-omc-turn-line])") === null) return undefined;
+    const label = found.querySelector<HTMLElement>(":scope > span:not([data-omc-turn-line])");
+    if (label === null) return undefined;
     const already = found.querySelector<HTMLElement>(":scope > [data-omc-turn-line]");
     if (already !== null) return already;
     const line = document.createElement("span");
     line.setAttribute("data-omc-turn-line", "1");
+    // dsh's sentence is a sibling, not an ancestor, so none of its own type styles are inherited
+    // here: the line would take the button's instead and read at a different size from the one it
+    // replaces. Copied from the node on screen rather than assumed, the way the bracket takes the
+    // clock's face.
+    const face = getComputedStyle(label);
+    line.style.fontSize = face.fontSize;
+    line.style.fontWeight = face.fontWeight;
+    line.style.fontFamily = face.fontFamily;
+    line.style.lineHeight = face.lineHeight;
+    line.style.letterSpacing = face.letterSpacing;
     // A text node the verb is written into: `wireTurnStatus` takes the first one with text in it,
     // so the seed cannot be blank. It is replaced before the next frame.
     line.append(document.createTextNode("…"));
