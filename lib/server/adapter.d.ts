@@ -551,11 +551,11 @@ export declare function buildArgs({ model, reasoningEffort, system, purpose, con
     /** Optional permission mode override; if provided, used instead of computing from config. */
     permissionMode?: string;
 }): string[];
-/** One stream-json input line: the user turn with text and inline images. */
+/** One stream-json input line: the user turn with text and inline images. `uuid` goes on the line so a later `cancel_async_message` can name it. */
 export declare function buildInput(prompt: string, images: Array<{
     mediaType: string;
     data: string;
-}>): string;
+}>, uuid?: string): string;
 /** Names from the CLI's init frame that dsh's command grammar accepts (lowercase, `[a-z0-9_-]`), deduped. */
 export declare function commandNames(value: JsonValue | undefined): string[];
 /**
@@ -656,9 +656,15 @@ export declare const killAfterGrace: (spawn: string) => boolean;
  *  2026-09-18: `queue-operation dequeue` 7 ms after `[Request interrupted by user]`). Nothing is
  *  left to park on, and a park flag left set would read the CLI's interrupt echo (a `user` frame)
  *  as the tool-result boundary, exit the step as parked, and leave the interrupted turn's error
- *  `result` in the queue for the next prompt to die on. */
+ *  `result` in the queue for the next prompt to die on. The waiting steers go too: the CLI dequeues them the moment the interrupt lands. */
 export declare function noteInterrupt(proc: {
     steerPending: boolean;
+    steers?: Map<string, unknown>;
+}): void;
+/** Forget the steers a process had waiting: the CLI has taken them or they went with the turn. Tolerates
+ *  a process object without the map (the test fakes, a process from before this field existed). */
+export declare function forgetSteers(proc: {
+    steers?: Map<string, unknown>;
 }): void;
 /** Whether an aborted stream should interrupt Claude: always, except a dsh shutdown under a keeper. */
 export declare function interruptOnAbort(kind: string | undefined, spawn: string): boolean;

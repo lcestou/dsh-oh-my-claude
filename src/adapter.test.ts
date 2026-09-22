@@ -66,6 +66,7 @@ import {
   parseCatalogCache,
   interruptOnAbort,
   noteInterrupt,
+  forgetSteers,
   noticeSource,
   RECONNECT_TEXT,
   LIMIT_TEXT,
@@ -4035,6 +4036,16 @@ assert.equal(killAfterGrace("node"), true);
   assert.equal(proc.steerPending, false, "an interrupt clears the park flag");
   noteInterrupt(proc);
   assert.equal(proc.steerPending, false, "clearing twice is the same");
+}
+// The waiting steers go with the interrupt, and a process object without the map is tolerated.
+{
+  const proc = {
+    steerPending: true,
+    steers: new Map([["m1", { uuid: "u", key: "r1", text: "t", at: 1 }]]),
+  };
+  noteInterrupt(proc);
+  assert.equal(proc.steers.size, 0, "an interrupt forgets the waiting steers");
+  forgetSteers({});
 }
 // The next call after the Stop is a prompt, not a steer continuation: the flag is clear and
 // `parked` was never set, so `continuationFor` drops the steer the CLI already has and keeps the

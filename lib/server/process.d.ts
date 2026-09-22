@@ -356,8 +356,9 @@ export declare function sshInvocation(host: string, command: string, args: strin
  * login; the dsh MCP bridge points at this box's port and does not reach it, so `dshTools` is best off.
  */
 export declare const sshSpawner: (host: string, resolveCwd?: (cwd: string) => string, token?: string) => Spawner;
-/** stdin line for one user turn. `session_id` empty and `parent_tool_use_id` null match what the SDK writes. */
-export declare function userTurnLine(content: unknown): string;
+/** stdin line for one user turn. `session_id` empty and `parent_tool_use_id` null match what the SDK
+ *  writes. `uuid` names the line for a later `cancel_async_message`; the CLI keeps it as the message's id. */
+export declare function userTurnLine(content: unknown, uuid?: string): string;
 /** stdin line answering one of the CLI's control requests with a result. */
 export declare function controlResponseLine(requestId: string, response: unknown): string;
 /** stdin line asking the CLI to stop the current turn; it answers with a result and stays alive. */
@@ -372,6 +373,9 @@ export interface RewindResult {
     insertions?: number;
     deletions?: number;
 }
+/** Whether a `cancel_async_message` reply says the CLI gave the message back. False for anything
+ *  else, including a reply shape a newer CLI changed, so a doubt reads as "already sent". */
+export declare function decodeCancelled(v: JsonValue | undefined): boolean;
 /** A `rewind_conversation` answer, keeping only the fields the panel shows. */
 export declare function decodeRewindResult(v: JsonValue | undefined): RewindResult;
 /**
@@ -680,6 +684,17 @@ export declare function scopeFailed(code: number | null, elapsedMs: number): boo
 export declare function spawnKeeper(dir: string, spec: KeeperSpec, launch: (argv: string[]) => void): Promise<SubprocessHandle>;
 /** How a child is started: locally, or on a box over ssh. The adapter holds one per provider. */
 export type Spawner = (command: string, args: string[], cwd: string, envOverride?: Record<string, string>) => SubprocessHandle;
+/** A typed steer written to the CLI and not yet absorbed, keyed by its dsh message id in `steers`. */
+export interface WaitingSteer {
+    /** The stdin line's uuid, which `cancel_async_message` names. */
+    uuid: string;
+    /** Its steerKey, the entry in the process's `sent` set. */
+    key: string;
+    /** What Claude will read: the latest edit. */
+    text: string;
+    /** Epoch ms of the first write, for ordering. */
+    at: number;
+}
 /**
  * A running Claude Code process bound to one dsh session. `spec` is what the process was spawned
  * with (cwd, model, effort, permission mode, session flags); a turn whose spec differs replaces it.
@@ -703,6 +718,9 @@ export declare class ClaudeProcess {
     dshIds?: Set<string>;
     relayed?: Set<string>;
     steerPending: boolean;
+    /** Typed steers written to stdin that the CLI has not taken yet, by dsh message id. Cleared at the
+     *  park that absorbs them, at the turn's end and on interrupt; the steer card lists these. */
+    steers: Map<string, WaitingSteer>;
     parked: "steer" | undefined;
     /** The CLI's `dsh` MCP session belongs to a dsh that is gone (adopted after a restart) and the
      *  reconnect after adoption gave up, because dsh had no live agent for the session yet. The next
