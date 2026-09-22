@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { bindServerLocale, serverIsChinese, serverText } from "./locale.js";
+import { HEADER_MARK, formatToolCall, formatToolResult } from "./translator.js";
 
 // Unbound (a test, an older dsh): English, placeholders filled.
 assert.equal(serverText("planApprove"), "Approve");
@@ -30,4 +31,27 @@ assert.equal(
   assert.ok(msg.includes("nova") && msg.includes("401") && msg.includes("未登录"));
   dispose();
   assert.equal(serverText("planApprove"), "Approve");
+}
+
+// Tool headers: the words dsh translates on its own cards follow the stored language; Bash, Grep and
+// Glob stay English as dsh keeps them. The glyph and HEADER_MARK the client folds on never change.
+{
+  const dispose = bindServerLocale(reader("zh"));
+  const read = formatToolCall("read", JSON.stringify({ file_path: "/tmp/a.txt" }));
+  assert.ok(read.startsWith(`▤${HEADER_MARK} 读取`), "Read is 读取, glyph and mark intact");
+  assert.ok(
+    formatToolCall("bash", JSON.stringify({ command: "ls" })).startsWith(`❯${HEADER_MARK} Bash`),
+  );
+  assert.ok(
+    formatToolCall("grep", JSON.stringify({ pattern: "x" })).startsWith(`⌕${HEADER_MARK} Grep`),
+  );
+  assert.ok(
+    formatToolResult("read", "/tmp/a.txt", "hi", false).startsWith(`▤${HEADER_MARK} 读取 · 结果`),
+  );
+  assert.ok(formatToolResult("bash", "", "boom", true).includes("Bash · 错误"));
+  dispose();
+  assert.ok(
+    formatToolCall("read", "{}").startsWith(`▤${HEADER_MARK} Read`),
+    "English when unbound",
+  );
 }

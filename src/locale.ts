@@ -26,6 +26,23 @@ const EN = {
   temporaryCommand: "Oh My Claude: keep no Claude transcript for this session (toggle)",
   btwCommand: "Oh My Claude: ask Claude a quick side question without interrupting the turn",
   btwHint: "<your question>",
+  // Tool header words, written into the chat as each tool runs. dsh keeps Bash, Grep and Glob in
+  // English on its own cards, so those are not here; the rest follow dsh's own card labels.
+  toolRead: "Read",
+  toolWrite: "Write",
+  toolEdit: "Edit",
+  toolNotebookEdit: "Notebook edit",
+  toolWebFetch: "Web fetch",
+  toolWebSearch: "Web search",
+  toolTodoWrite: "Todo write",
+  toolTask: "Task",
+  toolExitPlanMode: "Exit plan mode",
+  toolEnterPlanMode: "Enter plan mode",
+  toolSlashCommand: "Slash command",
+  toolBashOutput: "Bash output",
+  toolKillShell: "Kill shell",
+  toolResult: "Result",
+  toolError: "Error",
 } as const;
 
 /** A key of the server's own strings. */
@@ -45,6 +62,21 @@ const ZH = {
   temporaryCommand: "Oh My Claude：此会话不保留 Claude 记录（开关）",
   btwCommand: "Oh My Claude：向 Claude 快速提一个旁问，不打断当前回合",
   btwHint: "<你的问题>",
+  toolRead: "读取",
+  toolWrite: "写入",
+  toolEdit: "编辑",
+  toolNotebookEdit: "编辑笔记本",
+  toolWebFetch: "网页获取",
+  toolWebSearch: "网页搜索",
+  toolTodoWrite: "更新任务清单",
+  toolTask: "子智能体",
+  toolExitPlanMode: "退出计划模式",
+  toolEnterPlanMode: "进入计划模式",
+  toolSlashCommand: "指令",
+  toolBashOutput: "Bash 输出",
+  toolKillShell: "结束 Shell",
+  toolResult: "结果",
+  toolError: "错误",
 } satisfies Record<ServerKey, string>;
 
 let reader: LocaleSettingsReader | undefined;

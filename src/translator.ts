@@ -9,6 +9,7 @@ import { NATIVE_TOOL_MAP, TurnRecord, commandNames, finishReason } from "./adapt
 import { suggestRule } from "./permissions.js";
 import type { JsonValue } from "./dsh.js";
 import { pluginErrorsOf, type PluginLoadError } from "./plugins.js";
+import { serverText, type ServerKey } from "./locale.js";
 
 // ---------------------------------------------------------------------------
 // stream-json → dsh chunks (moved from src/adapter.ts)
@@ -162,9 +163,32 @@ const mcpName = (name: string): string | undefined => {
   return `${server} · ${parts.slice(2).join(" ")}`;
 };
 
-/** Icon + a capitalized, human name for a tool header: `❯ Bash`, `▤ Read`, `⤓ Web fetch`. */
+/** The header word for each built-in tool whose label dsh translates on its own cards, keyed by the
+ *  mapped tool name. Bash, Grep, Glob and anything unlisted keep their English name, as dsh does. */
+const TOOL_WORD = new Map<string, ServerKey>([
+  ["read", "toolRead"],
+  ["write", "toolWrite"],
+  ["edit", "toolEdit"],
+  ["notebook_edit", "toolNotebookEdit"],
+  ["web_fetch", "toolWebFetch"],
+  ["web_search", "toolWebSearch"],
+  ["todo_write", "toolTodoWrite"],
+  ["task", "toolTask"],
+  ["exit_plan_mode", "toolExitPlanMode"],
+  ["enter_plan_mode", "toolEnterPlanMode"],
+  ["slash_command", "toolSlashCommand"],
+  ["bash_output", "toolBashOutput"],
+  ["kill_shell", "toolKillShell"],
+]);
+
+/** Icon + a capitalized, human name for a tool header: `❯ Bash`, `▤ Read`, `⤓ Web fetch`, in the
+ *  stored language for the words dsh translates. Only the word changes: the client folds a header by
+ *  its glyph and HEADER_MARK, never by the word, so a Chinese header folds like an English one. */
 const label = (name: string): string => {
-  const human = mcpName(name) ?? (name.startsWith("web_") ? `Web ${name.slice(4)}` : words(name));
+  const key = TOOL_WORD.get(name);
+  const human =
+    mcpName(name) ??
+    (key ? serverText(key) : name.startsWith("web_") ? `Web ${name.slice(4)}` : words(name));
   return `${TOOL_ICON.get(name) ?? "◆"}${HEADER_MARK} ${human}`;
 };
 
@@ -279,7 +303,7 @@ export function formatToolResult(
   isError: boolean,
 ): string {
   // Same shape as the call header (`❯ Bash · List files`): the dot, then a capitalized word.
-  const head = `${label(name)} · ${isError ? "Error" : "Result"}`;
+  const head = `${label(name)} · ${serverText(isError ? "toolError" : "toolResult")}`;
   if (isError) return `${head}\n${fence(capLines(body))}`;
   const lang = name === "read" ? langOf(filePath) : "";
   return `${head}\n${fence(capLines(body), lang)}`;

@@ -12,6 +12,9 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
   Language), or the browser's language when none is picked, and switches without a reload. The
   plan review dialog, the not logged in tag and the login message follow the stored setting. A
   Chinese README sits beside the English one.
+- Claude's tool headers in the chat use the words dsh puts on its own tool cards when the stored
+  language is Chinese (读取, 写入, 编辑, 网页搜索, 网页获取, 更新任务清单, with 结果 and 错误 on
+  the result rows). Bash, Grep, Glob and MCP tool names stay as dsh shows them, in English.
 
 ### Fixed
 

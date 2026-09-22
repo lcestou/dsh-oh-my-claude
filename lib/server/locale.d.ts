@@ -17,6 +17,21 @@ declare const EN: {
     readonly temporaryCommand: "Oh My Claude: keep no Claude transcript for this session (toggle)";
     readonly btwCommand: "Oh My Claude: ask Claude a quick side question without interrupting the turn";
     readonly btwHint: "<your question>";
+    readonly toolRead: "Read";
+    readonly toolWrite: "Write";
+    readonly toolEdit: "Edit";
+    readonly toolNotebookEdit: "Notebook edit";
+    readonly toolWebFetch: "Web fetch";
+    readonly toolWebSearch: "Web search";
+    readonly toolTodoWrite: "Todo write";
+    readonly toolTask: "Task";
+    readonly toolExitPlanMode: "Exit plan mode";
+    readonly toolEnterPlanMode: "Enter plan mode";
+    readonly toolSlashCommand: "Slash command";
+    readonly toolBashOutput: "Bash output";
+    readonly toolKillShell: "Kill shell";
+    readonly toolResult: "Result";
+    readonly toolError: "Error";
 };
 /** A key of the server's own strings. */
 export type ServerKey = keyof typeof EN;
