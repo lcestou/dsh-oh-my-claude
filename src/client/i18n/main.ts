@@ -440,6 +440,8 @@ export const en = {
   "main.section.reportTitle": "Report a problem",
   "main.section.reportSummary":
     "A masked report of this box for a GitHub issue: versions, login state, switches, last error.",
+  // dsh's own ring label, word for word: the portalled usage panel is found by dsh labelling it
+  // with this phrase minus the percentage, so ours has to keep containing dsh's.
   "main.ring.used": "{pct}% of context used",
 } as const;
 
@@ -640,7 +642,7 @@ export const zh = {
   "main.usage.resetsInM": "{m} 分钟后重置",
   "main.usage.resetsAt": "{when} 重置",
   "main.usage.contextBreakdownErr": "上下文明细：{error}",
-  "main.usage.contextUsed": "已使用 {pct}% 的上下文",
+  "main.usage.contextUsed": "上下文已用 {pct}%",
   "main.usage.assumedNow":
     "暂按 {max} 计算：“代理转发到 Anthropic”已开启，此会话将在下一条消息时切换到完整窗口。",
   "main.usage.assumedBehind":
@@ -840,5 +842,6 @@ export const zh = {
   "main.section.reportTitle": "报告问题",
   "main.section.reportSummary":
     "为 GitHub issue 生成的本机打码报告：版本、登录状态、开关、最近错误。",
-  "main.ring.used": "已使用 {pct}% 的上下文",
+  // dsh-client-ui-conversation writes "上下文已用 {percent}"; must stay identical (see the English).
+  "main.ring.used": "上下文已用 {pct}%",
 } satisfies Record<keyof typeof en, string>;
