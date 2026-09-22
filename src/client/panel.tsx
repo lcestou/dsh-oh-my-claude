@@ -107,12 +107,24 @@ function useFitAbove(ref: { current: HTMLElement | null }, cap: number, open: bo
       const room = el.getBoundingClientRect().bottom - top - FIT_MARGIN - frame;
       setMaxHeight(Math.min(cap, Math.max(0, room)));
     };
+    // The scroll listener is on the capture phase of the window, so it fires for every scroll of
+    // every scroller, including the conversation following a streaming turn; each fit reads
+    // layout up the whole ancestor chain. One fit per frame is all a screen can show.
+    let queued = 0;
+    const fitSoon = () => {
+      if (queued !== 0) return;
+      queued = requestAnimationFrame(() => {
+        queued = 0;
+        fit();
+      });
+    };
     fit();
-    window.addEventListener("resize", fit);
-    window.addEventListener("scroll", fit, true);
+    window.addEventListener("resize", fitSoon);
+    window.addEventListener("scroll", fitSoon, true);
     return () => {
-      window.removeEventListener("resize", fit);
-      window.removeEventListener("scroll", fit, true);
+      if (queued !== 0) cancelAnimationFrame(queued);
+      window.removeEventListener("resize", fitSoon);
+      window.removeEventListener("scroll", fitSoon, true);
     };
   }, [ref, cap, open]);
   return maxHeight;

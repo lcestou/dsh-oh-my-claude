@@ -3906,6 +3906,27 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   }
 
   /**
+   * The mount holding a live process for this session, or undefined. The cheap half of
+   * `ownerFor`: a map walk, no session read. For a poll that only reports on a live process (the
+   * steer card, once a second per open session) it is the whole answer, and it spares the event-log
+   * snapshot `ownerFor` falls back to for a session with nothing running.
+   */
+  ownerIfLive(sessionId: string): ClaudeCodeAdapter | undefined {
+    // SAFETY: the registry symbol is this plugin's own key on globalThis, typed here once
+    const g = globalThis as typeof globalThis & {
+      [ADAPTER_CURRENT]?: Map<string, ClaudeCodeAdapter>;
+    };
+    const mounts = g[ADAPTER_CURRENT];
+    const suffix = `:${sessionId}`;
+    for (const [key, proc] of this.processes) {
+      if (!key.endsWith(suffix) || !proc.alive) continue;
+      const mount = mounts?.get(key.slice(0, key.length - suffix.length));
+      if (mount) return mount;
+    }
+    return undefined;
+  }
+
+  /**
    * The mount a session belongs to: the one whose live process it is, else the one its selected
    * model names, else this one.
    *
@@ -6780,7 +6801,11 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       rewind: (sessionId: string, uuid: string, dryRun: boolean) =>
         adapter.ownerFor(sessionId).rewind(sessionId, uuid, dryRun),
       permissionAsks: adapter.permissionAsks,
-      steersFor: (sessionId: string) => adapter.ownerFor(sessionId).steersFor(sessionId),
+      // Once a second per open session: a live process names its mount; without one there are no
+      // waiting steers, and a held one sits on the mount that took it, which is this one when
+      // nothing else is live.
+      steersFor: (sessionId: string) =>
+        (adapter.ownerIfLive(sessionId) ?? adapter).steersFor(sessionId),
       holdSteers: (sessionId: string, ids: string[]) =>
         adapter.ownerFor(sessionId).holdSteers(sessionId, ids),
       sendSteerNow: (sessionId: string, ids: string[]) =>

@@ -1290,6 +1290,13 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     /** The live process for a session, by exact registry key, else by the `:sessionId` suffix so a session survives across mounts; undefined when none is alive. */
     processFor(sessionId: string): ClaudeProcess | undefined;
     /**
+     * The mount holding a live process for this session, or undefined. The cheap half of
+     * `ownerFor`: a map walk, no session read. For a poll that only reports on a live process (the
+     * steer card, once a second per open session) it is the whole answer, and it spares the event-log
+     * snapshot `ownerFor` falls back to for a session with nothing running.
+     */
+    ownerIfLive(sessionId: string): ClaudeCodeAdapter | undefined;
+    /**
      * The mount a session belongs to: the one whose live process it is, else the one its selected
      * model names, else this one.
      *
