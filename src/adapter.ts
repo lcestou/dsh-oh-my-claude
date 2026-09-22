@@ -2369,10 +2369,14 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   constructor(ctx: PluginContext, config: Schemastery.TypeT<typeof Config>) {
     super();
     this.ctx = ctx;
+    // The probe answers `ok: false` with a reason rather than throwing, and the catch keeps the
+    // inline fallback on any dsh where that stops being true.
     if (DSH_VERSION !== null && atLeast(DSH_VERSION, "0.1.7-alpha.1"))
-      void rowsSupported().then((r) => {
-        this.rowsByDefault = r.ok;
-      });
+      void rowsSupported()
+        .then((r) => {
+          this.rowsByDefault = r.ok;
+        })
+        .catch(() => {});
     // Before `localConfig` turns a bare name into this box's absolute path: a turn that runs
     // somewhere else needs the name as configured. See `commandFor`.
     this.configuredCommand = config.command;
