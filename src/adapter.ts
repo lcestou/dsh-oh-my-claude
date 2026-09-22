@@ -32,6 +32,7 @@ import {
   createUserMessage,
 } from "@deepseek-ai/dsh-llm";
 import z from "@deepseek-ai/schemastery";
+import { atLeast } from "./update.js";
 import { type FirstPartyProbe, probeFirstParty, wantsFirstParty } from "./first-party.js";
 import {
   CONTEXT_SIZE_KEYS,
@@ -325,7 +326,7 @@ export type Config = {
   maxBudgetUsd?: number;
   titleModel: string;
   toolActivity: boolean;
-  toolsInline: boolean;
+  toolsInline?: boolean;
   hookRows: boolean;
   resume: boolean;
   idleTimeoutMs: number;
@@ -400,9 +401,8 @@ export const Config = z.object({
     .description("Show Claude Code tool calls and results as native tool rows"),
   toolsInline: z
     .boolean()
-    .default(true)
     .description(
-      "Render tool calls inline in the reasoning stream (keeps live order); off = rich native rows that can render out of order until the next message",
+      "Render tool calls as inline text (true) or as dsh's native tool rows (false). Unset: rows on dsh 0.1.7 and later, where the text streams live between the cards and the rows survive a reload; inline before that. The Tune switch overrides this per box.",
     ),
   hookRows: z
     .boolean()
@@ -2369,6 +2369,14 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   constructor(ctx: PluginContext, config: Schemastery.TypeT<typeof Config>) {
     super();
     this.ctx = ctx;
+    // The probe answers `ok: false` with a reason rather than throwing, and the catch keeps the
+    // inline fallback on any dsh where that stops being true.
+    if (DSH_VERSION !== null && atLeast(DSH_VERSION, "0.1.7-alpha.1"))
+      void rowsSupported()
+        .then((r) => {
+          this.rowsByDefault = r.ok;
+        })
+        .catch(() => {});
     // Before `localConfig` turns a bare name into this box's absolute path: a turn that runs
     // somewhere else needs the name as configured. See `commandFor`.
     this.configuredCommand = config.command;
@@ -3982,8 +3990,20 @@ export class ClaudeCodeAdapter extends LlmAdapter {
 
   /** Inline tool text unless the Tune switch, or failing that the config, asks for rows. */
   toolsInline(): boolean {
-    return this.toolMode === undefined ? this.config.toolsInline : this.toolMode === "inline";
+    if (this.toolMode !== undefined) return this.toolMode === "inline";
+    if (this.config.toolsInline !== undefined) return this.config.toolsInline;
+    return !this.rowsByDefault;
   }
+
+  /**
+   * Whether rows are the default on this dsh, when neither the Tune switch nor the config says.
+   * True on 0.1.7 and later once the probe has passed: there the text streams live between dsh's
+   * cards and the announced rows survive a reload, so the plugin looks like every other provider
+   * in dsh. False before 0.1.7, where a step's text lands only when it settles, and false until
+   * the probe answers, so the first turns of a process never write rows a dsh cannot load. A
+   * dsh that starts refusing the shape locks the probe and this falls back to inline on its own.
+   */
+  private rowsByDefault = false;
 
   /** What the Tune switch shows: the mode in force, and whether rows are open to it at all. */
   async toolModeInfo(): Promise<ToolModeInfo> {

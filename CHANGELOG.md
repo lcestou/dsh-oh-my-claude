@@ -6,6 +6,14 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Changed
+
+- Native rows are the default on dsh 0.1.7 and later. There the text streams live between dsh's
+  own tool cards and the rows survive a reload, so Claude's tool activity looks like every other
+  provider's in dsh. Inline stays the default before 0.1.7, where a step's text lands only when it
+  settles. A mode picked in Tune, or a `toolsInline` set in the config, still wins; and a dsh that
+  stops loading rows locks the switch and the plugin writes inline on its own.
+
 ### Fixed
 
 - The Restore tab reaches every transcript in a workspace. It showed eight and left the rest to
