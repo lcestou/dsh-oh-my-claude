@@ -4772,6 +4772,18 @@ function watchTurnStatus(ctx: ClientCtx) {
   const beat = setInterval(guard(markBody), 1000);
   whenContextGone(() => clearInterval(beat));
   const attach = (found: HTMLElement) => {
+    // Decide before wiring, not after. A reload draws every old group, and dsh leaves a stopped
+    // or failed one open, so asking "is it open" wired a verb onto a turn that ended an hour ago
+    // and took it down three polls later (owner, 2026-09-22). What is known up front: dsh's own
+    // session summary says whether the session is running at all, and only the newest group in
+    // the conversation can be the running turn.
+    if (found.matches("button[data-turn-process]")) {
+      const sid = activeClaudeSession(ctx);
+      if (!sid) return;
+      if (ctx.sessions.list.getSnapshot()?.byId[sid]?.running !== true) return;
+      const groups = document.querySelectorAll("button[data-turn-process]");
+      if (groups[groups.length - 1] !== found) return;
+    }
     const el = turnStatusRow(found);
     if (el === undefined) return;
     // The wired mark is read here rather than inside `wireTurnStatus`: everything below allocates a
