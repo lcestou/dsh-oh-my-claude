@@ -3,7 +3,7 @@
 // here or jump to the box) and Boxes (this box as the first row, plus the ssh and linked-dsh
 // machines you add, each probed for claude version and login). Built into lib/client.js by
 // `bun run build`.
-import { installLocale, t, useLocale } from "./i18n.js";
+import { installLocale, onLocaleSwitch, t, useLocale } from "./i18n.js";
 import type { CSSProperties, FC, ReactNode } from "react";
 import {
   Fragment,
@@ -3729,6 +3729,16 @@ function watchContextMeter(ctx: ClientCtx) {
   });
   scan(document.body);
   paintRing();
+  // The usage block and the ring's tooltip line are built by hand, so a language switch does not
+  // reach them. Drop them and scan again: an open panel gets a fresh block in the new language at
+  // once, and the ring's label follows on the next repaint.
+  whenContextGone(
+    onLocaleSwitch(() => {
+      for (const el of document.querySelectorAll(`[${MARK}]`)) el.remove();
+      scan(document.body);
+      paintRing();
+    }),
+  );
 }
 
 let spinnerSettings: Promise<{ verbs: string[]; frameSet: typeof DEFAULT_FRAMES }> | undefined;

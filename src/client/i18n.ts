@@ -111,3 +111,21 @@ export function useLocale(): string {
   );
   return runtime?.getSnapshot().active ?? "en";
 }
+
+/**
+ * Call `fn` each time the active language changes, not on every dictionary registration (which
+ * also bumps dsh's revision). For DOM this plugin builds by hand, which `useLocale()` cannot
+ * re-render: the caller throws its nodes away and draws them again. Returns the unsubscribe; a
+ * no-op without the locale service.
+ */
+export function onLocaleSwitch(fn: () => void): () => void {
+  if (!runtime) return () => {};
+  const svc = runtime;
+  let last = svc.getSnapshot().active;
+  return svc.subscribe(() => {
+    const now = svc.getSnapshot().active;
+    if (now === last) return;
+    last = now;
+    fn();
+  });
+}
