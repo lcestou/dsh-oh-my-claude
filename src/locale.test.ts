@@ -46,9 +46,9 @@ assert.equal(
     formatToolCall("grep", JSON.stringify({ pattern: "x" })).startsWith(`⌕${HEADER_MARK} Grep`),
   );
   assert.ok(
-    formatToolResult("read", "/tmp/a.txt", "hi", false).startsWith(`▤${HEADER_MARK} 读取 · 结果`),
+    formatToolResult("read", "/tmp/a.txt", "hi", false).startsWith(`▤${HEADER_MARK} 读取 · 输出`),
   );
-  assert.ok(formatToolResult("bash", "", "boom", true).includes("Bash · 错误"));
+  assert.ok(formatToolResult("bash", "", "boom", true).includes("Bash · 失败"));
   dispose();
   assert.ok(
     formatToolCall("read", "{}").startsWith(`▤${HEADER_MARK} Read`),

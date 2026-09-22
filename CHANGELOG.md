@@ -13,8 +13,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
   plan review dialog, the not logged in tag and the login message follow the stored setting. A
   Chinese README sits beside the English one.
 - Claude's tool headers in the chat use the words dsh puts on its own tool cards when the stored
-  language is Chinese (读取, 写入, 编辑, 网页搜索, 网页获取, 更新任务清单, with 结果 and 错误 on
-  the result rows). Bash, Grep, Glob and MCP tool names stay as dsh shows them, in English.
+  language is Chinese (读取, 写入, 编辑, 网页搜索, 网页获取, 更新任务清单, with 输出 and 失败 on
+  the result rows). Bash, Grep, Glob and MCP tool names stay as dsh shows them, in English. The
+  status lines the plugin writes into the chat (compaction, retries, model fallbacks, usage limits,
+  denied tool calls, "more lines" on long output) and the `/btw` replies follow it too.
 
 ### Fixed
 

@@ -3849,11 +3849,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         input: { hint: serverText("btwHint") },
         handler: ({ agent, rawInput }) => {
           const question = rawInput.trim();
-          if (!question) return { kind: "error", text: "Usage: /btw <your question>" };
+          if (!question) return { kind: "error", text: serverText("btwUsage") };
           this.askSideQuestion(String(agent.id), question);
           return {
             kind: "success",
-            text: "Side question sent. The answer opens in the ✻ aside bubble.",
+            text: serverText("btwSent"),
           };
         },
       });
@@ -5073,14 +5073,19 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       return {
         kind: "error",
         failure: {
-          message: `claude produced no output for ${Math.round((proc.idleKilledAfterMs ?? this.config.idleTimeoutMs) / 1000)}s and was stopped`,
+          message: serverText("idleStopped", {
+            s: String(Math.round((proc.idleKilledAfterMs ?? this.config.idleTimeoutMs) / 1000)),
+          }),
           code: "IDLE_TIMEOUT",
         },
       };
     return {
       kind: "error",
       failure: {
-        message: `claude exited ${proc.exitCode}: ${(proc.stderr || proc.stray).trim() || "no output"}`,
+        message: serverText("claudeExited", {
+          code: String(proc.exitCode),
+          detail: (proc.stderr || proc.stray).trim() || serverText("noOutput"),
+        }),
         code: "PROVIDER_ERROR",
       },
     };
@@ -5932,7 +5937,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const questions = elicitationQuestions(request, requestId);
     const ask = this.ctx?.userQuestions?.ask;
     if (!questions || !ask) {
-      yield* tr.wholeBlock("reasoning", `❓ ${who} asked for input dsh cannot present, declined`);
+      yield* tr.wholeBlock("reasoning", `❓ ${serverText("inputDeclined", { who })}`);
       reply(controlResponseLine(requestId, { action: "decline" }));
       return;
     }
