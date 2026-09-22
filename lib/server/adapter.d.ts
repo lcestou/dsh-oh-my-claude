@@ -224,6 +224,15 @@ export interface RewindReply extends Partial<RewindResult> {
     ok: boolean;
     dryRun: boolean;
 }
+/** What the steer card's route answers. `sent`: Claude already has it (or it was never waiting);
+ *  `gone`: no live process; `error`: the CLI did not answer the cancel. */
+export type SteerEditReply = {
+    ok: true;
+} | {
+    ok: false;
+    reason: "sent" | "gone" | "error";
+    error?: string;
+};
 /** What the context route reports: the CLI's own context breakdown for a live session. */
 export type ContextUsageReply = ({
     ok: true;
@@ -1053,6 +1062,20 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * to `resolveControl` as they arrive, so this works between turns as well as inside one.
      */
     control(proc: ClaudeProcess, request: Record<string, JsonValue>, timeoutMs?: number): Promise<ControlReply>;
+    /** The typed steers waiting in this session's CLI queue, oldest first, for the steer card. */
+    steersFor(sessionId: string): Array<{
+        id: string;
+        text: string;
+        at: number;
+    }>;
+    /**
+     * Edit (`text`) or remove (`null`) a steer Claude has not read yet. The CLI gives it back first:
+     * `cancel_async_message` answers `cancelled: false` once the CLI has taken it, and then nothing
+     * changes anywhere. Only after a true answer does the new text go to stdin and dsh's pending
+     * message change, so Claude and the chat agree. If dsh claimed the message in the few ms between
+     * (the park), Claude gets the edit while the chat keeps the original.
+     */
+    editSteer(sessionId: string, id: string, text: string | null): Promise<SteerEditReply>;
     /**
      * Rewind a session to one of its user prompts: `rewind_files` (dry run first, from the UI) puts
      * the working tree back, then `rewind_conversation` drops Claude's context after that prompt.

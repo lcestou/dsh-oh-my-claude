@@ -68,6 +68,7 @@ import {
   interruptLine,
   controlRequestLine,
   decodeRewindResult,
+  decodeCancelled,
   decodeContextUsage,
   turnDelta,
   decodeWorkspaceDiff,
@@ -544,6 +545,11 @@ export interface RewindReply extends Partial<RewindResult> {
   ok: boolean;
   dryRun: boolean;
 }
+/** What the steer card's route answers. `sent`: Claude already has it (or it was never waiting);
+ *  `gone`: no live process; `error`: the CLI did not answer the cancel. */
+export type SteerEditReply =
+  | { ok: true }
+  | { ok: false; reason: "sent" | "gone" | "error"; error?: string };
 /** What the context route reports: the CLI's own context breakdown for a live session. */
 export type ContextUsageReply =
   | ({ ok: true; error?: undefined } & ContextUsage)
@@ -3229,6 +3235,69 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         resolve({ ok: false, error: "claude process is not accepting input" });
       }
     });
+  }
+
+  /** The typed steers waiting in this session's CLI queue, oldest first, for the steer card. */
+  steersFor(sessionId: string): Array<{ id: string; text: string; at: number }> {
+    const proc = this.processes.get(registryKey(this.providerId, sessionId));
+    if (!proc?.alive) return [];
+    return [...proc.steers]
+      .map(([id, s]) => ({ id, text: s.text, at: s.at }))
+      .toSorted((a, b) => a.at - b.at);
+  }
+
+  /**
+   * Edit (`text`) or remove (`null`) a steer Claude has not read yet. The CLI gives it back first:
+   * `cancel_async_message` answers `cancelled: false` once the CLI has taken it, and then nothing
+   * changes anywhere. Only after a true answer does the new text go to stdin and dsh's pending
+   * message change, so Claude and the chat agree. If dsh claimed the message in the few ms between
+   * (the park), Claude gets the edit while the chat keeps the original.
+   */
+  async editSteer(sessionId: string, id: string, text: string | null): Promise<SteerEditReply> {
+    const proc = this.processes.get(registryKey(this.providerId, sessionId));
+    if (!proc?.alive) return { ok: false, reason: "gone" };
+    const waiting = proc.steers.get(id);
+    if (!waiting) return { ok: false, reason: "sent" };
+    const reply = await this.control(
+      proc,
+      { subtype: "cancel_async_message", message_uuid: waiting.uuid },
+      5_000,
+    );
+    if (!reply.ok) return { ok: false, reason: "error", error: reply.error };
+    if (!decodeCancelled(reply.response)) {
+      proc.steers.delete(id);
+      return { ok: false, reason: "sent" };
+    }
+    let inbox: Agent["inbox"];
+    try {
+      inbox = this.ctx?.agents?.get?.(asSessionId(sessionId))?.inbox;
+    } catch {
+      inbox = undefined; // scope gone mid-reload: the CLI side still happens
+    }
+    // A park or the turn's end may have run during the await and cleared the map; the steer is out
+    // of the CLI either way now, so only a live turn gets the new text on stdin.
+    const stillWaiting = proc.steers.delete(id);
+    const original = inbox?.nextStep.find((m) => m.id === id);
+    if (text === null) {
+      inbox?.remove(id);
+      return { ok: true };
+    }
+    if (!proc.busy) {
+      // The turn ended while the cancel was in flight. Writing now would start a CLI turn no dsh
+      // step is open for (the busy=false failure noted at openTurn). Hand it back to dsh instead:
+      // out of `sent`, so the next prompt carries the edited message like any other.
+      proc.sent.delete(waiting.key);
+      if (original) inbox?.replace(id, { ...original, content: [{ type: "text", text }] });
+      return { ok: true };
+    }
+    const uuid = randomUUID();
+    if (!proc.write(buildInput(text, [], uuid))) return { ok: false, reason: "gone" };
+    // The listener's contract: a steer on stdin parks the step at the CLI's next tool result.
+    proc.steerPending = true;
+    // Re-listed only while the map still had it; after a park it would show a row dsh has drawn as sent.
+    if (stillWaiting) proc.steers.set(id, { uuid, key: waiting.key, text, at: waiting.at });
+    if (original) inbox?.replace(id, { ...original, content: [{ type: "text", text }] });
+    return { ok: true };
   }
 
   /**
