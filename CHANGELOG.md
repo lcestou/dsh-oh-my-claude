@@ -30,6 +30,9 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- The Claude look no longer drops off new sessions until a refresh. One passing error from dsh's
+  session list could switch off the plugin's page code for the rest of the tab's life; now only a
+  real unload does.
 - Tool headers in the chat no longer show up now and then as a plain line with the code block
   open under it until the tab is reloaded. A paragraph dsh reused for a header was never picked up.
 - Runs under DSH Desktop. The plugin finds `claude` in the usual install folders when dsh starts

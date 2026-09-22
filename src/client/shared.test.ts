@@ -8,6 +8,7 @@ import {
   numberOr,
   openSession,
   openSessionId,
+  revive,
   parseSkillCosts,
   resumeCommand,
   skillStateFromReply,
@@ -83,6 +84,38 @@ assert.equal(
 // A retention the main view has let go of is not a selection.
 assert.equal(openSessionId(listCtx({ byId: { s1: { retainedBy: {} } } })), undefined);
 assert.equal(openSessionId(listCtx(undefined)), undefined);
+// A throw that is not a disposed context answers undefined and leaves the bundle live: the next
+// read still works. It used to retire everything until a refresh (owner, 2026-09-22: new sessions
+// lost the Claude look after switching languages back and forth).
+{
+  const flaky = {
+    sessions: {
+      list: {
+        getSnapshot: () => {
+          throw new Error("store is being rebuilt");
+        },
+      },
+    },
+  } as unknown as ClientCtx;
+  assert.equal(openSessionId(flaky), undefined);
+  assert.equal(openSessionId(listCtx({ current: "s1", byId: {} })), "s1", "still live after it");
+}
+// A disposed context retires; `revive` (what apply runs first) brings the module back.
+{
+  const dead = {
+    sessions: {
+      list: {
+        getSnapshot: () => {
+          throw new Error('cannot get required service "sessions" in inactive context');
+        },
+      },
+    },
+  } as unknown as ClientCtx;
+  assert.equal(openSessionId(dead), undefined);
+  assert.equal(openSessionId(listCtx({ current: "s1", byId: {} })), undefined, "retired");
+  revive();
+  assert.equal(openSessionId(listCtx({ current: "s1", byId: {} })), "s1", "live again");
+}
 // `current` wins when both are there, so 0.1.5 never pays for the scan.
 assert.equal(
   openSessionId(listCtx({ current: "s1", byId: { s2: { retainedBy: { mainView: 1 } } } })),

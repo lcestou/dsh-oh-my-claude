@@ -548,12 +548,24 @@ export const whenContextGone = (fn: () => void): void => {
   else goneWatchers.add(fn);
 };
 /** Mark this bundle disposed and run the watchers registered through `whenContextGone` once, so
- *  loops bound to the dead context stop reading it. */
-const retire = (): void => {
+ *  loops bound to the dead context stop reading it. Exported so `apply` can hang it on dsh's own
+ *  dispose (`ctx.effect`), which is the signal to trust; the error-based calls below are the net for
+ *  a dsh that disposes without running effects. */
+export const retire = (): void => {
   gone = true;
   for (const fn of goneWatchers) fn();
   goneWatchers.clear();
 };
+/** Undo a retirement at the start of `apply`. dsh can apply this same module again without
+ *  reloading it, and a `gone` left over from the last context would keep every loop of the new one
+ *  silent: no Claude look on a new session until the tab is refreshed. */
+export const revive = (): void => {
+  gone = false;
+};
+/** Whether a thrown error's message is dsh saying this bundle's context is disposed, the only error
+ *  that retires. */
+const isInactiveContext = (message: string | undefined): boolean =>
+  message?.includes("inactive context") === true;
 /**
  * Wrap a loop body, whether an interval tick or a registered scan, so the first
  * disposed-context throw retires this bundle instead of reaching the console. Any
@@ -567,7 +579,7 @@ export const guard = <A extends unknown[]>(fn: (...args: A) => void): ((...args:
     try {
       fn(...args);
     } catch (e) {
-      if (!(e instanceof Error) || !e.message.includes("inactive context")) throw e;
+      if (!isInactiveContext(e instanceof Error ? e.message : undefined)) throw e;
       retire();
     }
   };
@@ -592,8 +604,11 @@ export const openSessionId = (ctx: ClientCtx): string | undefined => {
       if ((summary.retainedBy?.mainView ?? 0) > 0) return id;
     }
     return undefined;
-  } catch {
-    retire();
+  } catch (e) {
+    // Only a disposed context retires the bundle. Any other throw (a store dsh is rebuilding, say
+    // mid language switch) used to retire it too, and every loop went quiet until a refresh: new
+    // sessions opened without the Claude look.
+    if (isInactiveContext(e instanceof Error ? e.message : undefined)) retire();
     return undefined;
   }
 };
@@ -772,6 +787,9 @@ export interface LocaleFace {
 
 /** The dsh client services this panel uses, the ones `inject` names. */
 export interface ClientCtx {
+  /** cordis: run `fn` now and its returned cleanup when this context is disposed. Optional because
+   *  test fakes and older dsh contexts may not carry it. */
+  effect?: (fn: () => () => void, label?: string) => void;
   slots: DshSlots;
   sessions: {
     // `cwd`, `blank`, `running`, `completed` and `displayTitle` come from SessionSummary
