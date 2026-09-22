@@ -9,6 +9,9 @@ export interface UsageWindow {
     severity?: string;
     /** For a window scoped to one model, that model's display name (`Fable`), as the API names it. */
     model?: string;
+    /** Which of the plan's two main windows this is, so the client can name it in the reader's language;
+     *  absent for a model-scoped window (see `model`) and for a kind this code has not met. */
+    kind?: "session" | "weekly";
 }
 /** Usage credits ("extra usage") as the panel shows them; the money is already display text. */
 export interface UsageCredits {

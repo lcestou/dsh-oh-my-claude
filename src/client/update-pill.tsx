@@ -60,7 +60,7 @@ export function UpdatePill({ latest, command }: { latest: string; command: strin
       {said === "copied"
         ? t("update.commandCopied")
         : said === "blocked"
-          ? t("common.copyBlocked")
+          ? t("copy.failed")
           : t("update.available", { latest })}
     </button>
   );

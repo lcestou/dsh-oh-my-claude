@@ -390,7 +390,7 @@ export function TuneBody({
     return error ? (
       <span style={errText}>{error}</span>
     ) : (
-      <span style={{ ...meta, padding: "2px 0" }}>{t("common.loading")}</span>
+      <span style={{ ...meta, padding: "2px 0" }}>{t("loading")}</span>
     );
 
   const settings = readTunables(file.text);

@@ -9,6 +9,7 @@ import { NATIVE_TOOL_MAP, TurnRecord, commandNames, finishReason } from "./adapt
 import { suggestRule } from "./permissions.js";
 import type { JsonValue } from "./dsh.js";
 import { pluginErrorsOf, type PluginLoadError } from "./plugins.js";
+import { serverIsChinese, serverText, type ServerKey } from "./locale.js";
 
 // ---------------------------------------------------------------------------
 // stream-json → dsh chunks (moved from src/adapter.ts)
@@ -105,7 +106,7 @@ const MAX_BODY_LINES = 18;
 export function capLines(body: string, max = MAX_BODY_LINES): string {
   const lines = body.split("\n");
   if (lines.length <= max) return body;
-  return `${lines.slice(0, max).join("\n")}\n… ${lines.length - max} more lines`;
+  return `${lines.slice(0, max).join("\n")}\n${serverText("moreLines", { n: String(lines.length - max) })}`;
 }
 
 /** The icon glyph that leads each tool header. The client's fold keys on this leading glyph to spot a
@@ -162,9 +163,32 @@ const mcpName = (name: string): string | undefined => {
   return `${server} · ${parts.slice(2).join(" ")}`;
 };
 
-/** Icon + a capitalized, human name for a tool header: `❯ Bash`, `▤ Read`, `⤓ Web fetch`. */
+/** The header word for each built-in tool whose label dsh translates on its own cards, keyed by the
+ *  mapped tool name. Bash, Grep, Glob and anything unlisted keep their English name, as dsh does. */
+const TOOL_WORD = new Map<string, ServerKey>([
+  ["read", "toolRead"],
+  ["write", "toolWrite"],
+  ["edit", "toolEdit"],
+  ["notebook_edit", "toolNotebookEdit"],
+  ["web_fetch", "toolWebFetch"],
+  ["web_search", "toolWebSearch"],
+  ["todo_write", "toolTodoWrite"],
+  ["task", "toolTask"],
+  ["exit_plan_mode", "toolExitPlanMode"],
+  ["enter_plan_mode", "toolEnterPlanMode"],
+  ["slash_command", "toolSlashCommand"],
+  ["bash_output", "toolBashOutput"],
+  ["kill_shell", "toolKillShell"],
+]);
+
+/** Icon + a capitalized, human name for a tool header: `❯ Bash`, `▤ Read`, `⤓ Web fetch`, in the
+ *  stored language for the words dsh translates. Only the word changes: the client folds a header by
+ *  its glyph and HEADER_MARK, never by the word, so a Chinese header folds like an English one. */
 const label = (name: string): string => {
-  const human = mcpName(name) ?? (name.startsWith("web_") ? `Web ${name.slice(4)}` : words(name));
+  const key = TOOL_WORD.get(name);
+  const human =
+    mcpName(name) ??
+    (key ? serverText(key) : name.startsWith("web_") ? `Web ${name.slice(4)}` : words(name));
   return `${TOOL_ICON.get(name) ?? "◆"}${HEADER_MARK} ${human}`;
 };
 
@@ -279,7 +303,7 @@ export function formatToolResult(
   isError: boolean,
 ): string {
   // Same shape as the call header (`❯ Bash · List files`): the dot, then a capitalized word.
-  const head = `${label(name)} · ${isError ? "Error" : "Result"}`;
+  const head = `${label(name)} · ${serverText(isError ? "toolError" : "toolResult")}`;
   if (isError) return `${head}\n${fence(capLines(body))}`;
   const lang = name === "read" ? langOf(filePath) : "";
   return `${head}\n${fence(capLines(body), lang)}`;
@@ -346,6 +370,20 @@ const BENIGN_PARTIALS = new Set(["message_delta", "message_stop", "ping"]);
 /** Task statuses that end a task: after one of these no further frame arrives for that task_id. */
 const TASK_TERMINAL = new Set(["completed", "failed", "killed"]);
 
+/** A background task's status word in the stored language; a status the CLI adds later shows as
+ *  it sent it. */
+const taskStatus = (status: string): string => {
+  const key = TASK_STATUS.get(status);
+  return key ? serverText(key) : status;
+};
+/** The task statuses the CLI reports, as server-text keys. */
+const TASK_STATUS = new Map<string, ServerKey>([
+  ["completed", "taskCompleted"],
+  ["failed", "taskFailed"],
+  ["killed", "taskKilled"],
+  ["done", "taskDone"],
+]);
+
 /** The elapsed marks a long tool call reports at, in seconds; past the last one it repeats every
  *  five minutes. A 30-second call is already the first heartbeat the CLI sends, so a call that
  *  finishes quickly never draws a line at all. */
@@ -396,6 +434,14 @@ export function resetClock(
       : away <= 7 * 24 * 60 * 60 * 1000
         ? { weekday: "short", ...clock }
         : { month: "short", day: "numeric", ...clock };
+  // In Chinese the clock is 24-hour with 周一 and 9月8日, the way a Chinese reader writes it; the
+  // English trims ":00" and lowercases am/pm to match the CLI's own banner.
+  if (serverIsChinese()) {
+    const zh = new Date(ms)
+      .toLocaleString("zh-CN", { ...opts, hour: "2-digit", hour12: false })
+      .replace(/^(周.)(?=\d)/, "$1 ");
+    return `${zh} (${zone})`;
+  }
   const text = new Date(ms)
     .toLocaleString("en-US", opts)
     .replace(":00", "")
@@ -403,14 +449,14 @@ export function resetClock(
   return `${text} (${zone})`;
 }
 
-/** What the CLI calls each limit in its own banner (its `rateLimitType` table). */
-const LIMIT_NAMES = new Map([
-  ["five_hour", "session limit"],
-  ["seven_day", "weekly limit"],
-  ["seven_day_opus", "Opus limit"],
-  ["seven_day_sonnet", "Sonnet limit"],
-  ["seven_day_overage_included", "Fable limit"],
-  ["overage", "usage credit limit"],
+/** What the CLI calls each limit in its own banner (its `rateLimitType` table), as server-text keys. */
+const LIMIT_NAMES = new Map<string, ServerKey>([
+  ["five_hour", "limitSession"],
+  ["seven_day", "limitWeekly"],
+  ["seven_day_opus", "limitOpus"],
+  ["seven_day_sonnet", "limitSonnet"],
+  ["seven_day_overage_included", "limitFable"],
+  ["overage", "limitCredit"],
 ]);
 
 /** Turns the CLI's stream-json events into the markdown and tool rows one dsh turn shows. */
@@ -754,13 +800,15 @@ export class Translator {
             this.onProgress?.({ frame: true });
             if (this.compacting) return [];
             this.compacting = true;
-            return this.wholeBlock("reasoning", "⟳ Compacting context…");
+            return this.wholeBlock("reasoning", serverText("compacting"));
           }
           if (event.compact_result === "failed") {
             this.compacting = false;
             return this.wholeBlock(
               "reasoning",
-              `⚠ Compaction failed: ${event.compact_error ?? "unknown reason"}`,
+              serverText("compactFailed", {
+                error: event.compact_error ?? serverText("unknownReason"),
+              }),
             );
           }
           return [];
@@ -841,7 +889,10 @@ export class Translator {
           const taskId = event.task_id ?? "";
           const entry = this.taskBlocks.get(taskId);
           const summary = (event.summary ?? "").trim();
-          const completionLine = `Task ${event.status ?? "done"}: ${summary ? clip(summary) : taskId || "?"}`;
+          const completionLine = serverText("taskLine", {
+            status: taskStatus(event.status ?? "done"),
+            detail: summary ? clip(summary) : taskId || "?",
+          });
           if (!entry) {
             return this.wholeBlock("reasoning", completionLine);
           }
@@ -862,12 +913,14 @@ export class Translator {
           entry.lastStatus = status;
           if (!TASK_TERMINAL.has(status)) {
             // Only a pause is worth a line: pending and running are the states it passes through.
-            return status === "paused" ? this.delta(entry.block, "\n… paused") : [];
+            return status === "paused"
+              ? this.delta(entry.block, `\n${serverText("taskPaused")}`)
+              : [];
           }
           const error = typeof patch.error === "string" ? patch.error.trim() : "";
           const events = this.delta(
             entry.block,
-            `\nTask ${status}${error ? `: ${clip(error)}` : ""}`,
+            `\n${error ? serverText("taskLine", { status: taskStatus(status), detail: clip(error) }) : serverText("taskEnded", { status: taskStatus(status) })}`,
           );
           events.push(...this.endBlock(entry.block));
           this.taskBlocks.delete(event.task_id ?? "");
@@ -891,7 +944,7 @@ export class Translator {
           this.onModel?.({ kind: "model_fallback", from, to, content: said || undefined });
           return this.wholeBlock(
             "reasoning",
-            said ? `⚠ ${clip(said)}` : `⚠ Model fallback${pair}${why}`,
+            said ? `⚠ ${clip(said)}` : `⚠ ${serverText("modelFallback")}${pair}${why}`,
           );
         }
         // The safety classifier flagged the message and the turn fell back to a safer model. This is
@@ -914,7 +967,7 @@ export class Translator {
           const why = cat ? ` (${cat} safeguard)` : "";
           return this.wholeBlock(
             "reasoning",
-            said ? `⚠ ${clip(said)}` : `⚠ Model switched${pair}${why}`,
+            said ? `⚠ ${clip(said)}` : `⚠ ${serverText("modelSwitched")}${pair}${why}`,
           );
         }
         // Flagged, and no fallback ran: the turn ends on a refusal. A `result` frame follows on its
@@ -933,7 +986,9 @@ export class Translator {
           const why = cat ? ` (${cat} safeguard)` : "";
           return this.wholeBlock(
             "reasoning",
-            said ? `⛔ ${clip(said)}` : `⛔ Request blocked${from ? ` on ${from}` : ""}${why}`,
+            said
+              ? `⛔ ${clip(said)}`
+              : `⛔ ${from ? serverText("requestBlockedOn", { from }) : serverText("requestBlocked")}${why}`,
           );
         }
         // The usage-credit / switch-default gate (secondary to the refusal frames). The CLI's own
@@ -951,7 +1006,10 @@ export class Translator {
             content: said || undefined,
           });
           const pair = from && to ? `: ${from} → ${to}` : from || to ? `: ${from || to}` : "";
-          return this.wholeBlock("reasoning", said ? `⚠ ${clip(said)}` : `⚠ Model switched${pair}`);
+          return this.wholeBlock(
+            "reasoning",
+            said ? `⚠ ${clip(said)}` : `⚠ ${serverText("modelSwitched")}${pair}`,
+          );
         }
         // The loop's own banner. This box runs many hooks and `info` is documented as transcript
         // only, so only a suggestion or worse is drawn, plus anything that ended the turn early,
@@ -972,7 +1030,10 @@ export class Translator {
               ? event.decision_reason
               : (event.message ?? "");
           const why = reason.trim();
-          return this.wholeBlock("reasoning", `⚠ Denied ${tool}${why ? `: ${clip(why)}` : ""}`);
+          return this.wholeBlock(
+            "reasoning",
+            `⚠ ${serverText("denied", { tool })}${why ? `: ${clip(why)}` : ""}`,
+          );
         }
         if (event.subtype === "background_tasks_changed") {
           return [];
@@ -986,19 +1047,20 @@ export class Translator {
           const wait = Math.round((event.retry_delay_ms ?? 0) / 1000);
           const resetsAt = err.rate_limits?.resets_at;
           const reset = Number.isFinite(resetsAt)
-            ? ` (resets ${resetClock((resetsAt ?? 0) * 1000, this.timeZone)})`
+            ? ` (${serverText("resets", { when: resetClock((resetsAt ?? 0) * 1000, this.timeZone) })})`
             : "";
           // api_error is the same failure without the retry framing, and it alone says whether the
           // connection itself is down. That is worth naming, since it reads as the model hanging.
           const down = err.is_network_down
-            ? " · network is down"
+            ? ` · ${serverText("networkDown")}`
             : err.connection
               ? ` · ${err.connection}`
               : "";
-          const head = err.formatted ?? err.message ?? `API error ${err.status ?? ""}`.trim();
+          const head =
+            err.formatted ?? err.message ?? `${serverText("apiError")} ${err.status ?? ""}`.trim();
           const retrying = event.subtype === "api_retry" || event.retry_delay_ms !== undefined;
           const tail = retrying
-            ? ` · Retrying in ${wait}s${reset} · attempt ${event.attempt ?? "?"}/${event.max_retries ?? "?"}`
+            ? ` · ${serverText("retryingIn", { s: String(wait) })}${reset} · ${serverText("attempt", { n: String(event.attempt ?? "?"), max: String(event.max_retries ?? "?") })}`
             : reset;
           // A 5xx (529 included) is Anthropic's side; the status page can say whether it is known.
           const code = err.status ?? 0;
@@ -1010,22 +1072,23 @@ export class Translator {
         if (event.subtype !== "compact_boundary") return [];
         this.compacting = false; // re-arm: a second compaction in the same turn announces again
         const meta = event.compact_metadata ?? {};
-        const how = meta.trigger === "manual" ? "manual" : "auto";
+        const how = serverText(meta.trigger === "manual" ? "compactManual" : "compactAuto");
         // `post_tokens` and `duration_ms` are optional in the CLI's own schema, and the boundary
         // frame has arrived here with neither. "after" only reads as a pair with "before", so it
         // is skipped when the CLI withheld the first number. The summary itself never reaches us:
         // the CLI feeds it straight into the next prompt and does not put it on the stream.
         const parts = [how];
         if (Number.isFinite(meta.pre_tokens)) {
-          parts.push(`${meta.pre_tokens} tokens before`);
-          if (Number.isFinite(meta.post_tokens)) parts.push(`${meta.post_tokens} after`);
+          parts.push(serverText("tokensBefore", { n: String(meta.pre_tokens) }));
+          if (Number.isFinite(meta.post_tokens))
+            parts.push(serverText("tokensAfter", { n: String(meta.post_tokens) }));
         }
         if (Number.isFinite(meta.duration_ms)) {
           parts.push(`${(Number(meta.duration_ms) / 1000).toFixed(1)}s`);
         }
         return this.wholeBlock(
           "reasoning",
-          `✓ Context compacted by Claude Code (${parts.join(", ")})`,
+          `✓ ${serverText("compacted", { parts: parts.join(serverText("listSep")) })}`,
         );
       }
       case "tool_progress":
@@ -1063,7 +1126,7 @@ export class Translator {
           events.push(
             ...this.wholeBlock(
               "text",
-              `\n\n_Claude Code denied ${n} tool call${n === 1 ? "" : "s"} that needed approval. Switch Access mode to Full Access to allow them._`,
+              `\n\n_${serverText(n === 1 ? "deniedCallsOne" : "deniedCallsOther", { n: String(n) })}_`,
             ),
           );
         }
@@ -1073,7 +1136,7 @@ export class Translator {
           events.push(
             ...this.wholeBlock(
               "text",
-              `\n\n_Auto mode blocked ${n} tool call${n === 1 ? "" : "s"} (${reasons}). A Bash permission rule in Claude Code's settings allows such a call; permissionMode bypassPermissions skips the classifier._`,
+              `\n\n_${serverText(n === 1 ? "autoBlockedOne" : "autoBlockedOther", { n: String(n), reasons })}_`,
             ),
           );
         }
@@ -1167,14 +1230,15 @@ export class Translator {
         // the turn does not end here: it is relayed as text, and this failure rides the result
         // The cause may be a cap, an org setting or an outage, but the user reads the CLI's
         // own words, and this row adds only which window it was and when it reopens.
-        const name = LIMIT_NAMES.get(info.rateLimitType ?? "") ?? "usage limit";
-        const clock = resetMs > 0 ? ` · resets ${resetClock(resetAt, this.timeZone)}` : "";
-        const waiting =
-          resetMs > 0 && this.continueAfterLimit
-            ? " · continuing automatically when it resets"
+        const name = serverText(LIMIT_NAMES.get(info.rateLimitType ?? "") ?? "limitUsage");
+        const clock =
+          resetMs > 0
+            ? ` · ${serverText("resets", { when: resetClock(resetAt, this.timeZone) })}`
             : "";
+        const waiting =
+          resetMs > 0 && this.continueAfterLimit ? ` · ${serverText("continuingAtReset")}` : "";
         const failure: LlmFailure & { providerRetryAfterMs?: number } = {
-          message: `You've hit your ${name}${clock}${waiting}`,
+          message: `${serverText("hitLimit", { name })}${clock}${waiting}`,
           code: "RATE_LIMIT",
         };
         if (resetMs > 0) failure.providerRetryAfterMs = resetMs;
@@ -1402,7 +1466,9 @@ export class Translator {
     if (parentToolUseId) {
       if (!this.toolActivity) return [];
       const text = content.flatMap((b) => (b.type === "text" && b.text ? [b.text] : [])).join("\n");
-      return text ? this.wholeBlock("reasoning", `↳ subagent\n${clip(text, this.limit)}`) : [];
+      return text
+        ? this.wholeBlock("reasoning", `↳ ${serverText("subagent")}\n${clip(text, this.limit)}`)
+        : [];
     }
     // The whole-message echo of what just streamed as deltas is a duplicate and is dropped. The
     // guard used to be `sawPartial` alone, which latched on the first `message_start` and stayed
@@ -1472,12 +1538,12 @@ export class Translator {
       const count = attempt && max ? ` ${attempt}/${max}` : attempt ? ` ${attempt}` : "";
       const why = retry.error_category || (retry.error_status ? `HTTP ${retry.error_status}` : "");
       const wait = retry.retry_delay_ms
-        ? `, retrying in ${Math.round(retry.retry_delay_ms / 1000)}s`
+        ? `, ${serverText("retryingInMid", { s: String(Math.round(retry.retry_delay_ms / 1000)) })}`
         : "";
       const who = event.subagent_type ? `${name} [${event.subagent_type}]` : name;
       return this.wholeBlock(
         "reasoning",
-        `↻ ${who} attempt${count} failed${why ? `: ${why}` : ""}${wait}`,
+        `↻ ${serverText("attemptFailed", { who, count })}${why ? `: ${why}` : ""}${wait}`,
       );
     }
     const id = event.tool_use_id;
@@ -1627,7 +1693,10 @@ export class Translator {
       const toolName = this.dshNames.get(toolUseId);
       this.dshNames.delete(toolUseId);
       // A dsh call that could not be relayed ran inside the bridge: show it as one compact row.
-      const lead = dsh && this.relay ? `⤷ ${toolName ?? "dsh tool"} (ran in bridge)\n` : "";
+      const lead =
+        dsh && this.relay
+          ? `⤷ ${serverText("ranInBridge", { tool: toolName ?? serverText("dshTool") })}\n`
+          : "";
       events.push(
         ...this.wholeBlock(
           dsh ? "text" : "reasoning",

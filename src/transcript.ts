@@ -7,6 +7,7 @@ import { join } from "node:path";
 import type { JsonValue } from "./dsh.js";
 import { NATIVE_TOOL_MAP } from "./adapter.js";
 import { formatToolCall, formatToolResult } from "./translator.js";
+import { serverText } from "./locale.js";
 
 const UUID_FILE = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/;
 const RESULT_TEXT_LIMIT = 4000;
@@ -611,7 +612,7 @@ export function toSessionEvents(folded: FoldedTranscript): SeedEvent[] {
         // the transcript was cut. dsh needs a result for every call, but seeding a settled empty
         // one erased the single fact worth keeping: that this is where the session died.
         const r = s.results.get(c.id) ?? {
-          content: [{ type: "text" as const, text: "No result recorded: the session ended here." }],
+          content: [{ type: "text" as const, text: serverText("noResultRecorded") }],
           isError: true,
           time: s.time,
         };
@@ -799,9 +800,9 @@ const MIRROR_REPLY_BYTES = 48 * 1024;
  *  order, tool calls and their results drawn the way the inline translator draws them in a live
  *  turn, text as it is. Thinking stays out, as it does live. Results are cut at `limit` bytes. */
 export function mirrorReply(turn: FoldedTurn, limit: number): string {
-  const md = mirrorReplyBlocks(turn, limit).join("\n\n") || "(no reply)";
+  const md = mirrorReplyBlocks(turn, limit).join("\n\n") || serverText("noReply");
   if (Buffer.byteLength(md) <= MIRROR_REPLY_BYTES) return md;
-  return `${truncateBytes(md, MIRROR_REPLY_BYTES)}\n\n… cut here; the whole exchange is in the transcript.`;
+  return `${truncateBytes(md, MIRROR_REPLY_BYTES)}\n\n${serverText("mirrorCut")}`;
 }
 
 /** The reply as one markdown chunk per rendered block, a text block or a tool call with its

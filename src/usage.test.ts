@@ -66,7 +66,7 @@ assert.deepEqual(
 }
 // legacy shape
 assert.deepEqual(usageWindows({ five_hour: { utilization: 50, resets_at: null }, seven_day: {} }), [
-  { label: "5-hour", usedPercent: 50, resetsAt: null },
+  { label: "5-hour", kind: "session", usedPercent: 50, resetsAt: null },
 ]);
 assert.deepEqual(usageWindows(null), []);
 assert.deepEqual(usageWindows({ limits: "nope" }), []);

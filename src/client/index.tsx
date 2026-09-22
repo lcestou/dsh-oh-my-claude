@@ -3,7 +3,7 @@
 // here or jump to the box) and Boxes (this box as the first row, plus the ssh and linked-dsh
 // machines you add, each probed for claude version and login). Built into lib/client.js by
 // `bun run build`.
-import { installLocale, onLocaleSwitch, t, useLocale } from "./i18n.js";
+import { activeLocale, installLocale, type OmcKey, onLocaleSwitch, t, useLocale } from "./i18n.js";
 import type { CSSProperties, FC, ReactNode } from "react";
 import {
   Fragment,
@@ -345,6 +345,73 @@ const DEFAULT_VERBS = [
   "Wrangling",
   "Zesting",
   "Zigzagging",
+] as const;
+
+/** The Chinese stand-in for the CLI's verbs, which exist only in English and are mostly puns
+ *  (Razzle-dazzling, Flibbertigibbeting) that do not survive translation. Not a translation: the same
+ *  register instead, cheeky and mock-grand, kitchen, magic and workshop, so a Chinese reader gets the
+ *  joke the English one does. */
+const ZH_VERBS = [
+  "琢磨中",
+  "捣鼓中",
+  "鼓捣中",
+  "酝酿中",
+  "盘算中",
+  "掐指一算中",
+  "冥思苦想中",
+  "绞尽脑汁中",
+  "抓耳挠腮中",
+  "炼丹中",
+  "文火慢炖中",
+  "爆炒中",
+  "腌制中",
+  "发酵中",
+  "揉面中",
+  "撒葱花中",
+  "施法中",
+  "念咒中",
+  "画符中",
+  "变戏法中",
+  "搓火球中",
+  "开光中",
+  "算卦中",
+  "观星中",
+  "灵光乍现中",
+  "脑洞大开中",
+  "头脑风暴中",
+  "抽丝剥茧中",
+  "顺藤摸瓜中",
+  "精雕细琢中",
+  "妙笔生花中",
+  "运筹帷幄中",
+  "天马行空中",
+  "左思右想中",
+  "融会贯通中",
+  "化繁为简中",
+  "胸有成竹中",
+  "举一反三中",
+  "画龙点睛中",
+  "整活中",
+  "憋大招中",
+  "打怪升级中",
+  "疯狂输出中",
+  "加载灵感中",
+  "充能中",
+  "量子纠缠中",
+  "转圈圈中",
+  "蹦跶中",
+  "嘀咕中",
+  "叽里咕噜中",
+  "手舞足蹈中",
+  "一本正经中",
+  "搬砖中",
+  "敲敲打打中",
+  "修修补补中",
+  "拼乐高中",
+  "打磨中",
+  "抛光中",
+  "煲汤中",
+  "假装很忙中",
 ] as const;
 
 /** Default ping-pong frames, played forward then reversed (~120 ms per frame). */
@@ -914,7 +981,7 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
       else if (action === "resume") {
         const host = r.g.sshBox ? r.g.host : undefined;
         await navigator.clipboard.writeText(resumeCommand(r.s.id, r.s.cwd, host));
-        setMoving(t("common.copied"));
+        setMoving(t("copied"));
         setTimeout(() => setMoving(""), 1600);
       }
     } catch (e) {
@@ -1013,7 +1080,7 @@ function Sessions({ ctx, boxes, close }: SessionsProps) {
         style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}
       >
         <div style={meta}>
-          {loading ? t("common.loading") : t("main.sessions.count", { shown: rows.length, total })}
+          {loading ? t("loading") : t("main.sessions.count", { shown: rows.length, total })}
           {remoteLoading ? t("main.sessions.checkingBoxes") : ""}
         </div>
         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
@@ -1510,7 +1577,7 @@ function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
           setEditing(false);
         }}
       >
-        {t("common.cancel")}
+        {t("cancel")}
       </button>
       <button
         id="dsh-oh-my-claude-settings-save"
@@ -1519,7 +1586,7 @@ function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
         disabled={!canSave}
         onClick={save}
       >
-        {busy ? t("main.settings.saving") : t("common.save")}
+        {busy ? t("main.settings.saving") : t("save")}
       </button>
     </>
   ) : open ? (
@@ -1972,7 +2039,7 @@ function LoginSteps({
               {login.busy ? "…" : t("main.login.submit")}
             </button>
             <button type="button" style={btn} onClick={() => setLogin(null)}>
-              {t("common.cancel")}
+              {t("cancel")}
             </button>
           </div>
         </>
@@ -2659,7 +2726,7 @@ function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
             </button>
             {total > 0 && (
               <button type="button" style={btn} onClick={() => setAdding(false)}>
-                {t("common.cancel")}
+                {t("cancel")}
               </button>
             )}
           </form>
@@ -2979,6 +3046,7 @@ interface UsageWindow {
   resetsAt: number | null;
   severity?: string;
   model?: string;
+  kind?: "session" | "weekly";
 }
 interface UsageCredits {
   enabled: boolean;
@@ -3114,6 +3182,23 @@ const SEGMENT_COLORS = [
   "#6366f1",
 ];
 
+/** The CLI's context category names, which it sends in English only. A name not listed here (one a
+ *  newer CLI adds) shows as sent rather than disappearing. */
+const CATEGORY_KEYS = new Map<string, OmcKey>([
+  ["System prompt", "main.usage.catSystemPrompt"],
+  ["System tools", "main.usage.catSystemTools"],
+  ["MCP tools", "main.usage.catMcpTools"],
+  ["Custom agents", "main.usage.catCustomAgents"],
+  ["Memory files", "main.usage.catMemoryFiles"],
+  ["Skills", "main.usage.catSkills"],
+  ["Messages", "main.usage.catMessages"],
+]);
+/** A context category's name in the reader's language, or the CLI's own name when it is new. */
+const categoryName = (cliName: string): string => {
+  const key = CATEGORY_KEYS.get(cliName);
+  return key ? t(key) : cliName;
+};
+
 /** The meter's own readout, over the CLI's categories: a filled bar and one legend row each. */
 function renderContext(el: HTMLElement, reply: ContextReply) {
   el.replaceChildren();
@@ -3162,7 +3247,7 @@ function renderContext(el: HTMLElement, reply: ContextReply) {
     "aria-label",
     t("main.usage.contextBarLabel", {
       pct: Math.round(reply.percentage),
-      rows: rows.map((c) => `${c.name} ${kTokens(c.tokens)}`).join(", "),
+      rows: rows.map((c) => `${categoryName(c.name)} ${kTokens(c.tokens)}`).join(", "),
     }),
   );
   const legend = document.createElement("div");
@@ -3181,7 +3266,7 @@ function renderContext(el: HTMLElement, reply: ContextReply) {
     dot.style.cssText = `flex:0 0 auto;width:8px;height:8px;border-radius:2px;background:${color}`;
     const rowName = document.createElement("span");
     rowName.style.cssText = "overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
-    rowName.textContent = c.name;
+    rowName.textContent = categoryName(c.name);
     label.append(dot, rowName);
     const val = document.createElement("span");
     val.style.cssText = "font-variant-numeric:tabular-nums;white-space:nowrap";
@@ -3217,6 +3302,14 @@ const appendNote = (el: HTMLElement, note: string) => {
   el.append(note.slice(m.index + whole.length));
 };
 
+/** Anthropic's credits sentence in the reader's language when it is the wording this was written
+ *  against. Other wording shows as the API sent it: a guessed translation of new text would be the
+ *  plugin's account of credits, not Anthropic's. The link inside keeps its address either way. */
+const creditsNote = (note: string): string =>
+  note
+    .replace("Usage credits cover you when you hit your plan limits.", t("main.usage.creditsNote"))
+    .replace("[Learn more](", `[${t("main.usage.learnMore")}](`);
+
 /**
  * Credits sit under the plan windows in the same grammar, but with no bar and no reset: they are a
  * balance, not a window, and a percent here would imply a clock they do not have. The caption is
@@ -3239,7 +3332,7 @@ function creditsRow(c: UsageCredits): HTMLElement {
   if (c.note || c.canPurchase) {
     const caption = document.createElement("span");
     caption.style.cssText = `grid-column:1 / -1;color:${T.faint};font-size:11px;line-height:16px`;
-    if (c.note) appendNote(caption, c.note);
+    if (c.note) appendNote(caption, creditsNote(c.note));
     if (c.canPurchase) {
       if (c.note) caption.append(" ");
       caption.append(extLink(t("main.usage.buyCredits"), "https://claude.ai/settings/usage"));
@@ -3248,6 +3341,17 @@ function creditsRow(c: UsageCredits): HTMLElement {
   }
   return creditsLine;
 }
+
+/** A window's name in the reader's language: the plugin's word for the two plan windows and a
+ *  model's weekly one, and the API's own kind name for a window this code has not met. */
+const windowLabel = (w: UsageWindow): string =>
+  w.kind === "session"
+    ? t("main.usage.window5h")
+    : w.kind === "weekly"
+      ? t("main.usage.windowWeekly")
+      : w.model
+        ? t("main.usage.windowModelWeekly", { model: w.model })
+        : w.label;
 
 /** Fill a block with the usage rows, styled like the meter's own legend rows, or with the error
  *  text when the reply is not ok. */
@@ -3269,7 +3373,7 @@ function renderUsage(block: HTMLElement, reply: UsageReply) {
     usageRow.style.cssText =
       "display:grid;grid-template-columns:1fr auto;align-items:baseline;column-gap:12px;row-gap:3px;padding:3px 0";
     const label = document.createElement("span");
-    label.textContent = w.label;
+    label.textContent = windowLabel(w);
     label.style.cssText = `color:${T.text};font-weight:500`;
     const value = document.createElement("span");
     value.textContent = `${Math.round(pct)}%`;
@@ -3281,7 +3385,7 @@ function renderUsage(block: HTMLElement, reply: UsageReply) {
     bar.setAttribute("aria-valuemax", "100");
     bar.setAttribute(
       "aria-label",
-      t("main.usage.barLabel", { label: w.label, pct: Math.round(pct) }),
+      t("main.usage.barLabel", { label: windowLabel(w), pct: Math.round(pct) }),
     );
     bar.style.cssText = `grid-column:1 / -1;height:4px;border-radius:2px;background:${T.border};overflow:hidden`;
     const fill = document.createElement("div");
@@ -3350,10 +3454,20 @@ const flushScans = () => {
   pendingOverflow = false;
   for (const scan of frameScans) scan(records);
 };
-/** Subscribes the given MutationObserver to document.body for childList and subtree changes. */
+/** Subscribes the given MutationObserver to document.body for added and removed nodes and for text
+ *  rewritten in place. The last one matters: React updates a paragraph whose only child is text by
+ *  setting that text node's value, so a `<p>` reused from prose into a tool header changed without a
+ *  single childList record, and the header stayed bare until a reload swept the page. */
 const observeBody = (observer: MutationObserver) => {
-  observer.observe(document.body, { childList: true, subtree: true });
+  observer.observe(document.body, { childList: true, subtree: true, characterData: true });
 };
+/** The element a record is about: its target, or for a text edit the element holding the text. */
+const recordElement = (rec: MutationRecord): HTMLElement | null =>
+  rec.target instanceof HTMLElement
+    ? rec.target
+    : rec.target.parentElement instanceof HTMLElement
+      ? rec.target.parentElement
+      : null;
 /**
  * The elements a burst touched: each record's target plus whatever it added. A scan handed these
  * covers the same ground as one over `document.body`, because dsh only ever draws through the DOM.
@@ -3362,7 +3476,8 @@ const observeBody = (observer: MutationObserver) => {
 const changedElements = (records: MutationRecord[]): Set<HTMLElement> => {
   const nodes = new Set<HTMLElement>();
   for (const rec of records) {
-    if (rec.target instanceof HTMLElement) nodes.add(rec.target);
+    const el = recordElement(rec);
+    if (el) nodes.add(el);
     for (const node of rec.addedNodes) if (node instanceof HTMLElement) nodes.add(node);
   }
   return nodes;
@@ -3462,7 +3577,7 @@ function watchContextMeter(ctx: ClientCtx) {
     const caption = document.createElement("div");
     caption.style.cssText = `color:${T.faint};font-size:11px;line-height:16px;margin:-2px 0 4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap`;
     const rows = document.createElement("div");
-    rows.textContent = t("common.loading");
+    rows.textContent = t("loading");
     rows.style.color = T.faint;
     // Below the plan bars: the CLI's own context breakdown for this session (item 30), one row
     // per category that holds tokens, deferred tool schemas folded out since they are not in context.
@@ -3542,7 +3657,7 @@ function watchContextMeter(ctx: ClientCtx) {
           return;
         }
         const windows = reply.windows
-          .map((w) => `${w.label.toLowerCase()} ${Math.round(w.usedPercent)}%`)
+          .map((w) => `${windowLabel(w).toLowerCase()} ${Math.round(w.usedPercent)}%`)
           .join(" · ");
         text.textContent = windows
           ? t("main.usage.bubbleWindows", { windows, who })
@@ -3741,31 +3856,32 @@ function watchContextMeter(ctx: ClientCtx) {
   );
 }
 
-let spinnerSettings: Promise<{ verbs: string[]; frameSet: typeof DEFAULT_FRAMES }> | undefined;
-/** Fetch Claude Code's settings.json text and extract spinnerVerbs if present. */
+type SpinnerVerbSetting = { mode: "append" | "replace"; verbs: string[] };
+let spinnerSettings:
+  | Promise<{ setting?: SpinnerVerbSetting; frameSet: typeof DEFAULT_FRAMES }>
+  | undefined;
+/** Fetch Claude Code's settings.json text and extract spinnerVerbs if present. The setting comes
+ *  back unmerged: the defaults it adds to depend on the language when the row is drawn, not when
+ *  the page loaded. */
 const loadSpinnerSettings = async (): Promise<{
-  verbs: string[];
+  setting?: SpinnerVerbSetting;
   frameSet: typeof DEFAULT_FRAMES;
 }> => {
   try {
     const body = await readJson<SettingsFile>(await fetch(`${ROUTE}/settings`));
     const parsed = JSON.parse(body.text);
-    if (!isObj(parsed)) return { verbs: [...DEFAULT_VERBS], frameSet: [...DEFAULT_FRAMES] };
+    if (!isObj(parsed)) return { frameSet: [...DEFAULT_FRAMES] };
     const sv = parsed.spinnerVerbs;
     // SAFETY: spinnerVerbs comes from parsed JSON (a JsonObject); the cast is to read its known keys.
     if (!isObj(sv) || !Array.isArray((sv as { verbs?: unknown }).verbs))
-      return { verbs: [...DEFAULT_VERBS], frameSet: [...DEFAULT_FRAMES] };
+      return { frameSet: [...DEFAULT_FRAMES] };
     // SAFETY: mode is a string key on the JsonObject; we validate the value below.
     const mode = (sv as { mode?: string }).mode;
-    if (mode !== "append" && mode !== "replace")
-      return { verbs: [...DEFAULT_VERBS], frameSet: [...DEFAULT_FRAMES] };
+    if (mode !== "append" && mode !== "replace") return { frameSet: [...DEFAULT_FRAMES] };
     // SAFETY: mode and verbs have been validated above; the cast narrows to the expected shape.
-    return {
-      verbs: mergeVerbs(DEFAULT_VERBS, sv as { mode: "append" | "replace"; verbs: string[] }),
-      frameSet: [...DEFAULT_FRAMES],
-    };
+    return { setting: sv as SpinnerVerbSetting, frameSet: [...DEFAULT_FRAMES] };
   } catch {
-    return { verbs: [...DEFAULT_VERBS], frameSet: [...DEFAULT_FRAMES] };
+    return { frameSet: [...DEFAULT_FRAMES] };
   }
 };
 
@@ -4527,7 +4643,9 @@ function watchTurnStatus(ctx: ClientCtx) {
     // The await used to be unhandled, so a throw inside `wireTurnStatus` became a rejection
     // `guard` never saw: the spinner simply never appeared, with nothing on the console to say why.
     void spinnerSettings.then((settings) => {
-      if (el.isConnected) wireTurnStatus(el, activeId, settings.verbs, settings.frameSet);
+      if (!el.isConnected) return;
+      const defaults = activeLocale().startsWith("zh") ? ZH_VERBS : DEFAULT_VERBS;
+      wireTurnStatus(el, activeId, mergeVerbs(defaults, settings.setting), settings.frameSet);
     }, console.error);
   };
   const scan = (root: HTMLElement) => {
@@ -5245,7 +5363,8 @@ function watchToolFolds() {
       for (const head of node.querySelectorAll<HTMLElement>(MARKDOWN_P)) heads.add(head);
     };
     for (const rec of records) {
-      take(rec.target);
+      const el = recordElement(rec);
+      if (el) take(el);
       for (const node of rec.addedNodes) take(node);
     }
     return heads;
@@ -7725,8 +7844,8 @@ function ClaudeUpdateCard({
         </button>
         <button
           type="button"
-          aria-label={phase === "idle" ? t("main.update.dismissNextRelease") : t("common.close")}
-          title={phase === "idle" ? t("main.update.dismissNextRelease") : t("common.close")}
+          aria-label={phase === "idle" ? t("main.update.dismissNextRelease") : t("close")}
+          title={phase === "idle" ? t("main.update.dismissNextRelease") : t("close")}
           onClick={() => dismiss()}
           style={{ ...iconBtn, color: T.muted, fontSize: 12 }}
         >
@@ -7957,7 +8076,7 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
       )}
       {limitCard && (
         <LimitCard
-          label={limitCard.label}
+          label={windowLabel(limitCard)}
           resetsAt={limitCard.resetsAt}
           // The reset time is the key: a later limit, or the same one after it resets, shows again.
           onDismiss={() => limitCard.resetsAt !== null && setLimitDismissed(limitCard.resetsAt)}
@@ -8030,7 +8149,7 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
                   fontSize: 11,
                 }}
               >
-                {copied === it.id ? t("common.copied") : t("common.copy")}
+                {copied === it.id ? t("copied") : t("copy")}
               </button>
               <button
                 type="button"
