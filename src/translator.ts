@@ -9,7 +9,7 @@ import { NATIVE_TOOL_MAP, TurnRecord, commandNames, finishReason } from "./adapt
 import { suggestRule } from "./permissions.js";
 import type { JsonValue } from "./dsh.js";
 import { pluginErrorsOf, type PluginLoadError } from "./plugins.js";
-import { serverText, type ServerKey } from "./locale.js";
+import { serverIsChinese, serverText, type ServerKey } from "./locale.js";
 
 // ---------------------------------------------------------------------------
 // stream-json → dsh chunks (moved from src/adapter.ts)
@@ -434,6 +434,14 @@ export function resetClock(
       : away <= 7 * 24 * 60 * 60 * 1000
         ? { weekday: "short", ...clock }
         : { month: "short", day: "numeric", ...clock };
+  // In Chinese the clock is 24-hour with 周一 and 9月8日, the way a Chinese reader writes it; the
+  // English trims ":00" and lowercases am/pm to match the CLI's own banner.
+  if (serverIsChinese()) {
+    const zh = new Date(ms)
+      .toLocaleString("zh-CN", { ...opts, hour: "2-digit", hour12: false })
+      .replace(/^(周.)(?=\d)/, "$1 ");
+    return `${zh} (${zone})`;
+  }
   const text = new Date(ms)
     .toLocaleString("en-US", opts)
     .replace(":00", "")

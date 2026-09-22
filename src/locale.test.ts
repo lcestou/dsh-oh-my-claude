@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { bindServerLocale, serverIsChinese, serverText } from "./locale.js";
-import { HEADER_MARK, formatToolCall, formatToolResult } from "./translator.js";
+import { HEADER_MARK, formatToolCall, formatToolResult, resetClock } from "./translator.js";
 
 // Unbound (a test, an older dsh): English, placeholders filled.
 assert.equal(serverText("planApprove"), "Approve");
@@ -54,4 +54,16 @@ assert.equal(
     formatToolCall("read", "{}").startsWith(`▤${HEADER_MARK} Read`),
     "English when unbound",
   );
+}
+
+// Reset times in the limit lines read the Chinese way when the stored language is Chinese.
+{
+  const at = Date.parse("2026-09-24T15:00:00Z");
+  const dispose = bindServerLocale(reader("zh"));
+  const zh = resetClock(at, "UTC");
+  dispose();
+  const en = resetClock(at, "UTC");
+  assert.ok(/周|月/.test(zh) || /\d{1,2}:\d{2}/.test(zh), `Chinese clock: ${zh}`);
+  assert.ok(!/[ap]m/.test(zh), "no am/pm in Chinese");
+  assert.ok(/[ap]m/.test(en), `English keeps am/pm: ${en}`);
 }
