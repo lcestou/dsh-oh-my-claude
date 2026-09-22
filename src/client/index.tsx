@@ -8048,7 +8048,9 @@ function ClaudeUpdateCard({
   const [outcome, setOutcome] = useState<UpdateOutcome | null>(null);
   const where = update.host ? update.label : t("main.boxes.thisBoxLower");
   const Where = update.host ? update.label : t("main.sessions.thisBox");
-  const url = `${ROUTE}/claude-update?session=${encodeURIComponent(sessionId)}`;
+  // `host` is the box this card is about, so its Update button never lands on another one: the
+  // card is drawn from the picked mount, and the run has to follow the card.
+  const url = `${ROUTE}/claude-update?session=${encodeURIComponent(sessionId)}&host=${encodeURIComponent(update.host)}`;
   const fail = (note: string) => {
     setOutcome({ ok: false, from: update.installed, to: null, note });
     setPhase("failed");
@@ -8343,7 +8345,17 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
     let alive = true;
     const fetchItems = async () => {
       try {
-        const r = await fetch(`${ROUTE}/side-questions?session=${encodeURIComponent(sessionId)}`);
+        // `provider` is the mount the model picker names, so the update card reports the Claude
+        // Code that was chosen rather than whichever box this session's turns happen to run on.
+        // Switching model repoints the card on the next poll. The read is one store snapshot on a
+        // poll that was already happening: no extra request, and the server answers it with a map
+        // lookup against updaters its own tick keeps fresh, so nothing here probes a box.
+        const picked = claudeProviderOf(ctx, sessionId);
+        const r = await fetch(
+          `${ROUTE}/side-questions?session=${encodeURIComponent(sessionId)}${
+            picked === undefined ? "" : `&provider=${encodeURIComponent(picked)}`
+          }`,
+        );
         if (!r.ok) return;
         // SAFETY: our own JSON route; the union names both shapes the caller checks.
         const body = (await r.json()) as

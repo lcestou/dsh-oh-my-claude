@@ -1725,6 +1725,29 @@ export function registerSessionRoutes(
   /** The box a request is about: the session's own mount when it named one, else this instance. */
   const boxOf = (url: URL): MountBox =>
     instanceFor?.(url.searchParams.get("provider")) ?? { configDir, command, sshHost };
+  /**
+   * The box whose Claude Code an update card is about: the mount the session's model picker names,
+   * so the card and its Update button follow the CLI you chose.
+   *
+   * Not the box the turn runs on. Those differ in a remote workspace, whose turns go to its box
+   * whichever mount answers: keying the card to that made it report a version the person had not
+   * selected, in a session where they had deliberately picked another (owner, 2026-09-22). The
+   * picker is the choice; the card reports on the choice.
+   *
+   * A provider that names no box, and a request that names no provider, both mean this box.
+   */
+  const updateBoxOf = (url: URL, sessionId: string | null) => {
+    const named = url.searchParams.get("provider");
+    if (named !== null) {
+      const host = instanceFor?.(named)?.sshHost ?? "";
+      // The box's saved name when an updater already knows it ("Lilly"), its ssh host otherwise.
+      return host
+        ? { host, label: updaters.get(host)?.state().label ?? host }
+        : { host: "", label: hostname() };
+    }
+    const own = sessionId === null ? undefined : boxOfSession?.(sessionId);
+    return own ?? { host: "", label: hostname() };
+  };
   /** The remote workspaces, as the routes below last wrote them; seeded from disk at registration. */
   let remoteWorkspaces: RemoteWorkspace[] = [];
   /** One writer at a time on remote-workspaces.json. POST, DELETE, a box removal and the GET
@@ -2885,9 +2908,7 @@ export function registerSessionRoutes(
                 const box =
                   hostParam !== null
                     ? { host: hostParam, label: saved?.name ?? hostname() }
-                    : sid && boxOfSession
-                      ? boxOfSession(sid)
-                      : undefined;
+                    : updateBoxOf(url, sid);
                 if (!box) return json(res, 404, { error: "no updater" });
                 const u = updaterFor(box.host, box.label);
                 if (req.method === "GET") {
@@ -3014,9 +3035,9 @@ export function registerSessionRoutes(
                 const sid = url.searchParams.get("session");
                 if (!sid) return json(res, 400, { error: "session param required" });
                 const items: AsideEntry[] = sideQuestions?.get(sid) ?? [];
-                const box = boxOfSession?.(sid);
+                const box = updateBoxOf(url, sid);
                 // The hints file is read only while a card would show, not on every 3 s poll.
-                const card = box ? cardFor(updaters.get(box.host)?.state()) : null;
+                const card = cardFor(updaters.get(box.host)?.state());
                 return json(res, 200, {
                   items,
                   loginNeeded: loginNeeded?.get(sid) ?? null,

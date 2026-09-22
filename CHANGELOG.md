@@ -31,6 +31,15 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 - The plugin carries its own mark and its own name into dsh's Plugins page, where dsh 0.1.7 draws a
   card per installed plugin. Before this it took the default artwork every plugin without one gets.
 
+### Changed
+
+- The Claude Code update card is about the Claude Code you picked. It followed the box a session's
+  turns run on, which in a remote workspace is that box whichever model is selected, so a session
+  deliberately set to this machine's Claude was offered the other one's update. It now reads the
+  model picker, switches with it on the next poll, and its Update button acts on the box the card
+  names. No extra request and no extra probe: the poll was already running and the server answers
+  from the updater its own half-hourly tick keeps fresh.
+
 ### Fixed
 
 - An SSH box reports its own Claude Code again. Every box probe was run with this box's resolved
