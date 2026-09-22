@@ -6248,7 +6248,9 @@ const probeLogin = (adapter: ClaudeCodeAdapter) => {
 
 /** The entry point dsh calls: build the adapter, register its provider and adapter, probe the login, and pin the instance on globalThis so a re-instantiation at boot shares the one already running. */
 export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Config>) {
-  bindServerLocale(ctx.get("settings"));
+  // Looked up on every read: `settings` is not in `inject`, so at apply it may not be mounted yet, and
+  // a reference taken now stays undefined for the life of the process (every header wrote English).
+  bindServerLocale({ get: (ns) => ctx.get("settings")?.get(ns) });
   const adapter = new ClaudeCodeAdapter(ctx, config);
   const claudeHome = adapter.claudeHome;
   ctx.llm.registerConfigurableProviders([
