@@ -39,6 +39,9 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 - Picking a permission mode marks the menu at once. The pick used to sit on the old mode for the
   second or so the change takes, which read as a click that had not landed; a change that fails
   now puts the real mode back.
+- The result of a tool dsh ran for Claude is read back on dsh 0.1.7, which answers it as a message
+  of its own rather than a block inside a user message. Without this the relay saw no result and
+  the turn waited on one that had already arrived.
 - A transcript brought in through Import is readable on dsh 0.1.7. Its log was stamped version 3
   while 0.1.7 writes and expects version 4, and that dsh refuses a file whose name and header
   disagree. The version is read from dsh itself now.

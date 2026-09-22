@@ -470,6 +470,10 @@ export type LooseMessage = {
         name?: string;
     };
     content?: string | ContentBlock[];
+    /** dsh 0.1.7 answers a tool result as its own `role: "tool"` message and carries the call id on
+     *  the message; up to 0.1.6 it was a user message holding a `tool-result` block. */
+    toolCallId?: string;
+    isError?: boolean;
 };
 /** The browser's IANA zone as dsh stamped it on the latest user prompt; undefined when no
  *  prompt carried one (an API caller, an old log), so clocks fall back to the box's zone. */
