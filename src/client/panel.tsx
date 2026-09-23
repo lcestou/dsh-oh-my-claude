@@ -55,7 +55,6 @@ import { ReportBlock } from "./report.js";
 import { t, useLocale, type OmcKey } from "./i18n.js";
 import { Menu, Tooltip } from "@deepseek-ai/dsh-client-ui-primitives";
 import {
-  IconCheckOutlineMedium,
   IconChevronDownOutlineRegular,
   IconSparkleMedium,
   PermissionIconFullAccessRegular,
@@ -4400,11 +4399,7 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
 const ACCESS_TRIGGER_CSS =
   "[data-omc-access-trigger]:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}" +
   "[data-omc-access-trigger]:focus-visible{box-shadow:0 0 0 2px var(--dsw-alias-border-l3)}" +
-  // A menu row takes dsh's `.item` hover and keyboard fill; the ring would double the fill.
-  "[data-omc-access-row]:hover,[data-omc-access-row]:focus-visible{background:var(--dsw-alias-interactive-bg-hover);outline:none}" +
-  // dsh's `.itemIcon svg` and `.check` are 14 px; the glyph components draw at their own size.
-  "[data-omc-access-row] svg{width:14px;height:14px}" +
-  // dsh's `.triggerIcon svg`: the capsule's glyph is 14 px too.
+  // dsh's `.triggerIcon svg`: the capsule's glyph is 14 px, like the glyph cell in its menu rows.
   "[data-omc-access-trigger]>span:first-child svg{width:14px;height:14px}";
 
 /**
@@ -4445,60 +4440,6 @@ const accessTriggerStyle: CSSProperties = {
   fontWeight: 500,
   lineHeight: 20,
   display: "inline-flex",
-};
-/** A menu row: full width, unstyled button that dsh's card surface frames; the checked one takes
- *  the accent and a check. */
-const accessRowStyle: CSSProperties = {
-  // dsh's Menu `.item` cell, copied: its class is a build hash, so the numbers live here.
-  display: "flex",
-  alignItems: "center",
-  width: "100%",
-  minHeight: 34,
-  gap: 6,
-  padding: "6px 8px",
-  borderRadius: 8,
-  background: "transparent",
-  border: "none",
-  cursor: "pointer",
-  color: "var(--dsw-alias-label-primary)",
-  font: "inherit",
-  fontSize: 13,
-  lineHeight: "20px",
-  textAlign: "start",
-};
-/** dsh's `.itemIcon` cell: a 14 px box in the tertiary label colour, ahead of the label. */
-const accessRowGlyphStyle: CSSProperties = {
-  display: "inline-flex",
-  alignItems: "center",
-  justifyContent: "center",
-  width: 14,
-  height: 14,
-  flex: "none",
-  color: "var(--dsw-alias-label-tertiary)",
-};
-/** dsh's `.itemLabel`: takes the width, clips long text. */
-const accessRowLabelStyle: CSSProperties = {
-  flex: 1,
-  minWidth: 0,
-  overflow: "hidden",
-  textOverflow: "ellipsis",
-  whiteSpace: "nowrap",
-};
-/** dsh's trailing `.check` cell, reserved on every row so the labels sit still when the pick moves. */
-const accessRowCheckStyle: CSSProperties = {
-  display: "inline-flex",
-  alignItems: "center",
-  justifyContent: "flex-end",
-  width: 14,
-  height: 14,
-  flex: "none",
-  color: "var(--dsw-alias-label-primary)",
-};
-/** The refused-mode note and the pick error, in dsh's menu card body text. */
-const accessNoteStyle: CSSProperties = {
-  ...meta,
-  color: "var(--dsw-alias-label-tertiary)",
-  padding: "4px 12px 10px",
 };
 
 /**
@@ -4612,15 +4553,37 @@ export function AccessTrigger({ sessionId, ctx }: { sessionId: string; ctx: Clie
   };
 
   const chevronOpen = open ? { transform: "rotate(180deg)" } : undefined;
+  // The six rows go to dsh's Menu as data, the way dsh's own permission control hands it its three:
+  // dsh draws the glyph cell, the label and the trailing check with its own classes, so the rows
+  // track dsh's menu styling on every line instead of a copy of its numbers. The refused note and
+  // a pick error ride in the footer as heading rows, dsh's small grey text under a hairline.
+  const items = MODE_KEYS.map((m) => ({
+    id: m,
+    icon: <ModeGlyph mode={m} />,
+    label: bypassRefusedIn !== "" && m === "bypassPermissions" ? `${modeLabel(m)} ⚠` : modeLabel(m),
+  }));
+  const footer = [
+    ...(bypassRefused
+      ? [
+          {
+            type: "label" as const,
+            id: "refused",
+            text: t("panel.access.fullAccessRefused", { scope: bypassRefusedIn }),
+          },
+        ]
+      : []),
+    ...(error ? [{ type: "label" as const, id: "error", text: error }] : []),
+  ];
   const accessMenuProps = {
     open,
     onClose: () => setOpen(false),
     side: "top" as const,
     portal: true,
-    // The pinned primitives type (0.1.2-rc.1) requires these; dsh's own bundle (0.1.7) renders
-    // `children` over them, so an empty list and a no-op callback are harmless at runtime.
-    items: [],
-    onSelect: () => {},
+    items,
+    selectedId: mode,
+    onSelect: pick,
+    // An empty footer would still draw dsh's hairline above nothing.
+    footer: footer.length > 0 ? footer : undefined,
     anchor: (
       <button
         type="button"
@@ -4656,44 +4619,6 @@ export function AccessTrigger({ sessionId, ctx }: { sessionId: string; ctx: Clie
         )}
         <IconChevronDownOutlineRegular aria-hidden style={chevronOpen} />
       </button>
-    ),
-    children: (
-      <div role="presentation">
-        {MODE_KEYS.map((m, i) => {
-          const rowRefused = bypassRefusedIn !== "" && m === "bypassPermissions";
-          const checked = mode === m;
-          return (
-            <button
-              key={m}
-              type="button"
-              role="menuitemradio"
-              aria-checked={checked}
-              aria-setsize={MODE_KEYS.length}
-              aria-posinset={i + 1}
-              onClick={() => pick(m)}
-              data-omc-access-row=""
-              style={accessRowStyle}
-            >
-              <span aria-hidden style={accessRowGlyphStyle}>
-                <ModeGlyph mode={m} />
-              </span>
-              <span style={accessRowLabelStyle}>
-                {modeLabel(m)}
-                {rowRefused && <span aria-hidden> ⚠</span>}
-              </span>
-              <span aria-hidden style={accessRowCheckStyle}>
-                {checked && <IconCheckOutlineMedium size={14} />}
-              </span>
-            </button>
-          );
-        })}
-        {bypassRefused && (
-          <div style={accessNoteStyle}>
-            {t("panel.access.fullAccessRefused", { scope: bypassRefusedIn })}
-          </div>
-        )}
-        {error && <div style={accessNoteStyle}>{error}</div>}
-      </div>
     ),
   };
   return <Menu {...accessMenuProps} />;
