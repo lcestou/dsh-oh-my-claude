@@ -291,6 +291,20 @@ export const btn: CSSProperties = {
   lineHeight: 1.5,
   whiteSpace: "nowrap",
 };
+/** A list row that happens to be a button (a transcript, a memory file, a prompt to rewind to, a
+ *  changed file): dsh's own rows draw no box at rest and tint under the pointer, so this one keeps
+ *  `btn`'s metrics with a transparent border. Transparent, not none, so the row does not move when
+ *  the focus ring or a hover state lands on it. Eight rows each in their own hairline box read as
+ *  "a background border behind every item" (owner, 2026-09-23). */
+export const rowBtn: CSSProperties = {
+  ...btn,
+  border: "1px solid transparent",
+  display: "flex",
+  alignItems: "center",
+  width: "100%",
+  textAlign: "left",
+  padding: "5px 10px",
+};
 export const btnPrimary: CSSProperties = {
   ...btn,
   background: "var(--dsw-alias-label-primary, #eee)",

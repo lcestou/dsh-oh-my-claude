@@ -6,8 +6,19 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Added
+
+- Claude's working line (spinner, verb, figures) repeats above the composer once the turn's own
+  header has scrolled off screen or is not drawn. dsh 0.1.7 keeps that line in the turn header,
+  which a long run of tool cards pushes out of view, and on a long turn the header sits above the
+  "Load earlier" fold and is not drawn at all. A switch in Settings > Oh My Claude keeps the copy
+  above the composer for the whole turn.
+
 ### Changed
 
+- The list rows in the ✻ panel's tabs (transcripts to restore, memory files, instructions, prompts
+  to rewind to, changed files) no longer sit in their own hairline box; like dsh's rows they are
+  bare at rest and tint under the pointer.
 - Less work per frame and per poll. The status line no longer forces a style recalc or walks the
   page eight times a second; the row mask for withheld context re-runs only when rows are added,
   not on every streamed chunk; the cost pill, the send-button tint and the panel's fit-above
@@ -63,6 +74,9 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
   pointer, the way dsh's own rows do, instead of turning their border orange. In dark mode the
   faint hairline going orange read as a border appearing on whatever was hovered, on every tab.
   The orange border is now the keyboard focus ring only.
+- Claude's working line in the turn header no longer vanishes mid-turn, leaving dsh's "Deep
+  diving 12s" for the rest of the run. The plugin read the header's fold state as "the turn ended";
+  dsh folds a live group on its own, and the line came down and never came back.
 - The permission capsule no longer catches clicks far above and below itself. Its label had a
   line height of 260 px inside a 28 px button, so a click in the composer near it opened the menu.
 

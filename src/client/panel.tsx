@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import {
   btn,
   btnPrimary,
+  rowBtn,
   errText,
   stateText,
   sectionHead,
@@ -194,12 +195,7 @@ function TranscriptRow({
     <button
       type="button"
       style={{
-        ...btn,
-        display: "flex",
-        alignItems: "center",
-        width: "100%",
-        textAlign: "left",
-        padding: "5px 10px",
+        ...rowBtn,
         overflow: "hidden",
       }}
       onClick={async () => {
@@ -506,11 +502,7 @@ function MemoryBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
             key={f.name}
             type="button"
             style={{
-              ...btn,
-              display: "flex",
-              width: "100%",
-              textAlign: "left",
-              padding: "5px 10px",
+              ...rowBtn,
             }}
             onClick={() => openFile(f.name)}
           >
@@ -1699,11 +1691,7 @@ function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCt
             key={f.path}
             type="button"
             style={{
-              ...btn,
-              display: "flex",
-              width: "100%",
-              textAlign: "left",
-              padding: "5px 10px",
+              ...rowBtn,
             }}
             onClick={() => openFile(f)}
           >
@@ -1895,11 +1883,7 @@ function RewindBody({
               key={p.id}
               type="button"
               style={{
-                ...btn,
-                display: "flex",
-                width: "100%",
-                textAlign: "left",
-                padding: "5px 10px",
+                ...rowBtn,
               }}
               onClick={() => pick(p)}
             >
@@ -2171,11 +2155,7 @@ function ChangesBody({
               key={f.path}
               type="button"
               style={{
-                ...btn,
-                display: "flex",
-                width: "100%",
-                textAlign: "left",
-                padding: "5px 10px",
+                ...rowBtn,
                 fontFamily: "monospace",
               }}
               onClick={() => {

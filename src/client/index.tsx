@@ -4088,10 +4088,11 @@ const TURN_ROW_SELECTOR = '[role="status"][aria-live="polite"], button[data-turn
  */
 const turnStatusRow = (found: HTMLElement): HTMLElement | undefined => {
   if (found.matches("button[data-turn-process]")) {
-    if (found.getAttribute("data-open") !== "true") return undefined;
-    // A group whose turn ended keeps `data-open` when it failed or was stopped, and the scanner
-    // runs on every frame: without this mark every teardown was followed by a fresh line with a
-    // fresh verb, which is what read as "the verb keeps going" (owner, 2026-09-22, twice).
+    // Folded or not: `data-open` is the chevron, and a live group folds on its own. Whether the
+    // turn runs is the caller's question (list store plus newest group), asked before this.
+    // A group whose turn ended is marked done at teardown, and the scanner runs on every frame:
+    // without the mark every teardown was followed by a fresh line with a fresh verb, which is
+    // what read as "the verb keeps going" (owner, 2026-09-22, twice).
     if (found.hasAttribute("data-omc-turn-done")) return undefined;
     const label = found.querySelector<HTMLElement>(":scope > span:not([data-omc-turn-line])");
     if (label === null) return undefined;
@@ -4197,14 +4198,10 @@ const wireTurnStatus = (
         stop();
         return;
       }
-      // 0.1.7 keeps the group's button on screen after the turn, relabelled "Took 12s". That is a
-      // record, not a status, so the plugin's line comes down and dsh's own sentence goes back up.
-      const group = el.closest("button[data-turn-process]");
-      if (group !== null && group.getAttribute("data-open") !== "true") {
-        stop();
-        stopTurnLine(el);
-        return;
-      }
+      // The turn's end is `endedPerDsh` below, on the poll. It used to be read here from the
+      // group's `data-open`, which is dsh's fold state (the chevron), not whether the turn runs:
+      // dsh folds a live group on its own, the line came down mid-turn, the group was marked done
+      // and dsh's "Deep diving 12s" stayed up for the rest of it (owner, 2026-09-23).
       // Nothing to paint for a tab nobody is looking at; the teardown checks above still run.
       if (document.hidden) return;
       tick();
@@ -4754,6 +4751,118 @@ function movePickerToFallback(ctx: ClientCtx, sessionId: string, rec: FallbackRe
   const living = livingModelId(rec.to, offered);
   if (living && dir.select)
     void dir.select({ provider: cur.provider, model: living }).catch(() => {});
+}
+
+/**
+ * The turn's working line a second time, above the composer, in dsh's `conversation.input.dock`.
+ * dsh 0.1.7 keeps the line in the turn's header, which a long run of tool cards scrolls away, and
+ * on a long turn the header is not drawn at all: dsh builds it from the turn's start event, which
+ * sits above the "Load earlier" fold until that is clicked (the tail slot has the same blind spot,
+ * so the dock it is; measured 2026-09-23 on a nine-turn session: no header, no status row, no tail
+ * node in a fresh tab). dsh also took down the status bar older builds kept at the bottom. This is
+ * the same line, wired by `wireTurnStatus` the way the header's is (spinner, verb, figures), so the
+ * verb is the one the header picked (kept per session) and the bracket comes from the same route.
+ * Shown while the header's line is off screen or not drawn, or for the whole turn with the
+ * `dockStatusAlways` hint, and only under the Claude look's row switch.
+ * ponytail: with the header on the page too, both lines poll the live-turn route once a second; the
+ * server-push pass replaces both polls with one subscription.
+ */
+function DockStatus({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
+  const [always] = useHintFlag("dockStatusAlways");
+  const [running, setRunning] = useState(false);
+  const [headerAway, setHeaderAway] = useState(false);
+  const line = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    const read = () =>
+      setRunning(
+        ctx.sessions.list.getSnapshot()?.byId[sessionId]?.running === true &&
+          isClaudeSession(ctx, sessionId),
+      );
+    read();
+    return ctx.sessions.list.subscribe?.(read);
+  }, [ctx, sessionId]);
+  // The header's own verb line, when dsh drew the turn header at all: watched for leaving the
+  // viewport. Keyed on the visible line inside the process button, never on TURN_MARK: the global
+  // status watcher also stamps that mark on dsh's 1px hidden announcer span, which is present even
+  // when no header is drawn, so keying on it left the dock thinking a header was on screen and
+  // hiding (measured 2026-09-23). Polled rather than observed, since the header mounts a beat after
+  // the dock and dsh's virtual list drops and redraws it as the column scrolls. The dock's own line
+  // sits in `[data-omc-dock-status]` and is excluded.
+  useEffect(() => {
+    if (!running) return;
+    let watching: Element | null = null;
+    let obs: IntersectionObserver | undefined;
+    const find = () => {
+      const header = document.querySelector<HTMLElement>(
+        "button[data-turn-process] [data-omc-turn-line]",
+      );
+      // No visible header line: the dock is the only place the verb shows. Set unconditionally,
+      // never guarded by `header === watching`: on the first run both are null, and the guard used
+      // to return before `setHeaderAway(true)` ever ran, so the dock stayed hidden all turn.
+      if (header === null) {
+        obs?.disconnect();
+        obs = undefined;
+        watching = null;
+        setHeaderAway(true);
+        return;
+      }
+      if (header === watching) return;
+      obs?.disconnect();
+      watching = header;
+      obs = new IntersectionObserver(([e]) => setHeaderAway(e !== undefined && !e.isIntersecting));
+      obs.observe(header);
+    };
+    find();
+    const timer = setInterval(find, 500);
+    return () => {
+      clearInterval(timer);
+      obs?.disconnect();
+    };
+  }, [running]);
+  const shown = running && hasTheme("row") && (always || headerAway);
+  useEffect(() => {
+    if (!shown) return;
+    const el = line.current;
+    if (el === null) return;
+    spinnerSettings ??= loadSpinnerSettings();
+    let live = true;
+    void spinnerSettings.then((settings) => {
+      if (!live || !el.isConnected) return;
+      const defaults = activeLocale().startsWith("zh") ? ZH_VERBS : DEFAULT_VERBS;
+      wireTurnStatus(
+        el,
+        sessionId,
+        mergeVerbs(defaults, settings.setting),
+        settings.frameSet,
+        () => ctx.sessions.list.getSnapshot()?.byId[sessionId]?.running === true,
+      );
+    }, console.error);
+    // The beat inside `wireTurnStatus` stops on its own once the span leaves the document, which
+    // React does when `shown` flips; the mark is cleared so a re-show wires a fresh line.
+    return () => {
+      live = false;
+      el.removeAttribute(TURN_MARK);
+    };
+  }, [shown, sessionId, ctx]);
+  if (!shown) return null;
+  // Hidden from assistive tech: dsh's own status row already announces the turn, and this repeats it.
+  return (
+    <div
+      data-omc-dock-status=""
+      aria-hidden="true"
+      style={{ display: "flex", alignItems: "center", minWidth: 0, padding: "0 12px 4px" }}
+    >
+      {/* The seed text is replaced by the verb before the next frame; the line's font is dsh's
+          secondary size, the one the header's label uses. */}
+      <span
+        ref={line}
+        data-omc-turn-line="1"
+        style={{ fontSize: "var(--dsh-content-font-size-secondary, 13px)", lineHeight: "24px" }}
+      >
+        …
+      </span>
+    </div>
+  );
 }
 
 /** Wire a running turn's status: attach dsh's [role=status][aria-live=polite] element to this
@@ -7281,6 +7390,32 @@ function WorkspaceModelSwitch() {
   );
 }
 
+/** Settings > Oh My Claude: the working line above the composer shows once the turn's own header
+ *  has scrolled off or was never drawn; on, it stays there for the whole turn. */
+function DockStatusSwitch() {
+  useLocale();
+  const [on, setOn] = useHintFlag("dockStatusAlways");
+  return (
+    <div
+      data-omc-dock-status-switch=""
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
+        fontSize: 13,
+        marginBottom: 12,
+      }}
+    >
+      <div>
+        <div>{t("main.settingsUi.dockStatusTitle")}</div>
+        <div style={{ color: T.faint, fontSize: 12 }}>{t("main.settingsUi.dockStatusDesc")}</div>
+      </div>
+      <Switch on={on} onChange={setOn} label={t("main.settingsUi.dockStatusTitle")} />
+    </div>
+  );
+}
+
 /**
  * The settings switch between dsh's native tool rows and inline text for Claude's tool activity.
  * A bridge setting, not a Claude Code one, which is why it sits here and not in the Tune tab.
@@ -9064,6 +9199,7 @@ export function apply(ctx: ClientCtx) {
         <LimitWarningsSwitch />
         <WorkspaceModelSwitch />
         <ToolRowsSwitch />
+        <DockStatusSwitch />
         {/* The switches that start off sit together after the ones that start on, so the card reads
             as what the plugin does by default first, then what you can add to it. The proxy control
             keeps company with them rather than with the spend field it used to precede: it answers
@@ -9155,6 +9291,12 @@ export function apply(ctx: ClientCtx) {
 
   // `/btw` answers dock above the composer beside dsh's todo and goal panels, at their width.
   ctx.slots.inject("conversation.input.dock", () => {
+    // The working line again, above the composer, while the turn header's is off screen or not
+    // drawn. Lowest order of the dock so it sits nearest the chat, the way a status bar did.
+    ctx.slots.register(
+      { name: "conversation.input.dock", id: "claude-dock-status", order: 42 },
+      (props) => (props.sessionId ? <DockStatus sessionId={props.sessionId} ctx={ctx} /> : null),
+    );
     ctx.slots.register(
       { name: "conversation.input.dock", id: "claude-aside", order: 45 },
       (props) => (props.sessionId ? <AsideBubble sessionId={props.sessionId} ctx={ctx} /> : null),

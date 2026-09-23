@@ -364,6 +364,9 @@ export const en = {
   "main.settingsUi.toolRowsTitle": "Native tool rows",
   "main.settingsUi.toolRowsDesc":
     "Show Claude's tool calls as dsh's own tool cards, with the text streaming between them, instead of as text inside its message. Box-wide, from your next message. Off is inline text, which never depends on dsh's log format.",
+  "main.settingsUi.dockStatusTitle": "Working line always above the composer",
+  "main.settingsUi.dockStatusDesc":
+    "Claude's working line (spinner, verb, figures) repeats above the composer once the turn's own header has scrolled off screen or is not drawn yet. On, it stays there for the whole turn.",
   "main.settingsUi.wsModelTitle": "Remember model per workspace",
   "main.settingsUi.wsModelDesc":
     "A new session in a workspace opens on the Claude it last ran there: the same box and the same model. A blank session you have already switched by hand is left as you set it.",
@@ -807,6 +810,9 @@ export const zh = {
   "main.settingsUi.toolRowsTitle": "原生工具卡片",
   "main.settingsUi.toolRowsDesc":
     "把 Claude 的工具调用显示为 dsh 自己的工具卡片，文本在卡片之间流式显示，而不是作为消息内的文本。整机生效，从你的下一条消息起。关闭则为内联文本，它从不依赖 dsh 的日志格式。",
+  "main.settingsUi.dockStatusTitle": "工作状态行始终显示在输入框上方",
+  "main.settingsUi.dockStatusDesc":
+    "当本轮的标题滚出屏幕或尚未绘制时，Claude 的工作状态行（转轮、动词、数据）会在输入框上方重复显示。开启后整轮期间都显示在那里。",
   "main.settingsUi.wsModelTitle": "按工作区记住模型",
   "main.settingsUi.wsModelDesc":
     "工作区中的新会话会以它上次运行的 Claude 打开：同一台机器、同一个模型。你已手动切换过的空白会话保持你的选择。",
