@@ -5,6 +5,7 @@ import {
   contextDrops,
   CONTEXT_SOURCES,
   maskedRows,
+  sourceBlockOf,
   TOGGLEABLE,
 } from "./context-sources.js";
 
@@ -81,3 +82,13 @@ assert.equal(maskedRows(order, node, contextDrops({})).includes("typed"), false)
 assert.deepEqual(maskedRows(["gone"], node, contextDrops({})), []);
 
 console.log("context-sources.test.ts: ok");
+
+// Session format v4 renames dsh's system prompt source from the `plugin` wrapper to
+// `runtime-context`; both name the runtime block. The plugin's own v4 notice kind names none.
+assert.equal(sourceBlockOf({ kind: "runtime-context" }), "runtime");
+assert.equal(
+  sourceBlockOf({ kind: "plugin", plugin: "@deepseek-ai/dsh-system-prompt" }),
+  "runtime",
+);
+assert.equal(sourceBlockOf({ kind: "plugin:dsh-oh-my-claude" }), undefined);
+assert.equal(sourceBlockOf(undefined), undefined);

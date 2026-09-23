@@ -742,17 +742,32 @@ export declare function finishReason(result: ResultFrame, hostLabel?: string): F
  * Tool calls and results are shown as reasoning blocks: the CLI runs its own tools, dsh only watches.
  */
 /** The `kind` dsh's loop puts on an abort reason ("disposed" on shutdown), else undefined. */
-/** The source a wake notice carries: user only when a restart notice must rearm an active goal. */
-export declare function noticeSource(text: string, goalActive: boolean): {
+/** The producer-owned source kind dsh's session format v4 gives this plugin's own messages. v4
+ *  (`dsh-session-format-v3-to-v4`, `source()`) refuses any appended message whose `kind` is the
+ *  retired `"plugin"` wrapper with "format v4 message requires a producer-owned source kind"; its
+ *  migrator lifts `{ kind: "plugin", plugin: X }` to `{ kind: "plugin:X" }`, and a native v4 append
+ *  must already carry that shape. */
+export declare const OWN_SOURCE_KIND = "plugin:dsh-oh-my-claude";
+/** Whether a logged source is one of this plugin's own, in either the v3 wrapper or the v4 kind. */
+export declare const isOwnSource: (source: {
+    kind?: string;
+    plugin?: string;
+} | undefined) => boolean;
+/** The source a wake notice carries: user only when a restart notice must rearm an active goal.
+ *  `logVersion` is the session log's `header.version`; from 4 up the notice carries the
+ *  producer-owned kind, since the v3 wrapper fails the turn it is appended to (seen 2026-09-23 on
+ *  dsh 0.1.7-alpha.2: the restart notice itself was the turn that died). */
+export declare function noticeSource(text: string, goalActive: boolean, logVersion?: number): {
     readonly kind: "user";
-    readonly plugin?: undefined;
-    readonly form?: undefined;
-    readonly summary?: undefined;
 } | {
-    readonly kind: "plugin";
-    readonly plugin: "dsh-oh-my-claude";
     readonly form: "notice";
     readonly summary: string;
+    readonly kind: "plugin:dsh-oh-my-claude";
+} | {
+    readonly form: "notice";
+    readonly summary: string;
+    readonly kind: "plugin";
+    readonly plugin: "dsh-oh-my-claude";
 };
 /** After an interrupt, kill a process that did not finish in time: only when no keeper owns it. */
 export declare const killAfterGrace: (spawn: string) => boolean;

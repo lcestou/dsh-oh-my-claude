@@ -30,6 +30,7 @@ import {
   boundContextSummary,
   createToolResultMessage,
   createUserMessage,
+  type MessageSource,
 } from "@deepseek-ai/dsh-llm";
 import z from "@deepseek-ai/schemastery";
 import { atLeast } from "./update.js";
@@ -2011,17 +2012,27 @@ export function finishReason(result: ResultFrame, hostLabel?: string): FinishRea
  * Tool calls and results are shown as reasoning blocks: the CLI runs its own tools, dsh only watches.
  */
 /** The `kind` dsh's loop puts on an abort reason ("disposed" on shutdown), else undefined. */
-/** The source a wake notice carries: user only when a restart notice must rearm an active goal. */
-export function noticeSource(text: string, goalActive: boolean) {
+/** The producer-owned source kind dsh's session format v4 gives this plugin's own messages. v4
+ *  (`dsh-session-format-v3-to-v4`, `source()`) refuses any appended message whose `kind` is the
+ *  retired `"plugin"` wrapper with "format v4 message requires a producer-owned source kind"; its
+ *  migrator lifts `{ kind: "plugin", plugin: X }` to `{ kind: "plugin:X" }`, and a native v4 append
+ *  must already carry that shape. */
+export const OWN_SOURCE_KIND = "plugin:dsh-oh-my-claude";
+/** Whether a logged source is one of this plugin's own, in either the v3 wrapper or the v4 kind. */
+export const isOwnSource = (source: { kind?: string; plugin?: string } | undefined): boolean =>
+  source?.kind === OWN_SOURCE_KIND ||
+  (source?.kind === "plugin" && source.plugin === "dsh-oh-my-claude");
+/** The source a wake notice carries: user only when a restart notice must rearm an active goal.
+ *  `logVersion` is the session log's `header.version`; from 4 up the notice carries the
+ *  producer-owned kind, since the v3 wrapper fails the turn it is appended to (seen 2026-09-23 on
+ *  dsh 0.1.7-alpha.2: the restart notice itself was the turn that died). */
+export function noticeSource(text: string, goalActive: boolean, logVersion = 3) {
   const restart = text === RESTART_TEXT || text === RECONNECT_TEXT || text === LIMIT_TEXT;
-  return restart && goalActive
-    ? ({ kind: "user" } as const)
-    : ({
-        kind: "plugin",
-        plugin: "dsh-oh-my-claude",
-        form: "notice",
-        summary: boundContextSummary(text),
-      } as const);
+  if (restart && goalActive) return { kind: "user" } as const;
+  const rest = { form: "notice", summary: boundContextSummary(text) } as const;
+  return logVersion >= 4
+    ? ({ kind: OWN_SOURCE_KIND, ...rest } as const)
+    : ({ kind: "plugin", plugin: "dsh-oh-my-claude", ...rest } as const);
 }
 /** After an interrupt, kill a process that did not finish in time: only when no keeper owns it. */
 export const killAfterGrace = (spawn: string): boolean => spawn !== "keeper";
@@ -2157,10 +2168,7 @@ const LIMIT_GRACE_MS = 5_000;
 /** A message that is our own wake notice, a plugin user message whose text is exactly WAKE_TEXT,
  * so wakeOnlyTurn can treat it apart from a real user prompt. */
 const isWake = (m: LooseMessage) =>
-  m.role === "user" &&
-  m.source?.kind === "plugin" &&
-  m.source.plugin === "dsh-oh-my-claude" &&
-  textOf(m.content) === WAKE_TEXT;
+  m.role === "user" && isOwnSource(m.source) && textOf(m.content) === WAKE_TEXT;
 /** A turn opened by our own wake notice, with no user prompt to send: only drain what Claude
  *  already wrote. A user prompt in the same batch takes precedence and is sent normally. */
 export function wakeOnlyTurn(messages: LooseMessage[] | undefined): boolean {
@@ -6450,6 +6458,14 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const found = await this.agentFor(sessionId);
     if (!found) return false;
     const { agent, how } = found;
+    // The session's log format decides the shape of the notice's source; 0 when the session is not
+    // open here (an adopted agent), which noticeSource reads as the v3 wrapper.
+    let logVersion = 0;
+    try {
+      logVersion = this.ctx?.sessions?.get?.(asSessionId(sessionId))?.header?.version ?? 0;
+    } catch {
+      // sessions service unavailable in this scope: keep the v3 shape
+    }
     if (text === RESTART_TEXT) {
       // A notice from a previous boot may still sit in the durable inbox: do not stack another.
       try {
@@ -6489,7 +6505,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       agent.followup(
         createUserMessage({
           content: [{ type: "text", text }],
-          source: noticeSource(text, goalActive),
+          // SAFETY: the plugin builds against dsh-llm 0.1.6 types, whose MessageSource still spells
+          // the v3 `{ kind: "plugin", plugin }` wrapper; dsh 0.1.7's v4 log refuses exactly that
+          // shape at runtime and takes the producer-owned kind instead. The runtime is the
+          // authority here, so the v4 shape goes through the stale type.
+          source: noticeSource(text, goalActive, logVersion) as MessageSource,
         }),
       );
     } catch (error) {

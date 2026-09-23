@@ -1987,6 +1987,12 @@ console.log("ok");
     "an old notice behind an assistant reply is history",
   );
   assert.equal(wakeOnlyTurn([user, asst, other]), false, "no notice, no drain turn");
+  const wakeV4 = message({
+    role: "user",
+    source: { kind: "plugin:dsh-oh-my-claude", form: "notice", summary: WAKE_TEXT },
+    content: [{ type: "text", text: WAKE_TEXT }],
+  });
+  assert.equal(wakeOnlyTurn([user, asst, wakeV4]), true, "the v4 producer kind is our notice too");
 }
 {
   // Claude Code's own compaction shows as one line; other system events stay silent.
@@ -3482,6 +3488,17 @@ console.log("boot ok");
     false,
   );
   assert.equal(hasPendingNotice([notice("other")], "dsh-oh-my-claude"), false);
+  const v4 = {
+    type: "agent/inbox/spliced",
+    data: {
+      target: "next-turn",
+      start: 0,
+      removedCount: 0,
+      inserted: [{ source: { kind: "plugin:dsh-oh-my-claude", form: "notice" } }],
+    },
+  };
+  assert.equal(hasPendingNotice([v4], "dsh-oh-my-claude"), true, "a v4 notice is pending too");
+  assert.equal(hasPendingNotice([v4], "other"), false);
   assert.equal(
     hasPendingNotice([{ type: "agent/inbox/spliced", data: null }], "dsh-oh-my-claude"),
     false,
@@ -4268,6 +4285,18 @@ assert.equal((noticeSource(RECONNECT_TEXT, false) as { form?: string }).form, "n
 assert.equal(noticeSource(LIMIT_TEXT, true).kind, "user", "a limit continue rearms a goal too");
 assert.equal(noticeSource(LIMIT_TEXT, false).kind, "plugin");
 assert.equal(noticeSource("wake", true).kind, "plugin", "a plain wake never claims the user");
+// Session format v4 refuses the `plugin` wrapper: from version 4 the notice carries the
+// producer-owned kind and no `plugin` field, and the goal rearm still claims the user.
+{
+  const v4 = noticeSource(WAKE_TEXT, false, 4) as { kind: string; form?: string; summary?: string };
+  assert.equal(v4.kind, "plugin:dsh-oh-my-claude");
+  assert.equal(v4.form, "notice");
+  assert.equal(typeof v4.summary, "string");
+}
+assert.equal("plugin" in noticeSource(WAKE_TEXT, false, 4), false, "v4 drops the plugin field");
+assert.deepEqual(noticeSource(RESTART_TEXT, true, 4), { kind: "user" });
+assert.equal(noticeSource(WAKE_TEXT, false, 3).kind, "plugin", "v3 keeps the wrapper");
+assert.equal(noticeSource(WAKE_TEXT, false, 0).kind, "plugin", "unknown version keeps the wrapper");
 console.log("notice-source ok");
 
 // An idle result wakes a turn only when it is a real reply, never an error or a rate-limit retry.

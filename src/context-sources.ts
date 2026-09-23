@@ -45,8 +45,11 @@ export type LoggedSource = { readonly kind?: string; readonly plugin?: string } 
 export function sourceBlockOf(source: LoggedSource): ContextSource | undefined {
   if (source?.kind === "agent-instructions") return "instructions";
   if (source?.kind === "skill-catalog") return "skills";
+  // dsh's own system prompt row: the v3 plugin wrapper, or the v4 producer kind its migrator
+  // renames it to.
   if (source?.kind === "plugin" && source.plugin === "@deepseek-ai/dsh-system-prompt")
     return "runtime";
+  if (source?.kind === "runtime-context") return "runtime";
   return undefined;
 }
 
