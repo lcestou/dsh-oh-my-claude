@@ -5867,9 +5867,20 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
       }
     };
     fetchTurns();
-    const interval = setInterval(() => {
+    // A new record arrives on the event stream when a turn ends; the read is the fallback: every
+    // 30 s while the stream is up, every 10 s when it is not. The same rule as the read: only
+    // records replace records, so an empty list never zeroes the row.
+    const offTurns = subscribe("turns", (session, data) => {
+      if (session !== sessionId || !alive) return;
+      const next = data.turns ?? [];
+      if (next.length > 0 || turnsRef.current.length === 0) setTurns(next);
+    });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const tick = () => {
       if (visibleRef.current) fetchTurns();
-    }, 10_000);
+      timer = setTimeout(tick, pollEvery(false, 10_000, 10_000));
+    };
+    timer = setTimeout(tick, 10_000);
     const onVisibility = () => {
       visibleRef.current = document.visibilityState === "visible";
       if (visibleRef.current) fetchTurns();
@@ -5877,7 +5888,8 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
     document.addEventListener("visibilitychange", onVisibility);
     return () => {
       alive = false;
-      clearInterval(interval);
+      offTurns();
+      if (timer !== undefined) clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [ctx, sessionId]);
@@ -6623,6 +6635,13 @@ let statusOnce: Promise<boolean> | undefined;
 /** One read of the store shared by every hook on the page: a Settings open mounts five readers and
  *  every cost pill two, so the fetch is memoised until a write dispatches the event. */
 let hintsOnce: Promise<Record<string, boolean | number>> | undefined;
+// A hint written from another tab or browser lands here as an event carrying the whole store;
+// hand it to every reader through the same event a local write dispatches, with no refetch.
+// Module-level: a hot reload loads a new module whose subscriber map starts empty, so nothing stacks.
+subscribe("hints", (_session, data) => {
+  hintsOnce = Promise.resolve(data);
+  window.dispatchEvent(new Event(HINTS_EVENT));
+});
 /** Fetch and parse the box-wide hints store once, memoising the promise and retrying on failure
  *  rather than caching the empty result. */
 const loadHints = (): Promise<Record<string, boolean | number>> =>
@@ -8838,16 +8857,21 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
     };
     pollRef.current = () => void fetchItems();
     fetchItems();
-    // A steer only happens while a turn is running, and the card should appear the moment one is
-    // queued, so the poll runs every second during a running turn and every three at rest. Self-
-    // scheduling rather than a fixed setInterval, so the rate follows the turn without a restart.
-    // ponytail: still a poll, since a server command cannot push to the client; the server-push
-    // pass replaces it with one event channel.
+    // The items, the steers and the login card arrive on the event stream the moment they change;
+    // `claudeUpdate` does not (the updater's tick lives on the route), so the read below stays as
+    // the fallback: every 30 s while the stream is up, else every second during a running turn
+    // and every three at rest. Self-scheduling so the rate follows the turn without a restart.
+    const offAsides = subscribe("asides", (session, data) => {
+      if (session !== sessionId || !alive) return;
+      setNeed((cur) => (sameNeed(cur, data.loginNeeded) ? cur : data.loginNeeded));
+      if (JSON.stringify(data.items) !== JSON.stringify(itemsRef.current)) setItems(data.items);
+      if (JSON.stringify(data.steers) !== JSON.stringify(steersRef.current)) setSteers(data.steers);
+    });
     let timer: ReturnType<typeof setTimeout> | undefined;
     const tick = () => {
       if (visibleRef.current) fetchItems();
       const running = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.running === true;
-      timer = setTimeout(tick, running ? 1000 : 3000);
+      timer = setTimeout(tick, pollEvery(running, 1000, 3000));
     };
     timer = setTimeout(tick, 1000);
     const onVisibility = () => {
@@ -8857,6 +8881,7 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
     document.addEventListener("visibilitychange", onVisibility);
     return () => {
       alive = false;
+      offAsides();
       if (timer !== undefined) clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisibility);
     };
@@ -9152,9 +9177,17 @@ function IdleChip({ sessionId }: { sessionId: string }) {
       }
     };
     fetchIdle();
-    const interval = setInterval(() => {
+    // The deadline arrives on the event stream (once a second while a turn re-arms it); the read
+    // is the fallback: every 30 s while the stream is up, every 5 s when it is not.
+    const offIdle = subscribe("idle", (session, data) => {
+      if (session === sessionId && alive) setDeadline(data.deadline ?? null);
+    });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const tick = () => {
       if (visibleRef.current) fetchIdle();
-    }, 5_000);
+      timer = setTimeout(tick, pollEvery(false, 5_000, 5_000));
+    };
+    timer = setTimeout(tick, 5_000);
     const onVisibility = () => {
       visibleRef.current = document.visibilityState === "visible";
       if (visibleRef.current) fetchIdle();
@@ -9162,7 +9195,8 @@ function IdleChip({ sessionId }: { sessionId: string }) {
     document.addEventListener("visibilitychange", onVisibility);
     return () => {
       alive = false;
-      clearInterval(interval);
+      offIdle();
+      if (timer !== undefined) clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [sessionId]);
