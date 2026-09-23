@@ -6,6 +6,8 @@ export interface OmcEvent {
     session: string | null;
     data: object;
 }
+/** One open stream: the response held open and the session its per-session kinds are filtered
+ *  to (null: tab-wide kinds only). */
 interface Connection {
     res: ServerResponse;
     session: string | null;

@@ -4452,6 +4452,7 @@ const wireTurnStatus = (
    *  failed group, which is why the button's own state cannot be the only signal (a turn that
    *  failed left the line saying "Incubating…" under dsh's "Failed", owner, 2026-09-22). */
   const applyBody = (b: LiveTurnBody): boolean => {
+    if (b.elapsedMs === undefined) return false; // the empty body: keep the figures as they are
     targetChars = (b.tokens ?? 0) * 4;
     thinkingMs = b.thinkingMs ?? -1;
     idleMs = b.idleMs ?? -1;

@@ -192,7 +192,18 @@ whenContextGone(() => {
  *  with, so a CLOSED source is reopened here on the next call. A reconnect gets a fresh snapshot
  *  from the server. */
 export function openStream(session: string | null): void {
-  if (source !== undefined && openSession === session && source.readyState !== EventSource.CLOSED)
+  // A socket that died without a FIN (a proxy dropped it) stays OPEN in the browser's eyes and
+  // never errors; the staleness clock is the only thing that notices, so replace it too.
+  const stale =
+    source !== undefined &&
+    source.readyState === EventSource.OPEN &&
+    Date.now() - lastMessageAt >= STALE_MS;
+  if (
+    source !== undefined &&
+    openSession === session &&
+    source.readyState !== EventSource.CLOSED &&
+    !stale
+  )
     return;
   source?.close();
   openSession = session;

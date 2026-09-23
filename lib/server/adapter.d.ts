@@ -1200,9 +1200,11 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      */
     control(proc: ClaudeProcess, request: Record<string, JsonValue>, timeoutMs?: number): Promise<ControlReply>;
     /** What the steer card shows: typed steers still in the CLI's queue, oldest first, and the ones
-     *  taken back for an edit. Each call is the card's poll, so it also re-arms every hold's timer; a
-     *  hold nobody polls for (a closed tab) goes back to Claude unchanged after `HOLD_IDLE_MS`. */
-    steersFor(sessionId: string): SteerCardState;
+     *  taken back for an edit. A call from the card's own read (`touch`, the default) re-arms every
+     *  hold's timer, so a hold nobody reads (a closed tab) goes back to Claude unchanged after
+     *  `HOLD_IDLE_MS`; a publish passes `touch: false`, since the turn loop publishes at every tool
+     *  boundary and would otherwise keep a closed tab's hold alive for the whole turn. */
+    steersFor(sessionId: string, touch?: boolean): SteerCardState;
     /** The timer that restores a hold its card stopped polling for. */
     private holdTimer;
     /**
@@ -1346,7 +1348,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      *  read from the mount that holds it: the ring, the login need and the fallback live on the
      *  session's owner, the waiting steers on whichever mount has its live process (the root when
      *  none is live, since a held steer sits on the mount that took it). */
-    asidesReply(sessionId: string): AsidesReply;
+    asidesReply(sessionId: string, touch?: boolean): AsidesReply;
     /** When the idle watchdog would end the session's process (null: not armed), from the mount
      *  that runs it, with the configured timeout so the tab can draw the countdown. */
     idleReply(sessionId: string): IdleReply;
@@ -1362,7 +1364,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      *  answered anywhere. A mount publishing only its own map would make a tab forget the root's
      *  prompts on the next box event. */
     private publishAwaiting;
-    /** The asides body for one session to its streams, read from the session's mount. */
+    /** The asides body for one session to its streams, read from the session's mount. A publish
+     *  does not re-arm hold timers (`touch: false`); only the card's own read does. */
     private publishAsides;
     /** The idle deadline for one session, coalesced to once a second: the turn loop re-arms the
      *  watchdog on every frame. `key` is the session id, except the aux decide stream's `aux-`
