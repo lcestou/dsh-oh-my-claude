@@ -5,14 +5,13 @@
 // kind that changes per frame. What is sent is built by the adapter from the same maps its routes
 // read, so an event body and the matching route body are one function's output.
 import type { ServerResponse } from "node:http";
-import type { JsonValue } from "./dsh.js";
 
 /** One message: `kind` names the SSE event, `session` scopes it (null: every tab hears it) and
  *  `data` is the matching GET route's body. */
 export interface OmcEvent {
   kind: string;
   session: string | null;
-  data: JsonValue;
+  data: object;
 }
 
 interface Connection {
@@ -91,10 +90,11 @@ export class EventHub {
     }
   }
 
-  /** Publish `build()` for `session` at most once per `ms`; a call while one is pending replaces
-   *  the builder and keeps the timer, so the body sent is the newest. */
-  coalesce(session: string, build: () => OmcEvent, ms = 1000): void {
-    const p = this.pending.get(session);
+  /** Publish `build()` under `key` at most once per `ms`; a call while one is pending replaces
+   *  the builder and keeps the timer, so the body sent is the newest. Callers key by kind and
+   *  session (`live-turn:<id>`), so two kinds for one session never replace each other. */
+  coalesce(key: string, build: () => OmcEvent, ms = 1000): void {
+    const p = this.pending.get(key);
     if (p) {
       p.build = build;
       return;
@@ -102,19 +102,19 @@ export class EventHub {
     const entry = {
       build,
       timer: setTimeout(() => {
-        this.pending.delete(session);
+        this.pending.delete(key);
         this.publish(entry.build());
       }, ms),
     };
-    this.pending.set(session, entry);
+    this.pending.set(key, entry);
   }
 
-  /** Cancel a pending coalesced event for `session` and publish `e` now. */
-  flush(session: string, e: OmcEvent): void {
-    const p = this.pending.get(session);
+  /** Cancel a pending coalesced event under `key` and publish `e` now. */
+  flush(key: string, e: OmcEvent): void {
+    const p = this.pending.get(key);
     if (p) {
       clearTimeout(p.timer);
-      this.pending.delete(session);
+      this.pending.delete(key);
     }
     this.publish(e);
   }

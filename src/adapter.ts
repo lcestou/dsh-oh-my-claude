@@ -54,6 +54,7 @@ import {
   type SshBox,
   sshBoxProviderId,
 } from "./sessions.js";
+import { hub, type OmcEvent } from "./events.js";
 import { readUsage, registerUsageRoute, stillLimitedUntil } from "./usage.js";
 import { KEY_HEADER, MCP_PATH, registerMcpBridge } from "./mcp.js";
 import {
@@ -637,6 +638,60 @@ export interface PermissionModeReply extends PermissionModeInfo {
   /** A live process was told; false when the override only applies at the next spawn. */
   live: boolean;
   error?: string;
+}
+/** `GET /awaiting` and the `awaiting` event: the open prompts keyed by dsh session id. */
+export interface AwaitingRow {
+  kind: "approval" | "question" | "plan";
+  id: string;
+  since: number;
+}
+/** `GET /live-turn` and the `live-turn` event while a turn runs; the empty object once it ends.
+ *  The ages are computed when the body is built; the tab adds the time since it received it. */
+export interface LiveTurnReply {
+  tokens: number;
+  elapsedMs: number;
+  thinkingMs?: number;
+  idleMs?: number;
+  tool: boolean;
+  thoughtMs?: number;
+  thoughtAgoMs?: number;
+  effort?: string;
+  relayName?: string;
+  relayMs?: number;
+}
+/** The sums over a session's turn records, with how many records were summed. */
+export interface TurnTotals {
+  costUsd: number;
+  durationMs: number;
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  count: number;
+}
+/** `GET /turns` and the `turns` event. */
+export interface TurnsReply {
+  turns: TurnRecord[];
+  total: TurnTotals;
+}
+/** The `asides` event: the aside ring, the login card, the model fallback note and the steer card
+ *  for one session. `GET /side-questions` answers these plus `claudeUpdate`, which the updater's
+ *  own tick in sessions.ts adds and which no event carries. */
+export interface AsidesReply {
+  items: AsideEntry[];
+  loginNeeded: LoginNeed | null;
+  fallback: FallbackRecord | null;
+  steers: SteerCardState;
+}
+/** `GET /idle` and the `idle` event: when the idle watchdog would end the process, or null. */
+export interface IdleReply {
+  deadline: number | null;
+  timeoutMs: number;
+}
+/** `GET /permission-mode` and the `permission-mode` event: the info plus the modes the client may
+ *  pick, under the name the client already reads (`modes`). */
+export interface PermissionModeState extends PermissionModeInfo {
+  modes: readonly string[];
 }
 
 /** The key every live process is stored under, `providerId` then `sessionId`; a session id must not contain a colon or it would collide with this separator. */
@@ -2544,6 +2599,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
             proc.steers.set(m.id, { uuid, key, text, at: Date.now() });
         }
       }
+      if (session?.id) this.publishAsides(session.id);
     });
   }
 
@@ -2623,13 +2679,17 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    *  logged out so the picker stops offering them; a turn that succeeded clears both. */
   noteTurnLogin(sessionId: string, result: ResultFrame) {
     if (!isLoginFailure(result)) {
-      if (!result.is_error) this.loginNeeded.delete(sessionId);
+      if (!result.is_error) {
+        this.loginNeeded.delete(sessionId);
+        this.publishAsides(sessionId);
+      }
       return;
     }
     const label = this.hostLabelFor(sessionId);
     // This box is the empty string here and in loginDone/logoutBox, one spelling for the compare.
     const host = label ?? "";
     this.loginNeeded.set(sessionId, { host, label: label ?? hostname() });
+    this.publishAsides(sessionId);
     // The process that failed carries no usable login in its environment, and it stays alive
     // between turns: reused, it fails again with the token the panel has since stored (seen
     // 2026-09-13: card login said done, the next message was still logged out). Marked stale, the
@@ -2678,7 +2738,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     for (const mount of ClaudeCodeAdapter.mounts(this))
       if ((mount.config.sshHost || "") === host) mount.setLoggedIn(true);
     for (const [sid, need] of this.loginNeeded)
-      if (need.host === host) this.loginNeeded.delete(sid);
+      if (need.host === host) {
+        this.loginNeeded.delete(sid);
+        this.publishAsides(sid);
+      }
   }
 
   /** Every mounted instance, this one included: at boot or in a test it may not be in the shared
@@ -3253,6 +3316,17 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    * launched below bypass can never be switched up live, whatever it was set to since.
    */
   async setPermissionMode(sessionId: string, mode: string | null): Promise<PermissionModeReply> {
+    const reply = await this.applyPermissionMode(sessionId, mode);
+    this.publishPermissionMode(sessionId);
+    return reply;
+  }
+
+  /** The body of `setPermissionMode` without the publish: every return path, refused or applied,
+   *  ends in the same event so the capsule reads the mode the process is really in. */
+  private async applyPermissionMode(
+    sessionId: string,
+    mode: string | null,
+  ): Promise<PermissionModeReply> {
     let info = this.permissionModeInfo(sessionId);
     if (mode !== null && !isPermissionMode(mode))
       return { ...info, live: false, error: `unknown mode "${mode}"` };
@@ -3291,6 +3365,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     if (!isPermissionMode(mode)) return;
     await savePermissionMode(this.stateDir, sessionId, mode);
     this.permissionModes.set(sessionId, mode);
+    this.publishPermissionMode(sessionId);
   }
 
   /**
@@ -3419,6 +3494,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         break;
       }
       proc.steers.delete(id);
+      this.publishAsides(sessionId);
       if (!decodeCancelled(reply.response)) continue; // Claude has it now
       proc.forwarded = Math.max(0, proc.forwarded - 1);
       const message = inbox?.nextStep.find((m) => m.id === id);
@@ -3443,6 +3519,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const holds = this.heldSteers.get(sessionId) ?? new Map<string, HeldSteer>();
     this.heldSteers.set(sessionId, holds);
     holds.set(first.id, { messages, text, timer: this.holdTimer(sessionId, first.id) });
+    this.publishAsides(sessionId);
     return { ok: true, holdId: first.id, text };
   }
 
@@ -3463,12 +3540,14 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     clearTimeout(hold.timer);
     holds.delete(holdId);
     if (holds.size === 0) this.heldSteers.delete(sessionId);
+    this.publishAsides(sessionId);
     if (how === "drop") return { ok: true };
     const agent = (await this.agentFor(sessionId))?.agent;
     if (!agent?.steer) {
       const back = this.heldSteers.get(sessionId) ?? new Map<string, HeldSteer>();
       this.heldSteers.set(sessionId, back);
       back.set(holdId, { ...hold, timer: this.holdTimer(sessionId, holdId) });
+      this.publishAsides(sessionId);
       return { ok: false, reason: "error", error: "session not reachable" };
     }
     const first = hold.messages[0];
@@ -3749,11 +3828,155 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   }
 
   /** The open prompts, keyed by dsh session id, for the browser's background notices. */
-  awaitingSnapshot(): Record<
-    string,
-    { kind: "approval" | "question" | "plan"; id: string; since: number }
-  > {
+  awaitingSnapshot(): Record<string, AwaitingRow> {
     return Object.fromEntries(this.awaitingInput);
+  }
+
+  /** The open prompts across every mount, which is what `/awaiting` and the `awaiting` event
+   *  serve: a box's session holds its prompt on the box's instance, so the root's own map alone
+   *  would miss it. On a box with one mount this is `awaitingSnapshot()`. */
+  awaitingAll(): Record<string, AwaitingRow> {
+    return Object.fromEntries(
+      [...ClaudeCodeAdapter.mounts(this)].flatMap((m) =>
+        Object.entries(m.awaitingSnapshot()),
+      ),
+    );
+  }
+
+  /** The running turn's figures for the status row, read from the session's mount, or the empty
+   *  object when no turn is running (the adapter drops the record the moment a turn ends). The
+   *  ages are relative to now; the tab adds the time since it received the body. `thinkingMs` is
+   *  how long the open thinking burst has run, absent when none is open; `idleMs` is the time
+   *  since the last frame of model output; `tool` says a call is in flight; `relayName` and
+   *  `relayMs` name the dsh tool a parked turn waits on and for how long. */
+  liveTurnReply(sessionId: string): LiveTurnReply | Record<string, never> {
+    const live = this.ownerFor(sessionId).liveTurn.get(sessionId);
+    if (!live) return {};
+    const now = Date.now();
+    const open = live.thinkingOpen === true && live.thinkingAt !== undefined;
+    const r: LiveTurnReply = {
+      tokens: (live.output ?? 0) + (live.thinking ?? 0),
+      // How long the turn has been running. dsh drew its own clock beside the status row up to
+      // 0.1.6; 0.1.7 folded it into one sentence inside the turn-process button, which the status
+      // line replaces, so the figure comes from the turn record instead of off the page.
+      elapsedMs: now - live.at,
+      tool: live.tool === true,
+    };
+    if (open) r.thinkingMs = now - live.thinkingAt!;
+    if (live.frameAt !== undefined) r.idleMs = now - live.frameAt;
+    if (live.thoughtMs !== undefined) r.thoughtMs = live.thoughtMs;
+    if (live.thoughtAt !== undefined) r.thoughtAgoMs = now - live.thoughtAt;
+    if (live.effort !== undefined) r.effort = live.effort;
+    if (live.relay) {
+      r.relayName = live.relay.name;
+      r.relayMs = now - live.relay.at;
+    }
+    return r;
+  }
+
+  /** A session's turn records from its mount, oldest first, with their sums. An empty list is
+   *  "no records to hand out right now", which the tab treats as nothing to replace: the buffer
+   *  is empty for a moment after a restart until the saved records load. */
+  turnsReply(sessionId: string): TurnsReply {
+    const turns = this.ownerFor(sessionId).turnBuffer.get(sessionId) ?? [];
+    const total: TurnTotals = {
+      costUsd: 0,
+      durationMs: 0,
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      count: 0,
+    };
+    for (const t of turns) {
+      total.costUsd += t.costUsd;
+      total.durationMs += t.durationMs;
+      total.input += t.input;
+      total.output += t.output;
+      total.cacheRead += t.cacheRead;
+      total.cacheWrite += t.cacheWrite;
+      total.count += 1;
+    }
+    return { turns, total };
+  }
+
+  /** The aside ring, the login card, the fallback note and the steer card for one session, each
+   *  read from the mount that holds it: the ring, the login need and the fallback live on the
+   *  session's owner, the waiting steers on whichever mount has its live process (the root when
+   *  none is live, since a held steer sits on the mount that took it). */
+  asidesReply(sessionId: string): AsidesReply {
+    const o = this.ownerFor(sessionId);
+    return {
+      items: o.sideQuestions.get(sessionId) ?? [],
+      loginNeeded: o.loginNeeded.get(sessionId) ?? null,
+      fallback: o.sessionFallbacks.get(sessionId) ?? null,
+      steers: (this.ownerIfLive(sessionId) ?? this).steersFor(sessionId),
+    };
+  }
+
+  /** When the idle watchdog would end the session's process (null: not armed), from the mount
+   *  that runs it, with the configured timeout so the tab can draw the countdown. */
+  idleReply(sessionId: string): IdleReply {
+    return {
+      deadline: this.ownerFor(sessionId).idleDeadlineMap.get(sessionId) ?? null,
+      timeoutMs: this.config.idleTimeoutMs,
+    };
+  }
+
+  /** The permission mode info the capsule draws, from the session's mount, with the pickable modes
+   *  under the `modes` name the client reads. */
+  permissionModeReply(sessionId: string): PermissionModeState {
+    const info = this.ownerFor(sessionId).permissionModeInfo(sessionId);
+    return { ...info, modes: info.allowed };
+  }
+
+  /** Everything a tab needs the moment its event stream opens: the tab-wide awaiting map always,
+   *  and for the open session its live turn, asides, idle deadline, turn records and permission
+   *  mode. Hints are not here: the tab reads them on mount already. A reconnect gets the same
+   *  snapshot in place of a replay, since every kind is a current value. */
+  snapshot(sessionId: string | null): OmcEvent[] {
+    const out: OmcEvent[] = [{ kind: "awaiting", session: null, data: this.awaitingAll() }];
+    if (sessionId === null) return out;
+    out.push({ kind: "live-turn", session: sessionId, data: this.liveTurnReply(sessionId) });
+    out.push({ kind: "asides", session: sessionId, data: this.asidesReply(sessionId) });
+    out.push({ kind: "idle", session: sessionId, data: this.idleReply(sessionId) });
+    out.push({ kind: "turns", session: sessionId, data: this.turnsReply(sessionId) });
+    out.push({
+      kind: "permission-mode",
+      session: sessionId,
+      data: this.permissionModeReply(sessionId),
+    });
+    return out;
+  }
+
+  /** The tab-wide awaiting map to every stream, merged over every mount: a prompt opened or
+   *  answered anywhere. A mount publishing only its own map would make a tab forget the root's
+   *  prompts on the next box event. */
+  private publishAwaiting(): void {
+    hub.publish({ kind: "awaiting", session: null, data: this.awaitingAll() });
+  }
+
+  /** The asides body for one session to its streams, read from the session's mount. */
+  private publishAsides(sessionId: string): void {
+    hub.publish({ kind: "asides", session: sessionId, data: this.asidesReply(sessionId) });
+  }
+
+  /** The idle deadline for one session, coalesced to once a second: the turn loop re-arms the
+   *  watchdog on every frame. `key` is the session id, except the aux decide stream's `aux-`
+   *  keys, which share the map and reach no tab. */
+  private publishIdle(key: string): void {
+    if (key.startsWith("aux-")) return;
+    hub.coalesce(`idle:${key}`, () => ({ kind: "idle", session: key, data: this.idleReply(key) }));
+  }
+
+  /** The permission mode state for one session to its streams: after a pick, a restore or a
+   *  spawn, which is when `liveMode` changes. */
+  private publishPermissionMode(sessionId: string): void {
+    hub.publish({
+      kind: "permission-mode",
+      session: sessionId,
+      data: this.permissionModeReply(sessionId),
+    });
   }
 
   /** The CLI's working-tree diff (`get_workspace_diff`) for a session with a live process. */
@@ -4021,6 +4244,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       if (oldest !== undefined) this.sideQuestions.delete(oldest);
     }
     this.sideQuestions.set(sessionId, ring.slice(-ASIDE_KEEP));
+    this.publishAsides(sessionId);
     // The ring lives on the main mount, but the control request has to be written and awaited by
     // the mount whose stream loop reads that process, else the reply resolves nobody's waiter.
     const owner = this.ownerFor(sessionId);
@@ -4724,13 +4948,19 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         command: this.config.command,
         spawner: this.spawnerFor(options.sessionId, prep.spec),
         onExit: (p) => {
-          if (this.processes.get(key2) === p) this.processes.delete(key2);
+          if (this.processes.get(key2) === p) {
+            this.processes.delete(key2);
+            // A dead process has no waiting steers; the card clears now, not at the fallback.
+            this.publishAsides(options.sessionId);
+          }
         },
       });
       proc.key = key;
       proc.resuming = prep.session?.resuming ?? false;
       proc.onIdleResult = () => this.wake(options.sessionId, proc);
       this.processes.set(key2, proc);
+      // The spawn is where `liveMode` changes without a pick.
+      this.publishPermissionMode(options.sessionId);
       if (this.config.debug) {
         this.log("info", `spawn cwd=${prep.cwd} claude ${prep.args.join(" ")}`);
       }
@@ -5214,6 +5444,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     this.sessionFallbacks.delete(sessionId);
     this.permissionAsks.delete(sessionId);
     this.awaitingInput.delete(sessionId);
+    this.publishAwaiting();
   }
 
   /** The session id inside a registry key this adapter owns. */
@@ -5283,6 +5514,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     if (held && !held.busy) {
       held.steerPending = false;
       forgetSteers(held);
+      this.publishAsides(options.sessionId);
     }
     return { mode: "prompt", options: { ...options, messages } };
   }
@@ -5299,6 +5531,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     if (cont.mode !== "prompt") {
       proc.steerPending = false;
       forgetSteers(proc);
+      this.publishAsides(cont.options.sessionId);
     }
     if (cont.mode === "relay") {
       const relays = [...proc.relays.values()];
@@ -5360,11 +5593,13 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     this.clearIdle(key);
     const deadline = Date.now() + timeoutMs;
     this.idleDeadlineMap.set(key, deadline);
+    this.publishIdle(key);
     this.idleTargets.set(key, { proc, warn, timeoutMs });
     this.idleKillTimers.set(
       key,
       setTimeout(() => {
         this.idleDeadlineMap.set(key, null);
+        this.publishIdle(key);
         proc.idleKilled = true;
         proc.idleKilledAfterMs = timeoutMs;
         proc.kill();
@@ -5391,6 +5626,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     this.idleWarnTimers.delete(key);
     this.idleTargets.delete(key);
     this.idleDeadlineMap.set(key, null);
+    this.publishIdle(key);
   }
 
   /** Push a stream's deadline out by one full timeout; false when nothing is armed under `key`. */
@@ -5668,6 +5904,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
           cur.thinking = undefined;
         }
         this.liveTurn.set(options.sessionId, cur);
+        hub.coalesce(`live-turn:${options.sessionId}`, () => ({
+          kind: "live-turn",
+          session: options.sessionId,
+          data: this.liveTurnReply(options.sessionId),
+        }));
       },
       onToolCall:
         turnStep && rowMode.rows
@@ -5735,12 +5976,14 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       onModel: (rec) => {
         // Bank the switch for the session so the notice and the picker read it at the stop
         // transition. `rec` omits sessionId and at; fill them here (the translator has no clock).
-        if (options.sessionId)
+        if (options.sessionId) {
           this.sessionFallbacks.set(options.sessionId, {
             ...rec,
             sessionId: options.sessionId,
             at: Date.now(),
           });
+          this.publishAsides(options.sessionId);
+        }
       },
       onResult: (summary: TurnRecord) => {
         // ponytail: ring buffer capped at 50 entries per session; now also persisted to disk so it
@@ -5763,6 +6006,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         buf.push(summary);
         if (buf.length > TURN_RING) buf.shift();
         this.turnBuffer.set(options.sessionId, buf);
+        hub.publish({
+          kind: "turns",
+          session: options.sessionId,
+          data: this.turnsReply(options.sessionId),
+        });
         void saveTurnRecords(this.stateDir, options.sessionId, buf);
         // The window this model actually runs at, asked once per model between turns so dsh's
         // context ring is right before anyone opens the breakdown. A model switched mid-session is
@@ -5828,6 +6076,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     /** One CLI event. Returns what the loop should do next. */
     // The generator below is a plain function, so the adapter is reached through this closure.
     const noteLogin = (r: ResultFrame) => this.noteTurnLogin(options.sessionId, r);
+    const publishAsidesFor = () => this.publishAsides(options.sessionId);
     const dispatch = async function* (event: ClaudeEvent) {
       if (event.type === "idle_warning") {
         yield* tr.wholeBlock(
@@ -5869,6 +6118,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       if (tr.toolPending) armToolIdle(); // tool running: silence is expected, but not forever
       if (tr.finished) {
         forgetSteers(proc);
+        publishAsidesFor();
         return "finished";
       }
       if (proc.steerPending && event.type === "user") {
@@ -5877,6 +6127,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         // takes its whole queue at one tool result (probed 2026-09-22), so no steer stays editable.
         proc.steerPending = false;
         forgetSteers(proc);
+        publishAsidesFor();
         proc.parked = "steer";
         return "parked";
       }
@@ -5947,7 +6198,14 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     };
     try {
       // A relay dsh never answered would otherwise hand its figures to the next turn.
-      if (cont.mode === "prompt") this.liveTurn.delete(options.sessionId);
+      if (cont.mode === "prompt") {
+        this.liveTurn.delete(options.sessionId);
+        hub.flush(`live-turn:${options.sessionId}`, {
+          kind: "live-turn",
+          session: options.sessionId,
+          data: {},
+        });
+      }
       // A fresh prompt: anything already queued is output from a turn Claude ran while dsh was
       // idle (background task finished). Relay/steer modes are mid-turn; their queue is live.
       proc.staleResults = cont.mode === "prompt" ? (proc.countStaleResults?.() ?? 0) : 0;
@@ -6005,7 +6263,14 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       // The turn is over, whichever way, unless the step only parked the CLI on a dsh tool or a
       // steer: dsh calls back within the same turn, and the row keeps its figures and names the
       // wait meanwhile. Every other outcome drops them.
-      if (!keepsLiveTurn(outcome)) this.liveTurn.delete(options.sessionId);
+      if (!keepsLiveTurn(outcome)) {
+        this.liveTurn.delete(options.sessionId);
+        hub.flush(`live-turn:${options.sessionId}`, {
+          kind: "live-turn",
+          session: options.sessionId,
+          data: {},
+        });
+      }
       this.clearIdle(options.sessionId);
       options.signal?.removeEventListener("abort", onAbort);
       for (const c of pending.values()) c.abort();
@@ -6013,6 +6278,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       // the abort. A stranded controller is harmless; a stranded awaiting entry announces a prompt
       // that no longer exists, on every reload.
       this.awaitingInput.delete(options.sessionId);
+      this.publishAwaiting();
       proc.busy = false;
       proc.lastUsed = Date.now();
       void this.watchTranscript(options.sessionId, prep.cwd, prep.session?.id);
@@ -6315,6 +6581,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       id: requestId,
       since: Date.now(),
     });
+    this.publishAwaiting();
     const signal = options.signal
       ? AbortSignal.any([options.signal, controller.signal])
       : controller.signal;
@@ -6332,7 +6599,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       .finally(() => {
         pending.delete(requestId);
         const held = this.awaitingInput.get(options.sessionId);
-        if (held?.id === requestId) this.awaitingInput.delete(options.sessionId);
+        if (held?.id === requestId) {
+          this.awaitingInput.delete(options.sessionId);
+          this.publishAwaiting();
+        }
       });
   }
 
@@ -6380,6 +6650,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       id: requestId,
       since: Date.now(),
     });
+    this.publishAwaiting();
     const signal = options.signal
       ? AbortSignal.any([options.signal, controller.signal])
       : controller.signal;
@@ -6392,7 +6663,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       .finally(() => {
         pending.delete(requestId);
         const held = this.awaitingInput.get(options.sessionId);
-        if (held?.id === requestId) this.awaitingInput.delete(options.sessionId);
+        if (held?.id === requestId) {
+          this.awaitingInput.delete(options.sessionId);
+          this.publishAwaiting();
+        }
       });
   }
 
