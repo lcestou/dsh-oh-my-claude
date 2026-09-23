@@ -89,6 +89,14 @@ import { livingModelId } from "../model-ids.js";
 import type { FallbackRecord } from "../translator.js";
 import { ReportBlock } from "./report.js";
 import { openStream, pollEvery, streamUp, subscribe, type LiveTurnBody } from "./events.js";
+import type {
+  AsideItem,
+  IdleReply,
+  LoginNeed,
+  SteerCardData,
+  TurnRecord,
+  TurnsReply,
+} from "./events.js";
 import { ChangelogBlock } from "./changelog.js";
 import { Spark, sparkNode } from "./spark.js";
 import { AccessShield, AccessTrigger, OhMyClaudeControl, sessionLabel } from "./panel.js";
@@ -5760,31 +5768,6 @@ function watchToolFolds() {
   onBodyMutation(scan, true);
 }
 
-interface TurnRecord {
-  at: number;
-  costUsd: number;
-  durationMs: number;
-  apiMs: number;
-  turns: number;
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-  ttftMs?: number;
-}
-interface TurnsReply {
-  turns: TurnRecord[];
-  total: {
-    costUsd: number;
-    durationMs: number;
-    input: number;
-    output: number;
-    cacheRead: number;
-    cacheWrite: number;
-    count: number;
-  };
-}
-
 /** The hashed half of a CSS-module class changes with every dsh build, the suffix does not. */
 const MODULE_ROOT = /(?:^|\s)[\w-]*_root(?:\s|$)/;
 /** dsh's `StatsLine` separator: a direct child of the row, `aria-hidden`, and a literal bar. */
@@ -7850,17 +7833,6 @@ function DraftRelay({
   return null;
 }
 
-/** One `/btw` side question as the client bubble draws it (mirrors the adapter's `AsideEntry`). */
-interface AsideItem {
-  id: string;
-  question: string;
-  answer?: string;
-  error?: string;
-  pending: boolean;
-  at: number;
-  dismissed?: boolean;
-}
-
 /**
  * The `/btw` aside bubble: a Claude-orange card docked above the composer, in the same slot and at
  * the same width as dsh's todo and goal panels, that shows each side question and the answer the
@@ -7976,11 +7948,6 @@ function BoxUpdateButton({
   );
 }
 
-/** Mirrors the server's LoginNeed: the box the failed turn ran on (empty for this box) and its name. */
-interface LoginNeed {
-  host: string;
-  label: string;
-}
 /** Compare two LoginNeeds by identity or by matching host and label, so a re-rendered need counts
  *  the same one. */
 const sameNeed = (a: LoginNeed | null, b: LoginNeed | null): boolean =>
@@ -8082,25 +8049,6 @@ function useBindingLimit(sessionId: string, ctx: ClientCtx) {
     };
   }, [sessionId, ctx]);
   return limit;
-}
-
-/** A typed steer still in Claude's queue, as the side-questions poll lists it. */
-interface WaitingSteerRow {
-  id: string;
-  text: string;
-  at: number;
-}
-
-/** Steers taken back from Claude for an edit: one hold, possibly several messages joined. */
-interface HeldSteerRow {
-  id: string;
-  text: string;
-}
-
-/** The steer card's half of the side-questions poll. */
-interface SteerCardData {
-  waiting: WaitingSteerRow[];
-  held: HeldSteerRow[];
 }
 
 /** One request to the steer-edit route, as its validation accepts them. */
@@ -9150,11 +9098,6 @@ const COST_DIALOG_CSS =
 
 /** dsh's unplaced-portal style: mounted so it can be measured, invisible until it has coordinates. */
 const MEASURE_STYLE: CSSProperties = { visibility: "hidden", left: 0, top: 0 };
-
-interface IdleReply {
-  deadline: number | null;
-  timeoutMs: number;
-}
 
 /** Small chip that warns when the idle watchdog is about to kill the process. */
 function IdleChip({ sessionId }: { sessionId: string }) {

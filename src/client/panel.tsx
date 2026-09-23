@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import type { CSSProperties, ReactElement } from "react";
 import { createPortal } from "react-dom";
 import { subscribe } from "./events.js";
+import type { PermissionModeState } from "./events.js";
 import {
   btn,
   btnPrimary,
@@ -3847,19 +3848,6 @@ function McpAddForm({
   );
 }
 
-/** What `GET /permission-mode` reports. */
-interface PermissionModeState {
-  mode: string;
-  override: string | null;
-  modes: string[];
-  accessMode: string | null;
-  ceiling: string;
-  /** The mode the running process is in; null without a process. Differs from `mode` after a pick
-   *  the CLI could not take live, until the next turn respawns. */
-  liveMode?: string | null;
-  live?: boolean;
-  error?: string;
-}
 /** The mode to show for a session: the process's own when one runs, else the one the next spawn gets. */
 const shownMode = (snap: PermissionModeState): string => snap.liveMode ?? snap.mode;
 /** The stored mode when it differs from the running process's, else empty: what the footer notes. */
