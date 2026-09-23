@@ -36,11 +36,13 @@ export interface LoginNeed {
   host: string;
   label: string;
 }
-/** A typed steer still in the CLI's queue. */
+/** A typed steer Claude has not read yet. `relayed` while the CLI is inside a dsh tool and dsh
+ *  holds the message: Edit and Remove work, Send now does not. */
 export interface WaitingSteerRow {
   id: string;
   text: string;
   at: number;
+  relayed?: true;
 }
 /** Steers taken back from Claude for an edit: one hold, possibly several messages joined. */
 export interface HeldSteerRow {
@@ -49,6 +51,8 @@ export interface HeldSteerRow {
 }
 /** The steer card's half of the side-questions body. */
 export interface SteerCardData {
+  /** The CLI is inside a dsh tool: no Send now on any row. Present only when true. */
+  inTool?: true;
   waiting: WaitingSteerRow[];
   held: HeldSteerRow[];
 }

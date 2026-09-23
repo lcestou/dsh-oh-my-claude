@@ -225,13 +225,13 @@ export interface RewindReply extends Partial<RewindResult> {
     ok: boolean;
     dryRun: boolean;
 }
-/** What the steer card's route answers. `sent`: Claude already has it (or it was never waiting);
- *  `gone`: no live process; `error`: the CLI did not answer the cancel. */
+/** `relayed`: Send now was asked while the CLI is inside a dsh tool, which cannot be cut short
+ *  without killing the tool; the card says to wait or edit instead. */
 export type SteerEditReply = {
     ok: true;
 } | {
     ok: false;
-    reason: "sent" | "gone" | "error";
+    reason: "sent" | "gone" | "error" | "relayed";
     error?: string;
 };
 /** What taking steers back answers: the hold to end later and the text the editor starts from. */
@@ -246,10 +246,15 @@ export type HoldReply = {
 };
 /** The steer card's poll: steers still waiting in the CLI, and holds open for an edit. */
 export interface SteerCardState {
+    /** The CLI is inside a dsh tool, so Send now is refused for every row; present only when true. */
+    inTool?: true;
+    /** `relayed` is present only while dsh holds the message (typed during a dsh tool): a hold skips
+     *  the CLI cancel and leaves dsh's inbox directly. */
     waiting: Array<{
         id: string;
         text: string;
         at: number;
+        relayed?: true;
     }>;
     held: Array<{
         id: string;
@@ -1218,13 +1223,15 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      *  taken back for an edit. A call from the card's own read (`touch`, the default) re-arms every
      *  hold's timer, so a hold nobody reads (a closed tab) goes back to Claude unchanged after
      *  `HOLD_IDLE_MS`; a publish passes `touch: false`, since the turn loop publishes at every tool
-     *  boundary and would otherwise keep a closed tab's hold alive for the whole turn. */
+     *  boundary and would otherwise keep a closed tab's hold alive for the whole turn. `inTool` says
+     *  the CLI is inside a dsh tool, which blocks Send now for every row. */
     steersFor(sessionId: string, touch?: boolean): SteerCardState;
     /** The timer that restores a hold its card stopped polling for. */
     private holdTimer;
     /**
      * Take typed steers back from Claude so someone can edit them, several at once when asked (the
-     * card's Edit all, the CLI's up-arrow). Each is cancelled in the CLI first; one the CLI already
+     * card's Edit all, the CLI's up-arrow). Each is cancelled in the CLI first; a relayed one (dsh
+     * holds it, the CLI never saw it) skips the cancel and leaves the inbox directly; one the CLI already
      * took is skipped, and one dsh already drew as sent (the park won the race) goes straight back to
      * Claude. The rest leave dsh's inbox too, so nothing delivers them while the edit is open, and
      * wait in a hold until `releaseHold`. When nothing forwarded is left in the CLI's queue the park
@@ -1250,7 +1257,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * CLI its interrupt. The hold comes first so the messages are not in the CLI's own pending list
      * when the interrupt lands, and they go back through `agent.steer` once the agent is idle, which
      * the mirror documents as starting a turn. A dsh without `cancel` (0.1.6 and earlier) gets the
-     * steers put back untouched and a refusal that says so.
+     * steers put back untouched and a refusal that says so. A relay pending refuses with `relayed`:
+     * the tool cannot be cut short without killing the CLI.
      */
     sendSteerNow(sessionId: string, ids: string[]): Promise<SteerEditReply>;
     /**

@@ -449,13 +449,16 @@ export interface SessionRouteOptions {
     }>;
     /** `/btw` side questions and their answers, per session; the client bubble reads them. */
     sideQuestions?: Map<string, AsideEntry[]>;
-    /** The steer card's poll: typed steers still in the session's CLI queue, and holds open for an
-     *  edit. Calling it re-arms the holds' idle timers. */
+    /** The steer card's poll: typed steers Claude has not read yet (in the CLI's queue, or in dsh's
+     *  inbox while a dsh tool runs), and holds open for an edit. Calling it re-arms the holds' idle
+     *  timers. */
     steersFor?: (sessionId: string) => {
+        inTool?: true;
         waiting: Array<{
             id: string;
             text: string;
             at: number;
+            relayed?: true;
         }>;
         held: Array<{
             id: string;
@@ -469,7 +472,7 @@ export interface SessionRouteOptions {
         text: string;
     } | {
         ok: false;
-        reason: "sent" | "gone" | "error";
+        reason: "sent" | "gone" | "error" | "relayed";
         error?: string;
     }>;
     /** Cut the running turn short and send these waiting steers as the next turn. */
@@ -481,7 +484,7 @@ export interface SessionRouteOptions {
         ok: true;
     } | {
         ok: false;
-        reason: "sent" | "gone" | "error";
+        reason: "sent" | "gone" | "error" | "relayed";
         error?: string;
     }>;
     /** Sessions whose last turn failed for want of a login, read beside the asides for the card. */

@@ -1588,10 +1588,12 @@ export interface SessionRouteOptions {
   ) => Promise<{ ok: boolean; error?: string }>;
   /** `/btw` side questions and their answers, per session; the client bubble reads them. */
   sideQuestions?: Map<string, AsideEntry[]>;
-  /** The steer card's poll: typed steers still in the session's CLI queue, and holds open for an
-   *  edit. Calling it re-arms the holds' idle timers. */
+  /** The steer card's poll: typed steers Claude has not read yet (in the CLI's queue, or in dsh's
+   *  inbox while a dsh tool runs), and holds open for an edit. Calling it re-arms the holds' idle
+   *  timers. */
   steersFor?: (sessionId: string) => {
-    waiting: Array<{ id: string; text: string; at: number }>;
+    inTool?: true;
+    waiting: Array<{ id: string; text: string; at: number; relayed?: true }>;
     held: Array<{ id: string; text: string }>;
   };
   /** Take waiting steers back from Claude for an edit; the answer names the hold and its text. */
@@ -1600,7 +1602,7 @@ export interface SessionRouteOptions {
     ids: string[],
   ) => Promise<
     | { ok: true; holdId: string; text: string }
-    | { ok: false; reason: "sent" | "gone" | "error"; error?: string }
+    | { ok: false; reason: "sent" | "gone" | "error" | "relayed"; error?: string }
   >;
   /** Cut the running turn short and send these waiting steers as the next turn. */
   sendSteerNow?: (
@@ -1612,7 +1614,9 @@ export interface SessionRouteOptions {
     sessionId: string,
     holdId: string,
     how: "restore" | "drop" | { text: string },
-  ) => Promise<{ ok: true } | { ok: false; reason: "sent" | "gone" | "error"; error?: string }>;
+  ) => Promise<
+    { ok: true } | { ok: false; reason: "sent" | "gone" | "error" | "relayed"; error?: string }
+  >;
   /** Sessions whose last turn failed for want of a login, read beside the asides for the card. */
   loginNeeded?: Map<string, LoginNeed>;
   /** dsh session id → the model switch its last turn reported, for the `fallback` field beside the

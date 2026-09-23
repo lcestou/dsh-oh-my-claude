@@ -684,17 +684,26 @@ export declare function scopeFailed(code: number | null, elapsedMs: number): boo
 export declare function spawnKeeper(dir: string, spec: KeeperSpec, launch: (argv: string[]) => void): Promise<SubprocessHandle>;
 /** How a child is started: locally, or on a box over ssh. The adapter holds one per provider. */
 export type Spawner = (command: string, args: string[], cwd: string, envOverride?: Record<string, string>) => SubprocessHandle;
-/** A typed steer written to the CLI and not yet absorbed, keyed by its dsh message id in `steers`. */
-export interface WaitingSteer {
-    /** The stdin line's uuid, which `cancel_async_message` names. */
-    uuid: string;
-    /** Its steerKey, the entry in the process's `sent` set. */
+/** A typed steer Claude has not read yet, keyed by its dsh message id in `steers`. Two kinds:
+ *  written to stdin during a native tool (has the line's `uuid`, and `cancel_async_message`
+ *  takes it back), or left in dsh's inbox during a dsh tool (`relayed`, never written, so there is
+ *  nothing to cancel; dsh staples it to the relay result at the tool's end). */
+export type WaitingSteer = {
+    /** Its steerKey, the entry in the process's `sent` set (never added for a relayed steer). */
     key: string;
     /** What Claude will read: the latest edit. */
     text: string;
-    /** Epoch ms of the first write, for ordering. */
+    /** Epoch ms of the first record, for ordering. */
     at: number;
-}
+} & ({
+    /** The stdin line's uuid, which `cancel_async_message` names. */
+    uuid: string;
+    relayed?: false;
+} | {
+    uuid?: undefined;
+    /** Waiting in dsh's inbox while the CLI is inside a dsh tool. */
+    relayed: true;
+});
 /**
  * A running Claude Code process bound to one dsh session. `spec` is what the process was spawned
  * with (cwd, model, effort, permission mode, session flags); a turn whose spec differs replaces it.
@@ -722,8 +731,10 @@ export declare class ClaudeProcess {
     dshIds?: Set<string>;
     relayed?: Set<string>;
     steerPending: boolean;
-    /** Typed steers written to stdin that the CLI has not taken yet, by dsh message id. Cleared at the
-     *  park that absorbs them, at the turn's end and on interrupt; the steer card lists these. */
+    /** Typed steers Claude has not read yet, by dsh message id: written to stdin during a native
+     *  tool, or left in dsh's inbox during a dsh tool (`relayed`). Cleared at the park that absorbs
+     *  them, at the relay result that carries them, at the turn's end and on interrupt; the steer
+     *  card lists these. */
     steers: Map<string, WaitingSteer>;
     /** How many mid-turn messages (typed or not, and file steers waiting to park) the CLI still has to
      *  take. Holding a steer for an edit lowers it; at zero nothing is left to park on. */
