@@ -63,7 +63,12 @@ type IconExports = Partial<
     | "IconSkillOutlineMedium"
     | "IconSkillOutline16"
     | "IconSparkleMedium"
-    | "IconSparkle16",
+    | "IconSparkle16"
+    // The permission preset glyphs dsh draws in its own composer menu. 0.1.7 is the first line to
+    // export them; before that the shield cloned dsh's rendered svgs, so there is no older name.
+    | "PermissionIconReadOnlyRegular"
+    | "PermissionIconWorkspaceWriteRegular"
+    | "PermissionIconFullAccessRegular",
     IconComponent
   >
 >;
@@ -108,3 +113,7 @@ export const IconSearchOutlineMedium =
 export const IconSkillOutlineMedium =
   exported.IconSkillOutlineMedium ?? exported.IconSkillOutline16 ?? blank;
 export const IconSparkleMedium = exported.IconSparkleMedium ?? exported.IconSparkle16 ?? blank;
+export const PermissionIconReadOnlyRegular = exported.PermissionIconReadOnlyRegular ?? blank;
+export const PermissionIconWorkspaceWriteRegular =
+  exported.PermissionIconWorkspaceWriteRegular ?? blank;
+export const PermissionIconFullAccessRegular = exported.PermissionIconFullAccessRegular ?? blank;

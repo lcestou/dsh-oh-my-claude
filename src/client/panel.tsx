@@ -58,6 +58,9 @@ import {
   IconCheckOutlineMedium,
   IconChevronDownOutlineRegular,
   IconSparkleMedium,
+  PermissionIconFullAccessRegular,
+  PermissionIconReadOnlyRegular,
+  PermissionIconWorkspaceWriteRegular,
 } from "./icons.js";
 import { Spark } from "./spark.js";
 import { ConfirmButton, TuneBody } from "./tune.js";
@@ -3920,6 +3923,18 @@ const MODE_KEYS = [
 const presetForMode = (m: string): string =>
   // SAFETY: PRESET_FOR_MODE has exactly the six Claude modes as keys; all paths below pass a known key.
   PRESET_FOR_MODE[m as keyof typeof PRESET_FOR_MODE];
+/** The glyph dsh draws for a preset in its own permission menu, keyed the way `PRESET_FOR_MODE`
+ *  names them; a Claude mode shows the glyph of the preset it maps to, so the six rows read like
+ *  dsh's three. Draws nothing for an unknown mode (the empty string before the first fetch). */
+const ModeGlyph = ({ mode }: { mode: string }) => {
+  // SAFETY: widening the readonly tuple to string[] only loosens `includes`; the membership check
+  // is what makes `presetForMode` safe to call with an arbitrary string.
+  const preset = (MODE_KEYS as readonly string[]).includes(mode) ? presetForMode(mode) : "";
+  if (preset === "read-only") return <PermissionIconReadOnlyRegular aria-hidden />;
+  if (preset === "workspace-write") return <PermissionIconWorkspaceWriteRegular aria-hidden />;
+  if (preset === "danger-full-access") return <PermissionIconFullAccessRegular aria-hidden />;
+  return null;
+};
 /** How a Claude mode is labelled in the menu, translated; a mode not in `MODE_KEYS` shows raw. */
 const modeLabel = (m: string): string =>
   // SAFETY: the membership check guarantees `panel.access.mode.<m>` is a defined dictionary key.
@@ -4441,13 +4456,21 @@ const accessRowStyle: CSSProperties = {
   font: "inherit",
   textAlign: "start",
 };
-/** A row's label column, so the check does not shift the text when a mode gains or loses it. */
+/** A row's glyph-and-label column, the way dsh lays out its own preset rows. */
 const accessRowLabelStyle: CSSProperties = {
   display: "flex",
   alignItems: "center",
   gap: 8,
   minWidth: 0,
   flex: 1,
+};
+/** The trailing check cell, reserved on every row so the labels sit still when the pick moves. */
+const accessRowCheckStyle: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "flex-end",
+  width: 16,
+  flex: "none",
 };
 /** The refused-mode note and the pick error, in dsh's menu card body text. */
 const accessNoteStyle: CSSProperties = {
@@ -4589,7 +4612,9 @@ export function AccessTrigger({ sessionId, ctx }: { sessionId: string; ctx: Clie
         onClick={() => setOpen((v) => !v)}
         style={accessTriggerStyle}
       >
-        <IconSparkleMedium size={14} aria-hidden style={{ flex: "none" }} />
+        <span aria-hidden style={{ flex: "none", display: "inline-flex", alignItems: "center" }}>
+          {mode === "" ? <IconSparkleMedium size={14} /> : <ModeGlyph mode={mode} />}
+        </span>
         <span
           aria-hidden="true"
           style={{
@@ -4627,10 +4652,13 @@ export function AccessTrigger({ sessionId, ctx }: { sessionId: string; ctx: Clie
               style={accessRowStyle}
             >
               <span style={accessRowLabelStyle}>
-                {checked && <IconCheckOutlineMedium size={16} />}
+                <ModeGlyph mode={m} />
                 <span>{modeLabel(m)}</span>
+                {rowRefused && <span aria-hidden>⚠</span>}
               </span>
-              {rowRefused && <span aria-hidden>⚠</span>}
+              <span aria-hidden style={accessRowCheckStyle}>
+                {checked && <IconCheckOutlineMedium size={16} />}
+              </span>
             </button>
           );
         })}
