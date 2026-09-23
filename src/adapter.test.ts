@@ -6822,3 +6822,95 @@ console.log("watch-save-race ok");
   );
   console.log("flush-on-death ok");
 }
+
+// Regression (2026-09-23 13:01, a second session lost the same day #100 shipped): a user Stop
+// while a native call is running. The adapter asks the CLI to interrupt, the CLI answers with a
+// result frame, and dsh, seeing its abort, breaks out of the stream at the first chunk of that
+// answer, which calls return() on the generator at that yield: nothing after the main loop runs,
+// only a `finally` sees the exit. Same fake process as above, but alive: after announcing the
+// call it aborts the signal (the user's Stop) and answers with the interrupt's result, and the
+// consumer breaks at the first chunk after the abort, the way dsh's loop does. Rows mode yields
+// no chunk for the call itself, so the break must wait for that result chunk or the loop would
+// spin on timeouts with the consumer never regaining control.
+{
+  const appended: Array<{ type: string; data: any }> = [];
+  const session = {
+    header: { version: 0 },
+    snapshotEvents: () => [
+      { type: "turn/start", data: { turn: 1 } },
+      { type: "step/start", data: { step: 1 } },
+    ],
+    append: (type: string, data: any) => {
+      appended.push({ type, data });
+      return { seq: appended.length };
+    },
+  };
+  const a = new ClaudeCodeAdapter(
+    fakeCtx({ on() {}, sessions: { get: () => session } }),
+    Config({ resume: true, toolActivity: true, toolsInline: false, dshTools: false }),
+  );
+  a.stateDir = joinPath(tmpdir(), "omc-flush-test-nowrite");
+  const queue: Array<unknown> = [
+    {
+      type: "assistant",
+      message: {
+        id: "m1",
+        role: "assistant",
+        content: [
+          { type: "tool_use", id: "toolu_stopped", name: "Bash", input: { command: "sleep 60" } },
+        ],
+      },
+    },
+  ];
+  const stop = new AbortController();
+  const proc: any = {
+    alive: true,
+    busy: false,
+    parked: undefined,
+    steerPending: false,
+    relays: new Map(),
+    dshIds: new Set(),
+    relayed: new Set(),
+    sent: new Set(),
+    idleKilled: false,
+    exitCode: 0,
+    stderr: "",
+    stray: "",
+    staleResults: 0,
+    countStaleResults: () => 0,
+    write: () => true,
+    // After the call: the user presses Stop while the tool runs, and the CLI answers the
+    // interrupt with a result frame.
+    nextEvent: async () => {
+      if (queue.length) return queue.shift();
+      stop.abort();
+      return { type: "result", subtype: "success", is_error: false, result: "", usage: {} };
+    },
+    kill: () => {},
+  };
+  const prep = { input: "go", spec: { model: "m" }, cwd: "/tmp", session: undefined, args: [] };
+  a.acquire = async () => ({ prep, proc }) as any;
+  a.reconnectIfStale = async () => {};
+  a.watchTranscript = (async () => {}) as any;
+  a.pumpMirror = (async () => {}) as any;
+  for await (const _ of a.stream({
+    sessionId: "sstopped",
+    model: "m",
+    messages: messageList([{ role: "user", content: [{ type: "text", text: "run it" }] }]),
+    signal: stop.signal,
+  } as any)) {
+    void _;
+    // dsh's loop: break on abort, which calls return() on the generator at this yield.
+    if (stop.signal.aborted) break;
+  }
+  assert.ok(
+    appended.some((e) => e.type === "tool/call"),
+    "the native call was recorded before the Stop",
+  );
+  assert.deepEqual(
+    appended.filter((e) => e.type === "tool/result").map((e) => e.data.message.source.callId),
+    ["toolu_stopped"],
+    "a Stop with a native call open still leaves its placeholder result behind",
+  );
+  console.log("flush-on-stop ok");
+}
