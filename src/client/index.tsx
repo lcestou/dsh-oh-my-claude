@@ -4851,7 +4851,22 @@ function DockStatus({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   if (!shown) return null;
   // Hidden from assistive tech: dsh's own status row already announces the turn, and this repeats it.
   return (
-    <div data-omc-dock-status="" aria-hidden="true" style={{ padding: "0 0 4px" }}>
+    <div
+      data-omc-dock-status=""
+      data-omc-arrived=""
+      aria-hidden="true"
+      style={{
+        // A short, gentle fade: chat scrolls behind the line, so the page colour holds solid under
+        // the verb and dissolves to transparent over ~14px above it, enough to keep the last chat
+        // row from touching the verb without opening a gap. No drop shadow: the gradient alone
+        // reads as the line floating, and a shadow on top drew a second, harder edge; a tall fade
+        // opened too big a gap (owner, 2026-09-23). The colour is dsh's base layer, which fills the
+        // composer area, so it holds in either theme. The strip fades in with `data-omc-arrived`.
+        padding: "14px 0 4px",
+        background:
+          "linear-gradient(to top, var(--dsw-alias-bg-base, transparent) 0%, var(--dsw-alias-bg-base, transparent) 55%, transparent 100%)",
+      }}
+    >
       {/* The chat column and the composer share a centre line, so the same max-width centred with
           auto margins lands this line's left edge on the chat text's, instead of the full composer
           width. `--dsh-chat-content-width` is dsh's own column width (748px is its default). */}
