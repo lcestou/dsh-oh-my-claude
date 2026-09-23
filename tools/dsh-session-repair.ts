@@ -19,6 +19,12 @@
 // next reload after that turn (a dsh-web restart, a second browser) and was refused from then on.
 // The repair inserts the head the seed now writes, ahead of the first surface row, and renumbers.
 //
+// A v4 step that ends over a `tool/call` with no `tool/result` is refused whole ("step/end leaves
+// unresolved tool call"). The plugin writes such a step when a user Stop lands while one of Claude
+// Code's own tools is running (fixed in the adapter 2026-09-23; #100 had covered the other exits).
+// The repair closes each open call with the same placeholder result the adapter now writes, right
+// before that step's `step/end`, citing the call it closes.
+//
 // usage:
 //   bun tools/dsh-session-repair.ts --check  [--dsh <prefix>] [<log> | --all]
 //   bun tools/dsh-session-repair.ts --apply  [--dsh <prefix>] [<log> | --all]
@@ -28,7 +34,7 @@
 // --all walks $DSH_HOME/sessions (default ~/.dsh/sessions). Stop dsh-web before --apply. The
 // original log is kept next to the repaired one as session.jsonl.zstd.bak-<timestamp>.
 import { execFileSync } from "node:child_process";
-import { existsSync, readdirSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import assert from "node:assert/strict";
@@ -93,6 +99,16 @@ const opt = (name: string) => {
  *  without an `as` assertion.
  */
 const defined = <T>(x: T | undefined): x is T => x !== undefined;
+/** The call id a `tool/result` row answers: v4 puts it at `message.toolCallId`, older formats only
+ *  at `message.source.callId`. Undefined for any other row. */
+const resultOf = (e: Row): string | undefined => {
+  const onMessage = e.data?.message?.toolCallId;
+  return typeof onMessage === "string" ? onMessage : e.data?.message?.source?.callId;
+};
+/** The text the adapter's own placeholder result carries; kept the same so a repaired log reads
+ *  like one the fixed adapter wrote. */
+const PENDING_TEXT =
+  "(still running when dsh took over this step; the output shows in the next step)";
 /** The event types dsh folds onto the conversation surface; the first of them is the system head. */
 const SURFACE = new Set(["system/message", "user/message", "assistant/message", "tool/result"]);
 
@@ -126,7 +142,7 @@ const withSpan = (op: Record<string, unknown>, span: Range): Record<string, unkn
 export function repair(
   rows: Row[],
   version = 4,
-): { rows: Row[]; droppedCalls: number; addedHead: boolean } {
+): { rows: Row[]; droppedCalls: number; addedHead: boolean; closedCalls: number } {
   const advertised = new Set<string>();
   const dropIds = new Set<string>();
   const dropped = new Set<number>();
@@ -143,9 +159,8 @@ export function repair(
       drop(e);
       continue;
     }
-    const onMessage = e.data?.message?.toolCallId;
-    const resultOf = typeof onMessage === "string" ? onMessage : e.data?.message?.source?.callId;
-    if (e.type === "tool/result" && resultOf !== undefined && dropIds.has(resultOf)) {
+    const answers = resultOf(e);
+    if (e.type === "tool/result" && answers !== undefined && dropIds.has(answers)) {
       drop(e);
       continue;
     }
@@ -181,6 +196,47 @@ export function repair(
       e.surfaceOp = withSpan(e.surfaceOp, { start: first, end: last });
     }
     out.push(e);
+  }
+  // Close every call still open when its step ends, v4 only: the placeholder is dsh 0.1.7's
+  // `role: "tool"` result message, and a v0 log never reaches here with an advertised call open
+  // (rows mode wrote its calls unadvertised, and the pass above dropped them). A seq of -1 takes a
+  // fresh slot in the renumbering below; `sourceEventSeqs` cites the call's seq, which the same
+  // renumbering remaps.
+  let closedCalls = 0;
+  if (version >= 4) {
+    const open = new Map<string, number>();
+    const closed: Row[] = [];
+    for (const e of out) {
+      if (e.type === "tool/call" && e.data?.callId !== undefined && e.seq !== undefined)
+        open.set(e.data.callId, e.seq);
+      const answers = resultOf(e);
+      if (e.type === "tool/result" && answers !== undefined) open.delete(answers);
+      if (e.type === "step/end") {
+        for (const [callId, callSeq] of open)
+          closed.push({
+            type: "tool/result",
+            seq: -1,
+            time: e.time,
+            data: {
+              turn: e.data?.turn,
+              step: e.data?.step,
+              message: {
+                id: `${callId}:result`,
+                role: "tool",
+                toolCallId: callId,
+                content: [{ type: "text", text: PENDING_TEXT }],
+                source: { kind: "tool", callId },
+              },
+            },
+            surfaceOp: "append",
+            sourceEventSeqs: [callSeq],
+          });
+        closedCalls += open.size;
+        open.clear();
+      }
+      closed.push(e);
+    }
+    out.splice(0, out.length, ...closed);
   }
   // The system head: a placeholder seq of -1 takes a fresh slot in the renumbering below, and
   // nothing in the log can reference it. The row goes where dsh's loop and the seed both put it,
@@ -267,7 +323,7 @@ export function repair(
     if (Array.isArray(e.data?.shadowedSeqs)) e.data.shadowedSeqs = list(e.data.shadowedSeqs);
     if (e.data?.shadowedRange) e.data.shadowedRange = range(e.data.shadowedRange);
   }
-  return { rows: out, droppedCalls: dropIds.size, addedHead };
+  return { rows: out, droppedCalls: dropIds.size, addedHead, closedCalls };
 }
 
 /** Decode a zstd-compressed session log into its header and rows, throwing on an empty file that
@@ -312,8 +368,12 @@ function dshPrefix(): string {
   if (given) return resolve(given);
   const bin = execFileSync("sh", ["-c", "command -v dsh"]).toString().trim();
   const real = execFileSync("readlink", ["-f", bin]).toString().trim();
-  // <prefix>/lib/node_modules/@deepseek-ai/dsh/lib/bin.js
-  return resolve(dirname(real), "..", "..", "..", "..", "..");
+  // A launcher script that pins its own node names the bin.js path inside; a symlinked bin.js
+  // is that path itself. Either way: <prefix>/lib/node_modules/@deepseek-ai/dsh/lib/bin.js
+  const launcher = readFileSync(real, "utf8").slice(0, 4096);
+  const named = /(\S+)\/lib\/node_modules\/@deepseek-ai\/dsh\/lib\/bin\.js/.exec(launcher)?.[1];
+  const prefix = named?.replace(/^"?\$HOME/, homedir()).replace(/"$/, "") ?? dirname(real);
+  return named !== undefined ? resolve(prefix) : resolve(prefix, "..", "..", "..", "..", "..");
 }
 
 /** Import dsh's session-format catalog module by path, failing with a clear message when dsh 0.1.5+
@@ -465,9 +525,22 @@ function selfCheck() {
     ),
     ev(12, "step/end", { turn: 1, step: 1 }),
     ev(13, "turn/end", { turn: 1, reason: "done" }),
+    // A second turn stopped by the user with a native call open: no tool/result before step/end.
+    ev(14, "turn/start", { turn: 2 }),
+    ev(15, "step/start", { turn: 2, step: 1 }),
+    ev(
+      16,
+      "assistant/message",
+      { turn: 2, step: 1, message: msg("m2", [{ type: "tool-call", id: "open", name: "bash" }]) },
+      { surfaceOp: "append", sourceEventSeqs: [] },
+    ),
+    ev(17, "tool/call", { turn: 2, step: 1, callId: "open", name: "bash", arguments: "{}" }),
+    ev(18, "step/end", { turn: 2, step: 1 }),
+    ev(19, "turn/end", { turn: 2, reason: "aborted" }),
   ];
-  const { rows: out, droppedCalls, addedHead } = repair(structuredClone(rows));
+  const { rows: out, droppedCalls, addedHead, closedCalls } = repair(structuredClone(rows));
   assert.equal(droppedCalls, 1, "one unadvertised call dropped");
+  assert.equal(closedCalls, 1, "one call still open at its step/end got a placeholder result");
   assert.equal(addedHead, true, "the first surface row was not a system/message");
   assert.deepEqual(
     out.map((e) => e.type),
@@ -483,14 +556,24 @@ function selfCheck() {
       "tool/result",
       "step/end",
       "turn/end",
+      "turn/start",
+      "step/start",
+      "assistant/message",
+      "tool/call",
+      "tool/result",
+      "step/end",
+      "turn/end",
     ],
-    "orphan call, its result and the prune that shadowed only them are gone; the head sits ahead of the first surface row",
+    "orphan call, its result and the prune that shadowed only them are gone; the head sits ahead of the first surface row; the open call is closed before its step/end",
   );
   // seq slots stay contiguous: 0,1,2 then the packed run owns 3-4, then 5..
   assert.deepEqual(
     out.filter((e) => e.seq !== undefined).map((e) => e.seq),
-    [0, 1, 2, 5, 6, 7, 8, 9, 10, 11],
+    [0, 1, 2, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18],
   );
+  const closing = out[15]!;
+  assert.equal(closing.data?.message?.toolCallId, "open", "the placeholder answers the open call");
+  assert.deepEqual(closing.sourceEventSeqs, [15], "and cites the call's renumbered seq");
   assert.equal(out[3]?.seq0, 3);
   assert.deepEqual(out[5]?.data, {
     turn: 1,
@@ -511,6 +594,7 @@ function selfCheck() {
   // A log whose first surface row already is a system/message is left alone.
   const headed = repair(structuredClone(out));
   assert.equal(headed.addedHead, false);
+  assert.equal(headed.closedCalls, 0, "a closed call is not closed twice");
   assert.equal(headed.rows.length, out.length);
   console.log("dsh-session-repair self-check ok");
 }
@@ -551,6 +635,7 @@ async function main() {
     const what = [
       fixed.droppedCalls > 0 ? `drops ${fixed.droppedCalls} tool rows` : "",
       fixed.addedHead ? "adds the system head" : "",
+      fixed.closedCalls > 0 ? `closes ${fixed.closedCalls} open tool calls` : "",
     ]
       .filter(Boolean)
       .join(", ");

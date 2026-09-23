@@ -107,4 +107,6 @@ Links in the README and under `docs/` are checked by `bun tools/check-links.ts`:
 
 ## Repairing session logs
 
-`tools/dsh-session-repair.ts` mends a session log that dsh 0.1.5's format migration refuses, and one a restore seeded without its system head before 1.3.2; the user-facing note is [Failed to load history after a dsh upgrade](how-it-works.md#failed-to-load-history-after-a-dsh-upgrade). It proves every repaired log through dsh's own migration chain before writing it and keeps a `.bak` beside each.
+`tools/dsh-session-repair.ts` mends a session log that dsh 0.1.5's format migration refuses, one a restore seeded without its system head before 1.3.2, and one a Stop left with a tool call open before 1.3.2; the user-facing note is [Failed to load history after a dsh upgrade](how-it-works.md#failed-to-load-history-after-a-dsh-upgrade). It proves every repaired log through dsh's own migration chain before writing it and keeps a `.bak` beside each.
+
+`bun tools/probe-notice-source.ts` asks the installed dsh whether it still accepts every message source the plugin appends (the wake and restart notices, a typed prompt), by restoring a synthetic log the way dsh loads a session. Run it after a dsh upgrade: the plugin compiles against an older dsh-llm's types, so a format rule dsh adds at runtime never fails the build. 0.1.7's v4 refused the notices while the gate stayed green.

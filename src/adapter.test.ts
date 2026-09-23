@@ -1987,6 +1987,12 @@ console.log("ok");
     "an old notice behind an assistant reply is history",
   );
   assert.equal(wakeOnlyTurn([user, asst, other]), false, "no notice, no drain turn");
+  const wakeV4 = message({
+    role: "user",
+    source: { kind: "plugin:dsh-oh-my-claude", form: "notice", summary: WAKE_TEXT },
+    content: [{ type: "text", text: WAKE_TEXT }],
+  });
+  assert.equal(wakeOnlyTurn([user, asst, wakeV4]), true, "the v4 producer kind is our notice too");
 }
 {
   // Claude Code's own compaction shows as one line; other system events stay silent.
@@ -3482,6 +3488,17 @@ console.log("boot ok");
     false,
   );
   assert.equal(hasPendingNotice([notice("other")], "dsh-oh-my-claude"), false);
+  const v4 = {
+    type: "agent/inbox/spliced",
+    data: {
+      target: "next-turn",
+      start: 0,
+      removedCount: 0,
+      inserted: [{ source: { kind: "plugin:dsh-oh-my-claude", form: "notice" } }],
+    },
+  };
+  assert.equal(hasPendingNotice([v4], "dsh-oh-my-claude"), true, "a v4 notice is pending too");
+  assert.equal(hasPendingNotice([v4], "other"), false);
   assert.equal(
     hasPendingNotice([{ type: "agent/inbox/spliced", data: null }], "dsh-oh-my-claude"),
     false,
@@ -4268,6 +4285,18 @@ assert.equal((noticeSource(RECONNECT_TEXT, false) as { form?: string }).form, "n
 assert.equal(noticeSource(LIMIT_TEXT, true).kind, "user", "a limit continue rearms a goal too");
 assert.equal(noticeSource(LIMIT_TEXT, false).kind, "plugin");
 assert.equal(noticeSource("wake", true).kind, "plugin", "a plain wake never claims the user");
+// Session format v4 refuses the `plugin` wrapper: from version 4 the notice carries the
+// producer-owned kind and no `plugin` field, and the goal rearm still claims the user.
+{
+  const v4 = noticeSource(WAKE_TEXT, false, 4) as { kind: string; form?: string; summary?: string };
+  assert.equal(v4.kind, "plugin:dsh-oh-my-claude");
+  assert.equal(v4.form, "notice");
+  assert.equal(typeof v4.summary, "string");
+}
+assert.equal("plugin" in noticeSource(WAKE_TEXT, false, 4), false, "v4 drops the plugin field");
+assert.deepEqual(noticeSource(RESTART_TEXT, true, 4), { kind: "user" });
+assert.equal(noticeSource(WAKE_TEXT, false, 3).kind, "plugin", "v3 keeps the wrapper");
+assert.equal(noticeSource(WAKE_TEXT, false, 0).kind, "plugin", "unknown version keeps the wrapper");
 console.log("notice-source ok");
 
 // An idle result wakes a turn only when it is a real reply, never an error or a rate-limit retry.
@@ -6821,4 +6850,96 @@ console.log("watch-save-race ok");
     "the placeholder carries the pending note",
   );
   console.log("flush-on-death ok");
+}
+
+// Regression (2026-09-23 13:01, a second session lost the same day #100 shipped): a user Stop
+// while a native call is running. The adapter asks the CLI to interrupt, the CLI answers with a
+// result frame, and dsh, seeing its abort, breaks out of the stream at the first chunk of that
+// answer, which calls return() on the generator at that yield: nothing after the main loop runs,
+// only a `finally` sees the exit. Same fake process as above, but alive: after announcing the
+// call it aborts the signal (the user's Stop) and answers with the interrupt's result, and the
+// consumer breaks at the first chunk after the abort, the way dsh's loop does. Rows mode yields
+// no chunk for the call itself, so the break must wait for that result chunk or the loop would
+// spin on timeouts with the consumer never regaining control.
+{
+  const appended: Array<{ type: string; data: any }> = [];
+  const session = {
+    header: { version: 0 },
+    snapshotEvents: () => [
+      { type: "turn/start", data: { turn: 1 } },
+      { type: "step/start", data: { step: 1 } },
+    ],
+    append: (type: string, data: any) => {
+      appended.push({ type, data });
+      return { seq: appended.length };
+    },
+  };
+  const a = new ClaudeCodeAdapter(
+    fakeCtx({ on() {}, sessions: { get: () => session } }),
+    Config({ resume: true, toolActivity: true, toolsInline: false, dshTools: false }),
+  );
+  a.stateDir = joinPath(tmpdir(), "omc-flush-test-nowrite");
+  const queue: Array<unknown> = [
+    {
+      type: "assistant",
+      message: {
+        id: "m1",
+        role: "assistant",
+        content: [
+          { type: "tool_use", id: "toolu_stopped", name: "Bash", input: { command: "sleep 60" } },
+        ],
+      },
+    },
+  ];
+  const stop = new AbortController();
+  const proc: any = {
+    alive: true,
+    busy: false,
+    parked: undefined,
+    steerPending: false,
+    relays: new Map(),
+    dshIds: new Set(),
+    relayed: new Set(),
+    sent: new Set(),
+    idleKilled: false,
+    exitCode: 0,
+    stderr: "",
+    stray: "",
+    staleResults: 0,
+    countStaleResults: () => 0,
+    write: () => true,
+    // After the call: the user presses Stop while the tool runs, and the CLI answers the
+    // interrupt with a result frame.
+    nextEvent: async () => {
+      if (queue.length) return queue.shift();
+      stop.abort();
+      return { type: "result", subtype: "success", is_error: false, result: "", usage: {} };
+    },
+    kill: () => {},
+  };
+  const prep = { input: "go", spec: { model: "m" }, cwd: "/tmp", session: undefined, args: [] };
+  a.acquire = async () => ({ prep, proc }) as any;
+  a.reconnectIfStale = async () => {};
+  a.watchTranscript = (async () => {}) as any;
+  a.pumpMirror = (async () => {}) as any;
+  for await (const _ of a.stream({
+    sessionId: "sstopped",
+    model: "m",
+    messages: messageList([{ role: "user", content: [{ type: "text", text: "run it" }] }]),
+    signal: stop.signal,
+  } as any)) {
+    void _;
+    // dsh's loop: break on abort, which calls return() on the generator at this yield.
+    if (stop.signal.aborted) break;
+  }
+  assert.ok(
+    appended.some((e) => e.type === "tool/call"),
+    "the native call was recorded before the Stop",
+  );
+  assert.deepEqual(
+    appended.filter((e) => e.type === "tool/result").map((e) => e.data.message.source.callId),
+    ["toolu_stopped"],
+    "a Stop with a native call open still leaves its placeholder result behind",
+  );
+  console.log("flush-on-stop ok");
 }

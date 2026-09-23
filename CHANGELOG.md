@@ -62,6 +62,15 @@ dsh: runs on 0.1.5-rc.1 through 0.1.7-alpha.2; built and tested on 0.1.7-alpha.2
 
 ### Fixed
 
+- On dsh 0.1.7 (session format v4) the plugin's own wake, restart, reconnect and usage-limit
+  notices failed the turn they opened with *format v4 message requires a producer-owned source
+  kind*, so every session nudged after a dsh restart died on its first turn until someone typed.
+  The notice now carries the source kind v4 expects; v3 logs keep the old shape.
+- A Stop pressed while one of Claude's own tools (Bash, Read…) was running left that tool's call
+  open in the session log, and dsh refused the whole session on the next load (*Failed to load
+  history … step/end leaves unresolved tool call*). The placeholder result now lands on every way a
+  step can end, including the Stop, and `tools/dsh-session-repair.ts` closes the open calls in a
+  log already refused for it.
 - A session restored from a Claude Code transcript stays loadable after its first live turn. The
   restore seeded the log without the system-prompt entry dsh keeps as the log's first line; dsh's
   loop wrote one on the first live turn further down, and from the next reload on (a dsh-web
