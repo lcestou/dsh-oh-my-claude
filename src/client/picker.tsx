@@ -88,6 +88,8 @@ const noop = (): void => {};
 
 /** What Settings dispatches to open this dialog; see the takeover effect below. */
 export const OPEN_EVENT = "omc-add-workspace";
+/** The one mounted AddWorkflow that answers OPEN_EVENT, so two cells never open two dialogs. */
+let settingsOpener: (() => void) | null = null;
 /** What this dialog dispatches once a remote workspace is saved, so the Settings card lists it. */
 export const RW_EVENT = "omc-remote-workspaces";
 /** What the Boxes card dispatches after saving the ssh box list, so this dialog's takeover engages
@@ -340,12 +342,18 @@ export function AddWorkflow({
   const [forcedOpen, setForcedOpen] = useState(false);
 
   // The Settings card lists remote workspaces but has no shared React tree with the sidebar, so it
-  // opens this dialog by event rather than through the owner's `open`.
+  // opens this dialog by event rather than through the owner's `open`. One instance answers it:
+  // this component sits in both directory-flow cells, and when the hero is on screen both are
+  // mounted, so every instance answering put two dialogs on top of each other (pr-review, #98).
+  // The first to mount claims the event, the next claims it when that one unmounts.
   useEffect(() => {
     const start = () => setForcedOpen(true);
+    if (settingsOpener !== null) return;
+    settingsOpener = start;
     document.addEventListener(OPEN_EVENT, start);
     return () => {
       document.removeEventListener(OPEN_EVENT, start);
+      if (settingsOpener === start) settingsOpener = null;
     };
   }, []);
 

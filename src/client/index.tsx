@@ -9305,13 +9305,23 @@ export function apply(ctx: ClientCtx) {
   // never runs the inject callback, and the scan keeps its title match.
   ctx.slots.inject("sidebar.workspaces.session.row.action", () => {
     try {
-      ctx.slots.register(
+      const off = ctx.slots.register(
         { name: "sidebar.workspaces.session.row.action", id: "oh-my-claude-mark", order: 300 },
         (props) => (props.sessionId ? <RowMark sessionId={props.sessionId} ctx={ctx} /> : null),
       );
       markActive = true;
+      // The flag is module state and the entry is not: when dsh retires the entry (a redeclared
+      // slot, a hot reload's old context) the scan has to go back to its title match.
+      ctx.effect?.(
+        () => () => {
+          off();
+          markActive = false;
+        },
+        "row-mark-entry",
+      );
     } catch {
       // A dsh that refuses the entry leaves the scan on its title match.
+      markActive = false;
     }
     return null;
   });
