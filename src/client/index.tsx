@@ -4762,13 +4762,14 @@ function movePickerToFallback(ctx: ClientCtx, sessionId: string, rec: FallbackRe
  * node in a fresh tab). dsh also took down the status bar older builds kept at the bottom. This is
  * the same line, wired by `wireTurnStatus` the way the header's is (spinner, verb, figures), so the
  * verb is the one the header picked (kept per session) and the bracket comes from the same route.
- * Shown while the header's line is off screen or not drawn, or for the whole turn with the
- * `dockStatusAlways` hint, and only under the Claude look's row switch.
+ * Shown while the header's line is off screen or not drawn, and hidden while the header line is on
+ * screen so the two never show at once, under the Claude look's row switch. On by default; the
+ * `dockStatusOff` hint turns it off for someone who wants only dsh's header line.
  * ponytail: with the header on the page too, both lines poll the live-turn route once a second; the
  * server-push pass replaces both polls with one subscription.
  */
 function DockStatus({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
-  const [always] = useHintFlag("dockStatusAlways");
+  const [off] = useHintFlag("dockStatusOff");
   const [running, setRunning] = useState(false);
   const [headerAway, setHeaderAway] = useState(false);
   const line = useRef<HTMLSpanElement>(null);
@@ -4823,7 +4824,7 @@ function DockStatus({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
       obs?.disconnect();
     };
   }, [running]);
-  const shown = running && hasTheme("row") && (always || headerAway);
+  const shown = running && hasTheme("row") && !off && headerAway;
   useEffect(() => {
     if (!shown) return;
     const el = line.current;
@@ -7418,11 +7419,12 @@ function WorkspaceModelSwitch() {
   );
 }
 
-/** Settings > Oh My Claude: the working line above the composer shows once the turn's own header
- *  has scrolled off or was never drawn; on, it stays there for the whole turn. */
+/** Settings > Oh My Claude: on by default, repeats the working line above the composer while the
+ *  turn's own header line is off screen. Off leaves only dsh's header line. The switch stores the
+ *  off state (`dockStatusOff`), so an unset box gets the line. */
 function DockStatusSwitch() {
   useLocale();
-  const [on, setOn] = useHintFlag("dockStatusAlways");
+  const [off, setOff] = useHintFlag("dockStatusOff");
   return (
     <div
       data-omc-dock-status-switch=""
@@ -7439,7 +7441,11 @@ function DockStatusSwitch() {
         <div>{t("main.settingsUi.dockStatusTitle")}</div>
         <div style={{ color: T.faint, fontSize: 12 }}>{t("main.settingsUi.dockStatusDesc")}</div>
       </div>
-      <Switch on={on} onChange={setOn} label={t("main.settingsUi.dockStatusTitle")} />
+      <Switch
+        on={!off}
+        onChange={(next) => setOff(!next)}
+        label={t("main.settingsUi.dockStatusTitle")}
+      />
     </div>
   );
 }
@@ -9242,6 +9248,9 @@ export function apply(ctx: ClientCtx) {
         </div>
         <StarLine />
         <ThemeSwitch />
+        {/* Second, right under the look switch: the working line is part of the Claude look (its
+            row group), so it reads as the next thing to decide about that look. */}
+        <DockStatusSwitch />
         <StarterSwitch />
         <UpdateNoticeSwitch />
         <ClaudeUpdateSwitch />
@@ -9249,7 +9258,6 @@ export function apply(ctx: ClientCtx) {
         <LimitWarningsSwitch />
         <WorkspaceModelSwitch />
         <ToolRowsSwitch />
-        <DockStatusSwitch />
         {/* The switches that start off sit together after the ones that start on, so the card reads
             as what the plugin does by default first, then what you can add to it. The proxy control
             keeps company with them rather than with the spend field it used to precede: it answers

@@ -15,8 +15,8 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 - Claude's working line (spinner, verb, figures) repeats above the composer once the turn's own
   header has scrolled off screen or is not drawn. dsh 0.1.7 keeps that line in the turn header,
   which a long run of tool cards pushes out of view, and on a long turn the header sits above the
-  "Load earlier" fold and is not drawn at all. A switch in Settings > Oh My Claude keeps the copy
-  above the composer for the whole turn.
+  "Load earlier" fold and is not drawn at all. It is on by default; a switch in Settings > Oh My
+  Claude turns it off for someone who wants only dsh's header line.
 
 ### Changed
 
