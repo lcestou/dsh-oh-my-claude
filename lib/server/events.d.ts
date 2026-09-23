@@ -1,11 +1,10 @@
 import type { ServerResponse } from "node:http";
-import type { JsonValue } from "./dsh.js";
 /** One message: `kind` names the SSE event, `session` scopes it (null: every tab hears it) and
  *  `data` is the matching GET route's body. */
 export interface OmcEvent {
     kind: string;
     session: string | null;
-    data: JsonValue;
+    data: object;
 }
 interface Connection {
     res: ServerResponse;
@@ -38,11 +37,12 @@ export declare class EventHub {
     attach(res: ServerResponse, session: string | null, snapshot: OmcEvent[]): void;
     /** Send `e` to every connection whose session matches, or to all when `e.session` is null. */
     publish(e: OmcEvent): void;
-    /** Publish `build()` for `session` at most once per `ms`; a call while one is pending replaces
-     *  the builder and keeps the timer, so the body sent is the newest. */
-    coalesce(session: string, build: () => OmcEvent, ms?: number): void;
-    /** Cancel a pending coalesced event for `session` and publish `e` now. */
-    flush(session: string, e: OmcEvent): void;
+    /** Publish `build()` under `key` at most once per `ms`; a call while one is pending replaces
+     *  the builder and keeps the timer, so the body sent is the newest. Callers key by kind and
+     *  session (`live-turn:<id>`), so two kinds for one session never replace each other. */
+    coalesce(key: string, build: () => OmcEvent, ms?: number): void;
+    /** Cancel a pending coalesced event under `key` and publish `e` now. */
+    flush(key: string, e: OmcEvent): void;
     /** End every response and stop the timers. Called by the route's disposer only: a box mount
      *  going away must not close the root's streams, and a reload disposes the route anyway. */
     close(): void;

@@ -3837,9 +3837,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    *  would miss it. On a box with one mount this is `awaitingSnapshot()`. */
   awaitingAll(): Record<string, AwaitingRow> {
     return Object.fromEntries(
-      [...ClaudeCodeAdapter.mounts(this)].flatMap((m) =>
-        Object.entries(m.awaitingSnapshot()),
-      ),
+      [...ClaudeCodeAdapter.mounts(this)].flatMap((m) => Object.entries(m.awaitingSnapshot())),
     );
   }
 
@@ -7145,6 +7143,17 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       turnRecords: adapter.turnBuffer,
       dshVersion: DSH_VERSION,
       liveTurn: adapter.liveTurn,
+      events: {
+        hub,
+        snapshot: (session: string | null) => adapter.snapshot(session),
+        replies: {
+          liveTurn: (sessionId: string) => adapter.liveTurnReply(sessionId),
+          turns: (sessionId: string) => adapter.turnsReply(sessionId),
+          asides: (sessionId: string) => adapter.asidesReply(sessionId),
+          idle: (sessionId: string) => adapter.idleReply(sessionId),
+          permissionMode: (sessionId: string) => adapter.permissionModeReply(sessionId),
+        },
+      },
       idle: {
         deadlineFor: (session: string) =>
           adapter.ownerFor(session).idleDeadlineMap.get(session) ?? null,
@@ -7248,7 +7257,7 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       pluginErrors: (sessionId: string) => adapter.ownerFor(sessionId).pluginErrorsFor(sessionId),
       pluginWarnings: (sessionId: string) =>
         adapter.ownerFor(sessionId).pluginWarningsFor(sessionId),
-      awaiting: () => adapter.awaitingSnapshot(),
+      awaiting: () => adapter.awaitingAll(),
       continueAfterLimit: adapter.config.continueAfterLimit,
     });
     // Mount the saved SSH boxes at boot; `sshMounts` is scope-local so a hot reload rebuilds them.
