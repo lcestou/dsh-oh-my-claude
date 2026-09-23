@@ -66,6 +66,7 @@ import {
   claudeProviderOf,
   claudeMount,
   type ClientCtx,
+  type DirectoryFlowOwnerProps,
   openHere,
   openSession,
   openSessionId,
@@ -91,7 +92,14 @@ import { ChangelogBlock } from "./changelog.js";
 import { Spark, sparkNode } from "./spark.js";
 import { AccessShield, AccessTrigger, OhMyClaudeControl, sessionLabel } from "./panel.js";
 import { ConfirmButton } from "./tune.js";
-import { AddWorkspaceFlow, BOXES_EVENT, canBrowseDirs, OPEN_EVENT, RW_EVENT } from "./picker.js";
+import {
+  AddWorkflow,
+  AddWorkspaceFlow,
+  BOXES_EVENT,
+  canBrowseDirs,
+  OPEN_EVENT,
+  RW_EVENT,
+} from "./picker.js";
 import { ClaudeUpdateDetails } from "./claude-updates.js";
 import { type LimitLevel, worstLimit } from "./limits.js";
 import { SearchField } from "./search-field.js";
@@ -9152,16 +9160,50 @@ export function apply(ctx: ClientCtx) {
   // Add workspace, with a box to pick it on. Renderless until dsh's sidebar "+" is clicked, and
   // dormant unless an SSH box is saved; the sidebar footer is where a root-scoped entry stays
   // mounted whether the sidebar is wide or collapsed.
-  // Add workspace, with a box to pick it on. Renderless until dsh's sidebar "+" is clicked, and
-  // dormant unless an SSH box is saved; the sidebar footer is where a root-scoped entry stays
-  // mounted whether the sidebar is wide or collapsed.
-  ctx.slots.inject("sidebar.footer.action", () => {
-    ctx.slots.register(
-      { name: "sidebar.footer.action", id: "claude-add-workspace", order: 90 },
-      () => <AddWorkspaceFlow ctx={ctx} />,
-    );
-    return null;
-  });
+  // The directory picker as a slot occupant in both the sidebar and the hero, so the dialog is
+  // ours on every dsh. Shadowing is per cell, not per session; priority -1 replaces dsh's picker.
+  // On an older dsh that refuses a second occupant of a cell the register throws, and we take the
+  // sidebar "+" over by click instead until an upgrade.
+  try {
+    ctx.slots.inject("sidebar.workspaces.directoryFlow", () => {
+      ctx.slots.register(
+        {
+          name: "sidebar.workspaces.directoryFlow",
+          id: "oh-my-claude-workflow",
+          order: 300,
+          priority: -1,
+        },
+        // SAFETY: `DshSlots.register` types the owner props as the generic session shape, but dsh's
+        // directory-flow slots hand the DirectoryFlowOwnerProps contract; the cast names the truth.
+        (props) => <AddWorkflow {...(props as DirectoryFlowOwnerProps)} ctx={ctx} />,
+      );
+      return null;
+    });
+    ctx.slots.inject("conversation.hero.workspace.directoryFlow", () => {
+      ctx.slots.register(
+        {
+          name: "conversation.hero.workspace.directoryFlow",
+          id: "oh-my-claude-workflow-hero",
+          order: 300,
+          priority: -1,
+        },
+        // SAFETY: `DshSlots.register` types the owner props as the generic session shape, but dsh's
+        // directory-flow slots hand the DirectoryFlowOwnerProps contract; the cast names the truth.
+        (props) => <AddWorkflow {...(props as DirectoryFlowOwnerProps)} ctx={ctx} />,
+      );
+      return null;
+    });
+  } catch {
+    // Older dsh refuses a second occupant of a cell; take the sidebar "+" over by click until an
+    // upgrade, when the slot occupant takes over again on the next restart.
+    ctx.slots.inject("sidebar.footer.action", () => {
+      ctx.slots.register(
+        { name: "sidebar.footer.action", id: "claude-add-workspace", order: 90 },
+        () => <AddWorkspaceFlow ctx={ctx} />,
+      );
+      return null;
+    });
+  }
 
   // Header chips in the session header.
   ctx.slots.inject("conversation.session.header.actions", () => {

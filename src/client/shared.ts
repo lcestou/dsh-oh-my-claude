@@ -810,6 +810,26 @@ export interface LocaleFace {
   bind: (ns: string) => (key: string) => string;
 }
 
+/**
+ * The owner share dsh's directory-flow slots (`sidebar.workspaces.directoryFlow`,
+ * `conversation.hero.workspace.directoryFlow`) hand to their occupant: the complete exchange between
+ * the trigger surface and the picking dialog. The occupant reads `open` to run its interaction and
+ * reports exactly one outcome per open — `onPicked` for a directory the owner adopts, `onCancel` for
+ * a dismiss, `onError` when the chooser itself fails. Mirrors dsh-client-ui-workspace's own type.
+ */
+export interface DirectoryFlowOwnerProps {
+  /** True while a picking interaction is requested; flipping back to false withdraws the request. */
+  open: boolean;
+  /** True while the owner adopts a picked path; occupants disable their commit affordances. */
+  busy: boolean;
+  /** The operator picked a directory (absolute host path); the owner adopts it. */
+  onPicked: (path: string) => void;
+  /** The operator dismissed the interaction; the owner just closes the flow. */
+  onCancel: () => void;
+  /** The interaction itself failed (chooser missing, listing denied); the owner shows its error. */
+  onError: (message: string) => void;
+}
+
 /** The dsh client services this panel uses, the ones `inject` names. */
 export interface ClientCtx {
   /** cordis: run `fn` now and its returned cleanup when this context is disposed. Optional because

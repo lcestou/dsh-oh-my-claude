@@ -19,6 +19,7 @@ import {
   readJson,
   type ClientCtx,
   type DirEntry,
+  type DirectoryFlowOwnerProps,
   type LocaleFace,
   type UiWorkspaceFace,
 } from "./shared.js";
@@ -80,6 +81,10 @@ export const ancestry = (path: string): DirEntry[] => {
 
 /** The last segment of a path, which is the name a remote workspace takes. */
 export const baseName = (path: string): string => segments(path).at(-1) ?? "";
+
+/** A create failure in the click fallback: the dialog stays open and re-enables Open, so no surface
+ *  needs the message; kept module-scoped so the no-op is not rebuilt per render. */
+const noop = (): void => {};
 
 /** What Settings dispatches to open this dialog; see the takeover effect below. */
 export const OPEN_EVENT = "omc-add-workspace";
@@ -157,21 +162,212 @@ const mkdir = async (ctx: ClientCtx, host: string, path: string, name: string): 
 };
 
 /**
- * Renderless until dsh's Add workspace button is clicked: the dialog it then opens is this plugin's,
- * and the click never reaches dsh's own flow. Mounted once at the sidebar footer, which is where a
- * root-scoped entry stays mounted whether the sidebar is wide or collapsed.
+ * The Select Workspace Directory dialog with its box dropdown, in the shape dsh draws it. Owns the
+ * ssh list, the current box and the create-in-flight guard, and routes a pick through this PC
+ * (`workspaces.create`) or a remote box (`/remote-workspaces`), calling back with the outcome. Both
+ * the slot occupant and the click fallback render this, so the dialog is identical whichever opened
+ * it. `busy` is the owner's adoption state; `submitting` is this dialog's own create, and either
+ * disables the commit and the box dropdown.
  */
-export function AddWorkspaceFlow({ ctx }: { ctx: ClientCtx }) {
+function WorkspaceDialog({
+  open,
+  busy,
+  ctx,
+  onPicked,
+  onError,
+  onClosed,
+}: {
+  open: boolean;
+  busy: boolean;
+  ctx: ClientCtx;
+  onPicked: (path: string) => void;
+  onError: (message: string) => void;
+  onClosed: () => void;
+}) {
   useLocale();
   const [ssh, setSsh] = useState<BoxRow[]>([]);
-  const [open, setOpen] = useState(false);
   // Empty host means this PC, which is what the dropdown opens on.
   const [host, setHost] = useState("");
-  const [busy, setBusy] = useState(false);
-  // Bumped with the host so the dialog relists from that box's home.
+  // Bumped with the host so the dialog relists from that box's home on a switch.
   const [generation, setGeneration] = useState(0);
   const [menuOpen, setMenuOpen] = useState(false);
+  // A pick is in flight: disables Open so a double click cannot start two creates.
+  const [submitting, setSubmitting] = useState(false);
   const t = copyOf(ctx);
+
+  // The list was read once at mount, so a box added in Settings left the takeover off until a
+  // reload. It now rereads when the Boxes card saves, and when the tab comes back into view, which
+  // covers a box added from another tab or device.
+  useEffect(() => {
+    const load = () =>
+      fetch(`${ROUTE}/ssh-boxes`)
+        .then((r) => readJson<{ boxes?: BoxRow[] }>(r))
+        .then((b) => setSsh(b.boxes ?? []))
+        .catch(() => {});
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void load();
+    };
+    void load();
+    window.addEventListener(BOXES_EVENT, load);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener(BOXES_EVENT, load);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, []);
+
+  // Stable per host: the dialog relists when these change, which is what a box switch wants.
+  const listDirectory = useCallback(
+    (path?: string, signal?: AbortSignal) => level(ctx, host, path, signal),
+    [ctx, host],
+  );
+  const createDirectory = useCallback(
+    (path: string, name: string) => mkdir(ctx, host, path, name),
+    [ctx, host],
+  );
+
+  // A pick on whichever box is picked: optimistically guard, then create locally or remotely. The
+  // remote route names the workspace after the directory and appends the host itself, and the row
+  // is committed before the Settings card rereads, so the new remote workspace lists.
+  const add = (target: string) => {
+    if (submitting || busy) return;
+    setSubmitting(true);
+    const done = () => {
+      setSubmitting(false);
+      onPicked(target);
+    };
+    const failed = (message: string) => {
+      setSubmitting(false);
+      onError(message);
+    };
+    if (host === "") {
+      ctx.workspaces.create({ path: target }).then(done).catch(failed);
+      return;
+    }
+    fetch(`${ROUTE}/remote-workspaces`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: baseName(target) || host, host, remoteCwd: target }),
+    })
+      .then((r) => readJson<{ workspace?: unknown }>(r))
+      .then(() => window.dispatchEvent(new Event(RW_EVENT)))
+      .then(done)
+      .catch(failed);
+  };
+
+  const boxes: BoxRow[] = [{ name: omcT("picker.thisBox"), host: "" }, ...ssh];
+  const current = boxes.find((b) => b.host === host) ?? boxes[0];
+  return (
+    <DirectoryBrowser
+      // Remount on a box switch: the dialog lists its home on open, and a new box is a new open.
+      key={generation}
+      open={open}
+      busy={busy || submitting}
+      listDirectory={listDirectory}
+      createDirectory={createDirectory}
+      onOpen={add}
+      onClose={onClosed}
+      t={t}
+      footerLead={
+        // dsh's Menu on a selector-shaped trigger, the way its own settings dropdowns are built
+        // (a 36 px capsule, label and chevron), so the box list drops down as dsh's lists do.
+        <Menu
+          open={menuOpen}
+          onClose={() => setMenuOpen(false)}
+          items={boxes.map((b) => ({ id: b.host, label: b.name }))}
+          selectedId={host}
+          onSelect={(id) => {
+            setMenuOpen(false);
+            if (id === host) return;
+            setHost(id);
+            setGeneration((n) => n + 1);
+          }}
+          side="top"
+          portal
+          anchor={
+            <button
+              type="button"
+              style={selectorStyle}
+              aria-label={omcT("picker.box")}
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              disabled={busy || submitting}
+              onClick={() => setMenuOpen((v) => !v)}
+            >
+              {current?.name}
+              <IconChevronDownOutlineRegular />
+            </button>
+          }
+        />
+      }
+    />
+  );
+}
+
+/**
+ * The directory picker as dsh's slot occupant: the dialog runs off the owner's `open` flag, and the
+ * owner adopts a pick via `onPicked`, closes it via `onCancel`, and shows a failure via `onError`.
+ * The Settings card opens it by event (OPEN_EVENT) since it has no React parent with the sidebar, so
+ * a local `forcedOpen` covers that path. Registration into the slot is what makes the dialog dsh's
+ * on every version; this component is the slot path, and AddWorkspaceFlow is the click fallback.
+ */
+export function AddWorkflow({
+  open,
+  busy,
+  onPicked,
+  onCancel,
+  onError,
+  ctx,
+}: DirectoryFlowOwnerProps & { ctx: ClientCtx }) {
+  const [forcedOpen, setForcedOpen] = useState(false);
+
+  // The Settings card lists remote workspaces but has no shared React tree with the sidebar, so it
+  // opens this dialog by event rather than through the owner's `open`.
+  useEffect(() => {
+    const start = () => setForcedOpen(true);
+    document.addEventListener(OPEN_EVENT, start);
+    return () => {
+      document.removeEventListener(OPEN_EVENT, start);
+    };
+  }, []);
+
+  // A pick is adopted by the owner; the forced-open dialog closes first so a second open is fresh.
+  const adopt = (path: string) => {
+    if (forcedOpen) setForcedOpen(false);
+    onPicked(path);
+  };
+
+  // Dismiss withdraws the flow: the forced-open dialog closes on its own, the owner's closes via
+  // onCancel.
+  const dismiss = () => {
+    if (forcedOpen) setForcedOpen(false);
+    else onCancel();
+  };
+
+  return (
+    <WorkspaceDialog
+      open={open || forcedOpen}
+      busy={busy}
+      ctx={ctx}
+      onPicked={adopt}
+      onError={onError}
+      onClosed={dismiss}
+    />
+  );
+}
+
+/**
+ * Renderless fallback for an older dsh that refuses the slot occupant: it takes dsh's Add workspace
+ * button over by capture-click, so the dialog it opens is this plugin's and the click never reaches
+ * dsh's own flow. Only engages when at least one SSH box is saved, which is what makes the box
+ * dropdown worth the takeover; without one dsh's own local-only dialog is left alone. Mounted at the
+ * sidebar footer, where a root-scoped entry stays mounted whether the sidebar is wide or collapsed.
+ */
+export function AddWorkspaceFlow({ ctx }: { ctx: ClientCtx }) {
+  const [ssh, setSsh] = useState<BoxRow[]>([]);
+  // The dialog is open only from the capture-click or the Settings event; the owner drives it in the
+  // slot path, so this fallback owns its own open flag.
+  const [open, setOpen] = useState(false);
 
   // The list was read once at mount, so a box added in Settings left the takeover off until a
   // reload. It now rereads when the Boxes card saves, and when the tab comes back into view, which
@@ -201,11 +397,7 @@ export function AddWorkspaceFlow({ ctx }: { ctx: ClientCtx }) {
   useEffect(() => {
     if (ssh.length === 0 || !uiWorkspaceOf(ctx)) return;
     const label = localeOf(ctx)?.bind("workspace")("workspace.add") || "Add workspace";
-    const start = () => {
-      setHost("");
-      setBusy(false);
-      setOpen(true);
-    };
+    const start = () => setOpen(true);
     const onClick = (e: MouseEvent) => {
       const target = e.target instanceof Element ? e.target : null;
       if (!target?.closest(`button[aria-label="${CSS.escape(label)}"]`)) return;
@@ -223,86 +415,19 @@ export function AddWorkspaceFlow({ ctx }: { ctx: ClientCtx }) {
     };
   }, [ssh.length, ctx]);
 
-  // Stable per host: the dialog relists when these change, which is what a box switch wants.
-  const listDirectory = useCallback(
-    (path?: string, signal?: AbortSignal) => level(ctx, host, path, signal),
-    [ctx, host],
-  );
-  const createDirectory = useCallback(
-    (path: string, name: string) => mkdir(ctx, host, path, name),
-    [ctx, host],
-  );
+  // A pick just closes the dialog; the create already ran inside the dialog. A failure leaves it
+  // open (the dialog re-enables Open), matching the pre-slot behavior, so the operator can retry.
+  const adopt = () => setOpen(false);
+  const fail = noop;
 
-  const add = (target: string) => {
-    setBusy(true);
-    const done = () => {
-      setBusy(false);
-      setOpen(false);
-    };
-    const failed = () => setBusy(false);
-    if (host === "") {
-      ctx.workspaces.create({ path: target }).then(done).catch(failed);
-      return;
-    }
-    // A remote workspace is a dsh workspace pinned to a path on the box; the route names it after
-    // the directory and appends the host itself.
-    fetch(`${ROUTE}/remote-workspaces`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: baseName(target) || host, host, remoteCwd: target }),
-    })
-      .then((r) => readJson<{ workspace?: unknown }>(r))
-      // After the answer, so the row is in the file by the time the card asks for it.
-      .then(() => window.dispatchEvent(new Event(RW_EVENT)))
-      .then(done)
-      .catch(failed);
-  };
-
-  const boxes: BoxRow[] = [{ name: omcT("picker.thisBox"), host: "" }, ...ssh];
-  const current = boxes.find((b) => b.host === host) ?? boxes[0];
   return (
-    <DirectoryBrowser
-      // Remount on a box switch: the dialog lists its home on open, and a new box is a new open.
-      key={generation}
+    <WorkspaceDialog
       open={open}
-      busy={busy}
-      listDirectory={listDirectory}
-      createDirectory={createDirectory}
-      onOpen={add}
-      onClose={() => setOpen(false)}
-      t={t}
-      footerLead={
-        // dsh's Menu on a selector-shaped trigger, the way its own settings dropdowns are built
-        // (a 36 px capsule, label and chevron), so the box list drops down as dsh's lists do.
-        <Menu
-          open={menuOpen}
-          onClose={() => setMenuOpen(false)}
-          items={boxes.map((b) => ({ id: b.host, label: b.name }))}
-          selectedId={host}
-          onSelect={(id) => {
-            setMenuOpen(false);
-            if (id === host) return;
-            setHost(id);
-            setGeneration((n) => n + 1);
-          }}
-          side="top"
-          portal
-          anchor={
-            <button
-              type="button"
-              style={selectorStyle}
-              aria-label={omcT("picker.box")}
-              aria-haspopup="menu"
-              aria-expanded={menuOpen}
-              disabled={busy}
-              onClick={() => setMenuOpen((v) => !v)}
-            >
-              {current?.name}
-              <IconChevronDownOutlineRegular />
-            </button>
-          }
-        />
-      }
+      busy={false}
+      ctx={ctx}
+      onPicked={adopt}
+      onError={fail}
+      onClosed={() => setOpen(false)}
     />
   );
 }
