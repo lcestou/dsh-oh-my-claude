@@ -35,7 +35,10 @@ let row = running.first();
 if (which === "idle") {
   const texts = await rows.allInnerTexts();
   const idx = texts.findIndex(
-    (t, i) => i > 0 && !/Running|运行中/.test(t) && !/^(oh-my-claude|IC-Saves|lutechi|pewtron|afk-solutions)$/.test(t.trim()),
+    (t, i) =>
+      i > 0 &&
+      !/Running|运行中/.test(t) &&
+      !/^(oh-my-claude|IC-Saves|lutechi|pewtron|afk-solutions)$/.test(t.trim()),
   );
   row = rows.nth(idx);
 }
@@ -47,5 +50,6 @@ await p.waitForTimeout(Number(secs) * 1000);
 const total = [...counts.values()].reduce((a, c) => a + c, 0);
 console.log(`row: ${label}`);
 console.log(`window ${secs}s: total ${total} (${((total * 60) / Number(secs)).toFixed(0)}/min)`);
-for (const [k, v] of [...counts.entries()].toSorted((x, y) => y[1] - x[1])) console.log(`${v}\t${k}`);
+for (const [k, v] of [...counts.entries()].toSorted((x, y) => y[1] - x[1]))
+  console.log(`${v}\t${k}`);
 await b.close();
