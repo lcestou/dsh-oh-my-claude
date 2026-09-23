@@ -200,7 +200,7 @@ import { buildMirror } from "./claude-home.js";
 export { markBusy, takeInterrupted } from "./state.js";
 export { forkTranscriptText } from "./transcript.js";
 import { anthropicStatus, degradedNote, peekStatus } from "./anthropic-status.js";
-import { Translator, type FallbackRecord } from "./translator.js";
+import { Translator, type FallbackRecord, type LiveMode } from "./translator.js";
 export { Translator, type TranslatorBlock, type FallbackRecord } from "./translator.js";
 import type {
   ContentBlockType,
@@ -667,6 +667,10 @@ export interface LiveTurnReply {
   thinkingMs?: number;
   idleMs?: number;
   tool: boolean;
+  /** Which way the line's shimmer runs; see LiveMode in translator.ts. The builder always sets
+   *  it; optional on the type because the no-hub route fallback and the hand-built fakes in the
+   *  route tests do not, and the row reads an absent mode as no change. */
+  mode?: LiveMode;
   thoughtMs?: number;
   thoughtAgoMs?: number;
   effort?: string;
@@ -2343,6 +2347,9 @@ export interface LiveTurn {
   effort?: string;
   /** The dsh tool dsh is running for this parked turn, and when the relay went out. */
   relay?: { name: string; at: number };
+  /** The CLI's spinner mode for this turn; absent until the first frame names one, which the reply
+   *  reads as `requesting` (the CLI's own state between the request and the first block). */
+  mode?: LiveMode;
   at: number;
 }
 
@@ -3948,6 +3955,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       // line replaces, so the figure comes from the turn record instead of off the page.
       elapsedMs: now - live.at,
       tool: live.tool === true,
+      mode: live.mode ?? "requesting",
     };
     if (open) r.thinkingMs = now - live.thinkingAt!;
     if (live.frameAt !== undefined) r.idleMs = now - live.frameAt;
@@ -5968,10 +5976,15 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       onProgress: (p) => {
         const cur = this.liveTurn.get(options.sessionId) ?? {
           at: Date.now(),
+          // The stall clock counts from the turn's start, as the CLI's does: a slow first byte
+          // tints the line past 10 s. The first stream frame moves it.
+          frameAt: Date.now(),
           effort: options.reasoningEffort ?? undefined,
         };
         if (p.frame) cur.frameAt = Date.now();
         if (p.tool !== undefined) cur.tool = p.tool;
+        const modeChanged = p.mode !== undefined && p.mode !== cur.mode;
+        if (p.mode !== undefined) cur.mode = p.mode;
         if (p.relay !== undefined) cur.relay = { name: p.relay.name, at: Date.now() };
         if (p.thinking !== undefined) cur.thinking = p.thinking;
         // When the burst began, kept here rather than in the tab: a tab opened mid-think must read
@@ -5993,11 +6006,15 @@ export class ClaudeCodeAdapter extends LlmAdapter {
           cur.thinking = undefined;
         }
         this.liveTurn.set(options.sessionId, cur);
-        hub.coalesce(`live-turn:${options.sessionId}`, () => ({
-          kind: "live-turn",
+        const body = () => ({
+          kind: "live-turn" as const,
           session: options.sessionId,
           data: this.liveTurnReply(options.sessionId),
-        }));
+        });
+        // A mode change is the sweep flipping direction; a second late it reads as noise. The
+        // figures still ride the 1 s coalesce.
+        if (modeChanged) hub.flush(`live-turn:${options.sessionId}`, body());
+        else hub.coalesce(`live-turn:${options.sessionId}`, body);
       },
       onToolCall:
         turnStep && rowMode.rows

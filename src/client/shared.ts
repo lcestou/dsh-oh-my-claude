@@ -15,11 +15,15 @@ export const numberOr = (v: boolean | number | undefined): number | undefined =>
   typeof v === "number" ? v : undefined;
 /** Format a turn's cost in USD with two decimals. */
 export const fmtCost = (usd: number): string => `$${usd.toFixed(2)}`;
-/** Format duration ms into a human string: "34s" or "1m 35s". */
+/** A duration the way the CLI's own status line writes one: `34s`, `1m 35s`, `1h 40m 42s`. Past an
+ *  hour every part is written, as the CLI does; below it an exact minute stays `1m` (the CLI
+ *  writes `1m 0s`), kept for the cost dialog that has read that way since 1.0. No day part. */
 export const fmtDuration = (ms: number): string => {
   const s = Math.max(0, Math.round(ms / 1000));
-  const m = Math.floor(s / 60);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
   const sec = s % 60;
+  if (h > 0) return `${h}h ${m}m ${sec}s`;
   if (m === 0) return `${sec}s`;
   if (sec === 0) return `${m}m`;
   return `${m}m ${sec}s`;
