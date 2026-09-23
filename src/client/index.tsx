@@ -4947,10 +4947,14 @@ function DockStatus({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
     >
       {/* The chat column and the composer share a centre line, so the same max-width centred with
           auto margins lands this line's left edge on the chat text's, instead of the full composer
-          width. `--dsh-chat-content-width` is dsh's own column width (748px is its default). */}
+          width. `--dsh-chat-content-width` is dsh's own column width (748px is its default). On a
+          narrow page dsh drops the column to the page minus 32px and gives the text a 16px gutter
+          inside it, so the text sits 32px in from this strip's edge; the `min` follows it there
+          (measured 2026-09-23: the header's line at strip edge + 32 at 390 and 600 px, at the
+          column's edge at 900 and 1400 px, where the token is the smaller term). */}
       <div
         style={{
-          maxWidth: "var(--dsh-chat-content-width, 748px)",
+          maxWidth: "min(calc(100% - 64px), var(--dsh-chat-content-width, 748px))",
           margin: "0 auto",
           display: "flex",
           alignItems: "center",

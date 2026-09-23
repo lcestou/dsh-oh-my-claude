@@ -72,6 +72,8 @@ dsh: runs on 0.1.5-rc.1 through 0.1.7-alpha.2; built and tested on 0.1.7-alpha.2
 - Durations past an hour read `1h 40m 42s` in the working line and the cost dialog, not
   `100m 42s`.
 - The dark theme's shimmer is the CLI's dark value; it used the light one on both.
+- On a phone the working line above the composer starts where the chat text does; it began
+  32 px further left, past the composer's edge.
 - The steer card now lists a message typed while Claude is inside a dsh tool (a subagent, a relayed
   job or shell). Edit and Remove work there; Send now waits for the tool to end, and the card says
   so. Before, such a message showed nowhere until the tool ended.
