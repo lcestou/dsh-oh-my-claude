@@ -478,13 +478,28 @@ console.log("translator plugin-warnings ok");
   assert.equal(modes.at(-1), "tool-use", "no mode from an echo");
   t.translate({ type: "system", subtype: "status", status: "requesting" });
   assert.equal(modes.at(-1), "requesting", "the CLI's own frame requests");
-  // A nested agent's frames (the CLI's Task tool) never drive the line.
+  // A nested agent's frames (the CLI's Task tool) never drive the line: no mode, no tool flag,
+  // no stall-clock frame, and its message_start leaves the parent's open calls alone.
+  ev({
+    type: "content_block_start",
+    index: 0,
+    content_block: { type: "tool_use", id: "c9", name: "Task" },
+  });
+  ev({ type: "content_block_stop", index: 0 });
   const before = modes.length;
+  const toolsBefore = tools.length;
   ev({ type: "message_start", message: { id: "m2" } }, "c9");
   t.translate({ type: "system", subtype: "status", status: "requesting" });
   ev({ type: "content_block_start", index: 0, content_block: { type: "text" } }, "c9");
   ev({ type: "message_stop" }, "c9");
   echo("c8", "c9");
   assert.equal(modes.length, before, "nested frames emit no mode");
+  assert.equal(tools.length, toolsBefore, "a nested echo moves neither the flag nor the clock");
+  echo("c9");
+  assert.deepEqual(
+    tools.at(-1),
+    { tool: false, frame: true },
+    "the Task's own echo ends it: the nested message_start did not clear the parent's set",
+  );
   console.log("live-mode ok");
 }
