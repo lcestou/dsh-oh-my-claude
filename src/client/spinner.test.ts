@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import { pickVerb, mergeVerbs, bracketOpen } from "./index.js";
+import { pickVerb, mergeVerbs, bracketOpen, spinnerFrameAt } from "./index.js";
 
 // Re-declare locally for tests; the module-level consts are not exported.
 const DEFAULT_VERBS = [
@@ -251,4 +251,16 @@ console.log("spinner: ok");
   assert.equal(bracketOpen({ ...closed, relay: true }), true);
   assert.equal(bracketOpen({ ...closed, elapsedMs: -1 }), false);
   console.log("bracket-gate ok");
+}
+
+// The CLI's eased spinner: end frames at the period's ends, the middle at the quarter marks.
+{
+  assert.equal(spinnerFrameAt(0, 6), 0);
+  assert.equal(spinnerFrameAt(1000, 6), 5);
+  assert.equal(spinnerFrameAt(2000, 6), 0);
+  // cos(π/2) is not quite zero in floating point, so the half-way mark lands just under 2.5 and
+  // rounds down, in the CLI's arithmetic too.
+  assert.equal(spinnerFrameAt(500, 6), 2);
+  assert.equal(spinnerFrameAt(250, 6), 1);
+  console.log("spinner-ease ok");
 }
