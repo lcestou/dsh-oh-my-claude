@@ -62,6 +62,9 @@ dsh: runs on 0.1.5-rc.1 through 0.1.7-alpha.2; built and tested on 0.1.7-alpha.2
 
 ### Fixed
 
+- The steer card now lists a message typed while Claude is inside a dsh tool (a subagent, a relayed
+  job or shell). Edit and Remove work there; Send now waits for the tool to end, and the card says
+  so. Before, such a message showed nowhere until the tool ended.
 - The working verb in the turn header stays through a plugin reload. A rebuild or an upgrade
   landing during a turn used to hand the header back to dsh's own "Deep diving…" until the next
   turn; the working line above the composer was never affected.
