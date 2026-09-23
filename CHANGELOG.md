@@ -42,6 +42,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 - The Restore tab reaches every transcript in a workspace. It showed eight and left the rest to
   the search box, with nothing saying more existed; now a Show more line under the eight brings
   twenty at a time and says how many are left. Searching starts the list short again.
+- A running DeepSeek or llama session's sidebar glyph stays dsh's blue while a Claude session is
+  open. It went orange with the rest, since the rule reached every running glyph on the page; the
+  sidebar rows now take the orange only from the mark on a running Claude row, and turn it on and
+  off the instant the row's state flips rather than on the next one-second pass.
 
 ### Fixed
 
