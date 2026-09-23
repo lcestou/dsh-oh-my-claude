@@ -38,6 +38,10 @@ export declare function tokensText(tokens: number): string;
 export declare function resetClock(ms: number, zone?: string): string;
 /** Turns the CLI's stream-json events into the markdown and tool rows one dsh turn shows. */
 /** What the live translator tells the adapter about the running turn, for the status row. */
+/** The CLI's own spinner modes, from its stream reducer (2.1.280): what the working line's shimmer
+ *  does depends on which one is current. The CLI's fifth, `tool-input` (a tool_use block streaming
+ *  its input), is reported as `responding` here because the CLI draws both the same way. */
+export type LiveMode = "requesting" | "responding" | "thinking" | "tool-use";
 export interface TurnProgress {
     /** The estimate for the thinking block in progress, cumulative for that block. */
     thinking?: number;
@@ -53,6 +57,10 @@ export interface TurnProgress {
     relay?: {
         name: string;
     };
+    /** The line's mode changed; see LiveMode. Reported on the frame that changes it: the CLI's own
+     *  `status:"requesting"` system frame, a block start, a tool block's stop and message_stop. Never
+     *  for a nested agent's frames: the CLI's main line holds `tool-use` through a Task. */
+    mode?: LiveMode;
 }
 /** A model switch the CLI reported mid-turn, surfaced to the notice and the picker. `direction` and
  *  `scope` come from `model_refusal_fallback`; `model_fallback` and `model_consent_fallback` leave
@@ -102,6 +110,8 @@ export declare class Translator {
     denied: number;
     autoDenied: string[];
     toolPending: boolean;
+    private calls;
+    private nested;
     /** A compaction announced and not yet closed, so its 30-second heartbeat prints one line, not six.
      *  A Translator lives for one stream() call; a compaction killed mid-flight leaves this set for the
      *  rest of that turn, which costs at most one missing announcement. */
@@ -264,7 +274,11 @@ export declare class Translator {
      *  that carry a signature and no text, and this is the only sign they are working. */
     thinkingTokens(total: number): StreamChunk[];
     /** A tool call in flight, or not: the status row reads it to hold its thinking and stall ramps
-     *  the way the CLI's line does while a tool runs. Reported only on change. */
+     *  the way the CLI's line does while a tool runs. Reported only on change. A flip to true is the
+     *  line's `tool-use` (the CLI sets it at message_stop; the plugin's nearest frame is the tool
+     *  block's stop, one block early when a message carries two calls). The flip back is not a mode:
+     *  `requesting` is reported by the frames that mean it, since a fresh step's translator starts at
+     *  false and would never flip. */
     private setToolPending;
     /** The thinking block is over, or the turn is: tell the status row, once per open block. */
     private closeThinking;

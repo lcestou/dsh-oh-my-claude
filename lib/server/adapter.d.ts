@@ -17,7 +17,7 @@ import { sshRunner, type HoldRecord } from "./hold.js";
 import type { RewindResult } from "./process.js";
 export { markBusy, takeInterrupted } from "./state.js";
 export { forkTranscriptText } from "./transcript.js";
-import { Translator, type FallbackRecord } from "./translator.js";
+import { Translator, type FallbackRecord, type LiveMode } from "./translator.js";
 export { Translator, type TranslatorBlock, type FallbackRecord } from "./translator.js";
 import type { FinishReason, Message } from "@deepseek-ai/dsh-llm";
 import type { ClaudeProcessSpec, RelayEvent, RelayResult, TurnPrep } from "./process.js";
@@ -363,6 +363,10 @@ export interface LiveTurnReply {
     thinkingMs?: number;
     idleMs?: number;
     tool: boolean;
+    /** Which way the line's shimmer runs; see LiveMode in translator.ts. The builder always sets
+     *  it; optional on the type because the no-hub route fallback and the hand-built fakes in the
+     *  route tests do not, and the row reads an absent mode as no change. */
+    mode?: LiveMode;
     thoughtMs?: number;
     thoughtAgoMs?: number;
     effort?: string;
@@ -885,6 +889,9 @@ export interface LiveTurn {
         name: string;
         at: number;
     };
+    /** The CLI's spinner mode for this turn; absent until the first frame names one, which the reply
+     *  reads as `requesting` (the CLI's own state between the request and the first block). */
+    mode?: LiveMode;
     at: number;
 }
 /** A `get_workspace_diff` answer as the text a side question carries. Hunk headers and raw lines,

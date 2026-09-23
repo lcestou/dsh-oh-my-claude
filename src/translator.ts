@@ -461,6 +461,11 @@ const LIMIT_NAMES = new Map<string, ServerKey>([
 
 /** Turns the CLI's stream-json events into the markdown and tool rows one dsh turn shows. */
 /** What the live translator tells the adapter about the running turn, for the status row. */
+/** The CLI's own spinner modes, from its stream reducer (2.1.280): what the working line's shimmer
+ *  does depends on which one is current. The CLI's fifth, `tool-input` (a tool_use block streaming
+ *  its input), is reported as `responding` here because the CLI draws both the same way. */
+export type LiveMode = "requesting" | "responding" | "thinking" | "tool-use";
+
 export interface TurnProgress {
   /** The estimate for the thinking block in progress, cumulative for that block. */
   thinking?: number;
@@ -474,6 +479,10 @@ export interface TurnProgress {
   frame?: boolean;
   /** A dsh tool call went out to dsh, by name. */
   relay?: { name: string };
+  /** The line's mode changed; see LiveMode. Reported on the frame that changes it: the CLI's own
+   *  `status:"requesting"` system frame, a block start, a tool block's stop and message_stop. Never
+   *  for a nested agent's frames: the CLI's main line holds `tool-use` through a Task. */
+  mode?: LiveMode;
 }
 
 /** A model switch the CLI reported mid-turn, surfaced to the notice and the picker. `direction` and
@@ -527,6 +536,8 @@ export class Translator {
   denied: number;
   autoDenied: string[]; // tool calls Claude Code refused because a non-interactive run cannot ask
   toolPending: boolean; // a tool_use block closed and its result has not arrived yet
+  private calls = new Set<string>(); // tool_use ids of the streamed message not yet echoed as results
+  private nested = false; // the frame in hand belongs to a nested agent: its modes are not the line's
   /** A compaction announced and not yet closed, so its 30-second heartbeat prints one line, not six.
    *  A Translator lives for one stream() call; a compaction killed mid-flight leaves this set for the
    *  rest of that turn, which costs at most one missing announcement. */
@@ -793,6 +804,14 @@ export class Translator {
         // start it can pair with, so surface its error here. All of it rides the reasoning lane so it
         // reads as model activity in the UI, not as chat text the model appears to have typed.
         if (event.subtype === "status") {
+          // The CLI's `stream_request_start`, written to stream-json once per API request right
+          // before message_start (2.1.280, engine emitter at 205,236,415): the line's `requesting`.
+          // A nested agent's request is not the line's; the frame carries no parent id in the probe,
+          // so the last partial's owner decides (see the chunk 0 probe).
+          if (event.status === "requesting") {
+            if (!this.nested) this.onProgress?.({ mode: "requesting" });
+            return [];
+          }
           if (event.status === "compacting") {
             // The CLI repeats this frame every 30 s until the boundary, so the announcement is guarded
             // but the tick is not: a 141-second compaction was measured on 2026-09-14, and no other
@@ -1287,6 +1306,7 @@ export class Translator {
    *  Only content_block frames open or append a block; message_delta feeds the running usage count
    *  the status row reads rather than drawing, and skips a nested agent so its tokens are not added. */
   partial(ev: ClaudeStreamPartial, subagent = false) {
+    this.nested = subagent;
     switch (ev.type) {
       case "message_start": {
         this.sawPartial = true;
@@ -1295,6 +1315,7 @@ export class Translator {
         this.streamedId = ev.message?.id;
         this.setToolPending(false);
         this.open.clear();
+        this.calls.clear();
         this.closeThinking();
         return this.endThinking();
       }
@@ -1393,6 +1414,9 @@ export class Translator {
           }
           return [];
         }
+        // The CLI's line goes to `tool-use` at message_stop whatever the message held; the belt in
+        // setToolPending covers a relay step that exits before this frame is read.
+        if (ev?.type === "message_stop" && !this.nested) this.onProgress?.({ mode: "tool-use" });
         if (!BENIGN_PARTIALS.has(ev?.type)) this.noteUnknown("stream event", ev?.type);
         return [];
     }
@@ -1406,16 +1430,23 @@ export class Translator {
    *  relay stays hidden, so only visible text, thinking and tool rows get a block-start. */
   openBlock(apiIndex: number, cb: { type?: string; id?: string; name?: string }) {
     let opened: { block: TranslatorBlock; events: StreamChunk[] };
-    if (cb.type === "text") opened = this.startBlock("text");
-    else if (cb.type === "thinking") {
+    if (cb.type === "text") {
+      opened = this.startBlock("text");
+      if (!this.nested) this.onProgress?.({ mode: "responding" });
+    } else if (cb.type === "thinking") {
       opened = this.startBlock("reasoning");
       this.thinkingBlock = opened.block;
       // The status row's "thinking" is the block being open, the way the CLI's own spinner mode
       // works, not the estimate frames being fresh: Fable-class thinking streams no text, and its
       // estimate frames come every 50 tokens or so, which on a slow think is seconds apart.
-      this.onProgress?.({ thinkingOpen: true });
+      this.onProgress?.(
+        this.nested ? { thinkingOpen: true } : { thinkingOpen: true, mode: "thinking" },
+      );
     } else if (cb.type === "tool_use") {
+      // The CLI's `tool-input`, drawn the same as responding: right-to-left sweep, down arrow.
+      if (!this.nested) this.onProgress?.({ mode: "responding" });
       const toolName = cb.name ?? "";
+      if (cb.id) this.calls.add(cb.id);
       const dsh = toolName.startsWith("mcp__dsh__");
       if (dsh && cb.id) {
         this.dshIds.add(cb.id);
@@ -1589,9 +1620,16 @@ export class Translator {
   }
 
   /** A tool call in flight, or not: the status row reads it to hold its thinking and stall ramps
-   *  the way the CLI's line does while a tool runs. Reported only on change. */
+   *  the way the CLI's line does while a tool runs. Reported only on change. A flip to true is the
+   *  line's `tool-use` (the CLI sets it at message_stop; the plugin's nearest frame is the tool
+   *  block's stop, one block early when a message carries two calls). The flip back is not a mode:
+   *  `requesting` is reported by the frames that mean it, since a fresh step's translator starts at
+   *  false and would never flip. */
   private setToolPending(v: boolean): void {
-    if (this.toolPending !== v) this.onProgress?.({ tool: v });
+    if (this.toolPending !== v) {
+      if (v && !this.nested) this.onProgress?.({ tool: v, mode: "tool-use" });
+      else this.onProgress?.({ tool: v });
+    }
     this.toolPending = v;
   }
 
@@ -1621,7 +1659,19 @@ export class Translator {
    *  off. Each result routes to a dsh session row, an inline markdown block, or a compact reasoning
    *  row, and auto-denied and denied counts are tallied for the result-frame summary. */
   toolResults(content: ClaudeContentBlock[], parentToolUseId: string | null | undefined) {
-    this.setToolPending(false);
+    this.nested = parentToolUseId != null;
+    for (const b of content)
+      if (b.type === "tool_result" && b.tool_use_id) this.calls.delete(b.tool_use_id);
+    // The CLI's next request goes out once every call of the message has answered; results echo
+    // one frame each, never batched, so an echo with calls still out is a tool still in flight.
+    // Reported without the change gate: a step's fresh translator starts at false and the record
+    // from a relay still says true.
+    if (this.calls.size === 0) {
+      this.toolPending = false;
+      // `frame` restarts the stall clock at the tool's end, the CLI's `k.current=l`: without it the
+      // row read the whole tool wait as a stall the moment the tool answered.
+      this.onProgress?.({ tool: false, frame: true });
+    }
     if (!this.toolActivity) return [];
     const events: StreamChunk[] = [];
     for (const b of content) {
