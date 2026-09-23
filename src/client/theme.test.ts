@@ -6,6 +6,7 @@ assert.deepEqual(themeOf({}), {
   groups: ["row", "prose", "send", "panel", "rainbow"],
   accent: "#d97757",
   shimmer: "#f59575",
+  shimmerDark: "#eb9f7f",
 });
 assert.deepEqual(themeOf({ themeOff: true }).groups, []);
 assert.deepEqual(themeOf({ themeProseOff: true }).groups, ["row", "send", "panel", "rainbow"]);
@@ -29,3 +30,13 @@ assert.deepEqual(hexToRgb("#0066cc"), [0, 102, 204]);
 assert.equal(THEME_GROUPS.length, 5);
 
 console.log("theme.test.ts: ok");
+
+// The CLI's dark-theme shimmer for the default accent; a closer white mix for a custom one.
+{
+  assert.equal(themeOf({}).shimmerDark, "#eb9f7f");
+  assert.equal(
+    themeOf({ themeAccent: 0x3366cc }).shimmerDark,
+    "color-mix(in srgb, #3366cc 80%, white)",
+  );
+  console.log("shimmer-dark ok");
+}

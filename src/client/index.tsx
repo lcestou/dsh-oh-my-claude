@@ -207,7 +207,6 @@ const DEFAULT_VERBS = [
   "Catapulting",
   "Cerebrating",
   "Channeling",
-  "Channelling",
   "Choreographing",
   "Churning",
   "Clauding",
@@ -276,6 +275,7 @@ const DEFAULT_VERBS = [
   "Ionizing",
   "Jitterbugging",
   "Julienning",
+  "Kerfuffling",
   "Kneading",
   "Leavening",
   "Levitating",
@@ -301,7 +301,7 @@ const DEFAULT_VERBS = [
   "Perambulating",
   "Percolating",
   "Perusing",
-  "Philosophising",
+  "Philosophizing",
   "Photosynthesizing",
   "Pollinating",
   "Pondering",
@@ -350,11 +350,12 @@ const DEFAULT_VERBS = [
   "Tomfoolering",
   "Topsy-turvying",
   "Transfiguring",
+  "Transmogrifying",
   "Transmuting",
   "Twisting",
   "Undulating",
   "Unfurling",
-  "Unravelling",
+  "Unraveling",
   "Vibing",
   "Waddling",
   "Wandering",
@@ -4041,7 +4042,7 @@ const DETAIL_MARK = "data-omc-turn-detail";
 /** How long thinking runs before the row says so differently. The CLI switches to "still thinking"
  *  and warms the colour once it has been at it a while; neither the wording nor the colour is ever
  *  put on the wire, so the rule is kept here. */
-/** The CLI's own wording ladder for a thinking burst (2.1.268, `gr()` in its spinner), by how long
+/** The CLI's own wording ladder for a thinking burst (2.1.280, `Oo()` in its spinner), by how long
  *  the burst has run; it warms the colour from the first step. Same marks here so the row reads
  *  the way a terminal user already knows it. */
 /** Returns the CLI wording for a thinking burst of the given length, defaulting to "thinking". The
@@ -4049,7 +4050,7 @@ const DETAIL_MARK = "data-omc-turn-detail";
  *  call time so a language switch reaches them, not baked into a module-load constant. */
 const thinkingWord = (ms: number): string =>
   ms >= 45_000
-    ? t("main.turn.thinkingAlmostDone")
+    ? t("main.turn.thinkingDeep")
     : ms >= 30_000
       ? t("main.turn.thinkingSomeMore")
       : ms >= 20_000
@@ -4059,17 +4060,17 @@ const thinkingWord = (ms: number): string =>
           : t("main.turn.thinking");
 
 type Rgb = readonly [number, number, number];
-/** The CLI's spinner colours (2.1.268 themes). `claude` is the same in both; the shimmer and the
- *  warning shade differ, so the row picks by the page's background. The stall red is a constant in
- *  the spinner code, not a theme entry. The grey pair is the bracket word's idle pulse. */
+/** The CLI's spinner colours (2.1.280 themes, `B` dark and `v` light). `claude` is the same in both;
+ *  the warning shade differs, so the row picks by the page's background. The shimmer is not here:
+ *  it is the `--omc-shimmer` pair from theme.ts, since the sweep is drawn by the sheet. The stall
+ *  red is a constant in the spinner code, not a theme entry. The grey pair is the bracket word's
+ *  idle pulse. */
 const SPINNER_DARK = {
   claude: [215, 119, 87],
-  shimmer: [235, 159, 127],
   warning: [255, 193, 7],
 } as const;
 const SPINNER_LIGHT = {
   claude: [215, 119, 87],
-  shimmer: [245, 149, 117],
   warning: [150, 108, 30],
 } as const;
 const STALL_RED: Rgb = [171, 43, 63];
@@ -4326,6 +4327,10 @@ const wireTurnStatus = (
   let stallIntensity = 0;
   let lastBeat = Date.now();
   const palette = pageIsDark() ? SPINNER_DARK : SPINNER_LIGHT;
+  // The sheet's sweep reads `--omc-shimmer`, the CLI's light value; on a dark page the line takes
+  // the CLI's dark one. Set on the line so prose links keep theirs. Chosen once per row like the
+  // palette: a theme flipped mid-turn shows on the next row.
+  if (palette === SPINNER_DARK) el.style.setProperty("--omc-shimmer", "var(--omc-shimmer-dark)");
   // Read once per wired row: `accentRgb` is a getComputedStyle on the root, which forces a style
   // recalc, and the beat below paints eight times a second. The accent only moves when the Claude
   // look switch flips, and the next turn's row reads the new one.
@@ -6749,6 +6754,7 @@ function applyTheme(hints: Record<string, boolean | number>): void {
   const root = document.documentElement.style;
   root.setProperty("--omc-accent", theme.accent);
   root.setProperty("--omc-shimmer", theme.shimmer);
+  root.setProperty("--omc-shimmer-dark", theme.shimmerDark);
 }
 
 /** One theme group's checkbox: checked means on; the flag is the group's off key. */
