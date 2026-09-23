@@ -19,13 +19,12 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Changed
 
-- The running-session spinner mark now hangs off dsh's own slot instead of a body attribute, the
-  same shape as the access control and the add-workspace control. It is set the way the scan reads
-  it, so a dsh upgrade can no longer silently drop it; the old DOM path stays as the fallback when an
-  older dsh refuses the slot.
-
-### Changed
-
+- The Claude permission control, the Add workspace dialog with its box dropdown, and the orange
+  mark on a running Claude session's sidebar row now sit in dsh's own slots
+  (`conversation.input.permission`, the two directory-flow holes, and the session row's action
+  strip) instead of rewriting dsh's DOM. The permission menu is drawn by the plugin, so it no longer
+  depends on dsh's menu markup, and the row mark follows the session id rather than the row title.
+  The old DOM paths stay as the fallback on a dsh that refuses the slot.
 - The inline-or-rows choice for Claude's tool activity moved from the Tune tab to Settings > Oh My
   Claude, as a Native tool rows switch. It configures the bridge, not Claude Code, which is what
   Tune is for.

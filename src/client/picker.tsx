@@ -176,13 +176,19 @@ function WorkspaceDialog({
   onPicked,
   onError,
   onClosed,
+  adoptsLocal,
 }: {
   open: boolean;
   busy: boolean;
   ctx: ClientCtx;
+  /** A local pick: with `adoptsLocal` the path is handed over as is and the caller creates the
+   *  workspace (dsh's directory-flow owner); without it the dialog creates it first. */
   onPicked: (path: string) => void;
   onError: (message: string) => void;
+  /** The dialog is done: a dismiss, or a remote workspace saved (which dsh's owner must not adopt as
+   *  a local path). */
   onClosed: () => void;
+  adoptsLocal: boolean;
 }) {
   useLocale();
   const [ssh, setSsh] = useState<BoxRow[]>([]);
@@ -241,9 +247,18 @@ function WorkspaceDialog({
       onError(message);
     };
     if (host === "") {
+      // dsh's owner creates the workspace from the path it is handed; creating it here as well
+      // would register the same directory twice.
+      if (adoptsLocal) {
+        setSubmitting(false);
+        onPicked(target);
+        return;
+      }
       ctx.workspaces.create({ path: target }).then(done).catch(failed);
       return;
     }
+    // A remote path is never handed to dsh's owner: it would adopt it as a directory on this PC.
+    // The route pins the workspace to the box, then the dialog just closes.
     fetch(`${ROUTE}/remote-workspaces`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -251,7 +266,10 @@ function WorkspaceDialog({
     })
       .then((r) => readJson<{ workspace?: unknown }>(r))
       .then(() => window.dispatchEvent(new Event(RW_EVENT)))
-      .then(done)
+      .then(() => {
+        setSubmitting(false);
+        onClosed();
+      })
       .catch(failed);
   };
 
@@ -352,6 +370,9 @@ export function AddWorkflow({
       onPicked={adopt}
       onError={onError}
       onClosed={dismiss}
+      // A dialog dsh opened hands the path back for dsh to adopt; one Settings forced open has no
+      // owner request behind it, so it creates the workspace itself.
+      adoptsLocal={!forcedOpen}
     />
   );
 }
@@ -428,6 +449,7 @@ export function AddWorkspaceFlow({ ctx }: { ctx: ClientCtx }) {
       onPicked={adopt}
       onError={fail}
       onClosed={() => setOpen(false)}
+      adoptsLocal={false}
     />
   );
 }

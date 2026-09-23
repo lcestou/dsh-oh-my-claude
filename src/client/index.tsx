@@ -4856,11 +4856,11 @@ const spinnerRowTitle = (dot: Element): string | null =>
  *  instead of matching each dot to a session by title. Reuses the value the body carries
  *  (`data-omc-claude`), so one flag names both the open session and its running rows. */
 const ROW_MARK = "data-omc-claude";
-/** Whether the mark slot is live: its occupant sets it on mount, so the scan reads the row mark when
- *  true and falls back to the title match when false (an older dsh that refused the slot). */
+/** Whether the row-mark entry registered: the scan then reads the per-row mark, and falls back to
+ *  the title match on a dsh without the row-action slot. */
 let markActive = false;
-/** displayTitles of the sessions that are both running and on a Claude mount this instant. Shared by
- *  the mark slot (which paints the row mark) and the scan's title-match fallback, so the two agree. */
+/** displayTitles of the sessions that are both running and on a Claude mount this instant: the
+ *  scan's title-match fallback on a dsh without the row-action slot. */
 export const claudeRunningTitles = (ctx: ClientCtx): Set<string> => {
   const set = new Set<string>();
   const snap = ctx.sessions.list.getSnapshot();
@@ -4869,44 +4869,32 @@ export const claudeRunningTitles = (ctx: ClientCtx): Set<string> => {
     if (s.running && s.displayTitle && isClaudeSession(ctx, id)) set.add(s.displayTitle.trim());
   return set;
 };
-/** Paint the row mark on every running Claude session's sidebar row, the exact set the scan tints.
- *  Reads the list store once and matches each running dot to its row by the title span, the same
- *  identity the scan falls back to. ponytail: the mark is the per-row id the title match lacked;
- *  swap the lookup for this flag the day dsh puts an id on the row. */
-const markRows = (ctx: ClientCtx): void => {
-  const titles = claudeRunningTitles(ctx);
-  for (const dot of document.querySelectorAll<SVGElement>('svg[data-state="ongoing"]')) {
-    const sessionRow = dot.closest('[role="treeitem"]');
-    if (!sessionRow) continue;
-    const title = spinnerRowTitle(dot);
-    if (title && titles.has(title)) sessionRow.setAttribute(ROW_MARK, "1");
-    else if (sessionRow.hasAttribute(ROW_MARK)) sessionRow.removeAttribute(ROW_MARK);
-  }
-};
 /**
- * The mark slot occupant: paint `data-omc-claude` on the sidebar rows whose running session is a
- * Claude mount, so the spinner scan reads a per-row flag instead of matching each dot to a session by
- * title. Runs on a poll and on visibilitychange, and sets {@link markActive} so the scan knows the
- * mark is live. Renderless; the slot has no UI, only the mark it leaves behind.
+ * The row-action occupant dsh mounts at the end of every session row (hidden until hover, mounted
+ * at rest): it draws nothing and marks its own row with `data-omc-claude` while the session is
+ * running on a Claude mount. The row is its nearest treeitem, found from the element it renders,
+ * so the mark follows the session id dsh handed the slot and never a title. Re-read on every list
+ * change (running flips, model switches), cleared on unmount and when the session stops qualifying.
  */
-function MarkRows({ ctx }: { ctx: ClientCtx }) {
-  ctx.effect?.(() => {
-    markActive = true;
-    const beat = setInterval(
-      guard(() => markRows(ctx)),
-      1000,
-    );
-    const onVisible = () => {
-      if (document.visibilityState === "visible") markRows(ctx);
+function RowMark({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    const treeRow = ref.current?.closest('[role="treeitem"]');
+    if (!treeRow) return;
+    const refresh = () => {
+      const s = ctx.sessions.list.getSnapshot()?.byId[sessionId];
+      const want = s?.running === true && isClaudeSession(ctx, sessionId);
+      if (want) treeRow.setAttribute(ROW_MARK, "1");
+      else treeRow.removeAttribute(ROW_MARK);
     };
-    document.addEventListener("visibilitychange", onVisible);
-    markRows(ctx);
+    refresh();
+    const off = ctx.sessions.list.subscribe?.(refresh);
     return () => {
-      clearInterval(beat);
-      document.removeEventListener("visibilitychange", onVisible);
+      off?.();
+      treeRow.removeAttribute(ROW_MARK);
     };
-  }, "oh-my-claude-mark");
-  return null;
+  }, [sessionId, ctx]);
+  return <span ref={ref} hidden data-omc-row-mark={sessionId} />;
 }
 
 /** The composer's primary send/stop button shares the local CSS-module class `_primary` with one
@@ -9279,19 +9267,21 @@ export function apply(ctx: ClientCtx) {
   });
 
   // The running Claude rows carry `data-omc-claude`, which the spinner scan reads instead of
-  // matching each dot to a session by title. A root-scoped, renderless occupant: it paints the mark
-  // and the scan reads it. On an older dsh that refuses the slot the register throws, and the scan
-  // falls back to the title match the mark replaces.
-  try {
-    ctx.slots.inject("oh-my-claude.mark", () => {
-      ctx.slots.register({ name: "oh-my-claude.mark", id: "oh-my-claude-mark", order: 1 }, () => (
-        <MarkRows ctx={ctx} />
-      ));
-      return null;
-    });
-  } catch {
-    // Older dsh refuses the slot; the scan's title match is its fallback.
-  }
+  // matching each dot to a session by title. dsh's row-action strip is a list slot fed the row's
+  // session id, so one renderless entry per row can mark its own row. A dsh without that slot
+  // never runs the inject callback, and the scan keeps its title match.
+  ctx.slots.inject("sidebar.workspaces.session.row.action", () => {
+    try {
+      ctx.slots.register(
+        { name: "sidebar.workspaces.session.row.action", id: "oh-my-claude-mark", order: 300 },
+        (props) => (props.sessionId ? <RowMark sessionId={props.sessionId} ctx={ctx} /> : null),
+      );
+      markActive = true;
+    } catch {
+      // A dsh that refuses the entry leaves the scan on its title match.
+    }
+    return null;
+  });
 
   // The permission control takes over dsh's composer permission slot (a single cell). Shadowing is
   // per cell, not per session, so this would also replace dsh's control in a non-Claude session;
@@ -9302,7 +9292,11 @@ export function apply(ctx: ClientCtx) {
   ctx.slots.inject("conversation.input.permission", () => {
     let dispose: (() => void) | undefined;
     // The active session's model-directory store, so a model switch off a Claude mount re-reads.
+    // Subscribed once per session, never re-subscribed from inside its own notification: a
+    // listener that leaves and rejoins a Set while it is being iterated is visited again, and the
+    // tab spins forever.
     let providerOff: (() => void) | undefined;
+    let providerFor: string | undefined;
     const stopProvider = () => {
       try {
         providerOff?.();
@@ -9310,15 +9304,19 @@ export function apply(ctx: ClientCtx) {
         // A disposed context retires the bundle on its own.
       }
       providerOff = undefined;
+      providerFor = undefined;
     };
     const sync = () => {
       const active = activeClaudeSession(ctx);
-      stopProvider();
-      if (active) {
-        try {
-          providerOff = ctx.modelDirectories.directoryFor(active).store.subscribe(sync);
-        } catch {
-          // Unbound in this tab; the list store below still reports the session identity.
+      if (active !== providerFor) {
+        stopProvider();
+        if (active) {
+          providerFor = active;
+          try {
+            providerOff = ctx.modelDirectories.directoryFor(active).store.subscribe(sync);
+          } catch {
+            // Unbound in this tab; the list store below still reports the session identity.
+          }
         }
       }
       if (active && !dispose) {

@@ -1,7 +1,5 @@
-// Offline self-check for the row mark: the mark slot paints `data-omc-claude` on the rows whose
-// running session is a Claude mount, and the scan's fallback matches by the same titles, so this
-// is the one function they share. If it names the wrong rows the scan tints the wrong dots, and the
-// check fails before either path runs.
+// Offline self-check for the spinner scan's title-match fallback (a dsh without the row-action
+// slot): if it names the wrong rows the scan tints the wrong dots.
 import { strict as assert } from "node:assert";
 import type { ClientCtx } from "./shared.js";
 import { claudeRunningTitles } from "./index.js";
