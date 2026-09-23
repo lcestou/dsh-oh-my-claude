@@ -4781,23 +4781,28 @@ function DockStatus({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
     read();
     return ctx.sessions.list.subscribe?.(read);
   }, [ctx, sessionId]);
-  // The running turn's own header, when dsh drew it: watched for leaving the viewport, so the dock
-  // hides while the header is on screen and shows once it scrolls off or was never drawn. dsh's 1px
-  // hidden announcer span is not a header and is ignored. Polled, since the header mounts a beat
-  // after the dock and dsh's virtual list drops and redraws it as the column scrolls.
+  // The running turn's header verb line, when dsh drew the header: watched for leaving the viewport,
+  // so the dock hides while the header is on screen and shows once it scrolls off or was never
+  // drawn. Polled, since the header mounts a beat after the dock and dsh's virtual list drops and
+  // redraws it as the column scrolls.
   useEffect(() => {
     if (!running) return;
     let watching: Element | null = null;
     let obs: IntersectionObserver | undefined;
     const find = () => {
-      // The header is the newest process button; the container is watched, not the verb line
-      // inside it, so the dock hides whenever the header is on screen whether the plugin wired its
-      // line or dsh is still showing "Deep diving" there (owner, 2026-09-23: both showed at once).
-      const groups = document.querySelectorAll<HTMLElement>("button[data-turn-process]");
-      const header = groups[groups.length - 1] ?? null;
-      // No header drawn (a long turn's header sits above "Load earlier"): the dock is the only
-      // place the verb shows. Set unconditionally, never guarded by `header === watching`: on the
-      // first run both are null, and the guard used to return before `setHeaderAway(true)` ran.
+      // The header's own verb line: the plugin wires it only on the running turn's newest header,
+      // never on a completed turn (those are marked done) and never on dsh's 1px hidden announcer.
+      // So this is the running turn's header when dsh drew it, and the dock hides while it is on
+      // screen. Watching the process button instead pointed at a completed turn on a long run,
+      // whose header sits below the running one, and hid the dock at the wrong scroll position
+      // (owner, 2026-09-23). On a long turn dsh draws no running header until "Load earlier", so
+      // none is found and the dock is the only place the verb shows.
+      const header = document.querySelector<HTMLElement>(
+        "button[data-turn-process] [data-omc-turn-line]",
+      );
+      // No header line drawn: the dock is the only place the verb shows. Set unconditionally, never
+      // guarded by `header === watching`: on the first run both are null, and the guard used to
+      // return before `setHeaderAway(true)` ran, so the dock stayed hidden all turn.
       if (header === null) {
         obs?.disconnect();
         obs = undefined;
