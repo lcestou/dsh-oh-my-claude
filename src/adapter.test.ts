@@ -14,6 +14,7 @@ import {
   contextSourceOf,
   ADAPTER_CURRENT,
   accessModeOf,
+  approvalsDisabled,
   buildArgs,
   permissionModeFor,
   isStaleResume,
@@ -816,6 +817,24 @@ assert.equal(
   accessModeOf([policy("read-only"), policy("danger-full-access")]),
   "danger-full-access",
 );
+// dsh's approval policy rides in the same snapshot; the last snapshot decides, so a switch back
+// to "ask" (a snapshot without the line) clears it, and a plain user message changes nothing.
+{
+  const never: LooseMessage = {
+    role: "user",
+    content: [
+      {
+        type: "text",
+        text: "Current runtime context.\n\nCurrent DSH file policy: workspace-write.\n\nApproval prompts are disabled in this session: actions that require approval are rejected automatically.",
+      },
+    ],
+  };
+  assert.equal(approvalsDisabled(undefined), false);
+  assert.equal(approvalsDisabled([policy("read-only")]), false);
+  assert.equal(approvalsDisabled([never]), true);
+  assert.equal(approvalsDisabled([never, { role: "user", content: "hi" }]), true);
+  assert.equal(approvalsDisabled([never, policy("workspace-write")]), false);
+}
 assert.equal(permissionModeFor(config, "read-only"), "plan");
 assert.equal(permissionModeFor(config, "workspace-write"), "acceptEdits");
 assert.equal(permissionModeFor(config, "danger-full-access"), "bypassPermissions");
@@ -854,6 +873,65 @@ assert.ok(switched.join(" ").includes("--permission-mode bypassPermissions"));
   assert.equal(a.getPermissionMode("s3", "danger-full-access"), "bypassPermissions");
   a.accessModes.set("s3", "read-only");
   assert.equal(a.getPermissionMode("s3", "read-only"), "plan");
+}
+
+// Live read-back: the info names the mode the running process is in, a switch the CLI took moves
+// it, and Bypass on a process launched below bypass is stored for the next spawn, never sent (the
+// CLI refuses it on any process not launched in bypass).
+{
+  const a = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  const sent: string[] = [];
+  const proc: any = {
+    alive: true,
+    busy: false,
+    spec: { mode: "default" },
+    liveMode: "default",
+    controlListener: undefined,
+    write(line: string) {
+      const req = JSON.parse(line);
+      sent.push(req.request.mode);
+      setTimeout(() => {
+        proc.controlListener({
+          type: "control_response",
+          request_id: req.request_id,
+          response: { subtype: "success", request_id: req.request_id, response: {} },
+        });
+      }, 0);
+      return true;
+    },
+  };
+  a.accessModes.set("s5", "danger-full-access");
+  assert.equal(a.permissionModeInfo("s5").liveMode, null, "no process, no live mode");
+  a.processes.set(registryKey(a.providerId, "s5"), proc);
+  assert.equal(a.permissionModeInfo("s5").liveMode, "default");
+
+  const bypass = await a.setPermissionMode("s5", "bypassPermissions");
+  assert.equal(bypass.live, false, "not sent: the CLI would refuse it");
+  assert.deepEqual(sent, []);
+  assert.equal(bypass.mode, "bypassPermissions", "stored for the next spawn");
+  assert.equal(bypass.liveMode, "default", "the process is still where it was");
+
+  const plan = await a.setPermissionMode("s5", "plan");
+  assert.deepEqual(sent, ["plan"]);
+  assert.equal(plan.live, true);
+  assert.equal(plan.liveMode, "plan", "read back from the accepted switch");
+  assert.equal(proc.liveMode, "plan");
+
+  // Launched in bypass: a live switch to bypass goes out and lands.
+  proc.spec.mode = "bypassPermissions";
+  const back = await a.setPermissionMode("s5", "bypassPermissions");
+  assert.deepEqual(sent, ["plan", "bypassPermissions"]);
+  assert.equal(back.live, true);
+  assert.equal(back.liveMode, "bypassPermissions");
+
+  // A restored transcript's mode is stored unchecked and clamped by the shield at read time.
+  await a.restorePermissionMode("s6", "bypassPermissions");
+  assert.equal(a.getPermissionMode("s6", "danger-full-access"), "bypassPermissions");
+  assert.equal(a.getPermissionMode("s6", "workspace-write"), "acceptEdits");
+  await a.restorePermissionMode("s7", "nonsense");
+  assert.equal(a.permissionModes.has("s7"), false);
+  // The process registry is shared by every adapter in this file; a fake left here trips evict().
+  a.processes.delete(registryKey(a.providerId, "s5"));
 }
 
 // Thinking budget: unknown until set, and set refuses without a live process to carry it

@@ -6,8 +6,23 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Added
+
+- The steer card (the "Waiting for Claude" card above the composer) appears faster: while a turn is
+  running the plugin checks for queued messages every second instead of every three, and drops back
+  to three at rest. With more than one message waiting, a Send all now button sends them all at once,
+  next to Edit all.
+- Claude's working line (spinner, verb, figures) repeats above the composer once the turn's own
+  header has scrolled off screen or is not drawn. dsh 0.1.7 keeps that line in the turn header,
+  which a long run of tool cards pushes out of view, and on a long turn the header sits above the
+  "Load earlier" fold and is not drawn at all. It is on by default; a switch in Settings > Oh My
+  Claude turns it off for someone who wants only dsh's header line.
+
 ### Changed
 
+- The list rows in the ✻ panel's tabs (transcripts to restore, memory files, instructions, prompts
+  to rewind to, changed files) no longer sit in their own hairline box; like dsh's rows they are
+  bare at rest and tint under the pointer.
 - Less work per frame and per poll. The status line no longer forces a style recalc or walks the
   page eight times a second; the row mask for withheld context re-runs only when rows are added,
   not on every streamed chunk; the cost pill, the send-button tint and the panel's fit-above
@@ -46,6 +61,28 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
   open. It went orange with the rest, since the rule reached every running glyph on the page; the
   sidebar rows now take the orange only from the mark on a running Claude row, and turn it on and
   off the instant the row's state flips rather than on the next one-second pass.
+- The permission capsule shows the mode Claude is running in, not the last pick. Picking Bypass on
+  a session whose process started in another mode used to get the CLI's refusal as raw text, and a
+  later look showed Bypass while every tool call was still being denied. Bypass is now stored for
+  the next turn, which respawns the process in it, and the menu says "Bypass · full access takes
+  effect on the next turn" until then. A transcript opened from the terminal keeps the permission
+  mode it ran under instead of the workspace default. When dsh's approval prompts are switched
+  off, a denied tool call tells Claude that dsh auto-denied it and nobody was asked, instead of
+  "the user denied this action".
+- A step that hands dsh a tool call no longer ends while one of Claude's own tools is still
+  running beside it. Claude firing Bash and a dsh tool in one message left the Bash call without
+  a result row in that step, and dsh refused the whole session log on the next load ("step/end
+  leaves unresolved tool call"). The step now waits up to ten seconds for those results and
+  closes any still running with a placeholder row, so the log always loads.
+- Buttons and rows in the ✻ panel and in Settings > Oh My Claude tint their background under the
+  pointer, the way dsh's own rows do, instead of turning their border orange. In dark mode the
+  faint hairline going orange read as a border appearing on whatever was hovered, on every tab.
+  The orange border is now the keyboard focus ring only.
+- Claude's working line in the turn header no longer vanishes mid-turn, leaving dsh's "Deep
+  diving 12s" for the rest of the run. The plugin read the header's fold state as "the turn ended";
+  dsh folds a live group on its own, and the line came down and never came back.
+- The permission capsule no longer catches clicks far above and below itself. Its label had a
+  line height of 260 px inside a 28 px button, so a click in the composer near it opened the menu.
 
 ### Fixed
 

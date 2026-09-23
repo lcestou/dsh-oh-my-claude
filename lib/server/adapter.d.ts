@@ -334,6 +334,9 @@ export interface PermissionModeInfo {
     ceiling: string;
     /** Permission modes the client may pick (at or below the ceiling). */
     allowed: readonly string[];
+    /** The mode the session's running Claude process is in, or null when no process is alive. It
+     *  lags `mode` after a pick the CLI could not take live; the next turn spawns with `mode`. */
+    liveMode: string | null;
 }
 export interface PermissionModeReply extends PermissionModeInfo {
     /** A live process was told; false when the override only applies at the next spawn. */
@@ -537,6 +540,9 @@ export declare function attachmentNotes(turns: LooseMessage[], images: readonly 
 export declare function relayFileHandles(text: string, copy: (localPath: string, farName: string) => Promise<string>, log?: (level: string, message: string) => void): Promise<string>;
 /** dsh's access-mode switch arrives as text in the runtime-context injection; the last snapshot wins. */
 export declare function accessModeOf(messages: LooseMessage[] | undefined): string | undefined;
+/** dsh's approval-policy line rides in the same runtime-context injection as the file policy, and
+ *  only while the policy is "never"; the last snapshot wins, so a switch back to "ask" clears it. */
+export declare function approvalsDisabled(messages: LooseMessage[] | undefined): boolean;
 /** The CLI's permission mode for a turn: the configured one, or the one dsh's access mode maps to. */
 export declare function permissionModeFor(config: Schemastery.TypeT<typeof Config>, accessMode: string | undefined): string;
 /** Forget what was probed on `host` ("" for this box): after `claude update` there, the flag set
@@ -867,6 +873,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     permissionModes: Map<string, string | null>;
     /** dsh access mode seen on each session's last turn, so the effective mode can be reported. */
     accessModes: Map<string, string | undefined>;
+    /** Sessions whose last runtime snapshot said dsh auto-denies every approval ask. */
+    approvalsOff: Set<string>;
     /** Callers waiting for the CLI's `control_response` to a request this plugin sent, by request id. */
     controlWaiters: Map<string, (reply: ControlReply) => void>;
     /** The rules recent approval requests suggest, newest last, per session. */
@@ -1099,8 +1107,24 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * Store a session's permission mode override (null clears it) and, when that session's Claude
      * process is alive, switch it live with a `set_permission_mode` control request. The CLI reads
      * stdin during a turn; between turns the line is queued and answered when the next turn opens.
+     *
+     * Bypass is the exception: the CLI answers `Cannot set permission mode to bypassPermissions
+     * because the session was not launched with --dangerously-skip-permissions` on any process that
+     * did not start in bypass (probed on 2.1.280: a `--permission-mode bypassPermissions` launch
+     * counts as the flag). That request is not sent; the stored mode joins the spec key, so the
+     * session's next turn respawns in bypass, and the reply says so with `live: false` and a
+     * `liveMode` that still names the old mode. Wrong case: a process that was switched out of
+     * bypass live would take bypass back live, but its `spec.mode` says bypass so it does; a process
+     * launched below bypass can never be switched up live, whatever it was set to since.
      */
     setPermissionMode(sessionId: string, mode: string | null): Promise<PermissionModeReply>;
+    /**
+     * Remember the mode a transcript ran under as the session's override, with no ceiling check and
+     * no live switch: the caller is opening a past CLI session in dsh, and `getPermissionMode` clamps
+     * the override to dsh's access mode at every spawn, so a bypass transcript opened under a
+     * workspace-write shield runs as acceptEdits. An unknown mode is ignored.
+     */
+    restorePermissionMode(sessionId: string, mode: string): Promise<void>;
     /**
      * A spec that differs from the live process only by model is switched in place with a
      * `set_model` control request, so a model flip keeps the process and its MCP bridge instead of

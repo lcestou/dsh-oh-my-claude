@@ -351,6 +351,9 @@ export interface FoldedTranscript {
   createdAt: number;
   /** Task call id to the subagent that answered it, for the records kept in a file of their own. */
   agents: Map<string, string>;
+  /** `permissionMode` of the last prompt row, the mode the CLI ran that session in; undefined on
+   *  a transcript older than the field. */
+  permissionMode: string | undefined;
 }
 
 /**
@@ -406,6 +409,7 @@ export function foldTranscript(text: string): FoldedTranscript {
   let cur: FoldedTurn | undefined;
   let title: string | undefined;
   let createdAt: number | undefined;
+  let permissionMode: string | undefined;
   const agents = new Map<string, string>();
   const close = () => {
     if (cur?.steps.length) turns.push(cur);
@@ -414,6 +418,8 @@ export function foldTranscript(text: string): FoldedTranscript {
   for (const line of stripBom(text).split("\n")) {
     const rec = parseLine(line);
     if (!rec || rec.isSidechain) continue;
+    if (rec.type === "user" && typeof rec.permissionMode === "string")
+      permissionMode = rec.permissionMode;
     if (rec.type === "summary" && typeof rec.summary === "string") {
       title = rec.summary;
       continue;
@@ -528,7 +534,7 @@ export function foldTranscript(text: string): FoldedTranscript {
     }
   }
   close();
-  return { turns, title, createdAt: createdAt ?? Date.now(), agents };
+  return { turns, title, createdAt: createdAt ?? Date.now(), agents, permissionMode };
 }
 
 /** A tool result as the seed writes it into a user message. */

@@ -285,6 +285,8 @@ interface Opened {
     existed: boolean;
     turns?: number;
     events?: number;
+    /** The permission mode the transcript's last prompt ran under; only on a freshly seeded open. */
+    permissionMode?: string;
 }
 /** The host services the routes read; injected before the route mounts. */
 type RouteHost = Required<Pick<PluginContext, "webServer" | "connection" | "sessions" | "sessionPersistence">>;
@@ -384,6 +386,8 @@ export interface SessionRouteOptions {
     permissionModes?: {
         info: (sessionId: string) => PermissionModeInfo;
         set: (sessionId: string, mode: string | null) => Promise<PermissionModeReply>;
+        /** Store the mode a restored transcript ran under, unchecked; dsh's shield clamps it at spawn. */
+        restore: (sessionId: string, mode: string) => Promise<void>;
     };
     /** Rewind a session's files (and, unless a dry run, Claude's conversation) to a user prompt. */
     rewind?: (sessionId: string, uuid: string, dryRun: boolean) => Promise<RewindReply>;

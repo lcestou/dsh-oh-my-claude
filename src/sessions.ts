@@ -1222,6 +1222,8 @@ interface Opened {
   existed: boolean;
   turns?: number;
   events?: number;
+  /** The permission mode the transcript's last prompt ran under; only on a freshly seeded open. */
+  permissionMode?: string;
 }
 
 /** The host services the routes read; injected before the route mounts. */
@@ -1388,7 +1390,13 @@ export async function openTranscriptOnce(
     await handle.close();
   }
   await attach(id);
-  return { id, existed: false, turns: folded.turns.length, events: seed.length };
+  return {
+    id,
+    existed: false,
+    turns: folded.turns.length,
+    events: seed.length,
+    permissionMode: folded.permissionMode,
+  };
 }
 
 /** A cwd-scoped read's destination: the box it runs on, and the path to read there. */
@@ -1501,6 +1509,8 @@ export interface SessionRouteOptions {
   permissionModes?: {
     info: (sessionId: string) => PermissionModeInfo;
     set: (sessionId: string, mode: string | null) => Promise<PermissionModeReply>;
+    /** Store the mode a restored transcript ran under, unchecked; dsh's shield clamps it at spawn. */
+    restore: (sessionId: string, mode: string) => Promise<void>;
   };
   /** Rewind a session's files (and, unless a dry run, Claude's conversation) to a user prompt. */
   rewind?: (sessionId: string, uuid: string, dryRun: boolean) => Promise<RewindReply>;
@@ -2069,18 +2079,20 @@ export function registerSessionRoutes(
                   return json(res, 400, { error: "cwd and id required" });
                 const onBox = workspaceAt(cwd);
                 if (onBox !== undefined) await cacheBoxTranscript(onBox, id);
-                return json(
-                  res,
-                  200,
-                  await openTranscript(
-                    routeHost,
-                    transcriptDirs(cwd),
-                    cwd,
-                    id,
-                    claudeIdOf,
-                    workspaceRegistry(),
-                  ),
+                const opened = await openTranscript(
+                  routeHost,
+                  transcriptDirs(cwd),
+                  cwd,
+                  id,
+                  claudeIdOf,
+                  workspaceRegistry(),
                 );
+                // The CLI stamps every prompt row with the mode it ran under, so a session brought
+                // in from a terminal keeps its mode instead of the workspace default. A session dsh
+                // already knows keeps whatever was picked in dsh.
+                if (!opened.existed && opened.permissionMode && permissionModes)
+                  await permissionModes.restore(opened.id, opened.permissionMode);
+                return json(res, 200, opened);
               }
               if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/search`) {
                 const q = url.searchParams.get("q") ?? "";

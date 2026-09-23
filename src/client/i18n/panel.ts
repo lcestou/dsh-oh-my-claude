@@ -331,6 +331,7 @@ export const en = {
   "panel.access.commandFailed": "command failed",
   "panel.access.fullAccessRefused":
     "Full access is refused by permissions.disableBypassPermissionsMode in {scope} settings.",
+  "panel.access.nextTurn": "{mode} takes effect on the next turn.",
 } as const;
 
 /** Chinese, one per English key. */
@@ -640,4 +641,5 @@ export const zh = {
   "panel.access.commandFailed": "命令失败",
   "panel.access.fullAccessRefused":
     "完全权限被 {scope} 设置中的 permissions.disableBypassPermissionsMode 拒绝。",
+  "panel.access.nextTurn": "{mode} 将在下一轮生效。",
 } satisfies Record<keyof typeof en, string>;

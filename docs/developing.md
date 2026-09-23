@@ -68,6 +68,7 @@ The scripts under `tools/playwright/` are development checks only; nothing in th
 
 - `tour.ts <token>` takes the README's screenshots and the clip behind `panel-tabs.gif`, into `docs/media/`. Shoot a throwaway session: the panel floats over the chat, and the text behind it lands in the shot. The ffmpeg crop for the gif is in the file's header.
 - `turn-status.ts <token> <out.png>` and `restore-button.ts <token> <out.png>` screenshot the two DOM features.
+- `dock-status.ts <token> [out.png]` needs a Claude session running right now: it opens it and expects the working line above the composer while the turn header's line is off screen or not drawn; with the header drawn it scrolls it into view and expects the dock line gone (or reports the always-on hint).
 - `starter-row.ts <token>` types into a blank session and fails if the starter dock changes height when the Save draft chip appears.
 - `keyword-paint.ts <token>` types `ultracode` and `ultrathink` into the composer and reads the highlight registry back.
 - `update-pill.ts <token> <dir>` rewrites the box's own status reply so npm appears to hold a newer plugin, then clicks the pill and reads the clipboard at a desktop and a phone width.

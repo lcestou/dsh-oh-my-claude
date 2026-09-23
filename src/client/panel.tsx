@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import {
   btn,
   btnPrimary,
+  rowBtn,
   errText,
   stateText,
   sectionHead,
@@ -194,12 +195,7 @@ function TranscriptRow({
     <button
       type="button"
       style={{
-        ...btn,
-        display: "flex",
-        alignItems: "center",
-        width: "100%",
-        textAlign: "left",
-        padding: "5px 10px",
+        ...rowBtn,
         overflow: "hidden",
       }}
       onClick={async () => {
@@ -506,11 +502,7 @@ function MemoryBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
             key={f.name}
             type="button"
             style={{
-              ...btn,
-              display: "flex",
-              width: "100%",
-              textAlign: "left",
-              padding: "5px 10px",
+              ...rowBtn,
             }}
             onClick={() => openFile(f.name)}
           >
@@ -1699,11 +1691,7 @@ function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCt
             key={f.path}
             type="button"
             style={{
-              ...btn,
-              display: "flex",
-              width: "100%",
-              textAlign: "left",
-              padding: "5px 10px",
+              ...rowBtn,
             }}
             onClick={() => openFile(f)}
           >
@@ -1895,11 +1883,7 @@ function RewindBody({
               key={p.id}
               type="button"
               style={{
-                ...btn,
-                display: "flex",
-                width: "100%",
-                textAlign: "left",
-                padding: "5px 10px",
+                ...rowBtn,
               }}
               onClick={() => pick(p)}
             >
@@ -2171,11 +2155,7 @@ function ChangesBody({
               key={f.path}
               type="button"
               style={{
-                ...btn,
-                display: "flex",
-                width: "100%",
-                textAlign: "left",
-                padding: "5px 10px",
+                ...rowBtn,
                 fontFamily: "monospace",
               }}
               onClick={() => {
@@ -3873,9 +3853,17 @@ interface PermissionModeState {
   modes: string[];
   accessMode: string | null;
   ceiling: string;
+  /** The mode the running process is in; null without a process. Differs from `mode` after a pick
+   *  the CLI could not take live, until the next turn respawns. */
+  liveMode?: string | null;
   live?: boolean;
   error?: string;
 }
+/** The mode to show for a session: the process's own when one runs, else the one the next spawn gets. */
+const shownMode = (snap: PermissionModeState): string => snap.liveMode ?? snap.mode;
+/** The stored mode when it differs from the running process's, else empty: what the footer notes. */
+const pendingMode = (snap: PermissionModeState): string =>
+  snap.liveMode && snap.liveMode !== snap.mode ? snap.mode : "";
 /** What `GET /permissions` reports: the rules and hooks the session's live process loaded. */
 /** What `GET /permissions` returns on success. A failure answers 409, which `readJson` throws, so
  *  the failed arm never reaches state: the reason lands in `permissionsError` instead. */
@@ -4037,7 +4025,7 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
 
       fetchMode().then((snap) => {
         if (snap) {
-          currentMode = snap.mode;
+          currentMode = shownMode(snap);
           reapplyLabel();
         }
       });
@@ -4238,7 +4226,7 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
                       if (errEl) errEl.textContent = reply.error;
                     } else {
                       fetchMode().then((next) => {
-                        if (next) currentMode = next.mode;
+                        if (next) currentMode = shownMode(next);
                         reapplyLabel();
                       });
                     }
@@ -4438,7 +4426,7 @@ const accessTriggerStyle: CSSProperties = {
   padding: "0 4px 0 8px",
   fontSize: 13,
   fontWeight: 500,
-  lineHeight: 20,
+  lineHeight: "20px",
   display: "inline-flex",
 };
 
@@ -4453,8 +4441,11 @@ const accessTriggerStyle: CSSProperties = {
 export function AccessTrigger({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   useLocale();
   const [open, setOpen] = useState(false);
-  // The current Claude mode, from GET /permission-mode; empty until the first fetch lands.
+  // The mode the session's process runs in (or will spawn in), from GET /permission-mode; empty
+  // until the first fetch lands.
   const [mode, setMode] = useState("");
+  // The stored mode the next turn will spawn in when the running process could not take it live.
+  const [pending, setPending] = useState("");
   // The scope whose permissions.disableBypassPermissionsMode refused bypass, empty when allowed;
   // marks the bypass row and the trigger, and drives the full-access note.
   const [bypassRefusedIn, setBypassRefusedIn] = useState("");
@@ -4467,7 +4458,9 @@ export function AccessTrigger({ sessionId, ctx }: { sessionId: string; ctx: Clie
   useEffect(() => {
     let live = true;
     fetchModeState(sessionId).then((snap) => {
-      if (live && snap) setMode(snap.mode);
+      if (!live || !snap) return;
+      setMode(shownMode(snap));
+      setPending(pendingMode(snap));
     });
     const cwd = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.cwd;
     fetch(`${ROUTE}/feature-switches${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ""}`)
@@ -4480,6 +4473,21 @@ export function AccessTrigger({ sessionId, ctx }: { sessionId: string; ctx: Clie
       live = false;
     };
   }, [sessionId, ctx]);
+
+  // A deferred pick lands when the next turn respawns the process, which this component cannot
+  // see; while one is pending, ask again every few seconds and stop the moment the two agree.
+  // ponytail: a bounded poll only while a note is showing; the server-push pass replaces it.
+  useEffect(() => {
+    if (!pending) return;
+    const timer = setInterval(() => {
+      fetchModeState(sessionId).then((snap) => {
+        if (!snap) return;
+        setMode(shownMode(snap));
+        setPending(pendingMode(snap));
+      });
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [pending, sessionId]);
 
   // Whether the bypass row and the trigger carry the refused badge for the current mode.
   const bypassRefused = bypassRefusedIn !== "" && mode === "bypassPermissions";
@@ -4515,9 +4523,10 @@ export function AccessTrigger({ sessionId, ctx }: { sessionId: string; ctx: Clie
               setError(reply.error);
             } else {
               setError(null);
-              fetchModeState(sessionId).then((next) => {
-                if (next) setMode(next.mode);
-              });
+              // The reply is the read-back: the process's own mode, and the stored one when the CLI
+              // could not take the pick live, so a deferred Bypass reads as the old mode plus a note.
+              setMode(shownMode(reply));
+              setPending(pendingMode(reply));
             }
           })
           .catch((e) => {
@@ -4569,6 +4578,15 @@ export function AccessTrigger({ sessionId, ctx }: { sessionId: string; ctx: Clie
             type: "label" as const,
             id: "refused",
             text: t("panel.access.fullAccessRefused", { scope: bypassRefusedIn }),
+          },
+        ]
+      : []),
+    ...(pending
+      ? [
+          {
+            type: "label" as const,
+            id: "pending",
+            text: t("panel.access.nextTurn", { mode: modeLabel(pending) }),
           },
         ]
       : []),

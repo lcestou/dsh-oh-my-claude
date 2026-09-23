@@ -364,6 +364,9 @@ export const en = {
   "main.settingsUi.toolRowsTitle": "Native tool rows",
   "main.settingsUi.toolRowsDesc":
     "Show Claude's tool calls as dsh's own tool cards, with the text streaming between them, instead of as text inside its message. Box-wide, from your next message. Off is inline text, which never depends on dsh's log format.",
+  "main.settingsUi.dockStatusTitle": "Working line above the composer",
+  "main.settingsUi.dockStatusDesc":
+    "Claude's working line (spinner, verb, figures) repeats above the composer while the turn's own header has scrolled off screen or is not drawn yet, and hides when the header is back on screen. On by default.",
   "main.settingsUi.wsModelTitle": "Remember model per workspace",
   "main.settingsUi.wsModelDesc":
     "A new session in a workspace opens on the Claude it last ran there: the same box and the same model. A blank session you have already switched by hand is left as you set it.",
@@ -414,6 +417,8 @@ export const en = {
   "main.steer.heldHint": "Held while you edit. Claude reads it once you save.",
   "main.steer.editAll": "Edit all",
   "main.steer.editAllAria": "Edit every waiting message as one",
+  "main.steer.sendAllNow": "Send all now",
+  "main.steer.sendAllNowAria": "Stop Claude and send every waiting message now",
   "main.steer.sent": "Edit failed: this message may have already started sending.",
   "main.steer.gone": "Claude is no longer running in this session.",
   "main.steer.error": "Could not reach Claude: {error}",
@@ -807,6 +812,9 @@ export const zh = {
   "main.settingsUi.toolRowsTitle": "原生工具卡片",
   "main.settingsUi.toolRowsDesc":
     "把 Claude 的工具调用显示为 dsh 自己的工具卡片，文本在卡片之间流式显示，而不是作为消息内的文本。整机生效，从你的下一条消息起。关闭则为内联文本，它从不依赖 dsh 的日志格式。",
+  "main.settingsUi.dockStatusTitle": "在输入框上方显示工作状态行",
+  "main.settingsUi.dockStatusDesc":
+    "当本轮的标题滚出屏幕或尚未绘制时，Claude 的工作状态行（转轮、动词、数据）会在输入框上方重复显示，标题回到屏幕上时则隐藏。默认开启。",
   "main.settingsUi.wsModelTitle": "按工作区记住模型",
   "main.settingsUi.wsModelDesc":
     "工作区中的新会话会以它上次运行的 Claude 打开：同一台机器、同一个模型。你已手动切换过的空白会话保持你的选择。",
@@ -854,6 +862,8 @@ export const zh = {
   "main.steer.heldHint": "编辑期间暂不发送。保存后 Claude 才会读取。",
   "main.steer.editAll": "全部编辑",
   "main.steer.editAllAria": "将所有等待中的消息合并为一条编辑",
+  "main.steer.sendAllNow": "全部立即发送",
+  "main.steer.sendAllNowAria": "停止 Claude 并立即发送所有等待中的消息",
   "main.steer.sent": "编辑失败：这条消息可能已经开始发送。",
   "main.steer.gone": "此会话中的 Claude 已不再运行。",
   "main.steer.error": "无法连接 Claude：{error}",
