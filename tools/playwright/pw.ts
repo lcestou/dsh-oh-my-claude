@@ -53,6 +53,8 @@ export type Page = {
   setViewportSize(size: Size): Promise<void>;
   keyboard: { press(key: string): Promise<void> };
   on(event: "console", handler: (message: { text(): string }) => void): void;
+  /** Every request the page makes; a counter check reads `url()` off each one. */
+  on(event: "request", handler: (request: { url(): string }) => void): void;
   video(): { path(): Promise<string> };
   url(): string;
   /** Answer one of the page's requests from the check: the handler may fetch the real reply and
