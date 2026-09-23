@@ -8152,18 +8152,33 @@ function SteerCard({
           {steers.held.length > 0 ? t("main.steer.heldHint") : t("main.steer.hint")}
         </span>
         {steers.waiting.length > 1 && (
-          <button
-            type="button"
-            data-omc-steer-edit-all=""
-            aria-label={t("main.steer.editAllAria")}
-            disabled={busy !== null}
-            onClick={() =>
-              void act("all", { action: "hold", ids: steers.waiting.map((w) => w.id) })
-            }
-            style={buttonStyle}
-          >
-            {t("main.steer.editAll")}
-          </button>
+          <>
+            <button
+              type="button"
+              data-omc-steer-edit-all=""
+              aria-label={t("main.steer.editAllAria")}
+              disabled={busy !== null}
+              onClick={() =>
+                void act("all", { action: "hold", ids: steers.waiting.map((w) => w.id) })
+              }
+              style={buttonStyle}
+            >
+              {t("main.steer.editAll")}
+            </button>
+            <button
+              type="button"
+              data-omc-steer-send-all=""
+              aria-label={t("main.steer.sendAllNowAria")}
+              title={t("main.steer.sendNowTitle")}
+              disabled={busy !== null}
+              onClick={() =>
+                void act("all", { action: "sendNow", ids: steers.waiting.map((w) => w.id) })
+              }
+              style={buttonStyle}
+            >
+              {t("main.steer.sendAllNow")}
+            </button>
+          </>
         )}
       </div>
       {failure("all")}
@@ -8789,11 +8804,18 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
     };
     pollRef.current = () => void fetchItems();
     fetchItems();
-    // ponytail: a 3s poll, since a server command cannot push to the client; swap for an event
-    // channel the day dsh gives a plugin one.
-    const interval = setInterval(() => {
+    // A steer only happens while a turn is running, and the card should appear the moment one is
+    // queued, so the poll runs every second during a running turn and every three at rest. Self-
+    // scheduling rather than a fixed setInterval, so the rate follows the turn without a restart.
+    // ponytail: still a poll, since a server command cannot push to the client; the server-push
+    // pass replaces it with one event channel.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const tick = () => {
       if (visibleRef.current) fetchItems();
-    }, 3000);
+      const running = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.running === true;
+      timer = setTimeout(tick, running ? 1000 : 3000);
+    };
+    timer = setTimeout(tick, 1000);
     const onVisibility = () => {
       visibleRef.current = document.visibilityState === "visible";
       if (visibleRef.current) fetchItems();
@@ -8801,7 +8823,7 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
     document.addEventListener("visibilitychange", onVisibility);
     return () => {
       alive = false;
-      clearInterval(interval);
+      if (timer !== undefined) clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [ctx, sessionId]);

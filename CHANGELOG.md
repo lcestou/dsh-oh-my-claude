@@ -8,6 +8,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Added
 
+- The steer card (the "Waiting for Claude" card above the composer) appears faster: while a turn is
+  running the plugin checks for queued messages every second instead of every three, and drops back
+  to three at rest. With more than one message waiting, a Send all now button sends them all at once,
+  next to Edit all.
 - Claude's working line (spinner, verb, figures) repeats above the composer once the turn's own
   header has scrolled off screen or is not drawn. dsh 0.1.7 keeps that line in the turn header,
   which a long run of tool cards pushes out of view, and on a long turn the header sits above the
