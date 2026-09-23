@@ -69,6 +69,10 @@ dsh: runs on 0.1.5-rc.1 through 0.1.7-alpha.2; built and tested on 0.1.7-alpha.2
 
 ### Fixed
 
+- The Claude Code update card shows only in a session that runs on Claude Code; a session on
+  another provider drew it too.
+- On a phone the permission capsule by the composer ends in an ellipsis instead of breaking into
+  a second line under its chevron.
 - Durations past an hour read `1h 40m 42s` in the working line and the cost dialog, not
   `100m 42s`.
 - The dark theme's shimmer is the CLI's dark value; it used the light one on both.

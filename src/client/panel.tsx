@@ -4377,7 +4377,13 @@ const ACCESS_TRIGGER_CSS =
   "[data-omc-access-trigger]:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}" +
   "[data-omc-access-trigger]:focus-visible{box-shadow:0 0 0 2px var(--dsw-alias-border-l3)}" +
   // dsh's `.triggerIcon svg`: the capsule's glyph is 14 px, like the glyph cell in its menu rows.
-  "[data-omc-access-trigger]>span:first-child svg{width:14px;height:14px}";
+  "[data-omc-access-trigger]>span:first-child svg{width:14px;height:14px}" +
+  // On a phone the composer's action row has no room for the full mode name: the capsule takes
+  // a third of the page at most and its label ends in an ellipsis, so the row stays one line
+  // instead of breaking under the chevron (owner, 2026-09-23). The open menu is dsh's portal and
+  // keeps its own width.
+  "[data-omc-access-trigger]{max-width:220px}" +
+  "@media (max-width:600px){[data-omc-access-trigger]{max-width:32vw}}";
 
 /**
  * Read the session's permission mode, or null when the route is down or the session is not
@@ -4402,7 +4408,7 @@ const ensureAccessTriggerStyle = (): void => {
 /** The capsule the composer's permission control wears at rest: dsh's trigger shape, our hook. */
 const accessTriggerStyle: CSSProperties = {
   minWidth: 0,
-  maxWidth: 220,
+  // The max width lives in ACCESS_TRIGGER_CSS, where the phone rule can override it.
   height: 28,
   color: "var(--dsw-alias-label-secondary)",
   cursor: "pointer",

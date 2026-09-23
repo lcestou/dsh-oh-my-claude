@@ -8858,7 +8858,11 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
         if (alive) {
           const nextNeed = body.loginNeeded ?? null;
           setNeed((cur) => (sameNeed(cur, nextNeed) ? cur : nextNeed));
-          const nextUpd = body.claudeUpdate ?? null;
+          // The card names a box's Claude Code, so it belongs to a session that runs on Claude
+          // Code; the route answers it for any session it is asked about, and a local-model
+          // session drew it too (owner, 2026-09-23). Read here, on every poll, rather than once:
+          // the provider binding is briefly undefined during a restart, and a poll later it is back.
+          const nextUpd = isClaudeSession(ctx, sessionId) ? (body.claudeUpdate ?? null) : null;
           // A card that was acted on stays until it says it is gone (its own countdown after a
           // success, the close otherwise): the server stops naming the release the moment the
           // install lands, and dropping the card on that poll left "Updated" on screen for a
