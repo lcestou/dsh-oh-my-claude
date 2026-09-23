@@ -552,8 +552,9 @@ export class Translator {
    *  time into, and the next elapsed mark worth a line. */
   readonly heartbeatBlocks = new Map<string, { block: TranslatorBlock; nextAt: number }>();
 
-  /** The counter a silent thinking stretch draws into, and the thinking block it stands in for. */
-  thinking?: { block: TranslatorBlock; nextAt: number };
+  /** The counter a silent thinking stretch draws into, and the thinking block it stands in for.
+   *  `marked` once the first token figure is written; before that the block holds one space. */
+  thinking?: { block: TranslatorBlock; nextAt: number; marked: boolean };
   thinkingBlock?: TranslatorBlock;
   /** Injected: append tool/call to the dsh session for a native Claude Code tool. */
   onToolCall?: (callId: string, name: string, args: string) => number | undefined;
@@ -1342,7 +1343,13 @@ export class Translator {
         if (!block || block.index < 0) return [];
         const d = ev.delta ?? {};
         const text = d.text ?? d.thinking ?? d.partial_json ?? "";
-        return this.delta(block, text);
+        // Thinking whose text streams is its own progress: the counter opened at the block's start
+        // (one whitespace token) closes before the first word, the way an estimate frame closes it.
+        const closed =
+          d.thinking !== undefined && text && block === this.thinkingBlock
+            ? this.endThinking()
+            : [];
+        return [...closed, ...this.delta(block, text)];
       }
       case "content_block_stop": {
         const block = this.open.get(ev.index ?? -1);
@@ -1435,12 +1442,24 @@ export class Translator {
    *  relay stays hidden, so only visible text, thinking and tool rows get a block-start. */
   openBlock(apiIndex: number, cb: { type?: string; id?: string; name?: string }) {
     let opened: { block: TranslatorBlock; events: StreamChunk[] };
+    let lead: StreamChunk[] = [];
     if (cb.type === "text") {
       opened = this.startBlock("text");
       if (!this.nested) this.onProgress?.({ mode: "responding" });
     } else if (cb.type === "thinking") {
       opened = this.startBlock("reasoning");
       this.thinkingBlock = opened.block;
+      // One whitespace token the moment thinking starts, into the counter that will carry the
+      // marks. dsh times a step's first token off the first non-empty delta in its stream, and a
+      // silent think (Fable) streams none until the first mark, a thousand tokens in, so TTFT
+      // swallowed the think and the decode window began near the step's end (a 23 s step read as
+      // 23 s TTFT, 0.3 s decode and 3,980 tokens a second, 2026-09-23). dsh draws no block whose
+      // text trims to nothing, so nothing shows until a mark, as before.
+      if (!this.thinking) {
+        const counter = this.startBlock("reasoning", " ");
+        this.thinking = { block: counter.block, nextAt: nextThinkStep(0), marked: false };
+        lead = counter.events;
+      }
       // The status row's "thinking" is the block being open, the way the CLI's own spinner mode
       // works, not the estimate frames being fresh: Fable-class thinking streams no text, and its
       // estimate frames come every 50 tokens or so, which on a slow think is seconds apart.
@@ -1489,7 +1508,7 @@ export class Translator {
       return [];
     }
     this.open.set(apiIndex, opened.block);
-    return opened.events;
+    return [...opened.events, ...lead];
   }
 
   /** A whole assistant message as chunks. A subagent's message folds into one reasoning row, and
@@ -1612,14 +1631,21 @@ export class Translator {
     if (this.thinkingBlock?.started) return this.endThinking();
     const entry = this.thinking;
     if (!entry) {
+      // An estimate with no thinking block open (the block start was missed): open the counter
+      // at the first mark, the way it always did.
       if (total < THINK_FLOOR) return [];
       const { block, events } = this.startBlock("reasoning", `~${tokensText(total)} tokens`);
-      this.thinking = { block, nextAt: nextThinkStep(total) };
+      this.thinking = { block, nextAt: nextThinkStep(total), marked: true };
       return events;
     }
     // One frame per delta arrives, so only a crossed mark writes.
     if (total < entry.nextAt) return [];
     entry.nextAt = nextThinkStep(total);
+    if (!entry.marked) {
+      // The first figure follows the whitespace token on the same line.
+      entry.marked = true;
+      return this.delta(entry.block, `~${tokensText(total)} tokens`);
+    }
     // Each mark on its own line, no ` → ` chain: dsh's Think summary is a nowrap line that follows the
     // end (data-follow-end), so the collapsed row shows the newest figure while the expanded block
     // keeps the ladder.

@@ -130,10 +130,12 @@ export declare class Translator {
         block: TranslatorBlock;
         nextAt: number;
     }>;
-    /** The counter a silent thinking stretch draws into, and the thinking block it stands in for. */
+    /** The counter a silent thinking stretch draws into, and the thinking block it stands in for.
+     *  `marked` once the first token figure is written; before that the block holds one space. */
     thinking?: {
         block: TranslatorBlock;
         nextAt: number;
+        marked: boolean;
     };
     thinkingBlock?: TranslatorBlock;
     /** Injected: append tool/call to the dsh session for a native Claude Code tool. */

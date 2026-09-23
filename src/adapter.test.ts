@@ -498,15 +498,20 @@ const se = (event: any) => tr.translate({ type: "stream_event", event });
 assert.deepEqual(se({ type: "message_start" }), []);
 assert.deepEqual(
   se({ type: "content_block_start", index: 0, content_block: { type: "thinking" } }),
-  [],
-  "a block is announced with its first text, not at start",
+  [
+    { type: "block-start", index: 1, blockType: "reasoning" },
+    { type: "reasoning-delta", index: 1, text: " " },
+  ],
+  "the thinking block itself is announced with its first text; the counter beside it opens at once with one whitespace token, dsh's first-token time",
 );
 assert.deepEqual(
   se({ type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "hmm" } }),
   [
+    { type: "block-end", index: 1, block: { type: "reasoning", text: " " } },
     { type: "block-start", index: 0, blockType: "reasoning" },
     { type: "reasoning-delta", index: 0, text: "hmm" },
   ],
+  "streamed thinking text is its own progress: the counter closes before the first word",
 );
 assert.deepEqual(
   se({ type: "content_block_delta", index: 0, delta: { type: "signature_delta", signature: "x" } }),
@@ -544,8 +549,9 @@ se({ type: "content_block_start", index: 0, content_block: { type: "text" } });
 assert.deepEqual(
   se({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "pong" } }),
   [
-    { type: "block-start", index: 3, blockType: "text" },
-    { type: "text-delta", index: 3, text: "pong" },
+    // Index 4: the thinking counter above took index 1 at the think's start.
+    { type: "block-start", index: 4, blockType: "text" },
+    { type: "text-delta", index: 4, text: "pong" },
   ],
 );
 assert.equal(tr.finished, false);
@@ -2900,12 +2906,22 @@ console.log("ok");
     type: "stream_event",
     event: { type: "content_block_start", index: 0, content_block: { type: "thinking" } },
   });
-  assert.deepEqual(s1, [], "a thinking block is not announced before it has text");
+  assert.deepEqual(
+    s1.map((c: StreamChunk) => c.type),
+    ["block-start", "reasoning-delta"],
+    "the thinking block itself is not announced before it has text; the counter beside it opens with one whitespace token",
+  );
+  assert.equal(s1[1].text, " ");
   const e1 = tr.translate({
     type: "stream_event",
     event: { type: "content_block_stop", index: 0 },
   });
-  assert.deepEqual(e1, [], "an empty thinking block closes silently: no empty bubble");
+  assert.deepEqual(
+    e1.map((c: StreamChunk) => c.type),
+    ["block-end"],
+    "an empty thinking block closes silently; only the whitespace counter closes, which dsh does not draw",
+  );
+  assert.equal(e1[0].block.text, " ");
   tr.translate({
     type: "stream_event",
     event: { type: "content_block_start", index: 1, content_block: { type: "thinking" } },
@@ -2920,8 +2936,8 @@ console.log("ok");
   });
   assert.deepEqual(
     d.map((c: StreamChunk) => c.type),
-    ["block-start", "reasoning-delta"],
-    "block-start rides ahead of the first text",
+    ["block-end", "block-start", "reasoning-delta"],
+    "the counter closes, then block-start rides ahead of the first text",
   );
   const e2 = tr.translate({
     type: "stream_event",
@@ -6162,12 +6178,20 @@ console.log("interrupt-on-abort ok");
     t.translate({ type: "system", subtype: "thinking_tokens", estimated_tokens: total });
   const t = new Translator() as any;
   t.partial({ type: "message_start" });
-  t.partial({ type: "content_block_start", index: 0, content_block: { type: "thinking" } });
+  // The counter opens with one whitespace token the moment thinking starts, so dsh's first-token
+  // time is the think's start; a block whose text trims to nothing is not drawn.
+  const started = t.partial({
+    type: "content_block_start",
+    index: 0,
+    content_block: { type: "thinking" },
+  });
+  assert.equal(started[0].type, "block-start");
+  assert.equal(started[0].blockType, "reasoning");
+  assert.deepEqual(started[1], { type: "reasoning-delta", index: started[0].index, text: " " });
   assert.deepEqual(think(t, 400), [], "below the first mark nothing draws");
   const open = think(t, 1200);
-  assert.equal(open[0].type, "block-start");
-  assert.equal(open[0].blockType, "reasoning");
-  assert.equal(open[1].text, "~1.2k tokens");
+  assert.equal(open.length, 1, "the block is already open; the first mark is one delta");
+  assert.equal(open[0].text, "~1.2k tokens");
   assert.deepEqual(think(t, 1900), [], "a frame short of the next mark is silent");
   assert.equal(think(t, 2100)[0].text, "\n~2.1k tokens", "the mark adds a fresh line");
   assert.deepEqual(think(t, 4999), []);
@@ -6179,7 +6203,7 @@ console.log("interrupt-on-abort ok");
     "the counter and the silent block it stood in for close once, not twice",
   );
   assert.equal(closed[0].type, "block-end", "the thinking block ending closes the counter");
-  assert.equal(closed[0].block.text, "~1.2k tokens\n~2.1k tokens\n~26k tokens");
+  assert.equal(closed[0].block.text, " ~1.2k tokens\n~2.1k tokens\n~26k tokens");
   assert.equal(t.thinking, undefined);
 
   // Thinking whose text is streaming needs no counter, and an open one closes.
@@ -6187,9 +6211,17 @@ console.log("interrupt-on-abort ok");
   t2.partial({ type: "message_start" });
   t2.partial({ type: "content_block_start", index: 0, content_block: { type: "thinking" } });
   think(t2, 1200);
-  t2.partial({ type: "content_block_delta", index: 0, delta: { thinking: "words" } });
-  const hushed = think(t2, 5000);
-  assert.equal(hushed[0].type, "block-end", "visible thinking closes the counter");
+  const words = t2.partial({
+    type: "content_block_delta",
+    index: 0,
+    delta: { thinking: "words" },
+  });
+  assert.equal(
+    words[0].type,
+    "block-end",
+    "visible thinking closes the counter, before its first word",
+  );
+  assert.deepEqual(think(t2, 5000), [], "a later estimate finds no counter");
   assert.deepEqual(think(t2, 9000), [], "and it does not reopen");
 
   // A counter still open when the turn ends is closed by the result frame.
