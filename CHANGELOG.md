@@ -25,8 +25,8 @@ dsh: runs on 0.1.5-rc.1 through 0.1.7-alpha.2; built and tested on 0.1.7-alpha.2
   waiting-for-you notice, the idle chip, the cost line and the permission capsule. One event stream
   per tab carries them (server-sent events on `GET /dsh-oh-my-claude/events`), so a steer card
   appears the moment the steer is queued, a prompt opened in a background session is announced
-  even in a hidden tab, and a running session's page makes a handful of requests a minute instead
-  of about two hundred. The old timers stay on as a safety net: every 30 s while the stream is up,
+  even in a hidden tab, and a running session's page makes 18 requests a minute instead of 206
+  (a blank session 4 instead of 80; measured on dsh 0.1.7-alpha.2, 2026-09-23). The old timers stay on as a safety net: every 30 s while the stream is up,
   at their old rates while it is down. A hint flipped in another browser reaches this one at once.
 - The list rows in the ✻ panel's tabs (transcripts to restore, memory files, instructions, prompts
   to rewind to, changed files) no longer sit in their own hairline box; like dsh's rows they are
