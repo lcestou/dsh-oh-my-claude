@@ -12,6 +12,13 @@
 // writes anything. The text of the conversation is untouched; only the tool cards of those old
 // turns disappear from history.
 //
+// Before 2026-09-23 the Restore tab seeded a log with no `system/message` head. dsh's loader
+// protects the first surface event as the system head and refuses a log where a `system/message`
+// follows any other surface event ("system/message requires a protected first surface head");
+// dsh's own loop writes one on the first live turn, so every restored session loaded until the
+// next reload after that turn (a dsh-web restart, a second browser) and was refused from then on.
+// The repair inserts the head the seed now writes, ahead of the first surface row, and renumbers.
+//
 // usage:
 //   bun tools/dsh-session-repair.ts --check  [--dsh <prefix>] [<log> | --all]
 //   bun tools/dsh-session-repair.ts --apply  [--dsh <prefix>] [<log> | --all]
@@ -53,7 +60,7 @@ type Row = {
   seq?: number;
   seq0?: number;
   data?: Data;
-  surfaceOp?: string | Range;
+  surfaceOp?: string | Record<string, unknown>;
   sourceEventSeqs?: Ref[];
   [key: string]: unknown;
 };
@@ -86,6 +93,24 @@ const opt = (name: string) => {
  *  without an `as` assertion.
  */
 const defined = <T>(x: T | undefined): x is T => x !== undefined;
+/** The event types dsh folds onto the conversation surface; the first of them is the system head. */
+const SURFACE = new Set(["system/message", "user/message", "assistant/message", "tool/result"]);
+
+/** The seq span a replacing `surfaceOp` names, or undefined for `"append"` and anything else. A
+ *  physical row says `startSeq`/`endSeq` (what dsh writes to disk); the projected shape says
+ *  `start`/`end`. Reading only the second is how a v4 system/message replacement kept pointing at
+ *  its pre-renumber seq ("replacement range is not on the current surface"). */
+const spanOf = (op: Row["surfaceOp"]): Range | undefined => {
+  if (!op || typeof op !== "object") return undefined;
+  const start = op["startSeq"] ?? op["start"];
+  const end = op["endSeq"] ?? op["end"];
+  return typeof start === "number" && typeof end === "number" ? { start, end } : undefined;
+};
+/** `op` with its span rewritten in whichever field pair it already uses. */
+const withSpan = (op: Record<string, unknown>, span: Range): Record<string, unknown> =>
+  "startSeq" in op
+    ? { ...op, startSeq: span.start, endSeq: span.end }
+    : { ...op, start: span.start, end: span.end };
 
 /**
  * Drop unadvertised tool rows and keep every seq reference consistent. A `tool/call` no
@@ -93,8 +118,15 @@ const defined = <T>(x: T | undefined): x is T => x !== undefined;
  * tools; dsh 0.1.5's v0 migration refused it, and dsh 0.1.7 refuses it again in v4 logs at load,
  * as "has no advertised tool lifecycle". The v4 result rows are the same rows to drop, found
  * through the call id they carry on the message.
+ *
+ * Then, when the first surface row is not a `system/message`, insert the head the seed writes
+ * since 2026-09-23 ahead of it, inside the same step, in the source shape `version` requires
+ * (plugin source up to v3, system-prompt from v4). A log with no surface row at all is left as is.
  */
-export function repair(rows: Row[]): { rows: Row[]; droppedCalls: number } {
+export function repair(
+  rows: Row[],
+  version = 4,
+): { rows: Row[]; droppedCalls: number; addedHead: boolean } {
   const advertised = new Set<string>();
   const dropIds = new Set<string>();
   const dropped = new Set<number>();
@@ -136,23 +168,52 @@ export function repair(rows: Row[]): { rows: Row[]; droppedCalls: number } {
         end: Math.max(...keep),
       };
     }
-    if (
-      e.type === "tool/result" &&
-      e.surfaceOp &&
-      typeof e.surfaceOp === "object" &&
-      "start" in e.surfaceOp
-    ) {
+    const replaced = e.type === "tool/result" ? spanOf(e.surfaceOp) : undefined;
+    if (replaced && typeof e.surfaceOp === "object") {
       const span: number[] = [];
-      for (let x = e.surfaceOp.start; x <= e.surfaceOp.end; x++) if (alive(x)) span.push(x);
+      for (let x = replaced.start; x <= replaced.end; x++) if (alive(x)) span.push(x);
       const first = span[0];
       const last = span[span.length - 1];
       if (first === undefined || last === undefined) {
         drop(e);
         continue;
       }
-      e.surfaceOp = { ...e.surfaceOp, start: first, end: last };
+      e.surfaceOp = withSpan(e.surfaceOp, { start: first, end: last });
     }
     out.push(e);
+  }
+  // The system head: a placeholder seq of -1 takes a fresh slot in the renumbering below, and
+  // nothing in the log can reference it. The row goes where dsh's loop and the seed both put it,
+  // right after the `step/start` that opens the first surface row's step.
+  const first = out.findIndex((e) => SURFACE.has(e.type));
+  const addedHead = first !== -1 && out[first]?.type !== "system/message";
+  if (addedHead) {
+    let step: { turn: unknown; step: unknown } | undefined;
+    for (const e of out.slice(0, first))
+      if (e.type === "step/start") step = { turn: e.data?.turn, step: e.data?.step };
+    // SAFETY: dsh opens a step before any surface row; a log without one fails the migration check
+    // that follows this repair, which is the report this tool exists to give.
+    out.splice(first, 0, {
+      type: "system/message",
+      seq: -1,
+      time: out[first]?.time ?? 0,
+      data: {
+        ...step,
+        message: {
+          id: "restored:system",
+          role: "system",
+          content: [
+            {
+              type: "text",
+              text: "No system prompt recorded: these turns were restored from a Claude Code transcript, and Claude Code ran them with its own prompt.",
+            },
+          ],
+          source:
+            version >= 4 ? { kind: "system-prompt" } : { kind: "plugin", plugin: "claude-code" },
+        },
+      },
+      surfaceOp: "append",
+    });
   }
   // Every row owns one seq slot; a packed chunk run owns one per chunk. Renumber, then remap
   // every reference (ranges, lists, prune targets) onto the surviving seqs.
@@ -200,13 +261,13 @@ export function repair(rows: Row[]): { rows: Row[]; droppedCalls: number } {
   };
   for (const e of out) {
     if (Array.isArray(e.sourceEventSeqs)) e.sourceEventSeqs = refs(e.sourceEventSeqs);
-    if (e.surfaceOp && typeof e.surfaceOp === "object" && "start" in e.surfaceOp)
-      e.surfaceOp = range(e.surfaceOp);
+    const span = spanOf(e.surfaceOp);
+    if (span && typeof e.surfaceOp === "object") e.surfaceOp = withSpan(e.surfaceOp, range(span));
     if (Array.isArray(e.data?.messageSeqs)) e.data.messageSeqs = list(e.data.messageSeqs);
     if (Array.isArray(e.data?.shadowedSeqs)) e.data.shadowedSeqs = list(e.data.shadowedSeqs);
     if (e.data?.shadowedRange) e.data.shadowedRange = range(e.data.shadowedRange);
   }
-  return { rows: out, droppedCalls: dropIds.size };
+  return { rows: out, droppedCalls: dropIds.size, addedHead };
 }
 
 /** Decode a zstd-compressed session log into its header and rows, throwing on an empty file that
@@ -274,6 +335,13 @@ async function loadCatalog(prefix: string): Promise<Catalog> {
   return (await import(p)).sessionFormatCatalog as Catalog;
 }
 
+/** Whether the log's first surface row is something other than a `system/message`: the shape the
+ *  Restore tab seeded before 2026-09-23. A log with no surface row at all is not headless. */
+const headless = (rows: Row[]): boolean => {
+  const first = rows.find((e) => SURFACE.has(e.type));
+  return first !== undefined && first.type !== "system/message";
+};
+
 /** Feed rows through dsh's migration chain; returns undefined on success, the refusal otherwise. */
 function migrate(catalog: Catalog, header: Header, rows: Row[]): string | undefined {
   try {
@@ -291,8 +359,8 @@ function migrate(catalog: Catalog, header: Header, rows: Row[]): string | undefi
   }
 }
 
-/** Return the v0 session logs that still need repair, skipping any directory that already has a
- *  migrated v+ file.
+/** Every session log dsh would load: the v4 file where one exists, else a v0 file dsh has not
+ *  migrated yet (a directory with a migrated v+ file keeps only that one).
  */
 function findLogs(): string[] {
   const root = join(process.env.DSH_HOME ?? join(homedir(), ".dsh"), "sessions");
@@ -303,7 +371,9 @@ function findLogs(): string[] {
       if (!sid.isDirectory()) continue;
       const dir = join(root, ws.name, sid.name);
       const v0 = join(dir, "session.jsonl.zstd");
-      if (existsSync(v0) && !readdirSync(dir).some((f) => /^session\.v\d+\.jsonl/.test(f)))
+      const v4 = join(dir, "session.v4.jsonl.zstd");
+      if (existsSync(v4)) logs.push(v4);
+      else if (existsSync(v0) && !readdirSync(dir).some((f) => /^session\.v\d+\.jsonl/.test(f)))
         logs.push(v0);
     }
   }
@@ -396,8 +466,9 @@ function selfCheck() {
     ev(12, "step/end", { turn: 1, step: 1 }),
     ev(13, "turn/end", { turn: 1, reason: "done" }),
   ];
-  const { rows: out, droppedCalls } = repair(structuredClone(rows));
+  const { rows: out, droppedCalls, addedHead } = repair(structuredClone(rows));
   assert.equal(droppedCalls, 1, "one unadvertised call dropped");
+  assert.equal(addedHead, true, "the first surface row was not a system/message");
   assert.deepEqual(
     out.map((e) => e.type),
     [
@@ -406,26 +477,41 @@ function selfCheck() {
       "assistant/chunk",
       "text-chunks",
       "assistant/chunk",
+      "system/message",
       "assistant/message",
       "tool/call",
       "tool/result",
       "step/end",
       "turn/end",
     ],
-    "orphan call, its result and the prune that shadowed only them are gone",
+    "orphan call, its result and the prune that shadowed only them are gone; the head sits ahead of the first surface row",
   );
   // seq slots stay contiguous: 0,1,2 then the packed run owns 3-4, then 5..
   assert.deepEqual(
     out.filter((e) => e.seq !== undefined).map((e) => e.seq),
-    [0, 1, 2, 5, 6, 7, 8, 9, 10],
+    [0, 1, 2, 5, 6, 7, 8, 9, 10, 11],
   );
   assert.equal(out[3]?.seq0, 3);
+  assert.deepEqual(out[5]?.data, {
+    turn: 1,
+    step: 1,
+    message: {
+      id: "restored:system",
+      role: "system",
+      content: [{ type: "text", text: out[5]?.data?.message?.content?.[0]?.text }],
+      source: { kind: "system-prompt" },
+    },
+  });
   assert.deepEqual(
-    out[5]?.sourceEventSeqs,
+    out[6]?.sourceEventSeqs,
     [[2, 5]],
     "message range follows the surviving chunk seqs",
   );
-  assert.deepEqual(out[7]?.sourceEventSeqs, [7], "advertised call's result still cites its call");
+  assert.deepEqual(out[8]?.sourceEventSeqs, [8], "advertised call's result still cites its call");
+  // A log whose first surface row already is a system/message is left alone.
+  const headed = repair(structuredClone(out));
+  assert.equal(headed.addedHead, false);
+  assert.equal(headed.rows.length, out.length);
   console.log("dsh-session-repair self-check ok");
 }
 
@@ -448,11 +534,13 @@ async function main() {
       console.log(`skip   ${file} (format v${header.version})`);
       continue;
     }
-    if (migrate(catalog, header, structuredClone(rows)) === undefined) {
+    // A log that loads today but has no system head breaks on the first reload after its first
+    // live turn (see the header comment), so it is repaired now rather than when it is refused.
+    if (migrate(catalog, header, structuredClone(rows)) === undefined && !headless(rows)) {
       fine++;
       continue;
     }
-    const fixed = repair(structuredClone(rows));
+    const fixed = repair(structuredClone(rows), header.version);
     const verdict = migrate(catalog, header, structuredClone(fixed.rows));
     if (verdict !== undefined) {
       stuck++;
@@ -460,7 +548,13 @@ async function main() {
       continue;
     }
     repaired++;
-    console.log(`${apply ? "fixed " : "needs "} ${file} (drops ${fixed.droppedCalls} tool rows)`);
+    const what = [
+      fixed.droppedCalls > 0 ? `drops ${fixed.droppedCalls} tool rows` : "",
+      fixed.addedHead ? "adds the system head" : "",
+    ]
+      .filter(Boolean)
+      .join(", ");
+    console.log(`${apply ? "fixed " : "needs "} ${file} (${what})`);
     if (apply) writeLog(file, header, fixed.rows);
   }
   console.log(

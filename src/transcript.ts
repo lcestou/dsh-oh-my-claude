@@ -579,6 +579,34 @@ export function toSessionEvents(folded: FoldedTranscript, logVersion = 3): SeedE
     t.steps.forEach((s, j) => {
       const step = j + 1;
       push("step/start", s.time, { turn, step });
+      // The log's first surface event must be a `system/message`: dsh's loader protects that node
+      // as the system head, and once any other surface event has landed it refuses a log where a
+      // `system/message` follows ("system/message requires a protected first surface head"). dsh's
+      // own loop writes one on every step, so a seed without it loads fine until the first live
+      // turn appends one mid-log, after which the next reload (a dsh-web restart, another browser)
+      // refuses the whole session. Seen on 2026-09-23 on a session restored twice. Claude Code
+      // never shares the prompt it ran with, so the head says so; dsh replaces it on the first
+      // live turn and this plugin never forwards history's system messages to the CLI. v3 logs
+      // (dsh up to 0.1.6) require a plugin source on it, v4 (0.1.7) a system-prompt one.
+      if (turn === 1 && step === 1)
+        push(
+          "system/message",
+          t.time,
+          {
+            turn,
+            step,
+            message: {
+              id: `${t.id}:system`,
+              role: "system",
+              content: [{ type: "text", text: serverText("seededSystemPrompt") }],
+              source:
+                logVersion >= 4
+                  ? { kind: "system-prompt" }
+                  : { kind: "plugin", plugin: "claude-code" },
+            },
+          },
+          { surfaceOp: "append" },
+        );
       if (step === 1)
         push(
           "user/message",
