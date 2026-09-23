@@ -1451,7 +1451,9 @@ export class Translator {
       // The CLI's `tool-input`, drawn the same as responding: right-to-left sweep, down arrow.
       if (!this.nested) this.onProgress?.({ mode: "responding" });
       const toolName = cb.name ?? "";
-      if (cb.id) this.calls.add(cb.id);
+      // A nested agent's call is its own to answer; in the parent's set a child killed before its
+      // echo would hold the line in tool-use until the next message.
+      if (cb.id && !this.nested) this.calls.add(cb.id);
       const dsh = toolName.startsWith("mcp__dsh__");
       if (dsh && cb.id) {
         this.dshIds.add(cb.id);

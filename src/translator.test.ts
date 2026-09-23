@@ -491,6 +491,17 @@ console.log("translator plugin-warnings ok");
   ev({ type: "message_start", message: { id: "m2" } }, "c9");
   t.translate({ type: "system", subtype: "status", status: "requesting" });
   ev({ type: "content_block_start", index: 0, content_block: { type: "text" } }, "c9");
+  // The child's own calls never enter the parent's set: one it never answers (a child killed
+  // mid-tool) must not hold the line in tool-use after the Task itself is answered.
+  ev(
+    {
+      type: "content_block_start",
+      index: 1,
+      content_block: { type: "tool_use", id: "c7", name: "Bash" },
+    },
+    "c9",
+  );
+  ev({ type: "content_block_stop", index: 1 }, "c9");
   ev({ type: "message_stop" }, "c9");
   echo("c8", "c9");
   assert.equal(modes.length, before, "nested frames emit no mode");
