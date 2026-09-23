@@ -5900,22 +5900,36 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       // for those results here, bounded, and close any still running with a placeholder row so
       // the step ends valid. Wrong case: a Bash longer than the wait gets the placeholder, and
       // its real output shows in the next step as text under a "result" line.
+      // Close every still-open native call with a placeholder result. Run on every exit from the
+      // wait below, including the two that end the turn under us: a step that ends with a tool/call
+      // and no tool/result is the corruption this guards against whether the turn ended for a relay
+      // or because the process died mid-step (pr-review #99), and the session log outlives the
+      // process, so the append is valid either way.
+      const flushPending = () => {
+        for (const callId of callSeqs.keys())
+          appendNativeResult?.(callId, serverText("resultPending"), false);
+      };
       const waitUntil = Date.now() + NATIVE_RESULT_WAIT_MS;
       while (callSeqs.size > 0) {
         const left = waitUntil - Date.now();
         if (left <= 0) break;
         const more = await proc.nextEvent(left);
-        if (more === null) return abandon("ended");
+        if (more === null) {
+          flushPending();
+          return abandon("ended");
+        }
         if (more.type === "timeout") break;
         if (more.type === "dsh_relay") {
           calls.push(more);
           continue;
         }
         const what = yield* dispatch(more);
-        if (what !== "continue") return abandon(what);
+        if (what !== "continue") {
+          flushPending();
+          return abandon(what);
+        }
       }
-      for (const callId of callSeqs.keys())
-        appendNativeResult?.(callId, serverText("resultPending"), false);
+      flushPending();
       // The oldest outstanding dsh tool_use blocks are the ones these calls came from.
       const ids = [...tr.dshIds];
       for (const [i, call] of calls.entries()) {
