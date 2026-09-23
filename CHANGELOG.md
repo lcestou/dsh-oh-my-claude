@@ -54,6 +54,11 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- Opening a transcript whose session dsh already has on disk no longer fails with a 500. When the
+  running catalog had dropped a session but its log was still on disk (a load that failed once, a
+  log put back by hand), clicking it in Restore tried to recreate it and dsh answered `session "…"
+  already exists`. It now attaches and opens the stored log instead, so the session comes back
+  rather than erroring.
 - The Restore tab reaches every transcript in a workspace. It showed eight and left the rest to
   the search box, with nothing saying more existed; now a Show more line under the eight brings
   twenty at a time and says how many are left. Searching starts the list short again.
