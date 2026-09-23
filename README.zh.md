@@ -124,6 +124,7 @@ dsh 只发布预发行版，客户端 API 也会在版本之间变动，所以�
 20. 你没在看的会话完成或停下来问你时，浏览器标签页会有标记，还可以选择弹出桌面通知。[Session notices](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#session-notices)
 21. dsh 自己的目标和会话以往的每个目标，与 Claude Code 的目标和定时任务并列显示。[Tasks](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#tasks)
 22. Claude 工作时你插话发送的消息，在 Claude 读取之前可以编辑或移除，也可以合并为一条编辑。编辑期间消息不会发出。[Steering](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#dsh-tools-over-mcp)
+23. Claude 的工作状态行（旋转图标、动词、数字）会在本轮的标题滚出屏幕后，在输入框上方重复显示，一长串工具卡片不会再遮住 Claude 正在做的事。设置中有开关可关闭。[轮次状态](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#turn-status)
 
 一些你永远不必动的默认行为，比如工具结果中的密钥脱敏和挺过 CLI 自身的更新，见 [How it works](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md)。
 
