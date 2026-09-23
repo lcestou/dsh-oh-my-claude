@@ -19,6 +19,13 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Changed
 
+- The running-session spinner mark now hangs off dsh's own slot instead of a body attribute, the
+  same shape as the access control and the add-workspace control. It is set the way the scan reads
+  it, so a dsh upgrade can no longer silently drop it; the old DOM path stays as the fallback when an
+  older dsh refuses the slot.
+
+### Changed
+
 - The inline-or-rows choice for Claude's tool activity moved from the Tune tab to Settings > Oh My
   Claude, as a Native tool rows switch. It configures the bridge, not Claude Code, which is what
   Tune is for.
