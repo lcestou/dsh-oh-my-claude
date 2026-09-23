@@ -90,6 +90,16 @@ subagent-model-selection:       # 让 dsh 子智能体也能使用 Claude Code
 
 想参与开发插件本身？从 [docs/developing.md](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/developing.md) 开始。
 
+## 兼容性
+
+dsh 只发布预发行版，客户端 API 也会在版本之间变动，所以插件的每个版本都记录它面向的 dsh 范围和实际运行验证过的 dsh。"可运行于"是代码带有兼容分支的范围；"测试于"是发版时机器上安装的那个 dsh。更新提示会从 npm 读取最低 dsh 版本，低于它的机器不会收到该版本。
+
+| 插件 | 可运行于 dsh | 测试于 dsh | npm 标签 |
+| --- | --- | --- | --- |
+| 下一版（main，未发布） | 0.1.5-rc.1 至 0.1.7-alpha.2 | 0.1.7-alpha.2 | 暂无 |
+| 1.3.1 | 0.1.5-rc.1 至 0.1.6-alpha.2 | 0.1.6-alpha.2 | `latest`、`dsh-0.1.6` |
+| 1.2.1 | 0.1.5-rc.1 至 0.1.6-alpha.2 | 0.1.6-alpha.2 | `dsh-0.1.5` |
+
 ## 你能得到什么
 
 1. 在 dsh 自己的选择器里使用你的登录可用的任何 Claude 模型。[Models](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#models)
@@ -114,6 +124,7 @@ subagent-model-selection:       # 让 dsh 子智能体也能使用 Claude Code
 20. 你没在看的会话完成或停下来问你时，浏览器标签页会有标记，还可以选择弹出桌面通知。[Session notices](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#session-notices)
 21. dsh 自己的目标和会话以往的每个目标，与 Claude Code 的目标和定时任务并列显示。[Tasks](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#tasks)
 22. Claude 工作时你插话发送的消息，在 Claude 读取之前可以编辑或移除，也可以合并为一条编辑。编辑期间消息不会发出。[Steering](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#dsh-tools-over-mcp)
+23. Claude 的工作状态行（旋转图标、动词、数字）会在本轮的标题滚出屏幕后，在输入框上方重复显示，一长串工具卡片不会再遮住 Claude 正在做的事。设置中有开关可关闭。[轮次状态](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#turn-status)
 
 一些你永远不必动的默认行为，比如工具结果中的密钥脱敏和挺过 CLI 自身的更新，见 [How it works](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md)。
 

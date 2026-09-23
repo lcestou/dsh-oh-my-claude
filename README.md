@@ -90,6 +90,16 @@ subagent-model-selection:       # let dsh subagents run on Claude Code too
 
 Working on the plugin itself? Start at [docs/developing.md](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/developing.md).
 
+## Compatibility
+
+dsh ships prereleases only and moves client APIs between them, so every release of the plugin records the dsh line it was written for and the dsh it was driven on. "Runs on" is the range the code carries branches for; "tested on" is the dsh installed on the box when the release was cut. The update pill reads the floor off the registry and never offers a release to a box whose dsh is below it.
+
+| Plugin | Runs on dsh | Tested on dsh | npm tag |
+| --- | --- | --- | --- |
+| next (main, unreleased) | 0.1.5-rc.1 through 0.1.7-alpha.2 | 0.1.7-alpha.2 | none yet |
+| 1.3.1 | 0.1.5-rc.1 through 0.1.6-alpha.2 | 0.1.6-alpha.2 | `latest`, `dsh-0.1.6` |
+| 1.2.1 | 0.1.5-rc.1 through 0.1.6-alpha.2 | 0.1.6-alpha.2 | `dsh-0.1.5` |
+
 ## What you get
 
 1. Any Claude model your login can use, in dsh's own picker. [Models](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#models)
@@ -114,6 +124,7 @@ Working on the plugin itself? Start at [docs/developing.md](https://github.com/l
 20. A mark on the browser tab and an optional desktop notice when a session you are not looking at finishes, or stops to ask you something. [Session notices](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#session-notices)
 21. dsh's own goal and every earlier goal of the session, beside Claude Code's goal and its scheduled tasks. [Tasks](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#tasks)
 22. Edit or remove a message you steered in while Claude works, or all of them as one, until Claude reads it. Nothing goes out while you edit. [Steering](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#dsh-tools-over-mcp)
+23. Claude's working line (spinner, verb, figures) repeats above the composer once the turn's own header has scrolled off screen, so a long run of tool cards never hides what Claude is doing. A switch in Settings turns it off. [Turn status](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#turn-status)
 
 Defaults you never have to touch, such as secret redaction in tool results and surviving the CLI's own updates, are on [How it works](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md).
 
