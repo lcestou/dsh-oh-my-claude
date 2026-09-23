@@ -4136,12 +4136,15 @@ const turnStatusRow = (found: HTMLElement): HTMLElement | undefined => {
 
 /** Give a 0.1.7 process group its own sentence back: removing the plugin's line is enough, because
  *  the rule that hides dsh's own only applies while that line is in the button. Called when the
- *  turn ends and when the bundle is disposed, and safe to call twice. */
-const stopTurnLine = (el: HTMLElement): void => {
+ *  turn ends and when the bundle is disposed, and safe to call twice. `ended` marks the group so
+ *  no later scan wires it again; a bundle being replaced passes false, since its turn is still
+ *  running and the next bundle has to find a group that wants wiring. Marking it there took the
+ *  header line down for the rest of every turn a rebuild landed in (owner, 2026-09-23). */
+export const stopTurnLine = (el: HTMLElement, ended = true): void => {
   if (!el.hasAttribute("data-omc-turn-line")) return;
   // Mark the group before removing the line, so the scan the removal itself triggers finds a
   // group that is done rather than one that wants wiring.
-  el.closest("button[data-turn-process]")?.setAttribute("data-omc-turn-done", "1");
+  if (ended) el.closest("button[data-turn-process]")?.setAttribute("data-omc-turn-done", "1");
   el.remove();
 };
 
@@ -4232,7 +4235,8 @@ const wireTurnStatus = (
     stop();
     el.removeAttribute(TURN_MARK);
     spinner.remove();
-    stopTurnLine(el);
+    // The turn is still running; the next bundle's first scan wires a fresh line onto this group.
+    stopTurnLine(el, false);
   });
   tick();
 
@@ -4934,7 +4938,7 @@ function watchEventStream(ctx: ClientCtx) {
 /** Wire a running turn's status: attach dsh's [role=status][aria-live=polite] element to this
  *  session, keep the body marked to the active Claude session, and tear both down on unmount. */
 function watchTurnStatus(ctx: ClientCtx) {
-  ensureTurnStatusStyle(); // a hot reload drops the old module's style tag but keeps marked elements
+  ensureTurnStatusStyle(); // a hot reload keeps the old module's sheet (no data-plugin on it) and its marked elements
   // Keep a body flag in step with the open session so the first-paint colour rule applies before
   // the observer runs (the flash of dsh's blue the owner saw on first load).
   // Written only when it changes: this runs every second, and an attribute write invalidates the

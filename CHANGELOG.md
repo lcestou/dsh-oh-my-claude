@@ -62,6 +62,9 @@ dsh: runs on 0.1.5-rc.1 through 0.1.7-alpha.2; built and tested on 0.1.7-alpha.2
 
 ### Fixed
 
+- The working verb in the turn header stays through a plugin reload. A rebuild or an upgrade
+  landing during a turn used to hand the header back to dsh's own "Deep diving…" until the next
+  turn; the working line above the composer was never affected.
 - On dsh 0.1.7 (session format v4) the plugin's own wake, restart, reconnect and usage-limit
   notices failed the turn they opened with *format v4 message requires a producer-owned source
   kind*, so every session nudged after a dsh restart died on its first turn until someone typed.
