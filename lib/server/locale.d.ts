@@ -88,6 +88,7 @@ declare const EN: {
     readonly attemptFailed: "{who} attempt{count} failed";
     readonly ranInBridge: "{tool} (ran in bridge)";
     readonly dshTool: "dsh tool";
+    readonly resultPending: "(still running when dsh took over this step; the output shows in the next step)";
     readonly noResultRecorded: "No result recorded: the session ended here.";
     readonly noReply: "(no reply)";
     readonly mirrorCut: "… cut here; the whole exchange is in the transcript.";

@@ -2175,6 +2175,9 @@ export function sideQuestionsIn(messages: LooseMessage[] | undefined): SideQuest
 export { ADAPTER_CURRENT };
 /** How long to wait for the rest of a parallel dsh tool-call batch after the first one arrives. */
 const RELAY_BATCH_MS = 1500;
+/** How long a step handing dsh a relay waits for Claude's own tool results still in flight.
+ *  Its Read, Grep and short Bash land in milliseconds; a longer Bash gets a placeholder row. */
+const NATIVE_RESULT_WAIT_MS = 10_000;
 /** After asking the CLI to interrupt, how long before falling back to killing the process. */
 const INTERRUPT_GRACE_MS = 5000;
 
@@ -5574,6 +5577,43 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         `toolsInline: false ignored: dsh session format v${formatVersion} refuses unadvertised tool rows (the log would not load after a migration); rendering tool activity inline`,
       );
     }
+    /** Append a native tool's result row citing its tool/call. Rows mode only; the closure is
+     *  shared by the translator (a result frame) and the relay boundary (a placeholder for a call
+     *  still running when the step must end). Deletes the call from `callSeqs` either way. */
+    const appendNativeResult =
+      turnStep && rowMode.rows
+        ? (callId: string, text: string, isError: boolean, meta?: object) => {
+            try {
+              const session = this.ctx?.sessions?.get?.(asSessionId(options.sessionId));
+              if (!session) return;
+              const callSeq = callSeqs.get(callId);
+              callSeqs.delete(callId);
+              // SAFETY: createToolResultMessage returns dsh's own tool-result message (a user
+              // message holding a tool-result block up to 0.1.6, a `role: "tool"` message from
+              // 0.1.7); session.append validates the shape at runtime either way
+              const message = createToolResultMessage({
+                callId: callId as any,
+                content: [{ type: "text" as const, text }],
+                isError,
+              });
+              // SAFETY: message is ToolResultMessage (a user-role Message); session.append validates JSON at runtime
+              const resultData = { turn: turnStep!.turn, step: turnStep!.step, message };
+              if (meta) Object.assign(resultData, { meta });
+              // SAFETY: resultData has the shape expected by session.append for tool/result; fields validated at runtime
+              session.append(
+                "tool/result",
+                resultData as any,
+                // SAFETY: sourceEventSeqs is optional when no call was recorded; invariant allows TOOL_NOT_STARTED as fallback
+                {
+                  surfaceOp: "append",
+                  sourceEventSeqs: callSeq !== undefined ? [callSeq] : [],
+                } as any,
+              );
+            } catch (err) {
+              this.log("warn", `native tool result append failed: ${err}`);
+            }
+          }
+        : undefined;
     const tr = new Translator({
       toolActivity: this.config.toolActivity,
       continueAfterLimit: this.config.continueAfterLimit,
@@ -5728,40 +5768,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
           void this.contextUsage(options.sessionId).catch(() => {});
         }
       },
-      onToolResult:
-        turnStep && rowMode.rows
-          ? (callId, text, isError, meta) => {
-              try {
-                const session = this.ctx?.sessions?.get?.(asSessionId(options.sessionId));
-                if (!session) return;
-                const callSeq = callSeqs.get(callId);
-                callSeqs.delete(callId);
-                // SAFETY: createToolResultMessage returns dsh's own tool-result message (a user
-                // message holding a tool-result block up to 0.1.6, a `role: "tool"` message from
-                // 0.1.7); session.append validates the shape at runtime either way
-                const message = createToolResultMessage({
-                  callId: callId as any,
-                  content: [{ type: "text" as const, text }],
-                  isError,
-                });
-                // SAFETY: message is ToolResultMessage (a user-role Message); session.append validates JSON at runtime
-                const resultData = { turn: turnStep!.turn, step: turnStep!.step, message };
-                if (meta) Object.assign(resultData, { meta });
-                // SAFETY: resultData has the shape expected by session.append for tool/result; fields validated at runtime
-                session.append(
-                  "tool/result",
-                  resultData as any,
-                  // SAFETY: sourceEventSeqs is optional when no call was recorded; invariant allows TOOL_NOT_STARTED as fallback
-                  {
-                    surfaceOp: "append",
-                    sourceEventSeqs: callSeq !== undefined ? [callSeq] : [],
-                  } as any,
-                );
-              } catch (err) {
-                this.log("warn", `native tool result append failed: ${err}`);
-              }
-            }
-          : undefined,
+      onToolResult: appendNativeResult,
     });
     const pending = new Map(); // control request id → AbortController
     let outcome: Outcome = "ended"; // ended | finished | relayed | parked | retry
@@ -5887,6 +5894,28 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         const what = yield* dispatch(more);
         if (what !== "continue") return abandon(what);
       }
+      // Claude's own Bash or Read fired beside the dsh call, and its result reaches us from the
+      // CLI a moment after the relay. dsh refuses a log whose step ends with a tool/call and no
+      // tool/result ("step/end leaves unresolved tool call", a session lost 2026-09-23), so wait
+      // for those results here, bounded, and close any still running with a placeholder row so
+      // the step ends valid. Wrong case: a Bash longer than the wait gets the placeholder, and
+      // its real output shows in the next step as text under a "result" line.
+      const waitUntil = Date.now() + NATIVE_RESULT_WAIT_MS;
+      while (callSeqs.size > 0) {
+        const left = waitUntil - Date.now();
+        if (left <= 0) break;
+        const more = await proc.nextEvent(left);
+        if (more === null) return abandon("ended");
+        if (more.type === "timeout") break;
+        if (more.type === "dsh_relay") {
+          calls.push(more);
+          continue;
+        }
+        const what = yield* dispatch(more);
+        if (what !== "continue") return abandon(what);
+      }
+      for (const callId of callSeqs.keys())
+        appendNativeResult?.(callId, serverText("resultPending"), false);
       // The oldest outstanding dsh tool_use blocks are the ones these calls came from.
       const ids = [...tr.dshIds];
       for (const [i, call] of calls.entries()) {

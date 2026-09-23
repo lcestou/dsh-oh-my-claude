@@ -54,6 +54,11 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
   mode it ran under instead of the workspace default. When dsh's approval prompts are switched
   off, a denied tool call tells Claude that dsh auto-denied it and nobody was asked, instead of
   "the user denied this action".
+- A step that hands dsh a tool call no longer ends while one of Claude's own tools is still
+  running beside it. Claude firing Bash and a dsh tool in one message left the Bash call without
+  a result row in that step, and dsh refused the whole session log on the next load ("step/end
+  leaves unresolved tool call"). The step now waits up to ten seconds for those results and
+  closes any still running with a placeholder row, so the log always loads.
 - The permission capsule no longer catches clicks far above and below itself. Its label had a
   line height of 260 px inside a 28 px button, so a click in the composer near it opened the menu.
 
