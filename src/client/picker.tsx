@@ -349,9 +349,15 @@ export function AddWorkflow({
     };
   }, []);
 
-  // A pick is adopted by the owner; the forced-open dialog closes first so a second open is fresh.
+  // A pick from a dialog dsh opened is handed to the owner, which creates the workspace. A pick
+  // from a Settings-forced open has already been created by the dialog itself (`adoptsLocal` is
+  // off there), so it only closes: handing the path on as well made dsh create the same workspace
+  // a second time (pr-review, #98).
   const adopt = (path: string) => {
-    if (forcedOpen) setForcedOpen(false);
+    if (forcedOpen) {
+      setForcedOpen(false);
+      return;
+    }
     onPicked(path);
   };
 
