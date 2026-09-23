@@ -165,6 +165,7 @@ import {
 } from "./state.js";
 import { suggestRule } from "./permissions.js";
 import {
+  currentLogVersion,
   probeRawToolRows,
   type RowsSupport,
   type ToolMode,
@@ -6458,14 +6459,17 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const found = await this.agentFor(sessionId);
     if (!found) return false;
     const { agent, how } = found;
-    // The session's log format decides the shape of the notice's source; 0 when the session is not
-    // open here (an adopted agent), which noticeSource reads as the v3 wrapper.
+    // The session's log format decides the shape of the notice's source. When the session is not
+    // readable here (an adopted agent, an inactive scope) the catalog's own version stands in: on
+    // one install every loaded log is at that version, since dsh migrates on open (9 session dirs
+    // held both a v3 and a v4 file on 2026-09-23). Only with neither does the v3 wrapper go out.
     let logVersion = 0;
     try {
       logVersion = this.ctx?.sessions?.get?.(asSessionId(sessionId))?.header?.version ?? 0;
     } catch {
-      // sessions service unavailable in this scope: keep the v3 shape
+      // sessions service unavailable in this scope: fall through to the catalog
     }
+    if (logVersion === 0) logVersion = (await currentLogVersion()) ?? 0;
     if (text === RESTART_TEXT) {
       // A notice from a previous boot may still sit in the durable inbox: do not stack another.
       try {
