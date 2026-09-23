@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import { pickVerb, mergeVerbs } from "./index.js";
+import { pickVerb, mergeVerbs, bracketOpen } from "./index.js";
 
 // Re-declare locally for tests; the module-level consts are not exported.
 const DEFAULT_VERBS = [
@@ -240,3 +240,15 @@ const DEFAULT_FRAMES = ["·", "✢", "✳", "✶", "✻", "✻"] as const;
 }
 
 console.log("spinner: ok");
+
+// The CLI's bracket gate: nothing for the first 16 s unless tokens, a word or a wait exist.
+{
+  const closed = { elapsedMs: 3000, tokens: 0, thinking: false, relay: false };
+  assert.equal(bracketOpen(closed), false);
+  assert.equal(bracketOpen({ ...closed, elapsedMs: 16_000 }), true);
+  assert.equal(bracketOpen({ ...closed, tokens: 1 }), true);
+  assert.equal(bracketOpen({ ...closed, thinking: true }), true);
+  assert.equal(bracketOpen({ ...closed, relay: true }), true);
+  assert.equal(bracketOpen({ ...closed, elapsedMs: -1 }), false);
+  console.log("bracket-gate ok");
+}

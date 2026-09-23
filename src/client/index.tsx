@@ -86,7 +86,7 @@ import { themeOf, hexToRgb, type ThemeGroup } from "./theme.js";
 import { PluginUpdateBadge, StarNudge } from "./update-pill.js";
 import { isNewer } from "../update.js";
 import { livingModelId } from "../model-ids.js";
-import type { FallbackRecord } from "../translator.js";
+import type { FallbackRecord, LiveMode } from "../translator.js";
 import { ReportBlock } from "./report.js";
 import { openStream, pollEvery, streamUp, subscribe, type LiveTurnBody } from "./events.js";
 import type {
@@ -440,6 +440,19 @@ const ZH_VERBS = [
 /** Default ping-pong frames, played forward then reversed (~120 ms per frame). */
 const DEFAULT_FRAMES = ["·", "✢", "✳", "✶", "✻", "✻"] as const;
 
+/** The CLI's `Go`: no bracket for a turn under this age unless it has tokens, a word or a wait. */
+const BRACKET_AFTER_MS = 16_000;
+/** Whether the working line draws its bracket, the CLI's own gate (2.1.280,
+ *  `_t=f||yt||It>0||V>Go||Boolean(v)`): tokens, a thinking word, a tool wait, or 16 s on the clock.
+ *  `elapsedMs` below zero means no body yet, which is closed. */
+export function bracketOpen(s: {
+  elapsedMs: number;
+  tokens: number;
+  thinking: boolean;
+  relay: boolean;
+}): boolean {
+  return s.elapsedMs >= BRACKET_AFTER_MS || s.tokens > 0 || s.thinking || s.relay;
+}
 /** Pick a verb at random from the list using the provided random function. */
 export function pickVerb(list: readonly string[], random: () => number): string {
   // SAFETY: random() returns [0,1), so floor(random()*length) is always a valid index.
@@ -4288,6 +4301,9 @@ const wireTurnStatus = (
   let thinkingMs = -1;
   let idleMs = -1;
   let tool = false;
+  /** The CLI's mode, which picks the sweep's direction and speed; `requesting` until a body says
+   *  otherwise, which is the CLI's own state at a turn's start. */
+  let mode: LiveMode = "requesting";
   let thoughtMs = -1;
   let thoughtAgoMs = -1;
   let effort = "";
@@ -4330,8 +4346,13 @@ const wireTurnStatus = (
       const steps = Math.floor((now - lastBeat) / 50);
       if (steps > 0) {
         for (let i = 0; i < steps; i++) {
-          thinkIntensity += (thinkTarget - thinkIntensity) * 0.1;
-          stallIntensity += (stallTarget - stallIntensity) * 0.1;
+          // The CLI chases a tint up 10 % a tick and drops it to zero the moment its state ends
+          // (`et.current=0` when the mode leaves thinking or a tool starts, `M.current=0` on the
+          // next token): a fade-out would show a colour for a state that is over.
+          thinkIntensity =
+            thinkTarget === 0 ? 0 : thinkIntensity + (thinkTarget - thinkIntensity) * 0.1;
+          stallIntensity =
+            stallTarget === 0 ? 0 : stallIntensity + (stallTarget - stallIntensity) * 0.1;
           shownChars = easeChars(shownChars, targetChars);
         }
         lastBeat += steps * 50;
@@ -4358,10 +4379,20 @@ const wireTurnStatus = (
     // above replaces, so there is no node to read and the figure comes from the turn record.
     const polled = elapsedMs >= 0 ? elapsedMs + since : -1;
     const time = (clock?.textContent ?? "").trim() || (polled >= 0 ? fmtDuration(polled) : "");
-    if (time) parts.push(time);
+    // The CLI draws no bracket until the turn has tokens, a thinking word, a tool wait or 16 s on
+    // the clock, so a short answer never grows one. `polled` is the body's elapsed time aged by the
+    // beat, which every body carries on every dsh; on 0.1.6 dsh's own clock node stays beside the
+    // verb until the gate opens.
+    const open = bracketOpen({
+      elapsedMs: polled,
+      tokens: Math.round(shownChars / 4),
+      thinking: burst >= 0 || thoughtAgoMs >= 0,
+      relay: relayName !== "" && relayMs >= 0,
+    });
+    if (time && open) parts.push(time);
     // dsh's copy goes quiet only while ours is showing the same figure. Hiding it unconditionally is
     // what left the row reading just the verb when the read came back empty.
-    if (clock) clock.style.display = time ? "none" : "";
+    if (clock) clock.style.display = time && open ? "none" : "";
     const shownTokens = Math.round(shownChars / 4);
     if (shownTokens > 0) parts.push(t("main.turn.tokens", { n: shortCount(shownTokens) }));
     // The CLI's gated `running tool for Ns`, with the dsh tool's name in place of "tool": the step
@@ -4388,17 +4419,21 @@ const wireTurnStatus = (
     // a slow grey pulse, itself pulled toward the warning shade by the thinking ramp. Time, count
     // and the brackets stay dim. Once either ramp is above zero the verb is one flat colour, no
     // shimmer: the CLI's glimmer only draws when neither ramp is up.
+    // Both tints snap to zero when their state ends and the stall wins when both would draw, as
+    // in the CLI.
     const tint =
-      ti > 0
-        ? mixRgb(claude, palette.warning, ti)
-        : si > 0
-          ? mixRgb(claude, STALL_RED, si)
+      si > 0
+        ? mixRgb(claude, STALL_RED, si)
+        : ti > 0
+          ? mixRgb(claude, palette.warning, ti)
           : undefined;
     const lo = cssRgb(mixRgb(WORD_GREY_LO, palette.warning, ti));
     const hi = cssRgb(mixRgb(WORD_GREY_HI, palette.warning, ti));
-    const key = `${parts.join("\0")}\0${word}\0${cssRgb(claude)}\0${tint ? cssRgb(tint) : ""}\0${lo}\0${hi}\0${ti >= 0.5}`;
+    const key = `${parts.join("\0")}\0${word}\0${cssRgb(claude)}\0${tint ? cssRgb(tint) : ""}\0${lo}\0${hi}\0${ti >= 0.5}\0${mode}`;
     if (key === painted) return;
     painted = key;
+    // The sheet reads the mode off the line: direction and speed of the sweep, or the tool-use pulse.
+    if (el.getAttribute("data-omc-mode") !== mode) el.setAttribute("data-omc-mode", mode);
     if (tint)
       el.style.setProperty(
         "--omc-row-bg",
@@ -4461,6 +4496,7 @@ const wireTurnStatus = (
     thinkingMs = b.thinkingMs ?? -1;
     idleMs = b.idleMs ?? -1;
     tool = b.tool === true;
+    if (b.mode !== undefined) mode = b.mode;
     thoughtMs = b.thoughtMs ?? -1;
     thoughtAgoMs = b.thoughtAgoMs ?? -1;
     effort = b.effort ?? "";

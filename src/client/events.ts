@@ -2,7 +2,7 @@
 // tab, reopened when the open session changes; readers subscribe by kind and get the same body
 // the matching GET route answers. `streamUp()` lets each fallback timer slow to 30 s while the
 // stream is alive, and `pollEvery()` is the period they ask for.
-import type { FallbackRecord } from "../translator.js";
+import type { FallbackRecord, LiveMode } from "../translator.js";
 import type { AwaitingRow } from "./notices.js";
 import { ROUTE, whenContextGone } from "./shared.js";
 
@@ -20,6 +20,9 @@ export interface LiveTurnBody {
   relayName?: string;
   relayMs?: number;
   elapsedMs?: number;
+  /** The CLI's spinner mode, which sets the sweep's direction and speed; absent from the
+   *  no-hub route fallback, which the row reads as no change. */
+  mode?: LiveMode;
 }
 /** One `/btw` side question and, once the CLI answers, its answer or error. */
 export interface AsideItem {
