@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactElement } from "react";
 import { createPortal } from "react-dom";
+import { subscribe } from "./events.js";
 import {
   btn,
   btnPrimary,
@@ -4475,18 +4476,27 @@ export function AccessTrigger({ sessionId, ctx }: { sessionId: string; ctx: Clie
   }, [sessionId, ctx]);
 
   // A deferred pick lands when the next turn respawns the process, which this component cannot
-  // see; while one is pending, ask again every few seconds and stop the moment the two agree.
-  // ponytail: a bounded poll only while a note is showing; the server-push pass replaces it.
+  // see; the respawn's mode arrives as a permission-mode event, and so does every pick made from
+  // another tab. One read when the note first shows covers a stream that is down.
+  useEffect(() => {
+    const off = subscribe("permission-mode", (session, data) => {
+      if (session !== sessionId) return;
+      setMode(shownMode(data));
+      setPending(pendingMode(data));
+    });
+    return off;
+  }, [sessionId]);
   useEffect(() => {
     if (!pending) return;
-    const timer = setInterval(() => {
-      fetchModeState(sessionId).then((snap) => {
-        if (!snap) return;
-        setMode(shownMode(snap));
-        setPending(pendingMode(snap));
-      });
-    }, 3000);
-    return () => clearInterval(timer);
+    let live = true;
+    fetchModeState(sessionId).then((snap) => {
+      if (!live || !snap) return;
+      setMode(shownMode(snap));
+      setPending(pendingMode(snap));
+    });
+    return () => {
+      live = false;
+    };
   }, [pending, sessionId]);
 
   // Whether the bypass row and the trigger carry the refused badge for the current mode.
