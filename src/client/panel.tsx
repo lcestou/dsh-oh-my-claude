@@ -4399,7 +4399,13 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
 // class is a build rename, so the rule is injected once and keyed on our own hook.
 const ACCESS_TRIGGER_CSS =
   "[data-omc-access-trigger]:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}" +
-  "[data-omc-access-trigger]:focus-visible{box-shadow:0 0 0 2px var(--dsw-alias-border-l3)}";
+  "[data-omc-access-trigger]:focus-visible{box-shadow:0 0 0 2px var(--dsw-alias-border-l3)}" +
+  // A menu row takes dsh's `.item` hover and keyboard fill; the ring would double the fill.
+  "[data-omc-access-row]:hover,[data-omc-access-row]:focus-visible{background:var(--dsw-alias-interactive-bg-hover);outline:none}" +
+  // dsh's `.itemIcon svg` and `.check` are 14 px; the glyph components draw at their own size.
+  "[data-omc-access-row] svg{width:14px;height:14px}" +
+  // dsh's `.triggerIcon svg`: the capsule's glyph is 14 px too.
+  "[data-omc-access-trigger]>span:first-child svg{width:14px;height:14px}";
 
 /**
  * Read the session's permission mode, or null when the route is down or the session is not
@@ -4443,34 +4449,50 @@ const accessTriggerStyle: CSSProperties = {
 /** A menu row: full width, unstyled button that dsh's card surface frames; the checked one takes
  *  the accent and a check. */
 const accessRowStyle: CSSProperties = {
+  // dsh's Menu `.item` cell, copied: its class is a build hash, so the numbers live here.
   display: "flex",
   alignItems: "center",
-  justifyContent: "space-between",
   width: "100%",
-  gap: 8,
-  padding: "10px 12px",
+  minHeight: 34,
+  gap: 6,
+  padding: "6px 8px",
+  borderRadius: 8,
   background: "transparent",
   border: "none",
   cursor: "pointer",
-  color: "inherit",
+  color: "var(--dsw-alias-label-primary)",
   font: "inherit",
+  fontSize: 13,
+  lineHeight: "20px",
   textAlign: "start",
 };
-/** A row's glyph-and-label column, the way dsh lays out its own preset rows. */
-const accessRowLabelStyle: CSSProperties = {
-  display: "flex",
+/** dsh's `.itemIcon` cell: a 14 px box in the tertiary label colour, ahead of the label. */
+const accessRowGlyphStyle: CSSProperties = {
+  display: "inline-flex",
   alignItems: "center",
-  gap: 8,
-  minWidth: 0,
-  flex: 1,
+  justifyContent: "center",
+  width: 14,
+  height: 14,
+  flex: "none",
+  color: "var(--dsw-alias-label-tertiary)",
 };
-/** The trailing check cell, reserved on every row so the labels sit still when the pick moves. */
+/** dsh's `.itemLabel`: takes the width, clips long text. */
+const accessRowLabelStyle: CSSProperties = {
+  flex: 1,
+  minWidth: 0,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+};
+/** dsh's trailing `.check` cell, reserved on every row so the labels sit still when the pick moves. */
 const accessRowCheckStyle: CSSProperties = {
   display: "inline-flex",
   alignItems: "center",
   justifyContent: "flex-end",
-  width: 16,
+  width: 14,
+  height: 14,
   flex: "none",
+  color: "var(--dsw-alias-label-primary)",
 };
 /** The refused-mode note and the pick error, in dsh's menu card body text. */
 const accessNoteStyle: CSSProperties = {
@@ -4649,15 +4671,18 @@ export function AccessTrigger({ sessionId, ctx }: { sessionId: string; ctx: Clie
               aria-setsize={MODE_KEYS.length}
               aria-posinset={i + 1}
               onClick={() => pick(m)}
+              data-omc-access-row=""
               style={accessRowStyle}
             >
-              <span style={accessRowLabelStyle}>
+              <span aria-hidden style={accessRowGlyphStyle}>
                 <ModeGlyph mode={m} />
-                <span>{modeLabel(m)}</span>
-                {rowRefused && <span aria-hidden>⚠</span>}
+              </span>
+              <span style={accessRowLabelStyle}>
+                {modeLabel(m)}
+                {rowRefused && <span aria-hidden> ⚠</span>}
               </span>
               <span aria-hidden style={accessRowCheckStyle}>
-                {checked && <IconCheckOutlineMedium size={16} />}
+                {checked && <IconCheckOutlineMedium size={14} />}
               </span>
             </button>
           );
