@@ -6,6 +6,8 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+dsh: runs on 0.1.5-rc.1 through 0.1.7-alpha.2; built and tested on 0.1.7-alpha.2.
+
 ### Added
 
 - The steer card (the "Waiting for Claude" card above the composer) appears faster: while a turn is
@@ -238,6 +240,8 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [1.3.1] - 2026-09-21
 
+dsh: runs on 0.1.5-rc.1 through 0.1.6-alpha.2; built and tested on 0.1.6-alpha.2.
+
 ### Changed
 
 - Every tab of the panel keeps the same inset on all four sides, the one dsh's slash menu uses,
@@ -409,6 +413,8 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
   whose reply carries the peers.
 
 ## [1.2.1] - 2026-09-18
+
+dsh: runs on 0.1.5-rc.1 through 0.1.6-alpha.2; built and tested on 0.1.6-alpha.2.
 
 ### Added
 
