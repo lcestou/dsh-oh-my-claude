@@ -237,8 +237,11 @@ export function ensurePanelStyle(): void {
     `body[data-omc-theme]:not([data-omc-theme~="panel"]) button[aria-label="Oh My Claude"] { --omc-accent-panel: ${T.brand}; }`,
     `${inScope(controls)} { transition: background-color .15s ease, background-image .15s ease, border-color .15s ease, color .15s ease, box-shadow .15s ease, opacity .15s ease; }`,
     // The wash is a background-image so it lays over any fill: transparent ghost, brand primary,
-    // the field colour. One rule, every button.
-    `${inScope("button:not(:disabled):hover")} { background-image: linear-gradient(var(--omc-wash), var(--omc-wash)) !important; border-color: var(--omc-edge) !important; }`,
+    // the field colour. One rule, every button. The border is left alone: it used to take the
+    // accent edge too, and in dark mode a hairline warming up under the pointer read as a border
+    // appearing on every row of every tab (owner, 2026-09-23). Fields keep the edge below, since
+    // theirs is a visible box at rest.
+    `${inScope("button:not(:disabled):hover")} { background-image: linear-gradient(var(--omc-wash), var(--omc-wash)) !important; }`,
     `${inScope("button:not(:disabled):active")} { background-image: linear-gradient(var(--omc-wash-strong), var(--omc-wash-strong)) !important; }`,
     `${inScope("button:disabled")} { opacity: .5 !important; cursor: not-allowed !important; }`,
     `${inScope(":is(select, input, textarea):not(:disabled):hover")} { border-color: var(--omc-edge) !important; }`,
@@ -270,9 +273,11 @@ export const row: CSSProperties = {
   borderTop: `1px solid ${T.border}`,
 };
 /** dsh's own settings-card buttons (ui-settings-plugins, 2026-09-13): the secondary is a hairline
- *  box in the secondary label colour that firms up under the pointer; the primary is the primary
- *  label colour filled, text in the layer colour. Hover, disabled and focus live in one CSS rule
- *  under the settings section and the panel, since inline styles cannot carry states. */
+ *  box in the secondary label colour; the primary is the primary label colour filled, text in the
+ *  layer colour. Under the pointer the background tints, the way dsh's own list rows do; the border
+ *  never changes on hover, since a hairline going brighter in dark mode reads as a border appearing
+ *  (owner, 2026-09-23). Hover, disabled and focus live in one CSS rule under the settings section
+ *  and the panel, since inline styles cannot carry states. */
 export const btn: CSSProperties = {
   appearance: "none",
   font: "inherit",
@@ -295,7 +300,7 @@ export const btnPrimary: CSSProperties = {
 /** The states those two need, plus the fields', as one stylesheet rule set under `scope`. */
 export const controlStatesCss = (scope: string): string =>
   `${scope} button:not([role="switch"]):not([aria-expanded]):disabled{opacity:.4;cursor:default}` +
-  `${scope} button:not([role="switch"]):not([aria-expanded]):not(:disabled):hover{color:var(--dsw-alias-label-primary,inherit);border-color:var(--dsw-alias-label-dimmed,rgba(128,128,128,.5))}` +
+  `${scope} button:not([role="switch"]):not([aria-expanded]):not(:disabled):hover{color:var(--dsw-alias-label-primary,inherit);background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.1))}` +
   `${scope} button:not([role="switch"]):focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#3b82f6);outline-offset:1px}` +
   `${scope} input:not([type="checkbox"]):not([type="file"]):focus-visible,${scope} select:focus-visible,${scope} textarea:focus-visible{border-color:var(--dsw-alias-brand-primary,#3b82f6);outline:none}` +
   `${scope} input:disabled,${scope} select:disabled{color:var(--dsw-alias-label-tertiary,rgba(128,128,128,.7));cursor:default}`;

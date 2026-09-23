@@ -59,6 +59,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
   a result row in that step, and dsh refused the whole session log on the next load ("step/end
   leaves unresolved tool call"). The step now waits up to ten seconds for those results and
   closes any still running with a placeholder row, so the log always loads.
+- Buttons and rows in the ✻ panel and in Settings > Oh My Claude tint their background under the
+  pointer, the way dsh's own rows do, instead of turning their border orange. In dark mode the
+  faint hairline going orange read as a border appearing on whatever was hovered, on every tab.
+  The orange border is now the keyboard focus ring only.
 - The permission capsule no longer catches clicks far above and below itself. Its label had a
   line height of 260 px inside a 28 px button, so a click in the composer near it opened the menu.
 
