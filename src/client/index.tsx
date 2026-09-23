@@ -88,6 +88,15 @@ import { isNewer } from "../update.js";
 import { livingModelId } from "../model-ids.js";
 import type { FallbackRecord } from "../translator.js";
 import { ReportBlock } from "./report.js";
+import { openStream, pollEvery, streamUp, subscribe, type LiveTurnBody } from "./events.js";
+import type {
+  AsideItem,
+  IdleReply,
+  LoginNeed,
+  SteerCardData,
+  TurnRecord,
+  TurnsReply,
+} from "./events.js";
 import { ChangelogBlock } from "./changelog.js";
 import { Spark, sparkNode } from "./spark.js";
 import { AccessShield, AccessTrigger, OhMyClaudeControl, sessionLabel } from "./panel.js";
@@ -4187,6 +4196,7 @@ const wireTurnStatus = (
   const stop = () => {
     clearInterval(interval);
     clearInterval(pollTimer);
+    offLive();
     obs.disconnect();
   };
   const interval = setInterval(
@@ -4433,6 +4443,30 @@ const wireTurnStatus = (
     const groups = document.querySelectorAll("button[data-turn-process]");
     return groups[groups.length - 1] !== group;
   };
+  /** Take one body, from the stream or from the fallback read, into the row's figures. True when
+   *  it carried a running turn; false for the empty body. The ages come from the adapter, which
+   *  saw the block open and the last frame land; a tab that opens mid-think would otherwise start
+   *  its own clocks late. An empty body is not an ending: the adapter registers the turn on its
+   *  first frame and clears and remakes the record at tool boundaries, so the figures simply
+   *  pause. The end of the turn is read off dsh in `endedPerDsh`; dsh keeps `data-open` on a
+   *  failed group, which is why the button's own state cannot be the only signal (a turn that
+   *  failed left the line saying "Incubating…" under dsh's "Failed", owner, 2026-09-22). */
+  const applyBody = (b: LiveTurnBody): boolean => {
+    if (b.elapsedMs === undefined) return false; // the empty body: keep the figures as they are
+    targetChars = (b.tokens ?? 0) * 4;
+    thinkingMs = b.thinkingMs ?? -1;
+    idleMs = b.idleMs ?? -1;
+    tool = b.tool === true;
+    thoughtMs = b.thoughtMs ?? -1;
+    thoughtAgoMs = b.thoughtAgoMs ?? -1;
+    effort = b.effort ?? "";
+    relayName = b.relayName ?? "";
+    relayMs = b.relayMs ?? -1;
+    elapsedMs = b.elapsedMs ?? -1;
+    polledAt = Date.now();
+    return b.elapsedMs !== undefined;
+  };
+  let lastRead = 0;
   const poll = async () => {
     if (!el.isConnected) return;
     if (endedPerDsh()) {
@@ -4443,46 +4477,23 @@ const wireTurnStatus = (
     // A hidden tab paints nothing, so its read would be a round trip for no one; the next beat
     // after it is shown again catches up.
     if (document.hidden) return;
+    // The figures arrive on the event stream; this read is the fallback and runs every 30 s while
+    // the stream is up, once a second when it is not.
+    if (Date.now() - lastRead < pollEvery(true, 1000, 1000)) return;
+    lastRead = Date.now();
     try {
       const r = await fetch(`${ROUTE}/live-turn?session=${encodeURIComponent(sessionId)}`);
-      const b = await readJson<{
-        tokens?: number;
-        thinkingMs?: number;
-        idleMs?: number;
-        tool?: boolean;
-        thoughtMs?: number;
-        thoughtAgoMs?: number;
-        effort?: string;
-        relayName?: string;
-        relayMs?: number;
-        elapsedMs?: number;
-      }>(r);
-      targetChars = (b.tokens ?? 0) * 4;
-      // The ages come from the adapter, which saw the block open and the last frame land; a tab
-      // that opens mid-think would otherwise start its own clocks late.
-      thinkingMs = b.thinkingMs ?? -1;
-      idleMs = b.idleMs ?? -1;
-      tool = b.tool === true;
-      thoughtMs = b.thoughtMs ?? -1;
-      thoughtAgoMs = b.thoughtAgoMs ?? -1;
-      effort = b.effort ?? "";
-      relayName = b.relayName ?? "";
-      relayMs = b.relayMs ?? -1;
-      elapsedMs = b.elapsedMs ?? -1;
-      polledAt = Date.now();
-      // The adapter drops its turn record the moment a turn ends, however it ended, so an empty
-      // answer after a live one is the end of the turn. dsh keeps `data-open` on a failed group,
-      // which is why the button's own state cannot be the only signal: a turn that failed left the
-      // line saying "Incubating…" under dsh's "Failed" (owner, 2026-09-22).
-      // An empty answer is not an ending: the adapter registers the turn on its first frame and
-      // clears and remakes the record at tool boundaries, so the figures simply pause. The end
-      // of the turn is read off dsh in the beat above.
-      if (b.elapsedMs === undefined) return;
+      const b = await readJson<LiveTurnBody>(r);
+      if (!applyBody(b)) return;
     } catch {
       // the row keeps its verb; the bracket is decoration
     }
     paint();
   };
+  const offLive = subscribe("live-turn", (session, data) => {
+    if (session !== sessionId || !el.isConnected) return;
+    if (applyBody(data)) paint();
+  });
   const pollTimer = setInterval(() => void poll(), 1000);
   onTick = paint;
   void poll();
@@ -4524,6 +4535,24 @@ function watchSessionNotices(ctx: ClientCtx) {
   // a baseline and must not fire, or a reload while a prompt is open re-announces a question the
   // person is already reading. Same rule `prev` above follows for `newlyWaiting`.
   let prevAwaiting: Record<string, AwaitingRow> | null = null;
+  let lastRead = 0;
+  /** Diff one awaiting map (from the stream or the fallback read) against the last one and
+   *  announce every Claude session that newly holds a prompt. The first map after a page load
+   *  (`prevAwaiting === null`) is a baseline and fires nothing, whichever way it arrived. */
+  const onSnapshot = (nextAwaiting: Record<string, AwaitingRow>) => {
+    const snap = ctx.sessions.list.getSnapshot();
+    for (const id of newlyAwaiting(prevAwaiting, nextAwaiting, openSessionId(ctx))) {
+      if (!isClaudeSession(ctx, id)) continue;
+      const prompt = nextAwaiting[id];
+      // noUncheckedIndexedAccess makes this read `AwaitingRow | undefined`; a missing row is
+      // not a transition to announce, so skip it rather than pass undefined to `notifyAwaiting`.
+      if (!prompt) continue;
+      waiting.add(id);
+      notifyAwaiting(ctx, id, snap?.byId[id]?.displayTitle ?? id, prompt);
+    }
+    prevAwaiting = nextAwaiting;
+  };
+  whenContextGone(subscribe("awaiting", (_session, data) => onSnapshot(data)));
   // The recap's two settings, kept beside the tick rather than read in it: the tick is synchronous
   // and the store is a fetch. Re-read on the same event the settings switches dispatch, so flipping
   // the switch reaches this watcher without a reload.
@@ -4558,27 +4587,23 @@ function watchSessionNotices(ctx: ClientCtx) {
     // A hidden tab keeps its bookkeeping but makes no request: this was the one unconditional
     // one-a-second poll a background tab still paid.
     if (anyClaudeRunning && !document.hidden) {
-      void fetch(`${ROUTE}/awaiting`)
-        .then((r) => readJson<{ sessions?: Record<string, AwaitingRow> }>(r))
-        .then((body) => {
-          const nextAwaiting = body.sessions ?? {};
-          for (const id of newlyAwaiting(prevAwaiting, nextAwaiting, openSessionId(ctx))) {
-            if (!isClaudeSession(ctx, id)) continue;
-            const prompt = nextAwaiting[id];
-            // noUncheckedIndexedAccess makes this read `AwaitingRow | undefined`; a missing row is
-            // not a transition to announce, so skip it rather than pass undefined to `notifyAwaiting`.
-            if (!prompt) continue;
-            waiting.add(id);
-            notifyAwaiting(ctx, id, snap.byId[id]?.displayTitle ?? id, prompt);
-          }
-          prevAwaiting = nextAwaiting;
-        })
-        .catch(() => {
-          // A failed poll says nothing. The next tick asks again; a prompt is not urgent enough to
-          // report a network error over.
-        });
-    } else {
-      prevAwaiting = null; // back to baseline: the next poll seeds it and does not fire
+      // The map arrives on the event stream; this read is the fallback and runs every 30 s while
+      // the stream is up, once a second when it is not.
+      if (Date.now() - lastRead >= pollEvery(true, 1000, 1000)) {
+        lastRead = Date.now();
+        void fetch(`${ROUTE}/awaiting`)
+          .then((r) => readJson<{ sessions?: Record<string, AwaitingRow> }>(r))
+          .then((body) => onSnapshot(body.sessions ?? {}))
+          .catch(() => {
+            // A failed poll says nothing. The next tick asks again; a prompt is not urgent enough
+            // to report a network error over.
+          });
+      }
+    } else if (!streamUp()) {
+      // Back to baseline: the next read seeds it and does not fire. With the stream up the pushed
+      // maps are one continuous series and the diff holds in a hidden tab, so a prompt that opens
+      // while the tab is hidden still fires, which is what a background notice is for.
+      prevAwaiting = null;
     }
     // Return recap: a session that stopped working while it was not the one on screen is asked for
     // one line when it is opened. Off by default; the switch is in Settings, under Oh My Claude.
@@ -4892,6 +4917,18 @@ function DockStatus({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
       </div>
     </div>
   );
+}
+
+/** Keep one event stream open for the Claude session on screen, reopening when it changes. Reads
+ *  the open session the way the status row does (`activeClaudeSession`; undefined for a llama
+ *  session or none open, which opens a stream for the tab-wide kinds only). Once a second whether
+ *  or not the store can be subscribed to: the beat also reopens a source the server-reload gap
+ *  closed for good, which no store change announces. */
+function watchEventStream(ctx: ClientCtx) {
+  const sync = () => openStream(activeClaudeSession(ctx) ?? null);
+  sync();
+  const beat = setInterval(guard(sync), 1000);
+  whenContextGone(() => clearInterval(beat));
 }
 
 /** Wire a running turn's status: attach dsh's [role=status][aria-live=polite] element to this
@@ -5732,31 +5769,6 @@ function watchToolFolds() {
   onBodyMutation(scan, true);
 }
 
-interface TurnRecord {
-  at: number;
-  costUsd: number;
-  durationMs: number;
-  apiMs: number;
-  turns: number;
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-  ttftMs?: number;
-}
-interface TurnsReply {
-  turns: TurnRecord[];
-  total: {
-    costUsd: number;
-    durationMs: number;
-    input: number;
-    output: number;
-    cacheRead: number;
-    cacheWrite: number;
-    count: number;
-  };
-}
-
 /** The hashed half of a CSS-module class changes with every dsh build, the suffix does not. */
 const MODULE_ROOT = /(?:^|\s)[\w-]*_root(?:\s|$)/;
 /** dsh's `StatsLine` separator: a direct child of the row, `aria-hidden`, and a literal bar. */
@@ -5839,9 +5851,20 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
       }
     };
     fetchTurns();
-    const interval = setInterval(() => {
+    // A new record arrives on the event stream when a turn ends; the read is the fallback: every
+    // 30 s while the stream is up, every 10 s when it is not. The same rule as the read: only
+    // records replace records, so an empty list never zeroes the row.
+    const offTurns = subscribe("turns", (session, data) => {
+      if (session !== sessionId || !alive) return;
+      const next = data.turns ?? [];
+      if (next.length > 0 || turnsRef.current.length === 0) setTurns(next);
+    });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const tick = () => {
       if (visibleRef.current) fetchTurns();
-    }, 10_000);
+      timer = setTimeout(tick, pollEvery(false, 10_000, 10_000));
+    };
+    timer = setTimeout(tick, 10_000);
     const onVisibility = () => {
       visibleRef.current = document.visibilityState === "visible";
       if (visibleRef.current) fetchTurns();
@@ -5849,7 +5872,8 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
     document.addEventListener("visibilitychange", onVisibility);
     return () => {
       alive = false;
-      clearInterval(interval);
+      offTurns();
+      if (timer !== undefined) clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [ctx, sessionId]);
@@ -6595,6 +6619,13 @@ let statusOnce: Promise<boolean> | undefined;
 /** One read of the store shared by every hook on the page: a Settings open mounts five readers and
  *  every cost pill two, so the fetch is memoised until a write dispatches the event. */
 let hintsOnce: Promise<Record<string, boolean | number>> | undefined;
+// A hint written from another tab or browser lands here as an event carrying the whole store;
+// hand it to every reader through the same event a local write dispatches, with no refetch.
+// Module-level: a hot reload loads a new module whose subscriber map starts empty, so nothing stacks.
+subscribe("hints", (_session, data) => {
+  hintsOnce = Promise.resolve(data);
+  window.dispatchEvent(new Event(HINTS_EVENT));
+});
 /** Fetch and parse the box-wide hints store once, memoising the promise and retrying on failure
  *  rather than caching the empty result. */
 const loadHints = (): Promise<Record<string, boolean | number>> =>
@@ -7803,17 +7834,6 @@ function DraftRelay({
   return null;
 }
 
-/** One `/btw` side question as the client bubble draws it (mirrors the adapter's `AsideEntry`). */
-interface AsideItem {
-  id: string;
-  question: string;
-  answer?: string;
-  error?: string;
-  pending: boolean;
-  at: number;
-  dismissed?: boolean;
-}
-
 /**
  * The `/btw` aside bubble: a Claude-orange card docked above the composer, in the same slot and at
  * the same width as dsh's todo and goal panels, that shows each side question and the answer the
@@ -7929,11 +7949,6 @@ function BoxUpdateButton({
   );
 }
 
-/** Mirrors the server's LoginNeed: the box the failed turn ran on (empty for this box) and its name. */
-interface LoginNeed {
-  host: string;
-  label: string;
-}
 /** Compare two LoginNeeds by identity or by matching host and label, so a re-rendered need counts
  *  the same one. */
 const sameNeed = (a: LoginNeed | null, b: LoginNeed | null): boolean =>
@@ -8035,25 +8050,6 @@ function useBindingLimit(sessionId: string, ctx: ClientCtx) {
     };
   }, [sessionId, ctx]);
   return limit;
-}
-
-/** A typed steer still in Claude's queue, as the side-questions poll lists it. */
-interface WaitingSteerRow {
-  id: string;
-  text: string;
-  at: number;
-}
-
-/** Steers taken back from Claude for an edit: one hold, possibly several messages joined. */
-interface HeldSteerRow {
-  id: string;
-  text: string;
-}
-
-/** The steer card's half of the side-questions poll. */
-interface SteerCardData {
-  waiting: WaitingSteerRow[];
-  held: HeldSteerRow[];
 }
 
 /** One request to the steer-edit route, as its validation accepts them. */
@@ -8810,16 +8806,21 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
     };
     pollRef.current = () => void fetchItems();
     fetchItems();
-    // A steer only happens while a turn is running, and the card should appear the moment one is
-    // queued, so the poll runs every second during a running turn and every three at rest. Self-
-    // scheduling rather than a fixed setInterval, so the rate follows the turn without a restart.
-    // ponytail: still a poll, since a server command cannot push to the client; the server-push
-    // pass replaces it with one event channel.
+    // The items, the steers and the login card arrive on the event stream the moment they change;
+    // `claudeUpdate` does not (the updater's tick lives on the route), so the read below stays as
+    // the fallback: every 30 s while the stream is up, else every second during a running turn
+    // and every three at rest. Self-scheduling so the rate follows the turn without a restart.
+    const offAsides = subscribe("asides", (session, data) => {
+      if (session !== sessionId || !alive) return;
+      setNeed((cur) => (sameNeed(cur, data.loginNeeded) ? cur : data.loginNeeded));
+      if (JSON.stringify(data.items) !== JSON.stringify(itemsRef.current)) setItems(data.items);
+      if (JSON.stringify(data.steers) !== JSON.stringify(steersRef.current)) setSteers(data.steers);
+    });
     let timer: ReturnType<typeof setTimeout> | undefined;
     const tick = () => {
       if (visibleRef.current) fetchItems();
       const running = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.running === true;
-      timer = setTimeout(tick, running ? 1000 : 3000);
+      timer = setTimeout(tick, pollEvery(running, 1000, 3000));
     };
     timer = setTimeout(tick, 1000);
     const onVisibility = () => {
@@ -8829,6 +8830,7 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
     document.addEventListener("visibilitychange", onVisibility);
     return () => {
       alive = false;
+      offAsides();
       if (timer !== undefined) clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisibility);
     };
@@ -9098,11 +9100,6 @@ const COST_DIALOG_CSS =
 /** dsh's unplaced-portal style: mounted so it can be measured, invisible until it has coordinates. */
 const MEASURE_STYLE: CSSProperties = { visibility: "hidden", left: 0, top: 0 };
 
-interface IdleReply {
-  deadline: number | null;
-  timeoutMs: number;
-}
-
 /** Small chip that warns when the idle watchdog is about to kill the process. */
 function IdleChip({ sessionId }: { sessionId: string }) {
   useLocale();
@@ -9124,9 +9121,17 @@ function IdleChip({ sessionId }: { sessionId: string }) {
       }
     };
     fetchIdle();
-    const interval = setInterval(() => {
+    // The deadline arrives on the event stream (once a second while a turn re-arms it); the read
+    // is the fallback: every 30 s while the stream is up, every 5 s when it is not.
+    const offIdle = subscribe("idle", (session, data) => {
+      if (session === sessionId && alive) setDeadline(data.deadline ?? null);
+    });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const tick = () => {
       if (visibleRef.current) fetchIdle();
-    }, 5_000);
+      timer = setTimeout(tick, pollEvery(false, 5_000, 5_000));
+    };
+    timer = setTimeout(tick, 5_000);
     const onVisibility = () => {
       visibleRef.current = document.visibilityState === "visible";
       if (visibleRef.current) fetchIdle();
@@ -9134,7 +9139,8 @@ function IdleChip({ sessionId }: { sessionId: string }) {
     document.addEventListener("visibilitychange", onVisibility);
     return () => {
       alive = false;
-      clearInterval(interval);
+      offIdle();
+      if (timer !== undefined) clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [sessionId]);
@@ -9176,6 +9182,7 @@ export function apply(ctx: ClientCtx) {
   whenContextGone(installLocale(ctx));
   followDeepLink(ctx);
   watchContextMeter(ctx);
+  watchEventStream(ctx);
   watchTurnStatus(ctx);
   watchSessionNotices(ctx);
   watchSessionSpinners(ctx);

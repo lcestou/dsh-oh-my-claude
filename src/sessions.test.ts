@@ -1990,3 +1990,184 @@ console.log("sessions ok");
   );
   console.log("skills-routes ok");
 }
+
+// GET /turns with only `turnRecords` wired (no `events`): the route's own body sums the records.
+{
+  const tmp = await mkdtemp(join(tmpdir(), "dsh-live-turn-test-"));
+  let handler: ((req: any, res: any) => void) | undefined;
+  // SAFETY: partial fake for tests
+  const ctx = {
+    inject: (deps: string[], cb: (host: any) => void) => {
+      cb({
+        webServer: {
+          register: (r: any) => {
+            handler = r.handler as (req: any, res: any) => void;
+            return () => {};
+          },
+        },
+        connection: { requestRejection: () => undefined },
+        sessions: { get: () => undefined },
+        sessionPersistence: { list: async () => [] },
+        effect: (fn: () => void | (() => void)) => fn(),
+      });
+    },
+  } as any;
+  const turnRecords = new Map([
+    ["s1", [{ costUsd: 0.5, durationMs: 100, input: 10, output: 20, cacheRead: 5, cacheWrite: 1 }]],
+  ]) as any;
+  registerSessionRoutes(ctx, {
+    log: () => {},
+    projectDir: (cwd: string) => [join(tmp, "claude", "projects", projectDirName(cwd))],
+    projectsDir: [join(tmp, "claude", "projects")],
+    startedIds: async () => [],
+    claudeIdOf: (id: string) => id,
+    configDir: join(tmp, "claude"),
+    boxesPath: join(tmp, "boxes.json"),
+    importedDir: join(tmp, "imported"),
+    instanceFor: () => undefined,
+    instanceForHost: () => ({ configDir: join(tmp, "box") }),
+    turnRecords,
+  });
+  assert.ok(handler);
+  const respond = responder(() => handler);
+  let r = await respond("GET", "/dsh-oh-my-claude/turns");
+  assert.equal(r.status, 400, "no session param");
+  r = await respond("GET", "/dsh-oh-my-claude/turns?session=s1");
+  assert.equal(r.status, 200);
+  assert.equal(r.body.turns.length, 1, "one record");
+  assert.equal(r.body.total.count, 1, "the total counts it");
+  assert.equal(r.body.total.costUsd, 0.5, "the total sums cost");
+  assert.equal(r.body.total.input, 10, "the total sums input");
+  console.log("turns-route-fallback ok");
+}
+
+// GET /events: an event stream. The fake res gains `write` and `on`; the hub writes the headers,
+// the connected comment and the snapshot, and holds the response open (no `end`).
+{
+  const tmp = await mkdtemp(join(tmpdir(), "dsh-live-turn-test-"));
+  let handler: ((req: any, res: any) => void) | undefined;
+  // SAFETY: partial fake for tests
+  const ctx = {
+    inject: (deps: string[], cb: (host: any) => void) => {
+      cb({
+        webServer: {
+          register: (r: any) => {
+            handler = r.handler as (req: any, res: any) => void;
+            return () => {};
+          },
+        },
+        connection: { requestRejection: () => undefined },
+        sessions: { get: () => undefined },
+        sessionPersistence: { list: async () => [] },
+        effect: (fn: () => void | (() => void)) => fn(),
+      });
+    },
+  } as any;
+  const { EventHub } = await import("./events.js");
+  const hub = new EventHub();
+  registerSessionRoutes(ctx, {
+    log: () => {},
+    projectDir: (cwd: string) => [join(tmp, "claude", "projects", projectDirName(cwd))],
+    projectsDir: [join(tmp, "claude", "projects")],
+    startedIds: async () => [],
+    claudeIdOf: (id: string) => id,
+    configDir: join(tmp, "claude"),
+    boxesPath: join(tmp, "boxes.json"),
+    importedDir: join(tmp, "imported"),
+    instanceFor: () => undefined,
+    instanceForHost: () => ({ configDir: join(tmp, "box") }),
+    events: {
+      hub,
+      snapshot: (session) => [
+        { kind: "awaiting", session: null, data: { s9: { kind: "question", id: "q1", since: 1 } } },
+        ...(session ? [{ kind: "idle", session, data: { deadline: null, timeoutMs: 7 } }] : []),
+      ],
+      replies: {
+        liveTurn: () => ({ tokens: 3, elapsedMs: 9, tool: false }),
+        turns: () => ({
+          turns: [],
+          total: {
+            costUsd: 0,
+            durationMs: 0,
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            count: 0,
+          },
+        }),
+        asides: () => ({
+          items: [],
+          loginNeeded: null,
+          fallback: null,
+          steers: { waiting: [], held: [] },
+        }),
+        idle: () => ({ deadline: null, timeoutMs: 7 }),
+        permissionMode: () => ({
+          mode: "default",
+          override: null,
+          accessMode: null,
+          ceiling: "default",
+          allowed: ["default"],
+          liveMode: null,
+          modes: ["default"],
+        }),
+      },
+    },
+  });
+  assert.ok(handler);
+  const chunks: string[] = [];
+  let status = 0;
+  let headers: Record<string, string> = {};
+  let ended = false;
+  const res = {
+    writeHead: (s: number, h: Record<string, string>) => {
+      status = s;
+      headers = h;
+    },
+    write: (c: string) => {
+      chunks.push(c);
+      return true;
+    },
+    end: () => {
+      ended = true;
+    },
+    on: () => {},
+    writableNeedDrain: false,
+  } as any;
+  await handler!(
+    {
+      method: "GET",
+      url: "/dsh-oh-my-claude/events?session=s1",
+      on: () => {},
+      destroy: () => {},
+    } as any,
+    res,
+  );
+  assert.equal(status, 200, "events status");
+  assert.equal(headers["content-type"], "text/event-stream", "events content type");
+  assert.equal(chunks[0], ": connected\n\n", "events opens with the connected comment");
+  assert.equal(
+    chunks[1],
+    'event: awaiting\ndata: {"session":null,"data":{"s9":{"kind":"question","id":"q1","since":1}}}\n\n',
+    "the awaiting snapshot frame",
+  );
+  assert.equal(
+    chunks[2],
+    'event: idle\ndata: {"session":"s1","data":{"deadline":null,"timeoutMs":7}}\n\n',
+    "the session's idle snapshot frame",
+  );
+  assert.equal(ended, false, "the stream stays open");
+  assert.equal(hub.connections.size, 1, "the hub holds the connection");
+  // The same registration answers /live-turn through the builder now.
+  const respond = responder(() => handler);
+  const r = await respond("GET", "/dsh-oh-my-claude/live-turn?session=s1");
+  assert.equal(r.status, 200);
+  assert.deepEqual(
+    r.body,
+    { tokens: 3, elapsedMs: 9, tool: false },
+    "live-turn answers with the builder when events is wired",
+  );
+  hub.close();
+  console.log("events-route ok");
+}

@@ -10,10 +10,9 @@ dsh: runs on 0.1.5-rc.1 through 0.1.7-alpha.2; built and tested on 0.1.7-alpha.2
 
 ### Added
 
-- The steer card (the "Waiting for Claude" card above the composer) appears faster: while a turn is
-  running the plugin checks for queued messages every second instead of every three, and drops back
-  to three at rest. With more than one message waiting, a Send all now button sends them all at once,
-  next to Edit all.
+- The steer card (the "Waiting for Claude" card above the composer) appears the moment a steer is
+  queued. With more than one message waiting, a Send all now button sends them all at once, next to
+  Edit all.
 - Claude's working line (spinner, verb, figures) repeats above the composer once the turn's own
   header has scrolled off screen or is not drawn. dsh 0.1.7 keeps that line in the turn header,
   which a long run of tool cards pushes out of view, and on a long turn the header sits above the
@@ -22,6 +21,13 @@ dsh: runs on 0.1.5-rc.1 through 0.1.7-alpha.2; built and tested on 0.1.7-alpha.2
 
 ### Changed
 
+- The tab no longer asks the server on timers for the status row, the steer card, the
+  waiting-for-you notice, the idle chip, the cost line and the permission capsule. One event stream
+  per tab carries them (server-sent events on `GET /dsh-oh-my-claude/events`), so a steer card
+  appears the moment the steer is queued, a prompt opened in a background session is announced
+  even in a hidden tab, and a running session's page makes 18 requests a minute instead of 206
+  (a blank session 4 instead of 80; measured on dsh 0.1.7-alpha.2, 2026-09-23). The old timers stay on as a safety net: every 30 s while the stream is up,
+  at their old rates while it is down. A hint flipped in another browser reaches this one at once.
 - The list rows in the ✻ panel's tabs (transcripts to restore, memory files, instructions, prompts
   to rewind to, changed files) no longer sit in their own hairline box; like dsh's rows they are
   bare at rest and tint under the pointer.

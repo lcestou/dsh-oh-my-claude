@@ -23,7 +23,8 @@ const ws = (
     ? p.locator('[role="treeitem"]').filter({ hasText: new RegExp(`^${wsName}$`) })
     : p.locator('[role="treeitem"]')
 ).first();
-const want = process.argv[4] ? new RegExp(process.argv[4], "i") : /Running|\bnow\b/;
+// dsh labels a working session Running (运行中 on a Chinese dsh); `now` was the pre-0.1.7 word.
+const want = process.argv[4] ? new RegExp(process.argv[4], "i") : /Running|运行中|\bnow\b/;
 // Only expand when the target is not already visible: clicking an expanded workspace collapses it.
 if (
   (await ws.count()) &&

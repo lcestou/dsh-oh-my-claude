@@ -120,8 +120,15 @@ import { COMMAND_CATALOG } from "./dsh.js";
 // per fake; every fake is partial on purpose and the test names what it exercises.
 // SAFETY: partial fake for tests
 const fakeCtx = (o: object): PluginContext => o as unknown as PluginContext;
-// SAFETY: partial fake for tests
-const fakeProc = (o: object): ClaudeProcess => o as unknown as ClaudeProcess;
+// Every real process carries a `steers` map, and the publish paths reach `steersFor` from most
+// mutations now, so a fake without one would throw where the product never does.
+const fakeProc = (o: object): ClaudeProcess => {
+  // SAFETY: partial fake for tests
+  const p = o as unknown as ClaudeProcess;
+  // In place, not a copy: some blocks keep the original object and read what the adapter set on it.
+  if (!p.steers) p.steers = new Map();
+  return p;
+};
 // SAFETY: partial fake for tests
 const fakeAgent = (o: object): Agent => o as unknown as Agent;
 // SAFETY: tests feed the translator event types it has never seen, on purpose

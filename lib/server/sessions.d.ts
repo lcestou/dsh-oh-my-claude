@@ -4,7 +4,8 @@ import type { JsonValue, PluginContext, WorkspaceRegistry } from "./dsh.js";
 import type { ToolMode, ToolModeInfo } from "./rows-probe.js";
 import { type PluginLoadError } from "./plugins.js";
 import { EFFORTS_ALL, type LoginNeed } from "./adapter.js";
-import type { PermissionModeInfo, PermissionModeReply, RewindReply, ContextUsageReply, SkillDoctorReply, WorkspaceDiffReply, PermissionReadoutReply, McpStatusReply, AsideEntry, FallbackRecord, LiveTurn } from "./adapter.js";
+import type { PermissionModeInfo, PermissionModeReply, PermissionModeState, RewindReply, ContextUsageReply, SkillDoctorReply, TurnsReply, WorkspaceDiffReply, PermissionReadoutReply, McpStatusReply, AsideEntry, AsidesReply, FallbackRecord, IdleReply, LiveTurn, LiveTurnReply } from "./adapter.js";
+import { type EventHub, type OmcEvent } from "./events.js";
 /** Any JSON object, as a request body or a stored file decodes to. */
 type JsonObject = Record<string, JsonValue>;
 /** Parse a JSON request body, capped at `limit` bytes. A non-object body reads as an empty object. */
@@ -301,6 +302,18 @@ export interface MountBox {
     command?: string;
     sshHost?: string;
 }
+/** What the event stream needs from the adapter; see `SessionRouteOptions.events`. */
+export interface EventsDeps {
+    hub: EventHub;
+    snapshot: (session: string | null) => OmcEvent[];
+    replies: {
+        liveTurn: (sessionId: string) => LiveTurnReply | Record<string, never>;
+        turns: (sessionId: string) => TurnsReply;
+        asides: (sessionId: string) => AsidesReply;
+        idle: (sessionId: string) => IdleReply;
+        permissionMode: (sessionId: string) => PermissionModeState;
+    };
+}
 /** Everything the routes need from the adapter. */
 export interface SessionRouteOptions {
     log: (level: string, msg: string) => void;
@@ -362,6 +375,11 @@ export interface SessionRouteOptions {
     dshVersion?: string | null;
     /** The running turn's figures per session, for the status row; absent when no turn is running. */
     liveTurn?: Map<string, LiveTurn>;
+    /** The event stream to open tabs (src/events.ts): the hub the `/events` route attaches to, the
+     *  snapshot a tab gets on connect, and the reply builders the polled routes answer with so a
+     *  route body and an event body are one function's output. Absent in tests that wire only the
+     *  maps, in which case each route keeps its own body. */
+    events?: EventsDeps;
     /** Idle watchdog state from the adapter. */
     idle?: {
         deadlineFor(session: string): number | null;
@@ -536,7 +554,7 @@ export interface SessionRouteOptions {
     continueAfterLimit?: boolean;
 }
 /** `projectDir(cwd)` → Claude Code project dir; `startedIds()` → ids the adapter started itself. */
-export declare function registerSessionRoutes(ctx: PluginContext, { log, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, importedDir, sshBoxesPath, onSshBoxes, remoteWorkspacesPath, onRemoteWorkspaces, command, boxCommand, sshHost, turnRecords, dshVersion, liveTurn, idle, toolMode, terminalSync, permissionModes, thinking, rewind, contextUsage, skillDoctor, workspaceDiff, permissionReadout, askAside, mcp, permissionAsks, sideQuestions, steersFor, holdSteers, releaseHold, sendSteerNow, loginNeeded, sessionFallbacks, boxOfSession, claudeUpdated, loginDone, logoutDone, liveCount, persistAsides, starters, setStarter, models, reloadPlugins, reloadSkills, pluginErrors, pluginWarnings, awaiting, continueAfterLimit, instanceFor, instanceForHost, onLoginStatus, }: SessionRouteOptions): void;
+export declare function registerSessionRoutes(ctx: PluginContext, { log, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, importedDir, sshBoxesPath, onSshBoxes, remoteWorkspacesPath, onRemoteWorkspaces, command, boxCommand, sshHost, turnRecords, dshVersion, liveTurn, events, idle, toolMode, terminalSync, permissionModes, thinking, rewind, contextUsage, skillDoctor, workspaceDiff, permissionReadout, askAside, mcp, permissionAsks, sideQuestions, steersFor, holdSteers, releaseHold, sendSteerNow, loginNeeded, sessionFallbacks, boxOfSession, claudeUpdated, loginDone, logoutDone, liveCount, persistAsides, starters, setStarter, models, reloadPlugins, reloadSkills, pluginErrors, pluginWarnings, awaiting, continueAfterLimit, instanceFor, instanceForHost, onLoginStatus, }: SessionRouteOptions): void;
 /**
  * The four files Claude Code merges for one session, highest precedence first. Duplicated in
  * `src/client/settings.ts`: the browser half cannot import server code, and the order is the

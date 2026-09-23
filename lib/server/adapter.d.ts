@@ -5,6 +5,7 @@ import { LlmAdapter, type ContentBlock, type GenerateOptions, type LlmModelInfo,
 import z from "@deepseek-ai/schemastery";
 import { type ContextSizes, type ContextSource } from "./context-sources.js";
 import { type PickerSettings, type RemoteWorkspace } from "./sessions.js";
+import { type OmcEvent } from "./events.js";
 import { readUsage } from "./usage.js";
 import { type ClaudeEvent, ClaudeProcess } from "./process.js";
 import type { Agent, ImageAttachmentRef, JsonValue, PluginContext, ResolvedAgent, SessionController, SessionId, SubprocessRuntime } from "./dsh.js";
@@ -342,6 +343,60 @@ export interface PermissionModeReply extends PermissionModeInfo {
     /** A live process was told; false when the override only applies at the next spawn. */
     live: boolean;
     error?: string;
+}
+/** `GET /awaiting` and the `awaiting` event: the open prompts keyed by dsh session id. */
+export interface AwaitingRow {
+    kind: "approval" | "question" | "plan";
+    id: string;
+    since: number;
+}
+/** `GET /live-turn` and the `live-turn` event while a turn runs; the empty object once it ends.
+ *  The ages are computed when the body is built; the tab adds the time since it received it. */
+export interface LiveTurnReply {
+    tokens: number;
+    elapsedMs: number;
+    thinkingMs?: number;
+    idleMs?: number;
+    tool: boolean;
+    thoughtMs?: number;
+    thoughtAgoMs?: number;
+    effort?: string;
+    relayName?: string;
+    relayMs?: number;
+}
+/** The sums over a session's turn records, with how many records were summed. */
+export interface TurnTotals {
+    costUsd: number;
+    durationMs: number;
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    count: number;
+}
+/** `GET /turns` and the `turns` event. */
+export interface TurnsReply {
+    turns: TurnRecord[];
+    total: TurnTotals;
+}
+/** The `asides` event: the aside ring, the login card, the model fallback note and the steer card
+ *  for one session. `GET /side-questions` answers these plus `claudeUpdate`, which the updater's
+ *  own tick in sessions.ts adds and which no event carries. */
+export interface AsidesReply {
+    items: AsideEntry[];
+    loginNeeded: LoginNeed | null;
+    fallback: FallbackRecord | null;
+    steers: SteerCardState;
+}
+/** `GET /idle` and the `idle` event: when the idle watchdog would end the process, or null. */
+export interface IdleReply {
+    deadline: number | null;
+    timeoutMs: number;
+}
+/** `GET /permission-mode` and the `permission-mode` event: the info plus the modes the client may
+ *  pick, under the name the client already reads (`modes`). */
+export interface PermissionModeState extends PermissionModeInfo {
+    modes: readonly string[];
 }
 /** The key every live process is stored under, `providerId` then `sessionId`; a session id must not contain a colon or it would collide with this separator. */
 export declare function registryKey(providerId: string, sessionId: string): string;
@@ -1118,6 +1173,9 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * launched below bypass can never be switched up live, whatever it was set to since.
      */
     setPermissionMode(sessionId: string, mode: string | null): Promise<PermissionModeReply>;
+    /** The body of `setPermissionMode` without the publish: every return path, refused or applied,
+     *  ends in the same event so the capsule reads the mode the process is really in. */
+    private applyPermissionMode;
     /**
      * Remember the mode a transcript ran under as the session's override, with no ceiling check and
      * no live switch: the caller is opening a past CLI session in dsh, and `getPermissionMode` clamps
@@ -1142,9 +1200,11 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      */
     control(proc: ClaudeProcess, request: Record<string, JsonValue>, timeoutMs?: number): Promise<ControlReply>;
     /** What the steer card shows: typed steers still in the CLI's queue, oldest first, and the ones
-     *  taken back for an edit. Each call is the card's poll, so it also re-arms every hold's timer; a
-     *  hold nobody polls for (a closed tab) goes back to Claude unchanged after `HOLD_IDLE_MS`. */
-    steersFor(sessionId: string): SteerCardState;
+     *  taken back for an edit. A call from the card's own read (`touch`, the default) re-arms every
+     *  hold's timer, so a hold nobody reads (a closed tab) goes back to Claude unchanged after
+     *  `HOLD_IDLE_MS`; a publish passes `touch: false`, since the turn loop publishes at every tool
+     *  boundary and would otherwise keep a closed tab's hold alive for the whole turn. */
+    steersFor(sessionId: string, touch?: boolean): SteerCardState;
     /** The timer that restores a hold its card stopped polling for. */
     private holdTimer;
     /**
@@ -1268,11 +1328,52 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     /** The plugin warnings this session's last init frame reported, for the panel. */
     pluginWarningsFor(sessionId: string): PluginLoadError[];
     /** The open prompts, keyed by dsh session id, for the browser's background notices. */
-    awaitingSnapshot(): Record<string, {
-        kind: "approval" | "question" | "plan";
-        id: string;
-        since: number;
-    }>;
+    awaitingSnapshot(): Record<string, AwaitingRow>;
+    /** The open prompts across every mount, which is what `/awaiting` and the `awaiting` event
+     *  serve: a box's session holds its prompt on the box's instance, so the root's own map alone
+     *  would miss it. On a box with one mount this is `awaitingSnapshot()`. */
+    awaitingAll(): Record<string, AwaitingRow>;
+    /** The running turn's figures for the status row, read from the session's mount, or the empty
+     *  object when no turn is running (the adapter drops the record the moment a turn ends). The
+     *  ages are relative to now; the tab adds the time since it received the body. `thinkingMs` is
+     *  how long the open thinking burst has run, absent when none is open; `idleMs` is the time
+     *  since the last frame of model output; `tool` says a call is in flight; `relayName` and
+     *  `relayMs` name the dsh tool a parked turn waits on and for how long. */
+    liveTurnReply(sessionId: string): LiveTurnReply | Record<string, never>;
+    /** A session's turn records from its mount, oldest first, with their sums. An empty list is
+     *  "no records to hand out right now", which the tab treats as nothing to replace: the buffer
+     *  is empty for a moment after a restart until the saved records load. */
+    turnsReply(sessionId: string): TurnsReply;
+    /** The aside ring, the login card, the fallback note and the steer card for one session, each
+     *  read from the mount that holds it: the ring, the login need and the fallback live on the
+     *  session's owner, the waiting steers on whichever mount has its live process (the root when
+     *  none is live, since a held steer sits on the mount that took it). */
+    asidesReply(sessionId: string, touch?: boolean): AsidesReply;
+    /** When the idle watchdog would end the session's process (null: not armed), from the mount
+     *  that runs it, with the configured timeout so the tab can draw the countdown. */
+    idleReply(sessionId: string): IdleReply;
+    /** The permission mode info the capsule draws, from the session's mount, with the pickable modes
+     *  under the `modes` name the client reads. */
+    permissionModeReply(sessionId: string): PermissionModeState;
+    /** Everything a tab needs the moment its event stream opens: the tab-wide awaiting map always,
+     *  and for the open session its live turn, asides, idle deadline, turn records and permission
+     *  mode. Hints are not here: the tab reads them on mount already. A reconnect gets the same
+     *  snapshot in place of a replay, since every kind is a current value. */
+    snapshot(sessionId: string | null): OmcEvent[];
+    /** The tab-wide awaiting map to every stream, merged over every mount: a prompt opened or
+     *  answered anywhere. A mount publishing only its own map would make a tab forget the root's
+     *  prompts on the next box event. */
+    private publishAwaiting;
+    /** The asides body for one session to its streams, read from the session's mount. A publish
+     *  does not re-arm hold timers (`touch: false`); only the card's own read does. */
+    private publishAsides;
+    /** The idle deadline for one session, coalesced to once a second: the turn loop re-arms the
+     *  watchdog on every frame. `key` is the session id, except the aux decide stream's `aux-`
+     *  keys, which share the map and reach no tab. */
+    private publishIdle;
+    /** The permission mode state for one session to its streams: after a pick, a restore or a
+     *  spawn, which is when `liveMode` changes. */
+    private publishPermissionMode;
     /** The CLI's working-tree diff (`get_workspace_diff`) for a session with a live process. */
     workspaceDiff(sessionId: string): Promise<WorkspaceDiffReply>;
     /** The permission rules and hooks a session's live process actually loaded
