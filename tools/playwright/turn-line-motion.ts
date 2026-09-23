@@ -96,10 +96,12 @@ async function read(
     };
   });
   if (shotsDir !== undefined) {
-    const line = p.locator("[data-omc-turn-line]").first();
-    if (await line.count()) {
-      await line.scrollIntoViewIfNeeded();
-      await line.screenshot({ path: `${shotsDir}/${viewport.width}-${colorScheme}.png` });
+    // The line's own box clips the verb's left edge (the sheen is painted past it), so the shot is
+    // of the group button that holds the line, which also shows dsh's label beside it.
+    const group = p.locator("button[data-turn-process]:has([data-omc-turn-line])").last();
+    if (await group.count()) {
+      await group.scrollIntoViewIfNeeded();
+      await group.screenshot({ path: `${shotsDir}/${viewport.width}-${colorScheme}.png` });
     }
   }
   await ctx.close();

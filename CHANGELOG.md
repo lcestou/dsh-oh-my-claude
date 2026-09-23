@@ -21,6 +21,13 @@ dsh: runs on 0.1.5-rc.1 through 0.1.7-alpha.2; built and tested on 0.1.7-alpha.2
 
 ### Changed
 
+- The working line follows the CLI's own status line more closely: the shimmer sweeps left to
+  right while a request is out and right to left while a reply streams, and breathes in place while
+  a tool runs; the spinner glyph eases the way the CLI's does; the bracket after the verb stays away
+  for the first 16 seconds of a turn with nothing to say; the warm and stall tints drop the moment
+  their cause ends instead of fading, and a slow request after a tool no longer reads as a stall; the
+  verb list matches Claude Code 2.1.280 (`Kerfuffling`, `Transmogrifying`, American spellings); the
+  45-second thinking word is the CLI's `deep in thought`.
 - The tab no longer asks the server on timers for the status row, the steer card, the
   waiting-for-you notice, the idle chip, the cost line and the permission capsule. One event stream
   per tab carries them (server-sent events on `GET /dsh-oh-my-claude/events`), so a steer card
@@ -62,6 +69,9 @@ dsh: runs on 0.1.5-rc.1 through 0.1.7-alpha.2; built and tested on 0.1.7-alpha.2
 
 ### Fixed
 
+- Durations past an hour read `1h 40m 42s` in the working line and the cost dialog, not
+  `100m 42s`.
+- The dark theme's shimmer is the CLI's dark value; it used the light one on both.
 - The steer card now lists a message typed while Claude is inside a dsh tool (a subagent, a relayed
   job or shell). Edit and Remove work there; Send now waits for the tool to end, and the card says
   so. Before, such a message showed nowhere until the tool ended.
