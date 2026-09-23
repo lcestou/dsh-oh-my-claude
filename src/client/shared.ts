@@ -501,19 +501,22 @@ export const claudeMount = (provider: string | undefined): string | undefined =>
  *  non-Claude session. */
 export const claudeProviderOf = (ctx: ClientCtx, id: string): string | undefined => {
   try {
-    const live = claudeMount(
-      ctx.modelDirectories.directoryFor(id).store.getSnapshot().current?.provider,
-    );
-    if (live !== undefined) return live;
+    const live = ctx.modelDirectories.directoryFor(id).store.getSnapshot().current?.provider;
+    // A live provider is the answer, Claude or not. Falling through on a non-Claude one used to
+    // land on `lastUsed` below, so a session that had run a Claude turn and then switched to
+    // another provider kept the Claude control and the ✻ button (owner, 2026-09-23).
+    if (live !== undefined) return claudeMount(live);
   } catch {
     // `directoryFor` needs a scope and a binding, and dsh only holds those for a session this tab
     // has opened. A session running in the sidebar and never clicked throws here, which used to
     // read as "not a Claude session" and left its row painted in dsh's blue until it was opened.
   }
   // The cold summary answers for the rest: dsh keeps the last and next model selection in the list
-  // projection so a session can be described without being activated.
+  // projection so a session can be described without being activated. A pending pick outranks the
+  // last request for the same reason as above: it is the newer truth, whichever provider it names.
   const sel = ctx.sessions.list.getSnapshot()?.byId[id]?.projectionValues?.modelSelection;
-  return claudeMount(sel?.next?.provider) ?? claudeMount(sel?.lastUsed?.provider);
+  if (sel?.next?.provider !== undefined) return claudeMount(sel.next.provider);
+  return claudeMount(sel?.lastUsed?.provider);
 };
 
 /**
@@ -756,6 +759,10 @@ type DshSlots = {
       id?: string;
       order?: number;
       label?: string;
+      // A negative priority shadows dsh's own occupant of the same cell (the lowest live entry
+      // renders); dsh 0.1.7's register accepts it, an older core that refuses a second occupant of
+      // one cell throws, which is why every such registration is wrapped in try/catch below.
+      priority?: number;
       inject?: () => Record<string, never>;
     },
     // `sessionId` on session-scoped slots; `close` on `settings.section` (dsh-client-ui-settings-general
@@ -771,7 +778,7 @@ type DshSlots = {
       // text in the box right now.
       useInput?: <T>(select: (state: { draft: string }) => T) => T;
     }) => ReactNode,
-  ) => void;
+  ) => () => void;
 };
 /** One directory row as dsh's listing reports it (dsh-host-directory-picker `DirectoryEntry`). */
 export interface DirEntry {
@@ -804,6 +811,26 @@ export interface UiWorkspaceFace {
 /** dsh's locale registry, read so a replaced dialog keeps dsh's own copy in dsh's language. */
 export interface LocaleFace {
   bind: (ns: string) => (key: string) => string;
+}
+
+/**
+ * The owner share dsh's directory-flow slots (`sidebar.workspaces.directoryFlow`,
+ * `conversation.hero.workspace.directoryFlow`) hand to their occupant: the complete exchange between
+ * the trigger surface and the picking dialog. The occupant reads `open` to run its interaction and
+ * reports exactly one outcome per open — `onPicked` for a directory the owner adopts, `onCancel` for
+ * a dismiss, `onError` when the chooser itself fails. Mirrors dsh-client-ui-workspace's own type.
+ */
+export interface DirectoryFlowOwnerProps {
+  /** True while a picking interaction is requested; flipping back to false withdraws the request. */
+  open: boolean;
+  /** True while the owner adopts a picked path; occupants disable their commit affordances. */
+  busy: boolean;
+  /** The operator picked a directory (absolute host path); the owner adopts it. */
+  onPicked: (path: string) => void;
+  /** The operator dismissed the interaction; the owner just closes the flow. */
+  onCancel: () => void;
+  /** The interaction itself failed (chooser missing, listing denied); the owner shows its error. */
+  onError: (message: string) => void;
 }
 
 /** The dsh client services this panel uses, the ones `inject` names. */

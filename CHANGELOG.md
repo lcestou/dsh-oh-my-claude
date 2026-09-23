@@ -19,6 +19,15 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Changed
 
+- The Claude permission control, the Add workspace dialog with its box dropdown, and the orange
+  mark on a running Claude session's sidebar row now sit in dsh's own slots
+  (`conversation.input.permission`, the two directory-flow holes, and the session row's action
+  strip) instead of rewriting dsh's DOM. The permission menu is drawn by the plugin, so it no longer
+  depends on dsh's menu markup, and the row mark follows the session id rather than the row title.
+  The old DOM paths stay as the fallback on a dsh that refuses the slot.
+- The Add workspace dialog with the box dropdown appears only once an SSH box is saved. With none,
+  the sidebar "+" and the hero's Add workspace open dsh's own dialog, and saving the first box
+  swaps ours in without a reload.
 - The inline-or-rows choice for Claude's tool activity moved from the Tune tab to Settings > Oh My
   Claude, as a Native tool rows switch. It configures the bridge, not Claude Code, which is what
   Tune is for.
@@ -33,6 +42,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 - The Restore tab reaches every transcript in a workspace. It showed eight and left the rest to
   the search box, with nothing saying more existed; now a Show more line under the eight brings
   twenty at a time and says how many are left. Searching starts the list short again.
+- A running DeepSeek or llama session's sidebar glyph stays dsh's blue while a Claude session is
+  open. It went orange with the rest, since the rule reached every running glyph on the page; the
+  sidebar rows now take the orange only from the mark on a running Claude row, and turn it on and
+  off the instant the row's state flips rather than on the next one-second pass.
 
 ### Fixed
 

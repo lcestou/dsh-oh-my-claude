@@ -66,6 +66,7 @@ import {
   claudeProviderOf,
   claudeMount,
   type ClientCtx,
+  type DirectoryFlowOwnerProps,
   openHere,
   openSession,
   openSessionId,
@@ -89,9 +90,16 @@ import type { FallbackRecord } from "../translator.js";
 import { ReportBlock } from "./report.js";
 import { ChangelogBlock } from "./changelog.js";
 import { Spark, sparkNode } from "./spark.js";
-import { AccessShield, OhMyClaudeControl, sessionLabel } from "./panel.js";
+import { AccessShield, AccessTrigger, OhMyClaudeControl, sessionLabel } from "./panel.js";
 import { ConfirmButton } from "./tune.js";
-import { AddWorkspaceFlow, BOXES_EVENT, canBrowseDirs, OPEN_EVENT, RW_EVENT } from "./picker.js";
+import {
+  AddWorkflow,
+  AddWorkspaceFlow,
+  BOXES_EVENT,
+  canBrowseDirs,
+  OPEN_EVENT,
+  RW_EVENT,
+} from "./picker.js";
 import { ClaudeUpdateDetails } from "./claude-updates.js";
 import { type LimitLevel, worstLimit } from "./limits.js";
 import { SearchField } from "./search-field.js";
@@ -3945,23 +3953,26 @@ const ensureTurnStatusStyle = () => {
   // row is a button in `--dsw-alias-link` blue while its child session is still running (dsh's
   // ui-workflow-run package, `memberButton`); once the member finishes it becomes a plain grey row.
   // The data attributes are dsh's own, the hashed class name is not.
-  // The chasing dots dsh draws while something runs (its `StateDot` at `state="ongoing"`: eight
-  // rects around a ring, each fading a beat after the last). They stayed dsh's blue wherever they
-  // appear away from the turn status row. The subagent switcher's dropdown is where it shows, since
-  // a Claude session's children are listed there with one running dot each. The colour comes from
-  // `--dsh-state-ongoing`, which dsh declared on the element itself up to 0.1.6, so a value
-  // inherited from
-  // `body` loses to it; the override has to land on the same element. 0.1.7 dropped that property
-  // and strokes the spinner with `currentColor` instead, so the rule sets `color` as well and one
-  // of the two takes on whichever dsh is installed. `svg[data-state="ongoing"]`
-  // does that on dsh's own attribute rather than its hashed class name, and outweighs the single
-  // class dsh sets it with, so no `!important` is needed. Under the row switch with the status row,
-  // which is the same idea in another place.
+  // The running glyph dsh draws (its `StateDot` at `state="ongoing"`: a matrix of chasing squares
+  // up to 0.1.6, a ring with a spinning arc from 0.1.7). Two rules, both under the row switch:
+  // the ones inside the open conversation (the job-list dot in the session header, the subagent
+  // switcher's dropdown, plans, schedules) take the orange while the open session is a Claude
+  // mount, and a sidebar row's takes it while that row carries `data-omc-claude`, the mark the
+  // row-action slot paints on a running Claude session's own row. The first rule stops at the
+  // sidebar rows on purpose: it used to reach every row, so a DeepSeek session running in the
+  // sidebar went orange whenever a Claude session was open. The colour comes from
+  // `--dsh-state-ongoing`, a custom property dsh sets in the glyph's own class up to 0.1.6, so a
+  // value inherited from `body` loses to it and the override has to land on the same element;
+  // 0.1.7 dropped that property and strokes the glyph with `currentColor`, so each rule sets
+  // `color` as well and one of the two takes on whichever dsh is installed. The rules select on
+  // dsh's own attribute rather than its hashed class name, and an attribute plus an ancestor
+  // outweighs the single class dsh sets it with, so no `!important` is needed. On a dsh without
+  // the row-action slot the sidebar rows are tinted by the spinner scan instead (title match).
   // The stats row under the composer (`data-composer-stats`) is padded to the composer's side
   // clearance, which leaves its pills 653px in a 717px column. dsh's two fill that; ours as a
   // third clips all three to an ellipsis by a few pixels. The pills are centred, so the padding
   // does no aligning; take it down to the row's rounded corners and the three fit.
-  styleEl.textContent = `${gated("row", '[role="status"][aria-live="polite"]:not([class*="visuallyHidden"])')},${gated("row", "[data-dsh-oh-my-claude-turn]", false)}{background-image:var(--omc-row-bg,linear-gradient(90deg,var(--omc-accent) 0%,var(--omc-accent) 40%,var(--omc-shimmer) 50%,var(--omc-accent) 60%,var(--omc-accent) 100%))}@keyframes omc-word{from{-webkit-text-fill-color:var(--omc-word-lo)}to{-webkit-text-fill-color:var(--omc-word-hi)}}[data-omc-turn-word]{animation:omc-word 1s ease-in-out 3s infinite alternate}@media (prefers-reduced-motion:reduce){[data-omc-turn-word]{animation:none}}[data-dsh-oh-my-claude-turn]>span[aria-hidden]{display:inline-block;width:1.3em;text-align:start;flex:none}[data-dsh-oh-my-claude-turn]{max-width:100%;min-width:0}[data-omc-turn-detail]{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}button[data-turn-process]:has([data-omc-turn-line])>span:not([data-omc-turn-line]){display:none}[data-omc-turn-line]{background-clip:text;-webkit-background-clip:text;color:transparent;-webkit-text-fill-color:transparent;background-size:200% 100%;animation:omc-verb-sheen 2.6s linear infinite;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-flex;align-items:center;gap:2px}@keyframes omc-verb-sheen{from{background-position:200% 0}to{background-position:-200% 0}}@media (prefers-reduced-motion:reduce){[data-omc-turn-line]{animation:none}}button[data-turn-process]:has([data-omc-turn-line]){min-width:0;max-width:100%}${gated("panel", "[data-omc-login-card] button:hover", false)},${gated("panel", "[data-omc-login-card] button:focus-visible", false)},${gated("panel", "[data-omc-update-card] button:not(:disabled):hover", false)},${gated("panel", "[data-omc-update-card] button:focus-visible", false)}{color:var(--omc-accent)!important;border-color:var(--omc-accent)!important}${controlStatesCss("[data-omc-settings]")}${controlStatesCss('[role="dialog"][aria-label="Oh My Claude"]')}${/* !important: the buttons carry their border inline (`btn`), which beats any sheet rule. */ ""}${gated("panel", '[data-omc-settings] button:not([role="switch"]):not([aria-expanded]):not(:disabled):hover', false)},${gated("panel", '[data-omc-settings] button:not([role="switch"]):not([aria-expanded]):focus-visible', false)},${gated("panel", '[role="dialog"][aria-label="Oh My Claude"] button:not([role="switch"]):not([aria-expanded]):not(:disabled):hover', false)},${gated("panel", '[role="dialog"][aria-label="Oh My Claude"] button:not([role="switch"]):not([aria-expanded]):focus-visible', false)}{color:var(--omc-accent)!important;border-color:var(--omc-accent)!important}[data-omc-card]:hover{border-color:var(--dsw-alias-label-dimmed,rgba(128,128,128,.5))}[data-omc-card]>button:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#3b82f6);outline-offset:-2px}[data-omc-card]>button:hover{background:none}@keyframes omc-sheen{from{background-position:200% 0}to{background-position:-200% 0}}[data-omc-skeleton]{border-radius:6px;background:linear-gradient(90deg,${T.border} 30%,${T.hover} 50%,${T.border} 70%);background-size:200% 100%;animation:omc-sheen 1.4s linear infinite}@keyframes omc-rise{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}@keyframes omc-drain{from{width:100%}to{width:0}}[data-omc-arrived]{animation:omc-rise .18s ease-out}@media (prefers-reduced-motion:reduce){[data-omc-skeleton],[data-omc-arrived]{animation:none}}${gated("prose", '[role="tablist"]>[role="tab"][aria-selected="true"]')}{color:var(--omc-accent)}${gated("prose", '[role="tablist"]>[role="tab"][aria-selected="true"]::after')}{background:var(--omc-accent)}${gated("prose", '[class*="_markdown"] blockquote')}{border-left-color:color-mix(in srgb,var(--omc-accent) 50.2%,transparent)}${gated("prose", '[class*="_markdown"] hr')}{background:color-mix(in srgb,var(--omc-accent) 34.9%,transparent)}${gated("prose", '[class*="_markdown"] a')}{color:var(--omc-accent);text-decoration-color:color-mix(in srgb,var(--omc-accent) 40%,transparent)}${gated("prose", '[class*="_markdown"] a:hover')}{color:var(--omc-shimmer);text-decoration-color:var(--omc-shimmer)}${gated("prose", '[class*="_markdown"] input[type="checkbox"]')}{accent-color:var(--omc-accent)}${/* The chips dsh draws in a sent bubble for a skill it knows (`/ic-logos`) and for a file mention: its business blue and its link blue. Selected by dsh's own `data-ref-chip` hook, which names the kind, not by the hashed class. */ ""}${gated("prose", "[data-ref-chip]")}{color:var(--omc-accent)}${gated("prose", "[data-ref-chip]:hover")},${gated("prose", "[data-ref-chip]:focus")}{color:var(--omc-shimmer);text-decoration-color:var(--omc-shimmer)}${gated("prose", "[data-ref-chip]:focus-visible")}{box-shadow:0 0 0 2px var(--omc-accent)}${gated("prose", "[data-workflow-run] button[data-member-status] [data-member-label]")}{color:var(--omc-accent)}${/* The icon tile on dsh's changed-files card is dsh's link blue; `data-changed-files` is dsh's own hook, and the class is matched by its module suffix since the prefix is generated per build. */ ""}${gated("prose", '[data-changed-files] [class*="_tile"]')}{background:var(--omc-accent)}body[data-omc-panel-open] [data-width-handle]{pointer-events:none}body[data-omc-panel-open] [class*="_toBottomSlot"],body:has([data-omc-cost-dialog]) [class*="_toBottomSlot"]{opacity:0;pointer-events:none;transition:opacity .1s}@keyframes omc-pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--omc-accent) 55%,transparent)}100%{box-shadow:0 0 0 12px transparent}}${gated("panel", 'button[aria-label="Oh My Claude"][data-omc-pulse]', false)}{animation:omc-pulse 1.1s ease-out 3}@media (prefers-reduced-motion:reduce){button[aria-label="Oh My Claude"][data-omc-pulse]{animation:none}}${gated("prose", "[data-produced-files-row] button")},${gated("prose", "[data-presented-files-row] button")}{color:var(--omc-accent)}${gated("prose", "[data-produced-files-row] button:hover")},${gated("prose", "[data-presented-files-row] button:hover")}{color:var(--omc-shimmer)}body[data-omc-claude] [data-composer-stats]{padding-left:8px;padding-right:8px}${gated("prose", '[class*="_optionLine"]>[class*="_badge"]')}{background:color-mix(in srgb,var(--omc-accent) 16%,transparent);color:var(--omc-accent)}[data-omc-cost-over]{color:var(--omc-accent)}${gated("row", 'svg[data-state="ongoing"]')}{--dsh-state-ongoing:var(--omc-accent);color:var(--omc-accent)}${RAINBOW_CSS}${COST_DIALOG_CSS}`;
+  styleEl.textContent = `${gated("row", '[role="status"][aria-live="polite"]:not([class*="visuallyHidden"])')},${gated("row", "[data-dsh-oh-my-claude-turn]", false)}{background-image:var(--omc-row-bg,linear-gradient(90deg,var(--omc-accent) 0%,var(--omc-accent) 40%,var(--omc-shimmer) 50%,var(--omc-accent) 60%,var(--omc-accent) 100%))}@keyframes omc-word{from{-webkit-text-fill-color:var(--omc-word-lo)}to{-webkit-text-fill-color:var(--omc-word-hi)}}[data-omc-turn-word]{animation:omc-word 1s ease-in-out 3s infinite alternate}@media (prefers-reduced-motion:reduce){[data-omc-turn-word]{animation:none}}[data-dsh-oh-my-claude-turn]>span[aria-hidden]{display:inline-block;width:1.3em;text-align:start;flex:none}[data-dsh-oh-my-claude-turn]{max-width:100%;min-width:0}[data-omc-turn-detail]{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}button[data-turn-process]:has([data-omc-turn-line])>span:not([data-omc-turn-line]){display:none}[data-omc-turn-line]{background-clip:text;-webkit-background-clip:text;color:transparent;-webkit-text-fill-color:transparent;background-size:200% 100%;animation:omc-verb-sheen 2.6s linear infinite;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-flex;align-items:center;gap:2px}@keyframes omc-verb-sheen{from{background-position:200% 0}to{background-position:-200% 0}}@media (prefers-reduced-motion:reduce){[data-omc-turn-line]{animation:none}}button[data-turn-process]:has([data-omc-turn-line]){min-width:0;max-width:100%}${gated("panel", "[data-omc-login-card] button:hover", false)},${gated("panel", "[data-omc-login-card] button:focus-visible", false)},${gated("panel", "[data-omc-update-card] button:not(:disabled):hover", false)},${gated("panel", "[data-omc-update-card] button:focus-visible", false)}{color:var(--omc-accent)!important;border-color:var(--omc-accent)!important}${controlStatesCss("[data-omc-settings]")}${controlStatesCss('[role="dialog"][aria-label="Oh My Claude"]')}${/* !important: the buttons carry their border inline (`btn`), which beats any sheet rule. */ ""}${gated("panel", '[data-omc-settings] button:not([role="switch"]):not([aria-expanded]):not(:disabled):hover', false)},${gated("panel", '[data-omc-settings] button:not([role="switch"]):not([aria-expanded]):focus-visible', false)},${gated("panel", '[role="dialog"][aria-label="Oh My Claude"] button:not([role="switch"]):not([aria-expanded]):not(:disabled):hover', false)},${gated("panel", '[role="dialog"][aria-label="Oh My Claude"] button:not([role="switch"]):not([aria-expanded]):focus-visible', false)}{color:var(--omc-accent)!important;border-color:var(--omc-accent)!important}[data-omc-card]:hover{border-color:var(--dsw-alias-label-dimmed,rgba(128,128,128,.5))}[data-omc-card]>button:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#3b82f6);outline-offset:-2px}[data-omc-card]>button:hover{background:none}@keyframes omc-sheen{from{background-position:200% 0}to{background-position:-200% 0}}[data-omc-skeleton]{border-radius:6px;background:linear-gradient(90deg,${T.border} 30%,${T.hover} 50%,${T.border} 70%);background-size:200% 100%;animation:omc-sheen 1.4s linear infinite}@keyframes omc-rise{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}@keyframes omc-drain{from{width:100%}to{width:0}}[data-omc-arrived]{animation:omc-rise .18s ease-out}@media (prefers-reduced-motion:reduce){[data-omc-skeleton],[data-omc-arrived]{animation:none}}${gated("prose", '[role="tablist"]>[role="tab"][aria-selected="true"]')}{color:var(--omc-accent)}${gated("prose", '[role="tablist"]>[role="tab"][aria-selected="true"]::after')}{background:var(--omc-accent)}${gated("prose", '[class*="_markdown"] blockquote')}{border-left-color:color-mix(in srgb,var(--omc-accent) 50.2%,transparent)}${gated("prose", '[class*="_markdown"] hr')}{background:color-mix(in srgb,var(--omc-accent) 34.9%,transparent)}${gated("prose", '[class*="_markdown"] a')}{color:var(--omc-accent);text-decoration-color:color-mix(in srgb,var(--omc-accent) 40%,transparent)}${gated("prose", '[class*="_markdown"] a:hover')}{color:var(--omc-shimmer);text-decoration-color:var(--omc-shimmer)}${gated("prose", '[class*="_markdown"] input[type="checkbox"]')}{accent-color:var(--omc-accent)}${/* The chips dsh draws in a sent bubble for a skill it knows (`/ic-logos`) and for a file mention: its business blue and its link blue. Selected by dsh's own `data-ref-chip` hook, which names the kind, not by the hashed class. */ ""}${gated("prose", "[data-ref-chip]")}{color:var(--omc-accent)}${gated("prose", "[data-ref-chip]:hover")},${gated("prose", "[data-ref-chip]:focus")}{color:var(--omc-shimmer);text-decoration-color:var(--omc-shimmer)}${gated("prose", "[data-ref-chip]:focus-visible")}{box-shadow:0 0 0 2px var(--omc-accent)}${gated("prose", "[data-workflow-run] button[data-member-status] [data-member-label]")}{color:var(--omc-accent)}${/* The icon tile on dsh's changed-files card is dsh's link blue; `data-changed-files` is dsh's own hook, and the class is matched by its module suffix since the prefix is generated per build. */ ""}${gated("prose", '[data-changed-files] [class*="_tile"]')}{background:var(--omc-accent)}body[data-omc-panel-open] [data-width-handle]{pointer-events:none}body[data-omc-panel-open] [class*="_toBottomSlot"],body:has([data-omc-cost-dialog]) [class*="_toBottomSlot"]{opacity:0;pointer-events:none;transition:opacity .1s}@keyframes omc-pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--omc-accent) 55%,transparent)}100%{box-shadow:0 0 0 12px transparent}}${gated("panel", 'button[aria-label="Oh My Claude"][data-omc-pulse]', false)}{animation:omc-pulse 1.1s ease-out 3}@media (prefers-reduced-motion:reduce){button[aria-label="Oh My Claude"][data-omc-pulse]{animation:none}}${gated("prose", "[data-produced-files-row] button")},${gated("prose", "[data-presented-files-row] button")}{color:var(--omc-accent)}${gated("prose", "[data-produced-files-row] button:hover")},${gated("prose", "[data-presented-files-row] button:hover")}{color:var(--omc-shimmer)}body[data-omc-claude] [data-composer-stats]{padding-left:8px;padding-right:8px}${gated("prose", '[class*="_optionLine"]>[class*="_badge"]')}{background:color-mix(in srgb,var(--omc-accent) 16%,transparent);color:var(--omc-accent)}[data-omc-cost-over]{color:var(--omc-accent)}${gated("row", 'svg[data-state="ongoing"]:not([role="treeitem"] *)')},${gated("row", '[role="treeitem"][data-omc-claude] svg[data-state="ongoing"]', false)}{--dsh-state-ongoing:var(--omc-accent);color:var(--omc-accent)}${RAINBOW_CSS}${COST_DIALOG_CSS}`;
   document.head.appendChild(styleEl);
 };
 
@@ -4844,6 +4855,51 @@ function watchTurnStatus(ctx: ClientCtx) {
 const spinnerRowTitle = (dot: Element): string | null =>
   dot.closest("span")?.nextElementSibling?.textContent?.trim() ?? null;
 
+/** The mark the slot paints on a running Claude session's row, so the scan reads a per-row flag
+ *  instead of matching each dot to a session by title. Reuses the value the body carries
+ *  (`data-omc-claude`), so one flag names both the open session and its running rows. */
+const ROW_MARK = "data-omc-claude";
+/** Whether the row-mark entry registered: the scan then reads the per-row mark, and falls back to
+ *  the title match on a dsh without the row-action slot. */
+let markActive = false;
+/** displayTitles of the sessions that are both running and on a Claude mount this instant: the
+ *  scan's title-match fallback on a dsh without the row-action slot. */
+export const claudeRunningTitles = (ctx: ClientCtx): Set<string> => {
+  const set = new Set<string>();
+  const snap = ctx.sessions.list.getSnapshot();
+  if (!snap) return set;
+  for (const [id, s] of Object.entries(snap.byId))
+    if (s.running && s.displayTitle && isClaudeSession(ctx, id)) set.add(s.displayTitle.trim());
+  return set;
+};
+/**
+ * The row-action occupant dsh mounts at the end of every session row (hidden until hover, mounted
+ * at rest): it draws nothing and marks its own row with `data-omc-claude` while the session is
+ * running on a Claude mount. The row is its nearest treeitem, found from the element it renders,
+ * so the mark follows the session id dsh handed the slot and never a title. Re-read on every list
+ * change (running flips, model switches), cleared on unmount and when the session stops qualifying.
+ */
+function RowMark({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    const treeRow = ref.current?.closest('[role="treeitem"]');
+    if (!treeRow) return;
+    const refresh = () => {
+      const s = ctx.sessions.list.getSnapshot()?.byId[sessionId];
+      const want = s?.running === true && isClaudeSession(ctx, sessionId);
+      if (want) treeRow.setAttribute(ROW_MARK, "1");
+      else treeRow.removeAttribute(ROW_MARK);
+    };
+    refresh();
+    const off = ctx.sessions.list.subscribe?.(refresh);
+    return () => {
+      off?.();
+      treeRow.removeAttribute(ROW_MARK);
+    };
+  }, [sessionId, ctx]);
+  return <span ref={ref} hidden data-omc-row-mark={sessionId} />;
+}
+
 /** The composer's primary send/stop button shares the local CSS-module class `_primary` with one
  *  button in a settings view, so class alone is not enough. The real one shares an ancestor with
  *  the message box (a contenteditable). Walk up until an ancestor holds one; null means it is not
@@ -5080,46 +5136,37 @@ function watchUltrathink(ctx: ClientCtx) {
   });
 }
 
-/** Tint this session's running Claude mounts' spinners orange, rescanning every second while the
- *  tab is visible, waking on visibilitychange, and leaving other providers' spinners alone. */
+/** Keep the composer's send button on the accent while the open session is Claude, and, only on a
+ *  dsh without the row-action slot, tint the running Claude rows' sidebar glyphs by title match.
+ *  Runs once a second while the tab is visible, waking on visibilitychange; everywhere else the
+ *  running glyphs are coloured by the stylesheet off the body and row marks, with no walk. */
 function watchSessionSpinners(ctx: ClientCtx) {
   const MARK = "data-omc-spinner";
   const SEND_MARK = "data-omc-send";
-  // displayTitles of the sessions that are both running and on a Claude mount, this instant.
-  const claudeRunningTitles = (): Set<string> => {
-    const set = new Set<string>();
-    const snap = ctx.sessions.list.getSnapshot();
-    if (!snap) return set;
-    for (const [id, s] of Object.entries(snap.byId))
-      if (s.running && s.displayTitle && isClaudeSession(ctx, id)) set.add(s.displayTitle.trim());
-    return set;
-  };
   const scan = () => {
     // A hidden tab is not being looked at, and this pass is two document-wide queries a second. The
     // visibility listener below runs it once the moment the tab comes back.
     if (document.hidden) return;
-    const claude = claudeRunningTitles();
-    // Every other ongoing matrix square renders inside the open conversation. That set is the
-    // job-list dot in the session header and the same dot dsh shows for subagents, plans and
-    // schedules, so it belongs to whichever session is open. Tint those when that session is a
-    // Claude mount.
     const openClaude = activeClaudeSession(ctx) !== undefined;
-    const openIsClaude = openClaude && hasTheme("row");
-    for (const dot of document.querySelectorAll<SVGElement>('svg[data-state="ongoing"]')) {
-      const inRow = dot.closest('[role="treeitem"]'); // a sidebar session row vs a dot elsewhere
-      let want: boolean;
-      if (inRow) {
+    // The glyphs are tinted by the stylesheet: the ones inside the open conversation off
+    // `body[data-omc-claude]`, a sidebar row's off the `data-omc-claude` mark the row-action slot
+    // paints on its own row. Only a dsh without that slot needs this walk, which tints the running
+    // Claude rows by matching each glyph to a session by title, the identity the mark replaces.
+    if (!markActive) {
+      const titles = claudeRunningTitles(ctx);
+      const rowsOn = hasTheme("row");
+      for (const dot of document.querySelectorAll<SVGElement>(
+        '[role="treeitem"] svg[data-state="ongoing"]',
+      )) {
         const title = spinnerRowTitle(dot);
-        want = title !== null && claude.has(title) && hasTheme("row");
-      } else {
-        want = openIsClaude;
-      }
-      if (want) {
-        dot.style.color = ACCENT;
-        dot.setAttribute(MARK, "1");
-      } else if (dot.hasAttribute(MARK)) {
-        dot.style.color = "";
-        dot.removeAttribute(MARK);
+        const want = rowsOn && title !== null && titles.has(title);
+        if (want) {
+          dot.style.color = ACCENT;
+          dot.setAttribute(MARK, "1");
+        } else if (dot.hasAttribute(MARK)) {
+          dot.style.color = "";
+          dot.removeAttribute(MARK);
+        }
       }
     }
     // The composer's send/stop button (one button, aria-label toggles). dsh fills it from
@@ -9149,16 +9196,88 @@ export function apply(ctx: ClientCtx) {
     return null;
   });
 
-  // Add workspace, with a box to pick it on. Renderless until dsh's sidebar "+" is clicked, and
-  // dormant unless an SSH box is saved; the sidebar footer is where a root-scoped entry stays
-  // mounted whether the sidebar is wide or collapsed.
-  ctx.slots.inject("sidebar.footer.action", () => {
-    ctx.slots.register(
-      { name: "sidebar.footer.action", id: "claude-add-workspace", order: 90 },
-      () => <AddWorkspaceFlow ctx={ctx} />,
+  // Add workspace, with a box to pick it on: the directory picker as a slot occupant in both the
+  // sidebar and the hero, so the dialog is ours on every dsh. Shadowing is per cell, not per
+  // session; priority -1 replaces dsh's picker. The seats are taken only while at least one SSH
+  // box is saved, which is what makes the box dropdown worth the takeover: with none, dsh's own
+  // local-only dialog answers the "+" and the hero button (owner, 2026-09-23). The box list is
+  // reread when the Boxes card saves and when the tab comes back into view, so a box added here or
+  // on another device seats the dialog without a reload, and removing the last one vacates it.
+  // On an older dsh that refuses a second occupant of a cell the register throws, and we take the
+  // sidebar "+" over by click instead until an upgrade; that fallback gates on the boxes itself.
+  {
+    const seats = new Map<string, () => void>();
+    const declared = new Set<{ name: string; id: string }>();
+    let boxed = false;
+    let fallback = false;
+    /** Take one declared cell while a box is saved and it is not ours yet. */
+    const seat = (cell: { name: string; id: string }) => {
+      if (!boxed || seats.has(cell.name) || fallback) return;
+      try {
+        seats.set(
+          cell.name,
+          ctx.slots.register(
+            { name: cell.name, id: cell.id, order: 300, priority: -1 },
+            // SAFETY: `DshSlots.register` types the owner props as the generic session shape, but
+            // dsh's directory-flow slots hand the DirectoryFlowOwnerProps contract; the cast names
+            // the truth.
+            (props) => <AddWorkflow {...(props as DirectoryFlowOwnerProps)} ctx={ctx} />,
+          ),
+        );
+      } catch {
+        // Older dsh refuses a second occupant of a cell; take the sidebar "+" over by click until
+        // an upgrade, when the slot occupant takes over again on the next restart.
+        fallback = true;
+        ctx.slots.inject("sidebar.footer.action", () => {
+          ctx.slots.register(
+            { name: "sidebar.footer.action", id: "claude-add-workspace", order: 90 },
+            () => <AddWorkspaceFlow ctx={ctx} />,
+          );
+          return null;
+        });
+      }
+    };
+    /** Hand every seat back to dsh's own picker. */
+    const vacate = () => {
+      for (const off of seats.values()) off();
+      seats.clear();
+    };
+    const refresh = () =>
+      fetch(`${ROUTE}/ssh-boxes`)
+        .then((r) => readJson<{ boxes?: unknown[] }>(r))
+        .then((b) => {
+          boxed = (b.boxes?.length ?? 0) > 0;
+          if (boxed) for (const cell of declared) seat(cell);
+          else vacate();
+        })
+        .catch(() => {
+          // The route is down; the seats stay as they were until the next reread.
+        });
+    for (const cell of [
+      { name: "sidebar.workspaces.directoryFlow", id: "oh-my-claude-workflow" },
+      { name: "conversation.hero.workspace.directoryFlow", id: "oh-my-claude-workflow-hero" },
+    ]) {
+      ctx.slots.inject(cell.name, () => {
+        declared.add(cell);
+        seat(cell);
+        return null;
+      });
+    }
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void refresh();
+    };
+    window.addEventListener(BOXES_EVENT, refresh);
+    document.addEventListener("visibilitychange", onVisible);
+    void refresh();
+    ctx.effect?.(
+      () => () => {
+        window.removeEventListener(BOXES_EVENT, refresh);
+        document.removeEventListener("visibilitychange", onVisible);
+        vacate();
+      },
+      "add-workspace-seats",
     );
-    return null;
-  });
+  }
 
   // Header chips in the session header.
   ctx.slots.inject("conversation.session.header.actions", () => {
@@ -9169,19 +9288,113 @@ export function apply(ctx: ClientCtx) {
     return null;
   });
 
-  // One Oh My Claude control in the composer's left group replaces the five separate buttons.
-  // The slot must be declared through `inject` before anything registers into it.
+  // One Oh My Claude control in the composer's left group.
   ctx.slots.inject("conversation.input.left", () => {
-    // Lookalike shield replaces dsh's trigger inside Claude sessions only.
-    ctx.slots.register(
-      { name: "conversation.input.left", id: "claude-access", order: 40 },
-      (props) => (props.sessionId ? <AccessShield sessionId={props.sessionId} ctx={ctx} /> : null),
-    );
     ctx.slots.register(
       { name: "conversation.input.left", id: "oh-my-claude", order: 50 },
       // Session-scoped slots receive `sessionId` (dsh-client-ui-jobs reads it the same way).
       (props) =>
         props.sessionId ? <OhMyClaudeControl sessionId={props.sessionId} ctx={ctx} /> : null,
+    );
+    return null;
+  });
+
+  // The running Claude rows carry `data-omc-claude`, which the spinner scan reads instead of
+  // matching each dot to a session by title. dsh's row-action strip is a list slot fed the row's
+  // session id, so one renderless entry per row can mark its own row. A dsh without that slot
+  // never runs the inject callback, and the scan keeps its title match.
+  ctx.slots.inject("sidebar.workspaces.session.row.action", () => {
+    try {
+      const off = ctx.slots.register(
+        { name: "sidebar.workspaces.session.row.action", id: "oh-my-claude-mark", order: 300 },
+        (props) => (props.sessionId ? <RowMark sessionId={props.sessionId} ctx={ctx} /> : null),
+      );
+      markActive = true;
+      // The flag is module state and the entry is not: when dsh retires the entry (a redeclared
+      // slot, a hot reload's old context) the scan has to go back to its title match.
+      ctx.effect?.(
+        () => () => {
+          off();
+          markActive = false;
+        },
+        "row-mark-entry",
+      );
+    } catch {
+      // A dsh that refuses the entry leaves the scan on its title match.
+      markActive = false;
+    }
+    return null;
+  });
+
+  // The permission control takes over dsh's composer permission slot (a single cell). Shadowing is
+  // per cell, not per session, so this would also replace dsh's control in a non-Claude session;
+  // register the entry only while the current session is Claude and dispose it otherwise, following
+  // the model picker the way useActiveClaude does. On an older dsh that refuses a second occupant
+  // of the cell the register throws, and we fall back to the DOM-mutating AccessShield in
+  // conversation.input.left.
+  ctx.slots.inject("conversation.input.permission", () => {
+    let dispose: (() => void) | undefined;
+    // The active session's model-directory store, so a model switch off a Claude mount re-reads.
+    // Subscribed once per session, never re-subscribed from inside its own notification: a
+    // listener that leaves and rejoins a Set while it is being iterated is visited again, and the
+    // tab spins forever.
+    let providerOff: (() => void) | undefined;
+    let providerFor: string | undefined;
+    const stopProvider = () => {
+      try {
+        providerOff?.();
+      } catch {
+        // A disposed context retires the bundle on its own.
+      }
+      providerOff = undefined;
+      providerFor = undefined;
+    };
+    const sync = () => {
+      const active = activeClaudeSession(ctx);
+      if (active !== providerFor) {
+        stopProvider();
+        if (active) {
+          providerFor = active;
+          try {
+            providerOff = ctx.modelDirectories.directoryFor(active).store.subscribe(sync);
+          } catch {
+            // Unbound in this tab; the list store below still reports the session identity.
+          }
+        }
+      }
+      if (active && !dispose) {
+        try {
+          dispose = ctx.slots.register(
+            {
+              name: "conversation.input.permission",
+              id: "oh-my-claude-access",
+              order: 30,
+              priority: -1,
+            },
+            (props) => <AccessTrigger sessionId={props.sessionId ?? active} ctx={ctx} />,
+          );
+        } catch {
+          // Older dsh refuses a second occupant of the cell; keep the old AccessShield.
+          dispose = ctx.slots.register(
+            { name: "conversation.input.left", id: "claude-access", order: 40 },
+            (props) =>
+              props.sessionId ? <AccessShield sessionId={props.sessionId} ctx={ctx} /> : null,
+          );
+        }
+      } else if (!active && dispose) {
+        dispose();
+        dispose = undefined;
+      }
+    };
+    const listOff = ctx.sessions.list.subscribe?.(sync);
+    sync();
+    ctx.effect?.(
+      () => () => {
+        listOff?.();
+        stopProvider();
+        dispose?.();
+      },
+      "permission-access-sync",
     );
     return null;
   });

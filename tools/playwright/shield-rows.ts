@@ -1,6 +1,8 @@
-// Dev-only: proves the six Claude permission rows still reach dsh's access-shield menu. dsh owns
-// that menu, so a dsh upgrade can silently drop our injection (0.1.5 removed the aria-expanded
-// attribute the observer used to gate on). Point PLAYWRIGHT_ROOT at any project with Playwright
+// Dev-only: proves the permission control still opens dsh's access menu. Task 1 moved the control
+// into dsh's `conversation.input.permission` slot (an AccessTrigger), so dsh renders the menu and
+// its access modes itself; the old DOM-mutating AccessShield is now only the fallback when an older
+// dsh refuses the slot. A dsh upgrade can still silently drop the slot, so this proves the menu
+// still opens and shows the access rows. Point PLAYWRIGHT_ROOT at any project with Playwright
 // installed; arg 1 is the dsh launch token; PW_SESSION names the session row to open.
 import { dshUrl, launch } from "./pw.js";
 
@@ -32,11 +34,16 @@ console.log(
 );
 await shield.click();
 await p.waitForTimeout(1500);
-const items = await p.locator('[role="menu"] [role="menuitem"]').allTextContents();
-console.log("menu items:", JSON.stringify(items));
-const marked = await p.locator('[role="menu"] [data-mode]').count();
-console.log("our injected rows:", marked);
-const wraps = await p.locator("[role='menu'] [class*='itemWrap']").count();
-console.log("itemWrap count:", wraps);
+// dsh renders the access rows as a radio group; the group size is the number of access modes.
+const radio = p.locator('[role="menu"] [role="menuitemradio"]');
+const items = await radio.allTextContents();
+const setsize = await radio.first().getAttribute("aria-setsize");
+console.log("access modes:", JSON.stringify(items.map((t) => t.trim())));
+console.log("radio setsize:", setsize);
 console.log("menu html head:", (await p.locator('[role="menu"]').last().innerHTML()).slice(0, 700));
+console.log(
+  setsize && Number(setsize) > 0
+    ? "VERDICT: access menu opened, " + setsize + " modes"
+    : "VERDICT: access menu did not open",
+);
 await b.close();
