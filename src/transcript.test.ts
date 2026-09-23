@@ -98,6 +98,44 @@ const transcript = [
 
 const folded = foldTranscript(transcript);
 assert.equal(folded.title, "Fix the widget");
+assert.equal(folded.permissionMode, undefined, "rows without the field leave it unset");
+// The CLI stamps each prompt row with the mode it ran under; the last one is the session's.
+assert.equal(
+  foldTranscript(
+    [
+      line({
+        type: "user",
+        uuid: "p1",
+        timestamp: T,
+        permissionMode: "default",
+        message: { role: "user", content: "a" },
+      }),
+      line({
+        type: "assistant",
+        uuid: "r1",
+        timestamp: T,
+        message: { id: "m9", model: "x", content: [{ type: "text", text: "ok" }] },
+      }),
+      line({
+        type: "user",
+        uuid: "p2",
+        timestamp: T,
+        permissionMode: "bypassPermissions",
+        message: { role: "user", content: "b" },
+      }),
+      line({
+        type: "user",
+        uuid: "p3",
+        timestamp: T,
+        isSidechain: true,
+        permissionMode: "plan",
+        message: { role: "user", content: "c" },
+      }),
+    ].join("\n"),
+  ).permissionMode,
+  "bypassPermissions",
+  "last main-line prompt wins; a sidechain row does not count",
+);
 assert.equal(folded.turns.length, 1, "unanswered trailing prompt is dropped");
 // SAFETY: turns.length is 1 so turns[0] is defined
 const firstText = folded.turns[0]!.content[0]!.text;
@@ -109,7 +147,13 @@ assert.ok(md.includes(firstText));
 assert.equal(md.split("## You").length - 1, folded.turns.length);
 assert.ok(md.endsWith("\n") && !md.endsWith("\n\n"));
 assert.equal(
-  toMarkdown({ turns: [], title: undefined, createdAt: 0, agents: new Map() }),
+  toMarkdown({
+    turns: [],
+    title: undefined,
+    createdAt: 0,
+    agents: new Map(),
+    permissionMode: undefined,
+  }),
   "# Claude Code session\n\n_1970-01-01T00:00:00.000Z_\n",
 );
 const [turn] = folded.turns;

@@ -629,6 +629,9 @@ export interface PermissionModeInfo {
   ceiling: string;
   /** Permission modes the client may pick (at or below the ceiling). */
   allowed: readonly string[];
+  /** The mode the session's running Claude process is in, or null when no process is alive. It
+   *  lags `mode` after a pick the CLI could not take live; the next turn spawns with `mode`. */
+  liveMode: string | null;
 }
 export interface PermissionModeReply extends PermissionModeInfo {
   /** A live process was told; false when the override only applies at the next spawn. */
@@ -1462,6 +1465,19 @@ export function accessModeOf(messages: LooseMessage[] | undefined): string | und
     if (found) mode = found[1];
   }
   return mode;
+}
+
+/** dsh's approval-policy line rides in the same runtime-context injection as the file policy, and
+ *  only while the policy is "never"; the last snapshot wins, so a switch back to "ask" clears it. */
+export function approvalsDisabled(messages: LooseMessage[] | undefined): boolean {
+  let disabled = false;
+  for (const m of messages ?? []) {
+    if (m.role !== "user") continue;
+    const text = textOf(m.content);
+    if (!text.includes("Current DSH file policy:")) continue;
+    disabled = text.includes("Approval prompts are disabled in this session");
+  }
+  return disabled;
 }
 
 /** The CLI's permission mode for a turn: the configured one, or the one dsh's access mode maps to. */
@@ -2332,6 +2348,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   permissionModes: Map<string, string | null>;
   /** dsh access mode seen on each session's last turn, so the effective mode can be reported. */
   accessModes: Map<string, string | undefined>;
+  /** Sessions whose last runtime snapshot said dsh auto-denies every approval ask. */
+  approvalsOff: Set<string>;
   /** Callers waiting for the CLI's `control_response` to a request this plugin sent, by request id. */
   controlWaiters: Map<string, (reply: ControlReply) => void>;
   /** The rules recent approval requests suggest, newest last, per session. */
@@ -2411,6 +2429,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         (level, msg) => this.log(level, msg),
       );
     this.accessModes = new Map();
+    this.approvalsOff = new Set();
     this.controlWaiters = new Map();
     loadPermissionModes(this.stateDir)
       .then((modes) => {
@@ -2962,7 +2981,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     if (notes) prompt = `${prompt}\n\n${notes}`;
     const model = options.purpose === "session-title" ? this.config.titleModel : options.model;
     const accessMode = accessModeOf(options.messages);
-    if (options.sessionId) this.accessModes.set(options.sessionId, accessMode);
+    if (options.sessionId) {
+      this.accessModes.set(options.sessionId, accessMode);
+      if (approvalsDisabled(options.messages)) this.approvalsOff.add(options.sessionId);
+      else this.approvalsOff.delete(options.sessionId);
+    }
     const effectivePermissionMode = options.sessionId
       ? this.getPermissionMode(options.sessionId, accessMode)
       : undefined;
@@ -3201,12 +3224,14 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // config's own default applies, never the loosest mode.
     const ceiling = permissionModeFor(this.config, accessMode ?? undefined);
     const allowed = isPermissionMode(ceiling) ? modesUpTo(ceiling) : PERMISSION_MODES;
+    const proc = this.processes.get(registryKey(this.providerId, sessionId));
     return {
       mode: this.getPermissionMode(sessionId, accessMode ?? undefined),
       override,
       accessMode,
       ceiling,
       allowed,
+      liveMode: proc?.alive ? proc.liveMode : null,
     };
   }
 
@@ -3214,6 +3239,15 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    * Store a session's permission mode override (null clears it) and, when that session's Claude
    * process is alive, switch it live with a `set_permission_mode` control request. The CLI reads
    * stdin during a turn; between turns the line is queued and answered when the next turn opens.
+   *
+   * Bypass is the exception: the CLI answers `Cannot set permission mode to bypassPermissions
+   * because the session was not launched with --dangerously-skip-permissions` on any process that
+   * did not start in bypass (probed on 2.1.280: a `--permission-mode bypassPermissions` launch
+   * counts as the flag). That request is not sent; the stored mode joins the spec key, so the
+   * session's next turn respawns in bypass, and the reply says so with `live: false` and a
+   * `liveMode` that still names the old mode. Wrong case: a process that was switched out of
+   * bypass live would take bypass back live, but its `spec.mode` says bypass so it does; a process
+   * launched below bypass can never be switched up live, whatever it was set to since.
    */
   async setPermissionMode(sessionId: string, mode: string | null): Promise<PermissionModeReply> {
     let info = this.permissionModeInfo(sessionId);
@@ -3231,13 +3265,29 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     info = this.permissionModeInfo(sessionId);
     const proc = this.processes.get(registryKey(this.providerId, sessionId));
     if (!proc?.alive) return { ...info, live: false };
+    if (info.mode === "bypassPermissions" && proc.spec.mode !== "bypassPermissions")
+      return { ...info, live: false };
     // 5 s: the CLI answers at once when it reads stdin; a longer wait would only stall the chip.
     const reply = await this.control(
       proc,
       { subtype: "set_permission_mode", mode: info.mode },
       5000,
     );
-    return reply.ok ? { ...info, live: true } : { ...info, live: true, error: reply.error };
+    if (!reply.ok) return { ...info, live: true, error: reply.error };
+    proc.liveMode = info.mode;
+    return { ...this.permissionModeInfo(sessionId), live: true };
+  }
+
+  /**
+   * Remember the mode a transcript ran under as the session's override, with no ceiling check and
+   * no live switch: the caller is opening a past CLI session in dsh, and `getPermissionMode` clamps
+   * the override to dsh's access mode at every spawn, so a bypass transcript opened under a
+   * workspace-write shield runs as acceptEdits. An unknown mode is ignored.
+   */
+  async restorePermissionMode(sessionId: string, mode: string): Promise<void> {
+    if (!isPermissionMode(mode)) return;
+    await savePermissionMode(this.stateDir, sessionId, mode);
+    this.permissionModes.set(sessionId, mode);
   }
 
   /**
@@ -6376,6 +6426,13 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       this.permissionAsks.set(sessionId, asks.slice(-ASK_SUGGESTIONS));
     }
     if (outcome === "allowed-once") return allowResult(toolUseId, input);
+    // Under dsh's "never" policy every ask comes back rejected without anyone seeing it, and "the
+    // user denied" would send Claude arguing with a person who was never asked.
+    if (outcome === "rejected" && sessionId !== undefined && this.approvalsOff.has(sessionId))
+      return denyResult(
+        toolUseId,
+        "dsh auto-denied this action: approval prompts are disabled in this session, so nobody was asked. The user can re-enable approvals in dsh or pick the Bypass permission mode.",
+      );
     return denyResult(
       toolUseId,
       outcome === "rejected" ? "The user denied this action in dsh." : `approval ${outcome}`,
@@ -6783,6 +6840,8 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
         info: (sessionId: string) => adapter.ownerFor(sessionId).permissionModeInfo(sessionId),
         set: (sessionId: string, mode: string | null) =>
           adapter.ownerFor(sessionId).setPermissionMode(sessionId, mode),
+        restore: (sessionId: string, mode: string) =>
+          adapter.ownerFor(sessionId).restorePermissionMode(sessionId, mode),
       },
       contextUsage: (sessionId: string) => adapter.ownerFor(sessionId).contextUsage(sessionId),
       skillDoctor: (sessionId: string) => adapter.ownerFor(sessionId).skillDoctor(sessionId),

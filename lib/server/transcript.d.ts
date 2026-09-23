@@ -92,6 +92,9 @@ export interface FoldedTranscript {
     createdAt: number;
     /** Task call id to the subagent that answered it, for the records kept in a file of their own. */
     agents: Map<string, string>;
+    /** `permissionMode` of the last prompt row, the mode the CLI ran that session in; undefined on
+     *  a transcript older than the field. */
+    permissionMode: string | undefined;
 }
 /** Folds raw transcript lines into turns, dropping injected noise (slash-command echoes, hook
  *  output) but never a message the CLI removed: it keeps such a line and folds it at its own prompt

@@ -1300,6 +1300,7 @@ const responder =
       sessionId: id,
       cwd,
       timestamp: "2026-09-05T10:00:00Z",
+      permissionMode: "bypassPermissions",
       message: { role: "user", content: [{ type: "text", text: "hi" }] },
     }) +
       line({
@@ -1379,6 +1380,7 @@ const responder =
   // workspace attach names a session whose log is already on disk.
   let r = await run({ inStore: false, persisted: false, archived: false });
   assert.equal(r.out.existed, false);
+  assert.equal(r.out.permissionMode, "bypassPermissions", "the mode the transcript ran under");
   assert.deepEqual(r.calls, ["create", "append", "flush", "close"]);
   assert.equal(r.written?.header.id, id);
   assert.equal(r.written?.header.cwd, cwd);
@@ -1393,6 +1395,7 @@ const responder =
   // Already in the store ("Show"): no seed, still attached.
   r = await run({ inStore: true, persisted: true, archived: false });
   assert.equal(r.out.existed, true);
+  assert.equal(r.out.permissionMode, undefined, "a session dsh already has keeps its own pick");
   assert.deepEqual(r.calls, []);
   assert.deepEqual(r.attached, [{ id, events: 0 }]);
   // Archived while the store still holds it: the early return used to skip the unarchive, and the

@@ -701,6 +701,10 @@ export interface WaitingSteer {
  */
 export declare class ClaudeProcess {
     spec: ClaudeProcessSpec;
+    /** The permission mode the CLI is running in right now: `spec.mode` at spawn, then whatever the
+     *  last accepted `set_permission_mode` set. `spec.mode` stays the launch mode on purpose, since
+     *  the CLI takes a live switch to bypassPermissions only from a process launched in it. */
+    liveMode: string;
     args: string[];
     cwd: string;
     busy: boolean;

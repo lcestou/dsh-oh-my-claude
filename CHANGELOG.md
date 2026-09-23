@@ -46,6 +46,16 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
   open. It went orange with the rest, since the rule reached every running glyph on the page; the
   sidebar rows now take the orange only from the mark on a running Claude row, and turn it on and
   off the instant the row's state flips rather than on the next one-second pass.
+- The permission capsule shows the mode Claude is running in, not the last pick. Picking Bypass on
+  a session whose process started in another mode used to get the CLI's refusal as raw text, and a
+  later look showed Bypass while every tool call was still being denied. Bypass is now stored for
+  the next turn, which respawns the process in it, and the menu says "Bypass · full access takes
+  effect on the next turn" until then. A transcript opened from the terminal keeps the permission
+  mode it ran under instead of the workspace default. When dsh's approval prompts are switched
+  off, a denied tool call tells Claude that dsh auto-denied it and nobody was asked, instead of
+  "the user denied this action".
+- The permission capsule no longer catches clicks far above and below itself. Its label had a
+  line height of 260 px inside a 28 px button, so a click in the composer near it opened the menu.
 
 ### Fixed
 
