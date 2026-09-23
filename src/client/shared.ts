@@ -501,19 +501,22 @@ export const claudeMount = (provider: string | undefined): string | undefined =>
  *  non-Claude session. */
 export const claudeProviderOf = (ctx: ClientCtx, id: string): string | undefined => {
   try {
-    const live = claudeMount(
-      ctx.modelDirectories.directoryFor(id).store.getSnapshot().current?.provider,
-    );
-    if (live !== undefined) return live;
+    const live = ctx.modelDirectories.directoryFor(id).store.getSnapshot().current?.provider;
+    // A live provider is the answer, Claude or not. Falling through on a non-Claude one used to
+    // land on `lastUsed` below, so a session that had run a Claude turn and then switched to
+    // another provider kept the Claude control and the ✻ button (owner, 2026-09-23).
+    if (live !== undefined) return claudeMount(live);
   } catch {
     // `directoryFor` needs a scope and a binding, and dsh only holds those for a session this tab
     // has opened. A session running in the sidebar and never clicked throws here, which used to
     // read as "not a Claude session" and left its row painted in dsh's blue until it was opened.
   }
   // The cold summary answers for the rest: dsh keeps the last and next model selection in the list
-  // projection so a session can be described without being activated.
+  // projection so a session can be described without being activated. A pending pick outranks the
+  // last request for the same reason as above: it is the newer truth, whichever provider it names.
   const sel = ctx.sessions.list.getSnapshot()?.byId[id]?.projectionValues?.modelSelection;
-  return claudeMount(sel?.next?.provider) ?? claudeMount(sel?.lastUsed?.provider);
+  if (sel?.next?.provider !== undefined) return claudeMount(sel.next.provider);
+  return claudeMount(sel?.lastUsed?.provider);
 };
 
 /**

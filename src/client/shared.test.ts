@@ -57,6 +57,40 @@ assert.equal(
   undefined,
 );
 assert.equal(claudeProviderOf(coldCtx(undefined), "s1"), undefined);
+// A pending pick of another provider wins over a Claude turn that already ran: the switch is the
+// newer truth, and reading `lastUsed` past it kept the Claude control on a session moved to dsh.
+assert.equal(
+  claudeProviderOf(
+    coldCtx({ lastUsed: { provider: "claude-code" }, next: { provider: "deepseek" } }),
+    "s1",
+  ),
+  undefined,
+);
+
+// An opened session has a live model directory, and its current provider is the answer whether or
+// not it is Claude: a non-Claude read must not fall through to a stale Claude `lastUsed`.
+const liveCtx = (provider: string, modelSelection: unknown): ClientCtx =>
+  ({
+    modelDirectories: {
+      directoryFor: () => ({ store: { getSnapshot: () => ({ current: { provider } }) } }),
+    },
+    sessions: {
+      list: {
+        getSnapshot: () => ({ byId: { s1: { id: "s1", projectionValues: { modelSelection } } } }),
+      },
+    },
+  }) as unknown as ClientCtx;
+assert.equal(
+  claudeProviderOf(
+    liveCtx("deepseek", { lastUsed: { provider: "claude-code" }, next: null }),
+    "s1",
+  ),
+  undefined,
+);
+assert.equal(
+  claudeProviderOf(liveCtx("claude-code-nova", { lastUsed: { provider: "deepseek" } }), "s1"),
+  "claude-code-nova",
+);
 
 assert.equal(numberOr(5), 5);
 assert.equal(numberOr(true), undefined);
