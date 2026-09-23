@@ -177,8 +177,7 @@ export function subscribe<K extends keyof EventData>(kind: K, fn: Listener<K>): 
 }
 
 /** One of KINDS, or undefined for an event name the server never sends. */
-const kindOf = (name: string): keyof EventData | undefined =>
-  KINDS.find((k) => k === name);
+const kindOf = (name: string): keyof EventData | undefined => KINDS.find((k) => k === name);
 
 // One watcher for the bundle, not one per open: `whenContextGone` keeps every closure it is given.
 whenContextGone(() => {
@@ -207,7 +206,10 @@ export function openStream(session: string | null): void {
     try {
       // SAFETY: our own server wrote this frame (src/events.ts `frame`): `{ session, data }` with
       // `data` the matching route's body for `kind`
-      const body = JSON.parse(String(ev.data)) as { session: string | null; data: EventData[typeof kind] };
+      const body = JSON.parse(String(ev.data)) as {
+        session: string | null;
+        data: EventData[typeof kind];
+      };
       dispatch(kind, body.session, body.data);
     } catch {
       // a malformed frame is dropped; the next snapshot or event replaces it

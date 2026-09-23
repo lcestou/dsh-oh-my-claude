@@ -88,6 +88,7 @@ import { isNewer } from "../update.js";
 import { livingModelId } from "../model-ids.js";
 import type { FallbackRecord } from "../translator.js";
 import { ReportBlock } from "./report.js";
+import { openStream, pollEvery, streamUp, subscribe, type LiveTurnBody } from "./events.js";
 import { ChangelogBlock } from "./changelog.js";
 import { Spark, sparkNode } from "./spark.js";
 import { AccessShield, AccessTrigger, OhMyClaudeControl, sessionLabel } from "./panel.js";
@@ -4187,6 +4188,7 @@ const wireTurnStatus = (
   const stop = () => {
     clearInterval(interval);
     clearInterval(pollTimer);
+    offLive();
     obs.disconnect();
   };
   const interval = setInterval(
@@ -4433,6 +4435,29 @@ const wireTurnStatus = (
     const groups = document.querySelectorAll("button[data-turn-process]");
     return groups[groups.length - 1] !== group;
   };
+  /** Take one body, from the stream or from the fallback read, into the row's figures. True when
+   *  it carried a running turn; false for the empty body. The ages come from the adapter, which
+   *  saw the block open and the last frame land; a tab that opens mid-think would otherwise start
+   *  its own clocks late. An empty body is not an ending: the adapter registers the turn on its
+   *  first frame and clears and remakes the record at tool boundaries, so the figures simply
+   *  pause. The end of the turn is read off dsh in `endedPerDsh`; dsh keeps `data-open` on a
+   *  failed group, which is why the button's own state cannot be the only signal (a turn that
+   *  failed left the line saying "Incubating…" under dsh's "Failed", owner, 2026-09-22). */
+  const applyBody = (b: LiveTurnBody): boolean => {
+    targetChars = (b.tokens ?? 0) * 4;
+    thinkingMs = b.thinkingMs ?? -1;
+    idleMs = b.idleMs ?? -1;
+    tool = b.tool === true;
+    thoughtMs = b.thoughtMs ?? -1;
+    thoughtAgoMs = b.thoughtAgoMs ?? -1;
+    effort = b.effort ?? "";
+    relayName = b.relayName ?? "";
+    relayMs = b.relayMs ?? -1;
+    elapsedMs = b.elapsedMs ?? -1;
+    polledAt = Date.now();
+    return b.elapsedMs !== undefined;
+  };
+  let lastRead = 0;
   const poll = async () => {
     if (!el.isConnected) return;
     if (endedPerDsh()) {
@@ -4443,46 +4468,23 @@ const wireTurnStatus = (
     // A hidden tab paints nothing, so its read would be a round trip for no one; the next beat
     // after it is shown again catches up.
     if (document.hidden) return;
+    // The figures arrive on the event stream; this read is the fallback and runs every 30 s while
+    // the stream is up, once a second when it is not.
+    if (Date.now() - lastRead < pollEvery(true, 1000, 1000)) return;
+    lastRead = Date.now();
     try {
       const r = await fetch(`${ROUTE}/live-turn?session=${encodeURIComponent(sessionId)}`);
-      const b = await readJson<{
-        tokens?: number;
-        thinkingMs?: number;
-        idleMs?: number;
-        tool?: boolean;
-        thoughtMs?: number;
-        thoughtAgoMs?: number;
-        effort?: string;
-        relayName?: string;
-        relayMs?: number;
-        elapsedMs?: number;
-      }>(r);
-      targetChars = (b.tokens ?? 0) * 4;
-      // The ages come from the adapter, which saw the block open and the last frame land; a tab
-      // that opens mid-think would otherwise start its own clocks late.
-      thinkingMs = b.thinkingMs ?? -1;
-      idleMs = b.idleMs ?? -1;
-      tool = b.tool === true;
-      thoughtMs = b.thoughtMs ?? -1;
-      thoughtAgoMs = b.thoughtAgoMs ?? -1;
-      effort = b.effort ?? "";
-      relayName = b.relayName ?? "";
-      relayMs = b.relayMs ?? -1;
-      elapsedMs = b.elapsedMs ?? -1;
-      polledAt = Date.now();
-      // The adapter drops its turn record the moment a turn ends, however it ended, so an empty
-      // answer after a live one is the end of the turn. dsh keeps `data-open` on a failed group,
-      // which is why the button's own state cannot be the only signal: a turn that failed left the
-      // line saying "Incubating…" under dsh's "Failed" (owner, 2026-09-22).
-      // An empty answer is not an ending: the adapter registers the turn on its first frame and
-      // clears and remakes the record at tool boundaries, so the figures simply pause. The end
-      // of the turn is read off dsh in the beat above.
-      if (b.elapsedMs === undefined) return;
+      const b = await readJson<LiveTurnBody>(r);
+      if (!applyBody(b)) return;
     } catch {
       // the row keeps its verb; the bracket is decoration
     }
     paint();
   };
+  const offLive = subscribe("live-turn", (session, data) => {
+    if (session !== sessionId || !el.isConnected) return;
+    if (applyBody(data)) paint();
+  });
   const pollTimer = setInterval(() => void poll(), 1000);
   onTick = paint;
   void poll();
@@ -4524,6 +4526,24 @@ function watchSessionNotices(ctx: ClientCtx) {
   // a baseline and must not fire, or a reload while a prompt is open re-announces a question the
   // person is already reading. Same rule `prev` above follows for `newlyWaiting`.
   let prevAwaiting: Record<string, AwaitingRow> | null = null;
+  let lastRead = 0;
+  /** Diff one awaiting map (from the stream or the fallback read) against the last one and
+   *  announce every Claude session that newly holds a prompt. The first map after a page load
+   *  (`prevAwaiting === null`) is a baseline and fires nothing, whichever way it arrived. */
+  const onSnapshot = (nextAwaiting: Record<string, AwaitingRow>) => {
+    const snap = ctx.sessions.list.getSnapshot();
+    for (const id of newlyAwaiting(prevAwaiting, nextAwaiting, openSessionId(ctx))) {
+      if (!isClaudeSession(ctx, id)) continue;
+      const prompt = nextAwaiting[id];
+      // noUncheckedIndexedAccess makes this read `AwaitingRow | undefined`; a missing row is
+      // not a transition to announce, so skip it rather than pass undefined to `notifyAwaiting`.
+      if (!prompt) continue;
+      waiting.add(id);
+      notifyAwaiting(ctx, id, snap?.byId[id]?.displayTitle ?? id, prompt);
+    }
+    prevAwaiting = nextAwaiting;
+  };
+  whenContextGone(subscribe("awaiting", (_session, data) => onSnapshot(data)));
   // The recap's two settings, kept beside the tick rather than read in it: the tick is synchronous
   // and the store is a fetch. Re-read on the same event the settings switches dispatch, so flipping
   // the switch reaches this watcher without a reload.
@@ -4558,27 +4578,23 @@ function watchSessionNotices(ctx: ClientCtx) {
     // A hidden tab keeps its bookkeeping but makes no request: this was the one unconditional
     // one-a-second poll a background tab still paid.
     if (anyClaudeRunning && !document.hidden) {
-      void fetch(`${ROUTE}/awaiting`)
-        .then((r) => readJson<{ sessions?: Record<string, AwaitingRow> }>(r))
-        .then((body) => {
-          const nextAwaiting = body.sessions ?? {};
-          for (const id of newlyAwaiting(prevAwaiting, nextAwaiting, openSessionId(ctx))) {
-            if (!isClaudeSession(ctx, id)) continue;
-            const prompt = nextAwaiting[id];
-            // noUncheckedIndexedAccess makes this read `AwaitingRow | undefined`; a missing row is
-            // not a transition to announce, so skip it rather than pass undefined to `notifyAwaiting`.
-            if (!prompt) continue;
-            waiting.add(id);
-            notifyAwaiting(ctx, id, snap.byId[id]?.displayTitle ?? id, prompt);
-          }
-          prevAwaiting = nextAwaiting;
-        })
-        .catch(() => {
-          // A failed poll says nothing. The next tick asks again; a prompt is not urgent enough to
-          // report a network error over.
-        });
-    } else {
-      prevAwaiting = null; // back to baseline: the next poll seeds it and does not fire
+      // The map arrives on the event stream; this read is the fallback and runs every 30 s while
+      // the stream is up, once a second when it is not.
+      if (Date.now() - lastRead >= pollEvery(true, 1000, 1000)) {
+        lastRead = Date.now();
+        void fetch(`${ROUTE}/awaiting`)
+          .then((r) => readJson<{ sessions?: Record<string, AwaitingRow> }>(r))
+          .then((body) => onSnapshot(body.sessions ?? {}))
+          .catch(() => {
+            // A failed poll says nothing. The next tick asks again; a prompt is not urgent enough
+            // to report a network error over.
+          });
+      }
+    } else if (!streamUp()) {
+      // Back to baseline: the next read seeds it and does not fire. With the stream up the pushed
+      // maps are one continuous series and the diff holds in a hidden tab, so a prompt that opens
+      // while the tab is hidden still fires, which is what a background notice is for.
+      prevAwaiting = null;
     }
     // Return recap: a session that stopped working while it was not the one on screen is asked for
     // one line when it is opened. Off by default; the switch is in Settings, under Oh My Claude.
@@ -4892,6 +4908,18 @@ function DockStatus({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
       </div>
     </div>
   );
+}
+
+/** Keep one event stream open for the Claude session on screen, reopening when it changes. Reads
+ *  the open session the way the status row does (`activeClaudeSession`; undefined for a llama
+ *  session or none open, which opens a stream for the tab-wide kinds only). Once a second whether
+ *  or not the store can be subscribed to: the beat also reopens a source the server-reload gap
+ *  closed for good, which no store change announces. */
+function watchEventStream(ctx: ClientCtx) {
+  const sync = () => openStream(activeClaudeSession(ctx) ?? null);
+  sync();
+  const beat = setInterval(guard(sync), 1000);
+  whenContextGone(() => clearInterval(beat));
 }
 
 /** Wire a running turn's status: attach dsh's [role=status][aria-live=polite] element to this
@@ -9176,6 +9204,7 @@ export function apply(ctx: ClientCtx) {
   whenContextGone(installLocale(ctx));
   followDeepLink(ctx);
   watchContextMeter(ctx);
+  watchEventStream(ctx);
   watchTurnStatus(ctx);
   watchSessionNotices(ctx);
   watchSessionSpinners(ctx);

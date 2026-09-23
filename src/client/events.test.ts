@@ -17,7 +17,15 @@ import { KINDS, SLOW_MS, dispatch, pollEvery, streamUp, subscribe } from "./even
   offOther();
   dispatch("turns", "s1", {
     turns: [],
-    total: { costUsd: 0, durationMs: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, count: 0 },
+    total: {
+      costUsd: 0,
+      durationMs: 0,
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      count: 0,
+    },
   });
   assert.equal(other.length, 0, "a kind with no subscribers dispatches to nobody");
 }
