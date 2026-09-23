@@ -5614,6 +5614,16 @@ export class ClaudeCodeAdapter extends LlmAdapter {
             }
           }
         : undefined;
+    // Close every native call still open with a placeholder result. dsh refuses a log whose step
+    // ends over a tool/call with no tool/result ("step/end leaves unresolved tool call", a session
+    // lost 2026-09-23), and a step ends on every turn exit: a relay boundary, a normal finish, a
+    // steer park, or the process dying mid-step (a dsh-web restart, a crash) with parallel native
+    // calls in flight. Both exit paths call this: the relay wait below, and the main loop's tail.
+    // A no-op on the happy path, where result frames already emptied callSeqs.
+    const flushPending = () => {
+      for (const callId of callSeqs.keys())
+        appendNativeResult?.(callId, serverText("resultPending"), false);
+    };
     const tr = new Translator({
       toolActivity: this.config.toolActivity,
       continueAfterLimit: this.config.continueAfterLimit,
@@ -5900,15 +5910,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       // for those results here, bounded, and close any still running with a placeholder row so
       // the step ends valid. Wrong case: a Bash longer than the wait gets the placeholder, and
       // its real output shows in the next step as text under a "result" line.
-      // Close every still-open native call with a placeholder result. Run on every exit from the
-      // wait below, including the two that end the turn under us: a step that ends with a tool/call
-      // and no tool/result is the corruption this guards against whether the turn ended for a relay
-      // or because the process died mid-step (pr-review #99), and the session log outlives the
-      // process, so the append is valid either way.
-      const flushPending = () => {
-        for (const callId of callSeqs.keys())
-          appendNativeResult?.(callId, serverText("resultPending"), false);
-      };
+      // Run flushPending on every exit from the wait below, including the two that end the turn
+      // under us (pr-review #99): a step that ends with a tool/call and no tool/result is the
+      // corruption this guards against whether the turn ended for a relay or because the process
+      // died mid-step, and the session log outlives the process, so the append is valid either way.
       const waitUntil = Date.now() + NATIVE_RESULT_WAIT_MS;
       while (callSeqs.size > 0) {
         const left = waitUntil - Date.now();
@@ -5970,6 +5975,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         outcome = what;
         break;
       }
+      // The main loop ended the step (a finish, a steer park, or the process dying mid-step). The
+      // relay path flushes its own exits; this closes any native call the main loop left open, so
+      // dsh never writes a step/end over an unresolved tool/call. No-op when callSeqs is empty.
+      flushPending();
       if (tr.limitResetAt !== undefined && this.config.continueAfterLimit)
         this.armLimitWait(options.sessionId, tr.limitResetAt);
       // What this step spent, once, just before the chunk that closes it. A step that streamed

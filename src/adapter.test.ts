@@ -6722,3 +6722,96 @@ console.log("forget-session ok");
   await Promise.all(saves);
 }
 console.log("watch-save-race ok");
+
+// Regression (2026-09-23, a session lost to this): a turn that ends with a native tool call still
+// open must leave a placeholder tool/result behind. dsh refuses a log whose step ends over a
+// tool/call with no tool/result ("step/end leaves unresolved tool call"), and the whole session
+// then fails to load. The case is the process dying mid-step (a dsh-web restart, a crash): the CLI
+// announces a Bash call, then goes silent before its result. The main turn loop must flush it, the
+// way the relay boundary already does. Drives the real stream() loop with acquire stubbed so no
+// process is spawned; the fake process announces one native call, then nextEvent returns null the
+// way a killed process ends its stream.
+{
+  const appended: Array<{ type: string; data: any }> = [];
+  const session = {
+    header: { version: 0 }, // format 0 takes native rows without the probe, so onToolCall fires
+    snapshotEvents: () => [
+      { type: "turn/start", data: { turn: 1 } },
+      { type: "step/start", data: { step: 1 } },
+    ],
+    append: (type: string, data: any) => {
+      appended.push({ type, data });
+      return { seq: appended.length };
+    },
+  };
+  const a = new ClaudeCodeAdapter(
+    fakeCtx({ on() {}, sessions: { get: () => session } }),
+    Config({ resume: true, toolActivity: true, toolsInline: false, dshTools: false }),
+  );
+  a.stateDir = joinPath(tmpdir(), "omc-flush-test-nowrite"); // busy.json write here is caught, not needed
+  const queue: Array<unknown> = [
+    {
+      type: "assistant",
+      message: {
+        id: "m1",
+        role: "assistant",
+        content: [
+          { type: "tool_use", id: "toolu_dead", name: "Bash", input: { command: "sleep 100" } },
+        ],
+      },
+    },
+    null, // process died before the result: the corruption trigger
+  ];
+  const proc: any = {
+    alive: true,
+    busy: false,
+    parked: undefined,
+    steerPending: false,
+    relays: new Map(),
+    dshIds: new Set(),
+    relayed: new Set(),
+    sent: new Set(),
+    idleKilled: false,
+    exitCode: 0,
+    stderr: "",
+    stray: "",
+    staleResults: 0,
+    countStaleResults: () => 0,
+    write: () => true,
+    nextEvent: async () => (queue.length ? queue.shift() : null),
+    kill: () => {},
+  };
+  const prep = { input: "go", spec: { model: "m" }, cwd: "/tmp", session: undefined, args: [] };
+  a.acquire = async () => ({ prep, proc }) as any;
+  a.reconnectIfStale = async () => {};
+  a.watchTranscript = (async () => {}) as any;
+  a.pumpMirror = (async () => {}) as any;
+  for await (const _ of a.stream({
+    sessionId: "sdead",
+    model: "m",
+    messages: messageList([{ role: "user", content: [{ type: "text", text: "run it" }] }]),
+    signal: new AbortController().signal,
+  } as any)) {
+    void _;
+  }
+  const calls = appended.filter((e) => e.type === "tool/call").map((e) => e.data.callId);
+  // dsh's createToolResultMessage carries the call id at message.source.callId (and inside the
+  // tool-result content block), never at message.toolCallId, so link the result to its call there.
+  const results = appended
+    .filter((e) => e.type === "tool/result")
+    .map((e) => e.data.message.source.callId);
+  assert.deepEqual(calls, ["toolu_dead"], "the native call was recorded as a tool/call");
+  assert.ok(
+    results.includes("toolu_dead"),
+    "and its result placeholder was flushed when the process died, so no step ends unresolved",
+  );
+  // The message is a tool-result block wrapping the text block, so the note sits two levels deep:
+  // message.content[0] is the tool-result, its .content[0] the text.
+  const placeholder = appended.find((e) => e.type === "tool/result");
+  assert.match(
+    placeholder!.data.message.content[0].content[0].text,
+    /next step/,
+    "the placeholder carries the pending note",
+  );
+  console.log("flush-on-death ok");
+}

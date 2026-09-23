@@ -1318,6 +1318,8 @@ const responder =
     archived: boolean;
     /** dsh's id for the persisted session when it differs from the transcript's. */
     dshId?: string;
+    /** create() throws SessionAlreadyExistsError: the log is on disk but neither list nor store had it. */
+    createCollision?: boolean;
   }) => {
     const dshId = opts.dshId ?? id;
     const calls: string[] = [];
@@ -1343,6 +1345,11 @@ const responder =
         list: async () => (opts.persisted ? [{ header: { id: dshId, cwd } }] : []),
         create: async (header: Record<string, unknown>) => {
           calls.push("create");
+          if (opts.createCollision) {
+            const err = new Error(`session "${id}" already exists`);
+            err.name = "SessionAlreadyExistsError";
+            throw err;
+          }
           written = { header, events: [] };
           return {
             append: async (events: unknown[]) => {
@@ -1420,6 +1427,18 @@ const responder =
   r = await run({ inStore: false, persisted: true, archived: true, dshId });
   assert.equal(r.out.id, dshId);
   assert.deepEqual(r.attached, [{ id: dshId, events: 0 }], "attached under dsh's id");
+  // Neither in the store nor in the persistence list, so the open falls through to create — but the
+  // log is already on disk (a session dropped from the running catalog whose file survived, e.g. a
+  // failed load or a log restored by hand). create() throws SessionAlreadyExistsError; the route
+  // must attach and open the existing session instead of surfacing the throw as a 500.
+  r = await run({ inStore: false, persisted: false, archived: false, createCollision: true });
+  assert.equal(r.out.existed, true, "the on-disk session is opened, not reseeded");
+  assert.deepEqual(r.calls, ["create"], "create was attempted once and its collision caught");
+  assert.deepEqual(r.attached, [{ id, events: 0 }], "attached so it reaches the sidebar");
+  // The collision is unarchived on the way in, same as every other existing-session path.
+  r = await run({ inStore: false, persisted: false, archived: true, createCollision: true });
+  assert.equal(r.out.existed, true);
+  assert.deepEqual(r.state.archivedSessionIds, [], "unarchived before attach");
 }
 
 // The two on-disk lists the panel reads at boot, and how each treats a file it does not like. They

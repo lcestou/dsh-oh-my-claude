@@ -1372,17 +1372,32 @@ export async function openTranscriptOnce(
   // prepare/enter/announce/flush owns no handle, so `session/flush` found no writer for this id and
   // answered nothing: the seed was dropped silently, and the client's adopting `sessions.create`
   // then found no stored session and made a blank one under the same id. Write the log here.
-  const handle = await ctx.sessionPersistence.create({
-    // The version the installed dsh reads: 0.1.7 writes v4 files and refuses one whose header
-    // says 3 ("session generation filename identifies v4, but its header identifies v3"), which
-    // would make every adopted transcript unreadable there. 3 stays the fallback for a dsh whose
-    // catalog cannot be read, which is what 0.1.5 and 0.1.6 want anyway.
-    version: logVersion,
-    id: asSessionId(id),
-    createdAt: folded.createdAt,
-    cwd,
-    isSeeded: false,
-  });
+  let handle: Awaited<ReturnType<typeof ctx.sessionPersistence.create>>;
+  try {
+    handle = await ctx.sessionPersistence.create({
+      // The version the installed dsh reads: 0.1.7 writes v4 files and refuses one whose header
+      // says 3 ("session generation filename identifies v4, but its header identifies v3"), which
+      // would make every adopted transcript unreadable there. 3 stays the fallback for a dsh whose
+      // catalog cannot be read, which is what 0.1.5 and 0.1.6 want anyway.
+      version: logVersion,
+      id: asSessionId(id),
+      createdAt: folded.createdAt,
+      cwd,
+      isSeeded: false,
+    });
+  } catch (err) {
+    // create() scans the disk and throws SessionAlreadyExistsError when the log is already there,
+    // even though neither ctx.sessions nor the persistence list this route read had it loaded: a
+    // session dropped from the running catalog whose file survived (a failed load, a log restored
+    // by hand), or a create racing another open. Reseeding would collide and the stored log IS the
+    // session, so surface it instead of answering 500 "already exists": unarchive, attach to the
+    // workspace, open it. Match the class by name so no persistence-internal import is needed.
+    // SAFETY: err is unknown from catch; only its optional `name` string is read, any other value narrows to undefined and rethrows
+    if ((err as { name?: string })?.name !== "SessionAlreadyExistsError") throw err;
+    await unarchive(id);
+    await attach(id);
+    return { id, existed: true };
+  }
   try {
     await handle.append(seed);
     await handle.flush();
