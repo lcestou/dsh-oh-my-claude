@@ -4781,24 +4781,23 @@ function DockStatus({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
     read();
     return ctx.sessions.list.subscribe?.(read);
   }, [ctx, sessionId]);
-  // The header's own verb line, when dsh drew the turn header at all: watched for leaving the
-  // viewport. Keyed on the visible line inside the process button, never on TURN_MARK: the global
-  // status watcher also stamps that mark on dsh's 1px hidden announcer span, which is present even
-  // when no header is drawn, so keying on it left the dock thinking a header was on screen and
-  // hiding (measured 2026-09-23). Polled rather than observed, since the header mounts a beat after
-  // the dock and dsh's virtual list drops and redraws it as the column scrolls. The dock's own line
-  // sits in `[data-omc-dock-status]` and is excluded.
+  // The running turn's own header, when dsh drew it: watched for leaving the viewport, so the dock
+  // hides while the header is on screen and shows once it scrolls off or was never drawn. dsh's 1px
+  // hidden announcer span is not a header and is ignored. Polled, since the header mounts a beat
+  // after the dock and dsh's virtual list drops and redraws it as the column scrolls.
   useEffect(() => {
     if (!running) return;
     let watching: Element | null = null;
     let obs: IntersectionObserver | undefined;
     const find = () => {
-      const header = document.querySelector<HTMLElement>(
-        "button[data-turn-process] [data-omc-turn-line]",
-      );
-      // No visible header line: the dock is the only place the verb shows. Set unconditionally,
-      // never guarded by `header === watching`: on the first run both are null, and the guard used
-      // to return before `setHeaderAway(true)` ever ran, so the dock stayed hidden all turn.
+      // The header is the newest process button; the container is watched, not the verb line
+      // inside it, so the dock hides whenever the header is on screen whether the plugin wired its
+      // line or dsh is still showing "Deep diving" there (owner, 2026-09-23: both showed at once).
+      const groups = document.querySelectorAll<HTMLElement>("button[data-turn-process]");
+      const header = groups[groups.length - 1] ?? null;
+      // No header drawn (a long turn's header sits above "Load earlier"): the dock is the only
+      // place the verb shows. Set unconditionally, never guarded by `header === watching`: on the
+      // first run both are null, and the guard used to return before `setHeaderAway(true)` ran.
       if (header === null) {
         obs?.disconnect();
         obs = undefined;
@@ -4847,20 +4846,29 @@ function DockStatus({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   if (!shown) return null;
   // Hidden from assistive tech: dsh's own status row already announces the turn, and this repeats it.
   return (
-    <div
-      data-omc-dock-status=""
-      aria-hidden="true"
-      style={{ display: "flex", alignItems: "center", minWidth: 0, padding: "0 12px 4px" }}
-    >
-      {/* The seed text is replaced by the verb before the next frame; the line's font is dsh's
-          secondary size, the one the header's label uses. */}
-      <span
-        ref={line}
-        data-omc-turn-line="1"
-        style={{ fontSize: "var(--dsh-content-font-size-secondary, 13px)", lineHeight: "24px" }}
+    <div data-omc-dock-status="" aria-hidden="true" style={{ padding: "0 0 4px" }}>
+      {/* The chat column and the composer share a centre line, so the same max-width centred with
+          auto margins lands this line's left edge on the chat text's, instead of the full composer
+          width. `--dsh-chat-content-width` is dsh's own column width (748px is its default). */}
+      <div
+        style={{
+          maxWidth: "var(--dsh-chat-content-width, 748px)",
+          margin: "0 auto",
+          display: "flex",
+          alignItems: "center",
+          minWidth: 0,
+        }}
       >
-        …
-      </span>
+        {/* The seed text is replaced by the verb before the next frame; the line's font is dsh's
+            secondary size, the one the header's label uses. */}
+        <span
+          ref={line}
+          data-omc-turn-line="1"
+          style={{ fontSize: "var(--dsh-content-font-size-secondary, 13px)", lineHeight: "24px" }}
+        >
+          …
+        </span>
+      </div>
     </div>
   );
 }
