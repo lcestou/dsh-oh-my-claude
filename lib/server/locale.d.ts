@@ -90,6 +90,7 @@ declare const EN: {
     readonly dshTool: "dsh tool";
     readonly resultPending: "(still running when dsh took over this step; the output shows in the next step)";
     readonly noResultRecorded: "No result recorded: the session ended here.";
+    readonly seededSystemPrompt: "No system prompt recorded: these turns were restored from a Claude Code transcript, and Claude Code ran them with its own prompt.";
     readonly noReply: "(no reply)";
     readonly mirrorCut: "… cut here; the whole exchange is in the transcript.";
     readonly btwUsage: "Usage: /btw <your question>";

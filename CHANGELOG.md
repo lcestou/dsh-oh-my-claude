@@ -54,6 +54,13 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- A session restored from a Claude Code transcript stays loadable after its first live turn. The
+  restore seeded the log without the system-prompt entry dsh keeps as the log's first line; dsh's
+  loop wrote one on the first live turn further down, and from the next reload on (a dsh-web
+  restart, a phone or second browser opening the session) dsh refused the whole log with "system/
+  message requires a protected first surface head". The seed now writes that head first, and
+  `tools/dsh-session-repair.ts --check --all` finds and mends every session restored before this
+  release, whether dsh has refused it yet or not.
 - Opening a transcript whose session dsh already has on disk no longer fails with a 500. When the
   running catalog had dropped a session but its log was still on disk (a load that failed once, a
   log put back by hand), clicking it in Restore tried to recreate it and dsh answered `session "…"

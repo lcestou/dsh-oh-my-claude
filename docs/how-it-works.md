@@ -188,3 +188,5 @@ bun tools/dsh-session-repair.ts --apply --all   # drops the offending rows, keep
 ```
 
 The tool proves every repaired log through dsh's own migration chain before writing it. Conversation text is untouched, and only the tool cards of those old turns are gone from history.
+
+The same tool mends a second break: *stored log is corrupt: … system/message requires a protected first surface head*. A session restored from a Claude Code transcript before plugin 1.3.2 was seeded without the system-prompt head dsh keeps as the log's first entry. It worked until its first live turn wrote one further down, and from the next reload on (a dsh-web restart, another browser or phone opening it) dsh refused the whole log. `--check --all` lists every such log, refused or not yet, and `--apply --all` inserts the head; nothing else in the log changes.

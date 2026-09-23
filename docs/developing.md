@@ -107,4 +107,4 @@ Links in the README and under `docs/` are checked by `bun tools/check-links.ts`:
 
 ## Repairing session logs
 
-`tools/dsh-session-repair.ts` mends a session log that dsh 0.1.5's format migration refuses; the user-facing note is [Failed to load history after a dsh upgrade](how-it-works.md#failed-to-load-history-after-a-dsh-upgrade). It proves every repaired log through dsh's own migration chain before writing it and keeps a `.bak` beside each.
+`tools/dsh-session-repair.ts` mends a session log that dsh 0.1.5's format migration refuses, and one a restore seeded without its system head before 1.3.2; the user-facing note is [Failed to load history after a dsh upgrade](how-it-works.md#failed-to-load-history-after-a-dsh-upgrade). It proves every repaired log through dsh's own migration chain before writing it and keeps a `.bak` beside each.

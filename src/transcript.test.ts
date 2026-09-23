@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { serverText } from "./locale.js";
 import {
   attachSubagents,
   foldTranscript,
@@ -187,6 +188,7 @@ assert.deepEqual(
   [
     "turn/start",
     "step/start",
+    "system/message",
     "user/message",
     "assistant/message",
     "tool/call",
@@ -200,6 +202,29 @@ assert.deepEqual(
   ],
 );
 events.forEach((e, i) => assert.equal(e.seq, i, "contiguous seqs"));
+// The system head is the log's first surface event, once, in turn 1 step 1: dsh's loader refuses a
+// log whose first system/message follows another surface event, and dsh's own loop appends one on
+// the first live turn. Its source is what each log version's validation requires.
+const head = events[2];
+assert.ok(head);
+const firstPrompt = events[3];
+assert.ok(firstPrompt);
+assert.deepEqual(head.surfaceOp, "append");
+assert.deepEqual(head.data, {
+  turn: 1,
+  step: 1,
+  message: {
+    id: `${(firstPrompt.data as { id: string }).id}:system`,
+    role: "system",
+    content: [{ type: "text", text: serverText("seededSystemPrompt") }],
+    source: { kind: "plugin", plugin: "claude-code" },
+  },
+});
+assert.equal(events.filter((e) => e.type === "system/message").length, 1, "one head only");
+const v4Head = toSessionEvents(folded, 4)[2];
+assert.ok(v4Head);
+// SAFETY: the v4 seed has the same shape; index 2 is the head asserted above
+assert.deepEqual((v4Head.data.message as { source: unknown }).source, { kind: "system-prompt" });
 // SAFETY: transcript contains exactly one tool/call event
 const call = events.find((e) => e.type === "tool/call");
 assert.ok(call);
@@ -236,7 +261,7 @@ assert.equal(
   "message block keeps arguments as a JSON string",
 );
 for (const e of events)
-  if (["user/message", "assistant/message", "tool/result"].includes(e.type))
+  if (["system/message", "user/message", "assistant/message", "tool/result"].includes(e.type))
     assert.equal(e.surfaceOp, "append");
   else assert.equal(e.surfaceOp, undefined);
 // SAFETY: last event is a session/title with source.kind === "user"
