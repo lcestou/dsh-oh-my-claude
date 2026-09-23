@@ -86,7 +86,7 @@ import { themeOf, hexToRgb, type ThemeGroup } from "./theme.js";
 import { PluginUpdateBadge, StarNudge } from "./update-pill.js";
 import { isNewer } from "../update.js";
 import { livingModelId } from "../model-ids.js";
-import type { FallbackRecord } from "../translator.js";
+import type { FallbackRecord, LiveMode } from "../translator.js";
 import { ReportBlock } from "./report.js";
 import { openStream, pollEvery, streamUp, subscribe, type LiveTurnBody } from "./events.js";
 import type {
@@ -207,7 +207,6 @@ const DEFAULT_VERBS = [
   "Catapulting",
   "Cerebrating",
   "Channeling",
-  "Channelling",
   "Choreographing",
   "Churning",
   "Clauding",
@@ -276,6 +275,7 @@ const DEFAULT_VERBS = [
   "Ionizing",
   "Jitterbugging",
   "Julienning",
+  "Kerfuffling",
   "Kneading",
   "Leavening",
   "Levitating",
@@ -301,7 +301,7 @@ const DEFAULT_VERBS = [
   "Perambulating",
   "Percolating",
   "Perusing",
-  "Philosophising",
+  "Philosophizing",
   "Photosynthesizing",
   "Pollinating",
   "Pondering",
@@ -350,11 +350,12 @@ const DEFAULT_VERBS = [
   "Tomfoolering",
   "Topsy-turvying",
   "Transfiguring",
+  "Transmogrifying",
   "Transmuting",
   "Twisting",
   "Undulating",
   "Unfurling",
-  "Unravelling",
+  "Unraveling",
   "Vibing",
   "Waddling",
   "Wandering",
@@ -437,9 +438,30 @@ const ZH_VERBS = [
   "假装很忙中",
 ] as const;
 
-/** Default ping-pong frames, played forward then reversed (~120 ms per frame). */
+/** Default frames, played out and back on the CLI's eased 2 s cosine (see spinnerFrameAt). */
 const DEFAULT_FRAMES = ["·", "✢", "✳", "✶", "✻", "✻"] as const;
 
+/** The CLI's spinner frame for a moment on its clock (2.1.280): a cosine of the time over a 2 s
+ *  period, 0 to 1 to 0, scaled to the last index and rounded, so the glyph lingers on the end
+ *  frames and passes quickly through the middle. Sampled on the row's 120 ms beat rather than
+ *  the CLI's 100 ms, which lands up to 60 ms off a frame boundary. */
+export function spinnerFrameAt(ms: number, frames: number): number {
+  const eased = (1 - Math.cos((2 * Math.PI * ms) / 2000)) / 2;
+  return Math.round(eased * (frames - 1));
+}
+/** The CLI's `Go`: no bracket for a turn under this age unless it has tokens, a word or a wait. */
+const BRACKET_AFTER_MS = 16_000;
+/** Whether the working line draws its bracket, the CLI's own gate (2.1.280,
+ *  `_t=f||yt||It>0||V>Go||Boolean(v)`): tokens, a thinking word, a tool wait, or 16 s on the clock.
+ *  `elapsedMs` below zero means no body yet, which is closed. */
+export function bracketOpen(s: {
+  elapsedMs: number;
+  tokens: number;
+  thinking: boolean;
+  relay: boolean;
+}): boolean {
+  return s.elapsedMs >= BRACKET_AFTER_MS || s.tokens > 0 || s.thinking || s.relay;
+}
 /** Pick a verb at random from the list using the provided random function. */
 export function pickVerb(list: readonly string[], random: () => number): string {
   // SAFETY: random() returns [0,1), so floor(random()*length) is always a valid index.
@@ -3977,11 +3999,18 @@ const ensureTurnStatusStyle = () => {
   // dsh's own attribute rather than its hashed class name, and an attribute plus an ancestor
   // outweighs the single class dsh sets it with, so no `!important` is needed. On a dsh without
   // the row-action slot the sidebar rows are tinted by the spinner scan instead (title match).
+  // The working line's sweep is the CLI's glimmer by mode (2.1.280): left to right in 1.5 s while
+  // the request is out, right to left in 6 s while a block streams (its 50 ms and 200 ms per cell
+  // over a ten-letter verb plus the twenty-cell run-out), and during a tool call the whole verb
+  // breathes between the accent and the shimmer on a 2 s round trip instead, drawn by sliding a
+  // three-stop gradient two hundred times wider than the line so the visible slice is one colour.
+  // A ramp's flat `--omc-row-bg` set inline wins over the pulse's; since the tints snap off when a
+  // tool starts, the pulse begins at once.
   // The stats row under the composer (`data-composer-stats`) is padded to the composer's side
   // clearance, which leaves its pills 653px in a 717px column. dsh's two fill that; ours as a
   // third clips all three to an ellipsis by a few pixels. The pills are centred, so the padding
   // does no aligning; take it down to the row's rounded corners and the three fit.
-  styleEl.textContent = `${gated("row", '[role="status"][aria-live="polite"]:not([class*="visuallyHidden"])')},${gated("row", "[data-dsh-oh-my-claude-turn]", false)}{background-image:var(--omc-row-bg,linear-gradient(90deg,var(--omc-accent) 0%,var(--omc-accent) 40%,var(--omc-shimmer) 50%,var(--omc-accent) 60%,var(--omc-accent) 100%))}@keyframes omc-word{from{-webkit-text-fill-color:var(--omc-word-lo)}to{-webkit-text-fill-color:var(--omc-word-hi)}}[data-omc-turn-word]{animation:omc-word 1s ease-in-out 3s infinite alternate}@media (prefers-reduced-motion:reduce){[data-omc-turn-word]{animation:none}}[data-dsh-oh-my-claude-turn]>span[aria-hidden]{display:inline-block;width:1.3em;text-align:start;flex:none}[data-dsh-oh-my-claude-turn]{max-width:100%;min-width:0}[data-omc-turn-detail]{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}button[data-turn-process]:has([data-omc-turn-line])>span:not([data-omc-turn-line]){display:none}[data-omc-turn-line]{background-clip:text;-webkit-background-clip:text;color:transparent;-webkit-text-fill-color:transparent;background-size:200% 100%;animation:omc-verb-sheen 2.6s linear infinite;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-flex;align-items:center;gap:2px}@keyframes omc-verb-sheen{from{background-position:200% 0}to{background-position:-200% 0}}@media (prefers-reduced-motion:reduce){[data-omc-turn-line]{animation:none}}button[data-turn-process]:has([data-omc-turn-line]){min-width:0;max-width:100%}${gated("panel", "[data-omc-login-card] button:hover", false)},${gated("panel", "[data-omc-update-card] button:not(:disabled):hover", false)}{color:var(--omc-accent)!important;background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.1))!important}${gated("panel", "[data-omc-login-card] button:focus-visible", false)},${gated("panel", "[data-omc-update-card] button:focus-visible", false)}{color:var(--omc-accent)!important;border-color:var(--omc-accent)!important}${controlStatesCss("[data-omc-settings]")}${controlStatesCss('[role="dialog"][aria-label="Oh My Claude"]')}${/* !important: the buttons carry their border inline (`btn`), which beats any sheet rule. */ ""}${/* Hover is dsh's row look: the background tints and the text takes the accent; the border stays put. It used to go accent too, and in dark mode a faint hairline turning orange read as a border appearing under the pointer on every tab (owner, 2026-09-23). The accent border is the keyboard focus ring only. */ ""}${gated("panel", '[data-omc-settings] button:not([role="switch"]):not([aria-expanded]):not(:disabled):hover', false)},${gated("panel", '[role="dialog"][aria-label="Oh My Claude"] button:not([role="switch"]):not([aria-expanded]):not(:disabled):hover', false)}{color:var(--omc-accent)!important;background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.1))!important}${gated("panel", '[data-omc-settings] button:not([role="switch"]):not([aria-expanded]):focus-visible', false)},${gated("panel", '[role="dialog"][aria-label="Oh My Claude"] button:not([role="switch"]):not([aria-expanded]):focus-visible', false)}{color:var(--omc-accent)!important;border-color:var(--omc-accent)!important}[data-omc-card]:hover{border-color:var(--dsw-alias-label-dimmed,rgba(128,128,128,.5))}[data-omc-card]>button:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#3b82f6);outline-offset:-2px}[data-omc-card]>button:hover{background:none}@keyframes omc-sheen{from{background-position:200% 0}to{background-position:-200% 0}}[data-omc-skeleton]{border-radius:6px;background:linear-gradient(90deg,${T.border} 30%,${T.hover} 50%,${T.border} 70%);background-size:200% 100%;animation:omc-sheen 1.4s linear infinite}@keyframes omc-rise{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}@keyframes omc-drain{from{width:100%}to{width:0}}[data-omc-arrived]{animation:omc-rise .18s ease-out}@media (prefers-reduced-motion:reduce){[data-omc-skeleton],[data-omc-arrived]{animation:none}}${gated("prose", '[role="tablist"]>[role="tab"][aria-selected="true"]')}{color:var(--omc-accent)}${gated("prose", '[role="tablist"]>[role="tab"][aria-selected="true"]::after')}{background:var(--omc-accent)}${gated("prose", '[class*="_markdown"] blockquote')}{border-left-color:color-mix(in srgb,var(--omc-accent) 50.2%,transparent)}${gated("prose", '[class*="_markdown"] hr')}{background:color-mix(in srgb,var(--omc-accent) 34.9%,transparent)}${gated("prose", '[class*="_markdown"] a')}{color:var(--omc-accent);text-decoration-color:color-mix(in srgb,var(--omc-accent) 40%,transparent)}${gated("prose", '[class*="_markdown"] a:hover')}{color:var(--omc-shimmer);text-decoration-color:var(--omc-shimmer)}${gated("prose", '[class*="_markdown"] input[type="checkbox"]')}{accent-color:var(--omc-accent)}${/* The chips dsh draws in a sent bubble for a skill it knows (`/ic-logos`) and for a file mention: its business blue and its link blue. Selected by dsh's own `data-ref-chip` hook, which names the kind, not by the hashed class. */ ""}${gated("prose", "[data-ref-chip]")}{color:var(--omc-accent)}${gated("prose", "[data-ref-chip]:hover")},${gated("prose", "[data-ref-chip]:focus")}{color:var(--omc-shimmer);text-decoration-color:var(--omc-shimmer)}${gated("prose", "[data-ref-chip]:focus-visible")}{box-shadow:0 0 0 2px var(--omc-accent)}${gated("prose", "[data-workflow-run] button[data-member-status] [data-member-label]")}{color:var(--omc-accent)}${/* The icon tile on dsh's changed-files card is dsh's link blue; `data-changed-files` is dsh's own hook, and the class is matched by its module suffix since the prefix is generated per build. */ ""}${gated("prose", '[data-changed-files] [class*="_tile"]')}{background:var(--omc-accent)}body[data-omc-panel-open] [data-width-handle]{pointer-events:none}body[data-omc-panel-open] [class*="_toBottomSlot"],body:has([data-omc-cost-dialog]) [class*="_toBottomSlot"]{opacity:0;pointer-events:none;transition:opacity .1s}@keyframes omc-pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--omc-accent) 55%,transparent)}100%{box-shadow:0 0 0 12px transparent}}${gated("panel", 'button[aria-label="Oh My Claude"][data-omc-pulse]', false)}{animation:omc-pulse 1.1s ease-out 3}@media (prefers-reduced-motion:reduce){button[aria-label="Oh My Claude"][data-omc-pulse]{animation:none}}${gated("prose", "[data-produced-files-row] button")},${gated("prose", "[data-presented-files-row] button")}{color:var(--omc-accent)}${gated("prose", "[data-produced-files-row] button:hover")},${gated("prose", "[data-presented-files-row] button:hover")}{color:var(--omc-shimmer)}body[data-omc-claude] [data-composer-stats]{padding-left:8px;padding-right:8px}${gated("prose", '[class*="_optionLine"]>[class*="_badge"]')}{background:color-mix(in srgb,var(--omc-accent) 16%,transparent);color:var(--omc-accent)}[data-omc-cost-over]{color:var(--omc-accent)}${gated("row", 'svg[data-state="ongoing"]:not([role="treeitem"] *)')},${gated("row", '[role="treeitem"][data-omc-claude] svg[data-state="ongoing"]', false)}{--dsh-state-ongoing:var(--omc-accent);color:var(--omc-accent)}${RAINBOW_CSS}${COST_DIALOG_CSS}`;
+  styleEl.textContent = `${gated("row", '[role="status"][aria-live="polite"]:not([class*="visuallyHidden"])')},${gated("row", "[data-dsh-oh-my-claude-turn]", false)}{background-image:var(--omc-row-bg,linear-gradient(90deg,var(--omc-accent) 0%,var(--omc-accent) 40%,var(--omc-shimmer) 50%,var(--omc-accent) 60%,var(--omc-accent) 100%))}@keyframes omc-word{from{-webkit-text-fill-color:var(--omc-word-lo)}to{-webkit-text-fill-color:var(--omc-word-hi)}}[data-omc-turn-word]{animation:omc-word 1s ease-in-out 3s infinite alternate}@media (prefers-reduced-motion:reduce){[data-omc-turn-word]{animation:none}}[data-dsh-oh-my-claude-turn]>span[aria-hidden]{display:inline-block;width:1.3em;text-align:start;flex:none}[data-dsh-oh-my-claude-turn]{max-width:100%;min-width:0}[data-omc-turn-detail]{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}button[data-turn-process]:has([data-omc-turn-line])>span:not([data-omc-turn-line]){display:none}[data-omc-turn-line]{background-clip:text;-webkit-background-clip:text;color:transparent;-webkit-text-fill-color:transparent;background-size:200% 100%;animation:omc-verb-sheen 1.5s linear infinite;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-flex;align-items:center;gap:2px}@keyframes omc-verb-sheen{from{background-position:200% 0}to{background-position:-200% 0}}[data-omc-turn-line][data-omc-mode="responding"],[data-omc-turn-line][data-omc-mode="thinking"]{animation-duration:6s;animation-direction:reverse}[data-omc-turn-line][data-omc-mode="tool-use"]{--omc-row-bg:linear-gradient(90deg,var(--omc-accent) 0%,var(--omc-shimmer) 50%,var(--omc-accent) 100%);background-size:20000% 100%;animation:omc-verb-pulse 1s ease-in-out infinite alternate}@keyframes omc-verb-pulse{from{background-position:0% 0}to{background-position:50% 0}}@media (prefers-reduced-motion:reduce){[data-omc-turn-line],[data-omc-turn-line][data-omc-mode]{animation:none}}button[data-turn-process]:has([data-omc-turn-line]){min-width:0;max-width:100%}${gated("panel", "[data-omc-login-card] button:hover", false)},${gated("panel", "[data-omc-update-card] button:not(:disabled):hover", false)}{color:var(--omc-accent)!important;background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.1))!important}${gated("panel", "[data-omc-login-card] button:focus-visible", false)},${gated("panel", "[data-omc-update-card] button:focus-visible", false)}{color:var(--omc-accent)!important;border-color:var(--omc-accent)!important}${controlStatesCss("[data-omc-settings]")}${controlStatesCss('[role="dialog"][aria-label="Oh My Claude"]')}${/* !important: the buttons carry their border inline (`btn`), which beats any sheet rule. */ ""}${/* Hover is dsh's row look: the background tints and the text takes the accent; the border stays put. It used to go accent too, and in dark mode a faint hairline turning orange read as a border appearing under the pointer on every tab (owner, 2026-09-23). The accent border is the keyboard focus ring only. */ ""}${gated("panel", '[data-omc-settings] button:not([role="switch"]):not([aria-expanded]):not(:disabled):hover', false)},${gated("panel", '[role="dialog"][aria-label="Oh My Claude"] button:not([role="switch"]):not([aria-expanded]):not(:disabled):hover', false)}{color:var(--omc-accent)!important;background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.1))!important}${gated("panel", '[data-omc-settings] button:not([role="switch"]):not([aria-expanded]):focus-visible', false)},${gated("panel", '[role="dialog"][aria-label="Oh My Claude"] button:not([role="switch"]):not([aria-expanded]):focus-visible', false)}{color:var(--omc-accent)!important;border-color:var(--omc-accent)!important}[data-omc-card]:hover{border-color:var(--dsw-alias-label-dimmed,rgba(128,128,128,.5))}[data-omc-card]>button:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#3b82f6);outline-offset:-2px}[data-omc-card]>button:hover{background:none}@keyframes omc-sheen{from{background-position:200% 0}to{background-position:-200% 0}}[data-omc-skeleton]{border-radius:6px;background:linear-gradient(90deg,${T.border} 30%,${T.hover} 50%,${T.border} 70%);background-size:200% 100%;animation:omc-sheen 1.4s linear infinite}@keyframes omc-rise{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}@keyframes omc-drain{from{width:100%}to{width:0}}[data-omc-arrived]{animation:omc-rise .18s ease-out}@media (prefers-reduced-motion:reduce){[data-omc-skeleton],[data-omc-arrived]{animation:none}}${gated("prose", '[role="tablist"]>[role="tab"][aria-selected="true"]')}{color:var(--omc-accent)}${gated("prose", '[role="tablist"]>[role="tab"][aria-selected="true"]::after')}{background:var(--omc-accent)}${gated("prose", '[class*="_markdown"] blockquote')}{border-left-color:color-mix(in srgb,var(--omc-accent) 50.2%,transparent)}${gated("prose", '[class*="_markdown"] hr')}{background:color-mix(in srgb,var(--omc-accent) 34.9%,transparent)}${gated("prose", '[class*="_markdown"] a')}{color:var(--omc-accent);text-decoration-color:color-mix(in srgb,var(--omc-accent) 40%,transparent)}${gated("prose", '[class*="_markdown"] a:hover')}{color:var(--omc-shimmer);text-decoration-color:var(--omc-shimmer)}${gated("prose", '[class*="_markdown"] input[type="checkbox"]')}{accent-color:var(--omc-accent)}${/* The chips dsh draws in a sent bubble for a skill it knows (`/ic-logos`) and for a file mention: its business blue and its link blue. Selected by dsh's own `data-ref-chip` hook, which names the kind, not by the hashed class. */ ""}${gated("prose", "[data-ref-chip]")}{color:var(--omc-accent)}${gated("prose", "[data-ref-chip]:hover")},${gated("prose", "[data-ref-chip]:focus")}{color:var(--omc-shimmer);text-decoration-color:var(--omc-shimmer)}${gated("prose", "[data-ref-chip]:focus-visible")}{box-shadow:0 0 0 2px var(--omc-accent)}${gated("prose", "[data-workflow-run] button[data-member-status] [data-member-label]")}{color:var(--omc-accent)}${/* The icon tile on dsh's changed-files card is dsh's link blue; `data-changed-files` is dsh's own hook, and the class is matched by its module suffix since the prefix is generated per build. */ ""}${gated("prose", '[data-changed-files] [class*="_tile"]')}{background:var(--omc-accent)}body[data-omc-panel-open] [data-width-handle]{pointer-events:none}body[data-omc-panel-open] [class*="_toBottomSlot"],body:has([data-omc-cost-dialog]) [class*="_toBottomSlot"]{opacity:0;pointer-events:none;transition:opacity .1s}@keyframes omc-pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--omc-accent) 55%,transparent)}100%{box-shadow:0 0 0 12px transparent}}${gated("panel", 'button[aria-label="Oh My Claude"][data-omc-pulse]', false)}{animation:omc-pulse 1.1s ease-out 3}@media (prefers-reduced-motion:reduce){button[aria-label="Oh My Claude"][data-omc-pulse]{animation:none}}${gated("prose", "[data-produced-files-row] button")},${gated("prose", "[data-presented-files-row] button")}{color:var(--omc-accent)}${gated("prose", "[data-produced-files-row] button:hover")},${gated("prose", "[data-presented-files-row] button:hover")}{color:var(--omc-shimmer)}body[data-omc-claude] [data-composer-stats]{padding-left:8px;padding-right:8px}${gated("prose", '[class*="_optionLine"]>[class*="_badge"]')}{background:color-mix(in srgb,var(--omc-accent) 16%,transparent);color:var(--omc-accent)}[data-omc-cost-over]{color:var(--omc-accent)}${gated("row", 'svg[data-state="ongoing"]:not([role="treeitem"] *)')},${gated("row", '[role="treeitem"][data-omc-claude] svg[data-state="ongoing"]', false)}{--dsh-state-ongoing:var(--omc-accent);color:var(--omc-accent)}${RAINBOW_CSS}${COST_DIALOG_CSS}`;
   document.head.appendChild(styleEl);
 };
 
@@ -4013,7 +4042,7 @@ const DETAIL_MARK = "data-omc-turn-detail";
 /** How long thinking runs before the row says so differently. The CLI switches to "still thinking"
  *  and warms the colour once it has been at it a while; neither the wording nor the colour is ever
  *  put on the wire, so the rule is kept here. */
-/** The CLI's own wording ladder for a thinking burst (2.1.268, `gr()` in its spinner), by how long
+/** The CLI's own wording ladder for a thinking burst (2.1.280, `Oo()` in its spinner), by how long
  *  the burst has run; it warms the colour from the first step. Same marks here so the row reads
  *  the way a terminal user already knows it. */
 /** Returns the CLI wording for a thinking burst of the given length, defaulting to "thinking". The
@@ -4021,7 +4050,7 @@ const DETAIL_MARK = "data-omc-turn-detail";
  *  call time so a language switch reaches them, not baked into a module-load constant. */
 const thinkingWord = (ms: number): string =>
   ms >= 45_000
-    ? t("main.turn.thinkingAlmostDone")
+    ? t("main.turn.thinkingDeep")
     : ms >= 30_000
       ? t("main.turn.thinkingSomeMore")
       : ms >= 20_000
@@ -4031,17 +4060,17 @@ const thinkingWord = (ms: number): string =>
           : t("main.turn.thinking");
 
 type Rgb = readonly [number, number, number];
-/** The CLI's spinner colours (2.1.268 themes). `claude` is the same in both; the shimmer and the
- *  warning shade differ, so the row picks by the page's background. The stall red is a constant in
- *  the spinner code, not a theme entry. The grey pair is the bracket word's idle pulse. */
+/** The CLI's spinner colours (2.1.280 themes, `B` dark and `v` light). `claude` is the same in both;
+ *  the warning shade differs, so the row picks by the page's background. The shimmer is not here:
+ *  it is the `--omc-shimmer` pair from theme.ts, since the sweep is drawn by the sheet. The stall
+ *  red is a constant in the spinner code, not a theme entry. The grey pair is the bracket word's
+ *  idle pulse. */
 const SPINNER_DARK = {
   claude: [215, 119, 87],
-  shimmer: [235, 159, 127],
   warning: [255, 193, 7],
 } as const;
 const SPINNER_LIGHT = {
   claude: [215, 119, 87],
-  shimmer: [245, 149, 117],
   warning: [150, 108, 30],
 } as const;
 const STALL_RED: Rgb = [171, 43, 63];
@@ -4175,8 +4204,8 @@ const wireTurnStatus = (
   const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
   /** The figure and colour beat, assigned once the row's state exists below. */
   let onTick: () => void = noBeat;
-  let frameIndex = 0;
-  let direction = 1; // 1 = forward, -1 = reverse
+  /** When the spinner started, for the CLI's eased ping-pong. */
+  const spinStart = Date.now();
 
   const tick = () => {
     const kept = turnVerbs.get(sessionId);
@@ -4185,16 +4214,8 @@ const wireTurnStatus = (
       spinner.textContent = "✻";
       return;
     }
-    // SAFETY: frameIndex is kept within bounds by the ping-pong logic above.
-    spinner.textContent = frames[frameIndex]!;
-    frameIndex += direction;
-    if (frameIndex >= frames.length) {
-      frameIndex = frames.length - 2;
-      direction = -1;
-    } else if (frameIndex < 0) {
-      frameIndex = 1;
-      direction = 1;
-    }
+    // SAFETY: spinnerFrameAt answers an index in [0, frames.length).
+    spinner.textContent = frames[spinnerFrameAt(Date.now() - spinStart, frames.length)]!;
   };
   const stop = () => {
     clearInterval(interval);
@@ -4288,6 +4309,9 @@ const wireTurnStatus = (
   let thinkingMs = -1;
   let idleMs = -1;
   let tool = false;
+  /** The CLI's mode, which picks the sweep's direction and speed; `requesting` until a body says
+   *  otherwise, which is the CLI's own state at a turn's start. */
+  let mode: LiveMode = "requesting";
   let thoughtMs = -1;
   let thoughtAgoMs = -1;
   let effort = "";
@@ -4303,6 +4327,10 @@ const wireTurnStatus = (
   let stallIntensity = 0;
   let lastBeat = Date.now();
   const palette = pageIsDark() ? SPINNER_DARK : SPINNER_LIGHT;
+  // The sheet's sweep reads `--omc-shimmer`, the CLI's light value; on a dark page the line takes
+  // the CLI's dark one. Set on the line so prose links keep theirs. Chosen once per row like the
+  // palette: a theme flipped mid-turn shows on the next row.
+  if (palette === SPINNER_DARK) el.style.setProperty("--omc-shimmer", "var(--omc-shimmer-dark)");
   // Read once per wired row: `accentRgb` is a getComputedStyle on the root, which forces a style
   // recalc, and the beat below paints eight times a second. The accent only moves when the Claude
   // look switch flips, and the next turn's row reads the new one.
@@ -4330,8 +4358,13 @@ const wireTurnStatus = (
       const steps = Math.floor((now - lastBeat) / 50);
       if (steps > 0) {
         for (let i = 0; i < steps; i++) {
-          thinkIntensity += (thinkTarget - thinkIntensity) * 0.1;
-          stallIntensity += (stallTarget - stallIntensity) * 0.1;
+          // The CLI chases a tint up 10 % a tick and drops it to zero the moment its state ends
+          // (`et.current=0` when the mode leaves thinking or a tool starts, `M.current=0` on the
+          // next token): a fade-out would show a colour for a state that is over.
+          thinkIntensity =
+            thinkTarget === 0 ? 0 : thinkIntensity + (thinkTarget - thinkIntensity) * 0.1;
+          stallIntensity =
+            stallTarget === 0 ? 0 : stallIntensity + (stallTarget - stallIntensity) * 0.1;
           shownChars = easeChars(shownChars, targetChars);
         }
         lastBeat += steps * 50;
@@ -4358,10 +4391,20 @@ const wireTurnStatus = (
     // above replaces, so there is no node to read and the figure comes from the turn record.
     const polled = elapsedMs >= 0 ? elapsedMs + since : -1;
     const time = (clock?.textContent ?? "").trim() || (polled >= 0 ? fmtDuration(polled) : "");
-    if (time) parts.push(time);
+    // The CLI draws no bracket until the turn has tokens, a thinking word, a tool wait or 16 s on
+    // the clock, so a short answer never grows one. `polled` is the body's elapsed time aged by the
+    // beat, which every body carries on every dsh; on 0.1.6 dsh's own clock node stays beside the
+    // verb until the gate opens.
+    const open = bracketOpen({
+      elapsedMs: polled,
+      tokens: Math.round(shownChars / 4),
+      thinking: burst >= 0 || thoughtAgoMs >= 0,
+      relay: relayName !== "" && relayMs >= 0,
+    });
+    if (time && open) parts.push(time);
     // dsh's copy goes quiet only while ours is showing the same figure. Hiding it unconditionally is
     // what left the row reading just the verb when the read came back empty.
-    if (clock) clock.style.display = time ? "none" : "";
+    if (clock) clock.style.display = time && open ? "none" : "";
     const shownTokens = Math.round(shownChars / 4);
     if (shownTokens > 0) parts.push(t("main.turn.tokens", { n: shortCount(shownTokens) }));
     // The CLI's gated `running tool for Ns`, with the dsh tool's name in place of "tool": the step
@@ -4388,17 +4431,21 @@ const wireTurnStatus = (
     // a slow grey pulse, itself pulled toward the warning shade by the thinking ramp. Time, count
     // and the brackets stay dim. Once either ramp is above zero the verb is one flat colour, no
     // shimmer: the CLI's glimmer only draws when neither ramp is up.
+    // Both tints snap to zero when their state ends and the stall wins when both would draw, as
+    // in the CLI.
     const tint =
-      ti > 0
-        ? mixRgb(claude, palette.warning, ti)
-        : si > 0
-          ? mixRgb(claude, STALL_RED, si)
+      si > 0
+        ? mixRgb(claude, STALL_RED, si)
+        : ti > 0
+          ? mixRgb(claude, palette.warning, ti)
           : undefined;
     const lo = cssRgb(mixRgb(WORD_GREY_LO, palette.warning, ti));
     const hi = cssRgb(mixRgb(WORD_GREY_HI, palette.warning, ti));
-    const key = `${parts.join("\0")}\0${word}\0${cssRgb(claude)}\0${tint ? cssRgb(tint) : ""}\0${lo}\0${hi}\0${ti >= 0.5}`;
+    const key = `${parts.join("\0")}\0${word}\0${cssRgb(claude)}\0${tint ? cssRgb(tint) : ""}\0${lo}\0${hi}\0${ti >= 0.5}\0${mode}`;
     if (key === painted) return;
     painted = key;
+    // The sheet reads the mode off the line: direction and speed of the sweep, or the tool-use pulse.
+    if (el.getAttribute("data-omc-mode") !== mode) el.setAttribute("data-omc-mode", mode);
     if (tint)
       el.style.setProperty(
         "--omc-row-bg",
@@ -4461,6 +4508,7 @@ const wireTurnStatus = (
     thinkingMs = b.thinkingMs ?? -1;
     idleMs = b.idleMs ?? -1;
     tool = b.tool === true;
+    if (b.mode !== undefined) mode = b.mode;
     thoughtMs = b.thoughtMs ?? -1;
     thoughtAgoMs = b.thoughtAgoMs ?? -1;
     effort = b.effort ?? "";
@@ -4899,10 +4947,14 @@ function DockStatus({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
     >
       {/* The chat column and the composer share a centre line, so the same max-width centred with
           auto margins lands this line's left edge on the chat text's, instead of the full composer
-          width. `--dsh-chat-content-width` is dsh's own column width (748px is its default). */}
+          width. `--dsh-chat-content-width` is dsh's own column width (748px is its default). On a
+          narrow page dsh drops the column to the page minus 32px and gives the text a 16px gutter
+          inside it, so the text sits 32px in from this strip's edge; the `min` follows it there
+          (measured 2026-09-23: the header's line at strip edge + 32 at 390 and 600 px, at the
+          column's edge at 900 and 1400 px, where the token is the smaller term). */}
       <div
         style={{
-          maxWidth: "var(--dsh-chat-content-width, 748px)",
+          maxWidth: "min(calc(100% - 64px), var(--dsh-chat-content-width, 748px))",
           margin: "0 auto",
           display: "flex",
           alignItems: "center",
@@ -6706,6 +6758,7 @@ function applyTheme(hints: Record<string, boolean | number>): void {
   const root = document.documentElement.style;
   root.setProperty("--omc-accent", theme.accent);
   root.setProperty("--omc-shimmer", theme.shimmer);
+  root.setProperty("--omc-shimmer-dark", theme.shimmerDark);
 }
 
 /** One theme group's checkbox: checked means on; the flag is the group's off key. */

@@ -32,3 +32,12 @@ assert.equal(formatCacheRead(1_500_000), "1.5M");
 assert.equal(formatCacheRead(2_000_000), "2M");
 
 console.log("✓ All turn accounting checks pass");
+
+// Past an hour every part is written, the CLI's own shape; the owner saw `100m 42s`.
+{
+  assert.equal(fmtDuration(6_042_000), "1h 40m 42s");
+  assert.equal(fmtDuration(3_600_000), "1h 0m 0s");
+  assert.equal(fmtDuration(3_599_500), "1h 0m 0s");
+  assert.equal(fmtDuration(3_599_400), "59m 59s");
+  console.log("duration-hours ok");
+}

@@ -6144,7 +6144,7 @@ console.log("interrupt-on-abort ok");
     [
       { output: 600 },
       { output: 850 },
-      { thinkingOpen: true },
+      { thinkingOpen: true, mode: "thinking" },
       { thinking: 1200 },
       { thinkingOpen: false },
       { output: 2150 },

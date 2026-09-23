@@ -420,3 +420,97 @@ console.log("translator model-fallback ok");
   );
 }
 console.log("translator plugin-warnings ok");
+
+// The line's mode, the way the CLI's own reducer sets it: requesting from the CLI's own status
+// frame, thinking or responding at a block start, tool-use when a tool block closes and at
+// message_stop; message_start sets nothing. `tool` drops on the echo that answers the last call,
+// and that echo is a frame (the stall clock restarts at the tool's end).
+{
+  const modes: string[] = [];
+  const tools: Array<{ tool: boolean; frame: boolean }> = [];
+  // SAFETY: the test feeds hand-built frames, the way the blocks above do
+  const t = new Translator({
+    onProgress: (p) => {
+      if (p.mode) modes.push(p.mode);
+      if (p.tool !== undefined) tools.push({ tool: p.tool, frame: p.frame === true });
+    },
+  }) as any;
+  const ev = (event: object, parent?: string) =>
+    t.translate({ type: "stream_event", event, parent_tool_use_id: parent ?? null });
+  const echo = (id: string, parent?: string) =>
+    t.translate({
+      type: "user",
+      message: { content: [{ type: "tool_result", tool_use_id: id }] },
+      parent_tool_use_id: parent ?? null,
+    });
+  t.translate({ type: "system", subtype: "status", status: "requesting" });
+  ev({ type: "message_start", message: { id: "m1" } });
+  ev({ type: "content_block_start", index: 0, content_block: { type: "thinking" } });
+  ev({ type: "content_block_stop", index: 0 });
+  ev({ type: "content_block_start", index: 1, content_block: { type: "text" } });
+  ev({ type: "content_block_stop", index: 1 });
+  ev({
+    type: "content_block_start",
+    index: 2,
+    content_block: { type: "tool_use", id: "c1", name: "Bash" },
+  });
+  ev({ type: "content_block_stop", index: 2 });
+  ev({
+    type: "content_block_start",
+    index: 3,
+    content_block: { type: "tool_use", id: "c2", name: "Read" },
+  });
+  ev({ type: "content_block_stop", index: 3 });
+  ev({ type: "message_stop" });
+  assert.deepEqual(
+    modes,
+    ["requesting", "thinking", "responding", "responding", "tool-use", "responding", "tool-use"],
+    "message_start sets no mode; the tool block's stop and message_stop both say tool-use",
+  );
+  echo("c1");
+  assert.deepEqual(tools, [{ tool: true, frame: false }], "first echo leaves the tool in flight");
+  echo("c2");
+  assert.deepEqual(
+    tools.at(-1),
+    { tool: false, frame: true },
+    "the last echo ends it and moves the stall clock",
+  );
+  assert.equal(modes.at(-1), "tool-use", "no mode from an echo");
+  t.translate({ type: "system", subtype: "status", status: "requesting" });
+  assert.equal(modes.at(-1), "requesting", "the CLI's own frame requests");
+  // A nested agent's frames (the CLI's Task tool) never drive the line: no mode, no tool flag,
+  // no stall-clock frame, and its message_start leaves the parent's open calls alone.
+  ev({
+    type: "content_block_start",
+    index: 0,
+    content_block: { type: "tool_use", id: "c9", name: "Task" },
+  });
+  ev({ type: "content_block_stop", index: 0 });
+  const before = modes.length;
+  const toolsBefore = tools.length;
+  ev({ type: "message_start", message: { id: "m2" } }, "c9");
+  t.translate({ type: "system", subtype: "status", status: "requesting" });
+  ev({ type: "content_block_start", index: 0, content_block: { type: "text" } }, "c9");
+  // The child's own calls never enter the parent's set: one it never answers (a child killed
+  // mid-tool) must not hold the line in tool-use after the Task itself is answered.
+  ev(
+    {
+      type: "content_block_start",
+      index: 1,
+      content_block: { type: "tool_use", id: "c7", name: "Bash" },
+    },
+    "c9",
+  );
+  ev({ type: "content_block_stop", index: 1 }, "c9");
+  ev({ type: "message_stop" }, "c9");
+  echo("c8", "c9");
+  assert.equal(modes.length, before, "nested frames emit no mode");
+  assert.equal(tools.length, toolsBefore, "a nested echo moves neither the flag nor the clock");
+  echo("c9");
+  assert.deepEqual(
+    tools.at(-1),
+    { tool: false, frame: true },
+    "the Task's own echo ends it: the nested message_start did not clear the parent's set",
+  );
+  console.log("live-mode ok");
+}

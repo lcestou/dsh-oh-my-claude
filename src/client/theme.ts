@@ -15,20 +15,25 @@ const OFF_KEY = {
 const isColourInt = (v: boolean | number | undefined): v is number =>
   Number.isInteger(v) && Number(v) >= 0 && Number(v) <= 0xffffff;
 
-type ThemeResult = { groups: ThemeGroup[]; accent: string; shimmer: string };
+type ThemeResult = { groups: ThemeGroup[]; accent: string; shimmer: string; shimmerDark: string };
 
 /** Hints in, body tokens and accent out. Absent keys mean on and the default colour. */
 export function themeOf(hints: Record<string, boolean | number>): ThemeResult {
   const n = isColourInt(hints.themeAccent) ? hints.themeAccent : THEME_DEFAULT_ACCENT;
   const accent = "#" + n.toString(16).padStart(6, "0");
+  // The CLI's two shimmers (2.1.280 theme table, `dO`: `v` is light, `B` is dark): rgb(245,149,117)
+  // on its light theme, rgb(235,159,127) on its dark one, the dark closer to the accent so the sweep
+  // does not blow out against a dark page. A custom accent has no CLI value, so its dark mix keeps
+  // more of the accent by the same margin.
   const shimmer = accent === "#d97757" ? "#f59575" : `color-mix(in srgb, ${accent} 72%, white)`;
+  const shimmerDark = accent === "#d97757" ? "#eb9f7f" : `color-mix(in srgb, ${accent} 80%, white)`;
 
   if (hints.themeOff === true) {
-    return { groups: [], accent, shimmer };
+    return { groups: [], accent, shimmer, shimmerDark };
   }
 
   const groups = THEME_GROUPS.filter((g) => hints[OFF_KEY[g]] !== true);
-  return { groups, accent, shimmer };
+  return { groups, accent, shimmer, shimmerDark };
 }
 
 /** "#rrggbb" (lower case, six digits) to its channels. */
