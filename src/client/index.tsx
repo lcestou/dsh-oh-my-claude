@@ -9198,52 +9198,87 @@ export function apply(ctx: ClientCtx) {
     return null;
   });
 
-  // Add workspace, with a box to pick it on. Renderless until dsh's sidebar "+" is clicked, and
-  // dormant unless an SSH box is saved; the sidebar footer is where a root-scoped entry stays
-  // mounted whether the sidebar is wide or collapsed.
-  // The directory picker as a slot occupant in both the sidebar and the hero, so the dialog is
-  // ours on every dsh. Shadowing is per cell, not per session; priority -1 replaces dsh's picker.
+  // Add workspace, with a box to pick it on: the directory picker as a slot occupant in both the
+  // sidebar and the hero, so the dialog is ours on every dsh. Shadowing is per cell, not per
+  // session; priority -1 replaces dsh's picker. The seats are taken only while at least one SSH
+  // box is saved, which is what makes the box dropdown worth the takeover: with none, dsh's own
+  // local-only dialog answers the "+" and the hero button (owner, 2026-09-23). The box list is
+  // reread when the Boxes card saves and when the tab comes back into view, so a box added here or
+  // on another device seats the dialog without a reload, and removing the last one vacates it.
   // On an older dsh that refuses a second occupant of a cell the register throws, and we take the
-  // sidebar "+" over by click instead until an upgrade.
-  try {
-    ctx.slots.inject("sidebar.workspaces.directoryFlow", () => {
-      ctx.slots.register(
-        {
-          name: "sidebar.workspaces.directoryFlow",
-          id: "oh-my-claude-workflow",
-          order: 300,
-          priority: -1,
-        },
-        // SAFETY: `DshSlots.register` types the owner props as the generic session shape, but dsh's
-        // directory-flow slots hand the DirectoryFlowOwnerProps contract; the cast names the truth.
-        (props) => <AddWorkflow {...(props as DirectoryFlowOwnerProps)} ctx={ctx} />,
-      );
-      return null;
-    });
-    ctx.slots.inject("conversation.hero.workspace.directoryFlow", () => {
-      ctx.slots.register(
-        {
-          name: "conversation.hero.workspace.directoryFlow",
-          id: "oh-my-claude-workflow-hero",
-          order: 300,
-          priority: -1,
-        },
-        // SAFETY: `DshSlots.register` types the owner props as the generic session shape, but dsh's
-        // directory-flow slots hand the DirectoryFlowOwnerProps contract; the cast names the truth.
-        (props) => <AddWorkflow {...(props as DirectoryFlowOwnerProps)} ctx={ctx} />,
-      );
-      return null;
-    });
-  } catch {
-    // Older dsh refuses a second occupant of a cell; take the sidebar "+" over by click until an
-    // upgrade, when the slot occupant takes over again on the next restart.
-    ctx.slots.inject("sidebar.footer.action", () => {
-      ctx.slots.register(
-        { name: "sidebar.footer.action", id: "claude-add-workspace", order: 90 },
-        () => <AddWorkspaceFlow ctx={ctx} />,
-      );
-      return null;
-    });
+  // sidebar "+" over by click instead until an upgrade; that fallback gates on the boxes itself.
+  {
+    const seats = new Map<string, () => void>();
+    const declared = new Set<{ name: string; id: string }>();
+    let boxed = false;
+    let fallback = false;
+    /** Take one declared cell while a box is saved and it is not ours yet. */
+    const seat = (cell: { name: string; id: string }) => {
+      if (!boxed || seats.has(cell.name) || fallback) return;
+      try {
+        seats.set(
+          cell.name,
+          ctx.slots.register(
+            { name: cell.name, id: cell.id, order: 300, priority: -1 },
+            // SAFETY: `DshSlots.register` types the owner props as the generic session shape, but
+            // dsh's directory-flow slots hand the DirectoryFlowOwnerProps contract; the cast names
+            // the truth.
+            (props) => <AddWorkflow {...(props as DirectoryFlowOwnerProps)} ctx={ctx} />,
+          ),
+        );
+      } catch {
+        // Older dsh refuses a second occupant of a cell; take the sidebar "+" over by click until
+        // an upgrade, when the slot occupant takes over again on the next restart.
+        fallback = true;
+        ctx.slots.inject("sidebar.footer.action", () => {
+          ctx.slots.register(
+            { name: "sidebar.footer.action", id: "claude-add-workspace", order: 90 },
+            () => <AddWorkspaceFlow ctx={ctx} />,
+          );
+          return null;
+        });
+      }
+    };
+    /** Hand every seat back to dsh's own picker. */
+    const vacate = () => {
+      for (const off of seats.values()) off();
+      seats.clear();
+    };
+    const refresh = () =>
+      fetch(`${ROUTE}/ssh-boxes`)
+        .then((r) => readJson<{ boxes?: unknown[] }>(r))
+        .then((b) => {
+          boxed = (b.boxes?.length ?? 0) > 0;
+          if (boxed) for (const cell of declared) seat(cell);
+          else vacate();
+        })
+        .catch(() => {
+          // The route is down; the seats stay as they were until the next reread.
+        });
+    for (const cell of [
+      { name: "sidebar.workspaces.directoryFlow", id: "oh-my-claude-workflow" },
+      { name: "conversation.hero.workspace.directoryFlow", id: "oh-my-claude-workflow-hero" },
+    ]) {
+      ctx.slots.inject(cell.name, () => {
+        declared.add(cell);
+        seat(cell);
+        return null;
+      });
+    }
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void refresh();
+    };
+    window.addEventListener(BOXES_EVENT, refresh);
+    document.addEventListener("visibilitychange", onVisible);
+    void refresh();
+    ctx.effect?.(
+      () => () => {
+        window.removeEventListener(BOXES_EVENT, refresh);
+        document.removeEventListener("visibilitychange", onVisible);
+        vacate();
+      },
+      "add-workspace-seats",
+    );
   }
 
   // Header chips in the session header.

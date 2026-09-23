@@ -25,6 +25,9 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
   strip) instead of rewriting dsh's DOM. The permission menu is drawn by the plugin, so it no longer
   depends on dsh's menu markup, and the row mark follows the session id rather than the row title.
   The old DOM paths stay as the fallback on a dsh that refuses the slot.
+- The Add workspace dialog with the box dropdown appears only once an SSH box is saved. With none,
+  the sidebar "+" and the hero's Add workspace open dsh's own dialog, and saving the first box
+  swaps ours in without a reload.
 - The inline-or-rows choice for Claude's tool activity moved from the Tune tab to Settings > Oh My
   Claude, as a Native tool rows switch. It configures the bridge, not Claude Code, which is what
   Tune is for.
