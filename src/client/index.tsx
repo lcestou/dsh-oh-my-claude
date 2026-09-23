@@ -89,7 +89,7 @@ import type { FallbackRecord } from "../translator.js";
 import { ReportBlock } from "./report.js";
 import { ChangelogBlock } from "./changelog.js";
 import { Spark, sparkNode } from "./spark.js";
-import { AccessShield, OhMyClaudeControl, sessionLabel } from "./panel.js";
+import { AccessShield, AccessTrigger, OhMyClaudeControl, sessionLabel } from "./panel.js";
 import { ConfirmButton } from "./tune.js";
 import { AddWorkspaceFlow, BOXES_EVENT, canBrowseDirs, OPEN_EVENT, RW_EVENT } from "./picker.js";
 import { ClaudeUpdateDetails } from "./claude-updates.js";
@@ -9152,6 +9152,9 @@ export function apply(ctx: ClientCtx) {
   // Add workspace, with a box to pick it on. Renderless until dsh's sidebar "+" is clicked, and
   // dormant unless an SSH box is saved; the sidebar footer is where a root-scoped entry stays
   // mounted whether the sidebar is wide or collapsed.
+  // Add workspace, with a box to pick it on. Renderless until dsh's sidebar "+" is clicked, and
+  // dormant unless an SSH box is saved; the sidebar footer is where a root-scoped entry stays
+  // mounted whether the sidebar is wide or collapsed.
   ctx.slots.inject("sidebar.footer.action", () => {
     ctx.slots.register(
       { name: "sidebar.footer.action", id: "claude-add-workspace", order: 90 },
@@ -9169,19 +9172,78 @@ export function apply(ctx: ClientCtx) {
     return null;
   });
 
-  // One Oh My Claude control in the composer's left group replaces the five separate buttons.
-  // The slot must be declared through `inject` before anything registers into it.
+  // One Oh My Claude control in the composer's left group.
   ctx.slots.inject("conversation.input.left", () => {
-    // Lookalike shield replaces dsh's trigger inside Claude sessions only.
-    ctx.slots.register(
-      { name: "conversation.input.left", id: "claude-access", order: 40 },
-      (props) => (props.sessionId ? <AccessShield sessionId={props.sessionId} ctx={ctx} /> : null),
-    );
     ctx.slots.register(
       { name: "conversation.input.left", id: "oh-my-claude", order: 50 },
       // Session-scoped slots receive `sessionId` (dsh-client-ui-jobs reads it the same way).
       (props) =>
         props.sessionId ? <OhMyClaudeControl sessionId={props.sessionId} ctx={ctx} /> : null,
+    );
+    return null;
+  });
+
+  // The permission control takes over dsh's composer permission slot (a single cell). Shadowing is
+  // per cell, not per session, so this would also replace dsh's control in a non-Claude session;
+  // register the entry only while the current session is Claude and dispose it otherwise, following
+  // the model picker the way useActiveClaude does. On an older dsh that refuses a second occupant
+  // of the cell the register throws, and we fall back to the DOM-mutating AccessShield in
+  // conversation.input.left.
+  ctx.slots.inject("conversation.input.permission", () => {
+    let dispose: (() => void) | undefined;
+    // The active session's model-directory store, so a model switch off a Claude mount re-reads.
+    let providerOff: (() => void) | undefined;
+    const stopProvider = () => {
+      try {
+        providerOff?.();
+      } catch {
+        // A disposed context retires the bundle on its own.
+      }
+      providerOff = undefined;
+    };
+    const sync = () => {
+      const active = activeClaudeSession(ctx);
+      stopProvider();
+      if (active) {
+        try {
+          providerOff = ctx.modelDirectories.directoryFor(active).store.subscribe(sync);
+        } catch {
+          // Unbound in this tab; the list store below still reports the session identity.
+        }
+      }
+      if (active && !dispose) {
+        try {
+          dispose = ctx.slots.register(
+            {
+              name: "conversation.input.permission",
+              id: "oh-my-claude-access",
+              order: 30,
+              priority: -1,
+            },
+            (props) => <AccessTrigger sessionId={props.sessionId ?? active} ctx={ctx} />,
+          );
+        } catch {
+          // Older dsh refuses a second occupant of the cell; keep the old AccessShield.
+          dispose = ctx.slots.register(
+            { name: "conversation.input.left", id: "claude-access", order: 40 },
+            (props) =>
+              props.sessionId ? <AccessShield sessionId={props.sessionId} ctx={ctx} /> : null,
+          );
+        }
+      } else if (!active && dispose) {
+        dispose();
+        dispose = undefined;
+      }
+    };
+    const listOff = ctx.sessions.list.subscribe?.(sync);
+    sync();
+    ctx.effect?.(
+      () => () => {
+        listOff?.();
+        stopProvider();
+        dispose?.();
+      },
+      "permission-access-sync",
     );
     return null;
   });

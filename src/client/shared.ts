@@ -756,6 +756,10 @@ type DshSlots = {
       id?: string;
       order?: number;
       label?: string;
+      // A negative priority shadows dsh's own occupant of the same cell (the lowest live entry
+      // renders); dsh 0.1.7's register accepts it, an older core that refuses a second occupant of
+      // one cell throws, which is why every such registration is wrapped in try/catch below.
+      priority?: number;
       inject?: () => Record<string, never>;
     },
     // `sessionId` on session-scoped slots; `close` on `settings.section` (dsh-client-ui-settings-general
@@ -771,7 +775,7 @@ type DshSlots = {
       // text in the box right now.
       useInput?: <T>(select: (state: { draft: string }) => T) => T;
     }) => ReactNode,
-  ) => void;
+  ) => () => void;
 };
 /** One directory row as dsh's listing reports it (dsh-host-directory-picker `DirectoryEntry`). */
 export interface DirEntry {

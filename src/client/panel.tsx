@@ -53,7 +53,12 @@ import { checkContract, contractMisses, contractSummary } from "./contract.js";
 import { UpdatePill } from "./update-pill.js";
 import { ReportBlock } from "./report.js";
 import { t, useLocale, type OmcKey } from "./i18n.js";
-import { Tooltip } from "@deepseek-ai/dsh-client-ui-primitives";
+import { Menu, Tooltip } from "@deepseek-ai/dsh-client-ui-primitives";
+import {
+  IconCheckOutlineMedium,
+  IconChevronDownOutlineRegular,
+  IconSparkleMedium,
+} from "./icons.js";
 import { Spark } from "./spark.js";
 import { ConfirmButton, TuneBody } from "./tune.js";
 import { noticesOn, setNoticesOn } from "./notices.js";
@@ -4372,6 +4377,273 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
   }, [sessionId, ctx]);
 
   return <span ref={anchorRef} hidden />;
+}
+
+// dsh's own permission trigger, copied so the new control reads as dsh's in the composer: a 28 px
+// capsule, transparent at rest, its hover shade under the pointer and a 2 px focus ring. The hashed
+// class is a build rename, so the rule is injected once and keyed on our own hook.
+const ACCESS_TRIGGER_CSS =
+  "[data-omc-access-trigger]:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}" +
+  "[data-omc-access-trigger]:focus-visible{box-shadow:0 0 0 2px var(--dsw-alias-border-l3)}";
+
+/**
+ * Read the session's permission mode, or null when the route is down or the session is not
+ * materialized. The optimistic pick and the current-mode label both start here, and the pick's
+ * success arm re-reads it to confirm the change.
+ */
+const fetchModeState = (sessionId: string): Promise<PermissionModeState | null> =>
+  fetch(`${ROUTE}/permission-mode?session=${encodeURIComponent(sessionId)}`)
+    .then((r) => readJson<PermissionModeState>(r))
+    .catch(() => null);
+
+/** Inject the trigger's hover/focus rule once, so a hot reload's stale copy never survives. */
+const ensureAccessTriggerStyle = (): void => {
+  const existing = document.getElementById("dsh-oh-my-claude-access-trigger");
+  if (existing) return;
+  const el = document.createElement("style");
+  el.id = "dsh-oh-my-claude-access-trigger";
+  el.textContent = ACCESS_TRIGGER_CSS;
+  document.head.appendChild(el);
+};
+
+/** The capsule the composer's permission control wears at rest: dsh's trigger shape, our hook. */
+const accessTriggerStyle: CSSProperties = {
+  minWidth: 0,
+  maxWidth: 220,
+  height: 28,
+  color: "var(--dsw-alias-label-secondary)",
+  cursor: "pointer",
+  background: "transparent",
+  border: "none",
+  borderRadius: 24,
+  outline: "none",
+  alignItems: "center",
+  gap: 4,
+  padding: "0 4px 0 8px",
+  fontSize: 13,
+  fontWeight: 500,
+  lineHeight: 20,
+  display: "inline-flex",
+};
+/** A menu row: full width, unstyled button that dsh's card surface frames; the checked one takes
+ *  the accent and a check. */
+const accessRowStyle: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  width: "100%",
+  gap: 8,
+  padding: "10px 12px",
+  background: "transparent",
+  border: "none",
+  cursor: "pointer",
+  color: "inherit",
+  font: "inherit",
+  textAlign: "start",
+};
+/** A row's label column, so the check does not shift the text when a mode gains or loses it. */
+const accessRowLabelStyle: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 8,
+  minWidth: 0,
+  flex: 1,
+};
+/** The refused-mode note and the pick error, in dsh's menu card body text. */
+const accessNoteStyle: CSSProperties = {
+  ...meta,
+  color: "var(--dsw-alias-label-tertiary)",
+  padding: "4px 12px 10px",
+};
+
+/**
+ * The permission control that owns dsh's composer permission slot (`conversation.input.permission`)
+ * in a Claude session: a capsule showing the current Claude mode, opening a menu of the six modes.
+ * It replaces the DOM-mutating AccessShield by rendering the trigger and menu directly, so it reads
+ * the same on every dsh and needs no selector. Registration is gated on the current session being
+ * Claude (see index.tsx), because the slot is a single cell and would otherwise shadow dsh's control
+ * in a non-Claude session too.
+ */
+export function AccessTrigger({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
+  useLocale();
+  const [open, setOpen] = useState(false);
+  // The current Claude mode, from GET /permission-mode; empty until the first fetch lands.
+  const [mode, setMode] = useState("");
+  // The scope whose permissions.disableBypassPermissionsMode refused bypass, empty when allowed;
+  // marks the bypass row and the trigger, and drives the full-access note.
+  const [bypassRefusedIn, setBypassRefusedIn] = useState("");
+  // The last pick's failure text, shown in the menu body; cleared on the next success.
+  const [error, setError] = useState<string | null>(null);
+  ensureAccessTriggerStyle();
+
+  // Read the current mode and the bypass ceiling once, so the capsule and menu show the truth before
+  // any pick. The session is fixed while this mounts, so the cwd does not change.
+  useEffect(() => {
+    let live = true;
+    fetchModeState(sessionId).then((snap) => {
+      if (live && snap) setMode(snap.mode);
+    });
+    const cwd = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.cwd;
+    fetch(`${ROUTE}/feature-switches${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ""}`)
+      .then((r) => readJson<FeatureSwitches>(r))
+      .then((s) => {
+        if (live) setBypassRefusedIn(s.bypassDisabled?.scope ?? "");
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [sessionId, ctx]);
+
+  // Whether the bypass row and the trigger carry the refused badge for the current mode.
+  const bypassRefused = bypassRefusedIn !== "" && mode === "bypassPermissions";
+  const label = `${modeLabel(mode)}${bypassRefused ? " ⚠" : ""}`;
+
+  /**
+   * Pick a mode, doing exactly what the shield's `pick` did: optimistically show it, send
+   * `/permission <preset>` through the live session when dsh's preset must change, then PUT the mode
+   * with the clearDefault rule, reverting and showing the error on any failure.
+   */
+  const pick = (m: string) => {
+    setOpen(false);
+    fetchModeState(sessionId).then((snap) => {
+      if (!snap) return; // nothing to compare against; leave the current mode as is
+      const wasMode = mode;
+      setMode(m); // optimistic, like the shield's reapplyLabel
+      const revert = () => setMode(wasMode);
+      const need = presetForMode(m);
+      const settle = () => {
+        const clearDefault =
+          (need === "read-only" && m === "plan") ||
+          (need === "workspace-write" && m === "acceptEdits") ||
+          (need === "danger-full-access" && m === "bypassPermissions");
+        fetch(`${ROUTE}/permission-mode`, {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ session: sessionId, mode: clearDefault ? null : m }),
+        })
+          .then((r) => readJson<PermissionModeState>(r))
+          .then((reply) => {
+            if (reply.error) {
+              revert();
+              setError(reply.error);
+            } else {
+              setError(null);
+              fetchModeState(sessionId).then((next) => {
+                if (next) setMode(next.mode);
+              });
+            }
+          })
+          .catch((e) => {
+            revert();
+            setError(e instanceof Error ? e.message : String(e));
+          });
+      };
+      if (need !== snap.accessMode) {
+        const live = ctx.sessions.binding?.(sessionId)?.session;
+        if (!live) {
+          revert();
+          setError(t("panel.access.notMaterialized"));
+          return;
+        }
+        live
+          .command(`/permission ${need}`)
+          .then((reply) => {
+            if (!reply || !reply.ok) {
+              revert();
+              setError(reply?.error?.message ?? t("panel.access.commandFailed"));
+            } else {
+              setTimeout(settle, 700);
+            }
+          })
+          .catch((e) => {
+            revert();
+            setError(e instanceof Error ? e.message : String(e));
+          });
+      } else {
+        settle();
+      }
+    });
+  };
+
+  const chevronOpen = open ? { transform: "rotate(180deg)" } : undefined;
+  const accessMenuProps = {
+    open,
+    onClose: () => setOpen(false),
+    side: "top" as const,
+    portal: true,
+    // The pinned primitives type (0.1.2-rc.1) requires these; dsh's own bundle (0.1.7) renders
+    // `children` over them, so an empty list and a no-op callback are harmless at runtime.
+    items: [],
+    onSelect: () => {},
+    anchor: (
+      <button
+        type="button"
+        data-omc-access-trigger=""
+        aria-label={t("panel.access.ariaLabel", {
+          text: label,
+          refused: bypassRefused ? t("panel.access.ariaRefused") : "",
+        })}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        style={accessTriggerStyle}
+      >
+        <IconSparkleMedium size={14} aria-hidden style={{ flex: "none" }} />
+        <span
+          aria-hidden="true"
+          style={{
+            flex: 1,
+            minWidth: 0,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {label}
+        </span>
+        {bypassRefused && (
+          <span aria-hidden style={{ flex: "none", color: "var(--dsw-alias-label-tertiary)" }}>
+            ⚠
+          </span>
+        )}
+        <IconChevronDownOutlineRegular aria-hidden style={chevronOpen} />
+      </button>
+    ),
+    children: (
+      <div role="presentation">
+        {MODE_KEYS.map((m, i) => {
+          const rowRefused = bypassRefusedIn !== "" && m === "bypassPermissions";
+          const checked = mode === m;
+          return (
+            <button
+              key={m}
+              type="button"
+              role="menuitemradio"
+              aria-checked={checked}
+              aria-setsize={MODE_KEYS.length}
+              aria-posinset={i + 1}
+              onClick={() => pick(m)}
+              style={accessRowStyle}
+            >
+              <span style={accessRowLabelStyle}>
+                {checked && <IconCheckOutlineMedium size={16} />}
+                <span>{modeLabel(m)}</span>
+              </span>
+              {rowRefused && <span aria-hidden>⚠</span>}
+            </button>
+          );
+        })}
+        {bypassRefused && (
+          <div style={accessNoteStyle}>
+            {t("panel.access.fullAccessRefused", { scope: bypassRefusedIn })}
+          </div>
+        )}
+        {error && <div style={accessNoteStyle}>{error}</div>}
+      </div>
+    ),
+  };
+  return <Menu {...accessMenuProps} />;
 }
 
 /** One `/btw` aside as the route returns it (mirrors the adapter's `AsideEntry`). */
