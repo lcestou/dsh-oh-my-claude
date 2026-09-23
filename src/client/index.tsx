@@ -8063,15 +8063,17 @@ type SteerAction =
   | { action: "restore" | "drop"; holdId: string };
 
 /** What the steer-edit route answers when it refuses. */
-type SteerEditFailure = { reason?: "sent" | "gone" | "error"; error?: string };
+type SteerEditFailure = { reason?: "sent" | "gone" | "error" | "relayed"; error?: string };
 
 /** The line under a row when an edit or removal did not happen, in the reader's language. */
 const steerFailureText = (f: SteerEditFailure): string =>
   f.reason === "gone"
     ? t("main.steer.gone")
-    : f.reason === "error"
-      ? t("main.steer.error", { error: f.error ?? t("common.unknownError") })
-      : t("main.steer.sent");
+    : f.reason === "relayed"
+      ? t("main.steer.relayedNoSend")
+      : f.reason === "error"
+        ? t("main.steer.error", { error: f.error ?? t("common.unknownError") })
+        : t("main.steer.sent");
 
 /** The card above the composer for typed steers Claude has not read yet. Edit (or Edit all, joining
  *  them one per line, as Claude Code's up arrow does) takes them back from Claude first, so nothing
@@ -8092,6 +8094,9 @@ function SteerCard({
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [failed, setFailed] = useState<{ id: string; text: string } | null>(null);
+  // A process fact from the server: the CLI is inside a dsh tool, which blocks Send now for every
+  // row, a stdin one typed before the tool call included.
+  const inTool = steers.inTool === true;
 
   /** Post one action for the row or hold `id`, then re-poll; a refusal leaves its line under it. */
   const act = async (id: string, body: SteerAction) => {
@@ -8155,7 +8160,11 @@ function SteerCard({
       <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 4 }}>
         <span style={{ flex: 1, color: T.faint, fontSize: 12 }}>
           {t("main.steer.title")} ·{" "}
-          {steers.held.length > 0 ? t("main.steer.heldHint") : t("main.steer.hint")}
+          {steers.held.length > 0
+            ? t("main.steer.heldHint")
+            : inTool
+              ? t("main.steer.relayedHint")
+              : t("main.steer.hint")}
         </span>
         {steers.waiting.length > 1 && (
           <>
@@ -8171,19 +8180,21 @@ function SteerCard({
             >
               {t("main.steer.editAll")}
             </button>
-            <button
-              type="button"
-              data-omc-steer-send-all=""
-              aria-label={t("main.steer.sendAllNowAria")}
-              title={t("main.steer.sendNowTitle")}
-              disabled={busy !== null}
-              onClick={() =>
-                void act("all", { action: "sendNow", ids: steers.waiting.map((w) => w.id) })
-              }
-              style={buttonStyle}
-            >
-              {t("main.steer.sendAllNow")}
-            </button>
+            {!inTool && (
+              <button
+                type="button"
+                data-omc-steer-send-all=""
+                aria-label={t("main.steer.sendAllNowAria")}
+                title={t("main.steer.sendNowTitle")}
+                disabled={busy !== null}
+                onClick={() =>
+                  void act("all", { action: "sendNow", ids: steers.waiting.map((w) => w.id) })
+                }
+                style={buttonStyle}
+              >
+                {t("main.steer.sendAllNow")}
+              </button>
+            )}
           </>
         )}
       </div>
@@ -8261,7 +8272,12 @@ function SteerCard({
       {steers.waiting.map((s) => {
         const disabled = busy !== null;
         return (
-          <div key={s.id} data-omc-steer-row={s.id} style={{ padding: "4px 0" }}>
+          <div
+            key={s.id}
+            data-omc-steer-row={s.id}
+            data-omc-steer-relayed={s.relayed ? "" : undefined}
+            style={{ padding: "4px 0" }}
+          >
             <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
               <span
                 style={{
@@ -8297,17 +8313,19 @@ function SteerCard({
               >
                 {t("common.remove")}
               </button>
-              <button
-                type="button"
-                data-omc-steer-send-now=""
-                aria-label={t("main.steer.sendNowAria")}
-                title={t("main.steer.sendNowTitle")}
-                disabled={disabled}
-                onClick={() => void act(s.id, { action: "sendNow", ids: [s.id] })}
-                style={buttonStyle}
-              >
-                {t("main.steer.sendNow")}
-              </button>
+              {!inTool && (
+                <button
+                  type="button"
+                  data-omc-steer-send-now=""
+                  aria-label={t("main.steer.sendNowAria")}
+                  title={t("main.steer.sendNowTitle")}
+                  disabled={disabled}
+                  onClick={() => void act(s.id, { action: "sendNow", ids: [s.id] })}
+                  style={buttonStyle}
+                >
+                  {t("main.steer.sendNow")}
+                </button>
+              )}
             </div>
             {failure(s.id)}
           </div>

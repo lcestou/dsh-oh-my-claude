@@ -4056,6 +4056,7 @@ console.log("keeper-mode ok");
     const proc: Record<string, unknown> = {
       alive: true,
       busy: true,
+      relays: new Map(),
       controlListener: undefined,
       steerPending: true,
       forwarded: 1,
@@ -4228,6 +4229,80 @@ console.log("keeper-mode ok");
     assert.deepEqual(await adapter.holdSteers("s9", ["m1"]), { ok: false, reason: "gone" });
   }
   console.log("steer edit ok");
+
+  // A steer typed during a dsh tool: dsh holds it, the CLI never saw it, so a hold skips the cancel
+  // and leaves the inbox directly; Send now is refused while the relay is pending.
+  {
+    const relayed = () =>
+      makeProc(true, {
+        busy: false,
+        relays: new Map([["c1", {}]]),
+        steerPending: false,
+        forwarded: 0,
+        sent: new Set(),
+        steers: new Map([["m1", { key: "r1", text: "first", at: 5, relayed: true }]]),
+      });
+    // Relayed hold and save: nothing written to the CLI, out of dsh's inbox, back through steer.
+    {
+      const { agent, removed, steered } = makeAgent([pending("m1", "r1", "first")]);
+      const adapter = adapterWith(agent);
+      const { proc, written } = relayed();
+      adapter.processes.set(registryKey(adapter.providerId, "s1"), fakeProc(proc));
+      assert.deepEqual(await adapter.holdSteers("s1", ["m1"]), {
+        ok: true,
+        holdId: "m1",
+        text: "first",
+      });
+      assert.equal(written.length, 0, "no cancel: the CLI never had it");
+      assert.deepEqual(removed, ["m1"]);
+      assert.deepEqual(adapter.steersFor("s1"), {
+        waiting: [],
+        held: [{ id: "m1", text: "first" }],
+        inTool: true,
+      });
+      assert.deepEqual(await adapter.releaseHold("s1", "m1", { text: "second" }), { ok: true });
+      assert.deepEqual(steered, [{ id: "m1", text: "second" }]);
+      assert.equal(written.length, 0);
+    }
+    // Relayed, already claimed for the tool's result: sent.
+    {
+      const adapter = adapterWith(makeAgent([]).agent);
+      const { proc, written } = relayed();
+      adapter.processes.set(registryKey(adapter.providerId, "s1"), fakeProc(proc));
+      assert.deepEqual(await adapter.holdSteers("s1", ["m1"]), { ok: false, reason: "sent" });
+      assert.equal(written.length, 0);
+      assert.deepEqual(adapter.steersFor("s1").waiting, []);
+    }
+    // The rows and the flag: present only while true, so a plain process's JSON is what it was.
+    {
+      const adapter = adapterWith(makeAgent([]).agent);
+      const { proc } = relayed();
+      adapter.processes.set(registryKey(adapter.providerId, "s1"), fakeProc(proc));
+      assert.deepEqual(adapter.steersFor("s1"), {
+        waiting: [{ id: "m1", text: "first", at: 5, relayed: true }],
+        held: [],
+        inTool: true,
+      });
+      const plain = makeProc(true);
+      adapter.processes.set(registryKey(adapter.providerId, "s1"), fakeProc(plain.proc));
+      assert.deepEqual(adapter.steersFor("s1"), {
+        waiting: [{ id: "m1", text: "first", at: 5 }],
+        held: [],
+      });
+    }
+    // Send now during a relay: refused before anything is taken back.
+    {
+      const { agent, removed } = makeAgent([pending("m1", "r1", "first")]);
+      const adapter = adapterWith(agent);
+      const { proc, written } = relayed();
+      adapter.processes.set(registryKey(adapter.providerId, "s1"), fakeProc(proc));
+      assert.deepEqual(await adapter.sendSteerNow("s1", ["m1"]), { ok: false, reason: "relayed" });
+      assert.equal(written.length, 0);
+      assert.deepEqual(removed, []);
+      assert.equal(adapter.steersFor("s1").waiting.length, 1);
+    }
+    console.log("steer-card relay hold ok");
+  }
 }
 
 // retarget: a model-only spec change switches the live process with set_model and keeps it; any
@@ -5188,6 +5263,81 @@ console.log("interrupt-on-abort ok");
   assert.equal(writes.length, 2, "a child's report is still forwarded");
   assert.equal(proc.steers.has("m2"), false, "but it is not the person's to edit");
   console.log("steer-card listener ok");
+}
+
+// Inside a dsh tool (a relay pending, busy already false) a typed steer is recorded as relayed and
+// nothing goes to stdin; dsh keeps it and staples it to the tool's result. A splice that removes
+// drops the records dsh no longer holds.
+{
+  const handlers: Record<string, (session: unknown, event: unknown) => void> = {};
+  let nextStep: Array<{ id: string }> = [];
+  const adapter = new ClaudeCodeAdapter(
+    fakeCtx({
+      on(name: string, fn: (session: unknown, event: unknown) => void) {
+        handlers[name] = fn;
+      },
+      agents: { get: () => ({ inbox: { nextStep, replace: () => true, remove: () => true } }) },
+    }),
+    Config({}),
+  );
+  const typed = {
+    id: "m1",
+    role: "user",
+    source: { kind: "user", rpcId: "r1" },
+    content: [{ type: "text", text: "check the README too" }],
+  };
+  const relayWrites: string[] = [];
+  const relayProc = {
+    alive: true,
+    busy: false,
+    relays: new Map([["c1", {}]]),
+    sent: new Set<string>(),
+    steerPending: false,
+    forwarded: 0,
+    steers: new Map<
+      string,
+      { uuid?: string; key: string; text: string; at: number; relayed?: true }
+    >(),
+    write(line: string) {
+      relayWrites.push(line);
+      return true;
+    },
+  };
+  adapter.processes.set(registryKey("claude-code", "r"), fakeProc(relayProc));
+  const relaySplice = (inserted: object[]) =>
+    handlers["session/event"]?.(
+      { id: "r" },
+      { type: "agent/inbox/spliced", data: { target: "next-step", inserted } },
+    );
+  relaySplice([typed]);
+  assert.equal(relayWrites.length, 0, "relayed: nothing written to stdin");
+  assert.deepEqual(relayProc.steers.get("m1"), {
+    key: "r1",
+    text: "check the README too",
+    at: relayProc.steers.get("m1")!.at,
+    relayed: true,
+  });
+  assert.equal(relayProc.sent.size, 0, "relayed: not marked sent");
+  assert.equal(relayProc.steerPending, false, "relayed: nothing to park on");
+  assert.equal(relayProc.forwarded, 0);
+  relaySplice([
+    {
+      id: "m3",
+      role: "user",
+      source: { kind: "agent-message", form: "relay", senderSessionId: "c1" },
+      content: [{ type: "text", text: "chunk done" }],
+    },
+  ]);
+  assert.equal(relayProc.steers.has("m3"), false, "relayed: a child's line is not the person's");
+  assert.equal(relayWrites.length, 0);
+  // A removal splice with m1 gone from dsh's inbox (a Stop's clear, a claim): the record goes.
+  nextStep = [];
+  handlers["session/event"]?.(
+    { id: "r" },
+    { type: "agent/inbox/spliced", data: { target: "next-step", inserted: [], removedCount: 1 } },
+  );
+  assert.equal(relayProc.steers.has("m1"), false, "relayed: follows dsh's inbox");
+  console.log("steer-card relay listener ok");
 }
 // What dsh sends on its own behalf goes live the same way a typed steer does, marked by its id. On
 // 2026-09-16 three child reports (a send_message relay, two settlement notices) were spliced a few

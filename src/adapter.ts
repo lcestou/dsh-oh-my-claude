@@ -283,7 +283,7 @@ type Continuation =
 /** dsh splicing messages into a session's inbox mid-turn; the steers this adapter forwards live. */
 type SpliceEvent = {
   type?: string;
-  data?: { target?: string; inserted?: LooseMessage[] };
+  data?: { target?: string; inserted?: LooseMessage[]; removedCount?: number };
 };
 /** The permission decision inputs, one control request's worth. */
 interface Decision {
@@ -552,16 +552,28 @@ export interface RewindReply extends Partial<RewindResult> {
 }
 /** What the steer card's route answers. `sent`: Claude already has it (or it was never waiting);
  *  `gone`: no live process; `error`: the CLI did not answer the cancel. */
+/** Whether the CLI is inside a dsh tool right now: a live process with a relay pending. Reads the
+ *  relay map as optional because the test fakes build processes field by field, and the ones that
+ *  never relay carry no map. */
+const inRelay = (proc: { alive?: boolean; relays?: Map<string, unknown> } | undefined): boolean =>
+  proc?.alive === true && (proc.relays?.size ?? 0) > 0;
+
+/** `relayed`: Send now was asked while the CLI is inside a dsh tool, which cannot be cut short
+ *  without killing the tool; the card says to wait or edit instead. */
 export type SteerEditReply =
   | { ok: true }
-  | { ok: false; reason: "sent" | "gone" | "error"; error?: string };
+  | { ok: false; reason: "sent" | "gone" | "error" | "relayed"; error?: string };
 /** What taking steers back answers: the hold to end later and the text the editor starts from. */
 export type HoldReply =
   | { ok: true; holdId: string; text: string }
   | { ok: false; reason: "sent" | "gone" | "error"; error?: string };
 /** The steer card's poll: steers still waiting in the CLI, and holds open for an edit. */
 export interface SteerCardState {
-  waiting: Array<{ id: string; text: string; at: number }>;
+  /** The CLI is inside a dsh tool, so Send now is refused for every row; present only when true. */
+  inTool?: true;
+  /** `relayed` is present only while dsh holds the message (typed during a dsh tool): a hold skips
+   *  the CLI cancel and leaves dsh's inbox directly. */
+  waiting: Array<{ id: string; text: string; at: number; relayed?: true }>;
   held: Array<{ id: string; text: string }>;
 }
 /** Steers taken back from Claude while someone edits them. */
@@ -2570,7 +2582,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // Everything dsh splices mid-step goes the same way, whoever sent it: a typed steer, a child's
     // send_message, a settlement notice, a job's finish line. Left to the boundary, a step parked
     // on a typed steer forwards only what a person typed and the rest is lost (2026-09-16: three
-    // child reports in one session, each spliced a few seconds after a typed steer).
+    // child reports in one session, each spliced a few seconds after a typed steer). During a dsh
+    // tool nothing is forwarded; a typed steer is recorded as relayed so the card can edit it in
+    // dsh's inbox until the tool ends.
     ctx.on?.("session/event", (sessionArg, eventArg) => {
       // SAFETY: dsh's session/event carries (session, event); only the spliced-inbox fields are read
       const session = sessionArg as { id?: string };
@@ -2578,7 +2592,15 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       const event = eventArg as SpliceEvent;
       if (event?.type !== "agent/inbox/spliced" || event.data?.target !== "next-step") return;
       const proc = this.processes.get(registryKey(this.providerId, session?.id ?? ""));
-      if (!proc?.alive || !proc.busy || proc.relays.size > 0) return;
+      if (!proc?.alive) return;
+      // A relay pending means the CLI is inside a dsh tool: dsh keeps the message and staples it to
+      // the tool's result at the tool's end (stepContextFor in openTurn), so nothing goes to stdin
+      // (written there, the CLI would inject it after the result too, and the park that follows
+      // would end a step into an empty inbox: the 2026-09-16 case noted in openTurn). Record it so
+      // the card can edit or remove it from dsh's inbox meanwhile. `busy` is not the signal: it
+      // drops a few statements after the relay is registered.
+      const toolPending = proc.relays.size > 0;
+      if (!toolPending && !proc.busy) return;
       for (const m of event.data?.inserted ?? []) {
         const key = steerKey(m);
         if (!key) continue;
@@ -2587,6 +2609,17 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         if (proc.sent.has(key)) continue;
         const text = textOf(m.content);
         if (!text) continue;
+        if (toolPending) {
+          // Only a text message a person typed is theirs to edit; the rest rides on the result as
+          // today. Nothing on `sent`, `forwarded` or `steerPending`: those drive the stdin park.
+          if (
+            m.source?.kind === "user" &&
+            m.id &&
+            !(Array.isArray(m.content) && m.content.some((b) => b.type !== "text"))
+          )
+            proc.steers.set(m.id, { key, text, at: Date.now(), relayed: true });
+          continue;
+        }
         // A file or image cannot go over stdin from here: dsh projects a file into its `[File …]`
         // handle only when it assembles the next request, and an image needs the attachment store.
         // Park the step at the CLI's next tool result instead, so dsh delivers the message whole
@@ -2607,6 +2640,20 @@ export class ClaudeCodeAdapter extends LlmAdapter {
           if (m.source?.kind === "user" && m.id)
             proc.steers.set(m.id, { uuid, key, text, at: Date.now() });
         }
+      }
+      // A splice that removes (a hold, a Stop's clear, dsh's claim at the tool's end) may have taken
+      // a message this map still lists as relayed. Drop what dsh no longer holds: on a Stop during
+      // a relay the abort listener is already gone, so this is the only signal.
+      if ((event.data?.removedCount ?? 0) > 0) {
+        let inbox: Agent["inbox"];
+        try {
+          inbox = this.ctx?.agents?.get?.(asSessionId(session?.id ?? ""))?.inbox;
+        } catch {
+          inbox = undefined; // scope reloading: the next splice or the exit clears them
+        }
+        if (inbox)
+          for (const [id, st] of proc.steers)
+            if (st.relayed && !inbox.nextStep.some((m) => m.id === id)) proc.steers.delete(id);
       }
       if (session?.id) this.publishAsides(session.id);
     });
@@ -3449,7 +3496,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    *  taken back for an edit. A call from the card's own read (`touch`, the default) re-arms every
    *  hold's timer, so a hold nobody reads (a closed tab) goes back to Claude unchanged after
    *  `HOLD_IDLE_MS`; a publish passes `touch: false`, since the turn loop publishes at every tool
-   *  boundary and would otherwise keep a closed tab's hold alive for the whole turn. */
+   *  boundary and would otherwise keep a closed tab's hold alive for the whole turn. `inTool` says
+   *  the CLI is inside a dsh tool, which blocks Send now for every row. */
   steersFor(sessionId: string, touch = true): SteerCardState {
     const holds = this.heldSteers.get(sessionId);
     if (touch)
@@ -3460,10 +3508,21 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const proc = this.processes.get(registryKey(this.providerId, sessionId));
     const waiting = proc?.alive
       ? [...proc.steers]
-          .map(([id, s]) => ({ id, text: s.text, at: s.at }))
+          .map(([id, s]) => {
+            // The key is absent, not false, for a stdin steer, so its JSON is what it was.
+            const row: SteerCardState["waiting"][number] = { id, text: s.text, at: s.at };
+            if (s.relayed) row.relayed = true;
+            return row;
+          })
           .toSorted((a, b) => a.at - b.at)
       : [];
-    return { waiting, held: [...(holds ?? [])].map(([id, h]) => ({ id, text: h.text })) };
+    const state: SteerCardState = {
+      waiting,
+      held: [...(holds ?? [])].map(([id, h]) => ({ id, text: h.text })),
+    };
+    // Present only while true: the JSON of a session with no relay pending is what it was.
+    if (inRelay(proc)) state.inTool = true;
+    return state;
   }
 
   /** The timer that restores a hold its card stopped polling for. */
@@ -3477,7 +3536,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
 
   /**
    * Take typed steers back from Claude so someone can edit them, several at once when asked (the
-   * card's Edit all, the CLI's up-arrow). Each is cancelled in the CLI first; one the CLI already
+   * card's Edit all, the CLI's up-arrow). Each is cancelled in the CLI first; a relayed one (dsh
+   * holds it, the CLI never saw it) skips the cancel and leaves the inbox directly; one the CLI already
    * took is skipped, and one dsh already drew as sent (the park won the race) goes straight back to
    * Claude. The rest leave dsh's inbox too, so nothing delivers them while the edit is open, and
    * wait in a hold until `releaseHold`. When nothing forwarded is left in the CLI's queue the park
@@ -3496,6 +3556,17 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const texts: string[] = [];
     let error: string | undefined;
     for (const { id, waiting } of order) {
+      if (waiting.relayed) {
+        // Never written to the CLI: dsh's inbox is the only copy. Out of it, or already claimed for
+        // the relay result, in which case Claude reads it with the result and the card says sent.
+        proc.steers.delete(id);
+        this.publishAsides(sessionId);
+        const message = inbox?.nextStep.find((m) => m.id === id);
+        if (!message || !inbox?.remove(id)) continue;
+        messages.push(message);
+        texts.push(waiting.text);
+        continue;
+      }
       const reply = await this.control(
         proc,
         { subtype: "cancel_async_message", message_uuid: waiting.uuid },
@@ -3581,9 +3652,15 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    * CLI its interrupt. The hold comes first so the messages are not in the CLI's own pending list
    * when the interrupt lands, and they go back through `agent.steer` once the agent is idle, which
    * the mirror documents as starting a turn. A dsh without `cancel` (0.1.6 and earlier) gets the
-   * steers put back untouched and a refusal that says so.
+   * steers put back untouched and a refusal that says so. A relay pending refuses with `relayed`:
+   * the tool cannot be cut short without killing the CLI.
    */
   async sendSteerNow(sessionId: string, ids: string[]): Promise<SteerEditReply> {
+    // Inside a dsh tool the cut would abort the tool, reject the relay and kill the CLI on the next
+    // turn (the abandon path). Refuse before taking anything back, for every row, since a steer the
+    // CLI queued before the tool call is blocked by the same tool.
+    const proc = this.processes.get(registryKey(this.providerId, sessionId));
+    if (inRelay(proc)) return { ok: false, reason: "relayed" };
     const held = await this.holdSteers(sessionId, ids);
     if (!held.ok) return held;
     const agent = (await this.agentFor(sessionId))?.agent;
@@ -5547,6 +5624,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     if (cont.mode === "relay") {
       const relays = [...proc.relays.values()];
       proc.relays.clear();
+      this.publishAsides(cont.options.sessionId);
       const live = this.liveTurn.get(cont.options.sessionId);
       if (live) live.relay = undefined;
       const extra = stepContextFor(cont.options.messages, prep.drops, proc.sent); // steers and notices ride on the last result
@@ -6204,6 +6282,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         yield* relayBlocks(tr, call);
         proc.relays.set(call.id, call);
       }
+      publishAsidesFor();
       tr.onProgress?.({ relay: { name: first.name } });
       return "relayed";
     };

@@ -422,6 +422,10 @@ export const en = {
   "main.steer.sent": "Edit failed: this message may have already started sending.",
   "main.steer.gone": "Claude is no longer running in this session.",
   "main.steer.error": "Could not reach Claude: {error}",
+  "main.steer.relayedHint":
+    "Claude is inside a dsh tool. It reads these with the tool's result; Send now waits until then.",
+  "main.steer.relayedNoSend":
+    "Claude is inside a dsh tool. Send now works once it ends; Edit and Remove work now.",
   // Login card above the composer
   "main.loginCard.loggedIn": "Logged in. Send your message again.",
   "main.loginCard.loggedOut": "Claude Code on {where} is logged out.",
@@ -867,6 +871,10 @@ export const zh = {
   "main.steer.sent": "编辑失败：这条消息可能已经开始发送。",
   "main.steer.gone": "此会话中的 Claude 已不再运行。",
   "main.steer.error": "无法连接 Claude：{error}",
+  "main.steer.relayedHint":
+    "Claude 正在运行 dsh 工具，会随工具结果读取这些消息；立即发送需等工具结束。",
+  "main.steer.relayedNoSend":
+    "Claude 正在运行 dsh 工具。工具结束后才能立即发送；现在可以编辑或移除。",
   "main.loginCard.loggedIn": "已登录。请重新发送你的消息。",
   "main.loginCard.loggedOut": "{where} 上的 Claude Code 已退出登录。",
   "main.loginCard.dismissAria": "关闭登录卡片",
