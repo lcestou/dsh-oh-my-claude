@@ -283,7 +283,7 @@ type Continuation =
 /** dsh splicing messages into a session's inbox mid-turn; the steers this adapter forwards live. */
 type SpliceEvent = {
   type?: string;
-  data?: { target?: string; inserted?: LooseMessage[] };
+  data?: { target?: string; inserted?: LooseMessage[]; removedCount?: number };
 };
 /** The permission decision inputs, one control request's worth. */
 interface Decision {
@@ -2582,7 +2582,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // Everything dsh splices mid-step goes the same way, whoever sent it: a typed steer, a child's
     // send_message, a settlement notice, a job's finish line. Left to the boundary, a step parked
     // on a typed steer forwards only what a person typed and the rest is lost (2026-09-16: three
-    // child reports in one session, each spliced a few seconds after a typed steer).
+    // child reports in one session, each spliced a few seconds after a typed steer). During a dsh
+    // tool nothing is forwarded; a typed steer is recorded as relayed so the card can edit it in
+    // dsh's inbox until the tool ends.
     ctx.on?.("session/event", (sessionArg, eventArg) => {
       // SAFETY: dsh's session/event carries (session, event); only the spliced-inbox fields are read
       const session = sessionArg as { id?: string };
@@ -2590,7 +2592,15 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       const event = eventArg as SpliceEvent;
       if (event?.type !== "agent/inbox/spliced" || event.data?.target !== "next-step") return;
       const proc = this.processes.get(registryKey(this.providerId, session?.id ?? ""));
-      if (!proc?.alive || !proc.busy || proc.relays.size > 0) return;
+      if (!proc?.alive) return;
+      // A relay pending means the CLI is inside a dsh tool: dsh keeps the message and staples it to
+      // the tool's result at the tool's end (stepContextFor in openTurn), so nothing goes to stdin
+      // (written there, the CLI would inject it after the result too, and the park that follows
+      // would end a step into an empty inbox: the 2026-09-16 case noted in openTurn). Record it so
+      // the card can edit or remove it from dsh's inbox meanwhile. `busy` is not the signal: it
+      // drops a few statements after the relay is registered.
+      const toolPending = proc.relays.size > 0;
+      if (!toolPending && !proc.busy) return;
       for (const m of event.data?.inserted ?? []) {
         const key = steerKey(m);
         if (!key) continue;
@@ -2599,6 +2609,17 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         if (proc.sent.has(key)) continue;
         const text = textOf(m.content);
         if (!text) continue;
+        if (toolPending) {
+          // Only a text message a person typed is theirs to edit; the rest rides on the result as
+          // today. Nothing on `sent`, `forwarded` or `steerPending`: those drive the stdin park.
+          if (
+            m.source?.kind === "user" &&
+            m.id &&
+            !(Array.isArray(m.content) && m.content.some((b) => b.type !== "text"))
+          )
+            proc.steers.set(m.id, { key, text, at: Date.now(), relayed: true });
+          continue;
+        }
         // A file or image cannot go over stdin from here: dsh projects a file into its `[File …]`
         // handle only when it assembles the next request, and an image needs the attachment store.
         // Park the step at the CLI's next tool result instead, so dsh delivers the message whole
@@ -2619,6 +2640,20 @@ export class ClaudeCodeAdapter extends LlmAdapter {
           if (m.source?.kind === "user" && m.id)
             proc.steers.set(m.id, { uuid, key, text, at: Date.now() });
         }
+      }
+      // A splice that removes (a hold, a Stop's clear, dsh's claim at the tool's end) may have taken
+      // a message this map still lists as relayed. Drop what dsh no longer holds: on a Stop during
+      // a relay the abort listener is already gone, so this is the only signal.
+      if ((event.data?.removedCount ?? 0) > 0) {
+        let inbox: Agent["inbox"];
+        try {
+          inbox = this.ctx?.agents?.get?.(asSessionId(session?.id ?? ""))?.inbox;
+        } catch {
+          inbox = undefined; // scope reloading: the next splice or the exit clears them
+        }
+        if (inbox)
+          for (const [id, st] of proc.steers)
+            if (st.relayed && !inbox.nextStep.some((m) => m.id === id)) proc.steers.delete(id);
       }
       if (session?.id) this.publishAsides(session.id);
     });

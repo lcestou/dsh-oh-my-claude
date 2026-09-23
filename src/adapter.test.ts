@@ -5264,6 +5264,81 @@ console.log("interrupt-on-abort ok");
   assert.equal(proc.steers.has("m2"), false, "but it is not the person's to edit");
   console.log("steer-card listener ok");
 }
+
+// Inside a dsh tool (a relay pending, busy already false) a typed steer is recorded as relayed and
+// nothing goes to stdin; dsh keeps it and staples it to the tool's result. A splice that removes
+// drops the records dsh no longer holds.
+{
+  const handlers: Record<string, (session: unknown, event: unknown) => void> = {};
+  let nextStep: Array<{ id: string }> = [];
+  const adapter = new ClaudeCodeAdapter(
+    fakeCtx({
+      on(name: string, fn: (session: unknown, event: unknown) => void) {
+        handlers[name] = fn;
+      },
+      agents: { get: () => ({ inbox: { nextStep, replace: () => true, remove: () => true } }) },
+    }),
+    Config({}),
+  );
+  const typed = {
+    id: "m1",
+    role: "user",
+    source: { kind: "user", rpcId: "r1" },
+    content: [{ type: "text", text: "check the README too" }],
+  };
+  const relayWrites: string[] = [];
+  const relayProc = {
+    alive: true,
+    busy: false,
+    relays: new Map([["c1", {}]]),
+    sent: new Set<string>(),
+    steerPending: false,
+    forwarded: 0,
+    steers: new Map<
+      string,
+      { uuid?: string; key: string; text: string; at: number; relayed?: true }
+    >(),
+    write(line: string) {
+      relayWrites.push(line);
+      return true;
+    },
+  };
+  adapter.processes.set(registryKey("claude-code", "r"), fakeProc(relayProc));
+  const relaySplice = (inserted: object[]) =>
+    handlers["session/event"]?.(
+      { id: "r" },
+      { type: "agent/inbox/spliced", data: { target: "next-step", inserted } },
+    );
+  relaySplice([typed]);
+  assert.equal(relayWrites.length, 0, "relayed: nothing written to stdin");
+  assert.deepEqual(relayProc.steers.get("m1"), {
+    key: "r1",
+    text: "check the README too",
+    at: relayProc.steers.get("m1")!.at,
+    relayed: true,
+  });
+  assert.equal(relayProc.sent.size, 0, "relayed: not marked sent");
+  assert.equal(relayProc.steerPending, false, "relayed: nothing to park on");
+  assert.equal(relayProc.forwarded, 0);
+  relaySplice([
+    {
+      id: "m3",
+      role: "user",
+      source: { kind: "agent-message", form: "relay", senderSessionId: "c1" },
+      content: [{ type: "text", text: "chunk done" }],
+    },
+  ]);
+  assert.equal(relayProc.steers.has("m3"), false, "relayed: a child's line is not the person's");
+  assert.equal(relayWrites.length, 0);
+  // A removal splice with m1 gone from dsh's inbox (a Stop's clear, a claim): the record goes.
+  nextStep = [];
+  handlers["session/event"]?.(
+    { id: "r" },
+    { type: "agent/inbox/spliced", data: { target: "next-step", inserted: [], removedCount: 1 } },
+  );
+  assert.equal(relayProc.steers.has("m1"), false, "relayed: follows dsh's inbox");
+  console.log("steer-card relay listener ok");
+}
 // What dsh sends on its own behalf goes live the same way a typed steer does, marked by its id. On
 // 2026-09-16 three child reports (a send_message relay, two settlement notices) were spliced a few
 // seconds after a typed steer, claimed into a step the plugin ran in steer mode, and never written.
