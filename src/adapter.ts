@@ -2709,7 +2709,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    *
    * `localConfig` resolves a bare `claude` against this box's PATH so a dsh started with a short
    * one still finds it. That path means nothing on a far box, and sending it there failed the turn
-   * outright: `claude exited 127: env: '/home/lutechi/.local/bin/claude': No such file or
+   * outright: `claude exited 127: env: '/home/<you>/.local/bin/claude': No such file or
    * directory` on a remote workspace whose provider is the local mount (owner, 2026-09-22). An SSH
    * box mount was never affected, since `localConfig` leaves a box's command alone.
    */
