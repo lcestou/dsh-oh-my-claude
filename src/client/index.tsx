@@ -5462,7 +5462,14 @@ function watchUltrathink(ctx: ClientCtx) {
    */
   const drawCopy = (box: HTMLElement, parts: ChildNode[], text: string) => {
     const had = copies.get(box);
-    if (had !== undefined && had.text === text && had.copy.isConnected) return;
+    if (had !== undefined && had.text === text && had.copy.isConnected) {
+      // The marks can go without the text changing: a hot reload's outgoing bundle clearing its own
+      // copy took them off this one's parts, and dsh's text showed under the copy. Put them back.
+      for (const part of parts)
+        if (part instanceof Element && !part.hasAttribute(QUOTE_SOURCE))
+          part.setAttribute(QUOTE_SOURCE, "1");
+      return;
+    }
     had?.copy.remove();
     // The message as lines of pieces: text as fresh text nodes, a chip as its clone, in order.
     let line: Node[] = [];
@@ -5526,12 +5533,14 @@ function watchUltrathink(ctx: ClientCtx) {
     parts[0]?.before(copy);
     copies.set(box, { text, copy });
   };
-  /** Put dsh's parts back and remove the copy, for a message whose quote went away. */
+  /** Remove this bundle's copy, and put dsh's parts back unless another copy still stands in for
+   *  them: on a hot reload the incoming bundle may have drawn its own before this one is torn down. */
   const dropCopy = (box: HTMLElement) => {
     copies.get(box)?.copy.remove();
+    copies.delete(box);
+    if (box.querySelector(`:scope > [${QUOTE_COPY}]`) !== null) return;
     for (const part of box.querySelectorAll(`:scope > [${QUOTE_SOURCE}]`))
       part.removeAttribute(QUOTE_SOURCE);
-    copies.delete(box);
   };
   /** Quotes read as quotes: dimmed with their `>` fainter still in the composer, where the person is
    *  typing, and laid out as quote blocks in a sent message (see `drawCopy`). Not part of the
@@ -5698,11 +5707,14 @@ function watchUltrathink(ctx: ClientCtx) {
   };
   const touchesHost = (records: MutationRecord[]): boolean => {
     for (const r of records) {
-      // The quote copies this pass writes beside a message are not a change to answer.
-      const moved = [...r.addedNodes, ...r.removedNodes];
+      // A quote copy this pass adds is not a change to answer. A removed one is: a hot reload's
+      // outgoing bundle takes its copy away, and this pass has to redraw and re-mark. The pass
+      // writes only when a message's text changed, so answering its own removals ends there.
+      const added = [...r.addedNodes];
       if (
-        moved.length > 0 &&
-        moved.every((n) => n instanceof Element && n.hasAttribute(QUOTE_COPY))
+        r.removedNodes.length === 0 &&
+        added.length > 0 &&
+        added.every((n) => n instanceof Element && n.hasAttribute(QUOTE_COPY))
       )
         continue;
       const el = r.target instanceof Element ? r.target : r.target.parentElement;
