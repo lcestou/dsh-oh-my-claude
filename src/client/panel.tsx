@@ -343,14 +343,16 @@ function SessionRepairsNotice({
     setBusyId(id);
     setRowError(null);
     try {
-      await readJson(
+      const seeded = await readJson<{ transcriptId?: string }>(
         await fetch(`${ROUTE}/reseed`, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ id }),
         }),
       );
-      await openHere(ctx, { id, dsh: { id } }, cwd);
+      // The open helper posts the transcript's id to `/open` and adopts the session under its
+      // dsh id, as the Restore tab's rows do; the route names the transcript for that.
+      await openHere(ctx, { id: seeded.transcriptId ?? id, dsh: { id } }, cwd);
     } catch (e) {
       setRowError({ id, text: e instanceof Error ? e.message : String(e) });
     } finally {

@@ -2388,7 +2388,9 @@ export function registerSessionRoutes(
                 bak,
                 at: Date.now(),
               });
-              return json(res, 200, opened);
+              // The transcript id rides along: the tab's open helper posts that id to `/open` and
+              // adopts the session under its dsh id, the way the Restore tab's rows do.
+              return json(res, 200, { ...opened, transcriptId: claudeIdOf(id) });
             }
             if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/search`) {
               const q = url.searchParams.get("q") ?? "";
