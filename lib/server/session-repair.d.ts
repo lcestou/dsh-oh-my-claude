@@ -56,6 +56,8 @@ export type Catalog = {
         finish(): void;
     };
 };
+/** The event types dsh folds onto the conversation surface; the first of them is the system head. */
+export declare const SURFACE: Set<string>;
 /**
  * Drop unadvertised tool rows and keep every seq reference consistent. A `tool/call` no
  * `assistant/message` tool-call block advertised is what rows mode wrote for Claude Code's own

@@ -88,7 +88,12 @@ const resultOf = (e: Row): string | undefined => {
 const PENDING_TEXT =
   "(still running when dsh took over this step; the output shows in the next step)";
 /** The event types dsh folds onto the conversation surface; the first of them is the system head. */
-const SURFACE = new Set(["system/message", "user/message", "assistant/message", "tool/result"]);
+export const SURFACE = new Set([
+  "system/message",
+  "user/message",
+  "assistant/message",
+  "tool/result",
+]);
 
 /** The seq span a replacing `surfaceOp` names, or undefined for `"append"` and anything else. A
  *  physical row says `startSeq`/`endSeq` (what dsh writes to disk); the projected shape says

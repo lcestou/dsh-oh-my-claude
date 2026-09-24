@@ -121,6 +121,51 @@ export declare const ASIDES_FILE: (d: string) => string;
 export declare function loadAsides(dir: string): Promise<Map<string, AsideEntry[]>>;
 /** Save one session's aside ring (already capped by the caller); serialized read-modify-write. */
 export declare function saveAsides(dir: string, sessionId: string, entries: AsideEntry[]): Promise<void>;
+/** Why a log was or was not rewritten. `fine` loads; `healed` was rewritten and loads now;
+ *  `unknown` is refused for a reason the plugin does not mend; `rolled-back` was rewritten, still
+ *  refused, and the .bak was put back; `owned` was skipped because another process holds its
+ *  write lock. */
+export type RepairVerdict = "fine" | "healed" | "unknown" | "rolled-back" | "owned";
+/** One log's verdict, as the sweep and the on-open heal record it. */
+export interface SessionRepairRecord {
+    /** The log's absolute path as dsh's `locate()` or its own error text named it. */
+    path: string;
+    /** `stat` at the time of the verdict; a changed pair re-probes the log on the next sweep. */
+    mtimeMs: number;
+    size: number;
+    verdict: RepairVerdict;
+    /** The refusal text dsh gave, first 300 chars, for `unknown` and `rolled-back`. */
+    reason?: string;
+    /** The backup written beside the log, for `healed` and `rolled-back`. */
+    bak?: string;
+    /** What the repair did, for `healed`: the counts `repair()` returns. */
+    did?: {
+        droppedCalls: number;
+        addedHead: boolean;
+        closedCalls: number;
+    };
+    /** When the verdict was reached, ms since epoch. */
+    at: number;
+}
+/** The box-wide record of session-log repairs, one entry per dsh session id. */
+export interface SessionRepairsFile {
+    version: 1;
+    /** When the last full sweep finished; 0 before the first. */
+    lastSweepAt: number;
+    /** Keyed by dsh session id (the log header's `id`). */
+    logs: Record<string, SessionRepairRecord>;
+}
+/** The repairs record; its key is the dsh session id, never the path, which can move. */
+export declare const SESSION_REPAIRS_FILE: (d: string) => string;
+/** Load the repairs record. An unreadable or unparseable file reads as the empty default, and an
+ *  entry missing `path`, `verdict` or `at` is skipped, so a hand-edited file cannot put a notice
+ *  on screen for a log nobody can find. */
+export declare function loadSessionRepairs(dir: string): Promise<SessionRepairsFile>;
+/** Write the whole record; serialized behind the same chain as `recordRepair`. */
+export declare function saveSessionRepairs(dir: string, next: SessionRepairsFile): Promise<void>;
+/** Replace one session's entry: read, set, write, serialized so two heals cannot lose each
+ *  other's verdict. */
+export declare function recordRepair(dir: string, id: string, record: SessionRepairRecord): Promise<void>;
 /** Load the saved openers. A non-string or blank value is skipped, so a hand-edited file cannot put a
  *  card on screen with nothing in it. */
 export declare function loadStarters(dir: string): Promise<Map<string, string>>;

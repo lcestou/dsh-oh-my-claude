@@ -5,6 +5,10 @@ import { mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  loadSessionRepairs,
+  recordRepair,
+  saveSessionRepairs,
+  SESSION_REPAIRS_FILE,
   lastSelectedProvider,
   loadPermissionModes,
   savePermissionMode,
@@ -379,4 +383,46 @@ console.log("state.test: ok");
   assert.equal(lastSelectedProvider(events.slice(0, 1)), undefined, "no selection: undefined");
   assert.equal(lastSelectedProvider([]), undefined);
   console.log("last-selected-provider ok");
+}
+
+// The repairs record: two entries written one at a time and read back, a corrupt file reads as
+// the default, and an entry missing its verdict is skipped.
+{
+  const dir = await mkdtemp(join(tmpdir(), "omc-repairs-"));
+  assert.deepEqual(await loadSessionRepairs(dir), { version: 1, lastSweepAt: 0, logs: {} });
+  await recordRepair(dir, "s1", { path: "/a", mtimeMs: 1, size: 2, verdict: "fine", at: 10 });
+  await recordRepair(dir, "s2", {
+    path: "/b",
+    mtimeMs: 3,
+    size: 4,
+    verdict: "healed",
+    bak: "/b.bak",
+    did: { droppedCalls: 2, addedHead: false, closedCalls: 0 },
+    at: 11,
+  });
+  const read = await loadSessionRepairs(dir);
+  assert.deepEqual(Object.keys(read.logs), ["s1", "s2"]);
+  assert.deepEqual(read.logs.s2, {
+    path: "/b",
+    mtimeMs: 3,
+    size: 4,
+    verdict: "healed",
+    bak: "/b.bak",
+    did: { droppedCalls: 2, addedHead: false, closedCalls: 0 },
+    at: 11,
+  });
+  await saveSessionRepairs(dir, { ...read, lastSweepAt: 99 });
+  assert.equal((await loadSessionRepairs(dir)).lastSweepAt, 99);
+  await writeFile(SESSION_REPAIRS_FILE(dir), "{not json");
+  assert.deepEqual(await loadSessionRepairs(dir), { version: 1, lastSweepAt: 0, logs: {} });
+  await writeFile(
+    SESSION_REPAIRS_FILE(dir),
+    JSON.stringify({
+      version: 1,
+      lastSweepAt: 5,
+      logs: { bad: { path: "/x", at: 1 }, ok: { path: "/y", verdict: "unknown", at: 2 } },
+    }),
+  );
+  assert.deepEqual(Object.keys((await loadSessionRepairs(dir)).logs), ["ok"]);
+  console.log("session-repairs ok");
 }
