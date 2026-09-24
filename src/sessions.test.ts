@@ -2478,7 +2478,7 @@ console.log("sessions ok");
           JSON.stringify({
             type: "session",
             version: 4,
-            id: "11111111-1111-4111-8111-111111111111",
+            id: "session-11111111-1111-4111-8111-111111111111",
             cwd,
           }) + "\n",
         ),
@@ -2503,7 +2503,9 @@ console.log("sessions ok");
         // The routes register their handler inside the host's effect.
         effect: (fn: () => void) => fn(),
         sessionPersistence: {
-          list: async () => [{ header: { id: "11111111-1111-4111-8111-111111111111", cwd } }],
+          list: async () => [
+            { header: { id: "session-11111111-1111-4111-8111-111111111111", cwd } },
+          ],
           create: async () => {
             calls.push("create");
             if (createFails) throw new Error("disk full");
@@ -2572,12 +2574,12 @@ console.log("sessions ok");
   let r = await respond(
     "POST",
     "/dsh-oh-my-claude/reseed",
-    JSON.stringify({ id: "11111111-1111-4111-8111-111111111111" }),
+    JSON.stringify({ id: "session-11111111-1111-4111-8111-111111111111" }),
   );
   assert.equal(r.status, 404);
   // A record but no transcript: 409, log untouched.
   writeLog();
-  await recordRepair(STATE_DIR, "11111111-1111-4111-8111-111111111111", {
+  await recordRepair(STATE_DIR, "session-11111111-1111-4111-8111-111111111111", {
     path: logPath,
     mtimeMs: 1,
     size: 1,
@@ -2588,14 +2590,14 @@ console.log("sessions ok");
   r = await respond(
     "POST",
     "/dsh-oh-my-claude/reseed",
-    JSON.stringify({ id: "11111111-1111-4111-8111-111111111111" }),
+    JSON.stringify({ id: "session-11111111-1111-4111-8111-111111111111" }),
   );
   assert.equal(r.status, 409);
   assert.match(r.body.error, /nothing to reseed from/);
   assert.equal(existsSync(logPath), true, "no transcript: the log stays");
   // A transcript with a completed turn: 200, the log moved to .bak, seeded again.
   writeFileSync(
-    join(projects, projectDirName(cwd), "11111111-1111-4111-8111-111111111111.jsonl"),
+    join(projects, projectDirName(cwd), "session-11111111-1111-4111-8111-111111111111.jsonl"),
     [
       {
         type: "user",
@@ -2622,12 +2624,13 @@ console.log("sessions ok");
   r = await respond(
     "POST",
     "/dsh-oh-my-claude/reseed",
-    JSON.stringify({ id: "11111111-1111-4111-8111-111111111111" }),
+    JSON.stringify({ id: "session-11111111-1111-4111-8111-111111111111" }),
   );
   assert.equal(r.status, 500);
   assert.equal(existsSync(logPath), true, "a failed seed puts the log back");
   assert.equal(
-    (await loadSessionRepairs(STATE_DIR)).logs["11111111-1111-4111-8111-111111111111"]?.verdict,
+    (await loadSessionRepairs(STATE_DIR)).logs["session-11111111-1111-4111-8111-111111111111"]
+      ?.verdict,
     "unknown",
   );
   createFails = false;
@@ -2635,7 +2638,7 @@ console.log("sessions ok");
   r = await respond(
     "POST",
     "/dsh-oh-my-claude/reseed",
-    JSON.stringify({ id: "11111111-1111-4111-8111-111111111111" }),
+    JSON.stringify({ id: "session-11111111-1111-4111-8111-111111111111" }),
   );
   assert.equal(r.status, 200, JSON.stringify(r.body));
   assert.equal(existsSync(logPath), false, "the refused log is out of the way");
@@ -2649,7 +2652,8 @@ console.log("sessions ok");
     "seeded again through the write handle",
   );
   assert.equal(
-    (await loadSessionRepairs(STATE_DIR)).logs["11111111-1111-4111-8111-111111111111"]?.verdict,
+    (await loadSessionRepairs(STATE_DIR)).logs["session-11111111-1111-4111-8111-111111111111"]
+      ?.verdict,
     "reseeded",
   );
   console.log("reseed-route ok");

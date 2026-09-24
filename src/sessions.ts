@@ -252,6 +252,11 @@ const validMemoryName = (name: unknown): name is string =>
 /** Narrows an unknown value to a string only when it is a 36-character lowercase-hex UUID; a
  *  malformed id fails closed and is refused rather than used as a session id. */
 const validId = (id: unknown): id is string => typeof id === "string" && /^[0-9a-f-]{36}$/.test(id);
+/** A dsh session id as the repairs record keys it: the uuid, with dsh's `session-` prefix or
+ *  without (a child agent's id has none). The reseed route takes this form, since its record is
+ *  keyed by the dsh id rather than the transcript's. */
+const validDshId = (id: unknown): id is string =>
+  typeof id === "string" && /^(session-)?[0-9a-f-]{36}$/.test(id);
 
 /** What parseSettingsText hands back: the object, or why the text is not one. */
 export type ParsedSettings =
@@ -2341,7 +2346,7 @@ export function registerSessionRoutes(
               // of the way, keep it as .bak, and seed the session again from its transcript.
               // Never automatic: the old log's dsh-only rows live on in the .bak only.
               const { id } = await readBody(req);
-              if (!validId(id)) return json(res, 400, { error: "id required" });
+              if (!validDshId(id)) return json(res, 400, { error: "id required" });
               const record = (await loadSessionRepairs(STATE_DIR)).logs[id];
               if (record === undefined || record.verdict !== "unknown")
                 return json(res, 404, { error: "no refused log recorded for this session" });
