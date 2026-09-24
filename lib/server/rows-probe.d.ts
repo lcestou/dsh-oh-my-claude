@@ -35,6 +35,18 @@ export interface RawRowsLog {
     header: LogHeader;
     rows: LogRow[];
 }
+/** The slice of dsh's session-format catalog the probe calls: the restore a load runs. */
+export interface Catalog {
+    /** The log version this dsh writes. The probe stamps its fixture with it, see `rawRowsLog`. */
+    readonly currentVersion?: number;
+    createRestore(header: LogHeader, options: {
+        recovery: string;
+        validation: string;
+    }): {
+        decodeRow(row: LogRow): void;
+        finish(): void;
+    };
+}
 /**
  * A tool's result as the log version stores it. Up to v3 (dsh 0.1.6) it is a user message from the
  * tool source holding one `tool-result` block; from v4 (dsh 0.1.7) it is a first-class message of
@@ -56,6 +68,12 @@ export declare function toolResultMessage(version: number, callId: string, id: s
  * ask about, and locked rows over a migration a live session never runs.
  */
 export declare const rawRowsLog: (version?: number) => RawRowsLog;
+/**
+ * The installed dsh's session-format catalog, the module its own loader restores a log with.
+ * Undefined when dsh cannot be found next to the running entry or the module has no such export,
+ * which a caller reads as "cannot judge a log" rather than an error.
+ */
+export declare function loadSessionCatalog(entry?: string): Promise<Catalog | undefined>;
 /**
  * The log version the installed dsh writes: 3 up to 0.1.6, 4 from 0.1.7. Read off dsh's own
  * catalog, so a log this plugin writes carries the version the reader expects. Undefined when the

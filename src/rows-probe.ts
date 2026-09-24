@@ -53,7 +53,7 @@ export interface RawRowsLog {
   rows: LogRow[];
 }
 /** The slice of dsh's session-format catalog the probe calls: the restore a load runs. */
-interface Catalog {
+export interface Catalog {
   /** The log version this dsh writes. The probe stamps its fixture with it, see `rawRowsLog`. */
   readonly currentVersion?: number;
   createRestore(
@@ -209,21 +209,30 @@ const catalogPath = (entry = process.argv[1] ?? ""): string | undefined => {
 };
 
 /**
- * The log version the installed dsh writes: 3 up to 0.1.6, 4 from 0.1.7. Read off dsh's own
- * catalog, so a log this plugin writes carries the version the reader expects. Undefined when the
- * catalog cannot be found or read, which leaves the caller to keep its own default.
+ * The installed dsh's session-format catalog, the module its own loader restores a log with.
+ * Undefined when dsh cannot be found next to the running entry or the module has no such export,
+ * which a caller reads as "cannot judge a log" rather than an error.
  */
-export async function currentLogVersion(entry?: string): Promise<number | undefined> {
+export async function loadSessionCatalog(entry?: string): Promise<Catalog | undefined> {
   const at = catalogPath(entry);
   if (at === undefined) return undefined;
   try {
     // SAFETY: `at` is dsh's own catalog module, checked to exist above, and its export carries the
     // version it reads and writes. A dsh that renames either answers undefined through the catch.
-    const { sessionFormatCatalog } = (await import(at)) as { sessionFormatCatalog: Catalog };
-    return sessionFormatCatalog.currentVersion;
+    const { sessionFormatCatalog } = (await import(at)) as { sessionFormatCatalog?: Catalog };
+    return sessionFormatCatalog;
   } catch {
     return undefined;
   }
+}
+
+/**
+ * The log version the installed dsh writes: 3 up to 0.1.6, 4 from 0.1.7. Read off dsh's own
+ * catalog, so a log this plugin writes carries the version the reader expects. Undefined when the
+ * catalog cannot be found or read, which leaves the caller to keep its own default.
+ */
+export async function currentLogVersion(entry?: string): Promise<number | undefined> {
+  return (await loadSessionCatalog(entry))?.currentVersion;
 }
 
 /** Feed the synthetic log through dsh's own restore, with the options its load passes. */

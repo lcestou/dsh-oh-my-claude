@@ -2787,6 +2787,102 @@ console.log("ok");
   assert.equal(resolvedAgent(agent), agent, "0.1.5 shape: the Agent itself");
   assert.equal(resolvedAgent({ agent }), agent, "0.1.6 shape: the Agent inside the wrapper");
   assert.throws(() => resolvedAgent({ error: "gone" }), /gone/, "a bare error value still throws");
+  // A resume dsh refuses for a reason the plugin mends: the wake heals the log named in the
+  // refusal and resumes once more; an unknown reason is logged and nothing is healed.
+  {
+    const { frame } = await import("./session-repair.js");
+    const { mkdirSync, writeFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const { STATE_DIR } = await import("./state.js");
+    const dir = join(STATE_DIR, "wake-heal");
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, "session.v4.jsonl.zstd");
+    const row = (seq: number, type: string, data: object, extra: object = {}) => ({
+      type,
+      seq,
+      time: seq,
+      data,
+      ...extra,
+    });
+    const rows = [
+      row(
+        0,
+        "system/message",
+        {
+          turn: 1,
+          step: 1,
+          message: { id: "sys", role: "system", content: [], source: { kind: "system-prompt" } },
+        },
+        { surfaceOp: "append" },
+      ),
+      row(1, "turn/start", { turn: 1 }),
+      row(2, "step/start", { turn: 1, step: 1 }),
+      row(
+        3,
+        "assistant/message",
+        {
+          turn: 1,
+          step: 1,
+          message: {
+            role: "assistant",
+            id: "m",
+            source: { kind: "model", provider: "p", model: "m" },
+            content: [{ type: "tool-call", id: "open", name: "bash" }],
+          },
+        },
+        { surfaceOp: "append", sourceEventSeqs: [] },
+      ),
+      row(4, "tool/call", { turn: 1, step: 1, callId: "open", name: "bash", arguments: "{}" }),
+      row(5, "step/end", { turn: 1, step: 1 }),
+      row(6, "turn/end", { turn: 1, reason: "aborted" }),
+    ];
+    writeFileSync(
+      file,
+      Buffer.concat([
+        frame(JSON.stringify({ type: "session", version: 4, id: "s1", cwd: "/w" }) + "\n"),
+        frame(rows.map((r) => JSON.stringify(r)).join("\n") + "\n"),
+      ]),
+    );
+    const refusal = `step/end leaves unresolved tool call open (raw log: ${file})`;
+    let resumes = 0;
+    (a as any).sessionController = {
+      resolveAgent: async () => {
+        resumes++;
+        if (resumes === 1) throw new Error(refusal);
+        return agent;
+      },
+    };
+    let probes = 0;
+    (a as any).heal = {
+      persistence: {
+        list: async () => [],
+        open: async () => (probes++, { read: async () => ({ events: [] }), close: async () => {} }),
+        locate: () => ({ kind: "jsonl", path: file }),
+      },
+      catalog: async () => ({
+        currentVersion: 4,
+        createRestore: () => ({ decodeRow() {}, finish() {} }),
+      }),
+      stateDir: dir,
+      log() {},
+    };
+    const sentBefore = sent.length;
+    assert.equal(await a.wake("s1", fakeProc({ busy: false })), true, "healed, then resumed");
+    assert.equal(resumes, 2, "one refused resume, one after the heal");
+    assert.equal(probes, 1, "the heal proved the rewritten log through dsh once");
+    assert.equal(sent.length, sentBefore + 1, "the notice went to the resumed agent");
+    resumes = 0;
+    (a as any).sessionController = {
+      resolveAgent: async () => {
+        resumes++;
+        throw new Error("some refusal dsh grew (raw log: /nowhere)");
+      },
+    };
+    assert.equal(await a.wake("s1", fakeProc({ busy: false })), false, "unknown: not woken");
+    assert.equal(resumes, 1, "unknown: no second resume");
+    assert.equal(probes, 1, "unknown: nothing healed");
+    sent.length = 2;
+  }
   sent.length = 2; // the counts below predate these cases
   // The restart notice asks the model to carry on. A mirrored session's context is a conversation
   // someone is holding in a terminal, and nudging one made it read that conversation as its own

@@ -287,6 +287,16 @@ const readHints = (): Promise<Record<string, boolean | number> | null> =>
   (hintsCache ??= fetch(`${ROUTE}/hints`)
     .then((r) => readJson<Record<string, boolean | number>>(r))
     .catch(() => null));
+/** Record a numbered hint (a dismissal that names what it dismissed) the way `markHint` records a
+ *  flag: the box remembers it, and this tab's cache sees it without a refetch. */
+const markHintValue = (key: string, value: number): void => {
+  hintsCache = (hintsCache ?? Promise.resolve(null)).then((h) => ({ ...h, [key]: value }));
+  void fetch(`${ROUTE}/hints`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ [key]: value }),
+  }).catch(() => {});
+};
 /** Mark a hint seen: POST it to the box, and add it to this tab's cached hints so the next read here
  *  sees it without a refetch. It is added, not swapped in: replacing the cache with the one key
  *  used to drop every other hint the tab had read, so a second mark brought the first one back. A
@@ -299,6 +309,61 @@ const markHint = (key: string): void => {
     body: JSON.stringify({ [key]: true }),
   }).catch(() => {});
 };
+
+/** The line under the plugin's version that says what the heal did to this box's session logs
+ *  since the last dismissal: healed logs, and the ones still refused for a reason the plugin
+ *  cannot mend. Dismissal is a box-wide hint holding the newest entry's time, so a later heal
+ *  shows again and an older one stays dismissed on every browser. Nothing while there is nothing
+ *  to say. */
+function SessionRepairsNotice({
+  repairs,
+}: {
+  repairs: { healed: number; unknown: number; rolledBack: number; at: number } | undefined;
+}) {
+  useLocale();
+  const [seen, setSeen] = useState<number | undefined>(undefined);
+  useEffect(() => {
+    let live = true;
+    void readHints().then((h) => {
+      if (!live) return;
+      const v = h?.sessionRepairsSeen;
+      // A flag or nothing reads as never dismissed; only a number names a dismissal.
+      setSeen(v === undefined || v === true || v === false ? 0 : v);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+  if (!repairs || seen === undefined) return null;
+  const refused = repairs.unknown + repairs.rolledBack;
+  if (repairs.healed + refused === 0 || repairs.at <= seen) return null;
+  return (
+    // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a live notice, not a form result, which is what <output> is for
+    <div data-omc-session-repairs="" role="status" style={{ padding: "4px 0" }}>
+      {repairs.healed > 0 && (
+        <div data-omc-session-repairs-healed="">
+          {t("panel.repairs.healed", { n: String(repairs.healed) })}
+        </div>
+      )}
+      {refused > 0 && (
+        <div data-omc-session-repairs-unknown="" style={{ color: T.warn }}>
+          {t("panel.repairs.unknown", { n: String(refused) })}
+        </div>
+      )}
+      <button
+        type="button"
+        data-omc-session-repairs-dismiss=""
+        style={btn}
+        onClick={() => {
+          markHintValue("sessionRepairsSeen", repairs.at);
+          setSeen(repairs.at);
+        }}
+      >
+        {t("panel.repairs.dismiss")}
+      </button>
+    </div>
+  );
+}
 
 /** "Restore Claude session" body inside the Oh My Claude dialog. Nothing when the session
  * already has content or the workspace has no directory to restore into. */
@@ -2634,6 +2699,9 @@ interface DiagnosticsReply {
     latest?: string;
     update?: string;
     error?: string;
+    /** Session logs the plugin healed, could not heal, or rolled back since the last dismissal;
+     *  this box only. */
+    sessionRepairs?: { healed: number; unknown: number; rolledBack: number; at: number };
   };
   configFiles: Array<{ scope: string; path: string; exists: boolean; parseError?: string }>;
   session?: { claudeId: string; cwd: string };
@@ -3087,6 +3155,7 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
                 </span>
               )}
             </div>
+            <SessionRepairsNotice repairs={data.runtime.sessionRepairs} />
             <div>
               {t("panel.diag.loginLabel")}{" "}
               {data.runtime.loggedIn ? (

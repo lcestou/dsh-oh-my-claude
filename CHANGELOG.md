@@ -21,6 +21,9 @@ dsh: runs on 0.1.5-rc.1 through 0.1.7-alpha.2; built and tested on 0.1.7-alpha.2
 
 ### Changed
 
+- `tools/dsh-session-repair.ts` now imports the repair from the plugin and no longer needs the
+  `zstd` binary; node 22.15 or newer is required for `node:zlib`'s zstd, which dsh itself imports
+  (its package.json declares no engines range).
 - The working line follows the CLI's own status line more closely: the shimmer sweeps left to
   right while a request is out and right to left while a reply streams, and breathes in place while
   a tool runs; the spinner glyph eases the way the CLI's does; the bracket after the verb stays away
@@ -69,6 +72,12 @@ dsh: runs on 0.1.5-rc.1 through 0.1.7-alpha.2; built and tested on 0.1.7-alpha.2
 
 ### Fixed
 
+- A session log dsh refuses to load for one of the three known reasons (an unadvertised tool row
+  from rows mode before 2026-09-22, a restore seeded without its system head before 1.3.2, a Stop
+  that left a tool call open before 1.3.2) is repaired by the plugin itself: at start, when the
+  session is opened from the Restore tab, and when a restart wakes it. The original is kept beside
+  the log as `.bak`, the panel's Runtime line says what was repaired, and a refusal the plugin does
+  not recognise is reported there instead of a silent failure to open.
 - dsh's Session statistics for a Claude session: time to first token now runs to the first byte
   of Claude's response, and tokens per second counts the think, where before a silent think or
   a step ending in a tool call left dsh with no first token at all (a 23 s step read as 23 s to

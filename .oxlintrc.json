@@ -144,7 +144,7 @@
     },
     {
       "files": [
-        "tools/dsh-session-repair.ts"
+        "src/session-repair.ts"
       ],
       "rules": {
         "anti-slop/no-runtime-typeof": "off",

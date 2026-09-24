@@ -53,6 +53,7 @@ declare const EN: {
     readonly limitUsage: "usage limit";
     readonly compacting: "⟳ Compacting context…";
     readonly compactFailed: "⚠ Compaction failed: {error}";
+    readonly logRefused: "dsh refuses this session's stored log: {reason}";
     readonly unknownReason: "unknown reason";
     readonly taskLine: "Task {status}: {detail}";
     readonly taskEnded: "Task {status}";

@@ -2171,3 +2171,142 @@ console.log("sessions ok");
   hub.close();
   console.log("events-route ok");
 }
+
+// openTranscriptOnce's owned branch with a heal host: a log dsh loads is attached as before; a
+// refusal the plugin mends is healed first and the open says so; any other refusal is answered
+// as an error and nothing is attached; no heal host keeps the old behaviour.
+{
+  const { frame } = await import("./session-repair.js");
+  const { mkdirSync, writeFileSync } = await import("node:fs");
+  const { STATE_DIR } = await import("./state.js");
+  const dir = join(STATE_DIR, "open-heal");
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, "session.v4.jsonl.zstd");
+  const row = (seq: number, type: string, data: object, extra: object = {}) => ({
+    type,
+    seq,
+    time: seq,
+    data,
+    ...extra,
+  });
+  const writeStopped = () =>
+    writeFileSync(
+      file,
+      Buffer.concat([
+        frame(JSON.stringify({ type: "session", version: 4, id: "d1", cwd: "/w" }) + "\n"),
+        frame(
+          [
+            row(
+              0,
+              "system/message",
+              {
+                turn: 1,
+                step: 1,
+                message: {
+                  id: "sys",
+                  role: "system",
+                  content: [],
+                  source: { kind: "system-prompt" },
+                },
+              },
+              { surfaceOp: "append" },
+            ),
+            row(1, "turn/start", { turn: 1 }),
+            row(2, "step/start", { turn: 1, step: 1 }),
+            row(
+              3,
+              "assistant/message",
+              {
+                turn: 1,
+                step: 1,
+                message: {
+                  role: "assistant",
+                  id: "m",
+                  source: { kind: "model", provider: "p", model: "m" },
+                  content: [{ type: "tool-call", id: "open", name: "bash" }],
+                },
+              },
+              { surfaceOp: "append", sourceEventSeqs: [] },
+            ),
+            row(4, "tool/call", {
+              turn: 1,
+              step: 1,
+              callId: "open",
+              name: "bash",
+              arguments: "{}",
+            }),
+            row(5, "step/end", { turn: 1, step: 1 }),
+            row(6, "turn/end", { turn: 1, reason: "aborted" }),
+          ]
+            .map((r) => JSON.stringify(r))
+            .join("\n") + "\n",
+        ),
+      ]),
+    );
+  const run = async (refusal: string | undefined, withHeal = true) => {
+    const attached: string[] = [];
+    let opens = 0;
+    const persistence = {
+      list: async () => [{ header: { id: "d1", cwd: "/w" } }],
+      create: async () => {
+        throw new Error("not expected");
+      },
+      open: async () => {
+        opens++;
+        // The first open refuses as told; after a heal the rewritten log loads.
+        if (refusal !== undefined && opens === 1) throw new Error(refusal);
+        return { read: async () => ({ events: [] }), close: async () => {} };
+      },
+      locate: () => ({ kind: "jsonl", path: file }),
+    };
+    // SAFETY: partial fakes; the function reads only these members
+    const ctx = { sessions: { get: () => undefined }, sessionPersistence: persistence } as any;
+    const ws = {
+      id: "w1",
+      path: "/w",
+      title: "w",
+      sessionIds: [],
+      attachSession: async (sid: string) => void attached.push(sid),
+    };
+    const registry = {
+      archivedSessionIds: [],
+      resolveByPath: async () => ws,
+      create: async () => ws,
+      enqueueOperation: <T>(op: () => Promise<T>) => op(),
+      requireState: () => ({ archivedSessionIds: [] }),
+      setState: async () => {},
+    } as any;
+    const heal = withHeal
+      ? {
+          persistence,
+          catalog: async () => ({
+            currentVersion: 4,
+            createRestore: () => ({ decodeRow() {}, finish() {} }),
+          }),
+          stateDir: dir,
+          log() {},
+        }
+      : undefined;
+    const out = await openTranscriptOnce(ctx, [dir], "/w", "d1", (x) => x, registry, heal);
+    return { out, attached, opens };
+  };
+  writeStopped();
+  let r = await run(undefined);
+  assert.deepEqual([r.out.existed, r.out.healed, r.attached, r.opens], [true, false, ["d1"], 1]);
+  r = await run("step/end leaves unresolved tool call open");
+  assert.deepEqual([r.out.existed, r.out.healed, r.attached], [true, true, ["d1"]]);
+  assert.equal(r.opens, 2, "the refused open, then the proof after the heal");
+  writeStopped();
+  await assert.rejects(
+    run("V3 catalog migration requires explicit historical child facts"),
+    /dsh refuses this session's stored log: V3 catalog migration/,
+    "an unknown refusal is the route's error",
+  );
+  r = await run("step/end leaves unresolved tool call open", false);
+  assert.deepEqual(
+    [r.out.existed, r.attached, r.opens],
+    [true, ["d1"], 0],
+    "no heal host: no probe",
+  );
+  console.log("open-heal ok");
+}

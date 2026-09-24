@@ -188,7 +188,7 @@ On first use per process the adapter reads `claude --help` and `--version`, and 
 
 ## Failed to load history after a dsh upgrade
 
-dsh 0.1.5 gave the session log a versioned format with a strict migration. Logs written with `toolsInline: false` before 2026-09-08 hold raw `tool/call` rows the migration refuses, and dsh then shows *Failed to load history … does not match one advertised tool call* for that session. Repair them once, with dsh-web stopped, from a checkout of this repository (`tools/` is not part of the npm package):
+dsh 0.1.5 gave the session log a versioned format with a strict migration. Logs written with `toolsInline: false` before 2026-09-08 hold raw `tool/call` rows the migration refuses, and dsh then shows *Failed to load history … does not match one advertised tool call* for that session. The plugin repairs these itself: when it starts (a sweep over every stored log, fifteen seconds after boot), when a session is opened from the Restore tab, and when a restart wakes a session dsh refuses. Each repair is proved through dsh's own loader before and after it writes, the original is kept beside the log as `.bak`, and the panel's Runtime line says what was repaired. A refusal the plugin does not recognise is reported there and on the Restore tab instead of a silent failure to open, and the log is left as it is. From a checkout, the same repair runs by hand, with dsh-web stopped, for a box where dsh cannot be restarted or the plugin is not installed:
 
 ```sh
 bun tools/dsh-session-repair.ts --check --all   # lists what needs repair, changes nothing

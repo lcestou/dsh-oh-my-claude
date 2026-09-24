@@ -362,6 +362,20 @@ export interface SessionPersistence {
     header: SessionHeader,
     options?: { inheritedEventCount?: number },
   ): Promise<SessionWriteHandle>;
+  /** dsh 0.1.5+: a `read` handle never takes the write lock; `write` throws
+   *  `SessionAlreadyOwnedError` while another handle or process owns the log. Both throw the
+   *  loader's refusal for a log dsh cannot load. */
+  open(
+    id: SessionId,
+    access: "read" | "write",
+  ): Promise<
+    SessionWriteHandle & {
+      header: SessionHeader;
+      read(offset?: number): Promise<{ events: SessionEvent[] }>;
+    }
+  >;
+  /** dsh 0.1.7: the stored log's absolute path from its header, without touching the disk. */
+  locate?(meta: { id: string; cwd?: string }): { kind: string; path: string };
 }
 
 /** Mirrors: @deepseek-ai/dsh-session-persistence/lib/types/handle.d.ts (write half). */

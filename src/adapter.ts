@@ -194,6 +194,8 @@ import {
   type HoldRecord,
 } from "./hold.js";
 import { dropHold, loadHolds, saveHold } from "./state.js";
+import { knownRefusal } from "./session-repair.js";
+import { healLog, rawLogPath, type HealHost } from "./session-heal.js";
 import type { RewindResult } from "./process.js";
 import { forkTranscriptText } from "./transcript.js";
 import { buildMirror } from "./claude-home.js";
@@ -2405,6 +2407,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   /** Probe targets already written to resume.log, so the line lands once per binary, not per turn. */
   probeTraced = new Set<string>();
   sessionController?: SessionController;
+  /** What a heal needs from dsh, handed over by the session routes; undefined until they load. */
+  heal?: HealHost;
   /** Masks secret env values in tool results; undefined when `redactSecrets` is off. */
   readonly redact: ((s: string) => string) | undefined;
   /** dsh sessions marked temporary with /temporary; on globalThis so a reload keeps them. */
@@ -5502,9 +5506,30 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         agent = resolvedAgent(await this.sessionController.resolveAgent(sessionId));
         how = "resumed";
       } catch (error) {
-        this.log("warn", `wake: could not resume session ${sessionId}: ${errorText(error)}`);
-        await note(`resume failed: ${errorText(error)}`);
-        return undefined;
+        // dsh refused the stored log. The one session the boot sweep cannot reach is exactly this
+        // one (takeInterrupted consumes its id at 10 s, the sweep runs at 15 s), so a refusal the
+        // plugin mends is healed here and the resume tried once more.
+        const text = errorText(error);
+        const path = rawLogPath(text);
+        if (path !== undefined && knownRefusal(text) && this.heal) {
+          const { verdict } = await healLog(this.heal, sessionId, path, text);
+          if (verdict !== "healed") {
+            this.log("warn", `wake: could not resume session ${sessionId}: ${text}`);
+            await note(`resume failed: ${text}`);
+            return undefined;
+          }
+          try {
+            agent = resolvedAgent(await this.sessionController.resolveAgent(sessionId));
+            how = "resumed after heal";
+          } catch (again) {
+            await note(`resume failed after heal: ${errorText(again)}`);
+            return undefined;
+          }
+        } else {
+          this.log("warn", `wake: could not resume session ${sessionId}: ${text}`);
+          await note(`resume failed: ${text}`);
+          return undefined;
+        }
       }
     }
     if (!agent) {
@@ -7238,6 +7263,9 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
     );
     registerSessionRoutes(ctx, {
       log: (level: string, msg: string) => adapter.log(level, msg),
+      onHeal: (heal) => {
+        adapter.heal = heal;
+      },
       // With the transcript switch on, `claudeHome` is the plugin's own mirror: its `projects/` is
       // where dsh-started sessions land, and the real `~/.claude/projects` is read alongside it so
       // a session started from a terminal is still listed and still opens.

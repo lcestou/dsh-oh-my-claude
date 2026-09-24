@@ -583,6 +583,113 @@ export function saveAsides(dir: string, sessionId: string, entries: AsideEntry[]
   return run;
 }
 
+/** Why a log was or was not rewritten. `fine` loads; `healed` was rewritten and loads now;
+ *  `unknown` is refused for a reason the plugin does not mend; `rolled-back` was rewritten, still
+ *  refused, and the .bak was put back; `owned` was skipped because another process holds its
+ *  write lock. */
+export type RepairVerdict = "fine" | "healed" | "unknown" | "rolled-back" | "owned";
+
+/** One log's verdict, as the sweep and the on-open heal record it. */
+export interface SessionRepairRecord {
+  /** The log's absolute path as dsh's `locate()` or its own error text named it. */
+  path: string;
+  /** `stat` at the time of the verdict; a changed pair re-probes the log on the next sweep. */
+  mtimeMs: number;
+  size: number;
+  verdict: RepairVerdict;
+  /** The refusal text dsh gave, first 300 chars, for `unknown` and `rolled-back`. */
+  reason?: string;
+  /** The backup written beside the log, for `healed` and `rolled-back`. */
+  bak?: string;
+  /** What the repair did, for `healed`: the counts `repair()` returns. */
+  did?: { droppedCalls: number; addedHead: boolean; closedCalls: number };
+  /** When the verdict was reached, ms since epoch. */
+  at: number;
+}
+
+/** The box-wide record of session-log repairs, one entry per dsh session id. */
+export interface SessionRepairsFile {
+  version: 1;
+  /** When the last full sweep finished; 0 before the first. */
+  lastSweepAt: number;
+  /** Keyed by dsh session id (the log header's `id`). */
+  logs: Record<string, SessionRepairRecord>;
+}
+
+/** The repairs record; its key is the dsh session id, never the path, which can move. */
+export const SESSION_REPAIRS_FILE = (d: string) => join(d, "session-repairs.json");
+let repairsChain = Promise.resolve();
+
+/** Load the repairs record. An unreadable or unparseable file reads as the empty default, and an
+ *  entry missing `path`, `verdict` or `at` is skipped, so a hand-edited file cannot put a notice
+ *  on screen for a log nobody can find. */
+export async function loadSessionRepairs(dir: string): Promise<SessionRepairsFile> {
+  const empty: SessionRepairsFile = { version: 1, lastSweepAt: 0, logs: {} };
+  try {
+    const parsed: unknown = JSON.parse(await readFile(SESSION_REPAIRS_FILE(dir), "utf8"));
+    if (typeof parsed !== "object" || parsed === null) return empty;
+    // SAFETY: a non-null object; each field is checked for its type before use.
+    const r = parsed as Record<string, unknown>;
+    const out: SessionRepairsFile = {
+      version: 1,
+      lastSweepAt: typeof r.lastSweepAt === "number" ? r.lastSweepAt : 0,
+      logs: {},
+    };
+    if (typeof r.logs === "object" && r.logs !== null) {
+      for (const [id, raw] of Object.entries(r.logs)) {
+        if (typeof raw !== "object" || raw === null) continue;
+        // SAFETY: same check as above, one entry at a time.
+        const e = raw as Record<string, unknown>;
+        if (typeof e.path !== "string" || typeof e.verdict !== "string") continue;
+        if (typeof e.at !== "number") continue;
+        if (!["fine", "healed", "unknown", "rolled-back", "owned"].includes(e.verdict)) continue;
+        const rec: SessionRepairRecord = {
+          path: e.path,
+          mtimeMs: typeof e.mtimeMs === "number" ? e.mtimeMs : 0,
+          size: typeof e.size === "number" ? e.size : 0,
+          // SAFETY: membership in the verdict list was checked two lines up.
+          verdict: e.verdict as RepairVerdict,
+          at: e.at,
+        };
+        if (typeof e.reason === "string") rec.reason = e.reason;
+        if (typeof e.bak === "string") rec.bak = e.bak;
+        if (typeof e.did === "object" && e.did !== null) {
+          // SAFETY: a non-null object; the three counts are read with their own type checks.
+          const d = e.did as Record<string, unknown>;
+          rec.did = {
+            droppedCalls: typeof d.droppedCalls === "number" ? d.droppedCalls : 0,
+            addedHead: d.addedHead === true,
+            closedCalls: typeof d.closedCalls === "number" ? d.closedCalls : 0,
+          };
+        }
+        out.logs[id] = rec;
+      }
+    }
+    return out;
+  } catch {
+    return empty;
+  }
+}
+
+/** Write the whole record; serialized behind the same chain as `recordRepair`. */
+export function saveSessionRepairs(dir: string, next: SessionRepairsFile): Promise<void> {
+  const run = repairsChain.then(() => writeJson(SESSION_REPAIRS_FILE(dir), next));
+  repairsChain = run.catch(() => {});
+  return run;
+}
+
+/** Replace one session's entry: read, set, write, serialized so two heals cannot lose each
+ *  other's verdict. */
+export function recordRepair(dir: string, id: string, record: SessionRepairRecord): Promise<void> {
+  const run = repairsChain.then(async () => {
+    const file = await loadSessionRepairs(dir);
+    file.logs[id] = record;
+    await writeJson(SESSION_REPAIRS_FILE(dir), file);
+  });
+  repairsChain = run.catch(() => {});
+  return run;
+}
+
 /** Per-session opening prompt, keyed by dsh session id, plus the shared `default` key the starter card
  *  offers a session that has none of its own. */
 const STARTERS_FILE = (d: string) => join(d, "starters.json");
