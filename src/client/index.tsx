@@ -4977,8 +4977,13 @@ function DockStatus({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
           inside it, so the text sits 32px in from this strip's edge; the `min` follows it there
           (measured 2026-09-23: the header's line at strip edge + 32 at 390 and 600 px, at the
           column's edge at 900 and 1400 px, where the token is the smaller term). */}
+      {/* Border-box so the 44px the Back-to-bottom rule adds on the right comes out of this width
+          rather than widening the line: content-box grew it by 44px and the auto margins moved the
+          left edge 22px left of the chat text whenever the button showed (measured 2026-09-24: 32px
+          to 10px at 390, the same 22px at 1400). */}
       <div
         style={{
+          boxSizing: "border-box",
           maxWidth: "min(calc(100% - 64px), var(--dsh-chat-content-width, 748px))",
           margin: "0 auto",
           display: "flex",
