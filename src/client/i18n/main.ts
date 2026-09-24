@@ -459,6 +459,9 @@ export const en = {
   "main.aside.copyAria": "Copy side question",
   "main.aside.dismissAria": "Dismiss side question",
   "main.aside.thinking": "Claude is thinking…",
+  // A finished turn's closing line, the way the CLI ends a turn
+  "main.turn.closing": "{verb} for {duration}",
+  "main.turn.closingDone": "{verb} for {duration} · done {time}",
   // Selection bar
   "main.selection.explain": "Explain this",
   "main.selection.region": "Selected text",
@@ -924,6 +927,9 @@ export const zh = {
   "main.aside.copyAria": "复制旁问",
   "main.aside.dismissAria": "关闭旁问",
   "main.aside.thinking": "Claude 正在思考…",
+  // A finished turn's closing line
+  "main.turn.closing": "{verb} {duration}",
+  "main.turn.closingDone": "{verb} {duration} · {time} 完成",
   // Selection bar
   "main.selection.explain": "解释这段内容",
   "main.selection.region": "选中的文本",
