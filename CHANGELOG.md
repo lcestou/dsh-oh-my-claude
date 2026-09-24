@@ -69,6 +69,10 @@ dsh: runs on 0.1.5-rc.1 through 0.1.7-alpha.2; built and tested on 0.1.7-alpha.2
 
 ### Fixed
 
+- dsh's Session statistics for a Claude session: time to first token now runs to the first byte
+  of Claude's response, and tokens per second counts the think, where before a silent think or
+  a step ending in a tool call left dsh with no first token at all (a 23 s step read as 23 s to
+  first token and 3,980 tokens a second). The user guide says what each figure covers here.
 - The Claude Code update card shows only in a session that runs on Claude Code; a session on
   another provider drew it too.
 - On a phone the permission capsule by the composer ends in an ellipsis instead of breaking into

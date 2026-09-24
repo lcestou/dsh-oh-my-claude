@@ -495,7 +495,13 @@ assert.equal(line.message.content[1].source.media_type, "image/png");
 // translator: partial deltas become live text/reasoning, whole assistant messages are then ignored
 const tr = new Translator() as any;
 const se = (event: any) => tr.translate({ type: "stream_event", event });
-assert.deepEqual(se({ type: "message_start" }), []);
+// The step's first message_start writes one whitespace reasoning block, dsh's first-token time,
+// which dsh does not draw; it takes index 0, so the blocks below start at 1.
+assert.deepEqual(se({ type: "message_start" }), [
+  { type: "block-start", index: 0, blockType: "reasoning" },
+  { type: "reasoning-delta", index: 0, text: " " },
+  { type: "block-end", index: 0, block: { type: "reasoning", text: " " } },
+]);
 assert.deepEqual(
   se({ type: "content_block_start", index: 0, content_block: { type: "thinking" } }),
   [],
@@ -504,8 +510,8 @@ assert.deepEqual(
 assert.deepEqual(
   se({ type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "hmm" } }),
   [
-    { type: "block-start", index: 0, blockType: "reasoning" },
-    { type: "reasoning-delta", index: 0, text: "hmm" },
+    { type: "block-start", index: 1, blockType: "reasoning" },
+    { type: "reasoning-delta", index: 1, text: "hmm" },
   ],
 );
 assert.deepEqual(
@@ -513,7 +519,7 @@ assert.deepEqual(
   [],
 );
 assert.deepEqual(se({ type: "content_block_stop", index: 0 }), [
-  { type: "block-end", index: 0, block: { type: "reasoning", text: "hmm" } },
+  { type: "block-end", index: 1, block: { type: "reasoning", text: "hmm" } },
 ]);
 assert.deepEqual(
   se({
@@ -544,8 +550,8 @@ se({ type: "content_block_start", index: 0, content_block: { type: "text" } });
 assert.deepEqual(
   se({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "pong" } }),
   [
-    { type: "block-start", index: 3, blockType: "text" },
-    { type: "text-delta", index: 3, text: "pong" },
+    { type: "block-start", index: 4, blockType: "text" },
+    { type: "text-delta", index: 4, text: "pong" },
   ],
 );
 assert.equal(tr.finished, false);

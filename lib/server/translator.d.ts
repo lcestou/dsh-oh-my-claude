@@ -111,6 +111,7 @@ export declare class Translator {
     autoDenied: string[];
     toolPending: boolean;
     private calls;
+    private tokened;
     private nested;
     /** A compaction announced and not yet closed, so its 30-second heartbeat prints one line, not six.
      *  A Translator lives for one stream() call; a compaction killed mid-flight leaves this set for the
