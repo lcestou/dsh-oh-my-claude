@@ -5364,7 +5364,8 @@ const RAINBOW_CSS =
   // (a 2px bar, the accent at half strength, 14px to the text, measured on 2026-09-24).
   `::highlight(omc-quote){color:${T.muted}}::highlight(omc-quote-mark){color:${T.faint}}` +
   `[data-omc-quote-source]{display:none!important}[data-omc-quote-copy]{white-space:pre-wrap}` +
-  `[data-omc-quote-copy]>[data-omc-quote-block]{border-left:2px solid ${T.border};padding-left:14px;color:${T.muted}}` +
+  `[data-omc-quote-copy]>[data-omc-quote-block]{border-left:2px solid ${T.border};padding-left:14px;color:${T.muted};margin:16px 0}` +
+  `[data-omc-quote-copy]>[data-omc-quote-block]:first-child{margin-top:0}[data-omc-quote-copy]>[data-omc-quote-block]:last-child{margin-bottom:0}` +
   `${gated("prose", "[data-omc-quote-copy]>[data-omc-quote-block]", false)}{border-left-color:color-mix(in srgb,var(--omc-accent) 50.2%,transparent)}`;
 const ULTRATHINK = /\bultrathink\b/gi;
 /** One character of a match: where it sits, which colour it takes, and its index in the
@@ -5486,20 +5487,40 @@ function watchUltrathink(ctx: ClientCtx) {
       const { fontSize, fontFamily, fontWeight, lineHeight, color } = getComputedStyle(first);
       Object.assign(copy.style, { fontSize, fontFamily, fontWeight, lineHeight, color });
     }
+    // One row per line, an empty line holding its height with a `<br>`: a block ending in a line
+    // break drops that last empty line.
+    // A quote block carries its own gap above and below, as a rendered quote does, so an empty line
+    // touching one is dropped: "text, quote" and "text, blank line, quote" read the same. Empty
+    // lines between plain lines stay as typed.
+    const blank = (i: number) => (lines[i] ?? []).every((n) => (n.textContent ?? "").trim() === "");
+    /** Whether empty line `i` runs, through other empty lines only, into a quote on either side. */
+    const touchesQuote = (i: number): boolean =>
+      [-1, 1].some((step) => {
+        let j = i + step;
+        while (j >= 0 && j < lines.length && blank(j) && quoted[j] !== true) j += step;
+        return quoted[j] === true;
+      });
     let block: HTMLElement | undefined;
     let blockQuoted = false;
     for (const [i, pieces] of lines.entries()) {
       const q = quoted[i] === true;
+      // An empty line inside a quote stays; one at a quote's edge, or beside it, is the gap's.
+      if (blank(i) && (q ? quoted[i - 1] !== true || quoted[i + 1] !== true : touchesQuote(i)))
+        continue;
       if (block === undefined || q !== blockQuoted) {
         block = document.createElement("div");
         if (q) block.setAttribute(QUOTE_BLOCK, "1");
         copy.append(block);
         blockQuoted = q;
-      } else block.append("\n");
+      }
+      const lineEl = document.createElement("div");
       for (const [j, piece] of pieces.entries()) {
         if (q && j === 0 && piece instanceof Text) piece.data = unquote(piece.data);
-        block.append(piece);
+        lineEl.append(piece);
       }
+      if ((lineEl.textContent ?? "") === "" && lineEl.childElementCount === 0)
+        lineEl.append(document.createElement("br"));
+      block.append(lineEl);
     }
     for (const part of parts) if (part instanceof Element) part.setAttribute(QUOTE_SOURCE, "1");
     parts[0]?.before(copy);
