@@ -65,3 +65,69 @@ export const askBody = (session: string, question: string, quote: string) => ({
   question: question.trim(),
   quote,
 });
+
+/** One run of text the quote scan reads: a text node's content, and whether it opens a new line
+ *  without a newline character (a new paragraph or a `<br>` in the composer). */
+export interface QuoteSeg {
+  text: string;
+  newLine: boolean;
+}
+/** A stretch to paint inside one segment: the `>` marker, or the quoted text after it. */
+export interface QuoteSpan {
+  seg: number;
+  start: number;
+  end: number;
+  mark: boolean;
+}
+
+/**
+ * The quoted lines in a run of text, by Markdown's own rule as far as it matters here: a line that
+ * opens (after up to three spaces) with `> `, or is a bare `>`, is a quote; `>` anywhere else in a
+ * line is not, and nothing between ``` or ~~~ fences is, since `> npm test` there is a prompt. A
+ * hand-typed `>5 items` stays plain, which Markdown would call a quote: the cost of reading `>`
+ * followed by a space as the sign, the way the Quote button writes it. A line may run across
+ * segments; the decision is taken where it starts and carried to its end.
+ */
+export function quoteSpans(segs: readonly QuoteSeg[]): QuoteSpan[] {
+  const out: QuoteSpan[] = [];
+  let atStart = true;
+  let quoting = false;
+  let fenced = false;
+  segs.forEach((seg, i) => {
+    if (seg.newLine) {
+      atStart = true;
+      quoting = false;
+    }
+    const t = seg.text;
+    let pos = 0;
+    // A segment that ends on a newline leaves the next one at the start of a line.
+    while (!(atStart && pos === t.length)) {
+      const nl = t.indexOf("\n", pos);
+      const end = nl === -1 ? t.length : nl;
+      if (atStart) {
+        const line = t.slice(pos, end);
+        const quote = /^( {0,3})>(?: |$)/.exec(line);
+        if (/^ {0,3}(?:```|~~~)/.test(line)) {
+          fenced = !fenced;
+          quoting = false;
+        } else if (fenced || quote === null) {
+          quoting = false;
+        } else {
+          quoting = true;
+          const at = pos + (quote[1]?.length ?? 0);
+          out.push({ seg: i, start: at, end: at + 1, mark: true });
+          if (at + 1 < end) out.push({ seg: i, start: at + 1, end, mark: false });
+        }
+      } else if (quoting && end > pos) {
+        out.push({ seg: i, start: pos, end, mark: false });
+      }
+      if (nl === -1) {
+        atStart = false;
+        break;
+      }
+      pos = nl + 1;
+      atStart = true;
+    }
+  });
+  return out;
+}

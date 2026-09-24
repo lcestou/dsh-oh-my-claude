@@ -123,6 +123,8 @@ import {
   previewOf,
   QUOTE_MAX,
   quoteMarkdown,
+  quoteSpans,
+  type QuoteSeg,
 } from "./selection.js";
 import {
   CLOSING_VERBS,
@@ -5348,7 +5350,9 @@ const RAINBOW_CSS =
   RAINBOW.map((c, i) => `::highlight(omc-rainbow-${i}){color:${c}}`).join("") +
   RAINBOW_SHIMMER.map((c, i) => `::highlight(omc-rainbow-s${i}){color:${c}}`).join("") +
   `::highlight(omc-rainbow-${ULTRACODE_INDEX}){color:var(--omc-ultracode,${ULTRACODE_DARK})}` +
-  `::highlight(omc-rainbow-s${ULTRACODE_INDEX}){color:${ULTRACODE_SHIMMER}}`;
+  `::highlight(omc-rainbow-s${ULTRACODE_INDEX}){color:${ULTRACODE_SHIMMER}}` +
+  // Quoted lines in a person's own words, the way a Markdown quote reads: dimmed, the marker more so.
+  `::highlight(omc-quote){color:${T.muted}}::highlight(omc-quote-mark){color:${T.faint}}`;
 const ULTRATHINK = /\bultrathink\b/gi;
 /** One character of a match: where it sits, which colour it takes, and its index in the
  *  composer's text (the sweep runs over those indices, as the CLI's does over its input string). */
@@ -5366,6 +5370,32 @@ const rangeOf = (c: RainbowChar): Range => {
   r.setStart(c.node, c.offset);
   r.setEnd(c.node, c.offset + 1);
   return r;
+};
+
+/** A host's text nodes and the segments `quoteSpans` reads from them, index for index. */
+interface HostText {
+  nodes: Node[];
+  segs: QuoteSeg[];
+}
+/** The host's text as the quote scan reads it: each text node, marked where a paragraph or a
+ *  `<br>` (the composer's line breaks) opens a new line without a newline character. */
+const segsIn = (host: Element): HostText => {
+  const nodes: Node[] = [];
+  const segs: QuoteSeg[] = [];
+  const walker = document.createTreeWalker(host, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
+  let block: Element | null = null;
+  let broke = false;
+  let node: Node | null;
+  while ((node = walker.nextNode())) {
+    if (node instanceof HTMLBRElement) broke = true;
+    if (node.nodeType !== Node.TEXT_NODE) continue;
+    const own = node.parentElement?.closest("p, div, li") ?? null;
+    segs.push({ text: node.textContent ?? "", newLine: broke || own !== block });
+    nodes.push(node);
+    block = own;
+    broke = false;
+  }
+  return { nodes, segs };
 };
 
 /**
@@ -5401,6 +5431,36 @@ function watchUltrathink(ctx: ClientCtx) {
     '[data-composer-input], [data-pending-steering], [data-chat-anchor-key*=":input-message"]';
   const clear = () => {
     for (const key of [...names, ...shimmerNames]) registry.delete(key);
+  };
+  /** Dim the quoted lines in every host: the Quote button's `> ` blocks read as quotes in the
+   *  composer and in the sent bubble, which dsh draws as plain text. Not part of the rainbow's
+   *  look switch: it is how a quote reads, not the Claude colour. */
+  const paintQuotes = () => {
+    const text: Range[] = [];
+    const mark: Range[] = [];
+    for (const host of document.querySelectorAll<HTMLElement>(HOSTS)) {
+      const { nodes, segs } = segsIn(host);
+      for (const span of quoteSpans(segs)) {
+        const node = nodes[span.seg];
+        if (node === undefined) continue;
+        const r = document.createRange();
+        r.setStart(node, span.start);
+        r.setEnd(node, span.end);
+        (span.mark ? mark : text).push(r);
+      }
+    }
+    // Below the rainbow, so `ultrathink` inside a quote keeps its colours.
+    for (const [key, ranges] of [
+      ["omc-quote", text],
+      ["omc-quote-mark", mark],
+    ] as const) {
+      if (ranges.length === 0) registry.delete(key);
+      else {
+        const h = new Highlight(...ranges);
+        h.priority = -1;
+        registry.set(key, h);
+      }
+    }
   };
   const charsIn = (host: Element, isComposer: boolean): RainbowChar[] => {
     const out: RainbowChar[] = [];
@@ -5456,7 +5516,15 @@ function watchUltrathink(ctx: ClientCtx) {
       stopSweep();
       return;
     }
-    if (activeClaudeSession(ctx) === undefined || !hasTheme("rainbow")) {
+    if (activeClaudeSession(ctx) === undefined) {
+      stopSweep();
+      clear();
+      registry.delete("omc-quote");
+      registry.delete("omc-quote-mark");
+      return;
+    }
+    paintQuotes();
+    if (!hasTheme("rainbow")) {
       stopSweep();
       clear();
       return;
