@@ -5496,24 +5496,28 @@ function watchUltrathink(ctx: ClientCtx) {
     }
     // One row per line, an empty line holding its height with a `<br>`: a block ending in a line
     // break drops that last empty line.
-    // A quote block carries its own gap above and below, as a rendered quote does, so an empty line
-    // touching one is dropped: "text, quote" and "text, blank line, quote" read the same. Empty
-    // lines between plain lines stay as typed.
+    // A quote block carries its own 16px gap above and below, as a rendered quote does. The one
+    // empty line that normally separates it from the text is that gap, so "text, quote" and "text,
+    // blank line, quote" read the same; every empty line past that one shows, as it does in a plain
+    // message, so extra returns still add space. Between two quotes the margins meet as one gap, and
+    // one empty line goes to it the same way.
     const blank = (i: number) => (lines[i] ?? []).every((n) => (n.textContent ?? "").trim() === "");
-    /** Whether empty line `i` runs, through other empty lines only, into a quote on either side. */
-    const touchesQuote = (i: number): boolean =>
-      [-1, 1].some((step) => {
-        let j = i + step;
-        while (j >= 0 && j < lines.length && blank(j) && quoted[j] !== true) j += step;
-        return quoted[j] === true;
-      });
+    const gap = new Set<number>();
+    for (let i = 0; i < lines.length; i++) {
+      if (!blank(i) || quoted[i] === true) continue;
+      let end = i;
+      while (end + 1 < lines.length && blank(end + 1) && quoted[end + 1] !== true) end++;
+      if (quoted[end + 1] === true) gap.add(end);
+      else if (quoted[i - 1] === true) gap.add(i);
+      i = end;
+    }
     let block: HTMLElement | undefined;
     let blockQuoted = false;
     for (const [i, pieces] of lines.entries()) {
       const q = quoted[i] === true;
-      // An empty line inside a quote stays; one at a quote's edge, or beside it, is the gap's.
-      if (blank(i) && (q ? quoted[i - 1] !== true || quoted[i + 1] !== true : touchesQuote(i)))
-        continue;
+      // An empty line inside a quote stays; one at a quote's edge (a bare `>`) is the gap's too.
+      if (gap.has(i)) continue;
+      if (blank(i) && q && (quoted[i - 1] !== true || quoted[i + 1] !== true)) continue;
       if (block === undefined || q !== blockQuoted) {
         block = document.createElement("div");
         if (q) block.setAttribute(QUOTE_BLOCK, "1");
