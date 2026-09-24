@@ -1852,6 +1852,8 @@ export interface SessionRouteOptions {
   };
   /** The model catalog for advisor model selection. */
   models?: () => Promise<Array<{ id: string; name: string }>>;
+  /** The provider id this machine's Claude mounts under; a restored session is put on it. */
+  providerId?: string;
   /** Re-read plugins into a session's live process after a plugin/marketplace mutation, so the
    *  change applies now instead of at the next spawn. `live` is false when there is no process. */
   reloadPlugins?: (sessionId: string) => Promise<{ ok: boolean; live: boolean; error?: string }>;
@@ -1965,6 +1967,7 @@ export function registerSessionRoutes(
     starters,
     setStarter,
     models,
+    providerId,
     reloadPlugins,
     reloadSkills,
     pluginErrors,
@@ -2118,6 +2121,21 @@ export function registerSessionRoutes(
    */
   const workspaceAt = (cwd: string | null): RemoteWorkspace | undefined =>
     cwd === null ? undefined : remoteWorkspaces.find((w) => w.path === cwd);
+  /** The model and mount a transcript restored into `cwd` opens on: the transcript's own last
+   *  model, else the one this workspace last ran, in whatever form the lineup still offers (a
+   *  retired model takes its family's). A box workspace never run in dsh has no known mount, so
+   *  its model stays dsh's fallback. */
+  const pickFor =
+    (cwd: string): PickSettings =>
+    async (folded) => {
+      const saved = (await loadWorkspaceModels(STATE_DIR)).get(cwd);
+      const wanted = lastModelOf(folded) ?? saved?.model;
+      const offered = models ? (await models()).map((m) => m.id) : undefined;
+      return {
+        provider: saved?.provider ?? (workspaceAt(cwd) ? undefined : (providerId ?? "claude-code")),
+        model: wanted && offered ? livingModelId(wanted, offered) : undefined,
+      };
+    };
   /** That workspace's own transcripts on its box, newest first; an unreachable box lists nothing. */
   const boxTranscripts = async (
     ws: RemoteWorkspace,
@@ -2364,17 +2382,7 @@ export function registerSessionRoutes(
                 claudeIdOf,
                 workspaceRegistry(),
                 heal,
-                async (folded) => {
-                  // The transcript's own last model, else the one this workspace last ran, in
-                  // whatever form the lineup still offers; a retired model takes its family's.
-                  const saved = (await loadWorkspaceModels(STATE_DIR)).get(cwd);
-                  const wanted = lastModelOf(folded) ?? saved?.model;
-                  const offered = models ? (await models()).map((m) => m.id) : undefined;
-                  return {
-                    provider: saved?.provider ?? (onBox ? undefined : "claude-code"),
-                    model: wanted && offered ? livingModelId(wanted, offered) : undefined,
-                  };
-                },
+                pickFor(cwd),
               );
               // The CLI stamps every prompt row with the mode it ran under, so a session brought
               // in from a terminal keeps its mode instead of the workspace default. A session dsh
@@ -2414,6 +2422,7 @@ export function registerSessionRoutes(
                   workspaceRegistry(),
                   heal,
                   claudeIdOf(id),
+                  pickFor(cwd),
                 );
               } catch (e) {
                 // The seed did not land: put the log back where it was so the click can be tried
