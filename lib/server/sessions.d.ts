@@ -1,6 +1,7 @@
 import type { IncomingMessage } from "node:http";
 import { type Reach } from "./reach.js";
 import type { JsonValue, PluginContext, WorkspaceRegistry } from "./dsh.js";
+import { type HealHost, type RepairsSummary } from "./session-heal.js";
 import type { ToolMode, ToolModeInfo } from "./rows-probe.js";
 import { type PluginLoadError } from "./plugins.js";
 import { EFFORTS_ALL, type LoginNeed } from "./adapter.js";
@@ -145,6 +146,8 @@ export interface RuntimeStatus {
     update?: string;
     /** GitHub stargazers_count for this repo; absent when offline, rate-limited or dismissed. This box only. */
     stars?: number;
+    /** Session logs the plugin healed, could not heal, or rolled back since the last dismissal. */
+    sessionRepairs?: RepairsSummary;
     /** Claude processes still running on the box; they answer on the login they loaded at start. */
     running?: number;
     /** The dsh this plugin is loaded beside, and the lowest dsh this build runs on. This box only. */
@@ -284,6 +287,8 @@ export declare function dshSessionsFor(entries: readonly (StoredHeader | {
 interface Opened {
     id: string;
     existed: boolean;
+    /** The stored log was refused and healed before this open handed it over. */
+    healed?: boolean;
     turns?: number;
     events?: number;
     /** The permission mode the transcript's last prompt ran under; only on a freshly seeded open. */
@@ -295,7 +300,7 @@ type RouteHost = Required<Pick<PluginContext, "webServer" | "connection" | "sess
  * Loads a Claude Code transcript and creates a dsh session from it, or
  * returns the existing session if one with this id is already live.
  */
-export declare function openTranscriptOnce(ctx: RouteHost, dirs: string[], cwd: string, id: string, claudeIdOf: (id: string) => string, registry: WorkspaceRegistry | undefined): Promise<Opened>;
+export declare function openTranscriptOnce(ctx: RouteHost, dirs: string[], cwd: string, id: string, claudeIdOf: (id: string) => string, registry: WorkspaceRegistry | undefined, heal?: HealHost): Promise<Opened>;
 /** One mount's own box: which `claude` to run, where its config lives, and whether it is remote. */
 export interface MountBox {
     configDir: string;
@@ -317,6 +322,9 @@ export interface EventsDeps {
 /** Everything the routes need from the adapter. */
 export interface SessionRouteOptions {
     log: (level: string, msg: string) => void;
+    /** Hands the adapter the heal host the routes build, so a wake that finds a session refused
+     *  can heal it too. */
+    onHeal?: (heal: HealHost) => void;
     /**
      * Claude Code project dirs for a workspace path, in read order. Normally one; with the transcript
      * switch on it is the plugin's own store first and the real `~/.claude` second, so a session
@@ -557,7 +565,7 @@ export interface SessionRouteOptions {
     continueAfterLimit?: boolean;
 }
 /** `projectDir(cwd)` → Claude Code project dir; `startedIds()` → ids the adapter started itself. */
-export declare function registerSessionRoutes(ctx: PluginContext, { log, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, importedDir, sshBoxesPath, onSshBoxes, remoteWorkspacesPath, onRemoteWorkspaces, command, boxCommand, sshHost, turnRecords, dshVersion, liveTurn, events, idle, toolMode, terminalSync, permissionModes, thinking, rewind, contextUsage, skillDoctor, workspaceDiff, permissionReadout, askAside, mcp, permissionAsks, sideQuestions, steersFor, holdSteers, releaseHold, sendSteerNow, loginNeeded, sessionFallbacks, boxOfSession, claudeUpdated, loginDone, logoutDone, liveCount, persistAsides, starters, setStarter, models, reloadPlugins, reloadSkills, pluginErrors, pluginWarnings, awaiting, continueAfterLimit, instanceFor, instanceForHost, onLoginStatus, }: SessionRouteOptions): void;
+export declare function registerSessionRoutes(ctx: PluginContext, { log, onHeal, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, importedDir, sshBoxesPath, onSshBoxes, remoteWorkspacesPath, onRemoteWorkspaces, command, boxCommand, sshHost, turnRecords, dshVersion, liveTurn, events, idle, toolMode, terminalSync, permissionModes, thinking, rewind, contextUsage, skillDoctor, workspaceDiff, permissionReadout, askAside, mcp, permissionAsks, sideQuestions, steersFor, holdSteers, releaseHold, sendSteerNow, loginNeeded, sessionFallbacks, boxOfSession, claudeUpdated, loginDone, logoutDone, liveCount, persistAsides, starters, setStarter, models, reloadPlugins, reloadSkills, pluginErrors, pluginWarnings, awaiting, continueAfterLimit, instanceFor, instanceForHost, onLoginStatus, }: SessionRouteOptions): void;
 /**
  * The four files Claude Code merges for one session, highest precedence first. Duplicated in
  * `src/client/settings.ts`: the browser half cannot import server code, and the order is the

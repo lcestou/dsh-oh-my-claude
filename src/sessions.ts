@@ -105,7 +105,18 @@ import type {
 } from "./dsh.js";
 import { errorText } from "./process.js";
 import { claudeMdDisabledBy, featureSwitches, type ClaudeMdState } from "./switches.js";
-import { currentLogVersion } from "./rows-probe.js";
+import { currentLogVersion, loadSessionCatalog } from "./rows-probe.js";
+import { serverText } from "./locale.js";
+import { knownRefusal } from "./session-repair.js";
+import {
+  healLog,
+  probeLoad,
+  rawLogPath,
+  repairsSummary,
+  sweepRefusedLogs,
+  type HealHost,
+  type RepairsSummary,
+} from "./session-heal.js";
 import type { ToolMode, ToolModeInfo } from "./rows-probe.js";
 import {
   isMarketplaceSource,
@@ -119,6 +130,7 @@ import {
   CLAUDE_HOME,
   PERMISSION_MODES,
   STATE_DIR,
+  loadSessionRepairs,
   isPermissionMode,
   loadContextSizes,
   loadWorkspaceModels,
@@ -148,6 +160,11 @@ import type {
 import { type EventHub, type OmcEvent } from "./events.js";
 
 const ROUTE_PREFIX = "/dsh-oh-my-claude";
+/** This plugin's own key on globalThis, so a hot reload does not start a second heal sweep. */
+const HEAL_SWEEP = Symbol.for("dsh-oh-my-claude.healSweep");
+/** After the adapter's resume delay (10 s), so the boot's wakes run first and take the wake
+ *  path's heal for the one session the sweep cannot reach. */
+const HEAL_SWEEP_DELAY_MS = 15_000;
 /** How long a thinking figure counts as current. The CLI sends one frame per delta while the model
  *  thinks, so anything older than a beat or two means it stopped and the status row should stop
  *  saying so. Generous enough to survive a slow delta, short enough that the word does not linger. */
@@ -643,6 +660,8 @@ export interface RuntimeStatus {
   update?: string;
   /** GitHub stargazers_count for this repo; absent when offline, rate-limited or dismissed. This box only. */
   stars?: number;
+  /** Session logs the plugin healed, could not heal, or rolled back since the last dismissal. */
+  sessionRepairs?: RepairsSummary;
   /** Claude processes still running on the box; they answer on the login they loaded at start. */
   running?: number;
   /** The dsh this plugin is loaded beside, and the lowest dsh this build runs on. This box only. */
@@ -1226,6 +1245,8 @@ const validCwd = (cwd: unknown): cwd is string =>
 interface Opened {
   id: string;
   existed: boolean;
+  /** The stored log was refused and healed before this open handed it over. */
+  healed?: boolean;
   turns?: number;
   events?: number;
   /** The permission mode the transcript's last prompt ran under; only on a freshly seeded open. */
@@ -1286,10 +1307,11 @@ function openTranscript(
   id: string,
   claudeIdOf: (id: string) => string,
   registry: WorkspaceRegistry | undefined,
+  heal?: HealHost,
 ): Promise<Opened> {
   let job = opening.get(id);
   if (!job) {
-    job = openTranscriptOnce(ctx, dirs, cwd, id, claudeIdOf, registry).finally(() =>
+    job = openTranscriptOnce(ctx, dirs, cwd, id, claudeIdOf, registry, heal).finally(() =>
       opening.delete(id),
     );
     opening.set(id, job);
@@ -1308,6 +1330,7 @@ export async function openTranscriptOnce(
   id: string,
   claudeIdOf: (id: string) => string,
   registry: WorkspaceRegistry | undefined,
+  heal?: HealHost,
 ): Promise<Opened> {
   // dsh 0.1.5 lists a session under a workspace only once it is on that workspace's own
   // `sessionIds`; a session that merely exists (older dsh derived the workspace from its cwd)
@@ -1359,11 +1382,25 @@ export async function openTranscriptOnce(
     new Set(registry?.archivedSessionIds ?? []),
   ).get(id);
   if (owned) {
+    // The stored log is the session, so make sure dsh can load it before handing it over: a log
+    // refused for one of the reasons the plugin mends is healed here, and one refused for any
+    // other reason is answered as an error instead of a silent "did not appear" (dsh's own
+    // resume 500s later, out of this route's sight). No heal host (the old signature) skips it.
+    const refusal = heal ? await probeLoad(heal, owned.id) : undefined;
+    if (heal && refusal !== undefined) {
+      const path = heal.persistence.locate?.({ id: owned.id, cwd }).path ?? rawLogPath(refusal);
+      const verdict =
+        path !== undefined && knownRefusal(refusal)
+          ? (await healLog(heal, owned.id, path, refusal)).verdict
+          : "unknown";
+      if (verdict !== "healed")
+        throw new Error(serverText("logRefused", { reason: refusal.slice(0, 200) }));
+    }
     await unarchive(owned.id);
     // Persisted but not in the store (a restart unloads it): the workspace list is the only way it
     // reaches the sidebar, and dsh reads its header from persistence, which lists it by now.
     await attach(owned.id);
-    return { id: owned.id, existed: true };
+    return { id: owned.id, existed: true, healed: refusal !== undefined };
   }
   // This PC: the archive lists only local transcripts, so an opened one is always here. An
   // imported one is not under `projects/` at all, which is why the caller passes both dirs.
@@ -1465,6 +1502,9 @@ export interface EventsDeps {
 /** Everything the routes need from the adapter. */
 export interface SessionRouteOptions {
   log: (level: string, msg: string) => void;
+  /** Hands the adapter the heal host the routes build, so a wake that finds a session refused
+   *  can heal it too. */
+  onHeal?: (heal: HealHost) => void;
   /**
    * Claude Code project dirs for a workspace path, in read order. Normally one; with the transcript
    * switch on it is the plugin's own store first and the real `~/.claude` second, so a session
@@ -1711,6 +1751,7 @@ export function registerSessionRoutes(
   ctx: PluginContext,
   {
     log,
+    onHeal,
     projectDir,
     projectsDir,
     startedIds,
@@ -2012,6 +2053,26 @@ export function registerSessionRoutes(
     const { webServer, connection, sessions, sessionPersistence } = host;
     if (!webServer || !connection || !sessionPersistence) return;
     const routeHost: RouteHost = { webServer, connection, sessions, sessionPersistence };
+    // What the heal needs from dsh: its persistence (read-open never takes the write lock), its
+    // catalog, and this plugin's state dir. Shared with the adapter's wake path through onHeal.
+    const heal: HealHost = {
+      persistence: sessionPersistence,
+      catalog: () => loadSessionCatalog(),
+      stateDir: STATE_DIR,
+      log,
+    };
+    onHeal?.(heal);
+    // One sweep per process, after the resume delay, so a boot is not slowed by it and a hot
+    // reload does not start a second. Heals the logs dsh refuses for the reasons the plugin
+    // knows; anything else is recorded and shown, never touched.
+    // SAFETY: the symbol is this plugin's own key on globalThis, typed here once
+    const sweepFlag = globalThis as typeof globalThis & { [HEAL_SWEEP]?: true };
+    if (!sweepFlag[HEAL_SWEEP]) {
+      sweepFlag[HEAL_SWEEP] = true;
+      setTimeout(() => {
+        void sweepRefusedLogs(heal).catch((e) => log("warn", `heal sweep: ${errorText(e)}`));
+      }, HEAL_SWEEP_DELAY_MS).unref?.();
+    }
     // Shared by the plugin-manager routes: check the scope and resolve the session's directory,
     // which is where a `project` or `local` write lands (a `user` write goes to configDir).
     const pluginScopeCwd = async (
@@ -2137,6 +2198,7 @@ export function registerSessionRoutes(
                 id,
                 claudeIdOf,
                 workspaceRegistry(),
+                heal,
               );
               // The CLI stamps every prompt row with the mode it ran under, so a session brought
               // in from a terminal keeps its mode instead of the workspace default. A session dsh
@@ -2793,6 +2855,14 @@ export function registerSessionRoutes(
                 status.dshFloor = DSH_FLOOR ?? null;
               }
               status.running = liveCount?.(box.sshHost ?? "") ?? 0;
+              if (!box.sshHost) {
+                // Healed, unknown and rolled-back logs since the last dismissal, a box fact.
+                const seen = hintsPath ? (await readHints(hintsPath)).sessionRepairsSeen : 0;
+                status.sessionRepairs = repairsSummary(
+                  await loadSessionRepairs(STATE_DIR),
+                  typeof seen === "number" ? seen : 0,
+                );
+              }
               if (
                 !box.sshHost &&
                 (provider === null || provider === DEFAULT_PROVIDER) &&

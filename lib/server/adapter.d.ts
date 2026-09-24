@@ -14,6 +14,7 @@ import { type ToolMode, type ToolModeInfo } from "./rows-probe.js";
 import { type FsBox } from "./remote-fs.js";
 import type { FoldedTurn } from "./transcript.js";
 import { sshRunner, type HoldRecord } from "./hold.js";
+import { type HealHost } from "./session-heal.js";
 import type { RewindResult } from "./process.js";
 export { markBusy, takeInterrupted } from "./state.js";
 export { forkTranscriptText } from "./transcript.js";
@@ -922,6 +923,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     /** Probe targets already written to resume.log, so the line lands once per binary, not per turn. */
     probeTraced: Set<string>;
     sessionController?: SessionController;
+    /** What a heal needs from dsh, handed over by the session routes; undefined until they load. */
+    heal?: HealHost;
     /** Masks secret env values in tool results; undefined when `redactSecrets` is off. */
     readonly redact: ((s: string) => string) | undefined;
     /** dsh sessions marked temporary with /temporary; on globalThis so a reload keeps them. */

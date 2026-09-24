@@ -44,15 +44,16 @@ export type Header = {
     version?: number;
     [key: string]: unknown;
 };
-/** As much of dsh's session-format catalog as the repair calls. `src/rows-probe.ts` loads the
- *  installed dsh's and its type is assignable here. */
+/** As much of dsh's session-format catalog as the repair calls. The header and row parameters
+ *  are `object` so the probe's own catalog type (`src/rows-probe.ts`, typed on its fixture's
+ *  shapes) is assignable here without a cast; the repair passes its own Header and Row. */
 export type Catalog = {
     currentVersion?: number;
-    createRestore(header: Header, options: {
+    createRestore(header: object, options: {
         recovery: string;
         validation: string;
     }): {
-        decodeRow(row: Row): void;
+        decodeRow(row: object): void;
         finish(): void;
     };
 };
