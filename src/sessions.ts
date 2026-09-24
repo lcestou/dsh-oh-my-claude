@@ -1319,6 +1319,21 @@ const userMessageOf = (e: { data: Record<string, JsonValue> }) => ({
 /** The text of a folded turn's prompt, rendered the way a stored user message renders. */
 const promptTextOf = (t: FoldedTurn): string => assistantMessageText(t.content);
 
+/** The CLI's own user rows that no person typed: the echo it writes when a turn is interrupted. */
+const CLI_ECHO = /^\[Request interrupted by user/;
+
+/** Whether a transcript prompt is one the stored log already holds. Exact text, or the stored text
+ *  followed by a blank line: the adapter sends a typed prompt to the CLI with dsh's context blocks
+ *  appended after `\n\n` (the runtime snapshot, instructions, the skill catalog), so the
+ *  transcript's row carries the composite while dsh stores the person's text alone (measured
+ *  2026-09-23: 542 characters against 150 for the same prompt). A short stored text can shadow a
+ *  later prompt that begins with it and a blank line; that reads as stored, the safe side. */
+const storedHolds = (texts: ReadonlySet<string>, prompt: string): boolean => {
+  if (texts.has(prompt)) return true;
+  for (const t of texts) if (t !== "" && prompt.startsWith(t + "\n\n")) return true;
+  return false;
+};
+
 /** Append to a stored log the completed transcript turns it does not hold yet. A turn is new
  *  when its prompt's uuid is not a stored user message id and its text is not a stored user
  *  message text (a prompt dsh ran or mirrored carries a dsh id and matches by text only). Two
@@ -1367,8 +1382,21 @@ async function foldTranscriptDelta(
       await trace(`fold ${dshId}: tail turn ${lastTurn} open, skipped`);
       return 0;
     }
-    const fresh = folded.turns.filter((t) => !ids.has(t.id) && !texts.has(promptTextOf(t)));
+    const fresh = folded.turns.filter((t) => {
+      const text = promptTextOf(t);
+      return !ids.has(t.id) && !CLI_ECHO.test(text) && !storedHolds(texts, text);
+    });
     if (fresh.length === 0) return 0;
+    // A copy of the log before the append, so a fold that turns out wrong is one file move away
+    // from undone; the trace line names it.
+    const located = ctx.sessionPersistence.locate?.({ id: dshId })?.path;
+    let bak = "";
+    if (located !== undefined) {
+      bak = `${located}.bak-${Date.now()}`;
+      await copyFile(located, bak).catch(() => {
+        bak = "";
+      });
+    }
     const delta = toSessionEvents(
       { ...folded, turns: fresh, title: undefined },
       handle.header.version,
@@ -1376,7 +1404,7 @@ async function foldTranscriptDelta(
     );
     await handle.append(delta);
     await handle.flush();
-    await trace(`fold ${dshId}: +${fresh.length} turns`);
+    await trace(`fold ${dshId}: +${fresh.length} turns${bak ? ` (before: ${bak})` : ""}`);
     return fresh.length;
   } finally {
     await handle.close();

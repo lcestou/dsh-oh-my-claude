@@ -2439,6 +2439,17 @@ console.log("sessions ok");
   );
   r = await run(stored, { openTail: true });
   assert.deepEqual([r.out.turnsAdded, r.appended.length], [0, 0], "an open tail turn: untouched");
+  // The two shapes a real reopen showed on 2026-09-23: a prompt the adapter sent with dsh's
+  // context appended after a blank line, and the CLI's own interrupt echo. Neither is new.
+  r = await run(stored, {
+    transcriptRows: transcript(4, [
+      "prompt 1",
+      "prompt 2\n\nCurrent runtime context. This snapshot supersedes earlier snapshots.",
+      "[Request interrupted by user]",
+      "prompt 4",
+    ]),
+  });
+  assert.equal(r.out.turnsAdded, 1, "only the genuinely new prompt folds");
   console.log("fold-delta ok");
 }
 
