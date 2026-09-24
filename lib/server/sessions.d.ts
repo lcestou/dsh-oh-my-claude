@@ -302,7 +302,7 @@ type RouteHost = Required<Pick<PluginContext, "webServer" | "connection" | "sess
  * Loads a Claude Code transcript and creates a dsh session from it, or
  * returns the existing session if one with this id is already live.
  */
-export declare function openTranscriptOnce(ctx: RouteHost, dirs: string[], cwd: string, id: string, claudeIdOf: (id: string) => string, registry: WorkspaceRegistry | undefined, heal?: HealHost, reseed?: boolean): Promise<Opened>;
+export declare function openTranscriptOnce(ctx: RouteHost, dirs: string[], cwd: string, id: string, claudeIdOf: (id: string) => string, registry: WorkspaceRegistry | undefined, heal?: HealHost, reseedFrom?: string): Promise<Opened>;
 /** One mount's own box: which `claude` to run, where its config lives, and whether it is remote. */
 export interface MountBox {
     configDir: string;

@@ -2534,7 +2534,8 @@ console.log("sessions ok");
     projectDir: () => [join(projects, projectDirName(cwd))],
     projectsDir: [projects],
     startedIds: async () => [],
-    claudeIdOf: (id: string) => id,
+    // A dsh-started session keeps its transcript under a derived id, as the plugin does.
+    claudeIdOf: (id: string) => `t-${id}`,
     configDir: join(root, "claude"),
     boxesPath: join(root, "boxes.json"),
     importedDir: join(root, "imported"),
@@ -2597,7 +2598,7 @@ console.log("sessions ok");
   assert.equal(existsSync(logPath), true, "no transcript: the log stays");
   // A transcript with a completed turn: 200, the log moved to .bak, seeded again.
   writeFileSync(
-    join(projects, projectDirName(cwd), "session-11111111-1111-4111-8111-111111111111.jsonl"),
+    join(projects, projectDirName(cwd), "t-session-11111111-1111-4111-8111-111111111111.jsonl"),
     [
       {
         type: "user",

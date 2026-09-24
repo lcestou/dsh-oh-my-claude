@@ -1456,7 +1456,7 @@ export async function openTranscriptOnce(
   claudeIdOf: (id: string) => string,
   registry: WorkspaceRegistry | undefined,
   heal?: HealHost,
-  reseed = false,
+  reseedFrom?: string,
 ): Promise<Opened> {
   // dsh 0.1.5 lists a session under a workspace only once it is on that workspace's own
   // `sessionIds`; a session that merely exists (older dsh derived the workspace from its cwd)
@@ -1502,7 +1502,9 @@ export async function openTranscriptOnce(
   // fall through to a local transcript read that ENOENTs (the body lives on the box). `cwd` is only
   // needed for the non-owned read below, where the transcript really is on this box's disk.
   // A reseed moved the refused log aside a moment ago; dsh's list may still name the id, and the
-  // create path below is the point of the call.
+  // create path below is the point of the call. `reseedFrom` is the transcript to seed from: for a
+  // dsh-started session that is the hash of the dsh id, while the session keeps its own id.
+  const reseed = reseedFrom !== undefined;
   const owned = reseed
     ? undefined
     : dshSessionsFor(
@@ -1538,7 +1540,7 @@ export async function openTranscriptOnce(
   }
   // This PC: the archive lists only local transcripts, so an opened one is always here. An
   // imported one is not under `projects/` at all, which is why the caller passes both dirs.
-  const folded = await firstTranscript(dirs, id);
+  const folded = await firstTranscript(dirs, reseedFrom ?? id);
   if (folded === undefined) throw new Error("transcript not found");
   if (folded.turns.length === 0) throw new Error("transcript has no completed turn");
   // The version this dsh writes decides both the header below and the shape of every tool result.
@@ -2371,7 +2373,7 @@ export function registerSessionRoutes(
                   claudeIdOf,
                   workspaceRegistry(),
                   heal,
-                  true,
+                  claudeIdOf(id),
                 );
               } catch (e) {
                 // The seed did not land: put the log back where it was so the click can be tried
