@@ -28,6 +28,28 @@ dsh: runs on 0.1.5-rc.1 through 0.1.7-alpha.2; built and tested on 0.1.7-alpha.2
   which a long run of tool cards pushes out of view, and on a long turn the header sits above the
   "Load earlier" fold and is not drawn at all. It is on by default; a switch in Settings > Oh My
   Claude turns it off for someone who wants only dsh's header line.
+- Chinese. Everything the plugin draws follows dsh's language setting (Settings → General →
+  Language), or the browser's language when none is picked, and switches without a reload. The
+  plan review dialog, the not logged in tag and the login message follow the stored setting. A
+  Chinese README sits beside the English one.
+- Claude's tool headers in the chat use the words dsh puts on its own tool cards when the stored
+  language is Chinese (读取, 写入, 编辑, 网页搜索, 网页获取, 更新任务清单, with 输出 and 失败 on
+  the result rows). Bash, Grep, Glob and MCP tool names stay as dsh shows them, in English. The
+  status lines the plugin writes into the chat (compaction, retries, model fallbacks, usage limits,
+  denied tool calls, "more lines" on long output) and the `/btw` replies follow it too.
+- The usage panel, the context breakdown and the usage report in Settings read in Chinese too,
+  including the sentences Claude Code and the usage API send in English. A sentence from a newer
+  Claude Code shows as sent until it is added.
+- A card above the composer lists the messages you steered in while Claude works, until Claude
+  reads them, with Edit, Remove and Edit all (every waiting message as one, as Claude Code's up
+  arrow does). Nothing goes out while the editor is open. A message Claude already has is left
+  alone and the card says so. Queue mode keeps dsh's own editing.
+- A Chinese set of working verbs for the turn status line, in the same cheeky spirit as Claude
+  Code's English ones (炼丹中, 憋大招中, 叽里咕噜中). Your own `spinnerVerbs` in Claude Code's
+  settings still apply on top of them, or replace them.
+
+- The plugin carries its own mark and its own name into dsh's Plugins page, where dsh 0.1.7 draws a
+  card per installed plugin. Before this it took the default artwork every plugin without one gets.
 
 ### Changed
 
@@ -59,9 +81,6 @@ dsh: runs on 0.1.5-rc.1 through 0.1.7-alpha.2; built and tested on 0.1.7-alpha.2
   status is remembered for a minute (three processes, or three ssh connections per box, per ask
   before), the three ssh probes of a box run over one connection, and the steer card's poll no
   longer reads the whole session log each second.
-
-### Changed
-
 - The Claude permission control, the Add workspace dialog with its box dropdown, and the orange
   mark on a running Claude session's sidebar row now sit in dsh's own slots
   (`conversation.input.permission`, the two directory-flow holes, and the session row's action
@@ -79,6 +98,18 @@ dsh: runs on 0.1.5-rc.1 through 0.1.7-alpha.2; built and tested on 0.1.7-alpha.2
   provider's in dsh. Inline stays the default before 0.1.7, where a step's text lands only when it
   settles. A mode picked in Tune, or a `toolsInline` set in the config, still wins; and a dsh that
   stops loading rows locks the switch and the plugin writes inline on its own.
+- Remember model per workspace remembers the Claude too, not only which Claude model. dsh 0.1.7
+  makes each workspace's blank session ahead of time on the deployment default with no selection
+  of its own, so a workspace that always ran Claude opened on llama and the memory, which only
+  ever changed the model, had nothing to act on. A new session now opens on the box and model the
+  workspace last ran Claude on; a blank you have switched by hand is left as you set it. The first
+  Claude turn in a workspace after this update records the mount, and it sticks from then on.
+- The Claude Code update card is about the Claude Code you picked. It followed the box a session's
+  turns run on, which in a remote workspace is that box whichever model is selected, so a session
+  deliberately set to this machine's Claude was offered the other one's update. It now reads the
+  model picker, switches with it on the next poll, and its Update button acts on the box the card
+  names. No extra request and no extra probe: the poll was already running and the server answers
+  from the updater its own half-hourly tick keeps fresh.
 
 ### Fixed
 
@@ -167,17 +198,11 @@ dsh: runs on 0.1.5-rc.1 through 0.1.7-alpha.2; built and tested on 0.1.7-alpha.2
   dsh folds a live group on its own, and the line came down and never came back.
 - The permission capsule no longer catches clicks far above and below itself. Its label had a
   line height of 260 px inside a 28 px button, so a click in the composer near it opened the menu.
-
-### Fixed
-
 - Native rows work on dsh 0.1.7 and survive a restart. Rows mode now announces each of Claude's
   tool calls in a small assistant message before its row, which is what 0.1.7's loader requires
   and what 0.1.5's migration asked for; the probe that gates the switch writes the same shape, so
   the switch unlocks on a dsh that loads it. Checked by running a rows turn, restarting dsh and
   reopening the session from disk: it loads, with one card per call.
-
-### Fixed
-
 - Native rows are locked again on dsh 0.1.7, this time for the real reason. That release loads a
   session with a stricter check than it migrates one with, and the check refuses the raw tool rows
   rows mode writes ("has no advertised tool lifecycle"): two rows-mode sessions failed to load
@@ -199,49 +224,6 @@ dsh: runs on 0.1.5-rc.1 through 0.1.7-alpha.2; built and tested on 0.1.7-alpha.2
   written on 0.1.7 reopens there.
 - Remember model per workspace no longer overwrites a provider you pick while a blank session is
   still loading.
-
-### Added
-
-- Chinese. Everything the plugin draws follows dsh's language setting (Settings → General →
-  Language), or the browser's language when none is picked, and switches without a reload. The
-  plan review dialog, the not logged in tag and the login message follow the stored setting. A
-  Chinese README sits beside the English one.
-- Claude's tool headers in the chat use the words dsh puts on its own tool cards when the stored
-  language is Chinese (读取, 写入, 编辑, 网页搜索, 网页获取, 更新任务清单, with 输出 and 失败 on
-  the result rows). Bash, Grep, Glob and MCP tool names stay as dsh shows them, in English. The
-  status lines the plugin writes into the chat (compaction, retries, model fallbacks, usage limits,
-  denied tool calls, "more lines" on long output) and the `/btw` replies follow it too.
-- The usage panel, the context breakdown and the usage report in Settings read in Chinese too,
-  including the sentences Claude Code and the usage API send in English. A sentence from a newer
-  Claude Code shows as sent until it is added.
-- A card above the composer lists the messages you steered in while Claude works, until Claude
-  reads them, with Edit, Remove and Edit all (every waiting message as one, as Claude Code's up
-  arrow does). Nothing goes out while the editor is open. A message Claude already has is left
-  alone and the card says so. Queue mode keeps dsh's own editing.
-- A Chinese set of working verbs for the turn status line, in the same cheeky spirit as Claude
-  Code's English ones (炼丹中, 憋大招中, 叽里咕噜中). Your own `spinnerVerbs` in Claude Code's
-  settings still apply on top of them, or replace them.
-
-- The plugin carries its own mark and its own name into dsh's Plugins page, where dsh 0.1.7 draws a
-  card per installed plugin. Before this it took the default artwork every plugin without one gets.
-
-### Changed
-
-- Remember model per workspace remembers the Claude too, not only which Claude model. dsh 0.1.7
-  makes each workspace's blank session ahead of time on the deployment default with no selection
-  of its own, so a workspace that always ran Claude opened on llama and the memory, which only
-  ever changed the model, had nothing to act on. A new session now opens on the box and model the
-  workspace last ran Claude on; a blank you have switched by hand is left as you set it. The first
-  Claude turn in a workspace after this update records the mount, and it sticks from then on.
-- The Claude Code update card is about the Claude Code you picked. It followed the box a session's
-  turns run on, which in a remote workspace is that box whichever model is selected, so a session
-  deliberately set to this machine's Claude was offered the other one's update. It now reads the
-  model picker, switches with it on the next poll, and its Update button acts on the box the card
-  names. No extra request and no extra probe: the poll was already running and the server answers
-  from the updater its own half-hourly tick keeps fresh.
-
-### Fixed
-
 - Settings > General > Permission is dsh's own again. dsh 0.1.7 draws the same permission control
   there as in the composer, and the access shield adopted it too: its six Claude rows appeared in
   that dropdown and the row kept reading "Full access" whatever was picked. The shield now only
