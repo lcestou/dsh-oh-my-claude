@@ -4875,6 +4875,9 @@ const publishDockHeight = (el: HTMLDivElement | null): void => {
 /** The observer behind `publishDockHeight`; one strip at a time. */
 let dockHeightWatch: ResizeObserver | undefined;
 
+/** How long a starting turn waits for dsh to draw its header before the dock line takes its place. */
+const DOCK_HEADER_GRACE_MS = 1000;
+
 /**
  * The turn's working line a second time, above the composer, in dsh's `conversation.input.dock`.
  * dsh 0.1.7 keeps the line in the turn's header, which a long run of tool cards scrolls away, and
@@ -4910,6 +4913,9 @@ function DockStatus({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   // redraws it as the column scrolls.
   useEffect(() => {
     if (!running) return;
+    // A new turn starts hidden: the previous turn may have ended with its header scrolled away.
+    setHeaderAway(false);
+    const startedAt = Date.now();
     let watching: Element | null = null;
     let obs: IntersectionObserver | undefined;
     const find = () => {
@@ -4930,7 +4936,10 @@ function DockStatus({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
         obs?.disconnect();
         obs = undefined;
         watching = null;
-        setHeaderAway(true);
+        // Right after a send dsh has not drawn the new turn's header yet, and reading that as
+        // "never drawn" flashed the line for up to one poll before the header turned up on screen
+        // (owner, 2026-09-24). Only a header still missing after the grace counts as not drawn.
+        setHeaderAway(Date.now() - startedAt >= DOCK_HEADER_GRACE_MS);
         return;
       }
       if (header === watching) return;
@@ -9594,6 +9603,10 @@ const composerOf = (anchor: Element | null): HTMLElement | null =>
     ?.closest("[data-conversation-scroll]")
     ?.querySelector<HTMLElement>("[data-composer-input]") ?? null;
 
+/** How long after a pointer release the selection bar reads the selection: a common double-click
+ *  window, so a triple click finishes before the bar can move the chat under it. */
+const SELECTION_SETTLE_MS = 450;
+
 /**
  * The selection bar: select text in the chat and it docks on the composer with the passage, an
  * optional question, Quote and Ask. Quote inserts a Markdown quote into the draft where the composer's
@@ -9652,9 +9665,20 @@ function SelectionBar({
         return;
       setPicked(null);
     };
+    // A pointer selection is read once the pointer has settled, not while it is still moving: a
+    // double click selects a word before the third click of a triple click lands, and the bar
+    // appearing in between grew the seat and scrolled the chat, so the third click hit moved text
+    // (owner, 2026-09-24). A drag paused mid-way showed the bar the same way. Keyboard selection
+    // (Shift+arrows, no pointer down) keeps the short delay.
+    let pointerDown = false;
     const onChange = () => {
       clearTimeout(timer);
+      if (pointerDown) return;
       timer = setTimeout(read, 150);
+    };
+    const onDown = () => {
+      pointerDown = true;
+      clearTimeout(timer);
     };
     // A tap collapses the page selection before its click fires, and a mobile browser may send that
     // click in a later task than pointerup, so the hold lasts until the click (or 400 ms without one).
@@ -9665,15 +9689,23 @@ function SelectionBar({
     const onUp = () => {
       clearTimeout(release);
       release = setTimeout(() => (holdRef.current = false), 400);
+      pointerDown = false;
+      clearTimeout(timer);
+      // A plain click with nothing selected and no bar up has nothing to read.
+      if (document.getSelection()?.isCollapsed !== false && !shownRef.current) return;
+      // Past the double-click window a further click starts a new selection, not a longer one.
+      timer = setTimeout(read, SELECTION_SETTLE_MS);
     };
     document.addEventListener("selectionchange", onChange);
     window.addEventListener("click", onClick, true);
+    window.addEventListener("pointerdown", onDown, true);
     window.addEventListener("pointerup", onUp);
     return () => {
       clearTimeout(timer);
       clearTimeout(release);
       document.removeEventListener("selectionchange", onChange);
       window.removeEventListener("click", onClick, true);
+      window.removeEventListener("pointerdown", onDown, true);
       window.removeEventListener("pointerup", onUp);
     };
   }, []);
