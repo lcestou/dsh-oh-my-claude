@@ -5100,7 +5100,9 @@ const paintClosing = (group: HTMLElement, sessionId: string): void => {
       line.append(glyph);
     }
     line.append(document.createTextNode(text));
-    group.append(line);
+    // In the label's place, not at the end: a group with content puts dsh's chevron after its label,
+    // and an appended line sat after the chevron, which pushed the glyph off the left edge.
+    label.after(line);
   } else if (line.lastChild?.nodeValue !== text && line.lastChild !== null) {
     line.lastChild.nodeValue = text;
   }
