@@ -30,6 +30,7 @@ import {
   settingsEvents,
   toMarkdown,
   toSessionEvents,
+  typedPrompt,
   type FoldedTranscript,
   type FoldedTurn,
 } from "./transcript.js";
@@ -3739,10 +3740,7 @@ export function registerSessionRoutes(
                 .map((t) => ({
                   id: t.id,
                   time: t.time,
-                  text: t.content
-                    .map((c) => c.text)
-                    .join("\n")
-                    .slice(0, 200),
+                  text: typedPrompt(t.content.map((c) => c.text).join("\n")).slice(0, 200),
                 }))
                 .toReversed()
                 .slice(0, 20);

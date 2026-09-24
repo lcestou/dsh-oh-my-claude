@@ -15,6 +15,7 @@ import {
   toMarkdown,
   toSessionEvents,
   truncateBytes,
+  typedPrompt,
 } from "./transcript.js";
 import {
   authFromStatus,
@@ -1002,3 +1003,28 @@ console.log("transcript ok");
   );
   assert.equal(lastModelOf(folded), folded.turns.at(-1)?.steps.at(-1)?.model, "last step's model");
 }
+
+// A Rewind row reads what was typed, not dsh's notice ahead of it or its runtime context after it.
+assert.equal(
+  typedPrompt(
+    'The approval policy changed from "never" to "ask" (changed by the user).\n\nRead src/recipes.ts.\n\nCurrent runtime context.\n\nCurrent DSH file policy: workspace-write.',
+  ),
+  "Read src/recipes.ts.",
+  "notice and runtime context dropped",
+);
+assert.equal(typedPrompt("  Plain question?  "), "Plain question?", "plain text only trimmed");
+assert.equal(
+  typedPrompt("Why did the approval policy changed from x happen?"),
+  "Why did the approval policy changed from x happen?",
+  "the phrase mid-prompt is the person's own words",
+);
+assert.equal(
+  typedPrompt("Read src/recipes.ts. Current runtime context. Then do X."),
+  "Read src/recipes.ts. Current runtime context. Then do X.",
+  "the marker inside a sentence is not dsh's block",
+);
+assert.equal(
+  typedPrompt("Current runtime context.\nexplain it"),
+  "Current runtime context.\nexplain it",
+  "a prompt that starts with the words keeps them",
+);

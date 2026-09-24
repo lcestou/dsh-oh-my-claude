@@ -1,6 +1,15 @@
 import { type FsBox } from "./remote-fs.js";
 import type { JsonValue } from "./dsh.js";
 /**
+ * What a person typed, out of a prompt as the CLI stored it. dsh sends its own text in the same
+ * user message: an approval-policy notice ahead of the prompt when the access mode changed, and its
+ * "Current runtime context." block after it. A Rewind row labelled with the raw text led with the
+ * notice ("The approval policy changed from "never" to "ask" …") instead of the question asked.
+ * Text without either part comes back trimmed and otherwise untouched, and so does text that
+ * would be left empty.
+ */
+export declare const typedPrompt: (text: string) => string;
+/**
  * Truncate to a byte budget without splitting a character. Encode once and cut at a UTF-8 boundary:
  * this used to append a character at a time and measure `out + ch` on each one, which is quadratic
  * in the budget and ran on every tool result in a transcript. Folding a 49 MB session spent 1.2 s

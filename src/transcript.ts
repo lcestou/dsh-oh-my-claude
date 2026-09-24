@@ -69,6 +69,26 @@ function promptText(content: unknown): string {
   return texts.join("\n");
 }
 
+/**
+ * What a person typed, out of a prompt as the CLI stored it. dsh sends its own text in the same
+ * user message: an approval-policy notice ahead of the prompt when the access mode changed, and its
+ * "Current runtime context." block after it. A Rewind row labelled with the raw text led with the
+ * notice ("The approval policy changed from "never" to "ask" …") instead of the question asked.
+ * Text without either part comes back trimmed and otherwise untouched, and so does text that
+ * would be left empty.
+ */
+export const typedPrompt = (text: string): string => {
+  // dsh's block starts on a line of its own after a blank line; the words mid-prompt are a person's.
+  const typed = text
+    .replace(/\n\nCurrent runtime context\.\n[\s\S]*$/, "")
+    .replace(
+      /^(?:The approval policy changed from "[^"]*" to "[^"]*" \(changed by the user\)\.\s*)+/,
+      "",
+    )
+    .trim();
+  return typed === "" ? text.trim() : typed;
+};
+
 /** Injected material Claude Code stores as user lines: slash-command echoes, hook output, reminders. */
 const isNoise = (text: string) => /^\s*<(command-|local-command|system-reminder)/.test(text);
 
