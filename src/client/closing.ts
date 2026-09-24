@@ -59,3 +59,9 @@ export const clockText = (dshClock: string, zh: boolean): string => {
   const h = Number(hh);
   return `${before}${h % 12 === 0 ? 12 : h % 12}:${mm} ${h < 12 ? "AM" : "PM"}`;
 };
+
+/**
+ * Whether dsh's label says the turn was stopped (`message.stopped`: `Stopped`, `已停止`), which dsh
+ * shows instead of a duration when the turn ended aborted. A failed turn (`Failed`) is not this.
+ */
+export const isStopped = (label: string): boolean => /^(?:Stopped|已停止)$/.test(label.trim());

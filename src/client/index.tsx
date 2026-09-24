@@ -129,6 +129,7 @@ import {
   ZH_CLOSING_VERBS,
   closingVerb,
   clockText,
+  isStopped,
   tookDuration,
 } from "./closing.js";
 import {
@@ -5043,8 +5044,9 @@ const CLOSING_MARK = "data-omc-turn-closing";
  * Writes the CLI's closing line (`✻ Crunched for 38s · done 3:33 AM`) into a finished turn's
  * process-group button, over dsh's own "Took 38s", which the sheet hides while the line is there.
  * Finished is dsh's label reading its `Took {duration}` template, not the chevron: a running group
- * reads "Deep diving for 12s" and is left alone, as is one still carrying the running line. The
- * time is the clock dsh prints in the turn's tail; a tail not mounted yet gives a line without it,
+ * reads "Deep diving for 12s" and is left alone, as is one still carrying the running line. A
+ * stopped turn (dsh's `Stopped`) gets the CLI's interrupt line instead; a failed one keeps dsh's
+ * word. The time is the clock dsh prints in the turn's tail; a tail not mounted yet gives a line without it,
  * rewritten on a later pass. Writes only when the text changes, since every write is a mutation the
  * observer brings straight back here.
  */
@@ -5052,8 +5054,9 @@ const paintClosing = (group: HTMLElement, sessionId: string): void => {
   if (group.querySelector(":scope > [data-omc-turn-line]") !== null) return;
   const label = group.querySelector<HTMLElement>(`:scope > span:not([${CLOSING_MARK}])`);
   if (label === null) return;
-  const duration = tookDuration(label.textContent ?? "");
-  if (duration === undefined) return;
+  const stopped = isStopped(label.textContent ?? "");
+  const duration = tookDuration(label.textContent ?? "") ?? "";
+  if (!stopped && duration === "") return;
   const turn = group.getAttribute("data-turn-process") ?? "";
   const scope = group.closest("[data-conversation-scroll]") ?? document;
   const tail = scope.querySelector(`[data-turn-tail="${CSS.escape(turn)}"] [data-clock="end"]`);
@@ -5063,8 +5066,10 @@ const paintClosing = (group: HTMLElement, sessionId: string): void => {
     .find((el) => el.childElementCount === 0 && /\d:\d{2}$/.test(el.textContent ?? ""));
   const zh = activeLocale().startsWith("zh");
   const verb = closingVerb(`${sessionId}:${turn}`, zh ? ZH_CLOSING_VERBS : CLOSING_VERBS);
-  const text =
-    clock === undefined
+  // A stopped turn reads the CLI's own interrupt line, which has no glyph, verb or time.
+  const text = stopped
+    ? t("main.turn.interrupted")
+    : clock === undefined
       ? t("main.turn.closing", { verb, duration })
       : t("main.turn.closingDone", {
           verb,
@@ -5083,15 +5088,23 @@ const paintClosing = (group: HTMLElement, sessionId: string): void => {
     line.style.fontFamily = face.fontFamily;
     line.style.lineHeight = face.lineHeight;
     line.style.color = T.faint;
-    const glyph = document.createElement("span");
-    glyph.setAttribute("aria-hidden", "true");
-    glyph.textContent = "✻ ";
-    line.append(glyph, document.createTextNode(text));
+    if (!stopped) {
+      // The running line's spinner cell (1.3em, glyph at its start) and its 2px gap, so the text
+      // starts where the verb did: 20px after the glyph at dsh's 14px, measured on both lines.
+      const glyph = document.createElement("span");
+      glyph.setAttribute("aria-hidden", "true");
+      glyph.style.display = "inline-block";
+      glyph.style.width = "1.3em";
+      glyph.style.marginRight = "2px";
+      glyph.textContent = "✻";
+      line.append(glyph);
+    }
+    line.append(document.createTextNode(text));
     group.append(line);
   } else if (line.lastChild?.nodeValue !== text && line.lastChild !== null) {
     line.lastChild.nodeValue = text;
   }
-  if (clock !== undefined) group.setAttribute(CLOSED_MARK, "1");
+  if (stopped || clock !== undefined) group.setAttribute(CLOSED_MARK, "1");
 };
 
 /** Wire a running turn's status: attach dsh's [role=status][aria-live=polite] element to this

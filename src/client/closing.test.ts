@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { closingVerb, CLOSING_VERBS, clockText, tookDuration } from "./closing.js";
+import { closingVerb, CLOSING_VERBS, clockText, isStopped, tookDuration } from "./closing.js";
 
 // The CLI's hash: "a" is 97, 97 % 8 is 1.
 assert.equal(closingVerb("a", CLOSING_VERBS), "Brewed");
@@ -20,4 +20,8 @@ assert.equal(clockText("15:21", false), "3:21 PM");
 assert.equal(clockText("9/23 15:21", false), "9/23 3:21 PM");
 assert.equal(clockText("15:21", true), "15:21", "Chinese keeps dsh's 24-hour clock");
 assert.equal(clockText("yesterday", false), "yesterday");
+assert.equal(isStopped("Stopped"), true);
+assert.equal(isStopped(" 已停止 "), true);
+assert.equal(isStopped("Failed"), false, "a failed turn keeps dsh's word");
+assert.equal(isStopped("Took 38s"), false);
 console.log("closing ok");

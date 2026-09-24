@@ -462,6 +462,7 @@ export const en = {
   // A finished turn's closing line, the way the CLI ends a turn
   "main.turn.closing": "{verb} for {duration}",
   "main.turn.closingDone": "{verb} for {duration} · done {time}",
+  "main.turn.interrupted": "Interrupted · What should Claude do instead?",
   // Selection bar
   "main.selection.explain": "Explain this",
   "main.selection.region": "Selected text",
@@ -930,6 +931,7 @@ export const zh = {
   // A finished turn's closing line
   "main.turn.closing": "{verb} {duration}",
   "main.turn.closingDone": "{verb} {duration} · {time} 完成",
+  "main.turn.interrupted": "已中断 · 想让 Claude 改做什么？",
   // Selection bar
   "main.selection.explain": "解释这段内容",
   "main.selection.region": "选中的文本",
