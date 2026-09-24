@@ -258,6 +258,16 @@ assert.equal(rawLogPath("no path here"), undefined);
   const second = await sweepRefusedLogs(host);
   assert.deepEqual(second, { healed: 0, unknown: 0, rolledBack: 0 });
   assert.equal(opens.length, openedBefore, "an unchanged log is not opened again");
+  // A log still refused is probed again on the next sweep whatever its stat says: a later
+  // plugin may mend what this one could not.
+  const { saveSessionRepairs } = await import("./state.js");
+  const stuck = await loadSessionRepairs(dir);
+  stuck.logs.s3 = { ...stuck.logs.s3!, verdict: "rolled-back", reason: "still refused" };
+  await saveSessionRepairs(dir, stuck);
+  const openedBeforeRetry = opens.length;
+  await sweepRefusedLogs(host);
+  assert.equal(opens.length, openedBeforeRetry + 1, "a rolled-back log is probed again");
+  assert.equal((await loadSessionRepairs(dir)).logs.s3?.verdict, "fine", "and it loads now");
   const summary = repairsSummary(file, 0);
   assert.equal(summary.healed, 1);
   assert.equal(repairsSummary(file, Date.now() + 1).healed, 0, "seen entries do not count");
