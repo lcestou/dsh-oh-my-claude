@@ -2466,3 +2466,37 @@ console.log("sessions ok");
   assert.equal((await loadSessionRepairs(STATE_DIR)).logs[id]?.verdict, "reseeded");
   console.log("reseed-route ok");
 }
+
+// POST /side-questions with a selected passage: a blank question is allowed beside a quote, the
+// quote is capped at 4000 characters, and a quote beside `withDiff` is dropped.
+{
+  const { fakeDsh } = await import("./test-dsh.js");
+  const { STATE_DIR } = await import("./state.js");
+  const f = fakeDsh(join(STATE_DIR, "selection-ask"));
+  const seen: Array<{
+    sid: string;
+    question: string;
+    seed: { withDiff: boolean; path: string; quote: string };
+  }> = [];
+  const { respond } = f.routes({
+    askAside: async (sid, question, seed) => {
+      seen.push({ sid, question, seed });
+      return { ok: true };
+    },
+  });
+  const post = (body: object) =>
+    respond("POST", "/dsh-oh-my-claude/side-questions", JSON.stringify(body));
+  let r = await post({ session: "s", question: "", quote: "x".repeat(5000) });
+  assert.equal(r.status, 200, "a blank question beside a quote is accepted");
+  assert.equal(seen.at(-1)?.question, "", "the blank question reaches the adapter as blank");
+  assert.equal(seen.at(-1)?.seed.quote.length, 4000, "the quote is capped at 4000 characters");
+  r = await post({ session: "s", question: "" });
+  assert.equal(r.status, 400, "a blank question with no quote is refused");
+  assert.equal(seen.length, 1, "a refused post never reaches the adapter");
+  r = await post({ session: "s", question: "q" });
+  assert.equal(r.status, 200, "a plain question is accepted");
+  assert.equal(seen.at(-1)?.seed.quote, "", "a plain question carries no quote");
+  r = await post({ session: "s", question: "", quote: "p", withDiff: true, path: "" });
+  assert.equal(r.status, 400, "a quote beside withDiff is dropped, leaving a blank question");
+  console.log("side-questions selection route ok");
+}

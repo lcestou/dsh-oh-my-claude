@@ -426,3 +426,16 @@ console.log("state.test: ok");
   assert.deepEqual(Object.keys((await loadSessionRepairs(dir)).logs), ["ok"]);
   console.log("session-repairs ok");
 }
+
+{
+  // An aside asked from the selection bar keeps its passage and its blank question across a reload,
+  // so the card still shows what was asked about after a restart.
+  const dir = await mkdtemp(join(tmpdir(), "omc-asides-quote-"));
+  await saveAsides(dir, "s", [
+    { id: "q1", question: "", quote: "> hi", answer: "a", pending: false, at: 1 },
+  ]);
+  const back = (await loadAsides(dir)).get("s")?.[0];
+  assert.equal(back?.quote, "> hi", "the quote survives a reload");
+  assert.equal(back?.question, "", "the blank question survives a reload");
+  console.log("asides quote ok");
+}

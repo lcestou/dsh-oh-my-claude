@@ -214,6 +214,9 @@ export interface AsideEntry {
     /** Set when the user closes the card. The entry stays in the ring so the panel's Asides tab can
      *  still show the answer; only the docked bubble filters these out. */
     dismissed?: boolean;
+    /** The selected passage this aside asked about, its first ASIDE_QUOTE_KEEP characters, shown above
+     *  the answer. Absent for `/btw` and the Changes tab's Ask. With a blank `question` it means "explain". */
+    quote?: string;
 }
 /** One user prompt of a session's transcript, as the Rewind list shows it. */
 export interface RewindPrompt {
@@ -447,6 +450,12 @@ export interface LoginNeed {
     host: string;
     label: string;
 }
+/**
+ * The side question's context for a selected passage: a lead line and the passage as a Markdown quote.
+ * Kept here rather than shared with the client's `quoteMarkdown`, since server code does not import
+ * from `src/client/`.
+ */
+export declare const selectionContext: (quote: string) => string;
 /**
  * Pull the answer text out of a `side_question` control response. The CLI answers with
  * `{ response: string }` (or a bare string on some paths, or null when it declined), so both shapes
@@ -1465,8 +1474,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * here first, or the panel reports "no live Claude process" for a session that has one.
      */
     ownerFor(sessionId: string): ClaudeCodeAdapter;
-    /** Record a side question in the session's aside ring (evicting the oldest session when the ring is full) and send it to the CLI through the mount that owns the process; the answer or error is written back onto the ring. */
-    askSideQuestion(sessionId: string, question: string, context?: string): void;
+    /** Record a side question in the session's aside ring (evicting the oldest session when the ring is full) and send it to the CLI through the mount that owns the process; the answer or error is written back onto the ring. A blank `question` with a `quote` asks Claude to explain the passage; the ring keeps the blank. */
+    askSideQuestion(sessionId: string, question: string, context?: string, quote?: string): void;
     /** Save (or clear, when the text is blank) an opening prompt for a session or for `default`. */
     setStarter(key: string, text: string | undefined): void;
     /** Persist a session's aside ring to disk so an answer survives a restart, eviction or hot reload. */

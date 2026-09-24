@@ -10,6 +10,10 @@ dsh: runs on 0.1.5-rc.1 through 0.1.7-alpha.2; built and tested on 0.1.7-alpha.2
 
 ### Added
 
+- Select text in a Claude chat and a bar docks on the composer. Quote puts the passage into your
+  message as a Markdown quote; Ask sends it as a side question whose answer appears in the aside
+  card without adding a turn, and a blank question asks Claude to explain it. Settings → Oh My
+  Claude → Selection bar turns it off. Needs dsh 0.1.7-alpha.2 or later.
 - The steer card (the "Waiting for Claude" card above the composer) appears the moment a steer is
   queued. With more than one message waiting, a Send all now button sends them all at once, next to
   Edit all.

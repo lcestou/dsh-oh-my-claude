@@ -314,6 +314,9 @@ export const en = {
   "main.settingsUi.starterTitle": "Prompt starter",
   "main.settingsUi.starterDesc":
     "Offer a saved opening prompt above the composer on a blank session.",
+  "main.settingsUi.selectionTitle": "Selection bar",
+  "main.settingsUi.selectionDesc":
+    "Select text in the chat to quote it into your message or ask Claude about it as a side question.",
   "main.settingsUi.claudeMdLoaded":
     "Claude Code loads these itself. The copy dsh sends is dropped.",
   "main.settingsUi.claudeMdOffEnv":
@@ -456,6 +459,22 @@ export const en = {
   "main.aside.copyAria": "Copy side question",
   "main.aside.dismissAria": "Dismiss side question",
   "main.aside.thinking": "Claude is thinking…",
+  // Selection bar
+  "main.selection.explain": "Explain this",
+  "main.selection.region": "Selected text",
+  "main.selection.title": "Selection",
+  "main.selection.trimmed": "trimmed to {max} characters",
+  "main.selection.closeAria": "Close selection bar",
+  "main.selection.questionAria": "Question about the selected text",
+  "main.selection.questionPlaceholder": "Ask about it, or leave blank to explain",
+  "main.selection.quote": "Quote",
+  "main.selection.ask": "Ask",
+  "main.selection.asking": "Asking…",
+  "main.selection.ready": "Text selected. Quote it or ask about it above the message box.",
+  "main.selection.noProcess":
+    "Claude isn't running for this session. Send a message first, then ask again.",
+  "main.selection.askFailed": "Couldn't send the question. Try again.",
+  "main.selection.quoteBusy": "The message box is sending. Quote again in a moment.",
   // Cost dialog detail rows
   "main.cost.lastTurn": "Last turn",
   "main.cost.turns": "Turns",
@@ -771,6 +790,9 @@ export const zh = {
   "main.settingsUi.reset": "重置",
   "main.settingsUi.starterTitle": "开场提示词",
   "main.settingsUi.starterDesc": "在空白会话的输入框上方提供一个已保存的开场提示词。",
+  "main.settingsUi.selectionTitle": "选中内容栏",
+  "main.settingsUi.selectionDesc":
+    "在对话中选中文本后，可将其引用到消息中，或作为旁问向 Claude 提问。",
   "main.settingsUi.claudeMdLoaded": "Claude Code 会自行加载这些文件。dsh 发送的副本会被丢弃。",
   "main.settingsUi.claudeMdOffEnv":
     "已关闭：CLAUDE_CODE_DISABLE_CLAUDE_MDS 设置在 dsh 运行的环境中，而不在任何设置文件里。",
@@ -902,6 +924,21 @@ export const zh = {
   "main.aside.copyAria": "复制旁问",
   "main.aside.dismissAria": "关闭旁问",
   "main.aside.thinking": "Claude 正在思考…",
+  // Selection bar
+  "main.selection.explain": "解释这段内容",
+  "main.selection.region": "选中的文本",
+  "main.selection.title": "选中内容",
+  "main.selection.trimmed": "已截取前 {max} 个字符",
+  "main.selection.closeAria": "关闭选中内容栏",
+  "main.selection.questionAria": "关于选中文本的问题",
+  "main.selection.questionPlaceholder": "输入问题，留空则解释",
+  "main.selection.quote": "引用",
+  "main.selection.ask": "提问",
+  "main.selection.asking": "正在提问…",
+  "main.selection.ready": "已选中文本。可在输入框上方引用或提问。",
+  "main.selection.noProcess": "此会话的 Claude 未在运行。请先发送一条消息，再提问。",
+  "main.selection.askFailed": "问题未能发送，请重试。",
+  "main.selection.quoteBusy": "输入框正在发送消息，请稍后再引用。",
   "main.cost.lastTurn": "上一轮",
   "main.cost.turns": "轮数",
   "main.cost.wallTime": "总耗时",
