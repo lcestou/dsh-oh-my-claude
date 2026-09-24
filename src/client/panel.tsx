@@ -4802,6 +4802,8 @@ interface AsideRow {
   pending: boolean;
   at: number;
   dismissed?: boolean;
+  /** The passage the selection bar asked about; a blank `question` beside it means "explain". */
+  quote?: string;
 }
 
 /**
@@ -4924,7 +4926,7 @@ function AsidesBody({ sessionId }: { sessionId: string }) {
                 {copied === it.id ? t("copied") : t("copy")}
               </button>
             </span>
-            {it.question}
+            {it.question || t("main.selection.explain")}
           </summary>
           <div
             style={{
@@ -4937,6 +4939,19 @@ function AsidesBody({ sessionId }: { sessionId: string }) {
               color: it.error !== undefined ? T.err : T.faint,
             }}
           >
+            {it.quote ? (
+              <blockquote
+                data-omc-asides-quote={it.id}
+                style={{
+                  margin: "0 0 4px",
+                  paddingLeft: 8,
+                  borderLeft: `2px solid ${T.border}`,
+                  color: T.muted,
+                }}
+              >
+                {it.quote}
+              </blockquote>
+            ) : null}
             {it.pending ? t("panel.asides.waitingAnswer") : (it.answer ?? it.error ?? "")}
           </div>
         </details>

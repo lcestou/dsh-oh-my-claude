@@ -456,6 +456,8 @@ export const en = {
   "main.aside.copyAria": "Copy side question",
   "main.aside.dismissAria": "Dismiss side question",
   "main.aside.thinking": "Claude is thinking…",
+  // Selection bar
+  "main.selection.explain": "Explain this",
   // Cost dialog detail rows
   "main.cost.lastTurn": "Last turn",
   "main.cost.turns": "Turns",
@@ -902,6 +904,8 @@ export const zh = {
   "main.aside.copyAria": "复制旁问",
   "main.aside.dismissAria": "关闭旁问",
   "main.aside.thinking": "Claude 正在思考…",
+  // Selection bar
+  "main.selection.explain": "解释这段内容",
   "main.cost.lastTurn": "上一轮",
   "main.cost.turns": "轮数",
   "main.cost.wallTime": "总耗时",

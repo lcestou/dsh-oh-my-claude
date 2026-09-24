@@ -9068,7 +9068,7 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
                     whiteSpace: "nowrap",
                   }}
                 >
-                  {it.question}
+                  {it.question || t("main.selection.explain")}
                 </span>
                 <span style={{ color: T.faint, fontSize: 11, flex: "0 0 auto" }}>{ago(it.at)}</span>
                 {/* Up when collapsed, down when open, the same convention as the queue dock. */}
@@ -9098,6 +9098,24 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
             {open ? (
               // A very tall answer scrolls inside the card rather than pushing the composer down.
               <div style={{ padding: "0 10px 8px 24px", maxHeight: "40vh", overflow: "auto" }}>
+                {/* The passage a selection-bar aside asked about, a few lines, above its answer. */}
+                {it.quote ? (
+                  <blockquote
+                    data-omc-aside-quote={it.id}
+                    style={{
+                      margin: "0 0 6px",
+                      padding: "0 0 0 8px",
+                      borderLeft: `2px solid ${T.border}`,
+                      color: T.muted,
+                      fontSize: 12,
+                      whiteSpace: "pre-wrap",
+                      maxHeight: "4.5em",
+                      overflow: "hidden",
+                    }}
+                  >
+                    {it.quote}
+                  </blockquote>
+                ) : null}
                 {it.pending ? (
                   <div style={{ color: ACCENT, fontSize: 12, fontStyle: "italic" }}>
                     {t("main.aside.thinking")}
