@@ -113,6 +113,9 @@ dsh: runs on 0.1.5-rc.1 through 0.1.7-alpha.2; built and tested on 0.1.7-alpha.2
   Claude turn in a workspace after this update records the mount, and it sticks from then on.
 ### Fixed
 
+- A Claude Code session restored into dsh opens on the model it last ran and the access it ran
+  under (a bypass session gets Full access), instead of dsh's default model and Workspace access.
+  A model Claude Code has since retired lands on the newest one of the same family.
 - The Claude Code update card is about the Claude Code you picked. It followed the box a session's
   turns run on, which in a remote workspace is that box whichever model is selected, so a session
   deliberately set to this machine's Claude was offered the other one's update. It now reads the

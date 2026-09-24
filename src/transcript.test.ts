@@ -7,7 +7,9 @@ import { serverText } from "./locale.js";
 import {
   attachSubagents,
   foldTranscript,
+  lastModelOf,
   listTranscripts,
+  settingsEvents,
   subagentText,
   subagentsDir,
   toMarkdown,
@@ -968,4 +970,35 @@ console.log("transcript ok");
     "the default base is today's seed",
   );
   console.log("seed-base ok");
+}
+
+// A restored transcript opens on its own model and access, not dsh's fallbacks.
+{
+  const picked = settingsEvents(
+    { provider: "claude-code", model: "claude-opus-5-5", permissionMode: "bypassPermissions" },
+    500,
+    40,
+  );
+  assert.deepEqual(
+    picked.map((e) => [e.type, e.seq, e.data]),
+    [
+      ["model/selection", 40, { provider: "claude-code", model: "claude-opus-5-5" }],
+      ["permission/preset", 41, { preset: "danger-full-access" }],
+      ["sandbox/mode", 42, { mode: "danger-full-access" }],
+      ["approval/policy", 43, { policy: "never" }],
+    ],
+    "bypass maps to full access, seqs run on",
+  );
+  assert.deepEqual(
+    settingsEvents({ provider: "claude-code", model: undefined, permissionMode: "odd" }, 1, 0),
+    [],
+    "no model and an unknown mode write nothing",
+  );
+  assert.equal(
+    settingsEvents({ provider: undefined, model: "x", permissionMode: "plan" }, 1, 0)[0]?.data
+      .preset,
+    "read-only",
+    "no provider skips the model, plan is read-only",
+  );
+  assert.equal(lastModelOf(folded), folded.turns.at(-1)?.steps.at(-1)?.model, "last step's model");
 }
