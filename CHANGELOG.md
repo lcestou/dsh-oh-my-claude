@@ -56,8 +56,10 @@ dsh: runs on 0.1.5-rc.1 through 0.1.7-alpha.2; built and tested on 0.1.7-alpha.2
 
 ### Changed
 
-- The plugin needs Node 22.15 or newer, up from 20.11. It repairs dsh session logs itself now, and
-  reading them uses `node:zlib`'s zstd, which arrived in Node 22.15. dsh itself needs the same.
+- The Node the plugin declares is 22.15, up from 20.11. Nothing changes for anyone running dsh:
+  the plugin runs in dsh's own process, and dsh's session store already reads and writes its logs
+  with `node:zlib`'s zstd, which first shipped in Node 22.15. The plugin's session repair reads
+  the same logs the same way.
 - `tools/dsh-session-repair.ts` now imports the repair from the plugin and no longer needs the
   `zstd` binary; node 22.15 or newer is required for `node:zlib`'s zstd, which dsh itself imports
   (its package.json declares no engines range).
