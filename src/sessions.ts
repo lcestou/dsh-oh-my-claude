@@ -22,12 +22,14 @@ import {
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
+  assistantMessageText,
   foldTranscript,
   listTranscripts,
   readTranscript,
   toMarkdown,
   toSessionEvents,
   type FoldedTranscript,
+  type FoldedTurn,
 } from "./transcript.js";
 import { queryWords, searchTranscript } from "./search.js";
 import { shq, sshArgs } from "./process.js";
@@ -107,7 +109,7 @@ import { errorText } from "./process.js";
 import { claudeMdDisabledBy, featureSwitches, type ClaudeMdState } from "./switches.js";
 import { currentLogVersion, loadSessionCatalog } from "./rows-probe.js";
 import { serverText } from "./locale.js";
-import { knownRefusal } from "./session-repair.js";
+import { knownRefusal, moveAside, restoreBak } from "./session-repair.js";
 import {
   healLog,
   probeLoad,
@@ -131,6 +133,8 @@ import {
   PERMISSION_MODES,
   STATE_DIR,
   loadSessionRepairs,
+  recordRepair,
+  trace,
   isPermissionMode,
   loadContextSizes,
   loadWorkspaceModels,
@@ -1247,6 +1251,8 @@ interface Opened {
   existed: boolean;
   /** The stored log was refused and healed before this open handed it over. */
   healed?: boolean;
+  /** Completed transcript turns the stored log did not hold yet, appended by this open. */
+  turnsAdded?: number;
   turns?: number;
   events?: number;
   /** The permission mode the transcript's last prompt ran under; only on a freshly seeded open. */
@@ -1299,6 +1305,120 @@ async function firstTranscript(dirs: string[], id: string): Promise<FoldedTransc
   return undefined;
 }
 
+/** The turn number a `turn/start` row carries, 0 when the row has none. */
+const turnOf = (e: { data: Record<string, JsonValue> }): number =>
+  typeof e.data.turn === "number" ? e.data.turn : 0;
+
+/** A stored user message's id and rendered text. v4 keeps `id` and `content` flat on `data`, the
+ *  shape the seed writes; a row without them answers empty strings. */
+const userMessageOf = (e: { data: Record<string, JsonValue> }) => ({
+  id: typeof e.data.id === "string" ? e.data.id : "",
+  text: assistantMessageText(e.data.content),
+});
+
+/** The text of a folded turn's prompt, rendered the way a stored user message renders. */
+const promptTextOf = (t: FoldedTurn): string => assistantMessageText(t.content);
+
+/** The CLI's own user rows that no person typed: the echo it writes when a turn is interrupted. */
+const CLI_ECHO = /^\[Request interrupted by user/;
+
+/** Whether a transcript prompt is one the stored log already holds. Exact text, or the stored text
+ *  followed by a blank line: the adapter sends a typed prompt to the CLI with dsh's context blocks
+ *  appended after `\n\n` (the runtime snapshot, instructions, the skill catalog), so the
+ *  transcript's row carries the composite while dsh stores the person's text alone (measured
+ *  2026-09-23: 542 characters against 150 for the same prompt). A short stored text can shadow a
+ *  later prompt that begins with it and a blank line; that reads as stored, the safe side. */
+const storedHolds = (texts: ReadonlySet<string>, prompt: string): boolean => {
+  if (texts.has(prompt)) return true;
+  for (const t of texts) if (t !== "" && prompt.startsWith(t + "\n\n")) return true;
+  return false;
+};
+
+/** Append to a stored log the completed transcript turns it does not hold yet. A turn is new
+ *  when its prompt's uuid is not a stored user message id and its text is not a stored user
+ *  message text (a prompt dsh ran or mirrored carries a dsh id and matches by text only). Two
+ *  distinct prompts with the same text, one stored, lose the other; a turn count cannot be the
+ *  check, since dsh turns include notices and steers the transcript never had (146 to 86 on one
+ *  log measured 2026-09-23). Skips, with a log line, when another process owns the log
+ *  (`SessionAlreadyOwnedError`), when the stored log's tail turn is still open (dsh closes it on
+ *  its own next resume, and a turn appended inside it is a shape nobody has measured dsh
+ *  loading), or when the transcript is not on this box. Returns the turns added. */
+async function foldTranscriptDelta(
+  ctx: RouteHost,
+  dirs: string[],
+  cwd: string,
+  dshId: string,
+  transcriptId: string,
+): Promise<number> {
+  const folded = await firstTranscript(dirs, transcriptId);
+  if (folded === undefined || folded.turns.length === 0) return 0;
+  let handle: Awaited<ReturnType<RouteHost["sessionPersistence"]["open"]>>;
+  try {
+    handle = await ctx.sessionPersistence.open(asSessionId(dshId), "write");
+  } catch (err) {
+    if (err instanceof Error && err.name === "SessionAlreadyOwnedError") {
+      await trace(`fold ${dshId}: owned elsewhere, skipped`);
+      return 0;
+    }
+    throw err;
+  }
+  try {
+    const { events } = await handle.read(0);
+    const ids = new Set<string>();
+    const texts = new Set<string>();
+    let lastTurn = 0;
+    let openTurn = false;
+    for (const e of events) {
+      if (e.type === "turn/start") {
+        lastTurn = Math.max(lastTurn, turnOf(e));
+        openTurn = true;
+      }
+      if (e.type === "turn/end") openTurn = false;
+      if (e.type !== "user/message") continue;
+      const m = userMessageOf(e);
+      if (m.id) ids.add(m.id);
+      if (m.text) texts.add(m.text);
+    }
+    if (openTurn) {
+      await trace(`fold ${dshId}: tail turn ${lastTurn} open, skipped`);
+      return 0;
+    }
+    const fresh = folded.turns.filter((t) => {
+      const text = promptTextOf(t);
+      return !ids.has(t.id) && !CLI_ECHO.test(text) && !storedHolds(texts, text);
+    });
+    if (fresh.length === 0) return 0;
+    // A copy of the log before the append, so a fold that turns out wrong is one file move away
+    // from undone; the trace line names it.
+    // dsh's locate needs the cwd as well as the id to name the log's directory.
+    const located = ctx.sessionPersistence.locate?.({ id: dshId, cwd })?.path;
+    let bak = "";
+    if (located !== undefined) {
+      bak = `${located}.bak-${Date.now()}`;
+      await copyFile(located, bak).catch(() => {
+        bak = "";
+      });
+    }
+    if (bak === "") {
+      // No copy, no append: the promise that a wrong fold is one file move from undone holds or
+      // the fold waits (a dsh without `locate`, a disk that refused the copy).
+      await trace(`fold ${dshId}: no backup could be written, skipped`);
+      return 0;
+    }
+    const delta = toSessionEvents(
+      { ...folded, turns: fresh, title: undefined },
+      handle.header.version,
+      { seq: events.length, turn: lastTurn },
+    );
+    await handle.append(delta);
+    await handle.flush();
+    await trace(`fold ${dshId}: +${fresh.length} turns${bak ? ` (before: ${bak})` : ""}`);
+    return fresh.length;
+  } finally {
+    await handle.close();
+  }
+}
+
 /** Same id opened twice at once (double click, two tabs) shares one creation. */
 function openTranscript(
   ctx: RouteHost,
@@ -1331,6 +1451,7 @@ export async function openTranscriptOnce(
   claudeIdOf: (id: string) => string,
   registry: WorkspaceRegistry | undefined,
   heal?: HealHost,
+  reseed = false,
 ): Promise<Opened> {
   // dsh 0.1.5 lists a session under a workspace only once it is on that workspace's own
   // `sessionIds`; a session that merely exists (older dsh derived the workspace from its cwd)
@@ -1375,12 +1496,16 @@ export async function openTranscriptOnce(
   // local placeholder cwd, not the transcript's own path, so filtering by `cwd` would miss it and
   // fall through to a local transcript read that ENOENTs (the body lives on the box). `cwd` is only
   // needed for the non-owned read below, where the transcript really is on this box's disk.
-  const owned = dshSessionsFor(
-    await ctx.sessionPersistence.list(),
-    null,
-    claudeIdOf,
-    new Set(registry?.archivedSessionIds ?? []),
-  ).get(id);
+  // A reseed moved the refused log aside a moment ago; dsh's list may still name the id, and the
+  // create path below is the point of the call.
+  const owned = reseed
+    ? undefined
+    : dshSessionsFor(
+        await ctx.sessionPersistence.list(),
+        null,
+        claudeIdOf,
+        new Set(registry?.archivedSessionIds ?? []),
+      ).get(id);
   if (owned) {
     // The stored log is the session, so make sure dsh can load it before handing it over: a log
     // refused for one of the reasons the plugin mends is healed here, and one refused for any
@@ -1396,11 +1521,15 @@ export async function openTranscriptOnce(
       if (verdict !== "healed")
         throw new Error(serverText("logRefused", { reason: refusal.slice(0, 200) }));
     }
+    // A session driven from the terminal since it was last in dsh has transcript turns the stored
+    // log lacks; append them now, before the tab reads the log, so the reopen shows the whole
+    // conversation rather than the count it had when first restored.
+    const turnsAdded = heal ? await foldTranscriptDelta(ctx, dirs, cwd, owned.id, id) : 0;
     await unarchive(owned.id);
     // Persisted but not in the store (a restart unloads it): the workspace list is the only way it
     // reaches the sidebar, and dsh reads its header from persistence, which lists it by now.
     await attach(owned.id);
-    return { id: owned.id, existed: true, healed: refusal !== undefined };
+    return { id: owned.id, existed: true, healed: refusal !== undefined, turnsAdded };
   }
   // This PC: the archive lists only local transcripts, so an opened one is always here. An
   // imported one is not under `projects/` at all, which is why the caller passes both dirs.
@@ -2205,6 +2334,53 @@ export function registerSessionRoutes(
               // already knows keeps whatever was picked in dsh.
               if (!opened.existed && opened.permissionMode && permissionModes)
                 await permissionModes.restore(opened.id, opened.permissionMode);
+              return json(res, 200, opened);
+            }
+            if (req.method === "POST" && url.pathname === `${ROUTE_PREFIX}/reseed`) {
+              // The person's click on the panel's refused line: move the log dsh cannot load out
+              // of the way, keep it as .bak, and seed the session again from its transcript.
+              // Never automatic: the old log's dsh-only rows live on in the .bak only.
+              const { id } = await readBody(req);
+              if (!validId(id)) return json(res, 400, { error: "id required" });
+              const record = (await loadSessionRepairs(STATE_DIR)).logs[id];
+              if (record === undefined || record.verdict !== "unknown")
+                return json(res, 404, { error: "no refused log recorded for this session" });
+              const header = (await sessionPersistence.list())
+                .map(headerOf)
+                .find((h) => h.id === id);
+              const cwd = header?.cwd;
+              if (!cwd) return json(res, 404, { error: "dsh does not list this session" });
+              const dirs = transcriptDirs(cwd);
+              const folded = await firstTranscript(dirs, claudeIdOf(id));
+              if (folded === undefined || folded.turns.length === 0)
+                return json(res, 409, { error: serverText("noTranscriptToReseed") });
+              const bak = moveAside(record.path);
+              await trace(`reseed ${id}: log moved to ${bak}`);
+              let opened: Opened;
+              try {
+                opened = await openTranscriptOnce(
+                  routeHost,
+                  dirs,
+                  cwd,
+                  id,
+                  claudeIdOf,
+                  workspaceRegistry(),
+                  heal,
+                  true,
+                );
+              } catch (e) {
+                // The seed did not land: put the log back where it was so the click can be tried
+                // again, and answer the failure. The record stays `unknown`.
+                restoreBak(record.path, bak);
+                await trace(`reseed ${id}: seed failed, log restored: ${errorText(e)}`);
+                throw e;
+              }
+              await recordRepair(STATE_DIR, id, {
+                ...record,
+                verdict: "reseeded",
+                bak,
+                at: Date.now(),
+              });
               return json(res, 200, opened);
             }
             if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/search`) {

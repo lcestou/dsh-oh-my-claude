@@ -330,6 +330,9 @@ export const en = {
   "panel.repairs.unknown":
     "{n} session logs still fail to load for a reason the plugin cannot mend. The details are in resume.log under the plugin's state directory.",
   "panel.repairs.dismiss": "Dismiss",
+  "panel.repairs.reseed": "Reseed from transcript",
+  "panel.repairs.reseedLabel":
+    "Move this session's refused log to .bak and seed it again from its Claude Code transcript",
   "panel.access.ariaLabel": "Claude permission: {text}{refused}",
   "panel.access.ariaRefused": ", refused by settings",
   "panel.access.notMaterialized": "this session is not materialized yet",
@@ -644,6 +647,9 @@ export const zh = {
   "panel.repairs.unknown":
     "{n} 个会话日志仍无法加载，原因超出插件可修复的范围。详情见插件状态目录下的 resume.log。",
   "panel.repairs.dismiss": "知道了",
+  "panel.repairs.reseed": "从转录重新生成",
+  "panel.repairs.reseedLabel":
+    "把这个会话无法加载的日志移为 .bak，并从它的 Claude Code 转录重新生成",
   "panel.access.ariaLabel": "Claude 权限：{text}{refused}",
   "panel.access.ariaRefused": "，已被设置拒绝",
   "panel.access.notMaterialized": "此会话尚未实例化",

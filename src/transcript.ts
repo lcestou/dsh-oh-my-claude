@@ -555,8 +555,21 @@ export interface SeedEvent {
   sourceEventSeqs?: number[];
 }
 
-/** dsh session events for folded turns. Shapes follow what dsh writes itself; seqs are contiguous from 0. */
-export function toSessionEvents(folded: FoldedTranscript, logVersion = 3): SeedEvent[] {
+/** Where an appended fold continues from: the write handle's cursor and the log's last turn
+ *  number. Zero for a fresh seed. With a nonzero turn the system head and the title row are
+ *  not written, since the log has both. */
+export interface SeedBase {
+  seq: number;
+  turn: number;
+}
+
+/** dsh session events for folded turns. Shapes follow what dsh writes itself; seqs are contiguous
+ *  from `base.seq` and turns count on from `base.turn`, so a delta appends onto a stored log. */
+export function toSessionEvents(
+  folded: FoldedTranscript,
+  logVersion = 3,
+  base: SeedBase = { seq: 0, turn: 0 },
+): SeedEvent[] {
   const events: SeedEvent[] = [];
   // Record times are copied from the transcript, where a tool result can be stamped later than the
   // `turn/end` that follows it (Claude writes the result when it arrives, not when the turn closed).
@@ -570,11 +583,12 @@ export function toSessionEvents(folded: FoldedTranscript, logVersion = 3): SeedE
     extra?: { surfaceOp?: "append"; sourceEventSeqs?: number[] },
   ): number => {
     last = Math.max(last, time);
-    events.push({ type, seq: events.length, time: last, data, ...extra });
-    return events.length - 1;
+    events.push({ type, seq: base.seq + events.length, time: last, data, ...extra });
+    // The row's own seq, absolute in the log, which is what a later row's `sourceEventSeqs` cites.
+    return base.seq + events.length - 1;
   };
   folded.turns.forEach((t, i) => {
-    const turn = i + 1;
+    const turn = base.turn + i + 1;
     push("turn/start", t.time, { turn });
     t.steps.forEach((s, j) => {
       const step = j + 1;
@@ -688,7 +702,7 @@ export function toSessionEvents(folded: FoldedTranscript, logVersion = 3): SeedE
     });
     push("turn/end", t.steps.at(-1)?.time ?? t.time, { turn, reason: { kind: "completed" } });
   });
-  if (folded.title)
+  if (folded.title && base.turn === 0)
     push("session/title", folded.createdAt, {
       title: titleFrom(folded.title),
       messageSeqs: [],

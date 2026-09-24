@@ -72,6 +72,11 @@ dsh: runs on 0.1.5-rc.1 through 0.1.7-alpha.2; built and tested on 0.1.7-alpha.2
 
 ### Fixed
 
+- Opening a session from the Restore tab now folds in the turns its Claude Code transcript gained
+  since the session was last in dsh (a session driven from the terminal used to stop at the turn
+  count it had when first restored). A stored log dsh refuses for a reason the plugin cannot mend
+  gets a Reseed from transcript button on the panel's Diagnostics tab; the old log is kept as
+  `.bak`.
 - dsh's Back-to-bottom button no longer rises when the working line above the composer appears;
   it stays where it was, and the line leaves the button's corner free so the two never overlap.
 - A session log dsh refuses to load for one of the three known reasons (an unadvertised tool row

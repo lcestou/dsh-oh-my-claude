@@ -263,24 +263,29 @@ export async function sweepRefusedLogs(
   return { healed, unknown, rolledBack };
 }
 
-/** What the panel's notice counts: verdicts newer than the dismissal, and the newest one's time. */
+/** What the panel's notice counts: verdicts newer than the dismissal, and the newest one's time.
+ *  `reseeded` counts as healed: the session opens again, with the old log kept as .bak. */
 export interface RepairsSummary {
   healed: number;
   unknown: number;
   rolledBack: number;
   /** The newest counted entry's `at`, 0 when nothing counted; a dismissal records it. */
   at: number;
+  /** The sessions still refused for a reason the plugin cannot mend, for the reseed button. */
+  refused: Array<{ id: string }>;
 }
 
 /** The summary the panel shows: entries newer than `seenAt`, counted by verdict, and the newest
  *  entry's time so a dismissal can name it. */
 export function repairsSummary(file: SessionRepairsFile, seenAt: number): RepairsSummary {
-  const out: RepairsSummary = { healed: 0, unknown: 0, rolledBack: 0, at: 0 };
-  for (const rec of Object.values(file.logs)) {
+  const out: RepairsSummary = { healed: 0, unknown: 0, rolledBack: 0, at: 0, refused: [] };
+  for (const [id, rec] of Object.entries(file.logs)) {
     if (rec.at <= seenAt) continue;
-    if (rec.verdict === "healed") out.healed++;
-    else if (rec.verdict === "unknown") out.unknown++;
-    else if (rec.verdict === "rolled-back") out.rolledBack++;
+    if (rec.verdict === "healed" || rec.verdict === "reseeded") out.healed++;
+    else if (rec.verdict === "unknown") {
+      out.unknown++;
+      out.refused.push({ id });
+    } else if (rec.verdict === "rolled-back") out.rolledBack++;
     else continue;
     out.at = Math.max(out.at, rec.at);
   }

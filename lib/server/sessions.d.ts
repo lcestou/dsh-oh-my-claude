@@ -289,6 +289,8 @@ interface Opened {
     existed: boolean;
     /** The stored log was refused and healed before this open handed it over. */
     healed?: boolean;
+    /** Completed transcript turns the stored log did not hold yet, appended by this open. */
+    turnsAdded?: number;
     turns?: number;
     events?: number;
     /** The permission mode the transcript's last prompt ran under; only on a freshly seeded open. */
@@ -300,7 +302,7 @@ type RouteHost = Required<Pick<PluginContext, "webServer" | "connection" | "sess
  * Loads a Claude Code transcript and creates a dsh session from it, or
  * returns the existing session if one with this id is already live.
  */
-export declare function openTranscriptOnce(ctx: RouteHost, dirs: string[], cwd: string, id: string, claudeIdOf: (id: string) => string, registry: WorkspaceRegistry | undefined, heal?: HealHost): Promise<Opened>;
+export declare function openTranscriptOnce(ctx: RouteHost, dirs: string[], cwd: string, id: string, claudeIdOf: (id: string) => string, registry: WorkspaceRegistry | undefined, heal?: HealHost, reseed?: boolean): Promise<Opened>;
 /** One mount's own box: which `claude` to run, where its config lives, and whether it is remote. */
 export interface MountBox {
     configDir: string;

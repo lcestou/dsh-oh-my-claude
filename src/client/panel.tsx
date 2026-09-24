@@ -317,11 +317,46 @@ const markHint = (key: string): void => {
  *  to say. */
 function SessionRepairsNotice({
   repairs,
+  ctx,
+  cwd,
 }: {
-  repairs: { healed: number; unknown: number; rolledBack: number; at: number } | undefined;
+  repairs:
+    | {
+        healed: number;
+        unknown: number;
+        rolledBack: number;
+        at: number;
+        refused?: Array<{ id: string }>;
+      }
+    | undefined;
+  ctx: ClientCtx;
+  cwd: string;
 }) {
   useLocale();
   const [seen, setSeen] = useState<number | undefined>(undefined);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [rowError, setRowError] = useState<{ id: string; text: string } | null>(null);
+  /** The person's click: the route moves the refused log to .bak and seeds the session again
+   *  from its transcript; on success the tab opens it the way the Restore tab does, and the
+   *  route's sentence shows under the row otherwise. */
+  const reseed = async (id: string) => {
+    setBusyId(id);
+    setRowError(null);
+    try {
+      await readJson(
+        await fetch(`${ROUTE}/reseed`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ id }),
+        }),
+      );
+      await openHere(ctx, { id, dsh: { id } }, cwd);
+    } catch (e) {
+      setRowError({ id, text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setBusyId(null);
+    }
+  };
   useEffect(() => {
     let live = true;
     void readHints().then((h) => {
@@ -350,6 +385,41 @@ function SessionRepairsNotice({
           {t("panel.repairs.unknown", { n: String(refused) })}
         </div>
       )}
+      {(repairs.refused ?? []).map((r) => (
+        <div
+          key={r.id}
+          data-omc-session-repairs-row={r.id}
+          style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}
+        >
+          <span
+            style={{
+              flex: 1,
+              fontFamily: T.mono,
+              minWidth: 0,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
+          >
+            {r.id}
+          </span>
+          <button
+            type="button"
+            data-omc-session-repairs-reseed={r.id}
+            aria-label={t("panel.repairs.reseedLabel")}
+            title={t("panel.repairs.reseedLabel")}
+            style={btn}
+            disabled={busyId === r.id}
+            onClick={() => void reseed(r.id)}
+          >
+            {t("panel.repairs.reseed")}
+          </button>
+          {rowError?.id === r.id && (
+            <span data-omc-session-repairs-error="" style={{ ...errText, flexBasis: "100%" }}>
+              {rowError.text}
+            </span>
+          )}
+        </div>
+      ))}
       <button
         type="button"
         data-omc-session-repairs-dismiss=""
@@ -2700,8 +2770,14 @@ interface DiagnosticsReply {
     update?: string;
     error?: string;
     /** Session logs the plugin healed, could not heal, or rolled back since the last dismissal;
-     *  this box only. */
-    sessionRepairs?: { healed: number; unknown: number; rolledBack: number; at: number };
+     *  this box only. `refused` names the ones a click can reseed from their transcript. */
+    sessionRepairs?: {
+      healed: number;
+      unknown: number;
+      rolledBack: number;
+      at: number;
+      refused?: Array<{ id: string }>;
+    };
   };
   configFiles: Array<{ scope: string; path: string; exists: boolean; parseError?: string }>;
   session?: { claudeId: string; cwd: string };
@@ -3155,7 +3231,7 @@ function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
                 </span>
               )}
             </div>
-            <SessionRepairsNotice repairs={data.runtime.sessionRepairs} />
+            <SessionRepairsNotice repairs={data.runtime.sessionRepairs} ctx={ctx} cwd={cwd} />
             <div>
               {t("panel.diag.loginLabel")}{" "}
               {data.runtime.loggedIn ? (
