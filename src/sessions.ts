@@ -1399,6 +1399,12 @@ async function foldTranscriptDelta(
         bak = "";
       });
     }
+    if (bak === "") {
+      // No copy, no append: the promise that a wrong fold is one file move from undone holds or
+      // the fold waits (a dsh without `locate`, a disk that refused the copy).
+      await trace(`fold ${dshId}: no backup could be written, skipped`);
+      return 0;
+    }
     const delta = toSessionEvents(
       { ...folded, turns: fresh, title: undefined },
       handle.header.version,

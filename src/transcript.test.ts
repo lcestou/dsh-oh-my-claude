@@ -955,6 +955,13 @@ console.log("transcript ok");
   );
   const firstTurn = delta.find((e) => e.type === "turn/start");
   assert.equal(firstTurn?.data.turn, 4, "the first appended turn follows the stored ones");
+  const cited = delta.flatMap((e) => e.sourceEventSeqs ?? []);
+  assert.ok(cited.length > 0, "the fixture has rows that cite others");
+  for (const c of cited)
+    assert.ok(
+      delta.some((e) => e.seq === c),
+      `a citation names a row of the appended stretch, absolute in the log (${c})`,
+    );
   assert.deepEqual(
     toSessionEvents(folded, 4),
     toSessionEvents(folded, 4, { seq: 0, turn: 0 }),

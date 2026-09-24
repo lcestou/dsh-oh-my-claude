@@ -2349,6 +2349,8 @@ console.log("sessions ok");
   };
   const write = (name: string, rows: object[]) =>
     writeFileSync(join(dir, `${name}.jsonl`), rows.map((r) => JSON.stringify(r)).join("\n") + "\n");
+  // The stored log the fold backs up before appending; its bytes do not matter to the fakes.
+  writeFileSync(join(dir, "d1.zstd"), "stored");
   const run = async (
     stored: object[],
     opts: { owned?: boolean; transcriptRows?: object[]; openTail?: boolean } = {},

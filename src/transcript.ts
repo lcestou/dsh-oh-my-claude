@@ -584,7 +584,8 @@ export function toSessionEvents(
   ): number => {
     last = Math.max(last, time);
     events.push({ type, seq: base.seq + events.length, time: last, data, ...extra });
-    return events.length - 1;
+    // The row's own seq, absolute in the log, which is what a later row's `sourceEventSeqs` cites.
+    return base.seq + events.length - 1;
   };
   folded.turns.forEach((t, i) => {
     const turn = base.turn + i + 1;
