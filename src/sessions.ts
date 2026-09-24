@@ -173,6 +173,8 @@ const HEAL_SWEEP_DELAY_MS = 15_000;
  *  thinks, so anything older than a beat or two means it stopped and the status row should stop
  *  saying so. Generous enough to survive a slow delta, short enough that the word does not linger. */
 const BODY_LIMIT = 64 * 1024;
+/** Longest selected passage `POST /side-questions` passes on; matches QUOTE_MAX in client/selection.ts. */
+const SELECTION_QUOTE_MAX = 4000;
 /** An imported transcript is a whole conversation, not a form field: megabytes, not kilobytes. */
 const IMPORT_LIMIT = 32 * 1024 * 1024;
 /** A search hit, joined to its transcript's listing metadata for the title and modification time. */
@@ -1760,7 +1762,7 @@ export interface SessionRouteOptions {
   askAside?: (
     sessionId: string,
     question: string,
-    seed: { withDiff: boolean; path: string },
+    seed: { withDiff: boolean; path: string; quote: string },
   ) => Promise<{ ok: boolean; error?: string }>;
   /** `/btw` side questions and their answers, per session; the client bubble reads them. */
   sideQuestions?: Map<string, AsideEntry[]>;
@@ -3400,7 +3402,15 @@ export function registerSessionRoutes(
               if (typeof sid !== "string" || typeof raw !== "string")
                 return json(res, 400, { error: "session and question required" });
               const question = raw.trim();
-              if (sid === "" || question === "")
+              // The selection bar sends the passage as `quote` and may leave the question blank, which
+              // the adapter asks as "explain this". Capped at the client's QUOTE_MAX (selection.ts).
+              // A quote rides alone: with `withDiff` the diff is the context, and a blank question
+              // would ask Claude to "explain the passage" over a diff.
+              const quote =
+                body.withDiff !== true && typeof body.quote === "string"
+                  ? body.quote.trim().slice(0, SELECTION_QUOTE_MAX)
+                  : "";
+              if (sid === "" || (question === "" && quote === ""))
                 return json(res, 400, { error: "session and question required" });
               // A recap says so, and only a recap is deduplicated: a question someone typed twice
               // was meant twice. `ok` either way. The caller wanted a recap for this return and
@@ -3410,6 +3420,7 @@ export function registerSessionRoutes(
               const reply = await askAside(sid, question, {
                 withDiff: body.withDiff === true,
                 path: typeof body.path === "string" ? body.path : "",
+                quote,
               });
               return json(res, reply.ok ? 200 : 409, reply);
             }

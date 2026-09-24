@@ -7,7 +7,8 @@ export const QUOTE_MAX = 4000;
 /** A dsh chat node. Every flow item carries its kind (input-message, assistant-step, tool-call …). */
 const CHAT_NODE = "[data-chat-flow-kind]";
 /** Places where selected text is someone's own typing, not the conversation. */
-const EDITABLE = "[data-composer-input], input, textarea, [contenteditable=''], [contenteditable='true']";
+const EDITABLE =
+  "[data-composer-input], input, textarea, [contenteditable=''], [contenteditable='true']";
 
 /** The element a selection end sits in: the node itself, or a text node's parent. */
 const elementOf = (n: Node | null): Element | null =>
@@ -32,11 +33,16 @@ export function chatSelection(sel: Selection | null, root: Element): string | nu
 
 /** Whether an element is conversation text under `root`: in a chat node and not in anything editable. */
 const inChat = (el: Element | null, root: Element): boolean =>
-  el !== null && root.contains(el) && el.closest(CHAT_NODE) !== null && el.closest(EDITABLE) === null;
+  el !== null &&
+  root.contains(el) &&
+  el.closest(CHAT_NODE) !== null &&
+  el.closest(EDITABLE) === null;
 
 /** Cut a passage to QUOTE_MAX characters; `trimmed` says whether anything was cut. */
 export const clampQuote = (text: string): { text: string; trimmed: boolean } =>
-  text.length <= QUOTE_MAX ? { text, trimmed: false } : { text: text.slice(0, QUOTE_MAX), trimmed: true };
+  text.length <= QUOTE_MAX
+    ? { text, trimmed: false }
+    : { text: text.slice(0, QUOTE_MAX), trimmed: true };
 
 /**
  * A Markdown blockquote of `text` followed by an empty line, ready to type under. Blank lines become a

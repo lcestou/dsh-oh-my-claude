@@ -78,6 +78,7 @@ import {
   contextSizes,
   skillDoctorReply,
   localConfig,
+  selectionContext,
 } from "./adapter.js";
 import { PERMISSION_MODES } from "./state.js";
 import {
@@ -7183,4 +7184,46 @@ console.log("watch-save-race ok");
     "a Stop with a native call open still leaves its placeholder result behind",
   );
   console.log("flush-on-stop ok");
+}
+
+{
+  // The selection bar's aside: a blank question with a quote asks Claude to explain the passage,
+  // the passage goes to the CLI as a Markdown quote, and the ring keeps the blank question and the
+  // first 300 characters of the quote for the card.
+  assert.equal(
+    selectionContext("a\n\nb"),
+    "The passage I selected in our conversation:\n\n> a\n>\n> b",
+    "the context is a lead line and the passage quoted line by line",
+  );
+  const a = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  a.stateDir = await mkdtemp(joinPath(tmpdir(), "omc-aside-quote-"));
+  const wrote: string[] = [];
+  a.processes.set(
+    registryKey("claude-code", "sel"),
+    fakeProc({ alive: true, write: (line: string) => (wrote.push(line), true) }),
+  );
+  const quote = "q".repeat(400);
+  a.askSideQuestion("sel", "", selectionContext(quote), quote);
+  const parsed = JSON.parse(wrote[0] ?? "{}");
+  assert.equal(
+    parsed.request.question,
+    `Explain the passage below from our conversation.\n\n${selectionContext(quote)}`,
+    "a blank question is sent as the explain request plus the passage",
+  );
+  const entry = a.sideQuestions.get("sel")?.[0];
+  assert.equal(entry?.question, "", "the ring keeps the blank question");
+  assert.equal(
+    entry?.quote,
+    "q".repeat(300),
+    "the ring keeps the first 300 characters of the quote",
+  );
+  // Answer it so no 120 s control timer keeps the test process alive.
+  const requestId = String(parsed.request_id);
+  a.resolveControl({
+    type: "control_response",
+    request_id: requestId,
+    response: { request_id: requestId, subtype: "success", response: { response: "a" } },
+  });
+  await new Promise((r) => setTimeout(r, 0));
+  console.log("aside selection ok");
 }

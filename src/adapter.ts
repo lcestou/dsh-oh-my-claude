@@ -540,6 +540,9 @@ export interface AsideEntry {
   /** Set when the user closes the card. The entry stays in the ring so the panel's Asides tab can
    *  still show the answer; only the docked bubble filters these out. */
   dismissed?: boolean;
+  /** The selected passage this aside asked about, its first ASIDE_QUOTE_KEEP characters, shown above
+   *  the answer. Absent for `/btw` and the Changes tab's Ask. With a blank `question` it means "explain". */
+  quote?: string;
 }
 /** One user prompt of a session's transcript, as the Rewind list shows it. */
 export interface RewindPrompt {
@@ -814,6 +817,21 @@ export interface LoginNeed {
 
 /** How many `/btw` asides a session keeps; older ones drop off the ring. */
 const ASIDE_KEEP = 10;
+/** How much of a selected passage the ring keeps for the card; the whole passage went to Claude. */
+const ASIDE_QUOTE_KEEP = 300;
+/** What Claude is asked when the selection bar's question is left blank. Claude reads it: English only. */
+const SELECTION_EXPLAIN = "Explain the passage below from our conversation.";
+/**
+ * The side question's context for a selected passage: a lead line and the passage as a Markdown quote.
+ * Kept here rather than shared with the client's `quoteMarkdown`, since server code does not import
+ * from `src/client/`.
+ */
+export const selectionContext = (quote: string): string =>
+  `The passage I selected in our conversation:\n\n${quote
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => (line.trim() === "" ? ">" : `> ${line}`))
+    .join("\n")}`;
 /** A side question is a full model turn, so it gets a longer wait than a control ping. */
 const ASIDE_TIMEOUT_MS = 120_000;
 /** Cap on how many sessions keep asides in memory; the oldest session drops when a new one arrives.
@@ -4327,8 +4345,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     return mounts?.get(this.sessionProvider(sessionId) ?? "") ?? this;
   }
 
-  /** Record a side question in the session's aside ring (evicting the oldest session when the ring is full) and send it to the CLI through the mount that owns the process; the answer or error is written back onto the ring. */
-  askSideQuestion(sessionId: string, question: string, context?: string) {
+  /** Record a side question in the session's aside ring (evicting the oldest session when the ring is full) and send it to the CLI through the mount that owns the process; the answer or error is written back onto the ring. A blank `question` with a `quote` asks Claude to explain the passage; the ring keeps the blank. */
+  askSideQuestion(sessionId: string, question: string, context?: string, quote?: string) {
     const q = question.trim();
     const entry: AsideEntry = {
       id: `omc-${randomUUID()}`,
@@ -4336,6 +4354,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       pending: true,
       at: Date.now(),
     };
+    if (quote !== undefined && quote !== "") entry.quote = quote.slice(0, ASIDE_QUOTE_KEEP);
     const ring = this.sideQuestions.get(sessionId) ?? [];
     ring.push(entry);
     if (!this.sideQuestions.has(sessionId) && this.sideQuestions.size >= ASIDE_MAX_SESSIONS) {
@@ -4357,7 +4376,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     }
     // The ring keeps `q`, which is what the bubble and the Asides tab show. `context` (a diff, today)
     // is sent to the CLI and dropped: a persisted ring is not the place for a copy of the tree.
-    const asked = context === undefined || context === "" ? q : `${q}\n\n${context}`;
+    // A blank question only arrives with a selected passage: the bar's "explain this".
+    const ask = q === "" ? SELECTION_EXPLAIN : q;
+    const asked = context === undefined || context === "" ? ask : `${ask}\n\n${context}`;
     void owner
       .control(proc, { subtype: "side_question", question: asked, history: [] }, ASIDE_TIMEOUT_MS)
       .then((reply) => {
@@ -7382,8 +7403,8 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
           const diff = await owner.workspaceDiff(sessionId);
           if (!diff.ok) return { ok: false, error: diff.error };
           context = diffContext(diff, seed.path);
-        }
-        owner.askSideQuestion(sessionId, question, context);
+        } else if (seed.quote !== "") context = selectionContext(seed.quote);
+        owner.askSideQuestion(sessionId, question, context, seed.quote);
         return { ok: true };
       },
       sideQuestions: adapter.sideQuestions,
