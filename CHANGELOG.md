@@ -10,6 +10,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 - A file path in Claude's answer (the button that opens the file in the sidebar) takes the Claude
   accent instead of dsh's link blue, like links already do.
+- The composer's text cursor is the Claude accent in a Claude session instead of dsh's blue.
 - The Rewind tab lists each prompt as you typed it. A prompt sent right after an access change
   led with dsh's own note ("The approval policy changed from ...") and carried dsh's runtime
   context after it.
