@@ -5039,6 +5039,8 @@ function watchEventStream(ctx: ClientCtx) {
 const CLOSED_MARK = "data-omc-turn-closed";
 /** The closing line the plugin writes into a finished turn's header. */
 const CLOSING_MARK = "data-omc-turn-closing";
+/** The type a closing line copies off dsh's label, so it reads at the size of the text it replaces. */
+type Face = { fontSize: string; fontWeight: string; fontFamily: string; lineHeight: string };
 
 /**
  * Writes the CLI's closing line (`✻ Crunched for 38s · done 3:33 AM`) into a finished turn's
@@ -5046,11 +5048,17 @@ const CLOSING_MARK = "data-omc-turn-closing";
  * Finished is dsh's label reading its `Took {duration}` template, not the chevron: a running group
  * reads "Deep diving for 12s" and is left alone, as is one still carrying the running line. A
  * stopped turn (dsh's `Stopped`) gets the CLI's interrupt line instead; a failed one keeps dsh's
- * word. The time is the clock dsh prints in the turn's tail; a tail not mounted yet gives a line without it,
- * rewritten on a later pass. Writes only when the text changes, since every write is a mutation the
+ * word. The time is the clock dsh prints in the turn's tail. Only the newest group can still gain
+ * one, so an older group is marked closed on its first paint with or without it, and the per-frame
+ * pass stops visiting it. Writes only when the text changes, since every write is a mutation the
  * observer brings straight back here.
  */
-const paintClosing = (group: HTMLElement, sessionId: string): void => {
+const paintClosing = (
+  group: HTMLElement,
+  sessionId: string,
+  newest: boolean,
+  faceOf: (label: HTMLElement) => Face,
+): void => {
   if (group.querySelector(":scope > [data-omc-turn-line]") !== null) return;
   const label = group.querySelector<HTMLElement>(`:scope > span:not([${CLOSING_MARK}])`);
   if (label === null) return;
@@ -5082,7 +5090,7 @@ const paintClosing = (group: HTMLElement, sessionId: string): void => {
     line.setAttribute(CLOSING_MARK, "1");
     // Copied from dsh's label, as the running line does: a sibling inherits the button's type, not
     // the label's, and would read at a different size from the text it replaces.
-    const face = getComputedStyle(label);
+    const face = faceOf(label);
     line.style.fontSize = face.fontSize;
     line.style.fontWeight = face.fontWeight;
     line.style.fontFamily = face.fontFamily;
@@ -5106,7 +5114,7 @@ const paintClosing = (group: HTMLElement, sessionId: string): void => {
   } else if (line.lastChild?.nodeValue !== text && line.lastChild !== null) {
     line.lastChild.nodeValue = text;
   }
-  if (stopped || clock !== undefined) group.setAttribute(CLOSED_MARK, "1");
+  if (stopped || clock !== undefined || !newest) group.setAttribute(CLOSED_MARK, "1");
 };
 
 /** Wire a running turn's status: attach dsh's [role=status][aria-live=polite] element to this
@@ -5189,10 +5197,20 @@ function watchTurnStatus(ctx: ClientCtx) {
   const closeFinished = () => {
     const sid = activeClaudeSession(ctx);
     if (!sid) return;
+    // Every label shares one face: read it once per pass, before this pass writes anything, so a
+    // page opening on fifty finished turns recalculates style once rather than once per turn.
+    let face: Face | undefined;
+    const faceOf = (label: HTMLElement): Face => {
+      if (face === undefined) {
+        const { fontSize, fontWeight, fontFamily, lineHeight } = getComputedStyle(label);
+        face = { fontSize, fontWeight, fontFamily, lineHeight };
+      }
+      return face;
+    };
     for (const group of document.querySelectorAll<HTMLElement>(
       `button[data-turn-process]:not([${CLOSED_MARK}])`,
     ))
-      paintClosing(group, sid);
+      paintClosing(group, sid, group === newestGroup, faceOf);
   };
   onBodyMutation((records) => {
     if (!activeClaudeSession(ctx)) return;
