@@ -72,6 +72,8 @@ dsh: runs on 0.1.5-rc.1 through 0.1.7-alpha.2; built and tested on 0.1.7-alpha.2
 
 ### Fixed
 
+- dsh's Back-to-bottom button no longer rises when the working line above the composer appears;
+  it stays where it was, and the line leaves the button's corner free so the two never overlap.
 - A session log dsh refuses to load for one of the three known reasons (an unadvertised tool row
   from rows mode before 2026-09-22, a restore seeded without its system head before 1.3.2, a Stop
   that left a tool call open before 1.3.2) is repaired by the plugin itself: at start, when the
