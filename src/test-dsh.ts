@@ -180,11 +180,13 @@ export function fakeDsh(root: string): FakeDsh {
       const cwd = cwdOf(id);
       if (!existsSync(logPath(id, cwd)))
         throw named("SessionPersistenceNotFoundError", `no stored session ${id}`);
+      // dsh's order: a write-open takes the lease before it loads the log, so an owned log says
+      // owned before it says refused; a read-open takes no lease and only the loader speaks.
+      if (access === "write" && owned.has(id))
+        throw named("SessionAlreadyOwnedError", `session ${id} is owned by another handle`);
       const rule = refusals.get(id);
       const refusal = typeof rule === "function" ? rule(readLog(logPath(id, cwd)).rows) : rule;
       if (refusal !== undefined) throw new Error(refusal);
-      if (access === "write" && owned.has(id))
-        throw named("SessionAlreadyOwnedError", `session ${id} is owned by another handle`);
       return handleFor(id, cwd);
     },
     locate: (meta) => ({ kind: "jsonl", path: logPath(meta.id, meta.cwd ?? "") }),
