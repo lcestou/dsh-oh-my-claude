@@ -711,6 +711,48 @@ export function toSessionEvents(
   return events;
 }
 
+/** The model the transcript's last answer ran on, undefined when no step names one. */
+export const lastModelOf = (folded: FoldedTranscript): string | undefined =>
+  folded.turns.flatMap((t) => t.steps).findLast((s) => s.model !== undefined)?.model;
+
+// Claude Code permission mode to dsh's built-in preset and the approval policy that preset
+// carries; its sandbox mode is the preset's own name. A box that redefined these presets reads the
+// restored session as "custom" rather than failing.
+const PRESET_FOR_MODE = new Map([
+  ["plan", { preset: "read-only", approval: "ask" }],
+  ["default", { preset: "workspace-write", approval: "ask" }],
+  ["acceptEdits", { preset: "workspace-write", approval: "ask" }],
+  ["auto", { preset: "danger-full-access", approval: "never" }],
+  ["dontAsk", { preset: "danger-full-access", approval: "never" }],
+  ["bypassPermissions", { preset: "danger-full-access", approval: "never" }],
+]);
+
+/**
+ * The model and access a restored transcript ran under, as the events dsh writes when someone
+ * picks them. Without them dsh fills a restored session with its fallbacks: the configured default
+ * model and, because the log is seeded, the shell's sandbox with "ask" instead of the default
+ * preset, which clamped a bypass transcript to acceptEdits. Appended after the turns; seqs run on
+ * from `seq`. An unknown mode or an absent model writes nothing for that half.
+ */
+export function settingsEvents(
+  pick: { provider: string | undefined; model: string | undefined; permissionMode?: string },
+  time: number,
+  seq: number,
+): SeedEvent[] {
+  const out: SeedEvent[] = [];
+  const push = (type: string, data: Record<string, JsonValue>) =>
+    out.push({ type, seq: seq + out.length, time, data });
+  if (pick.provider !== undefined && pick.model !== undefined)
+    push("model/selection", { provider: pick.provider, model: pick.model });
+  const access = PRESET_FOR_MODE.get(pick.permissionMode ?? "");
+  if (access !== undefined) {
+    push("permission/preset", { preset: access.preset });
+    push("sandbox/mode", { mode: access.preset });
+    push("approval/policy", { policy: access.approval });
+  }
+  return out;
+}
+
 /** What another entrypoint wrote into a stretch of transcript: its completed turns, and how many
  *  bytes of the stretch are settled. A prompt still being answered is not settled: `consumed` stops
  *  at its row, so the next read starts there and reports the whole turn once. */

@@ -24,8 +24,10 @@ import { dirname, join } from "node:path";
 import {
   assistantMessageText,
   foldTranscript,
+  lastModelOf,
   listTranscripts,
   readTranscript,
+  settingsEvents,
   toMarkdown,
   toSessionEvents,
   type FoldedTranscript,
@@ -1426,6 +1428,12 @@ async function foldTranscriptDelta(
   }
 }
 
+/** The model a restored transcript should open on, and the mount that serves it; undefined
+ *  fields leave dsh's own fallback in place. */
+type PickSettings = (
+  folded: FoldedTranscript,
+) => Promise<{ provider: string | undefined; model: string | undefined }>;
+
 /** Same id opened twice at once (double click, two tabs) shares one creation. */
 function openTranscript(
   ctx: RouteHost,
@@ -1435,12 +1443,21 @@ function openTranscript(
   claudeIdOf: (id: string) => string,
   registry: WorkspaceRegistry | undefined,
   heal?: HealHost,
+  pickSettings?: PickSettings,
 ): Promise<Opened> {
   let job = opening.get(id);
   if (!job) {
-    job = openTranscriptOnce(ctx, dirs, cwd, id, claudeIdOf, registry, heal).finally(() =>
-      opening.delete(id),
-    );
+    job = openTranscriptOnce(
+      ctx,
+      dirs,
+      cwd,
+      id,
+      claudeIdOf,
+      registry,
+      heal,
+      undefined,
+      pickSettings,
+    ).finally(() => opening.delete(id));
     opening.set(id, job);
   }
   return job;
@@ -1459,6 +1476,7 @@ export async function openTranscriptOnce(
   registry: WorkspaceRegistry | undefined,
   heal?: HealHost,
   reseedFrom?: string,
+  pickSettings?: PickSettings,
 ): Promise<Opened> {
   // dsh 0.1.5 lists a session under a workspace only once it is on that workspace's own
   // `sessionIds`; a session that merely exists (older dsh derived the workspace from its cwd)
@@ -1548,6 +1566,15 @@ export async function openTranscriptOnce(
   // The version this dsh writes decides both the header below and the shape of every tool result.
   const logVersion = (await currentLogVersion()) ?? 3;
   const seed = toSessionEvents(folded, logVersion);
+  const pick = await pickSettings?.(folded);
+  if (pick)
+    seed.push(
+      ...settingsEvents(
+        { ...pick, permissionMode: folded.permissionMode },
+        seed.at(-1)?.time ?? folded.createdAt,
+        seed.length,
+      ),
+    );
   // A session's log reaches disk only through the persistence write handle its creator opens
   // (dsh 0.1.5 does this in the agent-loop creation transaction). The store's own
   // prepare/enter/announce/flush owns no handle, so `session/flush` found no writer for this id and
@@ -2337,6 +2364,17 @@ export function registerSessionRoutes(
                 claudeIdOf,
                 workspaceRegistry(),
                 heal,
+                async (folded) => {
+                  // The transcript's own last model, else the one this workspace last ran, in
+                  // whatever form the lineup still offers; a retired model takes its family's.
+                  const saved = (await loadWorkspaceModels(STATE_DIR)).get(cwd);
+                  const wanted = lastModelOf(folded) ?? saved?.model;
+                  const offered = models ? (await models()).map((m) => m.id) : undefined;
+                  return {
+                    provider: saved?.provider ?? (onBox ? undefined : "claude-code"),
+                    model: wanted && offered ? livingModelId(wanted, offered) : undefined,
+                  };
+                },
               );
               // The CLI stamps every prompt row with the mode it ran under, so a session brought
               // in from a terminal keeps its mode instead of the workspace default. A session dsh

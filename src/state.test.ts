@@ -259,10 +259,26 @@ const wsDir = await mkdtemp(join(tmpdir(), "omc-ws-"));
   );
   assert.equal(
     livingModelId("sonnet[1m]", offered),
-    undefined,
-    "no living form: nothing is applied",
+    "claude-sonnet-5",
+    "a retired 1M alias lands on its family's newest id",
   );
-  assert.equal(livingModelId("claude-gone-9", offered), undefined);
+  assert.equal(
+    livingModelId("claude-opus-4-1", offered),
+    undefined,
+    "a 200k id never widens to the 1M alias",
+  );
+  assert.equal(
+    livingModelId("claude-opus-4-1[1m]", offered),
+    "opus[1m]",
+    "a retired 1M id takes the family's 1M alias",
+  );
+  assert.equal(
+    livingModelId("claude-fable-4-20250101", offered),
+    "claude-fable-5-1",
+    "a retired dated id takes the family's first offered id",
+  );
+  assert.equal(livingModelId("claude-gone-9", offered), undefined, "unknown family: nothing");
+  assert.equal(livingModelId("default", ["sonnet"]), undefined, "`default` is no family");
 }
 let wsModels = await loadWorkspaceModels(wsDir);
 assert.equal(wsModels.size, 0, "empty dir loads empty map");

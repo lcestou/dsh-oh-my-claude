@@ -1,4 +1,5 @@
 import type { IncomingMessage } from "node:http";
+import { type FoldedTranscript } from "./transcript.js";
 import { type Reach } from "./reach.js";
 import type { JsonValue, PluginContext, WorkspaceRegistry } from "./dsh.js";
 import { type HealHost, type RepairsSummary } from "./session-heal.js";
@@ -298,11 +299,17 @@ interface Opened {
 }
 /** The host services the routes read; injected before the route mounts. */
 type RouteHost = Required<Pick<PluginContext, "webServer" | "connection" | "sessions" | "sessionPersistence">>;
+/** The model a restored transcript should open on, and the mount that serves it; undefined
+ *  fields leave dsh's own fallback in place. */
+type PickSettings = (folded: FoldedTranscript) => Promise<{
+    provider: string | undefined;
+    model: string | undefined;
+}>;
 /**
  * Loads a Claude Code transcript and creates a dsh session from it, or
  * returns the existing session if one with this id is already live.
  */
-export declare function openTranscriptOnce(ctx: RouteHost, dirs: string[], cwd: string, id: string, claudeIdOf: (id: string) => string, registry: WorkspaceRegistry | undefined, heal?: HealHost, reseedFrom?: string): Promise<Opened>;
+export declare function openTranscriptOnce(ctx: RouteHost, dirs: string[], cwd: string, id: string, claudeIdOf: (id: string) => string, registry: WorkspaceRegistry | undefined, heal?: HealHost, reseedFrom?: string, pickSettings?: PickSettings): Promise<Opened>;
 /** One mount's own box: which `claude` to run, where its config lives, and whether it is remote. */
 export interface MountBox {
     configDir: string;

@@ -119,6 +119,20 @@ export interface SeedBase {
 /** dsh session events for folded turns. Shapes follow what dsh writes itself; seqs are contiguous
  *  from `base.seq` and turns count on from `base.turn`, so a delta appends onto a stored log. */
 export declare function toSessionEvents(folded: FoldedTranscript, logVersion?: number, base?: SeedBase): SeedEvent[];
+/** The model the transcript's last answer ran on, undefined when no step names one. */
+export declare const lastModelOf: (folded: FoldedTranscript) => string | undefined;
+/**
+ * The model and access a restored transcript ran under, as the events dsh writes when someone
+ * picks them. Without them dsh fills a restored session with its fallbacks: the configured default
+ * model and, because the log is seeded, the shell's sandbox with "ask" instead of the default
+ * preset, which clamped a bypass transcript to acceptEdits. Appended after the turns; seqs run on
+ * from `seq`. An unknown mode or an absent model writes nothing for that half.
+ */
+export declare function settingsEvents(pick: {
+    provider: string | undefined;
+    model: string | undefined;
+    permissionMode?: string;
+}, time: number, seq: number): SeedEvent[];
 /** What another entrypoint wrote into a stretch of transcript: its completed turns, and how many
  *  bytes of the stretch are settled. A prompt still being answered is not settled: `consumed` stops
  *  at its row, so the next read starts there and reports the whole turn once. */
