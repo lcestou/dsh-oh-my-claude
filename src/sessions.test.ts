@@ -2653,6 +2653,11 @@ console.log("sessions ok");
     "seeded again through the write handle",
   );
   assert.equal(
+    r.body.transcriptId,
+    "t-session-11111111-1111-4111-8111-111111111111",
+    "the reply names the transcript for the tab's open",
+  );
+  assert.equal(
     (await loadSessionRepairs(STATE_DIR)).logs["session-11111111-1111-4111-8111-111111111111"]
       ?.verdict,
     "reseeded",
