@@ -4,7 +4,7 @@ import { costDetails, isStatsRow } from "./index.js";
 /** The smallest node the predicate reads: dsh's row, its children and its class. */
 function el(
   className: string,
-  children: { className?: string; aria?: string; text?: string; pill?: boolean }[],
+  children: { className?: string; aria?: string; text?: string; pill?: boolean; ours?: boolean }[],
   text = "",
   attr = "",
 ): HTMLElement {
@@ -19,7 +19,12 @@ function el(
     querySelector(selector: string) {
       if (!selector.startsWith(":scope > span")) return null;
       if (selector.includes("button")) {
-        const pill = children.find((c) => c.pill === true);
+        // `ours` is the plugin's own composer button, which the pill selector excludes by its hook.
+        const pill = children.find(
+          (c) =>
+            c.pill === true &&
+            !(c.ours === true && selector.includes(":not([data-omc-panel-trigger])")),
+        );
         return pill ? { textContent: pill.text ?? "" } : null;
       }
       const match = children.find((c) => c.aria === "true" && (c.className ?? "").endsWith("_sep"));
@@ -66,6 +71,9 @@ assert.equal(
   isStatsRow(el("bOPqQW_root", [{ text: "2 turns 18 steps · 74 tok/s", pill: true }])),
   true,
 );
+// The composer toolbar holding the plugin's own button is the same shape, a span around a dialog
+// trigger; with no stats row on screen the cost pill was hooked in beside it.
+assert.equal(isStatsRow(el("", [{ text: "", pill: true, ours: true }])), false);
 // The footer that wraps the row holds no pill of its own; appending there is what put the readout
 // outside the row, behind a bar.
 assert.equal(isStatsRow(el("uV2eYG_dock", [{ text: "" }])), false);

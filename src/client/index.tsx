@@ -6233,8 +6233,11 @@ const COST_DEBUG = (() => {
     return false;
   }
 })();
-/** One of dsh's stats pills as the row holds it: an anchor span wrapping a popover button. */
-const STATS_PILL = ':scope > span > button[aria-haspopup="dialog"]';
+/** One of dsh's stats pills as the row holds it: an anchor span wrapping a popover button. The
+ *  plugin's own composer button has the same shape, a span around a dialog trigger, so while no
+ *  stats row is on screen (a session switched back to from a subagent, before its row draws) the
+ *  cost pill was hooked in beside it, took its grey class and stayed there until a refresh. */
+const STATS_PILL = ':scope > span > button[aria-haspopup="dialog"]:not([data-omc-panel-trigger])';
 /** dsh 0.1.7's compact stats draw each stat as a bare `span` pill in the row, with no anchor span
  *  around it and no button; its detailed stats keep the anchor-and-button pair `STATS_PILL` finds.
  *  Its own class is what the cost pill copies there, and the plugin's own node is excluded by the
