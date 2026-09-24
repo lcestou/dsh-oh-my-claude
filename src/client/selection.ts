@@ -131,3 +131,36 @@ export function quoteSpans(segs: readonly QuoteSeg[]): QuoteSpan[] {
   });
   return out;
 }
+
+/** One block of a message as the quote copy lays it out: a run of quoted lines (their `>` markers
+ *  taken off) or a run of plain ones, as typed. */
+export interface QuoteBlock {
+  quote: boolean;
+  text: string;
+}
+
+/**
+ * A message split into quote and plain blocks, by `quoteSpans`' rule: a line opening with `> ` (or a
+ * bare `>`) is quoted, fenced code never is. The marker and the one space after it come off a quoted
+ * line; everything else is kept byte for byte, blank lines included.
+ */
+export function quoteBlocks(text: string): QuoteBlock[] {
+  const lines = text.split("\n");
+  const starts = new Set(
+    quoteSpans([{ text, newLine: true }])
+      .filter((s) => s.mark)
+      .map((s) => s.start),
+  );
+  const out: QuoteBlock[] = [];
+  let at = 0;
+  for (const line of lines) {
+    const lead = /^ {0,3}/.exec(line)?.[0].length ?? 0;
+    const quote = starts.has(at + lead);
+    const body = quote ? line.slice(lead + 1).replace(/^ /, "") : line;
+    const last = out.at(-1);
+    if (last !== undefined && last.quote === quote) last.text += `\n${body}`;
+    else out.push({ quote, text: body });
+    at += line.length + 1;
+  }
+  return out;
+}

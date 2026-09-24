@@ -4,6 +4,7 @@ import {
   clampQuote,
   previewOf,
   QUOTE_MAX,
+  quoteBlocks,
   quoteMarkdown,
   quoteSpans,
 } from "./selection.js";
@@ -64,4 +65,15 @@ assert.deepEqual(
   ],
   "a new paragraph ends the quote line",
 );
+assert.deepEqual(quoteBlocks("> Ask\nTest"), [
+  { quote: true, text: "Ask" },
+  { quote: false, text: "Test" },
+]);
+assert.deepEqual(quoteBlocks("hi\n\n> a\n>\n> b\nafter"), [
+  { quote: false, text: "hi\n" },
+  { quote: true, text: "a\n\nb" },
+  { quote: false, text: "after" },
+]);
+assert.deepEqual(quoteBlocks("```\n> x\n```"), [{ quote: false, text: "```\n> x\n```" }]);
+assert.deepEqual(quoteBlocks("a > b"), [{ quote: false, text: "a > b" }]);
 console.log("selection ok");

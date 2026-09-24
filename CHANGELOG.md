@@ -10,8 +10,8 @@ dsh: runs on 0.1.5-rc.1 through 0.1.7-alpha.2; built and tested on 0.1.7-alpha.2
 
 ### Added
 
-- Quoted lines (`> …` at the start of a line) read as a quote in your sent messages, with a bar
-  beside them like the quotes in Claude's replies and the text dimmed, and dimmed in the composer
+- Quoted lines (`> …` at the start of a line) read as a quote in your sent messages, laid out
+  like the quotes in Claude's replies (indented, with the accent bar), and dimmed in the composer
   as you type. Fenced code and a `>` mid-line are left alone.
 - A finished Claude turn keeps a closing line in its header instead of dsh's "Took 27s", the way
   the terminal ends a turn: `✻ Crunched for 27s · done 3:21 AM`, in grey, with the CLI's own
