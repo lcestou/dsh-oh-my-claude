@@ -113,6 +113,8 @@ dsh: runs on 0.1.5-rc.1 through 0.1.7-alpha.2; built and tested on 0.1.7-alpha.2
   Claude turn in a workspace after this update records the mount, and it sticks from then on.
 ### Fixed
 
+- In a Claude session, a slash command or skill typed in the composer and its `@` file chips take
+  the Claude accent instead of dsh's blue, matching the chips in sent messages.
 - A Claude Code session restored into dsh opens on the model it last ran and the access it ran
   under (a bypass session gets Full access), instead of dsh's default model and Workspace access.
   A model Claude Code has since retired lands on the newest one of the same family.
