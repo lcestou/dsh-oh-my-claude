@@ -109,7 +109,7 @@ import { errorText } from "./process.js";
 import { claudeMdDisabledBy, featureSwitches, type ClaudeMdState } from "./switches.js";
 import { currentLogVersion, loadSessionCatalog } from "./rows-probe.js";
 import { serverText } from "./locale.js";
-import { knownRefusal, moveAside } from "./session-repair.js";
+import { knownRefusal, moveAside, restoreBak } from "./session-repair.js";
 import {
   healLog,
   probeLoad,
@@ -2349,23 +2349,32 @@ export function registerSessionRoutes(
               if (folded === undefined || folded.turns.length === 0)
                 return json(res, 409, { error: serverText("noTranscriptToReseed") });
               const bak = moveAside(record.path);
+              await trace(`reseed ${id}: log moved to ${bak}`);
+              let opened: Opened;
+              try {
+                opened = await openTranscriptOnce(
+                  routeHost,
+                  dirs,
+                  cwd,
+                  id,
+                  claudeIdOf,
+                  workspaceRegistry(),
+                  heal,
+                  true,
+                );
+              } catch (e) {
+                // The seed did not land: put the log back where it was so the click can be tried
+                // again, and answer the failure. The record stays `unknown`.
+                restoreBak(record.path, bak);
+                await trace(`reseed ${id}: seed failed, log restored: ${errorText(e)}`);
+                throw e;
+              }
               await recordRepair(STATE_DIR, id, {
                 ...record,
                 verdict: "reseeded",
                 bak,
                 at: Date.now(),
               });
-              await trace(`reseed ${id}: log moved to ${bak}`);
-              const opened = await openTranscriptOnce(
-                routeHost,
-                dirs,
-                cwd,
-                id,
-                claudeIdOf,
-                workspaceRegistry(),
-                heal,
-                true,
-              );
               return json(res, 200, opened);
             }
             if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/search`) {

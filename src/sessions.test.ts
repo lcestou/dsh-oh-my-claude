@@ -2484,6 +2484,7 @@ console.log("sessions ok");
       ]),
     );
   const calls: string[] = [];
+  let createFails = false;
   let handler: ((req: unknown, res: unknown) => void) | undefined;
   // SAFETY: partial fakes; the routes read only these members
   const ctx = {
@@ -2503,6 +2504,7 @@ console.log("sessions ok");
           list: async () => [{ header: { id: "11111111-1111-4111-8111-111111111111", cwd } }],
           create: async () => {
             calls.push("create");
+            if (createFails) throw new Error("disk full");
             if (existsSync(logPath)) {
               const e = new Error("exists");
               e.name = "SessionAlreadyExistsError";
@@ -2612,6 +2614,22 @@ console.log("sessions ok");
       .map((x) => JSON.stringify(x))
       .join("\n") + "\n",
   );
+  // The seed fails after the log was moved: the log comes back, the record stays unknown, and
+  // the click can be tried again.
+  createFails = true;
+  r = await respond(
+    "POST",
+    "/dsh-oh-my-claude/reseed",
+    JSON.stringify({ id: "11111111-1111-4111-8111-111111111111" }),
+  );
+  assert.equal(r.status, 500);
+  assert.equal(existsSync(logPath), true, "a failed seed puts the log back");
+  assert.equal(
+    (await loadSessionRepairs(STATE_DIR)).logs["11111111-1111-4111-8111-111111111111"]?.verdict,
+    "unknown",
+  );
+  createFails = false;
+  calls.length = 0;
   r = await respond(
     "POST",
     "/dsh-oh-my-claude/reseed",
