@@ -132,35 +132,26 @@ export function quoteSpans(segs: readonly QuoteSeg[]): QuoteSpan[] {
   return out;
 }
 
-/** One block of a message as the quote copy lays it out: a run of quoted lines (their `>` markers
- *  taken off) or a run of plain ones, as typed. */
-export interface QuoteBlock {
-  quote: boolean;
-  text: string;
-}
-
 /**
- * A message split into quote and plain blocks, by `quoteSpans`' rule: a line opening with `> ` (or a
- * bare `>`) is quoted, fenced code never is. The marker and the one space after it come off a quoted
- * line; everything else is kept byte for byte, blank lines included.
+ * Which lines of a message are quoted, by `quoteSpans`' rule: a line opening (after up to three
+ * spaces) with `> `, or a bare `>`, outside fenced code. Takes the lines' text, chips included as
+ * the text they show, so a `/command` chip in the middle of a quoted line keeps the line quoted.
  */
-export function quoteBlocks(text: string): QuoteBlock[] {
-  const lines = text.split("\n");
-  const starts = new Set(
+export function quotedLines(lines: readonly string[]): boolean[] {
+  const text = lines.join("\n");
+  const marks = new Set(
     quoteSpans([{ text, newLine: true }])
       .filter((s) => s.mark)
       .map((s) => s.start),
   );
-  const out: QuoteBlock[] = [];
   let at = 0;
-  for (const line of lines) {
+  return lines.map((line) => {
     const lead = /^ {0,3}/.exec(line)?.[0].length ?? 0;
-    const quote = starts.has(at + lead);
-    const body = quote ? line.slice(lead + 1).replace(/^ /, "") : line;
-    const last = out.at(-1);
-    if (last !== undefined && last.quote === quote) last.text += `\n${body}`;
-    else out.push({ quote, text: body });
+    const quoted = marks.has(at + lead);
     at += line.length + 1;
-  }
-  return out;
+    return quoted;
+  });
 }
+
+/** A quoted line's text with its marker taken off: the `>` and the one space after it. */
+export const unquote = (line: string): string => line.replace(/^ {0,3}> ?/, "");

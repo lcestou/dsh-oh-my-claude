@@ -122,9 +122,10 @@ import {
   clampQuote,
   previewOf,
   QUOTE_MAX,
-  quoteBlocks,
   quoteMarkdown,
   quoteSpans,
+  quotedLines,
+  unquote,
   type QuoteSeg,
 } from "./selection.js";
 import {
@@ -5447,38 +5448,69 @@ function watchUltrathink(ctx: ClientCtx) {
     for (const key of [...names, ...shimmerNames]) registry.delete(key);
   };
   // Sent messages that carry a quote, each with the copy drawn for it, rebuilt only when the text
-  // changes (every write is a mutation this scan is woken by).
+  // changes (every write is a mutation this scan is woken by). Keyed by the element holding the
+  // message's parts: its text spans and any chips dsh drew for a `/command` or a file.
   const copies = new Map<HTMLElement, { text: string; copy: HTMLElement }>();
   /**
    * Lay a sent message out with its quotes as quote blocks, the way dsh renders a reply's: dsh draws
-   * a person's message as one plain-text span, which a highlight can colour but cannot indent, so
-   * the span is hidden and a copy sits beside it. The span stays in the page untouched, and the copy
-   * is real text, so selecting and the selection bar read it as they would dsh's.
+   * a person's message as plain-text spans with chips between them, which a highlight can colour
+   * but cannot indent, so those parts are hidden and a copy sits in their place. The parts stay in
+   * the page untouched; the copy is real text, so selecting and the selection bar read it as they
+   * would dsh's. A chip is cloned onto its line, looking the same but not clickable: the click
+   * belongs to dsh's own, hidden beside it.
    */
-  const drawCopy = (src: HTMLElement, text: string) => {
-    const had = copies.get(src);
+  const drawCopy = (box: HTMLElement, parts: ChildNode[], text: string) => {
+    const had = copies.get(box);
     if (had !== undefined && had.text === text && had.copy.isConnected) return;
     had?.copy.remove();
+    // The message as lines of pieces: text as fresh text nodes, a chip as its clone, in order.
+    let line: Node[] = [];
+    const lines = [line];
+    for (const part of parts) {
+      if (part instanceof HTMLSpanElement && part.childElementCount === 0) {
+        (part.textContent ?? "").split("\n").forEach((piece, i) => {
+          if (i > 0) {
+            line = [];
+            lines.push(line);
+          }
+          if (piece !== "") line.push(document.createTextNode(piece));
+        });
+      } else line.push(part.cloneNode(true));
+    }
+    const quoted = quotedLines(lines.map((l) => l.map((x) => x.textContent ?? "").join("")));
     const copy = document.createElement("div");
     copy.setAttribute(QUOTE_COPY, "1");
-    // The span's own type, read once per copy: a sibling inherits the bubble's, not the span's.
-    const { fontSize, fontFamily, fontWeight, lineHeight, color } = getComputedStyle(src);
-    Object.assign(copy.style, { fontSize, fontFamily, fontWeight, lineHeight, color });
-    for (const block of quoteBlocks(text)) {
-      const el = document.createElement("div");
-      if (block.quote) el.setAttribute(QUOTE_BLOCK, "1");
-      el.textContent = block.text;
-      copy.append(el);
+    // The spans' own type, read once per copy: the copy inherits the bubble's, not the span's.
+    const first = parts.find((n): n is HTMLSpanElement => n instanceof HTMLSpanElement);
+    if (first !== undefined) {
+      const { fontSize, fontFamily, fontWeight, lineHeight, color } = getComputedStyle(first);
+      Object.assign(copy.style, { fontSize, fontFamily, fontWeight, lineHeight, color });
     }
-    src.setAttribute(QUOTE_SOURCE, "1");
-    src.after(copy);
-    copies.set(src, { text, copy });
+    let block: HTMLElement | undefined;
+    let blockQuoted = false;
+    for (const [i, pieces] of lines.entries()) {
+      const q = quoted[i] === true;
+      if (block === undefined || q !== blockQuoted) {
+        block = document.createElement("div");
+        if (q) block.setAttribute(QUOTE_BLOCK, "1");
+        copy.append(block);
+        blockQuoted = q;
+      } else block.append("\n");
+      for (const [j, piece] of pieces.entries()) {
+        if (q && j === 0 && piece instanceof Text) piece.data = unquote(piece.data);
+        block.append(piece);
+      }
+    }
+    for (const part of parts) if (part instanceof Element) part.setAttribute(QUOTE_SOURCE, "1");
+    parts[0]?.before(copy);
+    copies.set(box, { text, copy });
   };
-  /** Put dsh's span back and remove the copy, for a message whose quote went away. */
-  const dropCopy = (src: HTMLElement) => {
-    copies.get(src)?.copy.remove();
-    src.removeAttribute(QUOTE_SOURCE);
-    copies.delete(src);
+  /** Put dsh's parts back and remove the copy, for a message whose quote went away. */
+  const dropCopy = (box: HTMLElement) => {
+    copies.get(box)?.copy.remove();
+    for (const part of box.querySelectorAll(`:scope > [${QUOTE_SOURCE}]`))
+      part.removeAttribute(QUOTE_SOURCE);
+    copies.delete(box);
   };
   /** Quotes read as quotes: dimmed with their `>` fainter still in the composer, where the person is
    *  typing, and laid out as quote blocks in a sent message (see `drawCopy`). Not part of the
@@ -5501,14 +5533,20 @@ function watchUltrathink(ctx: ClientCtx) {
         }
         continue;
       }
-      // A sent message's words are the first text span in it; the clock and the actions after it
-      // are dsh's, and are left out of the copy.
-      const src = nodes[0]?.parentElement;
-      if (!src) continue;
-      const own = segs.filter((_, i) => nodes[i]?.parentElement === src);
-      if (quoteSpans(own).length === 0) continue;
-      seen.add(src);
-      drawCopy(src, own.map((seg) => seg.text).join(""));
+      // A sent message's words sit in one element as spans and chips, the first text in the host;
+      // the clock and the actions after it are dsh's, in another. A bare text node among the parts
+      // could not be hidden, so a message shaped like that is left as dsh draws it.
+      const box = nodes[0]?.parentElement?.parentElement;
+      if (!box) continue;
+      const parts = [...box.childNodes].filter(
+        (n) => !(n instanceof Element && n.hasAttribute(QUOTE_COPY)),
+      );
+      if (parts.some((n) => n.nodeType === Node.TEXT_NODE && (n.textContent ?? "").trim() !== ""))
+        continue;
+      const whole = parts.map((n) => n.textContent ?? "").join("");
+      if (!quotedLines(whole.split("\n")).includes(true)) continue;
+      seen.add(box);
+      drawCopy(box, parts, whole);
     }
     for (const src of copies.keys()) if (!seen.has(src)) dropCopy(src);
     // Below the rainbow, so `ultrathink` inside a quote keeps its colours.

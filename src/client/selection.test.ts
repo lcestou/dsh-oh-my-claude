@@ -4,9 +4,10 @@ import {
   clampQuote,
   previewOf,
   QUOTE_MAX,
-  quoteBlocks,
   quoteMarkdown,
   quoteSpans,
+  quotedLines,
+  unquote,
 } from "./selection.js";
 
 assert.equal(quoteMarkdown("one"), "> one\n\n");
@@ -65,15 +66,27 @@ assert.deepEqual(
   ],
   "a new paragraph ends the quote line",
 );
-assert.deepEqual(quoteBlocks("> Ask\nTest"), [
-  { quote: true, text: "Ask" },
-  { quote: false, text: "Test" },
+assert.deepEqual(quotedLines(["> Ask", "Test"]), [true, false]);
+assert.deepEqual(quotedLines(["hi", "", "> a", ">", "> b", "after"]), [
+  false,
+  false,
+  true,
+  true,
+  true,
+  false,
 ]);
-assert.deepEqual(quoteBlocks("hi\n\n> a\n>\n> b\nafter"), [
-  { quote: false, text: "hi\n" },
-  { quote: true, text: "a\n\nb" },
-  { quote: false, text: "after" },
-]);
-assert.deepEqual(quoteBlocks("```\n> x\n```"), [{ quote: false, text: "```\n> x\n```" }]);
-assert.deepEqual(quoteBlocks("a > b"), [{ quote: false, text: "a > b" }]);
+assert.deepEqual(
+  quotedLines(["```", "> x", "```"]),
+  [false, false, false],
+  "fenced code is not quoted",
+);
+assert.deepEqual(quotedLines(["a > b"]), [false]);
+assert.deepEqual(
+  quotedLines(["> then /ship when happy.", "Test"]),
+  [true, false],
+  "a chip's text inside a quoted line keeps it quoted",
+);
+assert.equal(unquote("> Ask"), "Ask");
+assert.equal(unquote("  >"), "");
+assert.equal(unquote(">  two spaces"), " two spaces", "only the one space after the marker goes");
 console.log("selection ok");
