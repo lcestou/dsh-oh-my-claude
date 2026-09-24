@@ -123,9 +123,12 @@ dsh 只发布预发行版，客户端 API 也会在版本之间变动，所以�
 19. 按范围列出 CLI 能用到的所有技能，你自己的和项目的技能可以添加、编辑和删除。每个技能的开销来自 CLI 自己的 `/skill-doctor`，是一张可排序的表格，旁边还有其他影响用量的因素：请求最多的 MCP 服务器，以及工作的构成。[Skills](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#skills)
 20. 你没在看的会话完成或停下来问你时，浏览器标签页会有标记，还可以选择弹出桌面通知。[Session notices](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#session-notices)
 21. dsh 自己的目标和会话以往的每个目标，与 Claude Code 的目标和定时任务并列显示。[Tasks](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#tasks)
-22. Claude 工作时你插话发送的消息，在 Claude 读取之前可以编辑或移除，也可以合并为一条编辑。编辑期间消息不会发出。[Steering](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#dsh-tools-over-mcp)
+22. Claude 工作时你插话发送的消息，在 Claude 读取之前可以编辑或移除，也可以合并为一条编辑。编辑期间消息不会发出。“立即发送”会打断 Claude，把这条消息作为下一轮发出。[Steering](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#dsh-tools-over-mcp)
 23. Claude 的工作状态行（旋转图标、动词、数字）会在本轮的标题滚出屏幕后，在输入框上方重复显示，一长串工具卡片不会再遮住 Claude 正在做的事。设置中有开关可关闭。[轮次状态](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#turn-status)
-24. 在回复中选中文本，即可将其引用到消息中，或作为旁问向 Claude 提问，不占用对话本身；问题留空时，Claude 会解释这段内容。[旁问](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#asides)
+24. 在回复中选中文本，即可将其引用到消息中，或作为旁问向 Claude 提问，不占用对话本身；问题留空时，Claude 会解释这段内容。你自己消息里的引用也会像 Claude 回复中的引用一样显示：缩进，左侧有强调色竖线。[旁问](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#asides)
+25. 一轮结束后，标题处保留一行收尾，和终端里一样：`✻ 烘焙了 27s · 03:21 完成`。被你停止的一轮显示 `已中断 · 想让 Claude 改做什么？`。[轮次状态](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#turn-status)
+26. 在 dsh 0.1.7 上，Claude 的工具调用显示为 dsh 自己的工具卡片，和其他提供方一样，文字在卡片之间实时输出。也可以在设置中切换回行内文本。[工具行](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/configuration.md)
+27. 在工作区中新建会话时，会使用该工作区上次运行的 Claude 主机和模型。[按工作区记住模型](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#remember-model-per-workspace)
 
 一些你永远不必动的默认行为，比如工具结果中的密钥脱敏和挺过 CLI 自身的更新，见 [How it works](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md)。
 
