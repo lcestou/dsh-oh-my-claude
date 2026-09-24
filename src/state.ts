@@ -553,6 +553,7 @@ export async function loadAsides(dir: string): Promise<Map<string, AsideEntry[]>
           if (typeof r.answer === "string") entry.answer = r.answer;
           if (typeof r.error === "string") entry.error = r.error;
           if (r.dismissed === true) entry.dismissed = true;
+          if (typeof r.quote === "string") entry.quote = r.quote;
           entries.push(entry);
         }
         if (entries.length > 0) map.set(k, entries);
