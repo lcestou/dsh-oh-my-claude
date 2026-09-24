@@ -325,6 +325,11 @@ export const en = {
   "panel.access.mode.auto": "Auto · full access",
   "panel.access.mode.dontAsk": "Don't ask · full access",
   "panel.access.mode.bypassPermissions": "Bypass · full access",
+  "panel.repairs.healed":
+    "Repaired {n} session logs dsh could not load. The original of each is kept beside it as .bak.",
+  "panel.repairs.unknown":
+    "{n} session logs still fail to load for a reason the plugin cannot mend. The details are in resume.log under the plugin's state directory.",
+  "panel.repairs.dismiss": "Dismiss",
   "panel.access.ariaLabel": "Claude permission: {text}{refused}",
   "panel.access.ariaRefused": ", refused by settings",
   "panel.access.notMaterialized": "this session is not materialized yet",
@@ -635,6 +640,10 @@ export const zh = {
   "panel.access.mode.auto": "自动 · 完全权限",
   "panel.access.mode.dontAsk": "不询问 · 完全权限",
   "panel.access.mode.bypassPermissions": "绕过 · 完全权限",
+  "panel.repairs.healed": "已修复 {n} 个 dsh 无法加载的会话日志。每个原文件以 .bak 后缀保留在旁。",
+  "panel.repairs.unknown":
+    "{n} 个会话日志仍无法加载，原因超出插件可修复的范围。详情见插件状态目录下的 resume.log。",
+  "panel.repairs.dismiss": "知道了",
   "panel.access.ariaLabel": "Claude 权限：{text}{refused}",
   "panel.access.ariaRefused": "，已被设置拒绝",
   "panel.access.notMaterialized": "此会话尚未实例化",
