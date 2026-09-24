@@ -1,5 +1,6 @@
 // Offline self-check: node src/sessions.test.js. No CLI, no network.
 import assert from "node:assert/strict";
+import type { Row } from "./session-repair.js";
 import { execFileSync } from "node:child_process";
 import { access, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -2172,16 +2173,16 @@ console.log("sessions ok");
   console.log("events-route ok");
 }
 
-// openTranscriptOnce's owned branch with a heal host: a log dsh loads is attached as before; a
-// refusal the plugin mends is healed first and the open says so; any other refusal is answered
-// as an error and nothing is attached; no heal host keeps the old behaviour.
+// openTranscriptOnce's owned branch with a heal host, against the dsh stand-in: a log dsh loads is
+// attached as before; a refusal the plugin mends is healed first and the open says so; any other
+// refusal is answered as an error and nothing is attached; no heal host keeps the old behaviour.
 {
-  const { frame } = await import("./session-repair.js");
-  const { mkdirSync, writeFileSync } = await import("node:fs");
+  const { fakeDsh } = await import("./test-dsh.js");
   const { STATE_DIR } = await import("./state.js");
-  const dir = join(STATE_DIR, "open-heal");
-  mkdirSync(dir, { recursive: true });
-  const file = join(dir, "session.v4.jsonl.zstd");
+  const f = fakeDsh(join(STATE_DIR, "open-heal"));
+  const cwd = join(f.root, "work");
+  const id = f.sessionId("open-heal");
+  const tid = f.transcriptId(id);
   const row = (seq: number, type: string, data: object, extra: object = {}) => ({
     type,
     seq,
@@ -2189,138 +2190,103 @@ console.log("sessions ok");
     data,
     ...extra,
   });
-  const writeStopped = () =>
-    writeFileSync(
-      file,
-      Buffer.concat([
-        frame(JSON.stringify({ type: "session", version: 4, id: "d1", cwd: "/w" }) + "\n"),
-        frame(
-          [
-            row(
-              0,
-              "system/message",
-              {
-                turn: 1,
-                step: 1,
-                message: {
-                  id: "sys",
-                  role: "system",
-                  content: [],
-                  source: { kind: "system-prompt" },
-                },
-              },
-              { surfaceOp: "append" },
-            ),
-            row(1, "turn/start", { turn: 1 }),
-            row(2, "step/start", { turn: 1, step: 1 }),
-            row(
-              3,
-              "assistant/message",
-              {
-                turn: 1,
-                step: 1,
-                message: {
-                  role: "assistant",
-                  id: "m",
-                  source: { kind: "model", provider: "p", model: "m" },
-                  content: [{ type: "tool-call", id: "open", name: "bash" }],
-                },
-              },
-              { surfaceOp: "append", sourceEventSeqs: [] },
-            ),
-            row(4, "tool/call", {
-              turn: 1,
-              step: 1,
-              callId: "open",
-              name: "bash",
-              arguments: "{}",
-            }),
-            row(5, "step/end", { turn: 1, step: 1 }),
-            row(6, "turn/end", { turn: 1, reason: "aborted" }),
-          ]
-            .map((r) => JSON.stringify(r))
-            .join("\n") + "\n",
-        ),
-      ]),
-    );
-  const run = async (refusal: string | undefined, withHeal = true) => {
-    const attached: string[] = [];
-    let opens = 0;
-    const persistence = {
-      list: async () => [{ header: { id: "d1", cwd: "/w" } }],
-      create: async () => {
-        throw new Error("not expected");
+  const stopped = () => [
+    row(
+      0,
+      "system/message",
+      {
+        turn: 1,
+        step: 1,
+        message: { id: "sys", role: "system", content: [], source: { kind: "system-prompt" } },
       },
-      open: async () => {
-        opens++;
-        // The first open refuses as told; after a heal the rewritten log loads.
-        if (refusal !== undefined && opens === 1) throw new Error(refusal);
-        return { read: async () => ({ events: [] }), close: async () => {} };
+      { surfaceOp: "append" },
+    ),
+    row(1, "turn/start", { turn: 1 }),
+    row(2, "step/start", { turn: 1, step: 1 }),
+    row(
+      3,
+      "assistant/message",
+      {
+        turn: 1,
+        step: 1,
+        message: {
+          role: "assistant",
+          id: "m",
+          source: { kind: "model", provider: "p", model: "m" },
+          content: [{ type: "tool-call", id: "open", name: "bash" }],
+        },
       },
-      locate: () => ({ kind: "jsonl", path: file }),
-    };
-    // SAFETY: partial fakes; the function reads only these members
-    const ctx = { sessions: { get: () => undefined }, sessionPersistence: persistence } as any;
-    const ws = {
-      id: "w1",
-      path: "/w",
-      title: "w",
-      sessionIds: [],
-      attachSession: async (sid: string) => void attached.push(sid),
-    };
-    const registry = {
-      archivedSessionIds: [],
-      resolveByPath: async () => ws,
-      create: async () => ws,
-      enqueueOperation: <T>(op: () => Promise<T>) => op(),
-      requireState: () => ({ archivedSessionIds: [] }),
-      setState: async () => {},
-    } as any;
-    const heal = withHeal
-      ? {
-          persistence,
-          catalog: async () => ({
-            currentVersion: 4,
-            createRestore: () => ({ decodeRow() {}, finish() {} }),
-          }),
-          stateDir: dir,
-          log() {},
-        }
-      : undefined;
-    const out = await openTranscriptOnce(ctx, [dir], "/w", "d1", (x) => x, registry, heal);
-    return { out, attached, opens };
+      { surfaceOp: "append", sourceEventSeqs: [] },
+    ),
+    row(4, "tool/call", { turn: 1, step: 1, callId: "open", name: "bash", arguments: "{}" }),
+    row(5, "step/end", { turn: 1, step: 1 }),
+    row(6, "turn/end", { turn: 1, reason: "aborted" }),
+  ];
+  /** dsh 0.1.7's rule for an open call, read against the rows on every open. */
+  const unresolved = (rows: Row[]) => {
+    const open = new Set<string>();
+    for (const r of rows) {
+      if (r.type === "tool/call" && typeof r.data?.callId === "string") open.add(r.data.callId);
+      if (r.type === "tool/result" && typeof r.data?.message?.toolCallId === "string")
+        open.delete(r.data.message.toolCallId);
+      if (r.type === "step/end" && open.size > 0) return "step/end leaves unresolved tool call";
+    }
+    return undefined;
   };
-  writeStopped();
-  let r = await run(undefined);
-  assert.deepEqual([r.out.existed, r.out.healed, r.attached, r.opens], [true, false, ["d1"], 1]);
-  r = await run("step/end leaves unresolved tool call open");
-  assert.deepEqual([r.out.existed, r.out.healed, r.attached], [true, true, ["d1"]]);
-  assert.equal(r.opens, 2, "the refused open, then the proof after the heal");
-  writeStopped();
+  const run = async (withHeal = true) => {
+    const { registry, attached } = f.registry(cwd);
+    const before = f.calls.length;
+    // SAFETY: partial fakes; the function reads only these members
+    const out = await openTranscriptOnce(
+      f.ctx() as any,
+      [f.projectDir(cwd)],
+      cwd,
+      tid,
+      f.transcriptId,
+      registry as any,
+      withHeal ? f.heal(f.root) : undefined,
+    );
+    return {
+      out,
+      attached,
+      opens: f.calls.slice(before).filter((x) => x.startsWith("open:")).length,
+    };
+  };
+  f.writeLog(id, cwd, stopped());
+  let r = await run();
+  assert.deepEqual([r.out.existed, r.out.healed, r.attached, r.opens], [true, false, [id], 1]);
+  f.refuse(id, unresolved);
+  r = await run();
+  assert.deepEqual([r.out.existed, r.out.healed, r.attached], [true, true, [id]]);
+  assert.equal(
+    f.readLog(id, cwd).rows.some((e) => e.type === "tool/result"),
+    true,
+    "the heal closed the call",
+  );
+  f.refuse(id, "V3 catalog migration requires explicit historical child facts");
   await assert.rejects(
-    run("V3 catalog migration requires explicit historical child facts"),
+    run(),
     /dsh refuses this session's stored log: V3 catalog migration/,
     "an unknown refusal is the route's error",
   );
-  r = await run("step/end leaves unresolved tool call open", false);
-  assert.deepEqual(
-    [r.out.existed, r.attached, r.opens],
-    [true, ["d1"], 0],
-    "no heal host: no probe",
-  );
+  r = await run(false);
+  assert.deepEqual([r.out.existed, r.attached, r.opens], [true, [id], 0], "no heal host: no probe");
+  f.refuse(id, undefined);
   console.log("open-heal ok");
 }
 
-// The delta fold on open: a stored two-turn log and a five-turn transcript gain three turns
-// through dsh's write handle, seqs from the cursor and turns from the last stored one; a log
-// owned elsewhere, a repeated prompt text and an open tail turn each leave the log alone.
+// The delta fold on open, against the dsh stand-in: a stored two-turn log and a five-turn
+// transcript gain three turns through dsh's write handle, seqs from the cursor and turns from the
+// last stored one; a log owned elsewhere, a repeated prompt text, an open tail turn, a prompt the
+// adapter sent with context appended and the CLI's interrupt echo each leave the log alone.
 {
+  const { fakeDsh } = await import("./test-dsh.js");
   const { toSessionEvents, foldTranscript } = await import("./transcript.js");
-  const { mkdirSync, writeFileSync } = await import("node:fs");
   const { STATE_DIR } = await import("./state.js");
-  const dir = join(STATE_DIR, "fold-delta");
-  mkdirSync(dir, { recursive: true });
-  const cwd = "/w";
+  const f = fakeDsh(join(STATE_DIR, "fold-delta"));
+  const cwd = join(f.root, "work");
+  const id = f.sessionId("fold");
+  const tid = f.transcriptId(id);
   /** A transcript of `n` completed turns, prompt i reading `prompt <i>` (or `texts[i]`). */
   const transcript = (n: number, texts: string[] = []) => {
     const rows: object[] = [];
@@ -2347,240 +2313,99 @@ console.log("sessions ok");
     }
     return rows;
   };
-  const write = (name: string, rows: object[]) =>
-    writeFileSync(join(dir, `${name}.jsonl`), rows.map((r) => JSON.stringify(r)).join("\n") + "\n");
-  // The stored log the fold backs up before appending; its bytes do not matter to the fakes.
-  writeFileSync(join(dir, "d1.zstd"), "stored");
-  const run = async (
-    stored: object[],
-    opts: { owned?: boolean; transcriptRows?: object[]; openTail?: boolean } = {},
-  ) => {
-    write("t1", opts.transcriptRows ?? transcript(5));
-    const appended: Array<{ type: string; seq: number; data: Record<string, unknown> }> = [];
-    let flushed = 0;
-    const storedEvents = opts.openTail
-      ? stored.filter(
-          (e) =>
-            (e as { type: string }).type !== "turn/end" ||
-            (e as { data: { turn: number } }).data.turn !== 2,
-        )
-      : stored;
-    const persistence = {
-      list: async () => [{ header: { id: "d1", cwd } }],
-      create: async () => {
-        throw new Error("not expected");
-      },
-      open: async (_id: string, access: string) => {
-        if (access === "write" && opts.owned) {
-          const e = new Error("owned");
-          e.name = "SessionAlreadyOwnedError";
-          throw e;
-        }
-        return {
-          header: { id: "d1", cwd, version: 4 },
-          read: async () => ({ events: storedEvents }),
-          append: async (events: typeof appended) => void appended.push(...events),
-          flush: async () => void flushed++,
-          close: async () => {},
-        };
-      },
-      locate: () => ({ kind: "jsonl", path: join(dir, "d1.zstd") }),
-    };
-    // SAFETY: partial fakes; the function reads only these members
-    const ctx = { sessions: { get: () => undefined }, sessionPersistence: persistence } as any;
-    const ws = { id: "w1", path: cwd, title: "w", sessionIds: [], attachSession: async () => {} };
-    const registry = {
-      archivedSessionIds: [],
-      resolveByPath: async () => ws,
-      create: async () => ws,
-      enqueueOperation: <T>(op: () => Promise<T>) => op(),
-      requireState: () => ({ archivedSessionIds: [] }),
-      setState: async () => {},
-    } as any;
-    // SAFETY: partial fake; the fold reads the members it names
-    const heal = {
-      persistence,
-      catalog: async () => ({
-        currentVersion: 4,
-        createRestore: () => ({ decodeRow() {}, finish() {} }),
-      }),
-      stateDir: dir,
-      log() {},
-    } as any;
-    const out = await openTranscriptOnce(ctx, [dir], cwd, "t1", () => "t1", registry, heal);
-    return { out, appended, flushed };
-  };
-  // The stored log: the seed of the first two turns of the same transcript.
-  write("seed", transcript(2));
-  const seeded = foldTranscript(
-    transcript(2)
-      .map((r) => JSON.stringify(r))
-      .join("\n") + "\n",
+  const stored = toSessionEvents(
+    foldTranscript(
+      transcript(2)
+        .map((r) => JSON.stringify(r))
+        .join("\n") + "\n",
+    ),
+    4,
   );
-  const stored = toSessionEvents(seeded, 4);
-  let r = await run(stored);
+  const run = async (
+    transcriptRows: object[],
+    opts: { owned?: boolean; openTail?: boolean } = {},
+  ) => {
+    f.writeLog(
+      id,
+      cwd,
+      opts.openTail ? stored.filter((e) => !(e.type === "turn/end" && e.data.turn === 2)) : stored,
+    );
+    f.writeTranscript(tid, cwd, transcriptRows);
+    f.own(id, opts.owned === true);
+    f.appended.length = 0;
+    const { registry } = f.registry(cwd);
+    // SAFETY: partial fakes; the function reads only these members
+    const out = await openTranscriptOnce(
+      f.ctx() as any,
+      [f.projectDir(cwd)],
+      cwd,
+      tid,
+      f.transcriptId,
+      registry as any,
+      f.heal(f.root),
+    );
+    return { out, appended: [...f.appended] };
+  };
+  let r = await run(transcript(5));
   assert.equal(r.out.turnsAdded, 3, "three transcript turns were missing");
   assert.equal(r.appended[0]?.seq, stored.length, "seqs continue from the stored length");
-  const firstTurn = r.appended.find((e) => e.type === "turn/start");
-  assert.equal(firstTurn?.data.turn, 3, "turns count on from the last stored one");
+  assert.equal(
+    r.appended.find((e) => e.type === "turn/start")?.data?.turn,
+    3,
+    "turns count on from the last stored one",
+  );
   assert.equal(
     r.appended.some((e) => e.type === "system/message"),
     false,
     "no second head",
   );
-  assert.equal(r.flushed, 1);
-  r = await run(stored, { owned: true });
+  assert.equal(
+    f.readLog(id, cwd).rows.length,
+    stored.length + r.appended.length,
+    "the log holds the stored rows plus the fold",
+  );
+  r = await run(transcript(5), { owned: true });
   assert.deepEqual([r.out.turnsAdded, r.appended.length], [0, 0], "owned elsewhere: untouched");
-  r = await run(stored, {
-    transcriptRows: transcript(5, ["prompt 1", "prompt 2", "prompt 2", "prompt 4", "prompt 5"]),
-  });
+  r = await run(transcript(5, ["prompt 1", "prompt 2", "prompt 2", "prompt 4", "prompt 5"]));
   assert.equal(
     r.out.turnsAdded,
     2,
     "a repeated prompt text reads as stored: the documented wrong case",
   );
-  r = await run(stored, { openTail: true });
+  r = await run(transcript(5), { openTail: true });
   assert.deepEqual([r.out.turnsAdded, r.appended.length], [0, 0], "an open tail turn: untouched");
-  // The two shapes a real reopen showed on 2026-09-23: a prompt the adapter sent with dsh's
-  // context appended after a blank line, and the CLI's own interrupt echo. Neither is new.
-  r = await run(stored, {
-    transcriptRows: transcript(4, [
+  r = await run(
+    transcript(4, [
       "prompt 1",
       "prompt 2\n\nCurrent runtime context. This snapshot supersedes earlier snapshots.",
       "[Request interrupted by user]",
       "prompt 4",
     ]),
-  });
+  );
   assert.equal(r.out.turnsAdded, 1, "only the genuinely new prompt folds");
   console.log("fold-delta ok");
 }
 
-// POST /reseed: the person's click on a refused log. The log is moved to .bak, the record says
-// reseeded, and the session is seeded again from its transcript through create and append; no
-// transcript answers 409 with the log untouched; no record answers 404.
+// POST /reseed: the person's click on a refused log, driven against the dsh stand-in. The log is
+// moved to .bak, the record says reseeded, and the session is seeded again from its transcript
+// through create and append; no transcript answers 409 with the log untouched; no record answers
+// 404; a seed that fails puts the log back and leaves the click retryable; the reply names the
+// transcript id the tab's open helper needs.
 {
-  const { frame } = await import("./session-repair.js");
-  const { existsSync, mkdirSync, readdirSync, writeFileSync } = await import("node:fs");
+  const { fakeDsh } = await import("./test-dsh.js");
   const { STATE_DIR, recordRepair, loadSessionRepairs } = await import("./state.js");
-  const { projectDirName } = await import("./adapter.js");
-  const root = join(STATE_DIR, "reseed-route");
-  const cwd = join(root, "work");
-  const projects = join(root, "projects");
-  const logDir = join(root, "logs");
-  mkdirSync(join(projects, projectDirName(cwd)), { recursive: true });
-  mkdirSync(logDir, { recursive: true });
-  const logPath = join(logDir, "session.v4.jsonl.zstd");
-  const writeLog = () =>
-    writeFileSync(
-      logPath,
-      Buffer.concat([
-        frame(
-          JSON.stringify({
-            type: "session",
-            version: 4,
-            id: "session-11111111-1111-4111-8111-111111111111",
-            cwd,
-          }) + "\n",
-        ),
-        frame(""),
-      ]),
-    );
-  const calls: string[] = [];
-  let createFails = false;
-  let handler: ((req: unknown, res: unknown) => void) | undefined;
-  // SAFETY: partial fakes; the routes read only these members
-  const ctx = {
-    inject: (_deps: string[], cb: (host: unknown) => void) => {
-      cb({
-        webServer: {
-          register: (r: { handler: (req: unknown, res: unknown) => void }) => {
-            handler = r.handler;
-            return () => {};
-          },
-        },
-        connection: { requestRejection: () => undefined },
-        sessions: { get: () => undefined },
-        // The routes register their handler inside the host's effect.
-        effect: (fn: () => void) => fn(),
-        sessionPersistence: {
-          list: async () => [
-            { header: { id: "session-11111111-1111-4111-8111-111111111111", cwd } },
-          ],
-          create: async () => {
-            calls.push("create");
-            if (createFails) throw new Error("disk full");
-            if (existsSync(logPath)) {
-              const e = new Error("exists");
-              e.name = "SessionAlreadyExistsError";
-              throw e;
-            }
-            return {
-              append: async () => void calls.push("append"),
-              flush: async () => void calls.push("flush"),
-              close: async () => void calls.push("close"),
-            };
-          },
-          open: async () => ({ read: async () => ({ events: [] }), close: async () => {} }),
-          locate: () => ({ kind: "jsonl", path: logPath }),
-        },
-      });
-    },
-    on() {},
-    effect: (fn: () => void) => fn(),
-  } as any;
-  const ws = { id: "w1", path: cwd, title: "w", sessionIds: [], attachSession: async () => {} };
-  registerSessionRoutes(ctx, {
-    log: () => {},
-    projectDir: () => [join(projects, projectDirName(cwd))],
-    projectsDir: [projects],
-    startedIds: async () => [],
-    // A dsh-started session keeps its transcript under a derived id, as the plugin does.
-    claudeIdOf: (id: string) => `t-${id}`,
-    configDir: join(root, "claude"),
-    boxesPath: join(root, "boxes.json"),
-    importedDir: join(root, "imported"),
-    settingsPath: join(root, "claude", "settings.json"),
-    workspaceRegistry: () =>
-      ({
-        archivedSessionIds: [],
-        resolveByPath: async () => ws,
-        create: async () => ws,
-        enqueueOperation: <T>(op: () => Promise<T>) => op(),
-        requireState: () => ({ archivedSessionIds: [] }),
-        setState: async () => {},
-      }) as any,
-  } as any);
-  assert.ok(handler);
-  const respond = async (method: string, url: string, body?: string) => {
-    const chunks: Buffer[] = [];
-    let status = 0;
-    // SAFETY: partial fakes for tests
-    const res = {
-      writeHead: (s: number) => void (status = s),
-      end: (b: Buffer | string) => void chunks.push(typeof b === "string" ? Buffer.from(b) : b),
-    };
-    const req = {
-      method,
-      url,
-      on: (ev: string, cb: (c?: Buffer) => void) => {
-        if (ev === "data" && body !== undefined) cb(Buffer.from(body));
-        if (ev === "end") cb();
-      },
-      destroy: () => {},
-    } as any;
-    await handler!(req, res);
-    return { status, body: JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}") };
-  };
-  // No record yet: 404.
-  let r = await respond(
-    "POST",
-    "/dsh-oh-my-claude/reseed",
-    JSON.stringify({ id: "session-11111111-1111-4111-8111-111111111111" }),
-  );
-  assert.equal(r.status, 404);
-  // A record but no transcript: 409, log untouched.
-  writeLog();
-  await recordRepair(STATE_DIR, "session-11111111-1111-4111-8111-111111111111", {
+  const { existsSync, readdirSync } = await import("node:fs");
+  const f = fakeDsh(join(STATE_DIR, "reseed-route"));
+  const cwd = join(f.root, "work");
+  const id = f.sessionId("reseed");
+  const logPath = f.logPath(id, cwd);
+  const row = (seq: number, type: string, data: object) => ({ type, seq, time: seq, data });
+  f.writeLog(id, cwd, [row(0, "turn/start", { turn: 1 }), row(1, "turn/end", { turn: 1 })]);
+  const { respond } = f.routes();
+  const reseed = () => respond("POST", "/dsh-oh-my-claude/reseed", JSON.stringify({ id }));
+  let r = await reseed();
+  assert.equal(r.status, 404, "no record yet");
+  await recordRepair(STATE_DIR, id, {
     path: logPath,
     mtimeMs: 1,
     size: 1,
@@ -2588,79 +2413,56 @@ console.log("sessions ok");
     reason: "x",
     at: 5,
   });
-  r = await respond(
-    "POST",
-    "/dsh-oh-my-claude/reseed",
-    JSON.stringify({ id: "session-11111111-1111-4111-8111-111111111111" }),
-  );
-  assert.equal(r.status, 409);
-  assert.match(r.body.error, /nothing to reseed from/);
+  r = await reseed();
+  assert.equal(r.status, 409, "a record but no transcript");
+  assert.match(String(r.body.error), /nothing to reseed from/);
   assert.equal(existsSync(logPath), true, "no transcript: the log stays");
-  // A transcript with a completed turn: 200, the log moved to .bak, seeded again.
-  writeFileSync(
-    join(projects, projectDirName(cwd), "t-session-11111111-1111-4111-8111-111111111111.jsonl"),
-    [
-      {
-        type: "user",
-        uuid: "u1",
-        cwd,
-        timestamp: "2026-09-05T10:00:00Z",
-        message: { role: "user", content: [{ type: "text", text: "hello" }] },
-      },
-      {
-        type: "assistant",
-        uuid: "a1",
-        parentUuid: "u1",
-        cwd,
-        timestamp: "2026-09-05T10:00:01Z",
-        message: { id: "m1", role: "assistant", content: [{ type: "text", text: "hi" }] },
-      },
-    ]
-      .map((x) => JSON.stringify(x))
-      .join("\n") + "\n",
-  );
-  // The seed fails after the log was moved: the log comes back, the record stays unknown, and
-  // the click can be tried again.
-  createFails = true;
-  r = await respond(
-    "POST",
-    "/dsh-oh-my-claude/reseed",
-    JSON.stringify({ id: "session-11111111-1111-4111-8111-111111111111" }),
-  );
-  assert.equal(r.status, 500);
+  f.writeTranscript(f.transcriptId(id), cwd, [
+    {
+      type: "user",
+      uuid: "u1",
+      cwd,
+      timestamp: "2026-09-05T10:00:00Z",
+      message: { role: "user", content: [{ type: "text", text: "hello" }] },
+    },
+    {
+      type: "assistant",
+      uuid: "a1",
+      parentUuid: "u1",
+      cwd,
+      timestamp: "2026-09-05T10:00:01Z",
+      message: { id: "m1", role: "assistant", content: [{ type: "text", text: "hi" }] },
+    },
+  ]);
+  f.failCreate(true);
+  r = await reseed();
+  assert.equal(r.status, 500, "the seed failed");
   assert.equal(existsSync(logPath), true, "a failed seed puts the log back");
-  assert.equal(
-    (await loadSessionRepairs(STATE_DIR)).logs["session-11111111-1111-4111-8111-111111111111"]
-      ?.verdict,
-    "unknown",
-  );
-  createFails = false;
-  calls.length = 0;
-  r = await respond(
-    "POST",
-    "/dsh-oh-my-claude/reseed",
-    JSON.stringify({ id: "session-11111111-1111-4111-8111-111111111111" }),
-  );
+  assert.equal((await loadSessionRepairs(STATE_DIR)).logs[id]?.verdict, "unknown");
+  f.failCreate(false);
+  f.calls.length = 0;
+  r = await reseed();
   assert.equal(r.status, 200, JSON.stringify(r.body));
-  assert.equal(existsSync(logPath), false, "the refused log is out of the way");
-  assert.ok(
-    readdirSync(logDir).some((f) => f.startsWith("session.v4.jsonl.zstd.bak-")),
-    "and kept as .bak",
+  assert.equal(
+    readdirSync(join(logPath, "..")).some((x) => x.startsWith("session.v4.jsonl.zstd.bak-")),
+    true,
+    "the refused log is kept as .bak",
   );
   assert.deepEqual(
-    calls,
+    f.calls,
     ["create", "append", "flush", "close"],
     "seeded again through the write handle",
   );
   assert.equal(
-    r.body.transcriptId,
-    "t-session-11111111-1111-4111-8111-111111111111",
-    "the reply names the transcript for the tab's open",
+    f.readLog(id, cwd).rows.filter((e) => e.type === "user/message").length,
+    1,
+    "the transcript's one prompt is in the new log",
   );
   assert.equal(
-    (await loadSessionRepairs(STATE_DIR)).logs["session-11111111-1111-4111-8111-111111111111"]
-      ?.verdict,
-    "reseeded",
+    r.body.transcriptId,
+    f.transcriptId(id),
+    "the reply names the transcript for the tab's open",
   );
+  assert.equal((await loadSessionRepairs(STATE_DIR)).logs[id]?.verdict, "reseeded");
   console.log("reseed-route ok");
 }
