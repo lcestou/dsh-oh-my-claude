@@ -834,6 +834,10 @@ export const selectionContext = (quote: string): string =>
     .join("\n")}`;
 /** A side question is a full model turn, so it gets a longer wait than a control ping. */
 const ASIDE_TIMEOUT_MS = 120_000;
+/** Sessions whose last turn options are kept for `revive`; past this the oldest is forgotten. */
+const REVIVE_KEEP = 32;
+/** A side question on a session with no process and nothing to respawn one from. */
+const NO_PROCESS_FOR_ASIDE = "no live Claude process for this session; send a prompt first";
 /** Cap on how many sessions keep asides in memory; the oldest session drops when a new one arrives.
  *  The adapter has no per-session teardown hook, so this bounds the map the way the ring bounds a session. */
 const ASIDE_MAX_SESSIONS = 200;
@@ -2466,6 +2470,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   readonly asked = new Set<string>();
   /** `/btw` side questions and their answers, newest last, per session; kept in memory only. */
   readonly sideQuestions = new Map<string, AsideEntry[]>();
+  /** The options of each session's last turn, newest last, so `revive` can respawn a process the
+   *  idle eviction killed with the spec the next turn would use. Survives eviction on purpose;
+   *  lost on a dsh restart, where the keeper normally keeps the process alive anyway. */
+  readonly lastTurnOptions = new Map<string, SessionOptions>();
   /** Steers taken back for an edit, per session, keyed by the hold's first message id. */
   readonly heldSteers = new Map<string, Map<string, HeldSteer>>();
   /** Sessions whose last turn failed for want of a login, and the box that turn ran on. The composer
@@ -4291,6 +4299,27 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     return g[ADAPTER_CURRENT]?.get("claude-code") ?? this;
   }
 
+  /**
+   * The session's live process, spawned again with `--resume` from its last turn's options when
+   * the idle eviction (or a crash) took it, so a side question does not need a turn first. No
+   * prompt is written: the process waits on stdin like any settled one. Undefined when this
+   * mount never ran a turn for the session since dsh started, when a turn is running (the live
+   * process answers then), or when the spawn fails; the failure is logged.
+   */
+  async revive(sessionId: string): Promise<ClaudeProcess | undefined> {
+    const live = this.processFor(sessionId);
+    if (live?.alive) return live;
+    const options = this.lastTurnOptions.get(sessionId);
+    if (options === undefined) return undefined;
+    try {
+      const { proc } = await this.acquire(options);
+      return proc ?? undefined;
+    } catch (error) {
+      this.log("warn", `revive ${sessionId}: ${errorText(error)}`);
+      return undefined;
+    }
+  }
+
   /** The live process for a session, by exact registry key, else by the `:sessionId` suffix so a session survives across mounts; undefined when none is alive. */
   processFor(sessionId: string): ClaudeProcess | undefined {
     const own = this.processes.get(registryKey(this.providerId, sessionId));
@@ -4367,31 +4396,39 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // The ring lives on the main mount, but the control request has to be written and awaited by
     // the mount whose stream loop reads that process, else the reply resolves nobody's waiter.
     const owner = this.ownerFor(sessionId);
-    const proc = owner.processFor(sessionId);
-    if (!proc?.alive) {
-      entry.pending = false;
-      entry.error = "no live Claude process for this session; send a prompt first";
-      this.persistAsides(sessionId);
-      return;
-    }
     // The ring keeps `q`, which is what the bubble and the Asides tab show. `context` (a diff, today)
     // is sent to the CLI and dropped: a persisted ring is not the place for a copy of the tree.
     // A blank question only arrives with a selected passage: the bar's "explain this".
     const ask = q === "" ? SELECTION_EXPLAIN : q;
     const asked = context === undefined || context === "" ? ask : `${ask}\n\n${context}`;
-    void owner
-      .control(proc, { subtype: "side_question", question: asked, history: [] }, ASIDE_TIMEOUT_MS)
-      .then((reply) => {
-        entry.pending = false;
-        if (!reply.ok) {
-          entry.error = reply.error;
-        } else {
-          const text = asideAnswerText(reply.response);
-          if (text === undefined) entry.error = "Claude gave no answer to the side question";
-          else entry.answer = text;
-        }
-        this.persistAsides(sessionId);
-      });
+    const send = (proc: ClaudeProcess) =>
+      owner.control(
+        proc,
+        { subtype: "side_question", question: asked, history: [] },
+        ASIDE_TIMEOUT_MS,
+      );
+    // A live process is asked at once; an evicted one is respawned first, and the entry stays
+    // pending while `--resume` loads.
+    const live = owner.processFor(sessionId);
+    void (
+      live?.alive
+        ? send(live)
+        : owner
+            .revive(sessionId)
+            .then((proc) =>
+              proc?.alive ? send(proc) : { ok: false as const, error: NO_PROCESS_FOR_ASIDE },
+            )
+    ).then((reply) => {
+      entry.pending = false;
+      if (!reply.ok) {
+        entry.error = reply.error;
+      } else {
+        const text = asideAnswerText(reply.response);
+        if (text === undefined) entry.error = "Claude gave no answer to the side question";
+        else entry.answer = text;
+      }
+      this.persistAsides(sessionId);
+    });
   }
 
   /** Save (or clear, when the text is blank) an opening prompt for a session or for `default`. */
@@ -5001,6 +5038,13 @@ export class ClaudeCodeAdapter extends LlmAdapter {
 
   /** Reuse the session's process when its spec still matches; otherwise replace it. */
   async acquire(options: SessionOptions, forceFresh?: boolean) {
+    // The turn's abort signal is dropped: a revive long after this turn must not inherit its abort.
+    this.lastTurnOptions.delete(options.sessionId);
+    this.lastTurnOptions.set(options.sessionId, { ...options, signal: undefined });
+    if (this.lastTurnOptions.size > REVIVE_KEEP) {
+      const oldest = this.lastTurnOptions.keys().next().value;
+      if (oldest !== undefined) this.lastTurnOptions.delete(oldest);
+    }
     const prep = await this.prepare(options, { forceFresh });
     if (prep.input === null) return { prep, proc: null }; // text-mode CLI: fall back to one-shot semantics
     // The model this workspace last ran, so a new session there opens on it (the client applies
@@ -7388,16 +7432,12 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       ) => adapter.ownerFor(sessionId).releaseHold(sessionId, holdId, how),
       askAside: async (sessionId: string, question: string, seed) => {
         const owner = adapter.ownerFor(sessionId);
-        // Liveness is checked here, not left to askSideQuestion, which would write its own error into
-        // the ring: a recap nobody typed must not leave an error bubble on a session whose process
-        // died. The Ask control shows this text in its own note line instead. This narrows the window,
-        // it does not close it: askSideQuestion pushes its ring entry (src/adapter.ts:2848) before its
-        // own alive re-check, so a process that dies in between still leaves one error bubble.
-        if (!owner.processFor(sessionId)?.alive)
-          return {
-            ok: false,
-            error: "no live Claude process for this session; send a prompt first",
-          };
+        // Liveness is settled here, not left to askSideQuestion, which would write its own error into
+        // the ring: a recap nobody typed must not leave an error bubble on a session with no process
+        // and nothing to respawn one from. An evicted process is respawned now, so the diff below
+        // has a process to ask. The Ask control shows the error in its own note line instead.
+        if (!(await owner.revive(sessionId))?.alive)
+          return { ok: false, error: NO_PROCESS_FOR_ASIDE };
         let context: string | undefined;
         if (seed.withDiff) {
           const diff = await owner.workspaceDiff(sessionId);

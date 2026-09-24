@@ -3065,6 +3065,26 @@ console.log("ok");
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(a.sideQuestions.get("far")?.[0]?.answer, "a box", "the answer lands in the ring");
 
+  // An evicted session is respawned from its last turn's options before the side question goes out;
+  // one never run since dsh started has nothing to respawn from and is refused.
+  assert.equal(await a.revive("never-ran"), undefined, "no last turn: nothing to revive");
+  const revived: string[] = [];
+  const woke = fakeProc({ alive: true, write: (line: string) => (revived.push(line), true) });
+  // SAFETY: only sessionId is read by the stubbed acquire below; the rest of a turn's options is dsh's
+  a.lastTurnOptions.set("evicted", { sessionId: "evicted" } as never);
+  a.acquire = async () => ({ prep: {} as never, proc: woke });
+  a.askSideQuestion("evicted", "still there?");
+  await new Promise((r) => setTimeout(r, 0));
+  assert.match(revived[0] ?? "", /side_question/, "asked over the respawned process");
+  const revivedId = String(JSON.parse(revived[0] ?? "{}").request_id);
+  a.resolveControl({
+    type: "control_response",
+    request_id: revivedId,
+    response: { request_id: revivedId, subtype: "success", response: { response: "yes" } },
+  });
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(a.sideQuestions.get("evicted")?.[0]?.answer, "yes", "the revived answer lands");
+
   // The routes are registered once, by the main mount, but a session running on a box is read and
   // steered by that box's mount: its stream loop is the one that resolves a control reply, and its
   // state dir is the one holding the session's modes. Every session-scoped route dispatches through

@@ -977,6 +977,10 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     readonly asked: Set<string>;
     /** `/btw` side questions and their answers, newest last, per session; kept in memory only. */
     readonly sideQuestions: Map<string, AsideEntry[]>;
+    /** The options of each session's last turn, newest last, so `revive` can respawn a process the
+     *  idle eviction killed with the spec the next turn would use. Survives eviction on purpose;
+     *  lost on a dsh restart, where the keeper normally keeps the process alive anyway. */
+    readonly lastTurnOptions: Map<string, SessionOptions>;
     /** Steers taken back for an edit, per session, keyed by the hold's first message id. */
     readonly heldSteers: Map<string, Map<string, HeldSteer>>;
     /** Sessions whose last turn failed for want of a login, and the box that turn ran on. The composer
@@ -1454,6 +1458,14 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      */
     /** The instance whose aside ring the route and the bubble read: the main mount, else this one. */
     asideOwner(): ClaudeCodeAdapter;
+    /**
+     * The session's live process, spawned again with `--resume` from its last turn's options when
+     * the idle eviction (or a crash) took it, so a side question does not need a turn first. No
+     * prompt is written: the process waits on stdin like any settled one. Undefined when this
+     * mount never ran a turn for the session since dsh started, when a turn is running (the live
+     * process answers then), or when the spawn fails; the failure is logged.
+     */
+    revive(sessionId: string): Promise<ClaudeProcess | undefined>;
     /** The live process for a session, by exact registry key, else by the `:sessionId` suffix so a session survives across mounts; undefined when none is alive. */
     processFor(sessionId: string): ClaudeProcess | undefined;
     /**
