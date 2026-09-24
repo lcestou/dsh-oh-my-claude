@@ -57,3 +57,11 @@ export const quoteMarkdown = (text: string): string =>
 
 /** One-line preview of a passage for the bar's header: whitespace runs collapsed to one space. */
 export const previewOf = (text: string): string => text.replace(/\s+/g, " ").trim();
+
+/** The `POST /side-questions` body for a selection: the typed question trimmed (blank means explain)
+ *  and the passage. Never sets `withDiff` or `recap`, which belong to the Changes tab and the recap. */
+export const askBody = (session: string, question: string, quote: string) => ({
+  session,
+  question: question.trim(),
+  quote,
+});

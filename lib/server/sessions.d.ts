@@ -453,6 +453,7 @@ export interface SessionRouteOptions {
     askAside?: (sessionId: string, question: string, seed: {
         withDiff: boolean;
         path: string;
+        quote: string;
     }) => Promise<{
         ok: boolean;
         error?: string;
