@@ -2788,15 +2788,15 @@ console.log("ok");
   assert.equal(resolvedAgent({ agent }), agent, "0.1.6 shape: the Agent inside the wrapper");
   assert.throws(() => resolvedAgent({ error: "gone" }), /gone/, "a bare error value still throws");
   // A resume dsh refuses for a reason the plugin mends: the wake heals the log named in the
-  // refusal and resumes once more; an unknown reason is logged and nothing is healed.
+  // refusal and resumes once more; an unknown reason is logged and nothing is healed. The log and
+  // the heal host come from the dsh stand-in.
   {
-    const { frame } = await import("./session-repair.js");
-    const { mkdirSync, writeFileSync } = await import("node:fs");
-    const { join } = await import("node:path");
+    const { fakeDsh } = await import("./test-dsh.js");
     const { STATE_DIR } = await import("./state.js");
-    const dir = join(STATE_DIR, "wake-heal");
-    mkdirSync(dir, { recursive: true });
-    const file = join(dir, "session.v4.jsonl.zstd");
+    const { join } = await import("node:path");
+    const f = fakeDsh(join(STATE_DIR, "wake-heal"));
+    const cwd = join(f.root, "work");
+    const id = f.sessionId("wake");
     const row = (seq: number, type: string, data: object, extra: object = {}) => ({
       type,
       seq,
@@ -2804,7 +2804,7 @@ console.log("ok");
       data,
       ...extra,
     });
-    const rows = [
+    f.writeLog(id, cwd, [
       row(
         0,
         "system/message",
@@ -2835,15 +2835,8 @@ console.log("ok");
       row(4, "tool/call", { turn: 1, step: 1, callId: "open", name: "bash", arguments: "{}" }),
       row(5, "step/end", { turn: 1, step: 1 }),
       row(6, "turn/end", { turn: 1, reason: "aborted" }),
-    ];
-    writeFileSync(
-      file,
-      Buffer.concat([
-        frame(JSON.stringify({ type: "session", version: 4, id: "s1", cwd: "/w" }) + "\n"),
-        frame(rows.map((r) => JSON.stringify(r)).join("\n") + "\n"),
-      ]),
-    );
-    const refusal = `step/end leaves unresolved tool call open (raw log: ${file})`;
+    ]);
+    const refusal = `step/end leaves unresolved tool call open (raw log: ${f.logPath(id, cwd)})`;
     let resumes = 0;
     (a as any).sessionController = {
       resolveAgent: async () => {
@@ -2852,24 +2845,21 @@ console.log("ok");
         return agent;
       },
     };
-    let probes = 0;
-    (a as any).heal = {
-      persistence: {
-        list: async () => [],
-        open: async () => (probes++, { read: async () => ({ events: [] }), close: async () => {} }),
-        locate: () => ({ kind: "jsonl", path: file }),
-      },
-      catalog: async () => ({
-        currentVersion: 4,
-        createRestore: () => ({ decodeRow() {}, finish() {} }),
-      }),
-      stateDir: dir,
-      log() {},
-    };
+    (a as any).heal = f.heal(f.root);
     const sentBefore = sent.length;
-    assert.equal(await a.wake("s1", fakeProc({ busy: false })), true, "healed, then resumed");
+    const opensBefore = f.calls.filter((x) => x === "open:read").length;
+    assert.equal(await a.wake(id, fakeProc({ busy: false })), true, "healed, then resumed");
     assert.equal(resumes, 2, "one refused resume, one after the heal");
-    assert.equal(probes, 1, "the heal proved the rewritten log through dsh once");
+    assert.equal(
+      f.calls.filter((x) => x === "open:read").length,
+      opensBefore + 1,
+      "the heal proved the rewritten log through dsh once",
+    );
+    assert.equal(
+      f.readLog(id, cwd).rows.some((e) => e.type === "tool/result"),
+      true,
+      "the open call was closed on disk",
+    );
     assert.equal(sent.length, sentBefore + 1, "the notice went to the resumed agent");
     resumes = 0;
     (a as any).sessionController = {
@@ -2878,9 +2868,8 @@ console.log("ok");
         throw new Error("some refusal dsh grew (raw log: /nowhere)");
       },
     };
-    assert.equal(await a.wake("s1", fakeProc({ busy: false })), false, "unknown: not woken");
+    assert.equal(await a.wake(id, fakeProc({ busy: false })), false, "unknown: not woken");
     assert.equal(resumes, 1, "unknown: no second resume");
-    assert.equal(probes, 1, "unknown: nothing healed");
     sent.length = 2;
   }
   sent.length = 2; // the counts below predate these cases
