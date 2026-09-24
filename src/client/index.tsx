@@ -9180,14 +9180,14 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
 /** dsh's pick-time draft span (`TokenSpan`, dsh-client-ui-conversation `contract/draft-editor.d.ts`). */
 type TokenSpan = { readonly start: number; readonly end: number; readonly draftRev: number };
 /** The part of dsh's `InputActions` the selection bar calls. `insertText` returns false while a send
- *  is in flight or when the draft moved under the span; older dsh builds may lack both insert calls. */
+ *  is in flight or when the draft moved under the span. Both calls arrived with dsh 0.1.7, the same
+ *  release that put `data-chat-flow-kind` on chat nodes; an older dsh has neither, so no bar. */
 type ComposerInsert = {
-  setDraft: (text: string) => void;
   captureInsertion?: () => TokenSpan;
   insertText?: (text: string, span: TokenSpan) => boolean;
 };
-/** The slice of dsh's `InputState` the bar reads: the draft text and the send phase. */
-type InputSlice = { draft: string; phase?: "plain" | "adjudicating" | "claimed" | "submitting" };
+/** The slice of dsh's `InputState` the bar reads: the send phase. */
+type InputSlice = { phase?: "plain" | "adjudicating" | "claimed" | "submitting" };
 
 /** Off-screen but read by screen readers: the bar's one-shot announcement. */
 const visuallyHidden: CSSProperties = {
@@ -9200,7 +9200,7 @@ const visuallyHidden: CSSProperties = {
 };
 
 /** Slot wrapper for the selection bar: off on the box-wide switch, on anything but the active Claude
- *  session, and when dsh hands no composer actions (then Quote would have nowhere to write). */
+ *  session, and on a dsh older than 0.1.7, whose composer has no `insertText` for Quote to call. */
 function SelectionSlot({
   sessionId,
   ctx,
@@ -9212,19 +9212,21 @@ function SelectionSlot({
   inputActions?: ComposerInsert;
   useInput?: <T>(select: (state: InputSlice) => T) => T;
 }) {
-  const draft = useInput?.((state) => state.draft) ?? "";
   const sending =
     useInput?.((state) => state.phase === "adjudicating" || state.phase === "submitting") ?? false;
   const [off] = useHintFlag("selectionOff");
   const mine = useActiveClaude(ctx, sessionId ?? "");
-  if (off || !mine || sessionId === undefined || inputActions === undefined) return null;
+  const capture = inputActions?.captureInsertion;
+  const insert = inputActions?.insertText;
+  if (off || !mine || sessionId === undefined || capture === undefined || insert === undefined)
+    return null;
   return (
     <SelectionBar
       key={sessionId}
       sessionId={sessionId}
-      draft={draft}
       sending={sending}
-      input={inputActions}
+      capture={capture}
+      insert={insert}
     />
   );
 }
@@ -9245,17 +9247,16 @@ const composerOf = (anchor: Element | null): HTMLElement | null =>
  */
 function SelectionBar({
   sessionId,
-  draft,
   sending,
-  input,
+  capture,
+  insert,
 }: {
   sessionId: string;
-  draft: string;
   sending: boolean;
-  input: ComposerInsert;
+  capture: () => TokenSpan;
+  insert: (text: string, span: TokenSpan) => boolean;
 }) {
   useLocale();
-  ensurePanelStyle(); // the bar shares the panel's hover and focus rules, as the aside dock does
   const [picked, setPicked] = useState<{ text: string; trimmed: boolean } | null>(null);
   const [question, setQuestion] = useState("");
   const [asking, setAsking] = useState(false);
@@ -9326,11 +9327,14 @@ function SelectionBar({
   useLayoutEffect(() => {
     if (shown === shownRef.current) return;
     shownRef.current = shown;
-    if (!shown) return;
+    if (!shown) {
+      setJustShown(false); // so the next appearance is announced again
+      return;
+    }
     setJustShown(true);
+    // Back to the bottom rather than up by the bar's height: the seat also grows by dsh's stack gap.
     const scroller = anchorRef.current?.closest("[data-conversation-scroll]");
-    if (nearBottomRef.current && scroller && barRef.current)
-      scroller.scrollTop += barRef.current.offsetHeight;
+    if (nearBottomRef.current && scroller) scroller.scrollTop = scroller.scrollHeight;
     const off = setTimeout(() => setJustShown(false), 1000);
     return () => clearTimeout(off);
   }, [shown]);
@@ -9344,29 +9348,17 @@ function SelectionBar({
   const quote = () => {
     if (picked === null) return;
     const block = quoteMarkdown(picked.text);
-    const box = composerOf(anchorRef.current);
-    if (input.captureInsertion !== undefined && input.insertText !== undefined) {
-      const s = input.captureInsertion();
-      // Collapsed to the end of whatever the composer had selected, so selected text is never replaced.
-      const at = { ...s, start: s.end };
-      if (!input.insertText(at.end > 0 ? `\n\n${block}` : block, at)) {
-        setNote(t("main.selection.quoteBusy"));
-        return;
-      }
-      // Lexical's commit already focused the editor with the caret after the quote.
-      if (box !== null && !box.contains(document.activeElement)) box.focus({ preventScroll: true });
-    } else {
-      input.setDraft(draft.trim() === "" ? block : `${draft.replace(/\s+$/, "")}\n\n${block}`);
-      if (box !== null) {
-        // A bare focus lands the caret at the start; Lexical adopts a DOM selection set inside it.
-        box.focus({ preventScroll: true });
-        const range = document.createRange();
-        range.selectNodeContents(box);
-        range.collapse(false);
-        document.getSelection()?.removeAllRanges();
-        document.getSelection()?.addRange(range);
-      }
+    const s = capture();
+    // Collapsed to the end of whatever the composer had selected, so selected text is never replaced.
+    const at = { ...s, start: s.end };
+    if (!insert(at.end > 0 ? `\n\n${block}` : block, at)) {
+      setNote(t("main.selection.quoteBusy"));
+      return;
     }
+    // Lexical's commit already focused the editor with the caret after the quote; a bare DOM focus
+    // would put the caret at the start, so it is only a fallback for an editor that kept no focus.
+    const box = composerOf(anchorRef.current);
+    if (box !== null && !box.contains(document.activeElement)) box.focus({ preventScroll: true });
     close();
   };
 
@@ -9451,7 +9443,7 @@ function SelectionBar({
               </span>
               {picked.trimmed ? (
                 <span style={{ color: T.faint, fontSize: 11, flex: "0 0 auto" }}>
-                  {t("main.selection.trimmed", { max: QUOTE_MAX.toLocaleString() })}
+                  {t("main.selection.trimmed", { max: String(QUOTE_MAX) })}
                 </span>
               ) : null}
               <button

@@ -792,14 +792,32 @@ type DshSlots = {
     // passes it so a section can dismiss the settings panel, e.g. after opening a restored session).
     // `inputActions` is the composer's own action face, handed to every entry of the session-scoped
     // composer slots (`conversation.input.dock` among them): `setDraft` writes the composer without
-    // sending, which is what a prompt starter needs.
+    // sending, which is what a prompt starter needs; `captureInsertion` and `insertText` (dsh 0.1.7
+    // on) insert at the caret without replacing the draft, which is what the selection bar's Quote needs.
     Component: (props: {
       sessionId?: string;
       close?: () => void;
-      inputActions?: { setDraft: (text: string) => void; submit?: () => void };
+      inputActions?: {
+        setDraft: (text: string) => void;
+        submit?: () => void;
+        captureInsertion?: () => {
+          readonly start: number;
+          readonly end: number;
+          readonly draftRev: number;
+        };
+        insertText?: (
+          text: string,
+          span: { readonly start: number; readonly end: number; readonly draftRev: number },
+        ) => boolean;
+      };
       // The composer's published state, read through dsh's snapshot-selector hook; `draft` is the
-      // text in the box right now.
-      useInput?: <T>(select: (state: { draft: string }) => T) => T;
+      // text in the box right now, `phase` whether a send holds the editor.
+      useInput?: <T>(
+        select: (state: {
+          draft: string;
+          phase?: "plain" | "adjudicating" | "claimed" | "submitting";
+        }) => T,
+      ) => T;
     }) => ReactNode,
   ) => () => void;
 };
