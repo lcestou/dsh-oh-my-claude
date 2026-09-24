@@ -989,7 +989,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     /** The live thinking budget this plugin last set per session (null = session default, 0 = off);
      *  memory only, since a respawn resets it and the CLI has no flag to carry it. */
     readonly thinkingBudgets: Map<string, number | null>;
-    /** Tool activity as the Tune switch set it; undefined = the config's `toolsInline`. Loaded from
+    /** Tool activity as the Settings switch set it; undefined = the config's `toolsInline`. Loaded from
      *  disk on construct, written through on every set, and read fresh at the start of each turn. */
     toolMode: ToolMode | undefined;
     cliModels: CliModel[];
@@ -1480,10 +1480,10 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     setStarter(key: string, text: string | undefined): void;
     /** Persist a session's aside ring to disk so an answer survives a restart, eviction or hot reload. */
     persistAsides(sessionId: string): void;
-    /** Inline tool text unless the Tune switch, or failing that the config, asks for rows. */
+    /** Inline tool text unless the Settings switch, or failing that the config, asks for rows. */
     toolsInline(): boolean;
     /**
-     * Whether rows are the default on this dsh, when neither the Tune switch nor the config says.
+     * Whether rows are the default on this dsh, when neither the Settings switch nor the config says.
      * True on 0.1.7 and later once the probe has passed: there the text streams live between dsh's
      * cards and the announced rows survive a reload, so the plugin looks like every other provider
      * in dsh. False before 0.1.7, where a step's text lands only when it settles, and false until
@@ -1491,7 +1491,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * dsh that starts refusing the shape locks the probe and this falls back to inline on its own.
      */
     private rowsByDefault;
-    /** What the Tune switch shows: the mode in force, and whether rows are open to it at all. */
+    /** What the Settings switch shows: the mode in force, and whether rows are open to it at all. */
     toolModeInfo(): Promise<ToolModeInfo>;
     /** Set the mode on every mount at once, so a session on a box's model follows the same switch. */
     setToolMode(mode: ToolMode): Promise<ToolModeInfo>;

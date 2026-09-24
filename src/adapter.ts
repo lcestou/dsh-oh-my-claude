@@ -407,7 +407,7 @@ export const Config = z.object({
   toolsInline: z
     .boolean()
     .description(
-      "Render tool calls as inline text (true) or as dsh's native tool rows (false). Unset: rows on dsh 0.1.7 and later, where the text streams live between the cards and the rows survive a reload; inline before that. The Tune switch overrides this per box.",
+      "Render tool calls as inline text (true) or as dsh's native tool rows (false). Unset: rows on dsh 0.1.7 and later, where the text streams live between the cards and the rows survive a reload; inline before that. The switch in Settings > Oh My Claude overrides this per box.",
     ),
   hookRows: z
     .boolean()
@@ -2478,7 +2478,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   /** The live thinking budget this plugin last set per session (null = session default, 0 = off);
    *  memory only, since a respawn resets it and the CLI has no flag to carry it. */
   readonly thinkingBudgets = new Map<string, number | null>();
-  /** Tool activity as the Tune switch set it; undefined = the config's `toolsInline`. Loaded from
+  /** Tool activity as the Settings switch set it; undefined = the config's `toolsInline`. Loaded from
    *  disk on construct, written through on every set, and read fresh at the start of each turn. */
   toolMode: ToolMode | undefined = undefined;
   cliModels: CliModel[] = [];
@@ -4407,7 +4407,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     if (ring) void saveAsides(this.stateDir, sessionId, ring);
   }
 
-  /** Inline tool text unless the Tune switch, or failing that the config, asks for rows. */
+  /** Inline tool text unless the Settings switch, or failing that the config, asks for rows. */
   toolsInline(): boolean {
     if (this.toolMode !== undefined) return this.toolMode === "inline";
     if (this.config.toolsInline !== undefined) return this.config.toolsInline;
@@ -4415,7 +4415,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   }
 
   /**
-   * Whether rows are the default on this dsh, when neither the Tune switch nor the config says.
+   * Whether rows are the default on this dsh, when neither the Settings switch nor the config says.
    * True on 0.1.7 and later once the probe has passed: there the text streams live between dsh's
    * cards and the announced rows survive a reload, so the plugin looks like every other provider
    * in dsh. False before 0.1.7, where a step's text lands only when it settles, and false until
@@ -4424,7 +4424,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    */
   private rowsByDefault = false;
 
-  /** What the Tune switch shows: the mode in force, and whether rows are open to it at all. */
+  /** What the Settings switch shows: the mode in force, and whether rows are open to it at all. */
   async toolModeInfo(): Promise<ToolModeInfo> {
     return { mode: this.toolsInline() ? "inline" : "rows", rows: await rowsSupported() };
   }
