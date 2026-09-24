@@ -1018,3 +1018,13 @@ assert.equal(
   "Why did the approval policy changed from x happen?",
   "the phrase mid-prompt is the person's own words",
 );
+assert.equal(
+  typedPrompt("Read src/recipes.ts. Current runtime context. Then do X."),
+  "Read src/recipes.ts. Current runtime context. Then do X.",
+  "the marker inside a sentence is not dsh's block",
+);
+assert.equal(
+  typedPrompt("Current runtime context.\nexplain it"),
+  "Current runtime context.\nexplain it",
+  "a prompt that starts with the words keeps them",
+);

@@ -5,7 +5,8 @@ import type { JsonValue } from "./dsh.js";
  * user message: an approval-policy notice ahead of the prompt when the access mode changed, and its
  * "Current runtime context." block after it. A Rewind row labelled with the raw text led with the
  * notice ("The approval policy changed from "never" to "ask" …") instead of the question asked.
- * Text without either part comes back trimmed and otherwise untouched.
+ * Text without either part comes back trimmed and otherwise untouched, and so does text that
+ * would be left empty.
  */
 export declare const typedPrompt: (text: string) => string;
 /**
