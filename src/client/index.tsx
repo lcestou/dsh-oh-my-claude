@@ -125,6 +125,14 @@ import {
   quoteMarkdown,
 } from "./selection.js";
 import {
+  CLOSING_VERBS,
+  ZH_CLOSING_VERBS,
+  closingVerb,
+  clockText,
+  isStopped,
+  tookDuration,
+} from "./closing.js";
+import {
   awaitingBody,
   markTitle,
   newlyAwaiting,
@@ -4019,7 +4027,7 @@ const ensureTurnStatusStyle = () => {
   // clearance, which leaves its pills 653px in a 717px column. dsh's two fill that; ours as a
   // third clips all three to an ellipsis by a few pixels. The pills are centred, so the padding
   // does no aligning; take it down to the row's rounded corners and the three fit.
-  styleEl.textContent = `${gated("row", '[role="status"][aria-live="polite"]:not([class*="visuallyHidden"])')},${gated("row", "[data-dsh-oh-my-claude-turn]", false)}{background-image:var(--omc-row-bg,linear-gradient(90deg,var(--omc-accent) 0%,var(--omc-accent) 40%,var(--omc-shimmer) 50%,var(--omc-accent) 60%,var(--omc-accent) 100%))}@keyframes omc-word{from{-webkit-text-fill-color:var(--omc-word-lo)}to{-webkit-text-fill-color:var(--omc-word-hi)}}[data-omc-turn-word]{animation:omc-word 1s ease-in-out 3s infinite alternate}@media (prefers-reduced-motion:reduce){[data-omc-turn-word]{animation:none}}[data-dsh-oh-my-claude-turn]>span[aria-hidden]{display:inline-block;width:1.3em;text-align:start;flex:none}[data-dsh-oh-my-claude-turn]{max-width:100%;min-width:0}[data-omc-turn-detail]{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}button[data-turn-process]:has([data-omc-turn-line])>span:not([data-omc-turn-line]){display:none}[data-omc-turn-line]{background-clip:text;-webkit-background-clip:text;color:transparent;-webkit-text-fill-color:transparent;background-size:200% 100%;animation:omc-verb-sheen 1.5s linear infinite;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-flex;align-items:center;gap:2px}@keyframes omc-verb-sheen{from{background-position:200% 0}to{background-position:-200% 0}}[data-omc-turn-line][data-omc-mode="responding"],[data-omc-turn-line][data-omc-mode="thinking"]{animation-duration:6s;animation-direction:reverse}[data-omc-turn-line][data-omc-mode="tool-use"]{--omc-row-bg:linear-gradient(90deg,var(--omc-accent) 0%,var(--omc-shimmer) 50%,var(--omc-accent) 100%);background-size:20000% 100%;animation:omc-verb-pulse 1s ease-in-out infinite alternate}@keyframes omc-verb-pulse{from{background-position:0% 0}to{background-position:50% 0}}@media (prefers-reduced-motion:reduce){[data-omc-turn-line],[data-omc-turn-line][data-omc-mode]{animation:none}}button[data-turn-process]:has([data-omc-turn-line]){min-width:0;max-width:100%}${gated("panel", "[data-omc-login-card] button:hover", false)},${gated("panel", "[data-omc-update-card] button:not(:disabled):hover", false)}{color:var(--omc-accent)!important;background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.1))!important}${gated("panel", "[data-omc-login-card] button:focus-visible", false)},${gated("panel", "[data-omc-update-card] button:focus-visible", false)}{color:var(--omc-accent)!important;border-color:var(--omc-accent)!important}${controlStatesCss("[data-omc-settings]")}${controlStatesCss('[role="dialog"][aria-label="Oh My Claude"]')}${/* !important: the buttons carry their border inline (`btn`), which beats any sheet rule. */ ""}${/* Hover is dsh's row look: the background tints and the text takes the accent; the border stays put. It used to go accent too, and in dark mode a faint hairline turning orange read as a border appearing under the pointer on every tab (owner, 2026-09-23). The accent border is the keyboard focus ring only. */ ""}${gated("panel", '[data-omc-settings] button:not([role="switch"]):not([aria-expanded]):not(:disabled):hover', false)},${gated("panel", '[role="dialog"][aria-label="Oh My Claude"] button:not([role="switch"]):not([aria-expanded]):not(:disabled):hover', false)}{color:var(--omc-accent)!important;background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.1))!important}${gated("panel", '[data-omc-settings] button:not([role="switch"]):not([aria-expanded]):focus-visible', false)},${gated("panel", '[role="dialog"][aria-label="Oh My Claude"] button:not([role="switch"]):not([aria-expanded]):focus-visible', false)}{color:var(--omc-accent)!important;border-color:var(--omc-accent)!important}[data-omc-card]:hover{border-color:var(--dsw-alias-label-dimmed,rgba(128,128,128,.5))}[data-omc-card]>button:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#3b82f6);outline-offset:-2px}[data-omc-card]>button:hover{background:none}@keyframes omc-sheen{from{background-position:200% 0}to{background-position:-200% 0}}[data-omc-skeleton]{border-radius:6px;background:linear-gradient(90deg,${T.border} 30%,${T.hover} 50%,${T.border} 70%);background-size:200% 100%;animation:omc-sheen 1.4s linear infinite}@keyframes omc-rise{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}@keyframes omc-drain{from{width:100%}to{width:0}}[data-omc-arrived]{animation:omc-rise .18s ease-out}@media (prefers-reduced-motion:reduce){[data-omc-skeleton],[data-omc-arrived]{animation:none}}${gated("prose", '[role="tablist"]>[role="tab"][aria-selected="true"]')}{color:var(--omc-accent)}${gated("prose", '[role="tablist"]>[role="tab"][aria-selected="true"]::after')}{background:var(--omc-accent)}${gated("prose", '[class*="_markdown"] blockquote')}{border-left-color:color-mix(in srgb,var(--omc-accent) 50.2%,transparent)}${gated("prose", '[class*="_markdown"] hr')}{background:color-mix(in srgb,var(--omc-accent) 34.9%,transparent)}${gated("prose", '[class*="_markdown"] a')}{color:var(--omc-accent);text-decoration-color:color-mix(in srgb,var(--omc-accent) 40%,transparent)}${gated("prose", '[class*="_markdown"] a:hover')}{color:var(--omc-shimmer);text-decoration-color:var(--omc-shimmer)}${gated("prose", '[class*="_markdown"] input[type="checkbox"]')}{accent-color:var(--omc-accent)}${/* The chips dsh draws in a sent bubble for a skill it knows (`/ic-logos`) and for a file mention: its business blue and its link blue. Selected by dsh's own `data-ref-chip` hook, which names the kind, not by the hashed class. */ ""}${gated("prose", "[data-ref-chip]")}{color:var(--omc-accent)}${gated("prose", "[data-ref-chip]:hover")},${gated("prose", "[data-ref-chip]:focus")}{color:var(--omc-shimmer);text-decoration-color:var(--omc-shimmer)}${gated("prose", "[data-ref-chip]:focus-visible")}{box-shadow:0 0 0 2px var(--omc-accent)}${gated("prose", "[data-workflow-run] button[data-member-status] [data-member-label]")}{color:var(--omc-accent)}${/* The icon tile on dsh's changed-files card is dsh's link blue; `data-changed-files` is dsh's own hook, and the class is matched by its module suffix since the prefix is generated per build. */ ""}${gated("prose", '[data-changed-files] [class*="_tile"]')}{background:var(--omc-accent)}body[data-omc-panel-open] [data-width-handle]{pointer-events:none}body[data-omc-panel-open] [class*="_toBottomSlot"],body:has([data-omc-cost-dialog]) [class*="_toBottomSlot"]{opacity:0;pointer-events:none;transition:opacity .1s}${/* dsh's Back-to-bottom button sits `--dsh-composer-height` above the page bottom, and that height is the composer stack's, our strip included; while the strip is mounted its height (published on body by the strip) comes back off, so the button stays where it was. dsh's module suffix, as the rule above. */ ""}body:has([data-omc-dock-status]) [class*="_toBottomSlot"]{bottom:calc(var(--dsh-composer-height,152px) + 16px - var(--omc-dock-height,0px) - var(--dsh-composer-stack-gap,6px))}${/* Held there, the button lands on the strip's row at its right end, so the strip's column leaves the button's footprint free while the button is drawn and the line's ellipsis takes the cut instead of a collision (owner, 2026-09-23). */ ""}body:has([class*="_toBottomSlot"] button) [data-omc-dock-status]>div{padding-right:44px}@keyframes omc-pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--omc-accent) 55%,transparent)}100%{box-shadow:0 0 0 12px transparent}}${gated("panel", 'button[aria-label="Oh My Claude"][data-omc-pulse]', false)}{animation:omc-pulse 1.1s ease-out 3}@media (prefers-reduced-motion:reduce){button[aria-label="Oh My Claude"][data-omc-pulse]{animation:none}}${gated("prose", "[data-produced-files-row] button")},${gated("prose", "[data-presented-files-row] button")}{color:var(--omc-accent)}${gated("prose", "[data-produced-files-row] button:hover")},${gated("prose", "[data-presented-files-row] button:hover")}{color:var(--omc-shimmer)}body[data-omc-claude] [data-composer-stats]{padding-left:8px;padding-right:8px}${gated("prose", '[class*="_optionLine"]>[class*="_badge"]')}{background:color-mix(in srgb,var(--omc-accent) 16%,transparent);color:var(--omc-accent)}[data-omc-cost-over]{color:var(--omc-accent)}${gated("row", 'svg[data-state="ongoing"]:not([role="treeitem"] *)')},${gated("row", '[role="treeitem"][data-omc-claude] svg[data-state="ongoing"]', false)}{--dsh-state-ongoing:var(--omc-accent);color:var(--omc-accent)}${RAINBOW_CSS}${COST_DIALOG_CSS}`;
+  styleEl.textContent = `${gated("row", '[role="status"][aria-live="polite"]:not([class*="visuallyHidden"])')},${gated("row", "[data-dsh-oh-my-claude-turn]", false)}{background-image:var(--omc-row-bg,linear-gradient(90deg,var(--omc-accent) 0%,var(--omc-accent) 40%,var(--omc-shimmer) 50%,var(--omc-accent) 60%,var(--omc-accent) 100%))}@keyframes omc-word{from{-webkit-text-fill-color:var(--omc-word-lo)}to{-webkit-text-fill-color:var(--omc-word-hi)}}[data-omc-turn-word]{animation:omc-word 1s ease-in-out 3s infinite alternate}@media (prefers-reduced-motion:reduce){[data-omc-turn-word]{animation:none}}[data-dsh-oh-my-claude-turn]>span[aria-hidden]{display:inline-block;width:1.3em;text-align:start;flex:none}[data-dsh-oh-my-claude-turn]{max-width:100%;min-width:0}[data-omc-turn-detail]{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}button[data-turn-process]:has([data-omc-turn-line])>span:not([data-omc-turn-line]){display:none}[data-omc-turn-closing]{display:none}${gated("row", "[data-omc-turn-closing]", false)}{display:inline}${gated("row", "button[data-turn-process]:has([data-omc-turn-closing])>span:not([data-omc-turn-closing])", false)}{display:none}[data-omc-turn-line]{background-clip:text;-webkit-background-clip:text;color:transparent;-webkit-text-fill-color:transparent;background-size:200% 100%;animation:omc-verb-sheen 1.5s linear infinite;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-flex;align-items:center;gap:2px}@keyframes omc-verb-sheen{from{background-position:200% 0}to{background-position:-200% 0}}[data-omc-turn-line][data-omc-mode="responding"],[data-omc-turn-line][data-omc-mode="thinking"]{animation-duration:6s;animation-direction:reverse}[data-omc-turn-line][data-omc-mode="tool-use"]{--omc-row-bg:linear-gradient(90deg,var(--omc-accent) 0%,var(--omc-shimmer) 50%,var(--omc-accent) 100%);background-size:20000% 100%;animation:omc-verb-pulse 1s ease-in-out infinite alternate}@keyframes omc-verb-pulse{from{background-position:0% 0}to{background-position:50% 0}}@media (prefers-reduced-motion:reduce){[data-omc-turn-line],[data-omc-turn-line][data-omc-mode]{animation:none}}button[data-turn-process]:has([data-omc-turn-line]){min-width:0;max-width:100%}${gated("panel", "[data-omc-login-card] button:hover", false)},${gated("panel", "[data-omc-update-card] button:not(:disabled):hover", false)}{color:var(--omc-accent)!important;background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.1))!important}${gated("panel", "[data-omc-login-card] button:focus-visible", false)},${gated("panel", "[data-omc-update-card] button:focus-visible", false)}{color:var(--omc-accent)!important;border-color:var(--omc-accent)!important}${controlStatesCss("[data-omc-settings]")}${controlStatesCss('[role="dialog"][aria-label="Oh My Claude"]')}${/* !important: the buttons carry their border inline (`btn`), which beats any sheet rule. */ ""}${/* Hover is dsh's row look: the background tints and the text takes the accent; the border stays put. It used to go accent too, and in dark mode a faint hairline turning orange read as a border appearing under the pointer on every tab (owner, 2026-09-23). The accent border is the keyboard focus ring only. */ ""}${gated("panel", '[data-omc-settings] button:not([role="switch"]):not([aria-expanded]):not(:disabled):hover', false)},${gated("panel", '[role="dialog"][aria-label="Oh My Claude"] button:not([role="switch"]):not([aria-expanded]):not(:disabled):hover', false)}{color:var(--omc-accent)!important;background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.1))!important}${gated("panel", '[data-omc-settings] button:not([role="switch"]):not([aria-expanded]):focus-visible', false)},${gated("panel", '[role="dialog"][aria-label="Oh My Claude"] button:not([role="switch"]):not([aria-expanded]):focus-visible', false)}{color:var(--omc-accent)!important;border-color:var(--omc-accent)!important}[data-omc-card]:hover{border-color:var(--dsw-alias-label-dimmed,rgba(128,128,128,.5))}[data-omc-card]>button:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#3b82f6);outline-offset:-2px}[data-omc-card]>button:hover{background:none}@keyframes omc-sheen{from{background-position:200% 0}to{background-position:-200% 0}}[data-omc-skeleton]{border-radius:6px;background:linear-gradient(90deg,${T.border} 30%,${T.hover} 50%,${T.border} 70%);background-size:200% 100%;animation:omc-sheen 1.4s linear infinite}@keyframes omc-rise{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}@keyframes omc-drain{from{width:100%}to{width:0}}[data-omc-arrived]{animation:omc-rise .18s ease-out}@media (prefers-reduced-motion:reduce){[data-omc-skeleton],[data-omc-arrived]{animation:none}}${gated("prose", '[role="tablist"]>[role="tab"][aria-selected="true"]')}{color:var(--omc-accent)}${gated("prose", '[role="tablist"]>[role="tab"][aria-selected="true"]::after')}{background:var(--omc-accent)}${gated("prose", '[class*="_markdown"] blockquote')}{border-left-color:color-mix(in srgb,var(--omc-accent) 50.2%,transparent)}${gated("prose", '[class*="_markdown"] hr')}{background:color-mix(in srgb,var(--omc-accent) 34.9%,transparent)}${gated("prose", '[class*="_markdown"] a')}{color:var(--omc-accent);text-decoration-color:color-mix(in srgb,var(--omc-accent) 40%,transparent)}${gated("prose", '[class*="_markdown"] a:hover')}{color:var(--omc-shimmer);text-decoration-color:var(--omc-shimmer)}${gated("prose", '[class*="_markdown"] input[type="checkbox"]')}{accent-color:var(--omc-accent)}${/* The chips dsh draws in a sent bubble for a skill it knows (`/ic-logos`) and for a file mention: its business blue and its link blue. Selected by dsh's own `data-ref-chip` hook, which names the kind, not by the hashed class. */ ""}${gated("prose", "[data-ref-chip]")}{color:var(--omc-accent)}${gated("prose", "[data-ref-chip]:hover")},${gated("prose", "[data-ref-chip]:focus")}{color:var(--omc-shimmer);text-decoration-color:var(--omc-shimmer)}${gated("prose", "[data-ref-chip]:focus-visible")}{box-shadow:0 0 0 2px var(--omc-accent)}${gated("prose", "[data-workflow-run] button[data-member-status] [data-member-label]")}{color:var(--omc-accent)}${/* The icon tile on dsh's changed-files card is dsh's link blue; `data-changed-files` is dsh's own hook, and the class is matched by its module suffix since the prefix is generated per build. */ ""}${gated("prose", '[data-changed-files] [class*="_tile"]')}{background:var(--omc-accent)}body[data-omc-panel-open] [data-width-handle]{pointer-events:none}body[data-omc-panel-open] [class*="_toBottomSlot"],body:has([data-omc-cost-dialog]) [class*="_toBottomSlot"]{opacity:0;pointer-events:none;transition:opacity .1s}${/* dsh's Back-to-bottom button sits `--dsh-composer-height` above the page bottom, and that height is the composer stack's, our strip included; while the strip is mounted its height (published on body by the strip) comes back off, so the button stays where it was. dsh's module suffix, as the rule above. */ ""}body:has([data-omc-dock-status]) [class*="_toBottomSlot"]{bottom:calc(var(--dsh-composer-height,152px) + 16px - var(--omc-dock-height,0px) - var(--dsh-composer-stack-gap,6px))}${/* Held there, the button lands on the strip's row at its right end, so the strip's column leaves the button's footprint free while the button is drawn and the line's ellipsis takes the cut instead of a collision (owner, 2026-09-23). */ ""}body:has([class*="_toBottomSlot"] button) [data-omc-dock-status]>div{padding-right:44px}@keyframes omc-pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--omc-accent) 55%,transparent)}100%{box-shadow:0 0 0 12px transparent}}${gated("panel", 'button[aria-label="Oh My Claude"][data-omc-pulse]', false)}{animation:omc-pulse 1.1s ease-out 3}@media (prefers-reduced-motion:reduce){button[aria-label="Oh My Claude"][data-omc-pulse]{animation:none}}${gated("prose", "[data-produced-files-row] button")},${gated("prose", "[data-presented-files-row] button")}{color:var(--omc-accent)}${gated("prose", "[data-produced-files-row] button:hover")},${gated("prose", "[data-presented-files-row] button:hover")}{color:var(--omc-shimmer)}body[data-omc-claude] [data-composer-stats]{padding-left:8px;padding-right:8px}${gated("prose", '[class*="_optionLine"]>[class*="_badge"]')}{background:color-mix(in srgb,var(--omc-accent) 16%,transparent);color:var(--omc-accent)}[data-omc-cost-over]{color:var(--omc-accent)}${gated("row", 'svg[data-state="ongoing"]:not([role="treeitem"] *)')},${gated("row", '[role="treeitem"][data-omc-claude] svg[data-state="ongoing"]', false)}{--dsh-state-ongoing:var(--omc-accent);color:var(--omc-accent)}${RAINBOW_CSS}${COST_DIALOG_CSS}`;
   document.head.appendChild(styleEl);
 };
 
@@ -5026,6 +5034,89 @@ function watchEventStream(ctx: ClientCtx) {
   whenContextGone(() => clearInterval(beat));
 }
 
+/** On a finished turn's process-group button once it carries the closing line with its time, so the
+ *  per-frame pass skips it; one still waiting for its tail's clock stays unmarked and is retried. */
+const CLOSED_MARK = "data-omc-turn-closed";
+/** The closing line the plugin writes into a finished turn's header. */
+const CLOSING_MARK = "data-omc-turn-closing";
+/** The type a closing line copies off dsh's label, so it reads at the size of the text it replaces. */
+type Face = { fontSize: string; fontWeight: string; fontFamily: string; lineHeight: string };
+
+/**
+ * Writes the CLI's closing line (`✻ Crunched for 38s · done 3:33 AM`) into a finished turn's
+ * process-group button, over dsh's own "Took 38s", which the sheet hides while the line is there.
+ * Finished is dsh's label reading its `Took {duration}` template, not the chevron: a running group
+ * reads "Deep diving for 12s" and is left alone, as is one still carrying the running line. A
+ * stopped turn (dsh's `Stopped`) gets the CLI's interrupt line instead; a failed one keeps dsh's
+ * word. The time is the clock dsh prints in the turn's tail. Only the newest group can still gain
+ * one, so an older group is marked closed on its first paint with or without it, and the per-frame
+ * pass stops visiting it. Writes only when the text changes, since every write is a mutation the
+ * observer brings straight back here.
+ */
+const paintClosing = (
+  group: HTMLElement,
+  sessionId: string,
+  newest: boolean,
+  faceOf: (label: HTMLElement) => Face,
+): void => {
+  if (group.querySelector(":scope > [data-omc-turn-line]") !== null) return;
+  const label = group.querySelector<HTMLElement>(`:scope > span:not([${CLOSING_MARK}])`);
+  if (label === null) return;
+  const stopped = isStopped(label.textContent ?? "");
+  const duration = tookDuration(label.textContent ?? "") ?? "";
+  if (!stopped && duration === "") return;
+  const turn = group.getAttribute("data-turn-process") ?? "";
+  const scope = group.closest("[data-conversation-scroll]") ?? document;
+  const tail = scope.querySelector(`[data-turn-tail="${CSS.escape(turn)}"] [data-clock="end"]`);
+  // The clock is the tail's last leaf span that ends in `HH:MM`; the usage button sits beside it.
+  const clock = [...(tail?.querySelectorAll("span") ?? [])]
+    .toReversed()
+    .find((el) => el.childElementCount === 0 && /\d:\d{2}$/.test(el.textContent ?? ""));
+  const zh = activeLocale().startsWith("zh");
+  const verb = closingVerb(`${sessionId}:${turn}`, zh ? ZH_CLOSING_VERBS : CLOSING_VERBS);
+  // A stopped turn reads the CLI's own interrupt line, which has no glyph, verb or time.
+  const text = stopped
+    ? t("main.turn.interrupted")
+    : clock === undefined
+      ? t("main.turn.closing", { verb, duration })
+      : t("main.turn.closingDone", {
+          verb,
+          duration,
+          time: clockText(clock.textContent ?? "", zh),
+        });
+  let line = group.querySelector<HTMLElement>(`:scope > [${CLOSING_MARK}]`);
+  if (line === null) {
+    line = document.createElement("span");
+    line.setAttribute(CLOSING_MARK, "1");
+    // Copied from dsh's label, as the running line does: a sibling inherits the button's type, not
+    // the label's, and would read at a different size from the text it replaces.
+    const face = faceOf(label);
+    line.style.fontSize = face.fontSize;
+    line.style.fontWeight = face.fontWeight;
+    line.style.fontFamily = face.fontFamily;
+    line.style.lineHeight = face.lineHeight;
+    line.style.color = T.faint;
+    if (!stopped) {
+      // The running line's spinner cell (1.3em, glyph at its start) and its 2px gap, so the text
+      // starts where the verb did: 20px after the glyph at dsh's 14px, measured on both lines.
+      const glyph = document.createElement("span");
+      glyph.setAttribute("aria-hidden", "true");
+      glyph.style.display = "inline-block";
+      glyph.style.width = "1.3em";
+      glyph.style.marginRight = "2px";
+      glyph.textContent = "✻";
+      line.append(glyph);
+    }
+    line.append(document.createTextNode(text));
+    // In the label's place, not at the end: a group with content puts dsh's chevron after its label,
+    // and an appended line sat after the chevron, which pushed the glyph off the left edge.
+    label.after(line);
+  } else if (line.lastChild?.nodeValue !== text && line.lastChild !== null) {
+    line.lastChild.nodeValue = text;
+  }
+  if (stopped || clock !== undefined || !newest) group.setAttribute(CLOSED_MARK, "1");
+};
+
 /** Wire a running turn's status: attach dsh's [role=status][aria-live=polite] element to this
  *  session, keep the body marked to the active Claude session, and tear both down on unmount. */
 function watchTurnStatus(ctx: ClientCtx) {
@@ -5097,14 +5188,49 @@ function watchTurnStatus(ctx: ClientCtx) {
   // Once per dirty frame, and the cheapest check comes first: on a session that is not a Claude
   // mount there is nothing to attach, so bail before the querySelectorAll. attach is idempotent
   // (the status row carries a data-attr once wired), so re-scanning the body each frame is safe.
+  // Finished turns keep a closing line. A whole-page pass rather than the changed nodes: dsh flips a
+  // group's label to "Took 12s" as a text change inside it and mounts the tail with the clock as a
+  // sibling, and neither reaches the group through the scan above. Closed groups drop out of the
+  // selector, so a long conversation costs one query and the few unfinished groups.
+  // Painted whatever the Claude look says: the sheet shows the line and hides dsh's label only
+  // while the row group is on, so switching the look off gives dsh's "Took 12s" back at once.
+  const closeFinished = () => {
+    const sid = activeClaudeSession(ctx);
+    if (!sid) return;
+    // Every label shares one face: read it once per pass, before this pass writes anything, so a
+    // page opening on fifty finished turns recalculates style once rather than once per turn.
+    let face: Face | undefined;
+    const faceOf = (label: HTMLElement): Face => {
+      if (face === undefined) {
+        const { fontSize, fontWeight, fontFamily, lineHeight } = getComputedStyle(label);
+        face = { fontSize, fontWeight, fontFamily, lineHeight };
+      }
+      return face;
+    };
+    for (const group of document.querySelectorAll<HTMLElement>(
+      `button[data-turn-process]:not([${CLOSED_MARK}])`,
+    ))
+      paintClosing(group, sid, group === newestGroup, faceOf);
+  };
   onBodyMutation((records) => {
     if (!activeClaudeSession(ctx)) return;
     refreshNewest();
+    closeFinished();
     if (records === undefined) return scan(document.body);
     for (const node of changedElements(records)) scan(node);
   });
   refreshNewest();
+  closeFinished();
   scan(document.body);
+  // Closed lines are written once, in the language of the moment; a switch reopens them so the
+  // next pass rewrites each in the new one (verb list, template and clock form all change).
+  whenContextGone(
+    onLocaleSwitch(() => {
+      for (const group of document.querySelectorAll(`[${CLOSED_MARK}]`))
+        group.removeAttribute(CLOSED_MARK);
+      closeFinished();
+    }),
+  );
 }
 
 /**

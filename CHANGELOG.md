@@ -10,6 +10,9 @@ dsh: runs on 0.1.5-rc.1 through 0.1.7-alpha.2; built and tested on 0.1.7-alpha.2
 
 ### Added
 
+- A finished Claude turn keeps a closing line in its header instead of dsh's "Took 27s", the way
+  the terminal ends a turn: `✻ Crunched for 27s · done 3:21 AM`, in grey, with the CLI's own
+  closing verbs. A stopped turn reads `Interrupted · What should Claude do instead?`.
 - Select text in a Claude chat and a bar docks on the composer. Quote puts the passage into your
   message as a Markdown quote; Ask sends it as a side question whose answer appears in the aside
   card without adding a turn, and a blank question asks Claude to explain it. Settings → Oh My
