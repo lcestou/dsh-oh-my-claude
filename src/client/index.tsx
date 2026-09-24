@@ -5488,11 +5488,13 @@ function watchUltrathink(ctx: ClientCtx) {
     const quoted = quotedLines(lines.map((l) => l.map((x) => x.textContent ?? "").join("")));
     const copy = document.createElement("div");
     copy.setAttribute(QUOTE_COPY, "1");
-    // The spans' own type, read once per copy: the copy inherits the bubble's, not the span's.
+    // The spans' own type, read once per copy: the copy inherits the bubble's, not the span's. Not
+    // the colour: a colour read here is frozen, and a switch to light mode left the text white on a
+    // light bubble. The bubble's own colour is the span's, in either theme, so the copy inherits it.
     const first = parts.find((n): n is HTMLSpanElement => n instanceof HTMLSpanElement);
     if (first !== undefined) {
-      const { fontSize, fontFamily, fontWeight, lineHeight, color } = getComputedStyle(first);
-      Object.assign(copy.style, { fontSize, fontFamily, fontWeight, lineHeight, color });
+      const { fontSize, fontFamily, fontWeight, lineHeight } = getComputedStyle(first);
+      Object.assign(copy.style, { fontSize, fontFamily, fontWeight, lineHeight });
     }
     // One row per line, an empty line holding its height with a `<br>`: a block ending in a line
     // break drops that last empty line.
