@@ -109,8 +109,16 @@ export interface SeedEvent {
     surfaceOp?: "append";
     sourceEventSeqs?: number[];
 }
-/** dsh session events for folded turns. Shapes follow what dsh writes itself; seqs are contiguous from 0. */
-export declare function toSessionEvents(folded: FoldedTranscript, logVersion?: number): SeedEvent[];
+/** Where an appended fold continues from: the write handle's cursor and the log's last turn
+ *  number. Zero for a fresh seed. With a nonzero turn the system head and the title row are
+ *  not written, since the log has both. */
+export interface SeedBase {
+    seq: number;
+    turn: number;
+}
+/** dsh session events for folded turns. Shapes follow what dsh writes itself; seqs are contiguous
+ *  from `base.seq` and turns count on from `base.turn`, so a delta appends onto a stored log. */
+export declare function toSessionEvents(folded: FoldedTranscript, logVersion?: number, base?: SeedBase): SeedEvent[];
 /** What another entrypoint wrote into a stretch of transcript: its completed turns, and how many
  *  bytes of the stretch are settled. A prompt still being answered is not settled: `consumed` stops
  *  at its row, so the next read starts there and reports the whole turn once. */

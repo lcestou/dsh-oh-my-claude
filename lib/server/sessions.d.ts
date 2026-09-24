@@ -289,6 +289,8 @@ interface Opened {
     existed: boolean;
     /** The stored log was refused and healed before this open handed it over. */
     healed?: boolean;
+    /** Completed transcript turns the stored log did not hold yet, appended by this open. */
+    turnsAdded?: number;
     turns?: number;
     events?: number;
     /** The permission mode the transcript's last prompt ran under; only on a freshly seeded open. */

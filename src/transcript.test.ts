@@ -932,3 +932,33 @@ console.log("transcript ok");
   assert.equal(await readTranscriptFrom(path, seen * 10), "", "a file shorter than the offset");
   console.log("terminal turns ok");
 }
+
+// A fold appended onto a stored log: seqs continue from the cursor, turns count on from the last
+// stored turn, and neither the system head nor the title is written again.
+{
+  const delta = toSessionEvents(folded, 4, { seq: 40, turn: 3 });
+  assert.equal(delta[0]?.seq, 40, "seqs continue from the base");
+  assert.deepEqual(
+    delta.map((e) => e.seq),
+    delta.map((_, i) => 40 + i),
+    "and stay contiguous",
+  );
+  assert.equal(
+    delta.some((e) => e.type === "system/message"),
+    false,
+    "no second head",
+  );
+  assert.equal(
+    delta.some((e) => e.type === "session/title"),
+    false,
+    "no second title",
+  );
+  const firstTurn = delta.find((e) => e.type === "turn/start");
+  assert.equal(firstTurn?.data.turn, 4, "the first appended turn follows the stored ones");
+  assert.deepEqual(
+    toSessionEvents(folded, 4),
+    toSessionEvents(folded, 4, { seq: 0, turn: 0 }),
+    "the default base is today's seed",
+  );
+  console.log("seed-base ok");
+}

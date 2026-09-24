@@ -2310,3 +2310,134 @@ console.log("sessions ok");
   );
   console.log("open-heal ok");
 }
+
+// The delta fold on open: a stored two-turn log and a five-turn transcript gain three turns
+// through dsh's write handle, seqs from the cursor and turns from the last stored one; a log
+// owned elsewhere, a repeated prompt text and an open tail turn each leave the log alone.
+{
+  const { toSessionEvents, foldTranscript } = await import("./transcript.js");
+  const { mkdirSync, writeFileSync } = await import("node:fs");
+  const { STATE_DIR } = await import("./state.js");
+  const dir = join(STATE_DIR, "fold-delta");
+  mkdirSync(dir, { recursive: true });
+  const cwd = "/w";
+  /** A transcript of `n` completed turns, prompt i reading `prompt <i>` (or `texts[i]`). */
+  const transcript = (n: number, texts: string[] = []) => {
+    const rows: object[] = [];
+    for (let i = 1; i <= n; i++) {
+      rows.push({
+        type: "user",
+        uuid: `u${i}`,
+        cwd,
+        timestamp: `2026-09-05T10:0${i}:00Z`,
+        message: { role: "user", content: [{ type: "text", text: texts[i - 1] ?? `prompt ${i}` }] },
+      });
+      rows.push({
+        type: "assistant",
+        uuid: `a${i}`,
+        parentUuid: `u${i}`,
+        cwd,
+        timestamp: `2026-09-05T10:0${i}:01Z`,
+        message: {
+          id: `m${i}`,
+          role: "assistant",
+          content: [{ type: "text", text: `answer ${i}` }],
+        },
+      });
+    }
+    return rows;
+  };
+  const write = (name: string, rows: object[]) =>
+    writeFileSync(join(dir, `${name}.jsonl`), rows.map((r) => JSON.stringify(r)).join("\n") + "\n");
+  const run = async (
+    stored: object[],
+    opts: { owned?: boolean; transcriptRows?: object[]; openTail?: boolean } = {},
+  ) => {
+    write("t1", opts.transcriptRows ?? transcript(5));
+    const appended: Array<{ type: string; seq: number; data: Record<string, unknown> }> = [];
+    let flushed = 0;
+    const storedEvents = opts.openTail
+      ? stored.filter(
+          (e) =>
+            (e as { type: string }).type !== "turn/end" ||
+            (e as { data: { turn: number } }).data.turn !== 2,
+        )
+      : stored;
+    const persistence = {
+      list: async () => [{ header: { id: "d1", cwd } }],
+      create: async () => {
+        throw new Error("not expected");
+      },
+      open: async (_id: string, access: string) => {
+        if (access === "write" && opts.owned) {
+          const e = new Error("owned");
+          e.name = "SessionAlreadyOwnedError";
+          throw e;
+        }
+        return {
+          header: { id: "d1", cwd, version: 4 },
+          read: async () => ({ events: storedEvents }),
+          append: async (events: typeof appended) => void appended.push(...events),
+          flush: async () => void flushed++,
+          close: async () => {},
+        };
+      },
+      locate: () => ({ kind: "jsonl", path: join(dir, "d1.zstd") }),
+    };
+    // SAFETY: partial fakes; the function reads only these members
+    const ctx = { sessions: { get: () => undefined }, sessionPersistence: persistence } as any;
+    const ws = { id: "w1", path: cwd, title: "w", sessionIds: [], attachSession: async () => {} };
+    const registry = {
+      archivedSessionIds: [],
+      resolveByPath: async () => ws,
+      create: async () => ws,
+      enqueueOperation: <T>(op: () => Promise<T>) => op(),
+      requireState: () => ({ archivedSessionIds: [] }),
+      setState: async () => {},
+    } as any;
+    // SAFETY: partial fake; the fold reads the members it names
+    const heal = {
+      persistence,
+      catalog: async () => ({
+        currentVersion: 4,
+        createRestore: () => ({ decodeRow() {}, finish() {} }),
+      }),
+      stateDir: dir,
+      log() {},
+    } as any;
+    const out = await openTranscriptOnce(ctx, [dir], cwd, "t1", () => "t1", registry, heal);
+    return { out, appended, flushed };
+  };
+  // The stored log: the seed of the first two turns of the same transcript.
+  write("seed", transcript(2));
+  const seeded = foldTranscript(
+    transcript(2)
+      .map((r) => JSON.stringify(r))
+      .join("\n") + "\n",
+  );
+  const stored = toSessionEvents(seeded, 4);
+  let r = await run(stored);
+  assert.equal(r.out.turnsAdded, 3, "three transcript turns were missing");
+  assert.equal(r.appended[0]?.seq, stored.length, "seqs continue from the stored length");
+  const firstTurn = r.appended.find((e) => e.type === "turn/start");
+  assert.equal(firstTurn?.data.turn, 3, "turns count on from the last stored one");
+  assert.equal(
+    r.appended.some((e) => e.type === "system/message"),
+    false,
+    "no second head",
+  );
+  assert.equal(r.flushed, 1);
+  r = await run(stored, { owned: true });
+  assert.deepEqual([r.out.turnsAdded, r.appended.length], [0, 0], "owned elsewhere: untouched");
+  r = await run(stored, {
+    transcriptRows: transcript(5, ["prompt 1", "prompt 2", "prompt 2", "prompt 4", "prompt 5"]),
+  });
+  assert.equal(
+    r.out.turnsAdded,
+    2,
+    "a repeated prompt text reads as stored: the documented wrong case",
+  );
+  r = await run(stored, { openTail: true });
+  assert.deepEqual([r.out.turnsAdded, r.appended.length], [0, 0], "an open tail turn: untouched");
+  console.log("fold-delta ok");
+}
