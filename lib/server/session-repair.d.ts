@@ -105,6 +105,10 @@ export declare const frame: (text: string) => Buffer;
  *  never absent: the rename is atomic on one filesystem, and a crash between the copy and the
  *  rename leaves the original in place and a `.bak` beside it. */
 export declare function writeLog(file: string, header: Header, rows: Row[]): string;
+/** Move a refused log out of dsh's way, for a reseed the person asked for: copy it to
+ *  `<file>.bak-<ms>` first, then unlink it, and return the backup path. The copy comes first, as
+ *  in `writeLog`, so a crash between the two leaves the original in place. */
+export declare function moveAside(file: string): string;
 /** Copy a backup back over the log it was taken from. Idempotent when the backup is already
  *  gone: nothing to restore, nothing thrown. */
 export declare function restoreBak(file: string, bak: string): void;

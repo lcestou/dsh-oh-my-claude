@@ -109,7 +109,7 @@ import { errorText } from "./process.js";
 import { claudeMdDisabledBy, featureSwitches, type ClaudeMdState } from "./switches.js";
 import { currentLogVersion, loadSessionCatalog } from "./rows-probe.js";
 import { serverText } from "./locale.js";
-import { knownRefusal } from "./session-repair.js";
+import { knownRefusal, moveAside } from "./session-repair.js";
 import {
   healLog,
   probeLoad,
@@ -133,6 +133,7 @@ import {
   PERMISSION_MODES,
   STATE_DIR,
   loadSessionRepairs,
+  recordRepair,
   trace,
   isPermissionMode,
   loadContextSizes,
@@ -1414,6 +1415,7 @@ export async function openTranscriptOnce(
   claudeIdOf: (id: string) => string,
   registry: WorkspaceRegistry | undefined,
   heal?: HealHost,
+  reseed = false,
 ): Promise<Opened> {
   // dsh 0.1.5 lists a session under a workspace only once it is on that workspace's own
   // `sessionIds`; a session that merely exists (older dsh derived the workspace from its cwd)
@@ -1458,12 +1460,16 @@ export async function openTranscriptOnce(
   // local placeholder cwd, not the transcript's own path, so filtering by `cwd` would miss it and
   // fall through to a local transcript read that ENOENTs (the body lives on the box). `cwd` is only
   // needed for the non-owned read below, where the transcript really is on this box's disk.
-  const owned = dshSessionsFor(
-    await ctx.sessionPersistence.list(),
-    null,
-    claudeIdOf,
-    new Set(registry?.archivedSessionIds ?? []),
-  ).get(id);
+  // A reseed moved the refused log aside a moment ago; dsh's list may still name the id, and the
+  // create path below is the point of the call.
+  const owned = reseed
+    ? undefined
+    : dshSessionsFor(
+        await ctx.sessionPersistence.list(),
+        null,
+        claudeIdOf,
+        new Set(registry?.archivedSessionIds ?? []),
+      ).get(id);
   if (owned) {
     // The stored log is the session, so make sure dsh can load it before handing it over: a log
     // refused for one of the reasons the plugin mends is healed here, and one refused for any
@@ -2292,6 +2298,44 @@ export function registerSessionRoutes(
               // already knows keeps whatever was picked in dsh.
               if (!opened.existed && opened.permissionMode && permissionModes)
                 await permissionModes.restore(opened.id, opened.permissionMode);
+              return json(res, 200, opened);
+            }
+            if (req.method === "POST" && url.pathname === `${ROUTE_PREFIX}/reseed`) {
+              // The person's click on the panel's refused line: move the log dsh cannot load out
+              // of the way, keep it as .bak, and seed the session again from its transcript.
+              // Never automatic: the old log's dsh-only rows live on in the .bak only.
+              const { id } = await readBody(req);
+              if (!validId(id)) return json(res, 400, { error: "id required" });
+              const record = (await loadSessionRepairs(STATE_DIR)).logs[id];
+              if (record === undefined || record.verdict !== "unknown")
+                return json(res, 404, { error: "no refused log recorded for this session" });
+              const header = (await sessionPersistence.list())
+                .map(headerOf)
+                .find((h) => h.id === id);
+              const cwd = header?.cwd;
+              if (!cwd) return json(res, 404, { error: "dsh does not list this session" });
+              const dirs = transcriptDirs(cwd);
+              const folded = await firstTranscript(dirs, claudeIdOf(id));
+              if (folded === undefined || folded.turns.length === 0)
+                return json(res, 409, { error: serverText("noTranscriptToReseed") });
+              const bak = moveAside(record.path);
+              await recordRepair(STATE_DIR, id, {
+                ...record,
+                verdict: "reseeded",
+                bak,
+                at: Date.now(),
+              });
+              await trace(`reseed ${id}: log moved to ${bak}`);
+              const opened = await openTranscriptOnce(
+                routeHost,
+                dirs,
+                cwd,
+                id,
+                claudeIdOf,
+                workspaceRegistry(),
+                heal,
+                true,
+              );
               return json(res, 200, opened);
             }
             if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/search`) {

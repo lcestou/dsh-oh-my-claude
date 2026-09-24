@@ -2441,3 +2441,185 @@ console.log("sessions ok");
   assert.deepEqual([r.out.turnsAdded, r.appended.length], [0, 0], "an open tail turn: untouched");
   console.log("fold-delta ok");
 }
+
+// POST /reseed: the person's click on a refused log. The log is moved to .bak, the record says
+// reseeded, and the session is seeded again from its transcript through create and append; no
+// transcript answers 409 with the log untouched; no record answers 404.
+{
+  const { frame } = await import("./session-repair.js");
+  const { existsSync, mkdirSync, readdirSync, writeFileSync } = await import("node:fs");
+  const { STATE_DIR, recordRepair, loadSessionRepairs } = await import("./state.js");
+  const { projectDirName } = await import("./adapter.js");
+  const root = join(STATE_DIR, "reseed-route");
+  const cwd = join(root, "work");
+  const projects = join(root, "projects");
+  const logDir = join(root, "logs");
+  mkdirSync(join(projects, projectDirName(cwd)), { recursive: true });
+  mkdirSync(logDir, { recursive: true });
+  const logPath = join(logDir, "session.v4.jsonl.zstd");
+  const writeLog = () =>
+    writeFileSync(
+      logPath,
+      Buffer.concat([
+        frame(
+          JSON.stringify({
+            type: "session",
+            version: 4,
+            id: "11111111-1111-4111-8111-111111111111",
+            cwd,
+          }) + "\n",
+        ),
+        frame(""),
+      ]),
+    );
+  const calls: string[] = [];
+  let handler: ((req: unknown, res: unknown) => void) | undefined;
+  // SAFETY: partial fakes; the routes read only these members
+  const ctx = {
+    inject: (_deps: string[], cb: (host: unknown) => void) => {
+      cb({
+        webServer: {
+          register: (r: { handler: (req: unknown, res: unknown) => void }) => {
+            handler = r.handler;
+            return () => {};
+          },
+        },
+        connection: { requestRejection: () => undefined },
+        sessions: { get: () => undefined },
+        // The routes register their handler inside the host's effect.
+        effect: (fn: () => void) => fn(),
+        sessionPersistence: {
+          list: async () => [{ header: { id: "11111111-1111-4111-8111-111111111111", cwd } }],
+          create: async () => {
+            calls.push("create");
+            if (existsSync(logPath)) {
+              const e = new Error("exists");
+              e.name = "SessionAlreadyExistsError";
+              throw e;
+            }
+            return {
+              append: async () => void calls.push("append"),
+              flush: async () => void calls.push("flush"),
+              close: async () => void calls.push("close"),
+            };
+          },
+          open: async () => ({ read: async () => ({ events: [] }), close: async () => {} }),
+          locate: () => ({ kind: "jsonl", path: logPath }),
+        },
+      });
+    },
+    on() {},
+    effect: (fn: () => void) => fn(),
+  } as any;
+  const ws = { id: "w1", path: cwd, title: "w", sessionIds: [], attachSession: async () => {} };
+  registerSessionRoutes(ctx, {
+    log: () => {},
+    projectDir: () => [join(projects, projectDirName(cwd))],
+    projectsDir: [projects],
+    startedIds: async () => [],
+    claudeIdOf: (id: string) => id,
+    configDir: join(root, "claude"),
+    boxesPath: join(root, "boxes.json"),
+    importedDir: join(root, "imported"),
+    settingsPath: join(root, "claude", "settings.json"),
+    workspaceRegistry: () =>
+      ({
+        archivedSessionIds: [],
+        resolveByPath: async () => ws,
+        create: async () => ws,
+        enqueueOperation: <T>(op: () => Promise<T>) => op(),
+        requireState: () => ({ archivedSessionIds: [] }),
+        setState: async () => {},
+      }) as any,
+  } as any);
+  assert.ok(handler);
+  const respond = async (method: string, url: string, body?: string) => {
+    const chunks: Buffer[] = [];
+    let status = 0;
+    // SAFETY: partial fakes for tests
+    const res = {
+      writeHead: (s: number) => void (status = s),
+      end: (b: Buffer | string) => void chunks.push(typeof b === "string" ? Buffer.from(b) : b),
+    };
+    const req = {
+      method,
+      url,
+      on: (ev: string, cb: (c?: Buffer) => void) => {
+        if (ev === "data" && body !== undefined) cb(Buffer.from(body));
+        if (ev === "end") cb();
+      },
+      destroy: () => {},
+    } as any;
+    await handler!(req, res);
+    return { status, body: JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}") };
+  };
+  // No record yet: 404.
+  let r = await respond(
+    "POST",
+    "/dsh-oh-my-claude/reseed",
+    JSON.stringify({ id: "11111111-1111-4111-8111-111111111111" }),
+  );
+  assert.equal(r.status, 404);
+  // A record but no transcript: 409, log untouched.
+  writeLog();
+  await recordRepair(STATE_DIR, "11111111-1111-4111-8111-111111111111", {
+    path: logPath,
+    mtimeMs: 1,
+    size: 1,
+    verdict: "unknown",
+    reason: "x",
+    at: 5,
+  });
+  r = await respond(
+    "POST",
+    "/dsh-oh-my-claude/reseed",
+    JSON.stringify({ id: "11111111-1111-4111-8111-111111111111" }),
+  );
+  assert.equal(r.status, 409);
+  assert.match(r.body.error, /nothing to reseed from/);
+  assert.equal(existsSync(logPath), true, "no transcript: the log stays");
+  // A transcript with a completed turn: 200, the log moved to .bak, seeded again.
+  writeFileSync(
+    join(projects, projectDirName(cwd), "11111111-1111-4111-8111-111111111111.jsonl"),
+    [
+      {
+        type: "user",
+        uuid: "u1",
+        cwd,
+        timestamp: "2026-09-05T10:00:00Z",
+        message: { role: "user", content: [{ type: "text", text: "hello" }] },
+      },
+      {
+        type: "assistant",
+        uuid: "a1",
+        parentUuid: "u1",
+        cwd,
+        timestamp: "2026-09-05T10:00:01Z",
+        message: { id: "m1", role: "assistant", content: [{ type: "text", text: "hi" }] },
+      },
+    ]
+      .map((x) => JSON.stringify(x))
+      .join("\n") + "\n",
+  );
+  r = await respond(
+    "POST",
+    "/dsh-oh-my-claude/reseed",
+    JSON.stringify({ id: "11111111-1111-4111-8111-111111111111" }),
+  );
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(existsSync(logPath), false, "the refused log is out of the way");
+  assert.ok(
+    readdirSync(logDir).some((f) => f.startsWith("session.v4.jsonl.zstd.bak-")),
+    "and kept as .bak",
+  );
+  assert.deepEqual(
+    calls,
+    ["create", "append", "flush", "close"],
+    "seeded again through the write handle",
+  );
+  assert.equal(
+    (await loadSessionRepairs(STATE_DIR)).logs["11111111-1111-4111-8111-111111111111"]?.verdict,
+    "reseeded",
+  );
+  console.log("reseed-route ok");
+}

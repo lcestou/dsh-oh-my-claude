@@ -54,6 +54,7 @@ declare const EN: {
     readonly compacting: "⟳ Compacting context…";
     readonly compactFailed: "⚠ Compaction failed: {error}";
     readonly logRefused: "dsh refuses this session's stored log: {reason}";
+    readonly noTranscriptToReseed: "No Claude Code transcript with a completed turn was found for this session, so there is nothing to reseed from.";
     readonly unknownReason: "unknown reason";
     readonly taskLine: "Task {status}: {detail}";
     readonly taskEnded: "Task {status}";

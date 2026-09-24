@@ -63,13 +63,18 @@ export declare function sweepRefusedLogs(host: HealHost): Promise<{
     unknown: number;
     rolledBack: number;
 }>;
-/** What the panel's notice counts: verdicts newer than the dismissal, and the newest one's time. */
+/** What the panel's notice counts: verdicts newer than the dismissal, and the newest one's time.
+ *  `reseeded` counts as healed: the session opens again, with the old log kept as .bak. */
 export interface RepairsSummary {
     healed: number;
     unknown: number;
     rolledBack: number;
     /** The newest counted entry's `at`, 0 when nothing counted; a dismissal records it. */
     at: number;
+    /** The sessions still refused for a reason the plugin cannot mend, for the reseed button. */
+    refused: Array<{
+        id: string;
+    }>;
 }
 /** The summary the panel shows: entries newer than `seenAt`, counted by verdict, and the newest
  *  entry's time so a dismissal can name it. */

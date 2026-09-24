@@ -75,6 +75,8 @@ const EN = {
   compacting: "⟳ Compacting context…",
   compactFailed: "⚠ Compaction failed: {error}",
   logRefused: "dsh refuses this session's stored log: {reason}",
+  noTranscriptToReseed:
+    "No Claude Code transcript with a completed turn was found for this session, so there is nothing to reseed from.",
   unknownReason: "unknown reason",
   taskLine: "Task {status}: {detail}",
   taskEnded: "Task {status}",
@@ -171,6 +173,7 @@ const ZH = {
   compacting: "⟳ 正在压缩上下文…",
   compactFailed: "⚠ 压缩失败：{error}",
   logRefused: "dsh 拒绝加载该会话的存储日志：{reason}",
+  noTranscriptToReseed: "没有找到这个会话的已完成 Claude Code 转录，无法重新生成。",
   unknownReason: "未知原因",
   taskLine: "任务{status}：{detail}",
   taskEnded: "任务{status}",

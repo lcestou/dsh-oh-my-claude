@@ -24,7 +24,7 @@
 // with the same placeholder result the adapter now writes, right before that step's `step/end`.
 //
 // `tools/dsh-session-repair.ts` is the command-line front over this module for a checkout.
-import { copyFileSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { copyFileSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { zstdCompressSync, zstdDecompressSync } from "node:zlib";
 
 /** A span of seqs a row shadows or replaces; dsh carries more fields on it than the repair reads. */
@@ -382,6 +382,16 @@ export function writeLog(file: string, header: Header, rows: Row[]): string {
   writeFileSync(tmp, Buffer.concat([frame(JSON.stringify(header) + "\n"), frame(body)]));
   copyFileSync(file, bak);
   renameSync(tmp, file);
+  return bak;
+}
+
+/** Move a refused log out of dsh's way, for a reseed the person asked for: copy it to
+ *  `<file>.bak-<ms>` first, then unlink it, and return the backup path. The copy comes first, as
+ *  in `writeLog`, so a crash between the two leaves the original in place. */
+export function moveAside(file: string): string {
+  const bak = `${file}.bak-${Date.now()}`;
+  copyFileSync(file, bak);
+  unlinkSync(file);
   return bak;
 }
 

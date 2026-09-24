@@ -586,8 +586,10 @@ export function saveAsides(dir: string, sessionId: string, entries: AsideEntry[]
 /** Why a log was or was not rewritten. `fine` loads; `healed` was rewritten and loads now;
  *  `unknown` is refused for a reason the plugin does not mend; `rolled-back` was rewritten, still
  *  refused, and the .bak was put back; `owned` was skipped because another process holds its
- *  write lock. */
-export type RepairVerdict = "fine" | "healed" | "unknown" | "rolled-back" | "owned";
+ *  write lock; `reseeded` was moved to .bak on the person's click and the session seeded again
+ *  from its transcript (the old log's dsh-only rows, subagents, permissions, title, tool cards,
+ *  notices and side questions, are in the .bak only). */
+export type RepairVerdict = "fine" | "healed" | "unknown" | "rolled-back" | "owned" | "reseeded";
 
 /** One log's verdict, as the sweep and the on-open heal record it. */
 export interface SessionRepairRecord {
@@ -642,7 +644,8 @@ export async function loadSessionRepairs(dir: string): Promise<SessionRepairsFil
         const e = raw as Record<string, unknown>;
         if (typeof e.path !== "string" || typeof e.verdict !== "string") continue;
         if (typeof e.at !== "number") continue;
-        if (!["fine", "healed", "unknown", "rolled-back", "owned"].includes(e.verdict)) continue;
+        if (!["fine", "healed", "unknown", "rolled-back", "owned", "reseeded"].includes(e.verdict))
+          continue;
         const rec: SessionRepairRecord = {
           path: e.path,
           mtimeMs: typeof e.mtimeMs === "number" ? e.mtimeMs : 0,
