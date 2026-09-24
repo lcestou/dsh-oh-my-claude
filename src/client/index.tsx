@@ -5460,7 +5460,7 @@ function watchUltrathink(ctx: ClientCtx) {
    * would dsh's. A chip is cloned onto its line, looking the same but not clickable: the click
    * belongs to dsh's own, hidden beside it.
    */
-  const drawCopy = (box: HTMLElement, parts: ChildNode[], text: string) => {
+  const drawCopy = (box: HTMLElement, parts: ChildNode[], text: string, face: () => Face) => {
     const had = copies.get(box);
     if (had !== undefined && had.text === text && had.copy.isConnected) {
       // The marks can go without the text changing: a hot reload's outgoing bundle clearing its own
@@ -5491,11 +5491,7 @@ function watchUltrathink(ctx: ClientCtx) {
     // The spans' own type, read once per copy: the copy inherits the bubble's, not the span's. Not
     // the colour: a colour read here is frozen, and a switch to light mode left the text white on a
     // light bubble. The bubble's own colour is the span's, in either theme, so the copy inherits it.
-    const first = parts.find((n): n is HTMLSpanElement => n instanceof HTMLSpanElement);
-    if (first !== undefined) {
-      const { fontSize, fontFamily, fontWeight, lineHeight } = getComputedStyle(first);
-      Object.assign(copy.style, { fontSize, fontFamily, fontWeight, lineHeight });
-    }
+    Object.assign(copy.style, face());
     // One row per line, an empty line holding its height with a `<br>`: a block ending in a line
     // break drops that last empty line.
     // A quote block carries its own 16px gap above and below, as a rendered quote does. The one
@@ -5555,10 +5551,24 @@ function watchUltrathink(ctx: ClientCtx) {
     const text: Range[] = [];
     const mark: Range[] = [];
     const seen = new Set<HTMLElement>();
+    // Every sent message shares one face: read it once per pass, before this pass writes a copy, so
+    // a session opening on many quoted messages recalculates style once rather than once each.
+    let shared: Face | undefined;
+    const faceFrom = (span: Element) => (): Face => {
+      if (shared === undefined) {
+        const { fontSize, fontWeight, fontFamily, lineHeight } = getComputedStyle(span);
+        shared = { fontSize, fontWeight, fontFamily, lineHeight };
+      }
+      return shared;
+    };
     for (const host of document.querySelectorAll<HTMLElement>(HOSTS)) {
+      const composer = host.hasAttribute("data-composer-input");
+      // Every keystroke runs this pass over every sent message. One without a `>` has no quote and
+      // no copy (a copy's hidden source still holds its `>`), so it costs one text read, not a walk.
+      if (!composer && !(host.textContent ?? "").includes(">")) continue;
       const { nodes, segs } = segsIn(host);
       const spans = quoteSpans(segs);
-      if (host.hasAttribute("data-composer-input")) {
+      if (composer) {
         for (const span of spans) {
           const node = nodes[span.seg];
           if (node === undefined) continue;
@@ -5582,7 +5592,8 @@ function watchUltrathink(ctx: ClientCtx) {
       const whole = parts.map((n) => n.textContent ?? "").join("");
       if (!quotedLines(whole.split("\n")).includes(true)) continue;
       seen.add(box);
-      drawCopy(box, parts, whole);
+      const span = parts.find((n) => n instanceof HTMLSpanElement);
+      if (span instanceof Element) drawCopy(box, parts, whole, faceFrom(span));
     }
     for (const src of copies.keys()) if (!seen.has(src)) dropCopy(src);
     // Below the rainbow, so `ultrathink` inside a quote keeps its colours.
