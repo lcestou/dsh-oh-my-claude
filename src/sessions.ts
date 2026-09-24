@@ -1346,6 +1346,7 @@ const storedHolds = (texts: ReadonlySet<string>, prompt: string): boolean => {
 async function foldTranscriptDelta(
   ctx: RouteHost,
   dirs: string[],
+  cwd: string,
   dshId: string,
   transcriptId: string,
 ): Promise<number> {
@@ -1389,7 +1390,8 @@ async function foldTranscriptDelta(
     if (fresh.length === 0) return 0;
     // A copy of the log before the append, so a fold that turns out wrong is one file move away
     // from undone; the trace line names it.
-    const located = ctx.sessionPersistence.locate?.({ id: dshId })?.path;
+    // dsh's locate needs the cwd as well as the id to name the log's directory.
+    const located = ctx.sessionPersistence.locate?.({ id: dshId, cwd })?.path;
     let bak = "";
     if (located !== undefined) {
       bak = `${located}.bak-${Date.now()}`;
@@ -1516,7 +1518,7 @@ export async function openTranscriptOnce(
     // A session driven from the terminal since it was last in dsh has transcript turns the stored
     // log lacks; append them now, before the tab reads the log, so the reopen shows the whole
     // conversation rather than the count it had when first restored.
-    const turnsAdded = heal ? await foldTranscriptDelta(ctx, dirs, owned.id, id) : 0;
+    const turnsAdded = heal ? await foldTranscriptDelta(ctx, dirs, cwd, owned.id, id) : 0;
     await unarchive(owned.id);
     // Persisted but not in the store (a restart unloads it): the workspace list is the only way it
     // reaches the sidebar, and dsh reads its header from persistence, which lists it by now.
