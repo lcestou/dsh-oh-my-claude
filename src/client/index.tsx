@@ -5346,13 +5346,23 @@ const ULTRACODE_DARK = "rgb(175,135,255)";
 const ULTRACODE_LIGHT = "rgb(135,0,255)";
 const ULTRACODE_SHIMMER = "rgb(208,180,255)";
 const ULTRACODE_INDEX = RAINBOW.length;
+/** A quote bar the plugin draws in a sent message, where dsh shows a quote as plain `> ` text. */
+const QUOTE_BAR = "data-omc-quote-bar";
+/** On the box a quote bar is positioned against: dsh's element around the message text. */
+const QUOTE_HOST = "data-omc-quote-host";
 const RAINBOW_CSS =
   RAINBOW.map((c, i) => `::highlight(omc-rainbow-${i}){color:${c}}`).join("") +
   RAINBOW_SHIMMER.map((c, i) => `::highlight(omc-rainbow-s${i}){color:${c}}`).join("") +
   `::highlight(omc-rainbow-${ULTRACODE_INDEX}){color:var(--omc-ultracode,${ULTRACODE_DARK})}` +
   `::highlight(omc-rainbow-s${ULTRACODE_INDEX}){color:${ULTRACODE_SHIMMER}}` +
-  // Quoted lines in a person's own words, the way a Markdown quote reads: dimmed, the marker more so.
-  `::highlight(omc-quote){color:${T.muted}}::highlight(omc-quote-mark){color:${T.faint}}`;
+  // Quoted lines in a person's own words, the way a Markdown quote reads: dimmed, the marker more so
+  // in the composer. In a sent message the marker gives way to a bar, as in dsh's rendered quotes
+  // (2px, the accent at half strength, measured off a reply's blockquote on 2026-09-24).
+  `::highlight(omc-quote){color:${T.muted}}::highlight(omc-quote-mark){color:${T.faint}}` +
+  `::highlight(omc-quote-mark-hidden){color:transparent}` +
+  `[data-omc-quote-host]{position:relative}` +
+  `[data-omc-quote-bar]{position:absolute;width:2px;border-radius:1px;pointer-events:none;background:${T.border}}` +
+  `${gated("prose", "[data-omc-quote-bar]", false)}{background:color-mix(in srgb,var(--omc-accent) 50.2%,transparent)}`;
 const ULTRATHINK = /\bultrathink\b/gi;
 /** One character of a match: where it sits, which colour it takes, and its index in the
  *  composer's text (the sweep runs over those indices, as the CLI's does over its input string). */
@@ -5432,13 +5442,78 @@ function watchUltrathink(ctx: ClientCtx) {
   const clear = () => {
     for (const key of [...names, ...shimmerNames]) registry.delete(key);
   };
+  // Boxes that hold bars, with what was drawn in each, so an unchanged layout writes nothing (every
+  // write is a mutation) and a box whose quote went away is cleared. A width change reflows the
+  // lines, so each box is watched for size as well.
+  const drawn = new Map<HTMLElement, string>();
+  const resized = new ResizeObserver(() => request());
+  /** Draw one bar per run of consecutive quoted lines in each box, in the padding to their left. */
+  const drawBars = (lines: Map<HTMLElement, DOMRect[]>) => {
+    const plans = new Map<HTMLElement, string>();
+    const bars = new Map<HTMLElement, { left: number; top: number; height: number }[]>();
+    for (const [box, rects] of lines) {
+      const origin = box.getBoundingClientRect();
+      // A text rect is the glyphs' height; the bar spans whole lines, as a rendered quote's border
+      // does, so each rect grows by half the leading and lines that touch merge into one bar.
+      const lh = Number.parseFloat(getComputedStyle(box).lineHeight);
+      const runs: { left: number; top: number; bottom: number }[] = [];
+      for (const r of rects.toSorted((a, b) => a.top - b.top)) {
+        if (r.width === 0 && r.height === 0) continue;
+        const lead = Number.isFinite(lh) ? Math.max(0, (lh - r.height) / 2) : 0;
+        const top = r.top - lead;
+        const bottom = r.bottom + lead;
+        const last = runs.at(-1);
+        if (last !== undefined && top - last.bottom <= 1) {
+          last.bottom = Math.max(last.bottom, bottom);
+          last.left = Math.min(last.left, r.left);
+        } else runs.push({ left: r.left, top, bottom });
+      }
+      // In the bubble's padding, clear of the text: a wrapped quote line starts at the text's own
+      // left edge, so a bar where the hidden `>` sits would run through it.
+      const placed = runs.map((run) => ({
+        left: Math.round(run.left - origin.left) - 9,
+        top: Math.round(run.top - origin.top),
+        height: Math.round(run.bottom - run.top),
+      }));
+      bars.set(box, placed);
+      plans.set(box, JSON.stringify(placed));
+    }
+    for (const [box, plan] of plans) {
+      if (drawn.get(box) === plan) continue;
+      for (const old of box.querySelectorAll(`:scope > [${QUOTE_BAR}]`)) old.remove();
+      box.setAttribute(QUOTE_HOST, "1");
+      for (const bar of bars.get(box) ?? []) {
+        const el = document.createElement("span");
+        el.setAttribute(QUOTE_BAR, "1");
+        el.setAttribute("aria-hidden", "true");
+        el.style.left = `${bar.left}px`;
+        el.style.top = `${bar.top}px`;
+        el.style.height = `${bar.height}px`;
+        box.append(el);
+      }
+      if (!drawn.has(box)) resized.observe(box);
+      drawn.set(box, plan);
+    }
+    for (const box of drawn.keys()) {
+      if (plans.has(box)) continue;
+      for (const old of box.querySelectorAll(`:scope > [${QUOTE_BAR}]`)) old.remove();
+      box.removeAttribute(QUOTE_HOST);
+      resized.unobserve(box);
+      drawn.delete(box);
+    }
+  };
   /** Dim the quoted lines in every host: the Quote button's `> ` blocks read as quotes in the
    *  composer and in the sent bubble, which dsh draws as plain text. Not part of the rainbow's
    *  look switch: it is how a quote reads, not the Claude colour. */
   const paintQuotes = () => {
     const text: Range[] = [];
     const mark: Range[] = [];
+    const hidden: Range[] = [];
+    // Line boxes of quoted text in sent messages, per positioning box; all measured before any bar
+    // is written, so the pass lays out once.
+    const lines = new Map<HTMLElement, DOMRect[]>();
     for (const host of document.querySelectorAll<HTMLElement>(HOSTS)) {
+      const composer = host.hasAttribute("data-composer-input");
       const { nodes, segs } = segsIn(host);
       for (const span of quoteSpans(segs)) {
         const node = nodes[span.seg];
@@ -5446,13 +5521,21 @@ function watchUltrathink(ctx: ClientCtx) {
         const r = document.createRange();
         r.setStart(node, span.start);
         r.setEnd(node, span.end);
-        (span.mark ? mark : text).push(r);
+        if (!span.mark) text.push(r);
+        else (composer ? mark : hidden).push(r);
+        const box = node.parentElement?.parentElement;
+        if (composer || !(box instanceof HTMLElement)) continue;
+        const list = lines.get(box) ?? [];
+        list.push(...r.getClientRects());
+        lines.set(box, list);
       }
     }
+    drawBars(lines);
     // Below the rainbow, so `ultrathink` inside a quote keeps its colours.
     for (const [key, ranges] of [
       ["omc-quote", text],
       ["omc-quote-mark", mark],
+      ["omc-quote-mark-hidden", hidden],
     ] as const) {
       if (ranges.length === 0) registry.delete(key);
       else {
@@ -5521,6 +5604,8 @@ function watchUltrathink(ctx: ClientCtx) {
       clear();
       registry.delete("omc-quote");
       registry.delete("omc-quote-mark");
+      registry.delete("omc-quote-mark-hidden");
+      drawBars(new Map());
       return;
     }
     paintQuotes();
@@ -5575,6 +5660,10 @@ function watchUltrathink(ctx: ClientCtx) {
   };
   const touchesHost = (records: MutationRecord[]): boolean => {
     for (const r of records) {
+      // The quote bars this pass writes into a bubble are not a change to answer.
+      const moved = [...r.addedNodes, ...r.removedNodes];
+      if (moved.length > 0 && moved.every((n) => n instanceof Element && n.hasAttribute(QUOTE_BAR)))
+        continue;
       const el = r.target instanceof Element ? r.target : r.target.parentElement;
       if (el?.closest(HOSTS)) return true;
       for (const n of r.addedNodes)
@@ -5597,6 +5686,8 @@ function watchUltrathink(ctx: ClientCtx) {
     document.removeEventListener("visibilitychange", request);
     stopSweep();
     clear();
+    drawBars(new Map());
+    resized.disconnect();
   });
 }
 
