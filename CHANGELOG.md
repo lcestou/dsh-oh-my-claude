@@ -113,6 +113,12 @@ dsh: runs on 0.1.5-rc.1 through 0.1.7-alpha.2; built and tested on 0.1.7-alpha.2
   Claude turn in a workspace after this update records the mount, and it sticks from then on.
 ### Fixed
 
+- Ask on selected text and `/btw` work on a session whose Claude process was stopped for being
+  idle: the process starts again with the conversation and answers, instead of "send a prompt
+  first". A session with no turn since dsh started still needs one.
+- The cost pill stays in the footer after switching back from a subagent. With no stats row on
+  screen yet it could attach itself beside the Oh My Claude button in the composer, grey, until a
+  refresh.
 - In a Claude session, a slash command or skill typed in the composer and its `@` file chips take
   the Claude accent instead of dsh's blue, matching the chips in sent messages.
 - A Claude Code session restored into dsh opens on the model it last ran and the access it ran

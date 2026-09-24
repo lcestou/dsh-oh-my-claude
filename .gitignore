@@ -13,3 +13,4 @@ node_modules
 CLAUDE.md
 .claude/
 notes/
+tools/playwright/state.json

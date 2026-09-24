@@ -5198,6 +5198,7 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
           aria-label="Oh My Claude"
           aria-haspopup="dialog"
           aria-expanded={open}
+          data-omc-panel-trigger=""
           {...(pulse ? { "data-omc-pulse": "" } : {})}
           onClick={() => {
             if (open) {
