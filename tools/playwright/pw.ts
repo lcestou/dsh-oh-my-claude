@@ -39,6 +39,7 @@ export type Locator = {
 
 export type Page = {
   goto(url: string, how?: { waitUntil?: "networkidle" | "load" }): Promise<void>;
+  addStyleTag(tag: { content: string }): Promise<void>;
   /** Run in the page, which carries dsh's session cookie: the plugin's own routes answer 401 to a
    *  token passed as a query parameter, so a check that has to call one goes through here. */
   evaluate<T>(fn: () => T | Promise<T>): Promise<T>;

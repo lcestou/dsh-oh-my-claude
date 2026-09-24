@@ -6,6 +6,12 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Fixed
+
+- The Rewind tab lists each prompt as you typed it. A prompt sent right after an access change
+  led with dsh's own note ("The approval policy changed from ...") and carried dsh's runtime
+  context after it.
+
 ## [1.4.0] - 2026-09-24
 
 dsh: runs on 0.1.5-rc.1 through 0.1.7-rc.2; built and tested on 0.1.7-rc.2.

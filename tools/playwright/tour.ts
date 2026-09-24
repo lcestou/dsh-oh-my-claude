@@ -55,12 +55,20 @@ const pick = async (p: Page) => {
   await target.last().click({ force: true });
   await wait(p, 3500);
 };
+// The panel is translucent, so the chat behind it bleeds through its rows and the shot reads as
+// two layers of text. While the panel is open the conversation is hidden; the shield menu and the
+// stats row, shot with the panel closed, keep it.
+const HIDE_CHAT_BEHIND_PANEL =
+  'body:has([role="dialog"][aria-label="Oh My Claude"]) [data-slot="conversation.view"]{visibility:hidden}';
+/** Hide the conversation behind the open panel for the rest of this page's shots. */
+const stage = (p: Page) => p.addStyleTag({ content: HIDE_CHAT_BEHIND_PANEL });
 /** Open a new page at dsh and drive it to a picked session, waiting for the network to idle so the
  *  panel is ready to shoot.
  */
 const open = async (ctx: Context) => {
   const p = await ctx.newPage();
   await p.goto(dshUrl(token), { waitUntil: "networkidle" });
+  await stage(p);
   await wait(p, 2500);
   await pick(p);
   return p;
@@ -245,6 +253,7 @@ if (!process.env.PW_CLIPS_ONLY) {
   });
   const p = await ctx.newPage();
   await p.goto(dshUrl(token), { waitUntil: "networkidle" });
+  await stage(p);
   await wait(p, 2500);
   await p.setViewportSize({ width: 1400, height: 900 });
   await wait(p, 1000);
