@@ -402,6 +402,9 @@ export interface PluginContext {
       providers: string[],
       adapter: import("@deepseek-ai/dsh-llm").LlmAdapter,
     ) => import("@deepseek-ai/dsh-llm").AdapterRegistrationHandle;
+    /** The `[File …]` text dsh sends for one attached file in this environment, the same string
+     *  its request assembly writes. Optional: a dsh without it leaves file steers to the boundary. */
+    fileRequestText?: (ref: { attachmentId: string; name: string; bytes: number }) => string;
   };
   logger: {
     [level: string]: ((msg: string) => void) | undefined;

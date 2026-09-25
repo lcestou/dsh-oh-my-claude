@@ -1706,8 +1706,14 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      */
     continuationFor(options: SessionOptions, forceFresh?: boolean): Continuation;
     /** Write one mid-turn message to the CLI's stdin whole, marking it sent on a good write so no
-     *  later delivery repeats it. Skips a message with neither text nor image. */
+     *  later delivery repeats it; `uuid` names the line for `cancel_async_message`. Answers whether
+     *  it was written: false for a message with neither text nor image, and for a dead process. */
     private writeSteerMessage;
+    /** A copy of a mid-turn message with each file block replaced by the `[File …]` text dsh would
+     *  send for it, so the message can go over stdin before dsh assembles a request. Undefined when
+     *  it cannot: a file on a dsh without `fileRequestText`, or an image with no attachment store to
+     *  load it from; that message waits for the boundary instead. */
+    private withFileHandles;
     /** First write of a turn: relay results, unsent steers, or the prompt itself. */
     openTurn(cont: Continuation, proc: ClaudeProcess, prep: TurnPrep): Promise<void>;
     /**

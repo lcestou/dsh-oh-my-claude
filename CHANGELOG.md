@@ -14,6 +14,9 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- A file or image you send while Claude runs one of its own tools reaches Claude with that
+  tool's result, like a text message does. Before, Claude answered the tool first and then the
+  message as a reply of its own.
 - A file or image sent on its own while Claude works reaches Claude at its next tool call, not
   after the turn ends.
 - An image sent while Claude waits on a dsh tool (a subagent, a background job) reaches Claude.
