@@ -2,6 +2,7 @@ import type { IncomingMessage } from "node:http";
 import { type FoldedTranscript } from "./transcript.js";
 import { type Reach } from "./reach.js";
 import type { JsonValue, PluginContext, WorkspaceRegistry } from "./dsh.js";
+import { type SteerAttachment } from "./process.js";
 import { type HealHost, type RepairsSummary } from "./session-heal.js";
 import type { ToolMode, ToolModeInfo } from "./rows-probe.js";
 import { type PluginLoadError } from "./plugins.js";
@@ -477,10 +478,12 @@ export interface SessionRouteOptions {
             text: string;
             at: number;
             relayed?: true;
+            attachments?: SteerAttachment[];
         }>;
         held: Array<{
             id: string;
             text: string;
+            attachments?: SteerAttachment[];
         }>;
     };
     /** Take waiting steers back from Claude for an edit; the answer names the hold and its text. */

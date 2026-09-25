@@ -29,6 +29,7 @@ import {
   IconCodeOutlineMedium,
   IconEditOutlineMedium,
   IconListPenOutlineMedium,
+  IconPaperclipOutlineRegular,
   IconSearchOutlineMedium,
   IconSkillOutlineMedium,
   IconSparkleMedium,
@@ -95,7 +96,10 @@ import type {
   AsideItem,
   IdleReply,
   LoginNeed,
+  HeldSteerRow,
+  SteerAttachmentRow,
   SteerCardData,
+  WaitingSteerRow,
   TurnRecord,
   TurnsReply,
 } from "./events.js";
@@ -113,6 +117,13 @@ import {
 } from "./picker.js";
 import { ClaudeUpdateDetails } from "./claude-updates.js";
 import { type LimitLevel, worstLimit } from "./limits.js";
+import {
+  noteWithdrawn,
+  type RestoreWatch,
+  startWatch,
+  stepRestore,
+  withdrawnSince,
+} from "./steer-restore.js";
 import { SearchField } from "./search-field.js";
 import { Switch } from "./switch.js";
 import type { ToolMode, ToolModeInfo } from "../rows-probe.js";
@@ -8579,6 +8590,68 @@ const steerFailureText = (f: SteerEditFailure): string =>
         ? t("main.steer.error", { error: f.error ?? t("common.unknownError") })
         : t("main.steer.sent");
 
+/** A chip's size: under a kilobyte in bytes, since the shared formatter rounds those to 0 KB. */
+const chipSize = (bytes: number): string => (bytes < 1000 ? `${bytes} B` : size(bytes));
+
+/** The files and images on a waiting or held steer, as small chips in the order the message holds
+ *  them: a file by name and size, an image by its name or the word for image. Draws nothing for a
+ *  text-only message. */
+function SteerAttachments({ items }: { items: SteerAttachmentRow[] | undefined }) {
+  useLocale();
+  if (!items?.length) return null;
+  return (
+    <ul
+      data-omc-steer-attachments=""
+      aria-label={t("main.steer.attachmentsAria")}
+      style={{
+        display: "flex",
+        flexWrap: "wrap",
+        gap: 4,
+        margin: "0 0 2px",
+        padding: 0,
+        listStyle: "none",
+      }}
+    >
+      {items.map((a, i) => {
+        const label = a.name ?? t("main.steer.image");
+        // An older dsh's image reference may carry no size; the chip then names it alone.
+        const sized = a.bytes > 0;
+        return (
+          <li
+            key={`${label}:${i}`}
+            data-omc-steer-attachment={a.kind}
+            title={label}
+            aria-label={
+              sized
+                ? t("main.steer.attachmentAria", { name: label, size: chipSize(a.bytes) })
+                : label
+            }
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 4,
+              maxWidth: 220,
+              padding: "1px 6px",
+              border: `1px solid ${T.border}`,
+              borderRadius: 6,
+              color: T.faint,
+              fontSize: 12,
+            }}
+          >
+            <span aria-hidden="true" style={{ display: "inline-flex" }}>
+              <IconPaperclipOutlineRegular size={12} />
+            </span>
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {label}
+            </span>
+            {sized && <span aria-hidden="true">{chipSize(a.bytes)}</span>}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 /** The card above the composer for typed steers Claude has not read yet. Edit (or Edit all, joining
  *  them one per line, as Claude Code's up arrow does) takes them back from Claude first, so nothing
  *  goes out while the editor is open; Save sends one message with the new text, Cancel or Escape
@@ -8604,6 +8677,7 @@ function SteerCard({
 
   /** Post one action for the row or hold `id`, then re-poll; a refusal leaves its line under it. */
   const act = async (id: string, body: SteerAction) => {
+    if ("ids" in body) noteWithdrawn(body.ids);
     setBusy(id);
     setFailed(null);
     try {
@@ -8626,10 +8700,11 @@ function SteerCard({
     }
   };
 
-  /** Send a hold's typed text in its place, unless it is blank. */
-  const save = (holdId: string, fallback: string) => {
+  /** Send a hold's typed text in its place; blank only when the hold keeps a file or image, which
+   *  then goes alone. */
+  const save = (holdId: string, fallback: string, hasFiles: boolean) => {
     const text = drafts[holdId] ?? fallback;
-    if (text.trim() !== "") void act(holdId, { action: "save", holdId, text });
+    if (text.trim() !== "" || hasFiles) void act(holdId, { action: "save", holdId, text });
   };
 
   const buttonStyle = {
@@ -8706,11 +8781,14 @@ function SteerCard({
       {steers.held.map((h) => {
         const disabled = busy === h.id;
         const value = drafts[h.id] ?? h.text;
+        const hasFiles = Boolean(h.attachments?.length);
         return (
           <div key={h.id} data-omc-steer-hold={h.id} style={{ padding: "4px 0" }}>
+            <SteerAttachments items={h.attachments} />
             <textarea
               data-omc-steer-input=""
               aria-label={t("main.steer.inputAria")}
+              aria-describedby={hasFiles ? `omc-steer-kept-${h.id}` : undefined}
               // oxlint-disable-next-line jsx-a11y/no-autofocus -- opened by the person's own click, so focus goes where they asked
               autoFocus
               value={value}
@@ -8724,7 +8802,7 @@ function SteerCard({
                   void act(h.id, { action: "restore", holdId: h.id });
                 } else if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                   e.preventDefault();
-                  save(h.id, h.text);
+                  save(h.id, h.text, hasFiles);
                 }
               }}
               style={{
@@ -8739,6 +8817,15 @@ function SteerCard({
                 resize: "vertical",
               }}
             />
+            {hasFiles && (
+              <div
+                id={`omc-steer-kept-${h.id}`}
+                data-omc-steer-kept=""
+                style={{ color: T.faint, fontSize: 12, marginTop: 2 }}
+              >
+                {t("main.steer.attachmentsKept")}
+              </div>
+            )}
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 4, marginTop: 4 }}>
               <button
                 type="button"
@@ -8762,8 +8849,8 @@ function SteerCard({
               <button
                 type="button"
                 data-omc-steer-save=""
-                disabled={disabled || value.trim() === ""}
-                onClick={() => save(h.id, h.text)}
+                disabled={disabled || (value.trim() === "" && !hasFiles)}
+                onClick={() => save(h.id, h.text, hasFiles)}
                 style={{ ...buttonStyle, color: T.text }}
               >
                 {t("save")}
@@ -8783,20 +8870,22 @@ function SteerCard({
             style={{ padding: "4px 0" }}
           >
             <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
-              <span
-                style={{
-                  flex: 1,
-                  color: T.text,
-                  whiteSpace: "pre-wrap",
-                  overflowWrap: "anywhere",
-                  display: "-webkit-box",
-                  WebkitLineClamp: 3,
-                  WebkitBoxOrient: "vertical",
-                  overflow: "hidden",
-                }}
-              >
-                {s.text}
-              </span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <SteerAttachments items={s.attachments} />
+                <span
+                  style={{
+                    color: T.text,
+                    whiteSpace: "pre-wrap",
+                    overflowWrap: "anywhere",
+                    display: "-webkit-box",
+                    WebkitLineClamp: 3,
+                    WebkitBoxOrient: "vertical",
+                    overflow: "hidden",
+                  }}
+                >
+                  {s.text}
+                </span>
+              </div>
               <button
                 type="button"
                 data-omc-steer-edit=""
@@ -9241,9 +9330,62 @@ function ClaudeUpdateCard({
   );
 }
 
+/** The composer state and actions dsh hands a `conversation.input.dock` entry: the slice the steer
+ *  card's restore undo reads and writes. */
+type ComposerSlot = {
+  inputActions?: { setDraft: (text: string) => void; removeAttachment?: (id: string) => void };
+  useInput?: <T>(select: (state: { draft: string; attachmentIds?: readonly string[] }) => T) => T;
+};
+
+/** A composer with no attachments, one identity so the selector does not churn. */
+const NO_ATTACHMENTS: readonly string[] = [];
+
+/**
+ * Undo dsh's composer restore of an attachment steer the card took back. dsh counts a send with a
+ * file or image as unfinished until it lands in the chat; when a hold (Edit, Remove, Send now)
+ * takes it out of the inbox first, dsh calls the send failed and, in the tab that sent it, puts its
+ * attachments back at the head of the composer's row and its text back into an empty composer.
+ * The card is the editor, so that copy is a duplicate one Enter away from going out twice. The
+ * pairing is `stepRestore`'s; this feeds it every composer and steer-list update and applies what
+ * it returns. Gets wrong: text typed before the restore keeps dsh from restoring the words (it only
+ * fills an empty composer), and a later restore then brings both drafts back joined, which the
+ * step does not recognise and leaves in place. Does nothing on a dsh without `removeAttachment`.
+ */
+function useUndoSteerRestore(
+  waiting: WaitingSteerRow[],
+  held: HeldSteerRow[],
+  { inputActions, useInput }: ComposerSlot,
+) {
+  const ids = useInput?.((state) => state.attachmentIds) ?? NO_ATTACHMENTS;
+  const draft = useInput?.((state) => state.draft) ?? "";
+  const watch = useRef<RestoreWatch>(startWatch(ids, waiting, draft));
+  useEffect(() => {
+    const at = Date.now();
+    const withdrawn = withdrawnSince(at);
+    for (const h of held) withdrawn.add(h.id);
+    const { next, remove, clearDraft } = stepRestore(watch.current, {
+      ids,
+      rows: waiting,
+      draft,
+      at,
+      withdrawn,
+    });
+    watch.current = next;
+    const drop = inputActions?.removeAttachment;
+    if (!inputActions || !drop) return;
+    for (const id of remove) drop(id);
+    if (clearDraft) inputActions.setDraft("");
+  }, [waiting, held, ids, draft, inputActions]);
+}
+
 /** Render this session's aside items as a collapsible stack, polling `/side-questions` every few
  *  seconds: questions, a login need and a Claude update card, or nothing when the poll is empty. */
-function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
+function AsideBubble({
+  sessionId,
+  ctx,
+  inputActions,
+  useInput,
+}: { sessionId: string; ctx: ClientCtx } & ComposerSlot) {
   useLocale();
   const [items, setItems] = useState<AsideItem[]>([]);
   // What the poll compares its answer against, without listing `items` as a dependency of its effect.
@@ -9385,6 +9527,8 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
   // which only exist for a Claude session, so an empty list is the only reason to hide it. Reading
   // the provider binding at render blinked the card out whenever the binding reloaded.
   const loginCard = need && needDismissed !== need.host ? need : null;
+  // Before the early return below: the card is gone once its last row goes, and so would be this.
+  useUndoSteerRestore(steers.waiting, steers.held, { inputActions, useInput });
   const anySteers = steers.waiting.length > 0 || steers.held.length > 0;
   if (shown.length === 0 && !loginCard && !claudeUpdate && !limitCard && !anySteers) return null;
 
@@ -10258,7 +10402,15 @@ export function apply(ctx: ClientCtx) {
     );
     ctx.slots.register(
       { name: "conversation.input.dock", id: "claude-aside", order: 45 },
-      (props) => (props.sessionId ? <AsideBubble sessionId={props.sessionId} ctx={ctx} /> : null),
+      (props) =>
+        props.sessionId ? (
+          <AsideBubble
+            sessionId={props.sessionId}
+            ctx={ctx}
+            inputActions={props.inputActions}
+            useInput={props.useInput}
+          />
+        ) : null,
     );
     // Above the aside so a fresh tab reads top-down: what to type first, then anything that answered
     // later. dsh hands composer-slot entries the composer's own `inputActions` and `useInput`, which

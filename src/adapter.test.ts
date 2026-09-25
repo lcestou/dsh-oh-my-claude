@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { anthropicStatus, forgetStatus } from "./anthropic-status.js";
 import {
+  attachmentsOf,
   nativeToolRows,
   Config,
   KNOWN_MODELS,
@@ -5310,7 +5311,11 @@ console.log("interrupt-on-abort ok");
   steer([file]);
   assert.equal(writes.length, 0, "file alone: nothing to write");
   assert.equal(proc.sent.size, 0, "file alone: not marked sent");
-  assert.equal(proc.steerPending, false, "file alone: no text, so nothing parks (as before)");
+  assert.equal(
+    proc.steerPending,
+    true,
+    "file alone: parks like a file with text (it used to wait for the turn's end)",
+  );
   console.log("live-steer ok");
 }
 // The steer card's side of the listener: a typed steer is recorded with the uuid its line carries,
@@ -5848,6 +5853,392 @@ console.log("interrupt-on-abort ok");
   assert.equal(keepsLiveTurn("parked"), true, "so does a step parked on a steer");
   assert.equal(keepsLiveTurn("finished"), false, "a finished turn drops them");
   assert.equal(keepsLiveTurn("ended"), false, "and so does a process that died under it");
+}
+
+// The steer card and a message carrying a file or image. The listener records it (`boundary` during
+// a native tool, `relayed` during a dsh tool) with chips for the card; a hold takes it out of dsh's
+// inbox without a CLI cancel and gives back its count; a save keeps every file and image and swaps
+// only the words; and the turn writers never lose an image to the text-only paths.
+{
+  const file = {
+    type: "file",
+    attachment: { attachmentId: "sha256:abc", name: "a.zip", bytes: 3 },
+  };
+  const image = {
+    type: "image",
+    attachment: { attachmentId: "sha256:def", mediaType: "image/png" },
+  };
+  const words = (text: string) => ({ type: "text", text });
+  const fileChip = { kind: "file", name: "a.zip", bytes: 3 };
+  const imageChip = { kind: "image", bytes: 0 };
+  // SAFETY: wire-shaped blocks, as dsh splices them; attachmentsOf reads only type and attachment
+  const content = (blocks: object[]) => blocks as unknown as LooseMessage["content"];
+
+  assert.deepEqual(attachmentsOf("plain"), [], "a string content has none");
+  assert.deepEqual(attachmentsOf(content([words("hi")])), [], "text alone has none");
+  assert.deepEqual(attachmentsOf(content([{ type: "image" }])), [], "a block without a reference");
+  assert.deepEqual(
+    attachmentsOf(content([file, image, words("x")])),
+    [fileChip, imageChip],
+    "named in block order; an image without a size reads 0",
+  );
+
+  // The listener.
+  const handlers: Record<string, (session: unknown, event: unknown) => void> = {};
+  let nextStep: Array<{ id: string }> = [];
+  const listener = new ClaudeCodeAdapter(
+    fakeCtx({
+      on(name: string, fn: (session: unknown, event: unknown) => void) {
+        handlers[name] = fn;
+      },
+      agents: { get: () => ({ inbox: { nextStep, replace: () => true, remove: () => true } }) },
+    }),
+    Config({}),
+  );
+  const writes: string[] = [];
+  const native = {
+    alive: true,
+    busy: true,
+    relays: new Map(),
+    sent: new Set<string>(),
+    steerPending: false,
+    forwarded: 0,
+    steers: new Map<string, Record<string, unknown>>(),
+    write(line: string) {
+      writes.push(line);
+      return true;
+    },
+  };
+  listener.processes.set(registryKey("claude-code", "n"), fakeProc(native));
+  const splice = (session: string, inserted: object[], removedCount = 0) =>
+    handlers["session/event"]?.(
+      { id: session },
+      { type: "agent/inbox/spliced", data: { target: "next-step", inserted, removedCount } },
+    );
+  const typed = (id: string, blocks: object[]) => ({
+    id,
+    role: "user",
+    source: { kind: "user", rpcId: `r-${id}` },
+    content: blocks,
+  });
+
+  splice("n", [typed("m1", [file, words("see")])]);
+  assert.equal(writes.length, 0, "native, file and text: nothing over stdin");
+  assert.deepEqual(native.steers.get("m1"), {
+    key: "r-m1",
+    text: "see",
+    at: native.steers.get("m1")?.at,
+    boundary: true,
+    attachments: [fileChip],
+  });
+  assert.equal(native.forwarded, 1);
+  assert.equal(native.steerPending, true, "native: the step parks at the next tool result");
+  assert.deepEqual(listener.steersFor("n").waiting, [
+    { id: "m1", text: "see", at: native.steers.get("m1")?.at, attachments: [fileChip] },
+  ]);
+
+  splice("n", [typed("m2", [image])]);
+  assert.equal(native.steers.get("m2")?.text, "", "native, image alone: recorded with no words");
+  assert.deepEqual(native.steers.get("m2")?.attachments, [imageChip]);
+  assert.equal(native.forwarded, 2, "native, image alone: it parks too");
+
+  splice("n", [
+    {
+      id: "m3",
+      role: "user",
+      source: { kind: "agent-message", form: "relay" },
+      content: [file, words("report")],
+    },
+  ]);
+  assert.equal(native.forwarded, 3, "a child's file parks the step");
+  assert.equal(native.steers.has("m3"), false, "but is not the person's to edit");
+
+  splice("n", [typed("m4", [{ type: "image" }, words("x")])]);
+  assert.equal(writes.length, 0, "a block without a reference still cannot go over stdin");
+  assert.equal(native.forwarded, 4, "so it parks");
+  assert.equal("attachments" in (native.steers.get("m4") ?? {}), false, "and shows no chip");
+
+  // dsh drops m2 some other way than a claim: the record goes and its count with it.
+  nextStep = [{ id: "m1" }, { id: "m4" }];
+  splice("n", [], 1);
+  assert.equal(native.steers.has("m2"), false, "the sweep follows dsh's inbox");
+  assert.equal(native.forwarded, 3, "and gives back the dropped row's count");
+  nextStep = [];
+  splice("n", [], 2);
+  assert.equal(native.steers.size, 0);
+  assert.equal(native.forwarded, 1, "the child's message still counts");
+  assert.equal(native.steerPending, true);
+  native.forwarded = 1;
+  native.steers.set("m6", { key: "r-m6", text: "", at: 6, boundary: true });
+  splice("n", [], 1);
+  assert.equal(native.forwarded, 0, "the last dropped row's count goes");
+  assert.equal(native.steerPending, false, "and the park with it");
+  // A save comes back through dsh's steer: the listener records it again, counted, as boundary.
+  native.steers.clear();
+  splice("n", [typed("m1", [file, words("new words")])]);
+  assert.equal(native.steers.get("m1")?.boundary, true, "a saved message is listed again");
+  assert.equal(native.forwarded, 1, "and parks again");
+  assert.equal(native.steerPending, true);
+
+  const relayed = {
+    alive: true,
+    busy: false,
+    relays: new Map([["c1", {}]]),
+    sent: new Set<string>(),
+    steerPending: false,
+    forwarded: 0,
+    steers: new Map<string, Record<string, unknown>>(),
+    write(line: string) {
+      writes.push(line);
+      return true;
+    },
+  };
+  listener.processes.set(registryKey("claude-code", "d"), fakeProc(relayed));
+  splice("d", [typed("m5", [image, words("look")])]);
+  assert.deepEqual(relayed.steers.get("m5"), {
+    key: "r-m5",
+    text: "look",
+    at: relayed.steers.get("m5")?.at,
+    relayed: true,
+    attachments: [imageChip],
+  });
+  assert.equal(relayed.forwarded, 0, "dsh tool: nothing counted, dsh staples it to the result");
+  assert.equal(writes.length, 0);
+
+  // The hold and the save.
+  /** A fake dsh agent: its inbox's next-step list, what left it, and every message steered back. */
+  const makeAgent = (pending: object[], onGet?: () => void) => {
+    const removed: string[] = [];
+    const steered: Array<{ id: string; content: unknown[] }> = [];
+    const agent = {
+      inbox: {
+        nextStep: pending,
+        replace: () => true,
+        remove(id: string) {
+          removed.push(id);
+          return true;
+        },
+      },
+      steer(m: { id: string; content: unknown[] }) {
+        steered.push({ id: m.id, content: m.content });
+      },
+    };
+    const adapter = new ClaudeCodeAdapter(
+      fakeCtx({
+        on() {},
+        agents: {
+          get: () => {
+            onGet?.();
+            return agent;
+          },
+        },
+      }),
+      Config({}),
+    );
+    return { adapter, removed, steered };
+  };
+  /** A live process holding one `boundary` row, m1, carrying `blocks`. */
+  const boundaryProc = (text: string, attachments: object[]) => {
+    const written: string[] = [];
+    const proc = {
+      alive: true,
+      busy: true,
+      relays: new Map(),
+      sent: new Set<string>(),
+      steerPending: true,
+      forwarded: 1,
+      steers: new Map<string, Record<string, unknown>>([
+        ["m1", { key: "r-m1", text, at: 1, boundary: true, attachments }],
+      ]),
+      write(line: string) {
+        written.push(line);
+        return true;
+      },
+    };
+    return { proc, written };
+  };
+
+  {
+    const { adapter, removed, steered } = makeAgent([typed("m1", [file, words("see")])]);
+    const { proc, written } = boundaryProc("see", [fileChip]);
+    adapter.processes.set(registryKey(adapter.providerId, "s1"), fakeProc(proc));
+    assert.deepEqual(await adapter.holdSteers("s1", ["m1"]), {
+      ok: true,
+      holdId: "m1",
+      text: "see",
+    });
+    assert.equal(written.length, 0, "no cancel: the CLI never had it");
+    assert.deepEqual(removed, ["m1"], "out of dsh's inbox");
+    assert.equal(proc.forwarded, 0, "its count given back");
+    assert.equal(proc.steerPending, false, "nothing left to park on");
+    assert.deepEqual(adapter.steersFor("s1").held, [
+      { id: "m1", text: "see", attachments: [fileChip] },
+    ]);
+    assert.deepEqual(await adapter.releaseHold("s1", "m1", { text: "new words" }), { ok: true });
+    assert.deepEqual(steered, [{ id: "m1", content: [file, words("new words")] }], "file kept");
+  }
+  {
+    const { adapter, steered } = makeAgent([typed("m1", [file, words("see")])]);
+    const { proc } = boundaryProc("see", [fileChip]);
+    adapter.processes.set(registryKey(adapter.providerId, "s1"), fakeProc(proc));
+    await adapter.holdSteers("s1", ["m1"]);
+    assert.deepEqual(await adapter.releaseHold("s1", "m1", { text: "  " }), { ok: true });
+    assert.deepEqual(steered, [{ id: "m1", content: [file] }], "blank words: the file alone");
+  }
+  {
+    const { adapter, steered } = makeAgent([typed("m1", [words("first")])]);
+    const { proc } = boundaryProc("first", []);
+    proc.steers.set("m1", { key: "r-m1", text: "first", at: 1, relayed: true });
+    adapter.processes.set(registryKey(adapter.providerId, "s1"), fakeProc(proc));
+    await adapter.holdSteers("s1", ["m1"]);
+    assert.deepEqual(await adapter.releaseHold("s1", "m1", { text: " " }), {
+      ok: false,
+      reason: "error",
+      error: "text must be non-empty",
+    });
+    assert.equal(adapter.steersFor("s1").held.length, 1, "a refused blank save keeps the hold");
+    assert.deepEqual(steered, []);
+  }
+  // Edit all over an image alone and a text: the editor opens on the words, the save keeps it.
+  {
+    const { adapter, steered } = makeAgent([typed("m1", [image]), typed("m2", [words("fix it")])]);
+    const { proc } = boundaryProc("", [imageChip]);
+    proc.forwarded = 2;
+    proc.steers.set("m2", { key: "r-m2", text: "fix it", at: 2, relayed: true });
+    adapter.processes.set(registryKey(adapter.providerId, "s1"), fakeProc(proc));
+    assert.deepEqual(await adapter.holdSteers("s1", ["m1", "m2"]), {
+      ok: true,
+      holdId: "m1",
+      text: "fix it",
+    });
+    assert.equal(proc.forwarded, 1, "only the boundary row gave back a count");
+    await adapter.releaseHold("s1", "m1", { text: "fixed" });
+    assert.deepEqual(steered, [{ id: "m1", content: [image, words("fixed")] }]);
+  }
+  // A park during the hold's await clears the map and a new boundary steer counts itself: the stale
+  // row must not spend that count.
+  {
+    const { proc } = boundaryProc("see", [fileChip]);
+    const { adapter } = makeAgent([typed("m1", [file, words("see")])], () => {
+      proc.steers.clear();
+      proc.forwarded = 1;
+      proc.steerPending = true;
+      proc.steers.set("m9", { key: "r-m9", text: "late", at: 9, boundary: true });
+    });
+    adapter.processes.set(registryKey(adapter.providerId, "s1"), fakeProc(proc));
+    await adapter.holdSteers("s1", ["m1"]);
+    assert.equal(proc.forwarded, 1, "the newer steer keeps its count");
+    assert.equal(proc.steerPending, true, "and its park");
+  }
+
+  // The turn writers.
+  const turnWrites: string[] = [];
+  const withStore = new ClaudeCodeAdapter(
+    fakeCtx({
+      on() {},
+      attachments: { readImage: async () => ({ data: new Uint8Array([0, 1, 2]).buffer }) },
+    }),
+    Config({}),
+  );
+  const noStore = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  const turnProc = {
+    alive: true,
+    busy: true,
+    relays: new Map(),
+    sent: new Set<string>(),
+    steerPending: false,
+    parked: "steer" as "steer" | undefined,
+    write(line: string) {
+      turnWrites.push(line);
+      return true;
+    },
+  };
+  // SAFETY: openTurn reads only input and drops off the prep; the rest is the spawn path's.
+  const prep = { input: "{}", args: [], cwd: "/tmp", spec: emptySpec } as unknown as TurnPrep;
+  // SAFETY: the session options carry dsh's branded id; openTurn reads only these two fields
+  const opts = (sessionId: string, messages: LooseMessage[]) =>
+    ({ sessionId, messages }) as unknown as Parameters<ClaudeCodeAdapter["continuationFor"]>[0];
+  /** The content blocks of the nth stdin line. */
+  const blocksOf = (n: number) =>
+    // SAFETY: the line is what buildInput wrote
+    (
+      JSON.parse(turnWrites[n] ?? "{}") as {
+        message?: { content?: Array<Record<string, unknown>> };
+      }
+    ).message?.content ?? [];
+
+  await noStore.openTurn(
+    {
+      mode: "steer",
+      proc: fakeProc(turnProc),
+      options: opts(
+        "s",
+        messageList([
+          { role: "assistant", content: [words("on it")] },
+          { role: "user", source: { kind: "user", rpcId: "r-img" }, content: [image] },
+        ]),
+      ),
+    },
+    fakeProc(turnProc),
+    prep,
+  );
+  assert.equal(turnWrites.length, 1, "steer mode, image alone: written, not skipped");
+  assert.deepEqual(blocksOf(0), [words("(see attached)")], "never an empty text block");
+  assert.ok(turnProc.sent.has("r-img"));
+
+  turnWrites.length = 0;
+  const resolved: string[] = [];
+  turnProc.relays = new Map([
+    [
+      "c1",
+      {
+        type: "dsh_relay",
+        id: "c1",
+        name: "job_output",
+        args: {},
+        resolve: (v: { text: string }) => resolved.push(v.text),
+        reject: () => {},
+      },
+    ],
+  ]);
+  await withStore.openTurn(
+    {
+      mode: "relay",
+      proc: fakeProc(turnProc),
+      options: opts(
+        "s",
+        messageList([
+          { role: "assistant", content: [words("waiting")] },
+          {
+            role: "user",
+            source: { kind: "user", rpcId: "r-look" },
+            content: [image, words("look")],
+          },
+          {
+            role: "user",
+            source: { kind: "user", rpcId: "r-also" },
+            content: [words("also this")],
+          },
+        ]),
+      ),
+      results: [{ text: "job done" }],
+    },
+    fakeProc(turnProc),
+    prep,
+  );
+  assert.equal(turnWrites.length, 1, "relay mode: the image steer goes over stdin");
+  const relayBlocks = blocksOf(0);
+  assert.ok(String(relayBlocks[0]?.text).startsWith("look"), "its words with it");
+  assert.equal(relayBlocks[1]?.type, "image", "and its image inline");
+  assert.ok(turnProc.sent.has("r-look"));
+  assert.equal(resolved.length, 1);
+  assert.ok(resolved[0]?.includes("also this"), "a text steer still rides the result");
+  assert.equal(
+    resolved[0]?.includes("look"),
+    false,
+    "the image steer's words are not repeated there",
+  );
+  console.log("steer-card attachments ok");
 }
 
 // An attachment follows its turn to the box. dsh saves a file on this PC and names that path in

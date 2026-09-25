@@ -1,5 +1,5 @@
 import { type FSWatcher } from "node:fs";
-import type { Spawner, SubprocessHandle, ContextUsage, WorkspaceDiff, McpServerStatus, CliModel, PermissionRules, HooksListing } from "./process.js";
+import type { Spawner, SubprocessHandle, ContextUsage, WorkspaceDiff, McpServerStatus, CliModel, PermissionRules, HooksListing, SteerAttachment } from "./process.js";
 import { type PluginLoadError } from "./plugins.js";
 import { LlmAdapter, type ContentBlock, type GenerateOptions, type LlmModelInfo, type LlmResolvedModelInfo, type StreamChunk } from "@deepseek-ai/dsh-llm";
 import z from "@deepseek-ai/schemastery";
@@ -253,16 +253,19 @@ export interface SteerCardState {
     /** The CLI is inside a dsh tool, so Send now is refused for every row; present only when true. */
     inTool?: true;
     /** `relayed` is present only while dsh holds the message (typed during a dsh tool): a hold skips
-     *  the CLI cancel and leaves dsh's inbox directly. */
+     *  the CLI cancel and leaves dsh's inbox directly, as it does for a row carrying a file or
+     *  image. `attachments` is present only when the message carries one; a save keeps them. */
     waiting: Array<{
         id: string;
         text: string;
         at: number;
         relayed?: true;
+        attachments?: SteerAttachment[];
     }>;
     held: Array<{
         id: string;
         text: string;
+        attachments?: SteerAttachment[];
     }>;
 }
 /** Steers taken back from Claude while someone edits them. */
@@ -555,6 +558,10 @@ export type LooseMessage = {
 /** The browser's IANA zone as dsh stamped it on the latest user prompt; undefined when no
  *  prompt carried one (an API caller, an old log), so clocks fall back to the box's zone. */
 export declare function clientTimeZone(messages: readonly LooseMessage[]): string | undefined;
+/** The file and image blocks of a message as the steer card names them, in block order. A block
+ *  without its attachment reference (wire data from an older dsh) is skipped, as dsh's own queue
+ *  dock does. Empty for a string content or a text-only message. */
+export declare const attachmentsOf: (content: LooseMessage["content"]) => SteerAttachment[];
 /** The key a message dsh delivered mid-step is marked under once it went over stdin: the prompt's
  *  rpcId for a typed steer, the message id for anything dsh sends on its own behalf (a child's
  *  send_message, a settlement notice, a job's finish line). Undefined for what never goes over
@@ -1253,17 +1260,19 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     private holdTimer;
     /**
      * Take typed steers back from Claude so someone can edit them, several at once when asked (the
-     * card's Edit all, the CLI's up-arrow). Each is cancelled in the CLI first; a relayed one (dsh
-     * holds it, the CLI never saw it) skips the cancel and leaves the inbox directly; one the CLI already
-     * took is skipped, and one dsh already drew as sent (the park won the race) goes straight back to
-     * Claude. The rest leave dsh's inbox too, so nothing delivers them while the edit is open, and
-     * wait in a hold until `releaseHold`. When nothing forwarded is left in the CLI's queue the park
-     * flag drops, or the next tool result would end the step on an empty inbox.
+     * card's Edit all, the CLI's up-arrow). Each is cancelled in the CLI first; one the CLI never
+     * saw (relayed, or held back for its file or image) skips the cancel and leaves the inbox
+     * directly; one the CLI already took is skipped, and one dsh already drew as sent (the park won
+     * the race) goes straight back to Claude. The rest leave dsh's inbox too, so nothing delivers
+     * them while the edit is open, and wait in a hold until `releaseHold`. When nothing forwarded is
+     * left in the CLI's queue the park flag drops, or the next tool result would end the step on an
+     * empty inbox.
      */
     holdSteers(sessionId: string, ids: string[]): Promise<HoldReply>;
     /**
      * End a hold. `restore` puts every held message back as it was, `drop` discards them, and a text
-     * sends one message in their place (the first one's identity, the new words). Going back is dsh's
+     * sends one message in their place (the first one's identity, the new words, and every file and
+     * image the held messages carried; blank words only while one is left). Going back is dsh's
      * own steer, so a turn still running forwards it to Claude like any steer and an idle session
      * starts a turn for it. When the session cannot be reached the hold stays, for a retry.
      */
@@ -1696,6 +1705,9 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * - `prompt`: a normal turn; steers Claude already got live are dropped from the prompt.
      */
     continuationFor(options: SessionOptions, forceFresh?: boolean): Continuation;
+    /** Write one mid-turn message to the CLI's stdin whole, marking it sent on a good write so no
+     *  later delivery repeats it. Skips a message with neither text nor image. */
+    private writeSteerMessage;
     /** First write of a turn: relay results, unsent steers, or the prompt itself. */
     openTurn(cont: Continuation, proc: ClaudeProcess, prep: TurnPrep): Promise<void>;
     /**

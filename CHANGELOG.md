@@ -6,8 +6,18 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Added
+
+- A message with a file or image that you send while Claude works now shows on the steer card,
+  both while Claude runs its own tools and while it waits on a dsh tool. You can edit its text,
+  remove it or send it now, and the files stay on it through an edit.
+
 ### Fixed
 
+- A file or image sent on its own while Claude works reaches Claude at its next tool call, not
+  after the turn ends.
+- An image sent while Claude waits on a dsh tool (a subagent, a background job) reaches Claude.
+  Before, only its text did.
 - A file path in Claude's answer (the button that opens the file in the sidebar) takes the Claude
   accent instead of dsh's link blue, like links already do.
 - The composer's text cursor is the Claude accent in a Claude session instead of dsh's blue.
