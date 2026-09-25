@@ -108,7 +108,7 @@ import type {
   WorkspaceId,
   WorkspaceRegistry,
 } from "./dsh.js";
-import { errorText } from "./process.js";
+import { errorText, type SteerAttachment } from "./process.js";
 import { claudeMdDisabledBy, featureSwitches, type ClaudeMdState } from "./switches.js";
 import { currentLogVersion, loadSessionCatalog } from "./rows-probe.js";
 import { serverText } from "./locale.js";
@@ -1799,8 +1799,14 @@ export interface SessionRouteOptions {
    *  timers. */
   steersFor?: (sessionId: string) => {
     inTool?: true;
-    waiting: Array<{ id: string; text: string; at: number; relayed?: true }>;
-    held: Array<{ id: string; text: string }>;
+    waiting: Array<{
+      id: string;
+      text: string;
+      at: number;
+      relayed?: true;
+      attachments?: SteerAttachment[];
+    }>;
+    held: Array<{ id: string; text: string; attachments?: SteerAttachment[] }>;
   };
   /** Take waiting steers back from Claude for an edit; the answer names the hold and its text. */
   holdSteers?: (
@@ -3491,7 +3497,8 @@ export function registerSessionRoutes(
             }
             // The steer card. `hold` takes waiting steers back from Claude for an edit (several at
             // once for Edit all), `remove` takes them back for good, and a hold ends with `save`
-            // (one message with the new text), `restore` (as they were) or `drop`. 409 carries the
+            // (one message with the new text and every file or image the hold carried),
+            // `restore` (as they were) or `drop`. 409 carries the
             // reason so the card can say "already sent" in the reader's language.
             if (
               holdSteers &&
@@ -3523,8 +3530,9 @@ export function registerSessionRoutes(
               if (typeof holdId !== "string" || holdId === "")
                 return json(res, 400, { error: "holdId required" });
               if (action === "save") {
-                if (typeof text !== "string" || text.trim() === "")
-                  return json(res, 400, { error: "text must be non-empty" });
+                // Blank words are `releaseHold`'s call: they are fine while the hold keeps a file or
+                // image, and refused (409, `error`) when nothing would be left to send.
+                if (typeof text !== "string") return json(res, 400, { error: "text required" });
                 const reply = await releaseHold(sid, holdId, { text });
                 return json(res, reply.ok ? 200 : 409, reply);
               }

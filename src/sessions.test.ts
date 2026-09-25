@@ -641,12 +641,20 @@ const responder =
   assert.equal((await post({ session: "s1", action: "hold", ids: [1] })).status, 400);
   assert.equal((await post({ session: "s1", action: "save" })).status, 400, "no holdId");
   assert.equal(
-    (await post({ session: "s1", action: "save", holdId: "m1", text: "  " })).status,
+    (await post({ session: "s1", action: "save", holdId: "m1", text: 1 })).status,
     400,
-    "blank text is refused, not sent",
+    "text that is not a string is refused",
   );
   assert.equal((await post({ session: "s1", action: "zap", holdId: "m1" })).status, 400);
   assert.equal(calls.length, 0);
+  // Blank text reaches releaseHold, which sends it when the hold keeps a file or image and refuses
+  // it otherwise; the route no longer decides.
+  assert.equal(
+    (await post({ session: "s1", action: "save", holdId: "m1", text: "  " })).status,
+    200,
+    "blank text goes to releaseHold",
+  );
+  assert.deepEqual(calls.at(-1), { sid: "s1", op: "release", arg: ["m1", "  "] });
 
   r = await post({ session: "s1", action: "hold", ids: ["m1", "m2"] });
   assert.equal(r.status, 200);
