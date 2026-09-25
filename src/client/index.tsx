@@ -5,6 +5,7 @@
 // `bun run build`.
 import { activeLocale, installLocale, type OmcKey, onLocaleSwitch, t, useLocale } from "./i18n.js";
 import type { CSSProperties, FC, ReactNode } from "react";
+import { flushSync } from "react-dom";
 import {
   Fragment,
   useCallback,
@@ -4875,6 +4876,24 @@ const publishDockHeight = (el: HTMLDivElement | null): void => {
 /** The observer behind `publishDockHeight`; one strip at a time. */
 let dockHeightWatch: ResizeObserver | undefined;
 
+/** The nearest ancestor that scrolls vertically, which clips `el` on top of the viewport; null when
+ *  none does and the viewport is the only clip. */
+const scrollerOf = (el: HTMLElement): HTMLElement | null => {
+  for (let up = el.parentElement; up !== null; up = up.parentElement)
+    if (/auto|scroll/.test(getComputedStyle(up).overflowY)) return up;
+  return null;
+};
+
+/** Whether any of `el` shows inside both the viewport and its scroller. A zero-height box (folded,
+ *  `display: none`) counts as off screen, as it did for the IntersectionObserver this replaced. */
+const onScreen = (el: HTMLElement, box: HTMLElement | null): boolean => {
+  const r = el.getBoundingClientRect();
+  if (r.height === 0 || r.bottom <= 0 || r.top >= window.innerHeight) return false;
+  if (box === null) return true;
+  const c = box.getBoundingClientRect();
+  return r.bottom > c.top && r.top < c.bottom;
+};
+
 /** How long a starting turn waits for dsh to draw its header before the dock line takes its place. */
 const DOCK_HEADER_GRACE_MS = 1000;
 
@@ -4907,54 +4926,52 @@ function DockStatus({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
     read();
     return ctx.sessions.list.subscribe?.(read);
   }, [ctx, sessionId]);
-  // The running turn's header verb line, when dsh drew the header: watched for leaving the viewport,
+  // The running turn's header verb line, when dsh drew the header: read on every animation frame,
   // so the dock hides while the header is on screen and shows once it scrolls off or was never
-  // drawn. Polled, since the header mounts a beat after the dock and dsh's virtual list drops and
-  // redraws it as the column scrolls.
+  // drawn. A frame read, not an IntersectionObserver: the observer reports a frame after the paint
+  // that moved the header, so each time the header came back on screen both lines showed for a
+  // frame or two before the dock left. A phone's short column scrolls the header away far more
+  // often, so that is where it showed (owner, 2026-09-25). Read in the frame, before the paint,
+  // and committed with `flushSync`, the dock leaves in the same frame the header arrives. The read
+  // costs about 5 µs a frame on a 3,700-node page (measured 2026-09-25); the header is looked up
+  // only when missing or dropped, React renders only on a change, and a hidden tab gets no frames.
   useEffect(() => {
-    if (!running) return;
+    // Nothing to decide while the line is switched off, so no frame loop runs.
+    if (!running || off) return;
     // A new turn starts hidden: the previous turn may have ended with its header scrolled away.
     setHeaderAway(false);
     const startedAt = Date.now();
-    let watching: Element | null = null;
-    let obs: IntersectionObserver | undefined;
-    const find = () => {
+    let header: HTMLElement | null = null;
+    let box: HTMLElement | null = null;
+    let away = false;
+    let frame = 0;
+    const check = () => {
+      frame = requestAnimationFrame(check);
       // The header's own verb line: the plugin wires it only on the running turn's newest header,
       // never on a completed turn (those are marked done) and never on dsh's 1px hidden announcer.
-      // So this is the running turn's header when dsh drew it, and the dock hides while it is on
-      // screen. Watching the process button instead pointed at a completed turn on a long run,
-      // whose header sits below the running one, and hid the dock at the wrong scroll position
-      // (owner, 2026-09-23). On a long turn dsh draws no running header until "Load earlier", so
-      // none is found and the dock is the only place the verb shows.
-      const header = document.querySelector<HTMLElement>(
-        "button[data-turn-process] [data-omc-turn-line]",
-      );
-      // No header line drawn: the dock is the only place the verb shows. Set unconditionally, never
-      // guarded by `header === watching`: on the first run both are null, and the guard used to
-      // return before `setHeaderAway(true)` ran, so the dock stayed hidden all turn.
-      if (header === null) {
-        obs?.disconnect();
-        obs = undefined;
-        watching = null;
-        // Right after a send dsh has not drawn the new turn's header yet, and reading that as
-        // "never drawn" flashed the line for up to one poll before the header turned up on screen
-        // (owner, 2026-09-24). Only a header still missing after the grace counts as not drawn.
-        setHeaderAway(Date.now() - startedAt >= DOCK_HEADER_GRACE_MS);
-        return;
+      // So this is the running turn's header when dsh drew it. Watching the process button instead
+      // pointed at a completed turn on a long run, whose header sits below the running one, and
+      // hid the dock at the wrong scroll position (owner, 2026-09-23). Looked up again once dsh's
+      // virtual list drops the node; on a long turn dsh draws no running header until "Load
+      // earlier", so none is found and the dock is the only place the verb shows.
+      if (header === null || !header.isConnected) {
+        header = document.querySelector<HTMLElement>(
+          "button[data-turn-process] [data-omc-turn-line]",
+        );
+        box = header === null ? null : scrollerOf(header);
       }
-      if (header === watching) return;
-      obs?.disconnect();
-      watching = header;
-      obs = new IntersectionObserver(([e]) => setHeaderAway(e !== undefined && !e.isIntersecting));
-      obs.observe(header);
+      // Right after a send dsh has not drawn the new turn's header yet, and reading that as "never
+      // drawn" flashed the line before the header turned up on screen (owner, 2026-09-24). Only a
+      // header still missing after the grace counts as not drawn.
+      const next =
+        header === null ? Date.now() - startedAt >= DOCK_HEADER_GRACE_MS : !onScreen(header, box);
+      if (next === away) return;
+      away = next;
+      flushSync(() => setHeaderAway(next));
     };
-    find();
-    const timer = setInterval(find, 500);
-    return () => {
-      clearInterval(timer);
-      obs?.disconnect();
-    };
-  }, [running]);
+    frame = requestAnimationFrame(check);
+    return () => cancelAnimationFrame(frame);
+  }, [running, off]);
   const shown = running && hasTheme("row") && !off && headerAway;
   useEffect(() => {
     if (!shown) return;

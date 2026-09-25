@@ -16,6 +16,8 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
   until the clicking is done, and no longer shows mid-drag either.
 - The working line above the composer no longer flashes for a moment when you send a message,
   before the new turn's header appears.
+- The working line no longer shows twice for a moment when the turn's header scrolls back into
+  view or the turn ends, which on a phone happened on most turns.
 - The Rewind tab lists each prompt as you typed it. A prompt sent right after an access change
   led with dsh's own note ("The approval policy changed from ...") and carried dsh's runtime
   context after it.
