@@ -16,6 +16,7 @@ import type {
   CliModel,
   PermissionRules,
   HooksListing,
+  SteerAttachment,
   WaitingSteer,
 } from "./process.js";
 import { numberOf, type PluginLoadError } from "./plugins.js";
@@ -577,9 +578,16 @@ export interface SteerCardState {
   /** The CLI is inside a dsh tool, so Send now is refused for every row; present only when true. */
   inTool?: true;
   /** `relayed` is present only while dsh holds the message (typed during a dsh tool): a hold skips
-   *  the CLI cancel and leaves dsh's inbox directly. */
-  waiting: Array<{ id: string; text: string; at: number; relayed?: true }>;
-  held: Array<{ id: string; text: string }>;
+   *  the CLI cancel and leaves dsh's inbox directly, as it does for any row carrying a file or image.
+   *  `attachments` is present only when the message carries one; a save keeps them. */
+  waiting: Array<{
+    id: string;
+    text: string;
+    at: number;
+    relayed?: true;
+    attachments?: SteerAttachment[];
+  }>;
+  held: Array<{ id: string; text: string; attachments?: SteerAttachment[] }>;
 }
 /** Steers taken back from Claude while someone edits them. */
 interface HeldSteer {
@@ -1285,6 +1293,21 @@ const textOf = (content: LooseMessage["content"]): string => {
   if (!Array.isArray(content)) return content ?? "";
   return content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("\n");
 };
+
+/** The file and image blocks of a message as the steer card names them, in block order. A block
+ *  without its attachment reference (wire data from an older dsh) is skipped, as dsh's own queue
+ *  dock does. Empty for a string content or a text-only message. */
+export const attachmentsOf = (content: LooseMessage["content"]): SteerAttachment[] =>
+  Array.isArray(content)
+    ? content.flatMap((b): SteerAttachment[] => {
+        if ((b.type !== "file" && b.type !== "image") || !b.attachment) return [];
+        // SAFETY: both attachment refs carry `bytes`; only the file one always carries `name`
+        const ref = b.attachment as { name?: string; bytes?: number };
+        const chip: SteerAttachment = { kind: b.type, bytes: ref.bytes ?? 0 };
+        if (ref.name) chip.name = ref.name;
+        return [chip];
+      })
+    : [];
 
 /** The key a message dsh delivered mid-step is marked under once it went over stdin: the prompt's
  *  rpcId for a typed steer, the message id for anything dsh sends on its own behalf (a child's
@@ -2621,7 +2644,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // on a typed steer forwards only what a person typed and the rest is lost (2026-09-16: three
     // child reports in one session, each spliced a few seconds after a typed steer). During a dsh
     // tool nothing is forwarded; a typed steer is recorded as relayed so the card can edit it in
-    // dsh's inbox until the tool ends.
+    // dsh's inbox until the tool ends. A typed steer carrying a file or image is recorded too, as
+    // `boundary` during a native tool, since it waits in dsh's inbox for the next tool result.
     ctx.on?.("session/event", (sessionArg, eventArg) => {
       // SAFETY: dsh's session/event carries (session, event); only the spliced-inbox fields are read
       const session = sessionArg as { id?: string };
@@ -2645,16 +2669,22 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         // again would hand Claude the edit twice.
         if (proc.sent.has(key)) continue;
         const text = textOf(m.content);
-        if (!text) continue;
+        // Anything but text cannot go over stdin; the chips name only what carries a reference.
+        const whole = Array.isArray(m.content) && m.content.some((b) => b.type !== "text");
+        const attachments = attachmentsOf(m.content);
+        if (!text && !whole) continue;
+        // Only what a person typed is theirs to edit; a child's report or a job line is not.
+        const typed = m.source?.kind === "user" && m.id ? m.id : undefined;
+        /** List a typed steer on the card, with its chips when it carries a file or image. */
+        const record = (steer: WaitingSteer) => {
+          if (!typed) return;
+          if (attachments.length > 0) steer.attachments = attachments;
+          proc.steers.set(typed, steer);
+        };
         if (toolPending) {
-          // Only a text message a person typed is theirs to edit; the rest rides on the result as
-          // today. Nothing on `sent`, `forwarded` or `steerPending`: those drive the stdin park.
-          if (
-            m.source?.kind === "user" &&
-            m.id &&
-            !(Array.isArray(m.content) && m.content.some((b) => b.type !== "text"))
-          )
-            proc.steers.set(m.id, { key, text, at: Date.now(), relayed: true });
+          // The rest rides on the result as today. Nothing on `sent`, `forwarded` or
+          // `steerPending`: those drive the stdin park.
+          record({ key, text, at: Date.now(), relayed: true });
           continue;
         }
         // A file or image cannot go over stdin from here: dsh projects a file into its `[File …]`
@@ -2663,9 +2693,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         // and openTurn writes it; a message that lands after the last tool result rides on the
         // next prompt, since it is never marked sent (found 2026-09-16: a 34 MB zip on a mid-turn
         // message arrived as its text alone, and `sent` then hid it from every later delivery).
-        if (Array.isArray(m.content) && m.content.some((b) => b.type !== "text")) {
+        if (whole) {
           proc.steerPending = true;
           proc.forwarded += 1;
+          record({ key, text, at: Date.now(), boundary: true });
           continue;
         }
         const uuid = randomUUID();
@@ -2673,14 +2704,13 @@ export class ClaudeCodeAdapter extends LlmAdapter {
           proc.sent.add(key);
           proc.steerPending = true;
           proc.forwarded += 1;
-          // Only what a person typed is theirs to edit; a child's report or a job line is not.
-          if (m.source?.kind === "user" && m.id)
-            proc.steers.set(m.id, { uuid, key, text, at: Date.now() });
+          record({ uuid, key, text, at: Date.now() });
         }
       }
       // A splice that removes (a hold, a Stop's clear, dsh's claim at the tool's end) may have taken
-      // a message this map still lists as relayed. Drop what dsh no longer holds: on a Stop during
-      // a relay the abort listener is already gone, so this is the only signal.
+      // a message this map still lists as waiting in dsh's inbox. Drop what dsh no longer holds: on
+      // a Stop during a relay the abort listener is already gone, so this is the only signal. A
+      // dropped `boundary` row gives back its count, or the next tool result parks on nothing.
       if ((event.data?.removedCount ?? 0) > 0) {
         let inbox: Agent["inbox"];
         try {
@@ -2689,8 +2719,13 @@ export class ClaudeCodeAdapter extends LlmAdapter {
           inbox = undefined; // scope reloading: the next splice or the exit clears them
         }
         if (inbox)
-          for (const [id, st] of proc.steers)
-            if (st.relayed && !inbox.nextStep.some((m) => m.id === id)) proc.steers.delete(id);
+          for (const [id, st] of proc.steers) {
+            if (st.uuid !== undefined || inbox.nextStep.some((m) => m.id === id)) continue;
+            proc.steers.delete(id);
+            if (!st.boundary) continue;
+            proc.forwarded = Math.max(0, proc.forwarded - 1);
+            if (proc.forwarded === 0) proc.steerPending = false;
+          }
       }
       if (session?.id) this.publishAsides(session.id);
     });
@@ -3549,13 +3584,18 @@ export class ClaudeCodeAdapter extends LlmAdapter {
             // The key is absent, not false, for a stdin steer, so its JSON is what it was.
             const row: SteerCardState["waiting"][number] = { id, text: s.text, at: s.at };
             if (s.relayed) row.relayed = true;
+            if (s.attachments) row.attachments = s.attachments;
             return row;
           })
           .toSorted((a, b) => a.at - b.at)
       : [];
     const state: SteerCardState = {
       waiting,
-      held: [...(holds ?? [])].map(([id, h]) => ({ id, text: h.text })),
+      held: [...(holds ?? [])].map(([id, h]) => {
+        // From the held messages themselves, so a hold its idle timer restores shows the same chips.
+        const attachments = h.messages.flatMap((m) => attachmentsOf(m.content));
+        return attachments.length > 0 ? { id, text: h.text, attachments } : { id, text: h.text };
+      }),
     };
     // Present only while true: the JSON of a session with no relay pending is what it was.
     if (inRelay(proc)) state.inTool = true;
@@ -3573,8 +3613,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
 
   /**
    * Take typed steers back from Claude so someone can edit them, several at once when asked (the
-   * card's Edit all, the CLI's up-arrow). Each is cancelled in the CLI first; a relayed one (dsh
-   * holds it, the CLI never saw it) skips the cancel and leaves the inbox directly; one the CLI already
+   * card's Edit all, the CLI's up-arrow). Each is cancelled in the CLI first; one the CLI never saw
+   * (relayed, or held back for its file or image) skips the cancel and leaves the inbox directly; one the CLI already
    * took is skipped, and one dsh already drew as sent (the park won the race) goes straight back to
    * Claude. The rest leave dsh's inbox too, so nothing delivers them while the edit is open, and
    * wait in a hold until `releaseHold`. When nothing forwarded is left in the CLI's queue the park
@@ -3593,10 +3633,13 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const texts: string[] = [];
     let error: string | undefined;
     for (const { id, waiting } of order) {
-      if (waiting.relayed) {
+      if (waiting.uuid === undefined) {
         // Never written to the CLI: dsh's inbox is the only copy. Out of it, or already claimed for
-        // the relay result, in which case Claude reads it with the result and the card says sent.
-        proc.steers.delete(id);
+        // the relay result or the park, in which case Claude reads it there and the card says sent.
+        // A `boundary` row gives back its count, but only while its record is still here: `order`
+        // was read before the awaits, and a park since then has zeroed the count already.
+        if (proc.steers.delete(id) && waiting.boundary)
+          proc.forwarded = Math.max(0, proc.forwarded - 1);
         this.publishAsides(sessionId);
         const message = inbox?.nextStep.find((m) => m.id === id);
         if (!message || !inbox?.remove(id)) continue;
@@ -3635,7 +3678,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const first = messages[0];
     if (!first)
       return error ? { ok: false, reason: "error", error } : { ok: false, reason: "sent" };
-    const text = texts.join("\n");
+    // A message that is only a file or image adds no blank line to what the editor starts from.
+    const text = texts.filter(Boolean).join("\n");
     const holds = this.heldSteers.get(sessionId) ?? new Map<string, HeldSteer>();
     this.heldSteers.set(sessionId, holds);
     holds.set(first.id, { messages, text, timer: this.holdTimer(sessionId, first.id) });
@@ -3645,7 +3689,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
 
   /**
    * End a hold. `restore` puts every held message back as it was, `drop` discards them, and a text
-   * sends one message in their place (the first one's identity, the new words). Going back is dsh's
+   * sends one message in their place (the first one's identity, the new words, and every file and
+   * image the held messages carried; blank words only while one is left). Going back is dsh's
    * own steer, so a turn still running forwards it to Claude like any steer and an idle session
    * starts a turn for it. When the session cannot be reached the hold stays, for a retry.
    */
@@ -3657,6 +3702,15 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const holds = this.heldSteers.get(sessionId);
     const hold = holds?.get(holdId);
     if (!holds || !hold) return { ok: false, reason: "gone" };
+    // A save keeps every file and image the held messages carried; only the words change. Blank
+    // words are allowed while one is left, so an image can go without its caption.
+    const kept = hold.messages.flatMap((m) =>
+      Array.isArray(m.content)
+        ? m.content.filter((b) => b.type === "file" || b.type === "image")
+        : [],
+    );
+    if (how !== "restore" && how !== "drop" && how.text.trim() === "" && kept.length === 0)
+      return { ok: false, reason: "error", error: "text must be non-empty" };
     clearTimeout(hold.timer);
     holds.delete(holdId);
     if (holds.size === 0) this.heldSteers.delete(sessionId);
@@ -3674,7 +3728,15 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const out =
       how === "restore" || !first
         ? hold.messages
-        : [{ ...first, content: [{ type: "text" as const, text: how.text }] }];
+        : [
+            {
+              ...first,
+              content: [
+                ...kept,
+                ...(how.text.trim() === "" ? [] : [{ type: "text" as const, text: how.text }]),
+              ],
+            },
+          ];
     for (const m of out) agent.steer(m);
     return { ok: true };
   }
@@ -5705,6 +5767,38 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     return { mode: "prompt", options: { ...options, messages } };
   }
 
+  /** Write one mid-turn message to the CLI's stdin whole, marking it sent on a good write so no
+   *  later delivery repeats it. Skips a message with neither text nor image. */
+  private async writeSteerMessage(
+    m: LooseMessage,
+    key: string,
+    proc: ClaudeProcess,
+    options: Continuation["options"],
+  ): Promise<void> {
+    const local = textOf(m.content);
+    const refs = imageRefs([m]);
+    if (!local && refs.length === 0) return;
+    // dsh has projected a file into its handle by now; an image is still a block. It is loaded
+    // and noted the way a prompt's are (inline bytes, plus the saved-copy line so Claude can
+    // read it again later), so a steer deferred by the live path arrives whole. On a box both
+    // follow the turn there, under the short cap: the CLI is parked on this line.
+    const host = this.hostLabelFor(options.sessionId);
+    const text = host
+      ? await relayFileHandles(
+          local,
+          (path, farName) => this.onBox(host, path, farName, STEER_COPY_CAP_MS),
+          (level, message) => this.log(level, message),
+        )
+      : local;
+    const images = await this.loadImages(refs, options.signal, host, STEER_COPY_CAP_MS);
+    const notes = attachmentNotes([m], images);
+    // The CLI refuses an empty text block; an image-only steer whose copy could not be kept has no
+    // words at all, so it takes the prompt path's wording for an attachment-only turn. Skipping it
+    // would lose it: the next prompt starts after this turn's reply (`selectTurns`).
+    const body = [text, notes].filter(Boolean).join("\n\n") || "(see attached)";
+    if (proc.write(buildInput(body, images))) proc.sent.add(key);
+  }
+
   /** First write of a turn: relay results, unsent steers, or the prompt itself. */
   async openTurn(cont: Continuation, proc: ClaudeProcess, prep: TurnPrep) {
     // dsh claims its whole next-step inbox before it opens a step, so by now everything spliced
@@ -5725,6 +5819,15 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       this.publishAsides(cont.options.sessionId);
       const live = this.liveTurn.get(cont.options.sessionId);
       if (live) live.relay = undefined;
+      // An MCP tool result is text, so a steer carrying an image goes over stdin whole instead: the
+      // CLI injects it at its next tool call. Its key lands in `sent`, which keeps its words out of
+      // the result below. Left to the result, the image was lost: the next prompt starts after
+      // this step's own reply (`selectTurns`), so it never went anywhere.
+      for (const m of afterLastAssistant(cont.options.messages)) {
+        const key = steerKey(m);
+        if (key && !proc.sent.has(key) && imageRefs([m]).length > 0)
+          await this.writeSteerMessage(m, key, proc, cont.options);
+      }
       const extra = stepContextFor(cont.options.messages, prep.drops, proc.sent); // steers and notices ride on the last result
       relays.forEach((relay, i) => {
         const result = cont.results[i];
@@ -5738,29 +5841,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       for (const m of afterLastAssistant(cont.options.messages)) {
         const key = steerKey(m);
         if (!key || proc.sent.has(key)) continue;
-        const local = textOf(m.content);
-        if (!local) continue;
-        // dsh has projected a file into its handle by now; an image is still a block. It is loaded
-        // and noted the way a prompt's are (inline bytes, plus the saved-copy line so Claude can
-        // read it again later), so a steer deferred by the live path arrives whole. On a box both
-        // follow the turn there, under the short cap: the CLI is parked on this line.
-        const host = this.hostLabelFor(cont.options.sessionId);
-        const text = host
-          ? await relayFileHandles(
-              local,
-              (path, farName) => this.onBox(host, path, farName, STEER_COPY_CAP_MS),
-              (level, message) => this.log(level, message),
-            )
-          : local;
-        const images = await this.loadImages(
-          imageRefs([m]),
-          cont.options.signal,
-          host,
-          STEER_COPY_CAP_MS,
-        );
-        const notes = attachmentNotes([m], images);
-        const body = notes ? `${text}\n\n${notes}` : text;
-        if (proc.write(buildInput(body, images))) proc.sent.add(key);
+        await this.writeSteerMessage(m, key, proc, cont.options);
       }
       return;
     }

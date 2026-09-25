@@ -1488,27 +1488,43 @@ export type Spawner = (
   envOverride?: Record<string, string>,
 ) => SubprocessHandle;
 
-/** A typed steer Claude has not read yet, keyed by its dsh message id in `steers`. Two kinds:
+/** What the steer card shows of a message's file or image: enough to name it, never its bytes. */
+export type SteerAttachment = { kind: "file" | "image"; name?: string; bytes: number };
+
+/** A typed steer Claude has not read yet, keyed by its dsh message id in `steers`. Three kinds:
  *  written to stdin during a native tool (has the line's `uuid`, and `cancel_async_message`
- *  takes it back), or left in dsh's inbox during a dsh tool (`relayed`, never written, so there is
- *  nothing to cancel; dsh staples it to the relay result at the tool's end). */
+ *  takes it back); left in dsh's inbox during a dsh tool (`relayed`, never written, so there is
+ *  nothing to cancel; dsh staples it to the relay result at the tool's end); or left in dsh's inbox
+ *  during a native tool because it carries a file or image, which stdin cannot take (`boundary`:
+ *  counted in `forwarded`, it parks the step at the next tool result, where dsh delivers it whole). */
 export type WaitingSteer = {
-  /** Its steerKey, the entry in the process's `sent` set (never added for a relayed steer). */
+  /** Its steerKey, the entry in the process's `sent` set (never added for a steer dsh holds). */
   key: string;
-  /** What Claude will read: the latest edit. */
+  /** What Claude will read: the latest edit. Empty for a message that is only a file or image. */
   text: string;
   /** Epoch ms of the first record, for ordering. */
   at: number;
+  /** Present only when the message carries a file or image. */
+  attachments?: SteerAttachment[];
 } & (
   | {
       /** The stdin line's uuid, which `cancel_async_message` names. */
       uuid: string;
       relayed?: false;
+      boundary?: false;
     }
   | {
       uuid?: undefined;
       /** Waiting in dsh's inbox while the CLI is inside a dsh tool. */
       relayed: true;
+      boundary?: false;
+    }
+  | {
+      uuid?: undefined;
+      relayed?: false;
+      /** Waiting in dsh's inbox for the next tool result, since its file or image cannot go over
+       *  stdin. Named apart from `ClaudeProcess.parked`, the step's own state. */
+      boundary: true;
     }
 );
 
@@ -1540,7 +1556,8 @@ export class ClaudeProcess {
   relayed?: Set<string>;
   steerPending: boolean = false;
   /** Typed steers Claude has not read yet, by dsh message id: written to stdin during a native
-   *  tool, or left in dsh's inbox during a dsh tool (`relayed`). Cleared at the park that absorbs
+   *  tool, or left in dsh's inbox during a dsh tool (`relayed`) or, carrying a file or image, until
+   *  the next tool result (`boundary`). Cleared at the park that absorbs
    *  them, at the relay result that carries them, at the turn's end and on interrupt; the steer
    *  card lists these. */
   steers: Map<string, WaitingSteer> = new Map();
