@@ -2707,13 +2707,16 @@ export class ClaudeCodeAdapter extends LlmAdapter {
           const uuid = randomUUID();
           const at = Date.now();
           const sessionId = session?.id ?? "";
-          void this.writeSteerMessage(live, key, proc, { sessionId }, uuid).then((written) => {
-            // Not written: the park still comes, and openTurn writes it once it is out of `sent`.
-            if (!written) proc.sent.delete(key);
-            // A park since the splice has already taken the CLI's queue; a row now would linger.
-            else if (proc.steerPending) record({ uuid, key, text, at });
-            this.publishAsides(sessionId);
-          });
+          void this.writeSteerMessage(live, key, proc, { sessionId }, uuid)
+            .catch(() => false)
+            .then((written) => {
+              // Not written, or the load threw: the park still comes, and openTurn writes it
+              // once it is out of `sent`.
+              if (!written) proc.sent.delete(key);
+              // A park since the splice has already taken the CLI's queue; a row now would linger.
+              else if (proc.steerPending) record({ uuid, key, text, at });
+              this.publishAsides(sessionId);
+            });
           continue;
         }
         const uuid = randomUUID();

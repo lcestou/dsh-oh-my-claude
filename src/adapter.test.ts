@@ -6372,6 +6372,46 @@ console.log("interrupt-on-abort ok");
   await settle();
   assert.equal(oldProc.sent.size, 0, "no fileRequestText: not marked sent");
   assert.equal(oldProc.steers.get("m4")?.boundary, true, "listed as waiting for the boundary");
+
+  // A load that throws leaves it to the boundary rather than marked sent and lost.
+  const throwing = new ClaudeCodeAdapter(
+    fakeCtx({
+      on(name: string, fn: (session: unknown, event: unknown) => void) {
+        handlers.throwing = fn;
+      },
+      attachments: {
+        readImage: async () => ({ data: new Uint8Array([0]).buffer }),
+      },
+    }),
+    Config({}),
+  );
+  throwing.loadImages = async () => {
+    throw new Error("store gone");
+  };
+  const throwProc = { ...proc, sent: new Set<string>(), steers: new Map(), forwarded: 0 };
+  throwing.processes.set(registryKey("claude-code", "t"), fakeProc(throwProc));
+  handlers.throwing?.(
+    { id: "t" },
+    {
+      type: "agent/inbox/spliced",
+      data: {
+        target: "next-step",
+        inserted: [
+          {
+            id: "m5",
+            role: "user",
+            source: { kind: "user", rpcId: "r-m5" },
+            content: [
+              { type: "image", attachment: { attachmentId: "sha256:x", mediaType: "image/png" } },
+            ],
+          },
+        ],
+      },
+    },
+  );
+  await settle();
+  assert.equal(throwProc.sent.has("r-m5"), false, "a failed load is not left marked sent");
+  assert.equal(throwProc.steerPending, true, "and the park still delivers it");
   console.log("live attachment steers ok");
 }
 
