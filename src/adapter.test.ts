@@ -6241,6 +6241,140 @@ console.log("interrupt-on-abort ok");
   console.log("steer-card attachments ok");
 }
 
+// A file or image steer during a native tool goes over stdin at once when dsh can name the file
+// and load the image: the CLI takes it with the tool's result, like a text steer, and the card
+// lists it as a stdin row (its uuid, so Edit cancels it in the CLI). Without that, it waits for
+// the boundary as before.
+{
+  const handlers: Record<string, (session: unknown, event: unknown) => void> = {};
+  const adapter = new ClaudeCodeAdapter(
+    fakeCtx({
+      on(name: string, fn: (session: unknown, event: unknown) => void) {
+        handlers[name] = fn;
+      },
+      llm: {
+        fileRequestText(this: { tag: string }, ref: { name: string }) {
+          return `[File "${ref.name}" ${this.tag}]`;
+        },
+        tag: "handle",
+      },
+      attachments: { readImage: async () => ({ data: new Uint8Array([0, 1, 2]).buffer }) },
+    }),
+    Config({}),
+  );
+  const writes: string[] = [];
+  const proc = {
+    alive: true,
+    busy: true,
+    relays: new Map(),
+    sent: new Set<string>(),
+    steerPending: false,
+    forwarded: 0,
+    steers: new Map<string, Record<string, unknown>>(),
+    write(line: string) {
+      writes.push(line);
+      return true;
+    },
+  };
+  adapter.processes.set(registryKey("claude-code", "n"), fakeProc(proc));
+  const splice = (id: string, content: object[]) =>
+    handlers["session/event"]?.(
+      { id: "n" },
+      {
+        type: "agent/inbox/spliced",
+        data: {
+          target: "next-step",
+          inserted: [{ id, role: "user", source: { kind: "user", rpcId: `r-${id}` }, content }],
+        },
+      },
+    );
+  /** The content blocks of the nth stdin line, and its uuid. */
+  const lineOf = (n: number) =>
+    // SAFETY: the line is what buildInput wrote
+    JSON.parse(writes[n] ?? "{}") as {
+      uuid?: string;
+      message?: { content?: Array<Record<string, unknown>> };
+    };
+  const settle = () => new Promise((r) => setTimeout(r, 10));
+
+  splice("m1", [
+    { type: "file", attachment: { attachmentId: "sha256:abc", name: "a.zip", bytes: 3 } },
+    { type: "text", text: "see" },
+  ]);
+  assert.ok(proc.sent.has("r-m1"), "marked sent at once, so a park during the load skips it");
+  assert.equal(proc.steerPending, true, "the step still parks, so dsh draws it in the chat");
+  assert.equal(proc.forwarded, 1);
+  await settle();
+  assert.equal(writes.length, 1, "file and text: written live");
+  const fileLine = lineOf(0);
+  assert.equal(
+    fileLine.message?.content?.[0]?.text,
+    '[File "a.zip" handle]\nsee',
+    "the file as dsh's own handle text, called on the runtime, then the words",
+  );
+  assert.deepEqual(proc.steers.get("m1"), {
+    uuid: fileLine.uuid,
+    key: "r-m1",
+    text: "see",
+    at: proc.steers.get("m1")?.at,
+    attachments: [{ kind: "file", name: "a.zip", bytes: 3 }],
+  });
+
+  splice("m2", [
+    { type: "image", attachment: { attachmentId: "sha256:def", mediaType: "image/png" } },
+  ]);
+  await settle();
+  const imageLine = lineOf(1).message?.content ?? [];
+  assert.equal(imageLine[1]?.type, "image", "an image alone: written live with its bytes");
+  assert.ok(String(imageLine[0]?.text).includes('saved at "'), "and its saved-copy note");
+  assert.equal(proc.steers.get("m2")?.uuid, lineOf(1).uuid, "listed as a stdin row");
+
+  // A park while the image loads: the CLI's queue is taken, so no row is left behind.
+  proc.steerPending = false;
+  splice("m3", [
+    { type: "image", attachment: { attachmentId: "sha256:fed", mediaType: "image/png" } },
+  ]);
+  proc.steerPending = false;
+  await settle();
+  assert.equal(writes.length, 3, "still written");
+  assert.equal(proc.steers.has("m3"), false, "but not listed once a park has passed");
+
+  // A dsh that cannot name the file: it waits for the boundary, as before.
+  const old = new ClaudeCodeAdapter(
+    fakeCtx({
+      on(name: string, fn: (session: unknown, event: unknown) => void) {
+        handlers.old = fn;
+      },
+    }),
+    Config({}),
+  );
+  const oldProc = { ...proc, sent: new Set<string>(), steers: new Map(), forwarded: 0 };
+  old.processes.set(registryKey("claude-code", "o"), fakeProc(oldProc));
+  handlers.old?.(
+    { id: "o" },
+    {
+      type: "agent/inbox/spliced",
+      data: {
+        target: "next-step",
+        inserted: [
+          {
+            id: "m4",
+            role: "user",
+            source: { kind: "user", rpcId: "r-m4" },
+            content: [
+              { type: "file", attachment: { attachmentId: "sha256:abc", name: "a.zip", bytes: 3 } },
+            ],
+          },
+        ],
+      },
+    },
+  );
+  await settle();
+  assert.equal(oldProc.sent.size, 0, "no fileRequestText: not marked sent");
+  assert.equal(oldProc.steers.get("m4")?.boundary, true, "listed as waiting for the boundary");
+  console.log("live attachment steers ok");
+}
+
 // An attachment follows its turn to the box. dsh saves a file on this PC and names that path in
 // the handle; a claude on another box cannot read it, so the file is copied over and the handle
 // takes the far path. The handle text is dsh-llm's `fileHandleText`, byte for byte.
