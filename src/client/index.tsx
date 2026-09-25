@@ -29,6 +29,7 @@ import {
   IconCodeOutlineMedium,
   IconEditOutlineMedium,
   IconListPenOutlineMedium,
+  IconPaperclipOutlineRegular,
   IconSearchOutlineMedium,
   IconSkillOutlineMedium,
   IconSparkleMedium,
@@ -95,6 +96,7 @@ import type {
   AsideItem,
   IdleReply,
   LoginNeed,
+  SteerAttachmentRow,
   SteerCardData,
   TurnRecord,
   TurnsReply,
@@ -8579,6 +8581,62 @@ const steerFailureText = (f: SteerEditFailure): string =>
         ? t("main.steer.error", { error: f.error ?? t("common.unknownError") })
         : t("main.steer.sent");
 
+/** A chip's size: bytes under a kilobyte as bytes, since the shared formatter rounds them to 0 KB. */
+const chipSize = (bytes: number): string => (bytes < 1000 ? `${bytes} B` : size(bytes));
+
+/** The files and images on a waiting or held steer, as small chips in the order the message holds
+ *  them: a file by name and size, an image by its name or the word for image. Draws nothing for a
+ *  text-only message. */
+function SteerAttachments({ items }: { items: SteerAttachmentRow[] | undefined }) {
+  useLocale();
+  if (!items?.length) return null;
+  return (
+    <ul
+      data-omc-steer-attachments=""
+      aria-label={t("main.steer.attachmentsAria")}
+      style={{
+        display: "flex",
+        flexWrap: "wrap",
+        gap: 4,
+        margin: "0 0 2px",
+        padding: 0,
+        listStyle: "none",
+      }}
+    >
+      {items.map((a, i) => {
+        const label = a.name ?? t("main.steer.image");
+        return (
+          <li
+            key={`${label}:${i}`}
+            data-omc-steer-attachment={a.kind}
+            title={label}
+            aria-label={t("main.steer.attachmentAria", { name: label, size: chipSize(a.bytes) })}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 4,
+              maxWidth: 220,
+              padding: "1px 6px",
+              border: `1px solid ${T.border}`,
+              borderRadius: 6,
+              color: T.faint,
+              fontSize: 12,
+            }}
+          >
+            <span aria-hidden="true" style={{ display: "inline-flex" }}>
+              <IconPaperclipOutlineRegular size={12} />
+            </span>
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {label}
+            </span>
+            <span aria-hidden="true">{chipSize(a.bytes)}</span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 /** The card above the composer for typed steers Claude has not read yet. Edit (or Edit all, joining
  *  them one per line, as Claude Code's up arrow does) takes them back from Claude first, so nothing
  *  goes out while the editor is open; Save sends one message with the new text, Cancel or Escape
@@ -8626,10 +8684,11 @@ function SteerCard({
     }
   };
 
-  /** Send a hold's typed text in its place, unless it is blank. */
-  const save = (holdId: string, fallback: string) => {
+  /** Send a hold's typed text in its place; blank only when the hold keeps a file or image, which
+   *  then goes alone. */
+  const save = (holdId: string, fallback: string, hasFiles: boolean) => {
     const text = drafts[holdId] ?? fallback;
-    if (text.trim() !== "") void act(holdId, { action: "save", holdId, text });
+    if (text.trim() !== "" || hasFiles) void act(holdId, { action: "save", holdId, text });
   };
 
   const buttonStyle = {
@@ -8706,8 +8765,10 @@ function SteerCard({
       {steers.held.map((h) => {
         const disabled = busy === h.id;
         const value = drafts[h.id] ?? h.text;
+        const hasFiles = Boolean(h.attachments?.length);
         return (
           <div key={h.id} data-omc-steer-hold={h.id} style={{ padding: "4px 0" }}>
+            <SteerAttachments items={h.attachments} />
             <textarea
               data-omc-steer-input=""
               aria-label={t("main.steer.inputAria")}
@@ -8724,7 +8785,7 @@ function SteerCard({
                   void act(h.id, { action: "restore", holdId: h.id });
                 } else if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                   e.preventDefault();
-                  save(h.id, h.text);
+                  save(h.id, h.text, hasFiles);
                 }
               }}
               style={{
@@ -8739,6 +8800,11 @@ function SteerCard({
                 resize: "vertical",
               }}
             />
+            {hasFiles && (
+              <div data-omc-steer-kept="" style={{ color: T.faint, fontSize: 12, marginTop: 2 }}>
+                {t("main.steer.attachmentsKept")}
+              </div>
+            )}
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 4, marginTop: 4 }}>
               <button
                 type="button"
@@ -8762,8 +8828,8 @@ function SteerCard({
               <button
                 type="button"
                 data-omc-steer-save=""
-                disabled={disabled || value.trim() === ""}
-                onClick={() => save(h.id, h.text)}
+                disabled={disabled || (value.trim() === "" && !hasFiles)}
+                onClick={() => save(h.id, h.text, hasFiles)}
                 style={{ ...buttonStyle, color: T.text }}
               >
                 {t("save")}
@@ -8783,20 +8849,22 @@ function SteerCard({
             style={{ padding: "4px 0" }}
           >
             <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
-              <span
-                style={{
-                  flex: 1,
-                  color: T.text,
-                  whiteSpace: "pre-wrap",
-                  overflowWrap: "anywhere",
-                  display: "-webkit-box",
-                  WebkitLineClamp: 3,
-                  WebkitBoxOrient: "vertical",
-                  overflow: "hidden",
-                }}
-              >
-                {s.text}
-              </span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <SteerAttachments items={s.attachments} />
+                <span
+                  style={{
+                    color: T.text,
+                    whiteSpace: "pre-wrap",
+                    overflowWrap: "anywhere",
+                    display: "-webkit-box",
+                    WebkitLineClamp: 3,
+                    WebkitBoxOrient: "vertical",
+                    overflow: "hidden",
+                  }}
+                >
+                  {s.text}
+                </span>
+              </div>
               <button
                 type="button"
                 data-omc-steer-edit=""

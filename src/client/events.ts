@@ -41,18 +41,28 @@ export interface LoginNeed {
   host: string;
   label: string;
 }
+/** A file or image on a steer: its name and size for the chip, never its bytes. */
+export interface SteerAttachmentRow {
+  kind: "file" | "image";
+  name?: string;
+  bytes: number;
+}
 /** A typed steer Claude has not read yet. `relayed` while the CLI is inside a dsh tool and dsh
- *  holds the message: Edit and Remove work, Send now does not. */
+ *  holds the message: Edit and Remove work, Send now does not. `attachments` when it carries a
+ *  file or image; they stay on it through an edit, and `text` may be empty. */
 export interface WaitingSteerRow {
   id: string;
   text: string;
   at: number;
   relayed?: true;
+  attachments?: SteerAttachmentRow[];
 }
-/** Steers taken back from Claude for an edit: one hold, possibly several messages joined. */
+/** Steers taken back from Claude for an edit: one hold, possibly several messages joined, with
+ *  every file and image those messages carried. */
 export interface HeldSteerRow {
   id: string;
   text: string;
+  attachments?: SteerAttachmentRow[];
 }
 /** The steer card's half of the side-questions body. */
 export interface SteerCardData {

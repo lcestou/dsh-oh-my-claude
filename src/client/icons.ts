@@ -56,6 +56,9 @@ type IconExports = Partial<
     | "IconFolderOpen16"
     | "IconListPenOutlineMedium"
     | "IconListPenOutline16"
+    | "IconPaperclipOutlineRegular"
+    | "IconPaperclipOutline14"
+    | "IconPaperclipOutline16"
     | "IconPlusOutlineMedium"
     | "IconPlusOutline16"
     | "IconSearchOutlineMedium"
@@ -106,6 +109,11 @@ export const IconFolderOpenMedium =
   exported.IconFolderOpenMedium ?? exported.IconFolderOpen16 ?? blank;
 export const IconListPenOutlineMedium =
   exported.IconListPenOutlineMedium ?? exported.IconListPenOutline16 ?? blank;
+export const IconPaperclipOutlineRegular =
+  exported.IconPaperclipOutlineRegular ??
+  exported.IconPaperclipOutline14 ??
+  exported.IconPaperclipOutline16 ??
+  blank;
 export const IconPlusOutlineMedium =
   exported.IconPlusOutlineMedium ?? exported.IconPlusOutline16 ?? blank;
 export const IconSearchOutlineMedium =

@@ -429,6 +429,10 @@ export const en = {
     "Claude is inside a dsh tool. It reads these with the tool's result; Send now waits until then.",
   "main.steer.relayedNoSend":
     "Claude is inside a dsh tool. Send now works once it ends; Edit and Remove work now.",
+  "main.steer.image": "Image",
+  "main.steer.attachmentsAria": "Attachments",
+  "main.steer.attachmentAria": "{name}, {size}",
+  "main.steer.attachmentsKept": "The attachments stay on the message. Only the text changes.",
   // Login card above the composer
   "main.loginCard.loggedIn": "Logged in. Send your message again.",
   "main.loginCard.loggedOut": "Claude Code on {where} is logged out.",
@@ -901,6 +905,10 @@ export const zh = {
     "Claude 正在运行 dsh 工具，会随工具结果读取这些消息；立即发送需等工具结束。",
   "main.steer.relayedNoSend":
     "Claude 正在运行 dsh 工具。工具结束后才能立即发送；现在可以编辑或移除。",
+  "main.steer.image": "图片",
+  "main.steer.attachmentsAria": "附件",
+  "main.steer.attachmentAria": "{name}，{size}",
+  "main.steer.attachmentsKept": "附件会保留在消息中，只修改文字。",
   "main.loginCard.loggedIn": "已登录。请重新发送你的消息。",
   "main.loginCard.loggedOut": "{where} 上的 Claude Code 已退出登录。",
   "main.loginCard.dismissAria": "关闭登录卡片",
