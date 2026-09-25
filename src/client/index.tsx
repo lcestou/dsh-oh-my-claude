@@ -4932,9 +4932,12 @@ function DockStatus({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   // that moved the header, so each time the header came back on screen both lines showed for a
   // frame or two before the dock left. A phone's short column scrolls the header away far more
   // often, so that is where it showed (owner, 2026-09-25). Read in the frame, before the paint,
-  // and committed with `flushSync`, the dock leaves in the same frame the header arrives.
+  // and committed with `flushSync`, the dock leaves in the same frame the header arrives. The read
+  // costs about 5 µs a frame on a 3,700-node page (measured 2026-09-25); the header is looked up
+  // only when missing or dropped, React renders only on a change, and a hidden tab gets no frames.
   useEffect(() => {
-    if (!running) return;
+    // Nothing to decide while the line is switched off, so no frame loop runs.
+    if (!running || off) return;
     // A new turn starts hidden: the previous turn may have ended with its header scrolled away.
     setHeaderAway(false);
     const startedAt = Date.now();
@@ -4968,7 +4971,7 @@ function DockStatus({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
     };
     frame = requestAnimationFrame(check);
     return () => cancelAnimationFrame(frame);
-  }, [running]);
+  }, [running, off]);
   const shown = running && hasTheme("row") && !off && headerAway;
   useEffect(() => {
     if (!shown) return;
