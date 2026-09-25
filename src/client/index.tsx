@@ -96,6 +96,7 @@ import type {
   AsideItem,
   IdleReply,
   LoginNeed,
+  HeldSteerRow,
   SteerAttachmentRow,
   SteerCardData,
   WaitingSteerRow,
@@ -116,7 +117,13 @@ import {
 } from "./picker.js";
 import { ClaudeUpdateDetails } from "./claude-updates.js";
 import { type LimitLevel, worstLimit } from "./limits.js";
-import { type RestoreWatch, startWatch, stepRestore } from "./steer-restore.js";
+import {
+  noteWithdrawn,
+  type RestoreWatch,
+  startWatch,
+  stepRestore,
+  withdrawnSince,
+} from "./steer-restore.js";
 import { SearchField } from "./search-field.js";
 import { Switch } from "./switch.js";
 import type { ToolMode, ToolModeInfo } from "../rows-probe.js";
@@ -8670,6 +8677,7 @@ function SteerCard({
 
   /** Post one action for the row or hold `id`, then re-poll; a refusal leaves its line under it. */
   const act = async (id: string, body: SteerAction) => {
+    if ("ids" in body) noteWithdrawn(body.ids);
     setBusy(id);
     setFailed(null);
     try {
@@ -9343,23 +9351,31 @@ const NO_ATTACHMENTS: readonly string[] = [];
  * fills an empty composer), and a later restore then brings both drafts back joined, which the
  * step does not recognise and leaves in place. Does nothing on a dsh without `removeAttachment`.
  */
-function useUndoSteerRestore(waiting: WaitingSteerRow[], { inputActions, useInput }: ComposerSlot) {
+function useUndoSteerRestore(
+  waiting: WaitingSteerRow[],
+  held: HeldSteerRow[],
+  { inputActions, useInput }: ComposerSlot,
+) {
   const ids = useInput?.((state) => state.attachmentIds) ?? NO_ATTACHMENTS;
   const draft = useInput?.((state) => state.draft) ?? "";
   const watch = useRef<RestoreWatch>(startWatch(ids, waiting));
   useEffect(() => {
+    const at = Date.now();
+    const withdrawn = withdrawnSince(at);
+    for (const h of held) withdrawn.add(h.id);
     const { next, remove, clearDraft } = stepRestore(watch.current, {
       ids,
       rows: waiting,
       draft,
-      at: Date.now(),
+      at,
+      withdrawn,
     });
     watch.current = next;
     const drop = inputActions?.removeAttachment;
     if (!inputActions || !drop) return;
     for (const id of remove) drop(id);
     if (clearDraft) inputActions.setDraft("");
-  }, [waiting, ids, draft, inputActions]);
+  }, [waiting, held, ids, draft, inputActions]);
 }
 
 /** Render this session's aside items as a collapsible stack, polling `/side-questions` every few
@@ -9512,7 +9528,7 @@ function AsideBubble({
   // the provider binding at render blinked the card out whenever the binding reloaded.
   const loginCard = need && needDismissed !== need.host ? need : null;
   // Before the early return below: the card is gone once its last row goes, and so would be this.
-  useUndoSteerRestore(steers.waiting, { inputActions, useInput });
+  useUndoSteerRestore(steers.waiting, steers.held, { inputActions, useInput });
   const anySteers = steers.waiting.length > 0 || steers.held.length > 0;
   if (shown.length === 0 && !loginCard && !claudeUpdate && !limitCard && !anySteers) return null;
 

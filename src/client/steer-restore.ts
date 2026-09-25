@@ -27,6 +27,21 @@ export interface RestoreStep {
   clearDraft: boolean;
 }
 
+/** When this tab took each steer back (Edit, Remove, Send now), by message id. Module state: the
+ *  card that clicked may be gone by the time dsh's restore lands, and the watch outlives it. */
+const withdrawnAt = new Map<string, number>();
+
+/** Record steers this tab is taking back, so their restore can pair. */
+export const noteWithdrawn = (ids: readonly string[], at = Date.now()): void => {
+  for (const id of ids) withdrawnAt.set(id, at);
+};
+
+/** The steers taken back from this tab within the window, dropping older records as it reads. */
+export const withdrawnSince = (at: number): Set<string> => {
+  for (const [id, when] of withdrawnAt) if (at - when >= RESTORE_WINDOW_MS) withdrawnAt.delete(id);
+  return new Set(withdrawnAt.keys());
+};
+
 /** A watch that starts from what the composer and the list hold now, so nothing already there pairs. */
 export const startWatch = (
   ids: readonly string[],
@@ -36,22 +51,35 @@ export const startWatch = (
 /**
  * Advance the watch by one update and say what to undo. dsh restores a failed attachment send by
  * putting its ids at the head of the composer's row (a file the person picks lands at the tail)
- * and its text into an empty composer. A steer leaving the waiting list pairs with a head insertion
- * of the same count, in either order, within RESTORE_WINDOW_MS; its ids go in `remove`, and
- * `clearDraft` turns true once the composer holds exactly its text. A steer Claude took also
- * leaves the list, but no restore follows, so it ages out unpaired. Gets wrong: a head insertion
- * of the same count from anything else inside the window, which dsh does not make today.
+ * and its text into an empty composer. Only a steer that was taken back counts: one in
+ * `withdrawn` (this tab's Edit, Remove or Send now, or a row now held from any tab). A steer Claude
+ * took leaves the list too, and a file picked into an empty composer right after would otherwise
+ * look like its restore. A withdrawn steer pairs with a head insertion of the same count, in either
+ * order, within RESTORE_WINDOW_MS; its ids go in `remove`, and `clearDraft` turns true once the
+ * composer holds exactly its text. Gets wrong: a file picked into an empty composer within the
+ * window after taking an attachment steer back from this tab, and a steer removed from another
+ * tab, whose restore here is left in place.
  */
 export function stepRestore(
   watch: RestoreWatch,
-  now: { ids: readonly string[]; rows: readonly WaitingSteerRow[]; draft: string; at: number },
+  now: {
+    ids: readonly string[];
+    rows: readonly WaitingSteerRow[];
+    draft: string;
+    at: number;
+    withdrawn: ReadonlySet<string>;
+  },
 ): RestoreStep {
   const fresh = (e: { at: number }) => now.at - e.at < RESTORE_WINDOW_MS;
   let left = watch.left.filter(fresh);
   let heads = watch.heads.filter(fresh);
   let words = watch.words.filter(fresh);
   for (const was of watch.rows)
-    if (was.attachments?.length && !now.rows.some((w) => w.id === was.id))
+    if (
+      was.attachments?.length &&
+      now.withdrawn.has(was.id) &&
+      !now.rows.some((w) => w.id === was.id)
+    )
       left.push({ text: was.text.trim(), count: was.attachments.length, at: now.at });
   if (now.ids !== watch.ids) {
     const before = new Set(watch.ids);
