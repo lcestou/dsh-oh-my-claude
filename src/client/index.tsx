@@ -98,6 +98,7 @@ import type {
   LoginNeed,
   SteerAttachmentRow,
   SteerCardData,
+  WaitingSteerRow,
   TurnRecord,
   TurnsReply,
 } from "./events.js";
@@ -115,6 +116,7 @@ import {
 } from "./picker.js";
 import { ClaudeUpdateDetails } from "./claude-updates.js";
 import { type LimitLevel, worstLimit } from "./limits.js";
+import { type RestoreWatch, startWatch, stepRestore } from "./steer-restore.js";
 import { SearchField } from "./search-field.js";
 import { Switch } from "./switch.js";
 import type { ToolMode, ToolModeInfo } from "../rows-probe.js";
@@ -9320,9 +9322,54 @@ function ClaudeUpdateCard({
   );
 }
 
+/** The composer state and actions dsh hands a `conversation.input.dock` entry: the slice the steer
+ *  card's restore undo reads and writes. */
+type ComposerSlot = {
+  inputActions?: { setDraft: (text: string) => void; removeAttachment?: (id: string) => void };
+  useInput?: <T>(select: (state: { draft: string; attachmentIds?: readonly string[] }) => T) => T;
+};
+
+/** A composer with no attachments, one identity so the selector does not churn. */
+const NO_ATTACHMENTS: readonly string[] = [];
+
+/**
+ * Undo dsh's composer restore of an attachment steer the card took back. dsh counts a send with a
+ * file or image as unfinished until it lands in the chat; when a hold (Edit, Remove, Send now)
+ * takes it out of the inbox first, dsh calls the send failed and, in the tab that sent it, puts its
+ * attachments back at the head of the composer's row and its text back into an empty composer.
+ * The card is the editor, so that copy is a duplicate one Enter away from going out twice. The
+ * pairing is `stepRestore`'s; this feeds it every composer and steer-list update and applies what
+ * it returns. Gets wrong: text typed before the restore keeps dsh from restoring the words (it only
+ * fills an empty composer), and a later restore then brings both drafts back joined, which the
+ * step does not recognise and leaves in place. Does nothing on a dsh without `removeAttachment`.
+ */
+function useUndoSteerRestore(waiting: WaitingSteerRow[], { inputActions, useInput }: ComposerSlot) {
+  const ids = useInput?.((state) => state.attachmentIds) ?? NO_ATTACHMENTS;
+  const draft = useInput?.((state) => state.draft) ?? "";
+  const watch = useRef<RestoreWatch>(startWatch(ids, waiting));
+  useEffect(() => {
+    const { next, remove, clearDraft } = stepRestore(watch.current, {
+      ids,
+      rows: waiting,
+      draft,
+      at: Date.now(),
+    });
+    watch.current = next;
+    const drop = inputActions?.removeAttachment;
+    if (!inputActions || !drop) return;
+    for (const id of remove) drop(id);
+    if (clearDraft) inputActions.setDraft("");
+  }, [waiting, ids, draft, inputActions]);
+}
+
 /** Render this session's aside items as a collapsible stack, polling `/side-questions` every few
  *  seconds: questions, a login need and a Claude update card, or nothing when the poll is empty. */
-function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
+function AsideBubble({
+  sessionId,
+  ctx,
+  inputActions,
+  useInput,
+}: { sessionId: string; ctx: ClientCtx } & ComposerSlot) {
   useLocale();
   const [items, setItems] = useState<AsideItem[]>([]);
   // What the poll compares its answer against, without listing `items` as a dependency of its effect.
@@ -9464,6 +9511,8 @@ function AsideBubble({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) 
   // which only exist for a Claude session, so an empty list is the only reason to hide it. Reading
   // the provider binding at render blinked the card out whenever the binding reloaded.
   const loginCard = need && needDismissed !== need.host ? need : null;
+  // Before the early return below: the card is gone once its last row goes, and so would be this.
+  useUndoSteerRestore(steers.waiting, { inputActions, useInput });
   const anySteers = steers.waiting.length > 0 || steers.held.length > 0;
   if (shown.length === 0 && !loginCard && !claudeUpdate && !limitCard && !anySteers) return null;
 
@@ -10337,7 +10386,15 @@ export function apply(ctx: ClientCtx) {
     );
     ctx.slots.register(
       { name: "conversation.input.dock", id: "claude-aside", order: 45 },
-      (props) => (props.sessionId ? <AsideBubble sessionId={props.sessionId} ctx={ctx} /> : null),
+      (props) =>
+        props.sessionId ? (
+          <AsideBubble
+            sessionId={props.sessionId}
+            ctx={ctx}
+            inputActions={props.inputActions}
+            useInput={props.useInput}
+          />
+        ) : null,
     );
     // Above the aside so a fresh tab reads top-down: what to type first, then anything that answered
     // later. dsh hands composer-slot entries the composer's own `inputActions` and `useInput`, which
