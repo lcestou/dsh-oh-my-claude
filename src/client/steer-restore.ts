@@ -17,6 +17,10 @@ export interface RestoreWatch {
   heads: Array<{ ids: string[]; at: number }>;
   /** Texts of paired steers, waiting for dsh to put the same words back in the composer. */
   words: Array<{ text: string; at: number }>;
+  /** The composer's text at the last update. */
+  draft: string;
+  /** Texts that filled an empty composer in one update, the way dsh restores a draft. */
+  jumps: Array<{ text: string; at: number }>;
 }
 
 /** One step's answer: the watch to keep, the composer ids to take off, and whether to clear the
@@ -46,7 +50,8 @@ export const withdrawnSince = (at: number): Set<string> => {
 export const startWatch = (
   ids: readonly string[],
   rows: readonly WaitingSteerRow[],
-): RestoreWatch => ({ ids, rows, left: [], heads: [], words: [] });
+  draft = "",
+): RestoreWatch => ({ ids, rows, left: [], heads: [], words: [], draft, jumps: [] });
 
 /**
  * Advance the watch by one update and say what to undo. dsh restores a failed attachment send by
@@ -55,10 +60,12 @@ export const startWatch = (
  * `withdrawn` (this tab's Edit, Remove or Send now, or a row now held from any tab). A steer Claude
  * took leaves the list too, and a file picked into an empty composer right after would otherwise
  * look like its restore. A withdrawn steer pairs with a head insertion of the same count, in either
- * order, within RESTORE_WINDOW_MS; its ids go in `remove`, and `clearDraft` turns true once the
- * composer holds exactly its text. Gets wrong: a file picked into an empty composer within the
- * window after taking an attachment steer back from this tab, and a steer removed from another
- * tab, whose restore here is left in place.
+ * order, within RESTORE_WINDOW_MS; its ids go in `remove`, and `clearDraft` turns true when the
+ * composer holds exactly its text and that text filled an empty composer in one update, which is
+ * how dsh restores it; typing builds text up a key at a time. Gets wrong: pasting exactly the
+ * withdrawn steer's words into an empty composer within the window clears them, a file picked into
+ * an empty composer within the window after taking an attachment steer back from this tab is
+ * removed, and a steer removed from another tab leaves its restore here in place.
  */
 export function stepRestore(
   watch: RestoreWatch,
@@ -74,6 +81,9 @@ export function stepRestore(
   let left = watch.left.filter(fresh);
   let heads = watch.heads.filter(fresh);
   let words = watch.words.filter(fresh);
+  const jumps = watch.jumps.filter(fresh);
+  const text = now.draft.trim();
+  if (watch.draft.trim() === "" && text !== "") jumps.push({ text, at: now.at });
   for (const was of watch.rows)
     if (
       was.attachments?.length &&
@@ -101,10 +111,10 @@ export function stepRestore(
     left = left.filter((l) => l !== gone);
     if (gone.text) words.push({ text: gone.text, at: gone.at });
   }
-  const said = words.find((w) => w.text === now.draft.trim());
+  const said = words.find((w) => w.text === text && jumps.some((j) => j.text === text));
   if (said) words = words.filter((w) => w !== said);
   return {
-    next: { ids: now.ids, rows: now.rows, left, heads, words },
+    next: { ids: now.ids, rows: now.rows, left, heads, words, draft: now.draft, jumps },
     remove,
     clearDraft: said !== undefined,
   };

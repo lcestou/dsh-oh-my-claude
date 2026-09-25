@@ -9358,7 +9358,7 @@ function useUndoSteerRestore(
 ) {
   const ids = useInput?.((state) => state.attachmentIds) ?? NO_ATTACHMENTS;
   const draft = useInput?.((state) => state.draft) ?? "";
-  const watch = useRef<RestoreWatch>(startWatch(ids, waiting));
+  const watch = useRef<RestoreWatch>(startWatch(ids, waiting, draft));
   useEffect(() => {
     const at = Date.now();
     const withdrawn = withdrawnSince(at);

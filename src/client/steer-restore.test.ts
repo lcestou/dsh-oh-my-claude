@@ -86,4 +86,18 @@ const none = new Set<string>();
   assert.ok(withdrawnSince(1000 + RESTORE_WINDOW_MS - 1).has("h1"));
   assert.equal(withdrawnSince(1000 + RESTORE_WINDOW_MS).has("h1"), false, "gone after the window");
 }
+// Words typed by hand, even the same words, build up and are never a restore.
+{
+  let r = stepRestore(startWatch([], [image]), {
+    ids: ["r1"],
+    rows: [],
+    draft: "",
+    at: 100,
+    withdrawn,
+  });
+  assert.deepEqual(r.remove, ["r1"]);
+  r = stepRestore(r.next, { ids: [], rows: [], draft: "lo", at: 200, withdrawn });
+  r = stepRestore(r.next, { ids: [], rows: [], draft: "look", at: 300, withdrawn });
+  assert.equal(r.clearDraft, false, "typed text is left alone");
+}
 console.log("steer-restore ok");
