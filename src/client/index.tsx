@@ -8581,7 +8581,7 @@ const steerFailureText = (f: SteerEditFailure): string =>
         ? t("main.steer.error", { error: f.error ?? t("common.unknownError") })
         : t("main.steer.sent");
 
-/** A chip's size: bytes under a kilobyte as bytes, since the shared formatter rounds them to 0 KB. */
+/** A chip's size: under a kilobyte in bytes, since the shared formatter rounds those to 0 KB. */
 const chipSize = (bytes: number): string => (bytes < 1000 ? `${bytes} B` : size(bytes));
 
 /** The files and images on a waiting or held steer, as small chips in the order the message holds
@@ -8605,12 +8605,18 @@ function SteerAttachments({ items }: { items: SteerAttachmentRow[] | undefined }
     >
       {items.map((a, i) => {
         const label = a.name ?? t("main.steer.image");
+        // An older dsh's image reference may carry no size; the chip then names it alone.
+        const sized = a.bytes > 0;
         return (
           <li
             key={`${label}:${i}`}
             data-omc-steer-attachment={a.kind}
             title={label}
-            aria-label={t("main.steer.attachmentAria", { name: label, size: chipSize(a.bytes) })}
+            aria-label={
+              sized
+                ? t("main.steer.attachmentAria", { name: label, size: chipSize(a.bytes) })
+                : label
+            }
             style={{
               display: "inline-flex",
               alignItems: "center",
@@ -8629,7 +8635,7 @@ function SteerAttachments({ items }: { items: SteerAttachmentRow[] | undefined }
             <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {label}
             </span>
-            <span aria-hidden="true">{chipSize(a.bytes)}</span>
+            {sized && <span aria-hidden="true">{chipSize(a.bytes)}</span>}
           </li>
         );
       })}
@@ -8772,6 +8778,7 @@ function SteerCard({
             <textarea
               data-omc-steer-input=""
               aria-label={t("main.steer.inputAria")}
+              aria-describedby={hasFiles ? `omc-steer-kept-${h.id}` : undefined}
               // oxlint-disable-next-line jsx-a11y/no-autofocus -- opened by the person's own click, so focus goes where they asked
               autoFocus
               value={value}
@@ -8801,7 +8808,11 @@ function SteerCard({
               }}
             />
             {hasFiles && (
-              <div data-omc-steer-kept="" style={{ color: T.faint, fontSize: 12, marginTop: 2 }}>
+              <div
+                id={`omc-steer-kept-${h.id}`}
+                data-omc-steer-kept=""
+                style={{ color: T.faint, fontSize: 12, marginTop: 2 }}
+              >
                 {t("main.steer.attachmentsKept")}
               </div>
             )}

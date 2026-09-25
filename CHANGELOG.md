@@ -18,7 +18,6 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
   after the turn ends.
 - An image sent while Claude waits on a dsh tool (a subagent, a background job) reaches Claude.
   Before, only its text did.
-
 - A file path in Claude's answer (the button that opens the file in the sidebar) takes the Claude
   accent instead of dsh's link blue, like links already do.
 - The composer's text cursor is the Claude accent in a Claude session instead of dsh's blue.

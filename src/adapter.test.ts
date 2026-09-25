@@ -5968,6 +5968,17 @@ console.log("interrupt-on-abort ok");
   assert.equal(native.steers.size, 0);
   assert.equal(native.forwarded, 1, "the child's message still counts");
   assert.equal(native.steerPending, true);
+  native.forwarded = 1;
+  native.steers.set("m6", { key: "r-m6", text: "", at: 6, boundary: true });
+  splice("n", [], 1);
+  assert.equal(native.forwarded, 0, "the last dropped row's count goes");
+  assert.equal(native.steerPending, false, "and the park with it");
+  // A save comes back through dsh's steer: the listener records it again, counted, as boundary.
+  native.steers.clear();
+  splice("n", [typed("m1", [file, words("new words")])]);
+  assert.equal(native.steers.get("m1")?.boundary, true, "a saved message is listed again");
+  assert.equal(native.forwarded, 1, "and parks again");
+  assert.equal(native.steerPending, true);
 
   const relayed = {
     alive: true,
@@ -6088,7 +6099,7 @@ console.log("interrupt-on-abort ok");
     assert.equal(adapter.steersFor("s1").held.length, 1, "a refused blank save keeps the hold");
     assert.deepEqual(steered, []);
   }
-  // Edit all over an image alone and a text: the editor opens on the words, the save keeps the image.
+  // Edit all over an image alone and a text: the editor opens on the words, the save keeps it.
   {
     const { adapter, steered } = makeAgent([typed("m1", [image]), typed("m2", [words("fix it")])]);
     const { proc } = boundaryProc("", [imageChip]);

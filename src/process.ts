@@ -1496,7 +1496,8 @@ export type SteerAttachment = { kind: "file" | "image"; name?: string; bytes: nu
  *  takes it back); left in dsh's inbox during a dsh tool (`relayed`, never written, so there is
  *  nothing to cancel; dsh staples it to the relay result at the tool's end); or left in dsh's inbox
  *  during a native tool because it carries a file or image, which stdin cannot take (`boundary`:
- *  counted in `forwarded`, it parks the step at the next tool result, where dsh delivers it whole). */
+ *  counted in `forwarded`, it parks the step at the next tool result, where dsh delivers it
+ *  whole). */
 export type WaitingSteer = {
   /** Its steerKey, the entry in the process's `sent` set (never added for a steer dsh holds). */
   key: string;

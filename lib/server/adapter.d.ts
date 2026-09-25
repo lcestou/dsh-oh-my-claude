@@ -253,8 +253,8 @@ export interface SteerCardState {
     /** The CLI is inside a dsh tool, so Send now is refused for every row; present only when true. */
     inTool?: true;
     /** `relayed` is present only while dsh holds the message (typed during a dsh tool): a hold skips
-     *  the CLI cancel and leaves dsh's inbox directly, as it does for any row carrying a file or image.
-     *  `attachments` is present only when the message carries one; a save keeps them. */
+     *  the CLI cancel and leaves dsh's inbox directly, as it does for a row carrying a file or
+     *  image. `attachments` is present only when the message carries one; a save keeps them. */
     waiting: Array<{
         id: string;
         text: string;
@@ -1260,12 +1260,13 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     private holdTimer;
     /**
      * Take typed steers back from Claude so someone can edit them, several at once when asked (the
-     * card's Edit all, the CLI's up-arrow). Each is cancelled in the CLI first; one the CLI never saw
-     * (relayed, or held back for its file or image) skips the cancel and leaves the inbox directly; one the CLI already
-     * took is skipped, and one dsh already drew as sent (the park won the race) goes straight back to
-     * Claude. The rest leave dsh's inbox too, so nothing delivers them while the edit is open, and
-     * wait in a hold until `releaseHold`. When nothing forwarded is left in the CLI's queue the park
-     * flag drops, or the next tool result would end the step on an empty inbox.
+     * card's Edit all, the CLI's up-arrow). Each is cancelled in the CLI first; one the CLI never
+     * saw (relayed, or held back for its file or image) skips the cancel and leaves the inbox
+     * directly; one the CLI already took is skipped, and one dsh already drew as sent (the park won
+     * the race) goes straight back to Claude. The rest leave dsh's inbox too, so nothing delivers
+     * them while the edit is open, and wait in a hold until `releaseHold`. When nothing forwarded is
+     * left in the CLI's queue the park flag drops, or the next tool result would end the step on an
+     * empty inbox.
      */
     holdSteers(sessionId: string, ids: string[]): Promise<HoldReply>;
     /**
