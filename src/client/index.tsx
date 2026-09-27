@@ -4949,8 +4949,6 @@ function DockStatus({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   useEffect(() => {
     // Nothing to decide while the line is switched off, so no frame loop runs.
     if (!running || off) return;
-    // A new turn starts hidden: the previous turn may have ended with its header scrolled away.
-    setHeaderAway(false);
     const startedAt = Date.now();
     let header: HTMLElement | null = null;
     let box: HTMLElement | null = null;
@@ -4981,7 +4979,13 @@ function DockStatus({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
       flushSync(() => setHeaderAway(next));
     };
     frame = requestAnimationFrame(check);
-    return () => cancelAnimationFrame(frame);
+    // A turn that ended with its header scrolled away left `headerAway` true, and resetting it
+    // when the next turn started came one render late: the first render of the new turn drew the
+    // dock beside the new header. Reset as the turn ends instead, so the next one starts hidden.
+    return () => {
+      cancelAnimationFrame(frame);
+      setHeaderAway(false);
+    };
   }, [running, off]);
   const shown = running && hasTheme("row") && !off && headerAway;
   useEffect(() => {
