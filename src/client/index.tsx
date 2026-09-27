@@ -8964,13 +8964,16 @@ function LimitCard({
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <span style={{ color: T.err, flex: "0 0 auto" }} aria-hidden="true">
+        <span
+          style={{ color: usedPercent >= 100 ? T.err : T.warn, flex: "0 0 auto" }}
+          aria-hidden="true"
+        >
           ●
         </span>
         <span style={{ flex: 1 }}>
           {usedPercent >= 100
             ? t("main.limit.reached", { label })
-            : t("main.limit.near", { label, percent: Math.round(usedPercent) })}
+            : t("main.limit.near", { label, percent: Math.floor(usedPercent) })}
           {resetsAt === null ? (
             ""
           ) : (
