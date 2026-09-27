@@ -406,6 +406,7 @@ export const en = {
   "main.update.noRun": "No run was recorded.",
   // Limit card
   "main.limit.reached": "{label} limit reached",
+  "main.limit.near": "{label} limit {percent}% used",
   "main.limit.dismissAria": "Dismiss until the limit resets",
   // Steer card: typed steers Claude has not read yet
   "main.steer.title": "Waiting for Claude",
@@ -883,6 +884,7 @@ export const zh = {
   "main.update.noAnswer200": "200 秒内此 dsh 未响应。",
   "main.update.noRun": "未记录任何运行。",
   "main.limit.reached": "{label} 额度已用尽",
+  "main.limit.near": "{label} 额度已用 {percent}%",
   "main.limit.dismissAria": "关闭直到额度重置",
   "main.steer.title": "等待 Claude 读取",
   "main.steer.hint": "Claude 会在当前步骤结束后读取这些消息。",

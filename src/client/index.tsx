@@ -4949,8 +4949,6 @@ function DockStatus({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   useEffect(() => {
     // Nothing to decide while the line is switched off, so no frame loop runs.
     if (!running || off) return;
-    // A new turn starts hidden: the previous turn may have ended with its header scrolled away.
-    setHeaderAway(false);
     const startedAt = Date.now();
     let header: HTMLElement | null = null;
     let box: HTMLElement | null = null;
@@ -4981,7 +4979,13 @@ function DockStatus({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
       flushSync(() => setHeaderAway(next));
     };
     frame = requestAnimationFrame(check);
-    return () => cancelAnimationFrame(frame);
+    // A turn that ended with its header scrolled away left `headerAway` true, and resetting it
+    // when the next turn started came one render late: the first render of the new turn drew the
+    // dock beside the new header. Reset as the turn ends instead, so the next one starts hidden.
+    return () => {
+      cancelAnimationFrame(frame);
+      setHeaderAway(false);
+    };
   }, [running, off]);
   const shown = running && hasTheme("row") && !off && headerAway;
   useEffect(() => {
@@ -8928,15 +8932,19 @@ function SteerCard({
   );
 }
 
-/** The one-line notice above the composer when a limit the session's model counts against is
- *  reached. Dismissing it hides it until that limit resets, box-wide, since the reset is the next
- *  time the notice could say something new. */
+/** The one-line notice above the composer when the API grades a limit the session's model counts
+ *  against as critical. The API grades a window critical before it is full (Fable weekly at 91%,
+ *  2026-09-27), so the card says "reached" only at 100% and gives the percentage otherwise.
+ *  Dismissing it hides it until that limit resets, box-wide, since the reset is the next time the
+ *  notice could say something new. */
 function LimitCard({
   label,
+  usedPercent,
   resetsAt,
   onDismiss,
 }: {
   label: string;
+  usedPercent: number;
   resetsAt: number | null;
   onDismiss: () => void;
 }) {
@@ -8956,11 +8964,16 @@ function LimitCard({
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <span style={{ color: T.err, flex: "0 0 auto" }} aria-hidden="true">
+        <span
+          style={{ color: usedPercent >= 100 ? T.err : T.warn, flex: "0 0 auto" }}
+          aria-hidden="true"
+        >
           ●
         </span>
         <span style={{ flex: 1 }}>
-          {t("main.limit.reached", { label })}
+          {usedPercent >= 100
+            ? t("main.limit.reached", { label })
+            : t("main.limit.near", { label, percent: Math.floor(usedPercent) })}
           {resetsAt === null ? (
             ""
           ) : (
@@ -9577,6 +9590,7 @@ function AsideBubble({
       {limitCard && (
         <LimitCard
           label={windowLabel(limitCard)}
+          usedPercent={limitCard.usedPercent}
           resetsAt={limitCard.resetsAt}
           // The reset time is the key: a later limit, or the same one after it resets, shows again.
           onDismiss={() => limitCard.resetsAt !== null && setLimitDismissed(limitCard.resetsAt)}
