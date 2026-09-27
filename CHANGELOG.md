@@ -14,6 +14,11 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- The limit card above the composer says a limit is reached only when it is at 100%. The API
+  flags a limit as critical before it is full (a model's weekly limit at 91%), and the card used
+  to read "limit reached" then; it now reads "Fable weekly limit 91% used".
+- The working line above the composer no longer shows beside the new turn's header for a moment
+  when you send after a turn that ended with its header scrolled away.
 - A file or image you send while Claude runs one of its own tools reaches Claude with that
   tool's result, like a text message does. Before, Claude answered the tool first and then the
   message as a reply of its own.

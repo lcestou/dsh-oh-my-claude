@@ -8932,15 +8932,19 @@ function SteerCard({
   );
 }
 
-/** The one-line notice above the composer when a limit the session's model counts against is
- *  reached. Dismissing it hides it until that limit resets, box-wide, since the reset is the next
- *  time the notice could say something new. */
+/** The one-line notice above the composer when the API grades a limit the session's model counts
+ *  against as critical. The API grades a window critical before it is full (Fable weekly at 91%,
+ *  2026-09-27), so the card says "reached" only at 100% and gives the percentage otherwise.
+ *  Dismissing it hides it until that limit resets, box-wide, since the reset is the next time the
+ *  notice could say something new. */
 function LimitCard({
   label,
+  usedPercent,
   resetsAt,
   onDismiss,
 }: {
   label: string;
+  usedPercent: number;
   resetsAt: number | null;
   onDismiss: () => void;
 }) {
@@ -8964,7 +8968,9 @@ function LimitCard({
           ●
         </span>
         <span style={{ flex: 1 }}>
-          {t("main.limit.reached", { label })}
+          {usedPercent >= 100
+            ? t("main.limit.reached", { label })
+            : t("main.limit.near", { label, percent: Math.round(usedPercent) })}
           {resetsAt === null ? (
             ""
           ) : (
@@ -9581,6 +9587,7 @@ function AsideBubble({
       {limitCard && (
         <LimitCard
           label={windowLabel(limitCard)}
+          usedPercent={limitCard.usedPercent}
           resetsAt={limitCard.resetsAt}
           // The reset time is the key: a later limit, or the same one after it resets, shows again.
           onDismiss={() => limitCard.resetsAt !== null && setLimitDismissed(limitCard.resetsAt)}
