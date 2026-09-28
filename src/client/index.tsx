@@ -5198,15 +5198,11 @@ function watchTurnStatus(ctx: ClientCtx) {
   const attach = (found: HTMLElement) => {
     // A row already wired, or a group already marked done, needs no further look and no layout.
     if (found.hasAttribute(TURN_MARK) || found.hasAttribute("data-omc-turn-done")) return;
-    // Decide before wiring, not after. A reload draws every old group, and dsh leaves a stopped
-    // or failed one open, so asking "is it open" wired a verb onto a turn that ended an hour ago
-    // and took it down three polls later (owner, 2026-09-22). What is known up front: dsh's own
-    // session summary says whether the session is running at all, and only the newest group in
-    // the conversation can be the running turn.
     // dsh 0.2 draws a process group only once its turn closes and runs the live one in its own
-    // row, so a group is never the running turn. Asking the session list whether the session
-    // still runs was not enough: that flag and the one that takes the running row down are two
-    // stores, and a group drawn between the two would have taken the verb over its "Took 12s".
+    // row, so a group is never the running turn. The 0.1.7 checks this replaced (session still
+    // running, newest group only) left a gap: the session list's flag and the one that takes the
+    // running row down are two stores, and a group drawn between the two would have taken the
+    // verb over its "Took 12s".
     if (found.matches("button[data-turn-process]")) return;
     const el = turnStatusRow(found);
     if (el === undefined) return;
