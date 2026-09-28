@@ -5211,7 +5211,9 @@ function watchTurnStatus(ctx: ClientCtx) {
       if (newestGroup !== found) return;
       // dsh 0.2 draws a group only once its turn closes and runs the live one in its own row, so
       // while that row is up the newest group is the previous turn's "Took 12s", not this one.
-      if (document.querySelector("[data-chat-running]") !== null) return;
+      // Asked of the group's own conversation, as `paintClosing` reads its clock.
+      const scope = found.closest("[data-conversation-scroll]") ?? document;
+      if (scope.querySelector("[data-chat-running]") !== null) return;
     }
     const el = turnStatusRow(found);
     if (el === undefined) return;
