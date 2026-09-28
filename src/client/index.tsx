@@ -8694,9 +8694,9 @@ function SteerCard({
   const [busy, setBusy] = useState<string | null>(null);
   const [failed, setFailed] = useState<{ id: string; text: string } | null>(null);
   // Send now takes the rows back as a hold while the turn is cut short, then sends them once
-  // Claude is idle. The holds that already stood when it was pressed; any other hold seen while it
-  // runs is that one and is drawn as a row going out, not as an editor, which flashed the edit box
-  // for a moment on every Send now.
+  // Claude is idle. This keeps the ids of the holds that already stood when it was pressed; any
+  // other hold seen while it runs is Send now's own and is drawn as a row going out, not as an
+  // editor. Drawn as an editor, it flashed the edit box for a moment on every Send now.
   const [sendingFrom, setSendingFrom] = useState<ReadonlySet<string> | null>(null);
   const sending = steers.held.filter((h) => sendingFrom !== null && !sendingFrom.has(h.id));
   const editing = steers.held.filter((h) => !sending.includes(h));
