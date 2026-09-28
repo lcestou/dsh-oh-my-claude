@@ -13,6 +13,8 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 ### Fixed
 
 - The plugin loads on dsh 0.2. dsh 0.2 refuses a plugin whose dsh peer range leaves out the running version, and the old `^0.1.5-rc.1` range stopped at 0.1.x.
+- On dsh 0.2 the working line (verb, spinner, time and tokens) takes the place of dsh's "Deep diving" line under the running turn. The copy above the composer shows only once you scroll that line out of view. Before, dsh 0.2 left the plugin no header to draw in, so the copy sat under dsh's own line for the whole turn.
+- On a phone the permission button shows only its shield and chevron, as dsh's own does, so the composer's buttons stay on one row. Before, its shortened label pushed the model button onto a second row. It also takes dsh 0.2's smaller corner radius.
 
 ## [1.4.1] - 2026-09-27
 
