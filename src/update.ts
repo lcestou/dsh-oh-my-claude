@@ -56,11 +56,12 @@ const cache = new Map<string, { at: number; ttl: number; value: LatestRelease | 
 
 /** The dsh peer the plugin declares (`@deepseek-ai/dsh-llm`), and its lowest accepted version. */
 const DSH_PEER = "@deepseek-ai/dsh-llm";
-const PEER_RANGE = new RegExp(`"${DSH_PEER}"\\s*:\\s*"[\\^~>=\\s]*([^"\\s]+)"`);
+const PEER_RANGE = new RegExp(`"${DSH_PEER}"\\s*:\\s*"[\\^~>=\\s]*([^"\\s]+)[^"]*"`);
 
 /** The lowest dsh a package.json (or the registry's copy of it) accepts, read off its dsh-llm peer
- *  range. The range is one bound, `^0.1.6-alpha.2`; the caret, tilde or `>=` in front is dropped
- *  and what is left must parse as a version. Absent or unreadable: undefined. */
+ *  range. The floor is the range's first bound (`^0.1.6-alpha.2`, or `>=0.1.5-rc.1 <0.3.0`): the
+ *  caret, tilde or `>=` in front is dropped, anything after it (a ceiling) is ignored, and what is
+ *  left must parse as a version. Absent or unreadable: undefined. */
 export function dshFloor(packageJsonText: string): string | undefined {
   const v = PEER_RANGE.exec(packageJsonText)?.[1];
   return v && parse(v) ? v : undefined;

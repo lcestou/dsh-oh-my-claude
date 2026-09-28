@@ -18,8 +18,9 @@ export type LatestRelease = {
     dshFloor: string | undefined;
 };
 /** The lowest dsh a package.json (or the registry's copy of it) accepts, read off its dsh-llm peer
- *  range. The range is one bound, `^0.1.6-alpha.2`; the caret, tilde or `>=` in front is dropped
- *  and what is left must parse as a version. Absent or unreadable: undefined. */
+ *  range. The floor is the range's first bound (`^0.1.6-alpha.2`, or `>=0.1.5-rc.1 <0.3.0`): the
+ *  caret, tilde or `>=` in front is dropped, anything after it (a ceiling) is ignored, and what is
+ *  left must parse as a version. Absent or unreadable: undefined. */
 export declare function dshFloor(packageJsonText: string): string | undefined;
 /** True when `version` is `floor` or later, prerelease tags included: `0.1.6-alpha.2` reaches a
  *  floor of `0.1.6-alpha.1` and not one of `0.1.6`; `0.1.5-rc.2` reaches neither. Identifiers

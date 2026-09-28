@@ -107,6 +107,11 @@ assert.equal(
   dshFloor('{"peerDependencies":{"@deepseek-ai/dsh-llm": ">=0.1.5-rc.1"}}'),
   "0.1.5-rc.1",
 );
+// A floor and a ceiling: the floor is still the first bound.
+assert.equal(
+  dshFloor('{"peerDependencies":{"@deepseek-ai/dsh-llm":">=0.1.5-rc.1 <0.3.0"}}'),
+  "0.1.5-rc.1",
+);
 assert.equal(dshFloor('{"peerDependencies":{"@deepseek-ai/dsh-llm":"*"}}'), undefined);
 assert.equal(dshFloor('{"peerDependencies":{"react":"^18"}}'), undefined);
 

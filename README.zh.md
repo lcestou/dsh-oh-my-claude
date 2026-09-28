@@ -59,7 +59,7 @@
 
 ## 安装
 
-需要 Claude Code CLI 在 `PATH` 上并已登录（`claude --version` 能运行，打开 `claude` 不会要求登录），以及 dsh 0.1.5-rc.1 或更新版本。别的都不需要：没有 API key，没有 Node 构建步骤。
+需要 Claude Code CLI 在 `PATH` 上并已登录（`claude --version` 能运行，打开 `claude` 不会要求登录），以及 dsh 0.2（0.2.0-rc.1 或更新版本）。dsh 0.1.x 请按下方兼容性表格安装对应的 npm 标签。别的都不需要：没有 API key，没有 Node 构建步骤。
 
 ```sh
 dsh plugin --profile web add dsh-oh-my-claude                        # 从 npm 安装

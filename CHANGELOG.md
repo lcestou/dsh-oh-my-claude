@@ -6,6 +6,14 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Changed
+
+- Requires dsh 0.2 (`>=0.2.0-rc.1 <0.3.0`). dsh 0.1.7 keeps 1.4.1, served on the `dsh-0.1.7` npm tag.
+
+### Fixed
+
+- The plugin loads on dsh 0.2. dsh 0.2 refuses a plugin whose dsh peer range leaves out the running version, and the old `^0.1.5-rc.1` range stopped at 0.1.x.
+
 ## [1.4.1] - 2026-09-27
 
 dsh: runs on 0.1.5-rc.1 through 0.1.7-rc.2; built and tested on 0.1.7-rc.2.
