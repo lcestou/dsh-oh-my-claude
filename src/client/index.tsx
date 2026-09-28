@@ -4927,8 +4927,10 @@ const DOCK_HEADER_GRACE_MS = 1000;
  * the same line, wired by `wireTurnStatus` the way the header's is (spinner, verb, figures), so the
  * verb is the one the header picked (kept per session) and the bracket comes from the same route.
  * Shown while the header's line is off screen or not drawn, and hidden while the header line is on
- * screen so the two never show at once, under the Claude look's row switch. On by default; the
- * `dockStatusOff` hint turns it off for someone who wants only dsh's header line.
+ * screen so the two never show at once, under the Claude look's row switch. On dsh 0.2 the
+ * "header" is the running row under the turn, drawn from the start, so the dock shows once that
+ * row is scrolled away. On by default; the `dockStatusOff` hint turns it off for someone who wants
+ * only the line in the conversation.
  * ponytail: with the header on the page too, both lines poll the live-turn route once a second; the
  * server-push pass replaces both polls with one subscription.
  */

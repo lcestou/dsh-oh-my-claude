@@ -1,7 +1,7 @@
 // Dev-only: proves the working line repeats above the composer while the turn header's line is off
 // screen or not drawn. Needs a Claude session running right now in the workspace PW_WORKSPACE names
 // (default oh-my-claude); PW_SESSION names its sidebar row, else the first row dsh labels Running.
-// Reads the dockStatusAlways hint and reports it, since it changes what "hidden" should read.
+// Reads the dockStatusOff hint and reports it: with the switch off the dock never shows.
 // Point PLAYWRIGHT_ROOT at any project with Playwright installed; arg 1 is the dsh launch token;
 // arg 2 an optional screenshot path.
 import { dshUrl, launch } from "./pw.js";
@@ -41,12 +41,12 @@ if ((await row.count()) === 0) {
 }
 await row.click();
 await p.waitForTimeout(4000);
-const always = await p.evaluate(async () => {
+const off = await p.evaluate(async () => {
   const r = await fetch("/dsh-oh-my-claude/hints");
-  const h: { dockStatusAlways?: boolean } = await r.json();
-  return h.dockStatusAlways === true;
+  const h: { dockStatusOff?: boolean } = await r.json();
+  return h.dockStatusOff === true;
 });
-console.log("dockStatusAlways:", always);
+console.log("dockStatusOff:", off);
 const dock = p.locator("[data-omc-dock-status]");
 const headerLine = p.locator("[data-dsh-oh-my-claude-turn]:not([data-omc-dock-status] *)");
 const drawn = (await headerLine.count()) > 0;
@@ -54,11 +54,7 @@ console.log("header line drawn:", drawn);
 if (drawn) {
   await headerLine.first().scrollIntoViewIfNeeded();
   await p.waitForTimeout(1200);
-  console.log(
-    "dock with header visible:",
-    await dock.count(),
-    always ? "(always on)" : "(expect 0)",
-  );
+  console.log("dock with header visible:", await dock.count(), "(expect 0)");
   // Scroll the header out of view: past it to the bottom when it heads the turn (dsh 0.1.7), to
   // the top when it is dsh 0.2's running row, which sits under the turn's content.
   const below = (await p.locator("[data-chat-running] [data-omc-turn-line]").count()) > 0;
@@ -71,7 +67,7 @@ if (drawn) {
   await p.waitForTimeout(1500);
 }
 const n = await dock.count();
-console.log("dock with header away or absent:", n, "(expect 1)");
+console.log("dock with header away or absent:", n, off ? "(expect 0, switch off)" : "(expect 1)");
 if (n > 0) {
   const text = await dock.first().innerText();
   console.log("dock text:", JSON.stringify(text.slice(0, 80)));
