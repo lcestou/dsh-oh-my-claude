@@ -8693,6 +8693,13 @@ function SteerCard({
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [failed, setFailed] = useState<{ id: string; text: string } | null>(null);
+  // Send now takes the rows back as a hold while the turn is cut short, then sends them once
+  // Claude is idle. This keeps the ids of the holds that already stood when it was pressed; any
+  // other hold seen while it runs is Send now's own and is drawn as a row going out, not as an
+  // editor. Drawn as an editor, it flashed the edit box for a moment on every Send now.
+  const [sendingFrom, setSendingFrom] = useState<ReadonlySet<string> | null>(null);
+  const sending = steers.held.filter((h) => sendingFrom !== null && !sendingFrom.has(h.id));
+  const editing = steers.held.filter((h) => !sending.includes(h));
   // A process fact from the server: the CLI is inside a dsh tool, which blocks Send now for every
   // row, a stdin one typed before the tool call included.
   const inTool = steers.inTool === true;
@@ -8702,6 +8709,7 @@ function SteerCard({
     if ("ids" in body) noteWithdrawn(body.ids);
     setBusy(id);
     setFailed(null);
+    if (body.action === "sendNow") setSendingFrom(new Set(steers.held.map((h) => h.id)));
     try {
       const r = await fetch(`${ROUTE}/steer-edit`, {
         method: "POST",
@@ -8718,6 +8726,7 @@ function SteerCard({
       });
     } finally {
       setBusy(null);
+      setSendingFrom(null);
       refresh();
     }
   };
@@ -8761,7 +8770,7 @@ function SteerCard({
       <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 4 }}>
         <span style={{ flex: 1, color: T.faint, fontSize: 12 }}>
           {t("main.steer.title")} ·{" "}
-          {steers.held.length > 0
+          {editing.length > 0
             ? t("main.steer.heldHint")
             : inTool
               ? t("main.steer.relayedHint")
@@ -8800,7 +8809,25 @@ function SteerCard({
         )}
       </div>
       {failure("all")}
-      {steers.held.map((h) => {
+      {sending.map((h) => (
+        <div key={h.id} data-omc-steer-sending={h.id} style={{ padding: "4px 0" }}>
+          <SteerAttachments items={h.attachments} />
+          <span
+            style={{
+              color: T.faint,
+              whiteSpace: "pre-wrap",
+              overflowWrap: "anywhere",
+              display: "-webkit-box",
+              WebkitLineClamp: 3,
+              WebkitBoxOrient: "vertical",
+              overflow: "hidden",
+            }}
+          >
+            {h.text}
+          </span>
+        </div>
+      ))}
+      {editing.map((h) => {
         const disabled = busy === h.id;
         const value = drafts[h.id] ?? h.text;
         const hasFiles = Boolean(h.attachments?.length);
