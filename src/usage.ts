@@ -118,15 +118,21 @@ const isRec = (v: unknown): v is Rec => typeof v === "object" && v !== null && !
 /** A percentage clamped into 0 to 100, or null for anything that is not a finite number. */
 const percentOf = (v: unknown): number | null =>
   typeof v === "number" && Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : null;
-/** A reset time in epoch milliseconds. A number from 1e11 up is already milliseconds and a
- *  smaller one is seconds; a string is parsed as a date. */
+/** A reset time in epoch milliseconds, rounded to the minute. A number from 1e11 up is already
+ *  milliseconds and a smaller one is seconds; a string is parsed as a date. The endpoint answers a
+ *  slightly different instant on every read (16:59:59.602, then 17:00:00.052, then .246, one reset
+ *  seen 2026-09-27), so unrounded it read "resets 12:59 PM" for a 1:00 PM reset, and a notice
+ *  dismissed until the reset came back on the next read, which named another instant. */
 const resetOf = (v: unknown): number | null => {
-  if (typeof v === "number" && Number.isFinite(v)) return v >= 1e11 ? v : v * 1000;
-  if (typeof v === "string" && v.trim()) {
-    const t = Date.parse(v);
-    return Number.isNaN(t) ? null : t;
-  }
-  return null;
+  const ms =
+    typeof v === "number" && Number.isFinite(v)
+      ? v >= 1e11
+        ? v
+        : v * 1000
+      : typeof v === "string" && v.trim()
+        ? Date.parse(v)
+        : Number.NaN;
+  return Number.isNaN(ms) ? null : Math.round(ms / 60_000) * 60_000;
 };
 
 /**

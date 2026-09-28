@@ -14,6 +14,9 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- A limit card you dismiss stays dismissed until the limit resets, and reset times read on the
+  minute ("resets Tue 1 pm", not 12:59). The usage API names a slightly different instant on
+  every read, so a dismissed card came back after the next message.
 - The limit card above the composer says a limit is reached only when it is at 100%. The API
   flags a limit as critical before it is full (a model's weekly limit at 91%), and the card used
   to read "limit reached" then; it now reads "Fable weekly limit 91% used".
