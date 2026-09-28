@@ -4518,8 +4518,9 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
 }
 
 // dsh's own permission trigger, copied so the new control reads as dsh's in the composer: 28 px
-// tall with dsh's small radius, transparent at rest, its hover shade under the pointer and a 2 px focus ring. The hashed
-// class is a build rename, so the rule is injected once and keyed on our own hook.
+// tall with dsh's small radius, transparent at rest, its hover shade under the pointer and a 2 px
+// focus ring. The hashed class is a build rename, so the rule is injected once and keyed on our
+// own hook.
 const ACCESS_TRIGGER_CSS =
   "[data-omc-access-trigger]:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}" +
   "[data-omc-access-trigger]:focus-visible{box-shadow:0 0 0 2px var(--dsw-alias-border-l3)}" +
