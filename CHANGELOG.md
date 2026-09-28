@@ -6,17 +6,19 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
-### Added
+## [1.4.1] - 2026-09-27
 
-- A message with a file or image that you send while Claude works now shows on the steer card,
-  both while Claude runs its own tools and while it waits on a dsh tool. You can edit its text,
-  remove it or send it now, and the files stay on it through an edit.
+dsh: runs on 0.1.5-rc.1 through 0.1.7-rc.2; built and tested on 0.1.7-rc.2.
 
 ### Fixed
 
-- A limit card you dismiss stays dismissed until the limit resets, and reset times read on the
-  minute ("resets Tue 1 pm", not 12:59). The usage API names a slightly different instant on
-  every read, so a dismissed card came back after the next message.
+- A message with a file or image that you send while Claude works shows on the steer card, both
+  while Claude runs its own tools and while it waits on a dsh tool. Before, only text messages
+  were listed. You can edit its text, remove it or send it now, and the files stay on it through
+  an edit.
+- A limit card you dismiss stays hidden until the limit resets, and a reset shows on the whole
+  minute (1:00 PM, not 12:59 PM). The usage API names a slightly different instant on every
+  read, so a dismissed card came back after the next message.
 - The limit card above the composer says a limit is reached only when it is at 100%. The API
   flags a limit as critical before it is full (a model's weekly limit at 91%), and the card used
   to read "limit reached" then; it now reads "Fable weekly limit 91% used".
