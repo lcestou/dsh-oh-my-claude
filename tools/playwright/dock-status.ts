@@ -8,6 +8,9 @@ import { dshUrl, launch } from "./pw.js";
 
 const [token, out = "/tmp/pw/dock-status.png"] = process.argv.slice(2);
 const name = process.env.PW_SESSION;
+/** The verb alone: the text before the ellipsis, after the spinner's line. The spinner glyph
+ *  leads both lines and each ticks on its own beat, so comparing whole lines failed at random. */
+const verb = (line: string) => line.split("…")[0]?.split("\n").at(-1);
 const b = await launch();
 const ctx = await b.newContext({ viewport: { width: 1400, height: 900 }, colorScheme: "dark" });
 const p = await ctx.newPage();
@@ -56,13 +59,15 @@ if (drawn) {
     await dock.count(),
     always ? "(always on)" : "(expect 0)",
   );
-  // Scroll the chat column's nearest scrolling ancestor to its very bottom, past the header.
-  await p.evaluate(() => {
+  // Scroll the header out of view: past it to the bottom when it heads the turn (dsh 0.1.7), to
+  // the top when it is dsh 0.2's running row, which sits under the turn's content.
+  const below = (await p.locator("[data-chat-running] [data-omc-turn-line]").count()) > 0;
+  await p.evaluate((toTop) => {
     const flows = document.querySelectorAll<HTMLElement>("[data-chat-flow]");
     let box: HTMLElement | null = flows[flows.length - 1]?.parentElement ?? null;
     while (box !== null && box.scrollHeight <= box.clientHeight) box = box.parentElement;
-    if (box !== null) box.scrollTop = box.scrollHeight;
-  });
+    if (box !== null) box.scrollTop = toTop ? 0 : box.scrollHeight;
+  }, below);
   await p.waitForTimeout(1500);
 }
 const n = await dock.count();
@@ -72,7 +77,7 @@ if (n > 0) {
   console.log("dock text:", JSON.stringify(text.slice(0, 80)));
   if (drawn) {
     const headerText = await headerLine.first().innerText();
-    console.log("same verb:", text.split("…")[0] === headerText.split("…")[0]);
+    console.log("same verb:", verb(text) === verb(headerText));
   }
 }
 await p.screenshot({ path: out });
