@@ -1,10 +1,14 @@
 # Changelog
 
-Notable changes to Oh My Claude. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+Notable changes to Oh My Claude. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Each new dsh line the plugin moves to is a minor version, even when it drops the line before, and a fix on the same line is a patch; the dsh a release is for is named under its heading.
 
 Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the repository while the plugin was still private, and those sections are reconstructed from the commits.
 
 ## [Unreleased]
+
+## [1.5.0] - 2026-09-28
+
+dsh: runs on 0.2.0-rc.1 through 0.2.0-rc.1; built and tested on 0.2.0-rc.1.
 
 ### Changed
 
