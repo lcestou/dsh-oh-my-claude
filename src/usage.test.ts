@@ -13,6 +13,17 @@ import {
   usageWindows,
 } from "./usage.js";
 
+// The endpoint names a slightly different instant on every read; both land on the same minute.
+assert.deepEqual(
+  usageWindows({
+    limits: [
+      { kind: "session", percent: 1, resets_at: "2026-09-29T16:59:59.602055+00:00" },
+      { kind: "weekly_all", percent: 1, resets_at: "2026-09-29T17:00:00.246990+00:00" },
+    ],
+  }).map((x) => x.resetsAt),
+  [Date.parse("2026-09-29T17:00:00Z"), Date.parse("2026-09-29T17:00:00Z")],
+);
+
 // limits shape: session + weekly + scoped model rows, a repeated kind taking the first only.
 // `is_active` is deliberately not a filter: the endpoint sends false for windows that are running,
 // so a row carrying it false is read like any other.

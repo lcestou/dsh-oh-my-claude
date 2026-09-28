@@ -9532,7 +9532,11 @@ function AsideBubble({
     limit?.level === "critical" &&
     !warningsOff &&
     !noticeOff &&
-    (limit.window.resetsAt === null || limitDismissed !== limit.window.resetsAt)
+    // By the minute: a dismissal stored before the route rounded reset times holds a stray
+    // fraction of a second, and an exact match brought the card back on the next read.
+    // Unset reads as NaN through `Number`, which matches no minute.
+    (limit.window.resetsAt === null ||
+      Math.round(Number(limitDismissed) / 60_000) !== Math.round(limit.window.resetsAt / 60_000))
       ? limit.window
       : null;
   const shown = items.filter((it) => !it.dismissed && !dismissed.has(it.id));
