@@ -57,7 +57,7 @@ Once an SSH box is saved, dsh's own Add workspace dialog gains a box dropdown: a
 
 ## Install
 
-You need the Claude Code CLI on `PATH` and logged in (`claude --version` works, `claude` opens without asking you to sign in), and dsh 0.1.5-rc.1 or newer. Nothing else: no API key, no Node build step.
+You need the Claude Code CLI on `PATH` and logged in (`claude --version` works, `claude` opens without asking you to sign in), and dsh 0.2 (0.2.0-rc.1 or newer). On dsh 0.1.x, install the npm tag for your line from the Compatibility table below. Nothing else: no API key, no Node build step.
 
 ```sh
 dsh plugin --profile web add dsh-oh-my-claude                        # from npm
