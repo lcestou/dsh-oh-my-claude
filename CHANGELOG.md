@@ -6,16 +6,13 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
-### Fixed
-
-- dsh's context meter on a Claude session shows how full Claude's context really is. It used to add up every API call in a step, and each call resends the whole context, so a session at 740k of 1M read as 3.7M and the meter sat at 100%. dsh's session token pill now counts each step's context once instead of once per call; the Claude cost dialog still lists every call's tokens.
-
 ## [1.5.1] - 2026-09-29
 
 dsh: runs on 0.2.0-rc.1 through 0.2.0-rc.2; built and tested on 0.2.0-rc.2.
 
 ### Fixed
 
+- dsh's context meter on a Claude session shows how full Claude's context really is. It used to add up every API call in a step, and each call resends the whole context, so a session at 740k of 1M read as 3.7M and the meter sat at 100%. dsh's session token pill now counts each step's context once instead of once per call; the Claude cost dialog still lists every call's tokens.
 - On dsh 0.2.0-rc.2 a finished Claude turn shows its closing line again (`✻ Sautéed for 3m 27s · done 10:13 AM`) instead of dsh's "Completed in 1s". rc.2 reworded the label the plugin reads the duration from.
 
 ## [1.5.0] - 2026-09-28
