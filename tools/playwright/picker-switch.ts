@@ -32,14 +32,17 @@ const openPicker = async () => {
   await p.locator('[role="menu"] [role="menuitem"]', { hasText: "Model" }).first().click();
   await p.waitForTimeout(600);
 };
+// Innermost groups only: since dsh 0.2.0-rc.2 the searchable picker wraps every provider group in
+// an outer `role="group"`, which matches any provider's name and made `.first()` the wrapper.
+const GROUP = '[role="group"]:not(:has([role="group"]))';
 /** Select the radio rows inside a model group matched by name or pattern, so a provider row is
  *  picked by its label.
  */
 const groupRows = (group: string | RegExp) =>
-  p.locator('[role="group"]', { hasText: group }).first().locator('[role="menuitemradio"]');
+  p.locator(GROUP, { hasText: group }).first().locator('[role="menuitemradio"]');
 
 await openPicker();
-const groups = p.locator('[role="group"]');
+const groups = p.locator(GROUP);
 for (let i = 0; i < (await groups.count()); i++) {
   const g = groups.nth(i);
   const names = await g.locator('[role="menuitemradio"]').allInnerTexts();
