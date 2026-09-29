@@ -6,6 +6,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Fixed
+
+- On dsh 0.2.0-rc.2 a finished Claude turn shows its closing line again (`✻ Sautéed for 3m 27s · done 10:13 AM`) instead of dsh's "Completed in 1s". rc.2 reworded the label the plugin reads the duration from.
+
 ## [1.5.0] - 2026-09-28
 
 dsh: runs on 0.2.0-rc.1 through 0.2.0-rc.1; built and tested on 0.2.0-rc.1.

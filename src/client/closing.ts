@@ -38,12 +38,13 @@ export const closingVerb = (key: string, verbs: readonly string[]): string => {
 };
 
 /**
- * The duration out of dsh's finished-turn label: `Took 38s` in English, `用时 38s` in Chinese (dsh's
- * `message.turnProcess.took`). Undefined for anything else, which is how a running turn's label
- * ("Deep diving for 12s") and a dsh that reworded the template both read: not finished, leave it.
+ * The duration out of dsh's finished-turn label (`message.turnProcess.took`): `Completed in 38s` and
+ * `已完成，用时 38s` since dsh 0.2.0-rc.2, `Took 38s` and `用时 38s` before it. Undefined for anything
+ * else, which is how a running turn's label ("Deep diving for 12s") and a dsh that reworded the
+ * template again both read: not finished, leave it.
  */
 export const tookDuration = (label: string): string | undefined => {
-  const m = /^(?:Took|用时)\s*(\S.*)$/.exec(label.trim());
+  const m = /^(?:Completed in|Took|(?:已完成，)?用时)\s*(\S.*)$/.exec(label.trim());
   return m?.[1]?.trim();
 };
 
