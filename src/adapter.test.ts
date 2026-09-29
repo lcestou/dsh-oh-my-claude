@@ -584,8 +584,9 @@ assert.deepEqual(done[0].usage, {
 // Spent once: the adapter's own call at the step's end must not re-report the turn's figures.
 assert.deepEqual(tr.takeStepUsage(), []);
 
-// With partials on the wire, a step is its own messages summed — not the turn's total, and not the
-// last message's alone. Two messages, as when the CLI runs its own Read between them.
+// With partials on the wire, a step reports its last message's prompt (the context as it stands,
+// which dsh's meter reads) and every message's output, not the turn's total. Two messages, as when
+// the CLI runs its own Read between them; summing the prompts read five calls at 740k as 3.7M.
 const trs = new Translator() as any;
 const delta = (usage: object) =>
   trs.translate({ type: "stream_event", event: { type: "message_delta", usage } });
@@ -613,15 +614,32 @@ assert.deepEqual(trs.takeStepUsage(), [
   {
     type: "usage",
     usage: {
-      inputTokens: 20,
+      inputTokens: 10,
       outputTokens: 881,
-      cacheReadTokens: 24902,
-      cacheWriteTokens: 17930,
+      cacheReadTokens: 20739,
+      cacheWriteTokens: 1354,
       reasoningTokens: 709,
-      totalTokens: 43733,
+      totalTokens: 22984,
     },
   },
 ]);
+
+// A delta that reports output only leaves the last call's prompt standing, not a zero context.
+const tro = new Translator() as any;
+tro.translate({
+  type: "stream_event",
+  event: {
+    type: "message_delta",
+    usage: { input_tokens: 5, output_tokens: 10, cache_read_input_tokens: 800 },
+  },
+});
+tro.translate({
+  type: "stream_event",
+  event: { type: "message_delta", usage: { output_tokens: 4 } },
+});
+const [lone] = tro.takeStepUsage();
+assert.equal(lone.usage.cacheReadTokens, 800);
+assert.equal(lone.usage.outputTokens, 14);
 
 // The last step of a turn sees both sources: its own deltas, then the result frame carrying the
 // turn's total. It reports the deltas once and the fallback never — a second chunk would be a

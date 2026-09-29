@@ -158,14 +158,19 @@ export declare class Translator {
      *  the message it closes, not the turn, so the figure summed here is what the status row shows;
      *  reporting each message's own count made the row drop back to a few hundred at every tool step. */
     private turnOutput;
-    /** This step's own token usage, summed over the assistant messages it covered.
+    /** This step's token usage: the prompt of its last API call, and the output of all of them.
      *
      *  A step is one `stream()` call, and it ends when tool calls are relayed to dsh, so a step runs
      *  one API call per assistant message and several when the CLI works through its own Read, Bash
      *  and Edit without ever handing dsh a call. `message_delta` reports each of those messages
-     *  exactly once and carries all four counters settled, so summing them is what this step really
-     *  spent. Emitted by `takeStepUsage` at the step's end, because dsh fails a stream that reports
-     *  usage more than once ("LLM stream emitted usage more than once"). */
+     *  exactly once and carries all four counters settled. dsh reads a step's prompt counters as how
+     *  full the context is (its token meter), and every call resends the whole context, so the three
+     *  prompt counters are the latest call's, not a sum: summed, five calls at 740k read as 3.7M on a
+     *  1M window and the meter sat pinned at 100% (2026-09-29). Output is summed, since each call's
+     *  output is new. The price is dsh's session token pill, which now counts each step's context once
+     *  rather than once per call; the cost dialog's rows come from the result frame and still carry
+     *  every call. Emitted by `takeStepUsage` at the step's end, because dsh fails a stream that
+     *  reports usage more than once ("LLM stream emitted usage more than once"). */
     private stepUsage;
     /** Whether any `message_delta` was counted, which is what makes `stepUsage` the better source. */
     private sawUsageDelta;
