@@ -5101,8 +5101,9 @@ type Face = { fontSize: string; fontWeight: string; fontFamily: string; lineHeig
 
 /**
  * Writes the CLI's closing line (`✻ Crunched for 38s · done 3:33 AM`) into a finished turn's
- * process-group button, over dsh's own "Took 38s", which the sheet hides while the line is there.
- * Finished is dsh's label reading its `Took {duration}` template, not the chevron: a running group
+ * process-group button, over dsh's own "Completed in 38s" ("Took 38s" before 0.2.0-rc.2), which
+ * the sheet hides while the line is there. Finished is dsh's label reading its
+ * `message.turnProcess.took` template (see `tookDuration`), not the chevron: a running group
  * reads "Deep diving for 12s" and is left alone, as is one still carrying the running line. A
  * stopped turn (dsh's `Stopped`) gets the CLI's interrupt line instead; a failed one keeps dsh's
  * word. The time is the clock dsh prints in the turn's tail. Only the newest group can still gain
