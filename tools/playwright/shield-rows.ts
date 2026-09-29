@@ -34,16 +34,16 @@ console.log(
 );
 await shield.click();
 await p.waitForTimeout(1500);
-// dsh renders the access rows as a radio group; the group size is the number of access modes.
-const radio = p.locator('[role="menu"] [role="menuitemradio"]');
-const items = await radio.allTextContents();
-const setsize = await radio.first().getAttribute("aria-setsize");
+// The access rows: `menuitemradio` up to dsh 0.2.0-rc.1, plain `menuitem` from rc.2, so both
+// roles count. The number of rows is the number of access modes.
+const rows = p.locator('[role="menu"] [role^="menuitem"]');
+const items = await rows.allTextContents();
+const modes = items.length;
 console.log("access modes:", JSON.stringify(items.map((t) => t.trim())));
-console.log("radio setsize:", setsize);
 console.log("menu html head:", (await p.locator('[role="menu"]').last().innerHTML()).slice(0, 700));
 console.log(
-  setsize && Number(setsize) > 0
-    ? "VERDICT: access menu opened, " + setsize + " modes"
+  modes > 0
+    ? "VERDICT: access menu opened, " + modes + " modes"
     : "VERDICT: access menu did not open",
 );
 await b.close();
