@@ -3780,16 +3780,16 @@ function watchContextMeter(ctx: ClientCtx) {
    * Fill the ring from the CLI's own occupancy.
    *
    * dsh draws the arc from `contextPressure`, which is the prompt side of the last usage sample,
-   * input plus both cache counters, over the window. For a Claude Code session that sample is the
-   * result frame's, and the CLI sums it across every API call the turn made: a turn of 117 calls
-   * reports millions of cache reads, so the arc pins at 100% while the session is a third full. The
-   * dash is rewritten with the percentage the CLI reports, which is the number this plugin's popover
-   * and bubble already show and the one auto-compact fires on.
+   * input plus both cache counters, over the window, plus whatever its own surface grew by since.
+   * The server reports a step's last API call as that sample (see `stepUsage` in the translator),
+   * so dsh's figure is close; until 2026-09-29 it summed every call and pinned the arc at 100% on a
+   * session a third full. The CLI's own count is still the better one: it is what auto-compact
+   * fires on, and it is what this plugin's popover and bubble show, so the arc is rewritten with it
+   * whenever the session's process answers. When it does not (no live process, such as after a
+   * dsh-web restart until the next turn), dsh's figure stands.
    *
-   * Written rather than handed upstream because the number dsh is drawing is also what it bills the
-   * turn on; the throughput figure is right for that and wrong only here. The circle is found the
-   * same structural way `isRingRoot` finds it, and its radius is read from the element rather than
-   * assumed, so a ring dsh redraws at another size still gets a correct arc.
+   * The circle is found the same structural way `isRingRoot` finds it, and its radius is read from
+   * the element rather than assumed, so a ring dsh redraws at another size still gets a correct arc.
    *
    * This runs once per mutation burst, so past the first paint it is two string compares and no DOM
    * query: the circle and its circumference are held from the scan that found them, and a ring that
