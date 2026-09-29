@@ -11,6 +11,9 @@ assert.ok(CLOSING_VERBS.includes(closingVerb("zzzzzzzzzzzz", CLOSING_VERBS)));
 assert.equal(tookDuration("Took 38s"), "38s");
 assert.equal(tookDuration("Took 1m 20s"), "1m 20s");
 assert.equal(tookDuration("用时 38s"), "38s");
+assert.equal(tookDuration("Completed in 3m 27s"), "3m 27s", "dsh 0.2.0-rc.2 wording");
+assert.equal(tookDuration("已完成，用时 38s"), "38s");
+assert.equal(tookDuration("Completed"), undefined, "no duration, nothing to write");
 assert.equal(tookDuration("Deep diving for 12s"), undefined, "a running label is not finished");
 
 assert.equal(clockText("03:33", false), "3:33 AM");
