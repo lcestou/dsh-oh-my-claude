@@ -553,6 +553,9 @@ function MemoryBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   const [saved, setSaved] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // The list's own failure, apart from `error`: the list is re-read every half minute, and a
+  // re-read that works must not wipe what a failed save or delete said under the editor.
+  const [listError, setListError] = useState("");
 
   // Every call names the session's own mount, so a session on a box lists and edits that box's
   // memories rather than this PC's.
@@ -570,13 +573,13 @@ function MemoryBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
       .then((b) => {
         setFiles(b.files ?? []);
         setDir(b.dir ?? "");
-        setError("");
+        setListError("");
       })
       // An in-flight list outlives the tab being closed, and its reply landed on a component that
       // is gone: React drops the state write and the error branch painted an error nobody asked
       // for. The abort is the teardown, and its own rejection is not a failure to report.
       .catch((e: Error) => {
-        if (signal?.aborted !== true) setError(e.message);
+        if (signal?.aborted !== true) setListError(e.message);
       });
   };
   // Re-list every half minute: Claude writes memories mid-turn.
@@ -644,8 +647,8 @@ function MemoryBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   if (files.length === 0)
     return (
       <div style={bodyFlow} data-omc-memory-empty="">
-        {error ? (
-          <span style={errText}>{error}</span>
+        {listError ? (
+          <span style={errText}>{listError}</span>
         ) : (
           <>
             <span style={stateText}>{t("panel.memory.empty")}</span>
@@ -742,7 +745,7 @@ function MemoryBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
           />
         </>
       )}
-      {error && <span style={errText}>{error}</span>}
+      {(error || listError) && <span style={errText}>{error || listError}</span>}
     </div>
   );
 }
