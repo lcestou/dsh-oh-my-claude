@@ -71,7 +71,8 @@ export type JsonDoc = { [key: string]: JsonValue };
 /** One intercepted request; the slice a check needs to rewrite a JSON reply. */
 export type Route = {
   fetch(): Promise<Reply>;
-  fulfill(how: { response?: Reply; json: JsonDoc }): Promise<void>;
+  /** `status` defaults to 200; a check that shows a failed route passes its own. */
+  fulfill(how: { response?: Reply; status?: number; json: JsonDoc }): Promise<void>;
   /** The request being answered; a check on one URL for GET and POST reads the method and body. */
   request(): { method(): string; postData(): string | null };
 };

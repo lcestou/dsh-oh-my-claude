@@ -538,16 +538,24 @@ interface MemoryFile {
 /**
  * "Memory" body rendered inside the Oh My Claude dialog: lists the workspace's Claude auto-memory
  * files (`<project dir>/memory/*.md`, MEMORY.md first) and edits or deletes one in place.
+ *
+ * An empty list names the directory the server read, so a list that is empty because the plugin
+ * looked in the wrong place can be told from one that is empty because Claude has written nothing.
+ * A list that could not be fetched shows the failure instead of reading as empty.
  */
 function MemoryBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   useLocale();
   const cwd = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.cwd;
   const [files, setFiles] = useState<MemoryFile[]>([]);
+  const [dir, setDir] = useState("");
   const [file, setFile] = useState<string | null>(null);
   const [text, setText] = useState("");
   const [saved, setSaved] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // The list's own failure, apart from `error`: the list is re-read every half minute, and a
+  // re-read that works must not wipe what a failed save or delete said under the editor.
+  const [listError, setListError] = useState("");
 
   // Every call names the session's own mount, so a session on a box lists and edits that box's
   // memories rather than this PC's.
@@ -561,13 +569,17 @@ function MemoryBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   const refresh = (signal?: AbortSignal) => {
     if (!cwd) return;
     fetch(`${ROUTE}/memory?${q}`, { signal })
-      .then((r) => readJson<{ files?: MemoryFile[] }>(r))
-      .then((b) => setFiles(b.files ?? []))
+      .then((r) => readJson<{ dir?: string; files?: MemoryFile[] }>(r))
+      .then((b) => {
+        setFiles(b.files ?? []);
+        setDir(b.dir ?? "");
+        setListError("");
+      })
       // An in-flight list outlives the tab being closed, and its reply landed on a component that
       // is gone: React drops the state write and the error branch painted an error nobody asked
       // for. The abort is the teardown, and its own rejection is not a failure to report.
       .catch((e: Error) => {
-        if (signal?.aborted !== true) setError(e.message);
+        if (signal?.aborted !== true) setListError(e.message);
       });
   };
   // Re-list every half minute: Claude writes memories mid-turn.
@@ -632,7 +644,29 @@ function MemoryBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   };
 
   if (!cwd) return <span style={stateText}>{t("panel.memory.noWorkspace")}</span>;
-  if (files.length === 0) return <span style={stateText}>{t("panel.memory.empty")}</span>;
+  if (files.length === 0)
+    return (
+      <div style={bodyFlow} data-omc-memory-empty="">
+        {listError ? (
+          <span style={errText}>{listError}</span>
+        ) : (
+          <>
+            <span style={stateText}>{t("panel.memory.empty")}</span>
+            {dir && (
+              <span
+                data-omc-memory-dir=""
+                title={dir}
+                // A path has no spaces to wrap at; `anywhere` breaks it at its hyphens and
+                // slashes first and only then mid-word, so it never runs out of a phone's panel.
+                style={{ ...stateText, overflowWrap: "anywhere" }}
+              >
+                {t("panel.memory.lookedIn", { dir: shortPath(dir, cwd) })}
+              </span>
+            )}
+          </>
+        )}
+      </div>
+    );
   const dirty = text !== saved;
   return (
     <div style={bodyFlow}>
@@ -711,7 +745,7 @@ function MemoryBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
           />
         </>
       )}
-      {error && <span style={errText}>{error}</span>}
+      {(error || listError) && <span style={errText}>{error || listError}</span>}
     </div>
   );
 }

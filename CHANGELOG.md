@@ -6,6 +6,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Changed
+
+- The Memory tab says where it looked. An empty list names the directory it read, so a list that is empty because Claude has written nothing can be told from one read from the wrong place. A list that could not be fetched shows the failure instead of reading as empty.
+
 ## [1.5.2] - 2026-10-01
 
 dsh: runs on 0.2.0-rc.1 through 0.2.0-rc.2; built and tested on 0.2.0-rc.2.
