@@ -19,12 +19,14 @@ export const MCP_PATH = "/dsh-oh-my-claude/mcp";
 export const KEY_HEADER = "x-dsh-oh-my-claude-key";
 const PROTOCOL = "2025-06-18";
 const BODY_LIMIT = 1024 * 1024;
-/** dsh tools Claude Code already has natively; proxying them would only confuse the model. */
+/** dsh tools Claude Code already has natively; proxying them would only confuse the model.
+ *  `str_replace_editor` is the file editor some presets offer in place of `edit`. */
 export const HIDDEN = new Set([
   "read",
   "write",
   "edit",
   "multi_edit",
+  "str_replace_editor",
   "glob",
   "grep",
   "ls",

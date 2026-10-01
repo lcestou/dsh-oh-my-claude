@@ -193,10 +193,11 @@ const slugFile = (title: string): string =>
 /** A byte count for a session row: whole KB under a megabyte, MB with one decimal above. */
 const size = (bytes: number): string =>
   bytes < 1_000_000 ? `${Math.round(bytes / 1000)} KB` : `${(bytes / 1_000_000).toFixed(1)} MB`;
-/** `/home/me/Projects/app` → `Projects/app`; keeps the full path for the title attribute. */
+/** `/home/me/Projects/app` → `Projects/app`, and the same for a Windows path; keeps the full path
+ *  for the title attribute. */
 const shortPath = (p: string | undefined): string => {
   if (!p) return "";
-  const parts = p.split("/").filter(Boolean);
+  const parts = p.split(/[\\/]/).filter(Boolean);
   return parts.length > 2 ? parts.slice(-2).join("/") : p;
 };
 

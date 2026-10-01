@@ -6,6 +6,7 @@
 import { join } from "node:path";
 import z from "@deepseek-ai/schemastery";
 import { type FsBox, listDirsAt, readTextAt } from "./remote-fs.js";
+import { projectLevels } from "./repo.js";
 
 export interface SkillEntry {
   /** The name the frontmatter gives, else the directory's. */
@@ -113,21 +114,34 @@ async function installedPlugins(box: FsBox, claudeHome: string): Promise<Map<str
   return out;
 }
 
-/** The skills the CLI can reach for `cwd` on the box: user, then project, then each plugin's. */
+/**
+ * The skills the CLI can reach for `cwd` on the box: user, then project, then each plugin's.
+ * Project skills come from `cwd`'s own `.claude/skills` and from each directory above it as far as
+ * the CLI looks (`projectLevels`), nearest first, so a session opened in a subdirectory lists the
+ * repository's skills too. A name two levels both have is listed once, from the nearer level,
+ * which is the one the CLI runs.
+ */
 export async function listSkills(
   cwd: string,
   claudeHome: string,
   box: FsBox = {},
 ): Promise<SkillEntry[]> {
-  const installed = await installedPlugins(box, claudeHome);
-  const groups = await Promise.all([
+  const [installed, levels] = await Promise.all([
+    installedPlugins(box, claudeHome),
+    projectLevels(box, cwd),
+  ]);
+  const [user, project, plugins] = await Promise.all([
     skillsUnder(box, join(claudeHome, "skills"), "user"),
-    skillsUnder(box, join(cwd, ".claude", "skills"), "project"),
-    ...[...installed].map(([key, at]) =>
-      skillsUnder(box, join(at, "skills"), `plugin:${key.split("@")[0] ?? key}`),
+    Promise.all(levels.map((dir) => skillsUnder(box, join(dir, ".claude", "skills"), "project"))),
+    Promise.all(
+      [...installed].map(([key, at]) =>
+        skillsUnder(box, join(at, "skills"), `plugin:${key.split("@")[0] ?? key}`),
+      ),
     ),
   ]);
-  return groups.flat();
+  const nearest = new Map<string, SkillEntry>();
+  for (const entry of project.flat()) if (!nearest.has(entry.name)) nearest.set(entry.name, entry);
+  return [...user, ...nearest.values(), ...plugins.flat()];
 }
 
 /** A skill directory name the routes accept: lowercase letters, digits and hyphens, starting on a

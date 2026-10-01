@@ -1,19 +1,4 @@
 import { type FsBox } from "./remote-fs.js";
-/**
- * The directory whose name keys a workspace's auto-memory. Claude Code keys memory by repository,
- * not by cwd the way it keys transcripts: a subdirectory uses the checkout's root, and a linked
- * worktree uses its main checkout's, so every worktree of one repository shares one memory.
- * Outside a repository the answer is `cwd`.
- *
- * A `.git` that is there but will not read as a file is taken to be a checkout's `.git` directory.
- * That also covers an SSH box that cannot be reached, which then answers `cwd`, the key used
- * before this function existed.
- *
- * ponytail: one read per ancestor until a `.git` turns up, each an ssh round trip on a box. A
- * session normally opens at the checkout root, which is one read; fold the walk into one remote
- * script if deep non-repository workspaces make the tab slow.
- */
-export declare function memoryRoot(box: FsBox, cwd: string): Promise<string>;
 export interface MemoryFile {
     name: string;
     size: number;

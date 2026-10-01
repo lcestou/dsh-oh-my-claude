@@ -1,7 +1,11 @@
 // Offline checks for the SKILL.md head parser: bun src/skills.test.ts.
 import assert from "node:assert/strict";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   isWritableSkillScope,
+  listSkills,
   parseSkillHead,
   skillTargetPath,
   skillTemplate,
@@ -57,6 +61,40 @@ import {
   assert.equal(skillTargetPath("project", "foo", "/h/.claude", undefined), null);
   assert.equal(skillTargetPath("plugin:x", "foo", "/h/.claude", "/w"), null);
   assert.equal(skillTargetPath("user", "../x", "/home/u/.claude", undefined), null);
+}
+
+// Project skills come from the session's directory and from each directory above it up to the
+// checkout root, so a session opened in a subdirectory lists the repository's skills too. A
+// directory above the checkout is not a level, and neither is a sibling.
+{
+  const tmp = await mkdtemp(join(tmpdir(), "omc-skills-"));
+  const root = join(tmp, "repo");
+  const sub = join(root, "packages", "app");
+  const skill = async (dir: string, name: string) => {
+    await mkdir(join(dir, ".claude", "skills", name), { recursive: true });
+    await writeFile(
+      join(dir, ".claude", "skills", name, "SKILL.md"),
+      `---\nname: ${name}\ndescription: d\n---\n`,
+    );
+  };
+  await mkdir(join(root, ".git"), { recursive: true });
+  await skill(sub, "own");
+  await skill(root, "shared");
+  await skill(tmp, "outside");
+  await skill(join(root, "other"), "sibling");
+  // One name at two levels: the CLI runs the nearer one, so that is the one listed.
+  await skill(sub, "both");
+  await skill(root, "both");
+  const listed = await listSkills(sub, join(tmp, "claude-home"));
+  assert.deepEqual(listed.map((s) => `${s.scope}:${s.name}`).toSorted(), [
+    "project:both",
+    "project:own",
+    "project:shared",
+  ]);
+  assert.equal(
+    listed.find((s) => s.name === "both")?.path,
+    join(sub, ".claude", "skills", "both", "SKILL.md"),
+  );
 }
 
 console.log("skills ok");

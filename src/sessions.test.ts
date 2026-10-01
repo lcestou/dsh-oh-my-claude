@@ -106,6 +106,11 @@ import type { TranscriptListItem } from "./transcript.js";
   // Two remote workspaces: the placeholder dirs dsh stores, and the real paths on their boxes.
   const localWorkspace = join(tmp, "remote-workspaces", "wsbox__app");
   const sshWorkspace = join(tmp, "remote-workspaces", "sshbox__app");
+  // A session opened below a repository's root, for the scopes the CLI keys by repository.
+  const repo = join(tmp, "repo");
+  const repoSub = join(repo, "packages", "app");
+  await mkdir(join(repo, ".git"), { recursive: true });
+  await mkdir(repoSub, { recursive: true });
   const remoteWorkspacesPath = join(tmp, "remote-workspaces.json");
   await writeFile(
     remoteWorkspacesPath,
@@ -160,6 +165,7 @@ import type { TranscriptListItem } from "./transcript.js";
             { id: "sid1", cwd: "/work/app" },
             { id: "sid2", cwd: localWorkspace },
             { id: "sid3", cwd: sshWorkspace },
+            { id: "sid4", cwd: repoSub },
           ],
         },
         effect: (fn: () => void | (() => void)) => fn(),
@@ -519,6 +525,38 @@ import type { TranscriptListItem } from "./transcript.js";
   );
   assert.equal(r.error, "session and uuid required");
 
+  // Workspace search finds a transcript by its text, with grep and without it. An empty PATH
+  // makes the grep spawn fail the way it does on a box that has none, and the server narrows the
+  // listed transcripts itself; both answers have to be the same session.
+  const searched = "11111111-1111-4111-8111-111111111111";
+  await writeFile(
+    join(tmp, "claude", "projects", projectDirName(cwd), `${searched}.jsonl`),
+    line({
+      type: "user",
+      uuid: "u-s",
+      timestamp: "2026-09-05T11:00:00Z",
+      message: { role: "user", content: [{ type: "text", text: "find the quokka enclosure" }] },
+    }),
+  );
+  const find = `/dsh-oh-my-claude/search?q=quokka%20enclosure&cwd=${encodeURIComponent(cwd)}`;
+  r = await respond("GET", find);
+  assert.deepEqual(
+    r.hits.map((h: { id: string }) => h.id),
+    [searched],
+  );
+  const realPath = process.env.PATH;
+  process.env.PATH = "";
+  try {
+    r = await respond("GET", find);
+  } finally {
+    process.env.PATH = realPath;
+  }
+  assert.deepEqual(
+    r.hits.map((h: { id: string }) => h.id),
+    [searched],
+    "no grep on the box",
+  );
+
   // A save carries the mtime the tab read. The CLI writes settings.json itself while a tab sits
   // open, and a whole-file write that ignored that would put the file back without its change.
   const userSettings = join(tmp, "claude", "settings.json");
@@ -547,6 +585,42 @@ import type { TranscriptListItem } from "./transcript.js";
   );
   assert.ok(r.mtime > 0, "the mtime the read answered is accepted");
   assert.equal(JSON.parse(await readFile(userSettings, "utf8")).a, 3);
+
+  // Below a repository's root the local file is the root's, where the CLI reads and writes it,
+  // while the project file stays the session directory's own. A local save lands in the root.
+  const inRepo = `cwd=${encodeURIComponent(repoSub)}`;
+  r = await respond("GET", `/dsh-oh-my-claude/settings/scopes?${inRepo}`);
+  const scopePaths = Object.fromEntries(
+    (r.scopes as { scope: string; path: string }[]).map((s) => [s.scope, s.path]),
+  );
+  assert.equal(scopePaths.local, join(repo, ".claude", "settings.local.json"));
+  assert.equal(scopePaths.project, join(repoSub, ".claude", "settings.json"));
+  r = await respond(
+    "PUT",
+    "/dsh-oh-my-claude/settings",
+    JSON.stringify({ text: '{"b":1}\n', scope: "local", cwd: repoSub }),
+  );
+  assert.ok(r.mtime > 0);
+  assert.equal(
+    JSON.parse(await readFile(join(repo, ".claude", "settings.local.json"), "utf8")).b,
+    1,
+  );
+  // The session directory's own local file is still read, below the root's: a plugin only it
+  // enables is on the roster, and one both name takes the root's value.
+  await writeFile(
+    join(repo, ".claude", "settings.local.json"),
+    JSON.stringify({ enabledPlugins: { "both@m": false } }),
+  );
+  await mkdir(join(repoSub, ".claude"), { recursive: true });
+  await writeFile(
+    join(repoSub, ".claude", "settings.local.json"),
+    JSON.stringify({ enabledPlugins: { "both@m": true, "own@m": true } }),
+  );
+  r = await respond("GET", `/dsh-oh-my-claude/plugins?${inRepo}`);
+  const roster = Object.fromEntries(
+    (r.plugins as { key: string; enabled: boolean }[]).map((p) => [p.key, p.enabled]),
+  );
+  assert.deepEqual(roster, { "both@m": false, "own@m": true });
 }
 
 type RouteReply = { status: number; body: Record<string, any> };

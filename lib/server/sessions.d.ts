@@ -607,7 +607,8 @@ export declare function isSettingsScope(value: JsonValue | undefined): value is 
  * carries a scope and a directory, not a path. Project and local have no file without a
  * directory, and answer undefined so the caller can refuse the request. `managed` is the
  * directory the CLI's policy layer lives in on the box the file is read from (`managedDir(box)`);
- * the plugin never writes it.
+ * the plugin never writes it. `localDir` is where the local file sits when that is not `cwd`
+ * (`localSettingsRoot`); the project file is always `cwd`'s own.
  */
-export declare function settingsScopePath(scope: SettingsScope, userPath: string, cwd: string | null, managed?: string): string | undefined;
+export declare function settingsScopePath(scope: SettingsScope, userPath: string, cwd: string | null, managed?: string, localDir?: string | null): string | undefined;
 export {};

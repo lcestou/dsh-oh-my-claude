@@ -288,6 +288,18 @@ assert.equal(sid, claudeSessionId("abc"));
 assert.match(sid, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
 assert.notEqual(sid, claudeSessionId("abd"));
 assert.equal(projectDirName("/home/me/.dsh/x"), "-home-me--dsh-x");
+// Past 200 characters the CLI cuts the name and appends a hash of the whole path. The expected
+// name is the one Claude Code 2.1.287 itself used for this directory.
+{
+  const segments = Array.from(
+    { length: 14 },
+    (_, i) => `segment-number-${String(i + 1).padStart(2, "0")}`,
+  );
+  assert.equal(
+    projectDirName(`/tmp/omc-long-probe/${segments.join("/")}`),
+    `-tmp-omc-long-probe-${segments.slice(0, 10).join("-")}--csc9ne`,
+  );
+}
 
 // turn selection: fresh sends everything, resume sends only what follows the last assistant turn
 const inj = message({

@@ -1,12 +1,14 @@
 // The MCP servers Claude Code is configured with for a directory, and the scope each one lives in,
 // read from the files the CLI writes rather than from `claude mcp list`, which health-checks every
 // approved server (it connects to each one) and takes seconds. Three scopes: `user` and `local` in
-// the CLI's `.claude.json` (top-level `mcpServers`, and `projects[<cwd>].mcpServers`), `project` in
-// the workspace's `.mcp.json`. The MCP tab shows these beside the servers the running process has,
-// so a server added a moment ago has a row before Claude next starts.
-import { join } from "node:path";
+// the CLI's `.claude.json` (top-level `mcpServers`, and `projects[<repository>].mcpServers`),
+// `project` in the `.mcp.json` of the session's directory and of every directory above it. The MCP
+// tab shows these beside the servers the running process has, so a server added a moment ago has a
+// row before Claude next starts.
+import { dirname, join } from "node:path";
 import z from "@deepseek-ai/schemastery";
 import { type FsBox, readTextAt } from "./remote-fs.js";
+import { projectKey, repoRoot } from "./repo.js";
 
 export interface ConfiguredMcp {
   name: string;
@@ -43,37 +45,56 @@ const safe = <T>(read: () => T): T | null => {
   }
 };
 /**
- * Rows from the two files' text. Pure, so the listing is checked without a filesystem: `claudeJson`
- * is `.claude.json`, `mcpJson` is the workspace's `.mcp.json`, either absent as null.
+ * Rows from the files' text. Pure, so the listing is checked without a filesystem: `claudeJson` is
+ * `.claude.json`, and `mcpJsons` are the `.mcp.json` files from the session's directory upwards,
+ * nearest first, any of them absent as null. `key` is the `projects` entry the CLI files the
+ * session under, which is its repository and not its directory (see `listConfiguredMcp`). A
+ * server two `.mcp.json` files both name is listed once, from the nearer one.
  */
 export function configuredFrom(
   claudeJson: string | null,
-  mcpJson: string | null,
-  cwd: string,
+  mcpJsons: readonly (string | null)[],
+  key: string,
 ): ConfiguredMcp[] {
   // JSON.parse feeds the schema call as it does elsewhere in this plugin; either throwing reads
   // as no file.
   const top = claudeJson === null ? null : safe(() => ClaudeJson(JSON.parse(claudeJson)));
-  const project = mcpJson === null ? null : safe(() => McpJson(JSON.parse(mcpJson)));
+  const project = new Map<string, ConfiguredMcp>();
+  for (const text of mcpJsons) {
+    const file = text === null ? null : safe(() => McpJson(JSON.parse(text)));
+    for (const row of rowsOf(file?.mcpServers, "project"))
+      if (!project.has(row.name)) project.set(row.name, row);
+  }
   return [
     ...rowsOf(top?.mcpServers, "user"),
-    ...rowsOf(top?.projects?.[cwd]?.mcpServers, "local"),
-    ...rowsOf(project?.mcpServers, "project"),
+    ...rowsOf(top?.projects?.[key]?.mcpServers, "local"),
+    ...project.values(),
   ];
 }
 
 /**
  * The configured servers for `cwd` on the box. `claudeJsonPath` is where that instance's CLI keeps
  * `.claude.json`: `~/.claude.json` by default, inside the config dir when one is exported.
+ *
+ * The CLI files local servers under the repository's root, the main checkout's for a worktree, so
+ * a session in a subdirectory or a worktree is looked up there and not under its own directory.
+ * It reads `.mcp.json` from the session's directory and from every directory above it, so the
+ * walk here goes to the filesystem root, one read at a time: on an ssh box each is a channel on
+ * the shared connection, and a deep path read all at once would run into sshd's session limit.
  */
 export async function listConfiguredMcp(
   cwd: string,
   claudeJsonPath: string,
   box: FsBox = {},
 ): Promise<ConfiguredMcp[]> {
-  const [claudeJson, mcpJson] = await Promise.all([
+  const [claudeJson, root] = await Promise.all([
     readTextAt(box, claudeJsonPath).catch(() => null),
-    readTextAt(box, join(cwd, ".mcp.json")).catch(() => null),
+    repoRoot(box, cwd),
   ]);
-  return configuredFrom(claudeJson, mcpJson, cwd);
+  const mcpJsons: (string | null)[] = [];
+  for (let dir = cwd; ; dir = dirname(dir)) {
+    mcpJsons.push(await readTextAt(box, join(dir, ".mcp.json")).catch(() => null));
+    if (dir === dirname(dir)) break;
+  }
+  return configuredFrom(claudeJson, mcpJsons, projectKey(box, root));
 }
