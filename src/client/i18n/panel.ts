@@ -29,6 +29,7 @@ export const en = {
   "panel.memory.noWorkspace": "Open a workspace to see its memory files.",
   "panel.memory.empty":
     "No memory files for this workspace yet. Claude writes them as it learns the project.",
+  "panel.memory.lookedIn": "Looked in {dir}",
   "panel.memory.editorLabel": "Memory file",
 
   // Plugins and marketplaces
@@ -367,6 +368,7 @@ export const zh = {
   "panel.memory.deleteConfirm": "删除 {file}？MEMORY.md 中对应的那一行也会一并删除。",
   "panel.memory.noWorkspace": "打开一个工作区以查看其记忆文件。",
   "panel.memory.empty": "此工作区还没有记忆文件。Claude 会在了解项目的过程中写入。",
+  "panel.memory.lookedIn": "查找位置：{dir}",
   "panel.memory.editorLabel": "记忆文件",
 
   "panel.plugins.mktSourcePlaceholder": "插件市场：URL、路径或 owner/repo",
