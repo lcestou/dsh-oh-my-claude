@@ -1239,9 +1239,18 @@ export function claudeSessionId(sessionId: string): string {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-${variant}${h.slice(17, 20)}-${h.slice(20, 32)}`;
 }
 
-/** Claude Code stores transcripts under ~/.claude/projects/<cwd with non-alphanumerics as '-'>/<id>.jsonl */
+/**
+ * The directory Claude Code keeps a path's transcripts in, under `~/.claude/projects/`: the path
+ * with every non-alphanumeric as `-`. Past 200 characters the CLI keeps the first 200 and appends
+ * a base-36 hash of the whole path (its own 31-multiplier string hash, read off the 2.1.287
+ * binary and checked against a live run), so two long paths with one prefix stay apart.
+ */
 export function projectDirName(cwd: string): string {
-  return cwd.replace(/[^A-Za-z0-9]/g, "-");
+  const flat = cwd.replace(/[^A-Za-z0-9]/g, "-");
+  if (flat.length <= 200) return flat;
+  let hash = 0;
+  for (let i = 0; i < cwd.length; i++) hash = Math.imul(hash, 31) + cwd.charCodeAt(i);
+  return `${flat.slice(0, 200)}-${Math.abs(hash | 0).toString(36)}`;
 }
 
 /**

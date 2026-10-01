@@ -6,6 +6,7 @@
 import { join } from "node:path";
 import z from "@deepseek-ai/schemastery";
 import { type FsBox, listDirsAt, readTextAt } from "./remote-fs.js";
+import { projectLevels } from "./repo.js";
 
 export interface SkillEntry {
   /** The name the frontmatter gives, else the directory's. */
@@ -113,16 +114,24 @@ async function installedPlugins(box: FsBox, claudeHome: string): Promise<Map<str
   return out;
 }
 
-/** The skills the CLI can reach for `cwd` on the box: user, then project, then each plugin's. */
+/**
+ * The skills the CLI can reach for `cwd` on the box: user, then project, then each plugin's.
+ * Project skills come from `cwd`'s own `.claude/skills` and from each directory above it as far as
+ * the CLI looks (`projectLevels`), nearest first, so a session opened in a subdirectory lists the
+ * repository's skills too.
+ */
 export async function listSkills(
   cwd: string,
   claudeHome: string,
   box: FsBox = {},
 ): Promise<SkillEntry[]> {
-  const installed = await installedPlugins(box, claudeHome);
+  const [installed, levels] = await Promise.all([
+    installedPlugins(box, claudeHome),
+    projectLevels(box, cwd),
+  ]);
   const groups = await Promise.all([
     skillsUnder(box, join(claudeHome, "skills"), "user"),
-    skillsUnder(box, join(cwd, ".claude", "skills"), "project"),
+    ...levels.map((dir) => skillsUnder(box, join(dir, ".claude", "skills"), "project")),
     ...[...installed].map(([key, at]) =>
       skillsUnder(box, join(at, "skills"), `plugin:${key.split("@")[0] ?? key}`),
     ),

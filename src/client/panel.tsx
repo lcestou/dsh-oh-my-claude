@@ -272,8 +272,9 @@ function useTranscripts(cwd: string | undefined): SessionData[] {
   return transcripts;
 }
 
-/** The last path segment, which is the name a workspace shows in the sidebar. */
-const workspaceName = (cwd: string): string => cwd.split("/").filter(Boolean).at(-1) ?? cwd;
+/** The last path segment, which is the name a workspace shows in the sidebar; a Windows path
+ *  splits on its backslashes. */
+const workspaceName = (cwd: string): string => cwd.split(/[\\/]/).filter(Boolean).at(-1) ?? cwd;
 
 /**
  * One-time hints, kept on the box under the plugin's state (`GET`/`POST /hints`) so a hint shown
@@ -724,9 +725,10 @@ interface InstructionFile {
   importedBy?: string;
 }
 
-/** A path as the row shows it: relative to the workspace, or under `~`, whichever applies. */
+/** A path as the row shows it: relative to the workspace, or under `~`, whichever applies. A
+ *  Windows path under the workspace is cut the same way and keeps its own separators. */
 const shortPath = (path: string, cwd: string): string =>
-  path.startsWith(`${cwd}/`)
+  path.startsWith(`${cwd}/`) || path.startsWith(`${cwd}\\`)
     ? `./${path.slice(cwd.length + 1)}`
     : path.replace(/^\/home\/[^/]+\//, "~/");
 
@@ -1854,7 +1856,7 @@ function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCt
             {f.importedBy && (
               <span style={{ ...meta, flex: "none", marginLeft: 8 }}>
                 {t("panel.instructions.importedFrom", {
-                  name: f.importedBy.split("/").pop() ?? "",
+                  name: f.importedBy.split(/[\\/]/).pop() ?? "",
                 })}
               </span>
             )}

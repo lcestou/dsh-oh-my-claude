@@ -19,7 +19,12 @@ export interface SkillHead {
  * after the colon. Without a frontmatter fence there is nothing to read.
  */
 export declare function parseSkillHead(text: string): SkillHead;
-/** The skills the CLI can reach for `cwd` on the box: user, then project, then each plugin's. */
+/**
+ * The skills the CLI can reach for `cwd` on the box: user, then project, then each plugin's.
+ * Project skills come from `cwd`'s own `.claude/skills` and from each directory above it as far as
+ * the CLI looks (`projectLevels`), nearest first, so a session opened in a subdirectory lists the
+ * repository's skills too.
+ */
 export declare function listSkills(cwd: string, claudeHome: string, box?: FsBox): Promise<SkillEntry[]>;
 /** A skill directory name the routes accept: lowercase letters, digits and hyphens, starting on a
  *  letter or digit, 1 to 64 characters. Refuses "", uppercase, a leading hyphen, "..", and a slash,

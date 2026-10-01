@@ -69,7 +69,8 @@ import {
   type FsBox,
 } from "./remote-fs.js";
 import type { TranscriptListItem } from "./transcript.js";
-import { deleteMemory, isMemoryName, listMemory, memoryRoot } from "./memory.js";
+import { deleteMemory, isMemoryName, listMemory } from "./memory.js";
+import { localSettingsRoot, repoRoot } from "./repo.js";
 import { isWritableInstructions, listInstructions, managedDir } from "./instructions.js";
 import {
   isWritableSkillScope,
@@ -200,12 +201,28 @@ const SEARCH_LIMIT = 100;
 /** True while a scan is in flight. Two searches at once would put two full scans on the one event
  *  loop that serves every live turn, so the second is refused with 429 rather than run. */
 let searching = false;
-/** The basename of a path: everything after its last `/`. grep on this box prints `/`-separated
- *  paths, and a transcript id is the basename without `.jsonl`, so this joins a hit to its listing. */
-const baseName = (path: string): string => {
-  const slash = path.lastIndexOf("/");
-  return slash < 0 ? path : path.slice(slash + 1);
-};
+/** The basename of a path: everything after its last `/` or `\\`, so a Windows path splits too. A
+ *  transcript id is the basename without `.jsonl`, and this joins a search hit to its listing. */
+const baseName = (path: string): string =>
+  path.slice(Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\")) + 1);
+
+/**
+ * The files among `files` that mention `word`, case-insensitively: what `grep -rilF` answers, for
+ * a box that has no grep (a Windows host). A file that cannot be read is left out.
+ *
+ * ponytail: reads every listed transcript whole, one at a time, and the scan after it reads the
+ * matches a second time. Fine for the hundreds of files a box holds; stream them if a Windows box
+ * with thousands of transcripts makes search slow.
+ */
+async function filesMentioning(files: readonly string[], word: string): Promise<string[]> {
+  const needle = word.toLowerCase();
+  const found: string[] = [];
+  for (const file of files) {
+    const text = await readFile(file, "utf8").catch(() => "");
+    if (text.toLowerCase().includes(needle)) found.push(file);
+  }
+  return found;
+}
 
 /** Answer an HTTP request as JSON with a no-store cache header. Every route in this file replies
  *  through it, so no browser or proxy can hand back a stale answer for a state that changes under
@@ -1064,6 +1081,21 @@ async function readSettings(box: FsBox, path: string): Promise<SettingsFile> {
 }
 
 /**
+ * The file a scope names for a session in `cwd` on `box`. `settingsScopePath` with the two
+ * directories only the box can answer: its managed directory, and where its CLI keeps the local
+ * file, which is the repository root rather than `cwd` for a subdirectory or a worktree.
+ */
+async function scopePathAt(
+  box: FsBox,
+  scope: SettingsScope,
+  userPath: string,
+  cwd: string | null,
+): Promise<string | undefined> {
+  const localDir = scope === "local" && cwd !== null ? await localSettingsRoot(box, cwd) : cwd;
+  return settingsScopePath(scope, userPath, cwd, managedDir(box), localDir);
+}
+
+/**
  * Every settings file that exists for a cwd, highest precedence first, which is the order the
  * per-key merges in `switches.ts` and `plugins.ts` expect.
  */
@@ -1074,7 +1106,7 @@ async function settingsTexts(
 ): Promise<Array<{ scope: string; text: string }>> {
   const texts: Array<{ scope: string; text: string }> = [];
   for (const scope of SETTINGS_SCOPES) {
-    const path = settingsScopePath(scope, userPath, cwd, managedDir(box));
+    const path = await scopePathAt(box, scope, userPath, cwd);
     if (path === undefined) continue;
     // A file the box cannot answer for is a fault, not an empty one: reading it as empty shows
     // every key it sets as unset, and the roster built from that says a plugin is off when it is
@@ -1084,6 +1116,13 @@ async function settingsTexts(
       return null;
     });
     if (file?.exists === true) texts.push({ scope, text: file.text });
+    // In a subdirectory or a worktree the CLI's local file is the repository root's, and it still
+    // reads the session directory's own file below that one. Both count; the root's goes first.
+    const own = scope === "local" ? settingsScopePath("local", userPath, cwd) : undefined;
+    if (own !== undefined && own !== path) {
+      const below = await readSettings(box, own);
+      if (below.exists) texts.push({ scope, text: below.text });
+    }
   }
   return texts;
 }
@@ -2207,7 +2246,7 @@ export function registerSessionRoutes(
     box.sshHost ? `${await claudeHomeOf(box)}/settings.json` : settingsPath;
   /**
    * Where that box's CLI keeps a workspace's auto-memory. Not the transcript directory: memory is
-   * keyed by repository (`memoryRoot`), and `autoMemoryDirectory` in the managed or the user
+   * keyed by repository (`repoRoot`), and `autoMemoryDirectory` in the managed or the user
    * settings moves it somewhere else altogether. The first file that sets the key decides, as in
    * the CLI, and a value that is not an absolute path falls back to the default.
    *
@@ -2228,7 +2267,7 @@ export function registerSessionRoutes(
       if (validCwd(dir, box.sshHost ? "linux" : process.platform)) return dir;
       break;
     }
-    return join(await projectDirAt(box, await memoryRoot(box, cwd)), "memory");
+    return join(await projectDirAt(box, await repoRoot(box, cwd)), "memory");
   };
   // Optional: stock dsh has it; without it archived sessions list but cannot be restored. The
   // routes can serve before it mounts. A request in the first seconds after a restart found no
@@ -2529,9 +2568,12 @@ export function registerSessionRoutes(
                 // `withoutSubagents` is what the browser's own list applies, so a search cannot
                 // return a row the list would never show and Open could not reach.
                 const meta = new Map<string, TranscriptListItem>();
+                const listed: string[] = [];
                 for (const dir of dirs)
-                  for (const item of withoutSubagents(await listTranscripts(dir).catch(() => [])))
+                  for (const item of withoutSubagents(await listTranscripts(dir).catch(() => []))) {
                     meta.set(`${item.id}.jsonl`, item);
+                    listed.push(join(dir, `${item.id}.jsonl`));
+                  }
                 // grep narrows the file list with a literal word before any transcript is read:
                 // `-F` keeps a regex-heavy query literal, `-i` case-insensitive, `-l` lists names.
                 // The longest word is the most selective. A non-zero exit with empty output is
@@ -2541,8 +2583,12 @@ export function registerSessionRoutes(
                   (longest, w) => (w.length > longest.length ? w : longest),
                   "",
                 );
-                const matched = (await run("grep", ["-rilF", "--", grepWord, ...dirs])).out;
-                const files = matched.split("\n").filter((line) => line.length > 0);
+                // A box with no grep to run (a Windows host) narrows the listed transcripts here
+                // instead; a file with no listing row is dropped below either way.
+                const grep = await run("grep", ["-rilF", "--", grepWord, ...dirs]);
+                const files = grep.error?.includes("spawn grep ENOENT")
+                  ? await filesMentioning(listed, grepWord)
+                  : grep.out.split("\n").filter((line) => line.length > 0);
                 // One file is one session, so `searchTranscript` already yields one hit per
                 // session; reading only grep's narrowed set is what keeps this fast.
                 const filesToSearch = files.slice(0, SEARCH_MAX_FILES);
@@ -2895,7 +2941,8 @@ export function registerSessionRoutes(
                 if (scope === "managed")
                   return json(res, 400, { error: "managed settings are read-only" });
                 const cwd = await knownCwd(body.cwd, sessionPersistence);
-                // A project or local write lands in the session's own directory, so it goes to the
+                // A project or local write lands in the session's directory or its repository's
+                // root (`scopePathAt`), so it goes to the
                 // box that directory is on: a remote workspace's path is real over there and the
                 // write is an ssh write like any other. Any other session on a box still has a
                 // local cwd that need not exist there, which is what this refuses.
@@ -2905,7 +2952,7 @@ export function registerSessionRoutes(
                   return json(res, 400, {
                     error: "project and local settings do not reach an SSH box yet",
                   });
-                const path = settingsScopePath(scope, userPath, target.cwd, managedDir(target.box));
+                const path = await scopePathAt(target.box, scope, userPath, target.cwd);
                 if (path === undefined)
                   return json(res, 400, {
                     error: "project and local settings need a directory a dsh session is open in",
@@ -2936,7 +2983,7 @@ export function registerSessionRoutes(
               const userPath = (await userSettingsPathOf(box)) ?? settingsPath;
               const scopes: SettingsScopeInfo[] = [];
               for (const scope of SETTINGS_SCOPES) {
-                const path = settingsScopePath(scope, userPath, cwd, managedDir(box));
+                const path = await scopePathAt(box, scope, userPath, cwd);
                 if (path === undefined) continue;
                 // An unreadable managed file (root-owned, or a directory) reads as absent
                 // rather than failing the whole payload. Every other scope answers with the
@@ -3180,9 +3227,7 @@ export function registerSessionRoutes(
               const configFiles: DiagnosticFile[] = [];
               const userPath = await userSettingsPathOf(box);
               for (const scope of SETTINGS_SCOPES) {
-                const path = userPath
-                  ? settingsScopePath(scope, userPath, cwd, managedDir(box))
-                  : undefined;
+                const path = userPath ? await scopePathAt(box, scope, userPath, cwd) : undefined;
                 if (path === undefined) continue;
                 // A file that cannot be read at all reads as absent, the way the scopes route
                 // treats a root-owned managed file: the payload is a report, not a failure.
@@ -4476,18 +4521,21 @@ export function isSettingsScope(value: JsonValue | undefined): value is Settings
  * carries a scope and a directory, not a path. Project and local have no file without a
  * directory, and answer undefined so the caller can refuse the request. `managed` is the
  * directory the CLI's policy layer lives in on the box the file is read from (`managedDir(box)`);
- * the plugin never writes it.
+ * the plugin never writes it. `localDir` is where the local file sits when that is not `cwd`
+ * (`localSettingsRoot`); the project file is always `cwd`'s own.
  */
 export function settingsScopePath(
   scope: SettingsScope,
   userPath: string,
   cwd: string | null,
   managed: string = managedDir(),
+  localDir: string | null = cwd,
 ): string | undefined {
   if (scope === "user") return userPath;
   if (scope === "managed") return join(managed, "managed-settings.json");
-  if (cwd === null) return undefined;
-  return join(cwd, ".claude", scope === "local" ? "settings.local.json" : "settings.json");
+  const dir = scope === "local" ? localDir : cwd;
+  if (dir === null) return undefined;
+  return join(dir, ".claude", scope === "local" ? "settings.local.json" : "settings.json");
 }
 
 /**
