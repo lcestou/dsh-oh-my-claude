@@ -6,6 +6,12 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Fixed
+
+- On Windows the Memory, Instructions, Skills, MCP, Rewind and Restore tabs and the workspace search answer for a session opened in a drive path (`C:\work\repo`). Every one of them refused the directory with a 400, and Plugins, Diagnostics and the feature switches silently lost their project and local scopes. The managed settings and managed CLAUDE.md are read from the CLI's own directory for the OS (`C:\Program Files\ClaudeCode`, `/Library/Application Support/ClaudeCode`), and a `configDir` given as a drive path is no longer joined onto the working directory.
+- The Memory tab lists the memories Claude actually wrote. Claude Code keys auto-memory by repository, so a session opened in a linked worktree or in a subdirectory shares the main checkout's memory; the tab looked under the session's own directory and showed an empty list. It also follows `autoMemoryDirectory` from the managed and user settings.
+- The note that tells Claude which dsh tools to use names only the tools the session has. It used to name `mcp__dsh__bash` on Windows, where dsh offers `mcp__dsh__pwsh`, and `mcp__dsh__list_subagent_models` and preset subagent tools in sessions that have neither, so Claude went looking for them and fell back to a native background shell dsh cannot see.
+
 ## [1.5.1] - 2026-09-29
 
 dsh: runs on 0.2.0-rc.1 through 0.2.0-rc.2; built and tested on 0.2.0-rc.2.

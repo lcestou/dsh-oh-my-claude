@@ -58,7 +58,7 @@ import {
 } from "./sessions.js";
 import { hub, type OmcEvent } from "./events.js";
 import { readUsage, registerUsageRoute, stillLimitedUntil } from "./usage.js";
-import { KEY_HEADER, MCP_PATH, registerMcpBridge } from "./mcp.js";
+import { KEY_HEADER, MCP_PATH, registerMcpBridge, type McpBridge } from "./mcp.js";
 import {
   type ClaudeEvent,
   ClaudeProcess,
@@ -110,6 +110,7 @@ import type {
   SessionController,
   SessionId,
   SubprocessRuntime,
+  ToolSchema,
 } from "./dsh.js";
 import {
   ADAPTER_CURRENT,
@@ -1730,31 +1731,83 @@ export const supports = (flags: Set<string> | null | undefined, flag: string) =>
 export const usesStdin = (flags: Set<string> | null | undefined) =>
   supports(flags, "--input-format");
 
+/** Whether a bridged tool's JSON schema declares `param`; false for a tool that is not there and
+ *  for a schema with no `properties` object (`Object()` turns either into something `in` accepts). */
+const takes = (tool: ToolSchema | undefined, param: string): boolean =>
+  param in Object(tool?.parameters.properties);
+
+/** A dsh tool's name as Claude sees it over the bridge. */
+const bridgedName = (tool: string): string => `mcp__dsh__${tool}`;
+
+/** "a", "a and b", "a, b and c". */
+const listed = (items: string[]): string =>
+  items.length < 2 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
+
 /**
- * Constructs command-line arguments for spawning a Claude Code process.
- * Handles model, effort, permissions, MCP config, and other flags.
+ * The text appended to the system prompt whenever dsh tools are bridged. Claude Code's own Agent
+ * tool spawns children dsh cannot see (no card, no header count, no notice), so subagents must go
+ * through the bridged tools, and a background command through dsh's shell tool.
+ *
+ * It names only what `tools` holds, the schemas the bridge will list for this session. What dsh
+ * offers differs by box and by session: the shell tool is `pwsh` on Windows and `bash` elsewhere,
+ * a persistent shell takes no `run_in_background`, the preset subagent tools depend on the agent
+ * preset, and `subagent` takes a provider and model (with `list_subagent_models` beside it) only
+ * in a session that has a model-selection policy. Naming a tool that is not there sends Claude
+ * looking for it and then back to a native background shell dsh cannot see.
+ *
+ * With `tools` undefined (no live agent to ask) only the opening sentence is sent: the bridge
+ * answers that session with nothing either.
  */
-/**
- * Appended to the system prompt whenever dsh tools are bridged. Claude Code's own Agent tool
- * spawns children dsh cannot see (no card, no header count, no notice), so subagents must go
- * through the bridged tools. Routes are box-specific, hence the pointer to list_subagent_models.
- */
-const DSH_TOOLS_GUIDANCE = [
-  "dsh tools are available as mcp__dsh__* over MCP. For any subagent, worker, helper or a",
-  "specific model, use those and never the built-in Agent/Task tool: a native Agent child is",
-  "invisible to dsh (no card, no header count, no completion notice, no transcript).",
-  "mcp__dsh__subagent takes provider and model for a named route; mcp__dsh__list_subagent_models",
-  "lists the allowed routes; omit both for the default. Other preset subagent tools",
-  "(mcp__dsh__subagent_*, mcp__dsh__researcher_*) and mcp__dsh__subagent_fork are children",
-  "too. run_in_background: false returns the answer inline; background returns an id and the",
-  "notice arrives next turn. mcp__dsh__open_session makes a new top-level session, not a child.",
-  "Long-running or background commands (test suites, builds, code reviews, watchers, anything you",
-  "would run with `run_in_background`) go through `mcp__dsh__bash` with `run_in_background: true`;",
-  "dsh registers the job, shows its card and panel entry, and the finish notice arrives next turn;",
-  "read output with `mcp__dsh__job_output`, stop with `mcp__dsh__job_kill`. Short foreground",
-  "commands stay on native `Bash`; do not use native `Bash` `run_in_background` because dsh cannot",
-  "see it.",
-].join(" ");
+export function dshToolsGuidance(tools: readonly ToolSchema[] = []): string {
+  const byName = new Map(tools.map((t) => [t.name, t]));
+  const out = ["dsh tools are available as mcp__dsh__* over MCP."];
+
+  const subagent = byName.get("subagent");
+  const presets = tools.map((t) => t.name).filter((n) => /^(subagent|researcher)_/.test(n));
+  if (subagent || presets.length > 0) {
+    out.push(
+      "For any subagent, worker, helper or a specific model, use those and never the built-in",
+      "Agent/Task tool: a native Agent child is invisible to dsh (no card, no header count, no",
+      "completion notice, no transcript).",
+    );
+    if (subagent && takes(subagent, "provider")) {
+      out.push(`${bridgedName("subagent")} takes provider and model for a named route;`);
+      if (byName.has("list_subagent_models"))
+        out.push(`${bridgedName("list_subagent_models")} lists the allowed routes;`);
+      out.push("omit both for the default.");
+    } else if (subagent) {
+      out.push(`${bridgedName("subagent")} runs a child on the default route.`);
+    }
+    if (presets.length > 0)
+      out.push(
+        `${listed(presets.map(bridgedName))} ${presets.length > 1 ? "run children" : "runs a child"} too.`,
+      );
+    out.push(
+      "run_in_background: false returns the answer inline; background returns an id and the",
+      "notice arrives next turn.",
+    );
+  }
+  if (byName.has("open_session"))
+    out.push(`${bridgedName("open_session")} makes a new top-level session, not a child.`);
+
+  const shell = [byName.get("bash"), byName.get("pwsh")].find((t) => takes(t, "run_in_background"));
+  if (shell) {
+    const jobs = [
+      byName.has("job_output") ? `read output with \`${bridgedName("job_output")}\`` : "",
+      byName.has("job_kill") ? `stop with \`${bridgedName("job_kill")}\`` : "",
+    ].filter(Boolean);
+    const native = shell.name === "bash" ? "native `Bash`" : "the native shell tool";
+    out.push(
+      "Long-running or background commands (test suites, builds, code reviews, watchers, anything",
+      `you would run with \`run_in_background\`) go through \`${bridgedName(shell.name)}\` with`,
+      "`run_in_background: true`; dsh registers the job, shows its card and panel entry, and the",
+      `finish notice arrives next turn${jobs.length > 0 ? `; ${jobs.join(", ")}` : ""}.`,
+      `Short foreground commands stay on ${native}; do not use ${native} \`run_in_background\``,
+      "because dsh cannot see it.",
+    );
+  }
+  return out.join(" ");
+}
 
 /**
  * The argument list for one `claude -p` spawn: every flag this plugin sends, in one place.
@@ -1789,7 +1842,8 @@ export function buildArgs({
   accessMode?: string | undefined;
   flags?: Set<string> | null;
   promptText?: string;
-  mcp?: { url: string; key: string } | undefined;
+  /** The bridge for this session, with the dsh tools it will list (see `dshToolsGuidance`). */
+  mcp?: { url: string; key: string; tools?: readonly ToolSchema[] | undefined } | undefined;
   /** /temporary: keep no Claude transcript for this session. */
   temporary?: boolean;
   /** Optional permission mode override; if provided, used instead of computing from config. */
@@ -1808,7 +1862,7 @@ export function buildArgs({
   // In -p mode /fast only works in a session launched with fast mode in --settings (fast-mode docs).
   if (config.fastMode && supports(flags, "--settings"))
     args.push("--settings", JSON.stringify({ fastMode: true }));
-  const appended = [system, mcp ? DSH_TOOLS_GUIDANCE : ""].filter(Boolean).join("\n\n");
+  const appended = [system, mcp ? dshToolsGuidance(mcp.tools) : ""].filter(Boolean).join("\n\n");
   if (appended && supports(flags, "--append-system-prompt")) {
     args.push("--append-system-prompt", appended);
   }
@@ -2444,7 +2498,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   processes: Map<string, ClaudeProcess>;
   /** Per session, the timer that continues the task once its usage limit resets. */
   limitTimers: Map<string, ReturnType<typeof setTimeout>>;
-  mcp?: { base: string; key: string };
+  mcp?: McpBridge;
   warnedNoSeam = false;
   /** Set once a session read has thrown, so the line lands one time and not per routed message. */
   warnedNoSessionRead = false;
@@ -3211,7 +3265,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // Claude spent its first reply asking for a tool server that was never reachable).
     const mcpBridge =
       this.mcp && options.sessionId && !options.purpose && this.config.dshTools && !targetHost
-        ? { url: `${this.mcp.base}${MCP_PATH}/${options.sessionId}`, key: this.mcp.key }
+        ? {
+            url: `${this.mcp.base}${MCP_PATH}/${options.sessionId}`,
+            key: this.mcp.key,
+            tools: this.mcp.toolsFor?.(options.sessionId),
+          }
         : undefined;
     // Side calls (title, compaction) carry no card and no workspace of their own, so they measure
     // nothing; leaving `sizes` undefined is what keeps them out of the store. The guidance also
@@ -3220,7 +3278,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const toolsSent = mcpBridge !== undefined && supports(cli.flags, "--append-system-prompt");
     const sizes: ContextSizes | undefined = options.purpose
       ? undefined
-      : { ...contextSizes(turns), tools: toolsSent ? DSH_TOOLS_GUIDANCE.length : 0 };
+      : { ...contextSizes(turns), tools: toolsSent ? dshToolsGuidance(mcpBridge.tools).length : 0 };
     const args = buildArgs({
       ...options,
       model,

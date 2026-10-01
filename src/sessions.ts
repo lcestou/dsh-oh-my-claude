@@ -69,8 +69,8 @@ import {
   type FsBox,
 } from "./remote-fs.js";
 import type { TranscriptListItem } from "./transcript.js";
-import { deleteMemory, isMemoryName, listMemory } from "./memory.js";
-import { isWritableInstructions, listInstructions } from "./instructions.js";
+import { deleteMemory, isMemoryName, listMemory, memoryRoot } from "./memory.js";
+import { isWritableInstructions, listInstructions, managedDir } from "./instructions.js";
 import {
   isWritableSkillScope,
   listSkills,
@@ -1074,7 +1074,7 @@ async function settingsTexts(
 ): Promise<Array<{ scope: string; text: string }>> {
   const texts: Array<{ scope: string; text: string }> = [];
   for (const scope of SETTINGS_SCOPES) {
-    const path = settingsScopePath(scope, userPath, cwd);
+    const path = settingsScopePath(scope, userPath, cwd, managedDir(box));
     if (path === undefined) continue;
     // A file the box cannot answer for is a fault, not an empty one: reading it as empty shows
     // every key it sets as unset, and the roster built from that says a plugin is off when it is
@@ -1252,9 +1252,13 @@ export function dshSessionsFor(
   return map;
 }
 /** Narrows an unknown value to an absolute path string with no NUL; a relative or control-char path
- *  is refused rather than used as a directory. */
-const validCwd = (cwd: unknown): cwd is string =>
-  typeof cwd === "string" && cwd.startsWith("/") && !cwd.includes("\0");
+ *  is refused rather than used as a directory. On a Windows host a drive path (`C:\…`, `C:/…`)
+ *  counts too, since that is what dsh hands over there; a drive-relative `C:x`, a UNC share and a
+ *  `\\?\` device path stay refused, so a request cannot point a read at another machine. */
+export const validCwd = (cwd: unknown, platform: string = process.platform): cwd is string =>
+  typeof cwd === "string" &&
+  !cwd.includes("\0") &&
+  (cwd.startsWith("/") || (platform === "win32" && /^[A-Za-z]:[\\/]/.test(cwd)));
 
 /** What /open answers: the dsh session id to open, and whether it existed before. */
 interface Opened {
@@ -1646,9 +1650,10 @@ const claudeHomeOf = async (box: MountBox): Promise<string> =>
   box.sshHost ? `${await homeAt(box)}/.claude` : box.configDir;
 
 /**
- * Where that box keeps a workspace's transcripts and its auto-memory. The same directory the
- * adapter's own `projectDir` names for this PC, resolved against the box's `~/.claude` instead.
- * The cwd is already the remote path, since it is the directory the session runs in.
+ * Where that box keeps a directory's transcripts. The same directory the adapter's own
+ * `projectDir` names for this PC, resolved against the box's `~/.claude` instead. The cwd is
+ * already the remote path, since it is the directory the session runs in. Auto-memory sits under
+ * the same kind of directory but is keyed by repository, not by cwd; see `memoryDirAt`.
  */
 const projectDirAt = async (box: MountBox, cwd: string): Promise<string> =>
   join(await claudeHomeOf(box), "projects", projectDirName(cwd));
@@ -2200,6 +2205,31 @@ export function registerSessionRoutes(
    */
   const userSettingsPathOf = async (box: MountBox): Promise<string | undefined> =>
     box.sshHost ? `${await claudeHomeOf(box)}/settings.json` : settingsPath;
+  /**
+   * Where that box's CLI keeps a workspace's auto-memory. Not the transcript directory: memory is
+   * keyed by repository (`memoryRoot`), and `autoMemoryDirectory` in the managed or the user
+   * settings moves it somewhere else altogether. The first file that sets the key decides, as in
+   * the CLI, and a value that is not an absolute path falls back to the default.
+   *
+   * The project and local files can set the key too, but the CLI honours those only in a trusted
+   * workspace, which the plugin cannot see, and this route writes files: a checked-out repository
+   * must not be able to say where. A workspace that relies on one of them lists the default
+   * directory here.
+   */
+  const memoryDirAt = async (box: MountBox, cwd: string): Promise<string> => {
+    const userPath = await userSettingsPathOf(box);
+    for (const { text } of userPath ? await settingsTexts(box, userPath, null) : []) {
+      const set = parseSettingsText(text).value?.autoMemoryDirectory;
+      if (set === undefined || set === null) continue;
+      const dir =
+        typeof set === "string" && /^~[/\\]/.test(set)
+          ? join(await homeAt(box), set.slice(2))
+          : set;
+      if (validCwd(dir, box.sshHost ? "linux" : process.platform)) return dir;
+      break;
+    }
+    return join(await projectDirAt(box, await memoryRoot(box, cwd)), "memory");
+  };
   // Optional: stock dsh has it; without it archived sessions list but cannot be restored. The
   // routes can serve before it mounts. A request in the first seconds after a restart found no
   // registry and skipped the workspace attach silently, so the session it had just written was
@@ -2642,7 +2672,7 @@ export function registerSessionRoutes(
                   error: "cwd must be a directory a dsh session is open in",
                 });
               const { box, cwd: at } = targetOf(url, cwd);
-              const dir = join(await projectDirAt(box, at), "memory");
+              const dir = await memoryDirAt(box, at);
               const name = url.searchParams.get("name") ?? body.name;
               if (req.method === "GET" && name === undefined)
                 return json(res, 200, { dir, files: await listMemory(box, dir) });
@@ -2875,7 +2905,7 @@ export function registerSessionRoutes(
                   return json(res, 400, {
                     error: "project and local settings do not reach an SSH box yet",
                   });
-                const path = settingsScopePath(scope, userPath, target.cwd);
+                const path = settingsScopePath(scope, userPath, target.cwd, managedDir(target.box));
                 if (path === undefined)
                   return json(res, 400, {
                     error: "project and local settings need a directory a dsh session is open in",
@@ -2906,7 +2936,7 @@ export function registerSessionRoutes(
               const userPath = (await userSettingsPathOf(box)) ?? settingsPath;
               const scopes: SettingsScopeInfo[] = [];
               for (const scope of SETTINGS_SCOPES) {
-                const path = settingsScopePath(scope, userPath, cwd);
+                const path = settingsScopePath(scope, userPath, cwd, managedDir(box));
                 if (path === undefined) continue;
                 // An unreadable managed file (root-owned, or a directory) reads as absent
                 // rather than failing the whole payload. Every other scope answers with the
@@ -3150,7 +3180,9 @@ export function registerSessionRoutes(
               const configFiles: DiagnosticFile[] = [];
               const userPath = await userSettingsPathOf(box);
               for (const scope of SETTINGS_SCOPES) {
-                const path = userPath ? settingsScopePath(scope, userPath, cwd) : undefined;
+                const path = userPath
+                  ? settingsScopePath(scope, userPath, cwd, managedDir(box))
+                  : undefined;
                 if (path === undefined) continue;
                 // A file that cannot be read at all reads as absent, the way the scopes route
                 // treats a root-owned managed file: the payload is a report, not a failure.
@@ -4439,21 +4471,21 @@ export function isSettingsScope(value: JsonValue | undefined): value is Settings
   return SETTINGS_SCOPES.includes(value as SettingsScope);
 }
 
-/** Where the CLI's policy layer lives on Linux; the plugin never writes it. */
-const MANAGED_SETTINGS_PATH = "/etc/claude-code/managed-settings.json";
-
 /**
  * The file a scope names. Paths are derived here and never taken from the client: the request
  * carries a scope and a directory, not a path. Project and local have no file without a
- * directory, and answer undefined so the caller can refuse the request.
+ * directory, and answer undefined so the caller can refuse the request. `managed` is the
+ * directory the CLI's policy layer lives in on the box the file is read from (`managedDir(box)`);
+ * the plugin never writes it.
  */
 export function settingsScopePath(
   scope: SettingsScope,
   userPath: string,
   cwd: string | null,
+  managed: string = managedDir(),
 ): string | undefined {
   if (scope === "user") return userPath;
-  if (scope === "managed") return MANAGED_SETTINGS_PATH;
+  if (scope === "managed") return join(managed, "managed-settings.json");
   if (cwd === null) return undefined;
   return join(cwd, ".claude", scope === "local" ? "settings.local.json" : "settings.json");
 }

@@ -285,6 +285,11 @@ type StoredHeader = {
 export declare function dshSessionsFor(entries: readonly (StoredHeader | {
     header: StoredHeader;
 })[], cwd: string | null, claudeIdOf: (id: string) => string, archived?: Set<string>): Map<string, OwnedSession>;
+/** Narrows an unknown value to an absolute path string with no NUL; a relative or control-char path
+ *  is refused rather than used as a directory. On a Windows host a drive path (`C:\…`, `C:/…`)
+ *  counts too, since that is what dsh hands over there; a drive-relative `C:x`, a UNC share and a
+ *  `\\?\` device path stay refused, so a request cannot point a read at another machine. */
+export declare const validCwd: (cwd: unknown, platform?: string) => cwd is string;
 /** What /open answers: the dsh session id to open, and whether it existed before. */
 interface Opened {
     id: string;
@@ -600,7 +605,9 @@ export declare function isSettingsScope(value: JsonValue | undefined): value is 
 /**
  * The file a scope names. Paths are derived here and never taken from the client: the request
  * carries a scope and a directory, not a path. Project and local have no file without a
- * directory, and answer undefined so the caller can refuse the request.
+ * directory, and answer undefined so the caller can refuse the request. `managed` is the
+ * directory the CLI's policy layer lives in on the box the file is read from (`managedDir(box)`);
+ * the plugin never writes it.
  */
-export declare function settingsScopePath(scope: SettingsScope, userPath: string, cwd: string | null): string | undefined;
+export declare function settingsScopePath(scope: SettingsScope, userPath: string, cwd: string | null, managed?: string): string | undefined;
 export {};

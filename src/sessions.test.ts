@@ -2,8 +2,8 @@
 import assert from "node:assert/strict";
 import type { Row } from "./session-repair.js";
 import { execFileSync } from "node:child_process";
-import { access, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   dshSessionsFor,
@@ -17,12 +17,14 @@ import {
   withoutSubagents,
   slugForDir,
   settingsScopePath,
+  validCwd,
   isSettingsScope,
   SETTINGS_SCOPES,
   SSH_TRANSCRIPT_LISTER,
   readHints,
 } from "./sessions.js";
 import { projectDirName } from "./adapter.js";
+import { managedDir } from "./instructions.js";
 import type {
   FallbackRecord,
   LiveTurn,
@@ -281,6 +283,22 @@ import type { TranscriptListItem } from "./transcript.js";
   );
   r = await respond("GET", mem);
   assert.deepEqual(r.files, [], "this box did not gain the other box's memory");
+  assert.equal(r.dir, join(tmp, "claude", "projects", projectDirName(cwd), "memory"));
+
+  // `autoMemoryDirectory` in the user settings moves the memory dir, `~/` and all; a value that is
+  // not an absolute path is ignored, the way the CLI ignores it.
+  const memorySettings = join(tmp, "claude", "settings.json");
+  await mkdir(join(tmp, "claude"), { recursive: true });
+  await writeFile(memorySettings, JSON.stringify({ autoMemoryDirectory: join(tmp, "moved") }));
+  r = await respond("GET", mem);
+  assert.equal(r.dir, join(tmp, "moved"));
+  await writeFile(memorySettings, JSON.stringify({ autoMemoryDirectory: "~/omc-mem" }));
+  r = await respond("GET", mem);
+  assert.equal(r.dir, join(homedir(), "omc-mem"));
+  await writeFile(memorySettings, JSON.stringify({ autoMemoryDirectory: "relative/dir" }));
+  r = await respond("GET", mem);
+  assert.equal(r.dir, join(tmp, "claude", "projects", projectDirName(cwd), "memory"));
+  await rm(memorySettings);
 
   // Diagnostics: the tab renders on `ok`, so a reply without it reads as the failure shape and
   // draws an empty error line. Assert the flag is there, not only that the fields are.
@@ -1214,6 +1232,19 @@ const responder =
   );
 }
 
+// validCwd: a POSIX absolute path anywhere, a drive path only on a Windows host, and never a
+// relative path, a drive-relative one, a UNC share, a device path or anything holding a NUL.
+{
+  assert.equal(validCwd("/home/me/app"), true);
+  assert.equal(validCwd("/home/me/app", "win32"), true, "a WSL or SSH path on a Windows host");
+  assert.equal(validCwd("C:\\work\\repo", "win32"), true);
+  assert.equal(validCwd("d:/work/repo", "win32"), true, "forward slashes and a lowercase drive");
+  assert.equal(validCwd("C:\\work\\repo", "linux"), false, "a drive path is relative off Windows");
+  for (const bad of ["", "app", "C:", "C:repo", "\\\\server\\share", "\\\\?\\C:\\x", "C:\\a\0b"])
+    assert.equal(validCwd(bad, "win32"), false, JSON.stringify(bad));
+  assert.equal(validCwd(null, "win32"), false);
+}
+
 // settingsScopePath names the file each scope writes, and only project and local need a directory.
 {
   const user = "/home/user/.claude/settings.json";
@@ -1221,7 +1252,10 @@ const responder =
 
   assert.equal(settingsScopePath("user", user, cwd), user);
   assert.equal(settingsScopePath("user", user, null), user, "the user file needs no directory");
-  assert.equal(settingsScopePath("managed", user, null), "/etc/claude-code/managed-settings.json");
+  assert.equal(
+    settingsScopePath("managed", user, null, managedDir({}, "linux")),
+    "/etc/claude-code/managed-settings.json",
+  );
   assert.equal(settingsScopePath("project", user, cwd), `${cwd}/.claude/settings.json`);
   assert.equal(settingsScopePath("local", user, cwd), `${cwd}/.claude/settings.local.json`);
   assert.equal(settingsScopePath("project", user, null), undefined, "no directory, no path");

@@ -31,6 +31,11 @@ export const HIDDEN = new Set([
   "run_code",
 ]);
 
+/** The dsh tools the bridge offers `agent`: what dsh shows that agent, minus the ones Claude Code
+ *  has natively. `open_session` is the bridge's own and is added by the callers that offer it. */
+const bridgedSchemas = (tools: DshToolsRegistry, agent: Agent): ToolSchema[] =>
+  tools.schemas(agent).filter((t) => !HIDDEN.has(t.name));
+
 /** Bridge-only tool: a new top-level dsh session (sidebar row), not a child of the caller. */
 const OPEN_SESSION: ToolSchema = {
   name: "open_session",
@@ -189,9 +194,7 @@ export async function handleRpc(
       return reply({});
     case "tools/list":
       return reply({
-        tools: tools
-          .schemas(agent)
-          .filter((t) => !HIDDEN.has(t.name))
+        tools: bridgedSchemas(tools, agent)
           // readOnlyHint is what Claude Code keys concurrency on: without it every MCP call runs
           // one after another, so parallel subagents would serialize. dsh's own permission
           // presets still govern what a child may do.
@@ -308,13 +311,23 @@ function stableKey(file: string): string {
   return k;
 }
 
+/** The mounted bridge, as the adapter holds it. */
+export interface McpBridge {
+  base: string;
+  key: string;
+  /** The tools `tools/list` will answer that session with, `open_session` included, so the system
+   *  prompt can name the ones that are really there. Undefined when the session has no live agent
+   *  or dsh refuses the listing; the bridge has nothing for that session either. */
+  toolsFor: (sessionId: string) => ToolSchema[] | undefined;
+}
+
 /** Wires the MCP bridge into the web server once the required services are injected, and keeps the
  *  bridge key stable across dsh restarts so a keeper-mode claude that outlived dsh still
  *  authenticates. */
 export function registerMcpBridge(
   ctx: PluginContext,
   { log, version, relay, keyFile }: BridgeOptions,
-): Promise<{ base: string; key: string }> {
+): Promise<McpBridge> {
   // SAFETY: the key symbol is this plugin's own key on globalThis, typed here once
   const g = globalThis as typeof globalThis & { [KEY_REGISTRY]?: string };
   // A key file keeps the bridge key stable across dsh restarts, so a Claude process that outlived
@@ -367,7 +380,18 @@ export function registerMcpBridge(
             },
           }),
         );
-        resolve({ base: `http://127.0.0.1:${webServer.port}`, key });
+        resolve({
+          base: `http://127.0.0.1:${webServer.port}`,
+          key,
+          toolsFor: (sessionId) => {
+            try {
+              const agent = agents.get(asSessionId(sessionId));
+              return agent ? [...bridgedSchemas(tools, agent), OPEN_SESSION] : undefined;
+            } catch {
+              return undefined;
+            }
+          },
+        });
       },
     );
   });
