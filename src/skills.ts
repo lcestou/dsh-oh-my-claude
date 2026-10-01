@@ -118,7 +118,8 @@ async function installedPlugins(box: FsBox, claudeHome: string): Promise<Map<str
  * The skills the CLI can reach for `cwd` on the box: user, then project, then each plugin's.
  * Project skills come from `cwd`'s own `.claude/skills` and from each directory above it as far as
  * the CLI looks (`projectLevels`), nearest first, so a session opened in a subdirectory lists the
- * repository's skills too.
+ * repository's skills too. A name two levels both have is listed once, from the nearer level,
+ * which is the one the CLI runs.
  */
 export async function listSkills(
   cwd: string,
@@ -129,14 +130,18 @@ export async function listSkills(
     installedPlugins(box, claudeHome),
     projectLevels(box, cwd),
   ]);
-  const groups = await Promise.all([
+  const [user, project, plugins] = await Promise.all([
     skillsUnder(box, join(claudeHome, "skills"), "user"),
-    ...levels.map((dir) => skillsUnder(box, join(dir, ".claude", "skills"), "project")),
-    ...[...installed].map(([key, at]) =>
-      skillsUnder(box, join(at, "skills"), `plugin:${key.split("@")[0] ?? key}`),
+    Promise.all(levels.map((dir) => skillsUnder(box, join(dir, ".claude", "skills"), "project"))),
+    Promise.all(
+      [...installed].map(([key, at]) =>
+        skillsUnder(box, join(at, "skills"), `plugin:${key.split("@")[0] ?? key}`),
+      ),
     ),
   ]);
-  return groups.flat();
+  const nearest = new Map<string, SkillEntry>();
+  for (const entry of project.flat()) if (!nearest.has(entry.name)) nearest.set(entry.name, entry);
+  return [...user, ...nearest.values(), ...plugins.flat()];
 }
 
 /** A skill directory name the routes accept: lowercase letters, digits and hyphens, starting on a

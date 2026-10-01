@@ -82,10 +82,18 @@ import {
   await skill(root, "shared");
   await skill(tmp, "outside");
   await skill(join(root, "other"), "sibling");
+  // One name at two levels: the CLI runs the nearer one, so that is the one listed.
+  await skill(sub, "both");
+  await skill(root, "both");
   const listed = await listSkills(sub, join(tmp, "claude-home"));
-  assert.deepEqual(
-    listed.map((s) => `${s.scope}:${s.name}`),
-    ["project:own", "project:shared"],
+  assert.deepEqual(listed.map((s) => `${s.scope}:${s.name}`).toSorted(), [
+    "project:both",
+    "project:own",
+    "project:shared",
+  ]);
+  assert.equal(
+    listed.find((s) => s.name === "both")?.path,
+    join(sub, ".claude", "skills", "both", "SKILL.md"),
   );
 }
 

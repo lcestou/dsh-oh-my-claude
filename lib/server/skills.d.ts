@@ -23,7 +23,8 @@ export declare function parseSkillHead(text: string): SkillHead;
  * The skills the CLI can reach for `cwd` on the box: user, then project, then each plugin's.
  * Project skills come from `cwd`'s own `.claude/skills` and from each directory above it as far as
  * the CLI looks (`projectLevels`), nearest first, so a session opened in a subdirectory lists the
- * repository's skills too.
+ * repository's skills too. A name two levels both have is listed once, from the nearer level,
+ * which is the one the CLI runs.
  */
 export declare function listSkills(cwd: string, claudeHome: string, box?: FsBox): Promise<SkillEntry[]>;
 /** A skill directory name the routes accept: lowercase letters, digits and hyphens, starting on a
