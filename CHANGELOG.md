@@ -6,6 +6,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+## [1.5.2] - 2026-10-01
+
+dsh: runs on 0.2.0-rc.1 through 0.2.0-rc.2; built and tested on 0.2.0-rc.2.
+
 ### Fixed
 
 - On Windows the Memory, Instructions, Skills, MCP, Rewind and Restore tabs and the workspace search answer for a session opened in a drive path (`C:\work\repo`). Every one of them refused the directory with a 400, and Plugins, Diagnostics and the feature switches silently lost their project and local scopes. The managed settings and managed CLAUDE.md are read from the CLI's own directory for the OS (`C:\Program Files\ClaudeCode`, `/Library/Application Support/ClaudeCode`), and a `configDir` given as a drive path is no longer joined onto the working directory.
