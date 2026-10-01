@@ -20,6 +20,15 @@ const written = (out: ReturnType<typeof setPermissionRule>): string => {
   assert.equal(suggestRule("Bash", { command: "ls -la /tmp" }), "Bash(ls:*)");
   assert.equal(suggestRule("Bash", { command: "  make  " }), "Bash(make:*)");
   assert.equal(suggestRule("Bash", {}), "Bash", "no command, no specifier to invent");
+  // The CLI's shell tool on Windows: never the bare name, which would allow every command.
+  assert.equal(
+    suggestRule("PowerShell", { command: "git status --short" }),
+    "PowerShell(git status *)",
+  );
+  assert.equal(
+    suggestRule("PowerShell", { command: "Get-ChildItem -Force" }),
+    "PowerShell(Get-ChildItem *)",
+  );
 }
 
 // Anything carrying a file path becomes that path, whatever the tool is called.

@@ -43,6 +43,12 @@ assert.equal(
     formatToolCall("bash", JSON.stringify({ command: "ls" })).startsWith(`❯${HEADER_MARK} Bash`),
   );
   assert.ok(
+    formatToolCall("pwsh", JSON.stringify({ command: "Get-ChildItem" })).startsWith(
+      `❯${HEADER_MARK} PowerShell\n\`\`\`powershell\nGet-ChildItem`,
+    ),
+    "Claude's PowerShell tool draws as a shell card",
+  );
+  assert.ok(
     formatToolCall("grep", JSON.stringify({ pattern: "x" })).startsWith(`⌕${HEADER_MARK} Grep`),
   );
   assert.ok(

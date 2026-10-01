@@ -113,6 +113,7 @@ export function capLines(body: string, max = MAX_BODY_LINES): string {
  *  tool header (see TOOL_ICONS in the client), so the set here and there must stay in sync. */
 const TOOL_ICON = new Map<string, string>([
   ["bash", "❯"],
+  ["pwsh", "❯"],
   ["bash_output", "❯"],
   ["kill_shell", "❯"],
   ["read", "▤"],
@@ -186,9 +187,16 @@ const TOOL_WORD = new Map<string, ServerKey>([
  *  its glyph and HEADER_MARK, never by the word, so a Chinese header folds like an English one. */
 const label = (name: string): string => {
   const key = TOOL_WORD.get(name);
+  // `pwsh` is the one tool whose name is not its word: it is the product PowerShell, in any language.
   const human =
     mcpName(name) ??
-    (key ? serverText(key) : name.startsWith("web_") ? `Web ${name.slice(4)}` : words(name));
+    (key
+      ? serverText(key)
+      : name.startsWith("web_")
+        ? `Web ${name.slice(4)}`
+        : name === "pwsh"
+          ? "PowerShell"
+          : words(name));
   return `${TOOL_ICON.get(name) ?? "◆"}${HEADER_MARK} ${human}`;
 };
 
@@ -210,9 +218,11 @@ export function formatToolCall(name: string, inputJson: string): string {
   }
   const file = asStr(inp.file_path);
   switch (name) {
-    case "bash": {
+    case "bash":
+    case "pwsh": {
       const desc = asStr(inp.description);
-      return `${label("bash")}${desc ? ` · ${desc}` : ""}\n${fence(capLines(asStr(inp.command)), "bash")}`;
+      const lang = name === "pwsh" ? "powershell" : "bash";
+      return `${label(name)}${desc ? ` · ${desc}` : ""}\n${fence(capLines(asStr(inp.command)), lang)}`;
     }
     case "read":
       return `${label("read")} \`${file}\``;

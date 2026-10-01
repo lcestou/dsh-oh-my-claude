@@ -1571,6 +1571,11 @@ assert.equal(
   permissionReason("Bash", { command: "ls -la" }, { title: "Run ls" }),
   "Run ls: ls -la",
 );
+assert.equal(
+  permissionReason("PowerShell", { command: "Get-ChildItem" }, { title: "Run it" }),
+  "Run it: Get-ChildItem",
+  "the Windows shell tool shows its command, not its arguments as JSON",
+);
 assert.ok(buildArgs({ model: "m", config }).includes("--permission-prompt-tool"));
 assert.ok(
   !buildArgs({ model: "m", config: new Config({ approvals: false }) }).includes(

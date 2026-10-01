@@ -12,6 +12,10 @@ export type PermissionRules = {
  * `Bash(ls:*)`. Anything carrying a file path becomes that path, which is exact. Everything else is
  * the bare tool name, which covers the tool. The chip is editable, so a rule that is too narrow or
  * too broad costs a keystroke, not a wrong grant.
+ *
+ * `PowerShell`, the CLI's shell tool on Windows, gets the same treatment so its suggestion is not
+ * the bare name, which would allow every command. Its rule ends in ` *`, the wildcard form the
+ * CLI's own PowerShell rules use (`PowerShell(git checkout -b *)`).
  */
 export declare function suggestRule(toolName: string, input: Record<string, JsonValue>): string;
 /** The three lists as they stand. A file that is not JSON, or a list of the wrong shape, reads empty. */
