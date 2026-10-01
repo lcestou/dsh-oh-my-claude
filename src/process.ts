@@ -1090,7 +1090,8 @@ export function permissionReason(
 ): string {
   const head = request?.title ?? request?.description ?? "";
   let detail = "";
-  if (toolName === "Bash" && typeof input?.command === "string") detail = input.command;
+  // Any tool that runs a command line (`Bash`, and `PowerShell` on Windows) shows the command.
+  if (typeof input?.command === "string") detail = input.command;
   else if (typeof input?.file_path === "string") detail = input.file_path;
   else if (typeof input?.url === "string") detail = input.url;
   else if (input && typeof input === "object") detail = JSON.stringify(input);

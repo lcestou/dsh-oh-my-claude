@@ -727,6 +727,7 @@ export declare function mcpToolsByServer(serverNames: readonly string[], toolIds
 export declare function renameTitle(cmd: string, rawInput: string): string | undefined;
 export declare const NATIVE_TOOL_MAP: {
     readonly Bash: "bash";
+    readonly PowerShell: "pwsh";
     readonly Read: "read";
     readonly Edit: "edit";
     readonly Write: "write";

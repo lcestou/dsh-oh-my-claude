@@ -2020,6 +2020,9 @@ export function renameTitle(cmd: string, rawInput: string): string | undefined {
 // Unknown names fall through to the generic "others" row.
 export const NATIVE_TOOL_MAP = {
   Bash: "bash",
+  // Claude Code's shell tool on a Windows box without Git Bash. dsh draws `pwsh` with the same
+  // shell card as `bash`.
+  PowerShell: "pwsh",
   Read: "read",
   Edit: "edit",
   Write: "write",

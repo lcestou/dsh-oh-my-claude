@@ -18,15 +18,19 @@ type Settings = { [key: string]: JsonValue };
  * `Bash(ls:*)`. Anything carrying a file path becomes that path, which is exact. Everything else is
  * the bare tool name, which covers the tool. The chip is editable, so a rule that is too narrow or
  * too broad costs a keystroke, not a wrong grant.
+ *
+ * `PowerShell`, the CLI's shell tool on Windows, gets the same treatment so its suggestion is not
+ * the bare name, which would allow every command. Its rule ends in ` *`, the wildcard form the
+ * CLI's own PowerShell rules use (`PowerShell(git checkout -b *)`).
  */
 export function suggestRule(toolName: string, input: Record<string, JsonValue>): string {
-  if (toolName === "Bash") {
+  if (toolName === "Bash" || toolName === "PowerShell") {
     const words = String(input.command ?? "")
       .trim()
       .split(/\s+/);
     const head =
       words[1] !== undefined && !words[1].startsWith("-") ? words.slice(0, 2) : [words[0]];
-    if (head[0]) return `Bash(${head.join(" ")}:*)`;
+    if (head[0]) return `${toolName}(${head.join(" ")}${toolName === "Bash" ? ":*" : " *"})`;
   }
   const path = input.file_path;
   if (typeof path === "string" && path !== "") return `${toolName}(${path})`;
