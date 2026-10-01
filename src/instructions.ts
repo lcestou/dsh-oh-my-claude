@@ -16,8 +16,16 @@ export interface InstructionFile {
   importedBy?: string;
 }
 
-/** The CLI's managed directory on Linux; the same path the managed settings file sits in. */
-const MANAGED_DIR = "/etc/claude-code";
+/**
+ * The CLI's managed directory on the box the files are read from, which is also where the managed
+ * settings file sits. This PC's depends on its OS (the three paths are the CLI's own, read off the
+ * 2.1.287 binary). An SSH box is taken to be Linux: nothing asks it what it runs.
+ */
+export const managedDir = (box: FsBox = {}, platform: string = process.platform): string => {
+  if (!box.sshHost && platform === "win32") return "C:\\Program Files\\ClaudeCode";
+  if (!box.sshHost && platform === "darwin") return "/Library/Application Support/ClaudeCode";
+  return "/etc/claude-code";
+};
 
 /** The CLI's own limit on how deep `@` imports nest before it stops following them. */
 const MAX_IMPORT_DEPTH = 5;
@@ -77,8 +85,12 @@ const ancestors = (cwd: string): string[] => {
  * named by a directory listing that has not happened yet, and an `@` import by a file that has not
  * been read yet, so both are found on the way through.
  */
-export const instructionCandidates = (cwd: string, claudeHome: string): string[] => [
-  join(MANAGED_DIR, "CLAUDE.md"),
+export const instructionCandidates = (
+  cwd: string,
+  claudeHome: string,
+  managed: string = managedDir(),
+): string[] => [
+  join(managed, "CLAUDE.md"),
   join(claudeHome, "CLAUDE.md"),
   ...ancestors(cwd).flatMap((dir) => [
     join(dir, "CLAUDE.md"),
@@ -88,8 +100,8 @@ export const instructionCandidates = (cwd: string, claudeHome: string): string[]
 ];
 
 /** The rules directories the walk lists, in walk order. */
-const ruleDirs = (cwd: string, claudeHome: string): string[] => [
-  join(MANAGED_DIR, ".claude", "rules"),
+const ruleDirs = (cwd: string, claudeHome: string, managed: string): string[] => [
+  join(managed, ".claude", "rules"),
   join(claudeHome, "rules"),
   ...ancestors(cwd).map((dir) => join(dir, ".claude", "rules")),
 ];
@@ -177,8 +189,9 @@ export async function listInstructions(
   // no handler attached yet that reaches the host as an unhandled rejection. The await further down
   // is what reports it, as before; this only says someone is coming for it.
   void homeJob.catch(() => {});
-  const warm = inFlight(instructionCandidates(cwd, claudeHome), READ_FANOUT, readOnce);
-  await inFlight(ruleDirs(cwd, claudeHome), READ_FANOUT, listOnce);
+  const managed = managedDir(box);
+  const warm = inFlight(instructionCandidates(cwd, claudeHome, managed), READ_FANOUT, readOnce);
+  await inFlight(ruleDirs(cwd, claudeHome, managed), READ_FANOUT, listOnce);
   await warm;
   const home = await homeJob;
 
@@ -201,9 +214,8 @@ export async function listInstructions(
       await add(resolveImport(imported, at, home), kind, depth + 1, at);
   };
 
-  await add(join(MANAGED_DIR, "CLAUDE.md"), "Managed");
-  for (const rule of await listOnce(join(MANAGED_DIR, ".claude", "rules")))
-    await add(rule, "Managed");
+  await add(join(managed, "CLAUDE.md"), "Managed");
+  for (const rule of await listOnce(join(managed, ".claude", "rules"))) await add(rule, "Managed");
 
   await add(join(claudeHome, "CLAUDE.md"), "User");
   for (const rule of await listOnce(join(claudeHome, "rules"))) await add(rule, "User");

@@ -1,5 +1,5 @@
 import type { RelayResult } from "./process.js";
-import type { Agent, DshToolsRegistry, JsonValue, PluginContext } from "./dsh.js";
+import type { Agent, DshToolsRegistry, JsonValue, PluginContext, ToolSchema } from "./dsh.js";
 /** HTTP endpoint path for the MCP bridge handler. */
 export declare const MCP_PATH = "/dsh-oh-my-claude/mcp";
 /** HTTP header name for the MCP bridge authentication key. */
@@ -51,11 +51,17 @@ export interface BridgeOptions {
     /** Path of a file holding the bridge key; created once, reused across restarts. */
     keyFile?: string;
 }
+/** The mounted bridge, as the adapter holds it. */
+export interface McpBridge {
+    base: string;
+    key: string;
+    /** The tools `tools/list` will answer that session with, `open_session` included, so the system
+     *  prompt can name the ones that are really there. Undefined when the session has no live agent
+     *  or dsh refuses the listing; the bridge has nothing for that session either. */
+    toolsFor: (sessionId: string) => ToolSchema[] | undefined;
+}
 /** Wires the MCP bridge into the web server once the required services are injected, and keeps the
  *  bridge key stable across dsh restarts so a keeper-mode claude that outlived dsh still
  *  authenticates. */
-export declare function registerMcpBridge(ctx: PluginContext, { log, version, relay, keyFile }: BridgeOptions): Promise<{
-    base: string;
-    key: string;
-}>;
+export declare function registerMcpBridge(ctx: PluginContext, { log, version, relay, keyFile }: BridgeOptions): Promise<McpBridge>;
 export {};

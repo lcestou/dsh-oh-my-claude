@@ -3,12 +3,13 @@ import assert from "node:assert/strict";
 import { mkdtemp, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { importsIn, instructionCandidates, listInstructions } from "./instructions.js";
+import { importsIn, instructionCandidates, listInstructions, managedDir } from "./instructions.js";
 
 // The paths the walk is warmed with, in load order: managed, user, then every ancestor root-first.
 // One that drifts out of this list is one the walk waits a whole ssh round trip for.
 {
-  assert.deepEqual(instructionCandidates("/a/b", "/home/u/.claude"), [
+  const managed = managedDir({}, "linux");
+  assert.deepEqual(instructionCandidates("/a/b", "/home/u/.claude", managed), [
     "/etc/claude-code/CLAUDE.md",
     "/home/u/.claude/CLAUDE.md",
     "/CLAUDE.md",
@@ -21,6 +22,14 @@ import { importsIn, instructionCandidates, listInstructions } from "./instructio
     "/a/b/.claude/CLAUDE.md",
     "/a/b/CLAUDE.local.md",
   ]);
+}
+
+// The managed directory follows this PC's OS, and an SSH box is read as Linux whatever this PC is.
+{
+  assert.equal(managedDir({}, "win32"), "C:\\Program Files\\ClaudeCode");
+  assert.equal(managedDir({}, "darwin"), "/Library/Application Support/ClaudeCode");
+  assert.equal(managedDir({}, "linux"), "/etc/claude-code");
+  assert.equal(managedDir({ sshHost: "box" }, "win32"), "/etc/claude-code");
 }
 
 // What counts as an `@` import, and what the CLI would leave alone.

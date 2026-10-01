@@ -7,8 +7,9 @@ import { type ContextSizes, type ContextSource } from "./context-sources.js";
 import { type PickerSettings, type RemoteWorkspace } from "./sessions.js";
 import { type OmcEvent } from "./events.js";
 import { readUsage } from "./usage.js";
+import { type McpBridge } from "./mcp.js";
 import { type ClaudeEvent, ClaudeProcess } from "./process.js";
-import type { Agent, ImageAttachmentRef, JsonValue, PluginContext, ResolvedAgent, SessionController, SessionId, SubprocessRuntime } from "./dsh.js";
+import type { Agent, ImageAttachmentRef, JsonValue, PluginContext, ResolvedAgent, SessionController, SessionId, SubprocessRuntime, ToolSchema } from "./dsh.js";
 import { ADAPTER_CURRENT } from "./dsh.js";
 import { type ToolMode, type ToolModeInfo } from "./rows-probe.js";
 import { type FsBox } from "./remote-fs.js";
@@ -651,6 +652,22 @@ export declare const supports: (flags: Set<string> | null | undefined, flag: str
 /** Text mode when the CLI lacks --input-format: prompt goes positional, images are dropped. */
 export declare const usesStdin: (flags: Set<string> | null | undefined) => boolean;
 /**
+ * The text appended to the system prompt whenever dsh tools are bridged. Claude Code's own Agent
+ * tool spawns children dsh cannot see (no card, no header count, no notice), so subagents must go
+ * through the bridged tools, and a background command through dsh's shell tool.
+ *
+ * It names only what `tools` holds, the schemas the bridge will list for this session. What dsh
+ * offers differs by box and by session: the shell tool is `pwsh` on Windows and `bash` elsewhere,
+ * a persistent shell takes no `run_in_background`, the preset subagent tools depend on the agent
+ * preset, and `subagent` takes a provider and model (with `list_subagent_models` beside it) only
+ * in a session that has a model-selection policy. Naming a tool that is not there sends Claude
+ * looking for it and then back to a native background shell dsh cannot see.
+ *
+ * With `tools` undefined (no live agent to ask) only the opening sentence is sent: the bridge
+ * answers that session with nothing either.
+ */
+export declare function dshToolsGuidance(tools?: readonly ToolSchema[]): string;
+/**
  * The argument list for one `claude -p` spawn: every flag this plugin sends, in one place.
  *
  * Almost every flag is guarded by `supports`, which asks what this particular CLI binary
@@ -673,9 +690,11 @@ export declare function buildArgs({ model, reasoningEffort, system, purpose, con
     accessMode?: string | undefined;
     flags?: Set<string> | null;
     promptText?: string;
+    /** The bridge for this session, with the dsh tools it will list (see `dshToolsGuidance`). */
     mcp?: {
         url: string;
         key: string;
+        tools?: readonly ToolSchema[] | undefined;
     } | undefined;
     /** /temporary: keep no Claude transcript for this session. */
     temporary?: boolean;
@@ -928,10 +947,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     processes: Map<string, ClaudeProcess>;
     /** Per session, the timer that continues the task once its usage limit resets. */
     limitTimers: Map<string, ReturnType<typeof setTimeout>>;
-    mcp?: {
-        base: string;
-        key: string;
-    };
+    mcp?: McpBridge;
     warnedNoSeam: boolean;
     /** Set once a session read has thrown, so the line lands one time and not per routed message. */
     warnedNoSessionRead: boolean;

@@ -5,7 +5,7 @@
 import { appendFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import type { AsideEntry, TurnRecord } from "./adapter.js";
 import type { ToolMode } from "./rows-probe.js";
 
@@ -17,7 +17,7 @@ export const CLAUDE_HOME = process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".cl
 export function resolveClaudeHome(dir: string): string {
   if (!dir) return CLAUDE_HOME;
   const expanded = dir.startsWith("~") ? join(homedir(), dir.slice(1)) : dir;
-  return expanded.startsWith("/") ? expanded : join(process.cwd(), expanded);
+  return isAbsolute(expanded) ? expanded : join(process.cwd(), expanded);
 }
 
 // Session state: which Claude sessions this plugin started, so resume does not depend on guessing

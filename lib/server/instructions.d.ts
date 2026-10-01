@@ -10,6 +10,12 @@ export interface InstructionFile {
     importedBy?: string;
 }
 /**
+ * The CLI's managed directory on the box the files are read from, which is also where the managed
+ * settings file sits. This PC's depends on its OS (the three paths are the CLI's own, read off the
+ * 2.1.287 binary). An SSH box is taken to be Linux: nothing asks it what it runs.
+ */
+export declare const managedDir: (box?: FsBox, platform?: string) => string;
+/**
  * The `@` lines the CLI reads as imports. Its own regex, with its own acceptance rules: the `@`
  * has to open the line or follow whitespace (so `you@example.com` is an address, not an import),
  * a `#` ends the path, `\ ` is an escaped space, and the path is a relative, home or absolute one.
@@ -24,7 +30,7 @@ export declare function importsIn(text: string): string[];
  * named by a directory listing that has not happened yet, and an `@` import by a file that has not
  * been read yet, so both are found on the way through.
  */
-export declare const instructionCandidates: (cwd: string, claudeHome: string) => string[];
+export declare const instructionCandidates: (cwd: string, claudeHome: string, managed?: string) => string[];
 /**
  * Whether a listed file may be written back. The list doubles as the write allowlist, and a `@`
  * line puts any absolute path a repo names on it. A cloned `CLAUDE.md` holding

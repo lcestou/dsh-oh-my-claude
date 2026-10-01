@@ -17,6 +17,7 @@ import {
   accessModeOf,
   approvalsDisabled,
   buildArgs,
+  dshToolsGuidance,
   permissionModeFor,
   isStaleResume,
   probeCli,
@@ -424,22 +425,62 @@ assert.ok(
 );
 assert.ok(!chat.join(" ").includes("mcp__dsh__"), "no dsh guidance without the bridge");
 // bridged dsh tools: the system prompt gains the subagent guidance so Claude uses mcp__dsh__*
+/** A bridged tool schema with the named parameters, as far as the guidance reads one. */
+const bridgedTool = (name: string, ...params: string[]) => ({
+  name,
+  description: "",
+  parameters: { type: "object", properties: Object.fromEntries(params.map((p) => [p, {}])) },
+});
 const bridged = buildArgs({
   model: "m",
   system: "sys",
   config,
   session: { id: "u", resuming: false },
-  mcp: { url: "http://x/mcp/u", key: "k" },
+  mcp: {
+    url: "http://x/mcp/u",
+    key: "k",
+    tools: [
+      bridgedTool("subagent", "provider", "model"),
+      bridgedTool("list_subagent_models"),
+      bridgedTool("subagent_fork"),
+      bridgedTool("bash", "run_in_background"),
+      bridgedTool("job_output"),
+      bridgedTool("job_kill"),
+    ],
+  },
 } as any);
 const bridgedSystem = bridged[bridged.indexOf("--append-system-prompt") + 1]!;
 assert.ok(bridgedSystem.startsWith("sys\n\n"), "dsh system prompt comes first");
 assert.ok(bridgedSystem.includes("never the built-in Agent/Task tool"));
 assert.ok(bridgedSystem.includes("mcp__dsh__list_subagent_models"));
+assert.ok(bridgedSystem.includes("mcp__dsh__subagent_fork runs a child too."));
 assert.ok(bridgedSystem.includes("mcp__dsh__bash"), "guidance names the bridged bash tool");
 assert.ok(
   bridgedSystem.includes("run_in_background: true"),
   "guidance tells Claude to use run_in_background on it",
 );
+// The guidance names only the tools the session really has. A Windows session without a
+// model-selection policy: the shell tool is pwsh, `subagent` takes no route, and nothing mentions
+// bash, list_subagent_models or a preset tool that is not there.
+{
+  const windows = dshToolsGuidance([
+    bridgedTool("subagent"),
+    bridgedTool("pwsh", "run_in_background"),
+    bridgedTool("job_output"),
+  ]);
+  assert.ok(windows.includes("`mcp__dsh__pwsh` with `run_in_background: true`"));
+  assert.ok(windows.includes("mcp__dsh__subagent runs a child on the default route."));
+  assert.ok(windows.includes("read output with `mcp__dsh__job_output`."));
+  for (const absent of ["mcp__dsh__bash", "list_subagent_models", "researcher", "job_kill"])
+    assert.ok(!windows.includes(absent), `${absent} is not offered, so it is not named`);
+  assert.ok(!windows.includes("provider"), "no route arguments without a selection policy");
+  // A persistent shell takes no run_in_background, so nothing sends background work to it.
+  const persistent = dshToolsGuidance([bridgedTool("bash"), bridgedTool("open_session")]);
+  assert.ok(!persistent.includes("run_in_background"));
+  assert.ok(!persistent.includes("Agent/Task"), "no subagent tools, no subagent rule");
+  assert.ok(persistent.includes("mcp__dsh__open_session makes a new top-level session"));
+  assert.equal(dshToolsGuidance(), "dsh tools are available as mcp__dsh__* over MCP.");
+}
 const fresh = buildArgs({ model: "m", config, session: { id: "u", resuming: false } } as any);
 assert.deepEqual(fresh.slice(-2), ["--session-id", "u"]);
 const aux = buildArgs({
