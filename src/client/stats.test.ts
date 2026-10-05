@@ -4,7 +4,14 @@ import { costDetails, isStatsRow } from "./index.js";
 /** The smallest node the predicate reads: dsh's row, its children and its class. */
 function el(
   className: string,
-  children: { className?: string; aria?: string; text?: string; pill?: boolean; ours?: boolean }[],
+  children: {
+    className?: string;
+    aria?: string;
+    text?: string;
+    pill?: boolean;
+    ours?: boolean;
+    stat?: boolean;
+  }[],
   text = "",
   attr = "",
 ): HTMLElement {
@@ -18,6 +25,9 @@ function el(
     // answering either query with the separator made every row with a `_sep` look like a pill row.
     querySelector(selector: string) {
       if (!selector.startsWith(":scope > span")) return null;
+      // dsh 0.2.1's marked anchor is asked for by its attribute and nothing else.
+      if (selector.includes("[data-composer-stat]"))
+        return children.some((c) => c.stat === true) ? { textContent: "" } : null;
       if (selector.includes("button")) {
         // `ours` is the plugin's own composer button, which the pill selector excludes by its hook.
         const pill = children.find(
@@ -77,6 +87,8 @@ assert.equal(isStatsRow(el("", [{ text: "", pill: true, ours: true }])), false);
 // The footer that wraps the row holds no pill of its own; appending there is what put the readout
 // outside the row, behind a bar.
 assert.equal(isStatsRow(el("uV2eYG_dock", [{ text: "" }])), false);
+// dsh 0.2.1 in Compact: no row element and no button, only marked anchors in the dock's slot.
+assert.equal(isStatsRow(el("", [{ text: "109 tok/s", stat: true }])), true);
 
 const detached = groups("-NDN2W_sep", "|");
 // SAFETY: same fake node as above; the predicate refuses a row React has already dropped

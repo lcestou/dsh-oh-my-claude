@@ -10,6 +10,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 - The Memory tab says where it looked. An empty list names the directory it read, so a list that is empty because Claude has written nothing can be told from one read from the wrong place. A list that could not be fetched shows the failure instead of reading as empty.
 
+### Fixed
+
+- On dsh 0.2.1 with Performance & usage set to Compact, the cost readout sits with dsh's stats and looks like them. dsh 0.2.1 draws each stat as its own entry in the composer dock, and in Compact the readout landed after the context meter in the meter's style.
+
 ## [1.5.2] - 2026-10-01
 
 dsh: runs on 0.2.0-rc.1 through 0.2.0-rc.2; built and tested on 0.2.0-rc.2.
