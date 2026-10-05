@@ -6291,8 +6291,15 @@ const STATS_PILL = ':scope > span > button[aria-haspopup="dialog"]:not([data-omc
 /** dsh 0.1.7's compact stats draw each stat as a bare `span` pill in the row, with no anchor span
  *  around it and no button; its detailed stats keep the anchor-and-button pair `STATS_PILL` finds.
  *  Its own class is what the cost pill copies there, and the plugin's own node is excluded by the
- *  slot attribute it carries. */
-const STATS_PILL_SPAN = ':scope > span[class*="pill" i]:not([data-omc-cost-slot])';
+ *  slot attribute it carries. dsh 0.2.1 puts the anchor span back around that bare pill and marks
+ *  the anchor `data-composer-stat`, which is the second half of the list. */
+const STATS_PILL_SPAN =
+  ':scope > span[class*="pill" i]:not([data-omc-cost-slot]), :scope > span[data-composer-stat] > span[class*="pill" i]';
+/** One of dsh 0.2.1's stats pills. From that version there is no row element of dsh's own: each
+ *  pill is registered into the composer dock's slot, so the row is whatever holds the marked
+ *  anchors. Without this the Compact pills, which carry no button, went unseen and the dock around
+ *  them answered as the row because the context meter in it has the anchor-and-button shape. */
+const STATS_ANCHOR = ":scope > span[data-composer-stat]";
 
 /**
  * dsh's own stats row, the div the cost line is appended to. dsh builds it in `StatsLine` as a
@@ -6305,6 +6312,7 @@ export const isStatsRow = (el: HTMLElement): boolean => {
   // dsh 0.1.5 draws the row as pills and marks it (`StatsPills`, ui-chat); the shape checks below
   // are for the earlier row of groups with a bar between them.
   if (el.hasAttribute("data-composer-stats")) return true;
+  if (el.querySelector(STATS_ANCHOR)) return true;
   // dsh 0.1.6-alpha.2 draws the same pills and dropped the marker, so the row is recognised by the
   // shape instead: anchor spans holding one popover pill each. Asked for as direct children, which
   // is what keeps the footer that wraps the row from matching too. Appending into that footer is
@@ -6583,6 +6591,9 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
           -1,
         );
         if (marked?.isConnected) return marked;
+        // dsh 0.2.1 marks each pill instead of the row; the row is the last marked pill's parent.
+        const anchored = [...root.querySelectorAll<HTMLElement>("span[data-composer-stat]")].at(-1);
+        if (anchored?.parentElement) return anchored.parentElement;
         const divs = [...root.querySelectorAll<HTMLDivElement>("div")];
         // A div holding dsh's own pills is the row itself; the containers around it can pass the
         // looser shape test, and appending into one of those is how the readout ended up beside
@@ -6634,7 +6645,9 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
       const protoSpan = proto === null ? statsRow.querySelector(STATS_PILL_SPAN) : null;
       if (proto?.parentElement || protoSpan) {
         pad = "";
-        inline.className = proto?.parentElement?.className ?? "";
+        // A bare 0.1.7 pill sits in the row itself and has no anchor to copy; 0.2.1's has one.
+        const anchor = (proto ?? protoSpan)?.parentElement;
+        inline.className = anchor && anchor !== statsRow ? anchor.className : "";
         trigger = document.createElement("button");
         trigger.type = "button";
         trigger.className = (proto ?? protoSpan)?.className ?? "";
