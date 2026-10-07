@@ -1652,7 +1652,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * Start a newly spawned, resumed process from the totals the CLI reads back: the transcript's
      * last `cost-state` row (see `costStateOf`). Until that is read, and on an SSH box always, the
      * last recorded turn's totals stand in, which is the same figure whenever the previous process
-     * exited cleanly. Never throws, and leaves a process alone once it has reported a result.
+     * exited cleanly. Never throws. The caller awaits it before the process is handed a prompt.
      */
     private seedTotals;
     /** Where a session's Claude transcript is: on this box under `claudeHome`, or on the SSH box the
