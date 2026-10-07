@@ -1384,15 +1384,31 @@ const userMessageOf = (e: { data: Record<string, JsonValue> }) => ({
 /** The text of a folded turn's prompt, rendered the way a stored user message renders. */
 const promptTextOf = (t: FoldedTurn): string => assistantMessageText(t.content);
 
-/** Whether a transcript prompt is one the stored log already holds. Exact text, or the stored text
- *  followed by a blank line: the adapter sends a typed prompt to the CLI with dsh's context blocks
- *  appended after `\n\n` (the runtime snapshot, instructions, the skill catalog), so the
- *  transcript's row carries the composite while dsh stores the person's text alone (measured
- *  2026-09-23: 542 characters against 150 for the same prompt). A short stored text can shadow a
- *  later prompt that begins with it and a blank line; that reads as stored, the safe side. */
-const storedHolds = (texts: ReadonlySet<string>, prompt: string): boolean => {
-  if (texts.has(prompt)) return true;
-  for (const t of texts) if (t !== "" && prompt.startsWith(t + "\n\n")) return true;
+/** A prompt's text with each run of spaces and tabs as one space and no space at either end of a
+ *  line, so the same words compare equal however the CLI and dsh each spaced them. */
+const spaced = (text: string): string =>
+  text
+    .replace(/[ \t]+/g, " ")
+    .replace(/ ?\n ?/g, "\n")
+    .trim();
+
+/** Whether a transcript prompt is one the stored log already holds: the stored text, alone or
+ *  followed by a line break. The adapter sends a typed prompt to the CLI with more after it that
+ *  dsh does not store: its context blocks after a blank line (the runtime snapshot, instructions,
+ *  the skill catalog; measured 2026-09-23: 542 characters against 150 for the same prompt), and an
+ *  attached file's handle on the very next line. Spacing is not compared: dsh stores what was typed,
+ *  trailing space and all, and the CLI trims a slash command's args. Measured 2026-10-07 over 551
+ *  stored logs with the exact comparison this replaces: 84 of 139 slash-command prompts and every
+ *  prompt with an attachment read as missing, and would have been appended a second time. A short
+ *  stored text can shadow a later prompt that begins with it and a line break; that reads as stored,
+ *  the safe side. Narrowing it to a blank line or a file handle was tried and put back the same day:
+ *  an attached image (`[image]`) and a subagent's finish notice also follow on the next line, and
+ *  twelve stored prompts in those 551 logs read as missing again.
+ *  @param texts stored user texts, each already through `spaced` */
+export const storedHolds = (texts: ReadonlySet<string>, prompt: string): boolean => {
+  const p = spaced(prompt);
+  if (texts.has(p)) return true;
+  for (const t of texts) if (t !== "" && p.startsWith(t + "\n")) return true;
   return false;
 };
 
@@ -1439,7 +1455,7 @@ async function foldTranscriptDelta(
       if (e.type !== "user/message") continue;
       const m = userMessageOf(e);
       if (m.id) ids.add(m.id);
-      if (m.text) texts.add(m.text);
+      if (m.text) texts.add(spaced(m.text));
     }
     if (openTurn) {
       await trace(`fold ${dshId}: tail turn ${lastTurn} open, skipped`);
@@ -1447,11 +1463,6 @@ async function foldTranscriptDelta(
     }
     const fresh = folded.turns.filter((t) => {
       const text = promptTextOf(t);
-      // ponytail: a command turn is never caught up here. dsh stores a typed `/skill` under its own
-      // id and its own text, and whether that text matches the one rebuilt from the CLI's markup
-      // has not been measured; a miss would append a turn the log already holds. Compare them when
-      // a terminal-run command missing from a reopened session matters.
-      if (t.command) return false;
       return !ids.has(t.id) && !CLI_ECHO.test(text) && !storedHolds(texts, text);
     });
     if (fresh.length === 0) return 0;

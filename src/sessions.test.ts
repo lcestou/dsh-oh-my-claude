@@ -21,6 +21,7 @@ import {
   isSettingsScope,
   SETTINGS_SCOPES,
   SSH_TRANSCRIPT_LISTER,
+  storedHolds,
   readHints,
 } from "./sessions.js";
 import { projectDirName } from "./adapter.js";
@@ -2499,6 +2500,36 @@ console.log("sessions ok");
     ]),
   );
   assert.equal(r.out.turnsAdded, 1, "only the genuinely new prompt folds");
+  // A slash command typed at a terminal after the session was stored is caught up like a prompt.
+  const withCommand = transcript(3);
+  // SAFETY: transcript(3) builds six rows; index 4 is the third prompt
+  (withCommand[4] as { message: { content: unknown } }).message.content =
+    "<command-message>ship</command-message>\n<command-name>/ship</command-name>\n<command-args>no restart</command-args>";
+  r = await run(withCommand);
+  assert.equal(r.out.turnsAdded, 1, "a command turn the log lacks folds");
+  assert.equal(
+    JSON.stringify(r.appended.find((e) => e.type === "user/message")?.data).includes(
+      "/ship no restart",
+    ),
+    true,
+  );
+  // What dsh stored against what the CLI's transcript holds for the same message. Each pair below
+  // was read off a real log and its transcript; the comparison before this one called all but the
+  // first two missing and would have appended them a second time.
+  const held = (storedText: string, prompt: string) =>
+    storedHolds(new Set([storedText.replace(/[ \t]+/g, " ").trim()]), prompt);
+  assert.ok(held("fix it", "fix it"));
+  assert.ok(held("fix it", "fix it\n\nCurrent runtime context. x"));
+  assert.ok(held("/ship what else we got banked ", "/ship what else we got banked"));
+  assert.ok(held("/lwm-raisedonors  its been awhile", "/lwm-raisedonors its been awhile"));
+  assert.ok(
+    held("/sachmc subject line ", '/sachmc subject line\n[File "a.html" (1 bytes, sha256:x)'),
+  );
+  assert.ok(held("see attached", 'see attached\n[File "a.docx" (1 bytes, sha256:x)'));
+  assert.equal(held("fix it", "fix it now"), false, "a longer prompt on the same line is new");
+  assert.ok(held("resize this to 150px", "resize this to 150px\n[image]"));
+  assert.equal(held("fix it", "please fix it"), false);
+  assert.equal(storedHolds(new Set([""]), "anything"), false);
   console.log("fold-delta ok");
 }
 
