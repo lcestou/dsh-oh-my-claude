@@ -8,11 +8,14 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Changed
 
+- The Restore tab leaves out sessions that hold only commands Claude Code answers by itself, such as `/usage` or `/model`, with no conversation. Opening one failed, since there was nothing to restore.
 - The Memory tab says where it looked. An empty list names the directory it read, so a list that is empty because Claude has written nothing can be told from one read from the wrong place. A list that could not be fetched shows the failure instead of reading as empty.
 
 ### Fixed
 
 - A session that began with a slash command or a skill has a title in the Restore tab: the command and what was typed after it, as in `/design-pass A Skills tab in the panel`. It used to list as Untitled with an id, because the command is not stored as a typed prompt.
+- Restoring a session that began with a slash command or a skill brings back its opening message, `/skill` and the words typed after it. The restored chat used to start at Claude's reply.
+- A title in the Restore tab shows an attached file by its name, where it used to show the opening words of the note dsh sends Claude about the file. A session interrupted before its first prompt is no longer titled `[Request interrupted by user]`.
 
 - On dsh 0.2.1 with Performance & usage set to Compact, the cost readout sits with dsh's stats and looks like them. dsh 0.2.1 draws each stat as its own entry in the composer dock, and in Compact the readout landed after the context meter in the meter's style.
 

@@ -89,6 +89,9 @@ export const typedPrompt = (text: string): string => {
   return typed === "" ? text.trim() : typed;
 };
 
+/** The CLI's own user rows that no person typed: the echo it writes when a turn is interrupted. */
+export const CLI_ECHO = /^\[Request interrupted by user/;
+
 /** Injected material Claude Code stores as user lines: slash-command echoes, hook output, reminders. */
 const isNoise = (text: string) => /^\s*<(command-|local-command|system-reminder)/.test(text);
 
@@ -109,13 +112,19 @@ export function truncateBytes(text: string, max: number): string {
   return buf.toString("utf8", 0, end);
 }
 
+/** dsh's handle for an attached file up to the end of its line, capturing the quoted name. The
+ *  handle goes on for some 400 characters of size, hash, path and instructions to Claude. */
+const FILE_HANDLE_LINE = /\[File "((?:[^"\\]|\\.)*)" \(\d+ bytes[^\n]*/g;
+
 /** A session title from a prompt: its first line with system reminders removed and whitespace
- *  collapsed, cut to TITLE_BYTES. */
+ *  collapsed, cut to TITLE_BYTES. An attached file's handle is cut down to the file's name, so a
+ *  prompt that is only an attachment reads `report.html`, not the handle's opening words. */
 const titleFrom = (text: string): string =>
   truncateBytes(
     (
       text
         .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "")
+        .replace(FILE_HANDLE_LINE, "$1")
         .trim()
         .split("\n")[0] ?? ""
     ).replace(/\s+/g, " "),
@@ -132,13 +141,34 @@ const titleFrom = (text: string): string =>
  * for one.
  */
 export const commandTitle = (text: string): string => {
+  const cmd = commandOf(text);
+  if (!cmd) return "";
+  const args = cmd.args.replace(/(?:^|\n\n)Current runtime context\.[\s\S]*$/, "");
+  return titleFrom(`${cmd.name} ${titleFrom(args)}`.trim());
+};
+
+/** The command name and raw args out of the markup the CLI stores a slash command as, or undefined
+ *  for text with no command name in it (a `<local-command-stdout>` echo, a system reminder). */
+const commandOf = (text: string): { name: string; args: string } | undefined => {
   const name = /<command-name>\s*([^<\s]+)\s*<\/command-name>/.exec(text)?.[1];
-  if (!name) return "";
-  const args = (/<command-args>([\s\S]*?)<\/command-args>/.exec(text)?.[1] ?? "").replace(
-    /(?:^|\n\n)Current runtime context\.[\s\S]*$/,
-    "",
-  );
-  return titleFrom(`${name} ${titleFrom(args)}`.trim());
+  if (!name) return undefined;
+  return { name, args: /<command-args>([\s\S]*?)<\/command-args>/.exec(text)?.[1] ?? "" };
+};
+
+/**
+ * A slash command as the person sent it, `/skill what they typed`, from the CLI's markup: the
+ * bubble a restored session shows for it. dsh's context block inside the args is kept and set off
+ * by a blank line, the shape every other restored prompt has, so the bubble reads like its
+ * neighbours and matches dsh's stored text the way `storedHolds` compares. Undefined for text that
+ * names no command.
+ */
+const commandPrompt = (text: string): string | undefined => {
+  const cmd = commandOf(text);
+  if (!cmd) return undefined;
+  if (cmd.args === "") return cmd.name;
+  return cmd.args.startsWith("Current runtime context.")
+    ? `${cmd.name}\n\n${cmd.args}`
+    : `${cmd.name} ${cmd.args}`;
 };
 
 /** One-shots older plugin versions ran inside the workspace dir (titles now run from a scratch dir). */
@@ -207,6 +237,11 @@ interface Scan {
   title: string;
   /** `commandTitle` of the first slash command seen, used only when no typed prompt gave a title. */
   command: string;
+  /** An assistant row was seen. A session of commands the CLI answered on its own (`/usage`,
+   *  `/model`) has none, and nothing in it to restore. */
+  answered: boolean;
+  /** A prompt that is not an injection was seen, answered or not. */
+  typed: boolean;
   summary?: string;
   cwd?: string;
 }
@@ -233,20 +268,36 @@ export async function listTranscripts(
   // unbounded map would multiply that into hundreds of open descriptors for no extra speed.
   /** What a listing needs from the head of one transcript. */
   const scan = (lines: string[], fallbackTime: number): Scan => {
-    const found: Scan = { turns: 0, createdAt: fallbackTime, title: "", command: "" };
+    const found: Scan = {
+      turns: 0,
+      createdAt: fallbackTime,
+      title: "",
+      command: "",
+      answered: false,
+      typed: false,
+    };
     for (const line of lines) {
       const rec = parseLine(line);
       if (!rec) continue;
       if (found.cwd === undefined && typeof rec.cwd === "string") found.cwd = rec.cwd;
       if (rec.type === "summary" && typeof rec.summary === "string") found.summary = rec.summary;
+      if (rec.type === "assistant" && !rec.isSidechain) found.answered = true;
       if (rec.type !== "user" || rec.isSidechain || rec.isMeta || isSystemPrompt(rec)) continue;
       const text = promptText(isRec(rec.message) ? rec.message.content : undefined);
       if (!text) continue;
       if (found.turns === 0 && isAuxPrompt(text)) break;
       found.turns += 1;
       if (found.turns === 1) found.createdAt = timeOf(rec, found.createdAt);
-      if (!found.title && !isNoise(text)) found.title = titleFrom(text);
-      found.command ||= commandTitle(text);
+      const noise = isNoise(text);
+      if (!noise) found.typed = true;
+      if (found.title) continue;
+      // The first thing a person wrote names the session: a prompt, or a command with words after
+      // it. A bare `/skill` says less than the prompt that follows it, so it waits as a fallback,
+      // and the CLI's interrupt echo is nobody's words at all.
+      const cmd = commandTitle(text);
+      if (cmd.includes(" ")) found.title = cmd;
+      else if (cmd) found.command ||= cmd;
+      else if (!noise && !CLI_ECHO.test(text)) found.title = titleFrom(text);
     }
     return found;
   };
@@ -269,6 +320,10 @@ export async function listTranscripts(
       found = scan(head.lines, info.mtimeMs);
     }
     if (found.turns === 0) return undefined;
+    // Commands only and no reply anywhere in a file read whole: `/usage` and nothing else. Opening
+    // one fails with "no completed turn", so the row was a dead end. A capped head proves nothing
+    // about the rest of the file, and a typed prompt still waiting for its answer stays listed.
+    if (!found.typed && !found.summary && !found.answered && !head.partial) return undefined;
     const item: TranscriptListItem = {
       id,
       title: found.summary ?? (found.title || found.command),
@@ -385,6 +440,8 @@ export interface FoldedTurn {
   time: number;
   content: Array<{ type: "text"; text: string }>;
   steps: FoldedStep[];
+  /** The prompt was a slash command, rebuilt from the CLI's markup by `commandPrompt`. */
+  command?: true;
 }
 
 export interface FoldedTranscript {
@@ -442,8 +499,9 @@ const deliveredAsPrompt = (text: string): Set<string> => {
   return out;
 };
 
-/** Folds raw transcript lines into turns, dropping injected noise (slash-command echoes, hook
- *  output) but never a message the CLI removed: it keeps such a line and folds it at its own prompt
+/** Folds raw transcript lines into turns, dropping injected noise (hook output, reminders, the
+ *  stdout of a command the CLI ran itself) and turning a slash command into the prompt a person
+ *  sent, but never dropping a message the CLI removed: it keeps such a line and folds it at its own prompt
  *  arrival rather than showing a retraction. */
 export function foldTranscript(text: string): FoldedTranscript {
   const turns: FoldedTurn[] = [];
@@ -526,12 +584,32 @@ export function foldTranscript(text: string): FoldedTranscript {
       // before `close()`, so an injection between a prompt and its answer does not end the turn.
       if (isNoise(plain)) {
         command ||= commandTitle(plain);
+        // A slash command is the one injection a person typed, and what Claude says next answers
+        // it. Dropping it left a session begun with a skill without its opening bubble, and with it
+        // the words typed after the skill's name. It opens a turn like a prompt, but never over a
+        // prompt still waiting for its answer, which would be dropped in its favour. A command the
+        // CLI answers by itself (`/model`) gets no step and `close()` drops it again.
+        const sent = cur === undefined || cur.steps.length > 0 ? commandPrompt(plain) : undefined;
+        if (sent === undefined) continue;
+        close();
+        const sentAt = timeOf(rec, Date.now());
+        createdAt ??= sentAt;
+        // Same order as the listing: a command with words after it names the session.
+        const named = commandTitle(plain);
+        if (!title && named.includes(" ")) title = named;
+        cur = {
+          id: typeof rec.uuid === "string" ? rec.uuid : `c${turns.length}`,
+          time: sentAt,
+          content: [{ type: "text", text: sent }],
+          steps: [],
+          command: true,
+        };
         continue;
       }
       close();
       const time = timeOf(rec, Date.now());
       createdAt ??= time;
-      if (!title) title = titleFrom(plain);
+      if (!title && !CLI_ECHO.test(plain)) title = titleFrom(plain);
       cur = {
         id: typeof rec.uuid === "string" ? rec.uuid : `u${turns.length}`,
         time,

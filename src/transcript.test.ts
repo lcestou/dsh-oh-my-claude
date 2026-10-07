@@ -1,6 +1,7 @@
 // Offline check for the Claude Code transcript → dsh events conversion.
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { serverText } from "./locale.js";
@@ -19,6 +20,7 @@ import {
   typedPrompt,
 } from "./transcript.js";
 import {
+  SSH_TRANSCRIPT_LISTER,
   authFromStatus,
   dshSessionsFor,
   parseSettingsText,
@@ -1044,21 +1046,100 @@ assert.equal(
 );
 assert.equal(commandTitle("<local-command-stdout>Set model</local-command-stdout>"), "");
 {
-  const dir = await mkdtemp(join(tmpdir(), "omc-cmd-title-"));
-  const user = (content: string) =>
-    line({ type: "user", cwd: "/p", message: { role: "user", content } });
-  await writeFile(
-    join(dir, "11111111-1111-4111-8111-111111111111.jsonl"),
-    user(cmdRow("/afmdamc", "September Email #4")),
+  // One fake home, read by the local lister and by the script an SSH box runs: the script is a
+  // string nothing type-checks, so the same files going through both is what keeps them agreeing.
+  const home = await mkdtemp(join(tmpdir(), "omc-cmd-title-"));
+  const dir = join(home, ".claude", "projects", "-p");
+  await mkdir(dir, { recursive: true });
+  const user = (content: string, extra: object = {}) =>
+    line({ type: "user", cwd: "/p", message: { role: "user", content }, ...extra });
+  const reply = (id: string, text: string) =>
+    line({
+      type: "assistant",
+      message: {
+        id,
+        role: "assistant",
+        stop_reason: "end_turn",
+        content: [{ type: "text", text }],
+      },
+    });
+  const HANDLE =
+    '[File "CERN - December.html" (45539 bytes, sha256:3942c663): verbatim read-only copy saved at "/x/CERN - December.html". Read that path with your file tools when its contents are needed.]';
+  const files: Record<string, [title: string | undefined, rows: string[]]> = {
+    "11111111-1111-4111-8111-111111111111": [
+      "/afmdamc September Email #4",
+      [user(cmdRow("/afmdamc", "September Email #4")), reply("m1", "done")],
+    ],
+    "22222222-2222-4222-8222-222222222222": [
+      "fix the widget",
+      [user(cmdRow("/model", "")), user("fix the widget"), reply("m2", "fixed")],
+    ],
+    // A command with words after it comes first, so it names the session, not the later prompt.
+    "33333333-3333-4333-8333-333333333333": [
+      "/design-pass a skills tab",
+      [user(cmdRow("/design-pass", "a skills tab")), reply("m3", "plan"), user("go on")],
+    ],
+    "44444444-4444-4444-8444-444444444444": [
+      "/cernmc CERN - December.html",
+      [user(cmdRow("/cernmc", HANDLE)), reply("m4", "ok")],
+    ],
+    "55555555-5555-4555-8555-555555555555": [
+      "/llama",
+      [user(cmdRow("/llama", RUNTIME)), user("[Request interrupted by user]"), reply("m5", "x")],
+    ],
+    // Commands the CLI answered by itself and nothing else: no row, there is nothing to restore.
+    "66666666-6666-4666-8666-666666666666": [
+      undefined,
+      [user(cmdRow("/usage", "")), user("<local-command-stdout>42%</local-command-stdout>")],
+    ],
+    // A typed prompt still waiting for its answer stays listed.
+    "77777777-7777-4777-8777-777777777777": ["still waiting", [user("still waiting")]],
+  };
+  for (const [id, [, rows]] of Object.entries(files))
+    await writeFile(join(dir, `${id}.jsonl`), rows.join("\n") + "\n");
+  const want = Object.fromEntries(
+    Object.entries(files).flatMap(([id, [title]]) => (title === undefined ? [] : [[id, title]])),
   );
-  await writeFile(
-    join(dir, "22222222-2222-4222-8222-222222222222.jsonl"),
-    `${user(cmdRow("/model", ""))}\n${user("fix the widget")}\n`,
-  );
-  const titles = (await listTranscripts(dir)).map((r) => r.title).toSorted();
+  const local = Object.fromEntries((await listTranscripts(dir)).map((r) => [r.id, r.title]));
+  assert.deepEqual(local, want, "local lister");
+  // SAFETY: the script writes `JSON.stringify` of the rows it built.
+  const remote = JSON.parse(
+    execFileSync(process.execPath, ["-e", SSH_TRANSCRIPT_LISTER], {
+      env: { ...process.env, HOME: home },
+    }).toString(),
+  ) as Array<{ id: string; title: string }>;
+  assert.deepEqual(Object.fromEntries(remote.map((r) => [r.id, r.title])), want, "ssh lister");
+
+  // The fold gives a command the bubble a person would have seen themselves send.
+  const read = async (id: string) =>
+    foldTranscript(await readFile(join(dir, `${id}.jsonl`), "utf8"));
+  const skill = await read("33333333-3333-4333-8333-333333333333");
   assert.deepEqual(
-    titles,
-    ["/afmdamc September Email #4", "fix the widget"],
-    "a typed prompt still wins",
+    skill.turns.map((t) => [t.content[0]?.text, t.command, t.steps.length]),
+    [["/design-pass a skills tab", true, 1]],
+    "the command opens a turn; the unanswered prompt after it is dropped as before",
+  );
+  assert.equal(skill.title, "/design-pass a skills tab");
+  const bare = await read("55555555-5555-4555-8555-555555555555");
+  assert.equal(bare.title, "/llama", "the interrupt echo is not a title");
+  assert.equal(
+    (await read("22222222-2222-4222-8222-222222222222")).turns.length,
+    1,
+    "a command the CLI answered itself gets no turn",
+  );
+  assert.equal((await read("66666666-6666-4666-8666-666666666666")).turns.length, 0);
+  // No typed args: dsh's context block is the whole args, and is set off the way a prompt's is.
+  assert.equal(
+    foldTranscript([user(cmdRow("/llama", RUNTIME)), reply("m6", "ok")].join("\n")).turns[0]
+      ?.content[0]?.text,
+    `/llama\n\n${RUNTIME}`,
+  );
+  // A command row landing on a prompt that has no answer yet must not take the answer from it.
+  const mid = foldTranscript(
+    [user("real question"), user(cmdRow("/x", "y")), reply("m7", "answer")].join("\n"),
+  );
+  assert.deepEqual(
+    mid.turns.map((t) => t.content[0]?.text),
+    ["real question"],
   );
 }
