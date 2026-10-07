@@ -490,6 +490,12 @@ export async function loadTurnRecords(dir: string): Promise<Map<string, TurnReco
           // ttftMs is optional and absent from older files; carry it only when it was written.
           const ttftMs = num("ttftMs");
           if (ttftMs !== undefined) record.ttftMs = ttftMs;
+          const costTotal = num("costTotal");
+          const apiTotal = num("apiTotal");
+          if (costTotal !== undefined && apiTotal !== undefined) {
+            record.costTotal = costTotal;
+            record.apiTotal = apiTotal;
+          }
           records.push(record);
         }
         if (records.length > 0) map.set(k, records);

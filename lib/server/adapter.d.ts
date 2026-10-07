@@ -758,6 +758,10 @@ export interface TurnRecord {
     denials?: string[];
     /** Wall-clock ms from the prompt write to the first stream chunk; absent when not measured. */
     ttftMs?: number;
+    /** The CLI's running totals as this turn's result reported them, kept so a handle attached to
+     *  the same process after a dsh restart knows where to count from. Absent on older records. */
+    costTotal?: number;
+    apiTotal?: number;
 }
 /** The slice of a Claude process the idle watchdog needs. */
 export interface IdleTarget {
@@ -1637,6 +1641,20 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
         prep: TurnPrep;
         proc: ClaudeProcess;
     }>;
+    /**
+     * Start a handle on a CLI process that is already running from the totals its last recorded turn
+     * reported. The process kept counting while dsh restarted; a handle that starts from zero reads
+     * its next result, the session so far, as one turn. A session with turns on record but none
+     * carrying totals (written before they were kept) is marked unknown instead.
+     */
+    private carryTotals;
+    /**
+     * Start a newly spawned, resumed process from the totals the CLI reads back: the transcript's
+     * last `cost-state` row (see `costStateOf`). Until that is read, and on an SSH box always, the
+     * last recorded turn's totals stand in, which is the same figure whenever the previous process
+     * exited cleanly. Never throws, and leaves a process alone once it has reported a result.
+     */
+    private seedTotals;
     /** Where a session's Claude transcript is: on this box under `claudeHome`, or on the SSH box the
      *  turn runs on under that account's `~/.claude`, at the cwd the box really uses. Undefined
      *  without a Claude id or when the box's home cannot be read. */

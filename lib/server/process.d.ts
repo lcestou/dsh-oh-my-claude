@@ -386,6 +386,21 @@ export declare function decodeRewindResult(v: JsonValue | undefined): RewindResu
  * running total so far, so read the latest result rather than summing across results.
  */
 export declare const turnDelta: (total: number, soFar: number) => number;
+/** The CLI's running totals for a session: what `total_cost_usd` and `duration_api_ms` stood at. */
+export interface RunningTotals {
+    costUsd: number;
+    apiMs: number;
+}
+/**
+ * The totals a resumed CLI process starts counting from: the last `cost-state` row of the session's
+ * transcript. The CLI writes one when a process exits and reads it back on `--resume`, so its
+ * totals carry on across processes instead of starting at zero, and the first result of a new
+ * process reports the whole session so far. Read as a turn's own share, that put $580.71 on one
+ * turn of a session whose total had been $569.46 at the last exit (2026-10-07; 914 of 2,934
+ * stored turns carried a total this way). Undefined for a transcript with no such row, where the
+ * CLI starts from zero too; a row that does not parse is skipped for the one before it.
+ */
+export declare const costStateOf: (transcript: string) => RunningTotals | undefined;
 /** What a breakdown row is. The CLI's own words for the field: "'used' content occupies the window;
  *  'free' is the remaining window; 'buffer' is the compaction reserve; 'deferred' rows are
  *  out-of-window tool schemas. Classify on this, never on the English name." Absent from a CLI
@@ -782,6 +797,9 @@ export declare class ClaudeProcess {
      *  totals restart with the process. */
     costSoFar: number;
     apiMsSoFar: number;
+    /** This handle was attached to a CLI process that was already running and nothing recorded
+     *  where its totals stood, so its first result cannot be split into a turn's own share. */
+    totalsUnknown: boolean;
     /** The model whose context window was last asked for, as `spec.model ?? ""`. A session started on
      *  the mount's default model names no model at all, so "asked" cannot be read off the bank alone. */
     windowAskedFor?: string;
