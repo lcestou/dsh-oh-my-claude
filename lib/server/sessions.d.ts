@@ -305,6 +305,18 @@ interface Opened {
 }
 /** The host services the routes read; injected before the route mounts. */
 type RouteHost = Required<Pick<PluginContext, "webServer" | "connection" | "sessions" | "sessionPersistence">>;
+/** Whether a transcript prompt is one the stored log already holds: the stored text, alone or
+ *  followed by a line break. The adapter sends a typed prompt to the CLI with more after it that
+ *  dsh does not store: its context blocks after a blank line (the runtime snapshot, instructions,
+ *  the skill catalog; measured 2026-09-23: 542 characters against 150 for the same prompt), and an
+ *  attached file's handle on the very next line. Spacing is not compared: dsh stores what was typed,
+ *  trailing space and all, and the CLI trims a slash command's args. Measured 2026-10-07 over 551
+ *  stored logs with the exact comparison this replaces: 84 of 139 slash-command prompts and every
+ *  prompt with an attachment read as missing, and would have been appended a second time. A short
+ *  stored text can shadow a later prompt that begins with it and a line break; that reads as stored,
+ *  the safe side.
+ *  @param texts stored user texts, each already through `spaced` */
+export declare const storedHolds: (texts: ReadonlySet<string>, prompt: string) => boolean;
 /** The model a restored transcript should open on, and the mount that serves it; undefined
  *  fields leave dsh's own fallback in place. */
 type PickSettings = (folded: FoldedTranscript) => Promise<{

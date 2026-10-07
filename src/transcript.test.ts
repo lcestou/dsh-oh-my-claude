@@ -1134,6 +1134,12 @@ assert.equal(commandTitle("<local-command-stdout>Set model</local-command-stdout
       ?.content[0]?.text,
     `/llama\n\n${RUNTIME}`,
   );
+  // A bare command sent with a file: dsh put the handle on the next line, and so does the bubble.
+  assert.equal(
+    foldTranscript([user(cmdRow("/cernmc", HANDLE)), reply("m8", "ok")].join("\n")).turns[0]
+      ?.content[0]?.text,
+    `/cernmc\n${HANDLE}`,
+  );
   // A command row landing on a prompt that has no answer yet must not take the answer from it.
   const mid = foldTranscript(
     [user("real question"), user(cmdRow("/x", "y")), reply("m7", "answer")].join("\n"),
