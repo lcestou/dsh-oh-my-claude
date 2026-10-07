@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { serverText } from "./locale.js";
 import {
   attachSubagents,
+  commandTitle,
   foldTranscript,
   lastModelOf,
   listTranscripts,
@@ -1028,3 +1029,36 @@ assert.equal(
   "Current runtime context.\nexplain it",
   "a prompt that starts with the words keeps them",
 );
+
+// A session that opens on a slash command has no typed prompt in its head: the CLI stores the
+// command as markup, with dsh's runtime-context block inside the args. It listed as "Untitled".
+const cmdRow = (name: string, args: string) =>
+  `<command-message>${name.slice(1)}</command-message>\n<command-name>${name}</command-name>\n<command-args>${args}</command-args>`;
+const RUNTIME =
+  "Current runtime context. This snapshot supersedes earlier ones.\n\nCurrent DSH file policy: x";
+assert.equal(commandTitle(cmdRow("/usage", "")), "/usage");
+assert.equal(commandTitle(cmdRow("/llama", RUNTIME)), "/llama", "runtime context alone is no args");
+assert.equal(
+  commandTitle(cmdRow("/ic-logos", `what file\nsecond line\n\n${RUNTIME}`)),
+  "/ic-logos what file",
+);
+assert.equal(commandTitle("<local-command-stdout>Set model</local-command-stdout>"), "");
+{
+  const dir = await mkdtemp(join(tmpdir(), "omc-cmd-title-"));
+  const user = (content: string) =>
+    line({ type: "user", cwd: "/p", message: { role: "user", content } });
+  await writeFile(
+    join(dir, "11111111-1111-4111-8111-111111111111.jsonl"),
+    user(cmdRow("/afmdamc", "September Email #4")),
+  );
+  await writeFile(
+    join(dir, "22222222-2222-4222-8222-222222222222.jsonl"),
+    `${user(cmdRow("/model", ""))}\n${user("fix the widget")}\n`,
+  );
+  const titles = (await listTranscripts(dir)).map((r) => r.title).toSorted();
+  assert.deepEqual(
+    titles,
+    ["/afmdamc September Email #4", "fix the widget"],
+    "a typed prompt still wins",
+  );
+}

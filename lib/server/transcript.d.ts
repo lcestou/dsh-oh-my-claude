@@ -16,6 +16,16 @@ export declare const typedPrompt: (text: string) => string;
  * of its 1.35 s here.
  */
 export declare function truncateBytes(text: string, max: number): string;
+/**
+ * A title for a session that opened on a slash command or a skill: the command and what was typed
+ * after it, `/design-pass A Skills tab in the panel`. The CLI stores that opening prompt as
+ * `<command-name>` markup, which `isNoise` rightly keeps out of the turns, so a session whose
+ * only prompts in the head are commands had no title at all and listed as "Untitled" plus an id.
+ * dsh's runtime-context block lands inside the args (it is the whole args when nothing was typed)
+ * and is cut. Returns "" for text that carries no command name, a `<local-command-stdout>` echo
+ * for one.
+ */
+export declare const commandTitle: (text: string) => string;
 /** One transcript in a listing: what the session browser shows before opening it. */
 export interface TranscriptListItem {
     id: string;
