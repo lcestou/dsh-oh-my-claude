@@ -4501,6 +4501,10 @@ console.log("keeper-mode ok");
   const spec: ClaudeProcessSpec = { ...emptySpec, cwd: "/w", model: "sonnet", mode: "default" };
   const written: string[] = [];
   let answer: "success" | "error" = "success";
+  // What the fake CLI says its effort is. A real one answers `success` to a level it does not
+  // know and stays where it was, so the fake only moves while it is told to honour the request.
+  let cliEffort: string | null = null;
+  let honour = true;
   const proc: any = {
     alive: true,
     busy: false,
@@ -4510,6 +4514,8 @@ console.log("keeper-mode ok");
     write(line: string) {
       written.push(line);
       const req = JSON.parse(line);
+      if (req.request.subtype === "apply_flag_settings" && answer === "success" && honour)
+        cliEffort = req.request.settings.effortLevel;
       setTimeout(() => {
         proc.controlListener({
           type: "control_response",
@@ -4517,7 +4523,14 @@ console.log("keeper-mode ok");
           response: {
             subtype: answer,
             request_id: req.request_id,
-            ...(answer === "error" ? { error: "nope" } : { response: {} }),
+            ...(answer === "error"
+              ? { error: "nope" }
+              : {
+                  response:
+                    req.request.subtype === "get_settings"
+                      ? { applied: { effort: cliEffort } }
+                      : {},
+                }),
           },
         });
       }, 0);
@@ -4533,7 +4546,34 @@ console.log("keeper-mode ok");
   const moved = { ...opus, cwd: "/elsewhere" };
   assert.equal(await adapter.retarget(proc, moved), false, "cwd change is not live");
   assert.equal(written.length, 1, "no request sent for a non-model change");
+  // An effort-only change is live too, and is believed only once the CLI reads it back.
+  const subtypes = () => written.splice(0).map((l) => JSON.parse(l).request.subtype);
+  written.length = 0;
+  const high = { ...opus, effort: "high" };
+  assert.equal(await adapter.retarget(proc, high), true, "effort-only change is live");
+  assert.deepEqual(subtypes(), ["apply_flag_settings", "get_settings"], "no set_model for it");
+  assert.equal(proc.spec.effort, "high");
+  const both = { ...high, model: "sonnet", effort: "low" };
+  assert.equal(await adapter.retarget(proc, both), true, "model and effort together");
+  assert.deepEqual(subtypes(), ["set_model", "apply_flag_settings", "get_settings"]);
+  assert.equal(proc.key, JSON.stringify(both));
+  honour = false;
+  assert.equal(
+    await adapter.retarget(proc, { ...both, effort: "bogus" }),
+    false,
+    "a level the CLI acknowledged but did not take is not live",
+  );
+  assert.equal(proc.spec.effort, "low", "spec unchanged when the read-back disagrees");
+  honour = true;
+  assert.equal(await adapter.retarget(proc, { ...both, effort: null }), true, "clearing is live");
+  written.length = 0;
+  Object.assign(proc, { spec: opus, key: JSON.stringify(opus) });
   answer = "error";
+  assert.equal(
+    await adapter.retarget(proc, high),
+    false,
+    "a CLI without the request reports false and is respawned",
+  );
   const haiku = { ...opus, model: "haiku" };
   assert.equal(await adapter.retarget(proc, haiku), false, "refused request reports false");
   assert.equal(proc.key, JSON.stringify(opus), "key unchanged after a refusal");

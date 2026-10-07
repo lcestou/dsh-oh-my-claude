@@ -1260,12 +1260,19 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      */
     restorePermissionMode(sessionId: string, mode: string): Promise<void>;
     /**
-     * A spec that differs from the live process only by model is switched in place with a
-     * `set_model` control request, so a model flip keeps the process and its MCP bridge instead of
-     * a kill and `--resume`. Anything else (cwd, effort, mode, session flags) still respawns: the CLI
-     * has no live seam for `--effort`. On success the process carries the new spec and key.
-     * ponytail: the keeper's spec.json keeps the old model; a reattach after a dsh restart sees a key
-     * mismatch and respawns with --model, which is correct, only one spawn later than ideal.
+     * A spec that differs from the live process only by model, effort or both is switched in place,
+     * so the change keeps the process and its MCP bridge instead of a kill and `--resume`: the model
+     * with `set_model`, the effort with `apply_flag_settings`. Anything else (cwd, mode, session
+     * flags) still respawns, and so does a switch the CLI did not make. On success the process
+     * carries the new spec and key.
+     *
+     * The effort is read back with `get_settings` before it is believed: the CLI answers `success`
+     * to a level it does not know and changes nothing (probed on 2.1.293 with `bogus`), and on a
+     * model without effort levels the setting stays null. A null effort in the spec clears the
+     * setting, which returns the CLI to the model's default, the same as a spawn without `--effort`.
+     * A CLI older than the request answers with an error and is respawned, as before.
+     * ponytail: the keeper's spec.json keeps the old spec; a reattach after a dsh restart sees a key
+     * mismatch and respawns with the new flags, which is correct, only one spawn later than ideal.
      */
     retarget(proc: ClaudeProcess, spec: ClaudeProcessSpec): Promise<boolean>;
     /** Hand a `control_response` to whoever sent the request; true when someone was waiting. */
