@@ -92,6 +92,7 @@ import { livingModelId } from "../model-ids.js";
 import type { FallbackRecord, LiveMode } from "../translator.js";
 import { ReportBlock } from "./report.js";
 import { openStream, pollEvery, streamUp, subscribe, type LiveTurnBody } from "./events.js";
+import { paintSpeed, tokensPerSecond } from "./speed.js";
 import type {
   AsideItem,
   IdleReply,
@@ -6697,6 +6698,8 @@ function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
     let queued = false;
     const sync = () => {
       queued = false;
+      // dsh rewrites its own reading whenever its figure changes, so ours goes over it each pass.
+      paintSpeed(tokensPerSecond(turnsRef.current));
       if (!textRef.current) {
         if (inline) debug("no cost to show; dropping the row");
         drop();

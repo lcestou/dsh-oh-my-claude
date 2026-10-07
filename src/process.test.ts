@@ -19,6 +19,7 @@ import {
   toJsonValue,
   toolResultText,
   turnDelta,
+  costStateOf,
   isSshHost,
   sshArgs,
 } from "./process.js";
@@ -103,6 +104,33 @@ import {
   assert.equal(Number(perTurn.reduce((a, b) => a + b, 0).toFixed(2)), 21.3);
   assert.equal(turnDelta(0.5, 40), 0.5, "a total that restarted is already this turn's own");
   assert.equal(turnDelta(-1, 0), 0, "no negative share from a figure the CLI should never send");
+  // What a resumed process counts from: the transcript's last cost-state row. The figures are the
+  // ones a real session showed on 2026-10-07, where the next result read 580.71 and was stored as
+  // one turn's cost.
+  const state = (cost: unknown, api: unknown) =>
+    JSON.stringify({ type: "cost-state", totalCostUSD: cost, totalAPIDuration: api });
+  const text = [
+    JSON.stringify({ type: "user", message: { content: "hi" } }),
+    state(330.54, 15002317),
+    JSON.stringify({ type: "assistant" }),
+    state(569.46, 26371690),
+    "",
+  ].join("\n");
+  const from = costStateOf(text);
+  assert.deepEqual(from, { costUsd: 569.46, apiMs: 26371690 }, "the last row wins");
+  assert.equal(turnDelta(580.71, from!.costUsd).toFixed(2), "11.25", "the turn's own share");
+  assert.equal(costStateOf("") ?? costStateOf('{"type":"user"}\n'), undefined);
+  assert.deepEqual(
+    costStateOf(`${state(1, 2)}\n{"type":"cost-state","totalCostUSD":9`),
+    { costUsd: 1, apiMs: 2 },
+    "a torn last row falls back to the one before",
+  );
+  assert.deepEqual(
+    costStateOf(`${state(1, 2)}\n${state("9", null)}\n${state(-1, 5)}`),
+    { costUsd: 1, apiMs: 2 },
+    "rows with the wrong types or a negative total are skipped",
+  );
+  assert.deepEqual(costStateOf(state(3, 4)), { costUsd: 3, apiMs: 4 }, "no trailing newline");
 
   // Missing everything: totals fall back to 0, optional strings stay absent, categories is empty.
   const bare = decodeContextUsage({});

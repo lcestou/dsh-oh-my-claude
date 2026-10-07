@@ -76,6 +76,7 @@ import {
   decodeCancelled,
   decodeContextUsage,
   turnDelta,
+  costStateOf,
   decodeWorkspaceDiff,
   decodePermissionRules,
   decodeHooksListing,
@@ -2059,6 +2060,10 @@ export interface TurnRecord {
   denials?: string[];
   /** Wall-clock ms from the prompt write to the first stream chunk; absent when not measured. */
   ttftMs?: number;
+  /** The CLI's running totals as this turn's result reported them, kept so a handle attached to
+   *  the same process after a dsh restart knows where to count from. Absent on older records. */
+  costTotal?: number;
+  apiTotal?: number;
 }
 
 /** The slice of a Claude process the idle watchdog needs. */
@@ -4936,6 +4941,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       });
       proc.key = specKey(record.procSpec);
       proc.resuming = true;
+      this.carryTotals(proc, sessionId);
       proc.onIdleResult = () => this.wake(sessionId, proc);
       this.processes.set(key2, proc);
       await trace(
@@ -5029,6 +5035,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       });
       proc.key = specKey(procSpec);
       proc.resuming = true;
+      this.carryTotals(proc, spec.sessionId);
       proc.onIdleResult = () => this.wake(spec.sessionId, proc);
       this.processes.set(key2, proc);
       await trace(
@@ -5283,8 +5290,59 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         this.log("info", `spawn cwd=${prep.cwd} claude ${prep.args.join(" ")}`);
       }
       void this.refreshCliModels(proc);
+      // Last, after the process is registered, so a second caller during the read finds this
+      // process and does not spawn another. Awaited: the first result must find the totals in place, and a result that beat the read
+      // would be measured against the stand-in, which is wrong whenever the last process died
+      // without writing its totals. One file read on a path that runs once per process.
+      if (proc.resuming) await this.seedTotals(proc, options.sessionId, prep.cwd, prep.session?.id);
     }
     return { prep, proc };
+  }
+
+  /**
+   * Start a handle on a CLI process that is already running from the totals its last recorded turn
+   * reported. The process kept counting while dsh restarted; a handle that starts from zero reads
+   * its next result, the session so far, as one turn. A session with turns on record but none
+   * carrying totals (written before they were kept) is marked unknown instead.
+   */
+  private carryTotals(proc: ClaudeProcess, sessionId: string): void {
+    const last = this.turnBuffer.get(sessionId)?.at(-1);
+    if (last === undefined) return;
+    if (last.costTotal === undefined || last.apiTotal === undefined) {
+      proc.totalsUnknown = true;
+      return;
+    }
+    proc.costSoFar = last.costTotal;
+    proc.apiMsSoFar = last.apiTotal;
+  }
+
+  /**
+   * Start a newly spawned, resumed process from the totals the CLI reads back: the transcript's
+   * last `cost-state` row (see `costStateOf`). Until that is read, and on an SSH box always, the
+   * last recorded turn's totals stand in, which is the same figure whenever the previous process
+   * exited cleanly. Never throws. The caller awaits it before the process is handed a prompt.
+   */
+  private async seedTotals(
+    proc: ClaudeProcess,
+    sessionId: string,
+    cwd: string,
+    claudeId: string | undefined,
+  ): Promise<void> {
+    const last = this.turnBuffer.get(sessionId)?.at(-1);
+    proc.costSoFar = last?.costTotal ?? 0;
+    proc.apiMsSoFar = last?.apiTotal ?? 0;
+    try {
+      const where = await this.transcriptLocation(cwd, claudeId);
+      // ponytail: the whole file is read, on this box only. A box over SSH keeps the stand-in;
+      // read its tail there if a box's totals are ever seen to drift.
+      if (where === undefined || where.box.sshHost !== undefined) return;
+      const state = costStateOf(await readFile(where.path, "utf8"));
+      if (state === undefined) return;
+      proc.costSoFar = state.costUsd;
+      proc.apiMsSoFar = state.apiMs;
+    } catch {
+      // No transcript yet, or one that cannot be read: the stand-in is the best there is.
+    }
   }
 
   /** Where a session's Claude transcript is: on this box under `claudeHome`, or on the SSH box the
@@ -6391,10 +6449,15 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         // the difference is taken here, once, and what is stored is the turn's own.
         const costSoFar = summary.costUsd;
         const apiMsSoFar = summary.apiMs;
-        summary.costUsd = turnDelta(costSoFar, proc.costSoFar);
-        summary.apiMs = turnDelta(apiMsSoFar, proc.apiMsSoFar);
+        // A process picked up mid-life with no record of its totals: the figure is the session so
+        // far and this turn's part of it cannot be told, so the turn counts nothing, once.
+        summary.costUsd = proc.totalsUnknown ? 0 : turnDelta(costSoFar, proc.costSoFar);
+        summary.apiMs = proc.totalsUnknown ? 0 : turnDelta(apiMsSoFar, proc.apiMsSoFar);
+        proc.totalsUnknown = false;
         proc.costSoFar = costSoFar;
         proc.apiMsSoFar = apiMsSoFar;
+        summary.costTotal = costSoFar;
+        summary.apiTotal = apiMsSoFar;
         const buf = this.turnBuffer.get(options.sessionId) ?? [];
         buf.push(summary);
         if (buf.length > TURN_RING) buf.shift();
