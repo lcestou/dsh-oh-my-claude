@@ -265,21 +265,13 @@ export interface WorkspaceRegistry {
     get archivedSessionIds(): readonly SessionId[];
     archiveSession(sessionId: SessionId): Promise<void>;
     resolveByPath(path: string): Promise<Workspace | undefined>;
-    /** dsh 0.1.7's public unarchive. Absent on 0.1.5 and 0.1.6, which need the three below. */
-    unarchiveSession?(sessionId: SessionId): Promise<void>;
-    enqueueOperation?<T>(operation: () => Promise<T>): Promise<T>;
-    requireState?(): WorkspaceRegistryState;
-    setState?(state: WorkspaceRegistryState): Promise<void>;
+    /** Takes a session off the archived list, under the registry's own lock. */
+    unarchiveSession(sessionId: SessionId): Promise<void>;
 }
-/** The registry's persisted state; only the archived list is read or rewritten here. */
-export interface WorkspaceRegistryState {
-    archivedSessionIds: readonly SessionId[];
-    [key: string]: JsonValue | readonly SessionId[] | undefined;
-}
-/** What `sessionController.resolveAgent` answers. Up to dsh 0.1.5 it was the Agent itself; from
- *  0.1.6 the service hands back its agent controller's own result, `{ agent }` or `{ error }`, which
- *  dsh's callers unwrap (`if ("error" in result) throw result.error; return result.agent;`). */
-export type ResolvedAgent = Agent | {
+/** What `sessionController.resolveAgent` answers: its agent controller's own result, `{ agent }` or
+ *  `{ error }`, which dsh's callers unwrap (`if ("error" in result) throw result.error; return
+ *  result.agent;`). */
+export type ResolvedAgent = {
     agent: Agent;
 } | {
     error: unknown;

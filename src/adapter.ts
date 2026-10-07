@@ -34,7 +34,6 @@ import {
   type MessageSource,
 } from "@deepseek-ai/dsh-llm";
 import z from "@deepseek-ai/schemastery";
-import { atLeast } from "./update.js";
 import { type FirstPartyProbe, probeFirstParty, wantsFirstParty } from "./first-party.js";
 import {
   CONTEXT_SIZE_KEYS,
@@ -2218,17 +2217,10 @@ export function toolResultFor(
   for (let i = list.length - 1; i >= 0; i--) {
     const m = list[i];
     if (!m) continue;
-    // dsh 0.1.7: the result is a message of its own, `role: "tool"`, with the call id on it and
-    // the text in its blocks. `ToolResultBlock` is gone from that release's block map, so the
-    // older read below can never match there.
+    // The result is a message of its own, `role: "tool"`, with the call id on it and the text in
+    // its blocks.
     if (m.role === "tool" && m.toolCallId === id)
       return { text: textOf(m.content), isError: m.isError === true };
-    // dsh 0.1.6 and earlier: a user message from the tool source holding a `tool-result` block.
-    if (m.role !== "user" || m.source?.kind !== "tool" || !Array.isArray(m.content)) continue;
-    for (const b of m.content) {
-      if (b.type === "tool-result" && b.toolCallId === id)
-        return { text: textOf(b.content), isError: b.isError === true };
-    }
   }
   return undefined;
 }
@@ -2241,15 +2233,14 @@ export function afterLastAssistant(messages: LooseMessage[] | undefined): LooseM
   return list.slice(last + 1);
 }
 
-/** The Agent inside what dsh's session controller answered for a cold resume. dsh 0.1.6 wraps it
- *  (`{ agent }`, or `{ error }` when the session cannot be resumed) where 0.1.5 handed back the
- *  Agent; read as the Agent, the wrapper has no `followup`, and every wake of an unloaded session
- *  failed on it from the day 0.1.6 was installed. The controller's error is thrown so the caller
- *  reports it like any other failed resume. */
+/** The Agent inside what dsh's session controller answered for a cold resume: `{ agent }`, or
+ *  `{ error }` when the session cannot be resumed. Read as the Agent, the wrapper has no
+ *  `followup`, and every wake of an unloaded session fails on it. The controller's error is thrown
+ *  so the caller reports it like any other failed resume. */
 export function resolvedAgent(found: ResolvedAgent): Agent {
   if ("error" in found)
     throw found.error instanceof Error ? found.error : new Error(String(found.error));
-  return "agent" in found ? found.agent : found;
+  return found.agent;
 }
 
 /** Notice this plugin drops into a session's inbox to open a turn after Claude replied on its own. */
@@ -2600,12 +2591,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     this.ctx = ctx;
     // The probe answers `ok: false` with a reason rather than throwing, and the catch keeps the
     // inline fallback on any dsh where that stops being true.
-    if (DSH_VERSION !== null && atLeast(DSH_VERSION, "0.1.7-alpha.1"))
-      void rowsSupported()
-        .then((r) => {
-          this.rowsByDefault = r.ok;
-        })
-        .catch(() => {});
+    void rowsSupported()
+      .then((r) => {
+        this.rowsByDefault = r.ok;
+      })
+      .catch(() => {});
     // Before `localConfig` turns a bare name into this box's absolute path: a turn that runs
     // somewhere else needs the name as configured. See `commandFor`.
     this.configuredCommand = config.command;
@@ -4642,10 +4632,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
 
   /**
    * Whether rows are the default on this dsh, when neither the Settings switch nor the config says.
-   * True on 0.1.7 and later once the probe has passed: there the text streams live between dsh's
-   * cards and the announced rows survive a reload, so the plugin looks like every other provider
-   * in dsh. False before 0.1.7, where a step's text lands only when it settles, and false until
-   * the probe answers, so the first turns of a process never write rows a dsh cannot load. A
+   * True once the probe has passed: the text streams live between dsh's cards and the announced
+   * rows survive a reload, so the plugin looks like every other provider in dsh. False until the
+   * probe answers, so the first turns of a process never write rows a dsh cannot load. A
    * dsh that starts refusing the shape locks the probe and this falls back to inline on its own.
    */
   private rowsByDefault = false;
@@ -7466,10 +7455,7 @@ const probeLogin = (adapter: ClaudeCodeAdapter) => {
 export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Config>) {
   // Looked up on every read: `settings` is not in `inject`, so at apply it may not be mounted yet, and
   // a reference taken now stays undefined for the life of the process (every header wrote English).
-  // Both reads are forwarded, and `serverIsChinese` takes whichever this dsh answers: 0.1.6 and
-  // earlier have `get`, 0.1.7 replaced it with `describe`.
   bindServerLocale({
-    get: (ns) => ctx.get("settings")?.get?.(ns),
     describe: (options) => ctx.get("settings")?.describe?.(options) ?? [],
   });
   const adapter = new ClaudeCodeAdapter(ctx, config);
