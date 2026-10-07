@@ -8,6 +8,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Changed
 
+- Changing the effort level on a running session no longer relaunches Claude Code. The switch is made inside the running process, the way a model change already was, so the next message starts without the relaunch and the session keeps its MCP connections. A Claude Code too old for the request, or a model without effort levels, is relaunched as before.
 - The Restore tab leaves out sessions that hold only commands Claude Code answers by itself, such as `/usage` or `/model`, with no conversation. Opening one failed, since there was nothing to restore.
 - The Memory tab says where it looked. An empty list names the directory it read, so a list that is empty because Claude has written nothing can be told from one read from the wrong place. A list that could not be fetched shows the failure instead of reading as empty.
 

@@ -628,6 +628,14 @@ export function decodeRewindResult(v: JsonValue | undefined): RewindResult {
 export const turnDelta = (total: number, soFar: number): number =>
   total >= soFar ? total - soFar : Math.max(0, total);
 
+/** The effort level a `get_settings` answer says is in force (`applied.effort`), or undefined when
+ *  the answer has none: a model without effort levels, or a reply of another shape. */
+export const appliedEffort = (response: JsonValue | undefined): string | undefined => {
+  const applied = isRecord(response) ? response.applied : undefined;
+  const effort = isRecord(applied) ? applied.effort : undefined;
+  return str(effort);
+};
+
 /** The CLI's running totals for a session: what `total_cost_usd` and `duration_api_ms` stood at. */
 export interface RunningTotals {
   costUsd: number;
@@ -744,6 +752,8 @@ const isRecord = (v: JsonValue | undefined): v is Record<string, JsonValue> =>
 /** Return the number as-is, or 0 when the CLI omitted or mis-typed the field, so a missing count
  *  reads as zero rather than NaN. */
 const num = (x: JsonValue | undefined) => (typeof x === "number" ? x : 0);
+/** Return the string as-is, or undefined when the CLI omitted or mis-typed the field. */
+const str = (x: JsonValue | undefined) => (typeof x === "string" ? x : undefined);
 /** A `get_workspace_diff` answer as totals, per-file counts and hunks, skipping malformed entries. */
 export function decodeWorkspaceDiff(v: JsonValue | undefined): WorkspaceDiff {
   const outer = isRecord(v) ? v : {};

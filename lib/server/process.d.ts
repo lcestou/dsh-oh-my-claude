@@ -386,6 +386,9 @@ export declare function decodeRewindResult(v: JsonValue | undefined): RewindResu
  * running total so far, so read the latest result rather than summing across results.
  */
 export declare const turnDelta: (total: number, soFar: number) => number;
+/** The effort level a `get_settings` answer says is in force (`applied.effort`), or undefined when
+ *  the answer has none: a model without effort levels, or a reply of another shape. */
+export declare const appliedEffort: (response: JsonValue | undefined) => string | undefined;
 /** The CLI's running totals for a session: what `total_cost_usd` and `duration_api_ms` stood at. */
 export interface RunningTotals {
     costUsd: number;

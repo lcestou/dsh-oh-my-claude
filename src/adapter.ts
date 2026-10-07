@@ -77,6 +77,7 @@ import {
   decodeContextUsage,
   turnDelta,
   costStateOf,
+  appliedEffort,
   decodeWorkspaceDiff,
   decodePermissionRules,
   decodeHooksListing,
@@ -3592,23 +3593,53 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   }
 
   /**
-   * A spec that differs from the live process only by model is switched in place with a
-   * `set_model` control request, so a model flip keeps the process and its MCP bridge instead of
-   * a kill and `--resume`. Anything else (cwd, effort, mode, session flags) still respawns: the CLI
-   * has no live seam for `--effort`. On success the process carries the new spec and key.
-   * ponytail: the keeper's spec.json keeps the old model; a reattach after a dsh restart sees a key
-   * mismatch and respawns with --model, which is correct, only one spawn later than ideal.
+   * A spec that differs from the live process only by model, effort or both is switched in place,
+   * so the change keeps the process and its MCP bridge instead of a kill and `--resume`: the model
+   * with `set_model`, the effort with `apply_flag_settings`. Anything else (cwd, mode, session
+   * flags) still respawns, and so does a switch the CLI did not make. On success the process
+   * carries the new spec and key.
+   *
+   * The effort is read back with `get_settings` before it is believed: the CLI answers `success`
+   * to a level it does not know and changes nothing (probed on 2.1.293 with `bogus`), and on a
+   * model without effort levels the setting stays null. A change back to no effort at all
+   * respawns: the CLI would take it, but the default it returns to cannot be checked.
+   * A CLI older than the request answers with an error and is respawned, as before.
+   * ponytail: the keeper's spec.json keeps the old spec; a reattach after a dsh restart sees a key
+   * mismatch and respawns with the new flags, which is correct, only one spawn later than ideal.
    */
   async retarget(proc: ClaudeProcess, spec: ClaudeProcessSpec): Promise<boolean> {
-    if (specKey({ ...proc.spec, model: spec.model }) !== specKey(spec)) return false;
-    const reply = await this.control(
-      proc,
-      { subtype: "set_model", model: spec.model ?? null },
-      5000,
-    );
-    if (!reply.ok) {
-      this.log("warn", `set_model ${spec.model ?? "default"} refused: ${reply.error}; respawning`);
+    if (specKey({ ...proc.spec, model: spec.model, effort: spec.effort }) !== specKey(spec))
       return false;
+    if (proc.spec.model !== spec.model) {
+      const reply = await this.control(
+        proc,
+        { subtype: "set_model", model: spec.model ?? null },
+        5000,
+      );
+      if (!reply.ok) {
+        this.log(
+          "warn",
+          `set_model ${spec.model ?? "default"} refused: ${reply.error}; respawning`,
+        );
+        return false;
+      }
+    }
+    if (proc.spec.effort !== spec.effort) {
+      // Back to the model's default: the CLI takes a null, but what the default is differs by
+      // model, so the read-back has nothing to be checked against. Relaunch without the flag.
+      if (spec.effort === null) return false;
+      const reply = await this.control(
+        proc,
+        { subtype: "apply_flag_settings", settings: { effortLevel: spec.effort } },
+        5000,
+      );
+      const now = reply.ok ? await this.control(proc, { subtype: "get_settings" }, 5000) : reply;
+      const applied = now.ok ? appliedEffort(now.response) : undefined;
+      if (!now.ok || applied !== spec.effort) {
+        const why = now.ok ? `the CLI is at ${applied ?? "no effort"}` : now.error;
+        this.log("warn", `effort ${spec.effort} not applied: ${why}; respawning`);
+        return false;
+      }
     }
     proc.spec = spec;
     proc.key = specKey(spec);
