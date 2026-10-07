@@ -101,14 +101,10 @@ assert.equal(resumeCommand("abc", "/w/a"), "cd '/w/a' && claude --resume abc");
 assert.equal(resumeCommand("abc", "/w/it's"), "cd '/w/it'\\''s' && claude --resume abc");
 assert.equal(resumeCommand("abc", "/w/a", "nova"), "ssh nova \"cd '/w/a' && claude --resume abc\"");
 
-// Which session is on screen, in both shapes dsh has had for it. Kept as one check so dropping
-// dsh 0.1.5 means deleting the halves marked 0.1.5 here and in `shared.ts` together.
+// Which session is on screen: the row the main view retains.
 const listCtx = (snapshot: unknown): ClientCtx =>
   ({ sessions: { list: { getSnapshot: () => snapshot } } }) as unknown as ClientCtx;
 
-// dsh 0.1.5: the snapshot names it outright.
-assert.equal(openSessionId(listCtx({ current: "s1", byId: {} })), "s1");
-// dsh 0.1.6-alpha.2: no `current`, and the main view's retention marks the row instead.
 assert.equal(
   openSessionId(
     listCtx({ byId: { s1: { retainedBy: { sidebar: 1 } }, s2: { retainedBy: { mainView: 1 } } } }),
@@ -132,7 +128,11 @@ assert.equal(openSessionId(listCtx(undefined)), undefined);
     },
   } as unknown as ClientCtx;
   assert.equal(openSessionId(flaky), undefined);
-  assert.equal(openSessionId(listCtx({ current: "s1", byId: {} })), "s1", "still live after it");
+  assert.equal(
+    openSessionId(listCtx({ byId: { s1: { retainedBy: { mainView: 1 } } } })),
+    "s1",
+    "still live after it",
+  );
 }
 // A disposed context retires; `revive` (what apply runs first) brings the module back.
 {
@@ -146,27 +146,19 @@ assert.equal(openSessionId(listCtx(undefined)), undefined);
     },
   } as unknown as ClientCtx;
   assert.equal(openSessionId(dead), undefined);
-  assert.equal(openSessionId(listCtx({ current: "s1", byId: {} })), undefined, "retired");
+  assert.equal(
+    openSessionId(listCtx({ byId: { s1: { retainedBy: { mainView: 1 } } } })),
+    undefined,
+    "retired",
+  );
   revive();
-  assert.equal(openSessionId(listCtx({ current: "s1", byId: {} })), "s1", "live again");
+  assert.equal(
+    openSessionId(listCtx({ byId: { s1: { retainedBy: { mainView: 1 } } } })),
+    "s1",
+    "live again",
+  );
 }
-// `current` wins when both are there, so 0.1.5 never pays for the scan.
-assert.equal(
-  openSessionId(listCtx({ current: "s1", byId: { s2: { retainedBy: { mainView: 1 } } } })),
-  "s1",
-);
-
-// Navigation, the same two shapes. 0.1.5 answers on the sessions service itself.
-{
-  const opened: string[] = [];
-  const ctx = {
-    sessions: { open: (id: string) => opened.push(`sessions:${id}`) },
-    get: () => undefined,
-  } as unknown as ClientCtx;
-  openSession(ctx, "s1");
-  assert.deepEqual(opened, ["sessions:s1"]);
-}
-// 0.1.6-alpha.2 moved it to `uiWorkspace`, reached through `ctx.get` so a host without it mounts.
+// Navigation goes through `uiWorkspace`, reached through `ctx.get` so a host without it mounts.
 {
   const opened: string[] = [];
   const ctx = {
