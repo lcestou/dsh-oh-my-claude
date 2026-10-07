@@ -3601,8 +3601,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    *
    * The effort is read back with `get_settings` before it is believed: the CLI answers `success`
    * to a level it does not know and changes nothing (probed on 2.1.293 with `bogus`), and on a
-   * model without effort levels the setting stays null. A null effort in the spec clears the
-   * setting, which returns the CLI to the model's default, the same as a spawn without `--effort`.
+   * model without effort levels the setting stays null. A change back to no effort at all
+   * respawns: the CLI would take it, but the default it returns to cannot be checked.
    * A CLI older than the request answers with an error and is respawned, as before.
    * ponytail: the keeper's spec.json keeps the old spec; a reattach after a dsh restart sees a key
    * mismatch and respawns with the new flags, which is correct, only one spawn later than ideal.
@@ -3625,6 +3625,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       }
     }
     if (proc.spec.effort !== spec.effort) {
+      // Back to the model's default: the CLI takes a null, but what the default is differs by
+      // model, so the read-back has nothing to be checked against. Relaunch without the flag.
+      if (spec.effort === null) return false;
       const reply = await this.control(
         proc,
         { subtype: "apply_flag_settings", settings: { effortLevel: spec.effort } },
@@ -3632,9 +3635,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       );
       const now = reply.ok ? await this.control(proc, { subtype: "get_settings" }, 5000) : reply;
       const applied = now.ok ? appliedEffort(now.response) : undefined;
-      if (!now.ok || (spec.effort !== null && applied !== spec.effort)) {
+      if (!now.ok || applied !== spec.effort) {
         const why = now.ok ? `the CLI is at ${applied ?? "no effort"}` : now.error;
-        this.log("warn", `effort ${spec.effort ?? "default"} not applied: ${why}; respawning`);
+        this.log("warn", `effort ${spec.effort} not applied: ${why}; respawning`);
         return false;
       }
     }

@@ -4565,7 +4565,13 @@ console.log("keeper-mode ok");
   );
   assert.equal(proc.spec.effort, "low", "spec unchanged when the read-back disagrees");
   honour = true;
-  assert.equal(await adapter.retarget(proc, { ...both, effort: null }), true, "clearing is live");
+  written.length = 0;
+  assert.equal(
+    await adapter.retarget(proc, { ...both, effort: null }),
+    false,
+    "back to the model's default cannot be checked, so it respawns",
+  );
+  assert.equal(written.length, 0, "and asks the CLI nothing");
   written.length = 0;
   Object.assign(proc, { spec: opus, key: JSON.stringify(opus) });
   answer = "error";

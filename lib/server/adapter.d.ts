@@ -1268,8 +1268,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      *
      * The effort is read back with `get_settings` before it is believed: the CLI answers `success`
      * to a level it does not know and changes nothing (probed on 2.1.293 with `bogus`), and on a
-     * model without effort levels the setting stays null. A null effort in the spec clears the
-     * setting, which returns the CLI to the model's default, the same as a spawn without `--effort`.
+     * model without effort levels the setting stays null. A change back to no effort at all
+     * respawns: the CLI would take it, but the default it returns to cannot be checked.
      * A CLI older than the request answers with an error and is respawned, as before.
      * ponytail: the keeper's spec.json keeps the old spec; a reattach after a dsh restart sees a key
      * mismatch and respawns with the new flags, which is correct, only one spawn later than ideal.
