@@ -9,6 +9,8 @@ import type { JsonValue } from "./dsh.js";
  * would be left empty.
  */
 export declare const typedPrompt: (text: string) => string;
+/** The CLI's own user rows that no person typed: the echo it writes when a turn is interrupted. */
+export declare const CLI_ECHO: RegExp;
 /**
  * Truncate to a byte budget without splitting a character. Encode once and cut at a UTF-8 boundary:
  * this used to append a character at a time and measure `out + ch` on each one, which is quadratic
@@ -104,6 +106,8 @@ export interface FoldedTurn {
         text: string;
     }>;
     steps: FoldedStep[];
+    /** The prompt was a slash command, rebuilt from the CLI's markup by `commandPrompt`. */
+    command?: true;
 }
 export interface FoldedTranscript {
     turns: FoldedTurn[];
@@ -115,8 +119,9 @@ export interface FoldedTranscript {
      *  a transcript older than the field. */
     permissionMode: string | undefined;
 }
-/** Folds raw transcript lines into turns, dropping injected noise (slash-command echoes, hook
- *  output) but never a message the CLI removed: it keeps such a line and folds it at its own prompt
+/** Folds raw transcript lines into turns, dropping injected noise (hook output, reminders, the
+ *  stdout of a command the CLI ran itself) and turning a slash command into the prompt a person
+ *  sent, but never dropping a message the CLI removed: it keeps such a line and folds it at its own prompt
  *  arrival rather than showing a retraction. */
 export declare function foldTranscript(text: string): FoldedTranscript;
 /** One dsh session event as the seed writes it: the shapes dsh persists itself. */
