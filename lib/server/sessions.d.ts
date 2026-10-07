@@ -314,7 +314,9 @@ type RouteHost = Required<Pick<PluginContext, "webServer" | "connection" | "sess
  *  stored logs with the exact comparison this replaces: 84 of 139 slash-command prompts and every
  *  prompt with an attachment read as missing, and would have been appended a second time. A short
  *  stored text can shadow a later prompt that begins with it and a line break; that reads as stored,
- *  the safe side.
+ *  the safe side. Narrowing it to a blank line or a file handle was tried and put back the same day:
+ *  an attached image (`[image]`) and a subagent's finish notice also follow on the next line, and
+ *  twelve stored prompts in those 551 logs read as missing again.
  *  @param texts stored user texts, each already through `spaced` */
 export declare const storedHolds: (texts: ReadonlySet<string>, prompt: string) => boolean;
 /** The model a restored transcript should open on, and the mount that serves it; undefined

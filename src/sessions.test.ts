@@ -2527,6 +2527,7 @@ console.log("sessions ok");
   );
   assert.ok(held("see attached", 'see attached\n[File "a.docx" (1 bytes, sha256:x)'));
   assert.equal(held("fix it", "fix it now"), false, "a longer prompt on the same line is new");
+  assert.ok(held("resize this to 150px", "resize this to 150px\n[image]"));
   assert.equal(held("fix it", "please fix it"), false);
   assert.equal(storedHolds(new Set([""]), "anything"), false);
   console.log("fold-delta ok");
