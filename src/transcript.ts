@@ -122,6 +122,25 @@ const titleFrom = (text: string): string =>
     TITLE_BYTES,
   );
 
+/**
+ * A title for a session that opened on a slash command or a skill: the command and what was typed
+ * after it, `/design-pass A Skills tab in the panel`. The CLI stores that opening prompt as
+ * `<command-name>` markup, which `isNoise` rightly keeps out of the turns, so a session whose
+ * only prompts in the head are commands had no title at all and listed as "Untitled" plus an id.
+ * dsh's runtime-context block lands inside the args (it is the whole args when nothing was typed)
+ * and is cut. Returns "" for text that carries no command name, a `<local-command-stdout>` echo
+ * for one.
+ */
+export const commandTitle = (text: string): string => {
+  const name = /<command-name>\s*([^<\s]+)\s*<\/command-name>/.exec(text)?.[1];
+  if (!name) return "";
+  const args = (/<command-args>([\s\S]*?)<\/command-args>/.exec(text)?.[1] ?? "").replace(
+    /(?:^|\n\n)Current runtime context\.[\s\S]*$/,
+    "",
+  );
+  return titleFrom(`${name} ${titleFrom(args)}`.trim());
+};
+
 /** One-shots older plugin versions ran inside the workspace dir (titles now run from a scratch dir). */
 const isAuxPrompt = (text: string) => text.startsWith("Generate the session title");
 
@@ -186,6 +205,8 @@ interface Scan {
   turns: number;
   createdAt: number;
   title: string;
+  /** `commandTitle` of the first slash command seen, used only when no typed prompt gave a title. */
+  command: string;
   summary?: string;
   cwd?: string;
 }
@@ -212,7 +233,7 @@ export async function listTranscripts(
   // unbounded map would multiply that into hundreds of open descriptors for no extra speed.
   /** What a listing needs from the head of one transcript. */
   const scan = (lines: string[], fallbackTime: number): Scan => {
-    const found: Scan = { turns: 0, createdAt: fallbackTime, title: "" };
+    const found: Scan = { turns: 0, createdAt: fallbackTime, title: "", command: "" };
     for (const line of lines) {
       const rec = parseLine(line);
       if (!rec) continue;
@@ -225,6 +246,7 @@ export async function listTranscripts(
       found.turns += 1;
       if (found.turns === 1) found.createdAt = timeOf(rec, found.createdAt);
       if (!found.title && !isNoise(text)) found.title = titleFrom(text);
+      found.command ||= commandTitle(text);
     }
     return found;
   };
@@ -249,7 +271,7 @@ export async function listTranscripts(
     if (found.turns === 0) return undefined;
     const item: TranscriptListItem = {
       id,
-      title: found.summary ?? found.title,
+      title: found.summary ?? (found.title || found.command),
       createdAt: found.createdAt,
       modifiedAt: info.mtimeMs,
       bytes: info.size,
@@ -428,6 +450,7 @@ export function foldTranscript(text: string): FoldedTranscript {
   const delivered = deliveredAsPrompt(text);
   let cur: FoldedTurn | undefined;
   let title: string | undefined;
+  let command = "";
   let createdAt: number | undefined;
   let permissionMode: string | undefined;
   const agents = new Map<string, string>();
@@ -501,7 +524,10 @@ export function foldTranscript(text: string): FoldedTranscript {
       // are injections, not prompts: live they never render as a turn of their own, and copying
       // them in gave a resumed session user bubbles full of `<command-message>` markup. Checked
       // before `close()`, so an injection between a prompt and its answer does not end the turn.
-      if (isNoise(plain)) continue;
+      if (isNoise(plain)) {
+        command ||= commandTitle(plain);
+        continue;
+      }
       close();
       const time = timeOf(rec, Date.now());
       createdAt ??= time;
@@ -554,7 +580,13 @@ export function foldTranscript(text: string): FoldedTranscript {
     }
   }
   close();
-  return { turns, title, createdAt: createdAt ?? Date.now(), agents, permissionMode };
+  return {
+    turns,
+    title: title || command || undefined,
+    createdAt: createdAt ?? Date.now(),
+    agents,
+    permissionMode,
+  };
 }
 
 /** A tool result as the seed writes it into a user message. */
