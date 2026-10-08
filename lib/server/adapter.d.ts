@@ -1210,6 +1210,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      *  `confirmed` is absent until a read-back lands. Written to `ultracode.json` on every change, so
      *  a session keeps its setting across a dsh restart and a relaunch of its process. */
     readonly ultracode: Map<string, UltracodeState>;
+    /** The last write of `ultracode.json`; the next one waits for it. */
+    private ultracodeSaved;
     /** dsh session id → the tool names its last init frame reported; absent until one arrives. */
     readonly sessionTools: Map<string, string[]>;
     /** dsh session id → the plugins its last init frame said the CLI failed to load. Absent until an
