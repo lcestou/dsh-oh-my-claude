@@ -111,6 +111,15 @@ DSH_OMC_STATE_DIR=$(mktemp -d) bun tools/effort-switch-check.ts   # no prompt is
 
 It starts a real `claude -p`, hands it to the adapter as the process it drives, asks for each effort level, and after each one reads the level back from the CLI and compares the pid. Run it after a Claude Code update.
 
+Two checks under `tools/playwright/` watch things that only happen on a live dsh:
+
+```sh
+bun tools/playwright/status-row-live.ts "$TOKEN"   # runs one real turn, which spends tokens
+bun tools/playwright/spend-line.ts "$TOKEN"
+```
+
+`status-row-live.ts` opens a new session, sends one prompt, and samples the working line. Part-way through it stops that session's `claude` process for sixteen seconds, which is what a silent API looks like from here, and reports whether the line took the stall tint and whether "thought for Ns" was seen. The session stays in the sidebar. `spend-line.ts` sets the spend warning to one cent, reads the cost pill, and puts the setting back.
+
 Links in the README and under `docs/` are checked by `bun tools/check-links.ts`: every link into this repo resolves to a file, every fragment to a heading by GitHub's slug rule, and every page under `docs/` is linked from somewhere.
 
 ## Repairing session logs
