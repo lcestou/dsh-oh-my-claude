@@ -248,9 +248,7 @@ export function fakeDsh(root: string): FakeDsh {
         archivedSessionIds: [],
         resolveByPath: async () => ws,
         create: async () => ws,
-        enqueueOperation: <T>(op: () => Promise<T>) => op(),
-        requireState: () => ({ archivedSessionIds: [] }),
-        setState: async () => {},
+        unarchiveSession: async () => {},
       };
       return { registry, attached };
     },

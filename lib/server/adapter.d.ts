@@ -852,11 +852,10 @@ export declare function toolResultFor(messages: LooseMessage[] | undefined, id: 
 } | undefined;
 /** Messages dsh delivered after the last assistant step. */
 export declare function afterLastAssistant(messages: LooseMessage[] | undefined): LooseMessage[];
-/** The Agent inside what dsh's session controller answered for a cold resume. dsh 0.1.6 wraps it
- *  (`{ agent }`, or `{ error }` when the session cannot be resumed) where 0.1.5 handed back the
- *  Agent; read as the Agent, the wrapper has no `followup`, and every wake of an unloaded session
- *  failed on it from the day 0.1.6 was installed. The controller's error is thrown so the caller
- *  reports it like any other failed resume. */
+/** The Agent inside what dsh's session controller answered for a cold resume: `{ agent }`, or
+ *  `{ error }` when the session cannot be resumed. Read as the Agent, the wrapper has no
+ *  `followup`, and every wake of an unloaded session fails on it. The controller's error is thrown
+ *  so the caller reports it like any other failed resume. */
 export declare function resolvedAgent(found: ResolvedAgent): Agent;
 /** Notice this plugin drops into a session's inbox to open a turn after Claude replied on its own. */
 export declare const WAKE_TEXT = "Claude Code finished a background task and replied.";
@@ -1538,10 +1537,9 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     toolsInline(): boolean;
     /**
      * Whether rows are the default on this dsh, when neither the Settings switch nor the config says.
-     * True on 0.1.7 and later once the probe has passed: there the text streams live between dsh's
-     * cards and the announced rows survive a reload, so the plugin looks like every other provider
-     * in dsh. False before 0.1.7, where a step's text lands only when it settles, and false until
-     * the probe answers, so the first turns of a process never write rows a dsh cannot load. A
+     * True once the probe has passed: the text streams live between dsh's cards and the announced
+     * rows survive a reload, so the plugin looks like every other provider in dsh. False until the
+     * probe answers, so the first turns of a process never write rows a dsh cannot load. A
      * dsh that starts refusing the shape locks the probe and this falls back to inline on its own.
      */
     private rowsByDefault;

@@ -1758,11 +1758,7 @@ console.log("ok");
   const messages = messageList([
     { role: "user", content: [{ type: "text", text: "go" }] },
     { role: "assistant", content: [{ type: "tool-call", id: "c1", name: "x", arguments: "{}" }] },
-    {
-      role: "user",
-      source: { kind: "tool", callId: "c1" },
-      content: [{ type: "tool-result", toolCallId: "c1", content: [{ type: "text", text: "42" }] }],
-    },
+    { role: "tool", toolCallId: "c1", content: [{ type: "text", text: "42" }] },
   ]);
   assert.deepEqual(toolResultFor(messages, "c1"), { text: "42", isError: false });
   assert.equal(toolResultFor(messages, "nope"), undefined);
@@ -2822,7 +2818,7 @@ console.log("ok");
   } as unknown as import("./dsh.js").PluginContext;
   const a = new ClaudeCodeAdapter(fakeCtx(ctx), Config({}));
   let resumed = 0;
-  (a as any).sessionController = { resolveAgent: async () => (resumed++, agent) };
+  (a as any).sessionController = { resolveAgent: async () => (resumed++, { agent }) };
   // SAFETY: partial fake for tests; ClaudeProcess requires many fields not used here
   await a.wake("s1", fakeProc({ busy: false }));
   assert.equal(resumed, 1, "unloaded agent: resumed through the controller");
@@ -2862,8 +2858,7 @@ console.log("ok");
   (a as any).sessionController = { resolveAgent: async () => ({ error: new Error("owned") }) };
   assert.equal(await a.wake("s1", fakeProc({ busy: false })), false, "0.1.6 error: not woken");
   assert.equal(sent.length, 3, "0.1.6 error: reported as a failed resume, nothing sent");
-  assert.equal(resolvedAgent(agent), agent, "0.1.5 shape: the Agent itself");
-  assert.equal(resolvedAgent({ agent }), agent, "0.1.6 shape: the Agent inside the wrapper");
+  assert.equal(resolvedAgent({ agent }), agent, "the Agent inside the wrapper");
   assert.throws(() => resolvedAgent({ error: "gone" }), /gone/, "a bare error value still throws");
   // A resume dsh refuses for a reason the plugin mends: the wake heals the log named in the
   // refusal and resumes once more; an unknown reason is logged and nothing is healed. The log and
@@ -2920,7 +2915,7 @@ console.log("ok");
       resolveAgent: async () => {
         resumes++;
         if (resumes === 1) throw new Error(refusal);
-        return agent;
+        return { agent };
       },
     };
     (a as any).heal = f.heal(f.root);

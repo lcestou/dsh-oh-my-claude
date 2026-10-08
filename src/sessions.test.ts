@@ -1486,9 +1486,11 @@ const responder =
       },
       resolveByPath: async (p: string) => (p === cwd ? ws : undefined),
       create: async () => ws,
-      enqueueOperation: <T>(op: () => Promise<T>) => op(),
-      requireState: () => state,
-      setState: async (next: { archivedSessionIds: string[] }) => void (state = next),
+      unarchiveSession: async (sid: string) =>
+        void (state = {
+          ...state,
+          archivedSessionIds: state.archivedSessionIds.filter((x: string) => x !== sid),
+        }),
     } as any;
     const out = await openTranscriptOnce(
       ctx,

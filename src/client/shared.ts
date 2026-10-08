@@ -475,21 +475,12 @@ async function openHere(
 export { openHere };
 
 /**
- * Bring a session to the foreground, across both shapes dsh has had for it.
- *
- * `ctx.sessions.open` up to 0.1.5; 0.1.6-alpha.2 moved navigation onto `uiWorkspace.openSession`
- * and dropped it from the Session Controller. `uiWorkspace` is read through `ctx.get` rather than
- * named in `inject`: a cordis inject for a service the host does not provide leaves the whole
- * plugin waiting for a dependency that never arrives, which would break every 0.1.5 install.
- *
- * Both paths stay until 0.1.5 is no longer supported; dropping that support means deleting the
- * `ctx.sessions.open` branch, its type field, and this paragraph.
+ * Bring a session to the foreground through `uiWorkspace.openSession`. `uiWorkspace` is read
+ * through `ctx.get` rather than named in `inject`: a cordis inject for a service the host does not
+ * provide leaves the whole plugin waiting for a dependency that never arrives. Without the
+ * service this warns and opens nothing.
  */
 export function openSession(ctx: ClientCtx, id: string): void {
-  if (ctx.sessions.open) {
-    ctx.sessions.open(id);
-    return;
-  }
   const uiWorkspace = ctx.get?.<{ openSession?: (target: string) => void }>("uiWorkspace");
   if (uiWorkspace?.openSession) {
     uiWorkspace.openSession(id);
@@ -632,21 +623,15 @@ export const guard = <A extends unknown[]>(fn: (...args: A) => void): ((...args:
   };
 };
 /**
- * The session the main view is showing, across both shapes dsh has had for it.
- *
- * Up to 0.1.5 the list snapshot carried `current`. 0.1.6-alpha.2 removed it, "navigation belongs
- * to view owners", and the main view instead retains its session through the Session Controller,
- * which shows up on the row as `retainedBy.mainView`. Exactly one row carries it, so the scan is
- * over a handful of sessions and runs only when `current` is absent.
- *
- * Both reads stay until 0.1.5 is no longer supported; dropping that support means deleting the
- * `current` line, its type field, and this paragraph.
+ * The session the main view is showing. The main view retains its session through the Session
+ * Controller, which shows up on the row as `retainedBy.mainView`. Exactly one row carries it, so
+ * the scan is over a handful of sessions. Undefined when none does, when the bundle is retired, or
+ * when the read throws.
  */
 export const openSessionId = (ctx: ClientCtx): string | undefined => {
   if (gone) return undefined;
   try {
     const snap = ctx.sessions.list.getSnapshot();
-    if (snap?.current) return snap.current;
     for (const [id, summary] of Object.entries(snap?.byId ?? {})) {
       if ((summary.retainedBy?.mainView ?? 0) > 0) return id;
     }
@@ -904,9 +889,8 @@ export interface ClientCtx {
             completed?: boolean;
             displayTitle?: string;
             // Positive local reference counts per source (`SessionRetainInfo.retainedBy`). dsh
-            // 0.1.6-alpha.2 retains the session the main view shows under the `mainView` source,
-            // which is how the open session is read since the list snapshot stopped carrying
-            // `current`. Absent on 0.1.5, where `current` answers instead.
+            // retains the session the main view shows under the `mainView` source, which is how
+            // the open session is read.
             retainedBy?: Record<string, number>;
             // The cold-summary hints dsh persists so a session can be described without being
             // activated. `projectList` (dsh-api-session-controller) flattens the summary's
@@ -922,14 +906,8 @@ export interface ClientCtx {
           }
         >;
         phase?: string;
-        // dsh 0.1.5 and earlier: the selected session. Gone in 0.1.6-alpha.2, where the doc on
-        // `ISessions.list` reads "navigation belongs to view owners". See `openSessionId`.
-        current?: string;
       };
     };
-    // dsh 0.1.5 and earlier. 0.1.6-alpha.2 moved navigation to `uiWorkspace.openSession`; see
-    // `openSession` below, which prefers whichever of the two this host has.
-    open?: (id: string) => void;
     create: (opts: { sessionId: string; workspaceId?: string }) => Promise<void>;
     // When present, the host can forward dsh-style commands to a session's underlying CLI.
     binding?: (id: string) => {
