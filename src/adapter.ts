@@ -34,6 +34,7 @@ import {
   type MessageSource,
 } from "@deepseek-ai/dsh-llm";
 import z from "@deepseek-ai/schemastery";
+import { repairStoredTurns } from "./turn-repair.js";
 import { type FirstPartyProbe, probeFirstParty, wantsFirstParty } from "./first-party.js";
 import {
   CONTEXT_SIZE_KEYS,
@@ -2524,6 +2525,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   /** Per-session turn accounting buffer (last 50 turns); keyed by dsh sessionId. Lives on
    *  globalThis so the route registered at boot reads what a hot-reloaded adapter fills. */
   readonly turnBuffer: Map<string, TurnRecord[]>;
+  /** Settles once the stored turn records are in `turnBuffer`, or could not be read. */
+  private readonly turnsLoaded: Promise<void>;
   /** What the running turn has done so far, per session, for the status row: output tokens across
    *  the finished assistant messages, plus the thinking estimate for the block the model is in now.
    *  The estimate is cleared when the next usage frame lands, since that frame counts the same
@@ -2649,9 +2652,25 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         if (on !== undefined) this.terminalSync = on;
       })
       .catch(() => {}); // unreadable state leaves the field's own default, which is off
-    loadTurnRecords(this.stateDir)
-      .then((saved) => {
+    this.turnsLoaded = loadTurnRecords(this.stateDir)
+      .then(async (saved) => {
         for (const [id, list] of saved) if (!this.turnBuffer.has(id)) this.turnBuffer.set(id, list);
+        // Once per state directory: records stored with a session's running total are put back to
+        // the turn's own share. Its marker makes every later start a single `access`.
+        const report = await repairStoredTurns({
+          stateDir: this.stateDir,
+          claudeHome: this.claudeHome,
+          buffer: this.turnBuffer,
+          ids: new Set(saved.keys()),
+          ring: TURN_RING,
+          claudeIdOf: claudeSessionId,
+          save: (id) => saveTurnRecords(this.stateDir, id, this.turnBuffer.get(id) ?? []),
+        });
+        if (report && report.repaired > 0)
+          this.log(
+            "info",
+            `repaired ${report.repaired} stored turn costs in ${report.sessions} sessions; the figures as they were are in turns.json.before-repair`,
+          );
       })
       .catch(() => {}); // state is an optimization only
     // `/btw` asides are memory-only per instance, so a restart or a hot reload would lose them;
@@ -5323,17 +5342,25 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    * Start a handle on a CLI process that is already running from the totals its last recorded turn
    * reported. The process kept counting while dsh restarted; a handle that starts from zero reads
    * its next result, the session so far, as one turn. A session with turns on record but none
-   * carrying totals (written before they were kept) is marked unknown instead.
+   * carrying totals (written before they were kept) is marked unknown instead. Settles once the
+   * stored records are loaded, not on return.
    */
   private carryTotals(proc: ClaudeProcess, sessionId: string): void {
-    const last = this.turnBuffer.get(sessionId)?.at(-1);
-    if (last === undefined) return;
-    if (last.costTotal === undefined || last.apiTotal === undefined) {
-      proc.totalsUnknown = true;
-      return;
-    }
-    proc.costSoFar = last.costTotal;
-    proc.apiMsSoFar = last.apiTotal;
+    // Processes are adopted at boot, before the stored records have been read. Reading "no record"
+    // then as "no turns yet" started the handle from zero, and the next result was stored as one
+    // turn again ($601.91, 2026-10-07, the day the totals were first kept). So the totals are
+    // unknown until the records are in, and are settled then unless a result came first.
+    proc.totalsUnknown = true;
+    void this.turnsLoaded.then(() => {
+      if (!proc.totalsUnknown) return;
+      const last = this.turnBuffer.get(sessionId)?.at(-1);
+      // No record at all: a process that has not finished a turn, whose total is its first turn's.
+      if (last === undefined) proc.totalsUnknown = false;
+      if (last?.costTotal === undefined || last.apiTotal === undefined) return;
+      proc.totalsUnknown = false;
+      proc.costSoFar = last.costTotal;
+      proc.apiMsSoFar = last.apiTotal;
+    });
   }
 
   /**
