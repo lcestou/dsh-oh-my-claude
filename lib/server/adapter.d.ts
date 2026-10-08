@@ -973,6 +973,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     /** Per-session turn accounting buffer (last 50 turns); keyed by dsh sessionId. Lives on
      *  globalThis so the route registered at boot reads what a hot-reloaded adapter fills. */
     readonly turnBuffer: Map<string, TurnRecord[]>;
+    /** Settles once the stored turn records are in `turnBuffer`, or could not be read. */
+    private readonly turnsLoaded;
     /** What the running turn has done so far, per session, for the status row: output tokens across
      *  the finished assistant messages, plus the thinking estimate for the block the model is in now.
      *  The estimate is cleared when the next usage frame lands, since that frame counts the same
@@ -1650,7 +1652,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * Start a handle on a CLI process that is already running from the totals its last recorded turn
      * reported. The process kept counting while dsh restarted; a handle that starts from zero reads
      * its next result, the session so far, as one turn. A session with turns on record but none
-     * carrying totals (written before they were kept) is marked unknown instead.
+     * carrying totals (written before they were kept) is marked unknown instead. Settles once the
+     * stored records are loaded, not on return.
      */
     private carryTotals;
     /**

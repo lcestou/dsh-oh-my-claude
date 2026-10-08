@@ -673,6 +673,20 @@ export const costStateOf = (transcript: string): RunningTotals | undefined => {
   return undefined;
 };
 
+/** Every `cost-state` row of a transcript that parses, in file order: the totals each process
+ *  that exited left behind. Empty for a transcript with none. */
+export const costStatesOf = (transcript: string): RunningTotals[] => {
+  const out: RunningTotals[] = [];
+  for (let at = transcript.indexOf('"type":"cost-state"'); at >= 0;) {
+    const start = transcript.lastIndexOf("\n", at) + 1;
+    const stop = transcript.indexOf("\n", at);
+    const row = costStateOf(transcript.slice(start, stop < 0 ? undefined : stop));
+    if (row) out.push(row);
+    at = stop < 0 ? -1 : transcript.indexOf('"type":"cost-state"', stop);
+  }
+  return out;
+};
+
 /** What a breakdown row is. The CLI's own words for the field: "'used' content occupies the window;
  *  'free' is the remaining window; 'buffer' is the compaction reserve; 'deferred' rows are
  *  out-of-window tool schemas. Classify on this, never on the English name." Absent from a CLI

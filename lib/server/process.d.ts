@@ -404,6 +404,9 @@ export interface RunningTotals {
  * CLI starts from zero too; a row that does not parse is skipped for the one before it.
  */
 export declare const costStateOf: (transcript: string) => RunningTotals | undefined;
+/** Every `cost-state` row of a transcript that parses, in file order: the totals each process
+ *  that exited left behind. Empty for a transcript with none. */
+export declare const costStatesOf: (transcript: string) => RunningTotals[];
 /** What a breakdown row is. The CLI's own words for the field: "'used' content occupies the window;
  *  'free' is the remaining window; 'buffer' is the compaction reserve; 'deferred' rows are
  *  out-of-window tool schemas. Classify on this, never on the English name." Absent from a CLI
