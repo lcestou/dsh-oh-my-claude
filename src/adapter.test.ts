@@ -3940,9 +3940,9 @@ console.log("command-catalog-live ok");
   assert.ok(run("").text?.includes(serverText("ultracodeStateOn")), "nothing after it flips to on");
   assert.deepEqual(a.ultracode.get("ultracode-session"), { wanted: true });
   await new Promise((r) => setTimeout(r, 30));
-  assert.deepEqual(JSON.parse(await readFile(joinPath(dir, "ultracode.json"), "utf8")), [
-    "ultracode-session",
-  ]);
+  assert.deepEqual(JSON.parse(await readFile(joinPath(dir, "ultracode.json"), "utf8")), {
+    "ultracode-session": true,
+  });
   // A live process: the setting goes out and the read-back is recorded.
   let available = true;
   let cli = false;
@@ -3975,7 +3975,9 @@ console.log("command-catalog-live ok");
   assert.equal(run("off").text, serverText("ultracodeOff"));
   await new Promise((r) => setTimeout(r, 30));
   assert.equal(run("status").text, serverText("ultracodeStatusOff"));
-  assert.deepEqual(JSON.parse(await readFile(joinPath(dir, "ultracode.json"), "utf8")), []);
+  assert.deepEqual(JSON.parse(await readFile(joinPath(dir, "ultracode.json"), "utf8")), {
+    "ultracode-session": false,
+  });
   // A model that does not offer it: asked for, acknowledged, not in force.
   available = false;
   run("on");

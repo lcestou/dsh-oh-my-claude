@@ -771,8 +771,9 @@ export interface UltracodeState {
         available: boolean;
     };
 }
-/** The sessions with ultracode asked on, as stored: a session set back to off needs no record. */
-export declare const wantedUltracode: (states: ReadonlyMap<string, UltracodeState>) => string[];
+/** What each session asked for, as stored. Off is kept as well as on: a session whose own Claude
+ *  Code settings turn ultracode on has to be told off again by every process started for it. */
+export declare const wantedUltracode: (states: ReadonlyMap<string, UltracodeState>) => Record<string, boolean>;
 /** What `/ultracode status` answers for a session's state; undefined is a session never set. */
 export declare const ultracodeStatus: (state: UltracodeState | undefined) => string;
 /** The slice of a Claude process the idle watchdog needs. */

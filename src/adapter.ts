@@ -79,7 +79,7 @@ import {
   costStateOf,
   appliedEffort,
   appliedUltracode,
-  stringsOf,
+  flagsOf,
   decodeWorkspaceDiff,
   decodePermissionRules,
   decodeHooksListing,
@@ -2076,9 +2076,11 @@ export interface UltracodeState {
   confirmed?: { on: boolean; available: boolean };
 }
 
-/** The sessions with ultracode asked on, as stored: a session set back to off needs no record. */
-export const wantedUltracode = (states: ReadonlyMap<string, UltracodeState>): string[] =>
-  [...states].filter(([, s]) => s.wanted).map(([id]) => id);
+/** What each session asked for, as stored. Off is kept as well as on: a session whose own Claude
+ *  Code settings turn ultracode on has to be told off again by every process started for it. */
+export const wantedUltracode = (
+  states: ReadonlyMap<string, UltracodeState>,
+): Record<string, boolean> => Object.fromEntries([...states].map(([id, s]) => [id, s.wanted]));
 
 /** What `/ultracode status` answers for a session's state; undefined is a session never set. */
 export const ultracodeStatus = (state: UltracodeState | undefined): string => {
@@ -2718,11 +2720,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         for (const [id, at] of waits) this.armLimitWait(id, at, RESUME_DELAY_MS + LIMIT_GRACE_MS);
       })
       .catch(() => {});
-    // Sessions set to ultracode before a restart: asked for again, unconfirmed until a process says.
+    // What each session asked for before a restart: unconfirmed again until a process says.
     readFile(join(this.stateDir, "ultracode.json"), "utf8")
       .then((text) => {
-        for (const id of stringsOf(toJsonValue(JSON.parse(text))))
-          if (!this.ultracode.has(id)) this.ultracode.set(id, { wanted: true });
+        for (const [id, wanted] of flagsOf(toJsonValue(JSON.parse(text))))
+          if (!this.ultracode.has(id)) this.ultracode.set(id, { wanted });
       })
       .catch(() => {}); // no file: nobody has set it
     this.warnedNoSeam = false;

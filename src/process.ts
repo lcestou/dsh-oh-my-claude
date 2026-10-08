@@ -636,10 +636,14 @@ export const appliedEffort = (response: JsonValue | undefined): string | undefin
   return str(effort);
 };
 
-/** The strings in a decoded JSON array, in order; anything else in it, or a value that is not an
- *  array, yields none. */
-export const stringsOf = (value: JsonValue | undefined): string[] =>
-  Array.isArray(value) ? value.flatMap((v) => str(v) ?? []) : [];
+/** The true and false members of a decoded JSON object, by key; any other member, or a value that
+ *  is not an object, yields none. */
+export const flagsOf = (value: JsonValue | undefined): Array<[string, boolean]> =>
+  isRecord(value)
+    ? Object.entries(value).flatMap(([key, v]): Array<[string, boolean]> =>
+        v === true || v === false ? [[key, v]] : [],
+      )
+    : [];
 
 /** Where ultracode stands in a `get_settings` answer: whether it is in force, and whether the
  *  model in use offers it at all. Undefined for a reply of another shape. */
