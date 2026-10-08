@@ -58,6 +58,10 @@ The last row is the one limit of the design, and it comes from Claude Code, whic
 
 Type `/temporary` in a session to toggle it. From the next turn its Claude process runs with `--no-session-persistence`, so nothing lands under `projects/` for it, and the session is never resumed on the Claude side. A dsh restart continues it from dsh's own log instead. Type `/temporary` again to switch back. The mark lives in memory, so it survives a plugin reload but not a dsh restart.
 
+## Ultracode
+
+Type `/ultracode` to turn Claude Code's ultracode on or off for a session, or `/ultracode on`, `/ultracode off`. It is switched inside the running Claude process, with no relaunch, and remembered for the session's next process. dsh answers a command before Claude Code can, so the reply says the request went out; `/ultracode status` says what Claude Code read back: on, off, or that the session's model does not offer it.
+
 ## Process
 
 One `claude` process stays alive per dsh session (`processIdleMs`, default 30 min; `maxProcesses`, default 4, evicts the longest idle). Turns after the first start in about a second because hooks, CLAUDE.md and MCP servers are already loaded. A change of model, effort, working directory or permission mode replaces the process, and the Claude session is resumed, so nothing is lost.

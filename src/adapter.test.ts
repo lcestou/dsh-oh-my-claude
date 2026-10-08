@@ -167,7 +167,8 @@ const blockTextOf = (c: StreamChunk | undefined): string => {
 import { PassThrough } from "node:stream";
 import { tmpdir } from "node:os";
 import { homedir } from "node:os";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { serverText } from "./locale.js";
 import { join as joinPath } from "node:path";
 import { STATE_DIR } from "./state.js";
 
@@ -3830,18 +3831,18 @@ console.log("plan-review ok");
   a.bridgeCommands(["compact", "model"], undefined);
   assert.deepEqual(
     registered,
-    ["compact", "claude-model", "temporary", "btw"],
-    "Claude's own names, prefixed only where dsh's client half owns one, plus /temporary and /btw",
+    ["compact", "claude-model", "temporary", "btw", "ultracode"],
+    "Claude's own names, prefixed only where dsh's client half owns one, plus the plugin's three",
   );
-  assert.equal(a.bridged.size, 4, "compact, model, temporary and btw");
+  assert.equal(a.bridged.size, 5, "compact, model, temporary, btw and ultracode");
   // A catalog that already carries the plugin's own names (every catalog saved before 2026-09-08
   // did) must not bridge them to Claude: the real handler would then find the name taken.
   const again = new ClaudeCodeAdapter(fakeCtx(guarded), Config({ commandBridge: true }));
   registered.length = 0;
-  again.bridgeCommands(["btw", "temporary", "verify"], undefined);
+  again.bridgeCommands(["btw", "temporary", "ultracode", "verify"], undefined);
   assert.deepEqual(
     registered,
-    ["verify", "temporary", "btw"],
+    ["verify", "temporary", "btw", "ultracode"],
     "own names skipped by the bridge, registered by their own handlers",
   );
 }
@@ -3906,6 +3907,86 @@ console.log("plan-review ok");
   );
 }
 console.log("command-catalog-live ok");
+
+// /ultracode: flips or sets a session's ultracode, sends it to a live process, and `status` says
+// what the CLI read back. The fake CLI answers the way 2.1.293 did when probed: `success` either
+// way, and on a model without ultracode the setting stays off with `ultracodeAvailable: false`.
+{
+  type Handler = (i: { agent: { id: string }; rawInput: string }) => {
+    kind: string;
+    text?: string;
+  };
+  let handler: Handler | undefined;
+  const commands = {
+    register: (d: { name: string; handler: Handler }) => {
+      if (d.name === "ultracode") handler = d.handler;
+      return () => {};
+    },
+    find: () => undefined,
+  };
+  const dir = await mkdtemp(joinPath(tmpdir(), "omc-ultracode-"));
+  const a = new ClaudeCodeAdapter(
+    fakeCtx({ on() {}, logger: { info() {}, warn() {} } }),
+    Config({}),
+  );
+  a.stateDir = dir;
+  // SAFETY: the fake carries the one method the registration calls
+  a.registerUltracodeCommand(commands as any);
+  assert.ok(handler);
+  const run = (rawInput: string) => handler!({ agent: { id: "ultracode-session" }, rawInput });
+  assert.equal(run("status").text, serverText("ultracodeStatusUnset"));
+  assert.equal(run("maybe").kind, "error");
+  // No process yet: remembered for the next one.
+  assert.ok(run("").text?.includes(serverText("ultracodeStateOn")), "nothing after it flips to on");
+  assert.deepEqual(a.ultracode.get("ultracode-session"), { wanted: true });
+  await new Promise((r) => setTimeout(r, 30));
+  assert.deepEqual(JSON.parse(await readFile(joinPath(dir, "ultracode.json"), "utf8")), [
+    "ultracode-session",
+  ]);
+  // A live process: the setting goes out and the read-back is recorded.
+  let available = true;
+  let cli = false;
+  const sent: string[] = [];
+  const proc: any = fakeProc({
+    alive: true,
+    controlListener: undefined,
+    write(line: string) {
+      const req = JSON.parse(line);
+      sent.push(req.request.subtype);
+      if (req.request.subtype === "apply_flag_settings" && available)
+        cli = req.request.settings.ultracode;
+      setTimeout(() => {
+        proc.controlListener({
+          type: "control_response",
+          response: {
+            subtype: "success",
+            request_id: req.request_id,
+            response: { applied: { ultracode: cli, ultracodeAvailable: available } },
+          },
+        });
+      }, 0);
+      return true;
+    },
+  });
+  await a.applyUltracode(proc, "ultracode-session");
+  assert.deepEqual(sent, ["apply_flag_settings", "get_settings"]);
+  assert.equal(run("status").text, serverText("ultracodeStatusOn"));
+  a.processFor = () => proc;
+  assert.equal(run("off").text, serverText("ultracodeOff"));
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(run("status").text, serverText("ultracodeStatusOff"));
+  assert.deepEqual(JSON.parse(await readFile(joinPath(dir, "ultracode.json"), "utf8")), []);
+  // A model that does not offer it: asked for, acknowledged, not in force.
+  available = false;
+  run("on");
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(run("status").text, serverText("ultracodeStatusUnavailable"));
+  // A session nobody set is never sent anything.
+  sent.length = 0;
+  await a.applyUltracode(proc, "never-set");
+  assert.deepEqual(sent, []);
+  console.log("ultracode ok");
+}
 console.log("command-bridge ok");
 {
   // Raw tool rows only on a format-0 session: dsh 0.1.5's migration refuses unadvertised

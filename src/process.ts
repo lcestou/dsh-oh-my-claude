@@ -636,6 +636,21 @@ export const appliedEffort = (response: JsonValue | undefined): string | undefin
   return str(effort);
 };
 
+/** The strings in a decoded JSON array, in order; anything else in it, or a value that is not an
+ *  array, yields none. */
+export const stringsOf = (value: JsonValue | undefined): string[] =>
+  Array.isArray(value) ? value.flatMap((v) => str(v) ?? []) : [];
+
+/** Where ultracode stands in a `get_settings` answer: whether it is in force, and whether the
+ *  model in use offers it at all. Undefined for a reply of another shape. */
+export const appliedUltracode = (
+  response: JsonValue | undefined,
+): { on: boolean; available: boolean } | undefined => {
+  const applied = isRecord(response) ? response.applied : undefined;
+  if (!isRecord(applied)) return undefined;
+  return { on: applied.ultracode === true, available: applied.ultracodeAvailable === true };
+};
+
 /** The CLI's running totals for a session: what `total_cost_usd` and `duration_api_ms` stood at. */
 export interface RunningTotals {
   costUsd: number;

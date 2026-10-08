@@ -6,6 +6,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Added
+
+- `/ultracode` turns Claude Code's ultracode on or off for a session without relaunching it. `/ultracode status` says what Claude Code confirmed, including when the session's model does not offer it.
+
 ### Changed
 
 - Changing the effort level on a running session no longer relaunches Claude Code. The switch is made inside the running process, the way a model change already was, so the next message starts without the relaunch and the session keeps its MCP connections. A Claude Code too old for the request, or a model without effort levels, is relaunched as before.

@@ -389,6 +389,15 @@ export declare const turnDelta: (total: number, soFar: number) => number;
 /** The effort level a `get_settings` answer says is in force (`applied.effort`), or undefined when
  *  the answer has none: a model without effort levels, or a reply of another shape. */
 export declare const appliedEffort: (response: JsonValue | undefined) => string | undefined;
+/** The strings in a decoded JSON array, in order; anything else in it, or a value that is not an
+ *  array, yields none. */
+export declare const stringsOf: (value: JsonValue | undefined) => string[];
+/** Where ultracode stands in a `get_settings` answer: whether it is in force, and whether the
+ *  model in use offers it at all. Undefined for a reply of another shape. */
+export declare const appliedUltracode: (response: JsonValue | undefined) => {
+    on: boolean;
+    available: boolean;
+} | undefined;
 /** The CLI's running totals for a session: what `total_cost_usd` and `duration_api_ms` stood at. */
 export interface RunningTotals {
     costUsd: number;
