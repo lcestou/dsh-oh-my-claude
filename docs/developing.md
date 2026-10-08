@@ -103,6 +103,14 @@ bun tools/live-cli-check.ts --live   # also runs one real turn per target, which
 
 It checks the local `claude` plus every box a remote workspace names, using the same argument builder, the same SSH invocation and the same stored box login the plugin spawns with. An unreachable host is skipped; a flag the target does not have is a failure. Development check only, like Playwright.
 
+`tools/effort-switch-check.ts` does the same for the effort switch, which rests on a control request Claude Code does not document:
+
+```sh
+DSH_OMC_STATE_DIR=$(mktemp -d) bun tools/effort-switch-check.ts   # no prompt is sent, so nothing is spent
+```
+
+It starts a real `claude -p`, hands it to the adapter as the process it drives, asks for each effort level, and after each one reads the level back from the CLI and compares the pid. Run it after a Claude Code update.
+
 Links in the README and under `docs/` are checked by `bun tools/check-links.ts`: every link into this repo resolves to a file, every fragment to a heading by GitHub's slug rule, and every page under `docs/` is linked from somewhere.
 
 ## Repairing session logs
