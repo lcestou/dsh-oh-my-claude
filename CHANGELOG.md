@@ -6,6 +6,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+## [1.5.3] - 2026-10-08
+
+dsh: runs on 0.2.0-rc.1 through 0.2.1-alpha.1; built and tested on 0.2.1-alpha.1.
+
 ### Added
 
 - `/ultracode` turns Claude Code's ultracode on or off for a session without relaunching it. `/ultracode status` says what Claude Code confirmed, including when the session's model does not offer it.
