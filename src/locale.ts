@@ -42,6 +42,23 @@ const EN = {
   temporaryCommand: "Oh My Claude: keep no Claude transcript for this session (toggle)",
   btwCommand: "Oh My Claude: ask Claude a quick side question without interrupting the turn",
   btwHint: "<your question>",
+  ultracodeCommand: "Oh My Claude: turn Claude Code's ultracode on or off for this session",
+  ultracodeHint: "on | off | status",
+  ultracodeUsage:
+    "Usage: /ultracode on, /ultracode off or /ultracode status. With nothing after it, it flips.",
+  ultracodeOn: "Ultracode: on, sent to Claude Code. /ultracode status says whether it took.",
+  ultracodeOff: "Ultracode: off, sent to Claude Code. /ultracode status says whether it took.",
+  ultracodeNext:
+    "Ultracode: {state}. It is applied when this session's next message starts Claude Code.",
+  ultracodeStatusOn: "Ultracode is on: Claude Code confirmed it.",
+  ultracodeStatusOff: "Ultracode is off: Claude Code confirmed it.",
+  ultracodeStatusUnavailable:
+    "Ultracode is asked for, but the model this session runs on does not offer it.",
+  ultracodeStatusUnknown: "Ultracode is set to {state}; Claude Code has not confirmed it yet.",
+  ultracodeStatusUnset:
+    "Ultracode has not been set for this session; Claude Code uses its own setting.",
+  ultracodeStateOn: "on",
+  ultracodeStateOff: "off",
   // Tool header words, written into the chat as each tool runs. dsh keeps Bash, Grep and Glob in
   // English on its own cards, so those are not here; the rest follow dsh's own card labels.
   toolRead: "Read",
@@ -143,6 +160,19 @@ const ZH = {
   temporaryCommand: "Oh My Claude：此会话不保留 Claude 记录（开关）",
   btwCommand: "Oh My Claude：向 Claude 快速提一个旁问，不打断当前回合",
   btwHint: "<你的问题>",
+  ultracodeCommand: "Oh My Claude：为此会话开启或关闭 Claude Code 的 ultracode",
+  ultracodeHint: "on | off | status",
+  ultracodeUsage: "用法：/ultracode on、/ultracode off 或 /ultracode status。后面不写则切换。",
+  ultracodeOn: "Ultracode：已开启，已发送给 Claude Code。用 /ultracode status 查看是否生效。",
+  ultracodeOff: "Ultracode：已关闭，已发送给 Claude Code。用 /ultracode status 查看是否生效。",
+  ultracodeNext: "Ultracode：{state}。此会话下一条消息启动 Claude Code 时生效。",
+  ultracodeStatusOn: "Ultracode 已开启：Claude Code 已确认。",
+  ultracodeStatusOff: "Ultracode 已关闭：Claude Code 已确认。",
+  ultracodeStatusUnavailable: "已请求 Ultracode，但此会话使用的模型不支持。",
+  ultracodeStatusUnknown: "Ultracode 设为{state}；Claude Code 尚未确认。",
+  ultracodeStatusUnset: "此会话尚未设置 Ultracode；Claude Code 使用它自己的设置。",
+  ultracodeStateOn: "开启",
+  ultracodeStateOff: "关闭",
   toolRead: "读取",
   toolWrite: "写入",
   toolEdit: "编辑",

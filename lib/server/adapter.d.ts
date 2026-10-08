@@ -763,6 +763,19 @@ export interface TurnRecord {
     costTotal?: number;
     apiTotal?: number;
 }
+/** One session's ultracode: what `/ultracode` asked for, and the CLI's last read-back of it. */
+export interface UltracodeState {
+    wanted: boolean;
+    confirmed?: {
+        on: boolean;
+        available: boolean;
+    };
+}
+/** What each session asked for, as stored. Off is kept as well as on: a session whose own Claude
+ *  Code settings turn ultracode on has to be told off again by every process started for it. */
+export declare const wantedUltracode: (states: ReadonlyMap<string, UltracodeState>) => Record<string, boolean>;
+/** What `/ultracode status` answers for a session's state; undefined is a session never set. */
+export declare const ultracodeStatus: (state: UltracodeState | undefined) => string;
 /** The slice of a Claude process the idle watchdog needs. */
 export interface IdleTarget {
     idleKilled: boolean;
@@ -1194,6 +1207,12 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * handler saw the name taken and stood down (2026-09-08: "/btw isn't available in this environment").
      */
     static readonly OWN_COMMANDS: Set<string>;
+    /** dsh session id → what `/ultracode` last asked for, and what the CLI last said about it.
+     *  `confirmed` is absent until a read-back lands. Written to `ultracode.json` on every change, so
+     *  a session keeps its setting across a dsh restart and a relaunch of its process. */
+    readonly ultracode: Map<string, UltracodeState>;
+    /** The last write of `ultracode.json`; the next one waits for it. */
+    private ultracodeSaved;
     /** dsh session id → the tool names its last init frame reported; absent until one arrives. */
     readonly sessionTools: Map<string, string[]>;
     /** dsh session id → the plugins its last init frame said the CLI failed to load. Absent until an
@@ -1488,6 +1507,21 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * --no-session-persistence; a live one is replaced by the spec change.
      */
     registerTemporaryCommand(commands: NonNullable<PluginContext["commands"]>): void;
+    /**
+     * `/ultracode [on|off|status]`: Claude Code's ultracode for this session, switched inside the
+     * running process with `apply_flag_settings` and remembered for the next one. With no argument
+     * it flips. dsh's command handler answers at once and cannot wait for the CLI, so the reply
+     * says the request went out and `status` reports what the CLI read back: on, off, or that the
+     * model does not offer it (the CLI answers `success` there too and changes nothing, probed on
+     * 2.1.293 with haiku).
+     */
+    registerUltracodeCommand(commands: NonNullable<PluginContext["commands"]>): void;
+    /**
+     * Send a session's ultracode setting to its process and record what the CLI reads back. A
+     * session nobody has set is left alone, so a process keeps whatever its own settings gave it.
+     * Never throws: a refusal or a silent CLI leaves the setting unconfirmed, which `status` says.
+     */
+    applyUltracode(proc: ClaudeProcess, sessionId: string): Promise<void>;
     /**
      * `/btw <question>` asks Claude a side question over the `side_question` control request, which is
      * answered off the transcript. The pending entry lands in the ring at once so the client bubble

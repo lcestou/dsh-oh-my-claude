@@ -78,6 +78,8 @@ import {
   turnDelta,
   costStateOf,
   appliedEffort,
+  appliedUltracode,
+  flagsOf,
   decodeWorkspaceDiff,
   decodePermissionRules,
   decodeHooksListing,
@@ -166,6 +168,7 @@ import {
   saveContextSizes,
   saveWorkspaceModel,
   type WatchRecord,
+  writeJson,
 } from "./state.js";
 import { suggestRule } from "./permissions.js";
 import {
@@ -2067,6 +2070,30 @@ export interface TurnRecord {
   apiTotal?: number;
 }
 
+/** One session's ultracode: what `/ultracode` asked for, and the CLI's last read-back of it. */
+export interface UltracodeState {
+  wanted: boolean;
+  confirmed?: { on: boolean; available: boolean };
+}
+
+/** What each session asked for, as stored. Off is kept as well as on: a session whose own Claude
+ *  Code settings turn ultracode on has to be told off again by every process started for it. */
+export const wantedUltracode = (
+  states: ReadonlyMap<string, UltracodeState>,
+): Record<string, boolean> => Object.fromEntries([...states].map(([id, s]) => [id, s.wanted]));
+
+/** What `/ultracode status` answers for a session's state; undefined is a session never set. */
+export const ultracodeStatus = (state: UltracodeState | undefined): string => {
+  if (state === undefined) return serverText("ultracodeStatusUnset");
+  const { wanted, confirmed } = state;
+  if (confirmed === undefined)
+    return serverText("ultracodeStatusUnknown", {
+      state: serverText(wanted ? "ultracodeStateOn" : "ultracodeStateOff"),
+    });
+  if (wanted && !confirmed.available) return serverText("ultracodeStatusUnavailable");
+  return serverText(confirmed.on ? "ultracodeStatusOn" : "ultracodeStatusOff");
+};
+
 /** The slice of a Claude process the idle watchdog needs. */
 export interface IdleTarget {
   idleKilled: boolean;
@@ -2693,6 +2720,13 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         for (const [id, at] of waits) this.armLimitWait(id, at, RESUME_DELAY_MS + LIMIT_GRACE_MS);
       })
       .catch(() => {});
+    // What each session asked for before a restart: unconfirmed again until a process says.
+    readFile(join(this.stateDir, "ultracode.json"), "utf8")
+      .then((text) => {
+        for (const [id, wanted] of flagsOf(toJsonValue(JSON.parse(text))))
+          if (!this.ultracode.has(id)) this.ultracode.set(id, { wanted });
+      })
+      .catch(() => {}); // no file: nobody has set it
     this.warnedNoSeam = false;
     this.loggedVersion = false;
     // Kept on globalThis so a hot reload of this plugin adopts the running Claude processes
@@ -3364,7 +3398,13 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    * bridged, so once they slipped in, every later boot bridged `/btw` to Claude first and the real
    * handler saw the name taken and stood down (2026-09-08: "/btw isn't available in this environment").
    */
-  static readonly OWN_COMMANDS = new Set(["temporary", "btw"]);
+  static readonly OWN_COMMANDS = new Set(["temporary", "btw", "ultracode"]);
+  /** dsh session id → what `/ultracode` last asked for, and what the CLI last said about it.
+   *  `confirmed` is absent until a read-back lands. Written to `ultracode.json` on every change, so
+   *  a session keeps its setting across a dsh restart and a relaunch of its process. */
+  readonly ultracode = new Map<string, UltracodeState>();
+  /** The last write of `ultracode.json`; the next one waits for it. */
+  private ultracodeSaved: Promise<void> = Promise.resolve();
   /** dsh session id → the tool names its last init frame reported; absent until one arrives. */
   readonly sessionTools = new Map<string, string[]>();
   /** dsh session id → the plugins its last init frame said the CLI failed to load. Absent until an
@@ -3497,6 +3537,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     );
     this.registerTemporaryCommand(commands);
     this.registerAsideCommand(commands);
+    this.registerUltracodeCommand(commands);
   }
 
   /** The effective mode for a session and the stored override, for the header chip. */
@@ -4478,6 +4519,79 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   }
 
   /**
+   * `/ultracode [on|off|status]`: Claude Code's ultracode for this session, switched inside the
+   * running process with `apply_flag_settings` and remembered for the next one. With no argument
+   * it flips. dsh's command handler answers at once and cannot wait for the CLI, so the reply
+   * says the request went out and `status` reports what the CLI read back: on, off, or that the
+   * model does not offer it (the CLI answers `success` there too and changes nothing, probed on
+   * 2.1.293 with haiku).
+   */
+  registerUltracodeCommand(commands: NonNullable<PluginContext["commands"]>) {
+    if (this.bridged.has("ultracode")) return;
+    try {
+      const dispose = commands.register({
+        name: "ultracode",
+        description: serverText("ultracodeCommand"),
+        input: { hint: serverText("ultracodeHint") },
+        handler: ({ agent, rawInput }) => {
+          const id = String(agent.id);
+          const word = rawInput.trim().toLowerCase();
+          const now = this.ultracode.get(id);
+          if (word === "status") return { kind: "success", text: ultracodeStatus(now) };
+          if (word !== "" && word !== "on" && word !== "off")
+            return { kind: "error", text: serverText("ultracodeUsage") };
+          const on = word === "" ? !(now?.wanted ?? false) : word === "on";
+          this.ultracode.set(id, { wanted: on });
+          // One write at a time, each reading the map when it runs: two commands close together
+          // must not leave the earlier one's list on disk.
+          this.ultracodeSaved = this.ultracodeSaved
+            .then(() =>
+              writeJson(join(this.stateDir, "ultracode.json"), wantedUltracode(this.ultracode)),
+            )
+            .catch(() => {});
+          const proc = this.processFor(id);
+          if (proc?.alive) {
+            void this.applyUltracode(proc, id);
+            return { kind: "success", text: serverText(on ? "ultracodeOn" : "ultracodeOff") };
+          }
+          const state = serverText(on ? "ultracodeStateOn" : "ultracodeStateOff");
+          return { kind: "success", text: serverText("ultracodeNext", { state }) };
+        },
+      });
+      this.bridged.set("ultracode", dispose);
+    } catch (error) {
+      this.log("warn", `/ultracode not registered: ${errorText(error)}`);
+    }
+  }
+
+  /**
+   * Send a session's ultracode setting to its process and record what the CLI reads back. A
+   * session nobody has set is left alone, so a process keeps whatever its own settings gave it.
+   * Never throws: a refusal or a silent CLI leaves the setting unconfirmed, which `status` says.
+   */
+  async applyUltracode(proc: ClaudeProcess, sessionId: string): Promise<void> {
+    const state = this.ultracode.get(sessionId);
+    if (state === undefined) return;
+    const sent = await this.control(
+      proc,
+      { subtype: "apply_flag_settings", settings: { ultracode: state.wanted } },
+      5000,
+    );
+    const now = sent.ok ? await this.control(proc, { subtype: "get_settings" }, 5000) : sent;
+    const read = now.ok ? appliedUltracode(now.response) : undefined;
+    // A newer `/ultracode` may have landed while this one was out; its own call records it.
+    if (this.ultracode.get(sessionId) !== state) return;
+    if (read === undefined) {
+      this.log(
+        "warn",
+        `ultracode ${state.wanted ? "on" : "off"} not confirmed: ${now.ok ? "no answer shape" : now.error}`,
+      );
+      return;
+    }
+    this.ultracode.set(sessionId, { wanted: state.wanted, confirmed: read });
+  }
+
+  /**
    * `/btw <question>` asks Claude a side question over the `side_question` control request, which is
    * answered off the transcript. The pending entry lands in the ring at once so the client bubble
    * can show the question with a spinner; the answer or error fills in when the control response
@@ -5329,6 +5443,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         this.log("info", `spawn cwd=${prep.cwd} claude ${prep.args.join(" ")}`);
       }
       void this.refreshCliModels(proc);
+      // A session that was set to ultracode keeps it in every process started for it.
+      void this.applyUltracode(proc, options.sessionId);
       // Last, after the process is registered, so a second caller during the read finds this
       // process and does not spawn another. Awaited: the first result must find the totals in place, and a result that beat the read
       // would be measured against the stand-in, which is wrong whenever the last process died
