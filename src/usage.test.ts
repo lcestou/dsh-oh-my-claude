@@ -88,7 +88,7 @@ const home = mkdtempSync(join(tmpdir(), "omc-usage-"));
 writeFileSync(
   join(home, ".credentials.json"),
   JSON.stringify({
-    claudeAiOauth: { accessToken: "sk-ant-test", expiresAt: Date.now() + 3_600_000 },
+    claudeAiOauth: { accessToken: "sk-ant-your-token-here", expiresAt: Date.now() + 3_600_000 },
   }),
 );
 

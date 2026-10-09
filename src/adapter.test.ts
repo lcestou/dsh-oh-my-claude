@@ -3705,13 +3705,13 @@ console.log("pending-notice ok");
 // buildRedactor masks secret-looking env values, longest first, and leaves short or unnamed ones.
 {
   const redact = buildRedactor({
-    MY_API_KEY: "abcdefgh12",
-    LONGER_TOKEN: "abcdefgh12xyz",
+    MY_API_KEY: "your-key-0001",
+    LONGER_TOKEN: "your-key-0001-xyz",
     PATH: "/usr/bin:/bin",
     SHORT_KEY: "abc",
   });
   assert.equal(
-    redact("k=abcdefgh12xyz and abcdefgh12"),
+    redact("k=your-key-0001-xyz and your-key-0001"),
     "k=[redacted:LONGER_TOKEN] and [redacted:MY_API_KEY]",
   );
   assert.equal(
