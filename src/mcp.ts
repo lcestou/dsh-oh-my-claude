@@ -3,9 +3,18 @@
 // to dsh subagents and they show up under the session like any other child. Shell and file tools are
 // left out: Claude Code has its own. Guarded by a per-process key that only the adapter knows.
 // This is an I/O boundary: JSON-RPC bodies are decoded here.
+//
+// The bridge listens on its own loopback port rather than only on dsh's web server: DSH Desktop
+// wraps every web server route in a browser-access gate (403 for anything without the Electron
+// renderer's capability header), which the CLI's MCP client has no way to present, so a bridge
+// served only there is unreachable on Desktop and Claude sees zero dsh tools. The web server
+// route is still registered as a fallback (plain `dsh web` has no gate), and keeper-mode Claude
+// processes spawned before a restart keep working through it under the same stable key.
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { createServer, type Server } from "node:http";
+import { dirname, join } from "node:path";
+import type { AddressInfo } from "node:net";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { readBody } from "./sessions.js";
 import { errorText } from "./process.js";
@@ -283,6 +292,10 @@ export interface BridgeOptions {
   ) => Promise<RelayResult | undefined> | undefined;
   /** Path of a file holding the bridge key; created once, reused across restarts. */
   keyFile?: string;
+  /** Path of a file holding the loopback listener's port, so a restart rebinds the same port and
+   *  keeper-mode Claude processes keep their URL. Defaults to `mcp-port` next to `keyFile`.
+   *  Pass `null` to take a fresh ephemeral port on every mount. */
+  portFile?: string | null;
 }
 
 /** A JSON-RPC body is any JSON object; the bridge reads three fields off it. */
@@ -317,84 +330,179 @@ function stableKey(file: string): string {
 export interface McpBridge {
   base: string;
   key: string;
+  /** Where `base` points: the bridge's own loopback listener, or the dsh web server route when
+   *  the listener could not start. The CLI's `--mcp-config` URL is built off `base` either way. */
+  via: "loopback" | "webserver";
   /** The tools `tools/list` will answer that session with, `open_session` included, so the system
    *  prompt can name the ones that are really there. Undefined when the session has no live agent
    *  or dsh refuses the listing; the bridge has nothing for that session either. */
   toolsFor: (sessionId: string) => ToolSchema[] | undefined;
 }
 
-/** Wires the MCP bridge into the web server once the required services are injected, and keeps the
- *  bridge key stable across dsh restarts so a keeper-mode claude that outlived dsh still
- *  authenticates. */
+/** The loopback port remembered from the previous mount, else undefined. */
+function readPortFile(file: string): number | undefined {
+  try {
+    const n = Number.parseInt(readFileSync(file, "utf8").trim(), 10);
+    if (Number.isInteger(n) && n > 0 && n <= 65535) return n;
+  } catch {}
+  return undefined;
+}
+
+/** Remember the loopback port for the next mount; failures only lose the reuse, never the mount. */
+function writePortFile(file: string, port: number): void {
+  try {
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, `${port}\n`);
+  } catch {}
+}
+
+/** One listen attempt against 127.0.0.1. */
+function listenOnce(
+  handler: (req: IncomingMessage, res: ServerResponse) => void,
+  port: number,
+): Promise<Server> {
+  return new Promise((resolve, reject) => {
+    const server = createServer(handler);
+    server.once("error", reject);
+    server.listen(port, "127.0.0.1", () => {
+      server.off("error", reject);
+      resolve(server);
+    });
+  });
+}
+
+/**
+ * The bridge's own listener on 127.0.0.1. The remembered port is tried first so a restart rebinds
+ * the same port; when it is taken (a previous generation still holds it, or anything else does),
+ * an ephemeral port is taken instead and remembered. Resolves undefined when nothing listens, in
+ * which case the caller falls back to the dsh web server route.
+ */
+async function startLoopback(
+  log: (level: string, msg: string) => void,
+  handler: (req: IncomingMessage, res: ServerResponse) => void,
+  portFile: string | undefined,
+): Promise<{ url: string; close: () => void } | undefined> {
+  const wanted = portFile ? readPortFile(portFile) : undefined;
+  const attempts = wanted === undefined ? [0] : [wanted, 0];
+  for (const port of attempts) {
+    try {
+      const server = await listenOnce(handler, port);
+      // SAFETY: a TCP listener bound to 127.0.0.1 reports AddressInfo; string is Unix sockets only
+      const address = server.address() as AddressInfo | string | null;
+      const actual = typeof address === "object" && address !== null ? address.port : undefined;
+      if (actual === undefined) {
+        server.close();
+        continue;
+      }
+      if (portFile) writePortFile(portFile, actual);
+      server.on("error", (e) => log("warn", `mcp bridge loopback: ${errorText(e)}`));
+      return { url: `http://127.0.0.1:${actual}`, close: () => server.close() };
+    } catch (e) {
+      log(
+        "warn",
+        `mcp bridge: loopback listen on ${port === 0 ? "an ephemeral port" : `port ${port}`} failed: ${errorText(e)}`,
+      );
+    }
+  }
+  return undefined;
+}
+
+/** Wires the MCP bridge up once the required services are injected, and keeps the bridge key
+ *  stable across dsh restarts so a keeper-mode claude that outlived dsh still authenticates.
+ *  New Claude processes are pointed at the bridge's own loopback listener, which answers on
+ *  127.0.0.1 regardless of the browser-access gate DSH Desktop puts on web server routes; the
+ *  web server route stays registered as a fallback for plain `dsh web` and for keeper-mode
+ *  processes spawned before a restart. */
 export function registerMcpBridge(
   ctx: PluginContext,
-  { log, version, relay, keyFile }: BridgeOptions,
+  { log, version, relay, keyFile, portFile }: BridgeOptions,
 ): Promise<McpBridge> {
   // SAFETY: the key symbol is this plugin's own key on globalThis, typed here once
   const g = globalThis as typeof globalThis & { [KEY_REGISTRY]?: string };
   // A key file keeps the bridge key stable across dsh restarts, so a Claude process that outlived
   // dsh (keeper mode) still authenticates against the new bridge.
   const key = (g[KEY_REGISTRY] ??= keyFile ? stableKey(keyFile) : randomUUID());
+  const loopPortFile =
+    portFile === null
+      ? undefined
+      : (portFile ?? (keyFile ? join(dirname(keyFile), "mcp-port") : undefined));
   return new Promise((resolve) => {
     ctx.inject?.(
       ["webServer", "tools", "agents", "sessions", "sessionController", "workspaceRegistry"],
-      (host) => {
-        const { webServer, tools, agents, sessions, sessionController, workspaceRegistry } = host;
-        if (!webServer || !tools || !sessionController) return;
-        const openHost: OpenHost = { sessions, workspaceRegistry, sessionController, agents };
-        host.effect?.(() =>
-          webServer.register({
-            kind: "prefix",
-            path: MCP_PATH,
-            handler: async (req: IncomingMessage, res: ServerResponse) => {
-              if (req.headers[KEY_HEADER] !== key) return send(res, 403, { error: "forbidden" });
-              if (req.method !== "POST") return send(res, 405, { error: "POST only" });
-              const sessionId = decodeURIComponent(
-                (req.url ?? "").slice(MCP_PATH.length + 1).split("?")[0] ?? "",
-              );
-              const agent = agents.get(asSessionId(sessionId));
-              if (!agent)
-                return send(res, 404, { error: `no live agent for session ${sessionId}` });
-              const controller = new AbortController();
-              // Node fires the request's own "close" once the body is consumed; the response's
-              // fires when the client actually goes away.
-              res.on("close", () => {
-                if (!res.writableFinished) controller.abort();
+      // The body runs async (the loopback listen) but inject takes a sync callback.
+      (host) =>
+        void (async () => {
+          const { webServer, tools, agents, sessions, sessionController, workspaceRegistry } = host;
+          if (!webServer || !tools || !sessionController) return;
+          const openHost: OpenHost = { sessions, workspaceRegistry, sessionController, agents };
+          const serve = async (req: IncomingMessage, res: ServerResponse) => {
+            if (req.headers[KEY_HEADER] !== key) return send(res, 403, { error: "forbidden" });
+            if (req.method !== "POST") return send(res, 405, { error: "POST only" });
+            const sessionId = decodeURIComponent(
+              (req.url ?? "").slice(MCP_PATH.length + 1).split("?")[0] ?? "",
+            );
+            const agent = agents.get(asSessionId(sessionId));
+            if (!agent) return send(res, 404, { error: `no live agent for session ${sessionId}` });
+            const controller = new AbortController();
+            // Node fires the request's own "close" once the body is consumed; the response's
+            // fires when the client actually goes away.
+            res.on("close", () => {
+              if (!res.writableFinished) controller.abort();
+            });
+            try {
+              const msg = asRpc(await readBody(req, BODY_LIMIT));
+              const out = await handleRpc(msg, {
+                tools,
+                agent,
+                signal: controller.signal,
+                version,
+                open: (args) => openSession(openHost, agent, args, controller.signal),
+                relay: relay
+                  ? (name, args, signal) => relay(sessionId, name, args, signal)
+                  : undefined,
+                log,
               });
+              return out === null ? send(res, 202) : send(res, 200, out);
+            } catch (e) {
+              log("warn", `mcp bridge: ${errorText(e)}`);
+              return send(res, 400, { error: errorText(e) });
+            }
+          };
+          // The loopback listener is what new Claude processes get: it answers on 127.0.0.1 no
+          // matter what gate sits on the web server routes.
+          const loopback = await startLoopback(
+            log,
+            (req, res) => {
+              serve(req, res).catch((e: unknown) =>
+                log("warn", `mcp bridge loopback: ${errorText(e)}`),
+              );
+            },
+            loopPortFile,
+          );
+          if (loopback) log("info", `mcp bridge: loopback listener on ${loopback.url}`);
+          else
+            log("warn", "mcp bridge: no loopback listener, falling back to the web server route");
+          host.effect?.(() => {
+            const off = webServer.register({ kind: "prefix", path: MCP_PATH, handler: serve });
+            return () => {
+              loopback?.close();
+              if (typeof off === "function") off();
+            };
+          });
+          resolve({
+            base: loopback?.url ?? `http://127.0.0.1:${webServer.port}`,
+            via: loopback ? "loopback" : "webserver",
+            key,
+            toolsFor: (sessionId) => {
               try {
-                const msg = asRpc(await readBody(req, BODY_LIMIT));
-                const out = await handleRpc(msg, {
-                  tools,
-                  agent,
-                  signal: controller.signal,
-                  version,
-                  open: (args) => openSession(openHost, agent, args, controller.signal),
-                  relay: relay
-                    ? (name, args, signal) => relay(sessionId, name, args, signal)
-                    : undefined,
-                  log,
-                });
-                return out === null ? send(res, 202) : send(res, 200, out);
-              } catch (e) {
-                log("warn", `mcp bridge: ${errorText(e)}`);
-                return send(res, 400, { error: errorText(e) });
+                const agent = agents.get(asSessionId(sessionId));
+                return agent ? [...bridgedSchemas(tools, agent), OPEN_SESSION] : undefined;
+              } catch {
+                return undefined;
               }
             },
-          }),
-        );
-        resolve({
-          base: `http://127.0.0.1:${webServer.port}`,
-          key,
-          toolsFor: (sessionId) => {
-            try {
-              const agent = agents.get(asSessionId(sessionId));
-              return agent ? [...bridgedSchemas(tools, agent), OPEN_SESSION] : undefined;
-            } catch {
-              return undefined;
-            }
-          },
-        });
-      },
+          });
+        })(),
     );
   });
 }

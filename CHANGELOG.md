@@ -6,6 +6,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Fixed
+
+- On DSH Desktop, Claude sees the dsh tools again. The MCP bridge is served from the plugin's own listener on 127.0.0.1 instead of only from dsh's web server: Desktop gates every web server route behind its browser-access check, which answered the CLI's MCP requests with 403, so no dsh tool ever reached Claude. The web server route stays registered as a fallback, and the listener rebinds its remembered port across restarts, so a keeper-mode Claude that outlived dsh keeps both its URL and its key.
+
 ## [1.5.3] - 2026-10-08
 
 dsh: runs on 0.2.0-rc.1 through 0.2.1-alpha.1; built and tested on 0.2.1-alpha.1.

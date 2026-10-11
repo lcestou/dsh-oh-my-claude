@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
-import { handleRpc, HIDDEN } from "./mcp.js";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { handleRpc, HIDDEN, KEY_HEADER, MCP_PATH, registerMcpBridge } from "./mcp.js";
 
 const agent = { id: "a1" };
 // SAFETY: partial fake for tests
@@ -173,4 +176,97 @@ assert.ok(
   listed.result.tools.every((t) => t.annotations?.readOnlyHint === true),
   "dsh tools are marked concurrency-safe for the CLI",
 );
+
+// The bridge serves new Claude processes from its own loopback listener, so the browser-access
+// gate DSH Desktop puts on web server routes cannot 403 it. The web server route stays
+// registered as a fallback.
+// Honor TMPDIR like the test script's DSH_OMC_STATE_DIR: sandboxed runs cannot write os.tmpdir().
+const tmp = mkdtempSync(join(process.env.TMPDIR ?? tmpdir(), "omc-mcp-"));
+const cleanups: Array<() => void> = [];
+// SAFETY: minimal host double: only what registerMcpBridge reads
+const fakeCtx = {
+  inject: (
+    _names: string[],
+    cb: (host: {
+      webServer: { port: number; register: (route: unknown) => () => void };
+      tools: typeof tools;
+      agents: { get: (_id: unknown) => typeof agent | undefined };
+      sessions: object;
+      sessionController: object;
+      workspaceRegistry: object;
+      effect: (fn: () => () => void) => () => void;
+    }) => void,
+  ) => {
+    cb({
+      webServer: {
+        port: 43120,
+        register: (_route: unknown) => () => {},
+      },
+      tools,
+      agents: { get: (_id: unknown) => agent },
+      sessions: {},
+      sessionController: {},
+      workspaceRegistry: {},
+      effect: (fn: () => () => void) => {
+        cleanups.push(fn());
+        return () => {};
+      },
+    });
+  },
+};
+// SAFETY: host double above carries the services registerMcpBridge needs
+const bridge = await registerMcpBridge(fakeCtx as never, {
+  log: () => {},
+  version: "t",
+  keyFile: join(tmp, "mcp.key"),
+});
+assert.equal(bridge.via, "loopback", "new processes are pointed at the loopback listener");
+assert.match(bridge.base, /^http:\/\/127\.0\.0\.1:\d+$/, "loopback base is a 127.0.0.1 URL");
+const remembered = Number.parseInt(readFileSync(join(tmp, "mcp-port"), "utf8").trim(), 10);
+assert.ok(Number.isInteger(remembered) && remembered > 0, "loopback port is remembered");
+const post = (path: string, body: unknown, key?: string) => {
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (key !== undefined) headers[KEY_HEADER] = key;
+  return fetch(`${bridge.base}${path}`, { method: "POST", headers, body: JSON.stringify(body) });
+};
+// SAFETY: initialize always returns a response
+const loopInit = (await (
+  await post(
+    `${MCP_PATH}/s1`,
+    { jsonrpc: "2.0", id: 1, method: "initialize", params: {} },
+    bridge.key,
+  )
+).json()) as { result: { serverInfo: { name: string } } };
+assert.equal(loopInit.result.serverInfo.name, "dsh", "loopback answers without a gate");
+// SAFETY: tools/list always returns a response
+const loopList = (await (
+  await post(`${MCP_PATH}/s1`, { jsonrpc: "2.0", id: 2, method: "tools/list" }, bridge.key)
+).json()) as { result: { tools: Array<{ name: string }> } };
+assert.ok(
+  loopList.result.tools.some((t) => t.name === "subagent_local"),
+  "loopback serves the session tools",
+);
+assert.equal(
+  (await post(`${MCP_PATH}/s1`, { jsonrpc: "2.0", id: 3, method: "ping" }, "wrong-key")).status,
+  403,
+  "loopback still checks the bridge key",
+);
+assert.equal(
+  (await post(`${MCP_PATH}/s1`, { jsonrpc: "2.0", id: 4, method: "ping" })).status,
+  403,
+  "loopback rejects a missing key",
+);
+// A second mount rebinds the remembered port once the first listener is gone.
+for (const fn of cleanups) fn();
+cleanups.length = 0;
+// SAFETY: same host double shape as above
+const bridge2 = await registerMcpBridge(fakeCtx as never, {
+  log: () => {},
+  version: "t",
+  keyFile: join(tmp, "mcp.key"),
+});
+assert.equal(bridge2.via, "loopback");
+assert.equal(bridge2.base, bridge.base, "restart rebinds the remembered port");
+assert.equal(bridge2.key, bridge.key, "restart keeps the bridge key");
+for (const fn of cleanups) fn();
 console.log("mcp ok");
