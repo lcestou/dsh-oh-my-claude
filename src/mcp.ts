@@ -428,7 +428,7 @@ export function registerMcpBridge(
     portFile === null
       ? undefined
       : (portFile ?? (keyFile ? join(dirname(keyFile), "mcp-port") : undefined));
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     ctx.inject?.(
       ["webServer", "tools", "agents", "sessions", "sessionController", "workspaceRegistry"],
       // The body runs async (the loopback listen) but inject takes a sync callback.
@@ -501,8 +501,10 @@ export function registerMcpBridge(
               };
             });
           } catch (e) {
+            // Rejecting hands the caller its "bridge unavailable" path instead of a promise that
+            // never settles.
             loopback?.close();
-            log("warn", `mcp bridge: mount failed: ${errorText(e)}`);
+            reject(e instanceof Error ? e : new Error(errorText(e)));
             return;
           }
           resolve({
