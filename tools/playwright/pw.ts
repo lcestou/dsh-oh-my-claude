@@ -117,6 +117,8 @@ export async function launch(): Promise<Browser> {
   return chromium.launch({ headless: true }) as Promise<Browser>;
 }
 
-/** The dsh tab these checks drive; the token is dsh's own launch token, printed in its web log. */
+/** The dsh tab these checks drive; the token is dsh's own launch token, printed in its web log.
+ *  DSH_ORIGIN points a check at another dsh, such as a scratch one on a second port, so a shoot or
+ *  a check never has to touch the box's live sessions. */
 export const dshUrl = (token: string | undefined): string =>
-  `http://127.0.0.1:3080/?token=${token}`;
+  `${process.env.DSH_ORIGIN ?? "http://127.0.0.1:3080"}/?token=${token}`;

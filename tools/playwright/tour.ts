@@ -3,12 +3,12 @@
 // launch token; PW_SESSION (default "Getting started") names the session row to open.
 //
 // Shoot a session whose conversation is throwaway: the panel floats over the chat and the text
-// behind it lands in the shot. The clip is a webm; the gif comes from it with the crop this script
-// prints next to "crop", the seconds before the panel opens dropped:
-//   ffmpeg -y -ss 8.4 -i .video/<clip>.webm \
-//     -vf "crop=1024:316:376:556,fps=10,scale=640:-1:flags=lanczos,split[a][b];\
-//          [a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=3" \
-//     docs/media/panel-tabs.gif
+// behind it lands in the shot. A clip is recorded as a webm at the desktop size and the script
+// turns it into the gif itself with ffmpeg (on PATH): cropped to the panel, trimmed to the span the
+// drive marks, so the gif opens on the panel already up and ends on the tab it started on, which
+// is what makes the loop seamless. DSH_ORIGIN points the shoot at a scratch dsh, which is how a
+// throwaway session is kept out of the box's own sidebar.
+import { execFileSync } from "node:child_process";
 import { type Box, type Context, type Locator, type Page, dshUrl, launch } from "./pw.js";
 
 const token = process.argv[2];
@@ -55,18 +55,22 @@ const pick = async (p: Page) => {
   await target.last().click({ force: true });
   await wait(p, 3500);
 };
-// The panel is translucent, so the chat behind it bleeds through its rows and the shot reads as
-// two layers of text. While the panel is open the conversation is hidden; the shield menu and the
-// stats row, shot with the panel closed, keep it.
+// The panel and dsh's context popover are translucent, so the chat behind them bleeds through
+// their rows and the shot reads as two layers of text. While either dialog is open the
+// conversation is hidden; the shield menu and the stats row, shot with nothing open, keep it.
 const HIDE_CHAT_BEHIND_PANEL =
-  'body:has([role="dialog"][aria-label="Oh My Claude"]) [data-slot="conversation.view"]{visibility:hidden}';
+  'body:has([role="dialog"]) [data-slot="conversation.view"]{visibility:hidden}';
 /** Hide the conversation behind the open panel for the rest of this page's shots. */
 const stage = (p: Page) => p.addStyleTag({ content: HIDE_CHAT_BEHIND_PANEL });
+// When the page behind a clip was created, which is also when its video starts; a clip's gif span
+// is measured from here.
+let pageOpenedAt = 0;
 /** Open a new page at dsh and drive it to a picked session, waiting for the network to idle so the
- *  panel is ready to shoot.
+ *  panel is ready to shoot; also stamps `pageOpenedAt`, the clock a clip's gif span is cut on.
  */
 const open = async (ctx: Context) => {
   const p = await ctx.newPage();
+  pageOpenedAt = Date.now();
   await p.goto(dshUrl(token), { waitUntil: "networkidle" });
   await stage(p);
   await wait(p, 2500);
@@ -121,6 +125,99 @@ const hit = async (loc: Locator) => {
   await loc.click({ force: true });
 };
 
+// Clips first: the stills dismiss the pinned side question once Asides is shot, and the clip's
+// Asides tab should show the card as it was answered, not as dismissed.
+// Clips. A drive that returns a span and a crop becomes a gif; one that returns nothing stays a webm.
+/** What a clip's drive hands back: the crop in page pixels and the gif's span in milliseconds since
+ *  the page opened.
+ */
+type Gif = { crop: Box; start: number; end: number };
+/** Milliseconds since the clip's page opened, the clock the gif span is cut on. */
+const since = () => Date.now() - pageOpenedAt;
+/** Whole pixels for ffmpeg's crop filter, which refuses fractions. */
+const px = (n: number) => Math.round(n);
+const clips: [string, (p: Page) => Promise<Gif | undefined>][] = [
+  [
+    "panel-tabs",
+    async (p) => {
+      await hit(p.locator('button[aria-label="Oh My Claude"]'));
+      await wait(p, 1200);
+      const crop = await composerClip(p);
+      // Memory first and Memory last: the gif starts and ends on the same tab, so the loop reads
+      // as one more switch instead of a cut. The span starts once the panel has settled on it.
+      await hit(tab(p, "Memory"));
+      await wait(p, 500);
+      const start = since();
+      await wait(p, 1000);
+      for (const t of ["Rewind", "Changes", "Asides"]) {
+        await hit(tab(p, t));
+        await wait(p, 1600);
+      }
+      // The recording runs about a second behind this clock (measured 2026-10-13: a cut 300 ms
+      // after a 1.6 s hold still showed the tab fading in), so the closing hold is long and the
+      // cut lands on a settled frame that matches the first one.
+      await hit(tab(p, "Memory"));
+      await wait(p, 2600);
+      const end = since() - 300;
+      await p.keyboard.press("Escape");
+      await wait(p, 600);
+      return { crop, start, end };
+    },
+  ],
+  [
+    "shield-menu",
+    async (p) => {
+      const s = p
+        .locator('button[aria-label^="Claude permission"], button[aria-label^="Access mode"]')
+        .first();
+      await hit(s);
+      await wait(p, 1200);
+      const m = p.locator('[role="menu"]').last();
+      await m.locator('[role="menuitem"]', { hasText: /^Plan/ }).hover();
+      await wait(p, 700);
+      await m.locator('[role="menuitem"]', { hasText: /^Accept edits/ }).hover();
+      await wait(p, 700);
+      await p.keyboard.press("Escape");
+      await wait(p, 600);
+    },
+  ],
+];
+for (const [name, drive] of clips) {
+  // Record at the desktop size (the sidebar row must be reachable) and crop in ffmpeg afterwards.
+  const ctx = await b.newContext({
+    viewport: { width: 1400, height: 900 },
+    colorScheme: scheme,
+    recordVideo: { dir: `${out}/.video`, size: { width: 1400, height: 900 } },
+  });
+  const p = await open(ctx);
+  const gif = await drive(p);
+  const video = p.video();
+  await ctx.close();
+  const path = await video.path();
+  console.log("clip", name, path);
+  if (!gif) continue;
+  // The video is 1:1 with page pixels, so the crop measured on the page applies as is. Ten frames
+  // a second and a diff palette keep a 640-wide clip of a few seconds under a megabyte.
+  const c = gif.crop;
+  execFileSync("ffmpeg", [
+    "-y",
+    "-v",
+    "error",
+    "-ss",
+    (gif.start / 1000).toFixed(2),
+    "-t",
+    ((gif.end - gif.start) / 1000).toFixed(2),
+    "-i",
+    path,
+    "-vf",
+    `crop=${px(c.width)}:${px(c.height)}:${px(c.x)}:${px(c.y)},fps=10,scale=640:-1:flags=lanczos,` +
+      "split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=3",
+    "-loop",
+    "0",
+    `${out}/${name}.gif`,
+  ]);
+  console.log("wrote", `${name}.gif`);
+}
 // Desktop stills
 if (!process.env.PW_CLIPS_ONLY) {
   const ctx = await b.newContext({
@@ -212,11 +309,9 @@ if (!process.env.PW_CLIPS_ONLY) {
   }
   await p.keyboard.press("Escape");
   await wait(p, 300);
-  const stats = p
-    .locator("div")
-    .filter({ hasText: /\d+ turns\s*·?\s*\d+ steps/ })
-    .last();
-  const sb = await stats.boundingBox();
+  // dsh 0.2.1 draws the footer stats in a dock marked `data-composer-dock`, which is also where
+  // the plugin's cost pill lands. Its slot child has no box of its own (display: contents).
+  const sb = await p.locator("[data-composer-dock]").first().boundingBox();
   if (sb)
     await shot(p, "cost-row", {
       x: sb.x - 10,
@@ -264,58 +359,15 @@ if (!process.env.PW_CLIPS_ONLY) {
   await wait(p, 1500);
   await hit(tab(p, "Memory"));
   await wait(p, 1200);
-  await shot(p, "phone-panel", { x: 0, y: 300, width: 390, height: 544 });
+  // From just above the sheet to the bottom of the screen: the rows above it are the conversation,
+  // and a fixed top left a third of the shot empty on a short session.
+  {
+    const d = await boxOf(p.locator(panel()), "the phone sheet");
+    const y = Math.max(0, Math.round(d.y) - 12);
+    await shot(p, "phone-panel", { x: 0, y, width: 390, height: 844 - y });
+  }
   await p.keyboard.press("Escape");
   await wait(p, 300);
   await ctx.close();
-}
-// Clips
-const clips: [string, (p: Page) => Promise<void>][] = [
-  // The crop this clip wants is printed with it: ffmpeg turns the webm into the gif afterwards.
-  [
-    "panel-tabs",
-    async (p) => {
-      await hit(p.locator('button[aria-label="Oh My Claude"]'));
-      await wait(p, 1200);
-      console.log("crop", JSON.stringify(await composerClip(p)));
-      for (const t of ["Memory", "Rewind", "Changes", "Asides"]) {
-        await hit(tab(p, t));
-        await wait(p, 1400);
-      }
-      await p.keyboard.press("Escape");
-      await wait(p, 600);
-    },
-  ],
-  [
-    "shield-menu",
-    async (p) => {
-      const s = p
-        .locator('button[aria-label^="Claude permission"], button[aria-label^="Access mode"]')
-        .first();
-      await hit(s);
-      await wait(p, 1200);
-      const m = p.locator('[role="menu"]').last();
-      await m.locator('[role="menuitem"]', { hasText: /^Plan/ }).hover();
-      await wait(p, 700);
-      await m.locator('[role="menuitem"]', { hasText: /^Accept edits/ }).hover();
-      await wait(p, 700);
-      await p.keyboard.press("Escape");
-      await wait(p, 600);
-    },
-  ],
-];
-for (const [name, drive] of clips) {
-  // Record at the desktop size (the sidebar row must be reachable) and crop in ffmpeg afterwards.
-  const ctx = await b.newContext({
-    viewport: { width: 1400, height: 900 },
-    colorScheme: scheme,
-    recordVideo: { dir: `${out}/.video`, size: { width: 1400, height: 900 } },
-  });
-  const p = await open(ctx);
-  await drive(p);
-  const video = p.video();
-  await ctx.close();
-  const path = await video.path();
-  console.log("clip", name, path);
 }
 await b.close();
