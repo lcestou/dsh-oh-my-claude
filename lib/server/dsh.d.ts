@@ -425,6 +425,14 @@ export interface PluginContext {
     get(name: "commands"): PluginContext["commands"];
     get(name: "sessionTitle"): PluginContext["sessionTitle"];
     get(name: "workspaceRegistry"): WorkspaceRegistry | undefined;
+    /**
+     * Mirrors: dsh-plugin-desktop/src/desktop-browser-access.ts (the community DSH Desktop shell).
+     * Present only when dsh runs under that shell's Electron launcher, whose web server then answers
+     * 403 to every request that lacks its window's own header. The plugin reads presence only.
+     */
+    get(name: "desktopBrowserAccess"): {
+        readonly ordinaryBrowserEnabled: boolean;
+    } | undefined;
     /** dsh's settings service, narrowed to the locale namespace the server strings read. */
     get(name: "settings"): import("./locale.js").LocaleSettingsReader | undefined;
     /** dsh-commands (`/name` in the composer); optional so a host without it still mounts the plugin. */

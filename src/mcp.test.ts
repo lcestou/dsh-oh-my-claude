@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { handleRpc, HIDDEN, KEY_HEADER, MCP_PATH, registerMcpBridge } from "./mcp.js";
@@ -177,14 +177,15 @@ assert.ok(
   "dsh tools are marked concurrency-safe for the CLI",
 );
 
-// The bridge serves new Claude processes from its own loopback listener, so the browser-access
-// gate DSH Desktop puts on web server routes cannot 403 it. The web server route stays
-// registered as a fallback.
+// Under DSH Desktop the bridge serves new Claude processes from its own loopback listener, so the
+// browser-access gate Desktop puts on web server routes cannot 403 it. The web server route stays
+// registered as a fallback. A host without the gate keeps the web server route and starts nothing.
 // Honor TMPDIR like the test script's DSH_OMC_STATE_DIR: sandboxed runs cannot write os.tmpdir().
 const tmp = mkdtempSync(join(process.env.TMPDIR ?? tmpdir(), "omc-mcp-"));
 const cleanups: Array<() => void> = [];
 // SAFETY: minimal host double: only what registerMcpBridge reads
-const fakeCtx = {
+/** A host double; `gated` adds the service DSH Desktop's launcher provides. */
+const fakeHost = (gated: boolean) => ({
   inject: (
     _names: string[],
     cb: (host: {
@@ -194,6 +195,7 @@ const fakeCtx = {
       sessions: object;
       sessionController: object;
       workspaceRegistry: object;
+      get: (name: string) => object | undefined;
       effect: (fn: () => () => void) => () => void;
     }) => void,
   ) => {
@@ -207,13 +209,29 @@ const fakeCtx = {
       sessions: {},
       sessionController: {},
       workspaceRegistry: {},
+      get: (name: string) =>
+        gated && name === "desktopBrowserAccess" ? { ordinaryBrowserEnabled: false } : undefined,
       effect: (fn: () => () => void) => {
         cleanups.push(fn());
         return () => {};
       },
     });
   },
-};
+});
+// Plain dsh web: no gate service, so the URL is the web server's and no listener or port file
+// appears. This is every install that is not Desktop, and it must not move.
+// SAFETY: host double above carries the services registerMcpBridge needs
+const plain = await registerMcpBridge(fakeHost(false) as never, {
+  log: () => {},
+  version: "t",
+  keyFile: join(tmp, "mcp.key"),
+});
+assert.equal(plain.via, "webserver", "a host without the gate keeps the web server route");
+assert.equal(plain.base, "http://127.0.0.1:43120", "and the web server's own port");
+assert.equal(existsSync(join(tmp, "mcp-port")), false, "and starts no listener of its own");
+for (const fn of cleanups) fn();
+cleanups.length = 0;
+const fakeCtx = fakeHost(true);
 // SAFETY: host double above carries the services registerMcpBridge needs
 const bridge = await registerMcpBridge(fakeCtx as never, {
   log: () => {},
@@ -268,5 +286,6 @@ const bridge2 = await registerMcpBridge(fakeCtx as never, {
 assert.equal(bridge2.via, "loopback");
 assert.equal(bridge2.base, bridge.base, "restart rebinds the remembered port");
 assert.equal(bridge2.key, bridge.key, "restart keeps the bridge key");
+assert.equal(bridge.key, plain.key, "one key whichever way the bridge is reached");
 for (const fn of cleanups) fn();
 console.log("mcp ok");

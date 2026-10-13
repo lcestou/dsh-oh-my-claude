@@ -4,12 +4,12 @@
 // left out: Claude Code has its own. Guarded by a per-process key that only the adapter knows.
 // This is an I/O boundary: JSON-RPC bodies are decoded here.
 //
-// The bridge listens on its own loopback port rather than only on dsh's web server: DSH Desktop
-// wraps every web server route in a browser-access gate (403 for anything without the Electron
-// renderer's capability header), which the CLI's MCP client has no way to present, so a bridge
-// served only there is unreachable on Desktop and Claude sees zero dsh tools. The web server
-// route is still registered as a fallback (plain `dsh web` has no gate), and keeper-mode Claude
-// processes spawned before a restart keep working through it under the same stable key.
+// On DSH Desktop the bridge listens on its own loopback port rather than only on dsh's web server:
+// Desktop wraps every web server route in a browser-access gate (403 for anything without the
+// Electron renderer's capability header), which the CLI's MCP client has no way to present, so a
+// bridge served only there is unreachable and Claude sees zero dsh tools. Plain `dsh web` has no
+// gate and keeps the web server route alone, whose port is the one dsh was started on. The web
+// server route is registered either way, and is the fallback when the listener cannot start.
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
@@ -330,8 +330,9 @@ function stableKey(file: string): string {
 export interface McpBridge {
   base: string;
   key: string;
-  /** Where `base` points: the bridge's own loopback listener, or the dsh web server route when
-   *  the listener could not start. The CLI's `--mcp-config` URL is built off `base` either way. */
+  /** Where `base` points: the bridge's own loopback listener under DSH Desktop, else the dsh web
+   *  server route (also when the listener could not start). The CLI's `--mcp-config` URL is built
+   *  off `base` either way. */
   via: "loopback" | "webserver";
   /** The tools `tools/list` will answer that session with, `open_session` included, so the system
    *  prompt can name the ones that are really there. Undefined when the session has no live agent
@@ -409,10 +410,11 @@ async function startLoopback(
 
 /** Wires the MCP bridge up once the required services are injected, and keeps the bridge key
  *  stable across dsh restarts so a keeper-mode claude that outlived dsh still authenticates.
- *  New Claude processes are pointed at the bridge's own loopback listener, which answers on
- *  127.0.0.1 regardless of the browser-access gate DSH Desktop puts on web server routes; the
- *  web server route stays registered as a fallback for plain `dsh web` and for keeper-mode
- *  processes spawned before a restart. */
+ *  Under DSH Desktop, new Claude processes are pointed at the bridge's own loopback listener,
+ *  which answers on 127.0.0.1 regardless of the browser-access gate Desktop puts on web server
+ *  routes. Everywhere else they get the web server route as before, and no listener is started:
+ *  a process that outlives a restart can only reconnect to the URL it was started with, and the
+ *  web port is the one address that is fixed by configuration. */
 export function registerMcpBridge(
   ctx: PluginContext,
   { log, version, relay, keyFile, portFile }: BridgeOptions,
@@ -468,27 +470,41 @@ export function registerMcpBridge(
               return send(res, 400, { error: errorText(e) });
             }
           };
-          // The loopback listener is what new Claude processes get: it answers on 127.0.0.1 no
-          // matter what gate sits on the web server routes.
-          const loopback = await startLoopback(
-            log,
-            (req, res) => {
-              serve(req, res).catch((e: unknown) =>
-                log("warn", `mcp bridge loopback: ${errorText(e)}`),
-              );
-            },
-            loopPortFile,
-          );
+          // Desktop provides this service from its launcher, before any profile plugin loads, and
+          // gates on it per request; its presence is the gate. Read by name so a host without it
+          // (every plain `dsh web`) answers undefined and runs exactly the path it always has.
+          const gated = host.get?.("desktopBrowserAccess") !== undefined;
+          // The loopback listener is what new Claude processes get there: it answers on 127.0.0.1
+          // no matter what gate sits on the web server routes.
+          const loopback = gated
+            ? await startLoopback(
+                log,
+                (req, res) => {
+                  serve(req, res).catch((e: unknown) =>
+                    log("warn", `mcp bridge loopback: ${errorText(e)}`),
+                  );
+                },
+                loopPortFile,
+              )
+            : undefined;
           if (loopback) log("info", `mcp bridge: loopback listener on ${loopback.url}`);
-          else
+          else if (gated)
             log("warn", "mcp bridge: no loopback listener, falling back to the web server route");
-          host.effect?.(() => {
-            const off = webServer.register({ kind: "prefix", path: MCP_PATH, handler: serve });
-            return () => {
-              loopback?.close();
-              if (typeof off === "function") off();
-            };
-          });
+          // The listen above is awaited, so the scope may be gone by now (a reload mid-mount). An
+          // effect that cannot register would leave the listener holding the port with no owner.
+          try {
+            host.effect?.(() => {
+              const off = webServer.register({ kind: "prefix", path: MCP_PATH, handler: serve });
+              return () => {
+                loopback?.close();
+                if (typeof off === "function") off();
+              };
+            });
+          } catch (e) {
+            loopback?.close();
+            log("warn", `mcp bridge: mount failed: ${errorText(e)}`);
+            return;
+          }
           resolve({
             base: loopback?.url ?? `http://127.0.0.1:${webServer.port}`,
             via: loopback ? "loopback" : "webserver",
