@@ -13,8 +13,10 @@ the current line. Only the latest release gets fixes.
 The plugin runs the `claude` binary you already have and reads its login to fetch your model
 list and plan usage. That token goes only to `api.anthropic.com`. Its own state, including the
 login tokens for SSH boxes you add, lives under `~/.local/state/dsh-oh-my-claude/` in files
-only your user can read. It opens no TCP port: the keeper that holds Claude across a dsh
-restart listens on a Unix socket, and the HTTP routes live inside dsh's own server. Outbound
+only your user can read. On DSH Web it opens no TCP port: the keeper that holds Claude across
+a dsh restart listens on a Unix socket, and the HTTP routes live inside dsh's own server. Under
+DSH Desktop, whose web server refuses requests from outside its own window, the MCP bridge
+that hands dsh's tools to Claude also listens on 127.0.0.1, guarded by the same key. Outbound
 calls go to `api.anthropic.com`, `status.anthropic.com`, `downloads.claude.ai`,
 `registry.npmjs.org` and `api.github.com`, and SSH only to boxes you add. The README section
 "What it touches" keeps this list current.
