@@ -1,6 +1,8 @@
 // Offline self-check: bun src/remote-fs.test.ts. No CLI, no host, no network — the scripts are
 // pure strings and the local branch writes under a temp dir.
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { mkdtemp, readFile, writeFile, mkdir } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -55,6 +57,42 @@ import type { SubprocessHandle } from "./process.js";
   assert.ok(dirs.includes("pwd;"), "the resolved level comes first");
   assert.ok(dirsScript("").startsWith('cd -- "$HOME"'), "an empty level means the box's home");
   assert.ok(dirs.endsWith("; exit 0"), "a level whose last child is a file still exits 0");
+
+  // The script runs in the box's login shell. zsh aborts on a glob that matches nothing, so an
+  // empty level, or one with no hidden entries, used to fail there; run it in each shell this PC has.
+  const run = (shell: string, dir: string) =>
+    spawnSync(shell, ["-c", dirsScript(dir)], {
+      encoding: "utf8",
+      env: { ...process.env, HOME: dir },
+    });
+  const empty = mkdtempSync(join(tmpdir(), "omc-dirs-empty-"));
+  const mixed = mkdtempSync(join(tmpdir(), "omc-dirs-mixed-"));
+  mkdirSync(join(mixed, "sub dir"));
+  mkdirSync(join(mixed, ".hidden"));
+  writeFileSync(join(mixed, "file.txt"), "");
+  const plain = mkdtempSync(join(tmpdir(), "omc-dirs-plain-"));
+  mkdirSync(join(plain, "src"));
+  for (const shell of ["sh", "bash", "zsh"].filter(
+    (s) => spawnSync(s, ["-c", "exit 0"]).status === 0,
+  )) {
+    const e = run(shell, empty);
+    assert.equal(e.status, 0, `${shell}: an empty level exits 0 (${e.stderr.trim()})`);
+    assert.deepEqual(splitDirs(e.stdout).names, [], `${shell}: an empty level lists nothing`);
+    const m = run(shell, mixed);
+    assert.equal(m.status, 0, `${shell}: ${m.stderr.trim()}`);
+    assert.deepEqual(
+      splitDirs(m.stdout).names,
+      [".hidden", "sub dir"],
+      `${shell}: dirs only, files left out`,
+    );
+    const pl = run(shell, plain);
+    assert.equal(
+      pl.status,
+      0,
+      `${shell}: a level with no hidden entries exits 0 (${pl.stderr.trim()})`,
+    );
+    assert.deepEqual(splitDirs(pl.stdout).names, ["src"], `${shell}: no hidden entries`);
+  }
 
   // A write keeps a .bak and lands through a temp file, so a dropped connection cannot leave half
   // a settings file the CLI would refuse to start on.

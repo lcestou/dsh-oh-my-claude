@@ -25,6 +25,9 @@ export declare const listScript: (dir: string) => string;
  * then one child directory name per line. An empty `dir` means the box's home, which is where the
  * dialog opens; `cd` resolves `.`, `..` and a symlink for us, so the answer is the path the far box
  * would actually run in. An unreadable or absent level exits `ABSENT`, the way a file read does.
+ * The children come from `ls -A` rather than a `* .*` glob: the script runs in the box's login
+ * shell, and zsh (macOS's default) aborts on a glob that matches nothing, so a folder with no
+ * subfolders or no hidden entries failed to list and the picker could not open it.
  */
 export declare const dirsScript: (dir: string) => string;
 /** Make one directory, and fail when the name is taken: a picker's New folder, not `mkdir -p`. */
