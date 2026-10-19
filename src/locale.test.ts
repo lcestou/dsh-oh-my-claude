@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { bindServerLocale, serverIsChinese, serverText } from "./locale.js";
 import { HEADER_MARK, formatToolCall, formatToolResult, resetClock } from "./translator.js";
 
@@ -77,4 +78,19 @@ assert.equal(
   assert.ok(/周|月/.test(zh) || /\d{1,2}:\d{2}/.test(zh), `Chinese clock: ${zh}`);
   assert.ok(!/[ap]m/.test(zh), "no am/pm in Chinese");
   assert.ok(/[ap]m/.test(en), `English keeps am/pm: ${en}`);
+}
+
+// The package's own name and description on dsh's Plugins page. dsh 0.2.1 reads `meta.title` and
+// `meta.description` from `locale/<lang>.json`; without them the card shows the npm name. The
+// top-level pair stays for the dsh lines that read it there.
+for (const lang of ["en", "zh"]) {
+  const file: {
+    title?: string;
+    description?: string;
+    meta?: { title?: string; description?: string };
+  } = JSON.parse(readFileSync(new URL(`../locale/${lang}.json`, import.meta.url), "utf8"));
+  assert.equal(file.meta?.title, "Oh My Claude", `${lang}: meta.title`);
+  assert.ok((file.meta?.description ?? "").length > 20, `${lang}: meta.description`);
+  assert.equal(file.title, file.meta?.title, `${lang}: top-level title matches`);
+  assert.equal(file.description, file.meta?.description, `${lang}: top-level description matches`);
 }
