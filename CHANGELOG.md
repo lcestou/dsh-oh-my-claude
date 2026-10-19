@@ -6,13 +6,17 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
-### Changed
+## [1.5.4] - 2026-10-19
 
-- Claude look's Customize fold has two more checkboxes, split out of "Links, rules and quotes": one for the composer's command text, chips and cursor, and one for Claude's model names in the model picker. Each can now be turned off on its own. If you had turned "Links, rules and quotes" off, both new ones start off too.
+dsh: runs on 0.2.0-rc.1 through 0.2.1-rc.2; built and tested on 0.2.1-rc.2.
 
 ### Added
 
 - On dsh 0.2.1-alpha.5 and later, Claude's model names take the plugin's accent in the composer's model picker: the trigger, the menu's current value and every Claude row. Other providers' rows are unchanged, dsh's own badges on them still show, and an older dsh draws the picker as before.
+
+### Changed
+
+- Claude look's Customize fold has two more checkboxes, split out of "Links, rules and quotes": one for the composer's command text, chips and cursor, and one for Claude's model names in the model picker. Each can now be turned off on its own. If you had turned "Links, rules and quotes" off, both new ones start off too.
 
 ### Fixed
 
