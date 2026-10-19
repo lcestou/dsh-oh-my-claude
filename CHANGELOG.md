@@ -6,6 +6,16 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+## [1.4.2] - 2026-10-19
+
+dsh: runs on 0.1.5-rc.1 through 0.1.7-rc.2; built and tested on 0.1.7-rc.2.
+
+A fix for the dsh 0.1.x line only. Newer dsh gets the same fix from the 1.5 line.
+
+### Fixed
+
+- When dsh cannot reach anyone to approve a tool, or the request is cancelled, Claude is told that nobody refused it and not to retry in a loop, instead of the bare words `approval unavailable`. One reported session retried for half an hour (#170).
+
 ## [1.4.1] - 2026-09-27
 
 dsh: runs on 0.1.5-rc.1 through 0.1.7-rc.2; built and tested on 0.1.7-rc.2.
