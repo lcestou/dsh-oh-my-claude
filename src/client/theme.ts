@@ -1,10 +1,20 @@
-export const THEME_GROUPS = ["row", "prose", "send", "panel", "rainbow"] as const;
+export const THEME_GROUPS = [
+  "row",
+  "prose",
+  "composer",
+  "models",
+  "send",
+  "panel",
+  "rainbow",
+] as const;
 export type ThemeGroup = (typeof THEME_GROUPS)[number];
 export const THEME_DEFAULT_ACCENT = 0xd97757;
 
 const OFF_KEY = {
   row: "themeRowOff",
   prose: "themeProseOff",
+  composer: "themeComposerOff",
+  models: "themeModelsOff",
   send: "themeSendOff",
   panel: "themePanelOff",
   rainbow: "themeRainbowOff",
@@ -43,4 +53,22 @@ export function hexToRgb(hex: string): readonly [number, number, number] {
     parseInt(hex.slice(3, 5), 16),
     parseInt(hex.slice(5, 7), 16),
   ];
+}
+
+/** Marker hint for the one-time split below; a number, because the store drops `false`. */
+const SPLIT_MARK = "themeSplit";
+
+/**
+ * The hints that carry an old "Links, rules and quotes" off switch over to the two groups split out
+ * of it (the composer's command text, chips and cursor, and the model names in the picker), or null
+ * when there is nothing to write. Without it, someone who had turned that group off would see the
+ * composer and the picker turn orange again after the split. Runs once per box: the marker is
+ * written either way, so ticking the old group back on later never re-copies a stale off.
+ */
+export function themeSplitPatch(
+  hints: Record<string, boolean | number>,
+): Record<string, boolean | number> | null {
+  if (hints[SPLIT_MARK] !== undefined) return null;
+  if (hints.themeProseOff !== true) return { [SPLIT_MARK]: 1 };
+  return { themeComposerOff: true, themeModelsOff: true, [SPLIT_MARK]: 1 };
 }
