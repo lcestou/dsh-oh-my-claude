@@ -81,6 +81,7 @@ import {
   skillDoctorReply,
   localConfig,
   selectionContext,
+  OUTCOME_MESSAGE,
 } from "./adapter.js";
 import { PERMISSION_MODES } from "./state.js";
 import {
@@ -3790,6 +3791,38 @@ console.log("redaction ok");
   assert.ok(String(no.message).includes("add tests"), "feedback goes back to Claude");
 }
 console.log("plan-review ok");
+
+// decide(): an approval that was not allowed tells Claude why. "unavailable" and "cancelled" say
+// nobody refused (#170: the bare `approval unavailable` sent Claude into a 30-minute retry loop).
+{
+  let outcome = "unavailable";
+  const ctx = fakeCtx({ on() {}, approval: { request: async () => outcome } });
+  const adapter = new ClaudeCodeAdapter(ctx, Config({}));
+  const base = {
+    toolName: "Bash",
+    input: { command: "ls" },
+    request: { subtype: "can_use_tool" },
+    toolUseId: "tu-ap",
+    agent: { session: { id: "s-ap" } },
+    signal: new AbortController().signal,
+    accessMode: "workspace-write",
+  };
+  // SAFETY: the Decision shape is internal; the test passes the fields decide() reads
+  const un = await adapter.decide(base as any);
+  assert.ok(un.behavior === "deny", "unavailable denies");
+  assert.equal(un.message, OUTCOME_MESSAGE.unavailable);
+  assert.ok(un.message.includes("nobody was asked"), "unavailable is not a refusal");
+  outcome = "cancelled";
+  const ca = await adapter.decide(base as any);
+  assert.equal(ca.behavior === "deny" && ca.message, OUTCOME_MESSAGE.cancelled);
+  outcome = "rejected";
+  const re = await adapter.decide(base as any);
+  assert.equal(re.behavior === "deny" && re.message, "The user denied this action in dsh.");
+  outcome = "allowed-once";
+  const ok = await adapter.decide(base as any);
+  assert.equal(ok.behavior, "allow");
+}
+console.log("approval outcomes ok");
 
 // commandNames keeps dsh-grammar names from the init frame; the Translator hands them to onInit.
 {

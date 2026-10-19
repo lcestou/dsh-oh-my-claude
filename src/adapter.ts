@@ -2525,6 +2525,21 @@ export const diffContext = (diff: WorkspaceDiff, path: string): string => {
   return parts.join("\n\n");
 };
 
+/**
+ * What Claude reads when dsh answers an approval without allowing it. "unavailable" and
+ * "cancelled" used to reach it as the bare words `approval unavailable`, which say nothing: in one
+ * reported session Claude retried seven times over half an hour, then told the user to reopen the
+ * session elsewhere (#170). dsh answers "unavailable" when no approver is reachable or the one it
+ * has failed, so nobody was asked; a retry loop cannot fix that, and the person can.
+ */
+export const OUTCOME_MESSAGE = {
+  rejected: "The user denied this action in dsh.",
+  unavailable:
+    "dsh could not ask anyone to approve this action: no approver is reachable for this session, so nobody was asked and this is not a refusal. Do not retry it in a loop. Tell the user approvals are not reaching anyone; they can answer from the dsh web UI, fix the approver, or pick a permission mode that does not ask.",
+  cancelled:
+    "The approval request was cancelled before anyone answered (the turn was stopped or the request withdrawn). Nobody refused it.",
+} satisfies Record<Exclude<ApprovalOutcome, "allowed-once">, string>;
+
 /** The LlmAdapter that drives the logged-in Claude Code CLI: it owns the live `claude` processes, bridges dsh's commands and routes into them, and mirrors their transcript back into dsh. */
 export class ClaudeCodeAdapter extends LlmAdapter {
   ctx: PluginContext;
@@ -7398,10 +7413,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         toolUseId,
         "dsh auto-denied this action: approval prompts are disabled in this session, so nobody was asked. The user can re-enable approvals in dsh or pick the Bypass permission mode.",
       );
-    return denyResult(
-      toolUseId,
-      outcome === "rejected" ? "The user denied this action in dsh." : `approval ${outcome}`,
-    );
+    return denyResult(toolUseId, OUTCOME_MESSAGE[outcome]);
   }
 
   // ── one-shot path (aux calls, text-mode CLI, no session id) ──────────────

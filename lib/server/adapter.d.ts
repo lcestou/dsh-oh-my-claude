@@ -957,6 +957,18 @@ export interface LiveTurn {
  *  only, in the CLI's own order, up to the cap; the first file always goes even if it alone is over,
  *  because a context with no diff in it is worse than a long one. */
 export declare const diffContext: (diff: WorkspaceDiff, path: string) => string;
+/**
+ * What Claude reads when dsh answers an approval without allowing it. "unavailable" and
+ * "cancelled" used to reach it as the bare words `approval unavailable`, which say nothing: in one
+ * reported session Claude retried seven times over half an hour, then told the user to reopen the
+ * session elsewhere (#170). dsh answers "unavailable" when no approver is reachable or the one it
+ * has failed, so nobody was asked; a retry loop cannot fix that, and the person can.
+ */
+export declare const OUTCOME_MESSAGE: {
+    rejected: string;
+    unavailable: string;
+    cancelled: string;
+};
 /** The LlmAdapter that drives the logged-in Claude Code CLI: it owns the live `claude` processes, bridges dsh's commands and routes into them, and mirrors their transcript back into dsh. */
 export declare class ClaudeCodeAdapter extends LlmAdapter {
     ctx: PluginContext;

@@ -19,7 +19,7 @@ Mount the plugin more than once in the profile's `cordis.patch.yml`, with the sa
         configDir: ~/.claude-work
 ```
 
-Each mount gets its own `CLAUDE_CONFIG_DIR`, state files under `~/.local/state/dsh-oh-my-claude/<providerId>/` (sessions, busy log, resume trace), and a separate row in the process registry, so the two logins never mix. In v1 the session browser, settings editor, MCP bridge, usage route and turn-status panel all belong to the default `claude-code` instance; a non-default mount logs one info line saying so.
+Each mount gets its own `CLAUDE_CONFIG_DIR`, state files under `~/.local/state/dsh-oh-my-claude/<providerId>/` (sessions, busy log, resume trace), and a separate row in the process registry, so the two logins never mix. In v1 the session browser, settings editor, MCP bridge, usage route and turn-status panel all belong to the default `claude-code` instance; a non-default mount logs one info line saying so. In practice a session on an extra mount does not get dsh's tools (no `dsh` MCP server is passed to its Claude), and its skills, agents and settings come from that mount's own `configDir`, so anything shared has to be copied there.
 
 Same box, several clients (laptop, phone, another PC on the LAN): run `dsh web` where Claude Code is logged in and open that URL from anywhere.
 

@@ -16,6 +16,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- When dsh cannot reach anyone to approve a tool, or the request is cancelled, Claude is told that nobody refused it and not to retry in a loop, instead of the bare words `approval unavailable`. One reported session retried for half an hour (#170).
 - dsh's Plugins page lists the plugin as "Oh My Claude" with its description, in English and Chinese, instead of the npm package name.
 - The Add workspace dialog can open an empty folder on an SSH box, or one with no hidden files, when the box's login shell is zsh (the default on macOS). Listing such a folder failed with `no matches found: *` and left Open disabled.
 - On DSH Desktop, Claude sees the dsh tools again. There the MCP bridge is served from the plugin's own listener on 127.0.0.1 instead of only from dsh's web server: Desktop gates every web server route behind its browser-access check, which answered the CLI's MCP requests with 403, so no dsh tool ever reached Claude. The web server route stays registered as a fallback, and the listener rebinds its remembered port across restarts, so a keeper-mode Claude that outlived dsh keeps both its URL and its key. Plain `dsh web` has no such gate and is unchanged. Thanks to @sulingqingQAQ (#165).
