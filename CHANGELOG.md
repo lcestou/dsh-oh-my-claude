@@ -14,7 +14,7 @@ A fix for the dsh 0.1.x line only. Newer dsh gets the same fix from the 1.5 line
 
 ### Fixed
 
-- When dsh cannot reach anyone to approve a tool, or the request is cancelled, Claude is told that nobody refused it and not to retry in a loop, instead of the bare words `approval unavailable`. One reported session retried for half an hour (#170).
+- When dsh cannot reach anyone to approve a tool, or the request is cancelled, Claude is told that nobody refused it and not to retry in a loop, instead of the bare words `approval unavailable`. One reported session retried for half an hour. Thanks to @echobeijingecho for the report and the patch it grew from (#170).
 
 ## [1.4.1] - 2026-09-27
 
