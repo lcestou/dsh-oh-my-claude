@@ -6,12 +6,17 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Changed
+
+- Claude look's Customize fold has two more checkboxes, split out of "Links, rules and quotes": one for the composer's command text, chips and cursor, and one for Claude's model names in the model picker. Each can now be turned off on its own. If you had turned "Links, rules and quotes" off, both new ones start off too.
+
 ### Added
 
 - On dsh 0.2.1-alpha.5 and later, Claude's model names take the plugin's accent in the composer's model picker: the trigger, the menu's current value and every Claude row. Other providers' rows are unchanged, dsh's own badges on them still show, and an older dsh draws the picker as before.
 
 ### Fixed
 
+- dsh's Plugins page lists the plugin as "Oh My Claude" with its description, in English and Chinese, instead of the npm package name.
 - The Add workspace dialog can open an empty folder on an SSH box, or one with no hidden files, when the box's login shell is zsh (the default on macOS). Listing such a folder failed with `no matches found: *` and left Open disabled.
 - On DSH Desktop, Claude sees the dsh tools again. There the MCP bridge is served from the plugin's own listener on 127.0.0.1 instead of only from dsh's web server: Desktop gates every web server route behind its browser-access check, which answered the CLI's MCP requests with 403, so no dsh tool ever reached Claude. The web server route stays registered as a fallback, and the listener rebinds its remembered port across restarts, so a keeper-mode Claude that outlived dsh keeps both its URL and its key. Plain `dsh web` has no such gate and is unchanged. Thanks to @sulingqingQAQ (#165).
 

@@ -61,19 +61,28 @@
 
 需要 Claude Code CLI 在 `PATH` 上并已登录（`claude --version` 能运行，打开 `claude` 不会要求登录），以及 dsh 0.2（0.2.0-rc.1 或更新版本）。dsh 0.1.x 请按下方兼容性表格安装对应的 npm 标签。别的都不需要：没有 API key，没有 Node 构建步骤。
 
+**通过 dsh 的插件页面**，在 Web 应用或 DSH Desktop 中：
+
+1. 在侧边栏打开 **插件**，点击 **添加插件**。
+2. 输入 `dsh-oh-my-claude`，点击 **安装**。
+3. 点击 **立即启用**，或稍后在 **已安装插件** 里打开它的开关。
+
+无需重启就会加载。刷新页面后，模型选择器里会出现 "Oh My Claude"，列出你的登录可用的模型。选一个就能开始对话。
+
+**通过终端**，然后用你自己的方式重启 dsh：
+
 ```sh
-dsh plugin --profile web add dsh-oh-my-claude                        # 从 npm 安装
-dsh plugin --profile web add github:lcestou/dsh-oh-my-claude         # 或直接从仓库安装
-systemctl --user restart dsh-web.service   # 或用你自己的方式重启 `dsh web`
+dsh plugin --profile web add dsh-oh-my-claude
+systemctl --user restart dsh-web.service
 ```
 
-这个包声明了 dsh bundle，所以 `dsh plugin add` 会自动把它登记到 profile 里。重启后，模型选择器里会出现 "Oh My Claude"，列出你的登录可用的模型。选一个就能开始对话。
+想直接从仓库而不是 npm 安装，在两种方式里都把包名换成 `github:lcestou/dsh-oh-my-claude`。
 
 如果选择器里显示 `Oh My Claude (未登录)`，请在运行 dsh 的机器上打开终端运行 `claude auth login`，或在 设置 → Oh My Claude → 主机 中点击登录。
 
-**DSH Desktop**（macOS 和 Windows）通过自己的插件页面安装和更新插件，而不是 `dsh plugin` 命令：在那里添加 `dsh-oh-my-claude`，并按提示重启。从 Dock 启动的应用看不到你 shell 的 PATH，所以插件会在常见的安装目录里查找 `claude`。在 Windows 上，插件把 Claude 作为 dsh 的普通子进程运行，因此重启应用会中断正在进行的回合，需要 Unix shell 的功能（在设置里登录、SSH 主机）也不可用。服务端已按 Desktop 的方式在 Linux 上用 Electron 运行过；真实的 Mac 或 Windows 安装还没有试过。
+**DSH Desktop**（macOS 和 Windows）按上面插件页面的步骤安装。从 Dock 启动的应用看不到你 shell 的 PATH，所以插件会在常见的安装目录里查找 `claude`。在 Windows 上，插件把 Claude 作为 dsh 的普通子进程运行，因此重启应用会中断正在进行的回合，需要 Unix shell 的功能（在设置里登录、SSH 主机）也不可用。服务端已按 Desktop 的方式在 Linux 上用 Electron 运行过；真实的 Mac 或 Windows 安装还没有试过。
 
-npm 上有新版本时，设置和面板的运行环境行会出现一个带版本号的橙色标签，点击即可复制更新命令。详情以及插件在 dsh 升级后自行完成的修复，见 [Plugin updates](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#plugin-updates)。
+npm 上有新版本时，设置和面板的运行环境行会出现一个带版本号的橙色标签，点击即可复制在终端里用的更新命令。在插件页面上，dsh 更新第三方插件的方式是先移除再重新添加。详情以及插件在 dsh 升级后自行完成的修复，见 [Plugin updates](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#plugin-updates)。
 
 可选，在 `~/.dsh/settings.yaml` 中：
 

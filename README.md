@@ -59,21 +59,30 @@ Once an SSH box is saved, dsh's own Add workspace dialog gains a box dropdown: a
 
 You need the Claude Code CLI on `PATH` and logged in (`claude --version` works, `claude` opens without asking you to sign in), and dsh 0.2 (0.2.0-rc.1 or newer). On dsh 0.1.x, install the npm tag for your line from the Compatibility table below. Nothing else: no API key, no Node build step.
 
+**From dsh's Plugins page**, in the web app or DSH Desktop:
+
+1. Open **Plugins** in the sidebar and press **Add plugin**.
+2. Enter `dsh-oh-my-claude` and press **Install**.
+3. Press **Enable now**, or turn on its switch later under **Installed plugins**.
+
+It loads without a restart. Reload the page and "Oh My Claude" appears in the model picker with the models your login can use. Pick one and chat.
+
+**From a terminal**, then restart dsh however you run it:
+
 ```sh
-dsh plugin --profile web add dsh-oh-my-claude                        # from npm
-dsh plugin --profile web add github:lcestou/dsh-oh-my-claude         # or straight from the repository
-systemctl --user restart dsh-web.service   # or restart `dsh web` however you run it
+dsh plugin --profile web add dsh-oh-my-claude
+systemctl --user restart dsh-web.service
 ```
 
-The package declares a dsh bundle, so `dsh plugin add` registers it in the profile by itself. After the restart, "Oh My Claude" appears in the model picker with the models your login can use. Pick one and chat.
+To install straight from the repository instead of npm, use `github:lcestou/dsh-oh-my-claude` as the package name in either route.
 
 The plugin speaks English and Chinese and follows dsh's own language setting (Settings → General → Language), switching as soon as you change it.
 
 If the picker lists it as `Oh My Claude (not logged in)`, run `claude auth login` in a terminal on the box that runs dsh, or press Log in under Settings → Oh My Claude → Boxes.
 
-**DSH Desktop** (macOS and Windows) installs and updates plugins from its own Plugins page, not the `dsh plugin` command: add `dsh-oh-my-claude` there and restart when it asks. The plugin looks for `claude` in the usual install folders, since an app started from the Dock does not see your shell's PATH. On Windows it runs Claude as a plain child of dsh, so restarting the app ends a running turn, and the parts that need a Unix shell (Log in from Settings, SSH boxes) are not available. The server half has been run under Electron on Linux the way Desktop runs it; a real Mac or Windows install has not been tried yet.
+**DSH Desktop** (macOS and Windows) uses the Plugins page steps above. The plugin looks for `claude` in the usual install folders, since an app started from the Dock does not see your shell's PATH. On Windows it runs Claude as a plain child of dsh, so restarting the app ends a running turn, and the parts that need a Unix shell (Log in from Settings, SSH boxes) are not available. The server half has been run under Electron on Linux the way Desktop runs it; a real Mac or Windows install has not been tried yet.
 
-When a newer version is on npm, an orange pill with the version number appears in Settings and on the panel's Runtime line; a click copies the update command. Details, and the repairs the plugin makes on its own after a dsh upgrade, are under [Plugin updates](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#plugin-updates).
+When a newer version is on npm, an orange pill with the version number appears in Settings and on the panel's Runtime line; a click copies the update command for a terminal. On the Plugins page, dsh updates a third-party plugin by removing it and adding it again. Details, and the repairs the plugin makes on its own after a dsh upgrade, are under [Plugin updates](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#plugin-updates).
 
 Optional, in `~/.dsh/settings.yaml`:
 
