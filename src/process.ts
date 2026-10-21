@@ -116,6 +116,9 @@ export type ClaudeEvent =
       subtype?: string;
       /** subtype "init": the CLI's slash-command catalog (skills, custom commands, built-ins). */
       slash_commands?: JsonValue;
+      /** subtype "init": where the credential for API requests came from (`ANTHROPIC_API_KEY`,
+       *  `apiKeyHelper`, `none` for the claude.ai login, and the rest of the CLI's enum). */
+      apiKeySource?: string;
       /** subtype "init": every tool name the session has; MCP ones read `mcp__<server>__<tool>`. */
       tools?: JsonValue;
       /** subtype "init": plugins the CLI could not load, `{plugin,type,message}` each. Present only
@@ -1697,6 +1700,10 @@ export class ClaudeProcess {
   staleContext: boolean = false;
   /** Sees every `control_response` line as it arrives, even between turns; true means consumed. */
   controlListener?: (event: ClaudeEvent) => boolean;
+  /** The API-key line was drawn for this process. The init frame that carries `apiKeySource`
+   *  comes with every user message in -p mode, and each turn has a fresh translator, so the
+   *  once-per-process memory lives here. */
+  apiKeyNoted = false;
 
   /** Spawn the child Claude and feed its stdout into the line queue, noting idle completion replies
    *  so the adapter can open a dsh turn. */

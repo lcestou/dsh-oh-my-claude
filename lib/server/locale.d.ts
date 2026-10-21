@@ -68,6 +68,7 @@ declare const EN: {
     readonly taskLine: "Task {status}: {detail}";
     readonly taskEnded: "Task {status}";
     readonly taskPaused: "… paused";
+    readonly apiKeyBilling: "⚠ Claude Code is using the ANTHROPIC_API_KEY from dsh's environment, so this session bills that key, not your Claude subscription. Unset it where dsh starts (its .env or service file) to use the login.";
     readonly taskCompleted: "completed";
     readonly taskFailed: "failed";
     readonly taskKilled: "killed";

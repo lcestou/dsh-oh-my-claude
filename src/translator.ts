@@ -588,6 +588,9 @@ export class Translator {
    *  adapter banks it; the client fires a notice and moves the picker (only a sticky, session-scoped
    *  model_refusal_fallback). `sessionId` and `at` are added by the adapter. */
   onModel?: (rec: Omit<FallbackRecord, "sessionId" | "at">) => void;
+  /** Injected: asked once per init frame that names an environment API key; true draws the
+   *  billing line. The adapter answers true once per process. */
+  noteApiKey?: () => boolean;
   /** Output tokens across every assistant message of this turn so far. A `message_delta` reports
    *  the message it closes, not the turn, so the figure summed here is what the status row shows;
    *  reporting each message's own count made the row drop back to a few hundred at every tool step. */
@@ -657,6 +660,7 @@ export class Translator {
     onInit,
     onProgress,
     onModel,
+    noteApiKey,
     hostLabel,
     statusNote,
   }: {
@@ -680,6 +684,7 @@ export class Translator {
     ) => void;
     onProgress?: (progress: TurnProgress) => void;
     onModel?: (rec: Omit<FallbackRecord, "sessionId" | "at">) => void;
+    noteApiKey?: () => boolean;
     /** The box a remote turn runs on, so a logged-out error names it, not this local host. */
     hostLabel?: string;
     /** What to append to a 5xx retry line from the Anthropic status page cache. */
@@ -715,6 +720,7 @@ export class Translator {
     this.onInit = onInit;
     this.onProgress = onProgress;
     this.onModel = onModel;
+    this.noteApiKey = noteApiKey;
   }
 
   /** The delta chunk kind a block emits. Only a "text" block produces text-delta; any other block
@@ -808,6 +814,15 @@ export class Translator {
             pluginWarnings.length > 0
           )
             this.onInit?.(names, tools, pluginErrors, pluginWarnings);
+          // In -p mode an ANTHROPIC_API_KEY in the environment wins over the claude.ai login
+          // (probed 2026-10-20 on 2.1.304: the init frame names the source and the turn billed
+          // the key). dsh loads the launch folder's .env, so a key meant for another tool bills
+          // here unseen; one reasoning line per process says so. The init frame repeats with
+          // every user message, so the adapter's `noteApiKey` remembers the line on the process;
+          // with no hook (a bare translator) the line draws. `apiKeyHelper` is a setting someone
+          // chose and gets no line.
+          if (event.apiKeySource === "ANTHROPIC_API_KEY" && (this.noteApiKey?.() ?? true))
+            return this.wholeBlock("reasoning", serverText("apiKeyBilling"));
           return [];
         }
         if (event.subtype === "thinking_tokens") {

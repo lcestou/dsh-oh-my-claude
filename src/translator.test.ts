@@ -514,3 +514,32 @@ console.log("translator plugin-warnings ok");
   );
   console.log("live-mode ok");
 }
+
+// init frame: an environment API key draws one reasoning line; the login draws nothing
+{
+  // SAFETY: the strict event union is bypassed the way the api_retry block above does it
+  const t = new Translator() as any;
+  const keyed = t.translate({ type: "system", subtype: "init", apiKeySource: "ANTHROPIC_API_KEY" });
+  assert.equal(
+    keyed.at(-1)?.block?.type,
+    "reasoning",
+    "the key is announced on the reasoning lane",
+  );
+  assert.ok(
+    String(keyed.at(-1)?.block?.text).includes("ANTHROPIC_API_KEY"),
+    "the line names the variable",
+  );
+  assert.deepEqual(t.translate({ type: "system", subtype: "init", apiKeySource: "none" }), []);
+  assert.deepEqual(
+    t.translate({ type: "system", subtype: "init" }),
+    [],
+    "an old CLI without the field",
+  );
+  // SAFETY: as above
+  const noted = new Translator({ noteApiKey: () => false }) as any;
+  assert.deepEqual(
+    noted.translate({ type: "system", subtype: "init", apiKeySource: "ANTHROPIC_API_KEY" }),
+    [],
+    "a hook that says the line was drawn already draws nothing",
+  );
+}

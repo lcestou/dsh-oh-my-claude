@@ -154,6 +154,9 @@ export declare class Translator {
      *  adapter banks it; the client fires a notice and moves the picker (only a sticky, session-scoped
      *  model_refusal_fallback). `sessionId` and `at` are added by the adapter. */
     onModel?: (rec: Omit<FallbackRecord, "sessionId" | "at">) => void;
+    /** Injected: asked once per init frame that names an environment API key; true draws the
+     *  billing line. The adapter answers true once per process. */
+    noteApiKey?: () => boolean;
     /** Output tokens across every assistant message of this turn so far. A `message_delta` reports
      *  the message it closes, not the turn, so the figure summed here is what the status row shows;
      *  reporting each message's own count made the row drop back to a few hundred at every tool step. */
@@ -190,7 +193,7 @@ export declare class Translator {
     private fireToolCall;
     /** Every option is optional: a bare Translator shows tool activity, relays nothing and reports
      *  to no callbacks, which is what a one-shot call wants. */
-    constructor({ toolActivity, continueAfterLimit, timeZone, toolTextLimit, relay, dshIds, relayed, log, onToolCall, onToolResult, onResult, redact, onInit, onProgress, onModel, hostLabel, statusNote, }?: {
+    constructor({ toolActivity, continueAfterLimit, timeZone, toolTextLimit, relay, dshIds, relayed, log, onToolCall, onToolResult, onResult, redact, onInit, onProgress, onModel, noteApiKey, hostLabel, statusNote, }?: {
         toolActivity?: boolean;
         continueAfterLimit?: boolean;
         timeZone?: string;
@@ -206,6 +209,7 @@ export declare class Translator {
         onInit?: (commands: string[], tools: string[], pluginErrors?: PluginLoadError[], pluginWarnings?: PluginLoadError[]) => void;
         onProgress?: (progress: TurnProgress) => void;
         onModel?: (rec: Omit<FallbackRecord, "sessionId" | "at">) => void;
+        noteApiKey?: () => boolean;
         /** The box a remote turn runs on, so a logged-out error names it, not this local host. */
         hostLabel?: string;
         /** What to append to a 5xx retry line from the Anthropic status page cache. */
