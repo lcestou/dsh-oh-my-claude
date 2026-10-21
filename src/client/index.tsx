@@ -8135,12 +8135,13 @@ function CostSwitch() {
   );
 }
 
-/** The suggestions switch over the `promptSuggestionsOn` hint: absent is off, the default a
- *  feature that bills a model call gets here (the recap's rule, `notices.ts`). Applies at the next
- *  spawn of a session's Claude, which the description says. */
+/** The suggestions switch, inverted over the `promptSuggestionsOff` hint so a box with no hint
+ *  reads as on, the way the Claude Code terminal has it (owner, 2026-10-21: match the CLI; the
+ *  call is mostly cache reads). Applies at the next spawn of a session's Claude, which the
+ *  description says. */
 function SuggestionSwitch() {
   useLocale();
-  const [on, setOn] = useHintFlag("promptSuggestionsOn");
+  const [off, setOff] = useHintFlag("promptSuggestionsOff");
   return (
     <div
       data-omc-suggestion-switch=""
@@ -8157,7 +8158,7 @@ function SuggestionSwitch() {
         <div>{t("main.settingsUi.suggestTitle")}</div>
         <div style={{ color: T.faint, fontSize: 12 }}>{t("main.settingsUi.suggestDesc")}</div>
       </div>
-      <Switch on={on} onChange={setOn} label={t("main.settingsUi.suggestTitle")} />
+      <Switch on={!off} onChange={(on) => setOff(!on)} label={t("main.settingsUi.suggestTitle")} />
     </div>
   );
 }
@@ -10565,6 +10566,7 @@ export function apply(ctx: ClientCtx) {
         <LimitWarningsSwitch />
         <WorkspaceModelSwitch />
         <ToolRowsSwitch />
+        <SuggestionSwitch />
         {/* The switches that start off sit together after the ones that start on, so the card reads
             as what the plugin does by default first, then what you can add to it. The proxy control
             keeps company with them rather than with the spend field it used to precede: it answers
@@ -10572,7 +10574,6 @@ export function apply(ctx: ClientCtx) {
             is the one experiment here. */}
         <ContextSwitch ctx={ctx} />
         <ReturnRecapSwitch />
-        <SuggestionSwitch />
         <SpendGuardField />
         <ProxyFirstPartySwitch />
         <TerminalSyncSwitch />

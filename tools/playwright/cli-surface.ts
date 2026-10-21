@@ -1,5 +1,5 @@
 // Dev-only check for the 2026-10-20 CLI-surface pass: the Suggested next prompt switch is on the
-// Settings card and reads off until flipped (and the flip survives a reload), a page with no
+// Settings card and reads on until flipped (and the flip survives a reload), a page with no
 // suggestion draws no suggestion card, and the Tasks tab with no live task draws no live-task
 // section while its empty line still shows. Point PLAYWRIGHT_ROOT at any project with Playwright
 // installed; arg 1 is the dsh launch token, arg 2 a directory for the screenshots.
@@ -55,19 +55,19 @@ expect(
   "one suggestion switch on the Settings card",
   (await p.locator("[data-omc-suggestion-switch]").count()) === 1,
 );
-expect("the switch reads off by default", first === "false");
+expect("the switch reads on by default", first === "true");
 await p.screenshot({ path: `${out}/cli-surface-settings.png` });
 await p.locator('[data-omc-suggestion-switch] [role="switch"]').click();
 await p.waitForTimeout(600);
 await p.goto(dshUrl(token), { waitUntil: "networkidle" });
 await p.waitForTimeout(2000);
 const after = await openSettings();
-expect("the flip survives a reload", after === "true");
+expect("the flip survives a reload", after === "false");
 await p.locator('[data-omc-suggestion-switch] [role="switch"]').click();
 await p.waitForTimeout(600);
 await p.goto(dshUrl(token), { waitUntil: "networkidle" });
 await p.waitForTimeout(2000);
-expect("flipped back off", (await openSettings()) === "false");
+expect("flipped back on", (await openSettings()) === "true");
 // The panel's Tasks tab on a blank session: no live-task section, the empty line still there.
 await p.goto(dshUrl(token), { waitUntil: "networkidle" });
 await p.waitForTimeout(2000);

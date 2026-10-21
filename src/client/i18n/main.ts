@@ -383,7 +383,7 @@ export const en = {
     "One line on what Claude did while you were on another session, asked when you come back to one that finished without you. Costs a model call each time.",
   "main.settingsUi.suggestTitle": "Suggested next prompt",
   "main.settingsUi.suggestDesc":
-    "After each reply, Claude guesses what you will type next and shows it above the composer. One small model call per turn, mostly cache reads. A change here applies when the session's Claude next starts.",
+    "After each reply, Claude guesses what you will type next and shows it above the composer, as the Claude Code terminal does. One small model call per turn, mostly cache reads. A change here applies when the session's Claude next starts.",
   "main.suggestion.label": "Claude suggests",
   "main.suggestion.use": "Use",
   "main.suggestion.send": "Send",
@@ -873,7 +873,7 @@ export const zh = {
     "当你回到一个在你不在时完成的会话时，用一行说明 Claude 在你处理其他会话期间做了什么。每次都会消耗一次模型调用。",
   "main.settingsUi.suggestTitle": "下一条提示建议",
   "main.settingsUi.suggestDesc":
-    "每次回复后，Claude 猜测你接下来会输入什么，并显示在输入框上方。每轮多一次小的模型调用，大多是缓存读取。此处的改动在该会话的 Claude 下次启动时生效。",
+    "每次回复后，Claude 猜测你接下来会输入什么，并显示在输入框上方，与 Claude Code 终端一致。每轮多一次小的模型调用，大多是缓存读取。此处的改动在该会话的 Claude 下次启动时生效。",
   "main.suggestion.label": "Claude 建议",
   "main.suggestion.use": "采用",
   "main.suggestion.send": "发送",

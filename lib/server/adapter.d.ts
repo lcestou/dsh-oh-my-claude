@@ -1542,8 +1542,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      *  control request, and not `prepare`'s purpose branch, which forces a scratch cwd. */
     skillDoctor(sessionId: string): Promise<SkillDoctorReply>;
     /** The SDK's `initialize` request, once per process this adapter starts or adopts: asks the CLI
-     *  to write a one-line progress summary into each subagent's `task_progress`, and, when the
-     *  `promptSuggestionsOn` hint is set, to predict the next prompt after each turn
+     *  to write a one-line progress summary into each subagent's `task_progress`, and, unless the
+     *  `promptSuggestionsOff` hint is set, to predict the next prompt after each turn
      *  (`prompt_suggestion` frames, one small cached model call per turn). The reply (the command
      *  catalog the init frame already carries) is not used; a failure is logged and the session
      *  runs as before. Sent after the hints read, so the first prompt may go out first; probed both

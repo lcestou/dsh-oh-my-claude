@@ -4528,8 +4528,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     }
   }
   /** The SDK's `initialize` request, once per process this adapter starts or adopts: asks the CLI
-   *  to write a one-line progress summary into each subagent's `task_progress`, and, when the
-   *  `promptSuggestionsOn` hint is set, to predict the next prompt after each turn
+   *  to write a one-line progress summary into each subagent's `task_progress`, and, unless the
+   *  `promptSuggestionsOff` hint is set, to predict the next prompt after each turn
    *  (`prompt_suggestion` frames, one small cached model call per turn). The reply (the command
    *  catalog the init frame already carries) is not used; a failure is logged and the session
    *  runs as before. Sent after the hints read, so the first prompt may go out first; probed both
@@ -4543,7 +4543,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       const request = {
         subtype: "initialize",
         agentProgressSummaries: true,
-        promptSuggestions: hints.promptSuggestionsOn === true,
+        promptSuggestions: hints.promptSuggestionsOff !== true,
       } satisfies Record<string, JsonValue>;
       const reply = await this.control(proc, request, 15_000);
       if (!reply.ok) this.log("warn", `initialize not applied: ${reply.error}`);
