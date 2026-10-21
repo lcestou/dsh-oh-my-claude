@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import type { CSSProperties, ReactElement } from "react";
 import { createPortal } from "react-dom";
 import { subscribe } from "./events.js";
-import type { PermissionModeState } from "./events.js";
+import type { LiveTask, PermissionModeState } from "./events.js";
 import {
   btn,
   btnPrimary,
@@ -3693,6 +3693,118 @@ function PastGoalRow({ goal }: { goal: DshGoal }) {
   );
 }
 
+/** The two words the CLI sends for a live task, in the reader's language; a status the CLI adds
+ *  later shows as its own word, which is still true. Read at render, so a language switch that
+ *  re-renders the section re-reads it. */
+const statusWord = (status: string) =>
+  status === "running"
+    ? t("panel.tasks.status.running")
+    : status === "paused"
+      ? t("panel.tasks.status.paused")
+      : status;
+
+/**
+ * Claude's own background tasks and subagents, polled every 3 s while the tab is open, each with
+ * Stop (the CLI's `stop_task`) and Output (the last 8 KiB of a shell or Monitor task). The CLI's
+ * refusal, for a subagent asked for output or a task it no longer has, lands on the row's note
+ * line; a network failure lands there too. Renders nothing without tasks, so the tab reads as before.
+ */
+function LiveTasksSection({ sessionId }: { sessionId: string }) {
+  useLocale();
+  const [tasks, setTasks] = useState<LiveTask[]>([]);
+  const [output, setOutput] = useState<Record<string, string>>({});
+  const [note, setNote] = useState<Record<string, string>>({});
+  useEffect(() => {
+    let live = true;
+    const load = () =>
+      fetch(`${ROUTE}/live-tasks?session=${encodeURIComponent(sessionId)}`)
+        .then((r) => readJson<{ ok: true; tasks: LiveTask[] } | { ok: false }>(r))
+        .then((b) => live && b.ok && setTasks(b.tasks))
+        .catch(() => {});
+    void load();
+    const timer = setInterval(() => void load(), 3000);
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
+  }, [sessionId]);
+  const act = (task: LiveTask, kind: "stop" | "output") =>
+    fetch(`${ROUTE}/live-tasks/${kind}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ session: sessionId, taskId: task.id }),
+    })
+      .then((r) => readJson<{ ok: boolean; output?: string; error?: string }>(r))
+      .then((b) => {
+        if (kind === "output" && b.ok) setOutput((cur) => ({ ...cur, [task.id]: b.output ?? "" }));
+        else
+          setNote((cur) => ({
+            ...cur,
+            [task.id]: b.ok ? t("panel.tasks.stopped") : (b.error ?? t("panel.tasks.refused")),
+          }));
+      })
+      .catch((e: Error) => setNote((cur) => ({ ...cur, [task.id]: e.message })));
+  if (tasks.length === 0) return null;
+  return (
+    <div data-omc-live-tasks="">
+      <span style={sectionHead}>{t("panel.tasks.live")}</span>
+      {tasks.map((task) => (
+        <div
+          key={task.id}
+          data-omc-live-task={task.id}
+          style={{ ...nested, padding: "4px 0 4px 12px", fontSize: 12, lineHeight: "1.5" }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ flex: 1, minWidth: 0, overflowWrap: "anywhere" }}>
+              {task.description}
+            </span>
+            <button
+              type="button"
+              style={btn}
+              data-omc-live-task-output=""
+              onClick={() => void act(task, "output")}
+            >
+              {t("panel.tasks.output")}
+            </button>
+            <button
+              type="button"
+              style={btn}
+              data-omc-live-task-stop=""
+              onClick={() => void act(task, "stop")}
+            >
+              {t("panel.tasks.stop")}
+            </button>
+          </div>
+          <div style={{ ...meta, fontSize: 11 }}>
+            {[
+              statusWord(task.status),
+              task.backgrounded ? t("panel.tasks.background") : "",
+              task.subagentType ?? "",
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+            {note[task.id] ? ` · ${note[task.id]}` : ""}
+          </div>
+          {output[task.id] !== undefined ? (
+            <pre
+              data-omc-live-task-output-text=""
+              style={{
+                ...meta,
+                fontFamily: T.mono,
+                fontSize: 11,
+                whiteSpace: "pre-wrap",
+                margin: "4px 0 0",
+              }}
+            >
+              {output[task.id] || t("panel.tasks.outputEmpty")}
+            </pre>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /** Both goals and the scheduled tasks, each section only when it has something: dsh's goal and its
  *  past ones from dsh's own log, the CLI's goal from its transcript, then the tasks. Read-only;
  *  dsh's goal is changed from dsh's own controls. With nothing at all, one line says so. */
@@ -3724,6 +3836,7 @@ function TasksBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
 
   return (
     <div style={bodyFlow}>
+      <LiveTasksSection sessionId={sessionId} />
       {data === null ? (
         <span style={stateText}>{t("loading")}</span>
       ) : !data.ok ? (
