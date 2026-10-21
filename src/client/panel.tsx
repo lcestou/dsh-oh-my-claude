@@ -3754,10 +3754,13 @@ function LiveTasksSection({ sessionId }: { sessionId: string }) {
       .then((b) => {
         if (!mounted.current) return;
         if (kind === "output" && b.ok) setOutput((cur) => ({ ...cur, [task.id]: b.output ?? "" }));
+        else if (kind === "stop" && b.ok)
+          // The server dropped the row on the CLI's ok; the next poll would too, up to 3 s later.
+          setTasks((cur) => cur.filter((row) => row.id !== task.id));
         else
           setNote((cur) => ({
             ...cur,
-            [task.id]: b.ok ? t("panel.tasks.stopped") : (b.error ?? t("panel.tasks.refused")),
+            [task.id]: b.error ?? t("panel.tasks.refused"),
           }));
       })
       .catch((e: Error) => {

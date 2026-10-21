@@ -9155,11 +9155,24 @@ function SuggestionCard({
         >
           {text}
         </span>
-        <button type="button" style={btn} data-omc-suggestion-use="" onClick={onUse}>
+        {/* Disabled while folded: a card that is out of sight must not take the Tab key either. */}
+        <button
+          type="button"
+          style={btn}
+          data-omc-suggestion-use=""
+          disabled={folded}
+          onClick={onUse}
+        >
           {t("main.suggestion.use")}
         </button>
         {onSend && (
-          <button type="button" style={btn} data-omc-suggestion-send="" onClick={onSend}>
+          <button
+            type="button"
+            style={btn}
+            data-omc-suggestion-send=""
+            disabled={folded}
+            onClick={onSend}
+          >
             {t("main.suggestion.send")}
           </button>
         )}
@@ -9168,6 +9181,7 @@ function SuggestionCard({
           aria-label={t("main.suggestion.dismissAria")}
           title={t("main.suggestion.dismiss")}
           data-omc-suggestion-dismiss=""
+          disabled={folded}
           onClick={onDismiss}
           style={{
             background: "none",
