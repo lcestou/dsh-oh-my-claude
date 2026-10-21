@@ -17,6 +17,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 - Claude's multiple-choice questions keep the preview text of each option (a mockup, a snippet), shown under the question. It was dropped before.
 - The panel's Restore tab no longer shows the previous workspace's transcripts for a moment after a switch to a new session in another workspace.
+- A slash command typed in the composer takes the plugin's accent again on dsh 0.2.1-rc.2, which draws it as a chip of its own; it had gone back to dsh's blue.
 
 ## [1.5.4] - 2026-10-19
 
