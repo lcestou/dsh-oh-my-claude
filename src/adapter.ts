@@ -4554,15 +4554,19 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       agentProgressSummaries: true,
       promptSuggestions: hints.promptSuggestionsOff !== true,
     } satisfies Record<string, JsonValue>;
-    void this.control(proc, request, 15_000).then((reply) => {
-      if (!reply.ok) this.log("warn", `initialize not applied: ${reply.error}`);
-      // Diagnostics beside the rest: whether the CLI took the request and what it was asked for,
-      // so a session that never shows a suggestion can be read back from resume.log.
-      void trace(
-        join(this.stateDir, "resume.log"),
-        `initialize ${proc.spec?.sessionId ?? "?"}: ${reply.ok ? "applied" : `refused (${reply.error})`}, suggestions ${request.promptSuggestions ? "on" : "off"}`,
-      );
-    });
+    // `control` answers a failure as `ok: false` rather than throwing; the catch is for anything
+    // the trace itself raises, so nothing here becomes an unhandled rejection.
+    void this.control(proc, request, 15_000)
+      .then((reply) => {
+        if (!reply.ok) this.log("warn", `initialize not applied: ${reply.error}`);
+        // Diagnostics beside the rest: whether the CLI took the request and what it was asked
+        // for, so a session that never shows a suggestion can be read back from resume.log.
+        return trace(
+          join(this.stateDir, "resume.log"),
+          `initialize ${proc.spec?.sessionId ?? "?"}: ${reply.ok ? "applied" : `refused (${reply.error})`}, suggestions ${request.promptSuggestions ? "on" : "off"}`,
+        );
+      })
+      .catch((error) => this.log("warn", `initialize: ${errorText(error)}`));
   }
 
   /** Ask the CLI how many tokens this session's context window holds, bank the figure for dsh's context ring under both the spec and CLI model names, and flag an assumed-behind window when this box runs behind a proxy. */
