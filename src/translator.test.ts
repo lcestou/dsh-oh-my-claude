@@ -5,6 +5,8 @@ import {
   formatToolCall,
   formatToolResult,
   HEADER_MARK,
+  type LiveTask,
+  applyTaskPatch,
 } from "./translator.js";
 import type { PluginLoadError } from "./plugins.js";
 import type { FallbackRecord } from "./translator.js";
@@ -542,4 +544,93 @@ console.log("translator plugin-warnings ok");
     [],
     "a hook that says the line was drawn already draws nothing",
   );
+}
+
+// task frames reach onTask: start inserts, updated carries the status, notification ends it
+{
+  const seen: Array<[string, string]> = [];
+  // SAFETY: the strict event union is bypassed the way the api_retry block above does it
+  const t = new Translator({ onTask: (id, patch) => seen.push([id, patch.status]) }) as any;
+  t.translate({
+    type: "system",
+    subtype: "task_started",
+    task_id: "t1",
+    description: "lint",
+    is_backgrounded: true,
+  });
+  t.translate({
+    type: "system",
+    subtype: "task_updated",
+    task_id: "t1",
+    patch: { status: "paused" },
+  });
+  t.translate({
+    type: "system",
+    subtype: "task_notification",
+    task_id: "t1",
+    status: "completed",
+    summary: "done",
+  });
+  assert.deepEqual(seen, [
+    ["t1", "running"],
+    ["t1", "paused"],
+    ["t1", "completed"],
+  ]);
+  // A background task outlives its turn: the next turn's translator has no block for it, and the
+  // status still has to reach the list.
+  const late: Array<[string, string]> = [];
+  // SAFETY: as above
+  const fresh = new Translator({ onTask: (id, patch) => late.push([id, patch.status]) }) as any;
+  fresh.translate({
+    type: "system",
+    subtype: "task_updated",
+    task_id: "t2",
+    patch: { status: "killed" },
+  });
+  fresh.translate({
+    type: "system",
+    subtype: "task_notification",
+    task_id: "t2",
+    status: "stopped",
+  });
+  assert.deepEqual(
+    late,
+    [
+      ["t2", "killed"],
+      ["t2", "stopped"],
+    ],
+    "no block, still reported",
+  );
+}
+
+// applyTaskPatch: a start inserts, a status moves, a stop (killed, then stopped) removes, strays drop
+{
+  const tasks = new Map<string, LiveTask>();
+  applyTaskPatch(
+    tasks,
+    "t1",
+    { description: "sleep 90", backgrounded: true, status: "running" },
+    5,
+  );
+  assert.deepEqual(
+    [...tasks.values()],
+    [
+      {
+        id: "t1",
+        description: "sleep 90",
+        backgrounded: true,
+        subagentType: undefined,
+        status: "running",
+        at: 5,
+      },
+    ],
+  );
+  applyTaskPatch(tasks, "t1", { status: "paused" }, 6);
+  assert.equal(tasks.get("t1")?.status, "paused", "a status moves the row");
+  applyTaskPatch(tasks, "t9", { status: "running" }, 7);
+  assert.equal(tasks.size, 1, "a status for an unknown task inserts nothing");
+  applyTaskPatch(tasks, "t1", { status: "killed" }, 8);
+  assert.equal(tasks.size, 0, "killed removes");
+  applyTaskPatch(tasks, "t1", { status: "stopped" }, 9);
+  assert.equal(tasks.size, 0, "stopped on a removed task is a no-op");
 }

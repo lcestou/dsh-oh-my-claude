@@ -28,6 +28,10 @@ export interface TranslatorBlock {
     started: boolean;
     tool?: boolean;
 }
+/** Statuses after which a task is over: `task_updated` ends in `completed`, `failed` or `killed`,
+ *  `task_notification` in `completed`, `failed` or `stopped` (a Stop sends `killed` on the update
+ *  and `stopped` on the notification, probed 2026-10-20 on 2.1.304). Exported for the live list. */
+export declare const TASK_TERMINAL: Set<string>;
 /** `45s`, `4m30s`, `1h2m`: how long a call has been running, in the shortest form that stays exact. */
 export declare function elapsedText(seconds: number): string;
 /** `1k`, `4.6k`, `23k`: an estimate, so one decimal below 10k and none above it. */
@@ -62,6 +66,28 @@ export interface TurnProgress {
      *  for a nested agent's frames: the CLI's main line holds `tool-use` through a Task. */
     mode?: LiveMode;
 }
+/** One of Claude's own background tasks or subagents, as the task frames describe it, for the
+ *  Tasks tab's Stop and Output buttons. `status` is the CLI's word (`running`, `paused`); a
+ *  terminal status removes the row. */
+export interface LiveTask {
+    id: string;
+    description: string;
+    backgrounded: boolean;
+    subagentType?: string;
+    status: string;
+    at: number;
+}
+/** What one task frame changes on a `LiveTask`; `task_started` sets everything, the rest a status. */
+export interface LiveTaskPatch {
+    description?: string;
+    backgrounded?: boolean;
+    subagentType?: string;
+    status: string;
+}
+/** Apply one task frame to a session's live list: a start inserts, a status updates, a terminal
+ *  status removes. A status for a task the map never saw is dropped (its start was read by a
+ *  process this adapter no longer has), and a start for a known id only moves its status. */
+export declare function applyTaskPatch(tasks: Map<string, LiveTask>, taskId: string, patch: LiveTaskPatch, now: number): void;
 /** A model switch the CLI reported mid-turn, surfaced to the notice and the picker. `direction` and
  *  `scope` come from `model_refusal_fallback`; `model_fallback` and `model_consent_fallback` leave
  *  them undefined. The client moves the picker only for a `model_refusal_fallback` that is `sticky`
@@ -157,6 +183,9 @@ export declare class Translator {
     /** Injected: asked once per init frame that names an environment API key; true draws the
      *  billing line. The adapter answers true once per process. */
     noteApiKey?: () => boolean;
+    /** Injected: every task frame with a task id, so the adapter can keep the live list the Tasks
+     *  tab reads. The reasoning rows above are drawn regardless; this is the second reader. */
+    onTask?: (taskId: string, patch: LiveTaskPatch) => void;
     /** Output tokens across every assistant message of this turn so far. A `message_delta` reports
      *  the message it closes, not the turn, so the figure summed here is what the status row shows;
      *  reporting each message's own count made the row drop back to a few hundred at every tool step. */
@@ -193,7 +222,7 @@ export declare class Translator {
     private fireToolCall;
     /** Every option is optional: a bare Translator shows tool activity, relays nothing and reports
      *  to no callbacks, which is what a one-shot call wants. */
-    constructor({ toolActivity, continueAfterLimit, timeZone, toolTextLimit, relay, dshIds, relayed, log, onToolCall, onToolResult, onResult, redact, onInit, onProgress, onModel, noteApiKey, hostLabel, statusNote, }?: {
+    constructor({ toolActivity, continueAfterLimit, timeZone, toolTextLimit, relay, dshIds, relayed, log, onToolCall, onToolResult, onResult, redact, onInit, onProgress, onModel, noteApiKey, onTask, hostLabel, statusNote, }?: {
         toolActivity?: boolean;
         continueAfterLimit?: boolean;
         timeZone?: string;
@@ -210,6 +239,7 @@ export declare class Translator {
         onProgress?: (progress: TurnProgress) => void;
         onModel?: (rec: Omit<FallbackRecord, "sessionId" | "at">) => void;
         noteApiKey?: () => boolean;
+        onTask?: (taskId: string, patch: LiveTaskPatch) => void;
         /** The box a remote turn runs on, so a logged-out error names it, not this local host. */
         hostLabel?: string;
         /** What to append to a 5xx retry line from the Anthropic status page cache. */
