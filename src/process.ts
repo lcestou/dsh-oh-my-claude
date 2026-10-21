@@ -1758,7 +1758,12 @@ export class ClaudeProcess {
       if (line.includes('"prompt_suggestion"') && this.noteSuggestion(line)) return;
       // `"type":"result"` is how the CLI's JSON spells it; a result inside a tool's text would
       // need the space-free key too, and a false positive only lets a suggestion through early.
-      if (line.includes('"type":"result"')) this.resultSeen = true;
+      if (line.includes('"type":"result"')) {
+        this.resultSeen = true;
+        // The guess that stood before this turn is for a prompt that has gone; the frame that
+        // follows this result, if the CLI sends one, is the new guess.
+        this.suggestion = undefined;
+      }
       if (this.controlListener && line.includes('"control_response"')) {
         try {
           // SAFETY: I/O boundary; the listener branches on `type` and ignores anything else

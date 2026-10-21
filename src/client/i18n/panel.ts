@@ -628,7 +628,7 @@ export const zh = {
   "panel.tasks.output": "输出",
   "panel.tasks.outputEmpty": "还没有输出。",
   "panel.tasks.background": "后台",
-  "panel.tasks.refused": "Claude Code 拒绝了",
+  "panel.tasks.refused": "Claude Code 拒绝了该请求",
   "panel.tasks.status.running": "运行中",
   "panel.tasks.status.paused": "已暂停",
   "panel.tasks.dshGoal": "dsh 目标",

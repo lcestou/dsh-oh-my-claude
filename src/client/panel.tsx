@@ -3722,7 +3722,10 @@ function LiveTasksSection({ sessionId }: { sessionId: string }) {
         .then((b) => live && b.ok && setTasks(b.tasks))
         .catch(() => {});
     void load();
-    const timer = setInterval(() => void load(), 3000);
+    // A hidden tab keeps the timer and skips the read, the way the aside card's poll does.
+    const timer = setInterval(() => {
+      if (document.visibilityState === "visible") void load();
+    }, 3000);
     return () => {
       live = false;
       clearInterval(timer);
@@ -3758,14 +3761,18 @@ function LiveTasksSection({ sessionId }: { sessionId: string }) {
             <span style={{ flex: 1, minWidth: 0, overflowWrap: "anywhere" }}>
               {task.description}
             </span>
-            <button
-              type="button"
-              style={btn}
-              data-omc-live-task-output=""
-              onClick={() => void act(task, "output")}
-            >
-              {t("panel.tasks.output")}
-            </button>
+            {/* Output reads a shell or Monitor task's tail; the CLI refuses it for a subagent,
+                so a subagent row does not offer it. */}
+            {task.subagentType ? null : (
+              <button
+                type="button"
+                style={btn}
+                data-omc-live-task-output=""
+                onClick={() => void act(task, "output")}
+              >
+                {t("panel.tasks.output")}
+              </button>
+            )}
             <button
               type="button"
               style={btn}

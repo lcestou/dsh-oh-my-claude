@@ -207,7 +207,7 @@ const ZH = {
   taskEnded: "任务{status}",
   taskPaused: "… 已暂停",
   apiKeyBilling:
-    "⚠ Claude Code 正在使用 dsh 环境里的 ANTHROPIC_API_KEY，此会话按该 key 计费，而不是你的 Claude 订阅。在 dsh 启动处（.env 或服务文件）去掉该变量即可改用登录账号。",
+    "⚠ Claude Code 正在使用 dsh 环境里的 ANTHROPIC_API_KEY，此会话按该密钥计费，而不是你的 Claude 订阅。在 dsh 启动处（.env 或服务文件）去掉该变量即可改用登录账号。",
   taskCompleted: "已完成",
   taskFailed: "失败",
   taskKilled: "已终止",

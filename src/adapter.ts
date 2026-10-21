@@ -5194,7 +5194,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         command: record.command,
         spawner: () => this.attachHold(run, record),
         onExit: (p) => {
-          if (this.processes.get(key2) === p) this.processes.delete(key2);
+          if (this.processes.get(key2) === p) {
+            this.processes.delete(key2);
+            this.sessionTasks.delete(sessionId);
+          }
         },
       });
       proc.key = specKey(record.procSpec);
@@ -5292,7 +5295,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         command: spec.command,
         spawner: () => lazyHandle(attachKeeper(dir, 5000)),
         onExit: (p) => {
-          if (this.processes.get(key2) === p) this.processes.delete(key2);
+          if (this.processes.get(key2) === p) {
+            this.processes.delete(key2);
+            this.sessionTasks.delete(spec.sessionId);
+          }
         },
       });
       proc.key = specKey(procSpec);
@@ -6301,9 +6307,12 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       throw new LlmError("claude process is not running", "PROVIDER_ERROR");
     proc.promptSentAt = Date.now();
     // The guess was for the prompt that just went out; the result that follows brings a new one,
-    // and only a frame after that result is stored (see `noteSuggestion`).
+    // and only a frame after that result is stored (see `noteSuggestion`). Published at once: the
+    // card's own read runs every 30 s while the stream is up, and the publish before the write
+    // carried the old text.
     proc.suggestion = undefined;
     proc.resultSeen = false;
+    this.publishAsides(cont.options.sessionId);
   }
 
   /**
