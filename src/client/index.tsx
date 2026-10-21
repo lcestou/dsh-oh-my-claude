@@ -9768,6 +9768,27 @@ function AsideBubble({
   // does not count as typing, so the card hides through `suggestionHidden` there instead.
   const draft = useInput?.((state) => state.draft) ?? "";
   const typingElse = draft.trim() !== "" && draft !== suggestionCard;
+  // Sending what was typed empties the box a beat before the server's clear takes the card down,
+  // and the card unfolded for that beat (owner, 2026-10-21). So a fold outlasts the typing by a
+  // moment: long enough for the clear to land, short enough that a box emptied by hand gets the
+  // card back without a wait worth noticing.
+  // And while the turn runs: the server drops the guess at the prompt write and the stream says
+  // so, but dsh's own send empties the box first, and a card that unfolded in between read as
+  // the guess coming back. Read at render; the poll re-renders this once a second while running.
+  const running = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.running === true;
+  const [foldHold, setFoldHold] = useState(false);
+  const wasTyping = useRef(false);
+  useEffect(() => {
+    if (typingElse) {
+      wasTyping.current = true;
+      return;
+    }
+    if (!wasTyping.current) return;
+    wasTyping.current = false;
+    setFoldHold(true);
+    const timer = setTimeout(() => setFoldHold(false), 800);
+    return () => clearTimeout(timer);
+  }, [typingElse]);
   // Before the early return below: the card is gone once its last row goes, and so would be this.
   useUndoSteerRestore(steers.waiting, steers.held, { inputActions, useInput });
   const anySteers = steers.waiting.length > 0 || steers.held.length > 0;
@@ -9826,7 +9847,7 @@ function AsideBubble({
       {suggestionCard !== null && inputActions && (
         <SuggestionCard
           text={suggestionCard}
-          folded={typingElse}
+          folded={typingElse || foldHold || running}
           onUse={() => {
             inputActions.setDraft(suggestionCard);
             setSuggestionHidden(suggestionCard);

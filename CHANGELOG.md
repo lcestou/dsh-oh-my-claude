@@ -6,6 +6,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Fixed
+
+- The suggestion card no longer flashes back for a moment when you send your own message over it: a fold now outlasts the typing by a beat and holds while the turn runs, until the server clears the guess.
+
 ### Added
 
 - Settings → Oh My Claude → "Suggested next prompt": after each reply, Claude's own guess at your next prompt appears above the composer with Use, which writes it into the box, and Send, which sends it as it is; it folds away while you type something else and comes back if you clear the box. On by default, as in the Claude Code terminal, and the switch turns it off; it costs one small model call per turn, nearly all of it cache reads, and the CLI sends a guess only when it has one it trusts.
