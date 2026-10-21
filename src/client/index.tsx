@@ -9097,11 +9097,15 @@ function LimitCard({
  *  text in this tab. Same frame as the login card so the stack reads as one set. */
 function SuggestionCard({
   text,
+  folded,
   onUse,
   onSend,
   onDismiss,
 }: {
   text: string;
+  /** The person is typing something else: the card fades and collapses, and its buttons stop
+   *  taking clicks, until the box is cleared again. Stays mounted so the fade can run both ways. */
+  folded: boolean;
   onUse: () => void;
   onSend?: () => void;
   onDismiss: () => void;
@@ -9110,15 +9114,29 @@ function SuggestionCard({
   return (
     <div
       data-omc-suggestion-card=""
+      data-omc-suggestion-folded={folded ? "" : undefined}
       // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a live notice, not a form result, which is what <output> is for
       role="status"
+      aria-hidden={folded}
       style={{
         boxSizing: "border-box",
         background: "var(--dsw-specific-tip, var(--dsw-alias-bg-base, transparent))",
-        border: "0.5px solid var(--dsw-alias-border-l1, rgba(217,119,87,.4))",
+        // The border is split out so its width can fold to nothing too: at 0.5px top and bottom
+        // a folded card still drew a hairline across the dock.
+        borderStyle: "solid",
+        borderColor: "var(--dsw-alias-border-l1, rgba(217,119,87,.4))",
+        borderWidth: folded ? 0 : "0.5px",
         borderRadius: "12px 12px 0 0",
-        padding: "8px 10px",
+        padding: folded ? "0 10px" : "8px 10px",
         fontSize: 13,
+        // The fold: height and opacity ease out together; `maxHeight` stands in for height, which
+        // CSS cannot animate from auto. 120px holds the three wrapped lines of a phone.
+        maxHeight: folded ? 0 : 120,
+        opacity: folded ? 0 : 1,
+        overflow: "hidden",
+        pointerEvents: folded ? "none" : undefined,
+        transition:
+          "max-height .35s ease, opacity .35s ease, padding .35s ease, border-width .35s ease",
       }}
     >
       {/* Wraps on a phone: the text takes a line of its own under the label once the row is too
@@ -9729,6 +9747,11 @@ function AsideBubble({
   // (a dsh without the hook) has no Use to offer and shows nothing.
   const suggestionCard =
     suggestion !== null && inputActions && suggestionHidden !== suggestion ? suggestion : null;
+  // The guess is what you might type; once you are typing something else it folds away (a short
+  // fade, like the update card), and comes back if the box is cleared. Use's own text in the box
+  // does not count as typing, so the card hides through `suggestionHidden` there instead.
+  const draft = useInput?.((state) => state.draft) ?? "";
+  const typingElse = draft.trim() !== "" && draft !== suggestionCard;
   // Before the early return below: the card is gone once its last row goes, and so would be this.
   useUndoSteerRestore(steers.waiting, steers.held, { inputActions, useInput });
   const anySteers = steers.waiting.length > 0 || steers.held.length > 0;
@@ -9787,6 +9810,7 @@ function AsideBubble({
       {suggestionCard !== null && inputActions && (
         <SuggestionCard
           text={suggestionCard}
+          folded={typingElse}
           onUse={() => {
             inputActions.setDraft(suggestionCard);
             setSuggestionHidden(suggestionCard);
