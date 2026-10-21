@@ -444,6 +444,9 @@ export interface ContextUsage {
 /** Decodes a `get_context_usage` answer, returning an all-zero report when the payload is missing
  *  or not an object rather than throwing. */
 export declare function decodeContextUsage(v: JsonValue | undefined): ContextUsage;
+/** The text of a `get_task_output` answer: its `output` string when the CLI sent one, else the
+ *  whole answer as JSON so an unexpected shape is still readable, and "" for nothing. */
+export declare function decodeTaskOutput(v: JsonValue | undefined): string;
 /** The `title` of a `generate_session_title` answer, trimmed; undefined when absent or empty. */
 export declare function decodeTitle(v: JsonValue | undefined): string | undefined;
 /** The slice of a `get_workspace_diff` answer this plugin reports. */

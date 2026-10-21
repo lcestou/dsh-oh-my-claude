@@ -757,6 +757,15 @@ export function decodeContextUsage(v: JsonValue | undefined): ContextUsage {
   return out;
 }
 
+/** The text of a `get_task_output` answer: its `output` string when the CLI sent one, else the
+ *  whole answer as JSON so an unexpected shape is still readable, and "" for nothing. */
+export function decodeTaskOutput(v: JsonValue | undefined): string {
+  if (v === undefined || v === null) return "";
+  const r = typeof v === "object" && !Array.isArray(v) ? v : {};
+  if (typeof r.output === "string") return r.output;
+  return JSON.stringify(v);
+}
+
 /** The `title` of a `generate_session_title` answer, trimmed; undefined when absent or empty. */
 export function decodeTitle(v: JsonValue | undefined): string | undefined {
   const r = typeof v === "object" && v !== null && !Array.isArray(v) ? v : {};
@@ -1125,6 +1134,10 @@ export function parseQuestions(
     if (!item || typeof item !== "object" || typeof item.question !== "string" || !item.question)
       return undefined;
     const options: AskUserQuestionItem["options"] = [];
+    // dsh's option has a label and a description only; a preview (a mockup, a snippet) rides
+    // under the question as `detail`, one fenced block per option, four backticks so a preview
+    // that holds a fence of its own survives.
+    const previews: string[] = [];
     for (const o of Array.isArray(item.options) ? item.options : []) {
       if (!o || typeof o.label !== "string" || !o.label) return undefined;
       const optObj: AskUserQuestionItem["options"][number] = {
@@ -1132,6 +1145,8 @@ export function parseQuestions(
       };
       if (typeof o.description === "string" && o.description) optObj.description = o.description;
       options.push(optObj);
+      if (typeof o.preview === "string" && o.preview.trim() !== "")
+        previews.push(`**${o.label}**\n\n\`\`\`\`\n${o.preview.trim()}\n\`\`\`\``);
     }
     const outItem: AskUserQuestionItem = {
       id: `${toolUseId}:${index}`,
@@ -1140,6 +1155,7 @@ export function parseQuestions(
       multiSelect: item.multiSelect === true,
     };
     if (typeof item.header === "string" && item.header) outItem.header = item.header;
+    if (previews.length > 0) outItem.detail = previews.join("\n\n");
     out.push(outItem);
   }
   return out;
