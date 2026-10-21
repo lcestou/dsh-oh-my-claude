@@ -84,11 +84,14 @@ The tab also carries the session's own report block (the same redacted report as
 
 The Tasks tab shows both goals a session can hold and its scheduled tasks, each section only when it has something in it. A session with none of them says so in one line.
 
+Above those, while Claude Code runs a background shell task or a subagent, a "Running in Claude" section lists each one with Stop (the CLI's `stop_task`) and, for a shell or Monitor task, Output (the last 8 KiB it wrote, the CLI's own cap). The list is read from the task frames the CLI sends during a turn and polled every 3 s while the tab is open; a Stop removes the row at once and the CLI confirms it in the chat. A task that ends on its own between turns stays listed until the next prompt, and a Stop on it then shows the CLI's refusal on the row.
+
 - **dsh goal.** The current goal in full: its phase (active, paused or blocked), the rounds it has used against its cap, when it last changed, and the reason when blocked. Earlier goals sit behind a Past goals fold, one line each (phase, objective, age), opening to the full row. dsh writes every goal change into the session log as a `goal/change` record carrying the whole goal, and a clear record naming the goal it removed; the route folds those into one entry per goal. It shows whether or not Claude is running, since dsh's goal is there either way. Goals are set and changed from dsh itself.
 - **Claude Code goal.** The most recent `ProposeGoal`-family tool call in the transcript, with its time, only when the CLI holds one.
 - **Durable tasks.** Tasks persisted to `<project dir>/.claude/scheduled_tasks.json`, with the path under the list. Session-only tasks are reconstructed from the transcript's `CronCreate` and `CronDelete` calls (a later delete cancels a create); the CLI keeps them in memory only, so they are best effort and die with the process.
 
 Route: `GET /dsh-oh-my-claude/scheduled-tasks?session=<id>` returns `{ ok, durable, session, goal, dshGoals, path }` or `{ ok: false, error }`.
+Live tasks: `GET /dsh-oh-my-claude/live-tasks?session=<id>` returns `{ ok, tasks }`; `POST /dsh-oh-my-claude/live-tasks/stop` and `/live-tasks/output` take `{ session, taskId }` and answer `{ ok, error? }` and `{ ok, output?, error? }`, with the CLI's refusal in `error`.
 
 ## Tune
 
@@ -138,6 +141,10 @@ The settings are box-wide, in the same `hints.json` as the switches around them:
 A session with no messages yet shows a small card above the composer offering an opening prompt: the one saved for that session, or, on a brand-new tab, the last one saved anywhere. Clicking it fills the composer without sending, so it can be edited first. "Save draft" stores whatever is in the box as that session's opener and as the default the next new session is offered. It reads "Saved" and is greyed while the composer already matches the saved opener. "Forget" clears it after a second click.
 
 The card is one row whatever the draft's length: the opener and the hint shrink with an ellipsis, the buttons keep their place, and the row keeps its height, so nothing under it moves. Each button slides in and out over 200 ms (none under reduced motion), reserves the width of its widest label, and the Forget button holds its width while it reads "Sure?". A switch at the top of Settings → Oh My Claude turns the card off for the whole box. It is on by default, and the flag lives as `starterOff` in `hints.json` in the plugin's state dir (`GET`/`POST /dsh-oh-my-claude/hints`, a `false` dropping the key). It hides as soon as the session has a message or the composer holds text of its own. Openers live in `starters.json` in the plugin's state dir. The routes are `GET /dsh-oh-my-claude/starter?session=` and `POST` of `{session, text}`. Filling the composer uses `inputActions.setDraft`, which dsh hands to every entry of the composer's dock slot.
+
+## Suggested next prompt
+
+After each reply, with the switch on (its default, as in the Claude Code terminal), the CLI guesses what you will type next and the guess shows as a card above the composer: Use writes it into the box, Send sends it as it is, and the close hides that text in this tab. The card folds away while you type something else and comes back if you clear the box; the next prompt you send clears it. The guess comes from the CLI's own prompt-suggestion fork of the session, one small model call per turn that is nearly all cache reads, and the CLI sends one only when it passes its own quality filter, so many turns show no card. The switch applies when a session's Claude next starts.
 
 ## Session notices
 

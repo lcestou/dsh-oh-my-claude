@@ -9131,8 +9131,9 @@ function SuggestionCard({
         padding: folded ? "0 10px" : "8px 10px",
         fontSize: 13,
         // The fold: height and opacity ease out together; `maxHeight` stands in for height, which
-        // CSS cannot animate from auto. 120px holds the three wrapped lines of a phone.
-        maxHeight: folded ? 0 : 120,
+        // CSS cannot animate from auto. 240px is four wrapped lines on a phone with room over; a
+        // guess the CLI lets through is one short line, so the cap never shows.
+        maxHeight: folded ? 0 : 240,
         opacity: folded ? 0 : 1,
         overflow: "hidden",
         pointerEvents: folded ? "none" : undefined,
