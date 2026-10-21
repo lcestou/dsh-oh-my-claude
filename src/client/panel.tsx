@@ -3718,6 +3718,15 @@ function LiveTasksSection({ sessionId }: { sessionId: string }) {
   const [tasks, setTasks] = useState<LiveTask[]>([]);
   const [output, setOutput] = useState<Record<string, string>>({});
   const [note, setNote] = useState<Record<string, string>>({});
+  // A Stop or Output click outlives the tab when the panel closes before the route answers; the
+  // answer then has no row to land on, and is dropped rather than set on a gone section.
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   useEffect(() => {
     let live = true;
     const load = () =>
@@ -3743,6 +3752,7 @@ function LiveTasksSection({ sessionId }: { sessionId: string }) {
     })
       .then((r) => readJson<{ ok: boolean; output?: string; error?: string }>(r))
       .then((b) => {
+        if (!mounted.current) return;
         if (kind === "output" && b.ok) setOutput((cur) => ({ ...cur, [task.id]: b.output ?? "" }));
         else
           setNote((cur) => ({
@@ -3750,7 +3760,9 @@ function LiveTasksSection({ sessionId }: { sessionId: string }) {
             [task.id]: b.ok ? t("panel.tasks.stopped") : (b.error ?? t("panel.tasks.refused")),
           }));
       })
-      .catch((e: Error) => setNote((cur) => ({ ...cur, [task.id]: e.message })));
+      .catch((e: Error) => {
+        if (mounted.current) setNote((cur) => ({ ...cur, [task.id]: e.message }));
+      });
   if (tasks.length === 0) return null;
   return (
     <div data-omc-live-tasks="">
