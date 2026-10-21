@@ -9118,14 +9118,17 @@ function SuggestionCard({
         fontSize: 13,
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      {/* Wraps on a phone: the text takes a line of its own under the label once the row is too
+          narrow for label, text and buttons together (390 px squeezed it to three characters a
+          line, 2026-10-21). */}
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
         <Spark size={14} />
         <span style={{ color: ACCENT, fontWeight: 600, fontSize: 12, flex: "none" }}>
           {t("main.suggestion.label")}
         </span>
         <span
           data-omc-suggestion-text=""
-          style={{ flex: 1, minWidth: 0, overflowWrap: "anywhere" }}
+          style={{ flex: "1 1 14em", minWidth: 0, overflowWrap: "break-word" }}
         >
           {text}
         </span>

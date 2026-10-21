@@ -3757,8 +3757,10 @@ function LiveTasksSection({ sessionId }: { sessionId: string }) {
           data-omc-live-task={task.id}
           style={{ ...nested, padding: "4px 0 4px 12px", fontSize: 12, lineHeight: "1.5" }}
         >
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ flex: 1, minWidth: 0, overflowWrap: "anywhere" }}>
+          {/* Wraps on a phone, the way the suggestion card does: the buttons drop under a long
+              description instead of squeezing it. */}
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
+            <span style={{ flex: "1 1 14em", minWidth: 0, overflowWrap: "break-word" }}>
               {task.description}
             </span>
             {/* Output reads a shell or Monitor task's tail; the CLI refuses it for a subagent,
