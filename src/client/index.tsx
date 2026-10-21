@@ -8135,6 +8135,33 @@ function CostSwitch() {
   );
 }
 
+/** The suggestions switch over the `promptSuggestionsOn` hint: absent is off, the default a
+ *  feature that bills a model call gets here (the recap's rule, `notices.ts`). Applies at the next
+ *  spawn of a session's Claude, which the description says. */
+function SuggestionSwitch() {
+  useLocale();
+  const [on, setOn] = useHintFlag("promptSuggestionsOn");
+  return (
+    <div
+      data-omc-suggestion-switch=""
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
+        fontSize: 13,
+        marginBottom: 12,
+      }}
+    >
+      <div>
+        <div>{t("main.settingsUi.suggestTitle")}</div>
+        <div style={{ color: T.faint, fontSize: 12 }}>{t("main.settingsUi.suggestDesc")}</div>
+      </div>
+      <Switch on={on} onChange={setOn} label={t("main.settingsUi.suggestTitle")} />
+    </div>
+  );
+}
+
 /**
  * The settings switch for the one-line recap on returning to a finished session, and the away bar
  * under it. Both are hints: the answer lands in the Asides ring, which is the box's, so whether to
@@ -9064,6 +9091,70 @@ function LimitCard({
   );
 }
 
+/** The CLI's predicted next prompt as a dock card: Use writes it into the composer (over any
+ *  draft there, which is the one case a click gets wrong), Dismiss hides this text in this tab.
+ *  Same frame as the login card so the stack reads as one set. */
+function SuggestionCard({
+  text,
+  onUse,
+  onDismiss,
+}: {
+  text: string;
+  onUse: () => void;
+  onDismiss: () => void;
+}) {
+  useLocale();
+  return (
+    <div
+      data-omc-suggestion-card=""
+      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a live notice, not a form result, which is what <output> is for
+      role="status"
+      style={{
+        boxSizing: "border-box",
+        background: "var(--dsw-specific-tip, var(--dsw-alias-bg-base, transparent))",
+        border: "0.5px solid var(--dsw-alias-border-l1, rgba(217,119,87,.4))",
+        borderRadius: "12px 12px 0 0",
+        padding: "8px 10px",
+        fontSize: 13,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <Spark size={14} />
+        <span style={{ color: ACCENT, fontWeight: 600, fontSize: 12, flex: "none" }}>
+          {t("main.suggestion.label")}
+        </span>
+        <span
+          data-omc-suggestion-text=""
+          style={{ flex: 1, minWidth: 0, overflowWrap: "anywhere" }}
+        >
+          {text}
+        </span>
+        <button type="button" style={btn} data-omc-suggestion-use="" onClick={onUse}>
+          {t("main.suggestion.use")}
+        </button>
+        <button
+          type="button"
+          aria-label={t("main.suggestion.dismissAria")}
+          title={t("main.suggestion.dismiss")}
+          data-omc-suggestion-dismiss=""
+          onClick={onDismiss}
+          style={{
+            background: "none",
+            border: "none",
+            padding: "2px 4px",
+            cursor: "pointer",
+            color: "inherit",
+            font: "inherit",
+            lineHeight: 1,
+          }}
+        >
+          ×
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /** The card above the composer after a turn failed for want of a login on its box: the same login
  *  the Boxes row runs, here so nobody has to find Settings. It only ever follows a failed turn, so a
  *  box nobody uses never asks. Once the token is stored the server clears the need and the next poll
@@ -9468,6 +9559,12 @@ function AsideBubble({
   // What the poll compares its answer against, without listing `items` as a dependency of its effect.
   const itemsRef = useRef<AsideItem[]>([]);
   const [steers, setSteers] = useState<SteerCardData>({ waiting: [], held: [] });
+  // The CLI's predicted next prompt, text only, so an unchanged poll answer is the same string
+  // and React skips the render.
+  const [suggestion, setSuggestion] = useState<string | null>(null);
+  // This tab, this text: the next turn replaces the text anyway, so a box-wide store is more
+  // than the job needs.
+  const [suggestionHidden, setSuggestionHidden] = useState<string | null>(null);
   // What the poll compares its steers against, the same way `itemsRef` serves `items`.
   const steersRef = useRef<SteerCardData>({ waiting: [], held: [] });
   steersRef.current = steers;
@@ -9522,12 +9619,15 @@ function AsideBubble({
               loginNeeded?: LoginNeed | null;
               claudeUpdate?: ClaudeUpdateCardData | null;
               steers?: SteerCardData;
+              suggestion?: { text: string } | null;
             }
           | { error: string };
         if ("error" in body) return;
         if (alive) {
           const nextNeed = body.loginNeeded ?? null;
           setNeed((cur) => (sameNeed(cur, nextNeed) ? cur : nextNeed));
+          // The text alone: a fresh object on every poll would re-render the dock each time.
+          setSuggestion(body.suggestion?.text ?? null);
           // The card names a box's Claude Code, so it belongs to a session that runs on Claude
           // Code; the route answers it for any session it is asked about, and a local-model
           // session drew it too (owner, 2026-09-23). Read here, on every poll, rather than once:
@@ -9562,6 +9662,7 @@ function AsideBubble({
     const offAsides = subscribe("asides", (session, data) => {
       if (session !== sessionId || !alive) return;
       setNeed((cur) => (sameNeed(cur, data.loginNeeded) ? cur : data.loginNeeded));
+      setSuggestion(data.suggestion?.text ?? null);
       if (JSON.stringify(data.items) !== JSON.stringify(itemsRef.current)) setItems(data.items);
       if (JSON.stringify(data.steers) !== JSON.stringify(steersRef.current)) setSteers(data.steers);
     });
@@ -9608,10 +9709,22 @@ function AsideBubble({
   // which only exist for a Claude session, so an empty list is the only reason to hide it. Reading
   // the provider binding at render blinked the card out whenever the binding reloaded.
   const loginCard = need && needDismissed !== need.host ? need : null;
+  // Only with a composer to fill: dsh hands `inputActions` to dock entries, so a mount without it
+  // (a dsh without the hook) has no Use to offer and shows nothing.
+  const suggestionCard =
+    suggestion !== null && inputActions && suggestionHidden !== suggestion ? suggestion : null;
   // Before the early return below: the card is gone once its last row goes, and so would be this.
   useUndoSteerRestore(steers.waiting, steers.held, { inputActions, useInput });
   const anySteers = steers.waiting.length > 0 || steers.held.length > 0;
-  if (shown.length === 0 && !loginCard && !claudeUpdate && !limitCard && !anySteers) return null;
+  if (
+    shown.length === 0 &&
+    !loginCard &&
+    !claudeUpdate &&
+    !limitCard &&
+    !anySteers &&
+    !suggestionCard
+  )
+    return null;
 
   const dismissAside = (id: string) => {
     // Hide now, but tell the server to drop it so the next poll (or a remount) does not bring it back.
@@ -9654,6 +9767,16 @@ function AsideBubble({
       )}
       {loginCard && (
         <LoginCard need={loginCard} onDismiss={() => setNeedDismissed(loginCard.host)} />
+      )}
+      {suggestionCard !== null && inputActions && (
+        <SuggestionCard
+          text={suggestionCard}
+          onUse={() => {
+            inputActions.setDraft(suggestionCard);
+            setSuggestionHidden(suggestionCard);
+          }}
+          onDismiss={() => setSuggestionHidden(suggestionCard)}
+        />
       )}
       {limitCard && (
         <LimitCard
@@ -10399,6 +10522,7 @@ export function apply(ctx: ClientCtx) {
             is the one experiment here. */}
         <ContextSwitch ctx={ctx} />
         <ReturnRecapSwitch />
+        <SuggestionSwitch />
         <SpendGuardField />
         <ProxyFirstPartySwitch />
         <TerminalSyncSwitch />

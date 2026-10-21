@@ -2,7 +2,8 @@
 // tab, reopened when the open session changes; readers subscribe by kind and get the same body
 // the matching GET route answers. `streamUp()` lets each fallback timer slow to 30 s while the
 // stream is alive, and `pollEvery()` is the period they ask for.
-import type { FallbackRecord, LiveMode } from "../translator.js";
+import type { FallbackRecord, LiveMode, LiveTask, SuggestionRow } from "../translator.js";
+export type { LiveTask, SuggestionRow };
 import type { AwaitingRow } from "./notices.js";
 import { ROUTE, whenContextGone } from "./shared.js";
 
@@ -127,6 +128,7 @@ export interface EventData {
     loginNeeded: LoginNeed | null;
     fallback: FallbackRecord | null;
     steers: SteerCardData;
+    suggestion: SuggestionRow | null;
   };
   idle: IdleReply;
   turns: TurnsReply;
