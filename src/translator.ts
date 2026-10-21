@@ -606,7 +606,13 @@ export class Translator {
   /** task_id → { block, lastSummary, lastToolName } tracks open task blocks across progress frames. */
   readonly taskBlocks = new Map<
     string,
-    { block: TranslatorBlock; lastSummary?: string; lastToolName?: string; lastStatus?: string }
+    {
+      block: TranslatorBlock;
+      lastSummary?: string;
+      lastToolName?: string;
+      lastDescription?: string;
+      lastStatus?: string;
+    }
   >();
   /** tool_use_id → { block, nextAt } tracks the block a long-running call reports its elapsed
    *  time into, and the next elapsed mark worth a line. */
@@ -977,24 +983,35 @@ export class Translator {
           if (!entry) return [];
           const summary = (event.summary ?? "").trim();
           const toolName = event.last_tool_name ?? "";
+          // The CLI rewrites `description` per step ("Running Count lines in src/process.ts",
+          // probed 2026-10-21 on 2.1.306) while the tool name stays "Bash", so the step line is
+          // the one a reader follows; the model-written summary comes with the option on and
+          // only now and then. Each is drawn once per change.
+          const description = (event.description ?? "").trim();
           const summaryChanged = summary && summary !== entry.lastSummary;
           const toolNameChanged = toolName && toolName !== entry.lastToolName;
-          if (!summaryChanged && !toolNameChanged) return [];
+          const descriptionChanged =
+            description && description !== entry.lastDescription && description !== summary;
+          if (!summaryChanged && !toolNameChanged && !descriptionChanged) return [];
           const usage = event.usage ?? {};
           const input = usage.input_tokens ?? 0;
           const output = usage.output_tokens ?? 0;
-          let progressLine = "";
+          const lines: string[] = [];
           if (toolNameChanged) {
-            progressLine += `${clip(toolName)}`;
-            if (input > 0 || output > 0) progressLine += ` · ${input}→${output}t`;
+            let toolLine = clip(toolName);
+            if (input > 0 || output > 0) toolLine += ` · ${input}→${output}t`;
+            lines.push(toolLine);
             entry.lastToolName = toolName;
           }
+          if (descriptionChanged) {
+            lines.push(clip(description));
+            entry.lastDescription = description;
+          }
           if (summaryChanged) {
-            if (progressLine) progressLine += "\n";
-            progressLine += `${clip(summary)}`;
+            lines.push(clip(summary));
             entry.lastSummary = summary;
           }
-          return this.delta(entry.block, progressLine ? `\n${progressLine}` : "");
+          return this.delta(entry.block, `\n${lines.join("\n")}`);
         }
         if (event.subtype === "task_notification") {
           const taskId = event.task_id ?? "";

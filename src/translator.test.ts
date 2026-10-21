@@ -634,3 +634,55 @@ console.log("translator plugin-warnings ok");
   applyTaskPatch(tasks, "t1", { status: "stopped" }, 9);
   assert.equal(tasks.size, 0, "stopped on a removed task is a no-op");
 }
+
+// task_progress draws the CLI's per-step description once per change, beside the tool name
+{
+  // SAFETY: the strict event union is bypassed the way the api_retry block above does it
+  const t = new Translator() as any;
+  t.translate({
+    type: "system",
+    subtype: "task_started",
+    task_id: "t3",
+    description: "count lines",
+  });
+  const first = t.translate({
+    type: "system",
+    subtype: "task_progress",
+    task_id: "t3",
+    last_tool_name: "Bash",
+    description: "Running Count lines in a.ts",
+  });
+  assert.ok(
+    String(first.at(-1)?.text).includes("Bash\nRunning Count lines in a.ts"),
+    "tool and step on the first frame",
+  );
+  const same = t.translate({
+    type: "system",
+    subtype: "task_progress",
+    task_id: "t3",
+    last_tool_name: "Bash",
+    description: "Running Count lines in a.ts",
+  });
+  assert.deepEqual(same, [], "nothing changed, nothing drawn");
+  const next = t.translate({
+    type: "system",
+    subtype: "task_progress",
+    task_id: "t3",
+    last_tool_name: "Bash",
+    description: "Running Count lines in b.ts",
+  });
+  assert.equal(String(next.at(-1)?.text), "\nRunning Count lines in b.ts", "a new step alone");
+  const summed = t.translate({
+    type: "system",
+    subtype: "task_progress",
+    task_id: "t3",
+    last_tool_name: "Bash",
+    description: "Counting b",
+    summary: "Counting b",
+  });
+  assert.equal(
+    String(summed.at(-1)?.text),
+    "\nCounting b",
+    "a summary equal to the step draws once",
+  );
+}
