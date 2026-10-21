@@ -103,6 +103,7 @@ import {
   readKeeperInfo,
   readKeeperSpec,
   spawnKeeper,
+  decodeTaskOutput,
 } from "./process.js";
 import type {
   Agent,
@@ -214,6 +215,9 @@ import {
   type FallbackRecord,
   type LiveMode,
   type SuggestionRow,
+  type LiveTask,
+  type LiveTaskPatch,
+  applyTaskPatch,
 } from "./translator.js";
 export { Translator, type TranslatorBlock, type FallbackRecord } from "./translator.js";
 import type {
@@ -3441,6 +3445,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    *  the next spawn's init frame, never on a reload.
    *  ponytail: one entry per live session, dropped by `forgetSession` when its process goes. */
   readonly sessionPluginWarnings = new Map<string, PluginLoadError[]>();
+  /** Claude's own live tasks per dsh session (task id → row), from the translator's task frames;
+   *  a terminal status removes the row, `forgetSession` and a process exit drop the map. A task
+   *  that ends while no turn is reading stays until the next turn drains the queue; Stop on it
+   *  then shows the CLI's error. */
+  readonly sessionTasks = new Map<string, Map<string, LiveTask>>();
   /** dsh session id → the model switch its last turn reported (a safety refusal, a primary-model
    *  fallback, or the usage-credit gate), surfaced through `/side-questions` like `loginNeeded`. One
    *  entry per live session, overwritten on each switch; the client reads it at the stop transition.
@@ -4203,6 +4212,45 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     if (!proc?.alive) return { ok: true, live: false };
     const reply = await this.control(proc, { subtype: "reload_skills" }, 15_000);
     return reply.ok ? { ok: true, live: true } : { ok: false, live: true, error: reply.error };
+  }
+
+  /** One task frame into the session's live list (`applyTaskPatch` holds the rules); the map is
+   *  created on the first frame so a session with no tasks owns no entry. */
+  noteTask(sessionId: string, taskId: string, patch: LiveTaskPatch): void {
+    const tasks = this.sessionTasks.get(sessionId) ?? new Map<string, LiveTask>();
+    applyTaskPatch(tasks, taskId, patch, Date.now());
+    this.sessionTasks.set(sessionId, tasks);
+  }
+
+  /** The session's live tasks, oldest first, for the Tasks tab. Empty without a process. */
+  liveTasksFor(sessionId: string): LiveTask[] {
+    return [...(this.sessionTasks.get(sessionId)?.values() ?? [])].toSorted((a, b) => a.at - b.at);
+  }
+
+  /** Ask the CLI to stop one task. The reply is the CLI's: an error for a task it no longer has.
+   *  On success the row goes at once: the `killed` and `stopped` frames that follow reach the
+   *  translator only inside a turn, and a Stop clicked between turns would otherwise show a row
+   *  the CLI has already ended until the next prompt. */
+  async stopTask(sessionId: string, taskId: string): Promise<{ ok: boolean; error?: string }> {
+    const proc = this.processes.get(registryKey(this.providerId, sessionId));
+    if (!proc?.alive) return { ok: false, error: "no live Claude process for this session" };
+    const reply = await this.control(proc, { subtype: "stop_task", task_id: taskId }, 10_000);
+    if (!reply.ok) return { ok: false, error: reply.error };
+    this.noteTask(sessionId, taskId, { status: "stopped" });
+    return { ok: true };
+  }
+
+  /** The tail of one background shell or Monitor task's output (the CLI caps it at 8 KiB). On a
+   *  subagent task the CLI answers an error, which is returned as the text. */
+  async taskOutput(
+    sessionId: string,
+    taskId: string,
+  ): Promise<{ ok: boolean; output?: string; error?: string }> {
+    const proc = this.processes.get(registryKey(this.providerId, sessionId));
+    if (!proc?.alive) return { ok: false, error: "no live Claude process for this session" };
+    const reply = await this.control(proc, { subtype: "get_task_output", task_id: taskId }, 10_000);
+    if (!reply.ok) return { ok: false, error: reply.error };
+    return { ok: true, output: decodeTaskOutput(reply.response) };
   }
 
   /** The plugin load errors this session's last init frame reported, for the panel. */
@@ -5491,6 +5539,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         onExit: (p) => {
           if (this.processes.get(key2) === p) {
             this.processes.delete(key2);
+            this.sessionTasks.delete(options.sessionId);
             // A dead process has no waiting steers; the card clears now, not at the fallback.
             this.publishAsides(options.sessionId);
           }
@@ -6066,6 +6115,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     this.sessionTools.delete(sessionId);
     this.sessionPluginErrors.delete(sessionId);
     this.sessionPluginWarnings.delete(sessionId);
+    this.sessionTasks.delete(sessionId);
     this.sessionFallbacks.delete(sessionId);
     this.permissionAsks.delete(sessionId);
     this.awaitingInput.delete(sessionId);
@@ -6641,6 +6691,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
             }
           : undefined,
       redact: this.redact,
+      onTask: (taskId, patch) => {
+        if (!options.sessionId) return;
+        this.noteTask(options.sessionId, taskId, patch);
+      },
       noteApiKey: () => {
         if (proc.apiKeyNoted) return false;
         proc.apiKeyNoted = true;
@@ -7966,6 +8020,11 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       pluginErrors: (sessionId: string) => adapter.ownerFor(sessionId).pluginErrorsFor(sessionId),
       pluginWarnings: (sessionId: string) =>
         adapter.ownerFor(sessionId).pluginWarningsFor(sessionId),
+      liveTasks: (sessionId: string) => adapter.ownerFor(sessionId).liveTasksFor(sessionId),
+      stopTask: (sessionId: string, taskId: string) =>
+        adapter.ownerFor(sessionId).stopTask(sessionId, taskId),
+      taskOutput: (sessionId: string, taskId: string) =>
+        adapter.ownerFor(sessionId).taskOutput(sessionId, taskId),
       awaiting: () => adapter.awaitingAll(),
       continueAfterLimit: adapter.config.continueAfterLimit,
     });

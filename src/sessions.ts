@@ -110,6 +110,7 @@ import type {
   WorkspaceId,
   WorkspaceRegistry,
 } from "./dsh.js";
+import type { LiveTask } from "./translator.js";
 import { errorText, type SteerAttachment } from "./process.js";
 import { claudeMdDisabledBy, featureSwitches, type ClaudeMdState } from "./switches.js";
 import { currentLogVersion, loadSessionCatalog } from "./rows-probe.js";
@@ -1848,6 +1849,15 @@ export interface SessionRouteOptions {
   ) => Promise<{ ok: boolean; error?: string }>;
   /** `/btw` side questions and their answers, per session; the client bubble reads them. */
   sideQuestions?: Map<string, AsideEntry[]>;
+  /** Claude's own live tasks for a session, for the Tasks tab. */
+  liveTasks?: (sessionId: string) => LiveTask[];
+  /** Ask the CLI to stop one of its tasks. */
+  stopTask?: (sessionId: string, taskId: string) => Promise<{ ok: boolean; error?: string }>;
+  /** The tail of one task's output, or the CLI's error. */
+  taskOutput?: (
+    sessionId: string,
+    taskId: string,
+  ) => Promise<{ ok: boolean; output?: string; error?: string }>;
   /** The steer card's poll: typed steers Claude has not read yet (in the CLI's queue, or in dsh's
    *  inbox while a dsh tool runs), and holds open for an edit. Calling it re-arms the holds' idle
    *  timers. */
@@ -2013,6 +2023,9 @@ export function registerSessionRoutes(
     mcp,
     permissionAsks,
     sideQuestions,
+    liveTasks,
+    stopTask,
+    taskOutput,
     steersFor,
     holdSteers,
     releaseHold,
@@ -4438,6 +4451,31 @@ export function registerSessionRoutes(
                 return json(res, 200, p.status);
               }
               return json(res, 405, { error: "method not allowed" });
+            }
+            if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/live-tasks`) {
+              const sid = url.searchParams.get("session");
+              if (!sid) return json(res, 400, { error: "session param required" });
+              return json(res, 200, { ok: true, tasks: liveTasks?.(sid) ?? [] });
+            }
+            if (
+              req.method === "POST" &&
+              (url.pathname === `${ROUTE_PREFIX}/live-tasks/stop` ||
+                url.pathname === `${ROUTE_PREFIX}/live-tasks/output`)
+            ) {
+              const { session: sid, taskId } = await readBody(req);
+              if (
+                typeof sid !== "string" ||
+                sid === "" ||
+                typeof taskId !== "string" ||
+                taskId === ""
+              )
+                return json(res, 400, { error: "session and taskId required" });
+              const stop = url.pathname.endsWith("/stop");
+              const fn = stop ? stopTask : taskOutput;
+              if (!fn) return json(res, 501, { error: "not available" });
+              // 200 either way: the CLI's refusal (a task it no longer has, a subagent asked for
+              // output) is the answer the row shows, and the client's readJson throws on a 4xx.
+              return json(res, 200, await fn(sid, taskId));
             }
             if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/scheduled-tasks`) {
               // dsh's goal lives in its own session log, not the transcript, as `goal/change`

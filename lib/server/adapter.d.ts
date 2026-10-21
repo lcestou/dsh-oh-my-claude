@@ -19,7 +19,7 @@ import { type HealHost } from "./session-heal.js";
 import type { RewindResult } from "./process.js";
 export { markBusy, takeInterrupted } from "./state.js";
 export { forkTranscriptText } from "./transcript.js";
-import { Translator, type FallbackRecord, type LiveMode, type SuggestionRow } from "./translator.js";
+import { Translator, type FallbackRecord, type LiveMode, type SuggestionRow, type LiveTask, type LiveTaskPatch } from "./translator.js";
 export { Translator, type TranslatorBlock, type FallbackRecord } from "./translator.js";
 import type { FinishReason, Message } from "@deepseek-ai/dsh-llm";
 import type { ClaudeProcessSpec, RelayEvent, RelayResult, TurnPrep } from "./process.js";
@@ -1241,6 +1241,11 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      *  the next spawn's init frame, never on a reload.
      *  ponytail: one entry per live session, dropped by `forgetSession` when its process goes. */
     readonly sessionPluginWarnings: Map<string, PluginLoadError[]>;
+    /** Claude's own live tasks per dsh session (task id → row), from the translator's task frames;
+     *  a terminal status removes the row, `forgetSession` and a process exit drop the map. A task
+     *  that ends while no turn is reading stays until the next turn drains the queue; Stop on it
+     *  then shows the CLI's error. */
+    readonly sessionTasks: Map<string, Map<string, LiveTask>>;
     /** dsh session id → the model switch its last turn reported (a safety refusal, a primary-model
      *  fallback, or the usage-credit gate), surfaced through `/side-questions` like `loginNeeded`. One
      *  entry per live session, overwritten on each switch; the client reads it at the stop transition.
@@ -1444,6 +1449,26 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     reloadSkills(sessionId: string): Promise<{
         ok: boolean;
         live: boolean;
+        error?: string;
+    }>;
+    /** One task frame into the session's live list (`applyTaskPatch` holds the rules); the map is
+     *  created on the first frame so a session with no tasks owns no entry. */
+    noteTask(sessionId: string, taskId: string, patch: LiveTaskPatch): void;
+    /** The session's live tasks, oldest first, for the Tasks tab. Empty without a process. */
+    liveTasksFor(sessionId: string): LiveTask[];
+    /** Ask the CLI to stop one task. The reply is the CLI's: an error for a task it no longer has.
+     *  On success the row goes at once: the `killed` and `stopped` frames that follow reach the
+     *  translator only inside a turn, and a Stop clicked between turns would otherwise show a row
+     *  the CLI has already ended until the next prompt. */
+    stopTask(sessionId: string, taskId: string): Promise<{
+        ok: boolean;
+        error?: string;
+    }>;
+    /** The tail of one background shell or Monitor task's output (the CLI caps it at 8 KiB). On a
+     *  subagent task the CLI answers an error, which is returned as the text. */
+    taskOutput(sessionId: string, taskId: string): Promise<{
+        ok: boolean;
+        output?: string;
         error?: string;
     }>;
     /** The plugin load errors this session's last init frame reported, for the panel. */

@@ -2,6 +2,7 @@ import type { IncomingMessage } from "node:http";
 import { type FoldedTranscript } from "./transcript.js";
 import { type Reach } from "./reach.js";
 import type { JsonValue, PluginContext, WorkspaceRegistry } from "./dsh.js";
+import type { LiveTask } from "./translator.js";
 import { type SteerAttachment } from "./process.js";
 import { type HealHost, type RepairsSummary } from "./session-heal.js";
 import type { ToolMode, ToolModeInfo } from "./rows-probe.js";
@@ -487,6 +488,19 @@ export interface SessionRouteOptions {
     }>;
     /** `/btw` side questions and their answers, per session; the client bubble reads them. */
     sideQuestions?: Map<string, AsideEntry[]>;
+    /** Claude's own live tasks for a session, for the Tasks tab. */
+    liveTasks?: (sessionId: string) => LiveTask[];
+    /** Ask the CLI to stop one of its tasks. */
+    stopTask?: (sessionId: string, taskId: string) => Promise<{
+        ok: boolean;
+        error?: string;
+    }>;
+    /** The tail of one task's output, or the CLI's error. */
+    taskOutput?: (sessionId: string, taskId: string) => Promise<{
+        ok: boolean;
+        output?: string;
+        error?: string;
+    }>;
     /** The steer card's poll: typed steers Claude has not read yet (in the CLI's queue, or in dsh's
      *  inbox while a dsh tool runs), and holds open for an edit. Calling it re-arms the holds' idle
      *  timers. */
@@ -599,7 +613,7 @@ export interface SessionRouteOptions {
     continueAfterLimit?: boolean;
 }
 /** `projectDir(cwd)` → Claude Code project dir; `startedIds()` → ids the adapter started itself. */
-export declare function registerSessionRoutes(ctx: PluginContext, { log, onHeal, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, importedDir, sshBoxesPath, onSshBoxes, remoteWorkspacesPath, onRemoteWorkspaces, command, boxCommand, sshHost, turnRecords, dshVersion, liveTurn, events, idle, toolMode, terminalSync, permissionModes, thinking, rewind, contextUsage, skillDoctor, workspaceDiff, permissionReadout, askAside, mcp, permissionAsks, sideQuestions, steersFor, holdSteers, releaseHold, sendSteerNow, loginNeeded, sessionFallbacks, boxOfSession, claudeUpdated, loginDone, logoutDone, liveCount, persistAsides, starters, setStarter, models, providerId, reloadPlugins, reloadSkills, pluginErrors, pluginWarnings, awaiting, continueAfterLimit, instanceFor, instanceForHost, onLoginStatus, }: SessionRouteOptions): void;
+export declare function registerSessionRoutes(ctx: PluginContext, { log, onHeal, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, importedDir, sshBoxesPath, onSshBoxes, remoteWorkspacesPath, onRemoteWorkspaces, command, boxCommand, sshHost, turnRecords, dshVersion, liveTurn, events, idle, toolMode, terminalSync, permissionModes, thinking, rewind, contextUsage, skillDoctor, workspaceDiff, permissionReadout, askAside, mcp, permissionAsks, sideQuestions, liveTasks, stopTask, taskOutput, steersFor, holdSteers, releaseHold, sendSteerNow, loginNeeded, sessionFallbacks, boxOfSession, claudeUpdated, loginDone, logoutDone, liveCount, persistAsides, starters, setStarter, models, providerId, reloadPlugins, reloadSkills, pluginErrors, pluginWarnings, awaiting, continueAfterLimit, instanceFor, instanceForHost, onLoginStatus, }: SessionRouteOptions): void;
 /**
  * The four files Claude Code merges for one session, highest precedence first. Duplicated in
  * `src/client/settings.ts`: the browser half cannot import server code, and the order is the
