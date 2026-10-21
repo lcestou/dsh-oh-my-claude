@@ -9092,15 +9092,18 @@ function LimitCard({
 }
 
 /** The CLI's predicted next prompt as a dock card: Use writes it into the composer (over any
- *  draft there, which is the one case a click gets wrong), Dismiss hides this text in this tab.
- *  Same frame as the login card so the stack reads as one set. */
+ *  draft there, which is the one case a click gets wrong), Send writes it and sends it the way
+ *  Enter does (only on a dsh whose composer offers `submit`, 0.2.1 and later), Dismiss hides this
+ *  text in this tab. Same frame as the login card so the stack reads as one set. */
 function SuggestionCard({
   text,
   onUse,
+  onSend,
   onDismiss,
 }: {
   text: string;
   onUse: () => void;
+  onSend?: () => void;
   onDismiss: () => void;
 }) {
   useLocale();
@@ -9135,6 +9138,11 @@ function SuggestionCard({
         <button type="button" style={btn} data-omc-suggestion-use="" onClick={onUse}>
           {t("main.suggestion.use")}
         </button>
+        {onSend && (
+          <button type="button" style={btn} data-omc-suggestion-send="" onClick={onSend}>
+            {t("main.suggestion.send")}
+          </button>
+        )}
         <button
           type="button"
           aria-label={t("main.suggestion.dismissAria")}
@@ -9504,7 +9512,12 @@ function ClaudeUpdateCard({
 /** The composer state and actions dsh hands a `conversation.input.dock` entry: the slice the steer
  *  card's restore undo reads and writes. */
 type ComposerSlot = {
-  inputActions?: { setDraft: (text: string) => void; removeAttachment?: (id: string) => void };
+  inputActions?: {
+    setDraft: (text: string) => void;
+    removeAttachment?: (id: string) => void;
+    /** dsh 0.2.1: sends the draft the way Enter does (queued as a steer while a turn runs). */
+    submit?: () => void;
+  };
   useInput?: <T>(select: (state: { draft: string; attachmentIds?: readonly string[] }) => T) => T;
 };
 
@@ -9778,6 +9791,16 @@ function AsideBubble({
             inputActions.setDraft(suggestionCard);
             setSuggestionHidden(suggestionCard);
           }}
+          onSend={
+            inputActions.submit
+              ? () => {
+                  // Over any draft, like Use; dsh queues it as a steer while a turn runs.
+                  inputActions.setDraft(suggestionCard);
+                  inputActions.submit?.();
+                  setSuggestionHidden(suggestionCard);
+                }
+              : undefined
+          }
           onDismiss={() => setSuggestionHidden(suggestionCard)}
         />
       )}

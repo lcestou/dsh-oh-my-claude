@@ -8,7 +8,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Added
 
-- Settings → Oh My Claude → "Suggested next prompt": after each reply, Claude's own guess at your next prompt appears above the composer with a Use button that writes it into the box. Off until switched on; it costs one small cached model call per turn, and the CLI sends a guess only when it has one it trusts.
+- Settings → Oh My Claude → "Suggested next prompt": after each reply, Claude's own guess at your next prompt appears above the composer with Use, which writes it into the box, and Send, which sends it as it is. Off until switched on; it costs one small cached model call per turn, and the CLI sends a guess only when it has one it trusts.
 - Claude's background tasks and subagents are listed on the panel's Tasks tab while they run, each with Stop; a shell or Monitor task also has Output, the last 8 KiB it wrote.
 - A subagent's row in the chat shows each step the CLI reports for it ("Running Count lines in src/process.ts"), not only the tool name, plus the CLI's own one-line progress summary when it writes one, while the turn that started the subagent runs.
 - When Claude Code is billing an `ANTHROPIC_API_KEY` from dsh's environment instead of your login, the session says so in one line at its start.
