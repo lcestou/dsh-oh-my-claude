@@ -16,6 +16,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 ### Fixed
 
 - Claude's multiple-choice questions keep the preview text of each option (a mockup, a snippet), shown under the question. It was dropped before.
+- The panel's Restore tab no longer shows the previous workspace's transcripts for a moment after a switch to a new session in another workspace.
 
 ## [1.5.4] - 2026-10-19
 

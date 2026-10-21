@@ -259,6 +259,10 @@ const retentionNote = (s: FeatureSwitches | null): string =>
 function useTranscripts(cwd: string | undefined): SessionData[] {
   const [transcripts, setTranscripts] = useState<SessionData[]>([]);
   useEffect(() => {
+    // The list is the workspace's: a switch to another workspace (or to a session with no cwd yet)
+    // clears it before the new answer lands, so the Restore tab never shows the last workspace's
+    // transcripts under the new one's name (owner, 2026-10-21, on a new session in IC-Saves).
+    setTranscripts([]);
     if (!cwd) return;
     let live = true;
     fetch(`${ROUTE}/sessions?cwd=${encodeURIComponent(cwd)}`)
