@@ -1712,6 +1712,9 @@ export class ClaudeProcess {
   suggestion?: { text: string; at: number };
   /** Fires when a suggestion arrives, so the adapter can push it to every open tab. */
   onSuggestion?: () => void;
+  /** Fires for a `prompt_suggestion` frame the process did not keep, with the reason, so a
+   *  session that never shows a card can be read back from resume.log. */
+  onSuggestionDropped?: (reason: string) => void;
   /** A result line passed since the last prompt went out. A suggestion is stored only then: the
    *  CLI aborts its in-flight guess on new input, so a frame that still lands after a prompt was
    *  written is for the turn before it. Set by the readline handler, cleared by the prompt write. */
@@ -1832,7 +1835,14 @@ export class ClaudeProcess {
     const r = parsed as { type?: unknown; suggestion?: unknown };
     if (r.type !== "prompt_suggestion" || typeof r.suggestion !== "string") return false;
     const text = r.suggestion.trim();
-    if (text === "" || !this.resultSeen) return true;
+    if (text === "" || !this.resultSeen) {
+      try {
+        this.onSuggestionDropped?.(text === "" ? "empty" : "before a result");
+      } catch {
+        // as below: readline's data handler must not throw
+      }
+      return true;
+    }
     this.suggestion = { text, at: Date.now() };
     try {
       this.onSuggestion?.();

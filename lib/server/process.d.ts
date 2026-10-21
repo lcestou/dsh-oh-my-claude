@@ -845,6 +845,9 @@ export declare class ClaudeProcess {
     };
     /** Fires when a suggestion arrives, so the adapter can push it to every open tab. */
     onSuggestion?: () => void;
+    /** Fires for a `prompt_suggestion` frame the process did not keep, with the reason, so a
+     *  session that never shows a card can be read back from resume.log. */
+    onSuggestionDropped?: (reason: string) => void;
     /** A result line passed since the last prompt went out. A suggestion is stored only then: the
      *  CLI aborts its in-flight guess on new input, so a frame that still lands after a prompt was
      *  written is for the turn before it. Set by the readline handler, cleared by the prompt write. */

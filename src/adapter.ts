@@ -5210,6 +5210,12 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       proc.resuming = true;
       this.carryTotals(proc, sessionId);
       proc.onIdleResult = () => this.wake(sessionId, proc);
+      proc.onSuggestionDropped = (reason) => {
+        void trace(
+          join(this.stateDir, "resume.log"),
+          `suggestion ${sessionId}: dropped, ${reason}`,
+        );
+      };
       proc.onSuggestion = () => {
         void trace(
           join(this.stateDir, "resume.log"),
@@ -5317,6 +5323,12 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       proc.resuming = true;
       this.carryTotals(proc, spec.sessionId);
       proc.onIdleResult = () => this.wake(spec.sessionId, proc);
+      proc.onSuggestionDropped = (reason) => {
+        void trace(
+          join(this.stateDir, "resume.log"),
+          `suggestion ${spec.sessionId}: dropped, ${reason}`,
+        );
+      };
       proc.onSuggestion = () => {
         void trace(
           join(this.stateDir, "resume.log"),
@@ -5575,6 +5587,12 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       // `spawned`, not `proc`: the closure sees the outer `let proc`, which the compiler cannot
       // prove is still this process.
       const spawned = proc;
+      proc.onSuggestionDropped = (reason) => {
+        void trace(
+          join(this.stateDir, "resume.log"),
+          `suggestion ${options.sessionId}: dropped, ${reason}`,
+        );
+      };
       proc.onSuggestion = () => {
         void trace(
           join(this.stateDir, "resume.log"),
