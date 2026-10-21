@@ -21,6 +21,7 @@ import {
   turnDelta,
   costStateOf,
   isSshHost,
+  ClaudeProcess,
   parseQuestions,
   decodeTaskOutput,
   sshArgs,
@@ -584,6 +585,41 @@ import {
   assert.equal(decodeTaskOutput({ output: "line 1\nline 2" }), "line 1\nline 2");
   assert.equal(decodeTaskOutput({ status: "running" }), '{"status":"running"}');
   assert.equal(decodeTaskOutput(undefined), "");
+}
+
+// prompt_suggestion frames are consumed by noteSuggestion and parked on the process once a
+// result has passed; before one, the frame is for the turn before and is dropped
+{
+  const proc: {
+    suggestion?: { text: string; at: number };
+    resultSeen: boolean;
+    fired: number;
+    onSuggestion?: () => void;
+  } = { resultSeen: false, fired: 0 };
+  proc.onSuggestion = () => {
+    proc.fired += 1;
+  };
+  const storedText = (): string | undefined => proc.suggestion?.text;
+  const note = ClaudeProcess.prototype.noteSuggestion;
+  const frame = '{"type":"prompt_suggestion","suggestion":"  Step 3?  "}';
+  assert.equal(note.call(proc, frame), true, "before a result: consumed");
+  assert.equal(proc.suggestion, undefined, "before a result: not stored");
+  proc.resultSeen = true;
+  assert.equal(note.call(proc, frame), true, "after a result: consumed");
+  assert.equal(storedText(), "Step 3?", "stored trimmed");
+  assert.equal(proc.fired, 1, "the hook fired once");
+  assert.equal(
+    note.call(proc, '{"type":"prompt_suggestion","suggestion":""}'),
+    true,
+    "empty: consumed",
+  );
+  assert.equal(storedText(), "Step 3?", "empty: the old text stays");
+  assert.equal(
+    note.call(proc, '{"type":"result","suggestion":"x"}'),
+    false,
+    "another type is queued",
+  );
+  assert.equal(note.call(proc, "not json {"), false, "not JSON is queued");
 }
 
 console.log("process ok");

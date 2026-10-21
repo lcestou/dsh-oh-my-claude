@@ -19,7 +19,7 @@ import { type HealHost } from "./session-heal.js";
 import type { RewindResult } from "./process.js";
 export { markBusy, takeInterrupted } from "./state.js";
 export { forkTranscriptText } from "./transcript.js";
-import { Translator, type FallbackRecord, type LiveMode } from "./translator.js";
+import { Translator, type FallbackRecord, type LiveMode, type SuggestionRow } from "./translator.js";
 export { Translator, type TranslatorBlock, type FallbackRecord } from "./translator.js";
 import type { FinishReason, Message } from "@deepseek-ai/dsh-llm";
 import type { ClaudeProcessSpec, RelayEvent, RelayResult, TurnPrep } from "./process.js";
@@ -404,6 +404,9 @@ export interface AsidesReply {
     loginNeeded: LoginNeed | null;
     fallback: FallbackRecord | null;
     steers: SteerCardState;
+    /** The CLI's guess at the next prompt, or null: none yet, the process is gone, or a prompt went
+     *  out since. */
+    suggestion: SuggestionRow | null;
 }
 /** `GET /idle` and the `idle` event: when the idle watchdog would end the process, or null. */
 export interface IdleReply {
@@ -1469,6 +1472,9 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      *  session's owner, the waiting steers on whichever mount has its live process (the root when
      *  none is live, since a held steer sits on the mount that took it). */
     asidesReply(sessionId: string, touch?: boolean): AsidesReply;
+    /** The next prompt the CLI predicted after this session's last turn, from the mount that runs
+     *  its process; null when there is none, the process is gone, or a prompt went out since. */
+    suggestionFor(sessionId: string): SuggestionRow | null;
     /** When the idle watchdog would end the session's process (null: not armed), from the mount
      *  that runs it, with the configured timeout so the tab can draw the countdown. */
     idleReply(sessionId: string): IdleReply;
@@ -1510,6 +1516,17 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      *  (the command is synthetic, measured 2026-09-19 returning at 2.3 s with no model turn). Not a
      *  control request, and not `prepare`'s purpose branch, which forces a scratch cwd. */
     skillDoctor(sessionId: string): Promise<SkillDoctorReply>;
+    /** The SDK's `initialize` request, once per process this adapter starts or adopts: asks the CLI
+     *  to write a one-line progress summary into each subagent's `task_progress`, and, when the
+     *  `promptSuggestionsOn` hint is set, to predict the next prompt after each turn
+     *  (`prompt_suggestion` frames, one small cached model call per turn). The reply (the command
+     *  catalog the init frame already carries) is not used; a failure is logged and the session
+     *  runs as before. Sent after the hints read, so the first prompt may go out first; probed both
+     *  orders on 2.1.304 (2026-10-20) and the CLI applies the preference either way, and again on a
+     *  second request. A slow boot can outlast the reply timeout and log a warning for a request the
+     *  CLI did apply; harmless. A suggestion still arrives only on the CLI's own terms (see
+     *  `ClaudeProcess.suggestion`). */
+    sendInitialize(proc: ClaudeProcess): Promise<void>;
     /** Ask the CLI how many tokens this session's context window holds, bank the figure for dsh's context ring under both the spec and CLI model names, and flag an assumed-behind window when this box runs behind a proxy. */
     contextUsage(sessionId: string): Promise<ContextUsageReply>;
     /**

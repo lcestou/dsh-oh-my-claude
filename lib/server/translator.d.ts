@@ -88,6 +88,11 @@ export interface LiveTaskPatch {
  *  status removes. A status for a task the map never saw is dropped (its start was read by a
  *  process this adapter no longer has), and a start for a known id only moves its status. */
 export declare function applyTaskPatch(tasks: Map<string, LiveTask>, taskId: string, patch: LiveTaskPatch, now: number): void;
+/** The CLI's guess at the next prompt after a turn, as the composer card offers it. */
+export interface SuggestionRow {
+    text: string;
+    at: number;
+}
 /** A model switch the CLI reported mid-turn, surfaced to the notice and the picker. `direction` and
  *  `scope` come from `model_refusal_fallback`; `model_fallback` and `model_consent_fallback` leave
  *  them undefined. The client moves the picker only for a `model_refusal_fallback` that is `sticky`

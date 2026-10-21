@@ -2221,6 +2221,7 @@ console.log("sessions ok");
           loginNeeded: null,
           fallback: null,
           steers: { waiting: [], held: [] },
+          suggestion: null,
         }),
         idle: () => ({ deadline: null, timeoutMs: 7 }),
         permissionMode: () => ({

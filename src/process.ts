@@ -1704,6 +1704,18 @@ export class ClaudeProcess {
    *  comes with every user message in -p mode, and each turn has a fresh translator, so the
    *  once-per-process memory lives here. */
   apiKeyNoted = false;
+  /** The CLI's guess at the next prompt, from a `prompt_suggestion` frame, kept until the next
+   *  prompt is written so the composer card can offer it between turns. Absent most of the time:
+   *  the CLI withholds one below two assistant messages, in plan mode, behind a pending
+   *  permission, on a rate-limit warning, with a cold prompt cache, or when its own quality
+   *  filter rejects the text. */
+  suggestion?: { text: string; at: number };
+  /** Fires when a suggestion arrives, so the adapter can push it to every open tab. */
+  onSuggestion?: () => void;
+  /** A result line passed since the last prompt went out. A suggestion is stored only then: the
+   *  CLI aborts its in-flight guess on new input, so a frame that still lands after a prompt was
+   *  written is for the turn before it. Set by the readline handler, cleared by the prompt write. */
+  resultSeen = false;
 
   /** Spawn the child Claude and feed its stdout into the line queue, noting idle completion replies
    *  so the adapter can open a dsh turn. */
@@ -1741,6 +1753,12 @@ export class ClaudeProcess {
     });
     const rl = createInterface({ input: this.child.stdout, crlfDelay: Infinity });
     rl.on("line", (line) => {
+      // Consumed here, not queued: the frame lands after the result that ended the turn, when no
+      // turn is reading, and a queued copy would open the next turn as an unknown event.
+      if (line.includes('"prompt_suggestion"') && this.noteSuggestion(line)) return;
+      // `"type":"result"` is how the CLI's JSON spells it; a result inside a tool's text would
+      // need the space-free key too, and a false positive only lets a suggestion through early.
+      if (line.includes('"type":"result"')) this.resultSeen = true;
       if (this.controlListener && line.includes('"control_response"')) {
         try {
           // SAFETY: I/O boundary; the listener branches on `type` and ignores anything else
@@ -1790,6 +1808,33 @@ export class ClaudeProcess {
   /** Queue a synthetic event for the turn loop (the MCP bridge relaying a dsh tool call). */
   inject(event: ClaudeEvent) {
     this.queue.push(event);
+  }
+
+  /** True when `line` is a `prompt_suggestion` frame, which is then consumed; it is stored on
+   *  `suggestion` only when a result has passed since the last prompt went out (`resultSeen`),
+   *  and an empty text is consumed without storing. A line that is not JSON, or JSON of another
+   *  type, is left for the queue. The hook's own throw is swallowed: this runs inside readline's
+   *  data handler, and a hot-reloaded adapter behind it would take the host down. */
+  noteSuggestion(line: string): boolean {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      return false;
+    }
+    if (typeof parsed !== "object" || parsed === null) return false;
+    // SAFETY: a non-null object; each field is compared to a literal before use
+    const r = parsed as { type?: unknown; suggestion?: unknown };
+    if (r.type !== "prompt_suggestion" || typeof r.suggestion !== "string") return false;
+    const text = r.suggestion.trim();
+    if (text === "" || !this.resultSeen) return true;
+    this.suggestion = { text, at: Date.now() };
+    try {
+      this.onSuggestion?.();
+    } catch {
+      // logged by the adapter when it can; nothing else to do here
+    }
+    return true;
   }
 
   /** A `result` line while no turn is reading: Claude just finished a turn of its own. Tell the

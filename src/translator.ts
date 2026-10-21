@@ -538,6 +538,12 @@ export function applyTaskPatch(
     });
 }
 
+/** The CLI's guess at the next prompt after a turn, as the composer card offers it. */
+export interface SuggestionRow {
+  text: string;
+  at: number;
+}
+
 /** A model switch the CLI reported mid-turn, surfaced to the notice and the picker. `direction` and
  *  `scope` come from `model_refusal_fallback`; `model_fallback` and `model_consent_fallback` leave
  *  them undefined. The client moves the picker only for a `model_refusal_fallback` that is `sticky`

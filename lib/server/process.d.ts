@@ -834,6 +834,21 @@ export declare class ClaudeProcess {
      *  comes with every user message in -p mode, and each turn has a fresh translator, so the
      *  once-per-process memory lives here. */
     apiKeyNoted: boolean;
+    /** The CLI's guess at the next prompt, from a `prompt_suggestion` frame, kept until the next
+     *  prompt is written so the composer card can offer it between turns. Absent most of the time:
+     *  the CLI withholds one below two assistant messages, in plan mode, behind a pending
+     *  permission, on a rate-limit warning, with a cold prompt cache, or when its own quality
+     *  filter rejects the text. */
+    suggestion?: {
+        text: string;
+        at: number;
+    };
+    /** Fires when a suggestion arrives, so the adapter can push it to every open tab. */
+    onSuggestion?: () => void;
+    /** A result line passed since the last prompt went out. A suggestion is stored only then: the
+     *  CLI aborts its in-flight guess on new input, so a frame that still lands after a prompt was
+     *  written is for the turn before it. Set by the readline handler, cleared by the prompt write. */
+    resultSeen: boolean;
     /** Spawn the child Claude and feed its stdout into the line queue, noting idle completion replies
      *  so the adapter can open a dsh turn. */
     constructor({ args, cwd, spec, onExit, command, spawner, }: {
@@ -856,6 +871,12 @@ export declare class ClaudeProcess {
     kill(): void;
     /** Queue a synthetic event for the turn loop (the MCP bridge relaying a dsh tool call). */
     inject(event: ClaudeEvent): void;
+    /** True when `line` is a `prompt_suggestion` frame, which is then consumed; it is stored on
+     *  `suggestion` only when a result has passed since the last prompt went out (`resultSeen`),
+     *  and an empty text is consumed without storing. A line that is not JSON, or JSON of another
+     *  type, is left for the queue. The hook's own throw is swallowed: this runs inside readline's
+     *  data handler, and a hot-reloaded adapter behind it would take the host down. */
+    noteSuggestion(line: string): boolean;
     /** A `result` line while no turn is reading: Claude just finished a turn of its own. Tell the
      *  adapter (`onIdleResult`) so it can open a dsh turn and show the reply now. */
     noteIdleResult(line: string): void;

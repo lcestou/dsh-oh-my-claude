@@ -3581,6 +3581,7 @@ export function registerSessionRoutes(
               return json(res, 200, {
                 items,
                 loginNeeded: loginNeeded?.get(sid) ?? null,
+                suggestion: events ? events.replies.asides(sid).suggestion : null,
                 claudeUpdate: card && !(await updatesOff()) ? card : null,
                 fallback: sessionFallbacks?.get(sid) ?? null,
                 steers: events

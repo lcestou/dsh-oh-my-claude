@@ -209,7 +209,12 @@ import { buildMirror } from "./claude-home.js";
 export { markBusy, takeInterrupted } from "./state.js";
 export { forkTranscriptText } from "./transcript.js";
 import { anthropicStatus, degradedNote, peekStatus } from "./anthropic-status.js";
-import { Translator, type FallbackRecord, type LiveMode } from "./translator.js";
+import {
+  Translator,
+  type FallbackRecord,
+  type LiveMode,
+  type SuggestionRow,
+} from "./translator.js";
 export { Translator, type TranslatorBlock, type FallbackRecord } from "./translator.js";
 import type {
   ContentBlockType,
@@ -719,6 +724,9 @@ export interface AsidesReply {
   loginNeeded: LoginNeed | null;
   fallback: FallbackRecord | null;
   steers: SteerCardState;
+  /** The CLI's guess at the next prompt, or null: none yet, the process is gone, or a prompt went
+   *  out since. */
+  suggestion: SuggestionRow | null;
 }
 /** `GET /idle` and the `idle` event: when the idle watchdog would end the process, or null. */
 export interface IdleReply {
@@ -4290,7 +4298,15 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       loginNeeded: o.loginNeeded.get(sessionId) ?? null,
       fallback: o.sessionFallbacks.get(sessionId) ?? null,
       steers: (this.ownerIfLive(sessionId) ?? this).steersFor(sessionId, touch),
+      suggestion: (this.ownerIfLive(sessionId) ?? this).suggestionFor(sessionId),
     };
+  }
+
+  /** The next prompt the CLI predicted after this session's last turn, from the mount that runs
+   *  its process; null when there is none, the process is gone, or a prompt went out since. */
+  suggestionFor(sessionId: string): SuggestionRow | null {
+    const proc = this.processes.get(registryKey(this.providerId, sessionId));
+    return proc?.alive && proc.suggestion ? proc.suggestion : null;
   }
 
   /** When the idle watchdog would end the session's process (null: not armed), from the mount
@@ -4463,6 +4479,32 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       proc.kill();
     }
   }
+  /** The SDK's `initialize` request, once per process this adapter starts or adopts: asks the CLI
+   *  to write a one-line progress summary into each subagent's `task_progress`, and, when the
+   *  `promptSuggestionsOn` hint is set, to predict the next prompt after each turn
+   *  (`prompt_suggestion` frames, one small cached model call per turn). The reply (the command
+   *  catalog the init frame already carries) is not used; a failure is logged and the session
+   *  runs as before. Sent after the hints read, so the first prompt may go out first; probed both
+   *  orders on 2.1.304 (2026-10-20) and the CLI applies the preference either way, and again on a
+   *  second request. A slow boot can outlast the reply timeout and log a warning for a request the
+   *  CLI did apply; harmless. A suggestion still arrives only on the CLI's own terms (see
+   *  `ClaudeProcess.suggestion`). */
+  async sendInitialize(proc: ClaudeProcess): Promise<void> {
+    try {
+      const hints = await readHints(join(this.stateDir, "hints.json"));
+      const request = {
+        subtype: "initialize",
+        agentProgressSummaries: true,
+        promptSuggestions: hints.promptSuggestionsOn === true,
+      } satisfies Record<string, JsonValue>;
+      const reply = await this.control(proc, request, 15_000);
+      if (!reply.ok) this.log("warn", `initialize not applied: ${reply.error}`);
+    } catch (error) {
+      // Called with `void`: a throw here would be an unhandled rejection, not a logged line.
+      this.log("warn", `initialize not applied: ${errorText(error)}`);
+    }
+  }
+
   /** Ask the CLI how many tokens this session's context window holds, bank the figure for dsh's context ring under both the spec and CLI model names, and flag an assumed-behind window when this box runs behind a proxy. */
   async contextUsage(sessionId: string): Promise<ContextUsageReply> {
     const proc = this.processes.get(registryKey(this.providerId, sessionId));
@@ -5111,7 +5153,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       proc.resuming = true;
       this.carryTotals(proc, sessionId);
       proc.onIdleResult = () => this.wake(sessionId, proc);
+      proc.onSuggestion = () => this.publishAsides(sessionId);
       this.processes.set(key2, proc);
+      // Again on a reattach: the CLI re-applies the preference, and a keeper left by an older
+      // plugin never had one.
+      void this.sendInitialize(proc);
       await trace(
         join(this.stateDir, "resume.log"),
         `adopted hold ${record.name} for ${sessionId} on ${record.host} (offset ${record.offset})`,
@@ -5205,7 +5251,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       proc.resuming = true;
       this.carryTotals(proc, spec.sessionId);
       proc.onIdleResult = () => this.wake(spec.sessionId, proc);
+      proc.onSuggestion = () => this.publishAsides(spec.sessionId);
       this.processes.set(key2, proc);
+      void this.sendInitialize(proc);
       await trace(
         join(this.stateDir, "resume.log"),
         `adopted keeper ${basename(dir)} for ${spec.sessionId} (claude pid ${info.claudePid})`,
@@ -5451,7 +5499,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       proc.key = key;
       proc.resuming = prep.session?.resuming ?? false;
       proc.onIdleResult = () => this.wake(options.sessionId, proc);
+      proc.onSuggestion = () => this.publishAsides(options.sessionId);
       this.processes.set(key2, proc);
+      void this.sendInitialize(proc);
       // The spawn is where `liveMode` changes without a pick.
       this.publishPermissionMode(options.sessionId);
       if (this.config.debug) {
@@ -6200,6 +6250,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     if (prep.input === null || !proc.write(prep.input))
       throw new LlmError("claude process is not running", "PROVIDER_ERROR");
     proc.promptSentAt = Date.now();
+    // The guess was for the prompt that just went out; the result that follows brings a new one,
+    // and only a frame after that result is stored (see `noteSuggestion`).
+    proc.suggestion = undefined;
+    proc.resultSeen = false;
   }
 
   /**
