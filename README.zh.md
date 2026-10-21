@@ -120,7 +120,7 @@ dsh 只发布预发行版，客户端 API 也会在版本之间变动，所以�
 2. 每个 dsh 会话都会续接它的 Claude Code 会话（包括工具历史），终端里的 `claude /resume` 看到的是同一个会话。[Sessions](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#sessions)
 3. 重启 dsh 不会中断正在运行的 Claude 回合。[Restarts](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#restarts)
 4. dsh 的访问权限盾牌按会话设置 Claude 的六种权限模式。[Permission mode](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#permission-mode-per-session)
-5. Claude 的权限请求、提问和计划审阅都变成 dsh 对话框。[Approvals](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#approvals-and-questions)
+5. Claude 的权限请求、提问和计划审阅都变成 dsh 对话框，每个选项的预览显示在问题下方。[Approvals](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#approvals-and-questions)
 6. 一个 ✻ 按钮打开记忆、回溯、改动、MCP 等十余个标签，全部可以用键盘操作。[The panel](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md)
 7. 费用和缓存 token 显示在 dsh 底部，超过设定额度时标签变橙。[Cost pill](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#cost-pill)
 8. 套餐用量（5 小时、每周、额外用量）显示在 dsh 的上下文圆环里，接近上限时变琥珀色，达到上限时变红，并在输入框上方提示。只统计会话所用模型计入的额度，由 Anthropic 判定，所以新模型无需更新插件。[Plan usage](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#plan-usage)
@@ -143,6 +143,9 @@ dsh 只发布预发行版，客户端 API 也会在版本之间变动，所以�
 25. 一轮结束后，标题处保留一行收尾，和终端里一样：`✻ 烘焙了 27s · 03:21 完成`。被你停止的一轮显示 `已中断 · 想让 Claude 改做什么？`。[轮次状态](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#turn-status)
 26. 在 dsh 0.1.7 上，Claude 的工具调用显示为 dsh 自己的工具卡片，和其他提供方一样，文字在卡片之间实时输出。也可以在设置中切换回行内文本。[工具行](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/configuration.md)
 27. 在工作区中新建会话时，会使用该工作区上次运行的 Claude 主机和模型。[按工作区记住模型](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#remember-model-per-workspace)
+28. 每次回复后，Claude 对你下一条提示的猜测显示在输入框上方：「采用」填入输入框，「发送」原样发出，你输入别的内容时它会自动收起。默认开启，与终端一致；设置中有开关可关闭。[下一条提示建议](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#suggested-next-prompt)
+29. Claude 的后台 shell 任务和子智能体运行时列在任务标签里，每项都有「停止」，shell 任务还有「输出」。聊天中子智能体的那一行会按 CLI 的报告逐步列出它在做什么。[任务](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#tasks)
+30. 如果 dsh 环境里的 `ANTHROPIC_API_KEY` 取代了你的登录成为 Claude Code 的计费来源，会话开始时会用一行说明。[Where things live](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#where-things-live)
 
 一些你永远不必动的默认行为，比如工具结果中的密钥脱敏和挺过 CLI 自身的更新，见 [How it works](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md)。
 
