@@ -8,7 +8,10 @@ import { dshUrl, launch } from "./pw.js";
 const [token, out = "/tmp/pw"] = process.argv.slice(2);
 const ROUTE = "/dsh-oh-my-claude";
 const b = await launch();
-const ctx = await b.newContext({ viewport: { width: 1400, height: 900 }, colorScheme: "dark" });
+const ctx = await b.newContext({
+  viewport: { width: 1400, height: 900 },
+  colorScheme: "dark",
+});
 const p = await ctx.newPage();
 const errors: string[] = [];
 p.on("console", (m) => {
@@ -104,6 +107,56 @@ await settle(90_000);
 const runButtons = p.locator("[data-omc-run]");
 expect("a Run button on the bash block", (await runButtons.count()) >= 1);
 await p.screenshot({ path: `${out}/sweep-run-button.png` });
+if ((await runButtons.count()) >= 1) {
+  const run = runButtons.first();
+  expect(
+    "Run is an icon with an aria-label, no browser title",
+    (await run.getAttribute("title")) === null &&
+      (await run.locator("svg").count()) === 1 &&
+      (await run.getAttribute("aria-label")) !== null,
+  );
+  await run.scrollIntoViewIfNeeded();
+  await run.hover();
+  await p.waitForTimeout(400);
+  const tip = p.locator("[data-omc-tip]");
+  expect(
+    "hovering Run shows a dsh-style bubble linked by aria-describedby",
+    (await tip.count()) === 1 &&
+      (await run.getAttribute("aria-describedby")) === (await tip.getAttribute("id")),
+  );
+  const box = await run.boundingBox();
+  if (box)
+    await p.screenshot({
+      path: `${out}/sweep-run-tip.png`,
+      clip: {
+        x: Math.max(0, box.x - 440),
+        y: Math.max(0, box.y - 60),
+        width: 540,
+        height: 110,
+      },
+    });
+  const copy = p
+    .locator(
+      '[data-code-block-banner] button[aria-label="Copy"], [data-code-block-banner] button[aria-label="复制"]',
+    )
+    .first();
+  if ((await copy.count()) > 0) {
+    await copy.hover();
+    await p.waitForTimeout(400);
+    expect("moving to dsh's Copy takes our bubble down", (await tip.count()) === 0);
+    const cbox = await copy.boundingBox();
+    if (cbox)
+      await p.screenshot({
+        path: `${out}/sweep-copy-tip.png`,
+        clip: {
+          x: Math.max(0, cbox.x - 440),
+          y: Math.max(0, cbox.y - 60),
+          width: 540,
+          height: 110,
+        },
+      });
+  }
+}
 
 // 3. Run: the snippet lands in the composer as a draft; Enter sends it and the reply carries its output.
 if ((await runButtons.count()) >= 1) {

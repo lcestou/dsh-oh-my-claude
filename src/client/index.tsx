@@ -5210,6 +5210,82 @@ const paintClosing = (
   if (stopped || clock !== undefined || !newest) group.setAttribute(CLOSED_MARK, "1");
 };
 
+/** The play glyph for the Run button, drawn like dsh's own code-block icons (16-unit box, 1px
+ *  `currentColor` stroke, 14px on screen) so it reads as one of them. */
+function playIcon(): SVGSVGElement {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  const attrs: [string, string][] = [
+    ["width", "14"],
+    ["height", "14"],
+    ["viewBox", "0 0 16 16"],
+    ["fill", "none"],
+    ["aria-hidden", "true"],
+    ["stroke-width", "1"],
+  ];
+  for (const [k, v] of attrs) svg.setAttribute(k, v);
+  const path = document.createElementNS(ns, "path");
+  path.setAttribute("d", "M4.5 2.5v11l8.5-5.5z");
+  path.setAttribute("stroke", "currentColor");
+  path.setAttribute("stroke-linejoin", "round");
+  svg.append(path);
+  return svg;
+}
+
+/** The one tooltip bubble on screen, if any, with the element it describes. One at a time, as in
+ *  dsh: a second hover replaces the first. */
+let tipOpen: { bubble: HTMLElement; anchor: HTMLElement } | null = null;
+/** Take the open bubble down and drop the anchor's `aria-describedby` to it. */
+function hideTip(): void {
+  if (!tipOpen) return;
+  tipOpen.bubble.remove();
+  tipOpen.anchor.removeAttribute("aria-describedby");
+  tipOpen = null;
+}
+/** Show `text` above `anchor` the way dsh's own tooltip does (centred, 8px gap, 12px from any
+ *  viewport edge, under it when there is no room above): a fixed `role=tooltip` bubble styled on
+ *  dsh's tooltip tokens, linked by `aria-describedby`. Nothing is shown for an empty text. */
+function showTip(anchor: HTMLElement, text: string): void {
+  hideTip();
+  if (text === "") return;
+  const bubble = document.createElement("span");
+  bubble.setAttribute("data-omc-tip", "");
+  bubble.setAttribute("role", "tooltip");
+  bubble.id = `omc-tip-${Math.random().toString(36).slice(2, 8)}`;
+  const label = document.createElement("span");
+  label.textContent = text;
+  bubble.append(label);
+  bubble.style.visibility = "hidden";
+  document.body.append(bubble);
+  const edge = 12;
+  const gap = 8;
+  const r = anchor.getBoundingClientRect();
+  const { width, height } = bubble.getBoundingClientRect();
+  const above = r.top - gap - height >= edge;
+  const x = Math.max(
+    edge,
+    Math.min(r.left + r.width / 2 - width / 2, window.innerWidth - edge - width),
+  );
+  bubble.style.left = `${x + width / 2}px`;
+  bubble.style.top = `${above ? r.top - gap : r.bottom + gap}px`;
+  bubble.setAttribute("data-side", above ? "top" : "bottom");
+  bubble.style.visibility = "visible";
+  anchor.setAttribute("aria-describedby", bubble.id);
+  tipOpen = { bubble, anchor };
+}
+/** Give an element a dsh-style tooltip in place of the browser's `title`: shown on hover and on
+ *  keyboard focus, hidden on leave, blur, click and Escape. `text` is read each time, so a
+ *  language switch shows the new wording without re-attaching. */
+function attachTip(anchor: HTMLElement, text: () => string): void {
+  const show = () => showTip(anchor, text());
+  anchor.addEventListener("mouseenter", show);
+  anchor.addEventListener("focus", show);
+  for (const ev of ["mouseleave", "blur", "click"]) anchor.addEventListener(ev, hideTip);
+  anchor.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") hideTip();
+  });
+}
+
 /** The composer actions of the aside dock entry on screen, for the Run button, which is drawn
  *  outside any React tree. Null without a composer, so no button is offered. */
 let dockComposer: ComposerSlot["inputActions"] | null = null;
@@ -5236,12 +5312,12 @@ function watchRunButtons(ctx: ClientCtx) {
       const button = document.createElement("button");
       button.type = "button";
       button.setAttribute("data-omc-run", "");
-      // dsh's own action look, so the button sits with Wrap lines; the text is ours.
+      // dsh's own action look and shape, so the button sits with Copy and Wrap lines as one more
+      // icon: its class, a 14px outline glyph, an aria-label, and a bubble like dsh's on hover.
       button.className = actions.querySelector("button")?.className ?? "";
-      button.textContent = t("main.run.button");
-      button.title = t("main.run.title");
-      button.setAttribute("aria-label", t("main.run.title"));
-      button.style.cssText = "font-size:12px;padding:0 6px;cursor:pointer;width:auto";
+      button.setAttribute("aria-label", t("main.run.button"));
+      button.append(playIcon());
+      attachTip(button, () => t("main.run.title"));
       button.addEventListener("click", () => {
         const snippet = block.querySelector("pre")?.textContent?.trimEnd() ?? "";
         const composer = dockComposer;
@@ -10717,6 +10793,10 @@ const COST_DIALOG_CSS =
   "[data-omc-cost-details]{color:var(--dsw-alias-label-tertiary);grid-template-columns:minmax(76px,auto) minmax(0,1fr);gap:6px 16px;margin:0;display:grid}" +
   "[data-omc-cost-details] dt,[data-omc-cost-details] dd{min-width:0;margin:0}" +
   "[data-omc-cost-details] dd{color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums;text-align:right}" +
+  // dsh's tooltip look (its bubble class is hashed, so the rules are copied onto our own hook,
+  // on the same tokens): fixed, above the anchor, centred by the transform.
+  "[data-omc-tip]{display:inline-flex;align-items:center;position:fixed;z-index:1100;width:max-content;max-width:50vw;padding:3px 7px;border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-tooltip-bg);color:var(--dsw-static-neutral-bluish-00);font-size:13px;line-height:20px;white-space:pre-line;overflow-wrap:break-word;pointer-events:none;transform:translate(-50%,-100%)}" +
+  "[data-omc-tip][data-side=bottom]{transform:translate(-50%)}" +
   "[data-omc-cost-guard]{margin-top:10px;padding-top:8px;border-top:1px solid var(--dsw-alias-border-l1);display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12px}" +
   "[data-omc-cost-guard] label{display:inline-flex;align-items:center;gap:4px}" +
   "[data-omc-cost-guard] input{width:64px;font:inherit;color:inherit;background:var(--dsw-alias-bg-module-platform,rgba(128,128,128,.1));border:0;border-radius:6px;padding:2px 6px}" +
