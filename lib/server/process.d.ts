@@ -21,6 +21,7 @@ export declare const CHILD_ENV: {
     MCP_TOOL_TIMEOUT: string;
     CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: string;
     CLAUDE_CODE_ENTRYPOINT: string;
+    CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION: string;
 };
 /** The environment a Claude child runs with: dsh's own, then the plugin's additions, then whatever
  *  the caller passes. CHILD_ENV beats the inherited value on purpose. An `MCP_TOOL_TIMEOUT` that
