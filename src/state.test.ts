@@ -1,7 +1,7 @@
 // Offline self-check: bun src/state.test.ts. No CLI, no network.
 import { livingModelId } from "./model-ids.js";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -173,6 +173,8 @@ assert.deepEqual(modesUpTo("acceptEdits"), ["default", "acceptEdits", "plan"]);
 assert.equal(modesUpTo("bypassPermissions").length, 6);
 
 console.log("turns-state ok");
+// The dir is test litter: 2,354 of them (62 MB) had piled up in .cache by 2026-10-22.
+await rm(turnsDir, { recursive: true, force: true });
 
 // Limit waits: set two, forget one, reload; concurrent saves serialize.
 assert.deepEqual(await loadLimitWaits(dir), new Map());

@@ -35,7 +35,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "ls src/*.test.ts src/client/*.test.ts | xargs -P 8 -I{} sh -c 'DSH_OMC_STATE_DIR=$(mktemp -d /tmp/omc-test.XXXXXX) bun \"$1\"' _ {}",
+    "test": "ls src/*.test.ts src/client/*.test.ts | xargs -P 8 -I{} sh -c 'd=$(mktemp -d /tmp/omc-test.XXXXXX); DSH_OMC_STATE_DIR=$d bun \"$1\"; s=$?; rm -rf \"$d\"; exit $s' _ {}",
     "lint": "oxlint src/ tools/ --max-warnings=0",
     "format": "oxfmt src/ tools/",
     "deadcode": "fallow dead-code",
