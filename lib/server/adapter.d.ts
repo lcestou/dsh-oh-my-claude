@@ -1573,8 +1573,11 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * The other direction, checked at each prompt: a name someone typed into dsh (source `user`,
      * never dsh's generated or fallback title, which would overwrite the CLI's own auto title with
      * the first prompt's words) goes to the CLI as `rename_session` when it differs from the last
-     * name this process reported or was sent. `proc.title` is set before the write so the
-     * `session_title_changed` echo compares equal and renames nothing back.
+     * name this process reported or was sent. `proc.title` is set once the CLI has answered,
+     * accepted or refused (a refusal of this name is not worth repeating at every prompt); a
+     * request that never gets an answer leaves it unset, so the next prompt tries again. The
+     * `session_title_changed` echo that can land before the answer is harmless either way:
+     * `renameDshSession` finds dsh already holding that name and changes nothing.
      */
     syncTitleToCli(proc: ClaudeProcess, sessionId: string): void;
     /**

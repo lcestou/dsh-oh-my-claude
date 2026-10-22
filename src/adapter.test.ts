@@ -194,7 +194,10 @@ assert.equal(config.resume, true);
 
 // providerId defaults to claude-code; settingsNs and displayName derive correctly
 assert.equal(config.providerId, "claude-code");
-const workConfig = new Config({ providerId: "claude-code-work", providerName: "Work" });
+const workConfig = new Config({
+  providerId: "claude-code-work",
+  providerName: "Work",
+});
 assert.equal(workConfig.providerId, "claude-code-work");
 // registry key separates instances even with the same sessionId
 assert.notEqual(
@@ -355,7 +358,12 @@ const skill = (name: string): LooseMessage =>
   message({
     role: "user",
     source: { kind: "skill-invocation", name, form: "instructions" },
-    content: [{ type: "text", text: `<skill_content name="${name}">body</skill_content>` }],
+    content: [
+      {
+        type: "text",
+        text: `<skill_content name="${name}">body</skill_content>`,
+      },
+    ],
   });
 {
   // dsh and Claude Code both know these skills, so the CLI lists them; save/restore the global the
@@ -391,7 +399,11 @@ const skill = (name: string): LooseMessage =>
         messageList([
           { role: "user", content: "go" },
           { role: "assistant", content: "on it" },
-          { role: "user", source: { kind: "user", rpcId: "s1" }, content: "/ic-logos again" },
+          {
+            role: "user",
+            source: { kind: "user", rpcId: "s1" },
+            content: "/ic-logos again",
+          },
           skill("ic-logos"),
         ]),
       ),
@@ -406,7 +418,12 @@ const skill = (name: string): LooseMessage =>
 }
 // image-only / attachment-only user turn: no typed text, but not rejected — synthesize a prompt
 assert.equal(
-  buildPrompt([{ role: "user", content: [{ type: "image", attachment: { path: "/x.png" } }] }]),
+  buildPrompt([
+    {
+      role: "user",
+      content: [{ type: "image", attachment: { path: "/x.png" } }],
+    },
+  ]),
   "(see attached)",
 );
 // no user turn at all still rejects
@@ -443,7 +460,10 @@ assert.ok(!chat.join(" ").includes("mcp__dsh__"), "no dsh guidance without the b
 const bridgedTool = (name: string, ...params: string[]) => ({
   name,
   description: "",
-  parameters: { type: "object", properties: Object.fromEntries(params.map((p) => [p, {}])) },
+  parameters: {
+    type: "object",
+    properties: Object.fromEntries(params.map((p) => [p, {}])),
+  },
 });
 const bridged = buildArgs({
   model: "m",
@@ -495,7 +515,11 @@ assert.ok(
   assert.ok(persistent.includes("mcp__dsh__open_session makes a new top-level session"));
   assert.equal(dshToolsGuidance(), "dsh tools are available as mcp__dsh__* over MCP.");
 }
-const fresh = buildArgs({ model: "m", config, session: { id: "u", resuming: false } } as any);
+const fresh = buildArgs({
+  model: "m",
+  config,
+  session: { id: "u", resuming: false },
+} as any);
 assert.deepEqual(fresh.slice(-2), ["--session-id", "u"]);
 const aux = buildArgs({
   model: "haiku",
@@ -526,7 +550,10 @@ assert.ok(
 // session-only plugins map to repeated --plugin-dir/--plugin-url, gated on flag support
 const withPlugins = buildArgs({
   model: "m",
-  config: new Config({ pluginDirs: ["/a", "/b.zip"], pluginUrls: ["https://x/p.zip"] }),
+  config: new Config({
+    pluginDirs: ["/a", "/b.zip"],
+    pluginUrls: ["https://x/p.zip"],
+  }),
   flags: new Set(["--plugin-dir", "--plugin-url"]),
 } as any);
 assert.ok(
@@ -560,19 +587,31 @@ assert.deepEqual(se({ type: "message_start" }), [
   { type: "block-end", index: 0, block: { type: "reasoning", text: " " } },
 ]);
 assert.deepEqual(
-  se({ type: "content_block_start", index: 0, content_block: { type: "thinking" } }),
+  se({
+    type: "content_block_start",
+    index: 0,
+    content_block: { type: "thinking" },
+  }),
   [],
   "a block is announced with its first text, not at start",
 );
 assert.deepEqual(
-  se({ type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "hmm" } }),
+  se({
+    type: "content_block_delta",
+    index: 0,
+    delta: { type: "thinking_delta", thinking: "hmm" },
+  }),
   [
     { type: "block-start", index: 1, blockType: "reasoning" },
     { type: "reasoning-delta", index: 1, text: "hmm" },
   ],
 );
 assert.deepEqual(
-  se({ type: "content_block_delta", index: 0, delta: { type: "signature_delta", signature: "x" } }),
+  se({
+    type: "content_block_delta",
+    index: 0,
+    delta: { type: "signature_delta", signature: "x" },
+  }),
   [],
 );
 assert.deepEqual(se({ type: "content_block_stop", index: 0 }), [
@@ -594,18 +633,27 @@ se({
 });
 assert.equal(se({ type: "content_block_stop", index: 1 })[0].block.text, 'Read {"a":1}');
 assert.deepEqual(
-  tr.translate({ type: "assistant", message: { content: [{ type: "text", text: "dup" }] } }),
+  tr.translate({
+    type: "assistant",
+    message: { content: [{ type: "text", text: "dup" }] },
+  }),
   [],
 );
 const res = tr.translate({
   type: "user",
-  message: { content: [{ type: "tool_result", tool_use_id: "t", content: "1\thello" }] },
+  message: {
+    content: [{ type: "tool_result", tool_use_id: "t", content: "1\thello" }],
+  },
 });
 assert.equal(res.at(-1).block.text, "◀ result\n1\thello");
 se({ type: "message_start" });
 se({ type: "content_block_start", index: 0, content_block: { type: "text" } });
 assert.deepEqual(
-  se({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "pong" } }),
+  se({
+    type: "content_block_delta",
+    index: 0,
+    delta: { type: "text_delta", text: "pong" },
+  }),
   [
     { type: "block-start", index: 4, blockType: "text" },
     { type: "text-delta", index: 4, text: "pong" },
@@ -644,7 +692,10 @@ assert.deepEqual(tr.takeStepUsage(), []);
 // the CLI runs its own Read between them; summing the prompts read five calls at 740k as 3.7M.
 const trs = new Translator() as any;
 const delta = (usage: object) =>
-  trs.translate({ type: "stream_event", event: { type: "message_delta", usage } });
+  trs.translate({
+    type: "stream_event",
+    event: { type: "message_delta", usage },
+  });
 delta({
   input_tokens: 10,
   output_tokens: 337,
@@ -663,7 +714,10 @@ delta({
 trs.translate({
   type: "stream_event",
   parent_tool_use_id: "t1",
-  event: { type: "message_delta", usage: { input_tokens: 99, output_tokens: 99 } },
+  event: {
+    type: "message_delta",
+    usage: { input_tokens: 99, output_tokens: 99 },
+  },
 });
 assert.deepEqual(trs.takeStepUsage(), [
   {
@@ -702,7 +756,10 @@ assert.equal(lone.usage.outputTokens, 14);
 const trb = new Translator() as any;
 trb.translate({
   type: "stream_event",
-  event: { type: "message_delta", usage: { input_tokens: 3, output_tokens: 7 } },
+  event: {
+    type: "message_delta",
+    usage: { input_tokens: 3, output_tokens: 7 },
+  },
 });
 const closing = trb.translate({
   type: "result",
@@ -724,7 +781,12 @@ const dshCall = trd.translate({
   type: "assistant",
   message: {
     content: [
-      { type: "tool_use", id: "d1", name: "mcp__dsh__subagent_local", input: { prompt: "x" } },
+      {
+        type: "tool_use",
+        id: "d1",
+        name: "mcp__dsh__subagent_local",
+        input: { prompt: "x" },
+      },
     ],
   },
 });
@@ -732,13 +794,17 @@ assert.equal(dshCall[0].blockType, "text", "bridge call is a text block");
 assert.match(dshCall[1].text, /^⤷ subagent_local /, "bridge call drops the mcp prefix");
 const dshResult = trd.translate({
   type: "user",
-  message: { content: [{ type: "tool_result", tool_use_id: "d1", content: "abc" }] },
+  message: {
+    content: [{ type: "tool_result", tool_use_id: "d1", content: "abc" }],
+  },
 });
 assert.equal(dshResult[0].blockType, "text", "bridge result is a text block");
 assert.match(dshResult[1].text, /^⤶ result\nabc/);
 const nativeResult = trd.translate({
   type: "user",
-  message: { content: [{ type: "tool_result", tool_use_id: "other", content: "y" }] },
+  message: {
+    content: [{ type: "tool_result", tool_use_id: "other", content: "y" }],
+  },
 });
 assert.equal(nativeResult[0].blockType, "reasoning", "other tools stay in reasoning");
 
@@ -760,12 +826,17 @@ assert.deepEqual(
   ["block-start", "reasoning-delta", "block-end", "block-start", "text-delta", "block-end"],
 );
 assert.deepEqual(
-  tr2.translate({ type: "user", message: { content: [{ type: "tool_result", content: "x" }] } }),
+  tr2.translate({
+    type: "user",
+    message: { content: [{ type: "tool_result", content: "x" }] },
+  }),
   [],
 );
 assert.equal(
-  new Translator().translate({ type: "rate_limit_event", rate_limit_info: { status: "allowed" } })
-    .length,
+  new Translator().translate({
+    type: "rate_limit_event",
+    rate_limit_info: { status: "allowed" },
+  }).length,
   0,
 );
 // "allowed_warning" = near the cap, not a limit: the turn must go on (ending it made dsh's
@@ -774,14 +845,21 @@ const warned = new Translator() as any;
 assert.deepEqual(
   warned.translate({
     type: "rate_limit_event",
-    rate_limit_info: { status: "allowed_warning", utilization: 0.9, resetsAt: 1 },
+    rate_limit_info: {
+      status: "allowed_warning",
+      utilization: 0.9,
+      resetsAt: 1,
+    },
   }),
   [],
 );
 assert.equal(warned.finished, false, "allowed_warning does not end the turn");
 const limitedTr = new Translator();
 assert.deepEqual(
-  limitedTr.translate({ type: "rate_limit_event", rate_limit_info: { status: "rejected" } }),
+  limitedTr.translate({
+    type: "rate_limit_event",
+    rate_limit_info: { status: "rejected" },
+  }),
   [],
   "the CLI's own message follows, so the turn does not end on this frame",
 );
@@ -804,7 +882,11 @@ const api = modelFromApi({
   display_name: "X",
   max_input_tokens: 500,
   capabilities: {
-    effort: { supported: true, low: { supported: true }, max: { supported: false } },
+    effort: {
+      supported: true,
+      low: { supported: true },
+      max: { supported: false },
+    },
   },
 });
 assert.deepEqual(api, {
@@ -839,6 +921,29 @@ assert.equal(modelFromApi({ id: "claude-haiku-4-5-20251001" }).id, "claude-haiku
 {
   const good = [modelFromApi({ id: "claude-haiku-4-5-20251001", display_name: "Haiku" })];
   assert.deepEqual(parseCatalogCache(JSON.stringify(good)), good, "clean cache round-trips");
+  // A cache written before `createdAt` existed (1.5.x) still reads: the field is optional, as
+  // every schemastery field is unless marked required, so an upgrade keeps its catalog.
+  const dated = modelFromApi({
+    id: "claude-haiku-4-5-20251001",
+    display_name: "Haiku",
+    created_at: "2026-01-01T00:00:00Z",
+  });
+  const old = [
+    {
+      id: dated.id,
+      name: dated.name,
+      contextWindow: dated.contextWindow,
+      efforts: dated.efforts,
+    },
+  ];
+  const read = parseCatalogCache(JSON.stringify(old));
+  assert.equal(read.length, 1, "a cache row without createdAt still parses");
+  assert.equal(read[0]?.createdAt, undefined, "and carries no date");
+  assert.equal(
+    parseCatalogCache(JSON.stringify([dated]))[0]?.createdAt,
+    dated.createdAt,
+    "a dated row keeps its date",
+  );
   assert.deepEqual(parseCatalogCache("not json"), [], "garbage reads empty");
   assert.deepEqual(parseCatalogCache(JSON.stringify({ models: [] })), [], "non-array reads empty");
   const wrongProvider = JSON.stringify([
@@ -846,7 +951,13 @@ assert.equal(modelFromApi({ id: "claude-haiku-4-5-20251001" }).id, "claude-haiku
   ]);
   assert.deepEqual(parseCatalogCache(wrongProvider), [], "a bad row voids the whole cache");
   const badTypes = JSON.stringify([
-    { provider: "claude-code", id: "y", name: "Y", contextWindow: "big", efforts: [] },
+    {
+      provider: "claude-code",
+      id: "y",
+      name: "Y",
+      contextWindow: "big",
+      efforts: [],
+    },
   ]);
   assert.deepEqual(parseCatalogCache(badTypes), [], "a mistyped field voids the whole cache");
 }
@@ -897,7 +1008,10 @@ assert.equal(proxyBaseUrl("not a url"), "not a url");
 const policy = (mode: string): LooseMessage => ({
   role: "user",
   content: [
-    { type: "text", text: `Current runtime context.\n\nCurrent DSH file policy: ${mode}. Any` },
+    {
+      type: "text",
+      text: `Current runtime context.\n\nCurrent DSH file policy: ${mode}. Any`,
+    },
   ],
 });
 assert.equal(accessModeOf([{ role: "user", content: "hi" }]), undefined);
@@ -931,7 +1045,11 @@ assert.equal(
   permissionModeFor(new Config({ permissionMode: "plan" }), "danger-full-access"),
   "plan",
 );
-const switched = buildArgs({ model: "m", config, accessMode: "danger-full-access" } as any);
+const switched = buildArgs({
+  model: "m",
+  config,
+  accessMode: "danger-full-access",
+} as any);
 assert.ok(switched.join(" ").includes("--permission-mode bypassPermissions"));
 
 // Ceiling: permissionModeInfo reports allowed modes; setPermissionMode rejects loosening
@@ -982,7 +1100,11 @@ assert.ok(switched.join(" ").includes("--permission-mode bypassPermissions"));
         proc.controlListener({
           type: "control_response",
           request_id: req.request_id,
-          response: { subtype: "success", request_id: req.request_id, response: {} },
+          response: {
+            subtype: "success",
+            request_id: req.request_id,
+            response: {},
+          },
         });
       }, 0);
       return true;
@@ -1118,7 +1240,13 @@ assert.equal(boxFor("", undefined), undefined, "a local turn in a local workspac
   const standIns = joinPath(STATE_DIR, "remote-workspaces");
   const kept = joinPath(standIns, "devbox__kept");
   setRemoteWorkspaces([
-    { name: "kept", host: "devbox", remoteCwd: "/srv/kept", path: kept, workspaceId: "w-2" },
+    {
+      name: "kept",
+      host: "devbox",
+      remoteCwd: "/srv/kept",
+      path: kept,
+      workspaceId: "w-2",
+    },
   ]);
   assert.equal(
     isOrphanedStandIn(kept),
@@ -1206,7 +1334,10 @@ assert.ok(!remoteProbe.flags.has("--forward-subagent-text"));
 {
   const a = new ClaudeCodeAdapter(
     fakeCtx({ on() {} }),
-    new Config({ providerId: "claude-code-flagtest", command: "claude-flagtest" }),
+    new Config({
+      providerId: "claude-code-flagtest",
+      command: "claude-flagtest",
+    }),
   );
   const died = fakeProc({
     stderr: "error: unknown option '--forward-subagent-text'\n",
@@ -1229,7 +1360,9 @@ assert.ok(!remoteProbe.flags.has("--forward-subagent-text"));
   assert.ok(probe.flags?.has("--input-format"));
   // A turn that died for any other reason is not a flag problem and must not ask for a retry.
   assert.equal(
-    a.dropRejectedFlag(fakeProc({ stderr: "Killed", stray: "" }), { sessionId: "s1" } as never),
+    a.dropRejectedFlag(fakeProc({ stderr: "Killed", stray: "" }), {
+      sessionId: "s1",
+    } as never),
     false,
   );
 }
@@ -1249,7 +1382,9 @@ const soon = Math.floor(Date.now() / 1000) + 120;
   assert.equal(t.finished, false);
   const said = t.translate({
     type: "assistant",
-    message: { content: [{ type: "text", text: "You've reached your Fable limit." }] },
+    message: {
+      content: [{ type: "text", text: "You've reached your Fable limit." }],
+    },
   });
   assert.equal(said.at(-1).block.text, "You've reached your Fable limit.", "the CLI's own words");
   const fin = t.translate({ type: "result", is_error: false }).at(-1);
@@ -1302,7 +1437,11 @@ const soon = Math.floor(Date.now() / 1000) + 120;
   const t = new Translator({ continueAfterLimit: true }) as any;
   t.translate({
     type: "rate_limit_event",
-    rate_limit_info: { status: "rejected", resetsAt: soon, rateLimitType: "five_hour" },
+    rate_limit_info: {
+      status: "rejected",
+      resetsAt: soon,
+      rateLimitType: "five_hour",
+    },
   });
   assert.equal(
     t.translate({ type: "result", is_error: false }).at(-1).reason.failure.message,
@@ -1358,9 +1497,15 @@ const soon = Math.floor(Date.now() / 1000) + 120;
   assert.match(tz.at(-1).block.text, /\(Asia\/Tokyo\)\)/);
   assert.equal(
     clientTimeZone([
-      { role: "user", source: { kind: "user", clientTimeZone: "Europe/Lisbon" } },
+      {
+        role: "user",
+        source: { kind: "user", clientTimeZone: "Europe/Lisbon" },
+      },
       { role: "assistant" },
-      { role: "user", source: { kind: "user", clientTimeZone: "America/New_York" } },
+      {
+        role: "user",
+        source: { kind: "user", clientTimeZone: "America/New_York" },
+      },
       { role: "user", source: { kind: "plugin", plugin: "x" } },
     ]),
     "America/New_York",
@@ -1381,7 +1526,11 @@ assert.equal(
 assert.equal(isStaleResume({ type: "result", is_error: true, errors: ["boom"] }), false);
 assert.equal(isStaleResume({ type: "result", is_error: false }), false);
 // SAFETY: result with errors produces a finish chunk with error reason
-const rl2 = new Translator().translate({ type: "result", is_error: true, errors: ["a", "b"] });
+const rl2 = new Translator().translate({
+  type: "result",
+  is_error: true,
+  errors: ["a", "b"],
+});
 assert.ok(rl2[0] && "reason" in rl2[0] && rl2[0].reason.kind === "error");
 assert.equal(rl2[0].reason.failure.message, "a; b");
 
@@ -1390,14 +1539,26 @@ const td = new Translator({ toolTextLimit: 100 }) as any;
 td.translate({
   type: "user",
   message: {
-    content: [{ type: "tool_result", is_error: true, content: "This command requires approval" }],
+    content: [
+      {
+        type: "tool_result",
+        is_error: true,
+        content: "This command requires approval",
+      },
+    ],
   },
 });
 td.translate({
   type: "user",
-  message: { content: [{ type: "tool_result", is_error: true, content: "boom" }] },
+  message: {
+    content: [{ type: "tool_result", is_error: true, content: "boom" }],
+  },
 });
-const ended = td.translate({ type: "result", is_error: false, stop_reason: "end_turn" });
+const ended = td.translate({
+  type: "result",
+  is_error: false,
+  stop_reason: "end_turn",
+});
 assert.equal(ended[0].type, "block-start");
 // SAFETY: text-delta event exists for this transcript
 const textDelta = ended.find((e: { type: string }) => e.type === "text-delta");
@@ -1439,14 +1600,22 @@ assert.equal(recorded[0]!.cacheRead, 900);
 assert.equal(recorded[0]!.cacheWrite, 0);
 // missing fields default to 0
 const missing: TurnRecord[] = [];
-const trMissing = new Translator({ onResult: (s: TurnRecord) => missing.push(s) });
-trMissing.translate({ type: "result", is_error: false, stop_reason: "end_turn" });
+const trMissing = new Translator({
+  onResult: (s: TurnRecord) => missing.push(s),
+});
+trMissing.translate({
+  type: "result",
+  is_error: false,
+  stop_reason: "end_turn",
+});
 // no total_cost_usd or duration_ms → condition stays false, nothing recorded
 assert.equal(missing.length, 0);
 
 // permission_denials converts tool calls to rule labels, deduped and in insertion order
 const deniedTurns: TurnRecord[] = [];
-const trDenied = new Translator({ onResult: (s: TurnRecord) => deniedTurns.push(s) });
+const trDenied = new Translator({
+  onResult: (s: TurnRecord) => deniedTurns.push(s),
+});
 // SAFETY: test fixture; permission_denials is not in the ClaudeEvent type but exists on CLI output
 trDenied.translate({
   type: "result",
@@ -1466,7 +1635,9 @@ assert.deepEqual(deniedTurns[0]!.denials, ["Bash(git status:*)", "Read(/home/use
 
 // no permission_denials → record has no denials field
 const nodenialsRecords: TurnRecord[] = [];
-const trNoDenials = new Translator({ onResult: (s: TurnRecord) => nodenialsRecords.push(s) });
+const trNoDenials = new Translator({
+  onResult: (s: TurnRecord) => nodenialsRecords.push(s),
+});
 // SAFETY: test fixture; total_cost_usd and duration_ms are not in the ClaudeEvent type but exist on CLI output
 trNoDenials.translate({
   type: "result",
@@ -1545,7 +1716,9 @@ assert.deepEqual(answersFor(qs as any, { answers: [{ id: "toolu_9:0", selected: 
   "Tea or coffee?": "tea",
 });
 assert.deepEqual(
-  answersFor(qs as any, { answers: [{ id: "toolu_9:0", selected: [], custom: "water" }] }),
+  answersFor(qs as any, {
+    answers: [{ id: "toolu_9:0", selected: [], custom: "water" }],
+  }),
   { "Tea or coffee?": "water" },
 );
 const turn = JSON.parse(userTurnLine([{ type: "text", text: "hi" }]));
@@ -1602,9 +1775,15 @@ tp.translate({
   },
 });
 assert.equal(tp.toolPending, false);
-tp.translate({ type: "stream_event", event: { type: "content_block_stop", index: 0 } });
+tp.translate({
+  type: "stream_event",
+  event: { type: "content_block_stop", index: 0 },
+});
 assert.equal(tp.toolPending, true);
-tp.translate({ type: "user", message: { content: [{ type: "tool_result", content: "done" }] } });
+tp.translate({
+  type: "user",
+  message: { content: [{ type: "tool_result", content: "done" }] },
+});
 assert.equal(tp.toolPending, false);
 const tq = new Translator({ toolActivity: false }) as any;
 tq.translate({ type: "stream_event", event: { type: "message_start" } });
@@ -1620,7 +1799,10 @@ assert.deepEqual(
   [],
 );
 assert.deepEqual(
-  tq.translate({ type: "stream_event", event: { type: "content_block_stop", index: 0 } }),
+  tq.translate({
+    type: "stream_event",
+    event: { type: "content_block_stop", index: 0 },
+  }),
   [],
 );
 assert.equal(tq.toolPending, true);
@@ -1645,9 +1827,16 @@ console.log("ok");
   // The CLI streams one delta carrying the empty string for a `{}` input.
   tr.translate({
     type: "stream_event",
-    event: { type: "content_block_delta", index: 0, delta: { partial_json: "" } },
+    event: {
+      type: "content_block_delta",
+      index: 0,
+      delta: { partial_json: "" },
+    },
   });
-  tr.translate({ type: "stream_event", event: { type: "content_block_stop", index: 0 } });
+  tr.translate({
+    type: "stream_event",
+    event: { type: "content_block_stop", index: 0 },
+  });
   assert.equal(calls.length, 1, "the call fires on the id, not on having arguments");
   assert.equal(calls[0]!.input, "{}");
 }
@@ -1655,16 +1844,26 @@ console.log("ok");
 // --- the whole-message echo is dropped, a message the CLI sends on its own is not ---
 {
   const tr = new Translator() as any;
-  tr.translate({ type: "stream_event", event: { type: "message_start", message: { id: "m1" } } });
   tr.translate({
     type: "stream_event",
-    event: { type: "content_block_start", index: 0, content_block: { type: "text" } },
+    event: { type: "message_start", message: { id: "m1" } },
+  });
+  tr.translate({
+    type: "stream_event",
+    event: {
+      type: "content_block_start",
+      index: 0,
+      content_block: { type: "text" },
+    },
   });
   tr.translate({
     type: "stream_event",
     event: { type: "content_block_delta", index: 0, delta: { text: "hi" } },
   });
-  tr.translate({ type: "stream_event", event: { type: "content_block_stop", index: 0 } });
+  tr.translate({
+    type: "stream_event",
+    event: { type: "content_block_stop", index: 0 },
+  });
   assert.deepEqual(
     tr.translate({
       type: "assistant",
@@ -1676,7 +1875,10 @@ console.log("ok");
   // What the CLI sends after refusing a turn on a rate limit: its own message, never streamed.
   const limit = tr.translate({
     type: "assistant",
-    message: { id: "m2", content: [{ type: "text", text: "5-hour limit reached" }] },
+    message: {
+      id: "m2",
+      content: [{ type: "text", text: "5-hour limit reached" }],
+    },
   });
   assert.ok(
     JSON.stringify(limit).includes("5-hour limit reached"),
@@ -1692,7 +1894,11 @@ console.log("ok");
     event: {
       type: "content_block_start",
       index: 0,
-      content_block: { type: "tool_use", id: "tu1", name: "mcp__dsh__subagent_local" },
+      content_block: {
+        type: "tool_use",
+        id: "tu1",
+        name: "mcp__dsh__subagent_local",
+      },
     },
   });
   assert.deepEqual(start, [], "relayed dsh tool_use opens no visible block");
@@ -1705,7 +1911,9 @@ console.log("ok");
   tr.relayed.add("tu1"); // dsh ran it natively
   const res = tr.translate({
     type: "user",
-    message: { content: [{ type: "tool_result", tool_use_id: "tu1", content: "done" }] },
+    message: {
+      content: [{ type: "tool_result", tool_use_id: "tu1", content: "done" }],
+    },
   });
   assert.deepEqual(res, [], "its result row is dsh's to render, not ours");
   const plain = new Translator({ relay: false }) as any;
@@ -1714,7 +1922,11 @@ console.log("ok");
     event: {
       type: "content_block_start",
       index: 0,
-      content_block: { type: "tool_use", id: "tu2", name: "mcp__dsh__subagent_local" },
+      content_block: {
+        type: "tool_use",
+        id: "tu2",
+        name: "mcp__dsh__subagent_local",
+      },
     },
   });
   // SAFETY: open has entry for index 0
@@ -1759,21 +1971,36 @@ console.log("ok");
 {
   const messages = messageList([
     { role: "user", content: [{ type: "text", text: "go" }] },
-    { role: "assistant", content: [{ type: "tool-call", id: "c1", name: "x", arguments: "{}" }] },
+    {
+      role: "assistant",
+      content: [{ type: "tool-call", id: "c1", name: "x", arguments: "{}" }],
+    },
     { role: "tool", toolCallId: "c1", content: [{ type: "text", text: "42" }] },
   ]);
-  assert.deepEqual(toolResultFor(messages, "c1"), { text: "42", isError: false });
+  assert.deepEqual(toolResultFor(messages, "c1"), {
+    text: "42",
+    isError: false,
+  });
   assert.equal(toolResultFor(messages, "nope"), undefined);
   assert.equal(toolResultFor([{ role: "user", content: [] }], "c1"), undefined);
 }
 {
   const base = messageList([
     { role: "user", content: [{ type: "text", text: "go" }] },
-    { role: "assistant", content: [{ type: "tool-call", id: "c1", name: "x", arguments: "{}" }] },
+    {
+      role: "assistant",
+      content: [{ type: "tool-call", id: "c1", name: "x", arguments: "{}" }],
+    },
     {
       role: "user",
       source: { kind: "tool", callId: "c1" },
-      content: [{ type: "tool-result", toolCallId: "c1", content: [{ type: "text", text: "42" }] }],
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: "c1",
+          content: [{ type: "text", text: "42" }],
+        },
+      ],
     },
   ]);
   assert.equal(stepContextFor(base), "", "only the tool result: nothing to add");
@@ -1855,7 +2082,14 @@ console.log("ok");
   );
   assert.equal(
     dropSent(
-      messageList([{ id: "n1", role: "user", source: { kind: "agent-message" }, content: [] }]),
+      messageList([
+        {
+          id: "n1",
+          role: "user",
+          source: { kind: "agent-message" },
+          content: [],
+        },
+      ]),
       new Set(["n1"]),
     ).length,
     0,
@@ -1893,7 +2127,11 @@ console.log("ok");
 {
   const tr = new Translator({ relay: true }) as any;
   tr.aborting = true;
-  const fin = tr.translate({ type: "result", subtype: "error_during_execution", is_error: true });
+  const fin = tr.translate({
+    type: "result",
+    subtype: "error_during_execution",
+    is_error: true,
+  });
   assert.equal(
     fin.at(-1).reason.kind,
     "aborted",
@@ -1916,8 +2154,18 @@ console.log("ok");
     type: "assistant",
     message: {
       content: [
-        { type: "tool_use", id: "d1", name: "mcp__dsh__subagent_local", input: {} },
-        { type: "tool_use", id: "d2", name: "mcp__dsh__subagent_local", input: {} },
+        {
+          type: "tool_use",
+          id: "d1",
+          name: "mcp__dsh__subagent_local",
+          input: {},
+        },
+        {
+          type: "tool_use",
+          id: "d2",
+          name: "mcp__dsh__subagent_local",
+          input: {},
+        },
         { type: "tool_use", id: "b1", name: "Bash", input: {} },
       ],
     },
@@ -1927,7 +2175,11 @@ console.log("ok");
 {
   const line = (o: any) => JSON.stringify(o);
   const src = [
-    line({ type: "user", sessionId: "OLD", message: { role: "user", content: "first" } }),
+    line({
+      type: "user",
+      sessionId: "OLD",
+      message: { role: "user", content: "first" },
+    }),
     line({
       type: "assistant",
       sessionId: "OLD",
@@ -1936,7 +2188,10 @@ console.log("ok");
     line({
       type: "user",
       sessionId: "OLD",
-      message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t" }] },
+      message: {
+        role: "user",
+        content: [{ type: "tool_result", tool_use_id: "t" }],
+      },
     }),
     line({
       type: "user",
@@ -1991,7 +2246,10 @@ console.log("ok");
   const count = () => ClaudeProcess.prototype.countStaleResults.call({ queue });
   assert.equal(count(), 0, "empty queue");
   queue.push(
-    JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "done" }] } }),
+    JSON.stringify({
+      type: "assistant",
+      message: { content: [{ type: "text", text: "done" }] },
+    }),
   );
   queue.push(JSON.stringify({ type: "result", subtype: "success", is_error: false }));
   queue.push('{"type":"assistant","message":{"content":[{"type":"text","text":"result"}]}}');
@@ -2042,7 +2300,12 @@ console.log("ok");
 {
   const wake = message({
     role: "user",
-    source: { kind: "plugin", plugin: "dsh-oh-my-claude", form: "notice", summary: WAKE_TEXT },
+    source: {
+      kind: "plugin",
+      plugin: "dsh-oh-my-claude",
+      form: "notice",
+      summary: WAKE_TEXT,
+    },
     content: [{ type: "text", text: WAKE_TEXT }],
   });
   const user = message({
@@ -2055,7 +2318,10 @@ console.log("ok");
     source: { kind: "plugin", plugin: "dsh-skills" },
     content: [],
   });
-  const asst = message({ role: "assistant", content: [{ type: "text", text: "ok" }] });
+  const asst = message({
+    role: "assistant",
+    content: [{ type: "text", text: "ok" }],
+  });
   assert.equal(wakeOnlyTurn([user, asst, wake]), true, "our notice alone opens a drain-only turn");
   assert.equal(
     wakeOnlyTurn([user, asst, wake, other]),
@@ -2071,7 +2337,11 @@ console.log("ok");
   assert.equal(wakeOnlyTurn([user, asst, other]), false, "no notice, no drain turn");
   const wakeV4 = message({
     role: "user",
-    source: { kind: "plugin:dsh-oh-my-claude", form: "notice", summary: WAKE_TEXT },
+    source: {
+      kind: "plugin:dsh-oh-my-claude",
+      form: "notice",
+      summary: WAKE_TEXT,
+    },
     content: [{ type: "text", text: WAKE_TEXT }],
   });
   assert.equal(wakeOnlyTurn([user, asst, wakeV4]), true, "the v4 producer kind is our notice too");
@@ -2218,7 +2488,12 @@ console.log("ok");
       outcome: "success",
     },
     { subtype: "hook_started", hook_name: "ok", hook_event: "PreToolUse" },
-    { subtype: "hook_progress", hook_name: "ok", hook_event: "PreToolUse", stdout: "x" },
+    {
+      subtype: "hook_progress",
+      hook_name: "ok",
+      hook_event: "PreToolUse",
+      stdout: "x",
+    },
   ])
     assert.deepEqual(t.translate({ type: "system", ...frame }), [], frame.subtype);
 }
@@ -2350,7 +2625,11 @@ console.log("ok");
   // background_tasks_changed is silent.
   const t4 = new Translator() as any;
   assert.deepEqual(
-    t4.translate({ type: "system", subtype: "background_tasks_changed", tasks: [] }),
+    t4.translate({
+      type: "system",
+      subtype: "background_tasks_changed",
+      tasks: [],
+    }),
     [],
     "background_tasks_changed",
   );
@@ -2397,7 +2676,9 @@ console.log("ok");
   // The result closes the block, in the same batch as the result row.
   const done = t.translate({
     type: "user",
-    message: { content: [{ type: "tool_result", tool_use_id: "call1", content: "ok" }] },
+    message: {
+      content: [{ type: "tool_result", tool_use_id: "call1", content: "ok" }],
+    },
   });
   assert.equal(done[0].type, "block-end", "the tool result closes the elapsed block first");
   assert.equal(t.heartbeatBlocks.size, 0, "the closed call leaves the map");
@@ -2464,7 +2745,12 @@ console.log("ok");
   // status is silent; a pause writes one line and keeps the block open; a task nobody opened is
   // silent (a notification for one still reports itself, which is the other frame's job).
   const t = new Translator() as any;
-  t.translate({ type: "system", subtype: "task_started", task_id: "t1", description: "run tests" });
+  t.translate({
+    type: "system",
+    subtype: "task_started",
+    task_id: "t1",
+    description: "run tests",
+  });
   assert.deepEqual(
     t.translate({
       type: "system",
@@ -2494,7 +2780,12 @@ console.log("ok");
   assert.equal(t.taskBlocks.has("t1"), false, "a terminal status leaves the map");
   // Same status twice, and a task nothing opened: both silent.
   const t2 = new Translator() as any;
-  t2.translate({ type: "system", subtype: "task_started", task_id: "t2", description: "x" });
+  t2.translate({
+    type: "system",
+    subtype: "task_started",
+    task_id: "t2",
+    description: "x",
+  });
   t2.translate({
     type: "system",
     subtype: "task_updated",
@@ -2597,7 +2888,12 @@ console.log("ok");
   // turn is drawn whatever its level.
   const t3 = new Translator() as any;
   assert.deepEqual(
-    t3.translate({ type: "system", subtype: "informational", content: "hook ran", level: "info" }),
+    t3.translate({
+      type: "system",
+      subtype: "informational",
+      content: "hook ran",
+      level: "info",
+    }),
     [],
     "info is transcript-only",
   );
@@ -2617,7 +2913,12 @@ console.log("ok");
   });
   assert.equal(stopped.at(-1).block.text, "⛔ Stop hook denied continuation");
   assert.deepEqual(
-    t3.translate({ type: "system", subtype: "informational", content: "", level: "warning" }),
+    t3.translate({
+      type: "system",
+      subtype: "informational",
+      content: "",
+      level: "warning",
+    }),
     [],
     "an empty banner",
   );
@@ -2654,12 +2955,21 @@ console.log("ok");
   // The compaction start frame (status:"compacting") is announced at once, so the silent summarize
   // stretch has a visible anchor and does not arrive delayed as the boundary line alone.
   const t = new Translator() as any;
-  const start = t.translate({ type: "system", subtype: "status", status: "compacting" });
+  const start = t.translate({
+    type: "system",
+    subtype: "status",
+    status: "compacting",
+  });
   assert.match(start.at(-1).block.text, /Compacting context…/);
   assert.equal(t.finished, false, "the start frame does not end the turn");
   // The success end frame is silent; the boundary line reports the result.
   assert.deepEqual(
-    t.translate({ type: "system", subtype: "status", status: null, compact_result: "success" }),
+    t.translate({
+      type: "system",
+      subtype: "status",
+      status: null,
+      compact_result: "success",
+    }),
     [],
   );
   // A failed run gets no boundary, so its error surfaces here.
@@ -2677,7 +2987,9 @@ console.log("ok");
   // measured. One announcement covers the whole stretch, but every repeat still has to tick the
   // stall clock: no other frame arrives in that window, so this is the turn's only proof of life.
   let frames = 0;
-  const t = new Translator({ onProgress: (p: any) => p.frame && frames++ }) as any;
+  const t = new Translator({
+    onProgress: (p: any) => p.frame && frames++,
+  }) as any;
   const beat = { type: "system", subtype: "status", status: "compacting" };
   const first = t.translate({ ...beat });
   assert.match(first.at(-1).block.text, /Compacting context…/);
@@ -2694,20 +3006,35 @@ console.log("ok");
   // A failure re-arms it as well, since that run ends without a boundary.
   const t2 = new Translator() as any;
   t2.translate({ ...beat });
-  t2.translate({ type: "system", subtype: "status", status: null, compact_result: "failed" });
+  t2.translate({
+    type: "system",
+    subtype: "status",
+    status: null,
+    compact_result: "failed",
+  });
   assert.match(t2.translate({ ...beat }).at(-1).block.text, /Compacting context…/);
 }
 {
   // sessionProvider reads the last model/selection from the session log: the limit wait must not
   // wake a session that was rerouted to another provider meanwhile.
   const events = [
-    { type: "model/selection", data: { provider: "claude-code", model: "claude-opus-5" } },
+    {
+      type: "model/selection",
+      data: { provider: "claude-code", model: "claude-opus-5" },
+    },
     { type: "todo/write", data: { todos: [] } },
-    { type: "model/selection", data: { provider: "llama-local", model: "kat" } },
+    {
+      type: "model/selection",
+      data: { provider: "llama-local", model: "kat" },
+    },
   ];
-  const stub = { ctx: { sessions: { get: () => ({ snapshotEvents: () => events }) } } };
+  const stub = {
+    ctx: { sessions: { get: () => ({ snapshotEvents: () => events }) } },
+  };
   assert.equal(ClaudeCodeAdapter.prototype.sessionProvider.call(stub, "s"), "llama-local");
-  const none = { ctx: { sessions: { get: () => ({ snapshotEvents: () => [] }) } } };
+  const none = {
+    ctx: { sessions: { get: () => ({ snapshotEvents: () => [] }) } },
+  };
   assert.equal(ClaudeCodeAdapter.prototype.sessionProvider.call(none, "s"), undefined);
   const gone = { ctx: { sessions: { get: () => undefined } } };
   assert.equal(ClaudeCodeAdapter.prototype.sessionProvider.call(gone, "s"), undefined);
@@ -2755,7 +3082,12 @@ console.log("ok");
         return true;
       },
     };
-    const probe = async () => ({ ok: true as const, fetchedAt: 0, windows, extraUsage });
+    const probe = async () => ({
+      ok: true as const,
+      fetchedAt: 0,
+      windows,
+      extraUsage,
+    });
     await ClaudeCodeAdapter.prototype.continueAfterLimit.call(stub, "s", probe);
     return calls;
   };
@@ -2787,7 +3119,10 @@ console.log("ok");
   };
   const active = [
     { type: "turn/start", data: {} },
-    { type: "todo/write", data: { todos: [{ content: "a", status: "in_progress" }] } },
+    {
+      type: "todo/write",
+      data: { todos: [{ content: "a", status: "in_progress" }] },
+    },
     { type: "turn/start", data: {} },
   ];
   // Live turn/start: last non-empty list is re-appended.
@@ -2795,7 +3130,12 @@ console.log("ok");
   (ClaudeCodeAdapter.prototype as any).restoreTodos.call(a.stub, "s1");
   assert.deepEqual(
     a.appended,
-    [{ type: "todo/write", data: { todos: [{ content: "a", status: "in_progress" }] } }],
+    [
+      {
+        type: "todo/write",
+        data: { todos: [{ content: "a", status: "in_progress" }] },
+      },
+    ],
     "last todo list re-appended after turn/start",
   );
   // Disabled: nothing is written.
@@ -2820,7 +3160,9 @@ console.log("ok");
   } as unknown as import("./dsh.js").PluginContext;
   const a = new ClaudeCodeAdapter(fakeCtx(ctx), Config({}));
   let resumed = 0;
-  (a as any).sessionController = { resolveAgent: async () => (resumed++, { agent }) };
+  (a as any).sessionController = {
+    resolveAgent: async () => (resumed++, { agent }),
+  };
   // SAFETY: partial fake for tests; ClaudeProcess requires many fields not used here
   await a.wake("s1", fakeProc({ busy: false }));
   assert.equal(resumed, 1, "unloaded agent: resumed through the controller");
@@ -2840,7 +3182,9 @@ console.log("ok");
   await a.wake("s1", fakeProc({ busy: false }));
   assert.equal(resumed, 1, "live agent: no resume");
   assert.equal(sent.length, 2);
-  await a.wake("s1", { busy: true } as unknown as import("./process.js").ClaudeProcess);
+  await a.wake("s1", {
+    busy: true,
+  } as unknown as import("./process.js").ClaudeProcess);
   assert.equal(sent.length, 2, "busy process: the turn is dsh's own, no wake");
   ctx.agents.get = () => undefined;
   (a as any).sessionController = {
@@ -2857,7 +3201,9 @@ console.log("ok");
   (a as any).sessionController = { resolveAgent: async () => ({ agent }) };
   assert.equal(await a.wake("s1", fakeProc({ busy: false })), true, "0.1.6 wrapper: woken");
   assert.equal(sent.length, 3, "0.1.6 wrapper: the notice reaches the agent inside it");
-  (a as any).sessionController = { resolveAgent: async () => ({ error: new Error("owned") }) };
+  (a as any).sessionController = {
+    resolveAgent: async () => ({ error: new Error("owned") }),
+  };
   assert.equal(await a.wake("s1", fakeProc({ busy: false })), false, "0.1.6 error: not woken");
   assert.equal(sent.length, 3, "0.1.6 error: reported as a failed resume, nothing sent");
   assert.equal(resolvedAgent({ agent }), agent, "the Agent inside the wrapper");
@@ -2886,7 +3232,12 @@ console.log("ok");
         {
           turn: 1,
           step: 1,
-          message: { id: "sys", role: "system", content: [], source: { kind: "system-prompt" } },
+          message: {
+            id: "sys",
+            role: "system",
+            content: [],
+            source: { kind: "system-prompt" },
+          },
         },
         { surfaceOp: "append" },
       ),
@@ -2907,7 +3258,13 @@ console.log("ok");
         },
         { surfaceOp: "append", sourceEventSeqs: [] },
       ),
-      row(4, "tool/call", { turn: 1, step: 1, callId: "open", name: "bash", arguments: "{}" }),
+      row(4, "tool/call", {
+        turn: 1,
+        step: 1,
+        callId: "open",
+        name: "bash",
+        arguments: "{}",
+      }),
       row(5, "step/end", { turn: 1, step: 1 }),
       row(6, "turn/end", { turn: 1, reason: "aborted" }),
     ]);
@@ -3004,7 +3361,11 @@ console.log("ok");
   assert.ok(!n.includes("~/.claude/CLAUDE.md") && n.includes("docs/AGENTS.md") && n.includes("z"));
   // buildPrompt applies it only to agent-instructions messages
   const msgs = messageList([
-    { role: "user", source: { kind: "user" }, content: [{ type: "text", text: "hi" }] },
+    {
+      role: "user",
+      source: { kind: "user" },
+      content: [{ type: "text", text: "hi" }],
+    },
     {
       role: "user",
       source: { kind: "agent-instructions" },
@@ -3013,7 +3374,12 @@ console.log("ok");
     {
       role: "user",
       source: { kind: "user" },
-      content: [{ type: "text", text: "Instructions from: CLAUDE.md is a phrase I typed" }],
+      content: [
+        {
+          type: "text",
+          text: "Instructions from: CLAUDE.md is a phrase I typed",
+        },
+      ],
     },
   ]);
   const p = buildPrompt(msgs);
@@ -3064,7 +3430,11 @@ console.log("ok");
   const tr = new Translator() as any;
   const s1 = tr.translate({
     type: "stream_event",
-    event: { type: "content_block_start", index: 0, content_block: { type: "thinking" } },
+    event: {
+      type: "content_block_start",
+      index: 0,
+      content_block: { type: "thinking" },
+    },
   });
   assert.deepEqual(s1, [], "a thinking block is not announced before it has text");
   const e1 = tr.translate({
@@ -3074,7 +3444,11 @@ console.log("ok");
   assert.deepEqual(e1, [], "an empty thinking block closes silently: no empty bubble");
   tr.translate({
     type: "stream_event",
-    event: { type: "content_block_start", index: 1, content_block: { type: "thinking" } },
+    event: {
+      type: "content_block_start",
+      index: 1,
+      content_block: { type: "thinking" },
+    },
   });
   const d = tr.translate({
     type: "stream_event",
@@ -3118,7 +3492,10 @@ console.log("ok");
   const wrote: string[] = [];
   box.processes.set(
     registryKey("claude-code-box", "far"),
-    fakeProc({ alive: true, write: (line: string) => (wrote.push(line), true) }),
+    fakeProc({
+      alive: true,
+      write: (line: string) => (wrote.push(line), true),
+    }),
   );
   assert.equal(a.processFor("far")?.alive, true, "the main mount sees the box's process");
   assert.equal(a.processFor("nowhere"), undefined);
@@ -3134,7 +3511,11 @@ console.log("ok");
   a.resolveControl({
     type: "control_response",
     request_id: requestId,
-    response: { request_id: requestId, subtype: "success", response: { response: "a box" } },
+    response: {
+      request_id: requestId,
+      subtype: "success",
+      response: { response: "a box" },
+    },
   });
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(a.sideQuestions.get("far")?.[0]?.answer, "a box", "the answer lands in the ring");
@@ -3143,7 +3524,10 @@ console.log("ok");
   // one never run since dsh started has nothing to respawn from and is refused.
   assert.equal(await a.revive("never-ran"), undefined, "no last turn: nothing to revive");
   const revived: string[] = [];
-  const woke = fakeProc({ alive: true, write: (line: string) => (revived.push(line), true) });
+  const woke = fakeProc({
+    alive: true,
+    write: (line: string) => (revived.push(line), true),
+  });
   // SAFETY: only sessionId is read by the stubbed acquire below; the rest of a turn's options is dsh's
   a.lastTurnOptions.set("evicted", { sessionId: "evicted" } as never);
   a.acquire = async () => ({ prep: {} as never, proc: woke });
@@ -3154,7 +3538,11 @@ console.log("ok");
   a.resolveControl({
     type: "control_response",
     request_id: revivedId,
-    response: { request_id: revivedId, subtype: "success", response: { response: "yes" } },
+    response: {
+      request_id: revivedId,
+      subtype: "success",
+      response: { response: "yes" },
+    },
   });
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(a.sideQuestions.get("evicted")?.[0]?.answer, "yes", "the revived answer lands");
@@ -3200,7 +3588,10 @@ console.log("ok");
   const wrote: string[] = [];
   a.processes.set(
     registryKey("claude-code", "ctx"),
-    fakeProc({ alive: true, write: (line: string) => (wrote.push(line), true) }),
+    fakeProc({
+      alive: true,
+      write: (line: string) => (wrote.push(line), true),
+    }),
   );
   a.askSideQuestion("ctx", "what changed?", "--- a.ts\n@@ -1 +1 @@\n-old\n+new");
   assert.equal(a.sideQuestions.get("ctx")?.[0]?.error, undefined, "no error on the way out");
@@ -3220,7 +3611,11 @@ console.log("ok");
   a.resolveControl({
     type: "control_response",
     request_id: requestId,
-    response: { request_id: requestId, subtype: "success", response: { response: "a" } },
+    response: {
+      request_id: requestId,
+      subtype: "success",
+      response: { response: "a" },
+    },
   });
   await new Promise((r) => setTimeout(r, 0));
 }
@@ -3232,13 +3627,19 @@ console.log("ok");
       event: {
         type: "content_block_start",
         index: 0,
-        content_block: { type: "tool_use", id, name: "mcp__dsh__subagent_local" },
+        content_block: {
+          type: "tool_use",
+          id,
+          name: "mcp__dsh__subagent_local",
+        },
       },
     });
   const result = (id: string) =>
     tr.translate({
       type: "user",
-      message: { content: [{ type: "tool_result", tool_use_id: id, content: "out" }] },
+      message: {
+        content: [{ type: "tool_result", tool_use_id: id, content: "out" }],
+      },
     });
   open("r1");
   tr.relayed.add("r1");
@@ -3276,7 +3677,10 @@ console.log("schema-guard ok");
 
 // A logged-out CLI surfaces as a clear instruction, whichever way the CLI words it.
 {
-  const notIn = finishReason({ is_error: true, result: "Not logged in · Please run /login" });
+  const notIn = finishReason({
+    is_error: true,
+    result: "Not logged in · Please run /login",
+  });
   assert.match(failureOf(notIn).message, /not logged in on .+claude auth login/);
   // A remote turn names the box it ran on, not this local host, so the user logs in on the right one.
   const remoteOut = finishReason({ is_error: true, result: "Not logged in" }, "nova");
@@ -3294,17 +3698,30 @@ console.log("schema-guard ok");
   forgetStatus();
   const fetchMinor = async () =>
     new Response(
-      JSON.stringify({ status: { indicator: "minor", description: "Degraded performance" } }),
+      JSON.stringify({
+        status: { indicator: "minor", description: "Degraded performance" },
+      }),
     );
   await anthropicStatus(fetchMinor);
-  const gaveUp = finishReason({ is_error: true, api_error_status: 529, result: "overloaded" });
+  const gaveUp = finishReason({
+    is_error: true,
+    api_error_status: 529,
+    result: "overloaded",
+  });
   assert.equal(failureOf(gaveUp).message, "overloaded · Anthropic reports Degraded performance");
   forgetStatus();
-  const unknown = finishReason({ is_error: true, api_error_status: 529, result: "overloaded" });
+  const unknown = finishReason({
+    is_error: true,
+    api_error_status: 529,
+    result: "overloaded",
+  });
   assert.equal(failureOf(unknown).message, "overloaded", "nothing cached, nothing appended");
   // The one predicate the error text and the composer's login card share.
   assert.equal(
-    isLoginFailure({ is_error: true, result: "Not logged in · Please run /login" }),
+    isLoginFailure({
+      is_error: true,
+      result: "Not logged in · Please run /login",
+    }),
     true,
   );
   assert.equal(isLoginFailure({ is_error: true, api_error_status: 401, result: "x" }), true);
@@ -3381,7 +3798,11 @@ console.log("schema-guard ok");
   assert.ok(spec, "spawn was called");
   assert.deepEqual(spec.argv, ["claude", "-p", "--verbose"]);
   assert.equal(spec.cwd, "/w");
-  assert.deepEqual(spec.stdio, { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+  assert.deepEqual(spec.stdio, {
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   assert.deepEqual(
     Object.keys(spec.env ?? {}),
     Object.keys(CHILD_ENV),
@@ -3409,7 +3830,10 @@ console.log("schema-guard ok");
     content: [{ type: "text", text: "hi" }],
     source: { kind: "user" },
   });
-  const asst = message({ role: "assistant", content: [{ type: "text", text: "yo" }] });
+  const asst = message({
+    role: "assistant",
+    content: [{ type: "text", text: "yo" }],
+  });
   const restart = message({
     role: "user",
     content: [{ type: "text", text: RESTART_TEXT }],
@@ -3425,7 +3849,11 @@ console.log("schema-guard ok");
   const file = joinPath(dir, "busy.json");
   await markBusy("dead", true, file);
   await markBusy("live", true, file);
-  const ctx = { on() {}, agents: { get: () => undefined }, logger: { info() {}, warn() {} } };
+  const ctx = {
+    on() {},
+    agents: { get: () => undefined },
+    logger: { info() {}, warn() {} },
+  };
   const a = new ClaudeCodeAdapter(fakeCtx(ctx), Config({}));
   a.processes.set(registryKey("claude-code", "live"), fakeProc({ busy: true }));
   const woke: [string, ClaudeProcess | undefined, string | undefined][] = [];
@@ -3453,7 +3881,12 @@ console.log("schema-guard ok");
   a.processes.set(registryKey("claude-code", "s1"), running);
   // SAFETY: acquire only reads what prepare returns; the spawn path is never reached here.
   a.prepare = async () =>
-    ({ input: "{}", args: [], cwd: "/tmp", spec: emptySpec }) as unknown as TurnPrep;
+    ({
+      input: "{}",
+      args: [],
+      cwd: "/tmp",
+      spec: emptySpec,
+    }) as unknown as TurnPrep;
   await assert.rejects(
     // SAFETY: acquire takes the session options shape; only sessionId is read before the refusal
     async () =>
@@ -3469,7 +3902,12 @@ console.log("schema-guard ok");
 // --- native tool rows: onToolCall / onToolResult callbacks fire for Bash and Edit ---
 {
   const calls: Array<{ callId: string; name: string; args: string }> = [];
-  const results: Array<{ callId: string; text: string; isError: boolean; meta?: object }> = [];
+  const results: Array<{
+    callId: string;
+    text: string;
+    isError: boolean;
+    meta?: object;
+  }> = [];
   const tr = new Translator({
     onToolCall: (callId, name, args) => {
       calls.push({ callId, name, args });
@@ -3512,7 +3950,9 @@ console.log("schema-guard ok");
   // tool_result path
   const res = tr.translate({
     type: "user",
-    message: { content: [{ type: "tool_result", tool_use_id: "tu1", content: "file1\nfile2" }] },
+    message: {
+      content: [{ type: "tool_result", tool_use_id: "tu1", content: "file1\nfile2" }],
+    },
   });
   assert.deepEqual(res, [], "native tool_result emits no chunk");
   assert.equal(results.length, 1, "onToolResult fired once");
@@ -3547,13 +3987,23 @@ console.log("schema-guard ok");
       delta: { type: "input_json_delta", partial_json: '{"command":"ls"}' },
     },
   });
-  tr.translate({ type: "stream_event", event: { type: "content_block_stop", index: 0 } });
+  tr.translate({
+    type: "stream_event",
+    event: { type: "content_block_stop", index: 0 },
+  });
   assert.equal(calls.length, 1, "streaming path fired onToolCall once");
   // whole-message path replays the same tool_use (resume / non-partial); must not fire again
   tr.translate({
     type: "assistant",
     message: {
-      content: [{ type: "tool_use", id: "dup1", name: "Bash", input: { command: "ls" } }],
+      content: [
+        {
+          type: "tool_use",
+          id: "dup1",
+          name: "Bash",
+          input: { command: "ls" },
+        },
+      ],
     },
   });
   assert.equal(calls.length, 1, "same callId does not fire onToolCall a second time");
@@ -3561,7 +4011,9 @@ console.log("schema-guard ok");
   tr.onToolResult = () => {};
   tr.translate({
     type: "user",
-    message: { content: [{ type: "tool_result", tool_use_id: "dup1", content: "ok" }] },
+    message: {
+      content: [{ type: "tool_result", tool_use_id: "dup1", content: "ok" }],
+    },
   });
   assert.equal(tr.firedCalls.size, 0, "firedCalls emptied after tool_result");
   assert.equal(tr.callInputs.size, 0, "callInputs emptied after tool_result");
@@ -3595,7 +4047,9 @@ console.log("schema-guard ok");
   assert.equal(results.length, 0, "onToolResult not called yet — no result arrived");
   tr.translate({
     type: "user",
-    message: { content: [{ type: "tool_result", tool_use_id: "e1", content: "edited" }] },
+    message: {
+      content: [{ type: "tool_result", tool_use_id: "e1", content: "edited" }],
+    },
   });
   assert.equal(results.length, 1, "onToolResult fired after Edit result");
   assert.ok(
@@ -3663,7 +4117,12 @@ console.log("boot ok");
 {
   const notice = (plugin: string, target = "next-turn") => ({
     type: "agent/inbox/spliced",
-    data: { target, start: 0, removedCount: 0, inserted: [{ source: { kind: "plugin", plugin } }] },
+    data: {
+      target,
+      start: 0,
+      removedCount: 0,
+      inserted: [{ source: { kind: "plugin", plugin } }],
+    },
   });
   const turn = { type: "turn/start", data: { turn: 1 } };
   assert.equal(hasPendingNotice([notice("dsh-oh-my-claude")], "dsh-oh-my-claude"), true);
@@ -3695,7 +4154,12 @@ console.log("boot ok");
       target: "next-turn",
       start: 0,
       removedCount: 0,
-      inserted: [{ source: { kind: "user" }, content: [{ type: "text", text: "RESTART" }] }],
+      inserted: [
+        {
+          source: { kind: "user" },
+          content: [{ type: "text", text: "RESTART" }],
+        },
+      ],
     },
   };
   assert.equal(hasPendingNotice([userNotice], "dsh-oh-my-claude", ["RESTART"]), true);
@@ -3734,12 +4198,20 @@ console.log("pending-notice ok");
   }) as any;
   tr.translate({
     type: "assistant",
-    message: { content: [{ type: "tool_use", id: "t9", name: "Bash", input: { command: "env" } }] },
+    message: {
+      content: [{ type: "tool_use", id: "t9", name: "Bash", input: { command: "env" } }],
+    },
   });
   tr.translate({
     type: "user",
     message: {
-      content: [{ type: "tool_result", tool_use_id: "t9", content: "DB_PASSWORD=hunter22" }],
+      content: [
+        {
+          type: "tool_result",
+          tool_use_id: "t9",
+          content: "DB_PASSWORD=hunter22",
+        },
+      ],
     },
   });
   assert.deepEqual(results, ["DB_PASSWORD=[redacted:PW]"]);
@@ -3750,16 +4222,26 @@ console.log("redaction ok");
 // allows the tool, anything else denies with the typed feedback.
 {
   const asked: Array<{
-    questions: Array<{ id: string; detail?: string; intent?: { kind: string } }>;
+    questions: Array<{
+      id: string;
+      detail?: string;
+      intent?: { kind: string };
+    }>;
   }> = [];
-  let answer: { answers: Array<{ id: string; selected?: string[]; custom?: string }> } = {
+  let answer: {
+    answers: Array<{ id: string; selected?: string[]; custom?: string }>;
+  } = {
     answers: [],
   };
   const ctx = fakeCtx({
     on() {},
     userQuestions: {
       ask: async (req: {
-        questions: Array<{ id: string; detail?: string; intent?: { kind: string } }>;
+        questions: Array<{
+          id: string;
+          detail?: string;
+          intent?: { kind: string };
+        }>;
       }) => {
         asked.push(req);
         return answer;
@@ -3784,7 +4266,13 @@ console.log("redaction ok");
   assert.equal(asked[0]!.questions[0]!.detail, "# Plan\n1. do it");
   assert.equal(ok.behavior, "allow", "Approve allows ExitPlanMode");
   answer = {
-    answers: [{ id: "plan-review:tu-plan", selected: ["Keep planning"], custom: "add tests" }],
+    answers: [
+      {
+        id: "plan-review:tu-plan",
+        selected: ["Keep planning"],
+        custom: "add tests",
+      },
+    ],
   };
   const no = await adapter.decide(base as any);
   assert.equal(no.behavior, "deny");
@@ -3994,7 +4482,9 @@ console.log("command-catalog-live ok");
           response: {
             subtype: "success",
             request_id: req.request_id,
-            response: { applied: { ultracode: cli, ultracodeAvailable: available } },
+            response: {
+              applied: { ultracode: cli, ultracodeAvailable: available },
+            },
           },
         });
       }, 0);
@@ -4030,7 +4520,10 @@ console.log("command-bridge ok");
   assert.deepEqual(nativeToolRows(rows, 0), { rows: true, refused: false });
   assert.deepEqual(nativeToolRows(rows, 3), { rows: false, refused: true });
   // A dsh whose loader takes raw rows (the probe passed) lifts the refusal on a versioned format.
-  assert.deepEqual(nativeToolRows(rows, 3, true), { rows: true, refused: false });
+  assert.deepEqual(nativeToolRows(rows, 3, true), {
+    rows: true,
+    refused: false,
+  });
   assert.deepEqual(nativeToolRows({ toolActivity: true, toolsInline: true }, 3), {
     rows: false,
     refused: false,
@@ -4117,9 +4610,10 @@ console.log("temporary ok");
   };
   assert.ok(buildArgs({ ...base } as any).includes("--include-hook-events"));
   assert.ok(
-    !buildArgs({ ...base, config: Config({ hookRows: false }) } as any).includes(
-      "--include-hook-events",
-    ),
+    !buildArgs({
+      ...base,
+      config: Config({ hookRows: false }),
+    } as any).includes("--include-hook-events"),
   );
 }
 console.log("hook-rows ok");
@@ -4177,7 +4671,10 @@ console.log("hook-rows ok");
 
   const found = () => "/abs/claude";
   const base = { command: "claude", sshHost: "", spawn: "keeper" };
-  assert.deepEqual(localConfig(base, "darwin", found), { ...base, command: "/abs/claude" });
+  assert.deepEqual(localConfig(base, "darwin", found), {
+    ...base,
+    command: "/abs/claude",
+  });
   assert.equal(
     localConfig(base, "darwin", found) === base,
     false,
@@ -4220,7 +4717,11 @@ assert.equal(scopeFailed(null, 40), false, "killed by a signal");
   // Both spawn paths compose the child env through one helper, and the plugin's own values beat an
   // inherited one: a shell that exports MCP_TOOL_TIMEOUT used to cut relayed dsh tools short under
   // `spawn: node` while keeper mode ignored it, so the same config behaved two ways.
-  const composed = childEnv({ MCP_TOOL_TIMEOUT: "5000", PATH: "/bin", EMPTY: undefined });
+  const composed = childEnv({
+    MCP_TOOL_TIMEOUT: "5000",
+    PATH: "/bin",
+    EMPTY: undefined,
+  });
   assert.equal(composed.MCP_TOOL_TIMEOUT, "3600000", "plugin value wins over the inherited one");
   assert.ok(composed.PATH?.startsWith("/bin:"), "the inherited PATH is carried through, first");
   assert.equal(composed.PATH, withClaudeDirs("/bin"), "the installer folders follow it");
@@ -4312,18 +4813,30 @@ console.log("keeper-mode ok");
       setTimeout(() => {
         const response =
           req.request.subtype === "rewind_files"
-            ? { canRewind: true, filesChanged: ["a.ts", "b.ts"], insertions: 3, deletions: 1 }
+            ? {
+                canRewind: true,
+                filesChanged: ["a.ts", "b.ts"],
+                insertions: 3,
+                deletions: 1,
+              }
             : {};
         proc.controlListener({
           type: "control_response",
           request_id: req.request_id,
-          response: { subtype: "success", request_id: req.request_id, response },
+          response: {
+            subtype: "success",
+            request_id: req.request_id,
+            response,
+          },
         });
       }, 0);
       return true;
     },
   };
-  const ok = await adapter.control(proc, { subtype: "set_permission_mode", mode: "plan" });
+  const ok = await adapter.control(proc, {
+    subtype: "set_permission_mode",
+    mode: "plan",
+  });
   assert.equal(ok.ok, true);
   assert.equal(JSON.parse(written[0]!).request.mode, "plan");
   adapter.processes.set(registryKey(adapter.providerId, "s1"), proc);
@@ -4371,7 +4884,11 @@ console.log("keeper-mode ok");
             (proc.controlListener as (e: object) => void)({
               type: "control_response",
               request_id: req.request_id,
-              response: { subtype: "success", request_id: req.request_id, response: { cancelled } },
+              response: {
+                subtype: "success",
+                request_id: req.request_id,
+                response: { cancelled },
+              },
             });
           }, 0);
         return true;
@@ -4428,7 +4945,10 @@ console.log("keeper-mode ok");
     assert.equal(field<Set<string>>(proc, "sent").has("r1"), false);
     assert.equal(field<number>(proc, "forwarded"), 0);
     assert.equal(proc.steerPending, false, "nothing left in the CLI to park on");
-    assert.deepEqual(adapter.steersFor("s1"), { waiting: [], held: [{ id: "m1", text: "first" }] });
+    assert.deepEqual(adapter.steersFor("s1"), {
+      waiting: [],
+      held: [{ id: "m1", text: "first" }],
+    });
     assert.deepEqual(await adapter.releaseHold("s1", "m1", { text: "second" }), { ok: true });
     assert.deepEqual(steered, [{ id: "m1", text: "second" }]);
     assert.deepEqual(adapter.steersFor("s1").held, []);
@@ -4454,7 +4974,9 @@ console.log("keeper-mode ok");
       holdId: "m0",
       text: "zero\nfirst",
     });
-    assert.deepEqual(await adapter.releaseHold("s1", "m0", "restore"), { ok: true });
+    assert.deepEqual(await adapter.releaseHold("s1", "m0", "restore"), {
+      ok: true,
+    });
     assert.deepEqual(steered, [
       { id: "m0", text: "zero" },
       { id: "m1", text: "first" },
@@ -4467,9 +4989,14 @@ console.log("keeper-mode ok");
     const { proc } = makeProc(true);
     adapter.processes.set(registryKey(adapter.providerId, "s1"), fakeProc(proc));
     await adapter.holdSteers("s1", ["m1"]);
-    assert.deepEqual(await adapter.releaseHold("s1", "m1", "drop"), { ok: true });
+    assert.deepEqual(await adapter.releaseHold("s1", "m1", "drop"), {
+      ok: true,
+    });
     assert.deepEqual(steered, []);
-    assert.deepEqual(await adapter.releaseHold("s1", "m1", "drop"), { ok: false, reason: "gone" });
+    assert.deepEqual(await adapter.releaseHold("s1", "m1", "drop"), {
+      ok: false,
+      reason: "gone",
+    });
   }
   // The CLI already took it: refused, nothing held, dsh untouched.
   {
@@ -4477,7 +5004,10 @@ console.log("keeper-mode ok");
     const adapter = adapterWith(agent);
     const { proc, written } = makeProc(false);
     adapter.processes.set(registryKey(adapter.providerId, "s1"), fakeProc(proc));
-    assert.deepEqual(await adapter.holdSteers("s1", ["m1"]), { ok: false, reason: "sent" });
+    assert.deepEqual(await adapter.holdSteers("s1", ["m1"]), {
+      ok: false,
+      reason: "sent",
+    });
     assert.equal(written.length, 1, "only the cancel went out");
     assert.deepEqual(removed, []);
     assert.deepEqual(adapter.steersFor("s1"), { waiting: [], held: [] });
@@ -4488,7 +5018,10 @@ console.log("keeper-mode ok");
     const adapter = adapterWith(agent);
     const { proc, written } = makeProc(true);
     adapter.processes.set(registryKey(adapter.providerId, "s1"), fakeProc(proc));
-    assert.deepEqual(await adapter.holdSteers("s1", ["m1"]), { ok: false, reason: "sent" });
+    assert.deepEqual(await adapter.holdSteers("s1", ["m1"]), {
+      ok: false,
+      reason: "sent",
+    });
     assert.equal(JSON.parse(written[1]!).message.content[0].text, "first");
     assert.equal(field<number>(proc, "forwarded"), 1);
     assert.equal(proc.steerPending, true);
@@ -4507,7 +5040,10 @@ console.log("keeper-mode ok");
     const { agent } = makeAgent([pending("m1", "r1", "first")]);
     let reachable = true;
     const adapter = new ClaudeCodeAdapter(
-      fakeCtx({ on() {}, agents: { get: () => (reachable ? agent : undefined) } }),
+      fakeCtx({
+        on() {},
+        agents: { get: () => (reachable ? agent : undefined) },
+      }),
       Config({}),
     );
     const { proc } = makeProc(true);
@@ -4524,9 +5060,15 @@ console.log("keeper-mode ok");
     const adapter = adapterWith(makeAgent([]).agent);
     const { proc, written } = makeProc(true);
     adapter.processes.set(registryKey(adapter.providerId, "s1"), fakeProc(proc));
-    assert.deepEqual(await adapter.holdSteers("s1", ["nope"]), { ok: false, reason: "sent" });
+    assert.deepEqual(await adapter.holdSteers("s1", ["nope"]), {
+      ok: false,
+      reason: "sent",
+    });
     assert.equal(written.length, 0);
-    assert.deepEqual(await adapter.holdSteers("s9", ["m1"]), { ok: false, reason: "gone" });
+    assert.deepEqual(await adapter.holdSteers("s9", ["m1"]), {
+      ok: false,
+      reason: "gone",
+    });
   }
   console.log("steer edit ok");
 
@@ -4569,7 +5111,10 @@ console.log("keeper-mode ok");
       const adapter = adapterWith(makeAgent([]).agent);
       const { proc, written } = relayed();
       adapter.processes.set(registryKey(adapter.providerId, "s1"), fakeProc(proc));
-      assert.deepEqual(await adapter.holdSteers("s1", ["m1"]), { ok: false, reason: "sent" });
+      assert.deepEqual(await adapter.holdSteers("s1", ["m1"]), {
+        ok: false,
+        reason: "sent",
+      });
       assert.equal(written.length, 0);
       assert.deepEqual(adapter.steersFor("s1").waiting, []);
     }
@@ -4596,7 +5141,10 @@ console.log("keeper-mode ok");
       const adapter = adapterWith(agent);
       const { proc, written } = relayed();
       adapter.processes.set(registryKey(adapter.providerId, "s1"), fakeProc(proc));
-      assert.deepEqual(await adapter.sendSteerNow("s1", ["m1"]), { ok: false, reason: "relayed" });
+      assert.deepEqual(await adapter.sendSteerNow("s1", ["m1"]), {
+        ok: false,
+        reason: "relayed",
+      });
       assert.equal(written.length, 0);
       assert.deepEqual(removed, []);
       assert.equal(adapter.steersFor("s1").waiting.length, 1);
@@ -4609,7 +5157,12 @@ console.log("keeper-mode ok");
 // other change, or a refused request, leaves the process untouched so acquire() respawns.
 {
   const adapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
-  const spec: ClaudeProcessSpec = { ...emptySpec, cwd: "/w", model: "sonnet", mode: "default" };
+  const spec: ClaudeProcessSpec = {
+    ...emptySpec,
+    cwd: "/w",
+    model: "sonnet",
+    mode: "default",
+  };
   const written: string[] = [];
   let answer: "success" | "error" = "success";
   // What the fake CLI says its effort is. A real one answers `success` to a level it does not
@@ -4709,7 +5262,11 @@ assert.equal(noticeSource("wake", true).kind, "plugin", "a plain wake never clai
 // Session format v4 refuses the `plugin` wrapper: from version 4 the notice carries the
 // producer-owned kind and no `plugin` field, and the goal rearm still claims the user.
 {
-  const v4 = noticeSource(WAKE_TEXT, false, 4) as { kind: string; form?: string; summary?: string };
+  const v4 = noticeSource(WAKE_TEXT, false, 4) as {
+    kind: string;
+    form?: string;
+    summary?: string;
+  };
   assert.equal(v4.kind, "plugin:dsh-oh-my-claude");
   assert.equal(v4.form, "notice");
   assert.equal(typeof v4.summary, "string");
@@ -4839,7 +5396,11 @@ console.log("interrupt-on-abort ok");
             response: {
               categories: [
                 { name: "System prompt", tokens: 1499, color: "x" },
-                { name: "MCP tools (deferred)", tokens: 19540, isDeferred: true },
+                {
+                  name: "MCP tools (deferred)",
+                  tokens: 19540,
+                  isDeferred: true,
+                },
                 { name: "Messages", tokens: 3830 },
                 { name: "bogus" },
               ],
@@ -4892,7 +5453,11 @@ console.log("interrupt-on-abort ok");
           type: "control_response",
           request_id: req.request_id,
           response: decline
-            ? { subtype: "error", request_id: req.request_id, error: "unsupported" }
+            ? {
+                subtype: "error",
+                request_id: req.request_id,
+                error: "unsupported",
+              }
             : {
                 subtype: "success",
                 request_id: req.request_id,
@@ -4957,15 +5522,33 @@ console.log("interrupt-on-abort ok");
               diff: {
                 stats: { filesCount: 2, linesAdded: 1, linesRemoved: 0 },
                 perFileStats: [
-                  { path: "a.txt", added: 1, removed: 0, isBinary: false, isUntracked: false },
-                  { path: "b.txt", added: 0, removed: 0, isBinary: false, isUntracked: true },
+                  {
+                    path: "a.txt",
+                    added: 1,
+                    removed: 0,
+                    isBinary: false,
+                    isUntracked: false,
+                  },
+                  {
+                    path: "b.txt",
+                    added: 0,
+                    removed: 0,
+                    isBinary: false,
+                    isUntracked: true,
+                  },
                   { nope: true },
                 ],
                 hunks: [
                   {
                     path: "a.txt",
                     hunks: [
-                      { oldStart: 1, oldLines: 1, newStart: 1, newLines: 2, lines: [" x", "+y"] },
+                      {
+                        oldStart: 1,
+                        oldLines: 1,
+                        newStart: 1,
+                        newLines: 2,
+                        lines: [" x", "+y"],
+                      },
                     ],
                   },
                 ],
@@ -4994,7 +5577,14 @@ console.log("interrupt-on-abort ok");
         untracked: false,
         hunks: [{ oldStart: 1, newStart: 1, lines: [" x", "+y"] }],
       },
-      { path: "b.txt", added: 0, removed: 0, binary: false, untracked: true, hunks: [] },
+      {
+        path: "b.txt",
+        added: 0,
+        removed: 0,
+        binary: false,
+        untracked: true,
+        hunks: [],
+      },
     ]);
   }
   assert.equal((await adapter.workspaceDiff("nope")).ok, false);
@@ -5042,7 +5632,11 @@ console.log("interrupt-on-abort ok");
         proc.controlListener({
           type: "control_response",
           request_id: req.request_id,
-          response: { subtype: "success", request_id: req.request_id, response: {} },
+          response: {
+            subtype: "success",
+            request_id: req.request_id,
+            response: {},
+          },
         });
       }, 0);
       return true;
@@ -5065,7 +5659,11 @@ console.log("interrupt-on-abort ok");
         type: "control_response",
         request_id: r.request_id,
         response: fail
-          ? { subtype: "error", request_id: r.request_id, error: "MCP endpoint not found" }
+          ? {
+              subtype: "error",
+              request_id: r.request_id,
+              error: "MCP endpoint not found",
+            }
           : { subtype: "success", request_id: r.request_id, response: {} },
       });
     }, 0);
@@ -5119,7 +5717,11 @@ console.log("interrupt-on-abort ok");
                         serverInfo: { name: "dsh", version: "0.9.0" },
                         config: { type: "http" },
                       },
-                      { name: "plugin:x", status: "failed", error: "Connection timeout" },
+                      {
+                        name: "plugin:x",
+                        status: "failed",
+                        error: "Connection timeout",
+                      },
                       {
                         name: "plugin:y",
                         status: "needs-auth",
@@ -5141,7 +5743,12 @@ console.log("interrupt-on-abort ok");
     ok: true,
     servers: [
       { name: "dsh", status: "connected", version: "0.9.0", asking: false },
-      { name: "plugin:x", status: "failed", error: "Connection timeout", asking: false },
+      {
+        name: "plugin:x",
+        status: "failed",
+        error: "Connection timeout",
+        asking: false,
+      },
       {
         name: "plugin:y",
         status: "needs-auth",
@@ -5295,7 +5902,12 @@ console.log("interrupt-on-abort ok");
       displayName: "Opus (1M context)",
       efforts: [],
     },
-    { value: "custom", resolvedModel: "claude-next-9", displayName: "Next", efforts: [] },
+    {
+      value: "custom",
+      resolvedModel: "claude-next-9",
+      displayName: "Next",
+      efforts: [],
+    },
   ];
   const merged = mergeCatalog(cli, KNOWN_MODELS);
   assert.deepEqual(
@@ -5367,7 +5979,10 @@ console.log("interrupt-on-abort ok");
   // without a CLI list nothing is marked.
   {
     const base = [
-      modelFromApi({ id: "claude-haiku-4-5-20251001", created_at: "2025-10-01T00:00:00Z" }),
+      modelFromApi({
+        id: "claude-haiku-4-5-20251001",
+        created_at: "2025-10-01T00:00:00Z",
+      }),
       modelFromApi({ id: "claude-next-9", created_at: "2027-01-01T00:00:00Z" }),
       modelFromApi({ id: "claude-old-1", created_at: "2024-01-01T00:00:00Z" }),
     ];
@@ -5384,7 +5999,10 @@ console.log("interrupt-on-abort ok");
   }
   // modelPicker rows follow the built-in lineup, or replace it apart from Default.
   const rows = { options: [{ model: "opus-4-5", label: "Cheap Opus" }] };
-  const appended = mergeCatalog(cli, KNOWN_MODELS, { ...rows, replaceBuiltInOptions: false });
+  const appended = mergeCatalog(cli, KNOWN_MODELS, {
+    ...rows,
+    replaceBuiltInOptions: false,
+  });
   assert.deepEqual(
     appended.at(-1),
     {
@@ -5416,7 +6034,10 @@ console.log("interrupt-on-abort ok");
     "a cap in the picker leaves the listing's efforts untouched",
   );
   assert.deepEqual(
-    mergeCatalog(cli, KNOWN_MODELS, { ...rows, replaceBuiltInOptions: true }).map((m) => m.id),
+    mergeCatalog(cli, KNOWN_MODELS, {
+      ...rows,
+      replaceBuiltInOptions: true,
+    }).map((m) => m.id),
     ["default", "opus-4-5"],
     "replaceBuiltInOptions: Default and the rows, nothing else",
   );
@@ -5619,7 +6240,12 @@ console.log("interrupt-on-abort ok");
     "the line carries the uuid",
   );
 
-  splice([{ ...typed, content: [{ type: "text", text: "check the CHANGELOG instead" }] }]);
+  splice([
+    {
+      ...typed,
+      content: [{ type: "text", text: "check the CHANGELOG instead" }],
+    },
+  ]);
   assert.equal(writes.length, 1, "a replace of a message already forwarded is not written again");
 
   splice([
@@ -5646,7 +6272,11 @@ console.log("interrupt-on-abort ok");
       on(name: string, fn: (session: unknown, event: unknown) => void) {
         handlers[name] = fn;
       },
-      agents: { get: () => ({ inbox: { nextStep, replace: () => true, remove: () => true } }) },
+      agents: {
+        get: () => ({
+          inbox: { nextStep, replace: () => true, remove: () => true },
+        }),
+      },
     }),
     Config({}),
   );
@@ -5704,7 +6334,10 @@ console.log("interrupt-on-abort ok");
   nextStep = [];
   handlers["session/event"]?.(
     { id: "r" },
-    { type: "agent/inbox/spliced", data: { target: "next-step", inserted: [], removedCount: 1 } },
+    {
+      type: "agent/inbox/spliced",
+      data: { target: "next-step", inserted: [], removedCount: 1 },
+    },
   );
   assert.equal(relayProc.steers.has("m1"), false, "relayed: follows dsh's inbox");
   console.log("steer-card relay listener ok");
@@ -5844,7 +6477,12 @@ console.log("interrupt-on-abort ok");
     },
   };
   // SAFETY: openTurn reads only input and drops off the prep; the rest is the spawn path's.
-  const prep = { input: "{}", args: [], cwd: "/tmp", spec: emptySpec } as unknown as TurnPrep;
+  const prep = {
+    input: "{}",
+    args: [],
+    cwd: "/tmp",
+    spec: emptySpec,
+  } as unknown as TurnPrep;
   // SAFETY: the session options carry dsh's branded id; continuationFor and openTurn read only
   // these two fields of them.
   const opts = (sessionId: string, messages: LooseMessage[]) =>
@@ -5995,13 +6633,22 @@ console.log("interrupt-on-abort ok");
   adapter.processes.set(registryKey("claude-code", "t"), fakeProc(idle));
   const hi = (rpcId: string) =>
     messageList([
-      { role: "user", source: { kind: "user", rpcId }, content: [{ type: "text", text: "hi" }] },
+      {
+        role: "user",
+        source: { kind: "user", rpcId },
+        content: [{ type: "text", text: "hi" }],
+      },
     ]);
   const fresh = adapter.continuationFor(opts("t", hi("q1")));
   assert.equal(fresh.mode, "prompt");
   assert.equal(idle.steerPending, false, "a fresh turn clears the last turn's stale steer flag");
 
-  const busy = { ...idle, busy: true, sent: new Set<string>(), steerPending: true };
+  const busy = {
+    ...idle,
+    busy: true,
+    sent: new Set<string>(),
+    steerPending: true,
+  };
   adapter.processes.set(registryKey("claude-code", "u"), fakeProc(busy));
   adapter.continuationFor(opts("u", hi("q2")));
   assert.equal(busy.steerPending, true, "a busy process keeps its flag: its own turn parks on it");
@@ -6062,7 +6709,12 @@ console.log("interrupt-on-abort ok");
   );
   assert.equal(relayed.relays.size, 0, "and the relay map is emptied");
 
-  const resumed = { ...idle, busy: true, sent: new Set<string>(), steerPending: true };
+  const resumed = {
+    ...idle,
+    busy: true,
+    sent: new Set<string>(),
+    steerPending: true,
+  };
   await adapter.openTurn(
     { mode: "steer", proc: fakeProc(resumed), options: opts("x", []) },
     fakeProc(resumed),
@@ -6081,7 +6733,11 @@ console.log("interrupt-on-abort ok");
     resolve: (v: { text: string }) => resolved.push(v.text),
     reject: () => {},
   });
-  adapter.liveTurn.set("w", { at: 1, tool: true, relay: { name: "job_output", at: 1 } });
+  adapter.liveTurn.set("w", {
+    at: 1,
+    tool: true,
+    relay: { name: "job_output", at: 1 },
+  });
   await adapter.openTurn(
     {
       mode: "relay",
@@ -6144,7 +6800,11 @@ console.log("interrupt-on-abort ok");
       on(name: string, fn: (session: unknown, event: unknown) => void) {
         handlers[name] = fn;
       },
-      agents: { get: () => ({ inbox: { nextStep, replace: () => true, remove: () => true } }) },
+      agents: {
+        get: () => ({
+          inbox: { nextStep, replace: () => true, remove: () => true },
+        }),
+      },
     }),
     Config({}),
   );
@@ -6166,7 +6826,10 @@ console.log("interrupt-on-abort ok");
   const splice = (session: string, inserted: object[], removedCount = 0) =>
     handlers["session/event"]?.(
       { id: session },
-      { type: "agent/inbox/spliced", data: { target: "next-step", inserted, removedCount } },
+      {
+        type: "agent/inbox/spliced",
+        data: { target: "next-step", inserted, removedCount },
+      },
     );
   const typed = (id: string, blocks: object[]) => ({
     id,
@@ -6187,7 +6850,12 @@ console.log("interrupt-on-abort ok");
   assert.equal(native.forwarded, 1);
   assert.equal(native.steerPending, true, "native: the step parks at the next tool result");
   assert.deepEqual(listener.steersFor("n").waiting, [
-    { id: "m1", text: "see", at: native.steers.get("m1")?.at, attachments: [fileChip] },
+    {
+      id: "m1",
+      text: "see",
+      at: native.steers.get("m1")?.at,
+      attachments: [fileChip],
+    },
   ]);
 
   splice("n", [typed("m2", [image])]);
@@ -6335,7 +7003,9 @@ console.log("interrupt-on-abort ok");
     const { proc } = boundaryProc("see", [fileChip]);
     adapter.processes.set(registryKey(adapter.providerId, "s1"), fakeProc(proc));
     await adapter.holdSteers("s1", ["m1"]);
-    assert.deepEqual(await adapter.releaseHold("s1", "m1", { text: "  " }), { ok: true });
+    assert.deepEqual(await adapter.releaseHold("s1", "m1", { text: "  " }), {
+      ok: true,
+    });
     assert.deepEqual(steered, [{ id: "m1", content: [file] }], "blank words: the file alone");
   }
   {
@@ -6357,7 +7027,12 @@ console.log("interrupt-on-abort ok");
     const { adapter, steered } = makeAgent([typed("m1", [image]), typed("m2", [words("fix it")])]);
     const { proc } = boundaryProc("", [imageChip]);
     proc.forwarded = 2;
-    proc.steers.set("m2", { key: "r-m2", text: "fix it", at: 2, relayed: true });
+    proc.steers.set("m2", {
+      key: "r-m2",
+      text: "fix it",
+      at: 2,
+      relayed: true,
+    });
     adapter.processes.set(registryKey(adapter.providerId, "s1"), fakeProc(proc));
     assert.deepEqual(await adapter.holdSteers("s1", ["m1", "m2"]), {
       ok: true,
@@ -6376,7 +7051,12 @@ console.log("interrupt-on-abort ok");
       proc.steers.clear();
       proc.forwarded = 1;
       proc.steerPending = true;
-      proc.steers.set("m9", { key: "r-m9", text: "late", at: 9, boundary: true });
+      proc.steers.set("m9", {
+        key: "r-m9",
+        text: "late",
+        at: 9,
+        boundary: true,
+      });
     });
     adapter.processes.set(registryKey(adapter.providerId, "s1"), fakeProc(proc));
     await adapter.holdSteers("s1", ["m1"]);
@@ -6389,7 +7069,9 @@ console.log("interrupt-on-abort ok");
   const withStore = new ClaudeCodeAdapter(
     fakeCtx({
       on() {},
-      attachments: { readImage: async () => ({ data: new Uint8Array([0, 1, 2]).buffer }) },
+      attachments: {
+        readImage: async () => ({ data: new Uint8Array([0, 1, 2]).buffer }),
+      },
     }),
     Config({}),
   );
@@ -6407,7 +7089,12 @@ console.log("interrupt-on-abort ok");
     },
   };
   // SAFETY: openTurn reads only input and drops off the prep; the rest is the spawn path's.
-  const prep = { input: "{}", args: [], cwd: "/tmp", spec: emptySpec } as unknown as TurnPrep;
+  const prep = {
+    input: "{}",
+    args: [],
+    cwd: "/tmp",
+    spec: emptySpec,
+  } as unknown as TurnPrep;
   // SAFETY: the session options carry dsh's branded id; openTurn reads only these two fields
   const opts = (sessionId: string, messages: LooseMessage[]) =>
     ({ sessionId, messages }) as unknown as Parameters<ClaudeCodeAdapter["continuationFor"]>[0];
@@ -6428,7 +7115,11 @@ console.log("interrupt-on-abort ok");
         "s",
         messageList([
           { role: "assistant", content: [words("on it")] },
-          { role: "user", source: { kind: "user", rpcId: "r-img" }, content: [image] },
+          {
+            role: "user",
+            source: { kind: "user", rpcId: "r-img" },
+            content: [image],
+          },
         ]),
       ),
     },
@@ -6511,7 +7202,9 @@ console.log("interrupt-on-abort ok");
         },
         tag: "handle",
       },
-      attachments: { readImage: async () => ({ data: new Uint8Array([0, 1, 2]).buffer }) },
+      attachments: {
+        readImage: async () => ({ data: new Uint8Array([0, 1, 2]).buffer }),
+      },
     }),
     Config({}),
   );
@@ -6537,7 +7230,14 @@ console.log("interrupt-on-abort ok");
         type: "agent/inbox/spliced",
         data: {
           target: "next-step",
-          inserted: [{ id, role: "user", source: { kind: "user", rpcId: `r-${id}` }, content }],
+          inserted: [
+            {
+              id,
+              role: "user",
+              source: { kind: "user", rpcId: `r-${id}` },
+              content,
+            },
+          ],
         },
       },
     );
@@ -6551,7 +7251,10 @@ console.log("interrupt-on-abort ok");
   const settle = () => new Promise((r) => setTimeout(r, 10));
 
   splice("m1", [
-    { type: "file", attachment: { attachmentId: "sha256:abc", name: "a.zip", bytes: 3 } },
+    {
+      type: "file",
+      attachment: { attachmentId: "sha256:abc", name: "a.zip", bytes: 3 },
+    },
     { type: "text", text: "see" },
   ]);
   assert.ok(proc.sent.has("r-m1"), "marked sent at once, so a park during the load skips it");
@@ -6574,7 +7277,10 @@ console.log("interrupt-on-abort ok");
   });
 
   splice("m2", [
-    { type: "image", attachment: { attachmentId: "sha256:def", mediaType: "image/png" } },
+    {
+      type: "image",
+      attachment: { attachmentId: "sha256:def", mediaType: "image/png" },
+    },
   ]);
   await settle();
   const imageLine = lineOf(1).message?.content ?? [];
@@ -6585,7 +7291,10 @@ console.log("interrupt-on-abort ok");
   // A park while the image loads: the CLI's queue is taken, so no row is left behind.
   proc.steerPending = false;
   splice("m3", [
-    { type: "image", attachment: { attachmentId: "sha256:fed", mediaType: "image/png" } },
+    {
+      type: "image",
+      attachment: { attachmentId: "sha256:fed", mediaType: "image/png" },
+    },
   ]);
   proc.steerPending = false;
   await settle();
@@ -6601,7 +7310,12 @@ console.log("interrupt-on-abort ok");
     }),
     Config({}),
   );
-  const oldProc = { ...proc, sent: new Set<string>(), steers: new Map(), forwarded: 0 };
+  const oldProc = {
+    ...proc,
+    sent: new Set<string>(),
+    steers: new Map(),
+    forwarded: 0,
+  };
   old.processes.set(registryKey("claude-code", "o"), fakeProc(oldProc));
   handlers.old?.(
     { id: "o" },
@@ -6615,7 +7329,14 @@ console.log("interrupt-on-abort ok");
             role: "user",
             source: { kind: "user", rpcId: "r-m4" },
             content: [
-              { type: "file", attachment: { attachmentId: "sha256:abc", name: "a.zip", bytes: 3 } },
+              {
+                type: "file",
+                attachment: {
+                  attachmentId: "sha256:abc",
+                  name: "a.zip",
+                  bytes: 3,
+                },
+              },
             ],
           },
         ],
@@ -6641,7 +7362,12 @@ console.log("interrupt-on-abort ok");
   throwing.loadImages = async () => {
     throw new Error("store gone");
   };
-  const throwProc = { ...proc, sent: new Set<string>(), steers: new Map(), forwarded: 0 };
+  const throwProc = {
+    ...proc,
+    sent: new Set<string>(),
+    steers: new Map(),
+    forwarded: 0,
+  };
   throwing.processes.set(registryKey("claude-code", "t"), fakeProc(throwProc));
   handlers.throwing?.(
     { id: "t" },
@@ -6655,7 +7381,13 @@ console.log("interrupt-on-abort ok");
             role: "user",
             source: { kind: "user", rpcId: "r-m5" },
             content: [
-              { type: "image", attachment: { attachmentId: "sha256:x", mediaType: "image/png" } },
+              {
+                type: "image",
+                attachment: {
+                  attachmentId: "sha256:x",
+                  mediaType: "image/png",
+                },
+              },
             ],
           },
         ],
@@ -6728,7 +7460,9 @@ console.log("interrupt-on-abort ok");
   const adapter = new ClaudeCodeAdapter(
     fakeCtx({
       on() {},
-      attachments: { readImage: async () => ({ data: new Uint8Array([0, 1, 2]).buffer }) },
+      attachments: {
+        readImage: async () => ({ data: new Uint8Array([0, 1, 2]).buffer }),
+      },
     }),
     Config({ sshHost: "far" }),
   );
@@ -6750,7 +7484,12 @@ console.log("interrupt-on-abort ok");
     },
   };
   // SAFETY: openTurn reads only input and drops off the prep; the rest is the spawn path's.
-  const prep = { input: "{}", args: [], cwd: "/tmp", spec: emptySpec } as unknown as TurnPrep;
+  const prep = {
+    input: "{}",
+    args: [],
+    cwd: "/tmp",
+    spec: emptySpec,
+  } as unknown as TurnPrep;
   // SAFETY: the session options carry dsh's branded id; openTurn reads only these two fields.
   const opts = (sessionId: string, messages: LooseMessage[]) =>
     ({ sessionId, messages }) as unknown as Parameters<ClaudeCodeAdapter["continuationFor"]>[0];
@@ -6767,10 +7506,16 @@ console.log("interrupt-on-abort ok");
               role: "user",
               source: { kind: "user", rpcId },
               content: [
-                { type: "text", text: handle("a.zip", "abc12345", "/store/aa") },
+                {
+                  type: "text",
+                  text: handle("a.zip", "abc12345", "/store/aa"),
+                },
                 {
                   type: "image",
-                  attachment: { attachmentId: "sha256:feed01", mediaType: "image/png" },
+                  attachment: {
+                    attachmentId: "sha256:feed01",
+                    mediaType: "image/png",
+                  },
                 },
               ],
             },
@@ -6870,7 +7615,9 @@ console.log("interrupt-on-abort ok");
     action: "accept",
     content: { name: "Ada", size: "m", ok: false, count: 3 },
   });
-  assert.deepEqual(elicitationResult(request, { answers: [] }, "r1"), { action: "cancel" });
+  assert.deepEqual(elicitationResult(request, { answers: [] }, "r1"), {
+    action: "cancel",
+  });
   assert.equal(
     elicitationQuestions({ ...request, mode: "url", url: "https://x" }, "r2"),
     undefined,
@@ -6940,11 +7687,25 @@ console.log("interrupt-on-abort ok");
   const refusal = (why: string) =>
     `Permission for this action was denied by the Claude Code auto mode classifier. Reason: [${why}]. If you have other tasks, continue.`;
   t.toolResults(
-    [{ type: "tool_result", tool_use_id: "a", is_error: true, content: refusal("Exfil Scouting") }],
+    [
+      {
+        type: "tool_result",
+        tool_use_id: "a",
+        is_error: true,
+        content: refusal("Exfil Scouting"),
+      },
+    ],
     null,
   );
   t.toolResults(
-    [{ type: "tool_result", tool_use_id: "b", is_error: true, content: refusal("Exfil Scouting") }],
+    [
+      {
+        type: "tool_result",
+        tool_use_id: "b",
+        is_error: true,
+        content: refusal("Exfil Scouting"),
+      },
+    ],
     null,
   );
   t.toolResults(
@@ -6958,7 +7719,12 @@ console.log("interrupt-on-abort ok");
     ],
     null,
   );
-  const out = t.translate({ type: "result", subtype: "success", is_error: false, result: "" });
+  const out = t.translate({
+    type: "result",
+    subtype: "success",
+    is_error: false,
+    result: "",
+  });
   const text =
     out
       .filter((e: any) => e.type === "text-delta" || e.type === "delta")
@@ -6990,7 +7756,10 @@ console.log("interrupt-on-abort ok");
             name: "logo.png",
           },
         },
-        { type: "image", attachment: { attachmentId: "sha256:def", mediaType: "image/png" } },
+        {
+          type: "image",
+          attachment: { attachmentId: "sha256:def", mediaType: "image/png" },
+        },
       ],
     } as LooseMessage,
   ];
@@ -7028,7 +7797,12 @@ console.log("interrupt-on-abort ok");
     } as LooseMessage,
   ];
   const wideNote = attachmentNotes(wide, [
-    { mediaType: "image/png", data: "", attachmentId: "sha256:wide", path: "/state/wide.png" },
+    {
+      mediaType: "image/png",
+      data: "",
+      attachmentId: "sha256:wide",
+      path: "/state/wide.png",
+    },
   ]);
   assert.ok(wideNote.includes("not shown inline") && wideNote.includes("2000px"), wideNote);
   assert.ok(wideNote.includes('"/state/wide.png"'), "the note still names the copy to Read");
@@ -7064,8 +7838,16 @@ console.log("interrupt-on-abort ok");
   t.partial({ type: "message_delta", usage: { output_tokens: 600 } });
   t.partial({ type: "message_delta", usage: { output_tokens: 250 } });
   t.partial({ type: "message_start", message: { id: "m3" } });
-  t.partial({ type: "content_block_start", index: 0, content_block: { type: "thinking" } });
-  t.translate({ type: "system", subtype: "thinking_tokens", estimated_tokens: 1200 });
+  t.partial({
+    type: "content_block_start",
+    index: 0,
+    content_block: { type: "thinking" },
+  });
+  t.translate({
+    type: "system",
+    subtype: "thinking_tokens",
+    estimated_tokens: 1200,
+  });
   t.partial({ type: "content_block_stop", index: 0 });
   t.partial({ type: "content_block_stop", index: 0 }); // a second stop for a closed block says nothing
   t.partial({ type: "message_delta", usage: { output_tokens: 1300 } });
@@ -7089,10 +7871,18 @@ console.log("interrupt-on-abort ok");
 // stood in for.
 {
   const think = (t: any, total: number) =>
-    t.translate({ type: "system", subtype: "thinking_tokens", estimated_tokens: total });
+    t.translate({
+      type: "system",
+      subtype: "thinking_tokens",
+      estimated_tokens: total,
+    });
   const t = new Translator() as any;
   t.partial({ type: "message_start" });
-  t.partial({ type: "content_block_start", index: 0, content_block: { type: "thinking" } });
+  t.partial({
+    type: "content_block_start",
+    index: 0,
+    content_block: { type: "thinking" },
+  });
   assert.deepEqual(think(t, 400), [], "below the first mark nothing draws");
   const open = think(t, 1200);
   assert.equal(open[0].type, "block-start");
@@ -7115,9 +7905,17 @@ console.log("interrupt-on-abort ok");
   // Thinking whose text is streaming needs no counter, and an open one closes.
   const t2 = new Translator() as any;
   t2.partial({ type: "message_start" });
-  t2.partial({ type: "content_block_start", index: 0, content_block: { type: "thinking" } });
+  t2.partial({
+    type: "content_block_start",
+    index: 0,
+    content_block: { type: "thinking" },
+  });
   think(t2, 1200);
-  t2.partial({ type: "content_block_delta", index: 0, delta: { thinking: "words" } });
+  t2.partial({
+    type: "content_block_delta",
+    index: 0,
+    delta: { thinking: "words" },
+  });
   const hushed = think(t2, 5000);
   assert.equal(hushed[0].type, "block-end", "visible thinking closes the counter");
   assert.deepEqual(think(t2, 9000), [], "and it does not reopen");
@@ -7125,7 +7923,11 @@ console.log("interrupt-on-abort ok");
   // A counter still open when the turn ends is closed by the result frame.
   const t3 = new Translator() as any;
   t3.partial({ type: "message_start" });
-  t3.partial({ type: "content_block_start", index: 0, content_block: { type: "thinking" } });
+  t3.partial({
+    type: "content_block_start",
+    index: 0,
+    content_block: { type: "thinking" },
+  });
   think(t3, 3000);
   const ended = t3.translate({ type: "result", subtype: "success", usage: {} });
   assert(
@@ -7210,14 +8012,24 @@ console.log("interrupt-on-abort ok");
   const row = (o: object) => JSON.stringify(o);
   const T = "2026-09-10T22:00:00.000Z";
   const user = (uuid: string, ep: string, content: unknown) =>
-    row({ type: "user", uuid, timestamp: T, entrypoint: ep, message: { role: "user", content } });
+    row({
+      type: "user",
+      uuid,
+      timestamp: T,
+      entrypoint: ep,
+      message: { role: "user", content },
+    });
   const asst = (uuid: string, ep: string, text: string) =>
     row({
       type: "assistant",
       uuid,
       timestamp: T,
       entrypoint: ep,
-      message: { id: uuid, role: "assistant", content: [{ type: "text", text }] },
+      message: {
+        id: uuid,
+        role: "assistant",
+        content: [{ type: "text", text }],
+      },
     });
   a.terminalSync = true; // the mirror ships off; these cases are about what it does when on
   await a.watchTranscript("s1", cwd, "c1");
@@ -7241,7 +8053,9 @@ console.log("interrupt-on-abort ok");
   }> = [];
   // SAFETY: the test's agent only records followups; agentFor reads nothing else off it
   a.agentFor = async () => ({
-    agent: { followup: (m: unknown) => sent.push(m as (typeof sent)[0]) } as unknown as Agent,
+    agent: {
+      followup: (m: unknown) => sent.push(m as (typeof sent)[0]),
+    } as unknown as Agent,
     how: "live",
   });
   const proc = fakeProc({ alive: true, staleContext: false, kill() {} });
@@ -7315,7 +8129,9 @@ console.log("interrupt-on-abort ok");
   const sentC: Array<{ content: Array<{ text?: string }> }> = [];
   // SAFETY: as above, a recording agent
   c.agentFor = async () => ({
-    agent: { followup: (m: unknown) => sentC.push(m as (typeof sentC)[0]) } as unknown as Agent,
+    agent: {
+      followup: (m: unknown) => sentC.push(m as (typeof sentC)[0]),
+    } as unknown as Agent,
     how: "live",
   });
   await c.watchTranscript("s1", cwd, "c1");
@@ -7379,7 +8195,12 @@ console.log("interrupt-on-abort ok");
     off.terminalSync = true;
     await off.watchTranscript("s-off", cwd, claudeSessionId("s-off"));
     // No transcript for that id, so no watcher; assert the setter still clears any that exist.
-    off.watchers.set("x", { path: "/x", seen: 0, claudeId: "c", box: {} } as never);
+    off.watchers.set("x", {
+      path: "/x",
+      seen: 0,
+      claudeId: "c",
+      box: {},
+    } as never);
     await off.setTerminalSync(false);
     assert.equal(off.watchers.size, 0, "setTerminalSync(false) clears watchers");
     assert.equal(
@@ -7404,7 +8225,9 @@ console.log("interrupt-on-abort ok");
   const sentD: Array<{ content: Array<{ text?: string }> }> = [];
   // SAFETY: a recording agent, as above
   d.agentFor = async () => ({
-    agent: { followup: (m: unknown) => sentD.push(m as (typeof sentD)[0]) } as unknown as Agent,
+    agent: {
+      followup: (m: unknown) => sentD.push(m as (typeof sentD)[0]),
+    } as unknown as Agent,
     how: "live",
   });
   const nine = (await d.transcriptLocation(cwd, "c9"))!.path;
@@ -7439,7 +8262,9 @@ console.log("interrupt-on-abort ok");
             snapshotEvents: () => [
               {
                 type: "assistant/message",
-                data: { message: { content: [{ type: "text", text: shownText }] } },
+                data: {
+                  message: { content: [{ type: "text", text: shownText }] },
+                },
               },
             ],
           }),
@@ -7481,7 +8306,9 @@ console.log("interrupt-on-abort ok");
     g.terminalSync = true;
     const sentG: Array<{ id: string; content: Array<{ text?: string }> }> = [];
     g.agentFor = async () => ({
-      agent: { followup: (m: unknown) => sentG.push(m as (typeof sentG)[0]) } as unknown as Agent,
+      agent: {
+        followup: (m: unknown) => sentG.push(m as (typeof sentG)[0]),
+      } as unknown as Agent,
       how: "live",
     });
     const gp = (await g.transcriptLocation(cwd, "cg"))!.path;
@@ -7492,7 +8319,12 @@ console.log("interrupt-on-abort ok");
         uuid,
         timestamp: oldT,
         entrypoint: "cli",
-        message: { id: uuid, role: "assistant", content: blocks, stop_reason: reason },
+        message: {
+          id: uuid,
+          role: "assistant",
+          content: blocks,
+          stop_reason: reason,
+        },
       });
     const userRow = (uuid: string, content: unknown) =>
       JSON.stringify({
@@ -7578,7 +8410,11 @@ console.log("interrupt-on-abort ok");
   });
   const snap = message({
     role: "user",
-    source: { kind: "plugin", plugin: "@deepseek-ai/dsh-system-prompt", form: "snapshot" },
+    source: {
+      kind: "plugin",
+      plugin: "@deepseek-ai/dsh-system-prompt",
+      form: "snapshot",
+    },
     content: [{ type: "text", text: "approval policy: ask" }],
   });
   const job = message({
@@ -7618,7 +8454,11 @@ console.log("interrupt-on-abort ok");
 
   // The mid-turn path has no such fallback on purpose: a tool result already carries the turn.
   const midTurn = messageList([
-    { role: "user", source: { kind: "tool", callId: "x" }, content: [{ type: "tool-result" }] },
+    {
+      role: "user",
+      source: { kind: "tool", callId: "x" },
+      content: [{ type: "tool-result" }],
+    },
     cat,
     { role: "user", content: "and also this" },
   ]);
@@ -7690,7 +8530,11 @@ console.log("interrupt-on-abort ok");
   });
   const snap = message({
     role: "user",
-    source: { kind: "plugin", plugin: "@deepseek-ai/dsh-system-prompt", form: "snapshot" },
+    source: {
+      kind: "plugin",
+      plugin: "@deepseek-ai/dsh-system-prompt",
+      form: "snapshot",
+    },
     content: [{ type: "text", text: "approval policy: ask" }],
   });
   const typed = message({ role: "user", content: "do the thing" });
@@ -7785,7 +8629,10 @@ console.log("skill-doctor ok");
   a.awaitingInput.set("s2", { kind: "plan", id: "r2", since: 222 });
   assert.deepEqual(
     a.awaitingSnapshot(),
-    { s1: { kind: "approval", id: "r1", since: 111 }, s2: { kind: "plan", id: "r2", since: 222 } },
+    {
+      s1: { kind: "approval", id: "r1", since: 111 },
+      s2: { kind: "plan", id: "r2", since: 222 },
+    },
     "every waiting session is in the snapshot, keyed by dsh session id",
   );
   a.awaitingInput.delete("s1");
@@ -7862,7 +8709,12 @@ console.log("watch-save-race ok");
   };
   const a = new ClaudeCodeAdapter(
     fakeCtx({ on() {}, sessions: { get: () => session } }),
-    Config({ resume: true, toolActivity: true, toolsInline: false, dshTools: false }),
+    Config({
+      resume: true,
+      toolActivity: true,
+      toolsInline: false,
+      dshTools: false,
+    }),
   );
   a.stateDir = joinPath(tmpdir(), "omc-flush-test-nowrite"); // busy.json write here is caught, not needed
   const queue: Array<unknown> = [
@@ -7872,7 +8724,12 @@ console.log("watch-save-race ok");
         id: "m1",
         role: "assistant",
         content: [
-          { type: "tool_use", id: "toolu_dead", name: "Bash", input: { command: "sleep 100" } },
+          {
+            type: "tool_use",
+            id: "toolu_dead",
+            name: "Bash",
+            input: { command: "sleep 100" },
+          },
         ],
       },
     },
@@ -7897,7 +8754,13 @@ console.log("watch-save-race ok");
     nextEvent: async () => (queue.length ? queue.shift() : null),
     kill: () => {},
   };
-  const prep = { input: "go", spec: { model: "m" }, cwd: "/tmp", session: undefined, args: [] };
+  const prep = {
+    input: "go",
+    spec: { model: "m" },
+    cwd: "/tmp",
+    session: undefined,
+    args: [],
+  };
   a.acquire = async () => ({ prep, proc }) as any;
   a.reconnectIfStale = async () => {};
   a.watchTranscript = (async () => {}) as any;
@@ -7956,7 +8819,12 @@ console.log("watch-save-race ok");
   };
   const a = new ClaudeCodeAdapter(
     fakeCtx({ on() {}, sessions: { get: () => session } }),
-    Config({ resume: true, toolActivity: true, toolsInline: false, dshTools: false }),
+    Config({
+      resume: true,
+      toolActivity: true,
+      toolsInline: false,
+      dshTools: false,
+    }),
   );
   a.stateDir = joinPath(tmpdir(), "omc-flush-test-nowrite");
   const queue: Array<unknown> = [
@@ -7966,7 +8834,12 @@ console.log("watch-save-race ok");
         id: "m1",
         role: "assistant",
         content: [
-          { type: "tool_use", id: "toolu_stopped", name: "Bash", input: { command: "sleep 60" } },
+          {
+            type: "tool_use",
+            id: "toolu_stopped",
+            name: "Bash",
+            input: { command: "sleep 60" },
+          },
         ],
       },
     },
@@ -7993,11 +8866,23 @@ console.log("watch-save-race ok");
     nextEvent: async () => {
       if (queue.length) return queue.shift();
       stop.abort();
-      return { type: "result", subtype: "success", is_error: false, result: "", usage: {} };
+      return {
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        result: "",
+        usage: {},
+      };
     },
     kill: () => {},
   };
-  const prep = { input: "go", spec: { model: "m" }, cwd: "/tmp", session: undefined, args: [] };
+  const prep = {
+    input: "go",
+    spec: { model: "m" },
+    cwd: "/tmp",
+    session: undefined,
+    args: [],
+  };
   a.acquire = async () => ({ prep, proc }) as any;
   a.reconnectIfStale = async () => {};
   a.watchTranscript = (async () => {}) as any;
@@ -8038,7 +8923,10 @@ console.log("watch-save-race ok");
   const wrote: string[] = [];
   a.processes.set(
     registryKey("claude-code", "sel"),
-    fakeProc({ alive: true, write: (line: string) => (wrote.push(line), true) }),
+    fakeProc({
+      alive: true,
+      write: (line: string) => (wrote.push(line), true),
+    }),
   );
   const quote = "q".repeat(400);
   a.askSideQuestion("sel", "", selectionContext(quote), quote);
@@ -8060,7 +8948,11 @@ console.log("watch-save-race ok");
   a.resolveControl({
     type: "control_response",
     request_id: requestId,
-    response: { request_id: requestId, subtype: "success", response: { response: "a" } },
+    response: {
+      request_id: requestId,
+      subtype: "success",
+      response: { response: "a" },
+    },
   });
   await new Promise((r) => setTimeout(r, 0));
   console.log("aside selection ok");
