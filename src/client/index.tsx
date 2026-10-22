@@ -184,7 +184,27 @@ import {
   MASTER_KEY,
   OFF_KEY,
 } from "../context-sources.js";
+import {
+  HINTS_EVENT,
+  loadHints,
+  useHintValue,
+  writeHints,
+  useHintFlag,
+  applyTheme,
+} from "./hints.js";
+import { attachTip } from "./tooltip.js";
+import { onBodyMutation, changedElements, recordElement } from "./dom.js";
+import {
+  DEFAULT_VERBS,
+  ZH_VERBS,
+  spinnerFrameAt,
+  bracketOpen,
+  pickVerb,
+  mergeVerbs,
+} from "./verbs.js";
 export { type SessionData, isOwnedActive, fmtCost, fmtDuration, cacheShare };
+// The entry keeps its export list while the split runs, re-exporting from the module that owns each.
+export { spinnerFrameAt, bracketOpen, pickVerb, mergeVerbs } from "./verbs.js";
 
 /** Deep link another box's panel sends us to: `#claude-session=<id>&cwd=<path>`. */
 const HASH_KEY = "claude-session";
@@ -223,305 +243,8 @@ const isObj = (v: Json | undefined): v is JsonObject => v instanceof Object && !
 const count = (v: Json | undefined): number =>
   Array.isArray(v) ? v.length : isObj(v) ? Object.keys(v).length : 0;
 
-/** Default Claude Code spinner verbs, extracted from the installed CLI bundle. */
-const DEFAULT_VERBS = [
-  "Accomplishing",
-  "Actioning",
-  "Actualizing",
-  "Architecting",
-  "Baking",
-  "Beaming",
-  "Beboppin'",
-  "Befuddling",
-  "Billowing",
-  "Blanching",
-  "Bloviating",
-  "Boogieing",
-  "Boondoggling",
-  "Booping",
-  "Bootstrapping",
-  "Brewing",
-  "Bunning",
-  "Burrowing",
-  "Calculating",
-  "Canoodling",
-  "Caramelizing",
-  "Cascading",
-  "Catapulting",
-  "Cerebrating",
-  "Channeling",
-  "Choreographing",
-  "Churning",
-  "Clauding",
-  "Coalescing",
-  "Cogitating",
-  "Combobulating",
-  "Composing",
-  "Computing",
-  "Concocting",
-  "Considering",
-  "Contemplating",
-  "Cooking",
-  "Crafting",
-  "Creating",
-  "Crunching",
-  "Crystallizing",
-  "Cultivating",
-  "Deciphering",
-  "Deliberating",
-  "Determining",
-  "Dilly-dallying",
-  "Discombobulating",
-  "Doing",
-  "Doodling",
-  "Drizzling",
-  "Ebbing",
-  "Effecting",
-  "Elucidating",
-  "Embellishing",
-  "Enchanting",
-  "Envisioning",
-  "Fermenting",
-  "Fiddle-faddling",
-  "Finagling",
-  "Flambéing",
-  "Flibbertigibbeting",
-  "Flowing",
-  "Flummoxing",
-  "Fluttering",
-  "Forging",
-  "Forming",
-  "Frolicking",
-  "Frosting",
-  "Gallivanting",
-  "Galloping",
-  "Garnishing",
-  "Generating",
-  "Gesticulating",
-  "Germinating",
-  "Gitifying",
-  "Grooving",
-  "Gusting",
-  "Harmonizing",
-  "Hashing",
-  "Hatching",
-  "Herding",
-  "Honking",
-  "Hullaballooing",
-  "Hyperspacing",
-  "Ideating",
-  "Imagining",
-  "Improvising",
-  "Incubating",
-  "Inferring",
-  "Infusing",
-  "Ionizing",
-  "Jitterbugging",
-  "Julienning",
-  "Kerfuffling",
-  "Kneading",
-  "Leavening",
-  "Levitating",
-  "Lollygagging",
-  "Manifesting",
-  "Marinating",
-  "Meandering",
-  "Metamorphosing",
-  "Misting",
-  "Moonwalking",
-  "Moseying",
-  "Mulling",
-  "Mustering",
-  "Musing",
-  "Nebulizing",
-  "Nesting",
-  "Newspapering",
-  "Noodling",
-  "Nucleating",
-  "Onioning",
-  "Orbiting",
-  "Orchestrating",
-  "Osmosing",
-  "Perambulating",
-  "Percolating",
-  "Perusing",
-  "Philosophizing",
-  "Photosynthesizing",
-  "Polishing",
-  "Pollinating",
-  "Pondering",
-  "Pontificating",
-  "Pouncing",
-  "Precipitating",
-  "Prestidigitating",
-  "Processing",
-  "Proofing",
-  "Propagating",
-  "Puttering",
-  "Puzzling",
-  "Quantumizing",
-  "Razzle-dazzling",
-  "Razzmatazzing",
-  "Recombobulating",
-  "Reticulating",
-  "Roosting",
-  "Ruminating",
-  "Sautéing",
-  "Scampering",
-  "Schlepping",
-  "Scurrying",
-  "Seasoning",
-  "Shenaniganing",
-  "Shimmying",
-  "Simmering",
-  "Skedaddling",
-  "Sketching",
-  "Slithering",
-  "Smooshing",
-  "Sock-hopping",
-  "Spelunking",
-  "Spinning",
-  "Sprouting",
-  "Stewing",
-  "Sublimating",
-  "Swirling",
-  "Swooping",
-  "Symbioting",
-  "Synthesizing",
-  "Tempering",
-  "Thinking",
-  "Thundering",
-  "Tinkering",
-  "Tomfoolering",
-  "Topsy-turvying",
-  "Transfiguring",
-  "Transmogrifying",
-  "Transmuting",
-  "Twisting",
-  "Undulating",
-  "Unfurling",
-  "Unraveling",
-  "Vibing",
-  "Waddling",
-  "Wandering",
-  "Warping",
-  "Whatchamacalliting",
-  "Whirlpooling",
-  "Whirring",
-  "Whisking",
-  "Wibbling",
-  "Working",
-  "Wrangling",
-  "Zesting",
-  "Zigzagging",
-] as const;
-
-/** The Chinese stand-in for the CLI's verbs, which exist only in English and are mostly puns
- *  (Razzle-dazzling, Flibbertigibbeting) that do not survive translation. Not a translation: the same
- *  register instead, cheeky and mock-grand, kitchen, magic and workshop, so a Chinese reader gets the
- *  joke the English one does. */
-const ZH_VERBS = [
-  "琢磨中",
-  "捣鼓中",
-  "鼓捣中",
-  "酝酿中",
-  "盘算中",
-  "掐指一算中",
-  "冥思苦想中",
-  "绞尽脑汁中",
-  "抓耳挠腮中",
-  "炼丹中",
-  "文火慢炖中",
-  "爆炒中",
-  "腌制中",
-  "发酵中",
-  "揉面中",
-  "撒葱花中",
-  "施法中",
-  "念咒中",
-  "画符中",
-  "变戏法中",
-  "搓火球中",
-  "开光中",
-  "算卦中",
-  "观星中",
-  "灵光乍现中",
-  "脑洞大开中",
-  "头脑风暴中",
-  "抽丝剥茧中",
-  "顺藤摸瓜中",
-  "精雕细琢中",
-  "妙笔生花中",
-  "运筹帷幄中",
-  "天马行空中",
-  "左思右想中",
-  "融会贯通中",
-  "化繁为简中",
-  "胸有成竹中",
-  "举一反三中",
-  "画龙点睛中",
-  "整活中",
-  "憋大招中",
-  "打怪升级中",
-  "疯狂输出中",
-  "加载灵感中",
-  "充能中",
-  "量子纠缠中",
-  "转圈圈中",
-  "蹦跶中",
-  "嘀咕中",
-  "叽里咕噜中",
-  "手舞足蹈中",
-  "一本正经中",
-  "搬砖中",
-  "敲敲打打中",
-  "修修补补中",
-  "拼乐高中",
-  "打磨中",
-  "抛光中",
-  "煲汤中",
-  "假装很忙中",
-] as const;
-
 /** Default frames, played out and back on the CLI's eased 2 s cosine (see spinnerFrameAt). */
 const DEFAULT_FRAMES = ["·", "✢", "✳", "✶", "✻", "✻"] as const;
-
-/** The CLI's spinner frame for a moment on its clock (2.1.280): a cosine of the time over a 2 s
- *  period, 0 to 1 to 0, scaled to the last index and rounded, so the glyph lingers on the end
- *  frames and passes quickly through the middle. Sampled on the row's 120 ms beat rather than
- *  the CLI's 100 ms, which lands up to 60 ms off a frame boundary. */
-export function spinnerFrameAt(ms: number, frames: number): number {
-  const eased = (1 - Math.cos((2 * Math.PI * ms) / 2000)) / 2;
-  return Math.round(eased * (frames - 1));
-}
-/** The CLI's `Go`: no bracket for a turn under this age unless it has tokens, a word or a wait. */
-const BRACKET_AFTER_MS = 16_000;
-/** Whether the working line draws its bracket, the CLI's own gate (2.1.280,
- *  `_t=f||yt||It>0||V>Go||Boolean(v)`): tokens, a thinking word, a tool wait, or 16 s on the clock.
- *  `elapsedMs` below zero means no body yet, which is closed. */
-export function bracketOpen(s: {
-  elapsedMs: number;
-  tokens: number;
-  thinking: boolean;
-  relay: boolean;
-}): boolean {
-  return s.elapsedMs >= BRACKET_AFTER_MS || s.tokens > 0 || s.thinking || s.relay;
-}
-/** Pick a verb at random from the list using the provided random function. */
-export function pickVerb(list: readonly string[], random: () => number): string {
-  // SAFETY: random() returns [0,1), so floor(random()*length) is always a valid index.
-  return list[Math.floor(random() * list.length)]!;
-}
-
-/** Merge default verbs with a settings.json spinnerVerbs entry. */
-export function mergeVerbs(
-  defaults: readonly string[],
-  setting: { mode: "append" | "replace"; verbs: string[] } | undefined,
-): string[] {
-  if (!setting) return [...defaults];
-  if (setting.mode === "replace") return [...setting.verbs];
-  return [...defaults, ...setting.verbs];
-}
 
 interface CardProps {
   id: string;
@@ -3527,110 +3250,6 @@ function renderUsage(block: HTMLElement, reply: UsageReply) {
  * its dialog: a `[role=dialog]` whose parent holds a `button[aria-haspopup=dialog]` with the ring.
  * ponytail: DOM hook on a structural selector; swap for a slot the day the meter grows one.
  */
-/**
- * One shared `document.body` observer for every feature that reacts to nodes dsh adds. dsh appends
- * a message chunk many times a second during a turn, so a per-feature observer that ran a
- * `querySelectorAll` per mutation multiplied that load by the feature count and janked mobile
- * (Firefox worst). Here any mutation burst just marks the frame dirty; on the next animation frame
- * each registered scan runs once against `document.body`. The feature selectors are rare attributes
- * ([role=dialog/tooltip/status]), so one body-wide scan per frame is far cheaper than scanning each
- * of the hundreds of nodes a streaming turn appends. Scans do their own scoping and idempotency.
- */
-/** A registered scan. Sync scans are handed the burst's records so they can look at what changed
- *  instead of the whole document; a scan called with none does a full pass. */
-type FrameScan = (records?: MutationRecord[]) => void;
-const frameScans = new Set<FrameScan>();
-/**
- * Scans that have to land before the browser paints. A frame scan is fine for anything that only
- * adds to what dsh drew, but the tool fold *hides* a block dsh already laid out, and a frame late
- * is a frame the full code block is on screen. Those run inside the observer callback instead,
- * which is a microtask checkpoint: still before paint, still batched per mutation burst.
- */
-const syncScans = new Set<FrameScan>();
-let bodyObserver: MutationObserver | undefined;
-let scanQueued = false;
-/** The bursts since the last frame, so a frame scan can look at what changed instead of the body. */
-let pending: MutationRecord[] = [];
-/**
- * A hidden tab gets no animation frames, so a turn that streams into a background tab piles records
- * up with nothing draining them. Past this many the burst is dropped and the next frame goes wide,
- * which is what a scan does on its first run anyway.
- */
-const PENDING_CAP = 4000;
-let pendingOverflow = false;
-/** Run every frame scan once with the records gathered this frame, or with none after an
- *  overflow, which a scan reads as "look at the whole body". */
-const flushScans = () => {
-  scanQueued = false;
-  const records = pendingOverflow ? undefined : pending;
-  pending = [];
-  pendingOverflow = false;
-  for (const scan of frameScans) scan(records);
-};
-/** Subscribes the given MutationObserver to document.body for added and removed nodes and for text
- *  rewritten in place. The last one matters: React updates a paragraph whose only child is text by
- *  setting that text node's value, so a `<p>` reused from prose into a tool header changed without a
- *  single childList record, and the header stayed bare until a reload swept the page. */
-const observeBody = (observer: MutationObserver) => {
-  observer.observe(document.body, { childList: true, subtree: true, characterData: true });
-};
-/** The element a record is about: its target, or for a text edit the element holding the text. */
-const recordElement = (rec: MutationRecord): HTMLElement | null =>
-  rec.target instanceof HTMLElement
-    ? rec.target
-    : rec.target.parentElement instanceof HTMLElement
-      ? rec.target.parentElement
-      : null;
-/**
- * The elements a burst touched: each record's target plus whatever it added. A scan handed these
- * covers the same ground as one over `document.body`, because dsh only ever draws through the DOM.
- * The cost follows what changed rather than how long the conversation is.
- */
-const changedElements = (records: MutationRecord[]): Set<HTMLElement> => {
-  const nodes = new Set<HTMLElement>();
-  for (const rec of records) {
-    const el = recordElement(rec);
-    if (el) nodes.add(el);
-    for (const node of rec.addedNodes) if (node instanceof HTMLElement) nodes.add(node);
-  }
-  return nodes;
-};
-
-/** Register a scan; the returned function removes it again (a React effect's cleanup needs that). */
-const onBodyMutation = (scan: FrameScan, sync = false): (() => void) => {
-  const set = sync ? syncScans : frameScans;
-  const wrapped = guard(scan);
-  set.add(wrapped);
-  const off = () => set.delete(wrapped);
-  if (bodyObserver) return off;
-  // The new bundle registers its own scans; this one's would run on top of them against a context
-  // that no longer answers.
-  // When the bundle is replaced, disconnect the observer and clear the scan sets.
-  whenContextGone(() => {
-    bodyObserver?.disconnect();
-    bodyObserver = undefined;
-    frameScans.clear();
-    syncScans.clear();
-  });
-  bodyObserver = new MutationObserver((records) => {
-    // The records are the point: a sync scan that walks only what changed costs the same on a long
-    // transcript as on a short one. So the observer stays attached across the pass.
-    // Detaching to avoid being called back by our own writes threw the records away, and a scan
-    // with no records has nothing to scope itself to. The writes do call this back once more;
-    // did its work finds nothing to do and the second pass ends there.
-    for (const run of syncScans) run(records);
-    if (frameScans.size === 0) return;
-    if (pending.length + records.length > PENDING_CAP) {
-      pendingOverflow = true;
-      pending = [];
-    } else if (!pendingOverflow) for (const rec of records) pending.push(rec);
-    if (scanQueued) return;
-    scanQueued = true;
-    requestAnimationFrame(flushScans);
-  });
-  observeBody(bodyObserver);
-  return off;
-};
 
 /**
  * Hide the meter's own context readout, leaving this plugin's block in its place.
@@ -5230,60 +4849,6 @@ function playIcon(): SVGSVGElement {
   path.setAttribute("stroke-linejoin", "round");
   svg.append(path);
   return svg;
-}
-
-/** The one tooltip bubble on screen, if any, with the element it describes. One at a time, as in
- *  dsh: a second hover replaces the first. */
-let tipOpen: { bubble: HTMLElement; anchor: HTMLElement } | null = null;
-/** Take the open bubble down and drop the anchor's `aria-describedby` to it. */
-function hideTip(): void {
-  if (!tipOpen) return;
-  tipOpen.bubble.remove();
-  tipOpen.anchor.removeAttribute("aria-describedby");
-  tipOpen = null;
-}
-/** Show `text` above `anchor` the way dsh's own tooltip does (centred, 8px gap, 12px from any
- *  viewport edge, under it when there is no room above): a fixed `role=tooltip` bubble styled on
- *  dsh's tooltip tokens, linked by `aria-describedby`. Nothing is shown for an empty text. */
-function showTip(anchor: HTMLElement, text: string): void {
-  hideTip();
-  if (text === "") return;
-  const bubble = document.createElement("span");
-  bubble.setAttribute("data-omc-tip", "");
-  bubble.setAttribute("role", "tooltip");
-  bubble.id = `omc-tip-${Math.random().toString(36).slice(2, 8)}`;
-  const label = document.createElement("span");
-  label.textContent = text;
-  bubble.append(label);
-  bubble.style.visibility = "hidden";
-  document.body.append(bubble);
-  const edge = 12;
-  const gap = 8;
-  const r = anchor.getBoundingClientRect();
-  const { width, height } = bubble.getBoundingClientRect();
-  const above = r.top - gap - height >= edge;
-  const x = Math.max(
-    edge,
-    Math.min(r.left + r.width / 2 - width / 2, window.innerWidth - edge - width),
-  );
-  bubble.style.left = `${x + width / 2}px`;
-  bubble.style.top = `${above ? r.top - gap : r.bottom + gap}px`;
-  bubble.setAttribute("data-side", above ? "top" : "bottom");
-  bubble.style.visibility = "visible";
-  anchor.setAttribute("aria-describedby", bubble.id);
-  tipOpen = { bubble, anchor };
-}
-/** Give an element a dsh-style tooltip in place of the browser's `title`: shown on hover and on
- *  keyboard focus, hidden on leave, blur, click and Escape. `text` is read each time, so a
- *  language switch shows the new wording without re-attaching. */
-function attachTip(anchor: HTMLElement, text: () => string): void {
-  const show = () => showTip(anchor, text());
-  anchor.addEventListener("mouseenter", show);
-  anchor.addEventListener("focus", show);
-  for (const ev of ["mouseleave", "blur", "click"]) anchor.addEventListener(ev, hideTip);
-  anchor.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") hideTip();
-  });
 }
 
 /** The composer actions of the aside dock entry on screen, for the Run button, which is drawn
@@ -7283,98 +6848,7 @@ function Slide({ open, children }: { open: boolean; children: ReactNode }) {
   );
 }
 
-/** One flag from the box-wide `hints.json` store, live across components: a set here reaches every
- *  mounted reader through one window event, so the settings switch hides the dock without a remount. */
-const HINTS_EVENT = "omc-hints";
 let statusOnce: Promise<boolean> | undefined;
-/** One read of the store shared by every hook on the page: a Settings open mounts five readers and
- *  every cost pill two, so the fetch is memoised until a write dispatches the event. */
-let hintsOnce: Promise<Record<string, boolean | number>> | undefined;
-// A hint written from another tab or browser lands here as an event carrying the whole store;
-// hand it to every reader through the same event a local write dispatches, with no refetch.
-// Module-level: a hot reload loads a new module whose subscriber map starts empty, so nothing stacks.
-subscribe("hints", (_session, data) => {
-  hintsOnce = Promise.resolve(data);
-  window.dispatchEvent(new Event(HINTS_EVENT));
-});
-/** Fetch and parse the box-wide hints store once, memoising the promise and retrying on failure
- *  rather than caching the empty result. */
-const loadHints = (): Promise<Record<string, boolean | number>> =>
-  (hintsOnce ??= fetch(`${ROUTE}/hints`)
-    .then((r) => readJson<Record<string, boolean | number>>(r))
-    .catch(() => {
-      hintsOnce = undefined; // a failed read is retried by the next reader, not cached
-      return {};
-    }));
-/** One box-wide hint and its setter. Undefined until the first load. The setter posts to the box,
- *  null clears the hint, and every other reader in this tab re-reads once it lands. */
-function useHintValue(
-  key: string,
-): [boolean | number | undefined, (next: boolean | number | null) => void] {
-  const [value, setValue] = useState<boolean | number | undefined>(undefined);
-  useEffect(() => {
-    let live = true;
-    const load = () =>
-      loadHints().then((h) => {
-        if (live) setValue(h[key]);
-      });
-    void load();
-    window.addEventListener(HINTS_EVENT, load);
-    return () => {
-      live = false;
-      window.removeEventListener(HINTS_EVENT, load);
-    };
-  }, [key]);
-  const set = (next: boolean | number | null) => {
-    setValue(next === null ? undefined : next);
-    void fetch(`${ROUTE}/hints`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ [key]: next }),
-    }).finally(() => {
-      hintsOnce = undefined; // every reader re-reads once, through one shared fetch
-      window.dispatchEvent(new Event(HINTS_EVENT));
-    });
-  };
-  return [value, set];
-}
-
-/**
- * Write several hints as one request.
- *
- * Two `set` calls in a row are two reads and two writes of the same file, and the second read can
- * predate the first write: picking Off wrote the off flag over a snapshot that still held the on
- * flag, so both came back set and the control stayed On. Keys that answer one question travel
- * together.
- */
-function writeHints(next: Record<string, boolean | number | null>): void {
-  void fetch(`${ROUTE}/hints`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(next),
-  }).finally(() => {
-    hintsOnce = undefined;
-    window.dispatchEvent(new Event(HINTS_EVENT));
-  });
-}
-
-/** One boolean flag from the hints store; `false` clears the key. */
-function useHintFlag(flag: string): [boolean, (on: boolean) => void] {
-  const [value, set] = useHintValue(flag);
-  return [value === true, (on) => set(on)];
-}
-
-/** Write the Claude look's switches to the page: the group tokens on `<body>` (absent means every
- *  group on, so the first paint before the hints load is today's paint) and the accent pair on the
- *  root. Read by the sheets through `[data-omc-theme~="…"]` and `var(--omc-accent)`. */
-function applyTheme(hints: Record<string, boolean | number>): void {
-  const theme = themeOf(hints);
-  document.body.setAttribute("data-omc-theme", theme.groups.join(" "));
-  const root = document.documentElement.style;
-  root.setProperty("--omc-accent", theme.accent);
-  root.setProperty("--omc-shimmer", theme.shimmer);
-  root.setProperty("--omc-shimmer-dark", theme.shimmerDark);
-}
 
 /** One theme group's checkbox: checked means on; the flag is the group's off key. */
 function ThemeGroupBox({ flag, group, label }: { flag: string; group: string; label: string }) {
@@ -8073,6 +7547,7 @@ function ProxyFirstPartySwitch() {
   const [off] = useHintFlag("proxyFirstPartyOff");
   const mode = on ? "on" : off ? "off" : "auto";
   // Both keys in one write: `false` clears a key, and the pair only ever holds the chosen answer.
+  // oxlint-disable-next-line unicorn/consistent-function-scoping -- writeHints is an import now, so nothing here is captured from the component
   const choose = (next: string) =>
     writeHints({ proxyFirstParty: next === "on", proxyFirstPartyOff: next === "off" });
   return (
@@ -10899,6 +10374,7 @@ export function apply(ctx: ClientCtx) {
   // The Claude look: apply the stored switches once the hints load, and again on every change
   // (a Settings switch dispatches HINTS_EVENT after its POST). Removed with the module, like the
   // interval in watchTurnStatus, so a hot reload does not stack listeners.
+  // oxlint-disable-next-line unicorn/consistent-function-scoping -- loadHints, applyTheme and writeHints are imports now, so nothing here is captured from apply()
   const reapplyTheme = () =>
     void loadHints().then((hints) => {
       applyTheme(hints);
