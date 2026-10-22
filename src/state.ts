@@ -2,7 +2,7 @@
 // sessions with a turn in flight, the resume trace, the aux scratch dir, and the stored OAuth
 // token for the Models API. This is an I/O boundary: JSON from disk is decoded here and typed
 // values leave.
-import { appendFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
@@ -39,6 +39,12 @@ const BUSY_FILE = join(STATE_DIR, "busy.json");
 const RESUME_LOG = join(STATE_DIR, "resume.log");
 let busyChain = Promise.resolve();
 
+/** The trace file is cut back to its newest `TRACE_KEEP` bytes once it passes `TRACE_MAX`: it
+ *  had reached 2.7 MB with nothing trimming it (2026-10-22). Checked every 256th append, not
+ *  every one, since the stat would otherwise cost more than the line. */
+const TRACE_MAX = 4 * 1024 * 1024;
+const TRACE_KEEP = 2 * 1024 * 1024;
+let traceAppends = 0;
 /** Append one line to the resume trace; best effort, never throws. */
 export async function trace(fileOrLine: string, maybeLine?: string): Promise<void> {
   const file = maybeLine === undefined ? RESUME_LOG : fileOrLine;
@@ -46,6 +52,11 @@ export async function trace(fileOrLine: string, maybeLine?: string): Promise<voi
   try {
     await mkdir(dirname(file), { recursive: true });
     await appendFile(file, `${new Date().toISOString()} ${line}\n`);
+    if (++traceAppends % 256 === 0 && (await stat(file)).size > TRACE_MAX) {
+      const text = await readFile(file, "utf8");
+      const cut = text.indexOf("\n", text.length - TRACE_KEEP);
+      await writeFile(file, text.slice(cut + 1));
+    }
   } catch {}
 }
 

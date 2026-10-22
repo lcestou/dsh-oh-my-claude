@@ -8,6 +8,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- The plugin's `resume.log` under its state directory is trimmed to its newest 2 MB once it passes 4 MB; it grew without bound before.
 - On a phone the suggestion card's Use, Send and close stay together on one line under the text, instead of Use on the text's line and the other two dropping alone.
 - The suggestion card no longer flashes back for a moment when you send your own message over it: a fold now outlasts the typing by a beat and holds while the turn runs, until the server clears the guess.
 - A new session now gets suggestions from its second reply on. The request that switches them on was reaching the CLI a beat after the first prompt, inside the first turn, and the CLI then never suggested anything for that session; it goes out ahead of the first prompt now.

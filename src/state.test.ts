@@ -34,6 +34,7 @@ import {
   saveWorkspaceModel,
   loadContextSizes,
   saveContextSizes,
+  trace,
 } from "./state.js";
 
 const dir = await mkdtemp(join(tmpdir(), "omc-state-"));
@@ -456,4 +457,21 @@ console.log("state.test: ok");
   assert.equal(back?.quote, "> hi", "the quote survives a reload");
   assert.equal(back?.question, "", "the blank question survives a reload");
   console.log("asides quote ok");
+}
+
+// The trace file is trimmed to its newest bytes once it passes the cap; the check runs on every
+// 256th append, so the test writes past that count.
+{
+  const dir = await mkdtemp(join(tmpdir(), "omc-trace-"));
+  const file = join(dir, "resume.log");
+  const big = "x".repeat(20_000);
+  for (let i = 0; i < 300; i++) await trace(file, `${i} ${big}`);
+  const text = await readFile(file, "utf8");
+  assert.ok(text.length < 4 * 1024 * 1024, "trimmed under the cap");
+  assert.ok(text.length > 1024 * 1024, "but a good tail kept");
+  assert.ok(text.startsWith("20"), "the cut lands on a line start");
+  assert.ok(text.includes(" 299 "), "the newest line survives");
+  assert.ok(!text.includes(" 0 x"), "the oldest is gone");
+  await rm(dir, { recursive: true, force: true });
+  console.log("trace cap ok");
 }
