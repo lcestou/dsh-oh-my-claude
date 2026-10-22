@@ -776,6 +776,9 @@ interface CatalogModel {
   contextWindow: number;
   efforts: readonly string[];
   description?: string;
+  /** The Models API's `created_at`, as epoch ms; absent on a known or CLI row. Read by
+   *  `mergeCatalog` to tell a model newer than the installed CLI from an old id it dropped. */
+  createdAt?: number;
 }
 
 /** Build one KNOWN_MODELS row: the provider is always claude-code, so callers pass only the id, label, context window and efforts, filling description when given. */
@@ -916,6 +919,7 @@ const CachedCatalog = z.array(
     name: z.string(),
     contextWindow: z.number(),
     efforts: z.array(z.string()),
+    createdAt: z.number(),
   }),
 );
 /** Parse a persisted catalog file. Anything malformed reads as empty, so the caller falls back. */
@@ -923,7 +927,11 @@ export function parseCatalogCache(text: string): ReturnType<typeof M>[] {
   try {
     return CachedCatalog(JSON.parse(text))
       .filter((r) => r.id.length > 0 && r.name.length > 0)
-      .map((r) => M(r.id, r.name, r.contextWindow, r.efforts));
+      .map((r) => {
+        const row = M(r.id, r.name, r.contextWindow, r.efforts);
+        if (r.createdAt !== undefined) row.createdAt = r.createdAt;
+        return row;
+      });
   } catch {
     return [];
   }
@@ -958,11 +966,15 @@ export function modelFromApi(m: {
   display_name?: string;
   max_input_tokens?: number;
   capabilities?: { effort?: EffortCaps };
-}): LlmModelInfo {
+  created_at?: string;
+}): CatalogModel {
   const eff = m.capabilities?.effort;
   const efforts: string[] = eff?.supported ? EFFORTS_ALL.filter((l) => eff[l]?.supported) : [];
   const id = stableModelId(m.id ?? "");
-  return M(id, m.display_name ?? id, m.max_input_tokens ?? 200_000, efforts);
+  const row = M(id, m.display_name ?? id, m.max_input_tokens ?? 200_000, efforts);
+  const created = m.created_at ? Date.parse(m.created_at) : Number.NaN;
+  if (!Number.isNaN(created)) row.createdAt = created;
+  return row;
 }
 
 /**
@@ -1095,9 +1107,21 @@ export function mergeCatalog(
   // bound to `claude-fable-5-1` must still find that row, or the picker shows the raw id and an
   // empty menu (seen 2026-09-10, when the CLI's lineup offered only `claude-fable-5-1[1m]`).
   const emitted = new Set(fromCli.map((r) => r.row.id));
+  // A model the API lists that the CLI's picker does not, released after every model the CLI
+  // does offer, is one the installed CLI predates: its row says so, so a reader who picks it and
+  // gets a refusal knows which update fixes it. Older leftovers (dated ids, retired models the
+  // CLI dropped on purpose) say nothing. Nothing is hidden: the row still resolves a stored id.
+  const newestCli = Math.max(
+    0,
+    ...cli.map((c) => base.find((b) => strip(c.resolvedModel).startsWith(b.id))?.createdAt ?? 0),
+  );
+  const leftover = (b: CatalogModel): CatalogModel =>
+    cli.length > 0 && b.createdAt !== undefined && b.createdAt > newestCli
+      ? { ...b, description: serverText("modelNeedsCliUpdate") }
+      : b;
   let rows = [
     ...fromCli,
-    ...base.filter((b) => !emitted.has(b.id)).map((b) => ({ row: b, match: b.id })),
+    ...base.filter((b) => !emitted.has(b.id)).map((b) => ({ row: leftover(b), match: b.id })),
   ];
   if (picker) {
     const extra = picker.options.map((o) => {
@@ -3504,7 +3528,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
             // title service is not that failure, and refusing there would leave the user no way to
             // rename the Claude side at all, so the line still goes and the reply says what it did.
             const session = target.session;
-            const titles = this.ctx?.get("sessionTitle");
+            const titles = this.ctx?.get?.("sessionTitle");
             const renamed = title !== undefined && session !== undefined && titles !== undefined;
             if (renamed)
               try {
@@ -4569,6 +4593,70 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       .catch((error) => this.log("warn", `initialize: ${errorText(error)}`));
   }
 
+  /**
+   * Wire the per-process hooks that outlive any one turn: the suggestion traces and the CLI's
+   * session name following into dsh. One place for the spawn, adopt and reattach sites, which
+   * carried three copies of the suggestion pair before the title hook made it three triples.
+   */
+  hookProcess(proc: ClaudeProcess, sessionId: string): void {
+    proc.onSuggestionDropped = (reason) => {
+      void trace(join(this.stateDir, "resume.log"), `suggestion ${sessionId}: dropped, ${reason}`);
+    };
+    proc.onSuggestion = () => {
+      void trace(
+        join(this.stateDir, "resume.log"),
+        `suggestion ${sessionId}: ${proc.suggestion?.text ?? ""}`,
+      );
+      this.publishAsides(sessionId);
+    };
+    proc.onTitle = (title) => {
+      void trace(join(this.stateDir, "resume.log"), `title ${sessionId}: Claude says ${title}`);
+      this.renameDshSession(sessionId, title);
+    };
+  }
+
+  /**
+   * dsh's session takes the name the CLI reported, unless it already has it. Without a title
+   * service (a dsh without the bundle) or a live session nothing happens; a rename the service
+   * refuses (the session closing under it) is logged, not thrown, since this runs off a readline
+   * hook with no caller to answer.
+   */
+  renameDshSession(sessionId: string, title: string): void {
+    const titles = this.ctx?.get?.("sessionTitle");
+    const session = this.ctx?.sessions?.get?.(asSessionId(sessionId));
+    if (!titles || !session) return;
+    try {
+      if (titles.get(session)?.title === title) return;
+      titles.rename(session, title);
+    } catch (error) {
+      this.log("info", `rename from Claude declined: ${errorText(error)}`);
+    }
+  }
+
+  /**
+   * The other direction, checked at each prompt: a name someone typed into dsh (source `user`,
+   * never dsh's generated or fallback title, which would overwrite the CLI's own auto title with
+   * the first prompt's words) goes to the CLI as `rename_session` when it differs from the last
+   * name this process reported or was sent. `proc.title` is set before the write so the
+   * `session_title_changed` echo compares equal and renames nothing back.
+   */
+  syncTitleToCli(proc: ClaudeProcess, sessionId: string): void {
+    const titles = this.ctx?.get?.("sessionTitle");
+    const session = this.ctx?.sessions?.get?.(asSessionId(sessionId));
+    const snap = titles && session ? titles.get(session) : undefined;
+    if (!snap || snap.source.kind !== "user" || snap.title === proc.title) return;
+    const title = snap.title;
+    proc.title = title;
+    void this.control(proc, { subtype: "rename_session", title, source: "host" }, 10_000)
+      .then((reply) =>
+        trace(
+          join(this.stateDir, "resume.log"),
+          `title ${sessionId}: sent ${title} to Claude: ${reply.ok ? "ok" : reply.error}`,
+        ),
+      )
+      .catch((error) => this.log("warn", `rename_session: ${errorText(error)}`));
+  }
+
   /** Ask the CLI how many tokens this session's context window holds, bank the figure for dsh's context ring under both the spec and CLI model names, and flag an assumed-behind window when this box runs behind a proxy. */
   async contextUsage(sessionId: string): Promise<ContextUsageReply> {
     const proc = this.processes.get(registryKey(this.providerId, sessionId));
@@ -5220,19 +5308,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       proc.resuming = true;
       this.carryTotals(proc, sessionId);
       proc.onIdleResult = () => this.wake(sessionId, proc);
-      proc.onSuggestionDropped = (reason) => {
-        void trace(
-          join(this.stateDir, "resume.log"),
-          `suggestion ${sessionId}: dropped, ${reason}`,
-        );
-      };
-      proc.onSuggestion = () => {
-        void trace(
-          join(this.stateDir, "resume.log"),
-          `suggestion ${sessionId}: ${proc.suggestion?.text ?? ""}`,
-        );
-        this.publishAsides(sessionId);
-      };
+      this.hookProcess(proc, sessionId);
       this.processes.set(key2, proc);
       // Again on a reattach: the CLI re-applies the preference, and a keeper left by an older
       // plugin never had one.
@@ -5333,19 +5409,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       proc.resuming = true;
       this.carryTotals(proc, spec.sessionId);
       proc.onIdleResult = () => this.wake(spec.sessionId, proc);
-      proc.onSuggestionDropped = (reason) => {
-        void trace(
-          join(this.stateDir, "resume.log"),
-          `suggestion ${spec.sessionId}: dropped, ${reason}`,
-        );
-      };
-      proc.onSuggestion = () => {
-        void trace(
-          join(this.stateDir, "resume.log"),
-          `suggestion ${spec.sessionId}: ${proc.suggestion?.text ?? ""}`,
-        );
-        this.publishAsides(spec.sessionId);
-      };
+      this.hookProcess(proc, spec.sessionId);
       this.processes.set(key2, proc);
       void this.sendInitialize(proc);
       await trace(
@@ -5594,22 +5658,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       proc.key = key;
       proc.resuming = prep.session?.resuming ?? false;
       proc.onIdleResult = () => this.wake(options.sessionId, proc);
-      // `spawned`, not `proc`: the closure sees the outer `let proc`, which the compiler cannot
-      // prove is still this process.
-      const spawned = proc;
-      proc.onSuggestionDropped = (reason) => {
-        void trace(
-          join(this.stateDir, "resume.log"),
-          `suggestion ${options.sessionId}: dropped, ${reason}`,
-        );
-      };
-      proc.onSuggestion = () => {
-        void trace(
-          join(this.stateDir, "resume.log"),
-          `suggestion ${options.sessionId}: ${spawned.suggestion?.text ?? ""}`,
-        );
-        this.publishAsides(options.sessionId);
-      };
+      this.hookProcess(proc, options.sessionId);
       this.processes.set(key2, proc);
       // Awaited: the write must precede the first prompt's (see sendInitialize).
       await this.sendInitialize(proc);
@@ -6359,6 +6408,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       }
       return;
     }
+    // Before the prompt, like initialize: a rename typed into dsh since the last turn reaches
+    // the CLI ahead of the turn it names.
+    this.syncTitleToCli(proc, cont.options.sessionId);
     if (prep.input === null || !proc.write(prep.input))
       throw new LlmError("claude process is not running", "PROVIDER_ERROR");
     proc.promptSentAt = Date.now();

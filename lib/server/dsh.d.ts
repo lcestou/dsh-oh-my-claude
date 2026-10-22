@@ -472,6 +472,14 @@ export interface PluginContext {
     sessionTitle?: {
         /** Upstream returns the accepted snapshot; the plugin ignores it, so the mirror says void. */
         rename(session: Session, title: string): void;
+        /** The latest folded title, or undefined before any. Upstream's `source` is a union of
+         *  `fallback`, `provider` and `user`; the plugin reads only `kind`. */
+        get(session: Session): {
+            title: string;
+            source: {
+                kind: string;
+            };
+        } | undefined;
     };
     workspaceRegistry: WorkspaceRegistry;
     subprocess?: SubprocessRuntime;

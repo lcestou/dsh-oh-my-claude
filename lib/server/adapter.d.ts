@@ -439,6 +439,9 @@ interface CatalogModel {
     contextWindow: number;
     efforts: readonly string[];
     description?: string;
+    /** The Models API's `created_at`, as epoch ms; absent on a known or CLI row. Read by
+     *  `mergeCatalog` to tell a model newer than the installed CLI from an old id it dropped. */
+    createdAt?: number;
 }
 /** Build one KNOWN_MODELS row: the provider is always claude-code, so callers pass only the id, label, context window and efforts, filling description when given. */
 declare const M: (id: string, label: string, contextWindow: number, efforts: readonly string[], description?: string) => CatalogModel;
@@ -479,7 +482,8 @@ export declare function modelFromApi(m: {
     capabilities?: {
         effort?: EffortCaps;
     };
-}): LlmModelInfo;
+    created_at?: string;
+}): CatalogModel;
 /** The base URL when it names a host the CLI does not treat as first-party, else undefined. The
  *  test is the CLI's own (`av()` in 2.1.274: `new URL(e).host` against `["api.anthropic.com"]`),
  *  `host` with its port included, so this fires exactly when the CLI demotes. */
@@ -1552,6 +1556,27 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      *  CLI did apply; harmless. A suggestion still arrives only on the CLI's own terms (see
      *  `ClaudeProcess.suggestion`). */
     sendInitialize(proc: ClaudeProcess): Promise<void>;
+    /**
+     * Wire the per-process hooks that outlive any one turn: the suggestion traces and the CLI's
+     * session name following into dsh. One place for the spawn, adopt and reattach sites, which
+     * carried three copies of the suggestion pair before the title hook made it three triples.
+     */
+    hookProcess(proc: ClaudeProcess, sessionId: string): void;
+    /**
+     * dsh's session takes the name the CLI reported, unless it already has it. Without a title
+     * service (a dsh without the bundle) or a live session nothing happens; a rename the service
+     * refuses (the session closing under it) is logged, not thrown, since this runs off a readline
+     * hook with no caller to answer.
+     */
+    renameDshSession(sessionId: string, title: string): void;
+    /**
+     * The other direction, checked at each prompt: a name someone typed into dsh (source `user`,
+     * never dsh's generated or fallback title, which would overwrite the CLI's own auto title with
+     * the first prompt's words) goes to the CLI as `rename_session` when it differs from the last
+     * name this process reported or was sent. `proc.title` is set before the write so the
+     * `session_title_changed` echo compares equal and renames nothing back.
+     */
+    syncTitleToCli(proc: ClaudeProcess, sessionId: string): void;
     /** Ask the CLI how many tokens this session's context window holds, bank the figure for dsh's context ring under both the spec and CLI model names, and flag an assumed-behind window when this box runs behind a proxy. */
     contextUsage(sessionId: string): Promise<ContextUsageReply>;
     /**

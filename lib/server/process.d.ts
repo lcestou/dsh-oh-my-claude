@@ -848,6 +848,13 @@ export declare class ClaudeProcess {
     /** Fires for a `prompt_suggestion` frame the process did not keep, with the reason, so a
      *  session that never shows a card can be read back from resume.log. */
     onSuggestionDropped?: (reason: string) => void;
+    /** The session's name as the CLI last reported it in a `session_title_changed` frame: a name
+     *  someone set, never the CLI's own generated title. Set before `onTitle` fires; also the value
+     *  the adapter compares against before sending dsh's rename back, so an echo of a rename the
+     *  host itself sent costs no second write. */
+    title?: string;
+    /** Fires after `title` changes, so the adapter can rename dsh's session to match. */
+    onTitle?: (title: string) => void;
     /** A result line passed since the last prompt went out. A suggestion is stored only then: the
      *  CLI aborts its in-flight guess on new input, so a frame that still lands after a prompt was
      *  written is for the turn before it. Set by the readline handler, cleared by the prompt write. */
@@ -880,6 +887,11 @@ export declare class ClaudeProcess {
      *  type, is left for the queue. The hook's own throw is swallowed: this runs inside readline's
      *  data handler, and a hot-reloaded adapter behind it would take the host down. */
     noteSuggestion(line: string): boolean;
+    /** True when `line` is a `session_title_changed` frame, which is then consumed. The name is
+     *  stored on `title` and `onTitle` fires only when it differs from the last one, so the echo
+     *  the CLI sends back for a `rename_session` the adapter wrote is a no-op. An empty name (the
+     *  CLI clearing one) is consumed and ignored: dsh has no notion of an unnamed live session. */
+    noteTitle(line: string): boolean;
     /** A `result` line while no turn is reading: Claude just finished a turn of its own. Tell the
      *  adapter (`onIdleResult`) so it can open a dsh turn and show the reply now. */
     noteIdleResult(line: string): void;
