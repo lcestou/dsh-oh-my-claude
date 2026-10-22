@@ -1,8 +1,7 @@
-import { type FSWatcher } from "node:fs";
-import type { Spawner, SubprocessHandle, WorkspaceDiff, CliModel, SteerAttachment } from "./process.js";
+import type { Spawner, SubprocessHandle, WorkspaceDiff, CliModel } from "./process.js";
 import { type PluginLoadError } from "./plugins.js";
-import { LlmAdapter, type ContentBlock, type GenerateOptions, type LlmResolvedModelInfo, type StreamChunk } from "@deepseek-ai/dsh-llm";
-import { type ContextSizes, type ContextSource } from "./context-sources.js";
+import { LlmAdapter, type GenerateOptions, type LlmResolvedModelInfo, type StreamChunk } from "@deepseek-ai/dsh-llm";
+import { type ContextSource } from "./context-sources.js";
 import { type OmcEvent } from "./events.js";
 import { readUsage } from "./usage.js";
 import { type McpBridge } from "./mcp.js";
@@ -11,7 +10,6 @@ import type { Agent, ImageAttachmentRef, JsonValue, PluginContext, ResolvedAgent
 import { ADAPTER_CURRENT } from "./dsh.js";
 import { type ToolMode, type ToolModeInfo } from "./rows-probe.js";
 import { type FsBox } from "./remote-fs.js";
-import type { FoldedTurn } from "./transcript.js";
 import { sshRunner, type HoldRecord } from "./hold.js";
 import { type HealHost } from "./session-heal.js";
 export { markBusy, takeInterrupted } from "./state.js";
@@ -25,6 +23,11 @@ export { boxFor, Config, isOrphanedStandIn, localConfig, remoteCwdFor, remoteWor
 import { type AsideEntry, type AsidesReply, type AwaitingRow, Continuation, ControlRequestEvent, type ControlReply, type ContextUsageReply, type Decision, type HeldSteer, type HoldReply, type IdleReply, type LoginNeed, type LiveTurnReply, type McpAuthReply, type McpStatusReply, type PermissionModeInfo, type PermissionModeReply, type PermissionModeState, type PermissionReadoutReply, type RewindReply, type SessionOptions, type SkillDoctorReply, type SteerCardState, type SteerEditReply, type TurnTotals, type WorkspaceDiffReply } from "./adapter/types.js";
 export { type AsideEntry, type AsidesReply, type AwaitingRow, type ControlReply, type ContextUsageReply, type HoldReply, type IdleReply, keepsLiveTurn, type LoginNeed, type LiveTurnReply, type McpAuthReply, type McpStatusReply, type PermissionModeInfo, type PermissionModeReply, type PermissionModeState, type PermissionReadoutReply, registryKey, type RewindPrompt, type RewindReply, skillDoctorReply, type SkillDoctorReply, type SteerCardState, type SteerEditReply, type TurnTotals, type WorkspaceDiffReply, } from "./adapter/types.js";
 export { EFFORTS_ALL, getCatalog, KNOWN_MODELS, liveWindowFor, mergeCatalog, modelFromApi, noteLiveWindow, parseCatalogCache, proxyBaseUrl, resolveModelInfo, stableModelId, } from "./adapter/catalog.js";
+export { asideAnswerText, selectionContext } from "./adapter/asides.js";
+import { type MirrorQueue, type StreamState, type TranscriptWatch } from "./adapter/transcript-watch.js";
+export { claudeSessionId, projectDirName } from "./adapter/transcript-watch.js";
+import { type LoadedImage, type LooseMessage } from "./adapter/prompt.js";
+export { attachmentNotes, attachmentsOf, buildPrompt, clientTimeZone, contextSizes, contextSourceOf, type LooseMessage, relayFileHandles, selectTurns, steerKey, withoutNativeInstructions, } from "./adapter/prompt.js";
 /** Plugin name identifier. */
 export declare const name = "dsh-oh-my-claude";
 /** Services injected into the plugin by the dsh runtime. */
@@ -34,146 +37,6 @@ export interface TurnsReply {
     turns: TurnRecord[];
     total: TurnTotals;
 }
-/**
- * The side question's context for a selected passage: a lead line and the passage as a Markdown quote.
- * Kept here rather than shared with the client's `quoteMarkdown`, since server code does not import
- * from `src/client/`.
- */
-export declare const selectionContext: (quote: string) => string;
-/**
- * Pull the answer text out of a `side_question` control response. The CLI answers with
- * `{ response: string }` (or a bare string on some paths, or null when it declined), so both shapes
- * are parsed at this I/O boundary and blank or absent answers report as none.
- */
-export declare function asideAnswerText(response: JsonValue | undefined): string | undefined;
-/** Deterministic UUID for a dsh session id, so a reopened dsh session resumes the same Claude session. */
-/** Terminal exchanges waiting to be shown in a dsh session, and the one whose turn is open. */
-interface MirrorQueue {
-    queue: FoldedTurn[];
-    inFlight?: {
-        id: string;
-        turn: FoldedTurn;
-        at: number;
-    };
-}
-/** A terminal turn being streamed live into one open dsh turn. `id` matches the followup that
- *  opened the turn; the render loop reads the exchange from `start`, renders its blocks, and yields
- *  the ones past `shown`, waking on `wake` when a scan sees new rows and settling when `done`. */
-interface StreamState {
-    id: string;
-    path: string;
-    box: FsBox;
-    start: number;
-    shown: number;
-    done: boolean;
-    startedAt: number;
-    wake?: () => void;
-}
-/** A session's transcript under watch: the file, the byte its settled rows end at, the watcher. */
-interface TranscriptWatch {
-    path: string;
-    seen: number;
-    claudeId: string;
-    /** The box the file is on; a remote one has no inotify and is polled by the sweep instead. */
-    box: FsBox;
-    fw?: FSWatcher;
-    timer?: NodeJS.Timeout;
-    /** A scan is reading the file; one asked for meanwhile runs after it, never alongside it. */
-    scanning?: boolean;
-    again?: boolean;
-}
-/** Turns a dsh session id into a Claude Code–style session id so the transcript path computed from
- *  it matches the one the CLI actually wrote. */
-export declare function claudeSessionId(sessionId: string): string;
-/**
- * The directory Claude Code keeps a path's transcripts in, under `~/.claude/projects/`: the path
- * with every non-alphanumeric as `-`. Past 200 characters the CLI keeps the first 200 and appends
- * a base-36 hash of the whole path (its own 31-multiplier string hash, read off the 2.1.287
- * binary and checked against a live run), so two long paths with one prefix stay apart.
- */
-export declare function projectDirName(cwd: string): string;
-/** The slice of a dsh message this adapter reads; dsh's own Message type is wider. */
-/** The slice of a dsh message this adapter reads; exported for test fixtures. */
-export type LooseMessage = {
-    id?: string;
-    role?: string;
-    source?: {
-        kind?: string;
-        plugin?: string;
-        rpcId?: string;
-        clientTimeZone?: string;
-        name?: string;
-    };
-    content?: string | ContentBlock[];
-    /** dsh 0.1.7 answers a tool result as its own `role: "tool"` message and carries the call id on
-     *  the message; up to 0.1.6 it was a user message holding a `tool-result` block. */
-    toolCallId?: string;
-    isError?: boolean;
-};
-/** The browser's IANA zone as dsh stamped it on the latest user prompt; undefined when no
- *  prompt carried one (an API caller, an old log), so clocks fall back to the box's zone. */
-export declare function clientTimeZone(messages: readonly LooseMessage[]): string | undefined;
-/** The file and image blocks of a message as the steer card names them, in block order. A block
- *  without its attachment reference (wire data from an older dsh) is skipped, as dsh's own queue
- *  dock does. Empty for a string content or a text-only message. */
-export declare const attachmentsOf: (content: LooseMessage["content"]) => SteerAttachment[];
-/** The key a message dsh delivered mid-step is marked under once it went over stdin: the prompt's
- *  rpcId for a typed steer, the message id for anything dsh sends on its own behalf (a child's
- *  send_message, a settlement notice, a job's finish line). Undefined for what never goes over
- *  stdin on its own: an assistant turn, a tool result. */
-export declare const steerKey: (m: LooseMessage) => string | undefined;
-/**
- * Pick the messages that go into this call. Resuming: only what came after the last assistant turn
- * (the new prompt plus dsh's context injections). Fresh: the whole transcript, since `claude -p` is stateless.
- */
-export declare function selectTurns(messages: LooseMessage[] | undefined, resuming: boolean): LooseMessage[];
-/** dsh's instruction bundle repeats files Claude Code already loads on its own (`CLAUDE.md` in the
- *  workspace, `~/.claude/CLAUDE.md`), so those blocks are dropped from what goes to Claude. The
- *  bundle is one `<system-reminder>` with `Instructions from: <path>` headers; a block runs to
- *  the next header or the closing tag. Empty when nothing but the wrapper would remain. */
-export declare function withoutNativeInstructions(text: string): string;
-/** Which withheld block a message is, if any. The chat row mask classifies the same sources from
- *  the client side, so the rule itself lives in `context-sources.ts` and both read it there. */
-export declare const contextSourceOf: (m: LooseMessage) => ContextSource | undefined;
-/** What each dsh block cost this turn, in characters, measured before any switch removed it: a
- *  cleared checkbox still has to show its number or the owner cannot tell whether to put it back.
- *  `instructions` counts what survives the CLAUDE.md filter and `claudemd` counts what the filter
- *  took, so the two together are the bundle dsh handed over. A key is absent when this turn carried
- *  nothing of that kind, which is not the same as zero and must not be flattened into one. */
-export declare function contextSizes(turns: LooseMessage[]): ContextSizes;
-/**
- * The turn's text as one stdin prompt. A turn with assistant text in it is labelled by role so the
- * history stays legible; a plain user turn is sent as it was typed, with no label. A turn that
- * carries only an image has no text to send, so it becomes `(see attached)` and the image rides
- * along in `imageRefs`.
- */
-export declare function buildPrompt(turns: LooseMessage[], drops?: ReadonlySet<ContextSource>): string;
-/** An image loaded from dsh's attachment store, ready for the stdin line, plus the path of the
- *  copy kept for Claude's tools when one could be written. */
-/** An image of the turn. `data` is its base64 for the stdin line, or empty when the image rides by
- *  path only (see `oversize`); `path` is the copy `keepImageCopy` wrote, on the box that runs Claude. */
-type LoadedImage = {
-    mediaType: string;
-    data: string;
-    attachmentId?: string;
-    path?: string;
-};
-/**
- * Where each image of the turn lives on disk, told to the model after the prompt. The image rides
- * inline on the stdin line, which lets Claude see it and nothing more: no path, so no Read, no
- * edit, no handing it to a subagent. dsh's own store names an image by hash with no extension, so
- * the note points at the copy `keepImageCopy` wrote. Files need nothing here: dsh replaces a file
- * block with a line naming its stored path before any provider sees the turn.
- */
-export declare function attachmentNotes(turns: LooseMessage[], images: readonly LoadedImage[]): string;
-/**
- * The text with every file handle pointed at the box's own copy. dsh saves an attachment on this
- * PC and names that path in the handle, which a `claude` running on another box cannot read, so
- * each file is handed to `copy` (local path and a far name in, far path out) and its handle takes
- * the path that comes back. A copy that fails leaves its handle as it was, and Claude then says
- * the path is unreadable, which is what happened to every handle before this.
- */
-export declare function relayFileHandles(text: string, copy: (localPath: string, farName: string) => Promise<string>, log?: (level: string, message: string) => void): Promise<string>;
 /** dsh's access-mode switch arrives as text in the runtime-context injection; the last snapshot wins. */
 export declare function accessModeOf(messages: LooseMessage[] | undefined): string | undefined;
 /** dsh's approval-policy line rides in the same runtime-context injection as the file policy, and
