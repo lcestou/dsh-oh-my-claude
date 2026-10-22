@@ -1,4 +1,6 @@
 import { type FsBox } from "./remote-fs.js";
+/** HTTP header name for the MCP bridge authentication key. */
+export declare const KEY_HEADER = "x-dsh-oh-my-claude-key";
 export interface ConfiguredMcp {
     name: string;
     scope: "user" | "local" | "project";

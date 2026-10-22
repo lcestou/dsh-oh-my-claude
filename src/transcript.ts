@@ -5,7 +5,7 @@ import { open, readdir, stat } from "node:fs/promises";
 import { readAt, type FsBox } from "./remote-fs.js";
 import { join } from "node:path";
 import type { JsonValue } from "./dsh.js";
-import { NATIVE_TOOL_MAP } from "./adapter.js";
+import { NATIVE_TOOL_MAP } from "./adapter/cli.js";
 import { formatToolCall, formatToolResult } from "./translator.js";
 import { serverText } from "./locale.js";
 

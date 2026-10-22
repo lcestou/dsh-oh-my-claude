@@ -1,6 +1,6 @@
 import type { StreamChunk, LlmFailure } from "@deepseek-ai/dsh-llm";
 import { type ClaudeEvent, type ClaudeStreamPartial, type ClaudeContentBlock } from "./process.js";
-import { TurnRecord } from "./adapter.js";
+import { TurnRecord } from "./adapter/turn.js";
 import { type PluginLoadError } from "./plugins.js";
 /** Clamp a fenced body to its first `max` lines, with a count of what was elided. A tool-heavy turn
  *  floods the transcript with full read/bash/diff dumps; the head plus a tail count keeps each row

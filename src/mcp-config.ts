@@ -10,6 +10,9 @@ import z from "@deepseek-ai/schemastery";
 import { type FsBox, readTextAt } from "./remote-fs.js";
 import { projectKey, repoRoot } from "./repo.js";
 
+/** HTTP header name for the MCP bridge authentication key. */
+export const KEY_HEADER = "x-dsh-oh-my-claude-key";
+
 export interface ConfiguredMcp {
   name: string;
   scope: "user" | "local" | "project";

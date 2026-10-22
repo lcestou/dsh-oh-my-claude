@@ -6,7 +6,8 @@ import { appendFile, mkdir, readFile, rename, stat, writeFile } from "node:fs/pr
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
-import type { AsideEntry, TurnRecord } from "./adapter.js";
+import type { AsideEntry } from "./adapter/types.js";
+import type { TurnRecord } from "./adapter/turn.js";
 import type { ToolMode } from "./rows-probe.js";
 
 /** Claude Code's config dir: transcripts, settings.json. Honors CLAUDE_CONFIG_DIR like the CLI. */

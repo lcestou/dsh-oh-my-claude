@@ -110,7 +110,7 @@ import type {
   WorkspaceId,
   WorkspaceRegistry,
 } from "./dsh.js";
-import type { LiveTask } from "./translator.js";
+import type { FallbackRecord, LiveTask } from "./translator.js";
 import { errorText, type SteerAttachment } from "./process.js";
 import { claudeMdDisabledBy, featureSwitches, type ClaudeMdState } from "./switches.js";
 import { currentLogVersion, loadSessionCatalog } from "./rows-probe.js";
@@ -147,8 +147,10 @@ import {
   saveWorkspaceModel,
   writeJson,
 } from "./state.js";
-import { EFFORTS_ALL, projectDirName, type LoginNeed } from "./adapter.js";
+import { EFFORTS_ALL } from "./adapter/catalog.js";
+import { projectDirName } from "./adapter/transcript-watch.js";
 import type {
+  LoginNeed,
   PermissionModeInfo,
   PermissionModeReply,
   PermissionModeState,
@@ -156,17 +158,15 @@ import type {
   RewindReply,
   ContextUsageReply,
   SkillDoctorReply,
-  TurnsReply,
   WorkspaceDiffReply,
   PermissionReadoutReply,
   McpStatusReply,
   AsideEntry,
   AsidesReply,
-  FallbackRecord,
   IdleReply,
-  LiveTurn,
   LiveTurnReply,
-} from "./adapter.js";
+} from "./adapter/types.js";
+import type { TurnsReply, LiveTurn } from "./adapter/turn.js";
 import { type EventHub, type OmcEvent } from "./events.js";
 
 const ROUTE_PREFIX = "/dsh-oh-my-claude";

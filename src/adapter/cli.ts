@@ -3,7 +3,7 @@
 import { execFile } from "node:child_process";
 import { type GenerateOptions } from "@deepseek-ai/dsh-llm";
 import type { JsonValue, ToolSchema } from "../dsh.js";
-import { KEY_HEADER } from "../mcp.js";
+import { KEY_HEADER } from "../mcp-config.js";
 import { shq, sshArgs, userTurnLine } from "../process.js";
 import { probeRawToolRows, type RowsSupport } from "../rows-probe.js";
 import { Config } from "./config.js";

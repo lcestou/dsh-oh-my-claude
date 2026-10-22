@@ -5,7 +5,8 @@ import {
   type ClaudeContentBlock,
   toolResultText,
 } from "./process.js";
-import { NATIVE_TOOL_MAP, TurnRecord, commandNames, finishReason } from "./adapter.js";
+import { NATIVE_TOOL_MAP, commandNames } from "./adapter/cli.js";
+import { TurnRecord, finishReason } from "./adapter/turn.js";
 import { suggestRule } from "./permissions.js";
 import type { JsonValue } from "./dsh.js";
 import { pluginErrorsOf, type PluginLoadError } from "./plugins.js";

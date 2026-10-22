@@ -1,4 +1,5 @@
-import type { AsideEntry, TurnRecord } from "./adapter.js";
+import type { AsideEntry } from "./adapter/types.js";
+import type { TurnRecord } from "./adapter/turn.js";
 import type { ToolMode } from "./rows-probe.js";
 /** Claude Code's config dir: transcripts, settings.json. Honors CLAUDE_CONFIG_DIR like the CLI. */
 export declare const CLAUDE_HOME: string;

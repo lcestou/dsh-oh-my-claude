@@ -1,9 +1,8 @@
+export { KEY_HEADER } from "./mcp-config.js";
 import type { RelayResult } from "./process.js";
 import type { Agent, DshToolsRegistry, JsonValue, PluginContext, ToolSchema } from "./dsh.js";
 /** HTTP endpoint path for the MCP bridge handler. */
 export declare const MCP_PATH = "/dsh-oh-my-claude/mcp";
-/** HTTP header name for the MCP bridge authentication key. */
-export declare const KEY_HEADER = "x-dsh-oh-my-claude-key";
 /** dsh tools Claude Code already has natively; proxying them would only confuse the model.
  *  `str_replace_editor` is the file editor some presets offer in place of `edit`. */
 export declare const HIDDEN: Set<string>;
@@ -77,4 +76,3 @@ export interface McpBridge {
  *  a process that outlives a restart can only reconnect to the URL it was started with, and the
  *  web port is the one address that is fixed by configuration. */
 export declare function registerMcpBridge(ctx: PluginContext, { log, version, relay, keyFile, portFile }: BridgeOptions): Promise<McpBridge>;
-export {};

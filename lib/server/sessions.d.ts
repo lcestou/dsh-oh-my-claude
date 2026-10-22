@@ -2,13 +2,14 @@ import type { IncomingMessage } from "node:http";
 import { type FoldedTranscript } from "./transcript.js";
 import { type Reach } from "./reach.js";
 import type { JsonValue, PluginContext, WorkspaceRegistry } from "./dsh.js";
-import type { LiveTask } from "./translator.js";
+import type { FallbackRecord, LiveTask } from "./translator.js";
 import { type SteerAttachment } from "./process.js";
 import { type HealHost, type RepairsSummary } from "./session-heal.js";
 import type { ToolMode, ToolModeInfo } from "./rows-probe.js";
 import { type PluginLoadError } from "./plugins.js";
-import { EFFORTS_ALL, type LoginNeed } from "./adapter.js";
-import type { PermissionModeInfo, PermissionModeReply, PermissionModeState, RewindReply, ContextUsageReply, SkillDoctorReply, TurnsReply, WorkspaceDiffReply, PermissionReadoutReply, McpStatusReply, AsideEntry, AsidesReply, FallbackRecord, IdleReply, LiveTurn, LiveTurnReply } from "./adapter.js";
+import { EFFORTS_ALL } from "./adapter/catalog.js";
+import type { LoginNeed, PermissionModeInfo, PermissionModeReply, PermissionModeState, RewindReply, ContextUsageReply, SkillDoctorReply, WorkspaceDiffReply, PermissionReadoutReply, McpStatusReply, AsideEntry, AsidesReply, IdleReply, LiveTurnReply } from "./adapter/types.js";
+import type { TurnsReply, LiveTurn } from "./adapter/turn.js";
 import { type EventHub, type OmcEvent } from "./events.js";
 /** Any JSON object, as a request body or a stored file decodes to. */
 type JsonObject = Record<string, JsonValue>;

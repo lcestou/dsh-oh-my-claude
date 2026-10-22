@@ -17,6 +17,10 @@ import { dirname, join } from "node:path";
 import type { AddressInfo } from "node:net";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { readBody } from "./sessions.js";
+import { KEY_HEADER } from "./mcp-config.js";
+// The header name lives in mcp-config.ts, a leaf, so the CLI argument builder can read it without
+// importing this module, whose route helpers lead back to the adapter.
+export { KEY_HEADER } from "./mcp-config.js";
 import { errorText } from "./process.js";
 import type { RelayResult } from "./process.js";
 import type { Agent, DshToolsRegistry, JsonValue, PluginContext, ToolSchema } from "./dsh.js";
@@ -24,8 +28,6 @@ import { asSessionId } from "./dsh.js";
 
 /** HTTP endpoint path for the MCP bridge handler. */
 export const MCP_PATH = "/dsh-oh-my-claude/mcp";
-/** HTTP header name for the MCP bridge authentication key. */
-export const KEY_HEADER = "x-dsh-oh-my-claude-key";
 const PROTOCOL = "2025-06-18";
 const BODY_LIMIT = 1024 * 1024;
 /** dsh tools Claude Code already has natively; proxying them would only confuse the model.

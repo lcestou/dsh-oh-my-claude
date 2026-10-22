@@ -6,7 +6,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { claudeSessionId, projectDirName } from "./adapter.js";
+import { claudeSessionId, projectDirName } from "./adapter/transcript-watch.js";
 import { frame, readLog, type Header, type Row } from "./session-repair.js";
 import { registerSessionRoutes, type SessionRouteOptions } from "./sessions.js";
 import type { HealHost } from "./session-heal.js";
