@@ -1,9 +1,8 @@
 import { type FSWatcher } from "node:fs";
 import type { Spawner, SubprocessHandle, WorkspaceDiff, CliModel, SteerAttachment } from "./process.js";
 import { type PluginLoadError } from "./plugins.js";
-import { LlmAdapter, type ContentBlock, type GenerateOptions, type LlmModelInfo, type LlmResolvedModelInfo, type StreamChunk } from "@deepseek-ai/dsh-llm";
+import { LlmAdapter, type ContentBlock, type GenerateOptions, type LlmResolvedModelInfo, type StreamChunk } from "@deepseek-ai/dsh-llm";
 import { type ContextSizes, type ContextSource } from "./context-sources.js";
-import { type PickerSettings } from "./sessions.js";
 import { type OmcEvent } from "./events.js";
 import { readUsage } from "./usage.js";
 import { type McpBridge } from "./mcp.js";
@@ -25,6 +24,7 @@ import { Config } from "./adapter/config.js";
 export { boxFor, Config, isOrphanedStandIn, localConfig, remoteCwdFor, remoteWorkspaceFor, setRemoteWorkspaces, } from "./adapter/config.js";
 import { type AsideEntry, type AsidesReply, type AwaitingRow, Continuation, ControlRequestEvent, type ControlReply, type ContextUsageReply, type Decision, type HeldSteer, type HoldReply, type IdleReply, type LoginNeed, type LiveTurnReply, type McpAuthReply, type McpStatusReply, type PermissionModeInfo, type PermissionModeReply, type PermissionModeState, type PermissionReadoutReply, type RewindReply, type SessionOptions, type SkillDoctorReply, type SteerCardState, type SteerEditReply, type TurnTotals, type WorkspaceDiffReply } from "./adapter/types.js";
 export { type AsideEntry, type AsidesReply, type AwaitingRow, type ControlReply, type ContextUsageReply, type HoldReply, type IdleReply, keepsLiveTurn, type LoginNeed, type LiveTurnReply, type McpAuthReply, type McpStatusReply, type PermissionModeInfo, type PermissionModeReply, type PermissionModeState, type PermissionReadoutReply, registryKey, type RewindPrompt, type RewindReply, skillDoctorReply, type SkillDoctorReply, type SteerCardState, type SteerEditReply, type TurnTotals, type WorkspaceDiffReply, } from "./adapter/types.js";
+export { EFFORTS_ALL, getCatalog, KNOWN_MODELS, liveWindowFor, mergeCatalog, modelFromApi, noteLiveWindow, parseCatalogCache, proxyBaseUrl, resolveModelInfo, stableModelId, } from "./adapter/catalog.js";
 /** Plugin name identifier. */
 export declare const name = "dsh-oh-my-claude";
 /** Services injected into the plugin by the dsh runtime. */
@@ -34,41 +34,6 @@ export interface TurnsReply {
     turns: TurnRecord[];
     total: TurnTotals;
 }
-/** The CLI's effort ladder, low to high; `readPickerSettings` validates `maxEffortLevel` against it. */
-export declare const EFFORTS_ALL: readonly ["low", "medium", "high", "xhigh", "max"];
-/** One effort level's capability flag, as the Models API reports it. */
-type EffortLevelCaps = {
-    supported?: boolean;
-};
-/** The effort capability block: an overall flag plus one flag per level. */
-type EffortCaps = {
-    supported?: boolean;
-} & Partial<Record<(typeof EFFORTS_ALL)[number], EffortLevelCaps>>;
-/** One picker row. `description` is dsh's own optional field, drawn under the name; only the CLI's
- *  rows carry one, and a row without one has no key, since dsh validates the shape it is given. */
-interface CatalogModel {
-    provider: string;
-    id: string;
-    name: string;
-    contextWindow: number;
-    efforts: readonly string[];
-    description?: string;
-    /** The Models API's `created_at`, as epoch ms; absent on a known or CLI row. Read by
-     *  `mergeCatalog` to tell a model newer than the installed CLI from an old id it dropped. */
-    createdAt?: number;
-}
-/** Build one KNOWN_MODELS row: the provider is always claude-code, so callers pass only the id, label, context window and efforts, filling description when given. */
-declare const M: (id: string, label: string, contextWindow: number, efforts: readonly string[], description?: string) => CatalogModel;
-export declare const KNOWN_MODELS: CatalogModel[];
-/**
- * The Models API dates some ids (`claude-haiku-4-5-20251001`) and leaves others alone
- * (`claude-opus-5`), while the list above and the CLI's own picker use the undated form. The CLI
- * takes either, but dsh keys a model by its id: a lineup that spells the same model one way from
- * the API and another from this list retires the enabled one and offers a fresh unselected copy
- * every time the source changes. So an API id whose undated form is one we know is advertised
- * undated, and an id we do not know keeps whatever the API called it.
- */
-export declare const stableModelId: (id: string) => string;
 /**
  * The side question's context for a selected passage: a lead line and the passage as a Markdown quote.
  * Kept here rather than shared with the client's `quoteMarkdown`, since server code does not import
@@ -81,38 +46,6 @@ export declare const selectionContext: (quote: string) => string;
  * are parsed at this I/O boundary and blank or absent answers report as none.
  */
 export declare function asideAnswerText(response: JsonValue | undefined): string | undefined;
-/** Parse a persisted catalog file. Anything malformed reads as empty, so the caller falls back. */
-export declare function parseCatalogCache(text: string): ReturnType<typeof M>[];
-/** One entry of the Anthropic Models API list, in the shape the picker uses. */
-export declare function modelFromApi(m: {
-    id?: string;
-    display_name?: string;
-    max_input_tokens?: number;
-    capabilities?: {
-        effort?: EffortCaps;
-    };
-    created_at?: string;
-}): CatalogModel;
-/** The base URL when it names a host the CLI does not treat as first-party, else undefined. The
- *  test is the CLI's own (`av()` in 2.1.274: `new URL(e).host` against `["api.anthropic.com"]`),
- *  `host` with its port included, so this fires exactly when the CLI demotes. */
-export declare const proxyBaseUrl: (raw: string | undefined) => string | undefined;
-/** Record what a session answered. A missing or nonsense figure leaves the last good one standing. */
-export declare const noteLiveWindow: (modelId: string | undefined, maxTokens: number | undefined) => void;
-/** The context window a live session last reported for this model, which beats the catalog's
- *  figure because it is what this box's CLI actually runs with (a proxy can demote a 1M model to
- *  200k). Keyed by the stable id, so an alias and its dated spelling share one answer. Undefined
- *  until some session has reported it. */
-export declare const liveWindowFor: (modelId: string) => number | undefined;
-/** Merges the CLI's model rows into the catalog, giving each known model a single stable id and
- *  name so the picker offers the same lineup whether or not the CLI has yet learned the model's
- *  short spelling. */
-export declare function mergeCatalog(cli: CliModel[], base: ReturnType<typeof M>[], picker?: PickerSettings): CatalogModel[];
-/** Serves the model catalog from cache, fetching Anthropic's API when the cache is stale, and
- *  keeps the last good catalog on any failure so the picker never goes empty. */
-export declare function getCatalog(fetchImpl?: typeof fetch, cli?: CliModel[], picker?: PickerSettings): Promise<CatalogModel[]>;
-/** Exact model metadata. `id` must echo the requested id: dsh-llm normalizeModelInfo rejects mismatches. */
-export declare function resolveModelInfo(provider: string, modelId: string, models?: ReturnType<typeof M>[], cap?: (typeof EFFORTS_ALL)[number]): LlmResolvedModelInfo;
 /** Deterministic UUID for a dsh session id, so a reopened dsh session resumes the same Claude session. */
 /** Terminal exchanges waiting to be shown in a dsh session, and the one whose turn is open. */
 interface MirrorQueue {
@@ -717,7 +650,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     /** A box without a login lists nothing: dsh's catalog drops a provider whose listing throws into
      *  its "could not load" row with a Retry, which is the honest picker for a box no turn can use.
      *  The row names the fix; Retry after the login brings the models back. */
-    listModels(provider: string): Promise<LlmModelInfo[]>;
+    listModels(provider: string): Promise<import("@deepseek-ai/dsh-llm").LlmModelInfo[]>;
     /** After a `result` frame: remember a login failure for the card, and name the box's providers
      *  logged out so the picker stops offering them; a turn that succeeded clears both. */
     noteTurnLogin(sessionId: string, result: ResultFrame): void;
