@@ -622,4 +622,22 @@ import {
   assert.equal(note.call(proc, "not json {"), false, "not JSON is queued");
 }
 
+// session_title_changed frames are consumed by noteTitle: the name is kept, onTitle fires once
+// per change, and the echo of a name the adapter already set is a no-op
+{
+  const proc: { title?: string; seen: string[]; onTitle?: (t: string) => void } = { seen: [] };
+  proc.onTitle = (t) => proc.seen.push(t);
+  const note = ClaudeProcess.prototype.noteTitle;
+  const frame = (title: string) =>
+    JSON.stringify({ type: "system", subtype: "session_title_changed", title });
+  assert.equal(note.call(proc, frame("  Probe title ")), true, "consumed");
+  assert.deepEqual(proc.seen, ["Probe title"], "fired with the trimmed name");
+  assert.equal(note.call(proc, frame("Probe title")), true, "the echo is consumed too");
+  assert.deepEqual(proc.seen, ["Probe title"], "but fires nothing");
+  assert.equal(note.call(proc, frame("")), true, "an empty name is consumed");
+  assert.equal(proc.title, "Probe title", "and changes nothing");
+  assert.equal(note.call(proc, '{"type":"system","subtype":"init"}'), false, "other frames queue");
+  assert.equal(note.call(proc, "not json {"), false, "not JSON is queued");
+}
+
 console.log("process ok");

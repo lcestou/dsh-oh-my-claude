@@ -5362,6 +5362,23 @@ console.log("interrupt-on-abort ok");
     "empty list: Default only",
   );
 
+  // An API row newer than everything the CLI offers is one the installed CLI predates: its
+  // description says so. An older leftover (a dated id the CLI dropped) says nothing, and
+  // without a CLI list nothing is marked.
+  {
+    const base = [
+      modelFromApi({ id: "claude-haiku-4-5-20251001", created_at: "2025-10-01T00:00:00Z" }),
+      modelFromApi({ id: "claude-next-9", created_at: "2027-01-01T00:00:00Z" }),
+      modelFromApi({ id: "claude-old-1", created_at: "2024-01-01T00:00:00Z" }),
+    ];
+    const haikuOnly = cli.filter((c) => c.value === "haiku");
+    const marked = mergeCatalog(haikuOnly, base);
+    assert.match(marked.find((m) => m.id === "claude-next-9")?.description ?? "", /update/i);
+    assert.equal(marked.find((m) => m.id === "claude-old-1")?.description, undefined);
+    assert.equal(marked.find((m) => m.id === "claude-haiku-4-5")?.description, undefined);
+    assert.equal(mergeCatalog([], base).find((m) => m.id === "claude-next-9")?.description, undefined);
+    assert.equal(base[1]?.createdAt, Date.parse("2027-01-01T00:00:00Z"), "created_at kept");
+  }
   // modelPicker rows follow the built-in lineup, or replace it apart from Default.
   const rows = { options: [{ model: "opus-4-5", label: "Cheap Opus" }] };
   const appended = mergeCatalog(cli, KNOWN_MODELS, { ...rows, replaceBuiltInOptions: false });
