@@ -118,6 +118,13 @@ import {
 } from "./picker.js";
 import { ClaudeUpdateDetails } from "./claude-updates.js";
 import { paceOf, WINDOW_MS } from "./pace.js";
+import {
+  COMPACT_AT,
+  COMPACT_AT_CHOICES,
+  compactThreshold,
+  runDraft,
+  SHELL_LANGS,
+} from "./nudge.js";
 import { type LimitLevel, worstLimit } from "./limits.js";
 import {
   noteWithdrawn,
@@ -5206,10 +5213,6 @@ const paintClosing = (
 /** The composer actions of the aside dock entry on screen, for the Run button, which is drawn
  *  outside any React tree. Null without a composer, so no button is offered. */
 let dockComposer: ComposerSlot["inputActions"] | null = null;
-/** Fence labels dsh shows for a shell snippet; anything else gets no Run button. */
-const SHELL_LANGS = new Set(["bash", "sh", "zsh", "shell", "console", "shellsession"]);
-/** What Claude reads above the snippet; not translated, like every prompt. */
-const RUN_PROMPT = "Run this:";
 /**
  * A Run button in the banner of every shell code block in a Claude session. Clicking writes the
  * snippet into the composer as a prompt, fenced under "Run this:", and leaves sending to you: the
@@ -5243,7 +5246,7 @@ function watchRunButtons(ctx: ClientCtx) {
         const snippet = block.querySelector("pre")?.textContent?.trimEnd() ?? "";
         const composer = dockComposer;
         if (!composer || snippet.trim() === "") return;
-        composer.setDraft(`${RUN_PROMPT}\n\`\`\`${lang}\n${snippet}\n\`\`\``);
+        composer.setDraft(runDraft(lang, snippet));
         document.querySelector<HTMLElement>("[data-composer-input]")?.focus();
       });
       actions.append(button);
@@ -9166,20 +9169,6 @@ function SteerCard({
   );
 }
 
-/** The context window's share this card speaks up at. The CLI's own auto-compact sits higher;
- *  this is the point where the next prompt already carries most of a window and a compaction
- *  now costs less than one later, and where a session resumed after a break pays that on its
- *  first prompt. */
-const COMPACT_AT = 75;
-/** The thresholds the settings picker offers; a stored value outside this list still works, it
- *  just shows as the nearest the browser picks for an unlisted option value. */
-const COMPACT_AT_CHOICES = [50, 60, 70, 75, 80, 90];
-/** The threshold a box set through the `compactNudgeAt` hint, or the default: a percent between
- *  1 and 100, so a cleared or malformed hint falls back rather than silencing the card. */
-export const compactThreshold = (stored: boolean | number | undefined): number => {
-  const pct = Number(stored);
-  return pct >= 1 && pct <= 100 ? pct : COMPACT_AT;
-};
 /**
  * The nudge above the composer when a session's context is mostly full: how full, what the next
  * prompt carries, and a Compact button that posts to the plugin's `/compact` route, which sends
