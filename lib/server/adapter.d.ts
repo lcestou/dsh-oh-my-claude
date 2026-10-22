@@ -6,7 +6,7 @@ import { type OmcEvent } from "./events.js";
 import { readUsage } from "./usage.js";
 import { type McpBridge } from "./mcp.js";
 import { type ClaudeEvent, ClaudeProcess } from "./process.js";
-import type { Agent, ImageAttachmentRef, JsonValue, PluginContext, ResolvedAgent, SessionController, SubprocessRuntime, ToolSchema } from "./dsh.js";
+import type { Agent, ImageAttachmentRef, JsonValue, PluginContext, ResolvedAgent, SessionController, SubprocessRuntime } from "./dsh.js";
 import { ADAPTER_CURRENT } from "./dsh.js";
 import { type ToolMode, type ToolModeInfo } from "./rows-probe.js";
 import { type FsBox } from "./remote-fs.js";
@@ -28,6 +28,7 @@ import { type MirrorQueue, type StreamState, type TranscriptWatch } from "./adap
 export { claudeSessionId, projectDirName } from "./adapter/transcript-watch.js";
 import { type LoadedImage, type LooseMessage } from "./adapter/prompt.js";
 export { attachmentNotes, attachmentsOf, buildPrompt, clientTimeZone, contextSizes, contextSourceOf, type LooseMessage, relayFileHandles, selectTurns, steerKey, withoutNativeInstructions, } from "./adapter/prompt.js";
+export { accessModeOf, approvalsDisabled, buildArgs, buildInput, commandNames, denyCliFlag, dshToolsGuidance, type ExecLike, forgetCliProbe, mcpToolsByServer, NATIVE_TOOL_MAP, permissionModeFor, probeCli, renameTitle, supports, unknownFlagIn, usesStdin, } from "./adapter/cli.js";
 /** Plugin name identifier. */
 export declare const name = "dsh-oh-my-claude";
 /** Services injected into the plugin by the dsh runtime. */
@@ -37,126 +38,6 @@ export interface TurnsReply {
     turns: TurnRecord[];
     total: TurnTotals;
 }
-/** dsh's access-mode switch arrives as text in the runtime-context injection; the last snapshot wins. */
-export declare function accessModeOf(messages: LooseMessage[] | undefined): string | undefined;
-/** dsh's approval-policy line rides in the same runtime-context injection as the file policy, and
- *  only while the policy is "never"; the last snapshot wins, so a switch back to "ask" clears it. */
-export declare function approvalsDisabled(messages: LooseMessage[] | undefined): boolean;
-/** The CLI's permission mode for a turn: the configured one, or the one dsh's access mode maps to. */
-export declare function permissionModeFor(config: Schemastery.TypeT<typeof Config>, accessMode: string | undefined): string;
-/** Forget what was probed on `host` ("" for this box): after `claude update` there, the flag set
- *  and the denials belong to a binary that is gone, and the next spawn probes the new one. */
-export declare function forgetCliProbe(host: string): void;
-/** The flag in `error: unknown option '--x'`, however the CLI wrapped the line. */
-export declare function unknownFlagIn(text: string): string | undefined;
-/** Record a flag the target's CLI refused. False when it was already known bad, which is what stops
- * a retry loop: the second refusal of the same flag is a real failure, not something to retry. */
-export declare function denyCliFlag(command: string, host: string | undefined, flag: string): boolean;
-/** The slice of node's execFile the probe uses; tests hand in a fake with this shape. */
-export type ExecLike = (cmd: string, args: string[], opts: {
-    timeout: number;
-}, cb: (err: Error | null, stdout: string | Buffer) => void) => void;
-/** The target binary's version and the flags its `--help` lists, probed once per binary. */
-export declare function probeCli(exec?: ExecLike, command?: string, host?: string): Promise<{
-    flags: Set<string> | null;
-    version: string;
-}>;
-/**
- * Checks if a CLI flag is supported. Returns true if flags are unknown
- * (probe failed) to assume support.
- */
-export declare const supports: (flags: Set<string> | null | undefined, flag: string) => boolean;
-/** Text mode when the CLI lacks --input-format: prompt goes positional, images are dropped. */
-export declare const usesStdin: (flags: Set<string> | null | undefined) => boolean;
-/**
- * The text appended to the system prompt whenever dsh tools are bridged. Claude Code's own Agent
- * tool spawns children dsh cannot see (no card, no header count, no notice), so subagents must go
- * through the bridged tools, and a background command through dsh's shell tool.
- *
- * It names only what `tools` holds, the schemas the bridge will list for this session. What dsh
- * offers differs by box and by session: the shell tool is `pwsh` on Windows and `bash` elsewhere,
- * a persistent shell takes no `run_in_background`, the preset subagent tools depend on the agent
- * preset, and `subagent` takes a provider and model (with `list_subagent_models` beside it) only
- * in a session that has a model-selection policy. Naming a tool that is not there sends Claude
- * looking for it and then back to a native background shell dsh cannot see.
- *
- * With `tools` undefined (no live agent to ask) only the opening sentence is sent: the bridge
- * answers that session with nothing either.
- */
-export declare function dshToolsGuidance(tools?: readonly ToolSchema[]): string;
-/**
- * The argument list for one `claude -p` spawn: every flag this plugin sends, in one place.
- *
- * Almost every flag is guarded by `supports`, which asks what this particular CLI binary
- * advertises, so an older Claude Code on a remote box is never handed a flag it would refuse and
- * die on; the feature quietly goes without instead. The one exception worth knowing is
- * `--tools default`, which looks redundant and is not: without it the CLI keeps
- * `AskUserQuestion` out of `-p` runs, so Claude could never ask the person anything.
- *
- * An auxiliary call, a title or a compaction, returns early with one turn, no tools and no session
- * of its own, and never carries a permission mode, allowed tools, budget or resume. Everything
- * after that early return applies only to a real conversation turn.
- */
-export declare function buildArgs({ model, reasoningEffort, system, purpose, config, session, accessMode, flags, promptText, mcp, temporary, permissionMode, }: Pick<GenerateOptions, "reasoningEffort" | "system" | "purpose"> & {
-    model: string | undefined;
-    config: Schemastery.TypeT<typeof Config>;
-    session?: {
-        id: string;
-        resuming: boolean;
-    } | undefined;
-    accessMode?: string | undefined;
-    flags?: Set<string> | null;
-    promptText?: string;
-    /** The bridge for this session, with the dsh tools it will list (see `dshToolsGuidance`). */
-    mcp?: {
-        url: string;
-        key: string;
-        tools?: readonly ToolSchema[] | undefined;
-    } | undefined;
-    /** /temporary: keep no Claude transcript for this session. */
-    temporary?: boolean;
-    /** Optional permission mode override; if provided, used instead of computing from config. */
-    permissionMode?: string;
-}): string[];
-/** One stream-json input line: the user turn with text and inline images. `uuid` goes on the line so a later `cancel_async_message` can name it. */
-export declare function buildInput(prompt: string, images: Array<{
-    mediaType: string;
-    data: string;
-}>, uuid?: string): string;
-/** Names from the CLI's init frame that dsh's command grammar accepts (lowercase, `[a-z0-9_-]`), deduped. */
-export declare function commandNames(value: JsonValue | undefined): string[];
-/**
- * Bare tool names per MCP server, from the init frame's `mcp__<server>__<tool>` ids. Every known
- * server gets an entry, empty when it contributes nothing; an id whose server is not in the list
- * is dropped rather than guessed at.
- */
-export declare function mcpToolsByServer(serverNames: readonly string[], toolIds: readonly string[]): Map<string, string[]>;
-/**
- * The dsh title a bridged command should set: the trimmed argument when this is Claude's rename
- * with one. An empty argument returns undefined so the line reaches Claude unchanged and the CLI
- * answers with its own usage message.
- */
-export declare function renameTitle(cmd: string, rawInput: string): string | undefined;
-export declare const NATIVE_TOOL_MAP: {
-    readonly Bash: "bash";
-    readonly PowerShell: "pwsh";
-    readonly Read: "read";
-    readonly Edit: "edit";
-    readonly Write: "write";
-    readonly Grep: "grep";
-    readonly Glob: "glob";
-    readonly WebFetch: "web_fetch";
-    readonly WebSearch: "web_search";
-    readonly MultiEdit: "edit";
-    readonly TodoWrite: "todo_write";
-    readonly Task: "task";
-    readonly NotebookEdit: "notebook_edit";
-    readonly BashOutput: "bash_output";
-    readonly KillShell: "kill_shell";
-    readonly ExitPlanMode: "exit_plan_mode";
-    readonly EnterPlanMode: "enter_plan_mode";
-    readonly SlashCommand: "slash_command";
-};
 export interface TurnRecord {
     at: number;
     costUsd: number;
