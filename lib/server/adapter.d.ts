@@ -1577,6 +1577,16 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * `session_title_changed` echo compares equal and renames nothing back.
      */
     syncTitleToCli(proc: ClaudeProcess, sessionId: string): void;
+    /**
+     * Send Claude's own `/compact` as the session's next prompt, the way the bridged
+     * `/claude-compact` command does: a user message through the agent, so dsh opens a turn and the
+     * transcript shows `/compact` as the bubble you sent. The CLI expands it as the terminal would.
+     * Fails when the session cannot be reached (dsh unloaded it and refused the resume).
+     */
+    compactNow(sessionId: string): Promise<{
+        ok: boolean;
+        error?: string;
+    }>;
     /** Ask the CLI how many tokens this session's context window holds, bank the figure for dsh's context ring under both the spec and CLI model names, and flag an assumed-behind window when this box runs behind a proxy. */
     contextUsage(sessionId: string): Promise<ContextUsageReply>;
     /**

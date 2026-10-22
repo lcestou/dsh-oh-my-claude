@@ -4657,6 +4657,28 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       .catch((error) => this.log("warn", `rename_session: ${errorText(error)}`));
   }
 
+  /**
+   * Send Claude's own `/compact` as the session's next prompt, the way the bridged
+   * `/claude-compact` command does: a user message through the agent, so dsh opens a turn and the
+   * transcript shows `/compact` as the bubble you sent. The CLI expands it as the terminal would.
+   * Fails when the session cannot be reached (dsh unloaded it and refused the resume).
+   */
+  async compactNow(sessionId: string): Promise<{ ok: boolean; error?: string }> {
+    const found = await this.agentFor(sessionId);
+    if (!found) return { ok: false, error: "session not reachable" };
+    try {
+      found.agent.followup(
+        createUserMessage({
+          content: [{ type: "text", text: "/compact" }],
+          source: { kind: "user" },
+        }),
+      );
+    } catch (error) {
+      return { ok: false, error: errorText(error) };
+    }
+    return { ok: true };
+  }
+
   /** Ask the CLI how many tokens this session's context window holds, bank the figure for dsh's context ring under both the spec and CLI model names, and flag an assumed-behind window when this box runs behind a proxy. */
   async contextUsage(sessionId: string): Promise<ContextUsageReply> {
     const proc = this.processes.get(registryKey(this.providerId, sessionId));
@@ -8142,6 +8164,7 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
         adapter.ownerFor(sessionId).stopTask(sessionId, taskId),
       taskOutput: (sessionId: string, taskId: string) =>
         adapter.ownerFor(sessionId).taskOutput(sessionId, taskId),
+      compactNow: (sessionId: string) => adapter.ownerFor(sessionId).compactNow(sessionId),
       awaiting: () => adapter.awaitingAll(),
       continueAfterLimit: adapter.config.continueAfterLimit,
     });

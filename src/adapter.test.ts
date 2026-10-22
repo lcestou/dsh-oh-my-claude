@@ -5376,7 +5376,10 @@ console.log("interrupt-on-abort ok");
     assert.match(marked.find((m) => m.id === "claude-next-9")?.description ?? "", /update/i);
     assert.equal(marked.find((m) => m.id === "claude-old-1")?.description, undefined);
     assert.equal(marked.find((m) => m.id === "claude-haiku-4-5")?.description, undefined);
-    assert.equal(mergeCatalog([], base).find((m) => m.id === "claude-next-9")?.description, undefined);
+    assert.equal(
+      mergeCatalog([], base).find((m) => m.id === "claude-next-9")?.description,
+      undefined,
+    );
     assert.equal(base[1]?.createdAt, Date.parse("2027-01-01T00:00:00Z"), "created_at kept");
   }
   // modelPicker rows follow the built-in lineup, or replace it apart from Default.

@@ -1853,6 +1853,8 @@ export interface SessionRouteOptions {
   liveTasks?: (sessionId: string) => LiveTask[];
   /** Ask the CLI to stop one of its tasks. */
   stopTask?: (sessionId: string, taskId: string) => Promise<{ ok: boolean; error?: string }>;
+  /** Send `/compact` to the session as its next prompt, for the context nudge's button. */
+  compactNow?: (sessionId: string) => Promise<{ ok: boolean; error?: string }>;
   /** The tail of one task's output, or the CLI's error. */
   taskOutput?: (
     sessionId: string,
@@ -2026,6 +2028,7 @@ export function registerSessionRoutes(
     liveTasks,
     stopTask,
     taskOutput,
+    compactNow,
     steersFor,
     holdSteers,
     releaseHold,
@@ -4476,6 +4479,14 @@ export function registerSessionRoutes(
               // 200 either way: the CLI's refusal (a task it no longer has, a subagent asked for
               // output) is the answer the row shows, and the client's readJson throws on a 4xx.
               return json(res, 200, await fn(sid, taskId));
+            }
+            if (req.method === "POST" && url.pathname === `${ROUTE_PREFIX}/compact`) {
+              const { session: sid } = await readBody(req);
+              if (typeof sid !== "string" || sid === "")
+                return json(res, 400, { error: "session required" });
+              if (!compactNow) return json(res, 501, { error: "not available" });
+              // 200 either way, like the task routes: the refusal is the card's answer.
+              return json(res, 200, await compactNow(sid));
             }
             if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/scheduled-tasks`) {
               // dsh's goal lives in its own session log, not the transcript, as `goal/change`

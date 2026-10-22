@@ -9124,10 +9124,18 @@ function SteerCard({
  *  now costs less than one later, and where a session resumed after a break pays that on its
  *  first prompt. */
 const COMPACT_AT = 75;
+/** The threshold a box set through the `compactNudgeAt` hint, or the default: a percent between
+ *  1 and 100, so a cleared or malformed hint falls back rather than silencing the card. */
+export const compactThreshold = (stored: boolean | number | undefined): number => {
+  const pct = Number(stored);
+  return pct >= 1 && pct <= 100 ? pct : COMPACT_AT;
+};
 /**
  * The nudge above the composer when a session's context is mostly full: how full, what the next
- * prompt carries, and a Compact button that sends Claude's own `/compact` through dsh's composer
- * (`/claude-compact`, the bridged name), so the transcript shows it as a command you sent.
+ * prompt carries, and a Compact button that posts to the plugin's `/compact` route, which sends
+ * Claude's own `/compact` as the next prompt the way the bridged `/claude-compact` does. Not
+ * through the composer: a draft of `/claude-compact` submitted by script goes to Claude as that
+ * literal text, since dsh only turns a typed slash into a command chip (seen 2026-10-22).
  */
 function CompactCard({
   percent,
@@ -9958,25 +9966,41 @@ function AsideBubble({
   // returns at the next 10 % and not before. `loadContext` is the meter popover's cached read;
   // shortcut: up to 10 s stale after a turn, fresh enough for a threshold.
   const [compactOff] = useHintFlag("compactNudgeOff");
+  // The threshold is a hint too (`compactNudgeAt`, percent), so a box can move it through
+  // POST /hints; the switch card names the default.
+  const [compactAtHint] = useHintValue("compactNudgeAt");
+  const compactAt = compactThreshold(compactAtHint);
   const [context, setContext] = useState<{ percentage: number; totalTokens: number } | null>(null);
   const [compactDismissed, setCompactDismissed] = useState(-1);
   useEffect(() => {
     if (compactOff || running) return;
     let live = true;
-    void loadContext(sessionId).then((r) => {
-      if (live) setContext(r.ok ? { percentage: r.percentage, totalTokens: r.totalTokens } : null);
-    });
+    // A beat after the turn ends, and past `loadContext`'s cache: the read taken at mount, before
+    // any process was up, answered "no live process" and a cached copy of that hid the card for
+    // the turn that followed (seen 2026-10-22 in the sweep check).
+    const timer = setTimeout(() => {
+      // SAFETY: the body is our own JSON route; both shapes carry `ok`
+      const read = fetch(`${ROUTE}/context?session=${encodeURIComponent(sessionId)}`).then(
+        (r) => r.json() as Promise<ContextReply>,
+      );
+      void read
+        .then((r) => {
+          if (live)
+            setContext(r.ok ? { percentage: r.percentage, totalTokens: r.totalTokens } : null);
+        })
+        .catch(() => {});
+    }, 1500);
     return () => {
       live = false;
+      clearTimeout(timer);
     };
   }, [sessionId, running, compactOff]);
   const compactBucket = context ? Math.floor(context.percentage / 10) : -1;
   const compactCard =
     !compactOff &&
     context !== null &&
-    context.percentage >= COMPACT_AT &&
-    compactBucket !== compactDismissed &&
-    inputActions?.submit
+    context.percentage >= compactAt &&
+    compactBucket !== compactDismissed
       ? context
       : null;
   // The Run button on shell snippets lives outside React (a body scan); it borrows this entry's
@@ -10077,13 +10101,16 @@ function AsideBubble({
           onDismiss={() => setSuggestionHidden(suggestionCard)}
         />
       )}
-      {compactCard !== null && inputActions && (
+      {compactCard !== null && (
         <CompactCard
           percent={compactCard.percentage}
           tokens={compactCard.totalTokens}
           onCompact={() => {
-            inputActions.setDraft("/claude-compact");
-            inputActions.submit?.();
+            void fetch(`${ROUTE}/compact`, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ session: sessionId }),
+            }).catch(() => {});
             setCompactDismissed(compactBucket);
           }}
           onDismiss={() => setCompactDismissed(compactBucket)}

@@ -52,7 +52,7 @@ export type Page = {
   waitForTimeout(ms: number): Promise<void>;
   screenshot(how: { path: string; clip?: Box; fullPage?: boolean }): Promise<void>;
   setViewportSize(size: Size): Promise<void>;
-  keyboard: { press(key: string): Promise<void> };
+  keyboard: { press(key: string): Promise<void>; type(text: string): Promise<void> };
   on(event: "console", handler: (message: { text(): string }) => void): void;
   /** Every request the page makes; a counter check reads `url()` off each one. */
   on(event: "request", handler: (request: { url(): string }) => void): void;
