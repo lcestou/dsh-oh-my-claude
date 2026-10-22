@@ -9174,40 +9174,42 @@ function CompactCard({
         >
           ●
         </span>
-        <span style={{ flex: 1, minWidth: 160 }}>
+        <span style={{ flex: "1 1 14em", minWidth: 0 }}>
           {t("main.compact.full", { percent: Math.floor(percent), tokens: kTokens(tokens) })}
         </span>
-        <button
-          type="button"
-          data-omc-compact-now=""
-          onClick={onCompact}
-          style={{
-            background: "var(--dsw-alias-bg-elevated, transparent)",
-            border: `0.5px solid ${T.border}`,
-            borderRadius: 6,
-            padding: "2px 8px",
-            cursor: "pointer",
-            color: T.text,
-            fontSize: 12,
-          }}
-        >
-          {t("main.compact.now")}
-        </button>
-        <button
-          type="button"
-          aria-label={t("main.compact.dismissAria")}
-          title={t("main.compact.dismissAria")}
-          onClick={onDismiss}
-          style={{
-            background: "none",
-            border: "none",
-            cursor: "pointer",
-            padding: "0 2px",
-            color: T.faint,
-          }}
-        >
-          ×
-        </button>
+        <span style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: "auto" }}>
+          <button
+            type="button"
+            data-omc-compact-now=""
+            onClick={onCompact}
+            style={{
+              background: "var(--dsw-alias-bg-elevated, transparent)",
+              border: `0.5px solid ${T.border}`,
+              borderRadius: 6,
+              padding: "2px 8px",
+              cursor: "pointer",
+              color: T.text,
+              fontSize: 12,
+            }}
+          >
+            {t("main.compact.now")}
+          </button>
+          <button
+            type="button"
+            aria-label={t("main.compact.dismissAria")}
+            title={t("main.compact.dismissAria")}
+            onClick={onDismiss}
+            style={{
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+              padding: "0 2px",
+              color: T.faint,
+            }}
+          >
+            ×
+          </button>
+        </span>
       </div>
     </div>
   );
@@ -9344,46 +9346,51 @@ function SuggestionCard({
         >
           {text}
         </span>
-        {/* Disabled while folded: a card that is out of sight must not take the Tab key either. */}
-        <button
-          type="button"
-          style={btn}
-          data-omc-suggestion-use=""
-          disabled={folded}
-          onClick={onUse}
-        >
-          {t("main.suggestion.use")}
-        </button>
-        {onSend && (
+        {/* One cluster, pushed right: at phone width the text takes the first line and the
+            three buttons move to the next together, instead of Use staying up and Send and the
+            close dropping alone (owner's phone, 2026-10-21). */}
+        <span style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: "auto" }}>
+          {/* Disabled while folded: a card that is out of sight must not take the Tab key either. */}
           <button
             type="button"
             style={btn}
-            data-omc-suggestion-send=""
+            data-omc-suggestion-use=""
             disabled={folded}
-            onClick={onSend}
+            onClick={onUse}
           >
-            {t("main.suggestion.send")}
+            {t("main.suggestion.use")}
           </button>
-        )}
-        <button
-          type="button"
-          aria-label={t("main.suggestion.dismissAria")}
-          title={t("main.suggestion.dismiss")}
-          data-omc-suggestion-dismiss=""
-          disabled={folded}
-          onClick={onDismiss}
-          style={{
-            background: "none",
-            border: "none",
-            padding: "2px 4px",
-            cursor: "pointer",
-            color: "inherit",
-            font: "inherit",
-            lineHeight: 1,
-          }}
-        >
-          ×
-        </button>
+          {onSend && (
+            <button
+              type="button"
+              style={btn}
+              data-omc-suggestion-send=""
+              disabled={folded}
+              onClick={onSend}
+            >
+              {t("main.suggestion.send")}
+            </button>
+          )}
+          <button
+            type="button"
+            aria-label={t("main.suggestion.dismissAria")}
+            title={t("main.suggestion.dismiss")}
+            data-omc-suggestion-dismiss=""
+            disabled={folded}
+            onClick={onDismiss}
+            style={{
+              background: "none",
+              border: "none",
+              padding: "2px 4px",
+              cursor: "pointer",
+              color: "inherit",
+              font: "inherit",
+              lineHeight: 1,
+            }}
+          >
+            ×
+          </button>
+        </span>
       </div>
     </div>
   );
