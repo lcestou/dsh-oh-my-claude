@@ -8235,31 +8235,73 @@ function SuggestionSwitch() {
   );
 }
 
-/** The settings switch for the context nudge, a hint like the suggestion switch above: the
- *  threshold is the box's, so every tab agrees on when to speak up. */
+/** The settings switch for the context nudge and, with it on, the percent it speaks at. Both are
+ *  hints like the suggestion switch above: the threshold is the box's, so every tab agrees on when
+ *  to speak up. The default is stored as absence, so a box that never touched it follows a moved
+ *  default. */
 function CompactNudgeSwitch() {
   useLocale();
   const [off, setOff] = useHintFlag("compactNudgeOff");
+  const [stored, setStored] = useHintValue("compactNudgeAt");
+  const at = compactThreshold(stored);
   return (
-    <div
-      data-omc-compact-switch=""
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: 12,
-        fontSize: 13,
-        marginBottom: 12,
-      }}
-    >
-      <div>
-        <div>{t("main.settingsUi.compactTitle")}</div>
-        <div style={{ color: T.faint, fontSize: 12 }}>
-          {t("main.settingsUi.compactDesc", { percent: COMPACT_AT })}
+    <>
+      <div
+        data-omc-compact-switch=""
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+          fontSize: 13,
+          marginBottom: off ? 12 : 4,
+        }}
+      >
+        <div>
+          <div>{t("main.settingsUi.compactTitle")}</div>
+          <div style={{ color: T.faint, fontSize: 12 }}>
+            {t("main.settingsUi.compactDesc", { percent: at })}
+          </div>
         </div>
+        <Switch
+          on={!off}
+          onChange={(on) => setOff(!on)}
+          label={t("main.settingsUi.compactTitle")}
+        />
       </div>
-      <Switch on={!off} onChange={(on) => setOff(!on)} label={t("main.settingsUi.compactTitle")} />
-    </div>
+      {!off && (
+        <label
+          data-omc-compact-at=""
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            fontSize: 13,
+            marginBottom: 12,
+            paddingLeft: 16,
+          }}
+        >
+          <span style={{ color: T.muted }}>{t("main.settingsUi.compactAtLabel")}</span>
+          <select
+            style={select}
+            aria-label={t("main.settingsUi.compactAtAria")}
+            value={String(at)}
+            onChange={(e) => {
+              const next = Number(e.target.value);
+              setStored(next === COMPACT_AT ? null : next);
+            }}
+          >
+            {COMPACT_AT_CHOICES.map((pct) => (
+              <option key={pct} value={String(pct)}>
+                {pct === COMPACT_AT
+                  ? t("main.settingsUi.defaultSuffix", { text: `${pct}%` })
+                  : `${pct}%`}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+    </>
   );
 }
 
@@ -9129,6 +9171,9 @@ function SteerCard({
  *  now costs less than one later, and where a session resumed after a break pays that on its
  *  first prompt. */
 const COMPACT_AT = 75;
+/** The thresholds the settings picker offers; a stored value outside this list still works, it
+ *  just shows as the nearest the browser picks for an unlisted option value. */
+const COMPACT_AT_CHOICES = [50, 60, 70, 75, 80, 90];
 /** The threshold a box set through the `compactNudgeAt` hint, or the default: a percent between
  *  1 and 100, so a cleared or malformed hint falls back rather than silencing the card. */
 export const compactThreshold = (stored: boolean | number | undefined): number => {

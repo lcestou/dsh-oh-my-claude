@@ -76,6 +76,10 @@ expect(
   (await p.locator("[data-omc-compact-switch]").count()) === 1,
 );
 expect(
+  "compact threshold picker under the switch, at the default",
+  (await p.locator("[data-omc-compact-at] select").inputValue()) === "75",
+);
+expect(
   "compact nudge on by default",
   (await p.locator('[data-omc-compact-switch] [role="switch"]').getAttribute("aria-checked")) ===
     "true",
