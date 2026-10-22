@@ -190,6 +190,7 @@ export const en = {
   "panel.mcp.notRunning":
     "Claude starts on your first message. Its MCP servers appear here once it is running.",
   "panel.mcp.none": "No MCP servers",
+  "panel.mcp.toolCount": "{n} tools",
   "panel.mcp.status.connected": "connected",
   "panel.mcp.status.pending": "pending",
   "panel.mcp.status.needs-auth": "needs-auth",
@@ -527,6 +528,7 @@ export const zh = {
   "panel.mcp.notRunning":
     "Claude 会在你发出第一条消息时启动。它的 MCP 服务器在运行后会显示在这里。",
   "panel.mcp.none": "没有 MCP 服务器",
+  "panel.mcp.toolCount": "{n} 个工具",
   "panel.mcp.status.connected": "已连接",
   "panel.mcp.status.pending": "连接中",
   "panel.mcp.status.needs-auth": "需要登录",

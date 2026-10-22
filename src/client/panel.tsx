@@ -2667,6 +2667,11 @@ function McpBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx; onClos
               </span>
               {scopeOf(s.name) && <span style={pill(T.faint)}>{scopeOf(s.name)}</span>}
               <span style={{ ...meta, flex: "none" }}>{mcpStatusLabel(s.status)}</span>
+              {s.tools && (
+                <span data-omc-mcp-tool-count="" style={pill(T.faint)}>
+                  {t("panel.mcp.toolCount", { n: s.tools.length })}
+                </span>
+              )}
               {/* A tighten-only toggle: on sends default (ask), off sends null (clear). What it
                   reads is the plugin's record on the live process, so a refresh or a second browser
                   sees the same thing; the CLI offers no read-back of its own. */}

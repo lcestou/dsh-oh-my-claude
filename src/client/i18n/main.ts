@@ -211,6 +211,13 @@ export const en = {
   "main.usage.resetsInH": "resets in {h} h {m} min",
   "main.usage.resetsInM": "resets in {m} min",
   "main.usage.resetsAt": "resets {when}",
+  "main.usage.paceCap": "at this pace the cap lands at {when}",
+  "main.usage.paceEnds": "at this pace the window ends at {percent}%",
+  "main.compact.full": "Context {percent}% full; the next prompt carries {tokens} tokens",
+  "main.compact.now": "Compact",
+  "main.compact.dismissAria": "Dismiss until the next 10%",
+  "main.run.button": "Run",
+  "main.run.title": "Ask Claude to run this snippet",
   "main.usage.contextBreakdownErr": "Context breakdown: {error}",
   "main.usage.contextUsed": "{pct}% of context used",
   "main.usage.assumedNow":
@@ -382,6 +389,9 @@ export const en = {
   "main.settingsUi.recapDesc":
     "One line on what Claude did while you were on another session, asked when you come back to one that finished without you. Costs a model call each time.",
   "main.settingsUi.suggestTitle": "Suggested next prompt",
+  "main.settingsUi.compactTitle": "Compact nudge",
+  "main.settingsUi.compactDesc":
+    "Above the composer once the context window is {percent}% full, with a Compact button.",
   "main.settingsUi.suggestDesc":
     "After each reply, Claude guesses what you will type next and shows it above the composer, as the Claude Code terminal does. One small model call per turn, mostly cache reads. A change here applies when the session's Claude next starts.",
   "main.suggestion.label": "Claude suggests",
@@ -719,6 +729,13 @@ export const zh = {
   "main.usage.resetsInH": "{h} 小时 {m} 分钟后重置",
   "main.usage.resetsInM": "{m} 分钟后重置",
   "main.usage.resetsAt": "{when} 重置",
+  "main.usage.paceCap": "按当前速度，{when} 将达到上限",
+  "main.usage.paceEnds": "按当前速度，窗口结束时将用到 {percent}%",
+  "main.compact.full": "上下文已满 {percent}%；下一条提示将携带 {tokens} 个 token",
+  "main.compact.now": "压缩",
+  "main.compact.dismissAria": "关闭，到下一个 10% 再提醒",
+  "main.run.button": "运行",
+  "main.run.title": "让 Claude 运行这段代码",
   "main.usage.contextBreakdownErr": "上下文明细：{error}",
   "main.usage.contextUsed": "上下文已用 {pct}%",
   "main.usage.assumedNow":
@@ -872,6 +889,8 @@ export const zh = {
   "main.settingsUi.recapDesc":
     "当你回到一个在你不在时完成的会话时，用一行说明 Claude 在你处理其他会话期间做了什么。每次都会消耗一次模型调用。",
   "main.settingsUi.suggestTitle": "下一条提示建议",
+  "main.settingsUi.compactTitle": "压缩提醒",
+  "main.settingsUi.compactDesc": "上下文窗口用到 {percent}% 时在输入框上方提醒，并提供压缩按钮。",
   "main.settingsUi.suggestDesc":
     "每次回复后，Claude 猜测你接下来会输入什么，并显示在输入框上方，与 Claude Code 终端一致。每轮多一次小的模型调用，大多是缓存读取。此处的改动在该会话的 Claude 下次启动时生效。",
   "main.suggestion.label": "Claude 建议",

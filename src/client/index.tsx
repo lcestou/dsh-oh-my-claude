@@ -117,6 +117,7 @@ import {
   RW_EVENT,
 } from "./picker.js";
 import { ClaudeUpdateDetails } from "./claude-updates.js";
+import { paceOf, WINDOW_MS } from "./pace.js";
 import { type LimitLevel, worstLimit } from "./limits.js";
 import {
   noteWithdrawn,
@@ -3477,6 +3478,25 @@ function renderUsage(block: HTMLElement, reply: UsageReply) {
     when.textContent = resetText(w.resetsAt);
     when.style.cssText = `grid-column:1 / -1;color:${T.faint};font-size:11px;line-height:16px`;
     usageRow.append(label, value, bar, when);
+    // At this rate: where the window ends up, or when the cap lands, from the share of the window
+    // already gone. Only the two plan windows have a known length; a model-scoped or unmet kind
+    // shows its reset alone.
+    const pace = w.kind ? paceOf(pct, w.resetsAt, WINDOW_MS[w.kind]) : undefined;
+    if (pace) {
+      const paceLine = document.createElement("span");
+      paceLine.setAttribute("data-omc-usage-pace", pace.kind);
+      paceLine.textContent =
+        pace.kind === "cap"
+          ? t("main.usage.paceCap", {
+              when: new Date(pace.at).toLocaleTimeString(undefined, {
+                hour: "numeric",
+                minute: "2-digit",
+              }),
+            })
+          : t("main.usage.paceEnds", { percent: pace.percent });
+      paceLine.style.cssText = `grid-column:1 / -1;color:${pace.kind === "cap" ? T.warn : T.faint};font-size:11px;line-height:16px`;
+      usageRow.append(paceLine);
+    }
     block.append(usageRow);
   }
   if (reply.windows.length === 0) {
@@ -5178,6 +5198,53 @@ const paintClosing = (
   }
   if (stopped || clock !== undefined || !newest) group.setAttribute(CLOSED_MARK, "1");
 };
+
+/** The composer actions of the aside dock entry on screen, for the Run button, which is drawn
+ *  outside any React tree. Null without a composer, so no button is offered. */
+let dockComposer: ComposerSlot["inputActions"] | null = null;
+/** Fence labels dsh shows for a shell snippet; anything else gets no Run button. */
+const SHELL_LANGS = new Set(["bash", "sh", "zsh", "shell", "console", "shellsession"]);
+/** What Claude reads above the snippet; not translated, like every prompt. */
+const RUN_PROMPT = "Run this:";
+/**
+ * A Run button in the banner of every shell code block in a Claude session. Clicking sends the
+ * snippet to Claude as a prompt, fenced, so it runs through Claude's own Bash tool and dsh's
+ * approval; nothing on the box runs from the click itself. The block is dsh's `.md-code-block`
+ * with a `[data-code-block-banner]` holding the language span and an actions div (Wrap lines);
+ * a block drawn without its banner yet is left for the next scan.
+ */
+function watchRunButtons(ctx: ClientCtx) {
+  onBodyMutation(() => {
+    if (!activeClaudeSession(ctx) || !dockComposer?.submit) return;
+    for (const block of document.querySelectorAll<HTMLElement>(
+      ".md-code-block:not([data-omc-run-seen])",
+    )) {
+      const banner = block.querySelector<HTMLElement>("[data-code-block-banner]");
+      const actions = banner?.querySelector("button")?.parentElement;
+      if (!banner || !actions) continue;
+      block.setAttribute("data-omc-run-seen", "");
+      const lang = banner.firstElementChild?.textContent?.trim().toLowerCase() ?? "";
+      if (!SHELL_LANGS.has(lang)) continue;
+      const button = document.createElement("button");
+      button.type = "button";
+      button.setAttribute("data-omc-run", "");
+      // dsh's own action look, so the button sits with Wrap lines; the text is ours.
+      button.className = actions.querySelector("button")?.className ?? "";
+      button.textContent = t("main.run.button");
+      button.title = t("main.run.title");
+      button.setAttribute("aria-label", t("main.run.title"));
+      button.style.cssText = "font-size:12px;padding:0 6px;cursor:pointer;width:auto";
+      button.addEventListener("click", () => {
+        const snippet = block.querySelector("pre")?.textContent?.trimEnd() ?? "";
+        const composer = dockComposer;
+        if (!composer?.submit || snippet.trim() === "") return;
+        composer.setDraft(`${RUN_PROMPT}\n\`\`\`${lang}\n${snippet}\n\`\`\``);
+        composer.submit();
+      });
+      actions.append(button);
+    }
+  });
+}
 
 /** Wire a running turn's status: attach dsh's [role=status][aria-live=polite] element to this
  *  session, keep the body marked to the active Claude session, and tear both down on unmount. */
@@ -8163,6 +8230,34 @@ function SuggestionSwitch() {
   );
 }
 
+/** The settings switch for the context nudge, a hint like the suggestion switch above: the
+ *  threshold is the box's, so every tab agrees on when to speak up. */
+function CompactNudgeSwitch() {
+  useLocale();
+  const [off, setOff] = useHintFlag("compactNudgeOff");
+  return (
+    <div
+      data-omc-compact-switch=""
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
+        fontSize: 13,
+        marginBottom: 12,
+      }}
+    >
+      <div>
+        <div>{t("main.settingsUi.compactTitle")}</div>
+        <div style={{ color: T.faint, fontSize: 12 }}>
+          {t("main.settingsUi.compactDesc", { percent: COMPACT_AT })}
+        </div>
+      </div>
+      <Switch on={!off} onChange={(on) => setOff(!on)} label={t("main.settingsUi.compactTitle")} />
+    </div>
+  );
+}
+
 /**
  * The settings switch for the one-line recap on returning to a finished session, and the away bar
  * under it. Both are hints: the answer lands in the Asides ring, which is the box's, so whether to
@@ -9024,6 +9119,88 @@ function SteerCard({
   );
 }
 
+/** The context window's share this card speaks up at. The CLI's own auto-compact sits higher;
+ *  this is the point where the next prompt already carries most of a window and a compaction
+ *  now costs less than one later, and where a session resumed after a break pays that on its
+ *  first prompt. */
+const COMPACT_AT = 75;
+/**
+ * The nudge above the composer when a session's context is mostly full: how full, what the next
+ * prompt carries, and a Compact button that sends Claude's own `/compact` through dsh's composer
+ * (`/claude-compact`, the bridged name), so the transcript shows it as a command you sent.
+ */
+function CompactCard({
+  percent,
+  tokens,
+  onCompact,
+  onDismiss,
+}: {
+  percent: number;
+  tokens: number;
+  onCompact: () => void;
+  onDismiss: () => void;
+}) {
+  useLocale();
+  return (
+    <div
+      data-omc-compact-card=""
+      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a live notice, not a form result, which is what <output> is for
+      role="status"
+      style={{
+        boxSizing: "border-box",
+        background: "var(--dsw-specific-tip, var(--dsw-alias-bg-base, transparent))",
+        border: "0.5px solid var(--dsw-alias-border-l1, rgba(217,119,87,.4))",
+        borderRadius: "12px 12px 0 0",
+        padding: "8px 10px",
+        fontSize: 13,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <span
+          style={{ color: percent >= 90 ? T.err : T.warn, flex: "0 0 auto" }}
+          aria-hidden="true"
+        >
+          ●
+        </span>
+        <span style={{ flex: 1, minWidth: 160 }}>
+          {t("main.compact.full", { percent: Math.floor(percent), tokens: kTokens(tokens) })}
+        </span>
+        <button
+          type="button"
+          data-omc-compact-now=""
+          onClick={onCompact}
+          style={{
+            background: "var(--dsw-alias-bg-elevated, transparent)",
+            border: `0.5px solid ${T.border}`,
+            borderRadius: 6,
+            padding: "2px 8px",
+            cursor: "pointer",
+            color: T.text,
+            fontSize: 12,
+          }}
+        >
+          {t("main.compact.now")}
+        </button>
+        <button
+          type="button"
+          aria-label={t("main.compact.dismissAria")}
+          title={t("main.compact.dismissAria")}
+          onClick={onDismiss}
+          style={{
+            background: "none",
+            border: "none",
+            cursor: "pointer",
+            padding: "0 2px",
+            color: T.faint,
+          }}
+        >
+          ×
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /** The one-line notice above the composer when the API grades a limit the session's model counts
  *  against as critical. The API grades a window critical before it is full (Fable weekly at 91%,
  *  2026-09-27), so the card says "reached" only at 100% and gives the percentage otherwise.
@@ -9776,6 +9953,40 @@ function AsideBubble({
   // so, but dsh's own send empties the box first, and a card that unfolded in between read as
   // the guess coming back. Read at render; the poll re-renders this once a second while running.
   const running = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.running === true;
+  // The context nudge: read once the turn is over (mid-turn the CLI declines the read), and
+  // again at each session switch. The tens bucket dismissed is this tab's memory, so the card
+  // returns at the next 10 % and not before. `loadContext` is the meter popover's cached read;
+  // shortcut: up to 10 s stale after a turn, fresh enough for a threshold.
+  const [compactOff] = useHintFlag("compactNudgeOff");
+  const [context, setContext] = useState<{ percentage: number; totalTokens: number } | null>(null);
+  const [compactDismissed, setCompactDismissed] = useState(-1);
+  useEffect(() => {
+    if (compactOff || running) return;
+    let live = true;
+    void loadContext(sessionId).then((r) => {
+      if (live) setContext(r.ok ? { percentage: r.percentage, totalTokens: r.totalTokens } : null);
+    });
+    return () => {
+      live = false;
+    };
+  }, [sessionId, running, compactOff]);
+  const compactBucket = context ? Math.floor(context.percentage / 10) : -1;
+  const compactCard =
+    !compactOff &&
+    context !== null &&
+    context.percentage >= COMPACT_AT &&
+    compactBucket !== compactDismissed &&
+    inputActions?.submit
+      ? context
+      : null;
+  // The Run button on shell snippets lives outside React (a body scan); it borrows this entry's
+  // composer while the entry is on screen.
+  useEffect(() => {
+    dockComposer = inputActions ?? null;
+    return () => {
+      dockComposer = null;
+    };
+  }, [inputActions]);
   const [foldHold, setFoldHold] = useState(false);
   const wasTyping = useRef(false);
   useEffect(() => {
@@ -9798,7 +10009,8 @@ function AsideBubble({
     !claudeUpdate &&
     !limitCard &&
     !anySteers &&
-    !suggestionCard
+    !suggestionCard &&
+    !compactCard
   )
     return null;
 
@@ -9863,6 +10075,18 @@ function AsideBubble({
               : undefined
           }
           onDismiss={() => setSuggestionHidden(suggestionCard)}
+        />
+      )}
+      {compactCard !== null && inputActions && (
+        <CompactCard
+          percent={compactCard.percentage}
+          tokens={compactCard.totalTokens}
+          onCompact={() => {
+            inputActions.setDraft("/claude-compact");
+            inputActions.submit?.();
+            setCompactDismissed(compactBucket);
+          }}
+          onDismiss={() => setCompactDismissed(compactBucket)}
         />
       )}
       {limitCard && (
@@ -10513,6 +10737,7 @@ export function apply(ctx: ClientCtx) {
   watchContextMeter(ctx);
   watchEventStream(ctx);
   watchTurnStatus(ctx);
+  watchRunButtons(ctx);
   watchSessionNotices(ctx);
   watchSessionSpinners(ctx);
   watchUltrathink(ctx);
@@ -10603,6 +10828,7 @@ export function apply(ctx: ClientCtx) {
         <WorkspaceModelSwitch />
         <ToolRowsSwitch />
         <SuggestionSwitch />
+        <CompactNudgeSwitch />
         {/* The switches that start off sit together after the ones that start on, so the card reads
             as what the plugin does by default first, then what you can add to it. The proxy control
             keeps company with them rather than with the spend field it used to precede: it answers
