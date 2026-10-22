@@ -5,17 +5,12 @@ import { access, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promise
 import { watch, type FSWatcher } from "node:fs";
 import { dirname } from "node:path";
 import { hostname } from "node:os";
-import { createRequire } from "node:module";
 import { basename, join } from "node:path";
 import type {
   Spawner,
   SubprocessHandle,
-  ContextUsage,
   WorkspaceDiff,
-  McpServerStatus,
   CliModel,
-  PermissionRules,
-  HooksListing,
   SteerAttachment,
   WaitingSteer,
 } from "./process.js";
@@ -52,7 +47,6 @@ import {
   readPickerSettings,
   readSshBoxes,
   registerSessionRoutes,
-  type RemoteWorkspace,
   type SshBox,
   sshBoxProviderId,
 } from "./sessions.js";
@@ -113,7 +107,6 @@ import type {
   PluginContext,
   ResolvedAgent,
   SessionController,
-  SessionId,
   SubprocessRuntime,
   ToolSchema,
 } from "./dsh.js";
@@ -180,7 +173,7 @@ import {
   type ToolModeInfo,
 } from "./rows-probe.js";
 import { readSshToken, THIS_BOX } from "./ssh-login.js";
-import { CHILD_ENV, childEnv, errorText, resolveCommand } from "./process.js";
+import { CHILD_ENV, childEnv, errorText } from "./process.js";
 import { bindServerLocale, serverText } from "./locale.js";
 import {
   assistantMessageText,
@@ -204,7 +197,6 @@ import {
 import { dropHold, loadHolds, saveHold } from "./state.js";
 import { knownRefusal } from "./session-repair.js";
 import { healLog, rawLogPath, type HealHost } from "./session-heal.js";
-import type { RewindResult } from "./process.js";
 import { forkTranscriptText } from "./transcript.js";
 import { buildMirror } from "./claude-home.js";
 export { markBusy, takeInterrupted } from "./state.js";
@@ -228,305 +220,101 @@ import type {
   ToolCallId,
 } from "@deepseek-ai/dsh-llm";
 import type { ClaudeProcessSpec, RelayEvent, RelayResult, TurnPrep } from "./process.js";
-import { versionOf } from "./report.js";
+import {
+  boxFor,
+  Config,
+  DSH_VERSION,
+  isOrphanedStandIn,
+  localConfig,
+  remoteCwdFor,
+  remoteWorkspaceFor,
+  setRemoteWorkspaces,
+} from "./adapter/config.js";
+// The entry keeps its export list while the split runs.
+export {
+  boxFor,
+  Config,
+  isOrphanedStandIn,
+  localConfig,
+  remoteCwdFor,
+  remoteWorkspaceFor,
+  setRemoteWorkspaces,
+} from "./adapter/config.js";
 
-// dsh's own version for the bug report, read off the package this plugin is loaded beside.
-// Unknown when the plugin runs from a checkout without dsh's tree in reach.
-const DSH_VERSION: string | null = (() => {
-  try {
-    return versionOf(createRequire(import.meta.url)("@deepseek-ai/dsh-llm/package.json"));
-  } catch {
-    return null;
-  }
-})();
+import {
+  type AsideEntry,
+  type AsidesReply,
+  type AwaitingRow,
+  Continuation,
+  ControlRequestEvent,
+  type ControlReply,
+  type ContextUsageReply,
+  type Decision,
+  HOLD_IDLE_MS,
+  type HeldSteer,
+  type HoldReply,
+  type IdleReply,
+  inRelay,
+  isSettled,
+  keepsLiveTurn,
+  type LoginNeed,
+  type LiveTurnReply,
+  type McpAuthReply,
+  type McpStatusReply,
+  type Outcome,
+  type PermissionModeInfo,
+  type PermissionModeReply,
+  type PermissionModeState,
+  type PermissionReadoutReply,
+  registryKey,
+  requirePrep,
+  type RewindReply,
+  type SessionOptions,
+  skillDoctorReply,
+  type SkillDoctorReply,
+  type SteerCardState,
+  type SteerEditReply,
+  type TurnTotals,
+  type WorkspaceDiffReply,
+} from "./adapter/types.js";
+// The entry keeps its export list while the split runs.
+export {
+  type AsideEntry,
+  type AsidesReply,
+  type AwaitingRow,
+  type ControlReply,
+  type ContextUsageReply,
+  type HoldReply,
+  type IdleReply,
+  keepsLiveTurn,
+  type LoginNeed,
+  type LiveTurnReply,
+  type McpAuthReply,
+  type McpStatusReply,
+  type PermissionModeInfo,
+  type PermissionModeReply,
+  type PermissionModeState,
+  type PermissionReadoutReply,
+  registryKey,
+  type RewindPrompt,
+  type RewindReply,
+  skillDoctorReply,
+  type SkillDoctorReply,
+  type SteerCardState,
+  type SteerEditReply,
+  type TurnTotals,
+  type WorkspaceDiffReply,
+} from "./adapter/types.js";
 
-/** Live placeholder→remote map for remote workspaces, shared by every box's ssh spawner. Loaded at
- * boot and replaced whenever the panel edits the list, so a redirect applies without a dsh restart. */
-let remoteWorkspaces: RemoteWorkspace[] = [];
-/** Replace the redirect map: the boot read and every panel edit land here. Exported so the offline
- * suite can drive the two lookups below without a dsh mount. */
-export function setRemoteWorkspaces(workspaces: RemoteWorkspace[]): void {
-  remoteWorkspaces = workspaces;
-  remoteWorkspacesKnown = true;
-}
-/** Whether the map above has been fed at all: before the routes' first read lands, an empty map
- *  means "not read yet", not "no remote workspaces". */
-let remoteWorkspacesKnown = false;
-/** Where every remote workspace's stand-in folder lives. */
-const STAND_INS = join(STATE_DIR, "remote-workspaces");
-/**
- * Whether `cwd` is the stand-in of a remote workspace that no longer exists. Removing a box, or
- * deleting the workspace, drops its row and its stand-in folder, but dsh keeps the sessions and
- * lists them under Ungrouped with the stand-in as their cwd. A turn there has no box to run on:
- * spawned here it died on a missing directory as "claude exited -1: no output" (seen live
- * 2026-09-17), and on an ssh box's own provider it would have run in the far `$HOME` instead.
- */
-export const isOrphanedStandIn = (cwd: string): boolean =>
-  remoteWorkspacesKnown && cwd.startsWith(`${STAND_INS}/`) && remoteWorkspaceFor(cwd) === undefined;
-/** The real remote path for a placeholder workspace on `host`, or `cwd` unchanged. */
-export function remoteCwdFor(host: string, cwd: string): string {
-  return remoteWorkspaces.find((w) => w.host === host && w.path === cwd)?.remoteCwd ?? cwd;
-}
-/** The box a turn runs on: this instance's own host when it has one, else the box a remote-workspace
- * cwd belongs to. The choice is by truthiness because `sshHost` defaults to `""`, not undefined.
- * `??` treats that empty string as an answer, which is how a local provider's turn came to probe the
- * local binary for flags while its spawn ran on the box (2026-09-09: `--forward-subagent-text`, a
- * flag this box's CLI has and the box's 2.1.123 does not). */
-export const boxFor = (sshHost: string | undefined, workspaceHost: string | undefined) =>
-  sshHost || workspaceHost || undefined;
-
-/** The remote workspace whose local placeholder is `cwd`, if any. A session opened on this cwd must
- * run over SSH on that box regardless of the provider chosen, so a local provider does not sit in the
- * empty placeholder dir. */
-export function remoteWorkspaceFor(cwd: string): RemoteWorkspace | undefined {
-  return remoteWorkspaces.find((w) => w.path === cwd);
-}
-
-/** A dsh request that belongs to a session; everything on the persistent path has one. */
-type SessionOptions = GenerateOptions & { sessionId: SessionId };
-/** The CLI asking for a permission or a question. */
-type ControlRequestEvent = Extract<ClaudeEvent, { type: "control_request" }>;
-/** How a turn ended, as the turn loop tracks it. */
-type Outcome = "continue" | "finished" | "parked" | "retry" | "relayed" | "ended" | undefined;
-/** Whether a step's end keeps the status row's live figures: only when the step parked the CLI
- *  mid-turn (on a dsh tool dsh is running, or on a steer), since dsh calls back within the same
- *  turn. Every other outcome is the turn ending. */
-export const keepsLiveTurn = (outcome: string | undefined): boolean =>
-  outcome === "relayed" || outcome === "parked";
-/** How this request continues the session's Claude process; see continuationFor(). */
-type Continuation =
-  | { mode: "abandon" | "steer"; proc: ClaudeProcess; options: SessionOptions }
-  | { mode: "relay"; proc: ClaudeProcess; options: SessionOptions; results: RelayResult[] }
-  | { mode: "prompt"; proc?: undefined; options: SessionOptions };
 /** dsh splicing messages into a session's inbox mid-turn; the steers this adapter forwards live. */
 type SpliceEvent = {
   type?: string;
   data?: { target?: string; inserted?: LooseMessage[]; removedCount?: number };
 };
-/** The permission decision inputs, one control request's worth. */
-interface Decision {
-  toolName: string;
-  input: Record<string, JsonValue>;
-  request: NonNullable<ControlRequestEvent["request"]>;
-  toolUseId: string;
-  agent: Agent | undefined;
-  signal: AbortSignal;
-  accessMode: string | undefined;
-}
-
-/** A live process always carries the prep it was spawned with; acquire() sets it before use. */
-/** A process parked on a relayed tool call or a steer is mid-turn, not idle. */
-const isSettled = (p: ClaudeProcess) => !p.busy && p.relays.size === 0 && !p.parked;
-
-/** Throw rather than return a null prep: a process is assumed to carry the turn state acquire() set, so a missing one means it was used out of order. */
-function requirePrep(proc: ClaudeProcess): TurnPrep {
-  if (!proc.prep) throw new LlmError("claude process has no turn state", "PROVIDER_ERROR");
-  return proc.prep;
-}
-
-/** Configuration shape produced by the Config schema with defaults applied. */
-export type Config = {
-  command: string;
-  spawn: "node" | "dsh";
-  sshHost: string;
-  configDir: string;
-  permissionMode:
-    | "dsh"
-    | "acceptEdits"
-    | "bypassPermissions"
-    | "plan"
-    | "dontAsk"
-    | "auto"
-    | "manual";
-  allowedTools: string[];
-  disallowedTools: string[];
-  addDirs: string[];
-  pluginDirs: string[];
-  pluginUrls: string[];
-  maxTurns?: number;
-  maxBudgetUsd?: number;
-  titleModel: string;
-  toolActivity: boolean;
-  toolsInline?: boolean;
-  hookRows: boolean;
-  resume: boolean;
-  idleTimeoutMs: number;
-  toolTextLimit: number;
-  dshTools: boolean;
-  fastMode: boolean;
-  commandBridge: boolean;
-  redactSecrets: boolean;
-  persistTodos: boolean;
-  debug: boolean;
-  approvals: boolean;
-  processIdleMs: number;
-  maxProcesses: number;
-  providerId: string;
-  providerName: string;
-};
-
 /** Plugin name identifier. */
 export const name = "dsh-oh-my-claude";
 /** Services injected into the plugin by the dsh runtime. */
 export const inject = ["llm", "sessions", "attachments", "agents", "approval", "userQuestions"];
-
-/** Configuration schema for Claude Code plugin settings. */
-export const Config = z.object({
-  command: z
-    .string()
-    .default("claude")
-    .description("Claude Code binary: a name on PATH or an absolute path"),
-  spawn: z
-    .union(["keeper", "node", "dsh"])
-    .default("keeper")
-    .description(
-      "How the Claude Code process is started. 'keeper' (default): under a small keeper outside dsh's process tree (its own systemd user scope when available), so a dsh restart leaves Claude running and the new dsh reattaches. 'node': directly, as dsh's child. 'dsh': through dsh's subprocess seam (ctx.subprocess); with a remote provider mounted on that seam, a remote workspace then runs Claude Code on that machine. The seam scrubs credential-shaped env vars (KEY/TOKEN/SECRET/PASSWORD), so log in on the machine that runs it",
-    ),
-  sshHost: z
-    .string()
-    .default("")
-    .description(
-      "Run this instance's Claude Code on a remote host over SSH (e.g. 'user@box' or an ssh_config alias). Empty = local. This box's harness drives the far `claude` with `ssh -o BatchMode=yes`; nothing runs on the remote but the CLI, using the remote's own ~/.claude login. Needs a working SSH key to the host. With spawn: keeper (the default) the far claude is held in a session of its own on the box, so a dsh restart here reattaches to it; the dsh MCP bridge does not reach the remote",
-    ),
-  permissionMode: z
-    .union(["dsh", "acceptEdits", "bypassPermissions", "plan", "dontAsk", "auto", "manual"])
-    .default("dsh")
-    .description(
-      "Claude Code permission mode for tools the child runs on its own. 'dsh' follows the session's access mode switch: read-only → plan, workspace-write → acceptEdits, danger-full-access → bypassPermissions",
-    ),
-  allowedTools: z.array(z.string()).default([]).description("Extra --allowedTools entries"),
-  disallowedTools: z.array(z.string()).default([]).description("--disallowedTools entries"),
-  addDirs: z.array(z.string()).default([]).description("Extra --add-dir directories"),
-  pluginDirs: z
-    .array(z.string())
-    .default([])
-    .description(
-      "Load an uninstalled local plugin for this session only: each becomes --plugin-dir <path> (a directory or a .zip). A path the CLI's LocalPluginDirsAllowedByPolicy blocks is refused by the CLI at spawn",
-    ),
-  pluginUrls: z
-    .array(z.string())
-    .default([])
-    .description(
-      "Fetch a plugin .zip from a URL for this session only: each becomes --plugin-url <url>",
-    ),
-  maxTurns: z
-    .number()
-    .step(1)
-    .min(1)
-    .description("--max-turns cap per request; unset = CLI default"),
-  maxBudgetUsd: z.number().min(0).description("--max-budget-usd per request; unset = no cap"),
-  titleModel: z.string().default("haiku").description("Model for session-title requests"),
-  toolActivity: z
-    .boolean()
-    .default(true)
-    .description("Show Claude Code tool calls and results as native tool rows"),
-  toolsInline: z
-    .boolean()
-    .description(
-      "Render tool calls as inline text (true) or as dsh's native tool rows (false). Unset: rows on dsh 0.1.7 and later, where the text streams live between the cards and the rows survive a reload; inline before that. The switch in Settings > Oh My Claude overrides this per box.",
-    ),
-  hookRows: z
-    .boolean()
-    .default(true)
-    .description(
-      "Show Claude Code hook starts and results as reasoning lines (adds --include-hook-events)",
-    ),
-  resume: z
-    .boolean()
-    .default(true)
-    .description("Keep one Claude Code session per dsh session via --session-id/--resume"),
-  idleTimeoutMs: z
-    .number()
-    .step(1)
-    .min(1000)
-    .default(1_800_000)
-    .description(
-      "Kill the child when no stream event arrives for this long (a running tool emits nothing until it ends)",
-    ),
-  toolTextLimit: z
-    .number()
-    .step(1)
-    .min(100)
-    .default(600)
-    .description("Characters of tool arguments/results shown in the activity blocks"),
-  dshTools: z
-    .boolean()
-    .default(true)
-    .description("Expose dsh tools (subagents, jobs, skills...) to Claude Code over MCP"),
-  fastMode: z
-    .boolean()
-    .default(false)
-    .description(
-      "Launch each Claude process with fast mode enabled (--settings fastMode); the bridged /fast then toggles it per session",
-    ),
-  commandBridge: z
-    .boolean()
-    .default(true)
-    .description(
-      "Register Claude Code's slash commands (skills, custom commands) as dsh /commands that send the line to Claude",
-    ),
-  redactSecrets: z
-    .boolean()
-    .default(true)
-    .description(
-      "Mask values of env vars named *KEY, *TOKEN, *SECRET, *PASSWORD or *CREDENTIAL in Claude's tool results before they reach dsh",
-    ),
-  persistTodos: z
-    .boolean()
-    .default(true)
-    .description(
-      "Keep the todo list on screen across messages and resume (dsh clears it each turn by default)",
-    ),
-  continueAfterLimit: z
-    .boolean()
-    .default(true)
-    .description(
-      "When a usage limit ends a turn, wait for the reset and continue the task on its own, as the CLI does",
-    ),
-  debug: z.boolean().default(false).description("Log spawn arguments (minus the prompt) per call"),
-  approvals: z
-    .boolean()
-    .default(true)
-    .description(
-      "Route Claude Code permission prompts and AskUserQuestion to dsh dialogs (--permission-prompt-tool stdio)",
-    ),
-  processIdleMs: z
-    .number()
-    .step(1)
-    .min(10_000)
-    .default(30 * 60 * 1000)
-    .description("Kill a session's idle Claude Code process after this long without a turn"),
-  maxProcesses: z
-    .number()
-    .step(1)
-    .min(1)
-    .default(4)
-    .description("Cap on live Claude Code processes; the longest-idle one is evicted first"),
-  configDir: z
-    .string()
-    .default("")
-    .description(
-      "Claude Code config dir for this plugin instance (exported as CLAUDE_CONFIG_DIR); empty = CLAUDE_CONFIG_DIR env or ~/.claude",
-    ),
-  ownTranscripts: z
-    .boolean()
-    .default(false)
-    .description(
-      "Keep this instance's transcripts in the plugin's own state dir instead of ~/.claude/projects; the CLI runs against a config dir whose login, settings, commands and skills are symlinks back to the real one",
-    ),
-  providerId: z
-    .string()
-    .default("claude-code")
-    .description(
-      "Provider id; 'claude-code' is the default, anything starting with 'claude-code-' mounts a second instance",
-    ),
-  providerName: z
-    .string()
-    .default("")
-    .description(
-      "Display name for this instance in the model picker; empty = 'Oh My Claude' for the default id, else 'Oh My Claude (<suffix>)'",
-    ),
-});
 
 /** The text dsh's title provider sends: its one framed user message, joined when there are more. */
 function titleInput(messages: GenerateOptions["messages"]): string {
@@ -535,217 +323,10 @@ function titleInput(messages: GenerateOptions["messages"]): string {
     for (const b of m.content) if (b.type === "text" && b.text) parts.push(b.text);
   return parts.join("\n").trim();
 }
-/** Keys the shared process registry by instance so two mounts never see each other's processes. */
-/** Outcome of a control request this plugin sent to the CLI; `response` is the CLI's payload. */
-export type ControlReply =
-  | { ok: true; error?: undefined; response?: JsonValue }
-  | { ok: false; error: string; response?: undefined };
-/**
- * One `/btw` side question and its answer. The CLI answers a `side_question` control request out of
- * band, off the transcript, so the answer lands here and the client draws it in a floating bubble
- * rather than in the stream. `pending` is true from the moment the question is asked until the
- * control response (or an error) arrives.
- */
-export interface AsideEntry {
-  id: string;
-  question: string;
-  answer?: string;
-  error?: string;
-  pending: boolean;
-  at: number;
-  /** Set when the user closes the card. The entry stays in the ring so the panel's Asides tab can
-   *  still show the answer; only the docked bubble filters these out. */
-  dismissed?: boolean;
-  /** The selected passage this aside asked about, its first ASIDE_QUOTE_KEEP characters, shown above
-   *  the answer. Absent for `/btw` and the Changes tab's Ask. With a blank `question` it means "explain". */
-  quote?: string;
-}
-/** One user prompt of a session's transcript, as the Rewind list shows it. */
-export interface RewindPrompt {
-  id: string;
-  time: number;
-  text: string;
-}
-/** What `rewind_files` answers, plus whether the conversation was rewound too. */
-export interface RewindReply extends Partial<RewindResult> {
-  ok: boolean;
-  dryRun: boolean;
-}
-/** What the steer card's route answers. `sent`: Claude already has it (or it was never waiting);
- *  `gone`: no live process; `error`: the CLI did not answer the cancel. */
-/** Whether the CLI is inside a dsh tool right now: a live process with a relay pending. Reads the
- *  relay map as optional because the test fakes build processes field by field, and the ones that
- *  never relay carry no map. */
-const inRelay = (proc: { alive?: boolean; relays?: Map<string, unknown> } | undefined): boolean =>
-  proc?.alive === true && (proc.relays?.size ?? 0) > 0;
-
-/** `relayed`: Send now was asked while the CLI is inside a dsh tool, which cannot be cut short
- *  without killing the tool; the card says to wait or edit instead. */
-export type SteerEditReply =
-  | { ok: true }
-  | { ok: false; reason: "sent" | "gone" | "error" | "relayed"; error?: string };
-/** What taking steers back answers: the hold to end later and the text the editor starts from. */
-export type HoldReply =
-  | { ok: true; holdId: string; text: string }
-  | { ok: false; reason: "sent" | "gone" | "error"; error?: string };
-/** The steer card's poll: steers still waiting in the CLI, and holds open for an edit. */
-export interface SteerCardState {
-  /** The CLI is inside a dsh tool, so Send now is refused for every row; present only when true. */
-  inTool?: true;
-  /** `relayed` is present only while dsh holds the message (typed during a dsh tool): a hold skips
-   *  the CLI cancel and leaves dsh's inbox directly, as it does for a row carrying a file or
-   *  image. `attachments` is present only when the message carries one; a save keeps them. */
-  waiting: Array<{
-    id: string;
-    text: string;
-    at: number;
-    relayed?: true;
-    attachments?: SteerAttachment[];
-  }>;
-  held: Array<{ id: string; text: string; attachments?: SteerAttachment[] }>;
-}
-/** Steers taken back from Claude while someone edits them. */
-interface HeldSteer {
-  /** The dsh messages, oldest first, as they left the inbox; a restore puts these back unchanged. */
-  messages: Message[];
-  /** Their texts one per line, what the editor starts from. */
-  text: string;
-  /** Restores the hold when its card stops polling, so an abandoned edit never loses a message. */
-  timer: ReturnType<typeof setTimeout>;
-}
-/** How long a hold waits for a poll before it goes back to Claude unchanged. The card polls every
- *  3 s while its tab is visible; a minute covers a tab switch mid-edit without leaving a closed
- *  tab's message stranded for long. */
-const HOLD_IDLE_MS = 60_000;
-/** What the context route reports: the CLI's own context breakdown for a live session. */
-export type ContextUsageReply =
-  | ({ ok: true; error?: undefined } & ContextUsage)
-  | { ok: false; error: string };
-/** What the skill-report route answers. A decline (the CLI's own `no_user_skills` or
- *  `scan_policy_denied`) and a failure (spawn, timeout, missing binary) both leave `ok` false, but
- *  the card shows a decline verbatim and wraps a failure, so `declined` tells them apart. `partial`
- *  is set when the one-shot ran in a scratch cwd (a CLI too old for `--no-session-persistence`), so
- *  the report lists user skills only. */
-export type SkillDoctorReply = {
-  ok: boolean;
-  report?: string;
-  declined?: boolean;
-  error?: string;
-  partial?: boolean;
-};
-
-/** The CLI's `result` frame (or its absence) as a reply. Pulled out of the spawn so the mapping is
- *  unit-tested without a process: a decline keeps its text for the card to show verbatim, a missing
- *  frame is a start failure, and `partial` marks a user-skills-only fallback run. */
-export function skillDoctorReply(
-  result: { is_error?: boolean; result?: unknown } | null,
-  partial: boolean,
-  failure: string,
-): SkillDoctorReply {
-  if (result === null) return { ok: false, error: failure };
-  const report = String(result.result ?? "");
-  if (result.is_error) return { ok: false, declined: true, error: report };
-  return partial ? { ok: true, report, partial: true } : { ok: true, report };
-}
-/** What the diff route reports: the CLI's working-tree diff for a live session. */
-export type WorkspaceDiffReply =
-  | ({ ok: true; error?: undefined } & WorkspaceDiff)
-  | { ok: false; error: string };
-/** What `/permissions` answers: both lists, or the reason there are none. */
-export type PermissionReadoutReply =
-  | ({ ok: true } & PermissionRules & HooksListing)
-  | { ok: false; error: string };
-/** What the MCP route reports: the servers Claude's process has, as `mcp_status` lists them. */
-export type McpStatusReply =
-  | { ok: true; error?: undefined; servers: McpServerStatus[] }
-  | { ok: false; error: string };
-/** What the MCP login route reports: the sign-in page to open, an already-signed-in success with
- *  no page, or the reason the CLI refused. */
-export type McpAuthReply = { ok: true; authUrl?: string } | { ok: false; error: string };
-/** What the permission-mode route reports: the mode in force and the stored override. */
-export interface PermissionModeInfo {
-  mode: string;
-  override: string | null;
-  /** The session's dsh access mode as last seen, or null when unknown. */
-  accessMode: string | null;
-  /** The Claude permission mode that maps from the access mode, via `permissionModeFor`. */
-  ceiling: string;
-  /** Permission modes the client may pick (at or below the ceiling). */
-  allowed: readonly string[];
-  /** The mode the session's running Claude process is in, or null when no process is alive. It
-   *  lags `mode` after a pick the CLI could not take live; the next turn spawns with `mode`. */
-  liveMode: string | null;
-}
-export interface PermissionModeReply extends PermissionModeInfo {
-  /** A live process was told; false when the override only applies at the next spawn. */
-  live: boolean;
-  error?: string;
-}
-/** `GET /awaiting` and the `awaiting` event: the open prompts keyed by dsh session id. */
-export interface AwaitingRow {
-  kind: "approval" | "question" | "plan";
-  id: string;
-  since: number;
-}
-/** `GET /live-turn` and the `live-turn` event while a turn runs; the empty object once it ends.
- *  The ages are computed when the body is built; the tab adds the time since it received it. */
-export interface LiveTurnReply {
-  tokens: number;
-  elapsedMs: number;
-  thinkingMs?: number;
-  idleMs?: number;
-  tool: boolean;
-  /** Which way the line's shimmer runs; see LiveMode in translator.ts. The builder always sets
-   *  it; optional on the type because the no-hub route fallback and the hand-built fakes in the
-   *  route tests do not, and the row reads an absent mode as no change. */
-  mode?: LiveMode;
-  thoughtMs?: number;
-  thoughtAgoMs?: number;
-  effort?: string;
-  relayName?: string;
-  relayMs?: number;
-}
-/** The sums over a session's turn records, with how many records were summed. */
-export interface TurnTotals {
-  costUsd: number;
-  durationMs: number;
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-  count: number;
-}
 /** `GET /turns` and the `turns` event. */
 export interface TurnsReply {
   turns: TurnRecord[];
   total: TurnTotals;
-}
-/** The `asides` event: the aside ring, the login card, the model fallback note and the steer card
- *  for one session. `GET /side-questions` answers these plus `claudeUpdate`, which the updater's
- *  own tick in sessions.ts adds and which no event carries. */
-export interface AsidesReply {
-  items: AsideEntry[];
-  loginNeeded: LoginNeed | null;
-  fallback: FallbackRecord | null;
-  steers: SteerCardState;
-  /** The CLI's guess at the next prompt, or null: none yet, the process is gone, or a prompt went
-   *  out since. */
-  suggestion: SuggestionRow | null;
-}
-/** `GET /idle` and the `idle` event: when the idle watchdog would end the process, or null. */
-export interface IdleReply {
-  deadline: number | null;
-  timeoutMs: number;
-}
-/** `GET /permission-mode` and the `permission-mode` event: the info plus the modes the client may
- *  pick, under the name the client already reads (`modes`). */
-export interface PermissionModeState extends PermissionModeInfo {
-  modes: readonly string[];
-}
-
-/** The key every live process is stored under, `providerId` then `sessionId`; a session id must not contain a colon or it would collide with this separator. */
-export function registryKey(providerId: string, sessionId: string): string {
-  return `${providerId}:${sessionId}`;
 }
 
 /** The CLI's effort ladder, low to high; `readPickerSettings` validates `maxEffortLevel` against it. */
@@ -838,12 +419,6 @@ const MAX_IMAGES = 20;
 const ASK_SUGGESTIONS = 10;
 /** How many asked rpcIds to remember, so the dedupe set cannot grow without bound. */
 const ASIDE_ASKED_KEEP = 200;
-/** A session whose last turn wanted a login: the box it ran on (empty for this box) and its name. */
-export interface LoginNeed {
-  host: string;
-  label: string;
-}
-
 /** How many `/btw` asides a session keeps; older ones drop off the ring. */
 const ASIDE_KEEP = 10;
 /** How much of a selected passage the ring keeps for the card; the whole passage went to Claude. */
@@ -7825,22 +7400,6 @@ function reconcileSshBoxes(
     // adopted). A hot reload finds the processes already in the shared registry and skips them.
     void adapter.adoptHolds().catch((e) => log("warn", `hold adoption: ${errorText(e)}`));
   }
-}
-
-/** The config as this box runs it, as a copy. A bare local `command` becomes the absolute path
- *  `resolveCommand` finds, so a dsh started with a short PATH (DSH Desktop from the macOS Dock)
- *  still reaches the CLI; a remote one is left alone, the far box has its own PATH. On Windows the
- *  keeper gives way to a plain child: it needs a Unix socket and `systemd-run`, neither of which
- *  exists there, so a keeper spawn would fail every turn. */
-export function localConfig<T extends { command: string; sshHost: string; spawn: string }>(
-  config: T,
-  platform: NodeJS.Platform = process.platform,
-  resolve: (command: string) => string = resolveCommand,
-): T {
-  const out = { ...config };
-  if (!out.sshHost) out.command = resolve(out.command);
-  if (platform === "win32" && out.spawn === "keeper") out.spawn = "node";
-  return out;
 }
 
 /** One `claude auth status` at mount, so the picker names a logged-out box before its first turn.
