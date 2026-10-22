@@ -146,6 +146,10 @@ dsh ships prereleases only and moves client APIs between them, so every release 
 28. After each reply, Claude's guess at your next prompt shows above the composer: Use writes it into the box, Send sends it as it is, and it folds away while you type something else. On by default, as in the terminal; a switch in Settings turns it off. [Suggested next prompt](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#suggested-next-prompt)
 29. Claude's background shell tasks and subagents are listed on the Tasks tab while they run, each with Stop and, for a shell task, Output. A subagent's row in the chat names each step as the CLI reports it. [Tasks](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#tasks)
 30. If an `ANTHROPIC_API_KEY` in dsh's environment is what Claude Code bills instead of your login, the session says so in one line at its start. [Where things live](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#where-things-live)
+31. Each plan window says where it is heading at the current rate: the percent it ends at, or when the cap lands. [Plan usage](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#plan-usage)
+32. Once the context window is 75% full, a card above the composer says so and offers Compact, which sends Claude's own `/compact`. [Context nudge](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#context-nudge)
+33. A Run button on every shell snippet Claude writes sends it to Claude as a prompt, so it runs through Claude's Bash tool and dsh's approval. [Run a snippet](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#run-a-snippet)
+34. A session renamed in dsh keeps that name in `claude --resume`, and a name set on the Claude side renames the dsh session. [How it works](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md)
 
 Defaults you never have to touch, such as secret redaction in tool results and surviving the CLI's own updates, are on [How it works](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md).
 
