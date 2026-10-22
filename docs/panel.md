@@ -152,7 +152,7 @@ Once a session's context window is 75% full, a card above the composer says how 
 
 ## Run a snippet
 
-Every shell code block Claude writes (`bash`, `sh`, `zsh`, `shell`, `console`, `shellsession`) gets a Run button beside dsh's own wrap and copy actions. It sends the snippet to Claude as a prompt, fenced under "Run this:", so the command runs through Claude's own Bash tool and dsh's approval flow, and the output lands in the transcript as any tool result does. Nothing runs on the box from the click itself. The button needs a composer on screen, so it draws only in a Claude session with the chat open.
+Every shell code block Claude writes (`bash`, `sh`, `zsh`, `shell`, `console`, `shellsession`) gets a Run button beside dsh's own wrap and copy actions. It writes the snippet into the composer as a prompt, fenced under "Run this:", and focuses the box; Enter sends it, so the command runs through Claude's own Bash tool and dsh's approval flow, and the output lands in the transcript as any tool result does. Nothing runs on the box from the click, and nothing is sent by it either: a button that sent at once was too easy to hit for something that tells Claude to run a command. The button needs a composer on screen, so it draws only in a Claude session with the chat open.
 
 ## Session notices
 

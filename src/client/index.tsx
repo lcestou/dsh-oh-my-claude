@@ -5211,15 +5211,16 @@ const SHELL_LANGS = new Set(["bash", "sh", "zsh", "shell", "console", "shellsess
 /** What Claude reads above the snippet; not translated, like every prompt. */
 const RUN_PROMPT = "Run this:";
 /**
- * A Run button in the banner of every shell code block in a Claude session. Clicking sends the
- * snippet to Claude as a prompt, fenced, so it runs through Claude's own Bash tool and dsh's
- * approval; nothing on the box runs from the click itself. The block is dsh's `.md-code-block`
+ * A Run button in the banner of every shell code block in a Claude session. Clicking writes the
+ * snippet into the composer as a prompt, fenced under "Run this:", and leaves sending to you: the
+ * owner found a button that sends at once too easy to hit for something that tells Claude to run
+ * a command (2026-10-21). Nothing on the box runs from the click itself. The block is dsh's `.md-code-block`
  * with a `[data-code-block-banner]` holding the language span and an actions div (Wrap lines);
  * a block drawn without its banner yet is left for the next scan.
  */
 function watchRunButtons(ctx: ClientCtx) {
   onBodyMutation(() => {
-    if (!activeClaudeSession(ctx) || !dockComposer?.submit) return;
+    if (!activeClaudeSession(ctx) || !dockComposer) return;
     for (const block of document.querySelectorAll<HTMLElement>(
       ".md-code-block:not([data-omc-run-seen])",
     )) {
@@ -5241,9 +5242,9 @@ function watchRunButtons(ctx: ClientCtx) {
       button.addEventListener("click", () => {
         const snippet = block.querySelector("pre")?.textContent?.trimEnd() ?? "";
         const composer = dockComposer;
-        if (!composer?.submit || snippet.trim() === "") return;
+        if (!composer || snippet.trim() === "") return;
         composer.setDraft(`${RUN_PROMPT}\n\`\`\`${lang}\n${snippet}\n\`\`\``);
-        composer.submit();
+        document.querySelector<HTMLElement>("[data-composer-input]")?.focus();
       });
       actions.append(button);
     }

@@ -148,7 +148,7 @@ dsh 只发布预发行版，客户端 API 也会在版本之间变动，所以�
 30. 如果 dsh 环境里的 `ANTHROPIC_API_KEY` 取代了你的登录成为 Claude Code 的计费来源，会话开始时会用一行说明。[Where things live](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#where-things-live)
 31. 每个额度窗口会按当前速度给出走向：窗口结束时用到的百分比，或达到上限的时间。[Plan usage](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#plan-usage)
 32. 上下文窗口用到 75% 时，输入框上方会提醒并提供「压缩」按钮，发送 Claude 自己的 `/compact`。[Context nudge](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#context-nudge)
-33. Claude 写的每段 shell 代码块都有「运行」按钮，把代码作为提示发给 Claude，经由 Claude 的 Bash 工具和 dsh 的审批执行。[Run a snippet](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#run-a-snippet)
+33. Claude 写的每段 shell 代码块都有「运行」按钮，把代码作为提示放入输入框，按 Enter 发送后经由 Claude 的 Bash 工具和 dsh 的审批执行。[Run a snippet](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#run-a-snippet)
 34. 在 dsh 里重命名的会话在 `claude --resume` 中沿用同名，Claude 一侧设置的名字也会重命名 dsh 会话。[How it works](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md)
 
 一些你永远不必动的默认行为，比如工具结果中的密钥脱敏和挺过 CLI 自身的更新，见 [How it works](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md)。

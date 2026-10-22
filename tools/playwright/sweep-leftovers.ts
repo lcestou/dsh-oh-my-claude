@@ -101,12 +101,16 @@ const runButtons = p.locator("[data-omc-run]");
 expect("a Run button on the bash block", (await runButtons.count()) >= 1);
 await p.screenshot({ path: `${out}/sweep-run-button.png` });
 
-// 3. Run: the snippet goes to Claude as a prompt and the reply carries its output.
+// 3. Run: the snippet lands in the composer as a draft; Enter sends it and the reply carries its output.
 if ((await runButtons.count()) >= 1) {
   await runButtons.first().click();
+  await p.waitForTimeout(500);
+  const draft = await p.locator("[data-composer-input]").first().innerText();
+  expect("Run wrote the snippet into the composer, unsent", draft.startsWith("Run this:"));
+  await p.keyboard.press("Enter");
   await settle(90_000);
   const sent = await p.locator("text=Run this:").count();
-  expect("the Run click sent the snippet as a prompt", sent >= 1);
+  expect("Enter sent the snippet as a prompt", sent >= 1);
   const echoed = await p.locator("text=sweep-ok").count();
   expect("Claude ran it (sweep-ok appears more than in the block itself)", echoed >= 3);
   await p.screenshot({ path: `${out}/sweep-run-sent.png` });

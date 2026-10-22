@@ -217,7 +217,7 @@ export const en = {
   "main.compact.now": "Compact",
   "main.compact.dismissAria": "Dismiss until the next 10%",
   "main.run.button": "Run",
-  "main.run.title": "Ask Claude to run this snippet",
+  "main.run.title": "Put this snippet in the composer as a prompt to run it",
   "main.usage.contextBreakdownErr": "Context breakdown: {error}",
   "main.usage.contextUsed": "{pct}% of context used",
   "main.usage.assumedNow":
@@ -735,7 +735,7 @@ export const zh = {
   "main.compact.now": "压缩",
   "main.compact.dismissAria": "关闭，到下一个 10% 再提醒",
   "main.run.button": "运行",
-  "main.run.title": "让 Claude 运行这段代码",
+  "main.run.title": "把这段代码放入输入框，作为运行请求",
   "main.usage.contextBreakdownErr": "上下文明细：{error}",
   "main.usage.contextUsed": "上下文已用 {pct}%",
   "main.usage.assumedNow":
