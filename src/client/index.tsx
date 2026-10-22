@@ -3157,6 +3157,13 @@ const whose = (r: UsageReply): string => {
   return email || host;
 };
 
+/** A clock time, with the weekday once it is a day or more away: a weekly window at twice its
+ *  pace caps two days out, and a bare "8:40 PM" read as tonight (seen 2026-10-22). */
+const capClock = (at: number): string => {
+  const format: Intl.DateTimeFormatOptions = { hour: "numeric", minute: "2-digit" };
+  if (at - Date.now() >= 86_400_000) format.weekday = "short";
+  return new Date(at).toLocaleString(undefined, format);
+};
 /** "in 2 h 10 min" inside a day, else weekday and time. */
 const resetText = (at: number | null): string => {
   if (at === null) return "";
@@ -3481,18 +3488,15 @@ function renderUsage(block: HTMLElement, reply: UsageReply) {
     // At this rate: where the window ends up, or when the cap lands, from the share of the window
     // already gone. Only the two plan windows have a known length; a model-scoped or unmet kind
     // shows its reset alone.
-    const pace = w.kind ? paceOf(pct, w.resetsAt, WINDOW_MS[w.kind]) : undefined;
+    // A model-scoped window ("Fable weekly") is a weekly window too.
+    const kind = w.kind ?? (w.model ? "weekly" : undefined);
+    const pace = kind ? paceOf(pct, w.resetsAt, WINDOW_MS[kind]) : undefined;
     if (pace) {
       const paceLine = document.createElement("span");
       paceLine.setAttribute("data-omc-usage-pace", pace.kind);
       paceLine.textContent =
         pace.kind === "cap"
-          ? t("main.usage.paceCap", {
-              when: new Date(pace.at).toLocaleTimeString(undefined, {
-                hour: "numeric",
-                minute: "2-digit",
-              }),
-            })
+          ? t("main.usage.paceCap", { when: capClock(pace.at) })
           : t("main.usage.paceEnds", { percent: pace.percent });
       paceLine.style.cssText = `grid-column:1 / -1;color:${pace.kind === "cap" ? T.warn : T.faint};font-size:11px;line-height:16px`;
       usageRow.append(paceLine);
