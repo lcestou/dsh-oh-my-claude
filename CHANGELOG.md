@@ -6,13 +6,9 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
-### Fixed
+## [1.5.5] - 2026-10-22
 
-- The plugin's `resume.log` under its state directory is trimmed to its newest 2 MB once it passes 4 MB; it grew without bound before.
-- Suggestions keep coming once a plan window passes its 75% warning. The CLI mutes its guesses there (and after twenty in a row nobody took, which over stream-json is all of them); the plugin now starts each session with the CLI's own override for both. A limit that is reached still mutes them.
-- On a phone the suggestion card's Use, Send and close stay together on one line under the text, instead of Use on the text's line and the other two dropping alone.
-- The suggestion card no longer flashes back for a moment when you send your own message over it: a fold now outlasts the typing by a beat and holds while the turn runs, until the server clears the guess.
-- A new session now gets suggestions from its second reply on. The request that switches them on was reaching the CLI a beat after the first prompt, inside the first turn, and the CLI then never suggested anything for that session; it goes out ahead of the first prompt now.
+dsh: runs on 0.2.0-rc.1 through 0.2.1-rc.2; built and tested on 0.2.1-rc.2.
 
 ### Added
 
@@ -29,6 +25,11 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- The plugin's `resume.log` under its state directory is trimmed to its newest 2 MB once it passes 4 MB; it grew without bound before.
+- Suggestions keep coming once a plan window passes its 75% warning. The CLI mutes its guesses there (and after twenty in a row nobody took, which over stream-json is all of them); the plugin now starts each session with the CLI's own override for both. A limit that is reached still mutes them.
+- On a phone the suggestion card's Use, Send and close stay together on one line under the text, instead of Use on the text's line and the other two dropping alone.
+- The suggestion card no longer flashes back for a moment when you send your own message over it: a fold now outlasts the typing by a beat and holds while the turn runs, until the server clears the guess.
+- A new session now gets suggestions from its second reply on. The request that switches them on was reaching the CLI a beat after the first prompt, inside the first turn, and the CLI then never suggested anything for that session; it goes out ahead of the first prompt now.
 - Claude's multiple-choice questions keep the preview text of each option (a mockup, a snippet), shown under the question. It was dropped before.
 - The panel's Restore tab no longer shows the previous workspace's transcripts for a moment after a switch to a new session in another workspace.
 - A slash command typed in the composer takes the plugin's accent again on dsh 0.2.1-rc.2, which draws it as a chip of its own; it had gone back to dsh's blue.
