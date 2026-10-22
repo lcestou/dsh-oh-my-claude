@@ -6,6 +6,12 @@ Working on the plugin: install from a checkout, the lint contract, the gate and 
 
 Install from a checkout instead of npm: `dsh plugin --profile web add link:/path/to/oh-my-claude`. The source is strict TypeScript under `src/`; dsh loads the compiled output in `lib/`, so run `bun run build` after every edit. `lib/client.js` hot-reloads into every open tab the moment it is written; a change under `lib/server` needs a restart of `dsh web`. `lib/server` comes from `tsc`, `lib/client.js` from `bun build` of `src/client/index.tsx`; both are committed, so a plain install has them. `bun run validate` runs the whole gate: format, lint (oxlint with the anti-slop rules in `tools/oxlint`), tests, dead code, build, typecheck and a conflict-marker scan.
 
+## Where the code lives
+
+The server entry is `src/adapter.ts`, with its helper modules under `src/adapter/`, being moved there, see the commit history. The routes are in `src/sessions.ts`. The client entry is `src/client/index.tsx`, with the feature files beside it and the panel under `src/client/panel/`, also being moved there, see the commit history. Tests sit beside the modules they test and the suite runs them recursively. `tools/split/` holds the split helpers and the baseline that `tools/split/surface.ts` is diffed against.
+
+The split is a pure move, so both entries keep every export they have today, re-exported from the module that now owns each symbol. Install paths, route paths, hook names, settings keys and stored files do not move, and nothing outside the plugin notices the move.
+
 ## What this plugin may lean on in dsh
 
 Two kinds of coupling, and only one of them is safe.

@@ -13,7 +13,7 @@
 // reader English in a Chinese UI.
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /** The slice of Bun's global this check uses: its TSX transpiler. The suite runs under Bun; the
@@ -183,8 +183,8 @@ function scanPhrases(file: string): Hit[] {
     const line = raw.includes("://") ? raw : raw.replace(/\/\/.*$/, "");
     if (/console\.|\bdebug\(|new Error\(|throw /.test(line)) return;
     // picker.tsx mirrors dsh's own directory-browser dictionary as its no-locale fallback.
-    if (file === "picker.tsx" && /^\s*"browser\.[\w]+":/.test(line)) return;
-    if (file === "picker.tsx" && line.includes('|| "Add workspace"')) return;
+    if (basename(file) === "picker.tsx" && /^\s*"browser\.[\w]+":/.test(line)) return;
+    if (basename(file) === "picker.tsx" && line.includes('|| "Add workspace"')) return;
     for (const lit of literalsOf(line)) {
       let s = lit.trim();
       for (let prev = ""; prev !== s;) {
@@ -201,8 +201,11 @@ function scanPhrases(file: string): Hit[] {
   return hits;
 }
 
-const files = readdirSync(DIR).filter(
-  (f) => /\.tsx?$/.test(f) && !/\.test\.tsx?$|\.d\.ts$/.test(f),
+// Recursive so a file under panel/ or cards/ is scanned too. The i18n dictionaries stay out:
+// their values are the dictionary itself (i18n.test.ts checks those), and reading them here
+// would flag every English value as text that skipped t().
+const files = readdirSync(DIR, { recursive: true, encoding: "utf8" }).filter(
+  (f) => /\.tsx?$/.test(f) && !/\.test\.tsx?$|\.d\.ts$/.test(f) && !f.startsWith("i18n/"),
 );
 const hits = [
   ...files.filter((f) => f.endsWith(".tsx")).flatMap(scanJsx),
