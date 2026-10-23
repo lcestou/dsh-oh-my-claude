@@ -497,10 +497,13 @@ export function resolveModelInfo(
   // every turn that carries a stored effort (dsh refuses an effort the model does not list).
   const pool = [...models, ...catalog.models, ...KNOWN_MODELS];
   // A session stored before the ids settled asks for the dated one; it still names a model we know.
+  // A `modelPicker.options` row may be written without the prefix (`opus-4-5`), the form the CLI
+  // accepts; without the last lookup it resolved with no efforts and a stored effort failed its turns.
   const found =
     pool.find((m) => m.id === modelId) ??
     pool.find((m) => m.id.startsWith(modelId)) ??
-    pool.find((m) => m.id === stableModelId(modelId));
+    pool.find((m) => m.id === stableModelId(modelId)) ??
+    pool.find((m) => m.id === `claude-${modelId}`);
   const info: LlmResolvedModelInfo = {
     ...modelInfo(provider, { id: modelId, name: found?.name ?? modelId }),
   };

@@ -9,7 +9,8 @@ export type Pace = { kind: "cap"; at: number } | { kind: "ends"; percent: number
 /**
  * Projects a window's usage linearly from how much of it has elapsed. Undefined when the reset is
  * unknown, when less than 5 % of the window has passed (a fresh window reads any first call as a
- * runaway rate), when nothing has been used, or when the window has already reset. The projection
+ * runaway rate), when nothing has been used, when the window is already full (the cap has landed;
+ * the reset line says when it frees up), or when the window has already reset. The projection
  * is linear on purpose: a pace mark answers "at this rate", not "given your habits".
  */
 export function paceOf(
@@ -18,7 +19,7 @@ export function paceOf(
   windowMs: number,
   now = Date.now(),
 ): Pace | undefined {
-  if (resetsAt === null || usedPercent <= 0) return undefined;
+  if (resetsAt === null || usedPercent <= 0 || usedPercent >= 100) return undefined;
   const left = resetsAt - now;
   const elapsed = windowMs - left;
   if (left <= 0 || elapsed < windowMs * 0.05) return undefined;

@@ -18,6 +18,9 @@ assert.equal(paceOf(2, now + five * 0.96, five, now), undefined);
 assert.equal(paceOf(0, now + five / 2, five, now), undefined);
 assert.equal(paceOf(30, null, five, now), undefined);
 assert.equal(paceOf(30, now - 1, five, now), undefined);
+// A full window has hit its cap already: no projection, only the reset line.
+assert.equal(paceOf(100, now + five / 2, five, now), undefined);
+assert.equal(paceOf(104, now + WINDOW_MS.weekly / 2, WINDOW_MS.weekly, now), undefined);
 // Weekly window: one day in at 10 % ends at 70 %.
 const week = WINDOW_MS.weekly;
 assert.deepEqual(paceOf(10, now + week - 86_400_000, week, now), { kind: "ends", percent: 70 });

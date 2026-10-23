@@ -119,6 +119,13 @@ const row = (id: string): CliModel => ({
   assert.equal(info.context?.contextWindow, 400_000, "and its window");
 }
 
+// A settings.json picker row written without the prefix resolves like the full id, efforts included.
+assert.deepEqual(
+  resolveModelInfo("claude-code", "opus-4-5").reasoning?.efforts.map((e) => e.id),
+  ["low", "medium", "high"],
+  "a short picker id keeps its efforts",
+);
+
 // A model nothing names is named from its id, in the API's spelling.
 assert.equal(nameFromId("claude-opus-5-5"), "Claude Opus 5.5");
 assert.equal(nameFromId("claude-haiku-4-5-20251001"), "Claude Haiku 4.5");
