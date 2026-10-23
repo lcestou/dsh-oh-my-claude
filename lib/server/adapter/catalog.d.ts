@@ -38,6 +38,13 @@ export declare const KNOWN_MODELS: CatalogModel[];
  */
 export declare const stableModelId: (id: string) => string;
 export declare const CATALOG_TTL_MS: number;
+/** How long the first listing of a boot waits for the lineup probe (`probeCliModels`) before it
+ *  answers from what it has. A cold `claude -p` answered `list_models` in about 1.3 s on 2.1.309
+ *  (2026-10-23); the probe itself keeps going past this, and its answer serves the next listing. */
+export declare const LINEUP_PROBE_WAIT_MS = 5000;
+/** The lineup probe's command line: stream-json both ways, so a control request can be written and
+ *  its answer read, and no transcript, since no prompt is ever sent to it. */
+export declare const LINEUP_PROBE_ARGS: string[];
 /** Parse a persisted catalog file. Anything malformed reads as empty, so the caller falls back. */
 export declare function parseCatalogCache(text: string): ReturnType<typeof M>[];
 /** One entry of the Anthropic Models API list, in the shape the picker uses. */

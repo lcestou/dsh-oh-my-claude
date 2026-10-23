@@ -99,6 +99,21 @@ export const stableModelId = (id: string): string => {
 // Model catalog
 
 export const CATALOG_TTL_MS = 10 * 60 * 1000;
+/** How long the first listing of a boot waits for the lineup probe (`probeCliModels`) before it
+ *  answers from what it has. A cold `claude -p` answered `list_models` in about 1.3 s on 2.1.309
+ *  (2026-10-23); the probe itself keeps going past this, and its answer serves the next listing. */
+export const LINEUP_PROBE_WAIT_MS = 5000;
+/** The lineup probe's command line: stream-json both ways, so a control request can be written and
+ *  its answer read, and no transcript, since no prompt is ever sent to it. */
+export const LINEUP_PROBE_ARGS = [
+  "-p",
+  "--input-format",
+  "stream-json",
+  "--output-format",
+  "stream-json",
+  "--verbose",
+  "--no-session-persistence",
+];
 let catalog = { at: 0, models: KNOWN_MODELS };
 
 /** Where the last catalog the API gave us is kept, so a boot with the API down still lists the real
@@ -259,6 +274,16 @@ export const noteLiveWindow = (modelId: string | undefined, maxTokens: number | 
  *  until some session has reported it. */
 export const liveWindowFor = (modelId: string): number | undefined =>
   liveWindows.get(windowKey(modelId));
+/**
+ * The known row a CLI row resolves to: the same id, or that id with the Models API's date suffix
+ * (`claude-haiku-4-5-20251001`), and never an id it merely starts with. `claude-opus-5-5` starts
+ * with `claude-opus-5`, and a bare prefix match put Opus 5.5 under Opus 5's id and name.
+ */
+const knownRow = <T extends { id: string }>(base: T[], resolvedModel: string): T | undefined => {
+  const bare = strip(resolvedModel);
+  const undated = bare.replace(/-\d{8}$/, "");
+  return base.find((b) => b.id === bare || b.id === undated);
+};
 /** The three forms an entry takes: a family alias, a version prefix, or the whole id. */
 const allows = (entry: string, id: string) => {
   const want = bareId(entry);
@@ -276,8 +301,7 @@ export function mergeCatalog(
   if (cli.length === 0 && !picker) return base;
   // A CLI row is keyed by an alias (`opus`, `default`), so each row carries the id the allowlist reads.
   const fromCli = cli.map((c) => {
-    const bare = strip(c.resolvedModel);
-    const known = base.find((b) => bare === b.id || bare.startsWith(b.id));
+    const known = knownRow(base, c.resolvedModel);
     const window = c.resolvedModel.endsWith("[1m]") ? 1_000_000 : (known?.contextWindow ?? 200_000);
     // The CLI is asked for its picker once a process is live, so before that answer the lineup
     // spells a model `claude-haiku-4-5` and after it `haiku`. Anything holding an id across that
@@ -308,10 +332,7 @@ export function mergeCatalog(
   // does offer, is one the installed CLI predates: its row says so, so a reader who picks it and
   // gets a refusal knows which update fixes it. Older leftovers (dated ids, retired models the
   // CLI dropped on purpose) say nothing. Nothing is hidden: the row still resolves a stored id.
-  const newestCli = Math.max(
-    0,
-    ...cli.map((c) => base.find((b) => strip(c.resolvedModel).startsWith(b.id))?.createdAt ?? 0),
-  );
+  const newestCli = Math.max(0, ...cli.map((c) => knownRow(base, c.resolvedModel)?.createdAt ?? 0));
   const leftover = (b: CatalogModel): CatalogModel =>
     cli.length > 0 && b.createdAt !== undefined && b.createdAt > newestCli
       ? { ...b, description: serverText("modelNeedsCliUpdate") }

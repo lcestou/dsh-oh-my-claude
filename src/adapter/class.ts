@@ -5,7 +5,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { access, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { watch } from "node:fs";
 import { dirname } from "node:path";
-import { hostname } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import type { Spawner, SubprocessHandle, CliModel, WaitingSteer } from "../process.js";
 import { numberOf, type PluginLoadError } from "../plugins.js";
@@ -213,6 +213,8 @@ import {
 } from "./types.js";
 import {
   CATALOG_TTL_MS,
+  LINEUP_PROBE_ARGS,
+  LINEUP_PROBE_WAIT_MS,
   detectFirstParty,
   FIRST_PARTY_FLAG,
   getCatalog,
@@ -745,6 +747,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     if (this.loggedOut)
       throw new Error(serverText("loggedOutError", { host: this.config.sshHost || hostname() }));
     await this.cliSeed;
+    await this.probeCliModels();
     const models = await getCatalog(undefined, this.cliModels, await this.pickerSettings());
     return models.map((m) => modelInfo(provider, m));
   }
@@ -1869,6 +1872,60 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       await writeFile(this.cliModelsPath(), JSON.stringify(models));
     } catch {
       /* read-only state dir or full disk: the live answer still served this boot */
+    }
+  }
+  /** This boot's one lineup probe, shared by every listing that waits on it. */
+  private lineupProbe: Promise<void> | undefined;
+  /**
+   * Ask the local CLI for its model picker before any session has spawned a process, so a box with
+   * no `cli-models.json` yet does not list the built-in floor: without a seed the listing has only
+   * that floor and the Models API, and the API read needs a login file the CLI does not always
+   * keep (on macOS the login lives in the Keychain, and a `.credentials.json` left from an older
+   * install holds a token that expired long ago). One short-lived `claude -p` per boot is sent
+   * `list_models` and nothing else, so no model is called and nothing is spent; its answer goes
+   * through `refreshCliModels`, so it is decoded, cached and written to disk like a session's.
+   * Never on an ssh box, whose first session process is asked as before. Waits at most
+   * `LINEUP_PROBE_WAIT_MS`; a CLI that is missing, logged out or slow leaves the listing as it was.
+   */
+  async probeCliModels(): Promise<void> {
+    if (this.cliModels.length > 0 || this.config.sshHost) return;
+    this.lineupProbe ??= this.askLineup();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const waited = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, LINEUP_PROBE_WAIT_MS);
+    });
+    await Promise.race([this.lineupProbe, waited]);
+    clearTimeout(timer);
+  }
+  /** Run the probe's process to its answer and end it; resolves whatever happens and never throws,
+   *  logging at info why no lineup came back (the CLI's stderr tail, when it wrote one). */
+  private async askLineup(): Promise<void> {
+    let proc: ClaudeProcess | undefined;
+    try {
+      proc = new ClaudeProcess({
+        args: LINEUP_PROBE_ARGS,
+        cwd: tmpdir(),
+        spec: {
+          cwd: tmpdir(),
+          model: undefined,
+          effort: null,
+          mode: "default",
+          sessionId: null,
+          temporary: true,
+        },
+        command: this.config.command,
+        spawner: this.spawner(),
+      });
+      const answered = await this.refreshCliModels(proc);
+      const why = proc.stderr.trim().slice(-200) || "no lineup in the answer";
+      this.log(
+        "info",
+        answered ? `lineup probe: ${this.cliModels.length} models` : `lineup probe: ${why}`,
+      );
+    } catch (error) {
+      this.log("info", `lineup probe: ${errorText(error)}`);
+    } finally {
+      proc?.kill();
     }
   }
   /** Seed from the last answer, unless a process has already answered this boot. */

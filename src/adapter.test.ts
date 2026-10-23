@@ -172,6 +172,7 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { serverText } from "./locale.js";
 import { join as joinPath } from "node:path";
 import { STATE_DIR } from "./state.js";
+import { LINEUP_PROBE_ARGS } from "./adapter/catalog.js";
 
 declare module "./adapter.js" {
   interface Translator {
@@ -6113,6 +6114,123 @@ console.log("interrupt-on-abort ok");
     "the seed keeps the CLI's effort levels",
   );
   console.log("cli-models ok");
+}
+
+// A box with no CLI lineup yet asks its CLI once, before any session: one short-lived process,
+// control requests only (no prompt), ended after the answer, which seeds the next boot from disk.
+// A CLI that cannot start leaves the floor and is not asked again; an ssh box is never probed.
+{
+  /** A fake `claude -p` that answers `list_models` with `lineup`, or exits at once when null. */
+  const fakeCli = (lineup: Record<string, string | string[]>[] | null) => {
+    const spawned: [string, string[], string][] = [];
+    const written: string[] = [];
+    let terminated = 0;
+    const spawner = (command: string, args: string[], cwd: string): SubprocessHandle => {
+      spawned.push([command, args, cwd]);
+      const stdin = new PassThrough();
+      const stdout = new PassThrough();
+      let finish: (r: { exitCode: number | null; signal: string | null }) => void = () => {};
+      const done = new Promise<{ exitCode: number | null; signal: string | null }>(
+        (r) => (finish = r),
+      );
+      if (lineup === null) finish({ exitCode: 127, signal: null });
+      stdin.on("data", (d) => {
+        for (const line of String(d).split("\n").filter(Boolean)) {
+          written.push(line);
+          const req = JSON.parse(line);
+          if (req.request?.subtype !== "list_models") continue;
+          stdout.write(
+            `${JSON.stringify({
+              type: "control_response",
+              response: {
+                subtype: "success",
+                request_id: req.request_id,
+                response: { models: lineup },
+              },
+            })}\n`,
+          );
+        }
+      });
+      return {
+        stdin,
+        stdout,
+        stderr: new PassThrough(),
+        done,
+        terminate: () => {
+          terminated++;
+          finish({ exitCode: 143, signal: "SIGTERM" });
+        },
+      };
+    };
+    return { spawner, spawned, written, terminated: () => terminated };
+  };
+  const lineup = [
+    { value: "default", resolvedModel: "claude-opus-5-5", displayName: "Default (recommended)" },
+    { value: "opus", resolvedModel: "claude-opus-5-5", displayName: "Opus" },
+    { value: "sonnet", resolvedModel: "claude-sonnet-5-5", displayName: "Sonnet" },
+  ];
+
+  const cli = fakeCli(lineup);
+  const probing = new ClaudeCodeAdapter(
+    fakeCtx({ on() {} }),
+    Config({ providerId: "claude-code-probe", command: "/opt/claude" }),
+  );
+  probing.spawner = () => cli.spawner;
+  const listed = await probing.listModels("claude-code-probe");
+  assert.deepEqual(
+    listed.slice(0, 3).map((m) => m.id),
+    ["default", "opus", "sonnet"],
+    "the CLI's lineup leads",
+  );
+  // Opus 5.5 is not a dated Opus 5: a prefix match gave its row Opus 5's id and name.
+  assert.equal(listed[1]?.name, "Opus", "a model newer than the table keeps the CLI's own name");
+  assert.ok(
+    listed.some((m) => m.id === "claude-opus-5"),
+    "Opus 5 follows as its own row",
+  );
+  assert.equal(cli.spawned.length, 1, "one probe process");
+  assert.deepEqual(cli.spawned[0]?.slice(0, 2), ["/opt/claude", LINEUP_PROBE_ARGS]);
+  assert.deepEqual(
+    cli.written.map((line) => JSON.parse(line).type),
+    ["control_request"],
+    "control requests only: no prompt is ever written",
+  );
+  assert.equal(cli.terminated(), 1, "the probe process is ended after its answer");
+  await probing.listModels("claude-code-probe");
+  assert.equal(cli.spawned.length, 1, "a lineup in hand is not asked for again");
+  // The answer went to disk like a session's: the next boot lists it without a probe.
+  await new Promise((r) => setTimeout(r, 20));
+  const nextBoot = fakeCli(lineup);
+  const rebooted = new ClaudeCodeAdapter(
+    fakeCtx({ on() {} }),
+    Config({ providerId: "claude-code-probe" }),
+  );
+  rebooted.spawner = () => nextBoot.spawner;
+  assert.equal((await rebooted.listModels("claude-code-probe"))[0]?.id, "default");
+  assert.equal(nextBoot.spawned.length, 0, "the disk seed stands in for the probe");
+
+  const missing = fakeCli(null);
+  const bare = new ClaudeCodeAdapter(
+    fakeCtx({ on() {} }),
+    Config({ providerId: "claude-code-missing" }),
+  );
+  bare.spawner = () => missing.spawner;
+  const started = Date.now();
+  const floor = (await bare.listModels("claude-code-missing")).map((m) => m.id);
+  assert.ok(Date.now() - started < 1000, "a CLI that cannot start does not hold the listing");
+  assert.equal(floor[0], KNOWN_MODELS[0]?.id, "the floor answers as before");
+  await bare.listModels("claude-code-missing");
+  assert.equal(missing.spawned.length, 1, "one probe per boot, answered or not");
+
+  const box = fakeCli(lineup);
+  const remote = new ClaudeCodeAdapter(
+    fakeCtx({ on() {} }),
+    Config({ providerId: "claude-code-box", sshHost: "box.example" }),
+  );
+  remote.spawner = () => box.spawner;
+  await remote.probeCliModels();
+  assert.equal(box.spawned.length, 0, "an ssh box is not probed");
+  console.log("lineup probe ok");
 }
 
 // The live steer path: a text-only message goes to stdin at once; a message carrying a file or an

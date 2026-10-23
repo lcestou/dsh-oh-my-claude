@@ -449,6 +449,23 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     private cliModelsPath;
     /** Persist the CLI's model list to disk under the state dir; a read-only state dir or full disk is swallowed, since the live answer still serves this boot. */
     private persistCliModels;
+    /** This boot's one lineup probe, shared by every listing that waits on it. */
+    private lineupProbe;
+    /**
+     * Ask the local CLI for its model picker before any session has spawned a process, so a box with
+     * no `cli-models.json` yet does not list the built-in floor: without a seed the listing has only
+     * that floor and the Models API, and the API read needs a login file the CLI does not always
+     * keep (on macOS the login lives in the Keychain, and a `.credentials.json` left from an older
+     * install holds a token that expired long ago). One short-lived `claude -p` per boot is sent
+     * `list_models` and nothing else, so no model is called and nothing is spent; its answer goes
+     * through `refreshCliModels`, so it is decoded, cached and written to disk like a session's.
+     * Never on an ssh box, whose first session process is asked as before. Waits at most
+     * `LINEUP_PROBE_WAIT_MS`; a CLI that is missing, logged out or slow leaves the listing as it was.
+     */
+    probeCliModels(): Promise<void>;
+    /** Run the probe's process to its answer and end it; resolves whatever happens and never throws,
+     *  logging at info why no lineup came back (the CLI's stderr tail, when it wrote one). */
+    private askLineup;
     /** Seed from the last answer, unless a process has already answered this boot. */
     seedCliModels(): Promise<void>;
     /** Get the current model catalog for advisor selection. */
