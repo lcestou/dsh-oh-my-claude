@@ -6221,6 +6221,7 @@ console.log("interrupt-on-abort ok");
   assert.equal(floor[0], KNOWN_MODELS[0]?.id, "the floor answers as before");
   await bare.listModels("claude-code-missing");
   assert.equal(missing.spawned.length, 1, "one probe per boot, answered or not");
+  assert.equal(bare.cliModelsAt, 0, "a probe with no lineup leaves the first session free to ask");
 
   const box = fakeCli(lineup);
   const remote = new ClaudeCodeAdapter(

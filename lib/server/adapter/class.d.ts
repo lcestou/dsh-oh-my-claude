@@ -464,7 +464,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      */
     probeCliModels(): Promise<void>;
     /** Run the probe's process to its answer and end it; resolves whatever happens and never throws,
-     *  logging at info why no lineup came back (the CLI's stderr tail, when it wrote one). */
+     *  logging at info why no lineup came back (the CLI's stderr tail, when it wrote one). A probe
+     *  that got no lineup leaves the TTL stamp clear, so the first session still asks. */
     private askLineup;
     /** Seed from the last answer, unless a process has already answered this boot. */
     seedCliModels(): Promise<void>;

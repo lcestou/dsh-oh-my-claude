@@ -1898,7 +1898,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     clearTimeout(timer);
   }
   /** Run the probe's process to its answer and end it; resolves whatever happens and never throws,
-   *  logging at info why no lineup came back (the CLI's stderr tail, when it wrote one). */
+   *  logging at info why no lineup came back (the CLI's stderr tail, when it wrote one). A probe
+   *  that got no lineup leaves the TTL stamp clear, so the first session still asks. */
   private async askLineup(): Promise<void> {
     let proc: ClaudeProcess | undefined;
     try {
@@ -1926,6 +1927,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       this.log("info", `lineup probe: ${errorText(error)}`);
     } finally {
       proc?.kill();
+      // No lineup came back: clear the TTL stamp so the first session's process asks at once.
+      if (this.cliModels.length === 0) this.cliModelsAt = 0;
     }
   }
   /** Seed from the last answer, unless a process has already answered this boot. */
