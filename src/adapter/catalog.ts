@@ -217,10 +217,41 @@ const bareId = (id: string) => {
  * which it got, so the figure is taken from that session's own `get_context_usage` and kept per
  * model id for every later read.
  *
- * Not persisted: a dsh-web restart relearns on the first context read of each model, and until then
- * the table above answers. Write it next to the catalog cache the day that gap is worth a file.
+ * Kept on disk in `context-windows.json` beside the catalog cache, so a restart, or a model newer
+ * than this build that only the CLI names, keeps the window a session last reported instead of
+ * falling back to a guess. Wrong when the box's setup changes under a stored figure (a proxy added
+ * or removed, 1M turned on or off): the stale figure stands until that model's next context read.
  */
 const liveWindows = new Map<string, number>();
+/** Where `liveWindows` is kept between boots; DSH_OMC_STATE_DIR moves it for tests, as the catalog's. */
+const windowsPath = () => join(process.env.DSH_OMC_STATE_DIR ?? STATE_DIR, "context-windows.json");
+let windowsSeeded = false;
+/** The windows file: model id to the window its last session reported. Our own write, re-parsed
+ *  on read so a hand-edited or truncated file is dropped whole rather than half-trusted. */
+const StoredWindows = z.dict(z.number());
+/** Load the stored windows once per process. A figure a session already reported this boot wins
+ *  over the stored one; a malformed file is ignored and a non-positive figure skipped, never thrown. */
+export async function seedLiveWindows() {
+  if (windowsSeeded) return;
+  windowsSeeded = true;
+  try {
+    const stored = StoredWindows(JSON.parse(await readFile(windowsPath(), "utf8")));
+    for (const [id, n] of Object.entries(stored))
+      if (Number.isFinite(n) && n > 0 && !liveWindows.has(id)) liveWindows.set(id, n);
+  } catch {
+    /* no file yet or unreadable: windows are relearned from the next context reads */
+  }
+}
+/** Write every known window. Best effort: a failed write costs a guess after the next restart. */
+async function persistLiveWindows() {
+  try {
+    const path = windowsPath();
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, JSON.stringify(Object.fromEntries(liveWindows)));
+  } catch {
+    /* read-only state dir or full disk: this boot still has the figures in memory */
+  }
+}
 
 /** The liveWindows key: strip any ANSI codes and resolve to the stable id, so a window looked up by the CLI's raw model id matches the normalized one stored here. */
 export const windowKey = (id: string) => stableModelId(strip(id));
@@ -266,7 +297,10 @@ export const detectFirstParty = async (): Promise<FirstPartyProbe> => {
 export const noteLiveWindow = (modelId: string | undefined, maxTokens: number | undefined) => {
   if (modelId === undefined || maxTokens === undefined || !Number.isFinite(maxTokens)) return;
   if (maxTokens <= 0) return;
-  liveWindows.set(windowKey(modelId), maxTokens);
+  const key = windowKey(modelId);
+  if (liveWindows.get(key) === maxTokens) return;
+  liveWindows.set(key, maxTokens);
+  void persistLiveWindows();
 };
 /** The context window a live session last reported for this model, which beats the catalog's
  *  figure because it is what this box's CLI actually runs with (a proxy can demote a 1M model to
@@ -283,6 +317,18 @@ const knownRow = <T extends { id: string }>(base: T[], resolvedModel: string): T
   const bare = strip(resolvedModel);
   const undated = bare.replace(/-\d{8}$/, "");
   return base.find((b) => b.id === bare || b.id === undated);
+};
+/**
+ * The name a model gets when no API row or table row names it: `claude-opus-5-5` reads
+ * "Claude Opus 5.5", in the spelling the API gives its own rows, so a model newer than this build
+ * does not stand in the picker as the CLI's bare "Opus" beside "Claude Opus 5". Undefined for an id
+ * outside the `claude-<family>-<version>` shape, which keeps the CLI's label. Wrong for a family
+ * the API spells with more than one capital: none today.
+ */
+export const nameFromId = (id: string): string | undefined => {
+  const m = /^claude-([a-z]+)-(\d+(?:-\d+)?)$/.exec(strip(id).replace(/-\d{8}$/, ""));
+  if (!m?.[1] || !m[2]) return undefined;
+  return `Claude ${m[1].charAt(0).toUpperCase()}${m[1].slice(1)} ${m[2].replace("-", ".")}`;
 };
 /** The three forms an entry takes: a family alias, a version prefix, or the whole id. */
 const allows = (entry: string, id: string) => {
@@ -314,10 +360,11 @@ export function mergeCatalog(
     // "Fable", "Sonnet"), and the known rows that follow here read "Claude Opus 5"; two spellings
     // in one menu read as two lineups (owner, 2026-09-16). A row landing on a known model takes
     // that model's name, with the window named the way the CLI names it; Default keeps its own.
+    const name = known?.name ?? nameFromId(c.resolvedModel);
     const label =
-      c.value === "default" || known === undefined
+      c.value === "default" || name === undefined
         ? c.displayName
-        : `${known.name}${c.resolvedModel.endsWith("[1m]") ? " (1M context)" : ""}`;
+        : `${name}${c.resolvedModel.endsWith("[1m]") ? " (1M context)" : ""}`;
     return {
       row: M(stable ?? c.value, label, window, c.efforts, c.description),
       match: c.resolvedModel,
@@ -333,14 +380,20 @@ export function mergeCatalog(
   // gets a refusal knows which update fixes it. Older leftovers (dated ids, retired models the
   // CLI dropped on purpose) say nothing. Nothing is hidden: the row still resolves a stored id.
   const newestCli = Math.max(0, ...cli.map((c) => knownRow(base, c.resolvedModel)?.createdAt ?? 0));
+  const newer = (b: CatalogModel) => b.createdAt !== undefined && b.createdAt > newestCli;
+  // With a CLI lineup in hand, the CLI decides what is current. A base row stays only when the CLI
+  // reaches it through an alias that keeps its own id (`default`, a `[1m]` variant), so a session
+  // bound to the plain id still finds its row, or when the API lists it as newer than the CLI.
+  // Everything else is a model the CLI dropped, and it leaves the picker with the CLI that
+  // dropped it. Wrong for a session still bound to one of those: dsh shows "Select model" in its
+  // composer, yet its turns keep running (dsh gates only a new pick on the list, not a prompt),
+  // and a `modelPicker.options` row in settings.json brings the model back for whoever wants it.
+  const reached = new Set(cli.map((c) => strip(c.resolvedModel).replace(/-\d{8}$/, "")));
+  const keep = (b: CatalogModel) =>
+    !emitted.has(b.id) && (cli.length === 0 || reached.has(b.id) || newer(b));
   const leftover = (b: CatalogModel): CatalogModel =>
-    cli.length > 0 && b.createdAt !== undefined && b.createdAt > newestCli
-      ? { ...b, description: serverText("modelNeedsCliUpdate") }
-      : b;
-  let rows = [
-    ...fromCli,
-    ...base.filter((b) => !emitted.has(b.id)).map((b) => ({ row: leftover(b), match: b.id })),
-  ];
+    cli.length > 0 && newer(b) ? { ...b, description: serverText("modelNeedsCliUpdate") } : b;
+  let rows = [...fromCli, ...base.filter(keep).map((b) => ({ row: leftover(b), match: b.id }))];
   if (picker) {
     const extra = picker.options.map((o) => {
       const known = base.find((b) => allows(o.model, b.id) || allows(b.id, o.model));
@@ -362,7 +415,7 @@ export function mergeCatalog(
 /** Serves the model catalog from cache, fetching Anthropic's API when the cache is stale, and
  *  keeps the last good catalog on any failure so the picker never goes empty. */
 export async function getCatalog(fetchImpl = fetch, cli: CliModel[] = [], picker?: PickerSettings) {
-  await seedFromDisk();
+  await Promise.all([seedFromDisk(), seedLiveWindows()]);
   if (Date.now() - catalog.at < CATALOG_TTL_MS) return mergeCatalog(cli, catalog.models, picker);
   const headers = await authHeaders(CLAUDE_HOME);
   if (headers) {

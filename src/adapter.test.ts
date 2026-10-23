@@ -5918,11 +5918,11 @@ console.log("interrupt-on-abort ok");
       ["claude-sonnet-5", "Claude Sonnet 5", 1_000_000, []],
       ["claude-haiku-4-5", "Claude Haiku 4.5", 200_000, []],
       ["opus[1m]", "Claude Opus 5 (1M context)", 1_000_000, []],
-      ["custom", "Next", 200_000, []],
+      ["custom", "Claude Next 9", 200_000, []],
     ],
     "an alias landing on a known model takes that model's id and name, so the lineup is one set " +
-      "and one spelling whether or not the CLI has answered yet; Default and an unknown row keep " +
-      "the CLI's own label",
+      "and one spelling whether or not the CLI has answered yet; Default keeps the CLI's own " +
+      "label, and a model nothing names is named from its id",
   );
   assert.equal(
     merged[1]?.description,
@@ -5938,7 +5938,7 @@ console.log("interrupt-on-abort ok");
   );
   assert.ok(!rest.includes("claude-sonnet-5"), "covered by sonnet");
   assert.ok(!rest.includes("claude-haiku-4-5"), "covered by haiku (dated id)");
-  assert.ok(rest.includes("claude-fable-5-1"), "uncovered known model stays");
+  assert.ok(!rest.includes("claude-fable-5-1"), "a known model the CLI does not offer leaves");
   assert.deepEqual(mergeCatalog([], KNOWN_MODELS), KNOWN_MODELS, "no CLI list: unchanged");
   assert.deepEqual(
     mergeCatalog(cli, KNOWN_MODELS, undefined),
@@ -5946,9 +5946,16 @@ console.log("interrupt-on-abort ok");
     "no settings: the merge alone",
   );
 
-  // settings.json's availableModels is an allowlist over everything, but never over Default.
+  // settings.json's availableModels is an allowlist over everything, but never over Default. The
+  // CLI lineup here also offers three older ids, so the version-prefix cases have rows to keep.
+  const older = ["claude-opus-4-5", "claude-opus-4-6", "claude-sonnet-4-5"].map((id) => ({
+    value: id,
+    resolvedModel: id,
+    displayName: id,
+    efforts: [],
+  }));
   const ids = (picker: Parameters<typeof mergeCatalog>[2]) =>
-    mergeCatalog(cli, KNOWN_MODELS, picker).map((m) => m.id);
+    mergeCatalog([...cli, ...older], KNOWN_MODELS, picker).map((m) => m.id);
   const noRows = { options: [], replaceBuiltInOptions: false };
   assert.deepEqual(
     ids({ ...noRows, availableModels: ["haiku"] }),
@@ -6183,10 +6190,14 @@ console.log("interrupt-on-abort ok");
     "the CLI's lineup leads",
   );
   // Opus 5.5 is not a dated Opus 5: a prefix match gave its row Opus 5's id and name.
-  assert.equal(listed[1]?.name, "Opus", "a model newer than the table keeps the CLI's own name");
+  assert.equal(
+    listed[1]?.name,
+    "Claude Opus 5.5",
+    "a model newer than the table is named from its own id, not Opus 5's",
+  );
   assert.ok(
-    listed.some((m) => m.id === "claude-opus-5"),
-    "Opus 5 follows as its own row",
+    !listed.some((m) => m.id === "claude-opus-5"),
+    "Opus 5, which this CLI does not offer, is not listed under the CLI's rows",
   );
   assert.equal(cli.spawned.length, 1, "one probe process");
   assert.deepEqual(cli.spawned[0]?.slice(0, 2), ["/opt/claude", LINEUP_PROBE_ARGS]);

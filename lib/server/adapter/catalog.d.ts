@@ -57,6 +57,9 @@ export declare function modelFromApi(m: {
     };
     created_at?: string;
 }): CatalogModel;
+/** Load the stored windows once per process. A figure a session already reported this boot wins
+ *  over the stored one; a malformed file is ignored and a non-positive figure skipped, never thrown. */
+export declare function seedLiveWindows(): Promise<void>;
 /** The liveWindows key: strip any ANSI codes and resolve to the stable id, so a window looked up by the CLI's raw model id matches the normalized one stored here. */
 export declare const windowKey: (id: string) => string;
 /** Claude Code's env flag for "the base URL is a proxy in front of Anthropic" (`Xo()` in 2.1.274). */
@@ -74,6 +77,14 @@ export declare const noteLiveWindow: (modelId: string | undefined, maxTokens: nu
  *  200k). Keyed by the stable id, so an alias and its dated spelling share one answer. Undefined
  *  until some session has reported it. */
 export declare const liveWindowFor: (modelId: string) => number | undefined;
+/**
+ * The name a model gets when no API row or table row names it: `claude-opus-5-5` reads
+ * "Claude Opus 5.5", in the spelling the API gives its own rows, so a model newer than this build
+ * does not stand in the picker as the CLI's bare "Opus" beside "Claude Opus 5". Undefined for an id
+ * outside the `claude-<family>-<version>` shape, which keeps the CLI's label. Wrong for a family
+ * the API spells with more than one capital: none today.
+ */
+export declare const nameFromId: (id: string) => string | undefined;
 /** Merges the CLI's model rows into the catalog, giving each known model a single stable id and
  *  name so the picker offers the same lineup whether or not the CLI has yet learned the model's
  *  short spelling. */
