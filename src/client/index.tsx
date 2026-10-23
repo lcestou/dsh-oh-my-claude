@@ -229,6 +229,16 @@ function watchSessionSpinners(ctx: ClientCtx) {
   });
 }
 
+/** Read the hints and paint the Claude look from them; once per box, also carry an old
+ *  "Links, rules and quotes" off over to the groups split from it. The write fires HINTS_EVENT,
+ *  which lands back here with the marker set and stops. A failed read is logged, not thrown. */
+const reapplyTheme = () =>
+  void loadHints().then((hints) => {
+    applyTheme(hints);
+    const patch = themeSplitPatch(hints);
+    if (patch) writeHints(patch);
+  }, console.error);
+
 /** Wire the plugin into a mounted dsh context: follow deep links and start every watcher, so a
  *  fresh session gets turn status, notices, folds and hints. */
 export function apply(ctx: ClientCtx) {
@@ -251,15 +261,6 @@ export function apply(ctx: ClientCtx) {
   // The Claude look: apply the stored switches once the hints load, and again on every change
   // (a Settings switch dispatches HINTS_EVENT after its POST). Removed with the module, like the
   // interval in watchTurnStatus, so a hot reload does not stack listeners.
-  // oxlint-disable-next-line unicorn/consistent-function-scoping -- loadHints, applyTheme and writeHints are imports now, so nothing here is captured from apply()
-  const reapplyTheme = () =>
-    void loadHints().then((hints) => {
-      applyTheme(hints);
-      // Once per box: carry an old "Links, rules and quotes" off over to the groups split from it.
-      // The write fires HINTS_EVENT, which lands back here with the marker set and stops.
-      const patch = themeSplitPatch(hints);
-      if (patch) writeHints(patch);
-    }, console.error);
   // The sheets read bare var(--omc-accent); until the hints land nothing has set it and a fresh
   // page would paint the status row, links and rules unaccented for a fetch. Write the defaults
   // now, synchronously; the stored switches overwrite them a moment later.

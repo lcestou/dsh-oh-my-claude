@@ -1023,6 +1023,11 @@ export function ClaudeUpdateSwitch() {
   );
 }
 
+/** Store the proxy answer as both hint keys in one write: `false` clears a key, so the pair only
+ *  ever holds the chosen answer ("on", "off" or "auto", which clears both). */
+const chooseProxyFirstParty = (next: string) =>
+  writeHints({ proxyFirstParty: next === "on", proxyFirstPartyOff: next === "off" });
+
 /**
  * The settings control for a proxy in front of api.anthropic.com: Auto, On or Off.
  *
@@ -1036,10 +1041,6 @@ export function ProxyFirstPartySwitch() {
   const [on] = useHintFlag("proxyFirstParty");
   const [off] = useHintFlag("proxyFirstPartyOff");
   const mode = on ? "on" : off ? "off" : "auto";
-  // Both keys in one write: `false` clears a key, and the pair only ever holds the chosen answer.
-  // oxlint-disable-next-line unicorn/consistent-function-scoping -- writeHints is an import now, so nothing here is captured from the component
-  const choose = (next: string) =>
-    writeHints({ proxyFirstParty: next === "on", proxyFirstPartyOff: next === "off" });
   return (
     <>
       <div
@@ -1073,7 +1074,7 @@ export function ProxyFirstPartySwitch() {
           data-omc-proxy-first-party-mode=""
           aria-label={t("main.settingsUi.proxyTitle")}
           value={mode}
-          onChange={(e) => choose(e.target.value)}
+          onChange={(e) => chooseProxyFirstParty(e.target.value)}
           // `0 0 auto` because the row is flex and a shrinkable select collapsed here until only
           // the first letter of "Auto" showed; `fieldSizing: content` then takes the width from
           // the word on show rather than from the longest option, so Off sits narrower than Auto.

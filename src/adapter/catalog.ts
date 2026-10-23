@@ -10,6 +10,7 @@ import type { CliModel } from "../process.js";
 import type { PickerSettings } from "../sessions.js";
 import { authHeaders, CLAUDE_HOME, STATE_DIR } from "../state.js";
 
+// No default effort is advertised: `--effort` is only sent when dsh picks one, so the CLI's own default rules.
 /** The CLI's effort ladder, low to high; `readPickerSettings` validates `maxEffortLevel` against it. */
 export const EFFORTS_ALL = ["low", "medium", "high", "xhigh", "max"] as const;
 /** Trim an efforts list to those at or below `cap`. `"max"` and an absent cap keep everything.

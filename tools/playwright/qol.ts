@@ -21,10 +21,20 @@ await p.route("**/dsh-oh-my-claude/report?*", async (route) => {
 });
 await p.goto(dshUrl(token), { waitUntil: "networkidle" });
 await p.waitForTimeout(2000);
-await p
-  .locator('button[aria-label*="Settings" i], a[aria-label*="Settings" i]')
-  .first()
-  .click({ force: true });
+// Settings is a gear on dsh 0.1.x and an item in the account menu from 0.2.1 on.
+const gear = p.locator('button[aria-label*="Settings" i], a[aria-label*="Settings" i]');
+if ((await gear.count()) > 0) await gear.first().click({ force: true });
+else {
+  await p
+    .locator('button[aria-label="Account menu"], button[aria-label="账户菜单"]')
+    .first()
+    .click();
+  await p.waitForTimeout(500);
+  await p
+    .getByText(/^(Settings|设置)$/)
+    .first()
+    .click();
+}
 await p.waitForTimeout(800);
 await p
   .getByText(/^Oh My Claude$/)

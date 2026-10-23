@@ -11,7 +11,6 @@ import {
 import { COMMAND_CATALOG, type ImageAttachmentRef } from "../dsh.js";
 import { errorText, type SteerAttachment } from "../process.js";
 
-// No default effort is advertised: `--effort` is only sent when dsh picks one, so the CLI's own default rules.
 const MAX_IMAGES = 20;
 
 // ---------------------------------------------------------------------------
