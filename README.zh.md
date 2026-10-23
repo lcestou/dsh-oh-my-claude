@@ -89,12 +89,12 @@ npm 上有新版本时，设置和面板的运行环境行会出现一个带版�
 ```yaml
 agent-default-model:            # 让新会话默认使用 Claude Code
   provider: claude-code
-  model: claude-fable-5-1
+  model: claude-fable-5-1       # any model id the picker lists
 subagent-model-selection:       # 让 dsh 子智能体也能使用 Claude Code
   enabled: true
   allowedModels:
     - provider: claude-code
-      model: claude-haiku-5-5
+      model: claude-haiku-5-5   # any model id the picker lists
 ```
 
 想参与开发插件本身？从 [docs/developing.md](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/developing.md) 开始。

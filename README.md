@@ -89,12 +89,12 @@ Optional, in `~/.dsh/settings.yaml`:
 ```yaml
 agent-default-model:            # make Claude Code the default for new sessions
   provider: claude-code
-  model: claude-fable-5-1
+  model: claude-fable-5-1       # any model id the picker lists
 subagent-model-selection:       # let dsh subagents run on Claude Code too
   enabled: true
   allowedModels:
     - provider: claude-code
-      model: claude-haiku-5-5
+      model: claude-haiku-5-5   # any model id the picker lists
 ```
 
 Working on the plugin itself? Start at [docs/developing.md](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/developing.md).
