@@ -1161,3 +1161,24 @@ export function sortSkillCosts(
     return Number.isNaN(gap) ? 0 : sign * gap;
   });
 }
+
+/** dsh's own dock-card box (its QueueDock `_7yHdaG_dock`), to the pixel: composer-card width less one
+ *  dock inset each side, centred, and the negative bottom margin every dsh dock card uses to hug the
+ *  stack gap below it. Both of this plugin's dock cards sit on it so they line up with the queue,
+ *  todo and goal panels instead of spanning the pane. */
+export const DOCK_CARD: CSSProperties = {
+  boxSizing: "border-box",
+  width:
+    "calc(100% - var(--dsh-composer-side-clearance) - var(--dsh-composer-side-clearance) - var(--dsh-composer-dock-inset) - var(--dsh-composer-dock-inset))",
+  maxWidth:
+    "calc(var(--dsh-composer-card-max-width) - var(--dsh-composer-dock-inset) - var(--dsh-composer-dock-inset))",
+  // dsh stacks the dock and the composer with its stack gap between them; pulling the card up by
+  // most of that gap keeps it close, and the 4 px left over is what stops the composer's top edge
+  // from clipping the strip's buttons.
+  margin: "0 auto calc(4px - var(--dsh-composer-stack-gap))",
+  padding: "0 var(--dsh-composer-dock-inset)",
+  flex: "none",
+  display: "flex",
+  flexDirection: "column",
+  gap: 6,
+};
