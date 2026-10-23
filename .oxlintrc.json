@@ -84,7 +84,12 @@
         "src/claude-update.ts",
         "src/usage.ts",
         "src/translator.ts",
-        "src/client/shared.ts"
+        "src/client/shared.ts",
+        "src/routes/files.ts",
+        "src/routes/settings.ts",
+        "src/routes/status.ts",
+        "src/routes/controls.ts",
+        "src/routes/tasks.ts"
       ],
       "rules": {
         "anti-slop/no-runtime-typeof": "off"
@@ -107,7 +112,8 @@
         "src/state.ts",
         "src/claude-update.ts",
         "src/usage.ts",
-        "src/translator.ts"
+        "src/translator.ts",
+        "src/routes/settings.ts"
       ],
       "rules": {
         "anti-slop/no-unknown-parameters": "off"
