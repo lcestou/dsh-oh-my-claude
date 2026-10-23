@@ -208,7 +208,7 @@ Beside that filter, **Search transcripts** looks inside the sessions rather than
 
 On this box, Open opens the dsh session, Restore unarchives it first, and a terminal transcript is imported. Importing converts it to dsh events (prompts, replies, thinking, tool calls and results) so the history renders, with the dsh session taking the Claude session id as its own id, so the next prompt resumes that very Claude session with its full context. The transcript is only read. Claude Code keeps appending to the same file, so the session can be continued from either side. Claude's own subagent sidechains and an unanswered trailing prompt are left out of the copy. A row from another box says "Open on <box>" and sends the browser there with `#claude-session=<id>&cwd=<path>`. That box's panel picks the link up once dsh is ready and opens the session the same way.
 
-Each archived session row has a menu: download the raw transcript, export it as Markdown, or copy the `claude --resume` command. Below the list, Boxes, Changelog and Report a problem are collapsed cards with a one-line summary each. The browser half is `src/client/index.tsx`, built into `lib/client.js` by `bun run build`.
+Each archived session row has a menu: download the raw transcript, export it as Markdown, or copy the `claude --resume` command. Below the list, Boxes, Changelog and Report a problem are collapsed cards with a one-line summary each. The browser half is `src/client/` (the entry is `src/client/index.tsx`, the archive and Boxes cards are `sessions-tab.tsx` and `boxes.tsx`), built into `lib/client.js` by `bun run build`.
 
 ## Remember model per workspace
 

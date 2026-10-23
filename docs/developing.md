@@ -44,7 +44,7 @@ Read before writing code. The anti-slop rules in `.oxlintrc.json` fail the build
 - Every `as` assertion needs a `// SAFETY: <the invariant that makes it true>` comment on the line directly above it. Prefer a type guard or a narrower type so no assertion is needed. No `as X as Y` chains, no `as unknown as`.
 - No `typeof x === "string"` style runtime checks in `src/adapter.ts`, `src/adapter/` and `src/client/` (test files and the listed server modules are exempt). Use the existing narrowing helpers (`isJsonObject`, `textOf`, schema parsing) or a typed field.
 - No conditional empty-object spread (`...(cond ? { a } : {})`). Assign the property in a separate statement when present.
-- No `unknown` parameters, returns or type aliases in `src/adapter.ts and src/adapter/`; name the shape.
+- No `unknown` parameters, returns or type aliases in `src/adapter.ts` and `src/adapter/`; name the shape.
 - Do not widen a known literal (`const x: string = "bash"`); let inference keep the literal.
 - No `_prefixed` identifiers (`no-underscore-dangle`), no shadowed names (`no-shadow`), no unused variables.
 - Exemptions in `.oxlintrc.json` are per rule, not per file. The I/O modules (`process.ts`, `sessions.ts`, `state.ts` and the rest) parse payloads this plugin does not own, so four of the anti-slop rules are turned off for them, but each rule names only the files that actually need it, not one blanket list. Turning all four off everywhere hid 19 file-and-rule pairs that pass without help. Before adding a file to one of those lists, check it fails without it.
