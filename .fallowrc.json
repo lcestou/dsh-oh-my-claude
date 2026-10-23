@@ -10,10 +10,9 @@
   // in this repo references them. Everything under `tools/` is a dev-only check run by
   // hand or by `validate.ts`; nothing in the plugin imports any of it, which is the
   // design, not rot. Without these lines all ten scripts read as dead files.
-  // Split helpers, one line each per chunk; deleted when the split is done.
   // Tests, spelled out: the `test` script used to name these two globs and fallow read
   // them from it; the script now finds tests recursively, so the roots are declared here.
-  "entry": ["src/adapter.ts", "src/test-dsh.ts", "tools/*.ts", "tools/playwright/*.ts", "tools/oxlint/anti-slop/index.ts", "tools/split/*.ts", "src/**/*.test.ts"],
+  "entry": ["src/adapter.ts", "src/test-dsh.ts", "tools/*.ts", "tools/playwright/*.ts", "tools/oxlint/anti-slop/index.ts", "src/**/*.test.ts"],
 
   // An export used only inside its own module is still a KEEP here. `tools/` imports
   // the plugin through `lib/server/*.js`, which is ignored above, so the tool-facing

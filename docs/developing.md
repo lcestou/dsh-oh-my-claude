@@ -8,9 +8,9 @@ Install from a checkout instead of npm: `dsh plugin --profile web add link:/path
 
 ## Where the code lives
 
-The server entry is `src/adapter.ts`, with its helper modules under `src/adapter/`: types, config, catalog, asides, transcript-watch, prompt, cli, turn, class (the ClaudeCodeAdapter class, whole), and ssh-boxes. The routes are in `src/sessions.ts`. The client entry is `src/client/index.tsx`, with the feature files beside it and the panel under `src/client/panel/`, also being moved there, see the commit history. Tests sit beside the modules they test and the suite runs them recursively. `tools/split/` holds the split helpers and the baseline that `tools/split/surface.ts` is diffed against.
+The server entry is `src/adapter.ts`, with its helper modules under `src/adapter/`: types, config, catalog, asides, transcript-watch, prompt, cli, turn, class (the ClaudeCodeAdapter class, whole), and ssh-boxes. The routes are in `src/sessions.ts`. The client entry is `src/client/index.tsx`: its imports, the session spinners and `apply()`. Each feature it mounts has a file beside it (the cost line, the context meter, the turn status, the Settings card, the dock and its cards, the selection bar, the Run button and the rest), and the panel's tab switch is `src/client/panel.tsx` with one file per tab under `src/client/panel/`. Tests sit beside the modules they test and the suite runs them recursively.
 
-The split is a pure move, so both entries keep every export they have today, re-exported from the module that now owns each symbol. Install paths, route paths, hook names, settings keys and stored files do not move, and nothing outside the plugin notices the move.
+Both entries keep the exports they had before the code moved into these files, re-exported from the module that owns each symbol, so tests and tools import them as they always did.
 
 ## What this plugin may lean on in dsh
 
@@ -42,7 +42,7 @@ depends on what someone typed cries wolf, which is why the skill-chip hook is no
 Read before writing code. The anti-slop rules in `.oxlintrc.json` fail the build and cost a worker 25 check runs on 2026-09-05.
 
 - Every `as` assertion needs a `// SAFETY: <the invariant that makes it true>` comment on the line directly above it. Prefer a type guard or a narrower type so no assertion is needed. No `as X as Y` chains, no `as unknown as`.
-- No `typeof x === "string"` style runtime checks in `src/adapter.ts and src/adapter/` and `src/client/index.tsx` (test files and the listed server modules are exempt). Use the existing narrowing helpers (`isJsonObject`, `textOf`, schema parsing) or a typed field.
+- No `typeof x === "string"` style runtime checks in `src/adapter.ts`, `src/adapter/` and `src/client/` (test files and the listed server modules are exempt). Use the existing narrowing helpers (`isJsonObject`, `textOf`, schema parsing) or a typed field.
 - No conditional empty-object spread (`...(cond ? { a } : {})`). Assign the property in a separate statement when present.
 - No `unknown` parameters, returns or type aliases in `src/adapter.ts and src/adapter/`; name the shape.
 - Do not widen a known literal (`const x: string = "bash"`); let inference keep the literal.
