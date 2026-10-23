@@ -106,3 +106,13 @@ export const onBodyMutation = (scan: FrameScan, sync = false): (() => void) => {
   observeBody(bodyObserver);
   return off;
 };
+
+/** Dark page or light, from the body's own background: dsh keeps its theme in CSS variables and
+ *  exposes no flag, and the luminance of what is actually painted is what the eye compares to. */
+export const pageIsDark = (): boolean => {
+  const m = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(getComputedStyle(document.body).backgroundColor);
+  if (!m) return true;
+  return (Number(m[1]) * 299 + Number(m[2]) * 587 + Number(m[3]) * 114) / 1000 < 128;
+};
+/** The type a closing line copies off dsh's label, so it reads at the size of the text it replaces. */
+export type Face = { fontSize: string; fontWeight: string; fontFamily: string; lineHeight: string };

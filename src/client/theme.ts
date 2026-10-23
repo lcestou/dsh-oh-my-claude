@@ -72,3 +72,18 @@ export function themeSplitPatch(
   if (hints.themeProseOff !== true) return { [SPLIT_MARK]: 1 };
   return { themeComposerOff: true, themeModelsOff: true, [SPLIT_MARK]: 1 };
 }
+
+/** A rule that paints only while its theme group is on. The selector is doubled: once for an
+ *  absent `data-omc-theme` (before the hints load every group is on, so the first paint is
+ *  today's) and once for the group's token. `rest` is the part of the selector after the body;
+ *  `claude` false drops the `[data-omc-claude]` condition for rules that never had it. */
+export const gated = (group: ThemeGroup, rest: string, claude = true): string => {
+  const body = claude ? "body[data-omc-claude]" : "body";
+  return `${body}:not([data-omc-theme]) ${rest},${body}[data-omc-theme~="${group}"] ${rest}`;
+};
+
+/** Whether a theme group is on right now: absent attribute means on (nothing has loaded yet). */
+export const hasTheme = (group: ThemeGroup): boolean => {
+  const v = document.body.getAttribute("data-omc-theme");
+  return v === null || v.split(" ").includes(group);
+};
