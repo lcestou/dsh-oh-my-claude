@@ -61,6 +61,16 @@ const row = (id: string): CliModel => ({
   assert.match(merged.find((m) => m.id === "claude-next-9")?.description ?? "", /update/i);
   assert.ok(!ids.includes("claude-old-1"), "an API row older than the CLI's lineup leaves");
 }
+// A stale API cache that holds none of the CLI's models cannot date the lineup, so none of its rows
+// is called newer than the CLI and all of them leave.
+{
+  const base = [modelFromApi({ id: "claude-opus-4-1", created_at: "2025-08-01T00:00:00Z" })];
+  assert.deepEqual(
+    mergeCatalog([row("claude-opus-5-5")], base).map((m) => m.id),
+    ["claude-opus-5-5"],
+    "an undated lineup marks nothing as newer",
+  );
+}
 // A dated API id the table does not undate still counts as reached by the CLI's undated alias row.
 {
   const cli: CliModel[] = [

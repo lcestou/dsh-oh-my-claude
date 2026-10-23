@@ -396,7 +396,12 @@ export function mergeCatalog(
   // A model the API lists that the CLI's picker does not, released after every model the CLI
   // does offer, is one the installed CLI predates: its row says so, so a reader who picks it and
   // gets a refusal knows which update fixes it.
-  const newestCli = Math.max(0, ...cli.map((c) => knownRow(base, c.resolvedModel)?.createdAt ?? 0));
+  // Dated only through the base: with no CLI row found there (a stale API cache), nothing is called
+  // newer, since every dated row would be. Wrong for a real newer model in that state: unmarked.
+  const dated = cli
+    .map((c) => knownRow(base, c.resolvedModel)?.createdAt ?? 0)
+    .filter((n) => n > 0);
+  const newestCli = dated.length > 0 ? Math.max(...dated) : Number.POSITIVE_INFINITY;
   const newer = (b: CatalogModel) => b.createdAt !== undefined && b.createdAt > newestCli;
   // With a CLI lineup in hand, the CLI decides what is current. A base row stays only when the CLI
   // reaches it through an alias that keeps its own id (`default`, a `[1m]` variant), so a session
