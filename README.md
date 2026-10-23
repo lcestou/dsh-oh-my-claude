@@ -94,7 +94,7 @@ subagent-model-selection:       # let dsh subagents run on Claude Code too
   enabled: true
   allowedModels:
     - provider: claude-code
-      model: claude-haiku-4-5
+      model: claude-haiku-5-5
 ```
 
 Working on the plugin itself? Start at [docs/developing.md](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/developing.md).

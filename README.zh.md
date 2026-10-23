@@ -94,7 +94,7 @@ subagent-model-selection:       # 让 dsh 子智能体也能使用 Claude Code
   enabled: true
   allowedModels:
     - provider: claude-code
-      model: claude-haiku-4-5
+      model: claude-haiku-5-5
 ```
 
 想参与开发插件本身？从 [docs/developing.md](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/developing.md) 开始。

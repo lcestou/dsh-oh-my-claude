@@ -55,7 +55,7 @@ subagent-model-selection:       # let dsh subagents run on Claude Code too
   enabled: true
   allowedModels:
     - provider: claude-code
-      model: claude-haiku-4-5
+      model: claude-haiku-5-5
 ```
 
 Mounting the plugin more than once, for a second account or an SSH box, is a `cordis.patch.yml` edit; see [Remote boxes and accounts](remote.md).
