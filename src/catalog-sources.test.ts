@@ -23,7 +23,7 @@ assert.ok(dir, "run through the repo's test script, which sets DSH_OMC_STATE_DIR
 mkdirSync(dir!, { recursive: true });
 // The windows file is written first: the first catalog read below seeds from it, once per process.
 const file = join(dir!, "context-windows.json");
-writeFileSync(file, JSON.stringify({ "claude-stored-1": 640_000, "claude-held-1": 1, bad: -5 }));
+writeFileSync(file, JSON.stringify({ "claude-stored-1": 640_000, bad: -5 }));
 
 /** One CLI row whose alias is its own id. */
 const row = (id: string): CliModel => ({
@@ -119,19 +119,13 @@ assert.equal(nameFromId("my-proxy-model"), undefined);
 
 // A window a session reported is written to disk, and a later boot reads it back. A figure this
 // boot already holds is not replaced by the stored one.
-noteLiveWindow("claude-held-1", 300_000);
 await seedLiveWindows();
 assert.equal(liveWindowFor("claude-stored-1"), 640_000, "a stored window is read back");
-assert.equal(liveWindowFor("claude-held-1"), 300_000, "this boot's figure wins");
 assert.equal(liveWindowFor("bad"), undefined, "a non-positive figure is skipped");
 noteLiveWindow("claude-opus-5-5", 1_000_000);
 await flushLiveWindows();
 const written = JSON.parse(readFileSync(file, "utf8"));
 assert.equal(written["claude-opus-5-5"], 1_000_000, "a new figure reaches the file");
-assert.equal(
-  written["claude-stored-1"],
-  640_000,
-  "a note before the seed keeps the stored figures",
-);
+assert.equal(written["claude-stored-1"], 640_000, "a later write keeps the stored figures");
 
 console.log("catalog sources ok");

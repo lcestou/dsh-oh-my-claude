@@ -60,7 +60,8 @@ export declare function modelFromApi(m: {
 /** Load the stored windows once per process. A figure a session already reported this boot wins
  *  over the stored one; a malformed file is ignored and a non-positive figure skipped, never thrown. */
 export declare const seedLiveWindows: () => Promise<void>;
-/** Resolves once every window write queued so far has landed; for tests and an orderly exit. */
+/** Resolves once every window write asked for so far has landed; tests await it. Waits for the seed
+ *  first, because a note queues its write only after the seed, in a callback that runs before this. */
 export declare const flushLiveWindows: () => Promise<void>;
 /** Whether a session reported this model's window since this process started. */
 export declare const windowReportedThisBoot: (modelId: string) => boolean;
