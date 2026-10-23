@@ -102,6 +102,12 @@ function useUndoSteerRestore(
   }, [waiting, held, ids, draft, inputActions]);
 }
 
+/**
+ * The `/btw` aside bubble: a Claude-orange card docked above the composer, in the same slot and at
+ * the same width as dsh's todo and goal panels, that shows each side question and the answer the
+ * CLI returns off the transcript. Pending cards read as thinking; each is dismissed on its own. The
+ * server keeps only the last few per session, so the list stays short.
+ */
 /** Render this session's aside items as a collapsible stack, polling `/side-questions` every few
  *  seconds: questions, a login need and a Claude update card, or nothing when the poll is empty. */
 export function AsideBubble({

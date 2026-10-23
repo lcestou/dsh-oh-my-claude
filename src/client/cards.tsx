@@ -81,12 +81,8 @@ export function DraftRelay({
   return null;
 }
 
-/**
- * The `/btw` aside bubble: a Claude-orange card docked above the composer, in the same slot and at
- * the same width as dsh's todo and goal panels, that shows each side question and the answer the
- * CLI returns off the transcript. Pending cards read as thinking; each is dismissed on its own. The
- * server keeps only the last few per session, so the list stays short.
- */
+/** Compare two LoginNeeds by identity or by matching host and label, so a re-rendered need counts
+ *  the same one. */
 export const sameNeed = (a: LoginNeed | null, b: LoginNeed | null): boolean =>
   a === b || (a !== null && b !== null && a.host === b.host && a.label === b.label);
 

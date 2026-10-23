@@ -231,7 +231,6 @@ export interface BoxData {
   token?: string;
 }
 
-/** One SSH box's transcripts, from `/boxes/ssh-sessions` (listed over ssh, no HTTP endpoint). */
 export interface SettingsFile {
   text: string;
   path?: string;
@@ -1833,8 +1832,6 @@ interface RemoteWs {
   workspaceId: string;
 }
 
-/** A deep link from another box's panel: open that session here once dsh is ready. */
-
 /** The updater's answer as the Boxes rows read it: the two versions, whether a run is on, its log. */
 interface BoxUpdateState {
   installed: string | null;
@@ -1943,6 +1940,3 @@ function BoxUpdateButton({
     </button>
   );
 }
-
-/** Compare two LoginNeeds by identity or by matching host and label, so a re-rendered need counts
- *  the same one. */

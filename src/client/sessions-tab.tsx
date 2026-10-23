@@ -77,6 +77,7 @@ interface RemoteSessionData extends SessionData {
   name?: string;
 }
 
+/** One SSH box's transcripts, from `/boxes/ssh-sessions` (listed over ssh, no HTTP endpoint). */
 interface SshSessionData {
   name: string;
   host?: string;
