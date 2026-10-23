@@ -1,6 +1,7 @@
 <!-- The mark the plugin draws everywhere else (src/client/spark.tsx), as a file dsh can read
      for the Plugin Manager card. One path, Claude orange, no CSS variable: the card renders it
-     as an <img>, where a var() would not resolve. Keep the path in step with spark.tsx. -->
+     as an <img>, where a var() would not resolve. Keep the path in step with spark.tsx.
+     A 180 px PNG of it, docs/media/icon-180.png, is the plugin catalog's card icon; regenerate it when the path changes. -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100" role="img" aria-label="Oh My Claude">
   <!-- The mark sits inset, at 62% of the box: dsh draws this inside a 48px tile with a border,
        and the path alone fills that tile edge to edge, which reads as cropped beside dsh's own
