@@ -8,7 +8,7 @@ import { type FirstPartyProbe, probeFirstParty } from "../first-party.js";
 import { serverText } from "../locale.js";
 import type { CliModel } from "../process.js";
 import type { PickerSettings } from "../sessions.js";
-import { authHeaders, CLAUDE_HOME, STATE_DIR } from "../state.js";
+import { authHeaders, CLAUDE_HOME, STATE_DIR, writeJson } from "../state.js";
 
 // No default effort is advertised: `--effort` is only sent when dsh picks one, so the CLI's own default rules.
 /** The CLI's effort ladder, low to high; `readPickerSettings` validates `maxEffortLevel` against it. */
@@ -221,33 +221,33 @@ const bareId = (id: string) => {
  * than this build that only the CLI names, keeps the window a session last reported instead of
  * falling back to a guess. Wrong when the box's setup changes under a stored figure (a proxy added
  * or removed, 1M turned on or off): the stale figure stands until that model's next context read.
+ * Also wrong when one box runs a model both plain and `[1m]`: both bank under one key, so whichever
+ * ran last answers for both, now across restarts too.
  */
 const liveWindows = new Map<string, number>();
 /** Where `liveWindows` is kept between boots; DSH_OMC_STATE_DIR moves it for tests, as the catalog's. */
 const windowsPath = () => join(process.env.DSH_OMC_STATE_DIR ?? STATE_DIR, "context-windows.json");
-let windowsSeeded = false;
+let windowsSeed: Promise<void> | undefined;
 /** The windows file: model id to the window its last session reported. Our own write, re-parsed
  *  on read so a hand-edited or truncated file is dropped whole rather than half-trusted. */
 const StoredWindows = z.dict(z.number());
 /** Load the stored windows once per process. A figure a session already reported this boot wins
  *  over the stored one; a malformed file is ignored and a non-positive figure skipped, never thrown. */
-export async function seedLiveWindows() {
-  if (windowsSeeded) return;
-  windowsSeeded = true;
-  try {
-    const stored = StoredWindows(JSON.parse(await readFile(windowsPath(), "utf8")));
-    for (const [id, n] of Object.entries(stored))
-      if (Number.isFinite(n) && n > 0 && !liveWindows.has(id)) liveWindows.set(id, n);
-  } catch {
-    /* no file yet or unreadable: windows are relearned from the next context reads */
-  }
-}
-/** Write every known window. Best effort: a failed write costs a guess after the next restart. */
+export const seedLiveWindows = (): Promise<void> =>
+  (windowsSeed ??= (async () => {
+    try {
+      const stored = StoredWindows(JSON.parse(await readFile(windowsPath(), "utf8")));
+      for (const [id, n] of Object.entries(stored))
+        if (Number.isFinite(n) && n > 0 && !liveWindows.has(id)) liveWindows.set(id, n);
+    } catch {
+      /* no file yet or unreadable: windows are relearned from the next context reads */
+    }
+  })());
+/** Write every known window, through a temp file and a rename so two sessions writing at once never
+ *  leave a torn file. Best effort: a failed write costs a guess after the next restart. */
 async function persistLiveWindows() {
   try {
-    const path = windowsPath();
-    await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, JSON.stringify(Object.fromEntries(liveWindows)));
+    await writeJson(windowsPath(), Object.fromEntries(liveWindows));
   } catch {
     /* read-only state dir or full disk: this boot still has the figures in memory */
   }
@@ -300,7 +300,8 @@ export const noteLiveWindow = (modelId: string | undefined, maxTokens: number | 
   const key = windowKey(modelId);
   if (liveWindows.get(key) === maxTokens) return;
   liveWindows.set(key, maxTokens);
-  void persistLiveWindows();
+  // After the seed, so a figure noted before the first catalog read never overwrites the stored file.
+  void seedLiveWindows().then(persistLiveWindows);
 };
 /** The context window a live session last reported for this model, which beats the catalog's
  *  figure because it is what this box's CLI actually runs with (a proxy can demote a 1M model to
@@ -316,7 +317,7 @@ export const liveWindowFor = (modelId: string): number | undefined =>
 const knownRow = <T extends { id: string }>(base: T[], resolvedModel: string): T | undefined => {
   const bare = strip(resolvedModel);
   const undated = bare.replace(/-\d{8}$/, "");
-  return base.find((b) => b.id === bare || b.id === undated);
+  return base.find((b) => b.id === bare || b.id.replace(/-\d{8}$/, "") === undated);
 };
 /**
  * The name a model gets when no API row or table row names it: `claude-opus-5-5` reads
@@ -390,7 +391,8 @@ export function mergeCatalog(
   // and a `modelPicker.options` row in settings.json brings the model back for whoever wants it.
   const reached = new Set(cli.map((c) => strip(c.resolvedModel).replace(/-\d{8}$/, "")));
   const keep = (b: CatalogModel) =>
-    !emitted.has(b.id) && (cli.length === 0 || reached.has(b.id) || newer(b));
+    !emitted.has(b.id) &&
+    (cli.length === 0 || reached.has(b.id.replace(/-\d{8}$/, "")) || newer(b));
   const leftover = (b: CatalogModel): CatalogModel =>
     cli.length > 0 && newer(b) ? { ...b, description: serverText("modelNeedsCliUpdate") } : b;
   let rows = [...fromCli, ...base.filter(keep).map((b) => ({ row: leftover(b), match: b.id }))];
@@ -468,7 +470,10 @@ export function resolveModelInfo(
   models: ReturnType<typeof M>[] = catalog.models,
   cap?: (typeof EFFORTS_ALL)[number],
 ): LlmResolvedModelInfo {
-  const pool = [...models, ...KNOWN_MODELS];
+  // The unmerged API cache sits between the listing and the table: a model the CLI dropped is
+  // gone from `models` but still needs its efforts and window, or a session bound to it fails
+  // every turn that carries a stored effort (dsh refuses an effort the model does not list).
+  const pool = [...models, ...catalog.models, ...KNOWN_MODELS];
   // A session stored before the ids settled asks for the dated one; it still names a model we know.
   const found =
     pool.find((m) => m.id === modelId) ??
