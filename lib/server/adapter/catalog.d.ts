@@ -60,6 +60,10 @@ export declare function modelFromApi(m: {
 /** Load the stored windows once per process. A figure a session already reported this boot wins
  *  over the stored one; a malformed file is ignored and a non-positive figure skipped, never thrown. */
 export declare const seedLiveWindows: () => Promise<void>;
+/** Resolves once every window write queued so far has landed; for tests and an orderly exit. */
+export declare const flushLiveWindows: () => Promise<void>;
+/** Whether a session reported this model's window since this process started. */
+export declare const windowReportedThisBoot: (modelId: string) => boolean;
 /** The liveWindows key: strip any ANSI codes and resolve to the stable id, so a window looked up by the CLI's raw model id matches the normalized one stored here. */
 export declare const windowKey: (id: string) => string;
 /** Claude Code's env flag for "the base URL is a proxy in front of Anthropic" (`Xo()` in 2.1.274). */

@@ -219,7 +219,7 @@ import {
   FIRST_PARTY_FLAG,
   getCatalog,
   KNOWN_MODELS,
-  liveWindowFor,
+  windowReportedThisBoot,
   modelInfo,
   noteLiveWindow,
   proxyBaseUrl,
@@ -4726,11 +4726,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         // an id this process has not asked about, so the next result asks again for the model it
         // switched to. A session on the mount's default names no model, which is why the guard is
         // what this process asked rather than what the bank holds: nothing would ever ask for it.
+        // A figure read back from `context-windows.json` does not count as asked, so a stored one
+        // is refreshed on the first turn after a restart.
         const asking = proc.spec.model ?? "";
-        if (
-          proc.windowAskedFor !== asking &&
-          (asking === "" || liveWindowFor(asking) === undefined)
-        ) {
+        if (proc.windowAskedFor !== asking && (asking === "" || !windowReportedThisBoot(asking))) {
           proc.windowAskedFor = asking;
           void this.contextUsage(options.sessionId).catch(() => {});
         }

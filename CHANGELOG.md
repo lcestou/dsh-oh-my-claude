@@ -8,7 +8,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Changed
 
-- The model picker lists the models your Claude Code offers. Older models from the built-in list or the Models API that Claude Code no longer offers are left out, so a model Anthropic retires leaves the picker when Claude Code drops it. A session still on such a model keeps working at its stored effort; its composer shows "Select model" until you pick another, and adding its full id to `modelPicker.options` in settings.json keeps it listed. Answers the question @namastex888 asked on #183.
+- The model picker lists the models your Claude Code offers. Older models from the built-in list or the Models API that Claude Code no longer offers are left out, so a model Anthropic retires leaves the picker when Claude Code drops it. A session still on such a model keeps working. Opened while idle, it moves to the newest listed model of the same family, as it already did when the CLI renamed a row. Adding a model's full id to `modelPicker.options` in settings.json keeps it listed. Answers the question @namastex888 asked on #183.
 
 ### Fixed
 

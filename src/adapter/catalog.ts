@@ -228,6 +228,11 @@ const liveWindows = new Map<string, number>();
 /** Where `liveWindows` is kept between boots; DSH_OMC_STATE_DIR moves it for tests, as the catalog's. */
 const windowsPath = () => join(process.env.DSH_OMC_STATE_DIR ?? STATE_DIR, "context-windows.json");
 let windowsSeed: Promise<void> | undefined;
+/** The last write queued, so writes land in the order they were asked and the newest map wins. */
+let windowsWrite: Promise<void> = Promise.resolve();
+/** Ids a session reported since this process started. A figure read back from disk is not in it,
+ *  so the once-per-model ask between turns still refreshes a stored figure. */
+const reportedThisBoot = new Set<string>();
 /** The windows file: model id to the window its last session reported. Our own write, re-parsed
  *  on read so a hand-edited or truncated file is dropped whole rather than half-trusted. */
 const StoredWindows = z.dict(z.number());
@@ -243,15 +248,22 @@ export const seedLiveWindows = (): Promise<void> =>
       /* no file yet or unreadable: windows are relearned from the next context reads */
     }
   })());
-/** Write every known window, through a temp file and a rename so two sessions writing at once never
- *  leave a torn file. Best effort: a failed write costs a guess after the next restart. */
-async function persistLiveWindows() {
-  try {
-    await writeJson(windowsPath(), Object.fromEntries(liveWindows));
-  } catch {
-    /* read-only state dir or full disk: this boot still has the figures in memory */
-  }
+/** Queue a write of every known window. Writes run one after another and each reads the map when
+ *  it runs, so the last to land holds the newest figures; `writeJson`'s temp file and rename keep a
+ *  crash from tearing it. Best effort: a failed write costs a guess after the next restart. */
+function persistLiveWindows() {
+  windowsWrite = windowsWrite.then(() =>
+    writeJson(windowsPath(), Object.fromEntries(liveWindows)).catch(() => {
+      /* read-only state dir or full disk: this boot still has the figures in memory */
+    }),
+  );
+  return windowsWrite;
 }
+/** Resolves once every window write queued so far has landed; for tests and an orderly exit. */
+export const flushLiveWindows = (): Promise<void> => windowsWrite;
+/** Whether a session reported this model's window since this process started. */
+export const windowReportedThisBoot = (modelId: string): boolean =>
+  reportedThisBoot.has(windowKey(modelId));
 
 /** The liveWindows key: strip any ANSI codes and resolve to the stable id, so a window looked up by the CLI's raw model id matches the normalized one stored here. */
 export const windowKey = (id: string) => stableModelId(strip(id));
@@ -298,6 +310,7 @@ export const noteLiveWindow = (modelId: string | undefined, maxTokens: number | 
   if (modelId === undefined || maxTokens === undefined || !Number.isFinite(maxTokens)) return;
   if (maxTokens <= 0) return;
   const key = windowKey(modelId);
+  reportedThisBoot.add(key);
   if (liveWindows.get(key) === maxTokens) return;
   liveWindows.set(key, maxTokens);
   // After the seed, so a figure noted before the first catalog read never overwrites the stored file.

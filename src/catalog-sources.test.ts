@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  flushLiveWindows,
   getCatalog,
   KNOWN_MODELS,
   liveWindowFor,
@@ -124,7 +125,7 @@ assert.equal(liveWindowFor("claude-stored-1"), 640_000, "a stored window is read
 assert.equal(liveWindowFor("claude-held-1"), 300_000, "this boot's figure wins");
 assert.equal(liveWindowFor("bad"), undefined, "a non-positive figure is skipped");
 noteLiveWindow("claude-opus-5-5", 1_000_000);
-await new Promise((r) => setTimeout(r, 50));
+await flushLiveWindows();
 const written = JSON.parse(readFileSync(file, "utf8"));
 assert.equal(written["claude-opus-5-5"], 1_000_000, "a new figure reaches the file");
 assert.equal(
