@@ -170,6 +170,8 @@ Session names travel both ways. A name typed into dsh's sidebar (a `session/titl
 
 Each bridged command declares `input.attachments`, so a file or image in the composer goes with it (dsh refuses attachments to a command that does not declare them, with `/name does not accept attachments`), and they reach Claude the way a typed turn's do. A bridged line with attachments is logged as a user turn rather than the collapsed notice row, so the bubble shows the file or image chip a typed prompt would. Renaming through the bridge sets dsh's title as well. `/claude-rename <title>` renames the dsh session first and sends the line only if that worked, so the two names cannot end up disagreeing, and dsh's title is pinned afterwards so automatic title generation stops replacing it. Switch off with `commandBridge: false`.
 
+dsh lists these commands, and the plugin's own `/btw`, `/temporary` and `/ultracode`, in every session, whatever model it runs on. Typed in a session on another provider, each one answers `/<name> works in Claude Code sessions. This session runs on <provider>` and does nothing else. The provider is the one dsh routes the session by: a model picked and not yet used, else the model of the last request, else dsh's default model.
+
 ## Auxiliary calls
 
 dsh's session-title and compaction requests run as one turn with no tools and no session of their own, from a scratch directory so they never show up in a workspace's session list.
