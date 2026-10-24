@@ -306,6 +306,11 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
         id: string;
         since: number;
     }>;
+    /** The refusal a command this plugin owns answers with in a session on another provider. */
+    notClaude(agent: Agent, command: string): {
+        kind: "error";
+        text: string;
+    } | undefined;
     /**
      * Register Claude Code's slash commands (from the CLI's init frame) as dsh `/commands`. The
      * handler hands the line to Claude as the next prompt, where the CLI expands the skill or
@@ -986,10 +991,13 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      *  on meanwhile needs no detection: a prompt cancels the wait, and once Claude runs, its own
      *  rate_limit_event says whether credits cover the overflow. */
     continueAfterLimit(sessionId: string, probe?: typeof readUsage): Promise<void>;
-    /** The provider a session last selected, from its own log; undefined when it never picked one
-     *  (dsh's default applies) or the session cannot be read. The read is deprecated in dsh 0.1.6, and
-     *  a dsh that drops it would answer undefined for every session, which routes remote workspaces to
-     *  the local mount instead of failing. Too quiet to debug from the symptom, so it says so once. */
+    /** The provider a session runs on, resolved the way dsh's session controller does: the newest
+     *  pick in its log, else the provider its last request ran on, else the box's default model.
+     *  Undefined when the session cannot be read; the default is not guessed then, because
+     *  `continueAfterLimit` would drop every limit notice on a dsh without the read. The log read is
+     *  deprecated in dsh 0.1.6, and a dsh that drops it would answer undefined for every session,
+     *  which routes remote workspaces to the local mount instead of failing. Too quiet to debug from
+     *  the symptom, so it says so once. */
     sessionProvider(sessionId: string): string | undefined;
     /** Cancel and forget a session's limit-wait timer, if any, so a usage reset does not fire it twice. */
     clearLimitWait(sessionId: string): void;

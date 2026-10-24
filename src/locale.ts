@@ -139,6 +139,8 @@ const EN = {
   noReply: "(no reply)",
   mirrorCut: "… cut here; the whole exchange is in the transcript.",
   btwUsage: "Usage: /btw <your question>",
+  claudeOnly:
+    "/{command} works in Claude Code sessions. This session runs on {provider}; pick a Claude model to use it.",
   btwSent: "Side question sent. The answer opens in the ✻ aside bubble.",
   idleStopped: "claude produced no output for {s}s and was stopped",
   claudeExited: "claude exited {code}: {detail}",
@@ -251,6 +253,8 @@ const ZH = {
   noReply: "（无回复）",
   mirrorCut: "… 在此截断；完整对话在会话记录中。",
   btwUsage: "用法：/btw <你的问题>",
+  claudeOnly:
+    "/{command} 只能在 Claude Code 会话中使用。此会话使用的是 {provider}；请先选择一个 Claude 模型。",
   btwSent: "旁问已发送。回答会显示在 ✻ 旁问气泡中。",
   idleStopped: "claude 连续 {s} 秒没有输出，已停止",
   claudeExited: "claude 已退出（{code}）：{detail}",

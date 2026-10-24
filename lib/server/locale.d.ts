@@ -107,6 +107,7 @@ declare const EN: {
     readonly noReply: "(no reply)";
     readonly mirrorCut: "… cut here; the whole exchange is in the transcript.";
     readonly btwUsage: "Usage: /btw <your question>";
+    readonly claudeOnly: "/{command} works in Claude Code sessions. This session runs on {provider}; pick a Claude model to use it.";
     readonly btwSent: "Side question sent. The answer opens in the ✻ aside bubble.";
     readonly idleStopped: "claude produced no output for {s}s and was stopped";
     readonly claudeExited: "claude exited {code}: {detail}";

@@ -79,7 +79,8 @@ export interface Session {
     ...opts: unknown[]
   ): SessionEvent;
   deriveMessages(): Message[];
-  requestHeader(): { version: number } | undefined;
+  /** The folded `request/header`; `config.provider` is the provider the last request ran on. */
+  requestHeader(): { version: number; config?: { provider?: string } } | undefined;
   requestContext(): { provider?: string; model?: string } | undefined;
 }
 
@@ -407,6 +408,8 @@ export interface PluginContext {
   get(name: "commands"): PluginContext["commands"];
   get(name: "sessionTitle"): PluginContext["sessionTitle"];
   get(name: "workspaceRegistry"): WorkspaceRegistry | undefined;
+  /** Mirrors: @deepseek-ai/dsh-agent-default-model. The model a session runs on before anyone picks one. */
+  get(name: "agentDefaultModel"): { currentSelection(): { provider: string } } | undefined;
   /**
    * Mirrors: dsh-plugin-desktop/src/desktop-browser-access.ts (the community DSH Desktop shell).
    * Present only when dsh runs under that shell's Electron launcher, whose web server then answers

@@ -26,9 +26,11 @@ export declare function writeJson(file: string, value: unknown): Promise<void>;
 export declare function markBusy(id: string, on: boolean, path?: string): Promise<void>;
 /** Sessions whose turn the previous dsh process left unfinished; cleared on read. */
 export declare function takeInterrupted(path?: string): Promise<string[]>;
-/** The provider of the last `model/selection` event in a session log, if any. Read from the tail,
- *  so a long log costs the events after its last selection, not all of them. */
-export declare function lastSelectedProvider(events: readonly {
+/** The provider of a `model/selection` no request has run on yet: the newest selection after the
+ *  last `request/header`, if any. dsh treats a pick as spent once a request runs (its
+ *  modelSelection projection), and a fork child carries its parent's spent picks, so a selection
+ *  before the last header says nothing about what the session runs on. Read from the tail. */
+export declare function pendingProvider(events: readonly {
     type: string;
     data?: unknown;
 }[]): string | undefined;

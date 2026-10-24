@@ -109,13 +109,16 @@ export async function takeInterrupted(path = BUSY_FILE): Promise<string[]> {
   return Array.isArray(ids) ? ids.filter((x): x is string => typeof x === "string") : [];
 }
 
-/** The provider of the last `model/selection` event in a session log, if any. Read from the tail,
- *  so a long log costs the events after its last selection, not all of them. */
-export function lastSelectedProvider(
+/** The provider of a `model/selection` no request has run on yet: the newest selection after the
+ *  last `request/header`, if any. dsh treats a pick as spent once a request runs (its
+ *  modelSelection projection), and a fork child carries its parent's spent picks, so a selection
+ *  before the last header says nothing about what the session runs on. Read from the tail. */
+export function pendingProvider(
   events: readonly { type: string; data?: unknown }[],
 ): string | undefined {
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i]!;
+    if (e.type === "request/header") return undefined;
     if (e.type !== "model/selection" || typeof e.data !== "object" || e.data === null) continue;
     // SAFETY: a non-null object; the one field read is checked for string before use
     const p = (e.data as { provider?: unknown }).provider;

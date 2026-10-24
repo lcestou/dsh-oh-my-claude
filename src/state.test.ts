@@ -9,7 +9,7 @@ import {
   recordRepair,
   saveSessionRepairs,
   SESSION_REPAIRS_FILE,
-  lastSelectedProvider,
+  pendingProvider,
   loadPermissionModes,
   savePermissionMode,
   modesUpTo,
@@ -395,12 +395,17 @@ console.log("state.test: ok");
     { type: "assistant/message", data: {} },
   ];
   assert.equal(
-    lastSelectedProvider(events),
+    pendingProvider(events),
     "claude-code",
     "the newest selection with a string provider",
   );
-  assert.equal(lastSelectedProvider(events.slice(0, 1)), undefined, "no selection: undefined");
-  assert.equal(lastSelectedProvider([]), undefined);
+  assert.equal(pendingProvider(events.slice(0, 1)), undefined, "no selection: undefined");
+  assert.equal(pendingProvider([]), undefined);
+  assert.equal(
+    pendingProvider([...events, { type: "request/header", data: {} }]),
+    undefined,
+    "a pick a request has run on is spent",
+  );
   console.log("last-selected-provider ok");
 }
 

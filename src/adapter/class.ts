@@ -102,7 +102,7 @@ import {
   loadToolMode,
   saveToolMode,
   type PermissionMode,
-  lastSelectedProvider,
+  pendingProvider,
   loadLimitWaits,
   loadTurnRecords,
   saveLimitWait,
@@ -238,6 +238,7 @@ import {
   REVIVE_KEEP,
   SELECTION_EXPLAIN,
 } from "./asides.js";
+import { claudeOnlyRefusal } from "./claude-only.js";
 import {
   claudeSessionExists,
   claudeSessionId,
@@ -1251,6 +1252,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     { kind: "approval" | "question" | "plan"; id: string; since: number }
   >();
 
+  /** The refusal a command this plugin owns answers with in a session on another provider. */
+  notClaude(agent: Agent, command: string) {
+    return claudeOnlyRefusal(this.sessionProvider(agent.session?.id ?? String(agent.id)), command);
+  }
+
   /**
    * Register Claude Code's slash commands (from the CLI's init frame) as dsh `/commands`. The
    * handler hands the line to Claude as the next prompt, where the CLI expands the skill or
@@ -1284,6 +1290,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
           // provider sees it, and images reach Claude through imageRefs.
           input: { hint: "<arguments>", attachments: true },
           handler: ({ agent: target, rawInput, attachments }) => {
+            const refused = this.notClaude(target, cmd);
+            if (refused) return refused;
             const line = `/${cmd}${rawInput}`;
             const title = renameTitle(cmd, rawInput);
             // dsh's title goes first: sending the line and then failing would leave Claude renamed
@@ -2554,6 +2562,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         name: "temporary",
         description: serverText("temporaryCommand"),
         handler: ({ agent }) => {
+          const refused = this.notClaude(agent, "temporary");
+          if (refused) return refused;
           const id = String(agent.id);
           const on = !this.temporary.has(id);
           if (on) this.temporary.add(id);
@@ -2588,6 +2598,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         description: serverText("ultracodeCommand"),
         input: { hint: serverText("ultracodeHint") },
         handler: ({ agent, rawInput }) => {
+          const refused = this.notClaude(agent, "ultracode");
+          if (refused) return refused;
           const id = String(agent.id);
           const word = rawInput.trim().toLowerCase();
           const now = this.ultracode.get(id);
@@ -2924,6 +2936,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         description: serverText("btwCommand"),
         input: { hint: serverText("btwHint") },
         handler: ({ agent, rawInput }) => {
+          const refused = this.notClaude(agent, "btw");
+          if (refused) return refused;
           const question = rawInput.trim();
           if (!question) return { kind: "error", text: serverText("btwUsage") };
           this.askSideQuestion(String(agent.id), question);
@@ -5102,23 +5116,33 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     await trace(log, `limit wait ${sessionId}: fired, notice ${sent ? "sent" : "not sent"}`);
   }
 
-  /** The provider a session last selected, from its own log; undefined when it never picked one
-   *  (dsh's default applies) or the session cannot be read. The read is deprecated in dsh 0.1.6, and
-   *  a dsh that drops it would answer undefined for every session, which routes remote workspaces to
-   *  the local mount instead of failing. Too quiet to debug from the symptom, so it says so once. */
+  /** The provider a session runs on, resolved the way dsh's session controller does: the newest
+   *  pick in its log, else the provider its last request ran on, else the box's default model.
+   *  Undefined when the session cannot be read; the default is not guessed then, because
+   *  `continueAfterLimit` would drop every limit notice on a dsh without the read. The log read is
+   *  deprecated in dsh 0.1.6, and a dsh that drops it would answer undefined for every session,
+   *  which routes remote workspaces to the local mount instead of failing. Too quiet to debug from
+   *  the symptom, so it says so once. */
   sessionProvider(sessionId: string): string | undefined {
-    try {
-      const session = this.ctx?.sessions?.get?.(asSessionId(sessionId));
-      return session ? lastSelectedProvider(session.snapshotEvents()) : undefined;
-    } catch (error) {
+    const unreadable = (why: string) => {
       if (!this.warnedNoSessionRead) {
         this.warnedNoSessionRead = true;
-        this.log(
-          "warn",
-          `session read unavailable, provider routing falls back: ${errorText(error)}`,
-        );
+        this.log("warn", `session read unavailable, provider routing falls back: ${why}`);
       }
       return undefined;
+    };
+    const sessions = this.ctx?.sessions;
+    if (!sessions?.get) return unreadable("no session service");
+    try {
+      const session = sessions.get(asSessionId(sessionId));
+      if (!session) return undefined;
+      return (
+        pendingProvider(session.snapshotEvents()) ??
+        session.requestHeader()?.config?.provider ??
+        this.ctx?.get?.("agentDefaultModel")?.currentSelection().provider
+      );
+    } catch (error) {
+      return unreadable(errorText(error));
     }
   }
 

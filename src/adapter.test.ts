@@ -3034,7 +3034,9 @@ console.log("ok");
   };
   assert.equal(ClaudeCodeAdapter.prototype.sessionProvider.call(stub, "s"), "llama-local");
   const none = {
-    ctx: { sessions: { get: () => ({ snapshotEvents: () => [] }) } },
+    ctx: {
+      sessions: { get: () => ({ snapshotEvents: () => [], requestHeader: () => undefined }) },
+    },
   };
   assert.equal(ClaudeCodeAdapter.prototype.sessionProvider.call(none, "s"), undefined);
   const gone = { ctx: { sessions: { get: () => undefined } } };
