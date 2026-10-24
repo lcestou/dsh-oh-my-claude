@@ -94,3 +94,14 @@ for (const lang of ["en", "zh"]) {
   assert.equal(file.title, file.meta?.title, `${lang}: top-level title matches`);
   assert.equal(file.description, file.meta?.description, `${lang}: top-level description matches`);
 }
+
+// The Claude-only refusal fills both placeholders in Chinese too.
+{
+  const dispose = bindServerLocale(reader("zh"));
+  assert.equal(
+    serverText("claudeOnly", { command: "btw", provider: "lutechi-llm" }),
+    "/btw 只能在 Claude Code 会话中使用。此会话使用的是 lutechi-llm；请先选择一个 Claude 模型。",
+  );
+  dispose();
+  console.log("claude-only zh ok");
+}

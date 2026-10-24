@@ -9089,3 +9089,60 @@ console.log("watch-save-race ok");
   await new Promise((r) => setTimeout(r, 0));
   console.log("aside selection ok");
 }
+
+// Claude-only commands: the provider resolves like dsh (pick, then last request, then box default),
+// and a command typed in a session on another provider refuses. Found by the Omni fork (@namastex888).
+{
+  const session = (events: { type: string; data?: unknown }[], header?: string) => ({
+    snapshotEvents: () => events,
+    requestHeader: () => (header ? { version: 1, config: { provider: header } } : undefined),
+  });
+  const live = new Map<string, ReturnType<typeof session>>([
+    [
+      "picked",
+      session([{ type: "model/selection", data: { provider: "deepseek" } }], "claude-code"),
+    ],
+    [
+      "forked",
+      session(
+        [
+          { type: "model/selection", data: { provider: "lutechi-llm" } },
+          { type: "request/header", data: {} },
+        ],
+        "claude-code",
+      ),
+    ],
+    ["ran", session([], "claude-code-box")],
+    ["fresh", session([])],
+  ]);
+  const a = new ClaudeCodeAdapter(
+    fakeCtx({
+      on() {},
+      sessions: { get: (id: string) => live.get(id) },
+      get: (name: string) =>
+        name === "agentDefaultModel"
+          ? { currentSelection: () => ({ provider: "lutechi-llm" }) }
+          : undefined,
+    }),
+    Config({}),
+  );
+  assert.equal(a.sessionProvider("picked"), "deepseek", "the pick wins over the last request");
+  assert.equal(a.sessionProvider("ran"), "claude-code-box", "no pick: the last request's provider");
+  assert.equal(
+    a.sessionProvider("forked"),
+    "claude-code",
+    "a spent pick yields to the last request",
+  );
+  assert.equal(a.sessionProvider("fresh"), "lutechi-llm", "neither: the box default");
+  assert.equal(a.sessionProvider("gone"), undefined, "an unknown session is not guessed");
+  // SAFETY: partial fake; notClaude reads only id and session.id
+  const agent = (id: string) =>
+    ({ id, session: { id } }) as unknown as Parameters<typeof a.notClaude>[0];
+  assert.equal(a.notClaude(agent("ran"), "btw"), undefined, "an SSH box session keeps the command");
+  assert.match(a.notClaude(agent("fresh"), "btw")?.text ?? "", /^\/btw .*lutechi-llm/);
+  assert.equal(a.notClaude(agent("picked"), "review")?.kind, "error");
+  assert.equal(a.notClaude(agent("gone"), "btw"), undefined, "unknown provider lets it through");
+  const blind = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  assert.equal(blind.sessionProvider("x"), undefined, "no session service: undefined");
+  console.log("claude-only commands ok");
+}
