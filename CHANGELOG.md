@@ -6,6 +6,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Fixed
+
+- The plugin's slash commands (`/btw`, `/temporary`, `/ultracode` and the Claude Code commands it bridges) refuse in a session that runs on another provider, and say which. Before, the bridged line went to that model as a message and the toggles reported a change nothing used. A session nobody picked a model for counts as running on dsh's default model, the way dsh itself routes it. Thanks to @namastex888, whose Omni fork found it.
+
 ## [1.5.6] - 2026-10-23
 
 dsh: runs on 0.2.0-rc.1 through 0.2.1-rc.3; built and tested on 0.2.1-rc.3.
