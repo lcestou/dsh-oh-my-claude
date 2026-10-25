@@ -8,6 +8,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- Installing from the repository (`github:lcestou/dsh-oh-my-claude`, as the README describes) works again. pnpm refused it with `ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED`, because the package asked to run a build on install. The build is already in the repository, so that step is gone. Thanks to @namastex888, whose Omni fork made the same change.
 - The plugin's slash commands (`/btw`, `/temporary`, `/ultracode` and the Claude Code commands it bridges) refuse in a session that runs on another provider, and say which. Before, the bridged line went to that model as a message and the toggles reported a change nothing used. A session nobody picked a model for counts as running on dsh's default model, the way dsh itself routes it. Thanks to @namastex888, whose Omni fork found it.
 
 ## [1.5.6] - 2026-10-23
