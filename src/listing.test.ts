@@ -27,4 +27,17 @@ for (const shot of shots) {
   assert.match(shot, /\.(png|jpe?g|gif|webp)$/, `${shot}: storefronts show rasters only`);
   assert.ok(tracked.has(shot), `${shot}: not a tracked file, the storefront would 404`);
 }
+// pnpm refuses a git dependency that runs a script on install unless the installer allowlists it
+// (ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED), which broke `github:lcestou/dsh-oh-my-claude`. lib/ is
+// committed, so an install has nothing to build.
+const pkg: { scripts?: Record<string, string> } = JSON.parse(
+  readFileSync(join(root, "package.json"), "utf8"),
+);
+for (const hook of ["preinstall", "install", "postinstall", "prepare", "prepack"]) {
+  assert.equal(
+    pkg.scripts?.[hook],
+    undefined,
+    `package.json scripts.${hook} runs on a git install`,
+  );
+}
 console.log("listing ok");
