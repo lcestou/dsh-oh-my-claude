@@ -52,6 +52,10 @@ export interface SubprocessHandle {
         signal: string | null;
     }>;
     terminate(): void;
+    /** The stdout line at `index` (0 for this handle's first line) was used by a turn, or consumed
+     *  on arrival. A keeper keeps a line until then and replays it to the next dsh; a plain child
+     *  has nothing to keep. */
+    ack?(index: number): void;
 }
 /** One line of the CLI's stream-json stdout, in the shapes this plugin reads. */
 export type ClaudeEvent = {
@@ -782,6 +786,8 @@ export declare class ClaudeProcess {
     relays: Map<string, RelayEvent>;
     exitCode: number | undefined;
     queue: LineQueue;
+    /** The stdout index of each line in `queue`, in order, for `used` once nextEvent takes it. */
+    queuedIndexes: number[];
     child: SubprocessHandle;
     key?: string;
     resuming?: boolean;
@@ -901,6 +907,9 @@ export declare class ClaudeProcess {
     /** Count buffered `result` events with no turn reading them, so the loop can tell a real reply
      *  from a stale background-task completion. */
     countStaleResults(): number;
+    /** Tell the child a stdout line was used: a keeper keeps a line until then, so a line a dsh
+     *  read but never used (its turn ended as it shut down) reaches the next dsh (automagik#62). */
+    used(index: number): void;
     /** Next parsed JSON line; plain text lines are kept in `stray` for error messages. Null when the
      *  process ended, `{ type: "timeout" }` when `timeoutMs` passed first. */
     nextEvent(timeoutMs?: number): Promise<ClaudeEvent | null>;

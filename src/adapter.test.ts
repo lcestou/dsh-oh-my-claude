@@ -2347,7 +2347,7 @@ console.log("ok");
   // A child printing lines that are not JSON must not hold a timed call open: the deadline is
   // fixed when the wait starts, so the junk is filed under `stray` and the call still times out.
   const queue = new LineQueue();
-  const fake = { queue, stray: "" };
+  const fake = { queue, stray: "", queuedIndexes: [] as number[], used() {} };
   const noise = setInterval(() => queue.push("warning: not json"), 20);
   const started = Date.now();
   const event = await ClaudeProcess.prototype.nextEvent.call(fake, 120);
@@ -3854,6 +3854,46 @@ console.log("schema-guard ok");
   assert.equal(proc.alive, false);
   assert.equal(proc.exitCode, 143);
   assert.equal(proc.write("late\n"), false);
+}
+
+// A keeper keeps each stdout line until it was used (automagik#62), so the process tells the child
+// which lines it used: a queued line once a turn takes it from nextEvent, a frame consumed on arrival
+// (the session title) at once, and never a line still waiting in the queue.
+{
+  const stdout = new PassThrough();
+  const acked: number[] = [];
+  const handle: SubprocessHandle = {
+    stdin: new PassThrough(),
+    stdout,
+    stderr: new PassThrough(),
+    done: new Promise(() => {}),
+    terminate: () => {},
+    ack: (index) => acked.push(index),
+  };
+  const proc = new ClaudeProcess({
+    args: ["-p"],
+    cwd: "/",
+    spec: emptySpec,
+    spawner: () => handle,
+    command: "/opt/claude",
+  });
+  stdout.write('{"type":"system","subtype":"init"}\n');
+  stdout.write('{"type":"system","subtype":"session_title_changed","title":"Fix the build"}\n');
+  stdout.write('{"type":"assistant"}\n');
+  stdout.write('{"type":"result","subtype":"success","result":"done"}\n');
+  await new Promise((r) => setTimeout(r, 20));
+  assert.deepEqual(acked, [1], "the title frame is used on arrival; queued lines wait for a turn");
+  assert.equal((await proc.nextEvent())?.type, "system");
+  assert.equal((await proc.nextEvent())?.type, "assistant");
+  assert.deepEqual(
+    acked,
+    [1, 0, 2],
+    "each line a turn takes, by its stdout index; the result waits unacked",
+  );
+  proc.inject({ type: "assistant" });
+  assert.equal((await proc.nextEvent())?.type, "result");
+  assert.equal((await proc.nextEvent())?.type, "assistant");
+  assert.deepEqual(acked, [1, 0, 2, 3], "an injected event is no stdout line, so it acks nothing");
 }
 
 // The seam spawner hands dsh a fully explicit spec: raw pipes, the binary first in argv, small env.

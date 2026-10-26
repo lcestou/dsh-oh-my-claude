@@ -5,8 +5,13 @@
  * as `node keeper.js <dir>` where `<dir>/spec.json` holds { command, args, cwd, env, sessionId }.
  * Runs under its own systemd user scope when the adapter can arrange it, so a service restart's
  * cgroup kill does not reach it. Line protocol, JSON per line:
- *   client → keeper: { t: "hello" } | { t: "in", line } | { t: "kill" }
- *   keeper → client: { t: "out", line } | { t: "err", line } | { t: "exit", code, signal } | { t: "hello", pid, claudePid, buffered }
+ *   client → keeper: { t: "hello", acks? } | { t: "in", line } | { t: "ack", n } | { t: "kill" }
+ *   keeper → client: { t: "out", line, n } | { t: "err", line } | { t: "exit", code, signal } | { t: "hello", pid, claudePid, buffered }
+ * A client that says `acks: true` acknowledges each stdout line `n` once a turn has actually used
+ * it. Until then the keeper keeps the line, and replays every one not acknowledged to the next
+ * client: a dsh that is shutting down still reads Claude's output (it stays attached until it
+ * exits) but no turn uses it, and without this the reply it read was gone after the restart
+ * (automagik#62). A client without acks gets the old behavior: a line it was sent is gone.
  */
 import { spawn } from "node:child_process";
 import {
@@ -114,13 +119,19 @@ function main(dir: string) {
   child.stdout.on("error", (e) => log(`stdout error: ${e.message}`));
   child.stderr.on("error", (e) => log(`stderr error: ${e.message}`));
   let client: Socket | undefined;
+  /** Whether the attached client acknowledges the stdout lines it uses. */
+  let clientAcks = false;
   const buffer: string[] = [];
+  /** Stdout lines sent to an acknowledging client and not acknowledged yet, by number, in order. */
+  const unacked = new Map<number, string>();
+  let lastOut = 0;
   let dropped = 0;
+  const attached = () => client !== undefined && !client.destroyed;
 
   const send = (msg: object) => {
     const line = `${JSON.stringify(msg)}\n`;
-    if (client && !client.destroyed) {
-      client.write(line);
+    if (attached()) {
+      client?.write(line);
       return;
     }
     if (buffer.length >= BUFFER_LINES) {
@@ -128,6 +139,19 @@ function main(dir: string) {
       dropped++;
     }
     buffer.push(line);
+  };
+  // A stdout line goes out numbered. Detached, it waits in `unacked` like a sent one, so a replay
+  // keeps one order; sent to a client that acknowledges, it stays until acknowledged.
+  const sendOut = (text: string) => {
+    const line = `${JSON.stringify({ t: "out", line: text, n: ++lastOut })}\n`;
+    if (attached()) client?.write(line);
+    if (attached() && !clientAcks) return;
+    if (unacked.size >= BUFFER_LINES) {
+      const oldest = unacked.keys().next().value;
+      if (oldest !== undefined) unacked.delete(oldest);
+      dropped++;
+    }
+    unacked.set(lastOut, line);
   };
   const writeInfo = () =>
     writeFileSync(
@@ -146,9 +170,7 @@ function main(dir: string) {
   log(`start pid=${process.pid} claudePid=${child.pid}`);
   writeInfo();
 
-  createInterface({ input: child.stdout, crlfDelay: Infinity }).on("line", (line) =>
-    send({ t: "out", line }),
-  );
+  createInterface({ input: child.stdout, crlfDelay: Infinity }).on("line", sendOut);
   createInterface({ input: child.stderr, crlfDelay: Infinity }).on("line", (line) =>
     send({ t: "err", line }),
   );
@@ -170,34 +192,42 @@ function main(dir: string) {
     // One client at a time: a new dsh replaces the old (which is gone anyway after a restart).
     if (client && !client.destroyed) client.destroy();
     client = sock;
+    clientAcks = false;
     sock.on("error", () => {});
-    log(`attach buffered=${buffer.length} dropped=${dropped}`);
+    log(`attach buffered=${buffer.length} unacked=${unacked.size} dropped=${dropped}`);
     sock.on("close", () => {
       if (client === sock) {
         client = undefined;
-        log(`detach buffered=${buffer.length} dropped=${dropped}`);
+        log(`detach buffered=${buffer.length} unacked=${unacked.size} dropped=${dropped}`);
       }
     });
     createInterface({ input: sock, crlfDelay: Infinity }).on("line", (raw) => {
-      let msg: { t?: string; line?: string };
+      let msg: { t?: string; line?: string; acks?: boolean; n?: number };
       try {
         // SAFETY: the only client is this plugin's attachKeeper; fields are checked before use
-        msg = JSON.parse(raw) as { t?: string; line?: string };
+        msg = JSON.parse(raw) as { t?: string; line?: string; acks?: boolean; n?: number };
       } catch {
         return;
       }
       if (msg.t === "hello") {
+        clientAcks = msg.acks === true;
         sock.write(
-          `${JSON.stringify({ t: "hello", pid: process.pid, claudePid: child.pid, buffered: buffer.length, dropped })}\n`,
+          `${JSON.stringify({ t: "hello", pid: process.pid, claudePid: child.pid, buffered: buffer.length + unacked.size, dropped })}\n`,
         );
         if (dropped > 0)
           sock.write(
             `${JSON.stringify({ t: "err", line: `keeper: ${dropped} output lines dropped while detached` })}\n`,
           );
+        // What no turn used yet (sent to the client before, or waiting while detached), then the
+        // rest. A client without acks takes them as delivered.
+        for (const l of unacked.values()) sock.write(l);
+        if (!clientAcks) unacked.clear();
         for (const l of buffer) sock.write(l);
         buffer.length = 0;
         dropped = 0;
         if (exit) sock.write(`${JSON.stringify({ t: "exit", ...exit })}\n`);
+      } else if (msg.t === "ack" && typeof msg.n === "number") {
+        if (client === sock) unacked.delete(msg.n);
       } else if (msg.t === "in" && typeof msg.line === "string") {
         if (!exit) child.stdin.write(msg.line);
       } else if (msg.t === "kill") {
