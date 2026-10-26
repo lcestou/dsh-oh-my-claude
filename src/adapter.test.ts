@@ -9198,6 +9198,7 @@ console.log("watch-save-race ok");
   });
   assert.equal(mint.kind, "success", "a skill dsh serves passes on a local-model session");
   assert.equal(sent.length, 1, "and goes out as the user's turn for dsh to expand");
+  assert.ok(!/Claude Code/.test(mint.text ?? ""), "the notice does not say it went to Claude Code");
   const verify = await handlers.get("verify")!({
     agent: target,
     rawInput: "",

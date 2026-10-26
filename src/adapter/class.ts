@@ -1308,6 +1308,16 @@ export class ClaudeCodeAdapter extends LlmAdapter {
             // A skill dsh serves under the same name runs on any model: dsh expands the `/name` in the
             // line once it arrives as the user's turn, which is what the line below sends.
             if (refused && !(await this.dshServesSkill(target, cmd, signal))) return refused;
+            // Off Claude the line reaches the session's own model, which runs dsh's skill.
+            if (refused) {
+              target.followup(
+                createUserMessage({
+                  content: [{ type: "text", text: `/${cmd}${rawInput}` }, ...attachments],
+                  source: { kind: "user" },
+                }),
+              );
+              return { kind: "success", text: serverText("bridgeSkillSent", { name: cmd }) };
+            }
             const line = `/${cmd}${rawInput}`;
             const title = renameTitle(cmd, rawInput);
             // dsh's title goes first: sending the line and then failing would leave Claude renamed
