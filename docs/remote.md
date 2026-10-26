@@ -73,7 +73,7 @@ A file or image attached to a message in a session that runs on a box is copied 
 
 ### What runs where
 
-Every turn runs `ssh <host> claude -p --input-format stream-json …`; the remote shell inherits none of this box's environment, so the invocation carries the workspace directory and the CLI's env with it, and the stream-json wire flows through the pipe untouched, so translator, approvals and control requests all behave as if local.
+Every turn runs `ssh <host> claude -p --input-format stream-json …`; the remote shell inherits none of this box's environment, so the invocation carries the workspace directory and the CLI's env with it (including any of Claude Code's privacy switches set here: `DISABLE_TELEMETRY`, `DISABLE_ERROR_REPORTING`, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`, `DISABLE_AUTOUPDATER`, `DISABLE_BUG_COMMAND`, `DO_NOT_TRACK`), and the stream-json wire flows through the pipe untouched, so translator, approvals and control requests all behave as if local.
 
 The far side uses its own `~/.claude`, so log in there (`ssh <host>`, then `claude auth login` in that terminal; it needs a browser), or use Log in on the box's row. The status and diagnostics panels probe over the same ssh and report that box's binary, version and login, not this one's, and they follow the *session's* mount, not whichever instance registered the routes: pick a box's model in the picker and Diagnostics (including its `claude doctor` button) reports that box from the moment the session exists, before any prompt. It resolves the session's provider from dsh's own per-session model directory, since a session header carries no provider and a remote workspace path can equal a local one.
 
