@@ -9146,3 +9146,72 @@ console.log("watch-save-race ok");
   assert.equal(blind.sessionProvider("x"), undefined, "no session service: undefined");
   console.log("claude-only commands ok");
 }
+
+// A bridged name dsh also serves as a skill runs on any model: on a session that is not on Claude,
+// the line goes out as the user's turn so dsh expands the skill; a name dsh does not serve refuses.
+{
+  type Handler = (i: {
+    agent: Agent;
+    rawInput: string;
+    attachments: [];
+    signal: AbortSignal;
+  }) => { kind: string; text?: string } | Promise<{ kind: string; text?: string }>;
+  const handlers = new Map<string, Handler>();
+  const commands = {
+    register: (d: { name: string; handler: Handler }) => (
+      handlers.set(d.name, d.handler),
+      () => {}
+    ),
+    find: () => undefined,
+  };
+  const skills = {
+    get: async (name: string) =>
+      name === "mint" ? { invocation: { userInvocable: true } } : undefined,
+  };
+  const ctx = {
+    on() {},
+    logger: { info() {}, warn() {} },
+    sessions: { get: () => ({ snapshotEvents: () => [], requestHeader: () => undefined }) },
+    get: (n: string) =>
+      n === "commands"
+        ? commands
+        : n === "skills"
+          ? skills
+          : n === "agentDefaultModel"
+            ? { currentSelection: () => ({ provider: "lutechi-llm" }) }
+            : undefined,
+  };
+  const a = new ClaudeCodeAdapter(fakeCtx(ctx), Config({ commandBridge: true }));
+  a.bridgeCommands(["mint", "verify"], undefined);
+  const sent: Message[] = [];
+  const target = fakeAgent({
+    id: "s",
+    session: { id: "s" },
+    followup: (m: Message) => sent.push(m),
+  });
+  const signal = new AbortController().signal;
+  const mint = await handlers.get("mint")!({
+    agent: target,
+    rawInput: " now",
+    attachments: [],
+    signal,
+  });
+  assert.equal(mint.kind, "success", "a skill dsh serves passes on a local-model session");
+  assert.equal(sent.length, 1, "and goes out as the user's turn for dsh to expand");
+  const verify = await handlers.get("verify")!({
+    agent: target,
+    rawInput: "",
+    attachments: [],
+    signal,
+  });
+  assert.equal(verify.kind, "error", "a name only Claude Code has still refuses");
+  assert.equal(sent.length, 1, "and sends nothing");
+  assert.equal(await a.dshServesSkill(target, "verify"), false);
+  const bare = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  assert.equal(
+    await bare.dshServesSkill(target, "mint"),
+    false,
+    "no skill service: refuse as before",
+  );
+  console.log("bridged dsh skills ok");
+}

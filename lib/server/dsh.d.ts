@@ -435,6 +435,22 @@ export interface PluginContext {
             provider: string;
         };
     } | undefined;
+    /** Mirrors: @deepseek-ai/dsh-skill `SkillRegistry.get`. dsh expands a typed `/name` itself when it serves that skill. */
+    get(name: "skills"): {
+        get(name: string, options?: {
+            scope?: Agent;
+            cwd?: string;
+            signal?: AbortSignal;
+        }): Promise<{
+            invocation: {
+                userInvocable: boolean;
+            };
+        } | undefined>;
+    } | undefined;
+    /** Mirrors: @deepseek-ai/dsh-working-directory. The agent's working directory, for project-level skills. */
+    get(name: "workingDirectory"): {
+        ensure(agent: Agent, signal?: AbortSignal): Promise<string>;
+    } | undefined;
     /**
      * Mirrors: dsh-plugin-desktop/src/desktop-browser-access.ts (the community DSH Desktop shell).
      * Present only when dsh runs under that shell's Electron launcher, whose web server then answers
@@ -469,7 +485,13 @@ export interface PluginContext {
             } | {
                 kind: "error";
                 text: string;
-            };
+            } | Promise<{
+                kind: "success";
+                text?: string;
+            } | {
+                kind: "error";
+                text: string;
+            }>;
         }): () => void;
         find(agent: Agent, name: string): object | undefined;
     };

@@ -306,6 +306,9 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
         id: string;
         since: number;
     }>;
+    /** Whether dsh serves a user-invocable skill named `name` for this agent, user and project roots
+     *  both. False when dsh has no skill service or the lookup fails, so the command refuses as before. */
+    dshServesSkill(agent: Agent, name: string, signal?: AbortSignal): Promise<boolean>;
     /** The refusal a command this plugin owns answers with in a session on another provider. */
     notClaude(agent: Agent, command: string): {
         kind: "error";
