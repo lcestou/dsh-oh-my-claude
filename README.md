@@ -80,7 +80,7 @@ The plugin speaks English and Chinese and follows dsh's own language setting (Se
 
 If the picker lists it as `Oh My Claude (not logged in)`, run `claude auth login` in a terminal on the box that runs dsh, or press Log in under Settings → Oh My Claude → Boxes.
 
-**DSH Desktop** (macOS and Windows) uses the Plugins page steps above. The plugin looks for `claude` in the usual install folders, since an app started from the Dock does not see your shell's PATH. On Windows it runs Claude as a plain child of dsh, so restarting the app ends a running turn, and the parts that need a Unix shell (Log in from Settings, SSH boxes) are not available. The server half has been run under Electron on Linux the way Desktop runs it; a real Mac or Windows install has not been tried yet.
+**DSH Desktop** (macOS and Windows) uses the Plugins page steps above. The plugin looks for `claude` in the usual install folders, since an app started from the Dock does not see your shell's PATH. On Windows it runs Claude as a plain child of dsh, so restarting the app ends a running turn, and the parts that need a Unix shell (Log in from Settings, SSH boxes) are not available. The server half has run under Electron on Linux the way Desktop runs it, and on Windows 11 with Claude Code installed from npm.
 
 When a newer version is on npm, an orange pill with the version number appears in Settings and on the panel's Runtime line; a click copies the update command for a terminal. On the Plugins page, dsh updates a third-party plugin by removing it and adding it again. Details, and the repairs the plugin makes on its own after a dsh upgrade, are under [Plugin updates](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#plugin-updates).
 
@@ -120,7 +120,7 @@ dsh ships prereleases only and moves client APIs between them, so every release 
 
 ## What you get
 
-1. Any Claude model your login can use, in dsh's own picker. [Models](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#models)
+1. Any Claude model your login can use, in dsh's own picker. Hide the ones you don't use with `hiddenModels`. [Models](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#models)
 2. Every dsh session resumes its Claude Code session, tool history included, and a terminal `claude /resume` sees the same one. [Sessions](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#sessions)
 3. Restart dsh without killing a running Claude turn. [Restarts](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#restarts)
 4. dsh's access shield sets Claude's six permission modes per session. [Permission mode](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#permission-mode-per-session)
@@ -129,7 +129,7 @@ dsh ships prereleases only and moves client APIs between them, so every release 
 7. Cost and cached tokens in dsh's footer, with a spend line that turns the pill orange. [Cost pill](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#cost-pill)
 8. Plan usage (5-hour, weekly, extra usage) in dsh's context ring, which turns amber near a limit and red at one, with a notice above the composer. Only limits the session's model counts against, graded by Anthropic, so a new model needs no update. [Plan usage](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#plan-usage)
 9. Restore or import any past Claude transcript, from dsh or from a terminal, and search inside them for what was said. [Session browser](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#session-browser)
-10. Claude's slash commands and skills show up in dsh's slash menu as `/claude-<name>`. [Command bridge](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#command-bridge)
+10. Claude's slash commands and skills show up in dsh's slash menu under their own names, as `/claude-<name>` where dsh already uses the name. A skill dsh also serves runs on any model. [Command bridge](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#command-bridge)
 11. Claude gets dsh's subagents, jobs, goals and web search over MCP. [dsh tools over MCP](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#dsh-tools-over-mcp)
 12. Edit CLAUDE.md, settings.json and MCP servers from the panel, on this box or a remote one, and sign in to an MCP server that needs it. [Instructions](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#instructions), [settings.json editor](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#settingsjson-editor), [MCP](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#mcp)
 13. Run Claude on another box over SSH, or mount several accounts. [Remote boxes and accounts](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/remote.md)
