@@ -154,6 +154,7 @@ dsh 只发布预发行版，客户端 API 也会在版本之间变动，所以�
 32. 上下文窗口用到 75%（可在设置中调整）时，输入框上方会提醒并提供「压缩」按钮，发送 Claude 自己的 `/compact`。[Context nudge](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#context-nudge)
 33. Claude 写的每段 shell 代码块都有「运行」按钮，把代码作为提示放入输入框，按 Enter 发送后经由 Claude 的 Bash 工具和 dsh 的审批执行。[Run a snippet](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#run-a-snippet)
 34. 在 dsh 里重命名的会话在 `claude --resume` 中沿用同名，Claude 一侧设置的名字也会重命名 dsh 会话。[How it works](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md)
+35. 在 Claude 和其他模型（例如 DeepSeek 或本地模型）之间来回切换同一个会话：Claude 能看到其他模型期间的提示、回复和工具调用。[Sessions](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#sessions)
 
 一些你永远不必动的默认行为，比如工具结果中的密钥脱敏和挺过 CLI 自身的更新，见 [How it works](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md)。
 

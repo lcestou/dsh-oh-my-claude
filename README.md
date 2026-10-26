@@ -154,6 +154,7 @@ dsh ships prereleases only and moves client APIs between them, so every release 
 32. Once the context window is 75% full (adjustable in Settings), a card above the composer says so and offers Compact, which sends Claude's own `/compact`. [Context nudge](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#context-nudge)
 33. A Run button on every shell snippet Claude writes puts it in the composer as a prompt; Enter sends it, and it runs through Claude's Bash tool and dsh's approval. [Run a snippet](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#run-a-snippet)
 34. A session renamed in dsh keeps that name in `claude --resume`, and a name set on the Claude side renames the dsh session. [How it works](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md)
+35. Switch a session between Claude and another model, such as DeepSeek or a local one, and back: Claude sees the prompts, replies and tool use the other model had in between. [Sessions](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#sessions)
 
 Defaults you never have to touch, such as secret redaction in tool results and surviving the CLI's own updates, are on [How it works](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md).
 
