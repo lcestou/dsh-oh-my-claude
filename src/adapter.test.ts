@@ -4671,6 +4671,30 @@ console.log("hook-rows ok");
     "empty stays empty",
   );
   assert.ok(claudeDirs("/h").includes("/h/.local/bin"));
+  // Windows: npm's global folder holds an extension-less sh shim and claude.cmd, never claude.exe;
+  // the shim cannot run there, so the binary under its node_modules answers (#191).
+  const npmExe = "/npm/node_modules/@anthropic-ai/claude-code/bin/claude.exe";
+  assert.equal(
+    resolveCommand("claude", "/npm", [], on("/npm/claude", "/npm/claude.cmd", npmExe), "win32"),
+    npmExe,
+    "the npm shim is skipped for the binary npm installed",
+  );
+  assert.equal(
+    resolveCommand(
+      "claude",
+      "/npm:/h/.local/bin",
+      [],
+      on("/npm/claude", "/h/.local/bin/claude.exe"),
+      "win32",
+    ),
+    "/h/.local/bin/claude.exe",
+    "a shim with no binary beside it is passed over for a later claude.exe",
+  );
+  assert.equal(
+    resolveCommand("claude.exe", "/x", [], on("/x/claude.exe"), "win32"),
+    "/x/claude.exe",
+    "a name with its extension is looked up as written",
+  );
 
   const found = () => "/abs/claude";
   const base = { command: "claude", sshHost: "", spawn: "keeper" };

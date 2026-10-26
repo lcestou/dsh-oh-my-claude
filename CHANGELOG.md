@@ -10,6 +10,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 - On Windows, a command configured as an absolute path (`C:\...\claude.exe`) read as "not on PATH" and "not logged in" even though `--version` and `auth status` answered. The status probe asked `where` about it, and `where` takes the drive letter's colon for its `path:pattern` syntax and exits 2 with "Invalid pattern". A path is now its own answer. Thanks to @windybirth (#191, #192).
 - A skill dsh serves runs again when you type it in a session on another model, such as `/mint` in a local-model chat. Since 1.5.7 the plugin's copy of the command caught the line and refused it, because it registers every skill Claude Code lists. It now refuses only when dsh has no skill of that name. Thanks to @namastex888, whose Omni fork found it.
+- On Windows, Claude Code installed with `npm i -g @anthropic-ai/claude-code` is found when the plugin's `command` is the default `claude`. The lookup took npm's extension-less `#!/bin/sh` shim, which Windows cannot run, so every spawn failed and Settings showed "not logged in". A bare name now matches only `claude.exe`, and npm's folder answers with the binary under its `node_modules`. Thanks to @windybirth (#191).
 
 ## [1.5.7] - 2026-10-24
 

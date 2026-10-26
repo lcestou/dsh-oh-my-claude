@@ -93,7 +93,9 @@ export function withClaudeDirs(path: string | undefined, dirs = claudeDirs()): s
 
 /** The absolute path of `command` when it is a bare name found on `path` or in `dirs`, else
  *  `command` unchanged: a path is trusted as given, and a name found nowhere is left for spawn to
- *  fail on with the usual ENOENT. On Windows a bare name also matches `<name>.exe`. */
+ *  fail on with the usual ENOENT. On Windows a bare name matches only `<name>.exe`: npm's global
+ *  folder holds an extension-less `#!/bin/sh` shim beside `claude.cmd`, which Windows cannot run,
+ *  so for `claude` that folder answers with the binary npm installed under its `node_modules`. */
 export function resolveCommand(
   command: string,
   path = process.env.PATH,
@@ -102,9 +104,13 @@ export function resolveCommand(
   platform: NodeJS.Platform = process.platform,
 ): string {
   if (!command || command.includes("/") || command.includes(sep)) return command;
-  const names = platform === "win32" ? [command, `${command}.exe`] : [command];
-  for (const dir of [...(path ?? "").split(delimiter).filter(Boolean), ...dirs])
-    for (const name of names) if (exists(join(dir, name))) return join(dir, name);
+  const win = platform === "win32";
+  const name = win && !/\.[a-z0-9]+$/i.test(command) ? `${command}.exe` : command;
+  for (const dir of [...(path ?? "").split(delimiter).filter(Boolean), ...dirs]) {
+    if (exists(join(dir, name))) return join(dir, name);
+    const npm = join(dir, "node_modules", "@anthropic-ai", "claude-code", "bin", "claude.exe");
+    if (win && command === "claude" && exists(npm)) return npm;
+  }
   return command;
 }
 

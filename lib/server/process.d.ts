@@ -38,7 +38,9 @@ export declare function claudeDirs(home?: string): string[];
 export declare function withClaudeDirs(path: string | undefined, dirs?: string[]): string;
 /** The absolute path of `command` when it is a bare name found on `path` or in `dirs`, else
  *  `command` unchanged: a path is trusted as given, and a name found nowhere is left for spawn to
- *  fail on with the usual ENOENT. On Windows a bare name also matches `<name>.exe`. */
+ *  fail on with the usual ENOENT. On Windows a bare name matches only `<name>.exe`: npm's global
+ *  folder holds an extension-less `#!/bin/sh` shim beside `claude.cmd`, which Windows cannot run,
+ *  so for `claude` that folder answers with the binary npm installed under its `node_modules`. */
 export declare function resolveCommand(command: string, path?: string | undefined, dirs?: string[], exists?: (p: string) => boolean, platform?: NodeJS.Platform): string;
 /** The child process seam this plugin uses: dsh's own spawner and the node one both answer it. */
 export interface SubprocessHandle {
