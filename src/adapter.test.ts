@@ -45,6 +45,7 @@ import {
   resolveModelInfo,
   resolvedAgent,
   selectTurns,
+  TOOL_TEXT_CAP,
   relayBlocks,
   toolResultFor,
   sideQuestionsIn,
@@ -341,6 +342,81 @@ assert.equal(
   "[user]\nhi\n\n[assistant]\nyo\n\n[user]\nagain\n\n[user]\n<system-reminder>ctx</system-reminder>",
 );
 assert.throws(() => buildPrompt([{ role: "assistant", content: "x" }]));
+// Back on Claude after another model: everything since Claude's OWN last reply goes over, the other
+// model's tool use included, so the turns it made reach the resumed CLI session. Claude's own tool
+// results stay out: they already sit in its transcript.
+{
+  const switched = [
+    { role: "user", content: "read note-1" },
+    {
+      role: "assistant",
+      source: { kind: "model", provider: "claude-code", model: "claude-haiku-5-5" },
+      content: [
+        {
+          type: "tool-call",
+          id: "toolu_own",
+          name: "read",
+          arguments: '{"file_path":"note-1.txt"}',
+        },
+      ],
+    },
+    {
+      role: "tool",
+      toolCallId: "toolu_own",
+      content: [{ type: "text", text: "nonce-1: apricot" }],
+    },
+    {
+      role: "assistant",
+      source: { kind: "model", provider: "claude-code" },
+      content: "now=apricot",
+    },
+    { role: "user", content: "read note-2" },
+    {
+      role: "assistant",
+      source: { kind: "model", provider: "deepseek-official", model: "deepseek-flash" },
+      content: [
+        { type: "tool-call", id: "call_ds", name: "read", arguments: '{"file_path":"note-2.txt"}' },
+      ],
+    },
+    { role: "tool", toolCallId: "call_ds", content: [{ type: "text", text: "nonce-2: basalt" }] },
+    {
+      role: "assistant",
+      source: { kind: "model", provider: "deepseek-official" },
+      content: "now=basalt",
+    },
+    { role: "user", content: "what did note-2 say?" },
+  ];
+  const turns = selectTurns(switched as any, true, "claude-code");
+  assert.equal(turns.length, 5, "the other model's turn, its tool use and the new prompt");
+  const sent = buildPrompt(turns);
+  assert.match(sent, /\[user\]\nread note-2/);
+  assert.match(sent, /\(called read \{"file_path":"note-2\.txt"\}\)/);
+  assert.match(sent, /\[tool\]\nread returned:\nnonce-2: basalt/);
+  assert.match(sent, /\[assistant\]\nnow=basalt/);
+  assert.doesNotMatch(sent, /apricot/, "Claude's own turn is already in its session");
+  // Without a provider to match, resume keeps the old cut after the last reply of any model.
+  assert.equal(selectTurns(switched as any, true).length, 1);
+  // A fresh session gets the whole transcript, both models' tool results included.
+  assert.match(
+    buildPrompt(selectTurns(switched as any, false)),
+    /nonce-1: apricot[\s\S]*nonce-2: basalt/,
+  );
+  // A long tool output is cut, saying how much was left out.
+  const long = [
+    {
+      role: "assistant",
+      source: { provider: "openai" },
+      content: [{ type: "tool-call", id: "c", name: "bash", arguments: "{}" }],
+    },
+    {
+      role: "tool",
+      toolCallId: "c",
+      content: [{ type: "text", text: "x".repeat(TOOL_TEXT_CAP + 50) }],
+    },
+    { role: "user", content: "and?" },
+  ];
+  assert.match(buildPrompt(selectTurns(long as any, false)), /… \(50 more characters\)/);
+}
 // dsh's own system prompt arrives as role "system" and never reaches the CLI. Verified against a
 // fresh session on 2026-09-14: the block sits in the dsh log as a system/message, and neither the
 // Claude Code transcript nor the spawned process argv carries a word of it. The card says so, so

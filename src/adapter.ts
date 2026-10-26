@@ -89,6 +89,7 @@ export {
   type LooseMessage,
   relayFileHandles,
   selectTurns,
+  TOOL_TEXT_CAP,
   steerKey,
   withoutNativeInstructions,
 } from "./adapter/prompt.js";

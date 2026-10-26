@@ -9,6 +9,11 @@ export type LooseMessage = {
     role?: string;
     source?: {
         kind?: string;
+        /** The route that wrote an assistant message (`{kind: "model", provider, model}`). */
+        provider?: string;
+        model?: string;
+        /** The call a tool result answers, on the older user-message form of a result. */
+        callId?: string;
         plugin?: string;
         rpcId?: string;
         clientTimeZone?: string;
@@ -35,10 +40,16 @@ export declare const attachmentsOf: (content: LooseMessage["content"]) => SteerA
  *  stdin on its own: an assistant turn, a tool result. */
 export declare const steerKey: (m: LooseMessage) => string | undefined;
 /**
- * Pick the messages that go into this call. Resuming: only what came after the last assistant turn
- * (the new prompt plus dsh's context injections). Fresh: the whole transcript, since `claude -p` is stateless.
+ * Pick the messages that go into this call. Fresh: the whole transcript, since `claude -p` is
+ * stateless. Resuming: what came after Claude's own last reply (`own` names this route's
+ * provider), so the turns another model made while the session ran elsewhere reach Claude too;
+ * without that its transcript skipped from its own last reply to the new prompt. A tool result
+ * rides along only when the call it answers is in the same slice: another model's tool use is
+ * transcript Claude never saw, while Claude's own results already sit in its session.
  */
-export declare function selectTurns(messages: LooseMessage[] | undefined, resuming: boolean): LooseMessage[];
+export declare function selectTurns(messages: LooseMessage[] | undefined, resuming: boolean, own?: string): LooseMessage[];
+/** The most of one tool's input or output another model's transcript carries into the prompt. */
+export declare const TOOL_TEXT_CAP = 2000;
 /** dsh's instruction bundle repeats files Claude Code already loads on its own (`CLAUDE.md` in the
  *  workspace, `~/.claude/CLAUDE.md`), so those blocks are dropped from what goes to Claude. The
  *  bundle is one `<system-reminder>` with `Instructions from: <path>` headers; a block runs to

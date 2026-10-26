@@ -10,6 +10,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 - A `hiddenModels` key leaves models out of the picker: `config: { hiddenModels: [claude-opus-5] }` hides that model and its dated ids, but not `claude-opus-5-5`. It is a deny list, so a model released later still appears, and it changes only this plugin's picker, where settings.json's `availableModels` allowlist also narrows the terminal CLI and needs every new model added by hand. A session already on a hidden model keeps running; opened while idle, it moves to the newest listed model of its family when there is one. Thanks to @windybirth (#196, #197).
 
+### Fixed
+
+- Back on Claude after another model ran part of a session, Claude sees what happened in between: the prompts, the replies and the tools that model used. Before, the plugin sent only what followed the last reply, which was the other model's, so Claude never saw those turns. Another model's tool use goes over as text, each input or output capped at 2,000 characters. Thanks to @namastex888, whose Omni fork made this change.
+
 ## [1.5.8] - 2026-10-26
 
 dsh: runs on 0.2.0-rc.1 through 0.2.1-rc.4; built and tested on 0.2.1-rc.4.

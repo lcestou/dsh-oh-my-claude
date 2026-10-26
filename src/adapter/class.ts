@@ -1109,7 +1109,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const hints = await readHints(join(this.stateDir, "hints.json"));
     const drops = contextDrops(hints);
     this.proxyFirstParty = wantsFirstParty(hints, await detectFirstParty());
-    const turns = selectTurns(options.messages, session?.resuming ?? false);
+    const turns = selectTurns(options.messages, session?.resuming ?? false, this.providerId);
     let prompt = buildPrompt(turns, drops);
     // A turn on a box reads that box's disk, so what was attached here follows it there.
     if (targetHost)
