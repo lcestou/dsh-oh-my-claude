@@ -17,6 +17,7 @@ import {
   withoutSubagents,
   slugForDir,
   settingsScopePath,
+  isWindowsPathCommand,
   validCwd,
   isSettingsScope,
   SETTINGS_SCOPES,
@@ -1305,6 +1306,15 @@ const responder =
     { options: [], replaceBuiltInOptions: false, availableModels: ["opus"] },
     "an out-of-enum cap is dropped, the rest stays",
   );
+}
+
+// isWindowsPathCommand: only a Windows host with a path-shaped command skips `where`, which cannot
+// take a drive letter; a bare name still goes to `where` and POSIX hosts are unaffected.
+{
+  assert.equal(isWindowsPathCommand("C:\\Users\\me\\claude.exe", "win32"), true);
+  assert.equal(isWindowsPathCommand("C:/Users/me/claude.exe", "win32"), true);
+  assert.equal(isWindowsPathCommand("claude", "win32"), false);
+  assert.equal(isWindowsPathCommand("/usr/local/bin/claude", "linux"), false);
 }
 
 // validCwd: a POSIX absolute path anywhere, a drive path only on a Windows host, and never a

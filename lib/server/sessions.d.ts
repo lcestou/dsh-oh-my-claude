@@ -417,6 +417,12 @@ export declare function dshSessionsFor(entries: readonly (StoredHeader | {
  *  counts too, since that is what dsh hands over there; a drive-relative `C:x`, a UNC share and a
  *  `\\?\` device path stay refused, so a request cannot point a read at another machine. */
 export declare const validCwd: (cwd: unknown, platform?: string) => cwd is string;
+/**
+ * Whether a probe command names a file by path on a Windows host. `where` reads the colon of a
+ * drive letter as `path:pattern` and exits 2 with "Invalid pattern", so asking it about
+ * `C:\...\claude.exe` reported a working CLI as not on PATH; a path is its own answer.
+ */
+export declare const isWindowsPathCommand: (command: string, platform?: string) => boolean;
 /** What /open answers: the dsh session id to open, and whether it existed before. */
 export interface Opened {
     id: string;

@@ -872,6 +872,13 @@ async function runtimeStatus(
   }
 }
 const STATUS_TTL_MS = 60_000;
+/**
+ * Whether a probe command names a file by path on a Windows host. `where` reads the colon of a
+ * drive letter as `path:pattern` and exits 2 with "Invalid pattern", so asking it about
+ * `C:\...\claude.exe` reported a working CLI as not on PATH; a path is its own answer.
+ */
+export const isWindowsPathCommand = (command: string, platform = process.platform): boolean =>
+  platform === "win32" && /[\\/]/.test(command);
 /** What one probe command answered: its stdout, and the failure text when it did not run. */
 interface ProbeOutput {
   out: string;
@@ -906,10 +913,12 @@ async function probeRuntime(
     status = { out: st };
   } else {
     [which, version, status] = await Promise.all([
-      run(
-        process.platform === "win32" ? "where" : "sh",
-        process.platform === "win32" ? [command] : ["-c", `command -v ${command}`],
-      ),
+      isWindowsPathCommand(command)
+        ? Promise.resolve<ProbeOutput>({ out: command })
+        : run(
+            process.platform === "win32" ? "where" : "sh",
+            process.platform === "win32" ? [command] : ["-c", `command -v ${command}`],
+          ),
       run(command, ["--version"]),
       run(command, ["auth", "status"]),
     ]);
