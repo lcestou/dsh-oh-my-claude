@@ -8,7 +8,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
-- On Windows, a command configured as an absolute path (`C:\...\claude.exe`) read as "not on PATH" and "not logged in" even though `--version` and `auth status` answered. The status probe asked `where` about it, and `where` takes the drive letter's colon for its `path:pattern` syntax and exits 2 with "Invalid pattern". A path is now its own answer.
+- On Windows, a command configured as an absolute path (`C:\...\claude.exe`) read as "not on PATH" and "not logged in" even though `--version` and `auth status` answered. The status probe asked `where` about it, and `where` takes the drive letter's colon for its `path:pattern` syntax and exits 2 with "Invalid pattern". A path is now its own answer. Thanks to @windybirth (#191, #192).
 
 ## [1.5.7] - 2026-10-24
 
