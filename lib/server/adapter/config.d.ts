@@ -31,6 +31,7 @@ export type Config = {
     sshHost: string;
     configDir: string;
     permissionMode: "dsh" | "acceptEdits" | "bypassPermissions" | "plan" | "dontAsk" | "auto" | "manual";
+    hiddenModels: string[];
     allowedTools: string[];
     disallowedTools: string[];
     addDirs: string[];
@@ -63,6 +64,7 @@ export declare const Config: z<Schemastery.ObjectS<{
     spawn: z<"dsh" | "keeper" | "node", "dsh" | "keeper" | "node">;
     sshHost: z<string, string>;
     permissionMode: z<"acceptEdits" | "auto" | "bypassPermissions" | "dontAsk" | "dsh" | "manual" | "plan", "acceptEdits" | "auto" | "bypassPermissions" | "dontAsk" | "dsh" | "manual" | "plan">;
+    hiddenModels: z<string[], string[]>;
     allowedTools: z<string[], string[]>;
     disallowedTools: z<string[], string[]>;
     addDirs: z<string[], string[]>;
@@ -96,6 +98,7 @@ export declare const Config: z<Schemastery.ObjectS<{
     spawn: z<"dsh" | "keeper" | "node", "dsh" | "keeper" | "node">;
     sshHost: z<string, string>;
     permissionMode: z<"acceptEdits" | "auto" | "bypassPermissions" | "dontAsk" | "dsh" | "manual" | "plan", "acceptEdits" | "auto" | "bypassPermissions" | "dontAsk" | "dsh" | "manual" | "plan">;
+    hiddenModels: z<string[], string[]>;
     allowedTools: z<string[], string[]>;
     disallowedTools: z<string[], string[]>;
     addDirs: z<string[], string[]>;

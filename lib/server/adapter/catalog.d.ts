@@ -90,6 +90,15 @@ export declare const liveWindowFor: (modelId: string) => number | undefined;
  * the API spells with more than one capital: none today.
  */
 export declare const nameFromId: (id: string) => string | undefined;
+/**
+ * Drops the rows a `hiddenModels` entry names. An entry matches a row's id exactly or with a date
+ * stamp after it (`claude-haiku-4-5` hides `claude-haiku-4-5-20251001`), never a longer version:
+ * `claude-opus-5` leaves `claude-opus-5-5` in the picker. `default` is never hidden, and only the
+ * picker changes: a session already on a hidden model keeps running.
+ */
+export declare const withoutHiddenModels: <T extends {
+    id: string;
+}>(rows: readonly T[], hidden: readonly string[]) => T[];
 /** Merges the CLI's model rows into the catalog, giving each known model a single stable id and
  *  name so the picker offers the same lineup whether or not the CLI has yet learned the model's
  *  short spelling. */

@@ -74,6 +74,7 @@ export type Config = {
     | "dontAsk"
     | "auto"
     | "manual";
+  hiddenModels: string[];
   allowedTools: string[];
   disallowedTools: string[];
   addDirs: string[];
@@ -124,6 +125,12 @@ export const Config = z.object({
     .default("dsh")
     .description(
       "Claude Code permission mode for tools the child runs on its own. 'dsh' follows the session's access mode switch: read-only → plan, workspace-write → acceptEdits, danger-full-access → bypassPermissions",
+    ),
+  hiddenModels: z
+    .array(z.string())
+    .default([])
+    .description(
+      "Model ids to leave out of the model picker: the exact id, or the id plus a date stamp. Display only",
     ),
   allowedTools: z.array(z.string()).default([]).description("Extra --allowedTools entries"),
   disallowedTools: z.array(z.string()).default([]).description("--disallowedTools entries"),

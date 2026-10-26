@@ -12,6 +12,7 @@ import {
   noteLiveWindow,
   resolveModelInfo,
   seedLiveWindows,
+  withoutHiddenModels,
 } from "./adapter/catalog.js";
 import type { CliModel } from "./process.js";
 
@@ -144,5 +145,34 @@ await flushLiveWindows();
 const written = JSON.parse(readFileSync(file, "utf8"));
 assert.equal(written["claude-opus-5-5"], 1_000_000, "a new figure reaches the file");
 assert.equal(written["claude-stored-1"], 640_000, "a later write keeps the stored figures");
+
+// hiddenModels leaves rows out of the picker by exact id, or id plus a date stamp, and never by a
+// longer version; Default stays, and an empty list changes nothing.
+{
+  const rows = ["default", "claude-opus-5", "claude-opus-5-5", "claude-haiku-4-5-20251001"].map(
+    (id) => ({ id }),
+  );
+  const ids = (hidden: string[]) => withoutHiddenModels(rows, hidden).map((r) => r.id);
+  assert.deepEqual(
+    ids([]),
+    rows.map((r) => r.id),
+    "an empty list hides nothing",
+  );
+  assert.deepEqual(ids(["claude-opus-5"]), [
+    "default",
+    "claude-opus-5-5",
+    "claude-haiku-4-5-20251001",
+  ]);
+  assert.deepEqual(
+    ids(["claude-haiku-4-5"]),
+    ["default", "claude-opus-5", "claude-opus-5-5"],
+    "a date stamp follows",
+  );
+  assert.deepEqual(
+    ids(["opus-5[1m]", "default"]),
+    ["default", "claude-opus-5-5", "claude-haiku-4-5-20251001"],
+    "spelling variants match and Default stays",
+  );
+}
 
 console.log("catalog sources ok");

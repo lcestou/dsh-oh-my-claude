@@ -225,6 +225,7 @@ import {
   proxyBaseUrl,
   resolveModelInfo,
   windowKey,
+  withoutHiddenModels,
 } from "./catalog.js";
 import {
   ASIDE_ASKED_KEEP,
@@ -750,7 +751,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     await this.cliSeed;
     await this.probeCliModels();
     const models = await getCatalog(undefined, this.cliModels, await this.pickerSettings());
-    return models.map((m) => modelInfo(provider, m));
+    return withoutHiddenModels(models, this.config.hiddenModels).map((m) => modelInfo(provider, m));
   }
 
   /** After a `result` frame: remember a login failure for the card, and name the box's providers

@@ -6,6 +6,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Added
+
+- A `hiddenModels` key leaves models out of the picker: `config: { hiddenModels: [claude-opus-5] }` hides that model and its dated ids, but not `claude-opus-5-5`. It is a deny list, so a model released later still appears, and it changes only this plugin's picker, where settings.json's `availableModels` allowlist also narrows the terminal CLI and needs every new model added by hand.
+
 ## [1.5.8] - 2026-10-26
 
 dsh: runs on 0.2.0-rc.1 through 0.2.1-rc.4; built and tested on 0.2.1-rc.4.
