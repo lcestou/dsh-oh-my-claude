@@ -56,6 +56,27 @@ export const CHILD_ENV = {
   CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION: "true",
 };
 
+/** The privacy switches a person sets in the environment dsh runs in: Claude Code's own telemetry, error-reporting and nonessential-traffic switches, its updater
+ *  and bug-report switches, and the cross-tool DO_NOT_TRACK. A local child inherits them through
+ *  `childEnv`; a child on another machine starts from that machine's shell, so the remote paths
+ *  carry each one that is set here, as set. None is ever invented. */
+export const FORWARDED_ENV = [
+  "DISABLE_TELEMETRY",
+  "DISABLE_ERROR_REPORTING",
+  "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+  "DISABLE_AUTOUPDATER",
+  "DISABLE_BUG_COMMAND",
+  "DO_NOT_TRACK",
+] as const;
+
+/** The FORWARDED_ENV pairs set in `base`, in that order. */
+export function forwardedEnv(base: NodeJS.ProcessEnv = process.env): [string, string][] {
+  return FORWARDED_ENV.flatMap((key): [string, string][] => {
+    const value = base[key];
+    return value === undefined || value === "" ? [] : [[key, value]];
+  });
+}
+
 /** The environment a Claude child runs with: dsh's own, then the plugin's additions, then whatever
  *  the caller passes. CHILD_ENV beats the inherited value on purpose. An `MCP_TOOL_TIMEOUT` that
  *  happens to be in dsh's environment would otherwise cut relayed dsh tools short in one spawn mode
@@ -427,12 +448,12 @@ export function nodeSpawner(
  * `envOverride` is merged last so configured values win.
  */
 export const seamSpawner =
-  (subprocess: Pick<SubprocessRuntime, "spawn">): Spawner =>
+  (subprocess: Pick<SubprocessRuntime, "spawn">, base: NodeJS.ProcessEnv = process.env): Spawner =>
   (command, args, cwd, envOverride) =>
     subprocess.spawn({
       argv: [command, ...args],
       cwd,
-      env: { ...CHILD_ENV, ...envOverride },
+      env: { ...Object.fromEntries(forwardedEnv(base)), ...CHILD_ENV, ...envOverride },
       graceMs: 5000,
       stdio: { stdin: "pipe", stdout: "pipe", stderr: "pipe" },
     });
@@ -553,12 +574,13 @@ export function sshInvocation(
   args: string[],
   cwd: string,
   token?: string,
+  base: NodeJS.ProcessEnv = process.env,
 ) {
   // A fresh per-box token from `claude setup-token` is delivered as CLAUDE_CODE_OAUTH_TOKEN, not a
   // stored login, so it must be handed to the far claude at spawn. ponytail: it rides in the remote
   // env argv like the rest of CHILD_ENV, so it shows in the box's own `ps`; acceptable on a
   // single-user box, tighten with a remote env file if a box is shared.
-  const envPairs = Object.entries(CHILD_ENV);
+  const envPairs = [...forwardedEnv(base), ...Object.entries(CHILD_ENV)];
   if (token) envPairs.push(["CLAUDE_CODE_OAUTH_TOKEN", token]);
   const env = envPairs.map(([key, val]) => `${key}=${shq(val)}`).join(" ");
   const remote = [command, ...args].map(shq).join(" ");

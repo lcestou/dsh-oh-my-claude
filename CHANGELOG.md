@@ -14,6 +14,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 - Back on Claude after another model ran part of a session, Claude sees what happened in between: the prompts, the replies and the tools that model used. Before, the plugin sent only what followed the last reply, which was the other model's, so Claude never saw those turns. Another model's tool use goes over as text, each input or output capped at 2,000 characters. Thanks to @namastex888, whose Omni fork made this change.
 - A reply Claude finished while dsh was restarting reaches the session once dsh is back. The dying dsh read those lines and dropped them, so the new one had nothing to replay and the turn never appeared. The keeper now holds each line until the plugin confirms it used it, and replays the rest on the next attach. Thanks to @namastex888, whose Omni fork made this change.
+- Claude Code's privacy switches set in dsh's environment (`DISABLE_TELEMETRY`, `DISABLE_ERROR_REPORTING`, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`, `DISABLE_AUTOUPDATER`, `DISABLE_BUG_COMMAND`, `DO_NOT_TRACK`) now reach Claude on an SSH box, in a held process and in a remote workspace. A local Claude already inherited them; those three start from the far machine's shell and got none. Thanks to @namastex888, whose Omni fork made this change.
 
 ## [1.5.8] - 2026-10-26
 

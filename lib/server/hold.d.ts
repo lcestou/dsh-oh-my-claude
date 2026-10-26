@@ -30,7 +30,7 @@ export declare function holdName(providerId: string, sessionId: string, stamp?: 
  * so `setsid` execs rather than forks and `$!` is the leader itself. The inner `sh` holds the FIFO
  * open read-write for the CLI and records the exit code after it.
  */
-export declare function holdStartScript(name: string, cwd: string, command: string, args: string[], token?: string): string;
+export declare function holdStartScript(name: string, cwd: string, command: string, args: string[], token?: string, base?: NodeJS.ProcessEnv): string;
 /**
  * Attach: stdin into the FIFO, the log out from `offset`. `tail --pid` ends when the leader does,
  * after one last read, so the final `result` frame is never left in the file. The `cat` is killed

@@ -20,6 +20,7 @@ import { createHash } from "node:crypto";
 import { PassThrough, Writable } from "node:stream";
 import {
   CHILD_ENV,
+  forwardedEnv,
   nodeSpawner,
   shq,
   sshArgs,
@@ -75,8 +76,10 @@ export function holdStartScript(
   command: string,
   args: string[],
   token?: string,
+  base: NodeJS.ProcessEnv = process.env,
 ): string {
-  const envPairs = Object.entries(CHILD_ENV);
+  // The privacy switches set here travel too: the far shell has none of this box's environment.
+  const envPairs = [...forwardedEnv(base), ...Object.entries(CHILD_ENV)];
   if (token) envPairs.push(["CLAUDE_CODE_OAUTH_TOKEN", token]);
   const env = envPairs.map(([key, val]) => `${key}=${shq(val)}`).join(" ");
   const cli = [command, ...args].map(shq).join(" ");

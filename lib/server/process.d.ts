@@ -23,6 +23,13 @@ export declare const CHILD_ENV: {
     CLAUDE_CODE_ENTRYPOINT: string;
     CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION: string;
 };
+/** The privacy switches a person sets in the environment dsh runs in: Claude Code's own telemetry, error-reporting and nonessential-traffic switches, its updater
+ *  and bug-report switches, and the cross-tool DO_NOT_TRACK. A local child inherits them through
+ *  `childEnv`; a child on another machine starts from that machine's shell, so the remote paths
+ *  carry each one that is set here, as set. None is ever invented. */
+export declare const FORWARDED_ENV: readonly ["DISABLE_TELEMETRY", "DISABLE_ERROR_REPORTING", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "DISABLE_AUTOUPDATER", "DISABLE_BUG_COMMAND", "DO_NOT_TRACK"];
+/** The FORWARDED_ENV pairs set in `base`, in that order. */
+export declare function forwardedEnv(base?: NodeJS.ProcessEnv): [string, string][];
 /** The environment a Claude child runs with: dsh's own, then the plugin's additions, then whatever
  *  the caller passes. CHILD_ENV beats the inherited value on purpose. An `MCP_TOOL_TIMEOUT` that
  *  happens to be in dsh's environment would otherwise cut relayed dsh tools short in one spawn mode
@@ -317,7 +324,7 @@ export declare function nodeSpawner(command: string, args: string[], cwd: string
  * scrubs credential-shaped env vars, so credentials come from the login on that machine.
  * `envOverride` is merged last so configured values win.
  */
-export declare const seamSpawner: (subprocess: Pick<SubprocessRuntime, "spawn">) => Spawner;
+export declare const seamSpawner: (subprocess: Pick<SubprocessRuntime, "spawn">, base?: NodeJS.ProcessEnv) => Spawner;
 /** POSIX single-quote a string for a remote shell: wrap in `'...'`, escaping any embedded quote. */
 export declare function shq(value: string): string;
 /** The local `ssh` argv that runs `script` on `host`. BatchMode: key auth only, so a missing key or
@@ -355,7 +362,7 @@ export declare function controlSocketDir(runtime: string | undefined, state: str
  * rather than let `cd` fail the whole spawn. A remote workspace redirects `cwd` to its real remote
  * path before it reaches here (see `sshSpawner`), so that fallback is only for a plain local path.
  */
-export declare function sshInvocation(host: string, command: string, args: string[], cwd: string, token?: string): {
+export declare function sshInvocation(host: string, command: string, args: string[], cwd: string, token?: string, base?: NodeJS.ProcessEnv): {
     command: string;
     args: string[];
 };
