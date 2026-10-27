@@ -6,6 +6,7 @@ import {
   groupSkillsByScope,
   maskEmail,
   numberOr,
+  openHere,
   openSession,
   openSessionId,
   revive,
@@ -170,6 +171,29 @@ assert.equal(openSessionId(listCtx(undefined)), undefined);
   } as unknown as ClientCtx;
   openSession(ctx, "s1");
   assert.deepEqual(opened, ["uiWorkspace:s1"]);
+}
+// Restoring an archived session waits for the workspace list to unarchive it before opening:
+// dsh clears a main view whose session that list still calls archived.
+{
+  const events: string[] = [];
+  let archivedIds = ["s1"];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response("{}")) as unknown as typeof fetch;
+  setTimeout(() => {
+    archivedIds = [];
+    events.push("unarchived");
+  }, 120);
+  const ctx = {
+    sessions: { list: { getSnapshot: () => ({ byId: { s1: {} } }) } },
+    workspaces: {
+      list: { getSnapshot: () => ({ items: [], archivedSessionIds: archivedIds }) },
+    },
+    get: (name: string) =>
+      name === "uiWorkspace" ? { openSession: () => events.push("opened") } : undefined,
+  } as unknown as ClientCtx;
+  await openHere(ctx, { id: "t1", dsh: { id: "s1", archived: true } }, "/w");
+  globalThis.fetch = realFetch;
+  assert.deepEqual(events, ["unarchived", "opened"]);
 }
 
 // groupSkillsByScope sorts each scope into its bucket; an unknown scope falls to plugin.

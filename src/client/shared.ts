@@ -463,8 +463,13 @@ async function openHere(
     // Unarchiving/importing lands server-side; the client's session store learns of the session
     // through its own subscription a beat later. Opening an id the store does not know yet is a
     // no-op. The restored session would never come to the foreground on its own, so
-    // wait briefly for it.
-    for (let i = 0; i < 40 && !known()[id]; i++) await new Promise((r) => setTimeout(r, 50));
+    // wait briefly for it. An archived session is usually in the store already, so also wait
+    // for the workspace list to drop it from `archivedSessionIds`: dsh clears a main view
+    // whose session that list still calls archived, which undid the open about half the time.
+    const archived = () =>
+      ctx.workspaces.list.getSnapshot()?.archivedSessionIds?.includes(id) === true;
+    for (let i = 0; i < 40 && (!known()[id] || archived()); i++)
+      await new Promise((r) => setTimeout(r, 50));
     // If it never appeared (server-side open/import error), `open` below is a no-op and the row just
     // does nothing; leave a breadcrumb so a stuck restore is diagnosable rather than silent.
     if (!known()[id])
@@ -922,7 +927,10 @@ export interface ClientCtx {
   };
   workspaces: {
     list: {
-      getSnapshot: () => { items: Array<{ path: string; workspaceId: string }> };
+      getSnapshot: () => {
+        items: Array<{ path: string; workspaceId: string }>;
+        archivedSessionIds?: readonly string[];
+      };
       /** dsh's own sidebar reconciles on this; the Boxes card refetches its rows on it. */
       subscribe: (fn: () => void) => () => void;
     };
