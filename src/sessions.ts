@@ -1431,8 +1431,8 @@ export interface RouteCtx {
 
 /**
  * Create the dsh session for one transcript: seed with the converted history, flush to disk,
- * leave. The client then adopts it through the normal `sessions.create({ sessionId })` path,
- * which attaches it to the workspace and makes it live.
+ * attach it to the workspace, leave. The client then refreshes dsh's session list, which is how
+ * its store learns of the session, and opens it.
  */
 const opening = new Map<string, Promise<Opened>>();
 

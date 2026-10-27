@@ -452,14 +452,12 @@ async function openHere(
     }),
   );
   // A session dsh owns but has not loaded (persisted, then a restart) is as unknown to the store as
-  // a raw transcript: `open` on it is a no-op, so adopt it through create like the transcript case.
+  // a raw transcript the route just seeded: `open` on either is a no-op until the store lists it.
+  // Pull dsh's session list again rather than `sessions.create`: since dsh 0.2.1 create adopts a
+  // named session only while its log has no turn, so for a transcript it minted a new blank
+  // session under another id and the store never learned the one the route wrote.
   if (s.dsh?.archived || !existed) {
-    if (!s.dsh?.archived) {
-      const ws = (ctx.workspaces.list.getSnapshot()?.items ?? []).find((w) => w.path === cwd);
-      await ctx.sessions.create(
-        ws ? { sessionId: id, workspaceId: ws.workspaceId } : { sessionId: id },
-      );
-    }
+    if (!s.dsh?.archived) await ctx.sessions.refresh();
     // Unarchiving/importing lands server-side; the client's session store learns of the session
     // through its own subscription a beat later. Opening an id the store does not know yet is a
     // no-op. The restored session would never come to the foreground on its own, so
@@ -914,6 +912,8 @@ export interface ClientCtx {
       };
     };
     create: (opts: { sessionId: string; workspaceId?: string }) => Promise<void>;
+    /** Pull the host's full `session.list`; how the store learns of a log written behind its back. */
+    refresh: () => Promise<void>;
     // When present, the host can forward dsh-style commands to a session's underlying CLI.
     binding?: (id: string) => {
       session?: {

@@ -195,6 +195,34 @@ assert.equal(openSessionId(listCtx(undefined)), undefined);
   globalThis.fetch = realFetch;
   assert.deepEqual(events, ["unarchived", "opened"]);
 }
+// Importing a transcript the route just seeded refreshes dsh's list instead of calling create:
+// dsh 0.2.1's create mints a new session for a named one whose log has turns.
+{
+  const events: string[] = [];
+  let byId: Record<string, object> = {};
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response("{}")) as unknown as typeof fetch;
+  const ctx = {
+    sessions: {
+      list: { getSnapshot: () => ({ byId }) },
+      create: async () => {
+        events.push("create");
+      },
+      refresh: async () => {
+        byId = { t2: {} };
+        events.push("refresh");
+      },
+    },
+    workspaces: { list: { getSnapshot: () => ({ items: [], archivedSessionIds: [] }) } },
+    get: (name: string) =>
+      name === "uiWorkspace"
+        ? { openSession: (id: string) => events.push(`opened:${id}`) }
+        : undefined,
+  } as unknown as ClientCtx;
+  await openHere(ctx, { id: "t2" }, "/w");
+  globalThis.fetch = realFetch;
+  assert.deepEqual(events, ["refresh", "opened:t2"]);
+}
 
 // groupSkillsByScope sorts each scope into its bucket; an unknown scope falls to plugin.
 {
