@@ -152,7 +152,9 @@ export function RewindBody({
           <span style={{ ...meta, padding: "2px 0" }}>
             {busy && !preview ? t("panel.rewind.checking") : preview ? rewindSummary(preview) : ""}
           </span>
-          <span style={{ ...meta, padding: "2px 0" }}>{t("panel.rewind.explain")}</span>
+          <span style={{ ...meta, padding: "2px 0", whiteSpace: "normal" }}>
+            {t("panel.rewind.explain")}
+          </span>
           <div style={{ display: "flex", gap: 8, padding: "2px 0" }}>
             <button type="button" style={btn} disabled={busy} onClick={() => setPicked(null)}>
               ‹ {t("panel.back")}

@@ -18,6 +18,8 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 - Claude Code's privacy switches set in dsh's environment (`DISABLE_TELEMETRY`, `DISABLE_ERROR_REPORTING`, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`, `DISABLE_AUTOUPDATER`, `DISABLE_BUG_COMMAND`, `DO_NOT_TRACK`) now reach Claude on an SSH box, in a held process and in a remote workspace. A local Claude already inherited them; those three start from the far machine's shell and got none. Thanks to @namastex888, whose Omni fork made this change.
 - Restoring an archived session from the Restore tab or the Sessions tab now takes you to it every time. dsh drops the view of a session its workspace list still calls archived, and the plugin opened the session before that list caught up, so about half the time the session reappeared in the sidebar while the view stayed where it was.
 - Restoring a session started with `claude` in a terminal takes you to it again. On dsh 0.2.1 the plugin's adopt call made a new empty session instead, so the restored one went into the sidebar but never opened.
+- Switching models in an open session no longer restarts Claude when the API is slow to confirm the new model. The plugin gave up after 5 seconds while Claude Code waits up to 15, so a slow switch that was about to work started a fresh process instead.
+- The Rewind tab says what a rewind puts back: files Claude changed with its edit tools. Changes made by shell commands or by hand are not undone, and the tab used to say every file goes back.
 
 ## [1.5.8] - 2026-10-26
 

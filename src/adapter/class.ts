@@ -1515,10 +1515,12 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     if (specKey({ ...proc.spec, model: spec.model, effort: spec.effort }) !== specKey(spec))
       return false;
     if (proc.spec.model !== spec.model) {
+      // The CLI waits up to 15 s for the API to confirm a model (2.1.307, up from 5 s); a cold
+      // switch measured 4 s on 2.1.311. Giving up first respawns a process that was about to succeed.
       const reply = await this.control(
         proc,
         { subtype: "set_model", model: spec.model ?? null },
-        5000,
+        20_000,
       );
       if (!reply.ok) {
         this.log(

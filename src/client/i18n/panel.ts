@@ -160,7 +160,7 @@ export const en = {
   "panel.rewind.rewindTo": "Rewind to: {text}",
   "panel.rewind.checking": "Checking…",
   "panel.rewind.explain":
-    "Files go back and Claude forgets everything after this prompt. This dsh transcript keeps showing what happened.",
+    "Files Claude changed with its edit tools go back and Claude forgets everything after this prompt. Changes made by shell commands or by hand are not undone. This dsh transcript keeps showing what happened.",
   "panel.rewind.action": "Rewind",
   "panel.rewind.retentionTail": "A prompt older than that is no longer here to rewind to.",
 
@@ -500,7 +500,7 @@ export const zh = {
   "panel.rewind.rewindTo": "回溯到：{text}",
   "panel.rewind.checking": "检查中…",
   "panel.rewind.explain":
-    "文件会回到那时的状态，Claude 会忘记这条提示词之后的一切。此 dsh 会话记录仍会显示发生过的内容。",
+    "Claude 用编辑工具改过的文件会回到那时的状态，Claude 会忘记这条提示词之后的一切。通过 shell 命令或手动做的修改不会撤销。此 dsh 会话记录仍会显示发生过的内容。",
   "panel.rewind.action": "回溯",
   "panel.rewind.retentionTail": "早于该时间的 提示词 已不在此处，无法回溯到。",
 
