@@ -4403,7 +4403,13 @@ console.log("plan-review ok");
 // nobody refused (#170: the bare `approval unavailable` sent Claude into a 30-minute retry loop).
 {
   let outcome = "unavailable";
-  const ctx = fakeCtx({ on() {}, approval: { request: async () => outcome } });
+  const asked: { callId?: string }[] = [];
+  const ctx = fakeCtx({
+    on() {},
+    approval: {
+      request: async (req: { callId?: string }) => (asked.push(req), outcome),
+    },
+  });
   const adapter = new ClaudeCodeAdapter(ctx, Config({}));
   const base = {
     toolName: "Bash",
@@ -4428,6 +4434,11 @@ console.log("plan-review ok");
   outcome = "allowed-once";
   const ok = await adapter.decide(base as any);
   assert.equal(ok.behavior, "allow");
+  // dsh's ACP bridge (DSH Desktop) skips a request without the tool call's id (#202).
+  assert.ok(
+    asked.length > 0 && asked.every((r) => r.callId === "tu-ap"),
+    "every ask names its call",
+  );
 }
 console.log("approval outcomes ok");
 
