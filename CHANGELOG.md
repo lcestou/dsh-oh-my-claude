@@ -6,20 +6,24 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+## [1.5.9] - 2026-10-27
+
+dsh: runs on 0.2.0-rc.1 through 0.2.1-rc.4; built and tested on 0.2.1-rc.4.
+
 ### Added
 
-- A `hiddenModels` key leaves models out of the picker: `config: { hiddenModels: [claude-opus-5] }` hides that model and its dated ids, but not `claude-opus-5-5`. It is a deny list, so a model released later still appears, and it changes only this plugin's picker, where settings.json's `availableModels` allowlist also narrows the terminal CLI and needs every new model added by hand. A session already on a hidden model keeps running; opened while idle, it moves to the newest listed model of its family when there is one. Thanks to @windybirth (#196, #197).
+- A `hiddenModels` key hides models from the picker. `config: { hiddenModels: [claude-opus-5] }` hides Opus 5 and its dated ids, and leaves `claude-opus-5-5` alone. It is a deny list, so a model released later still shows up. It changes only this plugin's picker. settings.json's `availableModels` is an allowlist that also narrows the terminal CLI, and every new model has to be added to it by hand. A session already on a hidden model keeps running. Opened while idle, it moves to the newest listed model of the same family, if there is one. Thanks to @windybirth (#196, #197).
 
 ### Fixed
 
-- On DSH Desktop, Claude's permission asks reach the approval dialog again. The plugin asked dsh without naming the tool call, and Desktop's approval bridge only answers a request that does, so every ask came back "unavailable" within milliseconds and no dialog appeared. Thanks to @BHX233 (#202).
-- Back on Claude after another model ran part of a session, Claude sees what happened in between: the prompts, the replies and the tools that model used. Before, the plugin sent only what followed the last reply, which was the other model's, so Claude never saw those turns. Another model's tool use goes over as text, each input or output capped at 2,000 characters. Thanks to @namastex888, whose Omni fork made this change.
-- A reply Claude finished while dsh was restarting reaches the session once dsh is back. The dying dsh read those lines and dropped them, so the new one had nothing to replay and the turn never appeared. The keeper now holds each line until the plugin confirms it used it, and replays the rest on the next attach. Thanks to @namastex888, whose Omni fork made this change.
-- Claude Code's privacy switches set in dsh's environment (`DISABLE_TELEMETRY`, `DISABLE_ERROR_REPORTING`, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`, `DISABLE_AUTOUPDATER`, `DISABLE_BUG_COMMAND`, `DO_NOT_TRACK`) now reach Claude on an SSH box, in a held process and in a remote workspace. A local Claude already inherited them; those three start from the far machine's shell and got none. Thanks to @namastex888, whose Omni fork made this change.
-- Restoring an archived session from the Restore tab or the Sessions tab now takes you to it every time. dsh drops the view of a session its workspace list still calls archived, and the plugin opened the session before that list caught up, so about half the time the session reappeared in the sidebar while the view stayed where it was.
-- Restoring a session started with `claude` in a terminal takes you to it again. On dsh 0.2.1 the plugin's adopt call made a new empty session instead, so the restored one went into the sidebar but never opened.
-- Switching models in an open session no longer restarts Claude when the API is slow to confirm the new model. The plugin gave up after 5 seconds while Claude Code waits up to 15, so a slow switch that was about to work started a fresh process instead.
-- The Rewind tab says what a rewind puts back: files Claude changed with its edit tools. Changes made by shell commands or by hand are not undone, and the tab used to say every file goes back.
+- On DSH Desktop, Claude's permission requests reach the approval dialog again. The plugin asked dsh without naming the tool call, and Desktop's approval bridge only answers requests that name one, so every request came back "unavailable" within milliseconds and no dialog opened. Thanks to @BHX233 (#202).
+- When you switch back to Claude after another model ran part of a session, Claude sees the prompts, replies and tool calls from those turns. The plugin used to send only what followed the last reply, and that reply was the other model's, so Claude never saw them. The other model's tool calls go over as text, with each input and output capped at 2,000 characters. Thanks to @namastex888, whose Omni fork made this change.
+- A reply Claude finished while dsh was restarting now shows up once dsh is back. The old dsh read those lines on its way down and dropped them, so the new one had nothing to replay. The keeper now holds each line until the plugin confirms it, and replays the rest when the plugin reattaches. Thanks to @namastex888, whose Omni fork made this change.
+- Claude Code's privacy switches (`DISABLE_TELEMETRY`, `DISABLE_ERROR_REPORTING`, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`, `DISABLE_AUTOUPDATER`, `DISABLE_BUG_COMMAND`, `DO_NOT_TRACK`), set in dsh's environment, now reach Claude on an SSH box, in a remote workspace, and in a process the plugin keeps alive across dsh restarts. A local Claude already inherited them. The other three start from the remote machine's shell and got none of them. Thanks to @namastex888, whose Omni fork made this change.
+- Restoring an archived session from the Restore or Sessions tab takes you to it every time. The plugin opened the session before dsh's workspace list stopped calling it archived, and dsh drops the view of an archived session. About half the time the session came back in the sidebar and the view stayed put.
+- Restoring a session started with `claude` in a terminal opens it again. On dsh 0.2.1 the plugin's adopt call created a new empty session, so the restored one landed in the sidebar and never opened.
+- Switching models in an open session no longer restarts Claude when the API is slow to confirm the model. The plugin gave up after 5 seconds and Claude Code waits up to 15, so a switch that was about to work started a fresh process.
+- The Rewind tab used to say every file goes back. It now says what a rewind restores, which is the files Claude changed with its edit tools. Changes made by shell commands or by hand stay.
 
 ## [1.5.8] - 2026-10-26
 
