@@ -143,7 +143,8 @@ if (results.every((r) => r.ok) && (await step("build", "bun", "run", "build"))) 
   const CEILING = 800;
   const over: string[] = [];
   for (const file of ["src/adapter.ts", "src/client/index.tsx"]) {
-    const lines = readFileSync(file, "utf8").split("\n").length;
+    // Newlines, the way `wc -l` counts, so a file of exactly 800 lines ending in one passes.
+    const lines = (readFileSync(file, "utf8").match(/\n/g) ?? []).length;
     if (lines > CEILING) over.push(`${file}: ${lines} lines, ceiling ${CEILING}`);
   }
   results.push({ name: "entries stay thin", ok: over.length === 0, ms: Date.now() - start });
