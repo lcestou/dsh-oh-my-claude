@@ -178,7 +178,7 @@ sshHost: ""              # "[user@]host" 通过 ssh 驱动另一台机器上的 
 ## 它会接触什么
 
 - **运行** 你已有的 `claude` 程序，在本机或你通过 SSH 添加的主机上。
-- **读取** Claude Code 的登录信息（`~/.claude/.credentials.json`，或已设置的 `ANTHROPIC_API_KEY`），用来获取模型列表和套餐用量。这个令牌只会发往 `api.anthropic.com`。
+- **读取** Claude Code 的登录信息（`~/.claude/.credentials.json`；macOS 上该文件没有有效令牌时读钥匙串里的 `Claude Code-credentials`；或已设置的 `ANTHROPIC_API_KEY`），用来获取模型列表和套餐用量。这个令牌只会发往 `api.anthropic.com`。
 - **写入** 自己的状态到 `~/.local/state/dsh-oh-my-claude/`；SSH 主机的登录令牌保存为只有你能读取的文件。CLAUDE.md、settings.json 和 MCP 服务器只在你从面板编辑时才会改动。
 - **监听** 一个 Unix socket，供在 dsh 重启期间托管 Claude 的 keeper 使用。插件的 HTTP 路由都在 dsh 自己的服务器里，所以在 DSH Web 下不开放 TCP 端口。在 DSH Desktop 下，其 Web 服务器对非自身窗口的请求一律返回 403，因此把 dsh 工具交给 Claude 的桥接会另在 127.0.0.1 上监听，仍由同一把密钥保护。
 - **访问** `api.anthropic.com`（模型、套餐用量）、`status.anthropic.com`、`downloads.claude.ai`（CLI 的版本指针）、`registry.npmjs.org`（插件更新检查）和 `api.github.com`（仓库的 Star 数）。SSH 只连接你添加的主机。

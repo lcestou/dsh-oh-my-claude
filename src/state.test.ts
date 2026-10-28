@@ -35,6 +35,7 @@ import {
   loadContextSizes,
   saveContextSizes,
   trace,
+  authHeaders,
 } from "./state.js";
 
 const dir = await mkdtemp(join(tmpdir(), "omc-state-"));
@@ -479,4 +480,43 @@ console.log("state.test: ok");
   assert.ok(!text.includes(" 0 x"), "the oldest is gone");
   await rm(dir, { recursive: true, force: true });
   console.log("trace cap ok");
+}
+
+// The OAuth login: the file leads, and a missing or expired one falls back to the Keychain reader
+// (handed in here, so the box's own login is never read). A scratch home gets no Keychain at all.
+{
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  delete process.env.ANTHROPIC_API_KEY;
+  const home = await mkdtemp(join(tmpdir(), "omc-auth-"));
+  const login = (token: string, expiresAt: number) =>
+    JSON.stringify({ claudeAiOauth: { accessToken: token, expiresAt } });
+  const bearer = (token: string) => ({
+    Authorization: `Bearer ${token}`,
+    "anthropic-beta": "oauth-2025-04-20",
+  });
+  let asked = 0;
+  const keychain = async () => {
+    asked++;
+    return login("from-keychain", Date.now() + 3_600_000);
+  };
+
+  assert.equal(await authHeaders(home), null, "no file and no Keychain for a non-default home");
+  assert.deepEqual(await authHeaders(home, keychain), bearer("from-keychain"), "no file: Keychain");
+  assert.equal(await authHeaders(home, async () => null), null, "no file and no Keychain entry");
+
+  await writeFile(join(home, ".credentials.json"), login("stale", Date.now() - 1_000));
+  assert.deepEqual(
+    await authHeaders(home, keychain),
+    bearer("from-keychain"),
+    "an expired file falls back to the Keychain",
+  );
+
+  await writeFile(join(home, ".credentials.json"), login("from-file", Date.now() + 3_600_000));
+  asked = 0;
+  assert.deepEqual(await authHeaders(home, keychain), bearer("from-file"), "a live file wins");
+  assert.equal(asked, 0, "the Keychain is not asked when the file answers");
+
+  if (apiKey !== undefined) process.env.ANTHROPIC_API_KEY = apiKey;
+  await rm(home, { recursive: true, force: true });
+  console.log("auth headers ok");
 }

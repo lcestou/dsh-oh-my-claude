@@ -462,9 +462,9 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     /**
      * Ask the local CLI for its model picker before any session has spawned a process, so a box with
      * no `cli-models.json` yet does not list the built-in floor: without a seed the listing has only
-     * that floor and the Models API, and the API read needs a login file the CLI does not always
-     * keep (on macOS the login lives in the Keychain, and a `.credentials.json` left from an older
-     * install holds a token that expired long ago). One short-lived `claude -p` per boot is sent
+     * that floor and the Models API, and the API read can find no live token (a config dir other than
+     * the default `~/.claude` on macOS, whose Keychain login is not read, or a token the CLI has not
+     * refreshed lately). One short-lived `claude -p` per boot is sent
      * `list_models` and nothing else, so no model is called and nothing is spent; its answer goes
      * through `refreshCliModels`, so it is decoded, cached and written to disk like a session's.
      * Never on an ssh box, whose first session process is asked as before. Waits at most

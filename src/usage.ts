@@ -602,11 +602,13 @@ export function registerUsageRoute(
               const provider = url.searchParams.get("provider");
               const box: { home: string; sshHost?: string; realHome?: string; command?: string } =
                 (provider && boxFor?.(provider)) || { home: defaultHome ?? "" };
+              // The real config dir, not the transcript mirror: the mirror links its login back
+              // here, and only the real dir can be matched to the macOS Keychain login.
+              const realHome = box.realHome ?? options?.realHome ?? box.home;
               if (url.pathname.endsWith("/breakdown")) {
-                const bdRealHome = box.realHome ?? options?.realHome ?? box.home;
                 const bdCommand = box.command ?? options?.command ?? "claude";
                 const [reply, who] = await Promise.all([
-                  readBd(force, bdRealHome, bdCommand, box.sshHost),
+                  readBd(force, realHome, bdCommand, box.sshHost),
                   identity(box.home, box.sshHost),
                 ]);
                 if (reply.ok && reply.windows.length === 0)
@@ -618,7 +620,7 @@ export function registerUsageRoute(
               }
               // The usage belongs to that box's login; say so, the browser hops between boxes.
               const [reply, who] = await Promise.all([
-                read(force, box.home, box.sshHost),
+                read(force, realHome, box.sshHost),
                 identity(box.home, box.sshHost),
               ]);
               return send(200, { ...reply, ...who });

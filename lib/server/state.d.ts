@@ -72,8 +72,15 @@ export declare function loadStarted(stateFile?: string): Promise<Set<string>>;
  * that was loaded earlier would erase every id another writer added in between.
  */
 export declare function rememberStarted(id: string, keep?: boolean, stateFile?: string): Promise<void>;
-/** Headers for the Anthropic Models API: an API key from the env, else Claude Code's stored OAuth token. */
-export declare function authHeaders(home?: string): Promise<Record<string, string> | null>;
+/** The credentials JSON Claude Code keeps in the macOS Keychain instead of `.credentials.json`;
+ *  null off macOS, when there is no entry, or when `security` does not answer. */
+declare const keychainCredentials: () => Promise<string | null>;
+/**
+ * Headers for the Anthropic Models API: an API key from the env, else Claude Code's stored OAuth
+ * token. The file leads; a missing or expired one falls back to the Keychain, where the CLI keeps
+ * the login on macOS, but only for the default config dir, since that entry is the default login's.
+ */
+export declare function authHeaders(home?: string, keychain?: typeof keychainCredentials | undefined): Promise<Record<string, string> | null>;
 /** The same read from the text of a credentials file already in hand: a remote box's, fetched
  *  over ssh, decodes here the way this box's does. */
 export declare function authHeadersFrom(raw: string | null): Record<string, string> | null;
