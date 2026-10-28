@@ -23,6 +23,7 @@ import { sshBoxProviderId, validateRemoteWorkspaceInput, validateSshBoxes } from
   for (const opt of [
     "BatchMode=yes",
     "ConnectTimeout=10",
+    "LogLevel=ERROR",
     "ControlMaster=auto",
     "ControlPersist=60",
     "ServerAliveInterval=15",
