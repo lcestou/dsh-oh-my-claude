@@ -240,6 +240,7 @@ import {
   SELECTION_EXPLAIN,
 } from "./asides.js";
 import { claudeOnlyRefusal } from "./claude-only.js";
+import { claudeCommandText, skillContent } from "./skill-line.js";
 import {
   claudeSessionExists,
   claudeSessionId,
@@ -1308,7 +1309,39 @@ export class ClaudeCodeAdapter extends LlmAdapter {
             const refused = this.notClaude(target, dshCommand);
             // A skill dsh serves under the same name runs on any model: dsh expands the `/name` in the
             // line once it arrives as the user's turn, which is what the line below sends.
-            if (refused && !(await this.dshServesSkill(target, cmd, signal))) return refused;
+            if (refused && !(await this.dshServesSkill(target, cmd, signal))) {
+              // A name only Claude Code has still runs, with its instructions read from the file
+              // the CLI would expand, unless the switch is off. Local files only: on an ssh box the
+              // skills live on the far box and this box's `~/.claude` says nothing about them.
+              const own =
+                this.config.sshHost ||
+                (await readHints(join(this.stateDir, "hints.json"))).claudeSkillsAnywhereOff ===
+                  true
+                  ? undefined
+                  : await claudeCommandText(
+                      cmd,
+                      rawInput,
+                      this.sessionCwd(target.session?.id ?? String(target.id)),
+                      this.realClaudeHome,
+                    );
+              if (!own) return refused;
+              target.followup(
+                createUserMessage({
+                  content: [{ type: "text", text: `/${cmd}${rawInput}` }, ...attachments],
+                  source: { kind: "user" },
+                }),
+              );
+              const source = { kind: "skill-invocation", name: cmd, form: "instructions" };
+              // SAFETY: dsh-llm's MessageSource type predates the skill kinds; dsh's own skill
+              // injection (dsh-tool-skill) writes exactly this source, and the chat draws it folded.
+              target.followup(
+                createUserMessage({
+                  content: [{ type: "text", text: skillContent(cmd, own.path, own.body) }],
+                  source: source as MessageSource,
+                }),
+              );
+              return { kind: "success", text: serverText("bridgeSkillOwn", { name: cmd }) };
+            }
             // Off Claude the line reaches the session's own model, which runs dsh's skill.
             if (refused) {
               target.followup(

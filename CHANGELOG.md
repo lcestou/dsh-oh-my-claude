@@ -6,9 +6,13 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Added
+
+- A skill or custom command only Claude Code has runs in a session on another model. Typed as `/name` in a DeepSeek or local-model chat, it used to be refused with "works in Claude Code sessions"; now the line goes to that model with the skill's instructions, read from the same `SKILL.md` or command file Claude Code would expand, in the shape dsh uses for its own skills. Skills dsh serves itself run as before. A switch in Settings, "Claude Code skills on every model", turns it off box-wide. Thanks to @namastex888, whose Omni fork made this change.
+
 ### Fixed
 
-- On macOS, the usage panel shows your plan usage instead of "needs a Claude Code login". Claude Code keeps the macOS login in the Keychain, not in `~/.claude/.credentials.json`, and the plugin only read the file. It now falls back to the Keychain when the file is missing or its token has expired, for the default `~/.claude` login, also with `ownTranscripts` on. The Models API read gets the same fallback, so on macOS the model picker now also lists what that API returns.
+- On macOS, the usage panel shows your plan usage instead of "needs a Claude Code login". Thanks to @fancn (#208). Claude Code keeps the macOS login in the Keychain, not in `~/.claude/.credentials.json`, and the plugin only read the file. It now falls back to the Keychain when the file is missing or its token has expired, for the default `~/.claude` login, also with `ownTranscripts` on. The Models API read gets the same fallback, so on macOS the model picker now also lists what that API returns.
 
 ## [1.5.9] - 2026-10-27
 

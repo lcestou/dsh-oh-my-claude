@@ -1280,6 +1280,38 @@ export function SuggestionSwitch() {
   );
 }
 
+/** The Claude Code skills switch, inverted over the `claudeSkillsAnywhereOff` hint so a box with
+ *  no hint reads as on. It governs the command bridge in sessions on another model: with it on, a
+ *  skill or custom command only Claude Code has goes to that model with its instructions; off, the
+ *  bridge refuses as it did before. A hint, not browser state, so every tab and phone agrees. */
+export function ClaudeSkillsSwitch() {
+  useLocale();
+  const [off, setOff] = useHintFlag("claudeSkillsAnywhereOff");
+  return (
+    <div
+      data-omc-claude-skills-switch=""
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
+        fontSize: 13,
+        marginBottom: 12,
+      }}
+    >
+      <div>
+        <div>{t("main.settingsUi.claudeSkillsTitle")}</div>
+        <div style={{ color: T.faint, fontSize: 12 }}>{t("main.settingsUi.claudeSkillsDesc")}</div>
+      </div>
+      <Switch
+        on={!off}
+        onChange={(on) => setOff(!on)}
+        label={t("main.settingsUi.claudeSkillsTitle")}
+      />
+    </div>
+  );
+}
+
 /** The settings switch for the context nudge and, with it on, the percent it speaks at. Both are
  *  hints like the suggestion switch above: the threshold is the box's, so every tab agrees on when
  *  to speak up. The default is stored as absence, so a box that never touched it follows a moved

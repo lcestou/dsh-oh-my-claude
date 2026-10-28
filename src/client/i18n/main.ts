@@ -389,6 +389,9 @@ export const en = {
   "main.settingsUi.recapDesc":
     "One line on what Claude did while you were on another session, asked when you come back to one that finished without you. Costs a model call each time.",
   "main.settingsUi.suggestTitle": "Suggested next prompt",
+  "main.settingsUi.claudeSkillsTitle": "Claude Code skills on every model",
+  "main.settingsUi.claudeSkillsDesc":
+    "A skill or custom command only Claude Code has, typed in a session on another model, goes to that model with its instructions instead of being refused. Skills dsh serves itself run either way.",
   "main.settingsUi.compactTitle": "Compact nudge",
   "main.settingsUi.compactDesc":
     "Above the composer once the context window is {percent}% full, with a Compact button.",
@@ -891,6 +894,9 @@ export const zh = {
   "main.settingsUi.recapDesc":
     "当你回到一个在你不在时完成的会话时，用一行说明 Claude 在你处理其他会话期间做了什么。每次都会消耗一次模型调用。",
   "main.settingsUi.suggestTitle": "下一条提示建议",
+  "main.settingsUi.claudeSkillsTitle": "在所有模型上使用 Claude Code 技能",
+  "main.settingsUi.claudeSkillsDesc":
+    "在其他模型的会话中输入只有 Claude Code 才有的技能或自定义命令时，会连同其指令一起交给该模型，而不是被拒绝。dsh 自己提供的技能无论如何都能运行。",
   "main.settingsUi.compactTitle": "压缩提醒",
   "main.settingsUi.compactDesc": "上下文窗口用到 {percent}% 时在输入框上方提醒，并提供压缩按钮。",
   "main.settingsUi.suggestDesc":

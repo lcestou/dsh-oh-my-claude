@@ -63,6 +63,7 @@ import {
   StarLine,
   StarterSwitch,
   SuggestionSwitch,
+  ClaudeSkillsSwitch,
   TerminalSyncSwitch,
   ThemeSwitch,
   ToolRowsSwitch,
@@ -335,6 +336,7 @@ export function apply(ctx: ClientCtx) {
         <WorkspaceModelSwitch />
         <ToolRowsSwitch />
         <SuggestionSwitch />
+        <ClaudeSkillsSwitch />
         <CompactNudgeSwitch />
         {/* The switches that start off sit together after the ones that start on, so the card reads
             as what the plugin does by default first, then what you can add to it. The proxy control

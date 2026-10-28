@@ -169,7 +169,7 @@ const blockTextOf = (c: StreamChunk | undefined): string => {
 import { PassThrough } from "node:stream";
 import { tmpdir } from "node:os";
 import { homedir } from "node:os";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { serverText } from "./locale.js";
 import { join as joinPath } from "node:path";
 import { STATE_DIR } from "./state.js";
@@ -9356,7 +9356,7 @@ console.log("watch-save-race ok");
     attachments: [],
     signal,
   });
-  assert.equal(verify.kind, "error", "a name only Claude Code has still refuses");
+  assert.equal(verify.kind, "error", "a name without a file anywhere still refuses");
   assert.equal(sent.length, 1, "and sends nothing");
   assert.equal(await a.dshServesSkill(target, "verify"), false);
   const bare = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
@@ -9365,5 +9365,72 @@ console.log("watch-save-race ok");
     false,
     "no skill service: refuse as before",
   );
+
+  // A skill or custom command only Claude Code has goes to the session's model with its
+  // instructions, read from the file the CLI would expand; the hint switch turns that off, and an
+  // ssh box never reads this box's files for it.
+  const home = await mkdtemp(joinPath(tmpdir(), "omc-claude-home-"));
+  await mkdir(joinPath(home, "skills", "wish"), { recursive: true });
+  await writeFile(
+    joinPath(home, "skills", "wish", "SKILL.md"),
+    "---\nname: wish\n---\nGrant: $ARGUMENTS\n",
+  );
+  await mkdir(joinPath(home, "commands"), { recursive: true });
+  await writeFile(joinPath(home, "commands", "probe.md"), "Probe the box.\n");
+  const own = new ClaudeCodeAdapter(fakeCtx(ctx), Config({ commandBridge: true, configDir: home }));
+  await rm(joinPath(own.stateDir, "hints.json"), { force: true });
+  own.bridgeCommands(["wish", "probe", "verify"], undefined);
+  sent.length = 0;
+  const wish = await handlers.get("wish")!({
+    agent: target,
+    rawInput: " a pony",
+    attachments: [],
+    signal,
+  });
+  assert.equal(wish.kind, "success", "a skill only Claude Code has runs on the session's model");
+  assert.match(wish.text ?? "", /Claude Code's \/wish instructions/);
+  assert.equal(sent.length, 2, "the line and the instructions");
+  assert.equal(textOf(sent[0]!), "/wish a pony");
+  assert.equal(sent[1]!.source?.kind, "skill-invocation", "in dsh's own skill shape");
+  assert.match(textOf(sent[1]!), /<skill_content name="wish">/);
+  assert.match(textOf(sent[1]!), /Base directory for this skill: .*skills\/wish\n/);
+  assert.match(textOf(sent[1]!), /<skill_instructions>\nGrant: a pony\n<\/skill_instructions>/);
+  assert.ok(!/^---/m.test(textOf(sent[1]!)), "frontmatter is left out");
+  sent.length = 0;
+  const probe = await handlers.get("probe")!({
+    agent: target,
+    rawInput: "",
+    attachments: [],
+    signal,
+  });
+  assert.equal(probe.kind, "success", "a custom command too");
+  assert.match(textOf(sent[1]!), /custom command; it has no resources/);
+  sent.length = 0;
+  const none = await handlers.get("verify")!({
+    agent: target,
+    rawInput: "",
+    attachments: [],
+    signal,
+  });
+  assert.equal(none.kind, "error", "no file: refused as before");
+  assert.equal(sent.length, 0);
+  await mkdir(own.stateDir, { recursive: true });
+  await writeFile(
+    joinPath(own.stateDir, "hints.json"),
+    JSON.stringify({ claudeSkillsAnywhereOff: true }),
+  );
+  const off = await handlers.get("wish")!({ agent: target, rawInput: "", attachments: [], signal });
+  assert.equal(off.kind, "error", "the switch off refuses the name again");
+  assert.equal(sent.length, 0);
+  await rm(joinPath(own.stateDir, "hints.json"), { force: true });
+  const remote = new ClaudeCodeAdapter(
+    fakeCtx(ctx),
+    Config({ commandBridge: true, configDir: home, sshHost: "far" }),
+  );
+  remote.bridgeCommands(["wish"], undefined);
+  const far = await handlers.get("wish")!({ agent: target, rawInput: "", attachments: [], signal });
+  assert.equal(far.kind, "error", "an ssh box does not read this box's skill files");
+  assert.equal(sent.length, 0);
+  await rm(home, { recursive: true, force: true });
   console.log("bridged dsh skills ok");
 }
