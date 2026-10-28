@@ -9454,3 +9454,20 @@ console.log("watch-save-race ok");
   await rm(hintsPath, { force: true });
   console.log("hidden model ids ok");
 }
+
+// A hide switch announces the changed picker to dsh the way its own providers do, once per mount
+// under this mount's provider id; a host context without `emit` is left alone.
+{
+  const emitted: unknown[][] = [];
+  const a = new ClaudeCodeAdapter(
+    fakeCtx({ on() {}, emit: (...args: unknown[]) => emitted.push(args) }),
+    Config({}),
+  );
+  a.modelsUpdated();
+  assert.ok(
+    emitted.some((e) => e[0] === "llm/models-updated" && e[1] === "claude-code"),
+    "dsh's models-updated event for this provider",
+  );
+  new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({})).modelsUpdated();
+  console.log("models updated ok");
+}

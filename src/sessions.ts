@@ -1359,6 +1359,7 @@ export interface RouteCtx {
   memoryDirAt: (box: MountBox, cwd: string) => Promise<string>;
   models: SessionRouteOptions["models"];
   pickerModels: SessionRouteOptions["pickerModels"];
+  modelsUpdated: SessionRouteOptions["modelsUpdated"];
   mtimeOf: typeof mtimeOf;
   notOnBox: (url: URL, what: string, cwd?: string | null) => string | undefined;
   onLoginStatus: SessionRouteOptions["onLoginStatus"];
@@ -2031,6 +2032,8 @@ export interface SessionRouteOptions {
   pickerModels?: () => Promise<
     Array<{ id: string; name: string; hidden: boolean; locked: boolean }>
   >;
+  /** Announces a changed picker to dsh, after a hints write that hid or showed a model. */
+  modelsUpdated?: () => void;
   /** The provider id this machine's Claude mounts under; a restored session is put on it. */
   providerId?: string;
   /** Re-read plugins into a session's live process after a plugin/marketplace mutation, so the
@@ -2151,6 +2154,7 @@ export function registerSessionRoutes(
     setStarter,
     models,
     pickerModels,
+    modelsUpdated,
     providerId,
     reloadPlugins,
     reloadSkills,
@@ -2564,6 +2568,7 @@ export function registerSessionRoutes(
       memoryDirAt,
       models,
       pickerModels,
+      modelsUpdated,
       mtimeOf,
       notOnBox,
       onLoginStatus,

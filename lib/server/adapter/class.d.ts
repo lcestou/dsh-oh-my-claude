@@ -158,6 +158,13 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      */
     hiddenModelIds(): Promise<string[]>;
     /**
+     * Tell dsh every mount's picker changed, the event dsh's own providers send when their lineup
+     * moves (`llm/models-updated`): the composer's picker reloads `listModels` on it, so a model
+     * switched off in Settings leaves the open menu at once instead of at the next tab reload. One
+     * emit per mount, since each is its own provider route; a host without `emit` is left alone.
+     */
+    modelsUpdated(): void;
+    /**
      * The Settings card's model list: every row the catalog and settings.json would offer, hidden or
      * not, so a hidden model can be switched back on. `locked` marks a row the plugin config hides,
      * which the switch cannot undo; `hidden` is the picker's answer either way. Default is left out,
