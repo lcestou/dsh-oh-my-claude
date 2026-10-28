@@ -7836,16 +7836,19 @@ console.log("interrupt-on-abort ok");
   console.log("attachments-to-box ok");
 }
 
-// capacity split: prepareCall reports the window (the ring reads it), resolveModel does not
-// (dsh-compaction-basic reads that one, and silence there is what keeps it from compacting on top
-// of Claude Code's own compaction). Identity and reasoning survive on both.
+// Capacity on both reads: prepareCall feeds the context ring and resolveModel feeds
+// dsh-compaction-basic, whose model-switch check (dsh 0.2.2-alpha.2) fails the request, message
+// and all, when the target reports no capacity. Identity and reasoning agree on both.
 {
   const adapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
   const prepared = await adapter.prepareCall("claude-code", "claude-opus-5");
   const resolved = await adapter.resolveModel("claude-code", "claude-opus-5");
   assert.ok((prepared.model.context?.contextWindow ?? 0) > 0, "prepareCall reports capacity");
-  // `in`, not `.context`: the narrowed return type has no such property, which is the point.
-  assert.ok(!("context" in resolved), "resolveModel withholds capacity");
+  assert.deepEqual(
+    resolved.context,
+    prepared.model.context,
+    "resolveModel reports the same capacity, so a model switch can be priced",
+  );
   assert.equal(resolved.id, prepared.model.id);
   assert.deepEqual(resolved.reasoning, prepared.model.reasoning);
   assert.equal(typeof prepared.stream, "function");
