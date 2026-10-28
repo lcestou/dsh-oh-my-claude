@@ -6,6 +6,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Fixed
+
+- On dsh 0.2.2-alpha.2, switching a session to another Claude model failed with "Cannot switch to claude-code/…: context compaction failed: no context capacity" and dropped the message you had typed. That dsh prices a model switch against the target's context window, and the plugin withheld the window from dsh's compaction on purpose since 1.1.x, to keep it from compacting on top of Claude Code's own. The window is reported now; dsh's compaction can run again on a Claude session, only once its own measure of the session passes about 80% of the window.
+
 ## [1.5.10] - 2026-10-28
 
 dsh: runs on 0.2.0-rc.1 through 0.2.2-alpha.2; built and tested on 0.2.2-alpha.2.
