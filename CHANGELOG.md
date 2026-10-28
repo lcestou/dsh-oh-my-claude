@@ -6,6 +6,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+## [1.5.10] - 2026-10-28
+
+dsh: runs on 0.2.0-rc.1 through 0.2.2-alpha.2; built and tested on 0.2.2-alpha.2.
+
 ### Added
 
 - Settings gains a Models block with a switch per model, one group per box. Switch one off and it leaves that box's model picker in every browser, with no config file to edit, and the open picker follows at once; a box added over SSH keeps its own list, so it can show a model this box hides. A session already on it keeps running, a model released later shows up on its own, and a model `hiddenModels` hides is shown locked. Matching is the same as `hiddenModels`, so a dated id goes with its family and a longer version is left alone.
