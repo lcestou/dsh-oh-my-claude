@@ -3017,7 +3017,18 @@ export function registerSessionRoutes(
               const loginBoxes = await readSshBoxes(sshBoxesPath);
               if (loginHost !== THIS_BOX && !loginBoxes.some((b) => b.host === loginHost))
                 return json(res, 400, { error: "unknown box" });
-              return json(res, 200, await startSshLogin(loginHost, undefined, undefined, command));
+              // The box runs its own claude by the configured name; this box's resolved absolute
+              // path means nothing there (a login on lilly ran /home/<me>/.local/bin/claude).
+              return json(
+                res,
+                200,
+                await startSshLogin(
+                  loginHost,
+                  undefined,
+                  undefined,
+                  (loginHost === THIS_BOX ? command : (boxCommand ?? command)) ?? "claude",
+                ),
+              );
             }
             if (
               sshBoxesPath &&
