@@ -544,6 +544,10 @@ const SSH_OPTS = [
   "BatchMode=yes",
   "-o",
   "ConnectTimeout=10",
+  // Errors only: at the default level a multiplexed connection ends with "Shared connection to
+  // <host> closed." on stderr, which every probe reads as the box's failure text.
+  "-o",
+  "LogLevel=ERROR",
   ...(SSH_CONTROL_DIR === undefined
     ? []
     : [

@@ -39,6 +39,7 @@ export function statusRoutes(c: RouteCtx): RouteHandler {
       mcp,
       models,
       onLoginStatus,
+      pickerModels,
       parseSettingsText,
       pluginStars,
       pluginUpdate,
@@ -100,9 +101,11 @@ export function statusRoutes(c: RouteCtx): RouteHandler {
       return json(res, 200, status);
     }
     if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/models`) {
-      if (!models) return json(res, 404, { error: "models not available" });
+      // `?all=1` is the Settings card's read: every mount's rows with their hide state, not the cut.
+      const list = url.searchParams.get("all") === "1" ? pickerModels : models;
+      if (!list) return json(res, 404, { error: "models not available" });
       try {
-        const modelList = await models();
+        const modelList = await list();
         return json(res, 200, { models: modelList });
       } catch (e) {
         return json(res, 500, { error: errorText(e) });

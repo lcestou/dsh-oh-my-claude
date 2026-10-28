@@ -121,7 +121,7 @@ dsh 只发布预发行版，客户端 API 也会在版本之间变动，所以�
 
 ## 你能得到什么
 
-1. 在 dsh 自己的选择器里使用你的登录可用的任何 Claude 模型。用 `hiddenModels` 隐藏不用的模型。[Models](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#models)
+1. 在 dsh 自己的选择器里使用你的登录可用的任何 Claude 模型。用设置里的开关或插件配置的 `hiddenModels` 隐藏不用的模型。[Models](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#models)
 2. 每个 dsh 会话都会续接它的 Claude Code 会话（包括工具历史），终端里的 `claude /resume` 看到的是同一个会话。[Sessions](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#sessions)
 3. 重启 dsh 不会中断正在运行的 Claude 回合。[Restarts](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#restarts)
 4. dsh 的访问权限盾牌按会话设置 Claude 的六种权限模式。[Permission mode](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#permission-mode-per-session)
@@ -130,7 +130,7 @@ dsh 只发布预发行版，客户端 API 也会在版本之间变动，所以�
 7. 费用和缓存 token 显示在 dsh 底部，超过设定额度时标签变橙。[Cost pill](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#cost-pill)
 8. 套餐用量（5 小时、每周、额外用量）显示在 dsh 的上下文圆环里，接近上限时变琥珀色，达到上限时变红，并在输入框上方提示。只统计会话所用模型计入的额度，由 Anthropic 判定，所以新模型无需更新插件。[Plan usage](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#plan-usage)
 9. 恢复或导入任何过去的 Claude 记录，无论来自 dsh 还是终端，并可在其中搜索说过的内容。[Session browser](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#session-browser)
-10. Claude 的斜杠命令和技能以原名出现在 dsh 的斜杠菜单里，dsh 已占用的名字改为 `/claude-<name>`。dsh 自己也提供的技能在任何模型上都能运行。[Command bridge](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#command-bridge)
+10. Claude 的斜杠命令和技能以原名出现在 dsh 的斜杠菜单里，dsh 已占用的名字改为 `/claude-<name>`。dsh 自己也提供的技能在任何模型上都能运行；只有 Claude Code 才有的技能也一样：在其他模型的会话中输入时，会连同其指令一起交给该模型（可在设置中关闭）。[Command bridge](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#command-bridge)
 11. Claude 可以通过 MCP 使用 dsh 的子智能体、后台任务、目标和网页搜索。[dsh tools over MCP](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#dsh-tools-over-mcp)
 12. 在面板里编辑本机或远程主机上的 CLAUDE.md、settings.json 和 MCP 服务器，并登录需要登录的 MCP 服务器。[Instructions](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#instructions)、[settings.json editor](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#settingsjson-editor)、[MCP](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#mcp)
 13. 通过 SSH 在另一台主机上运行 Claude，或挂载多个账号。[Remote boxes and accounts](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/remote.md)

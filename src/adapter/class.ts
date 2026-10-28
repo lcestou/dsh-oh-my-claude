@@ -225,6 +225,7 @@ import {
   proxyBaseUrl,
   resolveModelInfo,
   windowKey,
+  hintHiddenModels,
   withoutHiddenModels,
 } from "./catalog.js";
 import {
@@ -240,6 +241,7 @@ import {
   SELECTION_EXPLAIN,
 } from "./asides.js";
 import { claudeOnlyRefusal } from "./claude-only.js";
+import { claudeCommandText, skillContent } from "./skill-line.js";
 import {
   claudeSessionExists,
   claudeSessionId,
@@ -751,7 +753,79 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     await this.cliSeed;
     await this.probeCliModels();
     const models = await getCatalog(undefined, this.cliModels, await this.pickerSettings());
-    return withoutHiddenModels(models, this.config.hiddenModels).map((m) => modelInfo(provider, m));
+    return withoutHiddenModels(models, await this.hiddenModelIds()).map((m) =>
+      modelInfo(provider, m),
+    );
+  }
+
+  /**
+   * Every id this mount's picker leaves out: the plugin config's `hiddenModels`, then the Settings
+   * switches for this mount, which live in the hints store (one file for every mount, keyed by
+   * provider id, so each box has its own list and every browser sees the same one). One small
+   * file read per listing.
+   */
+  async hiddenModelIds(): Promise<string[]> {
+    const hints = await readHints(join(STATE_DIR, "hints.json"));
+    return [...this.config.hiddenModels, ...hintHiddenModels(hints, this.providerId)];
+  }
+
+  /**
+   * The Settings card's Models block: one entry per mount, this box and every ssh box, each with
+   * its provider id (the switches' key), its host (null for this box) and its `pickerModels`.
+   * A mount whose catalog read fails is listed empty rather than failing the others.
+   */
+  async pickerBoxes(): Promise<
+    Array<{
+      provider: string;
+      host: string | null;
+      models: Array<{ id: string; name: string; hidden: boolean; locked: boolean }>;
+    }>
+  > {
+    return Promise.all(
+      [...ClaudeCodeAdapter.mounts(this)].map(async (mount) => ({
+        provider: mount.providerId,
+        host: mount.config.sshHost || null,
+        models: await mount.pickerModels().catch(() => []),
+      })),
+    );
+  }
+
+  /**
+   * Tell dsh every mount's picker changed, the event dsh's own providers send when their lineup
+   * moves (`llm/models-updated`): the composer's picker reloads `listModels` on it, so a model
+   * switched off in Settings leaves the open menu at once instead of at the next tab reload. One
+   * emit per mount, since each is its own provider route; a host without `emit` is left alone.
+   */
+  modelsUpdated() {
+    for (const mount of ClaudeCodeAdapter.mounts(this))
+      mount.ctx.emit?.("llm/models-updated", mount.providerId);
+  }
+
+  /**
+   * One mount's model list: every row the catalog and settings.json would offer, hidden or
+   * not, so a hidden model can be switched back on. `locked` marks a row the plugin config hides,
+   * which the switch cannot undo; `hidden` is the picker's answer either way. Default is left out,
+   * since it is never hidden.
+   */
+  async pickerModels(): Promise<
+    Array<{ id: string; name: string; hidden: boolean; locked: boolean }>
+  > {
+    await this.cliSeed;
+    const models = await getCatalog(undefined, this.cliModels, await this.pickerSettings());
+    const shown = new Set(
+      withoutHiddenModels(models, await this.hiddenModelIds()).map((m) => m.id),
+    );
+    const unlocked = new Set(
+      withoutHiddenModels(models, this.config.hiddenModels).map((m) => m.id),
+    );
+    return models
+      .filter((m) => m.id !== "default")
+      .map((m) => ({
+        id: m.id,
+        name: m.name,
+        hidden: !shown.has(m.id),
+        locked: !unlocked.has(m.id),
+      }));
   }
 
   /** After a `result` frame: remember a login failure for the card, and name the box's providers
@@ -1308,7 +1382,39 @@ export class ClaudeCodeAdapter extends LlmAdapter {
             const refused = this.notClaude(target, dshCommand);
             // A skill dsh serves under the same name runs on any model: dsh expands the `/name` in the
             // line once it arrives as the user's turn, which is what the line below sends.
-            if (refused && !(await this.dshServesSkill(target, cmd, signal))) return refused;
+            if (refused && !(await this.dshServesSkill(target, cmd, signal))) {
+              // A name only Claude Code has still runs, with its instructions read from the file
+              // the CLI would expand, unless the switch is off. Local files only: on an ssh box the
+              // skills live on the far box and this box's `~/.claude` says nothing about them.
+              const own =
+                this.config.sshHost ||
+                (await readHints(join(this.stateDir, "hints.json"))).claudeSkillsAnywhereOff ===
+                  true
+                  ? undefined
+                  : await claudeCommandText(
+                      cmd,
+                      rawInput,
+                      this.sessionCwd(target.session?.id ?? String(target.id)),
+                      this.realClaudeHome,
+                    );
+              if (!own) return refused;
+              target.followup(
+                createUserMessage({
+                  content: [{ type: "text", text: `/${cmd}${rawInput}` }, ...attachments],
+                  source: { kind: "user" },
+                }),
+              );
+              const source = { kind: "skill-invocation", name: cmd, form: "instructions" };
+              // SAFETY: dsh-llm's MessageSource type predates the skill kinds; dsh's own skill
+              // injection (dsh-tool-skill) writes exactly this source, and the chat draws it folded.
+              target.followup(
+                createUserMessage({
+                  content: [{ type: "text", text: skillContent(cmd, own.path, own.body) }],
+                  source: source as MessageSource,
+                }),
+              );
+              return { kind: "success", text: serverText("bridgeSkillOwn", { name: cmd }) };
+            }
             // Off Claude the line reaches the session's own model, which runs dsh's skill.
             if (refused) {
               target.followup(

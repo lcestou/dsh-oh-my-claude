@@ -389,6 +389,14 @@ export const en = {
   "main.settingsUi.recapDesc":
     "One line on what Claude did while you were on another session, asked when you come back to one that finished without you. Costs a model call each time.",
   "main.settingsUi.suggestTitle": "Suggested next prompt",
+  "main.settingsUi.modelsTitle": "Models in the picker",
+  "main.settingsUi.modelsDesc":
+    "Switch a model off to leave it out of that box's model picker. Each box has its own list, so a box you added over SSH can keep a model this one hides. A session already on it keeps running. A newer model shows up on its own.",
+  "main.settingsUi.modelsLocked": "hidden by hiddenModels in the plugin config",
+  "main.settingsUi.modelsSummary": "{shown} listed, {hidden} hidden",
+  "main.settingsUi.claudeSkillsTitle": "Claude Code skills on every model",
+  "main.settingsUi.claudeSkillsDesc":
+    "A skill or custom command only Claude Code has, typed in a session on another model, goes to that model with its instructions instead of being refused. Skills dsh serves itself run either way.",
   "main.settingsUi.compactTitle": "Compact nudge",
   "main.settingsUi.compactDesc":
     "Above the composer once the context window is {percent}% full, with a Compact button.",
@@ -891,6 +899,14 @@ export const zh = {
   "main.settingsUi.recapDesc":
     "当你回到一个在你不在时完成的会话时，用一行说明 Claude 在你处理其他会话期间做了什么。每次都会消耗一次模型调用。",
   "main.settingsUi.suggestTitle": "下一条提示建议",
+  "main.settingsUi.modelsTitle": "选择器中的模型",
+  "main.settingsUi.modelsDesc":
+    "关掉一个模型，它就不再出现在该主机的模型选择器里。每台主机各有一份列表，所以通过 SSH 添加的主机可以保留本机隐藏的模型。已在用它的会话照常运行。新模型会自动出现。",
+  "main.settingsUi.modelsLocked": "已被插件配置的 hiddenModels 隐藏",
+  "main.settingsUi.modelsSummary": "{shown} 个显示，{hidden} 个隐藏",
+  "main.settingsUi.claudeSkillsTitle": "在所有模型上使用 Claude Code 技能",
+  "main.settingsUi.claudeSkillsDesc":
+    "在其他模型的会话中输入只有 Claude Code 才有的技能或自定义命令时，会连同其指令一起交给该模型，而不是被拒绝。dsh 自己提供的技能无论如何都能运行。",
   "main.settingsUi.compactTitle": "压缩提醒",
   "main.settingsUi.compactDesc": "上下文窗口用到 {percent}% 时在输入框上方提醒，并提供压缩按钮。",
   "main.settingsUi.suggestDesc":

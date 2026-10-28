@@ -169,7 +169,7 @@ const blockTextOf = (c: StreamChunk | undefined): string => {
 import { PassThrough } from "node:stream";
 import { tmpdir } from "node:os";
 import { homedir } from "node:os";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { serverText } from "./locale.js";
 import { join as joinPath } from "node:path";
 import { STATE_DIR } from "./state.js";
@@ -9356,7 +9356,7 @@ console.log("watch-save-race ok");
     attachments: [],
     signal,
   });
-  assert.equal(verify.kind, "error", "a name only Claude Code has still refuses");
+  assert.equal(verify.kind, "error", "a name without a file anywhere still refuses");
   assert.equal(sent.length, 1, "and sends nothing");
   assert.equal(await a.dshServesSkill(target, "verify"), false);
   const bare = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
@@ -9365,5 +9365,129 @@ console.log("watch-save-race ok");
     false,
     "no skill service: refuse as before",
   );
+
+  // A skill or custom command only Claude Code has goes to the session's model with its
+  // instructions, read from the file the CLI would expand; the hint switch turns that off, and an
+  // ssh box never reads this box's files for it.
+  const home = await mkdtemp(joinPath(tmpdir(), "omc-claude-home-"));
+  await mkdir(joinPath(home, "skills", "wish"), { recursive: true });
+  await writeFile(
+    joinPath(home, "skills", "wish", "SKILL.md"),
+    "---\nname: wish\n---\nGrant: $ARGUMENTS\n",
+  );
+  await mkdir(joinPath(home, "commands"), { recursive: true });
+  await writeFile(joinPath(home, "commands", "probe.md"), "Probe the box.\n");
+  const own = new ClaudeCodeAdapter(fakeCtx(ctx), Config({ commandBridge: true, configDir: home }));
+  await rm(joinPath(own.stateDir, "hints.json"), { force: true });
+  own.bridgeCommands(["wish", "probe", "verify"], undefined);
+  sent.length = 0;
+  const wish = await handlers.get("wish")!({
+    agent: target,
+    rawInput: " a pony",
+    attachments: [],
+    signal,
+  });
+  assert.equal(wish.kind, "success", "a skill only Claude Code has runs on the session's model");
+  assert.match(wish.text ?? "", /Claude Code's \/wish instructions/);
+  assert.equal(sent.length, 2, "the line and the instructions");
+  assert.equal(textOf(sent[0]!), "/wish a pony");
+  assert.equal(sent[1]!.source?.kind, "skill-invocation", "in dsh's own skill shape");
+  assert.match(textOf(sent[1]!), /<skill_content name="wish">/);
+  assert.match(textOf(sent[1]!), /Base directory for this skill: .*skills\/wish\n/);
+  assert.match(textOf(sent[1]!), /<skill_instructions>\nGrant: a pony\n<\/skill_instructions>/);
+  assert.ok(!/^---/m.test(textOf(sent[1]!)), "frontmatter is left out");
+  sent.length = 0;
+  await handlers.get("wish")!({
+    agent: target,
+    rawInput: " $& and $' and $$",
+    attachments: [],
+    signal,
+  });
+  assert.match(
+    textOf(sent[1]!),
+    /Grant: \$& and \$' and \$\$\n/,
+    "a dollar pattern typed as an argument is inserted as text",
+  );
+  sent.length = 0;
+  const probe = await handlers.get("probe")!({
+    agent: target,
+    rawInput: "",
+    attachments: [],
+    signal,
+  });
+  assert.equal(probe.kind, "success", "a custom command too");
+  assert.match(textOf(sent[1]!), /custom command; it has no resources/);
+  sent.length = 0;
+  const none = await handlers.get("verify")!({
+    agent: target,
+    rawInput: "",
+    attachments: [],
+    signal,
+  });
+  assert.equal(none.kind, "error", "no file: refused as before");
+  assert.equal(sent.length, 0);
+  await mkdir(own.stateDir, { recursive: true });
+  await writeFile(
+    joinPath(own.stateDir, "hints.json"),
+    JSON.stringify({ claudeSkillsAnywhereOff: true }),
+  );
+  const off = await handlers.get("wish")!({ agent: target, rawInput: "", attachments: [], signal });
+  assert.equal(off.kind, "error", "the switch off refuses the name again");
+  assert.equal(sent.length, 0);
+  await rm(joinPath(own.stateDir, "hints.json"), { force: true });
+  const remote = new ClaudeCodeAdapter(
+    fakeCtx(ctx),
+    Config({ commandBridge: true, configDir: home, sshHost: "far" }),
+  );
+  remote.bridgeCommands(["wish"], undefined);
+  const far = await handlers.get("wish")!({ agent: target, rawInput: "", attachments: [], signal });
+  assert.equal(far.kind, "error", "an ssh box does not read this box's skill files");
+  assert.equal(sent.length, 0);
+  await rm(home, { recursive: true, force: true });
   console.log("bridged dsh skills ok");
+}
+
+// The picker's hide list: the plugin config's `hiddenModels` first, then the Settings switches from
+// the box-wide hints file; a switch turned back on leaves no key, and other hints do not count.
+{
+  const a = new ClaudeCodeAdapter(
+    fakeCtx({ on() {} }),
+    Config({ hiddenModels: ["claude-opus-5"] }),
+  );
+  const hintsPath = joinPath(STATE_DIR, "hints.json");
+  await mkdir(STATE_DIR, { recursive: true });
+  await rm(hintsPath, { force: true });
+  assert.deepEqual(await a.hiddenModelIds(), ["claude-opus-5"], "no hints file: the config alone");
+  await writeFile(
+    hintsPath,
+    JSON.stringify({
+      "hideModel:claude-code:claude-haiku-4-5": true,
+      "hideModel:claude-code-far:claude-sonnet-5": true,
+      starterOff: true,
+    }),
+  );
+  assert.deepEqual(
+    await a.hiddenModelIds(),
+    ["claude-opus-5", "claude-haiku-4-5"],
+    "this mount's switches, not another box's",
+  );
+  await rm(hintsPath, { force: true });
+  console.log("hidden model ids ok");
+}
+
+// A hide switch announces the changed picker to dsh the way its own providers do, once per mount
+// under this mount's provider id; a host context without `emit` is left alone.
+{
+  const emitted: unknown[][] = [];
+  const a = new ClaudeCodeAdapter(
+    fakeCtx({ on() {}, emit: (...args: unknown[]) => emitted.push(args) }),
+    Config({}),
+  );
+  a.modelsUpdated();
+  assert.ok(
+    emitted.some((e) => e[0] === "llm/models-updated" && e[1] === "claude-code"),
+    "dsh's models-updated event for this provider",
+  );
+  new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({})).modelsUpdated();
+  console.log("models updated ok");
 }

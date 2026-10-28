@@ -2,7 +2,7 @@
 // dock components that read the same hints. The entry renders them inside the card it builds.
 import { t, useLocale } from "./i18n.js";
 import type { CSSProperties, ReactNode } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ROUTE,
   T,
@@ -28,6 +28,7 @@ import { livingModelId } from "../model-ids.js";
 import { ConfirmButton } from "./tune.js";
 import { ClaudeUpdateDetails } from "./claude-updates.js";
 import { COMPACT_AT, COMPACT_AT_CHOICES, compactThreshold } from "./nudge.js";
+import { BOXES_EVENT } from "./picker.js";
 import { Switch } from "./switch.js";
 import type { ToolMode, ToolModeInfo } from "../rows-probe.js";
 import { RECAP_AWAY_MS, RECAP_AWAY_CHOICES, recapAwayIn } from "./notices.js";
@@ -1276,6 +1277,196 @@ export function SuggestionSwitch() {
         <div style={{ color: T.faint, fontSize: 12 }}>{t("main.settingsUi.suggestDesc")}</div>
       </div>
       <Switch on={!off} onChange={(on) => setOff(!on)} label={t("main.settingsUi.suggestTitle")} />
+    </div>
+  );
+}
+
+type PickerModel = { id: string; name: string; hidden: boolean; locked: boolean };
+type PickerBox = { provider: string; host: string | null; models: PickerModel[] };
+
+/** One model's row in the Models block: a switch over that box's `hideModel:<provider>:<id>` hint,
+ *  on when the model is listed. A row the plugin config hides is shown off and disabled, with a note
+ *  saying why, since a switch here cannot undo a config entry. Reports its live state up so the
+ *  summary can count. */
+function ModelRow({
+  box,
+  model,
+  onState,
+}: {
+  box: PickerBox;
+  model: PickerModel;
+  onState: (key: string, hidden: boolean) => void;
+}) {
+  const key = `hideModel:${box.provider}:${model.id}`;
+  const [off, setOff] = useHintFlag(key);
+  const hidden = model.locked || off;
+  useEffect(() => onState(key, hidden), [key, hidden, onState]);
+  return (
+    <div
+      data-omc-model-row={model.id}
+      style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}
+    >
+      <div style={{ minWidth: 0, color: hidden ? T.faint : undefined }}>
+        <div>{model.name}</div>
+        <div style={{ color: T.faint, fontSize: 11, fontFamily: "monospace" }}>
+          {model.id}
+          {model.locked ? ` · ${t("main.settingsUi.modelsLocked")}` : ""}
+        </div>
+      </div>
+      <Switch
+        on={!hidden}
+        disabled={model.locked}
+        onChange={(on) => setOff(!on)}
+        label={model.name}
+      />
+    </div>
+  );
+}
+
+/** The Models block: a folded `details` whose summary counts what the pickers list and what is
+ *  hidden, so a long lineup reads as one line until opened. Inside, one group per box (this one
+ *  and every ssh box), each with every model its picker could list, hidden ones included, and a
+ *  switch per model that hides it for that box alone through the hints store, so a box can keep a
+ *  model another leaves out and every browser sees the same lists. A session already on a hidden
+ *  model keeps running. */
+export function ModelsBlock() {
+  useLocale();
+  const [boxes, setBoxes] = useState<PickerBox[] | undefined>();
+  const [error, setError] = useState("");
+  const [hiddenKeys, setHiddenKeys] = useState<Set<string>>(() => new Set());
+  const onState = useCallback((key: string, hidden: boolean) => {
+    setHiddenKeys((prev) => {
+      if (prev.has(key) === hidden) return prev;
+      const next = new Set(prev);
+      if (hidden) next.add(key);
+      else next.delete(key);
+      return next;
+    });
+  }, []);
+  useEffect(() => {
+    let live = true;
+    const load = () =>
+      fetch(`${ROUTE}/models?all=1`)
+        .then((r) => readJson<{ models?: PickerBox[] }>(r))
+        .then((b) => {
+          if (!live) return;
+          const next = b.models ?? [];
+          // Rows report their state as they mount, and a row that stays mounted does not report
+          // again, so only the keys of rows that are gone (a removed box, a model that left the
+          // lineup) are dropped from the count; the rest keep what they said.
+          const alive = new Set(
+            next.flatMap((box) => box.models.map((m) => `hideModel:${box.provider}:${m.id}`)),
+          );
+          setHiddenKeys((prev) => new Set([...prev].filter((k) => alive.has(k))));
+          setBoxes(next);
+        })
+        .catch((e: Error) => live && setError(e.message));
+    void load();
+    // A box added or removed in the card above changes the groups here; the card announces it.
+    window.addEventListener(BOXES_EVENT, load);
+    return () => {
+      live = false;
+      window.removeEventListener(BOXES_EVENT, load);
+    };
+  }, []);
+  const total = boxes?.reduce((n, b) => n + b.models.length, 0) ?? 0;
+  return (
+    <details data-omc-models-block="" style={NESTED}>
+      <summary style={{ cursor: "pointer" }}>
+        {t("main.settingsUi.modelsTitle")}
+        <span style={{ color: T.faint, fontSize: 12 }}>
+          {boxes === undefined
+            ? ` · ${t("loading")}`
+            : ` · ${t("main.settingsUi.modelsSummary", { shown: total - hiddenKeys.size, hidden: hiddenKeys.size })}`}
+        </span>
+      </summary>
+      <div style={{ padding: "8px 0 0 16px" }}>
+        <div style={{ color: T.faint, fontSize: 12, marginBottom: 8 }}>
+          {t("main.settingsUi.modelsDesc")}
+        </div>
+        {error ? (
+          <div role="alert" style={{ color: T.faint, fontSize: 12 }}>
+            {error}
+          </div>
+        ) : (
+          (boxes ?? []).map((box) => {
+            const prefix = `hideModel:${box.provider}:`;
+            const hiddenHere = [...hiddenKeys].filter((k) => k.startsWith(prefix)).length;
+            const rows = (
+              <fieldset style={{ display: "grid", gap: 8, border: 0, margin: 0, padding: 0 }}>
+                <legend
+                  style={{
+                    position: "absolute",
+                    width: 1,
+                    height: 1,
+                    overflow: "hidden",
+                    clip: "rect(0 0 0 0)",
+                  }}
+                >
+                  {box.host ?? t("main.sessions.thisBox")}
+                </legend>
+                {box.models.map((m) => (
+                  <ModelRow key={m.id} box={box} model={m} onState={onState} />
+                ))}
+              </fieldset>
+            );
+            // One box: its rows sit right under the description, the outer fold is enough. More
+            // than one: each box is its own fold, shut by default, so opening one box's list keeps
+            // the others at one line each.
+            return (boxes ?? []).length === 1 ? (
+              <div key={box.provider} data-omc-models-box={box.provider}>
+                {rows}
+              </div>
+            ) : (
+              <details
+                key={box.provider}
+                data-omc-models-box={box.provider}
+                style={{ marginBottom: 8 }}
+              >
+                <summary style={{ cursor: "pointer", color: T.muted, fontSize: 13 }}>
+                  {box.host ?? t("main.sessions.thisBox")}
+                  <span style={{ color: T.faint, fontSize: 12 }}>
+                    {` · ${t("main.settingsUi.modelsSummary", { shown: box.models.length - hiddenHere, hidden: hiddenHere })}`}
+                  </span>
+                </summary>
+                <div style={{ padding: "8px 0 0 16px" }}>{rows}</div>
+              </details>
+            );
+          })
+        )}
+      </div>
+    </details>
+  );
+}
+
+/** The Claude Code skills switch, inverted over the `claudeSkillsAnywhereOff` hint so a box with
+ *  no hint reads as on. It governs the command bridge in sessions on another model: with it on, a
+ *  skill or custom command only Claude Code has goes to that model with its instructions; off, the
+ *  bridge refuses as it did before. A hint, not browser state, so every tab and phone agrees. */
+export function ClaudeSkillsSwitch() {
+  useLocale();
+  const [off, setOff] = useHintFlag("claudeSkillsAnywhereOff");
+  return (
+    <div
+      data-omc-claude-skills-switch=""
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
+        fontSize: 13,
+        marginBottom: 12,
+      }}
+    >
+      <div>
+        <div>{t("main.settingsUi.claudeSkillsTitle")}</div>
+        <div style={{ color: T.faint, fontSize: 12 }}>{t("main.settingsUi.claudeSkillsDesc")}</div>
+      </div>
+      <Switch
+        on={!off}
+        onChange={(on) => setOff(!on)}
+        label={t("main.settingsUi.claudeSkillsTitle")}
+      />
     </div>
   );
 }

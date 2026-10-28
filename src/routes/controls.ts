@@ -41,6 +41,7 @@ export function controlsRoutes(ctx: RouteCtx): RouteHandler {
       loginNeeded,
       mcp,
       models,
+      modelsUpdated,
       notOnBox,
       permissionAsks,
       permissionModes,
@@ -90,9 +91,13 @@ export function controlsRoutes(ctx: RouteCtx): RouteHandler {
       const current = await readHints(hintsPath);
       if (req.method === "GET") return json(res, 200, current);
       if (req.method === "POST") {
-        const next = await updateHints(hintsPath, await readBody(req));
+        const patch = await readBody(req);
+        const next = await updateHints(hintsPath, patch);
         // A hint written from any browser reaches every open tab.
         events?.hub.publish({ kind: "hints", session: null, data: next });
+        // A model switched off or on changes what `listModels` answers; dsh's picker reloads on
+        // the event its own providers send for that, so the open menu follows without a reload.
+        if (Object.keys(patch).some((k) => k.startsWith("hideModel:"))) modelsUpdated?.();
         return json(res, 200, next);
       }
     }

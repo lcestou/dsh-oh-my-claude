@@ -99,6 +99,17 @@ export declare const nameFromId: (id: string) => string | undefined;
 export declare const withoutHiddenModels: <T extends {
     id: string;
 }>(rows: readonly T[], hidden: readonly string[]) => T[];
+/** The hints-store key that hides one model from one box's picker: `hideModel:<provider>:<id>`
+ *  set to true, the provider being the mount's id (`claude-code`, `claude-code-<box>`). */
+export declare const hideModelHint: (provider: string, id: string) => string;
+/**
+ * The model ids the Settings switches hid for one mount, read off the hints store. Only a `true`
+ * under that mount's `hideModel:<provider>:` prefix counts; the store drops `false`, so a model
+ * switched back on simply has no key, and another box's keys are another box's list. The ids are
+ * matched by `withoutHiddenModels`, so an id the lineup has since renamed hides nothing and harms
+ * nothing.
+ */
+export declare const hintHiddenModels: (hints: Record<string, boolean | number>, provider: string) => string[];
 /** Merges the CLI's model rows into the catalog, giving each known model a single stable id and
  *  name so the picker offers the same lineup whether or not the CLI has yet learned the model's
  *  short spelling. */

@@ -12,6 +12,7 @@ import {
   noteLiveWindow,
   resolveModelInfo,
   seedLiveWindows,
+  hintHiddenModels,
   withoutHiddenModels,
 } from "./adapter/catalog.js";
 import type { CliModel } from "./process.js";
@@ -176,3 +177,23 @@ assert.equal(written["claude-stored-1"], 640_000, "a later write keeps the store
 }
 
 console.log("catalog sources ok");
+
+// The Settings switches: only a true key under this mount's `hideModel:<provider>:` prefix hides;
+// another box's keys, other hints and other values do not.
+assert.deepEqual(
+  hintHiddenModels(
+    {
+      "hideModel:claude-code:claude-opus-5": true,
+      "hideModel:claude-code:claude-haiku-4-5": 1,
+      "hideModel:claude-code-lilly:claude-sonnet-5": true,
+      "hideModel:claude-opus-5": true,
+      starterOff: true,
+      compactNudgeAt: 80,
+    },
+    "claude-code",
+  ),
+  ["claude-opus-5"],
+  "this mount's keys to ids",
+);
+assert.deepEqual(hintHiddenModels({}, "claude-code"), []);
+console.log("hint hidden models ok");

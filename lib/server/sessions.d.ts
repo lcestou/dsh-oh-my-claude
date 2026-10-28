@@ -77,6 +77,12 @@ export type ParsedSettings = {
 /** settings.json must be one JSON object; anything else Claude Code would reject or ignore. */
 export declare function parseSettingsText(text: unknown): ParsedSettings;
 /** Output of a probe command, or "" plus the failure text so the panel can show why. */
+/**
+ * One command's stdout, and the failure text when it did not exit 0 (stderr, else the spawn error,
+ * which for a timeout is a bare "Command failed"). Stdout is kept on a failure too: `claude auth
+ * status` prints its JSON and exits 1 on a logged-out box, and an ssh script exits with its last
+ * command's status, so a combined probe that ends in it used to lose every answer before it.
+ */
 declare const run: (cmd: string, args: string[], env?: NodeJS.ProcessEnv, cwd?: string, timeout?: number) => Promise<{
     out: string;
     error?: string;
@@ -313,6 +319,8 @@ declare function runtimeStatus(configDir: string, command?: string, sshHost?: st
  * `C:\...\claude.exe` reported a working CLI as not on PATH; a path is its own answer.
  */
 export declare const isWindowsPathCommand: (command: string, platform?: NodeJS.Platform) => boolean;
+/** The probes behind `runtimeStatus`, uncached. Exported for its test only. */
+export declare function probeRuntime(configDir: string, command: string, sshHost: string): Promise<RuntimeStatus>;
 /** Every transcript under the Claude projects dir, each with the cwd its records name. */
 declare function listAllTranscripts(projectsDirs: string[], hidden: Set<string>): Promise<TranscriptListItem[]>;
 export declare const SSH_TRANSCRIPT_LISTER = "(function(){\nconst fs=require(\"fs\"),os=require(\"os\"),p=require(\"path\");\nconst root=p.join(os.homedir(),\".claude\",\"projects\");\nlet dirs=[];try{dirs=fs.readdirSync(root)}catch(e){process.stdout.write(\"[]\");return}\nconst out=[];\nfor(const d of dirs){\n const dir=p.join(root,d);let names;\n try{names=fs.readdirSync(dir)}catch(e){continue}\n for(const n of names){\n  const m=/^([0-9a-f-]{36})\\.jsonl$/.exec(n);if(!m)continue;\n  const fp=p.join(dir,n);let st;\n  try{st=fs.statSync(fp)}catch(e){continue}\n  const readHead=function(cap){\n   const buf=Buffer.alloc(cap);let bytes=0,fd;\n   try{fd=fs.openSync(fp,\"r\");bytes=fs.readSync(fd,buf,0,cap,0);fs.closeSync(fd)}catch(e){return null}\n   return {text:buf.slice(0,bytes).toString(\"utf8\"),partial:bytes>=cap};\n  };\n  const scan=function(head){\n   let cwd,summary,title=\"\",command=\"\",turns=0,answered=false,typed=false;\n   const first=function(x){return (x.replace(/<system-reminder>[\\s\\S]*?<\\/system-reminder>/g,\"\").replace(/\\[File \"((?:[^\"\\\\]|\\\\.)*)\" \\(\\d+ bytes[^\\n]*/g,\"$1\").trim().split(\"\\n\")[0]||\"\").replace(/\\s+/g,\" \").slice(0,120)};\n   for(const line of head.split(\"\\n\")){\n    if(!line)continue;let r;\n    try{r=JSON.parse(line)}catch(e){continue}\n    if(cwd===undefined&&typeof r.cwd===\"string\")cwd=r.cwd;\n    if(r.type===\"summary\"&&typeof r.summary===\"string\")summary=r.summary;\n    if(r.type===\"assistant\"&&!r.isSidechain)answered=true;\n    if(r.type!==\"user\"||r.isSidechain||r.isMeta)continue;\n    const c=r.message&&r.message.content;let t=\"\";\n    if(typeof c===\"string\")t=c;\n    else if(Array.isArray(c)){const a=[];for(const b of c){if(b&&b.type===\"text\"&&typeof b.text===\"string\")a.push(b.text)}t=a.join(\"\\n\")}\n    if(!t)continue;\n    if(turns===0&&t.indexOf(\"Generate the session title\")===0)break;\n    turns++;\n    const noise=/^\\s*<(command-|local-command|system-reminder)/.test(t);\n    if(!noise)typed=true;\n    if(title)continue;\n    let cmd=\"\";const n=/<command-name>\\s*([^<\\s]+)\\s*<\\/command-name>/.exec(t);\n    if(n){const a=/<command-args>([\\s\\S]*?)<\\/command-args>/.exec(t);\n     cmd=first((n[1]+\" \"+first((a?a[1]:\"\").replace(/(?:^|\\n\\n)Current runtime context\\.[\\s\\S]*$/,\"\"))).trim())}\n    if(cmd.indexOf(\" \")>=0)title=cmd;\n    else if(cmd){if(!command)command=cmd}\n    else if(!noise&&t.indexOf(\"[Request interrupted by user\")!==0)title=first(t);\n   }\n   return {cwd:cwd,summary:summary,title:title||command,turns:turns,dead:!typed&&!summary&&!answered};\n  };\n  let h=readHead(262144);if(!h)continue;\n  let f=scan(h.text);\n  // Same second look as listTranscripts: one huge opening record can push the first real turn past\n  // the head bound and make a live session read as empty. Only the files that found nothing pay it.\n  if(f.turns===0&&h.partial){const d2=readHead(2097152);if(d2){h=d2;f=scan(h.text)}}\n  if(f.turns===0)continue;\n  if(f.dead&&!h.partial)continue;\n  const item={id:m[1],title:f.summary||f.title,createdAt:st.mtimeMs,modifiedAt:st.mtimeMs,bytes:st.size,turns:f.turns,turnsPartial:h.partial};\n  if(f.cwd)item.cwd=f.cwd;\n  out.push(item);\n }\n}\nout.sort(function(a,b){return b.modifiedAt-a.modifiedAt});\nprocess.stdout.write(JSON.stringify(out));\n})();";
@@ -501,6 +509,8 @@ export interface RouteCtx {
     mcp: SessionRouteOptions["mcp"];
     memoryDirAt: (box: MountBox, cwd: string) => Promise<string>;
     models: SessionRouteOptions["models"];
+    pickerModels: SessionRouteOptions["pickerModels"];
+    modelsUpdated: SessionRouteOptions["modelsUpdated"];
     mtimeOf: typeof mtimeOf;
     notOnBox: (url: URL, what: string, cwd?: string | null) => string | undefined;
     onLoginStatus: SessionRouteOptions["onLoginStatus"];
@@ -887,6 +897,19 @@ export interface SessionRouteOptions {
         id: string;
         name: string;
     }>>;
+    /** The Settings card's Models block: every mount with its rows, hidden ones included. */
+    pickerModels?: () => Promise<Array<{
+        provider: string;
+        host: string | null;
+        models: Array<{
+            id: string;
+            name: string;
+            hidden: boolean;
+            locked: boolean;
+        }>;
+    }>>;
+    /** Announces a changed picker to dsh, after a hints write that hid or showed a model. */
+    modelsUpdated?: () => void;
     /** The provider id this machine's Claude mounts under; a restored session is put on it. */
     providerId?: string;
     /** Re-read plugins into a session's live process after a plugin/marketplace mutation, so the
@@ -924,7 +947,7 @@ declare function sessionTranscript(box: MountBox, dir: string, sessionId: string
 /** True when this session already had one within the gap. Records the ask when it does not. */
 declare function recapIsRepeat(sessionId: string, now: number): boolean;
 /** `projectDir(cwd)` → Claude Code project dir; `startedIds()` → ids the adapter started itself. */
-export declare function registerSessionRoutes(ctx: PluginContext, { log, onHeal, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, importedDir, sshBoxesPath, onSshBoxes, remoteWorkspacesPath, onRemoteWorkspaces, command, boxCommand, sshHost, turnRecords, dshVersion, liveTurn, events, idle, toolMode, terminalSync, permissionModes, thinking, rewind, contextUsage, skillDoctor, workspaceDiff, permissionReadout, askAside, mcp, permissionAsks, sideQuestions, liveTasks, stopTask, taskOutput, compactNow, steersFor, holdSteers, releaseHold, sendSteerNow, loginNeeded, sessionFallbacks, boxOfSession, claudeUpdated, loginDone, logoutDone, liveCount, persistAsides, starters, setStarter, models, providerId, reloadPlugins, reloadSkills, pluginErrors, pluginWarnings, awaiting, continueAfterLimit, instanceFor, instanceForHost, onLoginStatus, }: SessionRouteOptions): void;
+export declare function registerSessionRoutes(ctx: PluginContext, { log, onHeal, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, importedDir, sshBoxesPath, onSshBoxes, remoteWorkspacesPath, onRemoteWorkspaces, command, boxCommand, sshHost, turnRecords, dshVersion, liveTurn, events, idle, toolMode, terminalSync, permissionModes, thinking, rewind, contextUsage, skillDoctor, workspaceDiff, permissionReadout, askAside, mcp, permissionAsks, sideQuestions, liveTasks, stopTask, taskOutput, compactNow, steersFor, holdSteers, releaseHold, sendSteerNow, loginNeeded, sessionFallbacks, boxOfSession, claudeUpdated, loginDone, logoutDone, liveCount, persistAsides, starters, setStarter, models, pickerModels, modelsUpdated, providerId, reloadPlugins, reloadSkills, pluginErrors, pluginWarnings, awaiting, continueAfterLimit, instanceFor, instanceForHost, onLoginStatus, }: SessionRouteOptions): void;
 /** One settings file as the Diagnostics tab reports it: where it is, and why the CLI refuses it. */
 export interface DiagnosticFile {
     scope: SettingsScope;

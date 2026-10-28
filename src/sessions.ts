@@ -255,6 +255,12 @@ export function parseSettingsText(text: unknown): ParsedSettings {
 }
 
 /** Output of a probe command, or "" plus the failure text so the panel can show why. */
+/**
+ * One command's stdout, and the failure text when it did not exit 0 (stderr, else the spawn error,
+ * which for a timeout is a bare "Command failed"). Stdout is kept on a failure too: `claude auth
+ * status` prints its JSON and exits 1 on a logged-out box, and an ssh script exits with its last
+ * command's status, so a combined probe that ends in it used to lose every answer before it.
+ */
 const run = (
   cmd: string,
   args: string[],
@@ -267,7 +273,7 @@ const run = (
       resolve(
         e
           ? {
-              out: "",
+              out: String(out ?? ""),
               error: String(err || e.message)
                 .trim()
                 .slice(0, 300),
@@ -353,7 +359,9 @@ export function updateHints(
     const current = await readHints(hintsPath);
     const merged = { ...current };
     for (const [k, v] of Object.entries(patch)) {
-      if (!/^[a-zA-Z][a-zA-Z0-9]{0,40}$/.test(k)) continue;
+      // A letter first keeps `__proto__` and friends out; `:`, `.` and `-` admit a scoped key such
+      // as `hideModel:claude-code-lilly:claude-opus-5`.
+      if (!/^[a-zA-Z][a-zA-Z0-9:._-]{0,120}$/.test(k)) continue;
       if (v === true) merged[k] = true;
       else if (typeof v === "number" && Number.isFinite(v) && v >= 0) merged[k] = v;
       else if (v === false || v === null) delete merged[k];
@@ -885,8 +893,8 @@ interface ProbeOutput {
   error?: string;
 }
 const statusCache = new Map<string, { at: number; value: Promise<RuntimeStatus> }>();
-/** The probes behind `runtimeStatus`, uncached. */
-async function probeRuntime(
+/** The probes behind `runtimeStatus`, uncached. Exported for its test only. */
+export async function probeRuntime(
   configDir: string,
   command: string,
   sshHost: string,
@@ -1356,6 +1364,8 @@ export interface RouteCtx {
   mcp: SessionRouteOptions["mcp"];
   memoryDirAt: (box: MountBox, cwd: string) => Promise<string>;
   models: SessionRouteOptions["models"];
+  pickerModels: SessionRouteOptions["pickerModels"];
+  modelsUpdated: SessionRouteOptions["modelsUpdated"];
   mtimeOf: typeof mtimeOf;
   notOnBox: (url: URL, what: string, cwd?: string | null) => string | undefined;
   onLoginStatus: SessionRouteOptions["onLoginStatus"];
@@ -2024,6 +2034,16 @@ export interface SessionRouteOptions {
   };
   /** The model catalog for advisor model selection. */
   models?: () => Promise<Array<{ id: string; name: string }>>;
+  /** The Settings card's Models block: every mount with its rows, hidden ones included. */
+  pickerModels?: () => Promise<
+    Array<{
+      provider: string;
+      host: string | null;
+      models: Array<{ id: string; name: string; hidden: boolean; locked: boolean }>;
+    }>
+  >;
+  /** Announces a changed picker to dsh, after a hints write that hid or showed a model. */
+  modelsUpdated?: () => void;
   /** The provider id this machine's Claude mounts under; a restored session is put on it. */
   providerId?: string;
   /** Re-read plugins into a session's live process after a plugin/marketplace mutation, so the
@@ -2143,6 +2163,8 @@ export function registerSessionRoutes(
     starters,
     setStarter,
     models,
+    pickerModels,
+    modelsUpdated,
     providerId,
     reloadPlugins,
     reloadSkills,
@@ -2555,6 +2577,8 @@ export function registerSessionRoutes(
       mcp,
       memoryDirAt,
       models,
+      pickerModels,
+      modelsUpdated,
       mtimeOf,
       notOnBox,
       onLoginStatus,
@@ -2686,6 +2710,25 @@ export function registerSessionRoutes(
                 // host no box names, which the card still lists and its Remove still clears.
                 const kept = new Set(v.boxes.map((b) => b.host));
                 const gone = new Set(before.map((b) => b.host).filter((h) => !kept.has(h)));
+                // A box takes its Models switches with it: its `hideModel:<provider>:` hints would
+                // otherwise sit in the store for good, and hide models on a box later added under
+                // the same name. Dropped by prefix; a failure is logged, the box is already gone.
+                if (gone.size > 0) {
+                  const hintsPath = join(dirname(sshBoxesPath), "hints.json");
+                  const prefixes = before
+                    .filter((b) => gone.has(b.host))
+                    .map((b) => `hideModel:${sshBoxProviderId(b.name)}:`);
+                  await readHints(hintsPath)
+                    .then((hints) => {
+                      const drop = Object.keys(hints).filter((k) =>
+                        prefixes.some((p) => k.startsWith(p)),
+                      );
+                      return drop.length === 0
+                        ? undefined
+                        : updateHints(hintsPath, Object.fromEntries(drop.map((k) => [k, false])));
+                    })
+                    .catch((e: unknown) => log("warn", `box removal, hints: ${errorText(e)}`));
+                }
                 if (remoteWorkspacesPath && gone.size > 0) {
                   const rwPath = remoteWorkspacesPath;
                   const removed = await withRwFile(async () => {
@@ -2993,7 +3036,18 @@ export function registerSessionRoutes(
               const loginBoxes = await readSshBoxes(sshBoxesPath);
               if (loginHost !== THIS_BOX && !loginBoxes.some((b) => b.host === loginHost))
                 return json(res, 400, { error: "unknown box" });
-              return json(res, 200, await startSshLogin(loginHost, undefined, undefined, command));
+              // The box runs its own claude by the configured name; this box's resolved absolute
+              // path means nothing there (a login on lilly ran /home/<me>/.local/bin/claude).
+              return json(
+                res,
+                200,
+                await startSshLogin(
+                  loginHost,
+                  undefined,
+                  undefined,
+                  (loginHost === THIS_BOX ? command : (boxCommand ?? command)) ?? "claude",
+                ),
+              );
             }
             if (
               sshBoxesPath &&

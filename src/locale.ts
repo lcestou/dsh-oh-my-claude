@@ -140,6 +140,7 @@ const EN = {
   mirrorCut: "… cut here; the whole exchange is in the transcript.",
   btwUsage: "Usage: /btw <your question>",
   bridgeSkillSent: "Sent; dsh runs its {name} skill on this session's model.",
+  bridgeSkillOwn: "Sent, with Claude Code's /{name} instructions, to this session's model.",
   claudeOnly:
     "/{command} works in Claude Code sessions. This session runs on {provider}; pick a Claude model to use it.",
   btwSent: "Side question sent. The answer opens in the ✻ aside bubble.",
@@ -255,6 +256,7 @@ const ZH = {
   mirrorCut: "… 在此截断；完整对话在会话记录中。",
   btwUsage: "用法：/btw <你的问题>",
   bridgeSkillSent: "已发送；dsh 会用此会话的模型运行它的 {name} 技能。",
+  bridgeSkillOwn: "已发送，并附上 Claude Code 的 /{name} 指令，交给此会话的模型。",
   claudeOnly:
     "/{command} 只能在 Claude Code 会话中使用。此会话使用的是 {provider}；请先选择一个 Claude 模型。",
   btwSent: "旁问已发送。回答会显示在 ✻ 旁问气泡中。",

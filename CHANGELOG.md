@@ -6,9 +6,17 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Added
+
+- Settings gains a Models block with a switch per model, one group per box. Switch one off and it leaves that box's model picker in every browser, with no config file to edit, and the open picker follows at once; a box added over SSH keeps its own list, so it can show a model this box hides. A session already on it keeps running, a model released later shows up on its own, and a model `hiddenModels` hides is shown locked. Matching is the same as `hiddenModels`, so a dated id goes with its family and a longer version is left alone.
+
+- A skill or custom command only Claude Code has runs in a session on another model. Typed as `/name` in a DeepSeek or local-model chat, it used to be refused with "works in Claude Code sessions"; now the line goes to that model with the skill's instructions, read from the same `SKILL.md` or command file Claude Code would expand, in the shape dsh uses for its own skills. Skills dsh serves itself run as before. A switch in Settings, "Claude Code skills on every model", turns it off box-wide. Thanks to @namastex888, whose Omni fork made this change.
+
 ### Fixed
 
-- On macOS, the usage panel shows your plan usage instead of "needs a Claude Code login". Claude Code keeps the macOS login in the Keychain, not in `~/.claude/.credentials.json`, and the plugin only read the file. It now falls back to the Keychain when the file is missing or its token has expired, for the default `~/.claude` login, also with `ownTranscripts` on. The Models API read gets the same fallback, so on macOS the model picker now also lists what that API returns.
+- Logging in to Claude Code on an SSH box from the Boxes card works when this box's `claude` is configured or resolved as an absolute path. The login ran that local path on the remote box, which answered `No such file or directory`; it now runs the configured command name there, as every other remote call does.
+- An SSH box whose Claude Code is logged out reads as "not logged in" in the Boxes card, with its version, instead of `Command failed: ssh …`. The box's three probes travel in one ssh script, `claude auth status` exits 1 when logged out, and the plugin dropped the script's whole output on that exit code. ssh's own "Shared connection to <host> closed." no longer shows under a box row either.
+- On macOS, the usage panel shows your plan usage instead of "needs a Claude Code login". Thanks to @fancn (#208). Claude Code keeps the macOS login in the Keychain, not in `~/.claude/.credentials.json`, and the plugin only read the file. It now falls back to the Keychain when the file is missing or its token has expired, for the default `~/.claude` login, also with `ownTranscripts` on. The Models API read gets the same fallback, so on macOS the model picker now also lists what that API returns.
 
 ## [1.5.9] - 2026-10-27
 
