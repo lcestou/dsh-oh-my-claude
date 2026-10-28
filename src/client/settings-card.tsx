@@ -1350,10 +1350,15 @@ export function ModelsBlock() {
         .then((r) => readJson<{ models?: PickerBox[] }>(r))
         .then((b) => {
           if (!live) return;
-          // Rows report their state as they mount; a fresh list starts the count over, so a
-          // removed box's keys do not stay in the summary.
-          setHiddenKeys(new Set());
-          setBoxes(b.models ?? []);
+          const next = b.models ?? [];
+          // Rows report their state as they mount, and a row that stays mounted does not report
+          // again, so only the keys of rows that are gone (a removed box, a model that left the
+          // lineup) are dropped from the count; the rest keep what they said.
+          const alive = new Set(
+            next.flatMap((box) => box.models.map((m) => `hideModel:${box.provider}:${m.id}`)),
+          );
+          setHiddenKeys((prev) => new Set([...prev].filter((k) => alive.has(k))));
+          setBoxes(next);
         })
         .catch((e: Error) => live && setError(e.message));
     void load();
