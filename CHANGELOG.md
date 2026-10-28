@@ -8,6 +8,8 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Added
 
+- Settings gains a Models block with a switch per model. Switch one off and it leaves the model picker on this box and on every box added over SSH, in every browser, with no config file to edit. A session already on it keeps running, a model released later shows up on its own, and a model `hiddenModels` hides is shown locked. Matching is the same as `hiddenModels`, so a dated id goes with its family and a longer version is left alone.
+
 - A skill or custom command only Claude Code has runs in a session on another model. Typed as `/name` in a DeepSeek or local-model chat, it used to be refused with "works in Claude Code sessions"; now the line goes to that model with the skill's instructions, read from the same `SKILL.md` or command file Claude Code would expand, in the shape dsh uses for its own skills. Skills dsh serves itself run as before. A switch in Settings, "Claude Code skills on every model", turns it off box-wide. Thanks to @namastex888, whose Omni fork made this change.
 
 ### Fixed

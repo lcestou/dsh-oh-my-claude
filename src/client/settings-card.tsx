@@ -1280,6 +1280,87 @@ export function SuggestionSwitch() {
   );
 }
 
+type PickerModel = { id: string; name: string; hidden: boolean; locked: boolean };
+
+/** One model's row in the Models block: a switch over the `hideModel:<id>` hint, on when the model
+ *  is listed. A row the plugin config hides is shown off and disabled, with a note saying why, since
+ *  a switch here cannot undo a config entry. */
+function ModelRow({ model }: { model: PickerModel }) {
+  const [off, setOff] = useHintFlag(`hideModel:${model.id}`);
+  return (
+    <div
+      data-omc-model-row={model.id}
+      style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}
+    >
+      <div style={{ minWidth: 0 }}>
+        <div>{model.name}</div>
+        <div style={{ color: T.faint, fontSize: 12, fontFamily: "monospace" }}>
+          {model.id}
+          {model.locked ? ` · ${t("main.settingsUi.modelsLocked")}` : ""}
+        </div>
+      </div>
+      <Switch
+        on={!model.locked && !off}
+        disabled={model.locked}
+        onChange={(on) => setOff(!on)}
+        label={model.name}
+      />
+    </div>
+  );
+}
+
+/** The Models block: every model the picker could list, each with a switch that hides it box-wide
+ *  through the hints store, so the cut holds on this box, on the boxes added over SSH and in every
+ *  browser. The list is read once per open, unfiltered (`/models?all=1`), so a hidden model stays
+ *  here to be switched back on; a session already on a hidden model keeps running. */
+export function ModelsBlock() {
+  useLocale();
+  const [models, setModels] = useState<PickerModel[] | undefined>();
+  const [error, setError] = useState("");
+  useEffect(() => {
+    let live = true;
+    fetch(`${ROUTE}/models?all=1`)
+      .then((r) => readJson<{ models?: PickerModel[] }>(r))
+      .then((b) => live && setModels(b.models ?? []))
+      .catch((e: Error) => live && setError(e.message));
+    return () => {
+      live = false;
+    };
+  }, []);
+  return (
+    <div data-omc-models-block="" style={{ fontSize: 13, marginBottom: 12 }}>
+      <div>{t("main.settingsUi.modelsTitle")}</div>
+      <div style={{ color: T.faint, fontSize: 12, marginBottom: 8 }}>
+        {t("main.settingsUi.modelsDesc")}
+      </div>
+      {error ? (
+        <div role="alert" style={{ color: T.faint, fontSize: 12 }}>
+          {error}
+        </div>
+      ) : models === undefined ? (
+        <div style={{ color: T.faint, fontSize: 12 }}>{t("loading")}</div>
+      ) : (
+        <fieldset style={{ display: "grid", gap: 8, border: 0, margin: 0, padding: 0 }}>
+          <legend
+            style={{
+              position: "absolute",
+              width: 1,
+              height: 1,
+              overflow: "hidden",
+              clip: "rect(0 0 0 0)",
+            }}
+          >
+            {t("main.settingsUi.modelsTitle")}
+          </legend>
+          {models.map((m) => (
+            <ModelRow key={m.id} model={m} />
+          ))}
+        </fieldset>
+      )}
+    </div>
+  );
+}
+
 /** The Claude Code skills switch, inverted over the `claudeSkillsAnywhereOff` hint so a box with
  *  no hint reads as on. It governs the command bridge in sessions on another model: with it on, a
  *  skill or custom command only Claude Code has goes to that model with its instructions; off, the

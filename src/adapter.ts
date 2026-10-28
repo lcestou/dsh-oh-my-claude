@@ -465,6 +465,7 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
           adapter.ownerFor(sessionId).setThinkingBudget(sessionId, tokens),
       },
       models: () => adapter.getAdvisorModels(),
+      pickerModels: () => adapter.pickerModels(),
       providerId: adapter.providerId,
       reloadPlugins: (sessionId: string) => adapter.ownerFor(sessionId).reloadPlugins(sessionId),
       reloadSkills: (sessionId: string) => adapter.ownerFor(sessionId).reloadSkills(sessionId),

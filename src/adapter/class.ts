@@ -225,6 +225,7 @@ import {
   proxyBaseUrl,
   resolveModelInfo,
   windowKey,
+  hintHiddenModels,
   withoutHiddenModels,
 } from "./catalog.js";
 import {
@@ -752,7 +753,46 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     await this.cliSeed;
     await this.probeCliModels();
     const models = await getCatalog(undefined, this.cliModels, await this.pickerSettings());
-    return withoutHiddenModels(models, this.config.hiddenModels).map((m) => modelInfo(provider, m));
+    return withoutHiddenModels(models, await this.hiddenModelIds()).map((m) =>
+      modelInfo(provider, m),
+    );
+  }
+
+  /**
+   * Every id the picker leaves out: the plugin config's `hiddenModels`, then the Settings switches,
+   * which live in the box-wide hints store (one file for every mount, ssh boxes included), so a
+   * model switched off is off on every box and in every browser. One small file read per listing.
+   */
+  async hiddenModelIds(): Promise<string[]> {
+    const hints = await readHints(join(STATE_DIR, "hints.json"));
+    return [...this.config.hiddenModels, ...hintHiddenModels(hints)];
+  }
+
+  /**
+   * The Settings card's model list: every row the catalog and settings.json would offer, hidden or
+   * not, so a hidden model can be switched back on. `locked` marks a row the plugin config hides,
+   * which the switch cannot undo; `hidden` is the picker's answer either way. Default is left out,
+   * since it is never hidden.
+   */
+  async pickerModels(): Promise<
+    Array<{ id: string; name: string; hidden: boolean; locked: boolean }>
+  > {
+    await this.cliSeed;
+    const models = await getCatalog(undefined, this.cliModels, await this.pickerSettings());
+    const shown = new Set(
+      withoutHiddenModels(models, await this.hiddenModelIds()).map((m) => m.id),
+    );
+    const unlocked = new Set(
+      withoutHiddenModels(models, this.config.hiddenModels).map((m) => m.id),
+    );
+    return models
+      .filter((m) => m.id !== "default")
+      .map((m) => ({
+        id: m.id,
+        name: m.name,
+        hidden: !shown.has(m.id),
+        locked: !unlocked.has(m.id),
+      }));
   }
 
   /** After a `result` frame: remember a login failure for the card, and name the box's providers

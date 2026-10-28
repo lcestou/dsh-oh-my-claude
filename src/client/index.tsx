@@ -64,6 +64,7 @@ import {
   StarterSwitch,
   SuggestionSwitch,
   ClaudeSkillsSwitch,
+  ModelsBlock,
   TerminalSyncSwitch,
   ThemeSwitch,
   ToolRowsSwitch,
@@ -334,6 +335,7 @@ export function apply(ctx: ClientCtx) {
         <CostSwitch />
         <LimitWarningsSwitch />
         <WorkspaceModelSwitch />
+        <ModelsBlock />
         <ToolRowsSwitch />
         <SuggestionSwitch />
         <ClaudeSkillsSwitch />

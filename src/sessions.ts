@@ -1356,6 +1356,7 @@ export interface RouteCtx {
   mcp: SessionRouteOptions["mcp"];
   memoryDirAt: (box: MountBox, cwd: string) => Promise<string>;
   models: SessionRouteOptions["models"];
+  pickerModels: SessionRouteOptions["pickerModels"];
   mtimeOf: typeof mtimeOf;
   notOnBox: (url: URL, what: string, cwd?: string | null) => string | undefined;
   onLoginStatus: SessionRouteOptions["onLoginStatus"];
@@ -2024,6 +2025,10 @@ export interface SessionRouteOptions {
   };
   /** The model catalog for advisor model selection. */
   models?: () => Promise<Array<{ id: string; name: string }>>;
+  /** The Settings card's list, hidden rows included, with each one's hide state. */
+  pickerModels?: () => Promise<
+    Array<{ id: string; name: string; hidden: boolean; locked: boolean }>
+  >;
   /** The provider id this machine's Claude mounts under; a restored session is put on it. */
   providerId?: string;
   /** Re-read plugins into a session's live process after a plugin/marketplace mutation, so the
@@ -2143,6 +2148,7 @@ export function registerSessionRoutes(
     starters,
     setStarter,
     models,
+    pickerModels,
     providerId,
     reloadPlugins,
     reloadSkills,
@@ -2555,6 +2561,7 @@ export function registerSessionRoutes(
       mcp,
       memoryDirAt,
       models,
+      pickerModels,
       mtimeOf,
       notOnBox,
       onLoginStatus,

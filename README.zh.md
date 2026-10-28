@@ -121,7 +121,7 @@ dsh 只发布预发行版，客户端 API 也会在版本之间变动，所以�
 
 ## 你能得到什么
 
-1. 在 dsh 自己的选择器里使用你的登录可用的任何 Claude 模型。用 `hiddenModels` 隐藏不用的模型。[Models](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#models)
+1. 在 dsh 自己的选择器里使用你的登录可用的任何 Claude 模型。用设置里的开关或插件配置的 `hiddenModels` 隐藏不用的模型。[Models](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#models)
 2. 每个 dsh 会话都会续接它的 Claude Code 会话（包括工具历史），终端里的 `claude /resume` 看到的是同一个会话。[Sessions](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#sessions)
 3. 重启 dsh 不会中断正在运行的 Claude 回合。[Restarts](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#restarts)
 4. dsh 的访问权限盾牌按会话设置 Claude 的六种权限模式。[Permission mode](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#permission-mode-per-session)

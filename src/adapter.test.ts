@@ -9434,3 +9434,23 @@ console.log("watch-save-race ok");
   await rm(home, { recursive: true, force: true });
   console.log("bridged dsh skills ok");
 }
+
+// The picker's hide list: the plugin config's `hiddenModels` first, then the Settings switches from
+// the box-wide hints file; a switch turned back on leaves no key, and other hints do not count.
+{
+  const a = new ClaudeCodeAdapter(
+    fakeCtx({ on() {} }),
+    Config({ hiddenModels: ["claude-opus-5"] }),
+  );
+  const hintsPath = joinPath(STATE_DIR, "hints.json");
+  await mkdir(STATE_DIR, { recursive: true });
+  await rm(hintsPath, { force: true });
+  assert.deepEqual(await a.hiddenModelIds(), ["claude-opus-5"], "no hints file: the config alone");
+  await writeFile(
+    hintsPath,
+    JSON.stringify({ "hideModel:claude-haiku-4-5": true, starterOff: true, compactNudgeAt: 80 }),
+  );
+  assert.deepEqual(await a.hiddenModelIds(), ["claude-opus-5", "claude-haiku-4-5"]);
+  await rm(hintsPath, { force: true });
+  console.log("hidden model ids ok");
+}

@@ -151,6 +151,24 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      *  its "could not load" row with a Retry, which is the honest picker for a box no turn can use.
      *  The row names the fix; Retry after the login brings the models back. */
     listModels(provider: string): Promise<import("@deepseek-ai/dsh-llm").LlmModelInfo[]>;
+    /**
+     * Every id the picker leaves out: the plugin config's `hiddenModels`, then the Settings switches,
+     * which live in the box-wide hints store (one file for every mount, ssh boxes included), so a
+     * model switched off is off on every box and in every browser. One small file read per listing.
+     */
+    hiddenModelIds(): Promise<string[]>;
+    /**
+     * The Settings card's model list: every row the catalog and settings.json would offer, hidden or
+     * not, so a hidden model can be switched back on. `locked` marks a row the plugin config hides,
+     * which the switch cannot undo; `hidden` is the picker's answer either way. Default is left out,
+     * since it is never hidden.
+     */
+    pickerModels(): Promise<Array<{
+        id: string;
+        name: string;
+        hidden: boolean;
+        locked: boolean;
+    }>>;
     /** After a `result` frame: remember a login failure for the card, and name the box's providers
      *  logged out so the picker stops offering them; a turn that succeeded clears both. */
     noteTurnLogin(sessionId: string, result: ResultFrame): void;
