@@ -31,6 +31,7 @@
  * hand-run. `pr-review` is likewise its own step — it needs a PR to exist.
  */
 import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
 
 // `node:child_process` rather than Bun's `$`: this repo has `@types/node` and no
 // `@types/bun`, and the gate type-checks itself like everything else under
@@ -130,6 +131,27 @@ if (results.every((r) => r.ok) && (await step("build", "bun", "run", "build"))) 
   if (found) console.error(`\n─── em dashes in published prose ───\n${out.slice(0, 2000)}\n`);
   else if (code !== 1)
     console.error(`\n─── em dash search failed (exit ${code}) ───\n${out.slice(0, 500)}\n`);
+}
+
+// 7. THE ENTRIES STAY THIN. `src/adapter.ts` imports and mounts the server modules under
+// `src/adapter/` and `src/routes/`; `src/client/index.tsx` imports and mounts one file per feature.
+// Nothing else belongs in either, and nothing in review notices the slow creep: `index.tsx` reached
+// 11,339 lines before the 2026-10-22 split. The ceiling is the size after that split plus room for
+// imports and mounts. Over it, the change goes in a module of its own, not here.
+{
+  const start = Date.now();
+  const CEILING = 800;
+  const over: string[] = [];
+  for (const file of ["src/adapter.ts", "src/client/index.tsx"]) {
+    // Newlines, the way `wc -l` counts, so a file of exactly 800 lines ending in one passes.
+    const lines = (readFileSync(file, "utf8").match(/\n/g) ?? []).length;
+    if (lines > CEILING) over.push(`${file}: ${lines} lines, ceiling ${CEILING}`);
+  }
+  results.push({ name: "entries stay thin", ok: over.length === 0, ms: Date.now() - start });
+  if (over.length > 0)
+    console.error(
+      `\n─── entry files over the ceiling ───\n${over.join("\n")}\nNew behaviour goes in a module under src/adapter/, src/routes/ or src/client/, imported from the entry.\n`,
+    );
 }
 
 const pad = Math.max(...results.map((r) => r.name.length));

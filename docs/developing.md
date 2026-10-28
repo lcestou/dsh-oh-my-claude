@@ -10,7 +10,7 @@ Install from a checkout instead of npm: `dsh plugin --profile web add link:/path
 
 The server entry is `src/adapter.ts`, with its helper modules under `src/adapter/`: types, config, catalog, asides, transcript-watch, prompt, cli, turn, class (the ClaudeCodeAdapter class, whole), and ssh-boxes. The routes are in `src/sessions.ts`. The client entry is `src/client/index.tsx`: its imports, the session spinners and `apply()`. Each feature it mounts has a file beside it (the cost line, the context meter, the turn status, the Settings card, the dock and its cards, the selection bar, the Run button and the rest), and the panel's tab switch is `src/client/panel.tsx` with one file per tab under `src/client/panel/`. Tests sit beside the modules they test and the suite runs them recursively.
 
-Both entries keep the exports they had before the code moved into these files, re-exported from the module that owns each symbol, so tests and tools import them as they always did.
+Both entries keep the exports they had before the code moved into these files, re-exported from the module that owns each symbol, so tests and tools import them as they always did. The entries only import and mount: new behaviour goes in a module beside the others, and `bun run validate` fails the gate when `src/adapter.ts` or `src/client/index.tsx` passes 800 lines.
 
 ## What this plugin may lean on in dsh
 
