@@ -1348,7 +1348,13 @@ export function ModelsBlock() {
     const load = () =>
       fetch(`${ROUTE}/models?all=1`)
         .then((r) => readJson<{ models?: PickerBox[] }>(r))
-        .then((b) => live && setBoxes(b.models ?? []))
+        .then((b) => {
+          if (!live) return;
+          // Rows report their state as they mount; a fresh list starts the count over, so a
+          // removed box's keys do not stay in the summary.
+          setHiddenKeys(new Set());
+          setBoxes(b.models ?? []);
+        })
         .catch((e: Error) => live && setError(e.message));
     void load();
     // A box added or removed in the card above changes the groups here; the card announces it.

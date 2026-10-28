@@ -9397,6 +9397,18 @@ console.log("watch-save-race ok");
   assert.match(textOf(sent[1]!), /<skill_instructions>\nGrant: a pony\n<\/skill_instructions>/);
   assert.ok(!/^---/m.test(textOf(sent[1]!)), "frontmatter is left out");
   sent.length = 0;
+  await handlers.get("wish")!({
+    agent: target,
+    rawInput: " $& and $' and $$",
+    attachments: [],
+    signal,
+  });
+  assert.match(
+    textOf(sent[1]!),
+    /Grant: \$& and \$' and \$\$\n/,
+    "a dollar pattern typed as an argument is inserted as text",
+  );
+  sent.length = 0;
   const probe = await handlers.get("probe")!({
     agent: target,
     rawInput: "",

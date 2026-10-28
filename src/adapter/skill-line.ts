@@ -42,7 +42,8 @@ export async function claudeCommandText(
     }
     const body = text
       .replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "")
-      .replaceAll("$ARGUMENTS", rawInput.trim())
+      // A function, so a `$&` or `$'` typed as an argument is inserted as text, not as a pattern.
+      .replaceAll("$ARGUMENTS", () => rawInput.trim())
       .trim();
     if (body !== "") return { path, body };
   }
