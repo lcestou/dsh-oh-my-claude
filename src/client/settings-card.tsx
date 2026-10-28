@@ -2,7 +2,7 @@
 // dock components that read the same hints. The entry renders them inside the card it builds.
 import { t, useLocale } from "./i18n.js";
 import type { CSSProperties, ReactNode } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ROUTE,
   T,
@@ -1284,23 +1284,31 @@ type PickerModel = { id: string; name: string; hidden: boolean; locked: boolean 
 
 /** One model's row in the Models block: a switch over the `hideModel:<id>` hint, on when the model
  *  is listed. A row the plugin config hides is shown off and disabled, with a note saying why, since
- *  a switch here cannot undo a config entry. */
-function ModelRow({ model }: { model: PickerModel }) {
+ *  a switch here cannot undo a config entry. Reports its live state up so the summary can count. */
+function ModelRow({
+  model,
+  onState,
+}: {
+  model: PickerModel;
+  onState: (id: string, hidden: boolean) => void;
+}) {
   const [off, setOff] = useHintFlag(`hideModel:${model.id}`);
+  const hidden = model.locked || off;
+  useEffect(() => onState(model.id, hidden), [model.id, hidden, onState]);
   return (
     <div
       data-omc-model-row={model.id}
       style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}
     >
-      <div style={{ minWidth: 0 }}>
+      <div style={{ minWidth: 0, color: hidden ? T.faint : undefined }}>
         <div>{model.name}</div>
-        <div style={{ color: T.faint, fontSize: 12, fontFamily: "monospace" }}>
+        <div style={{ color: T.faint, fontSize: 11, fontFamily: "monospace" }}>
           {model.id}
           {model.locked ? ` · ${t("main.settingsUi.modelsLocked")}` : ""}
         </div>
       </div>
       <Switch
-        on={!model.locked && !off}
+        on={!hidden}
         disabled={model.locked}
         onChange={(on) => setOff(!on)}
         label={model.name}
@@ -1309,14 +1317,25 @@ function ModelRow({ model }: { model: PickerModel }) {
   );
 }
 
-/** The Models block: every model the picker could list, each with a switch that hides it box-wide
- *  through the hints store, so the cut holds on this box, on the boxes added over SSH and in every
- *  browser. The list is read once per open, unfiltered (`/models?all=1`), so a hidden model stays
- *  here to be switched back on; a session already on a hidden model keeps running. */
+/** The Models block: a folded `details` whose summary counts what the picker lists and what is
+ *  hidden, so a box with many models reads as one line until opened. Inside, every model the picker
+ *  could list, hidden ones included, each with a switch that hides it through the hints store, so
+ *  the cut holds on this box, on the boxes added over SSH and in every browser. One list for every
+ *  box: the lineup is Anthropic's, not the box's. A session already on a hidden model keeps running. */
 export function ModelsBlock() {
   useLocale();
   const [models, setModels] = useState<PickerModel[] | undefined>();
   const [error, setError] = useState("");
+  const [hiddenIds, setHiddenIds] = useState<Set<string>>(() => new Set());
+  const onState = useCallback((id: string, hidden: boolean) => {
+    setHiddenIds((prev) => {
+      if (prev.has(id) === hidden) return prev;
+      const next = new Set(prev);
+      if (hidden) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }, []);
   useEffect(() => {
     let live = true;
     fetch(`${ROUTE}/models?all=1`)
@@ -1327,37 +1346,45 @@ export function ModelsBlock() {
       live = false;
     };
   }, []);
+  const total = models?.length ?? 0;
   return (
-    <div data-omc-models-block="" style={{ fontSize: 13, marginBottom: 12 }}>
-      <div>{t("main.settingsUi.modelsTitle")}</div>
-      <div style={{ color: T.faint, fontSize: 12, marginBottom: 8 }}>
-        {t("main.settingsUi.modelsDesc")}
-      </div>
-      {error ? (
-        <div role="alert" style={{ color: T.faint, fontSize: 12 }}>
-          {error}
+    <details data-omc-models-block="" style={NESTED}>
+      <summary style={{ cursor: "pointer" }}>
+        {t("main.settingsUi.modelsTitle")}
+        <span style={{ color: T.faint, fontSize: 12 }}>
+          {models === undefined
+            ? ` · ${t("loading")}`
+            : ` · ${t("main.settingsUi.modelsSummary", { shown: total - hiddenIds.size, hidden: hiddenIds.size })}`}
+        </span>
+      </summary>
+      <div style={{ padding: "8px 0 0 16px" }}>
+        <div style={{ color: T.faint, fontSize: 12, marginBottom: 8 }}>
+          {t("main.settingsUi.modelsDesc")}
         </div>
-      ) : models === undefined ? (
-        <div style={{ color: T.faint, fontSize: 12 }}>{t("loading")}</div>
-      ) : (
-        <fieldset style={{ display: "grid", gap: 8, border: 0, margin: 0, padding: 0 }}>
-          <legend
-            style={{
-              position: "absolute",
-              width: 1,
-              height: 1,
-              overflow: "hidden",
-              clip: "rect(0 0 0 0)",
-            }}
-          >
-            {t("main.settingsUi.modelsTitle")}
-          </legend>
-          {models.map((m) => (
-            <ModelRow key={m.id} model={m} />
-          ))}
-        </fieldset>
-      )}
-    </div>
+        {error ? (
+          <div role="alert" style={{ color: T.faint, fontSize: 12 }}>
+            {error}
+          </div>
+        ) : (
+          <fieldset style={{ display: "grid", gap: 8, border: 0, margin: 0, padding: 0 }}>
+            <legend
+              style={{
+                position: "absolute",
+                width: 1,
+                height: 1,
+                overflow: "hidden",
+                clip: "rect(0 0 0 0)",
+              }}
+            >
+              {t("main.settingsUi.modelsTitle")}
+            </legend>
+            {(models ?? []).map((m) => (
+              <ModelRow key={m.id} model={m} onState={onState} />
+            ))}
+          </fieldset>
+        )}
+      </div>
+    </details>
   );
 }
 

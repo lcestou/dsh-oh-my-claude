@@ -353,7 +353,9 @@ export function updateHints(
     const current = await readHints(hintsPath);
     const merged = { ...current };
     for (const [k, v] of Object.entries(patch)) {
-      if (!/^[a-zA-Z][a-zA-Z0-9]{0,40}$/.test(k)) continue;
+      // A letter first keeps `__proto__` and friends out; `:`, `.` and `-` admit a scoped key such
+      // as `hideModel:claude-opus-5`.
+      if (!/^[a-zA-Z][a-zA-Z0-9:._-]{0,80}$/.test(k)) continue;
       if (v === true) merged[k] = true;
       else if (typeof v === "number" && Number.isFinite(v) && v >= 0) merged[k] = v;
       else if (v === false || v === null) delete merged[k];

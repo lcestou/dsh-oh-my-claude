@@ -24,7 +24,19 @@ await updateHints(path, { starterOff: false, costOff: null });
 assert.deepEqual(await readHints(path), { spendWarnUsd: 25, themeRowOff: true });
 
 // Values the store does not keep, and key names it does not accept, change nothing.
-await updateHints(path, { nope: "yes", "bad-key": true, negative: -1 });
+await updateHints(path, {
+  nope: "yes",
+  "bad key": true,
+  "-lead": true,
+  __proto__: true,
+  negative: -1,
+});
+assert.equal(
+  (await updateHints(path, { "hideModel:claude-opus-5": true }))["hideModel:claude-opus-5"],
+  true,
+  "a scoped key with a model id is kept",
+);
+await updateHints(path, { "hideModel:claude-opus-5": false });
 assert.deepEqual(await readHints(path), { spendWarnUsd: 25, themeRowOff: true });
 
 // The file on disk is valid JSON after all of it, not a half-written map.
