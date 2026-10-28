@@ -255,6 +255,12 @@ export function parseSettingsText(text: unknown): ParsedSettings {
 }
 
 /** Output of a probe command, or "" plus the failure text so the panel can show why. */
+/**
+ * One command's stdout, and the failure text when it did not exit 0 (stderr, else the spawn error,
+ * which for a timeout is a bare "Command failed"). Stdout is kept on a failure too: `claude auth
+ * status` prints its JSON and exits 1 on a logged-out box, and an ssh script exits with its last
+ * command's status, so a combined probe that ends in it used to lose every answer before it.
+ */
 const run = (
   cmd: string,
   args: string[],
@@ -267,7 +273,7 @@ const run = (
       resolve(
         e
           ? {
-              out: "",
+              out: String(out ?? ""),
               error: String(err || e.message)
                 .trim()
                 .slice(0, 300),
@@ -887,8 +893,8 @@ interface ProbeOutput {
   error?: string;
 }
 const statusCache = new Map<string, { at: number; value: Promise<RuntimeStatus> }>();
-/** The probes behind `runtimeStatus`, uncached. */
-async function probeRuntime(
+/** The probes behind `runtimeStatus`, uncached. Exported for its test only. */
+export async function probeRuntime(
   configDir: string,
   command: string,
   sshHost: string,
