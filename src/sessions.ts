@@ -354,8 +354,8 @@ export function updateHints(
     const merged = { ...current };
     for (const [k, v] of Object.entries(patch)) {
       // A letter first keeps `__proto__` and friends out; `:`, `.` and `-` admit a scoped key such
-      // as `hideModel:claude-opus-5`.
-      if (!/^[a-zA-Z][a-zA-Z0-9:._-]{0,80}$/.test(k)) continue;
+      // as `hideModel:claude-code-lilly:claude-opus-5`.
+      if (!/^[a-zA-Z][a-zA-Z0-9:._-]{0,120}$/.test(k)) continue;
       if (v === true) merged[k] = true;
       else if (typeof v === "number" && Number.isFinite(v) && v >= 0) merged[k] = v;
       else if (v === false || v === null) delete merged[k];
@@ -2028,9 +2028,13 @@ export interface SessionRouteOptions {
   };
   /** The model catalog for advisor model selection. */
   models?: () => Promise<Array<{ id: string; name: string }>>;
-  /** The Settings card's list, hidden rows included, with each one's hide state. */
+  /** The Settings card's Models block: every mount with its rows, hidden ones included. */
   pickerModels?: () => Promise<
-    Array<{ id: string; name: string; hidden: boolean; locked: boolean }>
+    Array<{
+      provider: string;
+      host: string | null;
+      models: Array<{ id: string; name: string; hidden: boolean; locked: boolean }>;
+    }>
   >;
   /** Announces a changed picker to dsh, after a hints write that hid or showed a model. */
   modelsUpdated?: () => void;

@@ -377,18 +377,26 @@ export const withoutHiddenModels = <T extends { id: string }>(
     );
   });
 };
-/** The hints-store key that hides one model from the picker: `hideModel:<id>` set to true. */
-export const HIDE_MODEL_HINT = "hideModel:";
+/** The hints-store key that hides one model from one box's picker: `hideModel:<provider>:<id>`
+ *  set to true, the provider being the mount's id (`claude-code`, `claude-code-<box>`). */
+export const hideModelHint = (provider: string, id: string): string =>
+  `hideModel:${provider}:${id}`;
 /**
- * The model ids the Settings switches hid, read off the box-wide hints store. Only a `true` under a
- * `hideModel:` key counts; the store drops `false`, so a model switched back on simply has no key.
- * The ids are matched by `withoutHiddenModels`, so an id the lineup has since renamed hides nothing
- * and harms nothing.
+ * The model ids the Settings switches hid for one mount, read off the hints store. Only a `true`
+ * under that mount's `hideModel:<provider>:` prefix counts; the store drops `false`, so a model
+ * switched back on simply has no key, and another box's keys are another box's list. The ids are
+ * matched by `withoutHiddenModels`, so an id the lineup has since renamed hides nothing and harms
+ * nothing.
  */
-export const hintHiddenModels = (hints: Record<string, boolean | number>): string[] =>
-  Object.entries(hints)
-    .filter(([k, v]) => k.startsWith(HIDE_MODEL_HINT) && v === true)
-    .map(([k]) => k.slice(HIDE_MODEL_HINT.length));
+export const hintHiddenModels = (
+  hints: Record<string, boolean | number>,
+  provider: string,
+): string[] => {
+  const prefix = hideModelHint(provider, "");
+  return Object.entries(hints)
+    .filter(([k, v]) => k.startsWith(prefix) && v === true)
+    .map(([k]) => k.slice(prefix.length));
+};
 /** Merges the CLI's model rows into the catalog, giving each known model a single stable id and
  *  name so the picker offers the same lineup whether or not the CLI has yet learned the model's
  *  short spelling. */

@@ -32,11 +32,13 @@ await updateHints(path, {
   negative: -1,
 });
 assert.equal(
-  (await updateHints(path, { "hideModel:claude-opus-5": true }))["hideModel:claude-opus-5"],
+  (await updateHints(path, { "hideModel:claude-code-lilly:claude-opus-5": true }))[
+    "hideModel:claude-code-lilly:claude-opus-5"
+  ],
   true,
   "a scoped key with a model id is kept",
 );
-await updateHints(path, { "hideModel:claude-opus-5": false });
+await updateHints(path, { "hideModel:claude-code-lilly:claude-opus-5": false });
 assert.deepEqual(await readHints(path), { spendWarnUsd: 25, themeRowOff: true });
 
 // The file on disk is valid JSON after all of it, not a half-written map.

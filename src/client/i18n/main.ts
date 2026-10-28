@@ -391,7 +391,7 @@ export const en = {
   "main.settingsUi.suggestTitle": "Suggested next prompt",
   "main.settingsUi.modelsTitle": "Models in the picker",
   "main.settingsUi.modelsDesc":
-    "Switch a model off to leave it out of the model picker on this box and on the boxes you added over SSH. A session already on it keeps running. A newer model shows up on its own. One list for every box: the lineup is Anthropic's, not the box's.",
+    "Switch a model off to leave it out of that box's model picker. Each box has its own list, so a box you added over SSH can keep a model this one hides. A session already on it keeps running. A newer model shows up on its own.",
   "main.settingsUi.modelsLocked": "hidden by hiddenModels in the plugin config",
   "main.settingsUi.modelsSummary": "{shown} listed, {hidden} hidden",
   "main.settingsUi.claudeSkillsTitle": "Claude Code skills on every model",
@@ -901,7 +901,7 @@ export const zh = {
   "main.settingsUi.suggestTitle": "下一条提示建议",
   "main.settingsUi.modelsTitle": "选择器中的模型",
   "main.settingsUi.modelsDesc":
-    "关掉一个模型，它就不再出现在本机以及你通过 SSH 添加的主机的模型选择器里。已在用它的会话照常运行。新模型会自动出现。所有主机共用这一份列表：模型阵容来自 Anthropic，与主机无关。",
+    "关掉一个模型，它就不再出现在该主机的模型选择器里。每台主机各有一份列表，所以通过 SSH 添加的主机可以保留本机隐藏的模型。已在用它的会话照常运行。新模型会自动出现。",
   "main.settingsUi.modelsLocked": "已被插件配置的 hiddenModels 隐藏",
   "main.settingsUi.modelsSummary": "{shown} 个显示，{hidden} 个隐藏",
   "main.settingsUi.claudeSkillsTitle": "在所有模型上使用 Claude Code 技能",

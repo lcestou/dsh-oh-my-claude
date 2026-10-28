@@ -9448,9 +9448,17 @@ console.log("watch-save-race ok");
   assert.deepEqual(await a.hiddenModelIds(), ["claude-opus-5"], "no hints file: the config alone");
   await writeFile(
     hintsPath,
-    JSON.stringify({ "hideModel:claude-haiku-4-5": true, starterOff: true, compactNudgeAt: 80 }),
+    JSON.stringify({
+      "hideModel:claude-code:claude-haiku-4-5": true,
+      "hideModel:claude-code-far:claude-sonnet-5": true,
+      starterOff: true,
+    }),
   );
-  assert.deepEqual(await a.hiddenModelIds(), ["claude-opus-5", "claude-haiku-4-5"]);
+  assert.deepEqual(
+    await a.hiddenModelIds(),
+    ["claude-opus-5", "claude-haiku-4-5"],
+    "this mount's switches, not another box's",
+  );
   await rm(hintsPath, { force: true });
   console.log("hidden model ids ok");
 }

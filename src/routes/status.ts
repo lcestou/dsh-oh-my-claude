@@ -101,7 +101,7 @@ export function statusRoutes(c: RouteCtx): RouteHandler {
       return json(res, 200, status);
     }
     if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/models`) {
-      // `?all=1` is the Settings card's read: every row with its hide state, not the picker's cut.
+      // `?all=1` is the Settings card's read: every mount's rows with their hide state, not the cut.
       const list = url.searchParams.get("all") === "1" ? pickerModels : models;
       if (!list) return json(res, 404, { error: "models not available" });
       try {

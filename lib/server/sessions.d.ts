@@ -889,12 +889,16 @@ export interface SessionRouteOptions {
         id: string;
         name: string;
     }>>;
-    /** The Settings card's list, hidden rows included, with each one's hide state. */
+    /** The Settings card's Models block: every mount with its rows, hidden ones included. */
     pickerModels?: () => Promise<Array<{
-        id: string;
-        name: string;
-        hidden: boolean;
-        locked: boolean;
+        provider: string;
+        host: string | null;
+        models: Array<{
+            id: string;
+            name: string;
+            hidden: boolean;
+            locked: boolean;
+        }>;
     }>>;
     /** Announces a changed picker to dsh, after a hints write that hid or showed a model. */
     modelsUpdated?: () => void;

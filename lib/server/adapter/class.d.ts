@@ -152,11 +152,27 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      *  The row names the fix; Retry after the login brings the models back. */
     listModels(provider: string): Promise<import("@deepseek-ai/dsh-llm").LlmModelInfo[]>;
     /**
-     * Every id the picker leaves out: the plugin config's `hiddenModels`, then the Settings switches,
-     * which live in the box-wide hints store (one file for every mount, ssh boxes included), so a
-     * model switched off is off on every box and in every browser. One small file read per listing.
+     * Every id this mount's picker leaves out: the plugin config's `hiddenModels`, then the Settings
+     * switches for this mount, which live in the hints store (one file for every mount, keyed by
+     * provider id, so each box has its own list and every browser sees the same one). One small
+     * file read per listing.
      */
     hiddenModelIds(): Promise<string[]>;
+    /**
+     * The Settings card's Models block: one entry per mount, this box and every ssh box, each with
+     * its provider id (the switches' key), its host (null for this box) and its `pickerModels`.
+     * A mount whose catalog read fails is listed empty rather than failing the others.
+     */
+    pickerBoxes(): Promise<Array<{
+        provider: string;
+        host: string | null;
+        models: Array<{
+            id: string;
+            name: string;
+            hidden: boolean;
+            locked: boolean;
+        }>;
+    }>>;
     /**
      * Tell dsh every mount's picker changed, the event dsh's own providers send when their lineup
      * moves (`llm/models-updated`): the composer's picker reloads `listModels` on it, so a model
@@ -165,7 +181,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      */
     modelsUpdated(): void;
     /**
-     * The Settings card's model list: every row the catalog and settings.json would offer, hidden or
+     * One mount's model list: every row the catalog and settings.json would offer, hidden or
      * not, so a hidden model can be switched back on. `locked` marks a row the plugin config hides,
      * which the switch cannot undo; `hidden` is the picker's answer either way. Default is left out,
      * since it is never hidden.
