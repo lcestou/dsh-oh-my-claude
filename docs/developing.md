@@ -84,7 +84,7 @@ The scripts under `tools/playwright/` are development checks only; nothing in th
 - `remote-ws-sync.ts <token>` pins a throwaway workspace on the first saved ssh box and checks three things: the open Settings card lists it with no reload, a delete from dsh's sidebar menu leaves no row behind in the card, and a removal through the route leaves the open card. It needs one saved ssh box and removes what it made, also after a run that died half way.
 - `cost-pill.ts`, `usage-popover.ts`, `shield-rows.ts`, `mcp-preset.ts`, `login-card.ts`, `starter-switch.ts`, `composer-shots.ts`, `terminal-mirror.ts` and `qol.ts` each drive one feature the same way; the header comment of each says what it asserts.
 
-Everything under `tools/` is TypeScript (the scripts run with `bun`, the oxlint plugin is loaded by oxlint), and `tools/**/*.ts` is in the `tsconfig.json` include, so `bun run typecheck` covers all of it. That is what keeps a rename in `src/` from leaving `live-cli-check.ts` probing the wrong thing, and a null `boundingBox()` from reaching a screenshot crop.
+Everything under `tools/` is TypeScript (the scripts run with `bun`, the oxlint plugin is loaded by oxlint, under whatever `node` is on PATH, so its imports name the `.ts` files outright: a `.js` specifier only resolves when that node is Bun), and `tools/**/*.ts` is in the `tsconfig.json` include, so `bun run typecheck` covers all of it. That is what keeps a rename in `src/` from leaving `live-cli-check.ts` probing the wrong thing, and a null `boundingBox()` from reaching a screenshot crop.
 
 ## The gate
 
