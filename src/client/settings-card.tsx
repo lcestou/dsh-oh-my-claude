@@ -28,6 +28,7 @@ import { livingModelId } from "../model-ids.js";
 import { ConfirmButton } from "./tune.js";
 import { ClaudeUpdateDetails } from "./claude-updates.js";
 import { COMPACT_AT, COMPACT_AT_CHOICES, compactThreshold } from "./nudge.js";
+import { BOXES_EVENT } from "./picker.js";
 import { Switch } from "./switch.js";
 import type { ToolMode, ToolModeInfo } from "../rows-probe.js";
 import { RECAP_AWAY_MS, RECAP_AWAY_CHOICES, recapAwayIn } from "./notices.js";
@@ -1344,12 +1345,17 @@ export function ModelsBlock() {
   }, []);
   useEffect(() => {
     let live = true;
-    fetch(`${ROUTE}/models?all=1`)
-      .then((r) => readJson<{ models?: PickerBox[] }>(r))
-      .then((b) => live && setBoxes(b.models ?? []))
-      .catch((e: Error) => live && setError(e.message));
+    const load = () =>
+      fetch(`${ROUTE}/models?all=1`)
+        .then((r) => readJson<{ models?: PickerBox[] }>(r))
+        .then((b) => live && setBoxes(b.models ?? []))
+        .catch((e: Error) => live && setError(e.message));
+    void load();
+    // A box added or removed in the card above changes the groups here; the card announces it.
+    window.addEventListener(BOXES_EVENT, load);
     return () => {
       live = false;
+      window.removeEventListener(BOXES_EVENT, load);
     };
   }, []);
   const total = boxes?.reduce((n, b) => n + b.models.length, 0) ?? 0;
