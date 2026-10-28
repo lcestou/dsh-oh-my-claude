@@ -1372,33 +1372,50 @@ export function ModelsBlock() {
             {error}
           </div>
         ) : (
-          (boxes ?? []).map((box) => (
-            <fieldset
-              key={box.provider}
-              data-omc-models-box={box.provider}
-              style={{ display: "grid", gap: 8, border: 0, margin: "0 0 12px", padding: 0 }}
-            >
-              {/* One box needs no heading; with an ssh box in the list each group says whose it is. */}
-              <legend
-                style={
-                  (boxes ?? []).length > 1
-                    ? { padding: 0, marginBottom: 4, fontSize: 12, color: T.muted }
-                    : {
-                        position: "absolute",
-                        width: 1,
-                        height: 1,
-                        overflow: "hidden",
-                        clip: "rect(0 0 0 0)",
-                      }
-                }
+          (boxes ?? []).map((box) => {
+            const prefix = `hideModel:${box.provider}:`;
+            const hiddenHere = [...hiddenKeys].filter((k) => k.startsWith(prefix)).length;
+            const rows = (
+              <fieldset style={{ display: "grid", gap: 8, border: 0, margin: 0, padding: 0 }}>
+                <legend
+                  style={{
+                    position: "absolute",
+                    width: 1,
+                    height: 1,
+                    overflow: "hidden",
+                    clip: "rect(0 0 0 0)",
+                  }}
+                >
+                  {box.host ?? t("main.sessions.thisBox")}
+                </legend>
+                {box.models.map((m) => (
+                  <ModelRow key={m.id} box={box} model={m} onState={onState} />
+                ))}
+              </fieldset>
+            );
+            // One box: its rows sit right under the description, the outer fold is enough. More
+            // than one: each box is its own fold, shut by default, so opening one box's list keeps
+            // the others at one line each.
+            return (boxes ?? []).length === 1 ? (
+              <div key={box.provider} data-omc-models-box={box.provider}>
+                {rows}
+              </div>
+            ) : (
+              <details
+                key={box.provider}
+                data-omc-models-box={box.provider}
+                style={{ marginBottom: 8 }}
               >
-                {box.host ?? t("main.sessions.thisBox")}
-              </legend>
-              {box.models.map((m) => (
-                <ModelRow key={m.id} box={box} model={m} onState={onState} />
-              ))}
-            </fieldset>
-          ))
+                <summary style={{ cursor: "pointer", color: T.muted, fontSize: 13 }}>
+                  {box.host ?? t("main.sessions.thisBox")}
+                  <span style={{ color: T.faint, fontSize: 12 }}>
+                    {` · ${t("main.settingsUi.modelsSummary", { shown: box.models.length - hiddenHere, hidden: hiddenHere })}`}
+                  </span>
+                </summary>
+                <div style={{ padding: "8px 0 0 16px" }}>{rows}</div>
+              </details>
+            );
+          })
         )}
       </div>
     </details>
