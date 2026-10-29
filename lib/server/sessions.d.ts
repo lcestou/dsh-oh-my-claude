@@ -5,7 +5,7 @@ import { type Reach } from "./reach.js";
 import { type FsBox } from "./remote-fs.js";
 import type { TranscriptListItem } from "./transcript.js";
 import type { JsonValue, PluginContext, SessionPersistence, WorkspaceRegistry } from "./dsh.js";
-import type { FallbackRecord, LiveTask } from "./translator.js";
+import type { FallbackRecord, HookRun, LiveTask } from "./translator.js";
 import { type SteerAttachment } from "./process.js";
 import { type HealHost, type RepairsSummary } from "./session-heal.js";
 import type { ToolMode, ToolModeInfo } from "./rows-probe.js";
@@ -520,6 +520,7 @@ export interface RouteCtx {
     permissionAsks: SessionRouteOptions["permissionAsks"];
     permissionModes: SessionRouteOptions["permissionModes"];
     permissionReadout: SessionRouteOptions["permissionReadout"];
+    hookRuns: SessionRouteOptions["hookRuns"];
     persistAsides: SessionRouteOptions["persistAsides"];
     pickFor: (cwd: string) => PickSettings;
     pluginErrors: SessionRouteOptions["pluginErrors"];
@@ -766,6 +767,8 @@ export interface SessionRouteOptions {
     workspaceDiff?: (sessionId: string) => Promise<WorkspaceDiffReply>;
     /** Permission rules and hooks for a session with a live process. */
     permissionReadout?: (sessionId: string) => Promise<PermissionReadoutReply>;
+    /** The hooks the session's CLI has run so far, oldest first, for the Diagnostics tab. */
+    hookRuns?: (sessionId: string) => HookRun[];
     /** MCP servers of a session's live process, and a reconnect for one of them. */
     mcp?: {
         status: (sessionId: string) => Promise<McpStatusReply>;
@@ -947,7 +950,7 @@ declare function sessionTranscript(box: MountBox, dir: string, sessionId: string
 /** True when this session already had one within the gap. Records the ask when it does not. */
 declare function recapIsRepeat(sessionId: string, now: number): boolean;
 /** `projectDir(cwd)` → Claude Code project dir; `startedIds()` → ids the adapter started itself. */
-export declare function registerSessionRoutes(ctx: PluginContext, { log, onHeal, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, importedDir, sshBoxesPath, onSshBoxes, remoteWorkspacesPath, onRemoteWorkspaces, command, boxCommand, sshHost, turnRecords, dshVersion, liveTurn, events, idle, toolMode, terminalSync, permissionModes, thinking, rewind, contextUsage, skillDoctor, workspaceDiff, permissionReadout, askAside, mcp, permissionAsks, sideQuestions, liveTasks, stopTask, taskOutput, compactNow, steersFor, holdSteers, releaseHold, sendSteerNow, loginNeeded, sessionFallbacks, boxOfSession, claudeUpdated, loginDone, logoutDone, liveCount, persistAsides, starters, setStarter, models, pickerModels, modelsUpdated, providerId, reloadPlugins, reloadSkills, pluginErrors, pluginWarnings, awaiting, continueAfterLimit, instanceFor, instanceForHost, onLoginStatus, }: SessionRouteOptions): void;
+export declare function registerSessionRoutes(ctx: PluginContext, { log, onHeal, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, importedDir, sshBoxesPath, onSshBoxes, remoteWorkspacesPath, onRemoteWorkspaces, command, boxCommand, sshHost, turnRecords, dshVersion, liveTurn, events, idle, toolMode, terminalSync, permissionModes, thinking, rewind, contextUsage, skillDoctor, workspaceDiff, permissionReadout, hookRuns, askAside, mcp, permissionAsks, sideQuestions, liveTasks, stopTask, taskOutput, compactNow, steersFor, holdSteers, releaseHold, sendSteerNow, loginNeeded, sessionFallbacks, boxOfSession, claudeUpdated, loginDone, logoutDone, liveCount, persistAsides, starters, setStarter, models, pickerModels, modelsUpdated, providerId, reloadPlugins, reloadSkills, pluginErrors, pluginWarnings, awaiting, continueAfterLimit, instanceFor, instanceForHost, onLoginStatus, }: SessionRouteOptions): void;
 /** One settings file as the Diagnostics tab reports it: where it is, and why the CLI refuses it. */
 export interface DiagnosticFile {
     scope: SettingsScope;

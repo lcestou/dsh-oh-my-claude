@@ -76,7 +76,27 @@ export interface LiveTask {
     subagentType?: string;
     status: string;
     at: number;
+    /** When a terminal status landed; unset while the task runs. */
+    endedAt?: number;
 }
+/** How many ended tasks a session keeps on its list; the oldest ended one goes when a new one ends. */
+export declare const ENDED_TASKS_KEPT = 10;
+/** One hook the CLI ran, as its `hook_response` frame reported it. The terminal shows a hook's
+ *  result once and drops it; the Diagnostics tab keeps the last `HOOK_RUNS_KEPT` per session. */
+export interface HookRun {
+    name: string;
+    event: string;
+    /** The CLI's outcome literal: `success`, `error` or `cancelled`; `failed` when it sent none. */
+    outcome: string;
+    exitCode?: number;
+    /** stdout, else stderr, cut to a few KiB; empty for a silent hook. */
+    output: string;
+    at: number;
+}
+/** How many hook runs a session keeps; this box runs dozens per tool call, so a turn can fill it. */
+export declare const HOOK_RUNS_KEPT = 100;
+/** The longest hook output a kept run carries. */
+export declare const HOOK_OUTPUT_LIMIT = 4000;
 /** What one task frame changes on a `LiveTask`; `task_started` sets everything, the rest a status. */
 export interface LiveTaskPatch {
     description?: string;
@@ -85,8 +105,11 @@ export interface LiveTaskPatch {
     status: string;
 }
 /** Apply one task frame to a session's live list: a start inserts, a status updates, a terminal
- *  status removes. A status for a task the map never saw is dropped (its start was read by a
- *  process this adapter no longer has), and a start for a known id only moves its status. */
+ *  status keeps the row with `endedAt` set so its output can still be read, and the oldest ended
+ *  rows go past `ENDED_TASKS_KEPT`. A status for a task the map never saw is dropped (its start was
+ *  read by a process this adapter no longer has), and a start for a known id only moves its status.
+ *  A terminal status on an already ended row changes nothing: the CLI sends `killed` then `stopped`
+ *  for one Stop, and the first is the one that ended it. */
 export declare function applyTaskPatch(tasks: Map<string, LiveTask>, taskId: string, patch: LiveTaskPatch, now: number): void;
 /** The CLI's guess at the next prompt after a turn, as the composer card offers it. */
 export interface SuggestionRow {
@@ -192,6 +215,7 @@ export declare class Translator {
     /** Injected: every task frame with a task id, so the adapter can keep the live list the Tasks
      *  tab reads. The reasoning rows above are drawn regardless; this is the second reader. */
     onTask?: (taskId: string, patch: LiveTaskPatch) => void;
+    onHookRun?: (run: HookRun) => void;
     /** Output tokens across every assistant message of this turn so far. A `message_delta` reports
      *  the message it closes, not the turn, so the figure summed here is what the status row shows;
      *  reporting each message's own count made the row drop back to a few hundred at every tool step. */
@@ -228,7 +252,7 @@ export declare class Translator {
     private fireToolCall;
     /** Every option is optional: a bare Translator shows tool activity, relays nothing and reports
      *  to no callbacks, which is what a one-shot call wants. */
-    constructor({ toolActivity, continueAfterLimit, timeZone, toolTextLimit, relay, dshIds, relayed, log, onToolCall, onToolResult, onResult, redact, onInit, onProgress, onModel, noteApiKey, onTask, hostLabel, statusNote, }?: {
+    constructor({ toolActivity, continueAfterLimit, timeZone, toolTextLimit, relay, dshIds, relayed, log, onToolCall, onToolResult, onResult, redact, onInit, onProgress, onModel, noteApiKey, onTask, onHookRun, hostLabel, statusNote, }?: {
         toolActivity?: boolean;
         continueAfterLimit?: boolean;
         timeZone?: string;
@@ -246,6 +270,8 @@ export declare class Translator {
         onModel?: (rec: Omit<FallbackRecord, "sessionId" | "at">) => void;
         noteApiKey?: () => boolean;
         onTask?: (taskId: string, patch: LiveTaskPatch) => void;
+        /** Every hook the CLI reports finished, clean ones included, for the Diagnostics tab's log. */
+        onHookRun?: (run: HookRun) => void;
         /** The box a remote turn runs on, so a logged-out error names it, not this local host. */
         hostLabel?: string;
         /** What to append to a 5xx retry line from the Anthropic status page cache. */

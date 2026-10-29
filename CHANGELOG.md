@@ -6,6 +6,16 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Added
+
+- The Tasks tab keeps a background task after it ends. A task that completed, failed or was stopped used to vanish the moment the CLI reported it, Output button included; it now stays with its end and how long ago, for the last ten ended tasks of a session, so a background command's tail can still be read.
+- The Tasks tab lists the subagents a session already ran, under Earlier subagents, newest first and described by the Task call that started them, with Open to read the whole run back. The CLI folds a subagent's work away once it ends and dsh's subagent list covers only dsh's own children; the transcripts stay on disk beside the session's, and this reads them.
+- Diagnostics keeps a hook run log: the last hundred hooks the session's CLI finished, newest first, with outcome, exit code and output a click away. The terminal shows a hook's result once and drops it.
+
+### Changed
+
+- The line the chat shows while Claude Code compacts its own context now says so ("Claude Code is compacting its context…"), so it reads apart from dsh's own compaction row when both run in one turn.
+
 ### Fixed
 
 - On dsh 0.2.2-alpha.2, switching a session to another Claude model failed with "Cannot switch to claude-code/…: context compaction failed: no context capacity" and dropped the message you had typed. That dsh prices a model switch against the target's context window, and the plugin withheld the window from dsh's compaction on purpose since 1.1.x, to keep it from compacting on top of Claude Code's own. The window is reported now; dsh's compaction can run again on a Claude session, only once its own measure of the session passes about 80% of the window.

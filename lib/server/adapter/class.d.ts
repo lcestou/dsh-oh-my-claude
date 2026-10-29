@@ -10,7 +10,7 @@ import { type ToolMode, type ToolModeInfo } from "../rows-probe.js";
 import { type FsBox } from "../remote-fs.js";
 import { sshRunner, type HoldRecord } from "../hold.js";
 import { type HealHost } from "../session-heal.js";
-import { Translator, type FallbackRecord, type SuggestionRow, type LiveTask, type LiveTaskPatch } from "../translator.js";
+import { Translator, type FallbackRecord, type SuggestionRow, type LiveTask, type LiveTaskPatch, type HookRun } from "../translator.js";
 import type { FinishReason } from "@deepseek-ai/dsh-llm";
 import type { ClaudeProcessSpec, RelayResult, TurnPrep } from "../process.js";
 import { Config } from "./config.js";
@@ -317,6 +317,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      *  that ends while no turn is reading stays until the next turn drains the queue; Stop on it
      *  then shows the CLI's error. */
     readonly sessionTasks: Map<string, Map<string, LiveTask>>;
+    /** The last `HOOK_RUNS_KEPT` hook results per session, newest last, for the Diagnostics tab. */
+    readonly hookRuns: Map<string, HookRun[]>;
     /** dsh session id → the model switch its last turn reported (a safety refusal, a primary-model
      *  fallback, or the usage-credit gate), surfaced through `/side-questions` like `loginNeeded`. One
      *  entry per live session, overwritten on each switch; the client reads it at the stop transition.
@@ -551,6 +553,10 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     /** One task frame into the session's live list (`applyTaskPatch` holds the rules); the map is
      *  created on the first frame so a session with no tasks owns no entry. */
     noteTask(sessionId: string, taskId: string, patch: LiveTaskPatch): void;
+    /** One finished hook into the session's log, dropping the oldest past `HOOK_RUNS_KEPT`. */
+    noteHookRun(sessionId: string, run: HookRun): void;
+    /** The session's kept hook runs, oldest first. Empty for a session this adapter never ran. */
+    hookRunsFor(sessionId: string): HookRun[];
     /** The session's live tasks, oldest first, for the Tasks tab. Empty without a process. */
     liveTasksFor(sessionId: string): LiveTask[];
     /** Ask the CLI to stop one task. The reply is the CLI's: an error for a task it no longer has.

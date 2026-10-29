@@ -85,7 +85,7 @@ const EN = {
   limitFable: "Fable limit",
   limitCredit: "usage credit limit",
   limitUsage: "usage limit",
-  compacting: "⟳ Compacting context…",
+  compacting: "⟳ Claude Code is compacting its context…",
   compactFailed: "⚠ Compaction failed: {error}",
   logRefused: "dsh refuses this session's stored log: {reason}",
   noTranscriptToReseed:
@@ -203,7 +203,7 @@ const ZH = {
   limitFable: "Fable 额度",
   limitCredit: "用量额度上限",
   limitUsage: "用量上限",
-  compacting: "⟳ 正在压缩上下文…",
+  compacting: "⟳ Claude Code 正在压缩自己的上下文…",
   compactFailed: "⚠ 压缩失败：{error}",
   logRefused: "dsh 拒绝加载该会话的存储日志：{reason}",
   noTranscriptToReseed: "没有找到这个会话的已完成 Claude Code 转录，无法重新生成。",
