@@ -532,6 +532,10 @@ const wireTurnStatus = (
       thinking: burst >= 0 || thoughtAgoMs >= 0,
       relay: (relayName !== "" && relayMs >= 0) || compactingMs >= 0,
     });
+    // The CLI's compaction is a silent stretch of a minute or more, and its chat line sits in a
+    // folded Think row; the word here is what says what the wait is, and the clock beside it is
+    // the same clock, so it is not repeated as "for Ns".
+    if (compactingMs >= 0) parts.push(t("main.turn.compacting"));
     if (time && open) parts.push(time);
     // dsh's copy goes quiet only while ours is showing the same figure. Hiding it unconditionally is
     // what left the row reading just the verb when the read came back empty.
@@ -544,10 +548,6 @@ const wireTurnStatus = (
       parts.push(
         t("main.turn.runningFor", { name: relayName, n: Math.round((relayMs + since) / 1000) }),
       );
-    // The CLI's compaction is a silent stretch of a minute or more, and its chat line sits in a
-    // folded Think row; the figure here is what says what the wait is while it lasts.
-    if (compactingMs >= 0)
-      parts.push(t("main.turn.compactingFor", { n: Math.round((compactingMs + since) / 1000) }));
     // The CLI names the effort after the word when one was asked for, and once a burst closes
     // it says "thought for Ns" for two seconds, never sooner than two seconds after the burst
     // began.
