@@ -82,7 +82,7 @@ import type {
   WorkspaceId,
   WorkspaceRegistry,
 } from "./dsh.js";
-import type { FallbackRecord, LiveTask } from "./translator.js";
+import type { FallbackRecord, HookRun, LiveTask } from "./translator.js";
 import { errorText, type SteerAttachment } from "./process.js";
 import { currentLogVersion, loadSessionCatalog } from "./rows-probe.js";
 import { serverText } from "./locale.js";
@@ -1375,6 +1375,7 @@ export interface RouteCtx {
   permissionAsks: SessionRouteOptions["permissionAsks"];
   permissionModes: SessionRouteOptions["permissionModes"];
   permissionReadout: SessionRouteOptions["permissionReadout"];
+  hookRuns: SessionRouteOptions["hookRuns"];
   persistAsides: SessionRouteOptions["persistAsides"];
   pickFor: (cwd: string) => PickSettings;
   pluginErrors: SessionRouteOptions["pluginErrors"];
@@ -1931,6 +1932,8 @@ export interface SessionRouteOptions {
   workspaceDiff?: (sessionId: string) => Promise<WorkspaceDiffReply>;
   /** Permission rules and hooks for a session with a live process. */
   permissionReadout?: (sessionId: string) => Promise<PermissionReadoutReply>;
+  /** The hooks the session's CLI has run so far, oldest first, for the Diagnostics tab. */
+  hookRuns?: (sessionId: string) => HookRun[];
   /** MCP servers of a session's live process, and a reconnect for one of them. */
   mcp?: {
     status: (sessionId: string) => Promise<McpStatusReply>;
@@ -2140,6 +2143,7 @@ export function registerSessionRoutes(
     skillDoctor,
     workspaceDiff,
     permissionReadout,
+    hookRuns,
     askAside,
     mcp,
     permissionAsks,
@@ -2588,6 +2592,7 @@ export function registerSessionRoutes(
       permissionAsks,
       permissionModes,
       permissionReadout,
+      hookRuns,
       persistAsides,
       pickFor,
       pluginErrors,

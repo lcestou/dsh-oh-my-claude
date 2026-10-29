@@ -231,6 +231,101 @@ function HooksList({ hooks }: { hooks: HooksListing["hooks"] }) {
   );
 }
 
+/** One hook the CLI finished, as the route reports it. */
+interface HookRun {
+  name: string;
+  event: string;
+  outcome: string;
+  exitCode?: number;
+  output: string;
+  at: number;
+}
+
+/** The hook run log: newest first, each row the event and hook name, its outcome and exit code,
+ *  and when it ran. A row with output opens on a click to show it; the terminal shows a hook's
+ *  result once and drops it, this keeps the last hundred. */
+function HookRunsList({ runs }: { runs: HookRun[] }) {
+  const newestFirst = runs.toReversed();
+  const { shown, button } = useFold(newestFirst.length);
+  const [open, setOpen] = useState<number | null>(null);
+  return (
+    <div>
+      {newestFirst.slice(0, shown).map((run, i) => {
+        const failed =
+          run.outcome !== "success" || (run.exitCode !== undefined && run.exitCode !== 0);
+        const tail =
+          run.exitCode !== undefined && run.exitCode !== 0 ? `exit ${run.exitCode}` : run.outcome;
+        const row = (
+          <>
+            <span style={{ flex: "none", fontFamily: T.mono, fontSize: 11 }}>{run.event}</span>
+            <span
+              style={{
+                flex: 1,
+                minWidth: 0,
+                fontFamily: T.mono,
+                fontSize: 11,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {run.name}
+            </span>
+            <span style={{ ...meta, flex: "none", color: failed ? T.err : undefined }}>{tail}</span>
+            <span style={{ ...meta, flex: "none" }}>{ago(run.at)}</span>
+          </>
+        );
+        const rowStyle = {
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          padding: "3px 0",
+          fontSize: 12,
+        };
+        return (
+          <div key={`${run.at}-${i}`} data-omc-hook-run={run.name}>
+            {run.output ? (
+              <button
+                type="button"
+                aria-expanded={open === i}
+                onClick={() => setOpen(open === i ? null : i)}
+                style={{
+                  ...rowStyle,
+                  width: "100%",
+                  background: "none",
+                  border: 0,
+                  color: "inherit",
+                  cursor: "pointer",
+                  textAlign: "left",
+                }}
+              >
+                {row}
+              </button>
+            ) : (
+              <div style={rowStyle}>{row}</div>
+            )}
+            {open === i ? (
+              <pre
+                data-omc-hook-run-output=""
+                style={{
+                  ...meta,
+                  fontFamily: T.mono,
+                  fontSize: 11,
+                  whiteSpace: "pre-wrap",
+                  margin: "0 0 4px 12px",
+                }}
+              >
+                {run.output}
+              </pre>
+            ) : null}
+          </div>
+        );
+      })}
+      {button}
+    </div>
+  );
+}
+
 /**
  * "Diagnostics" body in the Oh My Claude dialog: runtime status, config file parse errors,
  * MCP servers that are not connected with their errors, and a doctor output button.
@@ -250,6 +345,7 @@ export function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: Cl
   const [auditError, setAuditError] = useState("");
   const [permissions, setPermissions] = useState<PermissionsReply | null>(null);
   const [permissionsError, setPermissionsError] = useState("");
+  const [hookRuns, setHookRuns] = useState<HookRun[]>([]);
   const [doctorOutput, setDoctorOutput] = useState<string | null>(null);
   const [doctorError, setDoctorError] = useState("");
   const [doctorBusy, setDoctorBusy] = useState(false);
@@ -302,6 +398,20 @@ export function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: Cl
       live = false;
     };
   }, [running, sessionId]);
+
+  // The hook log is the adapter's memory, not the CLI's answer, so a session that has only spawned
+  // (its SessionStart hooks ran) already has rows; read it with the tab and again as turns end.
+  useEffect(() => {
+    if (!running) return;
+    let live = true;
+    fetch(`${ROUTE}/hook-runs?session=${encodeURIComponent(sessionId)}`)
+      .then((r) => readJson<{ ok: true; runs: HookRun[] }>(r))
+      .then((b) => live && setHookRuns(b.runs))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [running, started, sessionId]);
 
   const reconnect = async (serverName: string) => {
     setReconnecting(serverName);
@@ -707,6 +817,19 @@ export function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: Cl
               ) : (
                 <HooksList hooks={permissions.hooks} />
               ))}
+          </div>
+          <div data-omc-hook-runs="">
+            <span style={sectionHead}>
+              {t("panel.diag.hookRuns")}
+              {hookRuns.length > 0 && ` · ${hookRuns.length}`}
+            </span>
+            {hookRuns.length === 0 ? (
+              <span style={{ ...meta, padding: "2px 0", fontSize: 12 }}>
+                {t("panel.diag.noHookRuns")}
+              </span>
+            ) : (
+              <HookRunsList runs={hookRuns} />
+            )}
           </div>
 
           {/* Doctor button */}

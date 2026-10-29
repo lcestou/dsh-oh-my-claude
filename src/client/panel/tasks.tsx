@@ -192,7 +192,13 @@ const statusWord = (status: string) =>
     ? t("panel.tasks.status.running")
     : status === "paused"
       ? t("panel.tasks.status.paused")
-      : status;
+      : status === "completed"
+        ? t("panel.tasks.status.completed")
+        : status === "failed"
+          ? t("panel.tasks.status.failed")
+          : status === "killed" || status === "stopped"
+            ? t("panel.tasks.status.stopped")
+            : status;
 
 /**
  * Claude's own background tasks and subagents, polled every 3 s while the tab is open, each with
@@ -242,8 +248,13 @@ function LiveTasksSection({ sessionId }: { sessionId: string }) {
         if (!mounted.current) return;
         if (kind === "output" && b.ok) setOutput((cur) => ({ ...cur, [task.id]: b.output ?? "" }));
         else if (kind === "stop" && b.ok)
-          // The server dropped the row on the CLI's ok; the next poll would too, up to 3 s later.
-          setTasks((cur) => cur.filter((row) => row.id !== task.id));
+          // The server marked the row stopped on the CLI's ok and keeps it, so its output can
+          // still be read; the next poll would show the same, up to 3 s later.
+          setTasks((cur) =>
+            cur.map((row) =>
+              row.id === task.id ? { ...row, status: "stopped", endedAt: Date.now() } : row,
+            ),
+          );
         else
           setNote((cur) => ({
             ...cur,
@@ -281,18 +292,22 @@ function LiveTasksSection({ sessionId }: { sessionId: string }) {
                 {t("panel.tasks.output")}
               </button>
             )}
-            <button
-              type="button"
-              style={btn}
-              data-omc-live-task-stop=""
-              onClick={() => void act(task, "stop")}
-            >
-              {t("panel.tasks.stop")}
-            </button>
+            {/* An ended row has nothing to stop; it stays for its output, with when it ended. */}
+            {task.endedAt === undefined ? (
+              <button
+                type="button"
+                style={btn}
+                data-omc-live-task-stop=""
+                onClick={() => void act(task, "stop")}
+              >
+                {t("panel.tasks.stop")}
+              </button>
+            ) : null}
           </div>
           <div style={{ ...meta, fontSize: 11 }}>
             {[
               statusWord(task.status),
+              task.endedAt === undefined ? "" : ago(task.endedAt),
               task.backgrounded ? t("panel.tasks.background") : "",
               task.subagentType ?? "",
             ]

@@ -163,6 +163,8 @@ import {
   type SuggestionRow,
   type LiveTask,
   type LiveTaskPatch,
+  type HookRun,
+  HOOK_RUNS_KEPT,
   applyTaskPatch,
 } from "../translator.js";
 import type { FinishReason, Message } from "@deepseek-ai/dsh-llm";
@@ -1305,6 +1307,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    *  that ends while no turn is reading stays until the next turn drains the queue; Stop on it
    *  then shows the CLI's error. */
   readonly sessionTasks = new Map<string, Map<string, LiveTask>>();
+  /** The last `HOOK_RUNS_KEPT` hook results per session, newest last, for the Diagnostics tab. */
+  readonly hookRuns = new Map<string, HookRun[]>();
   /** dsh session id → the model switch its last turn reported (a safety refusal, a primary-model
    *  fallback, or the usage-credit gate), surfaced through `/side-questions` like `loginNeeded`. One
    *  entry per live session, overwritten on each switch; the client reads it at the stop transition.
@@ -2199,6 +2203,19 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const tasks = this.sessionTasks.get(sessionId) ?? new Map<string, LiveTask>();
     applyTaskPatch(tasks, taskId, patch, Date.now());
     this.sessionTasks.set(sessionId, tasks);
+  }
+
+  /** One finished hook into the session's log, dropping the oldest past `HOOK_RUNS_KEPT`. */
+  noteHookRun(sessionId: string, run: HookRun): void {
+    const runs = this.hookRuns.get(sessionId) ?? [];
+    runs.push(run);
+    if (runs.length > HOOK_RUNS_KEPT) runs.splice(0, runs.length - HOOK_RUNS_KEPT);
+    this.hookRuns.set(sessionId, runs);
+  }
+
+  /** The session's kept hook runs, oldest first. Empty for a session this adapter never ran. */
+  hookRunsFor(sessionId: string): HookRun[] {
+    return this.hookRuns.get(sessionId) ?? [];
   }
 
   /** The session's live tasks, oldest first, for the Tasks tab. Empty without a process. */
@@ -4213,6 +4230,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     this.sessionPluginErrors.delete(sessionId);
     this.sessionPluginWarnings.delete(sessionId);
     this.sessionTasks.delete(sessionId);
+    this.hookRuns.delete(sessionId);
     this.sessionFallbacks.delete(sessionId);
     this.permissionAsks.delete(sessionId);
     this.awaitingInput.delete(sessionId);
@@ -4703,6 +4721,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         return degradedNote(known);
       },
       log: this.log.bind(this),
+      onHookRun: (run) => this.noteHookRun(options.sessionId, run),
       onProgress: (p) => {
         const cur = this.liveTurn.get(options.sessionId) ?? {
           at: Date.now(),

@@ -400,6 +400,7 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       workspaceDiff: (sessionId: string) => adapter.ownerFor(sessionId).workspaceDiff(sessionId),
       permissionReadout: (sessionId: string) =>
         adapter.ownerFor(sessionId).permissionReadout(sessionId),
+      hookRuns: (sessionId: string) => adapter.ownerFor(sessionId).hookRunsFor(sessionId),
       mcp: {
         status: (sessionId: string) => adapter.ownerFor(sessionId).mcpStatus(sessionId),
         reconnect: (sessionId: string, serverName: string) =>
