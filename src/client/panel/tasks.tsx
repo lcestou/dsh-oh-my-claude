@@ -264,11 +264,14 @@ function LiveTasksSection({ sessionId }: { sessionId: string }) {
       .catch((e: Error) => {
         if (mounted.current) setNote((cur) => ({ ...cur, [task.id]: e.message }));
       });
-  if (tasks.length === 0) return null;
+  // An ended subagent has nothing left to offer here (no Stop, no Output); the Earlier subagents
+  // section lists it with Open. Ended shell tasks stay for their Output.
+  const shown = tasks.filter((task) => task.endedAt === undefined || !task.subagentType);
+  if (shown.length === 0) return null;
   return (
     <div data-omc-live-tasks="">
       <span style={sectionHead}>{t("panel.tasks.live")}</span>
-      {tasks.map((task) => (
+      {shown.map((task) => (
         <div
           key={task.id}
           data-omc-live-task={task.id}
