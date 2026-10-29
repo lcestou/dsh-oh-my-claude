@@ -247,10 +247,13 @@ interface HookRun {
 function HookRunsList({ runs }: { runs: HookRun[] }) {
   const newestFirst = runs.toReversed();
   const { shown, button } = useFold(newestFirst.length);
-  const [open, setOpen] = useState<number | null>(null);
+  // Keyed by the run, not its position: the list is read again as turns end, and a new run at
+  // the top would otherwise move the opened row's index onto its neighbour.
+  const [open, setOpen] = useState<string | null>(null);
   return (
     <div>
-      {newestFirst.slice(0, shown).map((run, i) => {
+      {newestFirst.slice(0, shown).map((run) => {
+        const key = `${run.at}:${run.name}`;
         const failed =
           run.outcome !== "success" || (run.exitCode !== undefined && run.exitCode !== 0);
         const tail =
@@ -283,12 +286,12 @@ function HookRunsList({ runs }: { runs: HookRun[] }) {
           fontSize: 12,
         };
         return (
-          <div key={`${run.at}-${i}`} data-omc-hook-run={run.name}>
+          <div key={key} data-omc-hook-run={run.name}>
             {run.output ? (
               <button
                 type="button"
-                aria-expanded={open === i}
-                onClick={() => setOpen(open === i ? null : i)}
+                aria-expanded={open === key}
+                onClick={() => setOpen(open === key ? null : key)}
                 style={{
                   ...rowStyle,
                   width: "100%",
@@ -304,7 +307,7 @@ function HookRunsList({ runs }: { runs: HookRun[] }) {
             ) : (
               <div style={rowStyle}>{row}</div>
             )}
-            {open === i ? (
+            {open === key ? (
               <pre
                 data-omc-hook-run-output=""
                 style={{
