@@ -12,6 +12,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 - The Tasks tab lists the subagents a session already ran, under Earlier subagents, newest first and described by the Task call that started them, with Open to read the whole run back. The CLI folds a subagent's work away once it ends and dsh's subagent list covers only dsh's own children; the transcripts stay on disk beside the session's, and this reads them.
 - Diagnostics keeps a hook run log: the last hundred hooks the session's CLI finished, newest first, with outcome, exit code and output a click away. The terminal shows a hook's result once and drops it.
 
+### Fixed
+
+- `/claude-compact`, `/claude-goal`, `/claude-plan`, `/claude-export`, `/claude-feedback` and `/claude-permission` are in the slash menu again. dsh owns the bare names, and on dsh 0.2.2 its registry keeps a second registration of the same name without complaint, so the bridge's `/compact` sat behind dsh's and Claude Code's never got a name: a typed `/compact` compacted dsh's copy of the conversation and left Claude's context alone. The Compact button on the context card was the only way; now the prefixed command is the same thing typed.
+
 ### Changed
 
 - The line the chat shows while Claude Code compacts its own context now says so ("Claude Code is compacting its context…"), so it reads apart from dsh's own compaction row when both run in one turn.

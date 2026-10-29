@@ -113,6 +113,14 @@ export declare const BRIDGE_PREFIX = "claude-";
  */
 export declare const CLIENT_COMMANDS: Set<string>;
 /**
+ * Names dsh's own host plugins register (`dsh-command-compact` and the rest, read out of their
+ * bundles). On dsh 0.2.2 the registry scopes a name per plugin, so the bridge's bare registration
+ * of one of these does not throw: both exist, dsh's wins at dispatch, and Claude's never gets a
+ * name. A typed `/compact` ran dsh's compaction and left the CLI's context alone (2026-10-29).
+ * These take the prefixed form from the start, so `/claude-compact` is Claude Code's.
+ */
+export declare const HOST_COMMANDS: Set<string>;
+/**
  * The dsh title a bridged command should set: the trimmed argument when this is Claude's rename
  * with one. An empty argument returns undefined so the line reaches Claude unchanged and the CLI
  * answers with its own usage message.

@@ -279,6 +279,7 @@ import {
   buildArgs,
   buildInput,
   CLIENT_COMMANDS,
+  HOST_COMMANDS,
   denyCliFlag,
   dshToolsGuidance,
   mcpToolsByServer,
@@ -1364,7 +1365,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       // and blanks, all 200 names at once (2026-09-05), when a host command shadows a client
       // contribution the registry cannot see, so those names never take the bare form at all.
       const prefixed = `${BRIDGE_PREFIX}${cmd}`;
-      const dshName = CLIENT_COMMANDS.has(cmd) ? prefixed : cmd;
+      const dshName = CLIENT_COMMANDS.has(cmd) || HOST_COMMANDS.has(cmd) ? prefixed : cmd;
       if (agent && commands.find(agent, dshName) !== undefined) continue;
       const define = (dshCommand: string) =>
         commands.register({

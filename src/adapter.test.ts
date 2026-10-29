@@ -4482,8 +4482,8 @@ console.log("approval outcomes ok");
   a.bridgeCommands(["compact", "model"], undefined);
   assert.deepEqual(
     registered,
-    ["compact", "claude-model", "temporary", "btw", "ultracode"],
-    "Claude's own names, prefixed only where dsh's client half owns one, plus the plugin's three",
+    ["claude-compact", "claude-model", "temporary", "btw", "ultracode"],
+    "Claude's own names, prefixed where dsh's client half or a dsh host plugin owns one, plus the plugin's three",
   );
   assert.equal(a.bridged.size, 5, "compact, model, temporary, btw and ultracode");
   // A catalog that already carries the plugin's own names (every catalog saved before 2026-09-08
@@ -4498,13 +4498,15 @@ console.log("approval outcomes ok");
   );
 }
 
-// A name dsh already owns throws on the bare registration; the prefixed name is the fallback, so
-// the command still reaches the menu instead of dropping out of the catalog.
+// A name another host already owns throws on the bare registration; the prefixed name is the
+// fallback, so the command still reaches the menu instead of dropping out of the catalog. (dsh's
+// own names never try the bare form: HOST_COMMANDS sends them prefixed first; `verify` stands in
+// here for a name some other plugin took.)
 {
   const registered: string[] = [];
   const commands = {
     register: (d: { name: string }) => {
-      if (d.name === "compact") throw new Error('command "compact" is already registered');
+      if (d.name === "verify") throw new Error('command "verify" is already registered');
       registered.push(d.name);
       return () => {};
     },
@@ -4516,9 +4518,9 @@ console.log("approval outcomes ok");
     get: (n: string) => (n === "commands" ? commands : undefined),
   };
   const a = new ClaudeCodeAdapter(fakeCtx(base), Config({ commandBridge: true }));
-  a.bridgeCommands(["compact"], undefined);
-  assert.ok(registered.includes("claude-compact"), "fell back to the prefixed name");
-  assert.equal(a.bridged.has("compact"), true, "and the command is bridged either way");
+  a.bridgeCommands(["verify"], undefined);
+  assert.ok(registered.includes("claude-verify"), "fell back to the prefixed name");
+  assert.equal(a.bridged.has("verify"), true, "and the command is bridged either way");
 }
 
 // A later frame naming fewer commands does not shrink what is saved: the registrations already made
