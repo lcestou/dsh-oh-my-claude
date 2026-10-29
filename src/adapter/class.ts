@@ -4989,6 +4989,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       noteInterrupt(proc);
       if (!proc.write(interruptLine(`interrupt-${randomUUID()}`))) return proc.kill();
       proc.interruptOwed = true;
+      proc.interruptMark = proc.queue.lines.length;
       // A process that ignores the interrupt is killed after a grace period, except under a keeper:
       // there the idle watchdog already ends a hung process, and a kill here cost a respawn on
       // every model switch (2026-09-06 21:08: abort kind=none, kill at +5 s, "claude exited 143").
