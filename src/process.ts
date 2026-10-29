@@ -1989,6 +1989,14 @@ export class ClaudeProcess {
     if (!line.includes('"result"')) return;
     if (this.interruptOwed && isResultLine(line)) {
       this.interruptOwed = false;
+      // The answer is spent: it was queued a moment ago by the reader above, and left there it
+      // would count as a stale result at the next prompt and draw a rule nobody asked for. Only
+      // the queue's own tail is taken, in case a reader already took the line.
+      if (this.queue.lines.at(-1) === line) {
+        this.queue.lines.pop();
+        const index = this.queuedIndexes.pop();
+        if (index !== undefined) this.used(index);
+      }
       return;
     }
     if (this.busy || !this.onIdleResult) return;

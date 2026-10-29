@@ -2370,11 +2370,20 @@ console.log("ok");
   note('{"type":"result","subtype":"success"}');
   assert.equal(woke, 1, "a result during a live turn is the turn's own, no wake");
   fake.busy = false;
-  // The answer to an interrupt: one result of any outcome is swallowed, the next one wakes again.
-  (fake as any).interruptOwed = true;
+  // The answer to an interrupt: one result of any outcome is swallowed, taken off the queue and
+  // acknowledged to the keeper, and the next one wakes again.
+  const acked: number[] = [];
+  Object.assign(fake, {
+    interruptOwed: true,
+    queue: { lines: ['{"type":"result","subtype":"success"}'] },
+    queuedIndexes: [41],
+    used: (i: number) => acked.push(i),
+  });
   note('{"type":"result","subtype":"success"}');
   assert.equal(woke, 1, "the interrupt's own result wakes nobody");
   assert.equal((fake as any).interruptOwed, false, "and the debt is paid");
+  assert.deepEqual((fake as any).queue.lines, [], "the spent answer leaves the queue");
+  assert.deepEqual(acked, [41], "and the keeper is told it was used");
   note('{"type":"result","subtype":"success"}');
   assert.equal(woke, 2, "the one after it is a real idle reply");
   (fake as any).onIdleResult = undefined;
