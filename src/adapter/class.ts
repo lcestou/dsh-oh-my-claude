@@ -1283,7 +1283,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    * bridged, so once they slipped in, every later boot bridged `/btw` to Claude first and the real
    * handler saw the name taken and stood down (2026-09-08: "/btw isn't available in this environment").
    */
-  static readonly OWN_COMMANDS = new Set(["temporary", "btw", "ultracode"]);
+  static readonly OWN_COMMANDS = new Set(["temporary", "btw", "ultracode", "compact"]);
   /** dsh session id → what `/ultracode` last asked for, and what the CLI last said about it.
    *  `confirmed` is absent until a read-back lands. Written to `ultracode.json` on every change, so
    *  a session keeps its setting across a dsh restart and a relaunch of its process. */
@@ -1335,6 +1335,70 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       return skill?.invocation.userInvocable === true;
     } catch {
       return false;
+    }
+  }
+
+  /** The agents that already carry the plugin's agent-scoped `/compact`; a disposed agent drops
+   *  out on its own, and a session dsh reloads gets a new agent and a new mount. */
+  readonly compactOwned = new WeakSet<Agent>();
+
+  /**
+   * Shadow dsh's `/compact` for one Claude session with Claude Code's. dsh's global `/compact`
+   * condenses dsh's own copy of the conversation, which Claude never reads, so typed in a Claude
+   * session it did nothing for Claude's context (2026-10-29). dsh's command registry layers an
+   * agent-scoped command over the global one for that agent only, so this mounts a child plugin
+   * under the agent's context that registers `compact` there. On Claude the handler sends
+   * `/compact` to the CLI, the way the context card's button does; on any other model, after a
+   * switch, it runs dsh's own compaction, so the switch loses nothing. The registration unwinds
+   * with the agent. Mounted on the session's first turn and on each init frame, so a session
+   * reattached after a dsh restart carries it from its next prompt on, not before.
+   */
+  mountCompactOverride(agent: Agent | undefined): void {
+    if (agent?.ctx?.plugin === undefined || this.compactOwned.has(agent)) return;
+    this.compactOwned.add(agent);
+    try {
+      agent.ctx.plugin({
+        name: "dsh-oh-my-claude-compact",
+        inject: ["commands"],
+        apply: (child) => {
+          child.effect?.(
+            () =>
+              child.commands?.register({
+                name: "compact",
+                description: "Claude Code /compact",
+                handler: async ({ agent: target, rawInput, signal, commandId }) => {
+                  if (rawInput.trim() !== "")
+                    return { kind: "error", text: serverText("compactNoArgs") };
+                  if (this.notClaude(target, "compact") === undefined) {
+                    target.followup(
+                      createUserMessage({
+                        content: [{ type: "text", text: "/compact" }],
+                        source: { kind: "user" },
+                      }),
+                    );
+                    return { kind: "success", text: serverText("compactSent") };
+                  }
+                  const compaction = child.get("compaction");
+                  if (!compaction) return { kind: "error", text: serverText("compactUnavailable") };
+                  const result = await compaction.compactNow(target, signal, commandId);
+                  return {
+                    kind: "success",
+                    text:
+                      result === null
+                        ? serverText("compactNothing")
+                        : serverText("compactDone", {
+                            items: String(result.shadowedSeqs.length),
+                            tokens: String(result.shadowedTokenCount),
+                          }),
+                  };
+                },
+              }),
+            "oh-my-claude compact override",
+          );
+        },
+      });
+    } catch (error) {
+      this.log("warn", `compact override: ${errorText(error)}`);
     }
   }
 
@@ -3568,6 +3632,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       yield* this.oneShot(options);
       return;
     }
+    this.mountCompactOverride(this.ctx?.agents?.get?.(options.sessionId));
     // SAFETY: sessionId was checked just above; the persistent path always has one
     yield* this.turn(options as SessionOptions, false);
   }
@@ -4835,8 +4900,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         // a fresh init frame, never on a reload; a clean load sends [] and clears them.
         if (options.sessionId && pluginWarnings !== undefined)
           this.sessionPluginWarnings.set(options.sessionId, pluginWarnings);
-        if (names.length > 0)
-          this.bridgeCommands(names, this.ctx?.agents?.get?.(options.sessionId));
+        const agent = this.ctx?.agents?.get?.(options.sessionId);
+        if (names.length > 0) this.bridgeCommands(names, agent);
+        this.mountCompactOverride(agent);
       },
       onModel: (rec) => {
         // Bank the switch for the session so the notice and the picker read it at the stop

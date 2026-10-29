@@ -14,7 +14,8 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
-- `/claude-compact`, `/claude-goal`, `/claude-plan`, `/claude-export`, `/claude-feedback` and `/claude-permission` are in the slash menu again. dsh owns the bare names, and on dsh 0.2.2 its registry keeps a second registration of the same name without complaint, so the bridge's `/compact` sat behind dsh's and Claude Code's never got a name: a typed `/compact` compacted dsh's copy of the conversation and left Claude's context alone. The Compact button on the context card was the only way; now the prefixed command is the same thing typed.
+- A typed `/compact` in a Claude session compacts Claude Code's context, the same as the Compact button on the context card. It used to run dsh's own `/compact`, which condenses dsh's copy of the conversation that Claude never reads, so Claude's context stayed as it was. The plugin now mounts its own `compact` under the session's agent, which dsh's registry lets shadow the global one for that agent only; after a switch to another model the same command runs dsh's compaction, so nothing is lost.
+- `/claude-goal`, `/claude-plan`, `/claude-export`, `/claude-feedback` and `/claude-permission` are in the slash menu again. dsh owns the bare names, and on dsh 0.2.2 its registry keeps a second registration of the same name without complaint, so the bridge's copies sat behind dsh's and Claude Code's versions had no name.
 
 ### Changed
 

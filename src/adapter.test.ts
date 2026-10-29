@@ -4482,10 +4482,10 @@ console.log("approval outcomes ok");
   a.bridgeCommands(["compact", "model"], undefined);
   assert.deepEqual(
     registered,
-    ["claude-compact", "claude-model", "temporary", "btw", "ultracode"],
-    "Claude's own names, prefixed where dsh's client half or a dsh host plugin owns one, plus the plugin's three",
+    ["claude-model", "temporary", "btw", "ultracode"],
+    "Claude's own names, prefixed where dsh's client half owns one, plus the plugin's three; compact is the override's",
   );
-  assert.equal(a.bridged.size, 5, "compact, model, temporary, btw and ultracode");
+  assert.equal(a.bridged.size, 4, "model, temporary, btw and ultracode");
   // A catalog that already carries the plugin's own names (every catalog saved before 2026-09-08
   // did) must not bridge them to Claude: the real handler would then find the name taken.
   const again = new ClaudeCodeAdapter(fakeCtx(guarded), Config({ commandBridge: true }));
@@ -4523,6 +4523,73 @@ console.log("approval outcomes ok");
   assert.equal(a.bridged.has("verify"), true, "and the command is bridged either way");
 }
 
+// mountCompactOverride: a child plugin under the agent's context registers an agent-scoped
+// `compact`; on Claude the handler sends `/compact` to the session as a user message, an argument
+// is refused, and a second mount on the same agent is a no-op.
+{
+  const mounted: Array<{ name: string; inject?: string[] }> = [];
+  const registered: Array<{ name: string; handler: Function }> = [];
+  const sent: string[] = [];
+  const child = {
+    effect: (fn: () => void) => fn(),
+    commands: {
+      register: (d: { name: string; handler: Function }) => {
+        registered.push(d);
+        return () => {};
+      },
+      find: () => undefined,
+    },
+    get: () => undefined,
+  };
+  const agent = {
+    id: "s1",
+    followup: (m: { content: Array<{ type: string; text?: string }> }) =>
+      sent.push(m.content[0]?.text ?? ""),
+    ctx: {
+      plugin: (def: { name: string; inject?: string[]; apply: (c: unknown) => void }) => {
+        mounted.push({ name: def.name, inject: def.inject });
+        def.apply(child);
+        return {};
+      },
+    },
+  };
+  const base = { on() {}, logger: { info() {}, warn() {} }, get: () => undefined };
+  const a = new ClaudeCodeAdapter(fakeCtx(base), Config({}));
+  // SAFETY: the fake carries only what the override reads: ctx.plugin and followup.
+  a.mountCompactOverride(agent as any);
+  a.mountCompactOverride(agent as any);
+  assert.deepEqual(
+    mounted,
+    [{ name: "dsh-oh-my-claude-compact", inject: ["commands"] }],
+    "one mount per agent",
+  );
+  assert.deepEqual(
+    registered.map((r) => r.name),
+    ["compact"],
+    "the agent-scoped command carries dsh's own name",
+  );
+  const handler = registered[0]!.handler;
+  const ok = await handler({
+    agent,
+    rawInput: "",
+    attachments: [],
+    signal: new AbortController().signal,
+  });
+  assert.deepEqual(sent, ["/compact"], "sent to Claude as the next user message");
+  assert.equal(ok.kind, "success");
+  const refused = await handler({
+    agent,
+    rawInput: " now",
+    attachments: [],
+    signal: new AbortController().signal,
+  });
+  assert.equal(refused.kind, "error", "an argument is refused, as dsh's own command refuses it");
+  assert.equal(sent.length, 1, "and nothing more was sent");
+  // An agent with no context (another runtime's agent) is left alone.
+  a.mountCompactOverride({ id: "s2", followup() {} } as any);
+  assert.equal(mounted.length, 1);
+}
+
 // A later frame naming fewer commands does not shrink what is saved: the registrations already made
 // are not removed, so the file follows them rather than the frame.
 {
@@ -4539,11 +4606,11 @@ console.log("approval outcomes ok");
   const a = new ClaudeCodeAdapter(fakeCtx(base), Config({ commandBridge: true }));
   a.stateDir = dir;
   a.bridgeCommands(["llama", "mint"], undefined);
-  a.bridgeCommands(["compact"], undefined);
+  a.bridgeCommands(["verify"], undefined);
   await new Promise((r) => setTimeout(r, 50));
   assert.deepEqual(
-    (await loadCommandCatalog(dir)).filter((n) => ["llama", "mint", "compact"].includes(n)),
-    ["llama", "mint", "compact"],
+    (await loadCommandCatalog(dir)).filter((n) => ["llama", "mint", "verify"].includes(n)),
+    ["llama", "mint", "verify"],
     "every bridged name, not the last frame",
   );
   // And a second instance over the same state dir — dsh re-instantiates the plugin when settings

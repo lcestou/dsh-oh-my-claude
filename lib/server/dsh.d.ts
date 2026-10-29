@@ -475,6 +475,8 @@ export interface PluginContext {
             recordInput?: boolean;
             handler: (invocation: {
                 agent: Agent;
+                /** The `command/run` id dsh minted, which a compaction records as its source. */
+                commandId?: string;
                 rawInput: string;
                 /** The admitted image and file blocks, in submission order; empty unless declared. */
                 attachments: readonly ContentBlock[];
@@ -529,4 +531,19 @@ export interface PluginContext {
     inject?(deps: string[], cb: (host: PluginContext) => void): void;
     /** Registers a disposable side effect; the callback returns its disposer. */
     effect?(fn: () => (() => void) | void, label?: string): void;
+    /** Mounts a child plugin under this context (cordis); mounted under an agent's `ctx`, its
+     *  registrations are scoped to that agent and unwind with it. The fiber it returns is not read. */
+    plugin?(definition: {
+        name: string;
+        inject?: string[];
+        apply(ctx: PluginContext): void;
+    }): object;
+    /** dsh's compaction seam (`dsh-compaction`), mounted when a backend is; its `compactNow` is what
+     *  dsh's own `/compact` runs. `shadowedSeqs` and `shadowedTokenCount` are what that command reports. */
+    get(name: "compaction"): {
+        compactNow(agent: Agent, signal: AbortSignal, sourceCommandId?: string): Promise<{
+            shadowedSeqs: readonly number[];
+            shadowedTokenCount: number;
+        } | null>;
+    } | undefined;
 }

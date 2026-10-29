@@ -113,11 +113,12 @@ export declare const BRIDGE_PREFIX = "claude-";
  */
 export declare const CLIENT_COMMANDS: Set<string>;
 /**
- * Names dsh's own host plugins register (`dsh-command-compact` and the rest, read out of their
+ * Names dsh's own host plugins register (`dsh-command-goal` and the rest, read out of their
  * bundles). On dsh 0.2.2 the registry scopes a name per plugin, so the bridge's bare registration
  * of one of these does not throw: both exist, dsh's wins at dispatch, and Claude's never gets a
- * name. A typed `/compact` ran dsh's compaction and left the CLI's context alone (2026-10-29).
- * These take the prefixed form from the start, so `/claude-compact` is Claude Code's.
+ * name (found on `/compact`, 2026-10-29). These take the prefixed form from the start. `compact`
+ * is not here: the adapter shadows dsh's for Claude sessions with an agent-scoped command of the
+ * same name (`mountCompactOverride`), so the bridge leaves it alone.
  */
 export declare const HOST_COMMANDS: Set<string>;
 /**

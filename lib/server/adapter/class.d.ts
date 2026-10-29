@@ -336,6 +336,21 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     /** Whether dsh serves a user-invocable skill named `name` for this agent, user and project roots
      *  both. False when dsh has no skill service or the lookup fails, so the command refuses as before. */
     dshServesSkill(agent: Agent, name: string, signal?: AbortSignal): Promise<boolean>;
+    /** The agents that already carry the plugin's agent-scoped `/compact`; a disposed agent drops
+     *  out on its own, and a session dsh reloads gets a new agent and a new mount. */
+    readonly compactOwned: WeakSet<Agent>;
+    /**
+     * Shadow dsh's `/compact` for one Claude session with Claude Code's. dsh's global `/compact`
+     * condenses dsh's own copy of the conversation, which Claude never reads, so typed in a Claude
+     * session it did nothing for Claude's context (2026-10-29). dsh's command registry layers an
+     * agent-scoped command over the global one for that agent only, so this mounts a child plugin
+     * under the agent's context that registers `compact` there. On Claude the handler sends
+     * `/compact` to the CLI, the way the context card's button does; on any other model, after a
+     * switch, it runs dsh's own compaction, so the switch loses nothing. The registration unwinds
+     * with the agent. Mounted on the session's first turn and on each init frame, so a session
+     * reattached after a dsh restart carries it from its next prompt on, not before.
+     */
+    mountCompactOverride(agent: Agent | undefined): void;
     /** The refusal a command this plugin owns answers with in a session on another provider. */
     notClaude(agent: Agent, command: string): {
         kind: "error";
