@@ -2370,9 +2370,16 @@ console.log("ok");
   note('{"type":"result","subtype":"success"}');
   assert.equal(woke, 1, "a result during a live turn is the turn's own, no wake");
   fake.busy = false;
+  // The answer to an interrupt: one result of any outcome is swallowed, the next one wakes again.
+  (fake as any).interruptOwed = true;
+  note('{"type":"result","subtype":"success"}');
+  assert.equal(woke, 1, "the interrupt's own result wakes nobody");
+  assert.equal((fake as any).interruptOwed, false, "and the debt is paid");
+  note('{"type":"result","subtype":"success"}');
+  assert.equal(woke, 2, "the one after it is a real idle reply");
   (fake as any).onIdleResult = undefined;
   note('{"type":"result","subtype":"success"}');
-  assert.equal(woke, 1, "no callback, no throw");
+  assert.equal(woke, 2, "no callback, no throw");
 }
 {
   const wake = message({

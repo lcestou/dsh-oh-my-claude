@@ -17,6 +17,8 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 - A typed `/compact` in a Claude session compacts Claude Code's context, the same as the Compact button on the context card. It used to run dsh's own `/compact`, which condenses dsh's copy of the conversation that Claude never reads, so Claude's context stayed as it was. The plugin now mounts its own `compact` under the session's agent, which dsh's registry lets shadow the global one for that agent only; after a switch to another model the same command runs dsh's compaction, so nothing is lost.
 - `/claude-goal`, `/claude-plan`, `/claude-export`, `/claude-feedback` and `/claude-permission` are in the slash menu again. dsh owns the bare names, and on dsh 0.2.2 its registry keeps a second registration of the same name without complaint, so the bridge's copies sat behind dsh's and Claude Code's versions had no name.
 
+- Stopping a compaction no longer opens a second turn. The CLI answers an interrupt after dsh has already closed the turn, and a stopped `/compact` answers with a plain result, which the plugin read as a finished background task and sent back to Claude as a wake-up. The answer to an interrupt is now left alone.
+
 ### Changed
 
 - The line the chat shows while Claude Code compacts its own context now says so ("Claude Code is compacting its context…"), so it reads apart from dsh's own compaction row when both run in one turn.
