@@ -4989,6 +4989,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       noteInterrupt(proc);
       if (!proc.write(interruptLine(`interrupt-${randomUUID()}`))) return proc.kill();
       proc.interruptOwed = true;
+      proc.interruptMark = proc.queue.lines.length;
       // A process that ignores the interrupt is killed after a grace period, except under a keeper:
       // there the idle watchdog already ends a hung process, and a kill here cost a respawn on
       // every model switch (2026-09-06 21:08: abort kind=none, kill at +5 s, "claude exited 143").
@@ -5258,6 +5259,17 @@ export class ClaudeCodeAdapter extends LlmAdapter {
           void trace(
             join(this.stateDir, "resume.log"),
             `kept keeper process for ${options.sessionId}: dsh disposing`,
+          );
+        } else if (tr.aborting && proc.alive) {
+          // A user Stop: the interrupt went out and the CLI answers it with a result and stays
+          // in the session for the next prompt, which is what the interrupt is for. Killing it
+          // here cost a respawn on every Stop and, on a stopped compaction, left the CLI's
+          // "Compaction canceled." queued in the transcript to replay into the next turn
+          // (2026-10-29). A CLI that never answers is the idle watchdog's (keeper) or the grace
+          // timer's (node, dsh) to end.
+          void trace(
+            join(this.stateDir, "resume.log"),
+            `kept process for ${options.sessionId}: interrupted, awaiting the CLI's answer`,
           );
         } else {
           proc.kill();

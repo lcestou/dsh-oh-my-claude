@@ -2370,11 +2370,34 @@ console.log("ok");
   note('{"type":"result","subtype":"success"}');
   assert.equal(woke, 1, "a result during a live turn is the turn's own, no wake");
   fake.busy = false;
-  // The answer to an interrupt: one result of any outcome is swallowed, the next one wakes again.
-  (fake as any).interruptOwed = true;
+  // The answer to an interrupt: one result of any outcome is swallowed, taken off the queue and
+  // acknowledged to the keeper, and the next one wakes again.
+  const acked: number[] = [];
+  const kept = '{"type":"assistant","message":{"content":[{"type":"text","text":"earlier"}]}}';
+  Object.assign(fake, {
+    interruptOwed: true,
+    interruptMark: 1,
+    queue: {
+      lines: [
+        kept,
+        '{"type":"system","subtype":"init"}',
+        '{"type":"assistant","message":{"content":[{"type":"text","text":"Compaction canceled."}]}}',
+        '{"type":"result","subtype":"success"}',
+      ],
+    },
+    queuedIndexes: [40, 41, 42, 43],
+    used: (i: number) => acked.push(i),
+  });
   note('{"type":"result","subtype":"success"}');
   assert.equal(woke, 1, "the interrupt's own result wakes nobody");
   assert.equal((fake as any).interruptOwed, false, "and the debt is paid");
+  assert.deepEqual(
+    (fake as any).queue.lines,
+    [kept],
+    "the tail since the interrupt leaves the queue, what came before stays",
+  );
+  assert.deepEqual(acked, [41, 42, 43], "and the keeper is told each was used");
+  assert.equal((fake as any).interruptMark, undefined, "the mark is spent with the answer");
   note('{"type":"result","subtype":"success"}');
   assert.equal(woke, 2, "the one after it is a real idle reply");
   (fake as any).onIdleResult = undefined;
@@ -4674,6 +4697,9 @@ console.log("command-catalog-live ok");
     Config({}),
   );
   a.stateDir = dir;
+  // The constructor read this box's own ultracode.json before the state dir moved to the temp
+  // one; whatever sessions that file names would otherwise be saved along with the test's.
+  a.ultracode.clear();
   // SAFETY: the fake carries the one method the registration calls
   a.registerUltracodeCommand(commands as any);
   assert.ok(handler);
@@ -9123,6 +9149,9 @@ console.log("watch-save-race ok");
     dshIds: new Set(),
     relayed: new Set(),
     sent: new Set(),
+    // The interrupt notes where the queue stood when it went out.
+    queue: { lines: [] },
+    queuedIndexes: [],
     idleKilled: false,
     exitCode: 0,
     stderr: "",
@@ -9233,6 +9262,9 @@ console.log("watch-save-race ok");
     dshIds: new Set(),
     relayed: new Set(),
     sent: new Set(),
+    // The interrupt notes where the queue stood when it went out.
+    queue: { lines: [] },
+    queuedIndexes: [],
     idleKilled: false,
     exitCode: 0,
     stderr: "",

@@ -1744,6 +1744,11 @@ export class ClaudeProcess {
    *  lands in the few ms before it, that one is the one swallowed and the interrupt's answer wakes
    *  in its place: a wake is never lost, only credited to the other result. */
   interruptOwed: boolean = false;
+  /** How many lines the queue held when the interrupt went out. Everything queued after it and
+   *  up to the answer is the interrupted turn's tail (probed on 2.1.312: a status frame, a fresh
+   *  init frame and an `assistant` frame saying "Compaction canceled."), which the next turn would
+   *  otherwise read as its own and draw. */
+  interruptMark?: number;
   dshIds?: Set<string>;
   relayed?: Set<string>;
   steerPending: boolean = false;
@@ -1989,6 +1994,20 @@ export class ClaudeProcess {
     if (!line.includes('"result"')) return;
     if (this.interruptOwed && isResultLine(line)) {
       this.interruptOwed = false;
+      // The answer and the tail before it are spent: queued since the interrupt by the reader
+      // above, and left there they would reach the next turn as its own frames (the CLI's cancel
+      // notice as a line of text, the answer as a stale result drawing a rule). Only taken when
+      // no turn is reading (a turn that kept reading through the interrupt takes the answer
+      // itself) and the answer is the queue's last line, in case a reader already took it.
+      if (!this.busy && this.queue.lines.at(-1) === line) {
+        const from = Math.min(
+          this.interruptMark ?? this.queue.lines.length - 1,
+          this.queue.lines.length - 1,
+        );
+        this.queue.lines.splice(from);
+        for (const index of this.queuedIndexes.splice(from)) this.used(index);
+      }
+      this.interruptMark = undefined;
       return;
     }
     if (this.busy || !this.onIdleResult) return;

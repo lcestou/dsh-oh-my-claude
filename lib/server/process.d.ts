@@ -810,6 +810,11 @@ export declare class ClaudeProcess {
      *  lands in the few ms before it, that one is the one swallowed and the interrupt's answer wakes
      *  in its place: a wake is never lost, only credited to the other result. */
     interruptOwed: boolean;
+    /** How many lines the queue held when the interrupt went out. Everything queued after it and
+     *  up to the answer is the interrupted turn's tail (probed on 2.1.312: a status frame, a fresh
+     *  init frame and an `assistant` frame saying "Compaction canceled."), which the next turn would
+     *  otherwise read as its own and draw. */
+    interruptMark?: number;
     dshIds?: Set<string>;
     relayed?: Set<string>;
     steerPending: boolean;
