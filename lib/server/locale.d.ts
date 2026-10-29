@@ -60,7 +60,7 @@ declare const EN: {
     readonly limitFable: "Fable limit";
     readonly limitCredit: "usage credit limit";
     readonly limitUsage: "usage limit";
-    readonly compacting: "⟳ Compacting context…";
+    readonly compacting: "⟳ Claude Code is compacting its context…";
     readonly compactFailed: "⚠ Compaction failed: {error}";
     readonly logRefused: "dsh refuses this session's stored log: {reason}";
     readonly noTranscriptToReseed: "No Claude Code transcript with a completed turn was found for this session, so there is nothing to reseed from.";

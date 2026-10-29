@@ -3037,7 +3037,7 @@ console.log("ok");
     subtype: "status",
     status: "compacting",
   });
-  assert.match(start.at(-1).block.text, /Compacting context…/);
+  assert.match(start.at(-1).block.text, /compacting its context…/);
   assert.equal(t.finished, false, "the start frame does not end the turn");
   // The success end frame is silent; the boundary line reports the result.
   assert.deepEqual(
@@ -3069,7 +3069,7 @@ console.log("ok");
   }) as any;
   const beat = { type: "system", subtype: "status", status: "compacting" };
   const first = t.translate({ ...beat });
-  assert.match(first.at(-1).block.text, /Compacting context…/);
+  assert.match(first.at(-1).block.text, /compacting its context…/);
   assert.deepEqual(t.translate({ ...beat }), [], "the heartbeat repeats, the line does not");
   assert.deepEqual(t.translate({ ...beat }), []);
   assert.equal(frames, 3, "every heartbeat ticks the stall clock");
@@ -3079,7 +3079,7 @@ console.log("ok");
     subtype: "compact_boundary",
     compact_metadata: { trigger: "auto" },
   });
-  assert.match(t.translate({ ...beat }).at(-1).block.text, /Compacting context…/);
+  assert.match(t.translate({ ...beat }).at(-1).block.text, /compacting its context…/);
   // A failure re-arms it as well, since that run ends without a boundary.
   const t2 = new Translator() as any;
   t2.translate({ ...beat });
@@ -3089,7 +3089,7 @@ console.log("ok");
     status: null,
     compact_result: "failed",
   });
-  assert.match(t2.translate({ ...beat }).at(-1).block.text, /Compacting context…/);
+  assert.match(t2.translate({ ...beat }).at(-1).block.text, /compacting its context…/);
 }
 {
   // sessionProvider reads the last model/selection from the session log: the limit wait must not
