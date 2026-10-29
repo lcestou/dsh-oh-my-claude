@@ -61,6 +61,10 @@ export interface TurnProgress {
     relay?: {
         name: string;
     };
+    /** The CLI started compacting its context (true) or finished, either way (false). The status
+     *  row names it while it runs: the chat line sits inside a folded Think row, which hides what
+     *  the long silence is (owner, 2026-10-29). */
+    compacting?: boolean;
     /** The line's mode changed; see LiveMode. Reported on the frame that changes it: the CLI's own
      *  `status:"requesting"` system frame, a block start, a tool block's stop and message_stop. Never
      *  for a nested agent's frames: the CLI's main line holds `tool-use` through a Task. */

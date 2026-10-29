@@ -3037,13 +3037,20 @@ console.log("ok");
 }
 {
   // The compaction start frame (status:"compacting") is announced at once, so the silent summarize
-  // stretch has a visible anchor and does not arrive delayed as the boundary line alone.
-  const t = new Translator() as any;
+  // stretch has a visible anchor and does not arrive delayed as the boundary line alone. The status
+  // row is told too: `compacting: true` on the start, false on the boundary.
+  const progress: Array<boolean | undefined> = [];
+  const t = new Translator({
+    onProgress: (p: { compacting?: boolean }) => {
+      if (p.compacting !== undefined) progress.push(p.compacting);
+    },
+  }) as any;
   const start = t.translate({
     type: "system",
     subtype: "status",
     status: "compacting",
   });
+  assert.deepEqual(progress, [true], "the row learns the compaction started");
   assert.match(start.at(-1).block.text, /compacting its context…/);
   assert.equal(t.finished, false, "the start frame does not end the turn");
   // The success end frame is silent; the boundary line reports the result.
@@ -3056,7 +3063,16 @@ console.log("ok");
     }),
     [],
   );
+  assert.deepEqual(progress, [true], "a silent success frame leaves the row as it was");
+  const boundary = t.translate({
+    type: "system",
+    subtype: "compact_boundary",
+    compact_metadata: { trigger: "manual", pre_tokens: 1000, post_tokens: 100 },
+  });
+  assert.match(boundary.at(-1).block.text, /Context compacted by Claude Code/);
+  assert.deepEqual(progress, [true, false], "the boundary ends the row's compacting figure");
   // A failed run gets no boundary, so its error surfaces here.
+  t.translate({ type: "system", subtype: "status", status: "compacting" });
   const failed = t.translate({
     type: "system",
     subtype: "status",
@@ -3065,6 +3081,7 @@ console.log("ok");
     compact_error: "Not enough messages to compact.",
   });
   assert.match(failed.at(-1).block.text, /Compaction failed: Not enough messages to compact\./);
+  assert.deepEqual(progress, [true, false, true, false], "a failure ends the figure too");
 }
 {
   // The CLI repeats status:"compacting" every 30 s until it is done, and a 141-second run was

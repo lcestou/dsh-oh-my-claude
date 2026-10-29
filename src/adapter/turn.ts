@@ -468,6 +468,8 @@ export interface LiveTurn {
   effort?: string;
   /** The dsh tool dsh is running for this parked turn, and when the relay went out. */
   relay?: { name: string; at: number };
+  /** When the CLI's compaction started; unset once the boundary or a failure lands. */
+  compactingAt?: number;
   /** The CLI's spinner mode for this turn; absent until the first frame names one, which the reply
    *  reads as `requesting` (the CLI's own state between the request and the first block). */
   mode?: LiveMode;

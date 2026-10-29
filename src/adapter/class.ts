@@ -2368,6 +2368,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       r.relayName = live.relay.name;
       r.relayMs = now - live.relay.at;
     }
+    if (live.compactingAt !== undefined) r.compactingMs = now - live.compactingAt;
     return r;
   }
 
@@ -4803,6 +4804,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         const modeChanged = p.mode !== undefined && p.mode !== cur.mode;
         if (p.mode !== undefined) cur.mode = p.mode;
         if (p.relay !== undefined) cur.relay = { name: p.relay.name, at: Date.now() };
+        if (p.compacting !== undefined) cur.compactingAt = p.compacting ? Date.now() : undefined;
         if (p.thinking !== undefined) cur.thinking = p.thinking;
         // When the burst began, kept here rather than in the tab: a tab opened mid-think must read
         // the true age of the burst, not the time since it first looked.

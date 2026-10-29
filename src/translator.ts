@@ -492,6 +492,10 @@ export interface TurnProgress {
   frame?: boolean;
   /** A dsh tool call went out to dsh, by name. */
   relay?: { name: string };
+  /** The CLI started compacting its context (true) or finished, either way (false). The status
+   *  row names it while it runs: the chat line sits inside a folded Think row, which hides what
+   *  the long silence is (owner, 2026-10-29). */
+  compacting?: boolean;
   /** The line's mode changed; see LiveMode. Reported on the frame that changes it: the CLI's own
    *  `status:"requesting"` system frame, a block start, a tool block's stop and message_stop. Never
    *  for a nested agent's frames: the CLI's main line holds `tool-use` through a Task. */
@@ -949,10 +953,12 @@ export class Translator {
             this.onProgress?.({ frame: true });
             if (this.compacting) return [];
             this.compacting = true;
+            this.onProgress?.({ compacting: true });
             return this.wholeBlock("reasoning", serverText("compacting"));
           }
           if (event.compact_result === "failed") {
             this.compacting = false;
+            this.onProgress?.({ compacting: false });
             return this.wholeBlock(
               "reasoning",
               serverText("compactFailed", {
@@ -1250,6 +1256,7 @@ export class Translator {
         // why the model may have lost detail; every other system subtype is handshake noise.
         if (event.subtype !== "compact_boundary") return [];
         this.compacting = false; // re-arm: a second compaction in the same turn announces again
+        this.onProgress?.({ compacting: false });
         const meta = event.compact_metadata ?? {};
         const how = serverText(meta.trigger === "manual" ? "compactManual" : "compactAuto");
         // `post_tokens` and `duration_ms` are optional in the CLI's own schema, and the boundary

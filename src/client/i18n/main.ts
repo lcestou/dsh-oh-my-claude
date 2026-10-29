@@ -262,6 +262,7 @@ export const en = {
   "main.turn.thoughtFor": "thought for {n}s",
   "main.turn.tokens": "↓ {n} tokens",
   "main.turn.runningFor": "running {name} for {n}s",
+  "main.turn.compactingFor": "compacting context for {n}s",
   // Session notices (OS notification bodies)
   "main.notice.waiting": "Claude is waiting.",
   "main.fallback.pickedModel": "the model you picked",
@@ -789,6 +790,7 @@ export const zh = {
   "main.turn.thoughtFor": "思考了 {n} 秒",
   "main.turn.tokens": "↓ {n} 个 token",
   "main.turn.runningFor": "正在运行 {name}，已 {n} 秒",
+  "main.turn.compactingFor": "正在压缩上下文，已 {n} 秒",
   "main.notice.waiting": "Claude 正在等待。",
   "main.fallback.pickedModel": "你选择的模型",
   "main.fallback.anotherModel": "另一个模型",

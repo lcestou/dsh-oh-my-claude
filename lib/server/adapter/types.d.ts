@@ -256,6 +256,8 @@ export interface LiveTurnReply {
     effort?: string;
     relayName?: string;
     relayMs?: number;
+    /** How long the CLI's compaction has run; absent when none is running. */
+    compactingMs?: number;
 }
 /** The sums over a session's turn records, with how many records were summed. */
 export interface TurnTotals {
