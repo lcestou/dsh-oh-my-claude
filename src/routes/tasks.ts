@@ -5,6 +5,7 @@ import { type RouteHandler, UNHANDLED } from "./context.js";
 import type { RouteCtx } from "../sessions.js";
 import { errorText } from "../process.js";
 import { asSessionId } from "../dsh.js";
+import { listSubagentRuns, readSubagentRun } from "../subagent-runs.js";
 import {
   dshGoalsFrom,
   durableTasksPath,
@@ -62,6 +63,32 @@ export function tasksRoutes(c: RouteCtx): RouteHandler {
       if (!compactNow) return json(res, 501, { error: "not available" });
       // 200 either way, like the task routes: the refusal is the card's answer.
       return json(res, 200, await compactNow(sid));
+    }
+    if (
+      req.method === "GET" &&
+      (url.pathname === `${ROUTE_PREFIX}/subagent-runs` ||
+        url.pathname === `${ROUTE_PREFIX}/subagent-run`)
+    ) {
+      // The subagents this session already ran, from the files the CLI keeps beside its transcript;
+      // one run's text as Markdown when `agent` names it. Both read the box the session runs on.
+      const sid = url.searchParams.get("session");
+      if (!sid) return json(res, 400, { error: "session param required" });
+      const cwd = await sessionCwd(sid, sessionPersistence);
+      if (!cwd) return json(res, 404, { error: "session not found" });
+      try {
+        const { box, cwd: at } = targetOf(url, cwd);
+        const dir = await projectDirAt(box, at);
+        const ids = [claudeIdOf(sid), sid];
+        const agent = url.searchParams.get("agent");
+        if (agent === null)
+          return json(res, 200, { ok: true, runs: await listSubagentRuns(box, dir, ids) });
+        const markdown = await readSubagentRun(box, dir, ids, agent);
+        return markdown === null
+          ? json(res, 404, { ok: false, error: "no such subagent transcript" })
+          : json(res, 200, { ok: true, markdown });
+      } catch (e) {
+        return json(res, 500, { ok: false, error: errorText(e) });
+      }
     }
     if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/scheduled-tasks`) {
       // dsh's goal lives in its own session log, not the transcript, as `goal/change`

@@ -335,6 +335,96 @@ function LiveTasksSection({ sessionId }: { sessionId: string }) {
   );
 }
 
+/** One finished subagent as the route lists it. */
+interface SubagentRun {
+  agentId: string;
+  description: string;
+  subagentType?: string;
+  time: number;
+}
+
+/** The subagents this session already ran, newest first, from the transcripts the CLI keeps beside
+ *  the session's own. The CLI folds a subagent's work away once it ends; Open reads the whole run
+ *  back as Markdown. Read once per tab open: a run that ends while the tab is open shows next time. */
+function EarlierSubagentsSection({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
+  useLocale();
+  const [runs, setRuns] = useState<SubagentRun[]>([]);
+  const [open, setOpen] = useState<Record<string, string>>({});
+  useEffect(() => {
+    let live = true;
+    fetch(
+      `${ROUTE}/subagent-runs?session=${encodeURIComponent(sessionId)}${boxParam(ctx, sessionId)}`,
+    )
+      .then((r) => readJson<{ ok: true; runs: SubagentRun[] }>(r))
+      .then((b) => live && setRuns(b.runs))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [ctx, sessionId]);
+  const toggle = (run: SubagentRun) => {
+    if (open[run.agentId] !== undefined) {
+      setOpen((cur) => Object.fromEntries(Object.entries(cur).filter(([k]) => k !== run.agentId)));
+      return;
+    }
+    fetch(
+      `${ROUTE}/subagent-run?session=${encodeURIComponent(sessionId)}&agent=${encodeURIComponent(run.agentId)}${boxParam(ctx, sessionId)}`,
+    )
+      .then((r) => readJson<{ ok: true; markdown: string } | { ok: false; error: string }>(r))
+      .then((b) => setOpen((cur) => ({ ...cur, [run.agentId]: b.ok ? b.markdown : b.error })))
+      .catch((e: Error) => setOpen((cur) => ({ ...cur, [run.agentId]: e.message })));
+  };
+  if (runs.length === 0) return null;
+  return (
+    <div data-omc-earlier-subagents="">
+      <span style={sectionHead}>{t("panel.tasks.earlier")}</span>
+      {runs.map((run) => (
+        <div
+          key={run.agentId}
+          data-omc-earlier-subagent={run.agentId}
+          style={{ ...nested, padding: "4px 0 4px 12px", fontSize: 12, lineHeight: "1.5" }}
+        >
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
+            <span style={{ flex: "1 1 14em", minWidth: 0, overflowWrap: "break-word" }}>
+              {run.description}
+            </span>
+            <button
+              type="button"
+              style={btn}
+              aria-expanded={open[run.agentId] !== undefined}
+              data-omc-earlier-subagent-open=""
+              onClick={() => toggle(run)}
+            >
+              {open[run.agentId] === undefined ? t("panel.tasks.open") : t("panel.tasks.hide")}
+            </button>
+          </div>
+          <div style={{ ...meta, fontSize: 11 }}>
+            {[run.subagentType ?? "", run.time > 0 ? ago(run.time) : ""]
+              .filter(Boolean)
+              .join(" · ")}
+          </div>
+          {open[run.agentId] !== undefined ? (
+            <pre
+              data-omc-earlier-subagent-text=""
+              style={{
+                ...meta,
+                fontFamily: T.mono,
+                fontSize: 11,
+                whiteSpace: "pre-wrap",
+                margin: "4px 0 0",
+                maxHeight: "50vh",
+                overflow: "auto",
+              }}
+            >
+              {open[run.agentId]}
+            </pre>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /** Both goals and the scheduled tasks, each section only when it has something: dsh's goal and its
  *  past ones from dsh's own log, the CLI's goal from its transcript, then the tasks. Read-only;
  *  dsh's goal is changed from dsh's own controls. With nothing at all, one line says so. */
@@ -367,6 +457,7 @@ export function TasksBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCt
   return (
     <div style={bodyFlow}>
       <LiveTasksSection sessionId={sessionId} />
+      <EarlierSubagentsSection sessionId={sessionId} ctx={ctx} />
       {data === null ? (
         <span style={stateText}>{t("loading")}</span>
       ) : !data.ok ? (
