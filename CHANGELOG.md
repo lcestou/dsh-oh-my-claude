@@ -10,6 +10,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 - The Tasks tab keeps a background task after it ends. A task that completed, failed or was stopped used to vanish the moment the CLI reported it, Output button included; it now stays with its end and how long ago, for the last ten ended tasks of a session, so a background command's tail can still be read.
 - The Tasks tab lists the subagents a session already ran, under Earlier subagents, newest first and described by the Task call that started them, with Open to read the whole run back. The CLI folds a subagent's work away once it ends and dsh's subagent list covers only dsh's own children; the transcripts stay on disk beside the session's, and this reads them.
+- The summary Claude Code writes when it compacts its context shows in the chat, folded under the "Context compacted by Claude Code" line. The CLI never puts it on the stream, only into the transcript, so the plugin reads it back from there; dsh's own compaction row already expanded to its summary, and now Claude's does too.
 - Diagnostics keeps a hook run log: the last hundred hooks the session's CLI finished, newest first, with outcome, exit code and output a click away. The terminal shows a hook's result once and drops it.
 
 ### Fixed

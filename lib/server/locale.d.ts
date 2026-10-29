@@ -110,6 +110,7 @@ declare const EN: {
     readonly bridgeSkillSent: "Sent; dsh runs its {name} skill on this session's model.";
     readonly bridgeSkillOwn: "Sent, with Claude Code's /{name} instructions, to this session's model.";
     readonly compactSent: "/compact sent to Claude Code";
+    readonly compactSummaryHead: "Claude Code's compaction summary:";
     readonly compactNoArgs: "/compact takes no arguments";
     readonly compactUnavailable: "dsh has no compaction backend mounted";
     readonly compactNothing: "No compactable history yet.";

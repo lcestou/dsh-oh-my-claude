@@ -22,6 +22,7 @@ import {
 } from "@deepseek-ai/dsh-llm";
 import { repairStoredTurns } from "../turn-repair.js";
 import { wantsFirstParty } from "../first-party.js";
+import { readCompactSummary } from "../compact-summary.js";
 import { CONTEXT_SIZE_KEYS, contextDrops, type ContextSizes } from "../context-sources.js";
 import { accountIdentity, forgetIdentity, readHints, readPickerSettings } from "../sessions.js";
 import { hub, type OmcEvent } from "../events.js";
@@ -2698,9 +2699,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   }
 
   /**
-   * Send Claude's own `/compact` as the session's next prompt, the way the bridged
-   * `/claude-compact` command does: a user message through the agent, so dsh opens a turn and the
-   * transcript shows `/compact` as the bubble you sent. The CLI expands it as the terminal would.
+   * Send Claude's own `/compact` as the session's next prompt, the way the agent-scoped
+   * `/compact` from `mountCompactOverride` does: a user message through the agent, so dsh opens
+   * a turn and the transcript shows `/compact` as the bubble you sent. The CLI expands it as the
+   * terminal would.
    * Fails when the session cannot be reached (dsh unloaded it and refused the resume).
    */
   async compactNow(sessionId: string): Promise<{ ok: boolean; error?: string }> {
@@ -5013,6 +5015,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // The generator below is a plain function, so the adapter is reached through this closure.
     const noteLogin = (r: ResultFrame) => this.noteTurnLogin(options.sessionId, r);
     const publishAsidesFor = () => this.publishAsides(options.sessionId);
+    // Bound here: `dispatch` is a plain generator function, so `this` is not the adapter inside it.
+    const compactSummary = (preTokens: number | undefined) =>
+      this.compactSummary(prep.cwd, prep.session?.id, preTokens);
     const dispatch = async function* (event: ClaudeEvent) {
       if (event.type === "idle_warning") {
         yield* tr.wholeBlock(
@@ -5050,6 +5055,15 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       if (firstChunkAt === 0 && (event.type === "stream_event" || event.type === "assistant"))
         firstChunkAt = Date.now();
       yield* tr.translate(event);
+      // The CLI's compaction summary never rides the stream; it is in the transcript by the time
+      // the boundary frame lands, or a moment after. Folded under the ✓ line the way dsh's own
+      // compaction row expands to its summary.
+      if (event.type === "system" && event.subtype === "compact_boundary") {
+        const pre = event.compact_metadata?.pre_tokens;
+        const summary = await compactSummary(Number.isFinite(pre) ? Number(pre) : undefined);
+        if (summary !== undefined)
+          yield* tr.wholeBlock("reasoning", `${serverText("compactSummaryHead")}\n\n${summary}`);
+      }
       if (event.type === "result") noteLogin(event);
       if (tr.toolPending) armToolIdle(); // tool running: silence is expected, but not forever
       if (tr.finished) {
@@ -5367,6 +5381,30 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     clearTimeout(timer);
     this.limitTimers.delete(sessionId);
     saveLimitWait(this.stateDir, sessionId, undefined).catch(() => {});
+  }
+
+  /** Claude Code's summary for the compaction whose boundary reported `preTokens`, read from the
+   *  transcript the CLI writes it into (`src/compact-summary.ts`). Read twice, 700 ms apart: the
+   *  boundary frame can reach stdout before the row is flushed. Undefined with no transcript, no
+   *  matching row after both reads, or a box that cannot be read, which is logged. */
+  async compactSummary(
+    cwd: string,
+    claudeId: string | undefined,
+    preTokens: number | undefined,
+  ): Promise<string | undefined> {
+    const loc = await this.transcriptLocation(cwd, claudeId);
+    if (!loc) return undefined;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (attempt > 0) await new Promise((r) => setTimeout(r, 700));
+      try {
+        const found = await readCompactSummary(loc.box, loc.path, preTokens);
+        if (found !== undefined) return found;
+      } catch (error) {
+        this.log("warn", `compaction summary: ${errorText(error)}`);
+        return undefined;
+      }
+    }
+    return undefined;
   }
 
   /** Claude finished a turn of its own (a background task it launched completed) while dsh was

@@ -150,7 +150,7 @@ dsh 只发布预发行版，客户端 API 也会在版本之间变动，所以�
 26. 在 dsh 0.1.7 上，Claude 的工具调用显示为 dsh 自己的工具卡片，和其他提供方一样，文字在卡片之间实时输出。也可以在设置中切换回行内文本。[工具行](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/configuration.md)
 27. 在工作区中新建会话时，会使用该工作区上次运行的 Claude 主机和模型。[按工作区记住模型](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#remember-model-per-workspace)
 28. 每次回复后，Claude 对你下一条提示的猜测显示在输入框上方：「采用」填入输入框，「发送」原样发出，你输入别的内容时它会自动收起。默认开启，与终端一致；设置中有开关可关闭。[下一条提示建议](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#suggested-next-prompt)
-29. Claude 的后台 shell 任务和子智能体运行时列在任务标签里，每项都有「停止」，shell 任务还有「输出」。聊天中子智能体的那一行会按 CLI 的报告逐步列出它在做什么。[任务](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#tasks)
+29. Claude 的后台 shell 任务和子智能体运行时列在任务标签里，每项都有「停止」，shell 任务还有「输出」。已结束的 shell 任务保留其行和「输出」，最多十条；会话已运行过的子智能体列在「之前的子智能体」下，每个都能以 Markdown 打开。聊天中子智能体的那一行会按 CLI 的报告逐步列出它在做什么。[任务](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#tasks)
 30. 如果 dsh 环境里的 `ANTHROPIC_API_KEY` 取代了你的登录成为 Claude Code 的计费来源，会话开始时会用一行说明。[Where things live](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#where-things-live)
 31. 每个额度窗口会按当前速度给出走向：窗口结束时用到的百分比，或达到上限的时间。[Plan usage](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#plan-usage)
 32. 上下文窗口用到 75%（可在设置中调整）时，输入框上方会提醒并提供「压缩」按钮，发送 Claude 自己的 `/compact`。[Context nudge](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#context-nudge)

@@ -8,6 +8,8 @@ import {
   type LiveTask,
   applyTaskPatch,
   ENDED_TASKS_KEPT,
+  HOOK_OUTPUT_LIMIT,
+  type HookRun,
 } from "./translator.js";
 import type { PluginLoadError } from "./plugins.js";
 import type { FallbackRecord } from "./translator.js";
@@ -653,6 +655,46 @@ console.log("translator plugin-warnings ok");
   assert.equal(tasks.has("t1"), false, "the oldest ended row went");
   assert.equal(tasks.has("e0"), true, "the newest ten ended rows stay");
   assert.equal(tasks.size, ENDED_TASKS_KEPT + 1, "ten ended plus the running one");
+}
+
+// hook_response: every finished hook reaches onHookRun, clean ones included, with its output cut
+// to HOOK_OUTPUT_LIMIT; only a failed one also draws a line.
+{
+  const runs: HookRun[] = [];
+  // SAFETY: the strict event union is bypassed the way the api_retry block above does it
+  const t = new Translator({ onHookRun: (r) => runs.push(r) }) as any;
+  const clean = t.translate({
+    type: "system",
+    subtype: "hook_response",
+    hook_name: "SessionStart:startup",
+    hook_event: "SessionStart",
+    outcome: "success",
+    exit_code: 0,
+    stdout: "CAVEMAN MODE ACTIVE",
+  });
+  assert.equal(clean.length, 0, "a clean hook draws nothing");
+  const failed = t.translate({
+    type: "system",
+    subtype: "hook_response",
+    hook_name: "PreToolUse:Bash",
+    hook_event: "PreToolUse",
+    outcome: "error",
+    exit_code: 2,
+    stderr: "x".repeat(HOOK_OUTPUT_LIMIT + 50),
+  });
+  assert.ok(failed.length > 0, "a failed hook draws its line");
+  assert.deepEqual(
+    runs.map((r) => [r.name, r.event, r.outcome, r.exitCode, r.output.length]),
+    [
+      ["SessionStart:startup", "SessionStart", "success", 0, "CAVEMAN MODE ACTIVE".length],
+      ["PreToolUse:Bash", "PreToolUse", "error", 2, HOOK_OUTPUT_LIMIT + 1],
+    ],
+    "both runs kept, the long output cut with an ellipsis",
+  );
+  assert.ok(
+    runs.every((r) => Number.isFinite(r.at)),
+    "each run is stamped",
+  );
 }
 
 // task_progress draws the CLI's per-step description once per change, beside the tool name

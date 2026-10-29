@@ -695,9 +695,10 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      */
     syncTitleToCli(proc: ClaudeProcess, sessionId: string): void;
     /**
-     * Send Claude's own `/compact` as the session's next prompt, the way the bridged
-     * `/claude-compact` command does: a user message through the agent, so dsh opens a turn and the
-     * transcript shows `/compact` as the bubble you sent. The CLI expands it as the terminal would.
+     * Send Claude's own `/compact` as the session's next prompt, the way the agent-scoped
+     * `/compact` from `mountCompactOverride` does: a user message through the agent, so dsh opens
+     * a turn and the transcript shows `/compact` as the bubble you sent. The CLI expands it as the
+     * terminal would.
      * Fails when the session cannot be reached (dsh unloaded it and refused the resume).
      */
     compactNow(sessionId: string): Promise<{
@@ -1050,6 +1051,11 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     sessionProvider(sessionId: string): string | undefined;
     /** Cancel and forget a session's limit-wait timer, if any, so a usage reset does not fire it twice. */
     clearLimitWait(sessionId: string): void;
+    /** Claude Code's summary for the compaction whose boundary reported `preTokens`, read from the
+     *  transcript the CLI writes it into (`src/compact-summary.ts`). Read twice, 700 ms apart: the
+     *  boundary frame can reach stdout before the row is flushed. Undefined with no transcript, no
+     *  matching row after both reads, or a box that cannot be read, which is logged. */
+    compactSummary(cwd: string, claudeId: string | undefined, preTokens: number | undefined): Promise<string | undefined>;
     /** Claude finished a turn of its own (a background task it launched completed) while dsh was
      *  idle. Drop a notice into the session's inbox so dsh opens a turn now and the reply shows,
      *  instead of riding on top of the user's next prompt. */
