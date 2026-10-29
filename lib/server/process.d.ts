@@ -571,6 +571,8 @@ export declare function elicitationResult(request: ElicitationRequest, response:
         selected?: string[];
     }>;
 }, requestId: string): Record<string, JsonValue>;
+/** True for a `result` frame of any outcome; anything unparsable or of another type is false. */
+export declare function isResultLine(line: string): boolean;
 /**
  * A `result` line that arrived while no turn was reading, and that is worth a wake: a completed
  * reply. An error result is not: on a rate limit the CLI retries on its own and emits one error
@@ -799,6 +801,15 @@ export declare class ClaudeProcess {
     key?: string;
     resuming?: boolean;
     onIdleResult?(): void;
+    /** An interrupt was written and the CLI has not answered it yet. dsh ends the turn's generator
+     *  on a user Stop before that answer lands, so the answer reaches an idle process; a stopped
+     *  turn answers with an error, which the wake filter drops, but a stopped `/compact` answers
+     *  with a plain result that read as a finished background task and woke the session
+     *  (2026-10-29). The next `result` line clears this and wakes nobody. The CLI's interrupt answer
+     *  carries no id to match on, so if a result of Claude's own (a turn a background task woke)
+     *  lands in the few ms before it, that one is the one swallowed and the interrupt's answer wakes
+     *  in its place: a wake is never lost, only credited to the other result. */
+    interruptOwed: boolean;
     dshIds?: Set<string>;
     relayed?: Set<string>;
     steerPending: boolean;

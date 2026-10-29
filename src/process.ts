@@ -1125,6 +1125,21 @@ export function elicitationResult(
   return Object.keys(content).length > 0 ? { action: "accept", content } : { action: "cancel" };
 }
 
+/** True for a `result` frame of any outcome; anything unparsable or of another type is false. */
+export function isResultLine(line: string): boolean {
+  try {
+    const parsed: unknown = JSON.parse(line);
+    // SAFETY: a non-null object compared to one literal, never trusted as typed
+    return (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      (parsed as { type?: unknown }).type === "result"
+    );
+  } catch {
+    return false;
+  }
+}
+
 /**
  * A `result` line that arrived while no turn was reading, and that is worth a wake: a completed
  * reply. An error result is not: on a rate limit the CLI retries on its own and emits one error
@@ -1720,6 +1735,15 @@ export class ClaudeProcess {
   key?: string;
   resuming?: boolean;
   onIdleResult?(): void;
+  /** An interrupt was written and the CLI has not answered it yet. dsh ends the turn's generator
+   *  on a user Stop before that answer lands, so the answer reaches an idle process; a stopped
+   *  turn answers with an error, which the wake filter drops, but a stopped `/compact` answers
+   *  with a plain result that read as a finished background task and woke the session
+   *  (2026-10-29). The next `result` line clears this and wakes nobody. The CLI's interrupt answer
+   *  carries no id to match on, so if a result of Claude's own (a turn a background task woke)
+   *  lands in the few ms before it, that one is the one swallowed and the interrupt's answer wakes
+   *  in its place: a wake is never lost, only credited to the other result. */
+  interruptOwed: boolean = false;
   dshIds?: Set<string>;
   relayed?: Set<string>;
   steerPending: boolean = false;
@@ -1962,7 +1986,12 @@ export class ClaudeProcess {
   /** A `result` line while no turn is reading: Claude just finished a turn of its own. Tell the
    *  adapter (`onIdleResult`) so it can open a dsh turn and show the reply now. */
   noteIdleResult(line: string) {
-    if (this.busy || !this.onIdleResult || !line.includes('"result"')) return;
+    if (!line.includes('"result"')) return;
+    if (this.interruptOwed && isResultLine(line)) {
+      this.interruptOwed = false;
+      return;
+    }
+    if (this.busy || !this.onIdleResult) return;
     if (!isIdleReply(line)) return;
     try {
       // A throw here is inside readline's data handler: it would take the whole host down.

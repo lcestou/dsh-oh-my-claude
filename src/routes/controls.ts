@@ -46,6 +46,7 @@ export function controlsRoutes(ctx: RouteCtx): RouteHandler {
       permissionAsks,
       permissionModes,
       permissionReadout,
+      hookRuns,
       persistAsides,
       projectDirAt,
       readBody,
@@ -369,6 +370,11 @@ export function controlsRoutes(ctx: RouteCtx): RouteHandler {
       if (!permissionReadout) return json(res, 404, { error: "permission readout not available" });
       const reply = await permissionReadout(sid);
       return json(res, reply.ok ? 200 : 409, reply);
+    }
+    if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/hook-runs`) {
+      const sid = url.searchParams.get("session");
+      if (!sid) return json(res, 400, { error: "session param required" });
+      return json(res, 200, { ok: true, runs: hookRuns?.(sid) ?? [] });
     }
     if (mcp && req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/mcp-servers`) {
       const sid = url.searchParams.get("session");

@@ -60,7 +60,7 @@ declare const EN: {
     readonly limitFable: "Fable limit";
     readonly limitCredit: "usage credit limit";
     readonly limitUsage: "usage limit";
-    readonly compacting: "⟳ Compacting context…";
+    readonly compacting: "⟳ Claude Code is compacting its context…";
     readonly compactFailed: "⚠ Compaction failed: {error}";
     readonly logRefused: "dsh refuses this session's stored log: {reason}";
     readonly noTranscriptToReseed: "No Claude Code transcript with a completed turn was found for this session, so there is nothing to reseed from.";
@@ -109,6 +109,12 @@ declare const EN: {
     readonly btwUsage: "Usage: /btw <your question>";
     readonly bridgeSkillSent: "Sent; dsh runs its {name} skill on this session's model.";
     readonly bridgeSkillOwn: "Sent, with Claude Code's /{name} instructions, to this session's model.";
+    readonly compactSent: "/compact sent to Claude Code";
+    readonly compactSummaryHead: "Claude Code's compaction summary:";
+    readonly compactNoArgs: "/compact takes no arguments";
+    readonly compactUnavailable: "dsh has no compaction backend mounted";
+    readonly compactNothing: "No compactable history yet.";
+    readonly compactDone: "Compacted {items} history items (~{tokens} tokens).";
     readonly claudeOnly: "/{command} works in Claude Code sessions. This session runs on {provider}; pick a Claude model to use it.";
     readonly btwSent: "Side question sent. The answer opens in the ✻ aside bubble.";
     readonly idleStopped: "claude produced no output for {s}s and was stopped";

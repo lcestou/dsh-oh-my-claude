@@ -6,6 +6,25 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Added
+
+- The Tasks tab keeps a background task after it ends. A task that completed, failed or was stopped used to vanish the moment the CLI reported it, Output button included; it now stays with its end and how long ago, for the last ten ended tasks of a session, so a background command's tail can still be read.
+- The Tasks tab lists the subagents a session already ran, under Earlier subagents, newest first and described by the Task call that started them, with Open to read the whole run back. The CLI folds a subagent's work away once it ends and dsh's subagent list covers only dsh's own children; the transcripts stay on disk beside the session's, and this reads them.
+- The summary Claude Code writes when it compacts its context shows in the chat, folded under the "Context compacted by Claude Code" line. The CLI never puts it on the stream, only into the transcript, so the plugin reads it back from there; dsh's own compaction row already expanded to its summary, and now Claude's does too.
+- The working line above the composer says "compacting context for Ns" while Claude Code compacts, the way it names a running dsh tool. The chat's own compacting line sits inside a folded Think row, so a minute of silence had nothing visible to explain it.
+- Diagnostics keeps a hook run log: the last hundred hooks the session's CLI finished, newest first, with outcome, exit code and output a click away. The terminal shows a hook's result once and drops it.
+
+### Fixed
+
+- A typed `/compact` in a Claude session compacts Claude Code's context, the same as the Compact button on the context card. It used to run dsh's own `/compact`, which condenses dsh's copy of the conversation that Claude never reads, so Claude's context stayed as it was. The plugin now mounts its own `compact` under the session's agent, which dsh's registry lets shadow the global one for that agent only; after a switch to another model the same command runs dsh's compaction, so nothing is lost.
+- `/claude-goal`, `/claude-plan`, `/claude-export`, `/claude-feedback` and `/claude-permission` are in the slash menu again. dsh owns the bare names, and on dsh 0.2.2 its registry keeps a second registration of the same name without complaint, so the bridge's copies sat behind dsh's and Claude Code's versions had no name.
+
+- Stopping a compaction no longer opens a second turn. The CLI answers an interrupt after dsh has already closed the turn, and a stopped `/compact` answers with a plain result, which the plugin read as a finished background task and sent back to Claude as a wake-up. The answer to an interrupt is now left alone.
+
+### Changed
+
+- The line the chat shows while Claude Code compacts its own context now says so ("Claude Code is compacting its context…"), so it reads apart from dsh's own compaction row when both run in one turn.
+
 ### Fixed
 
 - On dsh 0.2.2-alpha.2, switching a session to another Claude model failed with "Cannot switch to claude-code/…: context compaction failed: no context capacity" and dropped the message you had typed. That dsh prices a model switch against the target's context window, and the plugin withheld the window from dsh's compaction on purpose since 1.1.x, to keep it from compacting on top of Claude Code's own. The window is reported now; dsh's compaction can run again on a Claude session, only once its own measure of the session passes about 80% of the window.

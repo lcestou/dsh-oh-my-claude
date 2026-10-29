@@ -192,7 +192,13 @@ const statusWord = (status: string) =>
     ? t("panel.tasks.status.running")
     : status === "paused"
       ? t("panel.tasks.status.paused")
-      : status;
+      : status === "completed"
+        ? t("panel.tasks.status.completed")
+        : status === "failed"
+          ? t("panel.tasks.status.failed")
+          : status === "killed" || status === "stopped"
+            ? t("panel.tasks.status.stopped")
+            : status;
 
 /**
  * Claude's own background tasks and subagents, polled every 3 s while the tab is open, each with
@@ -242,8 +248,13 @@ function LiveTasksSection({ sessionId }: { sessionId: string }) {
         if (!mounted.current) return;
         if (kind === "output" && b.ok) setOutput((cur) => ({ ...cur, [task.id]: b.output ?? "" }));
         else if (kind === "stop" && b.ok)
-          // The server dropped the row on the CLI's ok; the next poll would too, up to 3 s later.
-          setTasks((cur) => cur.filter((row) => row.id !== task.id));
+          // The server marked the row stopped on the CLI's ok and keeps it, so its output can
+          // still be read; the next poll would show the same, up to 3 s later.
+          setTasks((cur) =>
+            cur.map((row) =>
+              row.id === task.id ? { ...row, status: "stopped", endedAt: Date.now() } : row,
+            ),
+          );
         else
           setNote((cur) => ({
             ...cur,
@@ -253,11 +264,14 @@ function LiveTasksSection({ sessionId }: { sessionId: string }) {
       .catch((e: Error) => {
         if (mounted.current) setNote((cur) => ({ ...cur, [task.id]: e.message }));
       });
-  if (tasks.length === 0) return null;
+  // An ended subagent has nothing left to offer here (no Stop, no Output); the Earlier subagents
+  // section lists it with Open. Ended shell tasks stay for their Output.
+  const shown = tasks.filter((task) => task.endedAt === undefined || !task.subagentType);
+  if (shown.length === 0) return null;
   return (
     <div data-omc-live-tasks="">
       <span style={sectionHead}>{t("panel.tasks.live")}</span>
-      {tasks.map((task) => (
+      {shown.map((task) => (
         <div
           key={task.id}
           data-omc-live-task={task.id}
@@ -281,18 +295,22 @@ function LiveTasksSection({ sessionId }: { sessionId: string }) {
                 {t("panel.tasks.output")}
               </button>
             )}
-            <button
-              type="button"
-              style={btn}
-              data-omc-live-task-stop=""
-              onClick={() => void act(task, "stop")}
-            >
-              {t("panel.tasks.stop")}
-            </button>
+            {/* An ended row has nothing to stop; it stays for its output, with when it ended. */}
+            {task.endedAt === undefined ? (
+              <button
+                type="button"
+                style={btn}
+                data-omc-live-task-stop=""
+                onClick={() => void act(task, "stop")}
+              >
+                {t("panel.tasks.stop")}
+              </button>
+            ) : null}
           </div>
           <div style={{ ...meta, fontSize: 11 }}>
             {[
               statusWord(task.status),
+              task.endedAt === undefined ? "" : ago(task.endedAt),
               task.backgrounded ? t("panel.tasks.background") : "",
               task.subagentType ?? "",
             ]
@@ -312,6 +330,96 @@ function LiveTasksSection({ sessionId }: { sessionId: string }) {
               }}
             >
               {output[task.id] || t("panel.tasks.outputEmpty")}
+            </pre>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** One finished subagent as the route lists it. */
+interface SubagentRun {
+  agentId: string;
+  description: string;
+  subagentType?: string;
+  time: number;
+}
+
+/** The subagents this session already ran, newest first, from the transcripts the CLI keeps beside
+ *  the session's own. The CLI folds a subagent's work away once it ends; Open reads the whole run
+ *  back as Markdown. Read once per tab open: a run that ends while the tab is open shows next time. */
+function EarlierSubagentsSection({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
+  useLocale();
+  const [runs, setRuns] = useState<SubagentRun[]>([]);
+  const [open, setOpen] = useState<Record<string, string>>({});
+  useEffect(() => {
+    let live = true;
+    fetch(
+      `${ROUTE}/subagent-runs?session=${encodeURIComponent(sessionId)}${boxParam(ctx, sessionId)}`,
+    )
+      .then((r) => readJson<{ ok: true; runs: SubagentRun[] }>(r))
+      .then((b) => live && setRuns(b.runs))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [ctx, sessionId]);
+  const toggle = (run: SubagentRun) => {
+    if (open[run.agentId] !== undefined) {
+      setOpen((cur) => Object.fromEntries(Object.entries(cur).filter(([k]) => k !== run.agentId)));
+      return;
+    }
+    fetch(
+      `${ROUTE}/subagent-run?session=${encodeURIComponent(sessionId)}&agent=${encodeURIComponent(run.agentId)}${boxParam(ctx, sessionId)}`,
+    )
+      .then((r) => readJson<{ ok: true; markdown: string } | { ok: false; error: string }>(r))
+      .then((b) => setOpen((cur) => ({ ...cur, [run.agentId]: b.ok ? b.markdown : b.error })))
+      .catch((e: Error) => setOpen((cur) => ({ ...cur, [run.agentId]: e.message })));
+  };
+  if (runs.length === 0) return null;
+  return (
+    <div data-omc-earlier-subagents="">
+      <span style={sectionHead}>{t("panel.tasks.earlier")}</span>
+      {runs.map((run) => (
+        <div
+          key={run.agentId}
+          data-omc-earlier-subagent={run.agentId}
+          style={{ ...nested, padding: "4px 0 4px 12px", fontSize: 12, lineHeight: "1.5" }}
+        >
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
+            <span style={{ flex: "1 1 14em", minWidth: 0, overflowWrap: "break-word" }}>
+              {run.description}
+            </span>
+            <button
+              type="button"
+              style={btn}
+              aria-expanded={open[run.agentId] !== undefined}
+              data-omc-earlier-subagent-open=""
+              onClick={() => toggle(run)}
+            >
+              {open[run.agentId] === undefined ? t("panel.tasks.open") : t("panel.tasks.hide")}
+            </button>
+          </div>
+          <div style={{ ...meta, fontSize: 11 }}>
+            {[run.subagentType ?? "", run.time > 0 ? ago(run.time) : ""]
+              .filter(Boolean)
+              .join(" · ")}
+          </div>
+          {open[run.agentId] !== undefined ? (
+            <pre
+              data-omc-earlier-subagent-text=""
+              style={{
+                ...meta,
+                fontFamily: T.mono,
+                fontSize: 11,
+                whiteSpace: "pre-wrap",
+                margin: "4px 0 0",
+                maxHeight: "50vh",
+                overflow: "auto",
+              }}
+            >
+              {open[run.agentId]}
             </pre>
           ) : null}
         </div>
@@ -352,6 +460,7 @@ export function TasksBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCt
   return (
     <div style={bodyFlow}>
       <LiveTasksSection sessionId={sessionId} />
+      <EarlierSubagentsSection sessionId={sessionId} ctx={ctx} />
       {data === null ? (
         <span style={stateText}>{t("loading")}</span>
       ) : !data.ok ? (

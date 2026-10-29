@@ -7,6 +7,9 @@ import {
   HEADER_MARK,
   type LiveTask,
   applyTaskPatch,
+  ENDED_TASKS_KEPT,
+  HOOK_OUTPUT_LIMIT,
+  type HookRun,
 } from "./translator.js";
 import type { PluginLoadError } from "./plugins.js";
 import type { FallbackRecord } from "./translator.js";
@@ -630,9 +633,68 @@ console.log("translator plugin-warnings ok");
   applyTaskPatch(tasks, "t9", { status: "running" }, 7);
   assert.equal(tasks.size, 1, "a status for an unknown task inserts nothing");
   applyTaskPatch(tasks, "t1", { status: "killed" }, 8);
-  assert.equal(tasks.size, 0, "killed removes");
+  assert.deepEqual(
+    [tasks.get("t1")?.status, tasks.get("t1")?.endedAt],
+    ["killed", 8],
+    "killed keeps the row, ended at the frame's time",
+  );
   applyTaskPatch(tasks, "t1", { status: "stopped" }, 9);
-  assert.equal(tasks.size, 0, "stopped on a removed task is a no-op");
+  assert.deepEqual(
+    [tasks.get("t1")?.status, tasks.get("t1")?.endedAt],
+    ["killed", 8],
+    "the stopped that follows a kill changes nothing",
+  );
+  applyTaskPatch(tasks, "t2", { status: "completed" }, 10);
+  assert.equal(tasks.size, 1, "a terminal status for an unknown task inserts nothing");
+  // Past ENDED_TASKS_KEPT ended rows, the oldest ended one goes; running rows are never counted.
+  for (let i = 0; i < ENDED_TASKS_KEPT; i++) {
+    applyTaskPatch(tasks, `e${i}`, { description: `job ${i}`, status: "running" }, 20 + i);
+    applyTaskPatch(tasks, `e${i}`, { status: "completed" }, 40 + i);
+  }
+  applyTaskPatch(tasks, "live", { description: "still going", status: "running" }, 99);
+  assert.equal(tasks.has("t1"), false, "the oldest ended row went");
+  assert.equal(tasks.has("e0"), true, "the newest ten ended rows stay");
+  assert.equal(tasks.size, ENDED_TASKS_KEPT + 1, "ten ended plus the running one");
+}
+
+// hook_response: every finished hook reaches onHookRun, clean ones included, with its output cut
+// to HOOK_OUTPUT_LIMIT; only a failed one also draws a line.
+{
+  const runs: HookRun[] = [];
+  // SAFETY: the strict event union is bypassed the way the api_retry block above does it
+  const t = new Translator({ onHookRun: (r) => runs.push(r) }) as any;
+  const clean = t.translate({
+    type: "system",
+    subtype: "hook_response",
+    hook_name: "SessionStart:startup",
+    hook_event: "SessionStart",
+    outcome: "success",
+    exit_code: 0,
+    stdout: "CAVEMAN MODE ACTIVE",
+  });
+  assert.equal(clean.length, 0, "a clean hook draws nothing");
+  const failed = t.translate({
+    type: "system",
+    subtype: "hook_response",
+    hook_name: "PreToolUse:Bash",
+    hook_event: "PreToolUse",
+    outcome: "error",
+    exit_code: 2,
+    stderr: "x".repeat(HOOK_OUTPUT_LIMIT + 50),
+  });
+  assert.ok(failed.length > 0, "a failed hook draws its line");
+  assert.deepEqual(
+    runs.map((r) => [r.name, r.event, r.outcome, r.exitCode, r.output.length]),
+    [
+      ["SessionStart:startup", "SessionStart", "success", 0, "CAVEMAN MODE ACTIVE".length],
+      ["PreToolUse:Bash", "PreToolUse", "error", 2, HOOK_OUTPUT_LIMIT + 1],
+    ],
+    "both runs kept, the long output cut with an ellipsis",
+  );
+  assert.ok(
+    runs.every((r) => Number.isFinite(r.at)),
+    "each run is stamped",
+  );
 }
 
 // task_progress draws the CLI's per-step description once per change, beside the tool name

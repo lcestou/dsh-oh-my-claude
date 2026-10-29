@@ -446,6 +446,8 @@ const wireTurnStatus = (
   let effort = "";
   let relayName = "";
   let relayMs = -1;
+  /** How long the CLI's compaction has run, per the last poll; -1 when none is running. */
+  let compactingMs = -1;
   /** How long the turn has run, per the last poll. Only read where dsh draws no clock of its own
    *  (0.1.7 and later); -1 until the first answer. */
   let elapsedMs = -1;
@@ -528,7 +530,7 @@ const wireTurnStatus = (
       elapsedMs: polled,
       tokens: Math.round(shownChars / 4),
       thinking: burst >= 0 || thoughtAgoMs >= 0,
-      relay: relayName !== "" && relayMs >= 0,
+      relay: (relayName !== "" && relayMs >= 0) || compactingMs >= 0,
     });
     if (time && open) parts.push(time);
     // dsh's copy goes quiet only while ours is showing the same figure. Hiding it unconditionally is
@@ -542,6 +544,10 @@ const wireTurnStatus = (
       parts.push(
         t("main.turn.runningFor", { name: relayName, n: Math.round((relayMs + since) / 1000) }),
       );
+    // The CLI's compaction is a silent stretch of a minute or more, and its chat line sits in a
+    // folded Think row; the figure here is what says what the wait is while it lasts.
+    if (compactingMs >= 0)
+      parts.push(t("main.turn.compactingFor", { n: Math.round((compactingMs + since) / 1000) }));
     // The CLI names the effort after the word when one was asked for, and once a burst closes
     // it says "thought for Ns" for two seconds, never sooner than two seconds after the burst
     // began.
@@ -643,6 +649,7 @@ const wireTurnStatus = (
     effort = b.effort ?? "";
     relayName = b.relayName ?? "";
     relayMs = b.relayMs ?? -1;
+    compactingMs = b.compactingMs ?? -1;
     elapsedMs = b.elapsedMs ?? -1;
     polledAt = Date.now();
     return b.elapsedMs !== undefined;

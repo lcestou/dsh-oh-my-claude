@@ -10,7 +10,7 @@ import { type ToolMode, type ToolModeInfo } from "../rows-probe.js";
 import { type FsBox } from "../remote-fs.js";
 import { sshRunner, type HoldRecord } from "../hold.js";
 import { type HealHost } from "../session-heal.js";
-import { Translator, type FallbackRecord, type SuggestionRow, type LiveTask, type LiveTaskPatch } from "../translator.js";
+import { Translator, type FallbackRecord, type SuggestionRow, type LiveTask, type LiveTaskPatch, type HookRun } from "../translator.js";
 import type { FinishReason } from "@deepseek-ai/dsh-llm";
 import type { ClaudeProcessSpec, RelayResult, TurnPrep } from "../process.js";
 import { Config } from "./config.js";
@@ -317,6 +317,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      *  that ends while no turn is reading stays until the next turn drains the queue; Stop on it
      *  then shows the CLI's error. */
     readonly sessionTasks: Map<string, Map<string, LiveTask>>;
+    /** The last `HOOK_RUNS_KEPT` hook results per session, newest last, for the Diagnostics tab. */
+    readonly hookRuns: Map<string, HookRun[]>;
     /** dsh session id → the model switch its last turn reported (a safety refusal, a primary-model
      *  fallback, or the usage-credit gate), surfaced through `/side-questions` like `loginNeeded`. One
      *  entry per live session, overwritten on each switch; the client reads it at the stop transition.
@@ -334,6 +336,21 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     /** Whether dsh serves a user-invocable skill named `name` for this agent, user and project roots
      *  both. False when dsh has no skill service or the lookup fails, so the command refuses as before. */
     dshServesSkill(agent: Agent, name: string, signal?: AbortSignal): Promise<boolean>;
+    /** The agents that already carry the plugin's agent-scoped `/compact`; a disposed agent drops
+     *  out on its own, and a session dsh reloads gets a new agent and a new mount. */
+    readonly compactOwned: WeakSet<Agent>;
+    /**
+     * Shadow dsh's `/compact` for one Claude session with Claude Code's. dsh's global `/compact`
+     * condenses dsh's own copy of the conversation, which Claude never reads, so typed in a Claude
+     * session it did nothing for Claude's context (2026-10-29). dsh's command registry layers an
+     * agent-scoped command over the global one for that agent only, so this mounts a child plugin
+     * under the agent's context that registers `compact` there. On Claude the handler sends
+     * `/compact` to the CLI, the way the context card's button does; on any other model, after a
+     * switch, it runs dsh's own compaction, so the switch loses nothing. The registration unwinds
+     * with the agent. Mounted on the session's first turn and on each init frame, so a session
+     * reattached after a dsh restart carries it from its next prompt on, not before.
+     */
+    mountCompactOverride(agent: Agent | undefined): void;
     /** The refusal a command this plugin owns answers with in a session on another provider. */
     notClaude(agent: Agent, command: string): {
         kind: "error";
@@ -551,6 +568,10 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     /** One task frame into the session's live list (`applyTaskPatch` holds the rules); the map is
      *  created on the first frame so a session with no tasks owns no entry. */
     noteTask(sessionId: string, taskId: string, patch: LiveTaskPatch): void;
+    /** One finished hook into the session's log, dropping the oldest past `HOOK_RUNS_KEPT`. */
+    noteHookRun(sessionId: string, run: HookRun): void;
+    /** The session's kept hook runs, oldest first. Empty for a session this adapter never ran. */
+    hookRunsFor(sessionId: string): HookRun[];
     /** The session's live tasks, oldest first, for the Tasks tab. Empty without a process. */
     liveTasksFor(sessionId: string): LiveTask[];
     /** Ask the CLI to stop one task. The reply is the CLI's: an error for a task it no longer has.
@@ -674,9 +695,10 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      */
     syncTitleToCli(proc: ClaudeProcess, sessionId: string): void;
     /**
-     * Send Claude's own `/compact` as the session's next prompt, the way the bridged
-     * `/claude-compact` command does: a user message through the agent, so dsh opens a turn and the
-     * transcript shows `/compact` as the bubble you sent. The CLI expands it as the terminal would.
+     * Send Claude's own `/compact` as the session's next prompt, the way the agent-scoped
+     * `/compact` from `mountCompactOverride` does: a user message through the agent, so dsh opens
+     * a turn and the transcript shows `/compact` as the bubble you sent. The CLI expands it as the
+     * terminal would.
      * Fails when the session cannot be reached (dsh unloaded it and refused the resume).
      */
     compactNow(sessionId: string): Promise<{
@@ -1029,6 +1051,11 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     sessionProvider(sessionId: string): string | undefined;
     /** Cancel and forget a session's limit-wait timer, if any, so a usage reset does not fire it twice. */
     clearLimitWait(sessionId: string): void;
+    /** Claude Code's summary for the compaction whose boundary reported `preTokens`, read from the
+     *  transcript the CLI writes it into (`src/compact-summary.ts`). Read twice, 700 ms apart: the
+     *  boundary frame can reach stdout before the row is flushed. Undefined with no transcript, no
+     *  matching row after both reads, or a box that cannot be read, which is logged. */
+    compactSummary(cwd: string, claudeId: string | undefined, preTokens: number | undefined): Promise<string | undefined>;
     /** Claude finished a turn of its own (a background task it launched completed) while dsh was
      *  idle. Drop a notice into the session's inbox so dsh opens a turn now and the reply shows,
      *  instead of riding on top of the user's next prompt. */

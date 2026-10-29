@@ -439,6 +439,15 @@ export const BRIDGE_PREFIX = "claude-";
  * back to the prefixed name.
  */
 export const CLIENT_COMMANDS = new Set(["model"]);
+/**
+ * Names dsh's own host plugins register (`dsh-command-goal` and the rest, read out of their
+ * bundles). On dsh 0.2.2 the registry scopes a name per plugin, so the bridge's bare registration
+ * of one of these does not throw: both exist, dsh's wins at dispatch, and Claude's never gets a
+ * name (found on `/compact`, 2026-10-29). These take the prefixed form from the start. `compact`
+ * is not here: the adapter shadows dsh's for Claude sessions with an agent-scoped command of the
+ * same name (`mountCompactOverride`), so the bridge leaves it alone.
+ */
+export const HOST_COMMANDS = new Set(["feedback", "goal", "permission", "plan", "export"]);
 /** Claude's rename command, and the alias its catalog also offers. */
 const RENAME_COMMANDS = new Set(["rename", "name"]);
 /**

@@ -22,6 +22,7 @@ import {
 } from "@deepseek-ai/dsh-llm";
 import { repairStoredTurns } from "../turn-repair.js";
 import { wantsFirstParty } from "../first-party.js";
+import { readCompactSummary } from "../compact-summary.js";
 import { CONTEXT_SIZE_KEYS, contextDrops, type ContextSizes } from "../context-sources.js";
 import { accountIdentity, forgetIdentity, readHints, readPickerSettings } from "../sessions.js";
 import { hub, type OmcEvent } from "../events.js";
@@ -163,6 +164,8 @@ import {
   type SuggestionRow,
   type LiveTask,
   type LiveTaskPatch,
+  type HookRun,
+  HOOK_RUNS_KEPT,
   applyTaskPatch,
 } from "../translator.js";
 import type { FinishReason, Message } from "@deepseek-ai/dsh-llm";
@@ -277,6 +280,7 @@ import {
   buildArgs,
   buildInput,
   CLIENT_COMMANDS,
+  HOST_COMMANDS,
   denyCliFlag,
   dshToolsGuidance,
   mcpToolsByServer,
@@ -1280,7 +1284,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    * bridged, so once they slipped in, every later boot bridged `/btw` to Claude first and the real
    * handler saw the name taken and stood down (2026-09-08: "/btw isn't available in this environment").
    */
-  static readonly OWN_COMMANDS = new Set(["temporary", "btw", "ultracode"]);
+  static readonly OWN_COMMANDS = new Set(["temporary", "btw", "ultracode", "compact"]);
   /** dsh session id → what `/ultracode` last asked for, and what the CLI last said about it.
    *  `confirmed` is absent until a read-back lands. Written to `ultracode.json` on every change, so
    *  a session keeps its setting across a dsh restart and a relaunch of its process. */
@@ -1305,6 +1309,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    *  that ends while no turn is reading stays until the next turn drains the queue; Stop on it
    *  then shows the CLI's error. */
   readonly sessionTasks = new Map<string, Map<string, LiveTask>>();
+  /** The last `HOOK_RUNS_KEPT` hook results per session, newest last, for the Diagnostics tab. */
+  readonly hookRuns = new Map<string, HookRun[]>();
   /** dsh session id → the model switch its last turn reported (a safety refusal, a primary-model
    *  fallback, or the usage-credit gate), surfaced through `/side-questions` like `loginNeeded`. One
    *  entry per live session, overwritten on each switch; the client reads it at the stop transition.
@@ -1330,6 +1336,70 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       return skill?.invocation.userInvocable === true;
     } catch {
       return false;
+    }
+  }
+
+  /** The agents that already carry the plugin's agent-scoped `/compact`; a disposed agent drops
+   *  out on its own, and a session dsh reloads gets a new agent and a new mount. */
+  readonly compactOwned = new WeakSet<Agent>();
+
+  /**
+   * Shadow dsh's `/compact` for one Claude session with Claude Code's. dsh's global `/compact`
+   * condenses dsh's own copy of the conversation, which Claude never reads, so typed in a Claude
+   * session it did nothing for Claude's context (2026-10-29). dsh's command registry layers an
+   * agent-scoped command over the global one for that agent only, so this mounts a child plugin
+   * under the agent's context that registers `compact` there. On Claude the handler sends
+   * `/compact` to the CLI, the way the context card's button does; on any other model, after a
+   * switch, it runs dsh's own compaction, so the switch loses nothing. The registration unwinds
+   * with the agent. Mounted on the session's first turn and on each init frame, so a session
+   * reattached after a dsh restart carries it from its next prompt on, not before.
+   */
+  mountCompactOverride(agent: Agent | undefined): void {
+    if (agent?.ctx?.plugin === undefined || this.compactOwned.has(agent)) return;
+    this.compactOwned.add(agent);
+    try {
+      agent.ctx.plugin({
+        name: "dsh-oh-my-claude-compact",
+        inject: ["commands"],
+        apply: (child) => {
+          child.effect?.(
+            () =>
+              child.commands?.register({
+                name: "compact",
+                description: "Claude Code /compact",
+                handler: async ({ agent: target, rawInput, signal, commandId }) => {
+                  if (rawInput.trim() !== "")
+                    return { kind: "error", text: serverText("compactNoArgs") };
+                  if (this.notClaude(target, "compact") === undefined) {
+                    target.followup(
+                      createUserMessage({
+                        content: [{ type: "text", text: "/compact" }],
+                        source: { kind: "user" },
+                      }),
+                    );
+                    return { kind: "success", text: serverText("compactSent") };
+                  }
+                  const compaction = child.get("compaction");
+                  if (!compaction) return { kind: "error", text: serverText("compactUnavailable") };
+                  const result = await compaction.compactNow(target, signal, commandId);
+                  return {
+                    kind: "success",
+                    text:
+                      result === null
+                        ? serverText("compactNothing")
+                        : serverText("compactDone", {
+                            items: String(result.shadowedSeqs.length),
+                            tokens: String(result.shadowedTokenCount),
+                          }),
+                  };
+                },
+              }),
+            "oh-my-claude compact override",
+          );
+        },
+      });
+    } catch (error) {
+      this.log("warn", `compact override: ${errorText(error)}`);
     }
   }
 
@@ -1360,7 +1430,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       // and blanks, all 200 names at once (2026-09-05), when a host command shadows a client
       // contribution the registry cannot see, so those names never take the bare form at all.
       const prefixed = `${BRIDGE_PREFIX}${cmd}`;
-      const dshName = CLIENT_COMMANDS.has(cmd) ? prefixed : cmd;
+      const dshName = CLIENT_COMMANDS.has(cmd) || HOST_COMMANDS.has(cmd) ? prefixed : cmd;
       if (agent && commands.find(agent, dshName) !== undefined) continue;
       const define = (dshCommand: string) =>
         commands.register({
@@ -2201,6 +2271,19 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     this.sessionTasks.set(sessionId, tasks);
   }
 
+  /** One finished hook into the session's log, dropping the oldest past `HOOK_RUNS_KEPT`. */
+  noteHookRun(sessionId: string, run: HookRun): void {
+    const runs = this.hookRuns.get(sessionId) ?? [];
+    runs.push(run);
+    if (runs.length > HOOK_RUNS_KEPT) runs.splice(0, runs.length - HOOK_RUNS_KEPT);
+    this.hookRuns.set(sessionId, runs);
+  }
+
+  /** The session's kept hook runs, oldest first. Empty for a session this adapter never ran. */
+  hookRunsFor(sessionId: string): HookRun[] {
+    return this.hookRuns.get(sessionId) ?? [];
+  }
+
   /** The session's live tasks, oldest first, for the Tasks tab. Empty without a process. */
   liveTasksFor(sessionId: string): LiveTask[] {
     return [...(this.sessionTasks.get(sessionId)?.values() ?? [])].toSorted((a, b) => a.at - b.at);
@@ -2285,6 +2368,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       r.relayName = live.relay.name;
       r.relayMs = now - live.relay.at;
     }
+    if (live.compactingAt !== undefined) r.compactingMs = now - live.compactingAt;
     return r;
   }
 
@@ -2616,9 +2700,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   }
 
   /**
-   * Send Claude's own `/compact` as the session's next prompt, the way the bridged
-   * `/claude-compact` command does: a user message through the agent, so dsh opens a turn and the
-   * transcript shows `/compact` as the bubble you sent. The CLI expands it as the terminal would.
+   * Send Claude's own `/compact` as the session's next prompt, the way the agent-scoped
+   * `/compact` from `mountCompactOverride` does: a user message through the agent, so dsh opens
+   * a turn and the transcript shows `/compact` as the bubble you sent. The CLI expands it as the
+   * terminal would.
    * Fails when the session cannot be reached (dsh unloaded it and refused the resume).
    */
   async compactNow(sessionId: string): Promise<{ ok: boolean; error?: string }> {
@@ -3550,6 +3635,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       yield* this.oneShot(options);
       return;
     }
+    this.mountCompactOverride(this.ctx?.agents?.get?.(options.sessionId));
     // SAFETY: sessionId was checked just above; the persistent path always has one
     yield* this.turn(options as SessionOptions, false);
   }
@@ -4213,6 +4299,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     this.sessionPluginErrors.delete(sessionId);
     this.sessionPluginWarnings.delete(sessionId);
     this.sessionTasks.delete(sessionId);
+    this.hookRuns.delete(sessionId);
     this.sessionFallbacks.delete(sessionId);
     this.permissionAsks.delete(sessionId);
     this.awaitingInput.delete(sessionId);
@@ -4703,6 +4790,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         return degradedNote(known);
       },
       log: this.log.bind(this),
+      onHookRun: (run) => this.noteHookRun(options.sessionId, run),
       onProgress: (p) => {
         const cur = this.liveTurn.get(options.sessionId) ?? {
           at: Date.now(),
@@ -4716,6 +4804,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         const modeChanged = p.mode !== undefined && p.mode !== cur.mode;
         if (p.mode !== undefined) cur.mode = p.mode;
         if (p.relay !== undefined) cur.relay = { name: p.relay.name, at: Date.now() };
+        if (p.compacting !== undefined) cur.compactingAt = p.compacting ? Date.now() : undefined;
         if (p.thinking !== undefined) cur.thinking = p.thinking;
         // When the burst began, kept here rather than in the tab: a tab opened mid-think must read
         // the true age of the burst, not the time since it first looked.
@@ -4815,8 +4904,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         // a fresh init frame, never on a reload; a clean load sends [] and clears them.
         if (options.sessionId && pluginWarnings !== undefined)
           this.sessionPluginWarnings.set(options.sessionId, pluginWarnings);
-        if (names.length > 0)
-          this.bridgeCommands(names, this.ctx?.agents?.get?.(options.sessionId));
+        const agent = this.ctx?.agents?.get?.(options.sessionId);
+        if (names.length > 0) this.bridgeCommands(names, agent);
+        this.mountCompactOverride(agent);
       },
       onModel: (rec) => {
         // Bank the switch for the session so the notice and the picker read it at the stop
@@ -4898,6 +4988,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       tr.aborting = true;
       noteInterrupt(proc);
       if (!proc.write(interruptLine(`interrupt-${randomUUID()}`))) return proc.kill();
+      proc.interruptOwed = true;
       // A process that ignores the interrupt is killed after a grace period, except under a keeper:
       // there the idle watchdog already ends a hung process, and a kill here cost a respawn on
       // every model switch (2026-09-06 21:08: abort kind=none, kill at +5 s, "claude exited 143").
@@ -4926,6 +5017,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // The generator below is a plain function, so the adapter is reached through this closure.
     const noteLogin = (r: ResultFrame) => this.noteTurnLogin(options.sessionId, r);
     const publishAsidesFor = () => this.publishAsides(options.sessionId);
+    // Bound here: `dispatch` is a plain generator function, so `this` is not the adapter inside it.
+    const compactSummary = (preTokens: number | undefined) =>
+      this.compactSummary(prep.cwd, prep.session?.id, preTokens);
     const dispatch = async function* (event: ClaudeEvent) {
       if (event.type === "idle_warning") {
         yield* tr.wholeBlock(
@@ -4963,6 +5057,15 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       if (firstChunkAt === 0 && (event.type === "stream_event" || event.type === "assistant"))
         firstChunkAt = Date.now();
       yield* tr.translate(event);
+      // The CLI's compaction summary never rides the stream; it is in the transcript by the time
+      // the boundary frame lands, or a moment after. Folded under the ✓ line the way dsh's own
+      // compaction row expands to its summary.
+      if (event.type === "system" && event.subtype === "compact_boundary") {
+        const pre = event.compact_metadata?.pre_tokens;
+        const summary = await compactSummary(Number.isFinite(pre) ? Number(pre) : undefined);
+        if (summary !== undefined)
+          yield* tr.wholeBlock("reasoning", `${serverText("compactSummaryHead")}\n\n${summary}`);
+      }
       if (event.type === "result") noteLogin(event);
       if (tr.toolPending) armToolIdle(); // tool running: silence is expected, but not forever
       if (tr.finished) {
@@ -5280,6 +5383,30 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     clearTimeout(timer);
     this.limitTimers.delete(sessionId);
     saveLimitWait(this.stateDir, sessionId, undefined).catch(() => {});
+  }
+
+  /** Claude Code's summary for the compaction whose boundary reported `preTokens`, read from the
+   *  transcript the CLI writes it into (`src/compact-summary.ts`). Read twice, 700 ms apart: the
+   *  boundary frame can reach stdout before the row is flushed. Undefined with no transcript, no
+   *  matching row after both reads, or a box that cannot be read, which is logged. */
+  async compactSummary(
+    cwd: string,
+    claudeId: string | undefined,
+    preTokens: number | undefined,
+  ): Promise<string | undefined> {
+    const loc = await this.transcriptLocation(cwd, claudeId);
+    if (!loc) return undefined;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (attempt > 0) await new Promise((r) => setTimeout(r, 700));
+      try {
+        const found = await readCompactSummary(loc.box, loc.path, preTokens);
+        if (found !== undefined) return found;
+      } catch (error) {
+        this.log("warn", `compaction summary: ${errorText(error)}`);
+        return undefined;
+      }
+    }
+    return undefined;
   }
 
   /** Claude finished a turn of its own (a background task it launched completed) while dsh was

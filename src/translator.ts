@@ -492,6 +492,10 @@ export interface TurnProgress {
   frame?: boolean;
   /** A dsh tool call went out to dsh, by name. */
   relay?: { name: string };
+  /** The CLI started compacting its context (true) or finished, either way (false). The status
+   *  row names it while it runs: the chat line sits inside a folded Think row, which hides what
+   *  the long silence is (owner, 2026-10-29). */
+  compacting?: boolean;
   /** The line's mode changed; see LiveMode. Reported on the frame that changes it: the CLI's own
    *  `status:"requesting"` system frame, a block start, a tool block's stop and message_stop. Never
    *  for a nested agent's frames: the CLI's main line holds `tool-use` through a Task. */
@@ -508,7 +512,28 @@ export interface LiveTask {
   subagentType?: string;
   status: string;
   at: number;
+  /** When a terminal status landed; unset while the task runs. */
+  endedAt?: number;
 }
+/** How many ended tasks a session keeps on its list; the oldest ended one goes when a new one ends. */
+export const ENDED_TASKS_KEPT = 10;
+
+/** One hook the CLI ran, as its `hook_response` frame reported it. The terminal shows a hook's
+ *  result once and drops it; the Diagnostics tab keeps the last `HOOK_RUNS_KEPT` per session. */
+export interface HookRun {
+  name: string;
+  event: string;
+  /** The CLI's outcome literal: `success`, `error` or `cancelled`; `failed` when it sent none. */
+  outcome: string;
+  exitCode?: number;
+  /** stdout, else stderr, cut to a few KiB; empty for a silent hook. */
+  output: string;
+  at: number;
+}
+/** How many hook runs a session keeps; this box runs dozens per tool call, so a turn can fill it. */
+export const HOOK_RUNS_KEPT = 100;
+/** The longest hook output a kept run carries. */
+export const HOOK_OUTPUT_LIMIT = 4000;
 /** What one task frame changes on a `LiveTask`; `task_started` sets everything, the rest a status. */
 export interface LiveTaskPatch {
   description?: string;
@@ -517,8 +542,11 @@ export interface LiveTaskPatch {
   status: string;
 }
 /** Apply one task frame to a session's live list: a start inserts, a status updates, a terminal
- *  status removes. A status for a task the map never saw is dropped (its start was read by a
- *  process this adapter no longer has), and a start for a known id only moves its status. */
+ *  status keeps the row with `endedAt` set so its output can still be read, and the oldest ended
+ *  rows go past `ENDED_TASKS_KEPT`. A status for a task the map never saw is dropped (its start was
+ *  read by a process this adapter no longer has), and a start for a known id only moves its status.
+ *  A terminal status on an already ended row changes nothing: the CLI sends `killed` then `stopped`
+ *  for one Stop, and the first is the one that ended it. */
 export function applyTaskPatch(
   tasks: Map<string, LiveTask>,
   taskId: string,
@@ -526,8 +554,16 @@ export function applyTaskPatch(
   now: number,
 ): void {
   const row = tasks.get(taskId);
-  if (TASK_TERMINAL.has(patch.status)) tasks.delete(taskId);
-  else if (row) row.status = patch.status;
+  if (TASK_TERMINAL.has(patch.status)) {
+    if (!row || row.endedAt !== undefined) return;
+    row.status = patch.status;
+    row.endedAt = now;
+    const ended = [...tasks.values()]
+      .filter((t) => t.endedAt !== undefined)
+      .toSorted((a, b) => (a.endedAt ?? 0) - (b.endedAt ?? 0));
+    for (const old of ended.slice(0, Math.max(0, ended.length - ENDED_TASKS_KEPT)))
+      tasks.delete(old.id);
+  } else if (row) row.status = patch.status;
   else if (patch.description !== undefined)
     tasks.set(taskId, {
       id: taskId,
@@ -650,6 +686,7 @@ export class Translator {
   /** Injected: every task frame with a task id, so the adapter can keep the live list the Tasks
    *  tab reads. The reasoning rows above are drawn regardless; this is the second reader. */
   onTask?: (taskId: string, patch: LiveTaskPatch) => void;
+  onHookRun?: (run: HookRun) => void;
   /** Output tokens across every assistant message of this turn so far. A `message_delta` reports
    *  the message it closes, not the turn, so the figure summed here is what the status row shows;
    *  reporting each message's own count made the row drop back to a few hundred at every tool step. */
@@ -721,6 +758,7 @@ export class Translator {
     onModel,
     noteApiKey,
     onTask,
+    onHookRun,
     hostLabel,
     statusNote,
   }: {
@@ -746,6 +784,8 @@ export class Translator {
     onModel?: (rec: Omit<FallbackRecord, "sessionId" | "at">) => void;
     noteApiKey?: () => boolean;
     onTask?: (taskId: string, patch: LiveTaskPatch) => void;
+    /** Every hook the CLI reports finished, clean ones included, for the Diagnostics tab's log. */
+    onHookRun?: (run: HookRun) => void;
     /** The box a remote turn runs on, so a logged-out error names it, not this local host. */
     hostLabel?: string;
     /** What to append to a 5xx retry line from the Anthropic status page cache. */
@@ -783,6 +823,7 @@ export class Translator {
     this.onModel = onModel;
     this.noteApiKey = noteApiKey;
     this.onTask = onTask;
+    this.onHookRun = onHookRun;
   }
 
   /** The delta chunk kind a block emits. Only a "text" block produces text-delta; any other block
@@ -912,10 +953,12 @@ export class Translator {
             this.onProgress?.({ frame: true });
             if (this.compacting) return [];
             this.compacting = true;
+            this.onProgress?.({ compacting: true });
             return this.wholeBlock("reasoning", serverText("compacting"));
           }
           if (event.compact_result === "failed") {
             this.compacting = false;
+            this.onProgress?.({ compacting: false });
             return this.wholeBlock(
               "reasoning",
               serverText("compactFailed", {
@@ -948,8 +991,16 @@ export class Translator {
           const failed =
             (event.outcome !== undefined && event.outcome !== "success") ||
             (Number.isFinite(exitCode) && exitCode !== 0);
-          if (!failed) return [];
           const out = (event.output || event.stdout || event.stderr || "").trim();
+          this.onHookRun?.({
+            name: event.hook_name ?? "?",
+            event: event.hook_event ?? "?",
+            outcome: event.outcome ?? (failed ? "failed" : "success"),
+            exitCode: Number.isFinite(exitCode) ? exitCode : undefined,
+            output: out.length > HOOK_OUTPUT_LIMIT ? `${out.slice(0, HOOK_OUTPUT_LIMIT)}…` : out,
+            at: Date.now(),
+          });
+          if (!failed) return [];
           const tail = Number.isFinite(exitCode) ? `exit ${exitCode}` : (event.outcome ?? "failed");
           return this.wholeBlock(
             "reasoning",
@@ -1205,6 +1256,7 @@ export class Translator {
         // why the model may have lost detail; every other system subtype is handshake noise.
         if (event.subtype !== "compact_boundary") return [];
         this.compacting = false; // re-arm: a second compaction in the same turn announces again
+        this.onProgress?.({ compacting: false });
         const meta = event.compact_metadata ?? {};
         const how = serverText(meta.trigger === "manual" ? "compactManual" : "compactAuto");
         // `post_tokens` and `duration_ms` are optional in the CLI's own schema, and the boundary

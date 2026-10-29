@@ -2370,9 +2370,16 @@ console.log("ok");
   note('{"type":"result","subtype":"success"}');
   assert.equal(woke, 1, "a result during a live turn is the turn's own, no wake");
   fake.busy = false;
+  // The answer to an interrupt: one result of any outcome is swallowed, the next one wakes again.
+  (fake as any).interruptOwed = true;
+  note('{"type":"result","subtype":"success"}');
+  assert.equal(woke, 1, "the interrupt's own result wakes nobody");
+  assert.equal((fake as any).interruptOwed, false, "and the debt is paid");
+  note('{"type":"result","subtype":"success"}');
+  assert.equal(woke, 2, "the one after it is a real idle reply");
   (fake as any).onIdleResult = undefined;
   note('{"type":"result","subtype":"success"}');
-  assert.equal(woke, 1, "no callback, no throw");
+  assert.equal(woke, 2, "no callback, no throw");
 }
 {
   const wake = message({
@@ -3030,14 +3037,21 @@ console.log("ok");
 }
 {
   // The compaction start frame (status:"compacting") is announced at once, so the silent summarize
-  // stretch has a visible anchor and does not arrive delayed as the boundary line alone.
-  const t = new Translator() as any;
+  // stretch has a visible anchor and does not arrive delayed as the boundary line alone. The status
+  // row is told too: `compacting: true` on the start, false on the boundary.
+  const progress: Array<boolean | undefined> = [];
+  const t = new Translator({
+    onProgress: (p: { compacting?: boolean }) => {
+      if (p.compacting !== undefined) progress.push(p.compacting);
+    },
+  }) as any;
   const start = t.translate({
     type: "system",
     subtype: "status",
     status: "compacting",
   });
-  assert.match(start.at(-1).block.text, /Compacting context…/);
+  assert.deepEqual(progress, [true], "the row learns the compaction started");
+  assert.match(start.at(-1).block.text, /compacting its context…/);
   assert.equal(t.finished, false, "the start frame does not end the turn");
   // The success end frame is silent; the boundary line reports the result.
   assert.deepEqual(
@@ -3049,7 +3063,16 @@ console.log("ok");
     }),
     [],
   );
+  assert.deepEqual(progress, [true], "a silent success frame leaves the row as it was");
+  const boundary = t.translate({
+    type: "system",
+    subtype: "compact_boundary",
+    compact_metadata: { trigger: "manual", pre_tokens: 1000, post_tokens: 100 },
+  });
+  assert.match(boundary.at(-1).block.text, /Context compacted by Claude Code/);
+  assert.deepEqual(progress, [true, false], "the boundary ends the row's compacting figure");
   // A failed run gets no boundary, so its error surfaces here.
+  t.translate({ type: "system", subtype: "status", status: "compacting" });
   const failed = t.translate({
     type: "system",
     subtype: "status",
@@ -3058,6 +3081,7 @@ console.log("ok");
     compact_error: "Not enough messages to compact.",
   });
   assert.match(failed.at(-1).block.text, /Compaction failed: Not enough messages to compact\./);
+  assert.deepEqual(progress, [true, false, true, false], "a failure ends the figure too");
 }
 {
   // The CLI repeats status:"compacting" every 30 s until it is done, and a 141-second run was
@@ -3069,7 +3093,7 @@ console.log("ok");
   }) as any;
   const beat = { type: "system", subtype: "status", status: "compacting" };
   const first = t.translate({ ...beat });
-  assert.match(first.at(-1).block.text, /Compacting context…/);
+  assert.match(first.at(-1).block.text, /compacting its context…/);
   assert.deepEqual(t.translate({ ...beat }), [], "the heartbeat repeats, the line does not");
   assert.deepEqual(t.translate({ ...beat }), []);
   assert.equal(frames, 3, "every heartbeat ticks the stall clock");
@@ -3079,7 +3103,7 @@ console.log("ok");
     subtype: "compact_boundary",
     compact_metadata: { trigger: "auto" },
   });
-  assert.match(t.translate({ ...beat }).at(-1).block.text, /Compacting context…/);
+  assert.match(t.translate({ ...beat }).at(-1).block.text, /compacting its context…/);
   // A failure re-arms it as well, since that run ends without a boundary.
   const t2 = new Translator() as any;
   t2.translate({ ...beat });
@@ -3089,7 +3113,7 @@ console.log("ok");
     status: null,
     compact_result: "failed",
   });
-  assert.match(t2.translate({ ...beat }).at(-1).block.text, /Compacting context…/);
+  assert.match(t2.translate({ ...beat }).at(-1).block.text, /compacting its context…/);
 }
 {
   // sessionProvider reads the last model/selection from the session log: the limit wait must not
@@ -4482,10 +4506,10 @@ console.log("approval outcomes ok");
   a.bridgeCommands(["compact", "model"], undefined);
   assert.deepEqual(
     registered,
-    ["compact", "claude-model", "temporary", "btw", "ultracode"],
-    "Claude's own names, prefixed only where dsh's client half owns one, plus the plugin's three",
+    ["claude-model", "temporary", "btw", "ultracode"],
+    "Claude's own names, prefixed where dsh's client half owns one, plus the plugin's three; compact is the override's",
   );
-  assert.equal(a.bridged.size, 5, "compact, model, temporary, btw and ultracode");
+  assert.equal(a.bridged.size, 4, "model, temporary, btw and ultracode");
   // A catalog that already carries the plugin's own names (every catalog saved before 2026-09-08
   // did) must not bridge them to Claude: the real handler would then find the name taken.
   const again = new ClaudeCodeAdapter(fakeCtx(guarded), Config({ commandBridge: true }));
@@ -4498,13 +4522,15 @@ console.log("approval outcomes ok");
   );
 }
 
-// A name dsh already owns throws on the bare registration; the prefixed name is the fallback, so
-// the command still reaches the menu instead of dropping out of the catalog.
+// A name another host already owns throws on the bare registration; the prefixed name is the
+// fallback, so the command still reaches the menu instead of dropping out of the catalog. (dsh's
+// own names never try the bare form: HOST_COMMANDS sends them prefixed first; `verify` stands in
+// here for a name some other plugin took.)
 {
   const registered: string[] = [];
   const commands = {
     register: (d: { name: string }) => {
-      if (d.name === "compact") throw new Error('command "compact" is already registered');
+      if (d.name === "verify") throw new Error('command "verify" is already registered');
       registered.push(d.name);
       return () => {};
     },
@@ -4516,9 +4542,76 @@ console.log("approval outcomes ok");
     get: (n: string) => (n === "commands" ? commands : undefined),
   };
   const a = new ClaudeCodeAdapter(fakeCtx(base), Config({ commandBridge: true }));
-  a.bridgeCommands(["compact"], undefined);
-  assert.ok(registered.includes("claude-compact"), "fell back to the prefixed name");
-  assert.equal(a.bridged.has("compact"), true, "and the command is bridged either way");
+  a.bridgeCommands(["verify"], undefined);
+  assert.ok(registered.includes("claude-verify"), "fell back to the prefixed name");
+  assert.equal(a.bridged.has("verify"), true, "and the command is bridged either way");
+}
+
+// mountCompactOverride: a child plugin under the agent's context registers an agent-scoped
+// `compact`; on Claude the handler sends `/compact` to the session as a user message, an argument
+// is refused, and a second mount on the same agent is a no-op.
+{
+  const mounted: Array<{ name: string; inject?: string[] }> = [];
+  const registered: Array<{ name: string; handler: Function }> = [];
+  const sent: string[] = [];
+  const child = {
+    effect: (fn: () => void) => fn(),
+    commands: {
+      register: (d: { name: string; handler: Function }) => {
+        registered.push(d);
+        return () => {};
+      },
+      find: () => undefined,
+    },
+    get: () => undefined,
+  };
+  const agent = {
+    id: "s1",
+    followup: (m: { content: Array<{ type: string; text?: string }> }) =>
+      sent.push(m.content[0]?.text ?? ""),
+    ctx: {
+      plugin: (def: { name: string; inject?: string[]; apply: (c: unknown) => void }) => {
+        mounted.push({ name: def.name, inject: def.inject });
+        def.apply(child);
+        return {};
+      },
+    },
+  };
+  const base = { on() {}, logger: { info() {}, warn() {} }, get: () => undefined };
+  const a = new ClaudeCodeAdapter(fakeCtx(base), Config({}));
+  // SAFETY: the fake carries only what the override reads: ctx.plugin and followup.
+  a.mountCompactOverride(agent as any);
+  a.mountCompactOverride(agent as any);
+  assert.deepEqual(
+    mounted,
+    [{ name: "dsh-oh-my-claude-compact", inject: ["commands"] }],
+    "one mount per agent",
+  );
+  assert.deepEqual(
+    registered.map((r) => r.name),
+    ["compact"],
+    "the agent-scoped command carries dsh's own name",
+  );
+  const handler = registered[0]!.handler;
+  const ok = await handler({
+    agent,
+    rawInput: "",
+    attachments: [],
+    signal: new AbortController().signal,
+  });
+  assert.deepEqual(sent, ["/compact"], "sent to Claude as the next user message");
+  assert.equal(ok.kind, "success");
+  const refused = await handler({
+    agent,
+    rawInput: " now",
+    attachments: [],
+    signal: new AbortController().signal,
+  });
+  assert.equal(refused.kind, "error", "an argument is refused, as dsh's own command refuses it");
+  assert.equal(sent.length, 1, "and nothing more was sent");
+  // An agent with no context (another runtime's agent) is left alone.
+  a.mountCompactOverride({ id: "s2", followup() {} } as any);
+  assert.equal(mounted.length, 1);
 }
 
 // A later frame naming fewer commands does not shrink what is saved: the registrations already made
@@ -4537,11 +4630,11 @@ console.log("approval outcomes ok");
   const a = new ClaudeCodeAdapter(fakeCtx(base), Config({ commandBridge: true }));
   a.stateDir = dir;
   a.bridgeCommands(["llama", "mint"], undefined);
-  a.bridgeCommands(["compact"], undefined);
+  a.bridgeCommands(["verify"], undefined);
   await new Promise((r) => setTimeout(r, 50));
   assert.deepEqual(
-    (await loadCommandCatalog(dir)).filter((n) => ["llama", "mint", "compact"].includes(n)),
-    ["llama", "mint", "compact"],
+    (await loadCommandCatalog(dir)).filter((n) => ["llama", "mint", "verify"].includes(n)),
+    ["llama", "mint", "verify"],
     "every bridged name, not the last frame",
   );
   // And a second instance over the same state dir — dsh re-instantiates the plugin when settings

@@ -20,6 +20,8 @@ export interface LiveTurnBody {
   effort?: string;
   relayName?: string;
   relayMs?: number;
+  /** How long the CLI's compaction has run; absent when none is running. */
+  compactingMs?: number;
   elapsedMs?: number;
   /** The CLI's spinner mode, which sets the sweep's direction and speed; absent from the
    *  no-hub route fallback, which the row reads as no change. */
