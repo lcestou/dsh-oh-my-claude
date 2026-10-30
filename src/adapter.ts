@@ -7224,7 +7224,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const signal = options.signal
       ? AbortSignal.any([options.signal, controller.signal])
       : controller.signal;
-    const agent = this.ctx?.agents?.get?.(options.sessionId);
+    const agent = this.ctx?.agents?.get?.(asSessionId(options.sessionId));
     const label = toolName === "AskUserQuestion" ? "❓ question" : `⚑ approval: ${toolName}`;
     yield* tr.wholeBlock("reasoning", `${label} ${permissionReason(toolName, input, request)}`);
     // Decide asynchronously so the stream keeps flowing while the user thinks; the CLI waits on stdin.
@@ -7293,7 +7293,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const signal = options.signal
       ? AbortSignal.any([options.signal, controller.signal])
       : controller.signal;
-    const agent = this.ctx?.agents?.get?.(options.sessionId);
+    const agent = this.ctx?.agents?.get?.(asSessionId(options.sessionId));
     ask({ questions, agent, signal })
       .then((response) =>
         reply(controlResponseLine(requestId, elicitationResult(request, response, requestId))),
@@ -7389,6 +7389,35 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       const asks = this.permissionAsks.get(sessionId)?.filter((r) => r !== rule) ?? [];
       asks.push(rule);
       this.permissionAsks.set(sessionId, asks.slice(-ASK_SUGGESTIONS));
+    }
+    if (outcome === "unavailable") {
+      const ask = this.ctx?.userQuestions?.ask?.bind(this.ctx.userQuestions);
+      if (ask) {
+        const id = `approval:${toolUseId}`;
+        try {
+          const response = await ask({
+            questions: [
+              {
+                id,
+                header: "审批",
+                question: permissionReason(toolName, input, request),
+                options: [
+                  { label: "允许一次", description: "仅允许当前这次工具调用" },
+                  { label: "拒绝", description: "拒绝当前工具调用" },
+                ],
+                multiSelect: false,
+              },
+            ],
+            agent,
+            signal,
+          });
+          const answer = (response.answers ?? []).find((item) => item.id === id);
+          if (answer?.selected?.[0] === "允许一次") return allowResult(toolUseId, input);
+          return denyResult(toolUseId, "The user denied this action in dsh.");
+        } catch (error) {
+          return denyResult(toolUseId, `approval question cancelled: ${errorText(error)}`);
+        }
+      }
     }
     if (outcome === "allowed-once") return allowResult(toolUseId, input);
     // Under dsh's "never" policy every ask comes back rejected without anyone seeing it, and "the
@@ -7580,6 +7609,13 @@ export function localConfig<T extends { command: string; sshHost: string; spawn:
  *  A panel token counts too: the CLI's own status cannot see one, and without this a restart named
  *  a box logged in only from the panel as logged out until someone opened Settings. */
 const probeLogin = (adapter: ClaudeCodeAdapter) => {
+  // Gateway mounts authenticate at their configured upstream, not through Claude's
+  // first-party `auth status`. Treating them as logged out hides the provider from
+  // new-session model lists even though the wrapper is usable.
+  if (adapter.providerId !== "claude-code") {
+    adapter.setLoggedIn(true);
+    return;
+  }
   const panelToken = adapter.config.sshHost
     ? readSshToken(STATE_DIR, adapter.config.sshHost)
     : adapter.providerId === "claude-code"

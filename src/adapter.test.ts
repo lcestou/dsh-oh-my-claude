@@ -3791,6 +3791,57 @@ console.log("redaction ok");
 }
 console.log("plan-review ok");
 
+// decide(): when dsh's approval waterfall is unavailable, the adapter falls back to the
+// user-question service without losing its receiver context, and maps both answers correctly.
+{
+  const asked: string[] = [];
+  const ctx = fakeCtx({
+    agents: { get: () => undefined },
+    approval: {
+      request: async () => "unavailable",
+    },
+    userQuestions: {
+      ctx: { marker: "bound-service" },
+      ask(
+        this: { ctx: { marker: string } },
+        req: {
+          questions: Array<{ id: string; header?: string; options?: Array<{ label: string }> }>;
+        },
+      ) {
+        assert.equal(this.ctx.marker, "bound-service", "ask keeps the service receiver");
+        asked.push(req.questions[0]!.id);
+        return Promise.resolve({
+          answers: [{ id: req.questions[0]!.id, selected: ["允许一次"] }],
+        });
+      },
+    },
+  });
+  const adapter = new ClaudeCodeAdapter(ctx, Config({}));
+  const base = {
+    toolName: "Bash",
+    input: { command: "echo approval" },
+    request: { subtype: "can_use_tool" },
+    toolUseId: "tu-approval",
+    agent: { session: { id: "s-approval" } },
+    signal: new AbortController().signal,
+    accessMode: "workspace-write",
+  };
+  const allowed = await adapter.decide(base as any);
+  assert.deepEqual(asked, ["approval:tu-approval"]);
+  assert.equal(allowed.behavior, "allow", "allow-once answer reaches Claude");
+
+  ctx.userQuestions.ask = async function (
+    this: { ctx: { marker: string } },
+    req: { questions: Array<{ id: string }> },
+  ) {
+    assert.equal(this.ctx.marker, "bound-service");
+    return { answers: [{ id: req.questions[0]!.id, selected: ["拒绝"] }] };
+  };
+  const denied = await adapter.decide({ ...base, toolUseId: "tu-denied" } as any);
+  assert.equal(denied.behavior, "deny", "deny answer blocks the tool");
+}
+console.log("approval fallback ok");
+
 // commandNames keeps dsh-grammar names from the init frame; the Translator hands them to onInit.
 {
   assert.deepEqual(commandNames(["afmdamc", "Bad Name", "ok-1", 5, "ok-1", "_x"]), [
