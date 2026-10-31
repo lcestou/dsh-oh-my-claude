@@ -76,29 +76,63 @@ export const isOpenKey = (e: KeyboardEvent): boolean =>
 const focusComposer = () => document.querySelector<HTMLElement>("[data-composer-input]")?.focus();
 
 /**
- * The history search for one Claude session's composer. Off with the `historySearchOff` hint.
- * Renders nothing until Ctrl+R; the list for a scope is read when the card first opens on it
- * and kept until a turn ends (or the session changes), so typing in the field costs no request.
- * Needs the composer's `setDraft` to do anything; Enter also needs `submit`, and without it Enter
+ * Whether the history card is open for one Claude session's composer, and the setter. Ctrl+R in
+ * the composer opens it; the card itself closes it. Off with the `historySearchOff` hint, and
+ * inert without the composer's `setDraft`, since the card could then do nothing with a pick. A
+ * session switch closes it. Lives apart from the card so the dock, which draws nothing while it
+ * has no cards, can see that this one wants drawing.
+ */
+export function useHistoryOpen({
+  sessionId,
+  ctx,
+  setDraft,
+}: {
+  sessionId: string;
+  ctx: ClientCtx;
+  setDraft: ((text: string) => void) | undefined;
+}): [boolean, (open: boolean) => void] {
+  const [off] = useHintFlag("historySearchOff");
+  const [open, setOpen] = useState(false);
+  useEffect(() => setOpen(false), [sessionId]);
+  useEffect(() => {
+    if (off || !setDraft) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!isOpenKey(e) || !isClaudeSession(ctx, sessionId)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setOpen(true);
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, [off, ctx, sessionId, setDraft]);
+  return [open, setOpen];
+}
+
+/**
+ * The history card for one Claude session's composer, drawn while `open`. The list for a scope
+ * is read when the card first opens on it and kept until a turn ends (or the session changes),
+ * so typing in the field costs no request. Enter needs the composer's `submit`; without it Enter
  * fills the box like Tab. Gets wrong: a prompt longer than the card is cut to one line per row,
  * so two prompts with the same first words look alike until one is picked.
  */
 export function HistorySearch({
   sessionId,
   ctx,
+  open,
+  onClose,
   setDraft,
   submit,
   running,
 }: {
   sessionId: string;
   ctx: ClientCtx;
-  setDraft: ((text: string) => void) | undefined;
+  open: boolean;
+  onClose: () => void;
+  setDraft: (text: string) => void;
   submit: (() => void) | undefined;
   running: boolean;
 }) {
   useLocale();
-  const [off] = useHintFlag("historySearchOff");
-  const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [scope, setScope] = useState<HistoryScope>("session");
   const [at, setAt] = useState(0);
@@ -109,26 +143,13 @@ export function HistorySearch({
   useEffect(() => {
     if (!running) setLists({});
   }, [running]);
+  useEffect(() => setLists({}), [sessionId]);
+  // Each open starts clean, and the field takes the keyboard, so typing filters at once.
   useEffect(() => {
-    setLists({});
-    setOpen(false);
-  }, [sessionId]);
-  useEffect(() => {
-    if (off || !setDraft) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (!isOpenKey(e) || !isClaudeSession(ctx, sessionId)) return;
-      e.preventDefault();
-      e.stopPropagation();
-      setOpen(true);
-      setQuery("");
-      setAt(0);
-    };
-    document.addEventListener("keydown", onKey, true);
-    return () => document.removeEventListener("keydown", onKey, true);
-  }, [off, ctx, sessionId, setDraft]);
-  // The field takes the keyboard as the card opens, so typing filters at once.
-  useEffect(() => {
-    if (open) document.querySelector<HTMLElement>("[data-omc-history-query]")?.focus();
+    if (!open) return;
+    setQuery("");
+    setAt(0);
+    document.querySelector<HTMLElement>("[data-omc-history-query]")?.focus();
   }, [open]);
   // The scope's list, read once per open scope; the empty list is a real answer and stays.
   useEffect(() => {
@@ -147,12 +168,12 @@ export function HistorySearch({
       live = false;
     };
   }, [open, scope, lists, ctx, sessionId]);
-  if (!open || !setDraft) return null;
+  if (!open) return null;
   const entries = lists[scope];
   const rows = historyMatches(entries ?? [], query);
   const picked = rows[Math.min(at, Math.max(0, rows.length - 1))];
   const close = () => {
-    setOpen(false);
+    onClose();
     focusComposer();
   };
   const fill = () => {

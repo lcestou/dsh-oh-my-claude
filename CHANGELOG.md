@@ -10,6 +10,15 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 - Prompt recall in the composer: Up in an empty box brings back the session's last prompt, Up again older ones, Down newer ones and back to empty, as in the Claude Code terminal. Typing a character ends the walk, so an edit is never stepped away from, and the arrows move the caret again. A session that has not sent anything yet recalls from the workspace's latest transcript. Recall copies the text into the box and never touches earlier turns or Rewind. Off switch under Settings → Oh My Claude ("Prompt recall").
 
+- History search in the composer: Ctrl+R opens a card above the box that filters the prompts typed before, in this session, the workspace or everywhere on the box (Ctrl+S cycles). Enter sends the row, Tab writes it into the composer, Esc closes. Off switch under Settings → Oh My Claude ("History search").
+- Esc Esc in an empty, idle composer opens the Rewind tab on the session's latest prompt, preview and all, the way the terminal's double Escape opens /rewind on the last message; after the rewind that prompt is back in the composer to edit and resend. Off switch under Settings → Oh My Claude ("Edit last prompt").
+- Stop all on the Tasks tab, once two or more of Claude's shell tasks or subagents run.
+- The three composer gestures (prompt recall, history search, edit last prompt) are listed in dsh's own Keyboard shortcuts dialog (Settings → General → Edit shortcuts) while they are on.
+
+### Changed
+
+- The prompt recall, history search and edit last prompt switches sit together under one Shortcuts heading in Settings → Oh My Claude, and each description opens on the keys it takes.
+
 ### Fixed
 
 - Rewind rows on dsh 0.2.2 no longer carry dsh's runtime-context block after the prompt: dsh now writes "This snapshot supersedes earlier runtime-context snapshots." on the marker line and the cut had looked for the bare marker.
