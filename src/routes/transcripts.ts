@@ -1,7 +1,7 @@
 // The transcript routes: the event stream, the session list, open, reseed, search and the transcript readers.
 // The blocks are the chain's own, in its order; the dispatch in sessions.ts calls this group first.
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { type RouteHandler, UNHANDLED } from "./context.js";
@@ -36,6 +36,39 @@ const turnsOf = (folded: {
     time: turn.time,
     text: typedPrompt(turn.content.map((part) => part.text).join("\n")),
   }));
+
+/**
+ * The `n` most recently written transcript files across `dirs`, by mtime. A name and a stat per
+ * file, nothing read: `listTranscripts` opens every file for its title, which on a box of two
+ * thousand transcripts is a second the history card would wait for every Everywhere open
+ * (measured 2026-10-31: 1 s to list, 165 ms to read the 30 newest). Subagent transcripts live in
+ * each session's own subdirectory, so the top-level `.jsonl` files are all sessions. A dir that
+ * cannot be read lists nothing.
+ */
+async function newestTranscriptFiles(
+  dirs: string[],
+  n: number,
+): Promise<{ path: string; modifiedAt: number }[]> {
+  const perDir = await Promise.all(
+    dirs.map(async (dir) => {
+      const names = (await readdir(dir).catch(() => [])).filter((name) => name.endsWith(".jsonl"));
+      return Promise.all(
+        names.map(async (name) => {
+          const path = join(dir, name);
+          const modifiedAt = await stat(path)
+            .then((s) => s.mtimeMs)
+            .catch(() => 0);
+          return { path, modifiedAt };
+        }),
+      );
+    }),
+  );
+  return perDir
+    .flat()
+    .filter((f) => f.modifiedAt > 0)
+    .toSorted((a, b) => b.modifiedAt - a.modifiedAt)
+    .slice(0, n);
+}
 
 /** History folds in flight, by box, scope, cwd and session, so a repeat of the same question
  *  joins the running fold rather than starting another on the loop that serves live turns. */
@@ -266,13 +299,10 @@ export function transcriptsRoutes(c: RouteCtx): RouteHandler {
                   )
                 ).flat()
               : projectDir(cwd);
-          const listed: { path: string; modifiedAt: number }[] = [];
-          for (const dir of dirs)
-            for (const item of withoutSubagents(await listTranscripts(dir).catch(() => [])))
-              listed.push({ path: join(dir, `${item.id}.jsonl`), modifiedAt: item.modifiedAt });
-          const newest = listed
-            .toSorted((a, b) => b.modifiedAt - a.modifiedAt)
-            .slice(0, scope === "session" ? 1 : HISTORY_MAX_FILES);
+          const newest = await newestTranscriptFiles(
+            dirs,
+            scope === "session" ? 1 : HISTORY_MAX_FILES,
+          );
           // The file alone: a subagent's own transcript holds no typed prompt, so the fan-out
           // `readTranscript` does for them is skipped here.
           const folds = await Promise.all(
