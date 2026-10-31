@@ -63,6 +63,7 @@ import {
   StarLine,
   StarterSwitch,
   SuggestionSwitch,
+  RecallSwitch,
   ClaudeSkillsSwitch,
   ModelsBlock,
   TerminalSyncSwitch,
@@ -338,6 +339,7 @@ export function apply(ctx: ClientCtx) {
         <ModelsBlock />
         <ToolRowsSwitch />
         <SuggestionSwitch />
+        <RecallSwitch />
         <ClaudeSkillsSwitch />
         <CompactNudgeSwitch />
         {/* The switches that start off sit together after the ones that start on, so the card reads

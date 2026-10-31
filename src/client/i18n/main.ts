@@ -390,6 +390,9 @@ export const en = {
   "main.settingsUi.recapDesc":
     "One line on what Claude did while you were on another session, asked when you come back to one that finished without you. Costs a model call each time.",
   "main.settingsUi.suggestTitle": "Suggested next prompt",
+  "main.settingsUi.recallTitle": "Prompt recall",
+  "main.settingsUi.recallDesc":
+    "Up in an empty composer brings back the last prompt, Up again older ones, Down newer ones and back to empty, as in the Claude Code terminal. In a recalled multi-line prompt the arrows move the caret first and step only from its top or bottom line; typing a character ends the walk. A new session recalls from the workspace's latest transcript.",
   "main.settingsUi.modelsTitle": "Models in the picker",
   "main.settingsUi.modelsDesc":
     "Switch a model off to leave it out of that box's model picker. Each box has its own list, so a box you added over SSH can keep a model this one hides. A session already on it keeps running. A newer model shows up on its own.",
@@ -901,6 +904,9 @@ export const zh = {
   "main.settingsUi.recapDesc":
     "当你回到一个在你不在时完成的会话时，用一行说明 Claude 在你处理其他会话期间做了什么。每次都会消耗一次模型调用。",
   "main.settingsUi.suggestTitle": "下一条提示建议",
+  "main.settingsUi.recallTitle": "提示词回溯",
+  "main.settingsUi.recallDesc":
+    "输入框为空时按上箭头调出上一条提示词，再按上箭头调出更早的，下箭头调出更新的直至清空，与 Claude Code 终端一致。回溯出多行提示词时，箭头先移动光标，只在首行或末行时才切换；输入任意字符即结束回溯。新会话从该工作区最近的记录中回溯。",
   "main.settingsUi.modelsTitle": "选择器中的模型",
   "main.settingsUi.modelsDesc":
     "关掉一个模型，它就不再出现在该主机的模型选择器里。每台主机各有一份列表，所以通过 SSH 添加的主机可以保留本机隐藏的模型。已在用它的会话照常运行。新模型会自动出现。",

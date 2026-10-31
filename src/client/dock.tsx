@@ -28,6 +28,7 @@ import { Spark } from "./spark.js";
 import { compactThreshold } from "./nudge.js";
 import { type RestoreWatch, startWatch, stepRestore, withdrawnSince } from "./steer-restore.js";
 import { useHintValue, useHintFlag } from "./hints.js";
+import { useComposerRecall } from "./recall.js";
 import { Chevron } from "./boxes.js";
 import { type ContextReply, windowLabel } from "./context-meter.js";
 import {
@@ -288,6 +289,8 @@ export function AsideBubble({
   // so, but dsh's own send empties the box first, and a card that unfolded in between read as
   // the guess coming back. Read at render; the poll re-renders this once a second while running.
   const running = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.running === true;
+  // Up and Down in the composer walk this session's earlier prompts; this entry has the composer.
+  useComposerRecall({ sessionId, ctx, setDraft: inputActions?.setDraft, draft, running });
   // The context nudge: read once the turn is over (mid-turn the CLI declines the read), and
   // again at each session switch. The tens bucket dismissed is this tab's memory, so the card
   // returns at the next 10 % and not before. `loadContext` is the meter popover's cached read;
