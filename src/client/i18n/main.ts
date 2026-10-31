@@ -390,9 +390,28 @@ export const en = {
   "main.settingsUi.recapDesc":
     "One line on what Claude did while you were on another session, asked when you come back to one that finished without you. Costs a model call each time.",
   "main.settingsUi.suggestTitle": "Suggested next prompt",
+  "main.settingsUi.shortcutsTitle": "Shortcuts",
+  "main.settingsUi.shortcutsDesc":
+    "Composer keys borrowed from the Claude Code terminal. Each is listed in dsh's Keyboard shortcuts dialog too.",
   "main.settingsUi.recallTitle": "Prompt recall",
   "main.settingsUi.recallDesc":
-    "Up in an empty composer brings back the last prompt, Up again older ones, Down newer ones and back to empty, as in the Claude Code terminal. Typing a character ends the walk and the arrows move the caret again. A new session recalls from the workspace's latest transcript.",
+    "Up and Down: in an empty composer, Up brings back the last prompt, Up again older ones, Down newer ones and back to empty. Typing a character ends the walk and the arrows move the caret again. A new session recalls from the workspace's latest transcript.",
+  "main.settingsUi.historyTitle": "History search",
+  "main.settingsUi.historyDesc":
+    "Ctrl+R: search the prompts typed before, in this session, the workspace or everywhere on the box (Ctrl+S cycles). Enter sends the row, Tab writes it into the composer, Esc closes.",
+  "main.settingsUi.editLastTitle": "Edit last prompt",
+  "main.settingsUi.editLastDesc":
+    "Esc Esc: in an empty composer while nothing runs, opens the Rewind tab on the latest prompt; after the rewind that prompt is back in the composer to edit and resend.",
+  // Ctrl+R history search card
+  "main.history.title": "Search prompt history",
+  "main.history.placeholder": "Type to filter…",
+  "main.history.none": "No prompt matches",
+  "main.history.scopeLabel": "Search scope",
+  "main.history.scopeTip": "Ctrl+S cycles the scope",
+  "main.history.scope.session": "This session",
+  "main.history.scope.workspace": "Workspace",
+  "main.history.scope.box": "Everywhere",
+  "main.history.keys": "Enter sends · Tab fills the composer · Ctrl+S scope · Esc closes",
   "main.settingsUi.modelsTitle": "Models in the picker",
   "main.settingsUi.modelsDesc":
     "Switch a model off to leave it out of that box's model picker. Each box has its own list, so a box you added over SSH can keep a model this one hides. A session already on it keeps running. A newer model shows up on its own.",
@@ -904,9 +923,28 @@ export const zh = {
   "main.settingsUi.recapDesc":
     "当你回到一个在你不在时完成的会话时，用一行说明 Claude 在你处理其他会话期间做了什么。每次都会消耗一次模型调用。",
   "main.settingsUi.suggestTitle": "下一条提示建议",
+  "main.settingsUi.shortcutsTitle": "快捷键",
+  "main.settingsUi.shortcutsDesc":
+    "从 Claude Code 终端借来的输入框按键。每一项也列在 dsh 的快捷键对话框里。",
   "main.settingsUi.recallTitle": "提示词回溯",
   "main.settingsUi.recallDesc":
-    "输入框为空时按上箭头调出上一条提示词，再按上箭头调出更早的，下箭头调出更新的直至清空，与 Claude Code 终端一致。输入任意字符即结束回溯，箭头恢复移动光标。新会话从该工作区最近的记录中回溯。",
+    "上下箭头：输入框为空时按上箭头调出上一条提示词，再按上箭头调出更早的，下箭头调出更新的直至清空。输入任意字符即结束回溯，箭头恢复移动光标。新会话从该工作区最近的记录中回溯。",
+  "main.settingsUi.historyTitle": "历史搜索",
+  "main.settingsUi.historyDesc":
+    "Ctrl+R：搜索之前输入过的提示词，范围可为本会话、本工作区或整台机器（Ctrl+S 切换）。Enter 发送所选行，Tab 填入输入框，Esc 关闭。",
+  "main.settingsUi.editLastTitle": "编辑上一条提示词",
+  "main.settingsUi.editLastDesc":
+    "Esc Esc：输入框为空且没有任务运行时，打开回溯标签页并选中最新一条提示词；回溯后该提示词会回到输入框，可修改后重新发送。",
+  // Ctrl+R history search card
+  "main.history.title": "搜索提示词历史",
+  "main.history.placeholder": "输入以筛选…",
+  "main.history.none": "没有匹配的提示词",
+  "main.history.scopeLabel": "搜索范围",
+  "main.history.scopeTip": "Ctrl+S 切换范围",
+  "main.history.scope.session": "本会话",
+  "main.history.scope.workspace": "工作区",
+  "main.history.scope.box": "整台机器",
+  "main.history.keys": "Enter 发送 · Tab 填入输入框 · Ctrl+S 切换范围 · Esc 关闭",
   "main.settingsUi.modelsTitle": "选择器中的模型",
   "main.settingsUi.modelsDesc":
     "关掉一个模型，它就不再出现在该主机的模型选择器里。每台主机各有一份列表，所以通过 SSH 添加的主机可以保留本机隐藏的模型。已在用它的会话照常运行。新模型会自动出现。",

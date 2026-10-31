@@ -10,10 +10,26 @@ import { serverText } from "../locale.js";
 import { errorText } from "../process.js";
 import { readAt } from "../remote-fs.js";
 import { queryWords, searchTranscript } from "../search.js";
-import { listTranscripts, readTranscript, toMarkdown } from "../transcript.js";
+import { listTranscripts, readTranscript, toMarkdown, typedPrompt } from "../transcript.js";
+import {
+  HISTORY_MAX_FILES,
+  HISTORY_MAX_PROMPTS,
+  type HistoryEntry,
+  foldHistory,
+} from "../history.js";
 import type { TranscriptListItem } from "../transcript.js";
 import { moveAside, restoreBak } from "../session-repair.js";
 import { STATE_DIR, loadSessionRepairs, recordRepair, trace } from "../state.js";
+
+/** A folded transcript's user turns as history entries: each turn's text as the person typed it
+ *  (dsh's runtime block and the plugin's echoes cut by `typedPrompt`), with its time. */
+const turnsOf = (folded: {
+  turns: { time: number; content: { text: string }[] }[];
+}): HistoryEntry[] =>
+  folded.turns.map((turn) => ({
+    time: turn.time,
+    text: typedPrompt(turn.content.map((part) => part.text).join("\n")),
+  }));
 
 /** True while a scan is in flight. Two searches at once would put two full scans on the one event
  *  loop that serves every live turn, so the second is refused with 429 rather than run. */
@@ -51,6 +67,7 @@ export function transcriptsRoutes(c: RouteCtx): RouteHandler {
       routeHost,
       run,
       sessionPersistence,
+      sessionTranscript,
       startedIds,
       targetOf,
       transcriptDirs,
@@ -196,6 +213,60 @@ export function transcriptsRoutes(c: RouteCtx): RouteHandler {
       // The transcript id rides along: the tab's open helper posts that id to `/open` and
       // adopts the session under its dsh id, the way the Restore tab's rows do.
       return json(res, 200, { ...opened, transcriptId: claudeIdOf(id) });
+    }
+    // History: the typed prompts the composer's Ctrl+R searches, newest first, for one of three
+    // scopes. `session` folds this session's own transcript (a session that has none yet reads
+    // the workspace's newest, the way a fresh terminal has its project's history); `workspace`
+    // folds this workspace's newest transcripts, `box` every project dir's. The client filters;
+    // the route only folds, so one read serves every keystroke until the next turn ends.
+    if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/history`) {
+      const sid = url.searchParams.get("session") ?? "";
+      const cwd = url.searchParams.get("cwd") ?? "";
+      const scope = url.searchParams.get("scope") ?? "session";
+      if (!validCwd(cwd)) return json(res, 400, { error: "cwd must be an absolute path" });
+      // A remote workspace's transcripts live on its box, which this walk cannot list.
+      if (scope !== "box" && workspaceAt(cwd) !== undefined)
+        return json(res, 400, { error: "history runs on this box only" });
+      const { box, cwd: at } = targetOf(url, cwd);
+      let prompts: HistoryEntry[] = [];
+      let files = 0;
+      if (scope === "session" && sid) {
+        const own = await sessionTranscript(box, await projectDirAt(box, at), sid, claudeIdOf);
+        if (own !== undefined) {
+          prompts = turnsOf(own);
+          files = 1;
+        }
+      }
+      if (files === 0) {
+        // The roots' children are the project dirs (see the search route below); a root
+        // itself lists nothing.
+        const dirs =
+          scope === "box"
+            ? (
+                await Promise.all(
+                  projectsDir.map(async (root) =>
+                    (await readdir(root, { withFileTypes: true }).catch(() => []))
+                      .filter((entry) => entry.isDirectory())
+                      .map((entry) => join(root, entry.name)),
+                  ),
+                )
+              ).flat()
+            : projectDir(cwd);
+        const listed: { path: string; modifiedAt: number }[] = [];
+        for (const dir of dirs)
+          for (const item of withoutSubagents(await listTranscripts(dir).catch(() => [])))
+            listed.push({ path: join(dir, `${item.id}.jsonl`), modifiedAt: item.modifiedAt });
+        const newest = listed
+          .toSorted((a, b) => b.modifiedAt - a.modifiedAt)
+          .slice(0, scope === "session" ? 1 : HISTORY_MAX_FILES);
+        const folds = await Promise.all(newest.map((f) => readTranscript(box, f.path)));
+        for (const folded of folds)
+          if (folded !== undefined) {
+            prompts.push(...turnsOf(folded));
+            files += 1;
+          }
+      }
+      return json(res, 200, { prompts: foldHistory(prompts).slice(0, HISTORY_MAX_PROMPTS), files });
     }
     if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/search`) {
       const q = url.searchParams.get("q") ?? "";

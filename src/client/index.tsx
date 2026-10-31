@@ -63,7 +63,6 @@ import {
   StarLine,
   StarterSwitch,
   SuggestionSwitch,
-  RecallSwitch,
   ClaudeSkillsSwitch,
   ModelsBlock,
   TerminalSyncSwitch,
@@ -73,6 +72,8 @@ import {
   WorkspaceModelMemory,
   WorkspaceModelSwitch,
 } from "./settings-card.js";
+import { ShortcutSwitches } from "./shortcut-switches.js";
+import { mountShortcutRows } from "./shortcut-rows.js";
 
 import { watchContextMeter } from "./context-meter.js";
 import { watchUltrathink } from "./ultrathink.js";
@@ -251,6 +252,8 @@ export function apply(ctx: ClientCtx) {
   ctx.effect?.(() => retire);
   // First, so every string drawn below is already in the language the person picked.
   whenContextGone(installLocale(ctx));
+  // The composer gestures as rows in dsh's Keyboard shortcuts dialog, while this plugin is mounted.
+  ctx.effect?.(() => mountShortcutRows(ctx));
   followDeepLink(ctx);
   watchContextMeter(ctx);
   watchEventStream(ctx);
@@ -339,7 +342,7 @@ export function apply(ctx: ClientCtx) {
         <ModelsBlock />
         <ToolRowsSwitch />
         <SuggestionSwitch />
-        <RecallSwitch />
+        <ShortcutSwitches />
         <ClaudeSkillsSwitch />
         <CompactNudgeSwitch />
         {/* The switches that start off sit together after the ones that start on, so the card reads

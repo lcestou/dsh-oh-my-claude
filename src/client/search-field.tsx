@@ -3,7 +3,7 @@
 // were the generic text field, which sat a shade lighter than the panel and, inside a column, had
 // its height taken by `flex: 1` down to 17 px.
 import { IconSearchOutlineMedium } from "./icons.js";
-import type { CSSProperties } from "react";
+import type { CSSProperties, KeyboardEventHandler } from "react";
 
 import { T } from "./shared.js";
 
@@ -35,6 +35,7 @@ export function SearchField({
   id,
   hook,
   style,
+  onKeyDown,
 }: {
   value: string;
   onChange: (next: string) => void;
@@ -43,6 +44,8 @@ export function SearchField({
   id?: string;
   hook?: string;
   style?: CSSProperties;
+  /** Keys pressed in the field, for a caller that drives a list from it (the history card). */
+  onKeyDown?: KeyboardEventHandler<HTMLInputElement>;
 }) {
   return (
     <div
@@ -66,6 +69,7 @@ export function SearchField({
         placeholder={placeholder}
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        onKeyDown={onKeyDown}
         style={FIELD}
       />
     </div>
