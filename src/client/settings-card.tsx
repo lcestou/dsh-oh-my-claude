@@ -1281,6 +1281,33 @@ export function SuggestionSwitch() {
   );
 }
 
+/** The prompt recall switch, inverted over the `recallOff` hint so a box with no hint reads as on,
+ *  the way the Claude Code terminal's Up-arrow history is always there. Takes effect at once: the
+ *  listener unmounts when the hint flips. */
+export function RecallSwitch() {
+  useLocale();
+  const [off, setOff] = useHintFlag("recallOff");
+  return (
+    <div
+      data-omc-recall-switch=""
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
+        fontSize: 13,
+        marginBottom: 12,
+      }}
+    >
+      <div>
+        <div>{t("main.settingsUi.recallTitle")}</div>
+        <div style={{ color: T.faint, fontSize: 12 }}>{t("main.settingsUi.recallDesc")}</div>
+      </div>
+      <Switch on={!off} onChange={(on) => setOff(!on)} label={t("main.settingsUi.recallTitle")} />
+    </div>
+  );
+}
+
 type PickerModel = { id: string; name: string; hidden: boolean; locked: boolean };
 type PickerBox = { provider: string; host: string | null; models: PickerModel[] };
 

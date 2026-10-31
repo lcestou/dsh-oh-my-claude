@@ -6,6 +6,14 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Added
+
+- Prompt recall in the composer: Up in an empty box brings back the session's last prompt, Up again older ones, Down newer ones and back to empty, as in the Claude Code terminal. Typing a character ends the walk, so an edit is never stepped away from, and the arrows move the caret again. A session that has not sent anything yet recalls from the workspace's latest transcript. Recall copies the text into the box and never touches earlier turns or Rewind. Off switch under Settings → Oh My Claude ("Prompt recall").
+
+### Fixed
+
+- Rewind rows on dsh 0.2.2 no longer carry dsh's runtime-context block after the prompt: dsh now writes "This snapshot supersedes earlier runtime-context snapshots." on the marker line and the cut had looked for the bare marker.
+
 ## [1.5.11] - 2026-10-29
 
 dsh: runs on 0.2.0-rc.1 through 0.2.2-alpha.2; built and tested on 0.2.2-alpha.2.

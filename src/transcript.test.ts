@@ -1015,6 +1015,13 @@ assert.equal(
   "Read src/recipes.ts.",
   "notice and runtime context dropped",
 );
+assert.equal(
+  typedPrompt(
+    'What you think?\n\nCurrent runtime context. This snapshot supersedes earlier runtime-context snapshots.\n\nCurrent working directory: "/home/x".\n\nCurrent DSH file policy: danger-full-access.',
+  ),
+  "What you think?",
+  "dsh 0.2.2's block, with its supersedes sentence on the marker line, dropped whole",
+);
 assert.equal(typedPrompt("  Plain question?  "), "Plain question?", "plain text only trimmed");
 assert.equal(
   typedPrompt("Why did the approval policy changed from x happen?"),

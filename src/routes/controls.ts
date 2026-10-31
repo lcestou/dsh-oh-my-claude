@@ -501,14 +501,20 @@ export function controlsRoutes(ctx: RouteCtx): RouteHandler {
       const { box, cwd: at } = targetOf(url, cwd);
       const folded = await sessionTranscript(box, await projectDirAt(box, at), sid, claudeIdOf);
       if (folded === undefined) return json(res, 200, { prompts: [] });
+      // `full=1` is the composer's prompt recall: whole texts (a recalled prompt has to come back
+      // as typed) and a longer walk. Without it, the Rewind tab's rows: a 200-char label each.
+      const full = url.searchParams.get("full") === "1";
       const prompts: RewindPrompt[] = folded.turns
         .map((t) => ({
           id: t.id,
           time: t.time,
-          text: typedPrompt(t.content.map((c) => c.text).join("\n")).slice(0, 200),
+          text: typedPrompt(t.content.map((c) => c.text).join("\n")).slice(
+            0,
+            full ? undefined : 200,
+          ),
         }))
         .toReversed()
-        .slice(0, 20);
+        .slice(0, full ? 50 : 20);
       return json(res, 200, { prompts });
     }
     if (rewind && req.method === "POST" && url.pathname === `${ROUTE_PREFIX}/rewind`) {
