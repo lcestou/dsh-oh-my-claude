@@ -79,8 +79,10 @@ function promptText(content: unknown): string {
  */
 export const typedPrompt = (text: string): string => {
   // dsh's block starts on a line of its own after a blank line; the words mid-prompt are a person's.
+  // dsh 0.2.2 follows the marker with "This snapshot supersedes earlier runtime-context snapshots."
+  // on the same line, so the cut takes the rest of that line, not only a bare marker.
   const typed = text
-    .replace(/\n\nCurrent runtime context\.\n[\s\S]*$/, "")
+    .replace(/\n\nCurrent runtime context\.[^\n]*\n[\s\S]*$/, "")
     .replace(
       /^(?:The approval policy changed from "[^"]*" to "[^"]*" \(changed by the user\)\.\s*)+/,
       "",
