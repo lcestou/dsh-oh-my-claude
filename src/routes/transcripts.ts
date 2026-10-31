@@ -10,7 +10,13 @@ import { serverText } from "../locale.js";
 import { errorText } from "../process.js";
 import { readAt } from "../remote-fs.js";
 import { queryWords, searchTranscript } from "../search.js";
-import { listTranscripts, readTranscript, toMarkdown, typedPrompt } from "../transcript.js";
+import {
+  foldTranscript,
+  listTranscripts,
+  readTranscript,
+  toMarkdown,
+  typedPrompt,
+} from "../transcript.js";
 import {
   HISTORY_MAX_FILES,
   HISTORY_MAX_PROMPTS,
@@ -30,6 +36,10 @@ const turnsOf = (folded: {
     time: turn.time,
     text: typedPrompt(turn.content.map((part) => part.text).join("\n")),
   }));
+
+/** History folds in flight, by box, scope, cwd and session, so a repeat of the same question
+ *  joins the running fold rather than starting another on the loop that serves live turns. */
+const historyInFlight = new Map<string, Promise<{ prompts: HistoryEntry[]; files: number }>>();
 
 /** True while a scan is in flight. Two searches at once would put two full scans on the one event
  *  loop that serves every live turn, so the second is refused with 429 rather than run. */
@@ -224,49 +234,70 @@ export function transcriptsRoutes(c: RouteCtx): RouteHandler {
       const cwd = url.searchParams.get("cwd") ?? "";
       const scope = url.searchParams.get("scope") ?? "session";
       if (!validCwd(cwd)) return json(res, 400, { error: "cwd must be an absolute path" });
-      // A remote workspace's transcripts live on its box, which this walk cannot list.
-      if (scope !== "box" && workspaceAt(cwd) !== undefined)
+      if (scope !== "session" && scope !== "workspace" && scope !== "box")
+        return json(res, 400, { error: "scope must be session, workspace or box" });
+      // A remote workspace's transcripts live on its box, which only the session scope reaches
+      // (through the box's own reader); the workspace walk lists this box's dirs alone.
+      if (scope === "workspace" && workspaceAt(cwd) !== undefined)
         return json(res, 400, { error: "history runs on this box only" });
       const { box, cwd: at } = targetOf(url, cwd);
-      let prompts: HistoryEntry[] = [];
-      let files = 0;
-      if (scope === "session" && sid) {
-        const own = await sessionTranscript(box, await projectDirAt(box, at), sid, claudeIdOf);
-        if (own !== undefined) {
-          prompts = turnsOf(own);
-          files = 1;
-        }
-      }
-      if (files === 0) {
-        // The roots' children are the project dirs (see the search route below); a root
-        // itself lists nothing.
-        const dirs =
-          scope === "box"
-            ? (
-                await Promise.all(
-                  projectsDir.map(async (root) =>
-                    (await readdir(root, { withFileTypes: true }).catch(() => []))
-                      .filter((entry) => entry.isDirectory())
-                      .map((entry) => join(root, entry.name)),
-                  ),
-                )
-              ).flat()
-            : projectDir(cwd);
-        const listed: { path: string; modifiedAt: number }[] = [];
-        for (const dir of dirs)
-          for (const item of withoutSubagents(await listTranscripts(dir).catch(() => [])))
-            listed.push({ path: join(dir, `${item.id}.jsonl`), modifiedAt: item.modifiedAt });
-        const newest = listed
-          .toSorted((a, b) => b.modifiedAt - a.modifiedAt)
-          .slice(0, scope === "session" ? 1 : HISTORY_MAX_FILES);
-        const folds = await Promise.all(newest.map((f) => readTranscript(box, f.path)));
-        for (const folded of folds)
-          if (folded !== undefined) {
-            prompts.push(...turnsOf(folded));
-            files += 1;
+      const fold = async () => {
+        let prompts: HistoryEntry[] = [];
+        let files = 0;
+        if (scope === "session" && sid) {
+          const own = await sessionTranscript(box, await projectDirAt(box, at), sid, claudeIdOf);
+          if (own !== undefined) {
+            prompts = turnsOf(own);
+            files = 1;
           }
+        }
+        if (files === 0) {
+          // The roots' children are the project dirs (see the search route below); a root
+          // itself lists nothing.
+          const dirs =
+            scope === "box"
+              ? (
+                  await Promise.all(
+                    projectsDir.map(async (root) =>
+                      (await readdir(root, { withFileTypes: true }).catch(() => []))
+                        .filter((entry) => entry.isDirectory())
+                        .map((entry) => join(root, entry.name)),
+                    ),
+                  )
+                ).flat()
+              : projectDir(cwd);
+          const listed: { path: string; modifiedAt: number }[] = [];
+          for (const dir of dirs)
+            for (const item of withoutSubagents(await listTranscripts(dir).catch(() => [])))
+              listed.push({ path: join(dir, `${item.id}.jsonl`), modifiedAt: item.modifiedAt });
+          const newest = listed
+            .toSorted((a, b) => b.modifiedAt - a.modifiedAt)
+            .slice(0, scope === "session" ? 1 : HISTORY_MAX_FILES);
+          // The file alone: a subagent's own transcript holds no typed prompt, so the fan-out
+          // `readTranscript` does for them is skipped here.
+          const folds = await Promise.all(
+            newest.map(async (f) => {
+              const file = await readAt(box, f.path);
+              return file === null ? undefined : foldTranscript(file.text);
+            }),
+          );
+          for (const folded of folds)
+            if (folded !== undefined) {
+              prompts.push(...turnsOf(folded));
+              files += 1;
+            }
+        }
+        return { prompts: foldHistory(prompts).slice(0, HISTORY_MAX_PROMPTS), files };
+      };
+      // One fold per question at a time: a second tab, or Ctrl+S cycled back before the first
+      // answer landed, waits on the fold already running instead of stacking another.
+      const key = [url.searchParams.get("box") ?? "", scope, cwd, sid].join("\n");
+      let pending = historyInFlight.get(key);
+      if (pending === undefined) {
+        pending = fold().finally(() => historyInFlight.delete(key));
+        historyInFlight.set(key, pending);
       }
-      return json(res, 200, { prompts: foldHistory(prompts).slice(0, HISTORY_MAX_PROMPTS), files });
+      return json(res, 200, await pending);
     }
     if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/search`) {
       const q = url.searchParams.get("q") ?? "";

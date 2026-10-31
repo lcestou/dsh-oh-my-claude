@@ -31,8 +31,12 @@ export class OpenPanelEvent extends Event {
 /** The `REWOUND_EVENT` as the Rewind tab fires it: `text` is the prompt the rewind dropped from
  *  the transcript, for the composer to take back; undefined when the tab had none to name. */
 export class RewoundEvent extends Event {
-  /** Same event name `recall.ts` listens for as a plain `Event`, so its list goes stale too. */
-  constructor(readonly text: string | undefined) {
+  /** Same event name `recall.ts` listens for as a plain `Event`, so its list goes stale too.
+   *  `sessionId` names the session rewound, so only its composer takes the text. */
+  constructor(
+    readonly sessionId: string,
+    readonly text: string | undefined,
+  ) {
     super(REWOUND_EVENT);
   }
 }
@@ -81,7 +85,9 @@ export function useEditLastPrompt({
   setRef.current = setDraft;
   useEffect(() => {
     if (off) return;
-    const gap = ctx.get?.<{ stopSequenceMs?: number }>("shortcuts")?.stopSequenceMs ?? ESC_GAP_MS;
+    // Read per press, so a changed dsh interval holds without a remount.
+    const gap = () =>
+      ctx.get?.<{ stopSequenceMs?: number }>("shortcuts")?.stopSequenceMs ?? ESC_GAP_MS;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       const inBox = e.target instanceof Element && e.target.closest("[data-composer-input]");
@@ -100,7 +106,7 @@ export function useEditLastPrompt({
         lastAt.current = null;
         return;
       }
-      const step = escapeStep(lastAt.current, performance.now(), gap);
+      const step = escapeStep(lastAt.current, performance.now(), gap());
       lastAt.current = step.lastAt;
       if (!step.fire) return;
       e.preventDefault();
@@ -108,7 +114,7 @@ export function useEditLastPrompt({
       window.dispatchEvent(new OpenPanelEvent({ tab: "Rewind", rewindLatest: true }));
     };
     const onRewound = (e: Event) => {
-      if (!(e instanceof RewoundEvent) || e.text === undefined) return;
+      if (!(e instanceof RewoundEvent) || e.sessionId !== sessionId || e.text === undefined) return;
       if (draftRef.current.trim() === "") setRef.current?.(e.text);
     };
     document.addEventListener("keydown", onKey, true);

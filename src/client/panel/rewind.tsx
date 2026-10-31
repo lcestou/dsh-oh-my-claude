@@ -108,7 +108,7 @@ export function RewindBody({
       if (!dryRun && reply.ok) {
         // The walk's list now holds prompts the transcript no longer has; recall re-reads it,
         // and the composer (`edit-last.ts`) takes the dropped prompt back to edit and resend.
-        window.dispatchEvent(new RewoundEvent(picked?.text));
+        window.dispatchEvent(new RewoundEvent(sessionId, picked?.text));
         onClose();
       }
     } catch (e) {
@@ -129,7 +129,9 @@ export function RewindBody({
     if (!pickLatest || latest === undefined) return;
     onPicked?.();
     pick(latest);
-  });
+    // Only the flag and the list: a re-render for the preview must not pick (and post) again.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- pick is a per-render closure
+  }, [pickLatest, prompts]);
 
   if (!isClaude || !cwd) return null;
   // The file half of a rewind needs checkpoints; without them the button still moves the

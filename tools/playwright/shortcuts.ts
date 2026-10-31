@@ -87,8 +87,14 @@ await p.keyboard.press("Control+Slash");
 await p.waitForTimeout(1200);
 const dialog = p.locator('[role="dialog"]').last();
 const dialogText = (await dialog.innerText().catch(() => "")).replace(/\s+/g, " ");
-for (const label of ["Prompt recall", "History search", "Edit last prompt"])
-  console.log(`shortcuts dialog has "${label}":`, dialogText.includes(label));
+// Both languages, the way the Settings lookup below matches both.
+const ROWS: [string, string][] = [
+  ["Prompt recall", "提示词回溯"],
+  ["History search", "历史搜索"],
+  ["Edit last prompt", "编辑上一条提示词"],
+];
+for (const [en, zh] of ROWS)
+  console.log(`shortcuts dialog has "${en}":`, dialogText.includes(en) || dialogText.includes(zh));
 await p.keyboard.press("Escape");
 await p.waitForTimeout(600);
 
