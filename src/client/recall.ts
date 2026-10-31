@@ -106,8 +106,9 @@ function caretTop(): number | null {
  *
  * Costs nothing until Up is pressed in an empty box: the list is read then, not at mount or at
  * every turn end, since the route folds the whole transcript and most turns are never recalled.
- * A turn ending marks the list stale, so the next empty-box Up re-reads it and the prompt just
- * sent is the newest entry; a walk already under way keeps its list, so its indexes never shift.
+ * A turn ending, or a rewind, marks the list stale, so the next empty-box Up re-reads it and the
+ * prompt just sent is the newest entry; a walk already under way keeps its list, so its indexes
+ * never shift. On a session that is not a Claude one the arrows are left to the editor.
  *
  * The key listener is one capture listener on the document, filtered to the composer, with no
  * modifier held and no IME composition open. From an empty box Up is taken outright. In a filled
