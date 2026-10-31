@@ -43,7 +43,8 @@ await box.click();
 
 // Ctrl+R: the history card, its rows or its error.
 await p.keyboard.press("Control+r");
-await p.waitForTimeout(1500);
+// The fold of a busy workspace takes up to a second; two more are slack.
+await p.waitForTimeout(3000);
 const card = p.locator("[data-omc-history-search]");
 console.log("ctrl+r: card", await card.count());
 if ((await card.count()) > 0) {

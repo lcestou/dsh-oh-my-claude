@@ -140,10 +140,13 @@ export function HistorySearch({
   const [error, setError] = useState("");
   const listRef = useRef<HTMLDivElement>(null);
   // A turn ending adds a prompt, so every scope's list is stale; the next open re-reads.
+  // An already empty cache is kept as is: a fresh object here on mount re-ran the fetch effect
+  // and cancelled the first read a beat after it was sent.
+  const clear = () => setLists((cur) => (Object.keys(cur).length === 0 ? cur : {}));
   useEffect(() => {
-    if (!running) setLists({});
+    if (!running) clear();
   }, [running]);
-  useEffect(() => setLists({}), [sessionId]);
+  useEffect(clear, [sessionId]);
   // Each open starts clean, and the field takes the keyboard, so typing filters at once.
   useEffect(() => {
     if (!open) return;
