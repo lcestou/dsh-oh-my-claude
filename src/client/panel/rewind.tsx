@@ -17,6 +17,7 @@ import {
 } from "../shared.js";
 import { t, useLocale } from "../i18n.js";
 import { retentionNote, useFeatureSwitches } from "./restore.js";
+import { REWOUND_EVENT } from "../recall.js";
 
 /** One user prompt from `GET /rewind`. */
 interface RewindPrompt {
@@ -98,7 +99,11 @@ export function RewindBody({
         }),
       );
       setPreview(reply);
-      if (!dryRun && reply.ok) onClose();
+      if (!dryRun && reply.ok) {
+        // The walk's list now holds prompts the transcript no longer has; recall re-reads it.
+        window.dispatchEvent(new Event(REWOUND_EVENT));
+        onClose();
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {

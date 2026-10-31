@@ -21,6 +21,10 @@ export interface RecallMove {
   set?: string;
 }
 
+/** Fired on `window` by the Rewind tab after a rewind: the prompts behind the rewound point are
+ *  gone from the transcript, so the walk's list is read again before its next use. */
+export const REWOUND_EVENT = "omc-rewound";
+
 /** No list, not walking. */
 export const IDLE: RecallState = { entries: [], at: null, shown: null };
 
@@ -134,10 +138,12 @@ export function useComposerRecall({
   draftRef.current = draft;
   const setRef = useRef(setDraft);
   setRef.current = setDraft;
-  // An emptied box (sent, cleared, or walked down past the newest) ends the walk.
+  // An emptied box (sent, cleared, or walked down past the newest) ends the walk. Whitespace alone,
+  // a stray newline after a send, counts as empty: the walk starts from it and replaces it.
+  const empty = draft.trim() === "";
   useEffect(() => {
-    if (draft === "") state.current = { ...state.current, at: null, shown: null };
-  }, [draft]);
+    if (empty) state.current = { ...state.current, at: null, shown: null };
+  }, [empty]);
   useEffect(() => {
     state.current = IDLE;
     stale.current = true;
@@ -147,13 +153,20 @@ export function useComposerRecall({
     if (!running) stale.current = true;
   }, [running]);
   useEffect(() => {
+    const onRewound = () => {
+      stale.current = true;
+    };
+    window.addEventListener(REWOUND_EVENT, onRewound);
+    return () => window.removeEventListener(REWOUND_EVENT, onRewound);
+  }, []);
+  useEffect(() => {
     if (off) return;
     /** The list, read now if stale, shared between presses that land during one read. */
     const entries = (): Promise<string[]> => {
       if (!stale.current) return Promise.resolve(state.current.entries);
       if (loading.current) return loading.current;
       const cwd = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.cwd;
-      if (!cwd || !isClaudeSession(ctx, sessionId)) return Promise.resolve([]);
+      if (!cwd) return Promise.resolve([]);
       const read = loadEntries(ctx, sessionId, cwd).then((list) => {
         if (loading.current === read) {
           loading.current = null;
@@ -173,13 +186,15 @@ export function useComposerRecall({
       if (!set) return;
       const key = e.key === "ArrowUp" ? "up" : "down";
       const draftNow = draftRef.current;
-      if (draftNow === "") {
-        // Nothing to recall is known only after a read; a known-empty list leaves the key alone.
-        if (key === "down" || (!stale.current && state.current.entries.length === 0)) return;
+      if (draftNow.trim() === "") {
+        // Only a Claude session has a list; elsewhere the key is the editor's. Nothing to recall
+        // is known only after a read; a known-empty list leaves the key alone too.
+        if (key === "down" || !isClaudeSession(ctx, sessionId)) return;
+        if (!stale.current && state.current.entries.length === 0) return;
         e.preventDefault();
         e.stopPropagation();
         void entries().then(() => {
-          if (draftRef.current !== "") return;
+          if (draftRef.current.trim() !== "") return;
           const next = recallStep(state.current, "up", "");
           if (next.set === undefined) return;
           state.current = next.state;
