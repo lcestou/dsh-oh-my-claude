@@ -48,10 +48,17 @@ export function recallStep(s: RecallState, key: "up" | "down", draft: string): R
   return moveTo(s, s.at - 1);
 }
 
-/** The route's prompts (newest first) as walk entries: trimmed, blanks dropped, and a prompt sent
- *  twice in a row kept once, the way a shell's history collapses repeats. */
+/** The user lines this plugin itself sends the CLI (a reattach after a dsh restart, a usage limit
+ *  reset: `src/adapter/turn.ts`). The transcript stores them as prompts; nobody typed them. */
+const PLUGIN_NOTICE = "[Oh My Claude] ";
+
+/** The route's prompts (newest first) as walk entries: trimmed, blanks and the plugin's own notices
+ *  dropped, and a prompt sent twice in a row kept once, the way a shell's history collapses repeats. */
 export const recallEntries = (prompts: ReadonlyArray<{ text: string }>): string[] =>
-  prompts.map((p) => p.text.trim()).filter((text, i, all) => text !== "" && text !== all[i - 1]);
+  prompts
+    .map((p) => p.text.trim())
+    .filter((text) => text !== "" && !text.startsWith(PLUGIN_NOTICE))
+    .filter((text, i, all) => text !== all[i - 1]);
 
 /** The full prompts of one transcript, by the dsh session's id or a bare transcript id (the route
  *  resolves either). An unreadable or missing transcript answers an empty list, never throws. */
