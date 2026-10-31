@@ -87,20 +87,6 @@ async function loadEntries(ctx: ClientCtx, sessionId: string, cwd: string): Prom
   return last ? promptsOf(ctx, sessionId, last.id, cwd) : [];
 }
 
-/** The top of the caret's rectangle, or null without a selection. A collapsed range on an empty
- *  line has no box of its own, so the element it sits in answers for it. */
-function caretTop(): number | null {
-  const sel = window.getSelection();
-  if (!sel || sel.rangeCount === 0) return null;
-  const range = sel.getRangeAt(0).cloneRange();
-  range.collapse(true);
-  const rect = range.getBoundingClientRect();
-  if (rect.height > 0) return rect.top;
-  const node = range.startContainer;
-  const el = node instanceof Element ? node : node.parentElement;
-  return el ? el.getBoundingClientRect().top : null;
-}
-
 /**
  * Mounts prompt recall on the composer for one Claude session. Off with the `recallOff` hint.
  *
@@ -112,11 +98,12 @@ function caretTop(): number | null {
  *
  * The key listener is one capture listener on the document, filtered to the composer, with no
  * modifier held and no IME composition open. From an empty box Up is taken outright. In a filled
- * box the editor goes first: the key is let through, and one frame later the step happens only if
- * nothing claimed the key (`defaultPrevented`, a command menu for instance), the caret's line did
- * not move (it was already on the top line for Up, the bottom one for Down) and the draft is
- * unchanged; so a wrapped line, a tall box or a narrow phone never need measuring, the editor
- * decides what a line is. Gets wrong: a caret with no selection reads as unmoved.
+ * box the arrows are the walk's only while the text is a recalled prompt as recalled (the edit
+ * lock): then Up and Down step at once, wherever the caret is, because an unedited recall costs
+ * nothing to leave and Down brings it back (owner, 2026-10-31: stepping line by line to the top
+ * of a long prompt first was the wrong trade). One typed character hands the arrows back to the
+ * editor. Gets wrong: a recalled slash command whose menu dsh opens has its arrows taken by the
+ * walk until the text is edited.
  */
 export function useComposerRecall({
   sessionId,
@@ -150,12 +137,17 @@ export function useComposerRecall({
     stale.current = true;
     loading.current = null;
   }, [sessionId]);
+  // A turn ending or a rewind marks the list stale, and disowns a read still in flight: its
+  // answer is kept for the walk it was asked for, but it does not count as fresh.
   useEffect(() => {
-    if (!running) stale.current = true;
+    if (running) return;
+    stale.current = true;
+    loading.current = null;
   }, [running]);
   useEffect(() => {
     const onRewound = () => {
       stale.current = true;
+      loading.current = null;
     };
     window.addEventListener(REWOUND_EVENT, onRewound);
     return () => window.removeEventListener(REWOUND_EVENT, onRewound);
@@ -169,10 +161,10 @@ export function useComposerRecall({
       const cwd = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.cwd;
       if (!cwd) return Promise.resolve([]);
       const read = loadEntries(ctx, sessionId, cwd).then((list) => {
+        state.current = { ...state.current, entries: list };
         if (loading.current === read) {
           loading.current = null;
           stale.current = false;
-          state.current = { ...state.current, entries: list };
         }
         return list;
       });
@@ -195,22 +187,27 @@ export function useComposerRecall({
         e.preventDefault();
         e.stopPropagation();
         void entries().then(() => {
-          if (draftRef.current.trim() !== "") return;
-          const next = recallStep(state.current, "up", "");
+          // Presses queued behind one read each step once: the second continues from where the
+          // first left the walk instead of restarting at the newest. Typed text in the meantime
+          // ends it.
+          const s = state.current;
+          const now = draftRef.current;
+          if (now.trim() !== "" && now !== s.shown) return;
+          const next = recallStep(s, "up", s.at === null ? "" : (s.shown ?? ""));
           if (next.set === undefined) return;
           state.current = next.state;
           set(next.set);
         });
         return;
       }
-      const before = caretTop();
-      requestAnimationFrame(() => {
-        if (e.defaultPrevented || caretTop() !== before || draftRef.current !== draftNow) return;
-        const next = recallStep(state.current, key, draftNow);
-        if (next.set === undefined) return;
-        state.current = next.state;
-        set(next.set);
-      });
+      const s = state.current;
+      if (s.at === null || draftNow !== s.shown) return;
+      const next = recallStep(s, key, draftNow);
+      if (next.set === undefined) return;
+      e.preventDefault();
+      e.stopPropagation();
+      state.current = next.state;
+      set(next.set);
     };
     document.addEventListener("keydown", onKey, true);
     return () => document.removeEventListener("keydown", onKey, true);

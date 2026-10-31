@@ -39,7 +39,7 @@ await p.keyboard.press("ArrowUp");
 await p.waitForTimeout(1500);
 const first = await held();
 console.log(`up (${Date.now() - t0 - 1500}ms+):`, JSON.stringify(first.slice(0, 80)));
-// In a filled box Up moves the caret up a visual line first; the step comes from the top line.
+// An unedited recall steps on the first press; the loop is kept so a regression shows as a count.
 let second = first;
 let ups = 0;
 while (second === first && ups < 8) {
