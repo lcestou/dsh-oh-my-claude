@@ -1190,3 +1190,14 @@ export const DOCK_CARD: CSSProperties = {
   flexDirection: "column",
   gap: 6,
 };
+
+/**
+ * True when `target` sits in the composer of the session `sessionId` and no other: dsh marks each
+ * conversation's root with `data-conversation-session`, so with two sessions side by side (Split)
+ * a key pressed in one composer is not taken by the other's listener.
+ */
+export const inOwnComposer = (target: EventTarget | null, sessionId: string): boolean =>
+  target instanceof Element &&
+  target.closest("[data-composer-input]") !== null &&
+  target.closest("[data-conversation-session]")?.getAttribute("data-conversation-session") ===
+    sessionId;

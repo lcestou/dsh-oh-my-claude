@@ -7,7 +7,7 @@
 import { useEffect, useRef } from "react";
 import { useHintFlag } from "./hints.js";
 import { REWOUND_EVENT } from "./recall.js";
-import { isClaudeSession, type ClientCtx } from "./shared.js";
+import { inOwnComposer, isClaudeSession, type ClientCtx } from "./shared.js";
 
 /** Fired on `window` to open the plugin's panel on a tab, from code that has no panel of its own.
  *  `rewindLatest` asks the Rewind tab to pick the newest prompt itself, preview and all. */
@@ -90,7 +90,7 @@ export function useEditLastPrompt({
       ctx.get?.<{ stopSequenceMs?: number }>("shortcuts")?.stopSequenceMs ?? ESC_GAP_MS;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
-      const inBox = e.target instanceof Element && e.target.closest("[data-composer-input]");
+      const inBox = inOwnComposer(e.target, sessionId);
       if (
         e.altKey ||
         e.ctrlKey ||

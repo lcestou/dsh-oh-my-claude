@@ -12,6 +12,7 @@ import {
   ROUTE,
   T,
   boxParam,
+  inOwnComposer,
   isClaudeSession,
   meta,
   readJson,
@@ -97,7 +98,8 @@ export function useHistoryOpen({
   useEffect(() => {
     if (off || !setDraft) return;
     const onKey = (e: KeyboardEvent) => {
-      if (!isOpenKey(e) || !isClaudeSession(ctx, sessionId)) return;
+      if (!isOpenKey(e) || !inOwnComposer(e.target, sessionId) || !isClaudeSession(ctx, sessionId))
+        return;
       e.preventDefault();
       e.stopPropagation();
       setOpen(true);

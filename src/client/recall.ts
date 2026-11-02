@@ -3,7 +3,14 @@
 // The walk is a pure state machine (`recallStep`) so the rules are testable without a DOM; the hook
 // around it owns the list, the key listener and the caret check.
 import { useEffect, useRef } from "react";
-import { ROUTE, boxParam, isClaudeSession, readJson, type ClientCtx } from "./shared.js";
+import {
+  ROUTE,
+  boxParam,
+  inOwnComposer,
+  isClaudeSession,
+  readJson,
+  type ClientCtx,
+} from "./shared.js";
 import { useHintFlag } from "./hints.js";
 
 /** Where the walk stands: the prompts newest first, the index shown (null when not walking), and
@@ -174,7 +181,7 @@ export function useComposerRecall({
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
       if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || e.isComposing) return;
-      if (!(e.target instanceof Element) || !e.target.closest("[data-composer-input]")) return;
+      if (!inOwnComposer(e.target, sessionId)) return;
       const set = setRef.current;
       if (!set) return;
       const key = e.key === "ArrowUp" ? "up" : "down";
