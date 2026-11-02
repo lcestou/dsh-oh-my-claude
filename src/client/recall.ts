@@ -54,7 +54,7 @@ export function recallStep(s: RecallState, key: "up" | "down", draft: string): R
 
 /** The user lines this plugin itself sends the CLI (a reattach after a dsh restart, a usage limit
  *  reset: `src/adapter/turn.ts`). The transcript stores them as prompts; nobody typed them. */
-const PLUGIN_NOTICE = "[Oh My Claude] ";
+export const PLUGIN_NOTICE = "[Oh My Claude] ";
 
 /** The route's prompts (newest first) as walk entries: trimmed, blanks and the plugin's own notices
  *  dropped, and a prompt sent twice in a row kept once, the way a shell's history collapses repeats. */

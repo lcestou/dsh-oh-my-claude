@@ -18,6 +18,7 @@ import {
 import { t, useLocale } from "../i18n.js";
 import { retentionNote, useFeatureSwitches } from "./restore.js";
 import { RewoundEvent } from "../edit-last.js";
+import { PLUGIN_NOTICE } from "../recall.js";
 
 /** One user prompt from `GET /rewind`. */
 interface RewindPrompt {
@@ -122,10 +123,11 @@ export function RewindBody({
     setPreview(null);
     run(p.id, true);
   };
-  // Esc Esc: the newest prompt is picked for the person once the list is in; spent at once so a
-  // Back press is not undone by the next render.
+  // Esc Esc: the newest prompt the person typed (not a notice this plugin sent, such as the
+  // reattach line after a dsh restart) is picked once the list is in; spent at once so a Back
+  // press is not undone by the next render.
   useEffect(() => {
-    const latest = prompts[0];
+    const latest = prompts.find((p) => !p.text.trimStart().startsWith(PLUGIN_NOTICE));
     if (!pickLatest || latest === undefined) return;
     onPicked?.();
     pick(latest);
