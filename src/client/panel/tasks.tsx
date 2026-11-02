@@ -268,9 +268,25 @@ function LiveTasksSection({ sessionId }: { sessionId: string }) {
   // section lists it with Open. Ended shell tasks stay for their Output.
   const shown = tasks.filter((task) => task.endedAt === undefined || !task.subagentType);
   if (shown.length === 0) return null;
+  // Stop all, the terminal's Ctrl+X Ctrl+K, only once there are two to stop: one row has its own.
+  const live = shown.filter((task) => task.endedAt === undefined);
   return (
     <div data-omc-live-tasks="">
-      <span style={sectionHead}>{t("panel.tasks.live")}</span>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ ...sectionHead, flex: 1 }}>{t("panel.tasks.live")}</span>
+        {live.length > 1 && (
+          <button
+            type="button"
+            style={btn}
+            data-omc-live-tasks-stop-all=""
+            onClick={() => {
+              for (const task of live) void act(task, "stop");
+            }}
+          >
+            {t("panel.tasks.stopAll")}
+          </button>
+        )}
+      </div>
       {shown.map((task) => (
         <div
           key={task.id}

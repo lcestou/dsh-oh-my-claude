@@ -29,6 +29,8 @@ import { compactThreshold } from "./nudge.js";
 import { type RestoreWatch, startWatch, stepRestore, withdrawnSince } from "./steer-restore.js";
 import { useHintValue, useHintFlag } from "./hints.js";
 import { useComposerRecall } from "./recall.js";
+import { useEditLastPrompt } from "./edit-last.js";
+import { HistorySearch, useHistoryOpen } from "./history-search.js";
 import { Chevron } from "./boxes.js";
 import { type ContextReply, windowLabel } from "./context-meter.js";
 import {
@@ -291,6 +293,8 @@ export function AsideBubble({
   const running = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.running === true;
   // Up and Down in the composer walk this session's earlier prompts; this entry has the composer.
   useComposerRecall({ sessionId, ctx, setDraft: inputActions?.setDraft, draft, running });
+  // Esc Esc in the empty, idle composer opens the Rewind tab on the latest prompt.
+  useEditLastPrompt({ sessionId, ctx, setDraft: inputActions?.setDraft, draft, running });
   // The context nudge: read once the turn is over (mid-turn the CLI declines the read), and
   // again at each session switch. The tens bucket dismissed is this tab's memory, so the card
   // returns at the next 10 % and not before. `loadContext` is the meter popover's cached read;
@@ -356,6 +360,13 @@ export function AsideBubble({
   }, [typingElse]);
   // Before the early return below: the card is gone once its last row goes, and so would be this.
   useUndoSteerRestore(steers.waiting, steers.held, { inputActions, useInput });
+  // Ctrl+R's search card: its open state lives up here because the card has to draw even when
+  // this entry has nothing else to show.
+  const [historyOpen, setHistoryOpen] = useHistoryOpen({
+    sessionId,
+    ctx,
+    setDraft: inputActions?.setDraft,
+  });
   const anySteers = steers.waiting.length > 0 || steers.held.length > 0;
   if (
     shown.length === 0 &&
@@ -364,7 +375,8 @@ export function AsideBubble({
     !limitCard &&
     !anySteers &&
     !suggestionCard &&
-    !compactCard
+    !compactCard &&
+    !historyOpen
   )
     return null;
 
@@ -397,6 +409,18 @@ export function AsideBubble({
 
   return (
     <div {...{ [DOCK_ATTR]: "1" }} style={DOCK_CARD}>
+      {/* First: Ctrl+R's search card sits right on the composer, where its rows land. */}
+      {inputActions && (
+        <HistorySearch
+          sessionId={sessionId}
+          ctx={ctx}
+          open={historyOpen}
+          onClose={() => setHistoryOpen(false)}
+          setDraft={inputActions.setDraft}
+          submit={inputActions.submit}
+          running={running}
+        />
+      )}
       {claudeUpdate && (
         <ClaudeUpdateCard
           update={claudeUpdate}

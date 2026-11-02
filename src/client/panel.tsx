@@ -24,6 +24,7 @@ import { MemoryBody } from "./panel/memory.js";
 import { InstructionsBody } from "./panel/instructions.js";
 import { SkillsBody } from "./panel/skills.js";
 import { RewindBody } from "./panel/rewind.js";
+import { OPEN_PANEL_EVENT, type OpenPanelDetail, OpenPanelEvent } from "./edit-last.js";
 import { ChangesBody } from "./panel/changes.js";
 import { McpBody } from "./panel/mcp.js";
 import { AsidesBody } from "./panel/asides.js";
@@ -222,6 +223,31 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
     transition: `opacity ${easeMs()}ms ease, transform ${easeMs()}ms ease`,
   } satisfies CSSProperties);
 
+  // Opened from elsewhere (Esc Esc in the composer): the same placement the trigger's click does,
+  // on the tab asked for. `rewindLatest` rides along to the Rewind tab once and is spent there.
+  const [rewindLatest, setRewindLatest] = useState(false);
+  // Through a ref, so the one listener below reads this render's closures without re-subscribing.
+  const openFrom = useRef<(detail: OpenPanelDetail) => void>(() => {});
+  openFrom.current = (detail) => {
+    if (!isMine) return;
+    setSeenRestore(true);
+    dropTip();
+    setTab(detail.tab);
+    setRewindLatest(detail.rewindLatest === true);
+    const host = rootRef.current?.closest<HTMLElement>("[data-composer-card]") ?? null;
+    setCard(host);
+    const rect = rootRef.current?.getBoundingClientRect();
+    if (!host && rect) setAbove(Math.max(12, window.innerHeight - rect.top + 8));
+    openPanel();
+  };
+  useEffect(() => {
+    const onOpen = (e: Event) => {
+      if (e instanceof OpenPanelEvent) openFrom.current(e.detail);
+    };
+    window.addEventListener(OPEN_PANEL_EVENT, onOpen);
+    return () => window.removeEventListener(OPEN_PANEL_EVENT, onOpen);
+  }, []);
+
   // The tab's key is both its React key and its stable `data-omc-label` hook; the visible label
   // comes from `panel.tab.<key>` at render, so the key stays English while the label translates.
   const tabs = [
@@ -391,7 +417,15 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
               {tab === "Memory" && <MemoryBody sessionId={sessionId} ctx={ctx} />}
               {tab === "Instructions" && <InstructionsBody sessionId={sessionId} ctx={ctx} />}
               {tab === "Skills" && <SkillsBody sessionId={sessionId} ctx={ctx} />}
-              {tab === "Rewind" && <RewindBody sessionId={sessionId} ctx={ctx} onClose={close} />}
+              {tab === "Rewind" && (
+                <RewindBody
+                  sessionId={sessionId}
+                  ctx={ctx}
+                  onClose={close}
+                  pickLatest={rewindLatest}
+                  onPicked={() => setRewindLatest(false)}
+                />
+              )}
               {tab === "Changes" && <ChangesBody sessionId={sessionId} ctx={ctx} onClose={close} />}
               {tab === "MCP" && <McpBody sessionId={sessionId} ctx={ctx} onClose={close} />}
               {tab === "Asides" && <AsidesBody sessionId={sessionId} />}

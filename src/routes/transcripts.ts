@@ -1,7 +1,7 @@
 // The transcript routes: the event stream, the session list, open, reseed, search and the transcript readers.
 // The blocks are the chain's own, in its order; the dispatch in sessions.ts calls this group first.
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { type RouteHandler, UNHANDLED } from "./context.js";
@@ -10,10 +10,69 @@ import { serverText } from "../locale.js";
 import { errorText } from "../process.js";
 import { readAt } from "../remote-fs.js";
 import { queryWords, searchTranscript } from "../search.js";
-import { listTranscripts, readTranscript, toMarkdown } from "../transcript.js";
+import {
+  foldTranscript,
+  listTranscripts,
+  readTranscript,
+  toMarkdown,
+  typedPrompt,
+} from "../transcript.js";
+import {
+  HISTORY_MAX_FILES,
+  HISTORY_MAX_PROMPTS,
+  type HistoryEntry,
+  foldHistory,
+} from "../history.js";
 import type { TranscriptListItem } from "../transcript.js";
 import { moveAside, restoreBak } from "../session-repair.js";
 import { STATE_DIR, loadSessionRepairs, recordRepair, trace } from "../state.js";
+
+/** A folded transcript's user turns as history entries: each turn's text as the person typed it
+ *  (dsh's runtime block and the plugin's echoes cut by `typedPrompt`), with its time. */
+const turnsOf = (folded: {
+  turns: { time: number; content: { text: string }[] }[];
+}): HistoryEntry[] =>
+  folded.turns.map((turn) => ({
+    time: turn.time,
+    text: typedPrompt(turn.content.map((part) => part.text).join("\n")),
+  }));
+
+/**
+ * The `n` most recently written transcript files across `dirs`, by mtime. A name and a stat per
+ * file, nothing read: `listTranscripts` opens every file for its title, which on a box of two
+ * thousand transcripts is a second the history card would wait for every Everywhere open
+ * (measured 2026-10-31: 1 s to list, 165 ms to read the 30 newest). Subagent transcripts live in
+ * each session's own subdirectory, so the top-level `.jsonl` files are all sessions. A dir that
+ * cannot be read lists nothing.
+ */
+async function newestTranscriptFiles(
+  dirs: string[],
+  n: number,
+): Promise<{ path: string; modifiedAt: number }[]> {
+  const perDir = await Promise.all(
+    dirs.map(async (dir) => {
+      const names = (await readdir(dir).catch(() => [])).filter((name) => name.endsWith(".jsonl"));
+      return Promise.all(
+        names.map(async (name) => {
+          const path = join(dir, name);
+          const modifiedAt = await stat(path)
+            .then((s) => s.mtimeMs)
+            .catch(() => 0);
+          return { path, modifiedAt };
+        }),
+      );
+    }),
+  );
+  return perDir
+    .flat()
+    .filter((f) => f.modifiedAt > 0)
+    .toSorted((a, b) => b.modifiedAt - a.modifiedAt)
+    .slice(0, n);
+}
+
+/** History folds in flight, by box, scope, cwd and session, so a repeat of the same question
+ *  joins the running fold rather than starting another on the loop that serves live turns. */
+const historyInFlight = new Map<string, Promise<{ prompts: HistoryEntry[]; files: number }>>();
 
 /** True while a scan is in flight. Two searches at once would put two full scans on the one event
  *  loop that serves every live turn, so the second is refused with 429 rather than run. */
@@ -51,6 +110,7 @@ export function transcriptsRoutes(c: RouteCtx): RouteHandler {
       routeHost,
       run,
       sessionPersistence,
+      sessionTranscript,
       startedIds,
       targetOf,
       transcriptDirs,
@@ -196,6 +256,84 @@ export function transcriptsRoutes(c: RouteCtx): RouteHandler {
       // The transcript id rides along: the tab's open helper posts that id to `/open` and
       // adopts the session under its dsh id, the way the Restore tab's rows do.
       return json(res, 200, { ...opened, transcriptId: claudeIdOf(id) });
+    }
+    // History: the typed prompts the composer's Ctrl+R searches, newest first, for one of three
+    // scopes. `session` folds this session's own transcript (a session that has none yet reads
+    // the workspace's newest, the way a fresh terminal has its project's history); `workspace`
+    // folds this workspace's newest transcripts, `box` every project dir's. The client filters;
+    // the route only folds, so one read serves every keystroke until the next turn ends.
+    if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/history`) {
+      const sid = url.searchParams.get("session") ?? "";
+      const cwd = url.searchParams.get("cwd") ?? "";
+      const scope = url.searchParams.get("scope") ?? "session";
+      if (!validCwd(cwd)) return json(res, 400, { error: "cwd must be an absolute path" });
+      if (scope !== "session" && scope !== "workspace" && scope !== "box")
+        return json(res, 400, { error: "scope must be session, workspace or box" });
+      // The id names a file under the project dir; only a dsh id or a transcript uuid may.
+      if (sid !== "" && !validDshId(sid) && !validId(sid))
+        return json(res, 400, { error: "session must be a dsh session id or a transcript id" });
+      const { box, cwd: at } = targetOf(url, cwd);
+      // A remote box's transcripts live there, and only the session scope reads through the
+      // box's own reader; the workspace and box walks list this box's dirs alone, so on a
+      // remote session they are refused rather than answered with this box's history.
+      const remote = box.sshHost !== undefined;
+      if (scope !== "session" && remote)
+        return json(res, 400, { error: "history runs on this box only" });
+      const fold = async () => {
+        let prompts: HistoryEntry[] = [];
+        let files = 0;
+        if (scope === "session" && sid) {
+          const own = await sessionTranscript(box, await projectDirAt(box, at), sid, claudeIdOf);
+          if (own !== undefined) {
+            prompts = turnsOf(own);
+            files = 1;
+          }
+        }
+        // A remote session with no transcript yet answers nothing: the walk below is local.
+        if (files === 0 && !remote) {
+          // The roots' children are the project dirs (see the search route below); a root
+          // itself lists nothing.
+          const dirs =
+            scope === "box"
+              ? (
+                  await Promise.all(
+                    projectsDir.map(async (root) =>
+                      (await readdir(root, { withFileTypes: true }).catch(() => []))
+                        .filter((entry) => entry.isDirectory())
+                        .map((entry) => join(root, entry.name)),
+                    ),
+                  )
+                ).flat()
+              : projectDir(cwd);
+          const newest = await newestTranscriptFiles(
+            dirs,
+            scope === "session" ? 1 : HISTORY_MAX_FILES,
+          );
+          // The file alone: a subagent's own transcript holds no typed prompt, so the fan-out
+          // `readTranscript` does for them is skipped here.
+          const folds = await Promise.all(
+            newest.map(async (f) => {
+              const file = await readAt(box, f.path);
+              return file === null ? undefined : foldTranscript(file.text);
+            }),
+          );
+          for (const folded of folds)
+            if (folded !== undefined) {
+              prompts.push(...turnsOf(folded));
+              files += 1;
+            }
+        }
+        return { prompts: foldHistory(prompts).slice(0, HISTORY_MAX_PROMPTS), files };
+      };
+      // One fold per question at a time: a second tab, or Ctrl+S cycled back before the first
+      // answer landed, waits on the fold already running instead of stacking another.
+      const key = [url.searchParams.get("box") ?? "", scope, cwd, sid].join("\n");
+      let pending = historyInFlight.get(key);
+      if (pending === undefined) {
+        pending = fold().finally(() => historyInFlight.delete(key));
+        historyInFlight.set(key, pending);
+      }
+      return json(res, 200, await pending);
     }
     if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/search`) {
       const q = url.searchParams.get("q") ?? "";
