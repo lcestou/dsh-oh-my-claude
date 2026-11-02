@@ -269,6 +269,9 @@ export function transcriptsRoutes(c: RouteCtx): RouteHandler {
       if (!validCwd(cwd)) return json(res, 400, { error: "cwd must be an absolute path" });
       if (scope !== "session" && scope !== "workspace" && scope !== "box")
         return json(res, 400, { error: "scope must be session, workspace or box" });
+      // The id names a file under the project dir; only a dsh id or a transcript uuid may.
+      if (sid !== "" && !validDshId(sid) && !validId(sid))
+        return json(res, 400, { error: "session must be a dsh session id or a transcript id" });
       // A remote workspace's transcripts live on its box, which only the session scope reaches
       // (through the box's own reader); the workspace walk lists this box's dirs alone.
       if (scope === "workspace" && workspaceAt(cwd) !== undefined)
