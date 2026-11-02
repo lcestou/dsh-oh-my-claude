@@ -161,6 +161,33 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
     };
   }, [open]);
 
+  // Opened from elsewhere (Esc Esc in the composer): the same placement the trigger's click does,
+  // on the tab asked for. `rewindLatest` rides along to the Rewind tab once and is spent there.
+  // Above the `isMine` return like every hook here: three hooks below it crashed the slot entry
+  // with React's "rendered more hooks" the moment a new session switched to Claude (2026-11-02).
+  const [rewindLatest, setRewindLatest] = useState(false);
+  // Through a ref, so the one listener below reads this render's closures without re-subscribing.
+  const openFrom = useRef<(detail: OpenPanelDetail) => void>(() => {});
+  openFrom.current = (detail) => {
+    if (!isMine) return;
+    setSeenRestore(true);
+    dropTip();
+    setTab(detail.tab);
+    setRewindLatest(detail.rewindLatest === true);
+    const host = rootRef.current?.closest<HTMLElement>("[data-composer-card]") ?? null;
+    setCard(host);
+    const rect = rootRef.current?.getBoundingClientRect();
+    if (!host && rect) setAbove(Math.max(12, window.innerHeight - rect.top + 8));
+    openPanel();
+  };
+  useEffect(() => {
+    const onOpen = (e: Event) => {
+      if (e instanceof OpenPanelEvent) openFrom.current(e.detail);
+    };
+    window.addEventListener(OPEN_PANEL_EVENT, onOpen);
+    return () => window.removeEventListener(OPEN_PANEL_EVENT, onOpen);
+  }, []);
+
   if (!isMine) return null;
   // Restore only fits a blank session; the Restore body hides itself for the same reason.
   const blank = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.blank !== false;
@@ -222,31 +249,6 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
     transform: shown || card ? "none" : "translateY(6px)",
     transition: `opacity ${easeMs()}ms ease, transform ${easeMs()}ms ease`,
   } satisfies CSSProperties);
-
-  // Opened from elsewhere (Esc Esc in the composer): the same placement the trigger's click does,
-  // on the tab asked for. `rewindLatest` rides along to the Rewind tab once and is spent there.
-  const [rewindLatest, setRewindLatest] = useState(false);
-  // Through a ref, so the one listener below reads this render's closures without re-subscribing.
-  const openFrom = useRef<(detail: OpenPanelDetail) => void>(() => {});
-  openFrom.current = (detail) => {
-    if (!isMine) return;
-    setSeenRestore(true);
-    dropTip();
-    setTab(detail.tab);
-    setRewindLatest(detail.rewindLatest === true);
-    const host = rootRef.current?.closest<HTMLElement>("[data-composer-card]") ?? null;
-    setCard(host);
-    const rect = rootRef.current?.getBoundingClientRect();
-    if (!host && rect) setAbove(Math.max(12, window.innerHeight - rect.top + 8));
-    openPanel();
-  };
-  useEffect(() => {
-    const onOpen = (e: Event) => {
-      if (e instanceof OpenPanelEvent) openFrom.current(e.detail);
-    };
-    window.addEventListener(OPEN_PANEL_EVENT, onOpen);
-    return () => window.removeEventListener(OPEN_PANEL_EVENT, onOpen);
-  }, []);
 
   // The tab's key is both its React key and its stable `data-omc-label` hook; the visible label
   // comes from `panel.tab.<key>` at render, so the key stays English while the label translates.
