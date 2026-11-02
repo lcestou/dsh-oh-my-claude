@@ -272,11 +272,13 @@ export function transcriptsRoutes(c: RouteCtx): RouteHandler {
       // The id names a file under the project dir; only a dsh id or a transcript uuid may.
       if (sid !== "" && !validDshId(sid) && !validId(sid))
         return json(res, 400, { error: "session must be a dsh session id or a transcript id" });
-      // A remote workspace's transcripts live on its box, which only the session scope reaches
-      // (through the box's own reader); the workspace walk lists this box's dirs alone.
-      if (scope === "workspace" && workspaceAt(cwd) !== undefined)
-        return json(res, 400, { error: "history runs on this box only" });
       const { box, cwd: at } = targetOf(url, cwd);
+      // A remote box's transcripts live there, and only the session scope reads through the
+      // box's own reader; the workspace and box walks list this box's dirs alone, so on a
+      // remote session they are refused rather than answered with this box's history.
+      const remote = box.sshHost !== undefined;
+      if (scope !== "session" && remote)
+        return json(res, 400, { error: "history runs on this box only" });
       const fold = async () => {
         let prompts: HistoryEntry[] = [];
         let files = 0;
@@ -287,7 +289,8 @@ export function transcriptsRoutes(c: RouteCtx): RouteHandler {
             files = 1;
           }
         }
-        if (files === 0) {
+        // A remote session with no transcript yet answers nothing: the walk below is local.
+        if (files === 0 && !remote) {
           // The roots' children are the project dirs (see the search route below); a root
           // itself lists nothing.
           const dirs =

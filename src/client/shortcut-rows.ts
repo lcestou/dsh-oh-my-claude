@@ -74,8 +74,12 @@ export function mountShortcutRows(ctx: ClientCtx): () => void {
   const shortcuts = ctx.get?.<Shortcuts>("shortcuts");
   if (!shortcuts) return () => {};
   const live = new Map<string, () => void>();
+  // A hints read still in flight when the plugin is disposed must not register rows nobody will
+  // remove.
+  let disposed = false;
   const sync = () =>
     loadHints().then((hints) => {
+      if (disposed) return;
       for (const row of ROWS) {
         const on = hints[row.hint] !== true;
         const had = live.get(row.id);
@@ -104,6 +108,7 @@ export function mountShortcutRows(ctx: ClientCtx): () => void {
   void sync();
   window.addEventListener(HINTS_EVENT, onHints);
   return () => {
+    disposed = true;
     window.removeEventListener(HINTS_EVENT, onHints);
     for (const off of live.values()) off();
     live.clear();
