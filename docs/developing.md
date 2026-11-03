@@ -37,6 +37,15 @@ a probe to `src/client/contract.ts` for any selector a feature depends on, so Di
 it missing the first time the panel opens after an upgrade. A probe must be structural: one that
 depends on what someone typed cries wolf, which is why the skill-chip hook is not in that list.
 
+**Anything that floats renders through `createPortal(…, document.body)`,** never beside the
+element it hangs from. A fixed-positioned node takes its coordinates from the nearest ancestor
+with a transform, filter, `will-change: transform` or `contain`, and dsh's composer seat gained
+`will-change: transform` in 0.2.2-alpha.3 without any hook or type changing: the cost dialog,
+rendered beside the pill inside that seat, kept its correct viewport coordinates and drew 770px
+below the pill. dsh's own dialogs portal to the body and were untouched. `tools/playwright/cost-pill.ts`
+and the upgrade skill's `ui-check.ts` open each floating surface and fail it when its box leaves
+the viewport, which is the only kind of check that sees this class of break.
+
 ## Lint contract
 
 Read before writing code. The anti-slop rules in `.oxlintrc.json` fail the build and cost a worker 25 check runs on 2026-09-05.
