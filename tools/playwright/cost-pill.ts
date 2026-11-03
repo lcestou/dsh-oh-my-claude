@@ -113,7 +113,7 @@ async function check(p: Page, tag: string): Promise<void> {
 
 const desktop = await b.newPage({ viewport: { width: 1400, height: 900 }, deviceScaleFactor: 2 });
 if (await openCostSession(desktop)) await check(desktop, "desktop");
-else console.log("desktop: no session with a cost pill found");
+else failed.push("desktop: no session with a cost pill found");
 
 const phone = await b.newContext({
   viewport: { width: 390, height: 844 },
@@ -123,7 +123,7 @@ const phone = await b.newContext({
 });
 const pp = await phone.newPage();
 if (await openCostSession(pp)) await check(pp, "phone");
-else console.log("phone: no session with a cost pill found");
+else failed.push("phone: no session with a cost pill found");
 await phone.close();
 await b.close();
 for (const f of failed) console.log(`FAIL ${f}`);
