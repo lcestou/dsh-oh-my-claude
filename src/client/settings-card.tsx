@@ -1,5 +1,10 @@
 // The switches and fields on the Settings "Oh My Claude" card from the browser's side, plus the two
 // dock components that read the same hints. The entry renders them inside the card it builds.
+import {
+  type RememberedModel,
+  blankSessionTarget,
+  loadSessionDefault,
+} from "./new-session-default.js";
 import { t, useLocale } from "./i18n.js";
 import type { CSSProperties, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -14,7 +19,6 @@ import {
   ACCENT,
   isClaudeSession,
   claudeProviderOf,
-  claudeMount,
   type ClientCtx,
   openSessionId,
   numberOr,
@@ -55,7 +59,7 @@ interface StarterReply {
 const appliedModel = new Set<string>();
 
 /**
- * On a blank session, select the Claude mount and model this workspace last ran.
+ * On a blank session, select the Claude mount, model and effort this workspace last ran.
  *
  * Up to dsh 0.1.6 a new session arrived on whatever the picker last held, so this only had to
  * choose which Claude model. 0.1.7 makes each workspace's blank session ahead of time on the
@@ -65,6 +69,8 @@ const appliedModel = new Set<string>();
  * workspace, not reset to llama"). A blank the person has already switched by hand is left
  * alone, since a picked provider is a `next` selection dsh records. A row written before the
  * provider was stored names the model only and still needs the session to be Claude already.
+ * The effort rides with the model, and where the workspace remembers nothing the box default from
+ * the "Default for new Claude sessions" row applies instead (`blankSessionTarget` holds the order).
  * Once per session id per tab, and never once the session has a message.
  */
 export function WorkspaceModelMemory({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
@@ -78,26 +84,45 @@ export function WorkspaceModelMemory({ sessionId, ctx }: { sessionId: string; ct
     let live = true;
     const runApply = async () => {
       const hints = await loadHints();
-      if (hints.workspaceModelOff === true || !live) return;
+      if (!live) return;
+      // The workspace's own memory first, the box default after it; blankSessionTarget holds the
+      // order. Memory off reads as "nothing remembered", so the default then applies everywhere.
       const q = `cwd=${encodeURIComponent(entry.cwd ?? "")}`;
-      const saved = await readJson<{ model?: string; provider?: string }>(
-        await fetch(`${ROUTE}/workspace-model?${q}`),
-      );
-      if (!saved.model || !live) return;
-      // The mount to open on: the session's own when it is already Claude, else the remembered
-      // one, and only while nobody has picked a provider for this blank by hand. Read again here,
-      // not only at mount: the two reads above are async, and a click in the picker during them
-      // is a pick this must not overwrite.
+      const [saved, def] = await Promise.all([
+        hints.workspaceModelOff === true
+          ? Promise.resolve(undefined)
+          : fetch(`${ROUTE}/workspace-model?${q}`)
+              .then((r) => readJson<Partial<RememberedModel>>(r))
+              .then((r): RememberedModel | undefined =>
+                r.model ? { model: r.model, provider: r.provider, effort: r.effort } : undefined,
+              ),
+        loadSessionDefault(),
+      ]);
+      if (!live) return;
+      // Read again here, not only at mount: the reads above are async, and a click in the picker
+      // during them is a pick this must not overwrite.
       const pickedNow =
         ctx.sessions.list.getSnapshot()?.byId[sessionId]?.projectionValues?.modelSelection?.next
           ?.provider ?? picked;
-      const provider =
-        current ?? (saved.provider && !pickedNow ? claudeMount(saved.provider) : undefined);
-      if (!provider) return;
+      const target = blankSessionTarget({ current, picked: pickedNow, saved, def });
+      if (!target) return;
       const dir = ctx.modelDirectories.directoryFor(sessionId);
       const now = dir.store.getSnapshot().current;
-      if (now?.provider === provider && now.model === saved.model) return;
-      if (dir.select) await dir.select({ provider, model: saved.model });
+      // Strict on the effort too: a target with none means the model's default, so a blank that
+      // came up on the same model at another effort is still switched.
+      if (
+        now?.provider === target.provider &&
+        now.model === target.model &&
+        now.reasoningEffort === target.reasoningEffort
+      )
+        return;
+      if (!dir.select) return;
+      const done = await dir.select(target);
+      // dsh answers a failed selection rather than throwing. An effort the model does not take is
+      // the likely cause (a default set before a model lost a level), so the model alone is tried
+      // once more and the blank still opens on it.
+      if (done && done.ok === false && target.reasoningEffort !== undefined)
+        await dir.select({ provider: target.provider, model: target.model });
     };
     // A session dsh has not bound yet throws from directoryFor (see claudeProviderOf); a route
     // that is not there answers an error. Neither is this component's problem to report.

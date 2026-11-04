@@ -950,7 +950,7 @@ export interface ClientCtx {
       store: {
         subscribe: (fn: () => void) => () => void;
         getSnapshot: () => {
-          current: { provider: string; model: string } | null;
+          current: { provider: string; model: string; reasoningEffort?: string } | null;
           groups?: readonly { id: string; models: readonly { id: string }[] }[];
         };
       };
@@ -958,7 +958,12 @@ export interface ClientCtx {
       load?: () => Promise<{
         groups: readonly { id: string; models: readonly { id: string }[] }[];
       }>;
-      select?: (sel: { provider: string; model: string }) => Promise<void>;
+      // dsh's answer is a RemoteResult; `ok: false` is a refused selection, not a throw.
+      select?: (sel: {
+        provider: string;
+        model: string;
+        reasoningEffort?: string;
+      }) => Promise<{ ok: boolean } | undefined>;
     };
   };
 }

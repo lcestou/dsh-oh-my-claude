@@ -236,6 +236,8 @@ export const en = {
   "panel.diag.binaryLabel": "Binary:",
   "panel.diag.notFound": "(not found)",
   "panel.diag.versionLabel": "Version:",
+  "panel.diag.unknownEfforts":
+    "The Models API reports effort levels this plugin does not offer yet: {levels}. The picker leaves them out until a plugin update adds them.",
   "panel.diag.unknown": "(unknown)",
   "panel.diag.pluginLabel": "Plugin:",
   "panel.diag.loginLabel": "Login:",
@@ -577,6 +579,8 @@ export const zh = {
   "panel.diag.binaryLabel": "可执行文件：",
   "panel.diag.notFound": "（未找到）",
   "panel.diag.versionLabel": "版本：",
+  "panel.diag.unknownEfforts":
+    "Models API 报告了本插件尚未提供的推理强度：{levels}。在插件更新加入之前，模型选择器不会显示它们。",
   "panel.diag.unknown": "（未知）",
   "panel.diag.pluginLabel": "插件：",
   "panel.diag.loginLabel": "登录：",

@@ -188,12 +188,32 @@ export interface WorkspaceModel {
     /** The Claude mount the model ran on (`claude-code`, or a box's `claude-code-<name>`). Absent
      *  on rows written before 2026-09-22, which then only name the model. */
     provider?: string;
+    /** The reasoning effort the workspace last ran at (`low` to `max`), so a new session reopens on
+     *  the same effort as well as the same model. Absent on rows written before 2026-11-04, and
+     *  when the turn ran on the model's own default. */
+    effort?: string;
     at: number;
 }
 /** `{ [cwd]: { model, at } }`; a row whose model is not a non-empty string is skipped. */
 export declare function loadWorkspaceModels(dir: string): Promise<Map<string, WorkspaceModel>>;
-/** Save the model for one cwd, or forget it when `model` is undefined or blank. */
-export declare function saveWorkspaceModel(dir: string, cwd: string, model: string | undefined, at?: number, provider?: string): Promise<void>;
+/** Save the model (and the mount and effort it ran on) for one cwd, or forget the row when `model`
+ *  is undefined or blank. The row is replaced whole, so an absent effort clears a remembered one:
+ *  a turn on the model's own default means "default" next time too. */
+export declare function saveWorkspaceModel(dir: string, cwd: string, model: string | undefined, at?: number, provider?: string, effort?: string): Promise<void>;
+/** The model and effort a new Claude session opens on when its workspace remembers none, set in
+ *  Settings → Oh My Claude. `all` also pulls a blank in a workspace that has never run Claude onto
+ *  Claude; without it the default only picks the model for a blank that is Claude already. Its own
+ *  file rather than a hint, because the hints store holds only switches and numbers. */
+export interface NewSessionDefault {
+    provider: string;
+    model: string;
+    effort?: string;
+    all?: boolean;
+}
+/** The saved default, or undefined for none, a missing file or a row that lost its model. */
+export declare function loadNewSessionDefault(dir: string): Promise<NewSessionDefault | undefined>;
+/** Write the default, or clear it with undefined. The caller validates; this only stores. */
+export declare const saveNewSessionDefault: (dir: string, value: NewSessionDefault | undefined) => Promise<void>;
 export interface WorkspaceContextSizes {
     sizes: Record<string, number>;
     at: number;

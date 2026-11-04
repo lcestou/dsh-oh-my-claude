@@ -8,6 +8,7 @@ import { dirname, join } from "node:path";
 import { type RouteHandler, UNHANDLED } from "./context.js";
 import type { DiagnosticFile, MountBox, RouteCtx } from "../sessions.js";
 import { parseChangelog } from "../changelog.js";
+import { unknownEffortLevels } from "../adapter/catalog.js";
 import { errorText, shq, sshArgs } from "../process.js";
 import { buildReport, type PrivateValues, type ReportInput } from "../report.js";
 import { repairsSummary } from "../session-heal.js";
@@ -152,7 +153,13 @@ export function statusRoutes(c: RouteCtx): RouteHandler {
       }
       // `ok` is what the tab keys its render on; without it the reply reads as the
       // failure shape and the tab draws an empty error line instead of the report.
-      return json(res, 200, { ok: true, runtime, configFiles, session });
+      // A new effort level the Models API reports, so it is seen the first time Diagnostics opens
+      // after it appears instead of being filtered out of the picker in silence.
+      // Read through the catalog first: a Diagnostics opened before anything asked for the model
+      // list would otherwise see only the floor. Cached for ten minutes, so this is usually free.
+      await pickerModels?.().catch(() => undefined);
+      const unknownEfforts = unknownEffortLevels();
+      return json(res, 200, { ok: true, runtime, configFiles, session, unknownEfforts });
     }
     // Read on every open and never cached: a dev checkout shows an edit at once, and an
     // install shows the notes for the version it runs. A missing file (an install from

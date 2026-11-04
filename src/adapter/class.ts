@@ -3663,7 +3663,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       // The mount goes with the model: a new session in this workspace opens on both, so a box's
       // Claude comes back as that box's, and a local one as local (dsh 0.1.7 makes its blank
       // sessions ahead of time on the deployment default, so nothing else carries a provider over).
-      const written = `${this.providerId}\0${prep.spec.model}`;
+      const written = `${this.providerId}\0${prep.spec.model}\0${prep.spec.effort ?? ""}`;
       if (this.workspaceModelWritten.get(wsCwd) !== written) {
         this.workspaceModelWritten.set(wsCwd, written);
         void saveWorkspaceModel(
@@ -3672,6 +3672,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
           prep.spec.model,
           Date.now(),
           this.providerId,
+          prep.spec.effort ?? undefined,
         ).catch(() => {});
       }
     }

@@ -299,6 +299,14 @@ assert.deepEqual(wsModels.get("/w/c"), {
   at: 30,
 });
 assert.equal(wsModels.get("/w/a")?.provider, undefined, "older rows carry no provider");
+// The effort rides along too, and a later turn on the model's own default clears it.
+await saveWorkspaceModel(wsDir, "/w/c", "claude-opus-5-5", 31, "claude-code", "high");
+wsModels = await loadWorkspaceModels(wsDir);
+assert.equal(wsModels.get("/w/c")?.effort, "high", "the effort is remembered");
+await saveWorkspaceModel(wsDir, "/w/c", "claude-opus-5-5", 32, "claude-code");
+wsModels = await loadWorkspaceModels(wsDir);
+assert.equal(wsModels.get("/w/c")?.effort, undefined, "a turn on the default clears it");
+assert.equal(wsModels.get("/w/a")?.effort, undefined, "older rows carry no effort");
 await saveWorkspaceModel(wsDir, "/w/c", undefined); // back to the two rows the rest expects
 assert.deepEqual(wsModels.get("/w/b"), { model: "haiku", at: 20 });
 await saveWorkspaceModel(wsDir, "/w/b", undefined);

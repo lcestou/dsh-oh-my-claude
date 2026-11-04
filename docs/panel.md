@@ -82,6 +82,8 @@ Below the hooks readout, a Hook runs section keeps the last hundred hooks the se
 
 The tab also carries the session's own report block (the same redacted report as [Report a problem](#report-a-problem), for one session), an Export as Markdown button, and a Copy of the `claude --resume` command for the session. The desktop notification toggle described under [Session notices](#session-notices) lives here too.
 
+When Anthropic's Models API reports an effort level the plugin does not offer yet, a line under the runtime names it with the models that carry it. The picker leaves such a level out until a plugin update adds it, so this line is how a new one gets noticed.
+
 ## Tasks
 
 The Tasks tab shows both goals a session can hold and its scheduled tasks, each section only when it has something in it. A session with none of them says so in one line.
@@ -215,7 +217,9 @@ Each archived session row has a menu: download the raw transcript, export it as 
 
 ## Remember model per workspace
 
-A blank Claude session in a workspace opens on the model that workspace last ran, provider unchanged. The switch is Remember model per workspace, under Claude look in Settings → Oh My Claude.
+A blank Claude session in a workspace opens on the model and effort that workspace last ran, provider unchanged. The switch is Remember model per workspace, under Claude look in Settings → Oh My Claude.
+
+Under it, Default for new Claude sessions picks a model and an effort for a blank Claude session whose workspace remembers nothing. Empty by default. The order is: a provider you pick by hand on the blank, then the workspace's memory, then this default, then dsh's own deployment default. So a workspace that has run Claude keeps opening on what it last ran; turn Remember model per workspace off and every blank Claude session opens on the default. A blank on another provider is left alone unless "Also for workspaces that never ran Claude" is ticked, which pulls it onto the default's Claude box. "Model's default effort" leaves the effort to the model. The default is stored on the box, so every browser sees the same one.
 
 ## Proxy reaches Anthropic
 

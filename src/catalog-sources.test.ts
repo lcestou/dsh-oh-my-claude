@@ -9,6 +9,8 @@ import {
   mergeCatalog,
   modelFromApi,
   nameFromId,
+  parseCatalogCache,
+  unknownEffortsOf,
   noteLiveWindow,
   resolveModelInfo,
   seedLiveWindows,
@@ -197,3 +199,49 @@ assert.deepEqual(
 );
 assert.deepEqual(hintHiddenModels({}, "claude-code"), []);
 console.log("hint hidden models ok");
+
+// A level the plugin does not know is kept out of the picker but named on the row, so Diagnostics
+// can say a new one appeared; a known level and an unsupported unknown one are not reported.
+{
+  const row = modelFromApi({
+    id: "claude-next-9",
+    capabilities: {
+      effort: {
+        supported: true,
+        high: { supported: true },
+        ultra: { supported: true },
+        turbo: { supported: false },
+      },
+    },
+  });
+  assert.deepEqual(row.efforts, ["high"], "only known levels reach the picker");
+  assert.deepEqual(row.unknownEfforts, ["ultra"], "the supported unknown level is named");
+  assert.equal(
+    modelFromApi({ id: "claude-x" }).unknownEfforts,
+    undefined,
+    "no effort block, nothing named",
+  );
+  assert.deepEqual(
+    unknownEffortsOf({ supported: false, ultra: { supported: true } }),
+    [],
+    "effort off overall",
+  );
+  // Kept across a restart through the disk cache, and a cache written before the field still reads.
+  const cached = parseCatalogCache(JSON.stringify([{ ...row, createdAt: 1 }]));
+  assert.deepEqual(cached[0]?.unknownEfforts, ["ultra"], "the disk cache keeps unknown levels");
+  const old = parseCatalogCache(
+    JSON.stringify([
+      {
+        provider: "claude-code",
+        id: "claude-a",
+        name: "A",
+        contextWindow: 1,
+        efforts: ["high"],
+        createdAt: 1,
+      },
+    ]),
+  );
+  assert.equal(old.length, 1, "a cache row without the field still loads");
+  assert.equal(old[0]?.unknownEfforts, undefined, "and names no unknown level");
+  console.log("unknown efforts ok");
+}
