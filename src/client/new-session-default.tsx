@@ -5,6 +5,8 @@
 import { useEffect, useState } from "react";
 import { t, useLocale } from "./i18n.js";
 import { ROUTE, T, readJson, select } from "./shared.js";
+import { HINTS_EVENT } from "./hints.js";
+import { BOXES_EVENT } from "./picker.js";
 
 /** The efforts the CLI knows, lowest first; the same ladder the adapter caps per model. */
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
@@ -89,12 +91,22 @@ export function NewSessionDefaultRow() {
   useEffect(() => {
     let live = true;
     void loadSessionDefault().then((d) => live && setValue(d));
-    fetch(`${ROUTE}/models?all=1`)
-      .then((r) => readJson<{ models?: PickerBox[] }>(r))
-      .then((b) => live && setBoxes(b.models ?? []))
-      .catch(() => {});
+    const loadModels = () =>
+      fetch(`${ROUTE}/models?all=1`)
+        .then((r) => readJson<{ models?: PickerBox[] }>(r))
+        .then((b) => live && setBoxes(b.models ?? []))
+        .catch(() => {});
+    void loadModels();
+    // A model switched off or on in the Models block, and a box added or removed in the Boxes
+    // card, change this list. Read once at mount, the dropdown kept the old lineup until Settings
+    // was reopened (owner, 2026-11-04). The hints event fires after the hint is saved, so the
+    // re-read sees the new hidden state.
+    window.addEventListener(HINTS_EVENT, loadModels);
+    window.addEventListener(BOXES_EVENT, loadModels);
     return () => {
       live = false;
+      window.removeEventListener(HINTS_EVENT, loadModels);
+      window.removeEventListener(BOXES_EVENT, loadModels);
     };
   }, []);
   const save = (next: SessionDefault | undefined) => {
