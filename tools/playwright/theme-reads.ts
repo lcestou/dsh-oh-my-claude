@@ -16,7 +16,8 @@ type Reads = Record<string, string>;
 async function readScheme(colorScheme: "dark" | "light"): Promise<Reads> {
   const ctx = await b.newContext({ viewport: { width: 1400, height: 900 }, colorScheme });
   const p = await ctx.newPage();
-  await p.goto(dshUrl(token), { waitUntil: "networkidle" });
+  // `load`, not `networkidle`: two event streams stay open on a fresh dsh and idle never comes.
+  await p.goto(dshUrl(token), { waitUntil: "load" });
   await p.waitForTimeout(2500);
   // Expand the workspace (collapsed in a fresh profile), then open its first session row.
   const ws = p
@@ -45,7 +46,12 @@ async function readScheme(colorScheme: "dark" | "light"): Promise<Reads> {
     const host = document.createElement("div");
     host.className = "omc_markdown_probe";
     host.setAttribute("data-omc-theme-probe", "");
-    host.innerHTML = '<a href="#">l</a><blockquote>q</blockquote><hr><input type="checkbox">';
+    // The quote chip twice, on the two wrappers dsh gives it: a sent bubble's text node, and the
+    // composer's decorator. Synthetic, so the read does not need a quote to have been sent.
+    host.innerHTML =
+      '<a href="#">l</a><blockquote>q</blockquote><hr><input type="checkbox">' +
+      '<div data-message-bubble><span data-slot="conversation.user.text.node"><span data-quote-preview>q</span></span></div>' +
+      "<div data-composer-input><span data-composer-quote><span data-quote-preview>q</span></span></div>";
     body.appendChild(host);
     const missing = "missing";
     const css = (el: Element | null, prop: string) =>
@@ -68,6 +74,14 @@ async function readScheme(colorScheme: "dark" | "light"): Promise<Reads> {
       quoteBar: css(host.querySelector("blockquote"), "border-left-color"),
       ruleBg: css(host.querySelector("hr"), "background-color"),
       checkboxAccent: css(host.querySelector("input"), "accent-color"),
+      quoteChipColor: css(
+        host.querySelector("[data-message-bubble] [data-quote-preview]"),
+        "color",
+      ),
+      composerQuoteColor: css(
+        host.querySelector("[data-composer-quote] [data-quote-preview]"),
+        "color",
+      ),
       statusRowBg: css(status, "background-image"),
       viewTabColor: css(tab, "color"),
       sendFill: css(send, "background-color"),
