@@ -19,7 +19,7 @@ import { Tooltip } from "@deepseek-ai/dsh-client-ui-primitives";
 import { Spark } from "./spark.js";
 import { TuneBody } from "./tune.js";
 import { easeMs, markHint, readHints, useFitAbove, useHeightEase } from "./panel/shared.js";
-import { RestoreBody, useTranscripts } from "./panel/restore.js";
+import { RestoreBody, panelOpenTab, useTranscripts } from "./panel/restore.js";
 import { MemoryBody } from "./panel/memory.js";
 import { InstructionsBody } from "./panel/instructions.js";
 import { SkillsBody } from "./panel/skills.js";
@@ -61,9 +61,10 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
   // pulses a few times. The dot and the default tab need no memory; the pulse is remembered on
   // the box through the hints store, so it fires once and never again after an update.
   const entry = ctx.sessions.list.getSnapshot()?.byId[sessionId];
-  const restorable = useTranscripts(entry?.blank === false ? undefined : entry?.cwd).filter(
-    (s) => !isOwnedActive(s),
-  ).length;
+  const transcripts = useTranscripts(entry?.blank === false ? undefined : entry?.cwd);
+  const restorable = (transcripts ?? []).filter((s) => !isOwnedActive(s)).length;
+  // Still on its way for this workspace: the open-click treats that as restorable, see panelOpenTab.
+  const transcriptsUnknown = transcripts === undefined;
   const [seenRestore, setSeenRestore] = useState(false);
   const [pulse, setPulse] = useState(false);
   // A first-run pointer at the spark, for a box that has never used the plugin. The box counts as
@@ -311,13 +312,7 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
             }
             setSeenRestore(true);
             dropTip();
-            setTab(
-              blank && restorable > 0
-                ? "Restore"
-                : lastTab === "Restore" && !blank
-                  ? "Memory"
-                  : lastTab,
-            );
+            setTab(panelOpenTab({ blank, restorable, unknown: transcriptsUnknown, lastTab }));
             const host = rootRef.current?.closest<HTMLElement>("[data-composer-card]") ?? null;
             setCard(host);
             const rect = rootRef.current?.getBoundingClientRect();

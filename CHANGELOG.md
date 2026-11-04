@@ -6,8 +6,14 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Added
+
+- The history search card closes when the page loses focus and on Esc wherever the keyboard is in the page, not only from its own field. A browser that takes Ctrl+S for itself (Zen, Arc) moved the keyboard to its sidebar and left the card open with no way out.
+- Ctrl+Down and Ctrl+Up cycle the history search's scope alongside Ctrl+S. Zen and Arc take Ctrl+S at the browser level to toggle their sidebar, so the card never saw it there; no browser binds Ctrl with an arrow. The scope pill on the card stays clickable too, and the tooltip, the card's key line and the Settings description name both.
+
 ### Fixed
 
+- The ✻ panel on a new session opens on Restore every time, not only when the workspace's transcript list had already arrived. The list is read when the session appears, and a click on the flower that beat the answer opened the panel on whatever tab was used last, so the default looked random (Memory one time, Restore the next). While the list is still unknown, Restore wins; a workspace with nothing to restore still opens on the last tab.
 - The cost pill's dialog opens above the pill again on dsh 0.2.2-alpha.3. That dsh gives its composer seat `will-change: transform`, which makes the seat the containing block for anything fixed-positioned inside it, and the dialog, rendered beside the pill, took its viewport coordinates from the seat's corner and drew 770px below the pill, off the bottom of the screen. The dialog is now portaled to the document body the way dsh's own stat dialogs are.
 - Hovering the cost pill shows its breakdown (session total, last turn, turns, time to first token) in a tooltip; dsh's own stat pills show none, so the figure was readable only through the dialog.
 

@@ -66,6 +66,23 @@ if ((await card.count()) > 0) {
     "rows:",
     await p.locator("[data-omc-history-row]").count(),
   );
+  // The second pair of scope keys, for browsers that own Ctrl+S (Zen, Arc): forward, then back.
+  for (const key of ["Control+ArrowDown", "Control+ArrowUp"]) {
+    await p.keyboard.press(key);
+    await p.waitForTimeout(1200);
+    console.log(
+      ` after ${key} scope:`,
+      await p.locator("[data-omc-history-scope]").getAttribute("data-omc-history-scope"),
+    );
+  }
+  // Esc closes from anywhere in the page, not only from the field: blur it first.
+  // SAFETY: the active element is the card's input, an HTMLElement, and `blur` is optional-chained
+  await p.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await p.keyboard.press("Escape");
+  await p.waitForTimeout(400);
+  console.log(" after esc from body: card", await card.count());
+  await p.keyboard.press("Control+r");
+  await p.waitForTimeout(1200);
   await p.keyboard.type("a");
   await p.waitForTimeout(300);
   console.log(" after 'a' rows:", await p.locator("[data-omc-history-row]").count());
