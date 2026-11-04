@@ -209,6 +209,8 @@ export function controlsRoutes(ctx: RouteCtx): RouteHandler {
       const model = typeof body.model === "string" ? body.model.trim() : "";
       if (!model) {
         await saveNewSessionDefault(STATE_DIR, undefined);
+        // Every open Settings row follows a write made in another tab or browser.
+        events?.hub.publish({ kind: "new-session-default", session: null, data: {} });
         return json(res, 200, { ok: true });
       }
       // Checked at the door: the client reads this back and hands it to dsh's model picker.
@@ -225,6 +227,7 @@ export function controlsRoutes(ctx: RouteCtx): RouteHandler {
       if (typeof effort === "string") value.effort = effort;
       if (body.all === true) value.all = true;
       await saveNewSessionDefault(STATE_DIR, value);
+      events?.hub.publish({ kind: "new-session-default", session: null, data: value });
       return json(res, 200, { ok: true });
     }
     // What dsh's context blocks cost on the last turn in this workspace, in characters,

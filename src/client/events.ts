@@ -135,6 +135,8 @@ export interface EventData {
   idle: IdleReply;
   turns: TurnsReply;
   hints: Record<string, boolean | number>;
+  /** The new-session default after a write from any tab; `{}` when it was cleared. */
+  "new-session-default": { provider?: string; model?: string; effort?: string; all?: boolean };
   "permission-mode": PermissionModeState;
   ping: Record<string, never>;
 }
@@ -147,6 +149,7 @@ export const KINDS = [
   "idle",
   "turns",
   "hints",
+  "new-session-default",
   "permission-mode",
   "ping",
 ] as const;

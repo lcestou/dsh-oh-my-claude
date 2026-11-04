@@ -27,7 +27,7 @@ import { paintSpeed, tokensPerSecond } from "./speed.js";
 import { Spark, sparkNode } from "./spark.js";
 import { useHintValue, useHintFlag } from "./hints.js";
 import { onBodyMutation } from "./dom.js";
-import { attachTip } from "./tooltip.js";
+import { attachTip, hideTipFor, refreshTip } from "./tooltip.js";
 
 /** Cached tokens for the readout: `999`, `12.3K`, `2.1M`, and nothing at all for none. */
 export const formatCacheRead = (tokens: number): string => {
@@ -100,6 +100,7 @@ export const costDetails = (turns: TurnRecord[]): [string, string][] => {
  *  the stats dialog beside it (440 against 300, measured on dsh 0.1.6-alpha.2). */
 export const COST_DIALOG_CSS =
   "[data-omc-cost-dialog]{z-index:1100;box-sizing:border-box;background:var(--dsw-specific-menu);backdrop-filter:var(--dsw-menu-backdrop-filter);--dsw-elevation-stroke-color:var(--dsw-alias-border-l1);width:max-content;min-width:min(300px,100vw - 24px);max-width:min(320px,100vw - 24px);box-shadow:var(--dsw-elevation-prominent);color:var(--dsw-alias-label-secondary);cursor:default;border:0;border-radius:12px;padding:16px;font-size:12px;line-height:18px;position:fixed}" +
+  "[data-omc-cost-dialog]:focus{outline:none}" +
   "[data-omc-cost-title]{color:var(--dsw-alias-label-primary);justify-content:space-between;gap:16px;margin-bottom:8px;font-weight:500;display:flex}" +
   "[data-omc-cost-title-label]{align-items:center;gap:6px;min-width:0;display:inline-flex}" +
   "[data-omc-cost-title-label] svg{flex:none;width:14px;height:14px}" +
@@ -335,12 +336,22 @@ export function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
   useDismissOnOutsidePointer(pillRef, open, setOpen, panelRef);
   useEffect(() => {
     if (!open) return;
+    // Escape hands focus back to the pill; the move into the dialog is the effect below.
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key !== "Escape") return;
+      setOpen(false);
+      pillRef.current?.querySelector("button")?.focus({ preventScroll: true });
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [open]);
+  // The dialog is portaled to the end of the body, so the Tab after the pill used to land in the
+  // composer and the warn field was out of keyboard reach. Focus moves into it once it has
+  // coordinates: on its first frame it is `visibility: hidden` and cannot take focus.
+  const placed = pos !== null;
+  useEffect(() => {
+    if (open && placed) panelRef.current?.focus({ preventScroll: true });
+  }, [open, placed]);
   // A cost that left the row takes its dialog with it.
   useEffect(() => {
     if (!text) setOpen(false);
@@ -408,8 +419,10 @@ export function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
         // 2026-09-10, for nothing.
         if (trigger) {
           const expanded = String(openRef.current);
-          if (trigger.getAttribute("aria-label") !== titleRef.current)
+          if (trigger.getAttribute("aria-label") !== titleRef.current) {
             trigger.setAttribute("aria-label", titleRef.current);
+            refreshTip(trigger, titleRef.current);
+          }
           if (trigger.getAttribute("aria-expanded") !== expanded)
             trigger.setAttribute("aria-expanded", expanded);
           paintOver();
@@ -545,6 +558,7 @@ export function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
       // no cost to show yet. `lastRow` is what says a hook once succeeded, so a span dsh has since
       // dropped still clears the hooked flag.
       if (inline === undefined && lastRow === undefined) return;
+      if (trigger) hideTipFor(trigger);
       inline?.remove();
       inline = undefined;
       body = undefined;
@@ -618,6 +632,7 @@ export function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
             // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a non-modal popover; <dialog> hides unless open and brings its own box
             role="dialog"
             aria-label={t("main.cost.dialogLabel")}
+            tabIndex={-1}
             data-omc-cost-dialog=""
             style={pos ?? MEASURE_STYLE}
           >

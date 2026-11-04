@@ -52,7 +52,7 @@ export declare const childPath: (dir: string, name: string) => string;
  * editor checks its next write against: reading it back in a second round trip would both cost a
  * connection and report on a file that may have moved on since.
  */
-export declare const writeScript: (path: string, base64: string) => string;
+export declare const writeScript: (path: string) => string;
 /** Delete, and stay silent about a file that was already gone. */
 export declare const removeScript: (path: string) => string;
 /** The file's size in bytes, GNU or BSD stat; a missing file exits with the absent code. */

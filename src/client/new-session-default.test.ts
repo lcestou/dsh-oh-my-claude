@@ -12,9 +12,28 @@ assert.deepEqual(blankSessionTarget({ current: "claude-code", picked: undefined,
   model: "claude-sonnet-5-5",
   reasoningEffort: "medium",
 });
-// Nothing remembered: the default, on the session's own Claude mount.
+// Nothing remembered: the default, on the box it names, even when the blank is already Claude.
 assert.deepEqual(
   blankSessionTarget({ current: "claude-code-lilly", picked: undefined, saved: undefined, def }),
+  { provider: "claude-code", model: "claude-opus-5-5", reasoningEffort: "high" },
+);
+assert.deepEqual(
+  blankSessionTarget({
+    current: "claude-code",
+    picked: undefined,
+    saved: undefined,
+    def: { ...def, provider: "claude-code-lilly" },
+  }),
+  { provider: "claude-code-lilly", model: "claude-opus-5-5", reasoningEffort: "high" },
+);
+// A Claude mount picked by hand keeps its box; the default only fills in the model.
+assert.deepEqual(
+  blankSessionTarget({
+    current: "claude-code-lilly",
+    picked: "claude-code-lilly",
+    saved: undefined,
+    def,
+  }),
   { provider: "claude-code-lilly", model: "claude-opus-5-5", reasoningEffort: "high" },
 );
 // A blank that is not Claude stays put unless the default says all workspaces...

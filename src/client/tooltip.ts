@@ -42,6 +42,22 @@ function showTip(anchor: HTMLElement, text: string): void {
   anchor.setAttribute("aria-describedby", bubble.id);
   tipOpen = { bubble, anchor };
 }
+/** Take the bubble down when it belongs to `anchor`. For an anchor about to be removed: a node
+ *  taken out of the page never sees `mouseleave`, so its bubble stayed on screen until the next
+ *  tooltip anywhere replaced it. */
+export function hideTipFor(anchor: HTMLElement): void {
+  if (tipOpen?.anchor === anchor) hideTip();
+}
+
+/** Rewrite the open bubble's text when it belongs to `anchor`, so a figure that changes under the
+ *  pointer (the cost pill mid-turn) is not shown stale until the pointer leaves and comes back. */
+export function refreshTip(anchor: HTMLElement, text: string): void {
+  if (tipOpen?.anchor !== anchor) return;
+  if (text === "") return hideTip();
+  const label = tipOpen.bubble.firstElementChild;
+  if (label && label.textContent !== text) label.textContent = text;
+}
+
 /** Give an element a dsh-style tooltip in place of the browser's `title`: shown on hover and on
  *  keyboard focus, hidden on leave, blur, click and Escape. `text` is read each time, so a
  *  language switch shows the new wording without re-attaching. */

@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { t, useLocale } from "./i18n.js";
 import { ROUTE, T, readJson, select } from "./shared.js";
 import { HINTS_EVENT } from "./hints.js";
+import { subscribe } from "./events.js";
 import { BOXES_EVENT } from "./picker.js";
 
 /** The efforts the CLI knows, lowest first; the same ladder the adapter caps per model. */
@@ -43,9 +44,9 @@ const withEffort = (provider: string, model: string, effort: string | undefined)
 
 /**
  * What a blank session should be switched to, or undefined to leave it as dsh made it. In order:
- * the workspace memory when it has a row; then the box default; else nothing. `current` is the
- * session's Claude mount when it is already Claude, and `picked` a provider someone chose for this
- * blank by hand. A hand pick of another provider always wins, and a blank that is not Claude is
+ * the workspace memory when it has a row; then the box default, on the box it names; else nothing.
+ * `current` is the session's Claude mount when it is already Claude, and `picked` a provider
+ * someone chose for this blank by hand. A hand pick of another provider always wins, and a blank that is not Claude is
  * only pulled onto Claude by the memory (it ran Claude here before) or by a default marked `all`.
  */
 export function blankSessionTarget(args: {
@@ -60,7 +61,16 @@ export function blankSessionTarget(args: {
     return provider ? withEffort(provider, saved.model, saved.effort) : undefined;
   }
   if (def) {
-    const provider = current ?? (picked || !def.all ? undefined : claude(def.provider));
+    // The default names its box on purpose (the dropdown is grouped by box), so a blank that is
+    // already Claude moves to that box unless someone picked a mount by hand. Opening it on the
+    // blank's own mount put a box's model id on the local CLI, which may not list it.
+    const provider = current
+      ? picked
+        ? current
+        : (claude(def.provider) ?? current)
+      : picked || !def.all
+        ? undefined
+        : claude(def.provider);
     return provider ? withEffort(provider, def.model, def.effort) : undefined;
   }
   return undefined;
@@ -108,8 +118,19 @@ export function NewSessionDefaultRow() {
     // re-read sees the new hidden state.
     window.addEventListener(HINTS_EVENT, loadModels);
     window.addEventListener(BOXES_EVENT, loadModels);
+    // A default saved from another tab or browser: take it, so a later change here does not
+    // write back the model that tab replaced.
+    const offDefault = subscribe("new-session-default", (_session, d) => {
+      if (live)
+        setValue(
+          d.provider && d.model
+            ? { provider: d.provider, model: d.model, effort: d.effort, all: d.all }
+            : undefined,
+        );
+    });
     return () => {
       live = false;
+      offDefault();
       window.removeEventListener(HINTS_EVENT, loadModels);
       window.removeEventListener(BOXES_EVENT, loadModels);
     };
@@ -122,13 +143,11 @@ export function NewSessionDefaultRow() {
       body: JSON.stringify(next ?? {}),
     })
       .then(async (r) => {
-        if (!r.ok) {
-          const body = await readJson<{ error?: string }>(r).catch(() => ({ error: undefined }));
-          throw new Error(body.error ?? String(r.status));
-        }
+        // The route's refusal text is English and for logs; the row says it in the UI's language.
+        if (!r.ok) throw new Error(String(r.status));
         setValue(next);
       })
-      .catch((e: Error) => setError(e.message));
+      .catch(() => setError(t("main.settingsUi.newDefaultSaveFailed")));
   };
   const key = value ? `${value.provider}\n${value.model}` : "";
   const many = boxes.length > 1;
@@ -154,6 +173,11 @@ export function NewSessionDefaultRow() {
           }}
         >
           <option value="">{t("main.settingsUi.newDefaultNone")}</option>
+          {/* A stored default whose box is no longer listed (removed, or not answering) still
+              shows, so the row never reads "No default" over a default that applies. */}
+          {value && !boxes.some((b) => b.provider === value.provider) ? (
+            <option value={key}>{value.model}</option>
+          ) : null}
           {boxes.map((box) => {
             // A hidden model stays listed while it is the stored default, so the row shows what is
             // in effect instead of reading "No default" over a default that still applies.

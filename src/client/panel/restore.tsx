@@ -280,7 +280,11 @@ export function RestoreBody({
   useLocale();
   const entry = ctx.sessions.list.getSnapshot()?.byId[sessionId];
   const cwd = entry?.cwd;
-  const transcripts = useTranscripts(cwd) ?? [];
+  const loaded = useTranscripts(cwd);
+  // Still on its way: the panel now opens on this tab before the list lands, so the empty line
+  // must not stand in for "loading" (it flashed "nothing to restore" and then the rows).
+  const loading = loaded === undefined;
+  const transcripts = loaded ?? [];
   const [query, setQuery] = useState("");
   // How many rows show: eight to start, twenty more per click. A workspace with 146 transcripts
   // showed eight and nothing said there were more (owner, 2026-09-22); the search is for finding
@@ -313,7 +317,14 @@ export function RestoreBody({
           }}
         />
       )}
-      {candidates.length === 0 && (
+      {loading && (
+        <div data-omc-restore-loading="" aria-busy="true" aria-label={t("loading")}>
+          <div data-omc-skeleton="" style={{ height: 12, width: "55%", margin: "6px 0" }} />
+          <div data-omc-skeleton="" style={{ height: 12, width: "80%", margin: "6px 0" }} />
+          <div data-omc-skeleton="" style={{ height: 12, width: "65%", margin: "6px 0" }} />
+        </div>
+      )}
+      {!loading && candidates.length === 0 && (
         <span data-omc-restore-empty="" style={{ ...meta, padding: "2px 0", whiteSpace: "normal" }}>
           {t("panel.restore.empty", { name })}
         </span>

@@ -191,6 +191,12 @@ export function HistorySearch({
     const onBlur = () => closeRef.current();
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || e.isComposing) return;
+      // An Escape meant for a dialog or menu someone opened over the card (a dsh dialog, the ✻
+      // panel's Rewind) is theirs: taking it here closed the card and left that dialog open.
+      if (e.target instanceof Element) {
+        const surface = e.target.closest('[role="dialog"], [role="menu"], [role="listbox"]');
+        if (surface && !surface.closest("[data-omc-history-search]")) return;
+      }
       e.preventDefault();
       e.stopPropagation();
       closeRef.current();

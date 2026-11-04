@@ -3,7 +3,7 @@
 // token for the Models API (on macOS, from the Keychain when the file has none). This is an I/O
 // boundary: JSON from disk is decoded here and typed values leave.
 import { execFile } from "node:child_process";
-import { appendFile, mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { appendFile, copyFile, mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve as resolvePath } from "node:path";
@@ -62,6 +62,26 @@ export async function trace(fileOrLine: string, maybeLine?: string): Promise<voi
   } catch {}
 }
 
+/** Set a file aside as `<file>.corrupt-<ms>` when it holds text that is not JSON. Every store here
+ *  reads a file it cannot parse as empty and then writes its next state over it, so one typo from
+ *  a hand edit wiped every row (all switches, every workspace's model, all cost records). The
+ *  write still goes ahead; the old text survives beside it to be mended by hand. A missing or empty
+ *  file is nothing to keep. */
+async function keepUnreadable(file: string): Promise<void> {
+  let text: string;
+  try {
+    text = await readFile(file, "utf8");
+  } catch {
+    return;
+  }
+  if (text.trim() === "") return;
+  try {
+    JSON.parse(text);
+  } catch {
+    await copyFile(file, `${file}.corrupt-${Date.now()}`).catch(() => {});
+  }
+}
+
 /**
  * Write JSON so a crash mid-write cannot leave half a file behind: into a temp name in the same
  * directory, then rename over, which is atomic on one filesystem.
@@ -72,10 +92,20 @@ export async function trace(fileOrLine: string, maybeLine?: string): Promise<voi
  * writers to one path would otherwise share it, and the loser's rename would find the file the
  * winner already moved.
  */
-export async function writeJson(file: string, value: unknown): Promise<void> {
+export async function writeJson(
+  file: string,
+  value: unknown,
+  opts: { pretty?: boolean; mode?: number } = {},
+): Promise<void> {
   await mkdir(dirname(file), { recursive: true });
+  await keepUnreadable(file);
   const tmp = `${file}.tmp-${randomUUID()}`;
-  await writeFile(tmp, JSON.stringify(value));
+  const text = opts.pretty ? `${JSON.stringify(value, null, 2)}\n` : JSON.stringify(value);
+  await writeFile(
+    tmp,
+    text,
+    opts.mode === undefined ? "utf8" : { encoding: "utf8", mode: opts.mode },
+  );
   await rename(tmp, file);
 }
 
@@ -828,6 +858,15 @@ export async function loadWorkspaceModels(dir: string): Promise<Map<string, Work
     return new Map();
   }
 }
+
+/** Whether a turn's model is the workspace's to remember. A temporary side call is not, and nor is
+ *  a dsh subagent child: it shares its parent's cwd, and writing its model and effort (a Sonnet
+ *  review, say) moved the next new session in that workspace onto the child's choice. */
+export const countsForWorkspaceMemory = (turn: {
+  model: string | undefined;
+  temporary: boolean | undefined;
+  origin: string | undefined;
+}): boolean => Boolean(turn.model) && !turn.temporary && turn.origin !== "subagent";
 
 /** Save the model (and the mount and effort it ran on) for one cwd, or forget the row when `model`
  *  is undefined or blank. The row is replaced whole, so an absent effort clears a remembered one:
