@@ -82,6 +82,8 @@ Below the hooks readout, a Hook runs section keeps the last hundred hooks the se
 
 The tab also carries the session's own report block (the same redacted report as [Report a problem](#report-a-problem), for one session), an Export as Markdown button, and a Copy of the `claude --resume` command for the session. The desktop notification toggle described under [Session notices](#session-notices) lives here too.
 
+When Anthropic's Models API reports an effort level the plugin does not offer yet, a line under the runtime names it with the models that carry it. The picker leaves such a level out until a plugin update adds it, so this line is how a new one gets noticed.
+
 ## Tasks
 
 The Tasks tab shows both goals a session can hold and its scheduled tasks, each section only when it has something in it. A session with none of them says so in one line.
