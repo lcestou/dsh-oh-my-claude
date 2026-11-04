@@ -876,6 +876,25 @@ console.log("transcript ok");
     1,
     "a queued message that also arrives as a prompt folds exactly once",
   );
+  // The CLI queues its own background-task notices on the same rows. They are no one's words: read
+  // as typed they became a bubble of `<task-notification>` markup in the owner's name.
+  const taskNotice =
+    "<task-notification>\n<task-id>b1</task-id>\n<status>failed</status>\n</task-notification>";
+  const noticed = foreignTurns(
+    `${user("k8", "cli", "run it")}\n${q("enqueue", taskNotice)}\n${q("remove", taskNotice)}\n${stop("k9", [{ type: "text", text: "done" }], "end_turn")}\n`,
+    own,
+  );
+  assert.ok(
+    !JSON.stringify([noticed.turns, noticed.running]).includes("task-notification"),
+    "a queued task notice is not mirrored as a prompt",
+  );
+  const foldedNotice = foldTranscript(
+    `${user("k8", "cli", "run it")}\n${q("enqueue", taskNotice)}\n${stop("k9", [{ type: "text", text: "done" }], "end_turn")}\n`,
+  );
+  assert.ok(
+    !JSON.stringify(foldedNotice.turns).includes("task-notification"),
+    "a queued task notice is not folded as a prompt",
+  );
   // Dedup against what dsh actually holds: the prompt in a user message, the rendered reply in an
   // assistant message. The fingerprint this replaces glued both into one string and looked for it in
   // assistant text alone, which matched nothing ever, so every re-read mirrored the exchange twice.
