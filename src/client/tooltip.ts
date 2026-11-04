@@ -58,15 +58,40 @@ export function refreshTip(anchor: HTMLElement, text: string): void {
   if (label && label.textContent !== text) label.textContent = text;
 }
 
-/** Give an element a dsh-style tooltip in place of the browser's `title`: shown on hover and on
- *  keyboard focus, hidden on leave, blur, click and Escape. `text` is read each time, so a
- *  language switch shows the new wording without re-attaching. */
-export function attachTip(anchor: HTMLElement, text: () => string): void {
-  const show = () => showTip(anchor, text());
-  anchor.addEventListener("mouseenter", show);
-  anchor.addEventListener("focus", show);
-  for (const ev of ["mouseleave", "blur", "click"]) anchor.addEventListener(ev, hideTip);
+/** Give an element a dsh-style tooltip in place of the browser's `title`, timed the way dsh's own
+ *  Tooltip is: a real mouse hover shows it after `delayMs` (dsh's stat pills wait 200 ms), keyboard
+ *  focus shows it at once, and a touch never does. A tap used to fire hover and focus, so on a
+ *  phone the bubble sat on top of the dialog the tap had just opened. Hidden on leave, blur, click
+ *  and Escape. `text` is read each time, so a language switch shows the new wording. */
+export function attachTip(
+  anchor: HTMLElement,
+  text: () => string,
+  opts: { delayMs?: number } = {},
+): void {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const cancel = () => {
+    if (timer !== undefined) clearTimeout(timer);
+    timer = undefined;
+  };
+  const hide = () => {
+    cancel();
+    hideTipFor(anchor);
+  };
+  anchor.addEventListener("pointerenter", (e) => {
+    // dsh's rule: no bubble for touch, nor for a "mouse" on a device that cannot hover.
+    if (e.pointerType !== "mouse" || !window.matchMedia("(any-hover: hover)").matches) return;
+    cancel();
+    timer = setTimeout(() => {
+      timer = undefined;
+      showTip(anchor, text());
+    }, opts.delayMs ?? 0);
+  });
+  anchor.addEventListener("focus", () => {
+    // Only keyboard focus: a click or a tap focuses the button too, and that is not a request.
+    if (anchor.matches(":focus-visible")) showTip(anchor, text());
+  });
+  for (const ev of ["pointerleave", "blur", "click"]) anchor.addEventListener(ev, hide);
   anchor.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") hideTip();
+    if (e.key === "Escape") hide();
   });
 }

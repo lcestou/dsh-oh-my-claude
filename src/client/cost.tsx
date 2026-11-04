@@ -111,7 +111,9 @@ export const COST_DIALOG_CSS =
   "[data-omc-cost-details] dd{color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums;text-align:right}" +
   // dsh's tooltip look (its bubble class is hashed, so the rules are copied onto our own hook,
   // on the same tokens): fixed, above the anchor, centred by the transform.
-  "[data-omc-tip]{display:inline-flex;align-items:center;position:fixed;z-index:1100;width:max-content;max-width:50vw;padding:3px 7px;border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-tooltip-bg);color:var(--dsw-static-neutral-bluish-00);font-size:13px;line-height:20px;white-space:pre-line;overflow-wrap:break-word;pointer-events:none;transform:translate(-50%,-100%)}" +
+  "[data-omc-tip]{display:inline-flex;align-items:center;position:fixed;z-index:1100;width:max-content;max-width:50vw;padding:3px 7px;border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-tooltip-bg);color:var(--dsw-static-neutral-bluish-00);font-size:13px;line-height:20px;white-space:pre-line;overflow-wrap:break-word;pointer-events:none;transform:translate(-50%,-100%);animation:omc-tip-in .15s var(--ds-ease-in-out,ease-in-out)}" +
+  // dsh's bubble fades in over 0.15 s on its own easing; ours did not, and read as a jump beside it.
+  "@keyframes omc-tip-in{0%{opacity:0}}@media (prefers-reduced-motion:reduce){[data-omc-tip]{animation:none}}" +
   "[data-omc-tip][data-side=bottom]{transform:translate(-50%)}" +
   "[data-omc-cost-guard]{margin-top:10px;padding-top:8px;border-top:1px solid var(--dsw-alias-border-l1);display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12px}" +
   "[data-omc-cost-guard] label{display:inline-flex;align-items:center;gap:4px}" +
@@ -531,7 +533,7 @@ export function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
         // dsh's own stat pills get no hover bubble in 0.2.2, so the cost figure's breakdown would
         // be reachable only through the dialog; the plugin's bubble reads the pill's label on
         // each hover, so it tracks the figure and the language without re-attaching.
-        attachTip(trigger, () => titleRef.current);
+        attachTip(trigger, () => titleRef.current, { delayMs: 200 });
         body.className = (proto ?? protoSpan)?.querySelector("span")?.className ?? "";
         body.textContent = textRef.current;
         // dsh's pills lead with a 14px icon in the pill's own text colour; ours is Claude's spark.

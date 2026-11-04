@@ -72,10 +72,15 @@ async function check(p: Page, tag: string): Promise<void> {
   await p.waitForTimeout(500);
   const pb = await pill.boundingBox();
   const tip = p.locator('[role="tooltip"][data-omc-tip]');
-  const tb = await tip.boundingBox();
+  // `boundingBox` waits for an element that is not there, and on a touch screen there is none.
+  const tb = (await tip.count()) > 0 ? await tip.boundingBox() : null;
   console.log(`${tag} tooltip:`, await tip.count(), JSON.stringify(tb));
-  if (!(await within(p, tb)))
+  // dsh's rule, which the bubble follows: a mouse that can hover gets it, a touch screen never
+  // does (on a phone it used to sit on top of the dialog the tap opened).
+  const hovers = await p.evaluate(() => window.matchMedia("(any-hover: hover)").matches);
+  if (hovers && !(await within(p, tb)))
     failed.push(`${tag}: tooltip box ${JSON.stringify(tb)} is not inside the viewport`);
+  if (!hovers && (await tip.count()) > 0) failed.push(`${tag}: a tooltip showed on a touch screen`);
   if (pb)
     await p.screenshot({
       path: `${out}-${tag}-hover.png`,
@@ -84,6 +89,8 @@ async function check(p: Page, tag: string): Promise<void> {
   await pill.click();
   await p.waitForTimeout(1200);
   const dlg = p.locator("[data-omc-cost-dialog]");
+  if ((await p.locator('[role="tooltip"][data-omc-tip]').count()) > 0 && !hovers)
+    failed.push(`${tag}: a tooltip sits over the open dialog`);
   const db = await dlg.boundingBox();
   console.log(
     `${tag} dialog:`,
