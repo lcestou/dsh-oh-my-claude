@@ -46,8 +46,13 @@ function showTip(anchor: HTMLElement, text: string): void {
  *  taken out of the page never sees `mouseleave`, so its bubble stayed on screen until the next
  *  tooltip anywhere replaced it. */
 export function hideTipFor(anchor: HTMLElement): void {
+  pendingFor.get(anchor)?.();
   if (tipOpen?.anchor === anchor) hideTip();
 }
+
+/** Each anchor's pending hover timer, so `hideTipFor` can cancel one before it fires: a pill
+ *  removed inside the hover delay otherwise showed its bubble on a node no longer in the page. */
+const pendingFor = new WeakMap<HTMLElement, () => void>();
 
 /** Rewrite the open bubble's text when it belongs to `anchor`, so a figure that changes under the
  *  pointer (the cost pill mid-turn) is not shown stale until the pointer leaves and comes back. */
@@ -73,6 +78,7 @@ export function attachTip(
     if (timer !== undefined) clearTimeout(timer);
     timer = undefined;
   };
+  pendingFor.set(anchor, cancel);
   const hide = () => {
     cancel();
     hideTipFor(anchor);

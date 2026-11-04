@@ -170,6 +170,10 @@ const ssh = (host: string, script: string, timeout = 15_000, input?: string): Pr
         else resolve(r);
       },
     );
+    // ssh can exit before it reads the content (refused login, unreachable box). The write then
+    // hits a closed pipe, and an EPIPE with no listener throws in the dsh-web process instead of
+    // reaching the callback above, which already reports the failed run.
+    child.stdin?.on("error", () => {});
     child.stdin?.end(input ?? "");
   });
 
