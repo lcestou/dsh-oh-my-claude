@@ -90,6 +90,9 @@ const modeLabel = (m: string): string =>
  * The component only mounts a hidden span; all DOM work happens inside useEffect.
  */
 export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
+  // The label and aria-label are translated text; without this a language switch left them
+  // in the old language until the shield remounted.
+  useLocale();
   const anchorRef = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
