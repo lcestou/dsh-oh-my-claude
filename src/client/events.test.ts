@@ -36,7 +36,7 @@ import { KINDS, SLOW_MS, dispatch, pollEvery, streamUp, subscribe } from "./even
   assert.equal(pollEvery(false, 1000, 3000), 3000, "stream down, at rest: the slow rate");
   assert.equal(SLOW_MS, 30_000, "the fallback period while the stream is up");
   assert.ok(SLOW_MS < 60_000, "under HOLD_IDLE_MS, so a fallback read still re-arms a steer hold");
-  assert.equal(KINDS.length, 8, "seven kinds and the ping");
+  assert.equal(KINDS.length, 9, "eight kinds and the ping");
   assert.ok(KINDS.includes("ping"), "the heartbeat is an event the listener hears");
 }
 

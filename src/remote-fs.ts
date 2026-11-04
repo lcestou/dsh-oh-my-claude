@@ -10,8 +10,8 @@
  * (`src/remote-fs.test.ts`). Every path is single-quoted through `shq`, so a space or a quote in a
  * workspace path cannot break out of its argument.
  *
- * ponytail: a write carries its content base64-encoded inside the command line, which a settings or
- * memory file fits in comfortably; swap for a piped stdin the day something megabyte-sized needs it.
+ * A write sends its content base64-encoded on ssh's stdin, not in the command line: Linux caps one
+ * argument at 128 KiB, so a skill or memory file past about 96 KB failed with `spawn E2BIG`.
  */
 import { execFile } from "node:child_process";
 import { createReadStream } from "node:fs";
@@ -95,11 +95,11 @@ export const childPath = (dir: string, name: string): string =>
  * editor checks its next write against: reading it back in a second round trip would both cost a
  * connection and report on a file that may have moved on since.
  */
-export const writeScript = (path: string, base64: string): string =>
+export const writeScript = (path: string): string =>
   // `$$` is the remote shell's pid: two writes to one path at once would otherwise share a temp
   // name, and the second `mv` would find the file the first one already moved.
   `mkdir -p ${shq(dirname(path))} && { [ -e ${shq(path)} ] && cp -- ${shq(path)} ${shq(`${path}.bak`)} || true; } && ` +
-  `t=${shq(`${path}.tmp`)}.$$ && printf %s ${shq(base64)} | base64 -d > "$t" && mv -- "$t" ${shq(path)} && ` +
+  `t=${shq(`${path}.tmp`)}.$$ && base64 -d > "$t" && mv -- "$t" ${shq(path)} && ` +
   `{ stat -c %Y -- ${shq(path)} 2>/dev/null || stat -f %m -- ${shq(path)} 2>/dev/null || echo 0; }`;
 
 /** Delete, and stay silent about a file that was already gone. */
@@ -148,11 +148,12 @@ export const afterMark = (out: string): string | null => {
  * Run `script` on `host` and answer what it printed, with the box's own chatter cut away. Rejects
  * when the marker never arrived: the script did not get as far as its first statement, so `out` is
  * the box talking to itself rather than an answer, and reading that as one is how an unreachable
- * box shows up as an empty file that the next save then overwrites.
+ * box shows up as an empty file that the next save then overwrites. `input`, when given, is written
+ * to the remote shell's stdin and closed; without it stdin is closed at once.
  */
-const ssh = (host: string, script: string, timeout = 15_000): Promise<Ran> =>
-  new Promise((resolve, reject) =>
-    execFile(
+const ssh = (host: string, script: string, timeout = 15_000, input?: string): Promise<Ran> =>
+  new Promise((resolve, reject) => {
+    const child = execFile(
       "ssh",
       sshArgs(host, `printf ${shq(MARK)}; ${script}`),
       { timeout, windowsHide: true, maxBuffer: 8 * 1024 * 1024 },
@@ -168,8 +169,13 @@ const ssh = (host: string, script: string, timeout = 15_000): Promise<Ran> =>
         if (said === null) reject(transportError(host, r));
         else resolve(r);
       },
-    ),
-  );
+    );
+    // ssh can exit before it reads the content (refused login, unreachable box). The write then
+    // hits a closed pipe, and an EPIPE with no listener throws in the dsh-web process instead of
+    // reaching the callback above, which already reports the failed run.
+    child.stdin?.on("error", () => {});
+    child.stdin?.end(input ?? "");
+  });
 
 /** Split the read script's answer: the first line is the mtime in seconds, the rest is the file. */
 export function splitRead(out: string): FileRead {
@@ -304,7 +310,12 @@ export async function writeAt(box: FsBox, path: string, text: string): Promise<n
     await writeFile(path, body, "utf8");
     return (await stat(path)).mtimeMs;
   }
-  const r = await ssh(box.sshHost, writeScript(path, Buffer.from(body, "utf8").toString("base64")));
+  const r = await ssh(
+    box.sshHost,
+    writeScript(path),
+    15_000,
+    Buffer.from(body, "utf8").toString("base64"),
+  );
   if (r.code !== 0) throw transportError(box.sshHost, r);
   const seconds = Number(r.out.trim());
   return Number.isFinite(seconds) ? seconds * 1000 : 0;

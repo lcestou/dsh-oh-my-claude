@@ -518,6 +518,21 @@ export function unknownEffortLevels(): Array<{ level: string; models: string[] }
 export async function getCatalog(fetchImpl = fetch, cli: CliModel[] = [], picker?: PickerSettings) {
   await Promise.all([seedFromDisk(), seedLiveWindows()]);
   if (Date.now() - catalog.at < CATALOG_TTL_MS) return mergeCatalog(cli, catalog.models, picker);
+  // One read of the Models API at a time: every mount asks when the cache goes stale, and each
+  // used to fire its own call (and, offline, wait out its own five-second timeout).
+  apiRead ??= refreshFromApi(fetchImpl).finally(() => {
+    apiRead = undefined;
+  });
+  await apiRead;
+  return mergeCatalog(cli, catalog.models, picker);
+}
+
+/** The Models API read in flight, shared by every caller that finds the cache stale meanwhile. */
+let apiRead: Promise<void> | undefined;
+
+/** Refresh `catalog` from Anthropic's Models API, keeping the last good list on any failure and
+ *  marking the attempt so the next one waits out the TTL. */
+async function refreshFromApi(fetchImpl: typeof fetch): Promise<void> {
   const headers = await authHeaders(CLAUDE_HOME);
   if (headers) {
     try {
@@ -537,14 +552,13 @@ export async function getCatalog(fetchImpl = fetch, cli: CliModel[] = [], picker
           catalog = { at: Date.now(), models };
           void persistCatalog(models);
         }
-        return mergeCatalog(cli, catalog.models, picker);
+        return;
       }
     } catch {
       /* offline or rejected: keep previous catalog */
     }
   }
   catalog = { at: Date.now(), models: catalog.models }; // retry no sooner than the TTL
-  return mergeCatalog(cli, catalog.models, picker);
 }
 
 /** The provider-scoped half of a model entry; every Claude model takes text and images. */

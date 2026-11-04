@@ -21,7 +21,10 @@ export declare function trace(fileOrLine: string, maybeLine?: string): Promise<v
  * writers to one path would otherwise share it, and the loser's rename would find the file the
  * winner already moved.
  */
-export declare function writeJson(file: string, value: unknown): Promise<void>;
+export declare function writeJson(file: string, value: unknown, opts?: {
+    pretty?: boolean;
+    mode?: number;
+}): Promise<void>;
 /** Record (or clear) that a session's turn is running; serialized read-modify-write. */
 export declare function markBusy(id: string, on: boolean, path?: string): Promise<void>;
 /** Sessions whose turn the previous dsh process left unfinished; cleared on read. */
@@ -196,6 +199,14 @@ export interface WorkspaceModel {
 }
 /** `{ [cwd]: { model, at } }`; a row whose model is not a non-empty string is skipped. */
 export declare function loadWorkspaceModels(dir: string): Promise<Map<string, WorkspaceModel>>;
+/** Whether a turn's model is the workspace's to remember. A temporary side call is not, and nor is
+ *  a dsh subagent child: it shares its parent's cwd, and writing its model and effort (a Sonnet
+ *  review, say) moved the next new session in that workspace onto the child's choice. */
+export declare const countsForWorkspaceMemory: (turn: {
+    model: string | undefined;
+    temporary: boolean | undefined;
+    origin: string | undefined;
+}) => boolean;
 /** Save the model (and the mount and effort it ran on) for one cwd, or forget the row when `model`
  *  is undefined or blank. The row is replaced whole, so an absent effort clears a remembered one:
  *  a turn on the model's own default means "default" next time too. */

@@ -32,6 +32,8 @@ import {
   TERMINAL_SYNC_FILE,
   loadWorkspaceModels,
   saveWorkspaceModel,
+  writeJson,
+  countsForWorkspaceMemory,
   loadContextSizes,
   saveContextSizes,
   trace,
@@ -315,6 +317,40 @@ assert.equal(wsModels.size, 1, "undefined model forgets it");
 await saveWorkspaceModel(wsDir, "/w/a", "");
 wsModels = await loadWorkspaceModels(wsDir);
 assert.equal(wsModels.size, 0, "blank model forgets it");
+// A subagent child shares its parent's cwd and must not move the workspace onto its model.
+assert.equal(
+  countsForWorkspaceMemory({ model: "claude-opus-5-5", temporary: false, origin: undefined }),
+  true,
+);
+assert.equal(
+  countsForWorkspaceMemory({ model: "claude-sonnet-5-5", temporary: false, origin: "subagent" }),
+  false,
+);
+assert.equal(
+  countsForWorkspaceMemory({ model: "claude-opus-5-5", temporary: true, origin: undefined }),
+  false,
+);
+assert.equal(
+  countsForWorkspaceMemory({ model: undefined, temporary: false, origin: undefined }),
+  false,
+);
+// A store file a hand edit broke is kept beside the new one, not written over.
+{
+  const { readdir: rd, writeFile: wf, readFile: rf } = await import("node:fs/promises");
+  const bad = join(wsDir, "broken.json");
+  await wf(bad, '{"a": 1,,}');
+  await writeJson(bad, { a: 2 });
+  const kept = (await rd(wsDir)).filter((f) => f.startsWith("broken.json.corrupt-"));
+  assert.equal(kept.length, 1, "the unreadable text is set aside");
+  assert.equal(await rf(join(wsDir, kept[0]!), "utf8"), '{"a": 1,,}', "byte for byte");
+  assert.deepEqual(JSON.parse(await rf(bad, "utf8")), { a: 2 }, "and the write still lands");
+  await writeJson(bad, { a: 3 });
+  assert.equal(
+    (await rd(wsDir)).filter((f) => f.startsWith("broken.json.corrupt-")).length,
+    1,
+    "a good file is not copied",
+  );
+}
 console.log("workspace models ok");
 // Context sizes: per-workspace character cost of each dsh context block.
 const csDir = await mkdtemp(join(tmpdir(), "omc-cs-"));

@@ -27,7 +27,7 @@ import { paintSpeed, tokensPerSecond } from "./speed.js";
 import { Spark, sparkNode } from "./spark.js";
 import { useHintValue, useHintFlag } from "./hints.js";
 import { onBodyMutation } from "./dom.js";
-import { attachTip } from "./tooltip.js";
+import { attachTip, hideTipFor, refreshTip } from "./tooltip.js";
 
 /** Cached tokens for the readout: `999`, `12.3K`, `2.1M`, and nothing at all for none. */
 export const formatCacheRead = (tokens: number): string => {
@@ -100,6 +100,7 @@ export const costDetails = (turns: TurnRecord[]): [string, string][] => {
  *  the stats dialog beside it (440 against 300, measured on dsh 0.1.6-alpha.2). */
 export const COST_DIALOG_CSS =
   "[data-omc-cost-dialog]{z-index:1100;box-sizing:border-box;background:var(--dsw-specific-menu);backdrop-filter:var(--dsw-menu-backdrop-filter);--dsw-elevation-stroke-color:var(--dsw-alias-border-l1);width:max-content;min-width:min(300px,100vw - 24px);max-width:min(320px,100vw - 24px);box-shadow:var(--dsw-elevation-prominent);color:var(--dsw-alias-label-secondary);cursor:default;border:0;border-radius:12px;padding:16px;font-size:12px;line-height:18px;position:fixed}" +
+  "[data-omc-cost-dialog]:focus{outline:none}" +
   "[data-omc-cost-title]{color:var(--dsw-alias-label-primary);justify-content:space-between;gap:16px;margin-bottom:8px;font-weight:500;display:flex}" +
   "[data-omc-cost-title-label]{align-items:center;gap:6px;min-width:0;display:inline-flex}" +
   "[data-omc-cost-title-label] svg{flex:none;width:14px;height:14px}" +
@@ -110,7 +111,9 @@ export const COST_DIALOG_CSS =
   "[data-omc-cost-details] dd{color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums;text-align:right}" +
   // dsh's tooltip look (its bubble class is hashed, so the rules are copied onto our own hook,
   // on the same tokens): fixed, above the anchor, centred by the transform.
-  "[data-omc-tip]{display:inline-flex;align-items:center;position:fixed;z-index:1100;width:max-content;max-width:50vw;padding:3px 7px;border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-tooltip-bg);color:var(--dsw-static-neutral-bluish-00);font-size:13px;line-height:20px;white-space:pre-line;overflow-wrap:break-word;pointer-events:none;transform:translate(-50%,-100%)}" +
+  "[data-omc-tip]{display:inline-flex;align-items:center;position:fixed;z-index:1100;width:max-content;max-width:50vw;padding:3px 7px;border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-tooltip-bg);color:var(--dsw-static-neutral-bluish-00);font-size:13px;line-height:20px;white-space:pre-line;overflow-wrap:break-word;pointer-events:none;transform:translate(-50%,-100%);animation:omc-tip-in .15s var(--ds-ease-in-out,ease-in-out)}" +
+  // dsh's bubble fades in over 0.15 s on its own easing; ours did not, and read as a jump beside it.
+  "@keyframes omc-tip-in{0%{opacity:0}}@media (prefers-reduced-motion:reduce){[data-omc-tip]{animation:none}}" +
   "[data-omc-tip][data-side=bottom]{transform:translate(-50%)}" +
   "[data-omc-cost-guard]{margin-top:10px;padding-top:8px;border-top:1px solid var(--dsw-alias-border-l1);display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12px}" +
   "[data-omc-cost-guard] label{display:inline-flex;align-items:center;gap:4px}" +
@@ -335,12 +338,22 @@ export function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
   useDismissOnOutsidePointer(pillRef, open, setOpen, panelRef);
   useEffect(() => {
     if (!open) return;
+    // Escape hands focus back to the pill; the move into the dialog is the effect below.
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key !== "Escape") return;
+      setOpen(false);
+      pillRef.current?.querySelector("button")?.focus({ preventScroll: true });
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [open]);
+  // The dialog is portaled to the end of the body, so the Tab after the pill used to land in the
+  // composer and the warn field was out of keyboard reach. Focus moves into it once it has
+  // coordinates: on its first frame it is `visibility: hidden` and cannot take focus.
+  const placed = pos !== null;
+  useEffect(() => {
+    if (open && placed) panelRef.current?.focus({ preventScroll: true });
+  }, [open, placed]);
   // A cost that left the row takes its dialog with it.
   useEffect(() => {
     if (!text) setOpen(false);
@@ -408,8 +421,10 @@ export function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
         // 2026-09-10, for nothing.
         if (trigger) {
           const expanded = String(openRef.current);
-          if (trigger.getAttribute("aria-label") !== titleRef.current)
+          if (trigger.getAttribute("aria-label") !== titleRef.current) {
             trigger.setAttribute("aria-label", titleRef.current);
+            refreshTip(trigger, titleRef.current);
+          }
           if (trigger.getAttribute("aria-expanded") !== expanded)
             trigger.setAttribute("aria-expanded", expanded);
           paintOver();
@@ -518,7 +533,7 @@ export function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
         // dsh's own stat pills get no hover bubble in 0.2.2, so the cost figure's breakdown would
         // be reachable only through the dialog; the plugin's bubble reads the pill's label on
         // each hover, so it tracks the figure and the language without re-attaching.
-        attachTip(trigger, () => titleRef.current);
+        attachTip(trigger, () => titleRef.current, { delayMs: 200 });
         body.className = (proto ?? protoSpan)?.querySelector("span")?.className ?? "";
         body.textContent = textRef.current;
         // dsh's pills lead with a 14px icon in the pill's own text colour; ours is Claude's spark.
@@ -545,6 +560,7 @@ export function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
       // no cost to show yet. `lastRow` is what says a hook once succeeded, so a span dsh has since
       // dropped still clears the hooked flag.
       if (inline === undefined && lastRow === undefined) return;
+      if (trigger) hideTipFor(trigger);
       inline?.remove();
       inline = undefined;
       body = undefined;
@@ -618,6 +634,7 @@ export function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
             // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a non-modal popover; <dialog> hides unless open and brings its own box
             role="dialog"
             aria-label={t("main.cost.dialogLabel")}
+            tabIndex={-1}
             data-omc-cost-dialog=""
             style={pos ?? MEASURE_STYLE}
           >

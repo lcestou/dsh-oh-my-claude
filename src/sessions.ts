@@ -623,7 +623,7 @@ export async function syncRemoteWorkspaces(
   const dropped = rows.filter((w) => reg.get(w.workspaceId as WorkspaceId) === undefined);
   if (dropped.length === 0) return { workspaces: rows, dropped };
   const workspaces = rows.filter((w) => !dropped.includes(w));
-  await writeFile(path, `${JSON.stringify(workspaces, null, 2)}\n`, "utf8");
+  await writeJson(path, workspaces, { pretty: true });
   for (const w of dropped) {
     await rm(w.path, { recursive: true, force: true }).catch(() => {});
     log("info", `remote workspace ${w.name} on ${w.host} dropped: dsh no longer lists it`);
@@ -2681,10 +2681,7 @@ export function registerSessionRoutes(
                 // and the default mode left it readable by every account on the machine, which
                 // is a login to the other box for any of them. `mode` applies on create only, so
                 // `chmod` follows for a file an older build already wrote as 0664.
-                await writeFile(boxesPath, `${JSON.stringify(v.boxes, null, 2)}\n`, {
-                  encoding: "utf8",
-                  mode: 0o600,
-                });
+                await writeJson(boxesPath, v.boxes, { pretty: true, mode: 0o600 });
                 // Logged, not swallowed: if the chmod fails the token stays readable, and a
                 // hardening step that quietly does nothing is worse than one that says so.
                 await chmod(boxesPath, 0o600).catch((e: unknown) =>
@@ -2707,7 +2704,7 @@ export function registerSessionRoutes(
                 const v = validateSshBoxes((await readBody(req)).boxes);
                 if (v.error !== undefined) return json(res, 400, { error: v.error });
                 const before = await readSshBoxes(sshBoxesPath);
-                await writeFile(sshBoxesPath, `${JSON.stringify(v.boxes, null, 2)}\n`, "utf8");
+                await writeJson(sshBoxesPath, v.boxes, { pretty: true });
                 // A box takes its remote workspaces with it: their sessions ran over that box's
                 // ssh, and the sidebar rows would otherwise outlive the box they were pinned to.
                 // Same removal the card's own Remove does, one per row, so dsh's store tells every
@@ -2743,7 +2740,7 @@ export function registerSessionRoutes(
                       if (await dropRemoteWorkspace(w)) out.push(w);
                     if (out.length === 0) return out;
                     const next = existing.filter((w) => !out.includes(w));
-                    await writeFile(rwPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+                    await writeJson(rwPath, next, { pretty: true });
                     remoteWorkspaces = next;
                     await onRemoteWorkspaces?.(next);
                     return out;
@@ -2977,7 +2974,7 @@ export function registerSessionRoutes(
                 await withRwFile(async () => {
                   const existing = await readRemoteWorkspaces(rwPath);
                   const next = [...existing.filter((w) => w.path !== ws.path), entry];
-                  await writeFile(rwPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+                  await writeJson(rwPath, next, { pretty: true });
                   // Only after the file took it: a failed write must not leave the routes
                   // reading a workspace list that nothing on disk agrees with.
                   remoteWorkspaces = next;
@@ -2995,7 +2992,7 @@ export function registerSessionRoutes(
                   if (entry && !(await dropRemoteWorkspace(entry)))
                     return { workspaces: existing, stuck: entry.name };
                   const next = existing.filter((w) => w.path !== target);
-                  await writeFile(rwPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+                  await writeJson(rwPath, next, { pretty: true });
                   remoteWorkspaces = next;
                   await onRemoteWorkspaces?.(next);
                   return { workspaces: next, stuck: "" };

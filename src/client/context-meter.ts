@@ -602,10 +602,13 @@ export function watchContextMeter(ctx: ClientCtx) {
   let ringLevel: LimitLevel | undefined;
   let ringLimitAsked = 0;
   let ringModel: string | undefined;
-  // Flipping a warning switch rereads at the next paint rather than a minute later.
-  window.addEventListener(HINTS_EVENT, () => {
+  // Flipping a warning switch rereads at the next paint rather than a minute later. Removed with
+  // the module: a hot reload of the client used to leave one more listener behind each time.
+  const onHints = () => {
     ringLimitAsked = 0;
-  });
+  };
+  window.addEventListener(HINTS_EVENT, onHints);
+  whenContextGone(() => window.removeEventListener(HINTS_EVENT, onHints));
   /**
    * Fill the ring from the CLI's own occupancy.
    *

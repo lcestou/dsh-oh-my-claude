@@ -42,15 +42,62 @@ function showTip(anchor: HTMLElement, text: string): void {
   anchor.setAttribute("aria-describedby", bubble.id);
   tipOpen = { bubble, anchor };
 }
-/** Give an element a dsh-style tooltip in place of the browser's `title`: shown on hover and on
- *  keyboard focus, hidden on leave, blur, click and Escape. `text` is read each time, so a
- *  language switch shows the new wording without re-attaching. */
-export function attachTip(anchor: HTMLElement, text: () => string): void {
-  const show = () => showTip(anchor, text());
-  anchor.addEventListener("mouseenter", show);
-  anchor.addEventListener("focus", show);
-  for (const ev of ["mouseleave", "blur", "click"]) anchor.addEventListener(ev, hideTip);
+/** Take the bubble down when it belongs to `anchor`. For an anchor about to be removed: a node
+ *  taken out of the page never sees `mouseleave`, so its bubble stayed on screen until the next
+ *  tooltip anywhere replaced it. */
+export function hideTipFor(anchor: HTMLElement): void {
+  pendingFor.get(anchor)?.();
+  if (tipOpen?.anchor === anchor) hideTip();
+}
+
+/** Each anchor's pending hover timer, so `hideTipFor` can cancel one before it fires: a pill
+ *  removed inside the hover delay otherwise showed its bubble on a node no longer in the page. */
+const pendingFor = new WeakMap<HTMLElement, () => void>();
+
+/** Rewrite the open bubble's text when it belongs to `anchor`, so a figure that changes under the
+ *  pointer (the cost pill mid-turn) is not shown stale until the pointer leaves and comes back. */
+export function refreshTip(anchor: HTMLElement, text: string): void {
+  if (tipOpen?.anchor !== anchor) return;
+  if (text === "") return hideTip();
+  const label = tipOpen.bubble.firstElementChild;
+  if (label && label.textContent !== text) label.textContent = text;
+}
+
+/** Give an element a dsh-style tooltip in place of the browser's `title`, timed the way dsh's own
+ *  Tooltip is: a real mouse hover shows it after `delayMs` (dsh's stat pills wait 200 ms), keyboard
+ *  focus shows it at once, and a touch never does. A tap used to fire hover and focus, so on a
+ *  phone the bubble sat on top of the dialog the tap had just opened. Hidden on leave, blur, click
+ *  and Escape. `text` is read each time, so a language switch shows the new wording. */
+export function attachTip(
+  anchor: HTMLElement,
+  text: () => string,
+  opts: { delayMs?: number } = {},
+): void {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const cancel = () => {
+    if (timer !== undefined) clearTimeout(timer);
+    timer = undefined;
+  };
+  pendingFor.set(anchor, cancel);
+  const hide = () => {
+    cancel();
+    hideTipFor(anchor);
+  };
+  anchor.addEventListener("pointerenter", (e) => {
+    // dsh's rule: no bubble for touch, nor for a "mouse" on a device that cannot hover.
+    if (e.pointerType !== "mouse" || !window.matchMedia("(any-hover: hover)").matches) return;
+    cancel();
+    timer = setTimeout(() => {
+      timer = undefined;
+      showTip(anchor, text());
+    }, opts.delayMs ?? 0);
+  });
+  anchor.addEventListener("focus", () => {
+    // Only keyboard focus: a click or a tap focuses the button too, and that is not a request.
+    if (anchor.matches(":focus-visible")) showTip(anchor, text());
+  });
+  for (const ev of ["pointerleave", "blur", "click"]) anchor.addEventListener(ev, hide);
   anchor.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") hideTip();
+    if (e.key === "Escape") hide();
   });
 }

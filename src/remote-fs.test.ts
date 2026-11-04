@@ -96,13 +96,15 @@ import type { SubprocessHandle } from "./process.js";
 
   // A write keeps a .bak and lands through a temp file, so a dropped connection cannot leave half
   // a settings file the CLI would refuse to start on.
-  const write = writeScript("/w/.claude/settings.json", "e30K");
+  const write = writeScript("/w/.claude/settings.json");
   assert.ok(write.startsWith("mkdir -p '/w/.claude'"), "the parent is created first");
   assert.ok(write.includes("cp -- '/w/.claude/settings.json' '/w/.claude/settings.json.bak'"));
   // The temp name carries the remote shell's pid: two writes to one path at once would otherwise
   // share it, and the second `mv` would find the file the first one already moved.
   assert.ok(write.includes("t='/w/.claude/settings.json.tmp'.$$"));
-  assert.ok(write.includes("printf %s 'e30K' | base64 -d > \"$t\""));
+  // The content arrives on stdin, never in the command line, so its size has no argv limit.
+  assert.ok(write.includes('base64 -d > "$t"'));
+  assert.ok(!write.includes("printf %s"), "no content is inlined in the script");
   assert.ok(write.includes("mv -- \"$t\" '/w/.claude/settings.json'"));
   // The write answers its own mtime: reading it back would cost a second connection and report on a
   // file that may have moved on since.
