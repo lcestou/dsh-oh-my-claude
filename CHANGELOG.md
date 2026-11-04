@@ -6,6 +6,11 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Added
+
+- The history search card closes when the page loses focus and on Esc wherever the keyboard is in the page, not only from its own field. A browser that takes Ctrl+S for itself (Zen, Arc) moved the keyboard to its sidebar and left the card open with no way out.
+- Ctrl+Down and Ctrl+Up cycle the history search's scope alongside Ctrl+S. Zen and Arc take Ctrl+S at the browser level to toggle their sidebar, so the card never saw it there; no browser binds Ctrl with an arrow. The scope pill on the card stays clickable too, and the tooltip, the card's key line and the Settings description name both.
+
 ### Fixed
 
 - The ✻ panel on a new session opens on Restore every time, not only when the workspace's transcript list had already arrived. The list is read when the session appears, and a click on the flower that beat the answer opened the panel on whatever tab was used last, so the default looked random (Memory one time, Restore the next). While the list is still unknown, Restore wins; a workspace with nothing to restore still opens on the last tab.

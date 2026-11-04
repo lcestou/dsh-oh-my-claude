@@ -1,6 +1,6 @@
 // Ctrl+R in the composer: a search over the prompts typed before, the way the Claude Code
 // terminal's history search works. A card opens above the composer with a search field; the
-// rows are the prompts that match, newest first; Ctrl+S cycles the scope (this session, the
+// rows are the prompts that match, newest first; Ctrl+S or Ctrl+Down cycles the scope (this session, the
 // workspace, everywhere on the box); Enter sends the row, Tab writes it into the composer and
 // Escape closes. The match rule is a pure function (`historyMatches`) so it is testable without
 // a DOM; the component owns the key listener, the list and the fetch.
@@ -23,12 +23,16 @@ import {
 /** Where the search looks: one session, every transcript of the workspace, or the whole box. */
 export type HistoryScope = "session" | "workspace" | "box";
 
-/** The scopes in the order Ctrl+S walks them, round and round. */
+/** The scopes in the order Ctrl+S and Ctrl+Down walk them, round and round; Ctrl+Up walks back. */
 export const SCOPES: readonly HistoryScope[] = ["session", "workspace", "box"];
 
 /** The scope after `scope` in Ctrl+S's cycle; the last wraps to the first. */
 export const nextScope = (scope: HistoryScope): HistoryScope =>
   SCOPES[(SCOPES.indexOf(scope) + 1) % SCOPES.length] ?? "session";
+
+/** The scope before `scope`, for Ctrl+Up; the first wraps to the last. */
+export const prevScope = (scope: HistoryScope): HistoryScope =>
+  SCOPES[(SCOPES.indexOf(scope) + SCOPES.length - 1) % SCOPES.length] ?? "session";
 
 /** One prompt as the history route answers it. */
 export interface HistoryItem {
@@ -181,6 +185,29 @@ export function HistorySearch({
     onClose();
     focusComposer();
   };
+  // Two ways out that do not depend on the keyboard being in the field. Zen and Arc take Ctrl+S
+  // at the browser level and move the keyboard to their sidebar, outside the page, so the card
+  // sat open with no Esc able to reach it (owner, 2026-11-04). The window losing focus is that
+  // moment, and closing then hands the composer back when the page is clicked again. Esc on the
+  // document (capture, before dsh's own Esc Esc stop) covers the keyboard landing elsewhere in
+  // the page. The card is transient, so closing on a tab switch costs nothing.
+  const closeRef = useRef(close);
+  closeRef.current = close;
+  useEffect(() => {
+    const onBlur = () => closeRef.current();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.isComposing) return;
+      e.preventDefault();
+      e.stopPropagation();
+      closeRef.current();
+    };
+    window.addEventListener("blur", onBlur);
+    document.addEventListener("keydown", onKey, true);
+    return () => {
+      window.removeEventListener("blur", onBlur);
+      document.removeEventListener("keydown", onKey, true);
+    };
+  }, []);
   const fill = () => {
     if (picked) setDraft(picked.text);
     close();
@@ -210,6 +237,14 @@ export function HistorySearch({
       close();
       // On the next frame: dsh's composer takes the draft on its own render first.
       if (submit) requestAnimationFrame(() => submit());
+    } else if (ctrl && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+      // A second pair of scope keys: Zen and Arc take Ctrl+S at the browser level to toggle
+      // their sidebar, so the card never sees it there (owner, 2026-11-04). No browser binds
+      // Ctrl with an arrow, and the arrows alone already walk the rows, so the modifier reads
+      // as the other axis. Before the plain arrow branches, which would otherwise take these.
+      e.preventDefault();
+      setScope(e.key === "ArrowDown" ? nextScope(scope) : prevScope(scope));
+      setAt(0);
     } else if (e.key === "ArrowDown" || (ctrl && e.key.toLowerCase() === "r")) {
       e.preventDefault();
       move(1);

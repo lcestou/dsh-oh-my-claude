@@ -160,7 +160,7 @@ dsh 只发布预发行版，客户端 API 也会在版本之间变动，所以�
 34. 在 dsh 里重命名的会话在 `claude --resume` 中沿用同名，Claude 一侧设置的名字也会重命名 dsh 会话。[How it works](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md)
 35. 在 Claude 和其他模型（例如 DeepSeek 或本地模型）之间来回切换同一个会话：Claude 能看到其他模型期间的提示、回复和工具调用。[Sessions](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#sessions)
 36. 输入框为空时按上箭头调出上一条提示词，再按上箭头调出更早的，下箭头调出更新的直至清空，与 Claude Code 终端一致；输入任意字符即结束回溯。新会话从该工作区最近的记录中回溯。可在设置中关闭（「提示词回溯」）。
-37. 在输入框按 Ctrl+R 搜索之前输入过的提示词：范围可为本会话、本工作区或整台机器（Ctrl+S 切换）。Enter 发送所选行，Tab 填入输入框，Esc 关闭。可在设置中关闭（「历史搜索」）。
+37. 在输入框按 Ctrl+R 搜索之前输入过的提示词：范围可为本会话、本工作区或整台机器（Ctrl+S 或 Ctrl+↑/↓ 切换）。Enter 发送所选行，Tab 填入输入框，Esc 关闭。可在设置中关闭（「历史搜索」）。
 38. 输入框为空且没有任务运行时按两次 Esc，打开回溯标签页并选中最新一条提示词，与终端按两次 Esc 打开 /rewind 一致；回溯后该提示词会回到输入框，可修改后重新发送。可在设置中关闭（「编辑上一条提示词」）。这三个输入框按键也列在 dsh 的快捷键对话框里。
 
 一些你永远不必动的默认行为，比如工具结果中的密钥脱敏和挺过 CLI 自身的更新，见 [How it works](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md)。
