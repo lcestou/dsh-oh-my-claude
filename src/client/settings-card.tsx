@@ -108,13 +108,21 @@ export function WorkspaceModelMemory({ sessionId, ctx }: { sessionId: string; ct
       if (!target) return;
       const dir = ctx.modelDirectories.directoryFor(sessionId);
       const now = dir.store.getSnapshot().current;
+      // Strict on the effort too: a target with none means the model's default, so a blank that
+      // came up on the same model at another effort is still switched.
       if (
         now?.provider === target.provider &&
         now.model === target.model &&
-        (target.reasoningEffort === undefined || now.reasoningEffort === target.reasoningEffort)
+        now.reasoningEffort === target.reasoningEffort
       )
         return;
-      if (dir.select) await dir.select(target);
+      if (!dir.select) return;
+      const done = await dir.select(target);
+      // dsh answers a failed selection rather than throwing. An effort the model does not take is
+      // the likely cause (a default set before a model lost a level), so the model alone is tried
+      // once more and the blank still opens on it.
+      if (done && done.ok === false && target.reasoningEffort !== undefined)
+        await dir.select({ provider: target.provider, model: target.model });
     };
     // A session dsh has not bound yet throws from directoryFor (see claudeProviderOf); a route
     // that is not there answers an error. Neither is this component's problem to report.

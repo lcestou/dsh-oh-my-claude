@@ -138,8 +138,10 @@ export function NewSessionDefaultRow() {
         >
           <option value="">{t("main.settingsUi.newDefaultNone")}</option>
           {boxes.map((box) => {
+            // A hidden model stays listed while it is the stored default, so the row shows what is
+            // in effect instead of reading "No default" over a default that still applies.
             const rows = box.models
-              .filter((m) => !m.hidden)
+              .filter((m) => !m.hidden || `${box.provider}\n${m.id}` === key)
               .map((m) => (
                 <option key={`${box.provider}\n${m.id}`} value={`${box.provider}\n${m.id}`}>
                   {m.name}

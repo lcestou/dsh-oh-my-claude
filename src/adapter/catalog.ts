@@ -150,6 +150,7 @@ const CachedCatalog = z.array(
     contextWindow: z.number(),
     efforts: z.array(z.string()),
     createdAt: z.number(),
+    unknownEfforts: z.array(z.string()),
   }),
 );
 /** Parse a persisted catalog file. Anything malformed reads as empty, so the caller falls back. */
@@ -160,6 +161,8 @@ export function parseCatalogCache(text: string): ReturnType<typeof M>[] {
       .map((r) => {
         const row = M(r.id, r.name, r.contextWindow, r.efforts);
         if (r.createdAt !== undefined) row.createdAt = r.createdAt;
+        // Kept across a restart, so Diagnostics still names a new level before the next live read.
+        if (r.unknownEfforts && r.unknownEfforts.length > 0) row.unknownEfforts = r.unknownEfforts;
         return row;
       });
   } catch {
