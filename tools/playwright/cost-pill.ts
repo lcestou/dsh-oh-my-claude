@@ -1,10 +1,26 @@
 // Dev-only check: the cost pill in dsh's stats row lights up on hover, opens its dialog on click,
 // and does the same from a phone tap. Point PLAYWRIGHT_ROOT at any project that has Playwright.
 // Usage: bun tools/playwright/cost-pill.ts <token> [/tmp/pw/cost-pill]
-import { dshUrl, launch, type Page } from "./pw.js";
+import { type Box, dshUrl, launch, type Locator, type Page } from "./pw.js";
 
 const [token, out = "/tmp/pw/cost-pill"] = process.argv.slice(2);
 const b = await launch();
+/** What went wrong, one line each; the run exits 1 when any. A printed box used to be the whole
+ *  verdict, and a dialog 770px under the pill (dsh 0.2.2-alpha.3, whose composer seat became the
+ *  containing block for a fixed child) printed just like one above it. */
+const failed: string[] = [];
+/** A DOM click on a sidebar row, not Playwright's pointer: the phone sidebar is a sheet whose lower
+ *  rows sit outside the 844px viewport, and a pointer click on one fails actionability ("outside
+ *  of the viewport") on dsh 0.2.2-alpha.3 before the pill is ever reached. */
+const tap = (l: Locator) => l.evaluate((el) => el.click());
+
+/** Whether a box is drawn and lies wholly inside the page's viewport; a hidden or unplaced
+ *  element answers no box, which is the same failure as one drawn off screen. */
+async function within(p: Page, box: Box | null): Promise<boolean> {
+  if (box === null) return false;
+  const view = await p.evaluate(() => ({ w: window.innerWidth, h: window.innerHeight }));
+  return box.x >= 0 && box.y >= 0 && box.x + box.width <= view.w && box.y + box.height <= view.h;
+}
 
 /** Open a session that shows the cost pill: the workspace named by PW_WORKSPACE, else the first.
  *  A phone keeps the tree behind dsh's "Open sidebar" button, which closes again on each pick. */
@@ -26,14 +42,14 @@ async function openCostSession(p: Page): Promise<boolean> {
       : p.locator('[role="treeitem"]')
   ).first();
   if (await ws.count()) {
-    await ws.click({ force: true });
+    await tap(ws);
     await p.waitForTimeout(1200);
   }
   for (let i = 1; i < 8; i++) {
     await showTree();
     const row = p.locator('[role="treeitem"]').nth(i);
     if (!(await row.count())) break;
-    await row.click({ force: true });
+    await tap(row);
     await p.waitForTimeout(2500);
     if (await p.locator("[data-omc-cost-pill]").count()) return true;
   }
@@ -55,6 +71,11 @@ async function check(p: Page, tag: string): Promise<void> {
   await pill.hover();
   await p.waitForTimeout(500);
   const pb = await pill.boundingBox();
+  const tip = p.locator('[role="tooltip"][data-omc-tip]');
+  const tb = await tip.boundingBox();
+  console.log(`${tag} tooltip:`, await tip.count(), JSON.stringify(tb));
+  if (!(await within(p, tb)))
+    failed.push(`${tag}: tooltip box ${JSON.stringify(tb)} is not inside the viewport`);
   if (pb)
     await p.screenshot({
       path: `${out}-${tag}-hover.png`,
@@ -74,7 +95,9 @@ async function check(p: Page, tag: string): Promise<void> {
     "text:",
     JSON.stringify((await dlg.innerText().catch(() => "")).replace(/\n/g, " | ")),
   );
-  if (db && pb)
+  const inside = await within(p, db);
+  if (!inside) failed.push(`${tag}: dialog box ${JSON.stringify(db)} is not inside the viewport`);
+  if (db && pb && inside)
     await p.screenshot({
       path: `${out}-${tag}-open.png`,
       clip: {
@@ -91,7 +114,7 @@ async function check(p: Page, tag: string): Promise<void> {
 
 const desktop = await b.newPage({ viewport: { width: 1400, height: 900 }, deviceScaleFactor: 2 });
 if (await openCostSession(desktop)) await check(desktop, "desktop");
-else console.log("desktop: no session with a cost pill found");
+else failed.push("desktop: no session with a cost pill found");
 
 const phone = await b.newContext({
   viewport: { width: 390, height: 844 },
@@ -101,6 +124,8 @@ const phone = await b.newContext({
 });
 const pp = await phone.newPage();
 if (await openCostSession(pp)) await check(pp, "phone");
-else console.log("phone: no session with a cost pill found");
+else failed.push("phone: no session with a cost pill found");
 await phone.close();
 await b.close();
+for (const f of failed) console.log(`FAIL ${f}`);
+process.exit(failed.length ? 1 : 0);

@@ -6,6 +6,11 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Fixed
+
+- The cost pill's dialog opens above the pill again on dsh 0.2.2-alpha.3. That dsh gives its composer seat `will-change: transform`, which makes the seat the containing block for anything fixed-positioned inside it, and the dialog, rendered beside the pill, took its viewport coordinates from the seat's corner and drew 770px below the pill, off the bottom of the screen. The dialog is now portaled to the document body the way dsh's own stat dialogs are.
+- Hovering the cost pill shows its breakdown (session total, last turn, turns, time to first token) in a tooltip; dsh's own stat pills show none, so the figure was readable only through the dialog.
+
 ## [1.5.12] - 2026-11-02
 
 dsh: runs on 0.2.0-rc.1 through 0.2.2-alpha.2; built and tested on 0.2.2-alpha.2.

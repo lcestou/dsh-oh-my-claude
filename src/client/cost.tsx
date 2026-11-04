@@ -3,6 +3,7 @@
 import { t, useLocale } from "./i18n.js";
 import type { CSSProperties } from "react";
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   useAnchoredPosition,
   useDismissOnOutsidePointer,
@@ -26,6 +27,7 @@ import { paintSpeed, tokensPerSecond } from "./speed.js";
 import { Spark, sparkNode } from "./spark.js";
 import { useHintValue, useHintFlag } from "./hints.js";
 import { onBodyMutation } from "./dom.js";
+import { attachTip } from "./tooltip.js";
 
 /** Cached tokens for the readout: `999`, `12.3K`, `2.1M`, and nothing at all for none. */
 export const formatCacheRead = (tokens: number): string => {
@@ -313,8 +315,11 @@ export function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
   };
   // The pill's dialog, the same seat dsh's own pills use (`useStatDialog`, ui-chat): the injected
   // anchor span is the trigger root, the panel is fixed-positioned above it by dsh's own hook and
-  // closes on an outside pointer or Escape. No portal: the panel is rendered here, beside the slot
-  // span, and `position: fixed` puts it where the coordinates say regardless.
+  // closes on an outside pointer or Escape. Portaled to `document.body` the way dsh's own are:
+  // rendered beside the slot span it sat inside dsh's composer seat, and from 0.2.2-alpha.3 that
+  // seat carries `will-change: transform`, which makes it the containing block for a fixed
+  // descendant. The hook's viewport coordinates were then read from the seat's corner, and the
+  // dialog drew 770px below the pill, off the bottom of the screen (owner, 2026-11-03).
   const [open, setOpen] = useState(false);
   const openRef = useRef(open);
   const pillRef = useRef<HTMLElement | null>(null);
@@ -510,6 +515,10 @@ export function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
         trigger.setAttribute("aria-label", titleRef.current);
         paintOver();
         trigger.addEventListener("click", () => setOpen((was) => !was));
+        // dsh's own stat pills get no hover bubble in 0.2.2, so the cost figure's breakdown would
+        // be reachable only through the dialog; the plugin's bubble reads the pill's label on
+        // each hover, so it tracks the figure and the language without re-attaching.
+        attachTip(trigger, () => titleRef.current);
         body.className = (proto ?? protoSpan)?.querySelector("span")?.className ?? "";
         body.textContent = textRef.current;
         // dsh's pills lead with a 14px icon in the pill's own text colour; ours is Claude's spark.
@@ -602,65 +611,69 @@ export function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
           );
         })()}
       </span>
-      {open && (
-        <div
-          ref={panelRef}
-          // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a non-modal popover; <dialog> hides unless open and brings its own box
-          role="dialog"
-          aria-label={t("main.cost.dialogLabel")}
-          data-omc-cost-dialog=""
-          style={pos ?? MEASURE_STYLE}
-        >
-          <div data-omc-cost-title="">
-            <span data-omc-cost-title-label="">
-              <Spark size={14} />
-              {t("main.cost.dialogLabel")}
-            </span>
-            <span data-omc-cost-title-value="">{fmtCost(total)}</span>
-          </div>
-          <div data-omc-cost-rule="" aria-hidden="true" />
-          <dl data-omc-cost-details="">
-            {costDetails(turns).map(([label, value]) => (
-              <Fragment key={label}>
-                <dt>{label}</dt>
-                <dd>{value}</dd>
-              </Fragment>
-            ))}
-          </dl>
-          <div data-omc-cost-guard="">
-            <label>
-              {t("main.cost.warnAt")}
-              <input
-                type="number"
-                min={0}
-                step={1}
-                inputMode="decimal"
-                aria-label={t("main.cost.warnAria")}
-                data-omc-cost-guard-input=""
-                value={guardDraft}
-                placeholder={
-                  numberOr(boxLine) === undefined ? t("main.cost.offPlaceholder") : String(boxLine)
-                }
-                onChange={(e) => setGuardDraft(e.target.value)}
-                onBlur={saveGuard}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") saveGuard();
-                }}
-              />
-            </label>
-            {numberOr(sessionLine) !== undefined && (
-              <button
-                type="button"
-                data-omc-cost-guard-clear=""
-                onClick={() => setSessionLine(null)}
-              >
-                {t("main.cost.clear")}
-              </button>
-            )}
-            {subscription && <p data-omc-cost-note="">{t("main.cost.subscriptionNote")}</p>}
-          </div>
-        </div>
-      )}
+      {open &&
+        createPortal(
+          <div
+            ref={panelRef}
+            // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a non-modal popover; <dialog> hides unless open and brings its own box
+            role="dialog"
+            aria-label={t("main.cost.dialogLabel")}
+            data-omc-cost-dialog=""
+            style={pos ?? MEASURE_STYLE}
+          >
+            <div data-omc-cost-title="">
+              <span data-omc-cost-title-label="">
+                <Spark size={14} />
+                {t("main.cost.dialogLabel")}
+              </span>
+              <span data-omc-cost-title-value="">{fmtCost(total)}</span>
+            </div>
+            <div data-omc-cost-rule="" aria-hidden="true" />
+            <dl data-omc-cost-details="">
+              {costDetails(turns).map(([label, value]) => (
+                <Fragment key={label}>
+                  <dt>{label}</dt>
+                  <dd>{value}</dd>
+                </Fragment>
+              ))}
+            </dl>
+            <div data-omc-cost-guard="">
+              <label>
+                {t("main.cost.warnAt")}
+                <input
+                  type="number"
+                  min={0}
+                  step={1}
+                  inputMode="decimal"
+                  aria-label={t("main.cost.warnAria")}
+                  data-omc-cost-guard-input=""
+                  value={guardDraft}
+                  placeholder={
+                    numberOr(boxLine) === undefined
+                      ? t("main.cost.offPlaceholder")
+                      : String(boxLine)
+                  }
+                  onChange={(e) => setGuardDraft(e.target.value)}
+                  onBlur={saveGuard}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") saveGuard();
+                  }}
+                />
+              </label>
+              {numberOr(sessionLine) !== undefined && (
+                <button
+                  type="button"
+                  data-omc-cost-guard-clear=""
+                  onClick={() => setSessionLine(null)}
+                >
+                  {t("main.cost.clear")}
+                </button>
+              )}
+              {subscription && <p data-omc-cost-note="">{t("main.cost.subscriptionNote")}</p>}
+            </div>
+          </div>,
+          document.body,
+        )}
     </>
   );
 }
