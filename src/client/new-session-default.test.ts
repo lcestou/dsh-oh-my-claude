@@ -81,6 +81,21 @@ assert.deepEqual(
   }),
   { provider: "claude-code", model: "claude-opus-5-5" },
 );
+// A box picked by hand after the blank came up local: the pick decides the mount, for the default
+// and for the memory alike (`current` is read at mount, `picked` just before the apply).
+assert.deepEqual(
+  blankSessionTarget({
+    current: "claude-code",
+    picked: "claude-code-lilly",
+    saved: undefined,
+    def,
+  }),
+  { provider: "claude-code-lilly", model: "claude-opus-5-5", reasoningEffort: "high" },
+);
+assert.deepEqual(
+  blankSessionTarget({ current: "claude-code", picked: "claude-code-lilly", saved, def }),
+  { provider: "claude-code-lilly", model: "claude-sonnet-5-5", reasoningEffort: "medium" },
+);
 // Nothing at all: leave the blank alone.
 assert.equal(
   blankSessionTarget({

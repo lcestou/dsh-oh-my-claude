@@ -56,21 +56,28 @@ export function blankSessionTarget(args: {
   def: SessionDefault | undefined;
 }): BlankTarget | undefined {
   const { current, picked, saved, def } = args;
+  // A provider picked by hand decides the mount: a Claude one is used as it is, any other leaves
+  // the blank alone. `current` is read when the component mounts and `picked` just before the
+  // apply, so a box chosen in between must not lose to the mount the blank started on.
+  if (picked) {
+    const mount = claude(picked);
+    const model = saved?.model ?? def?.model;
+    if (!mount || !model) return undefined;
+    return withEffort(mount, model, saved ? saved.effort : def?.effort);
+  }
   if (saved) {
-    const provider = current ?? (picked ? undefined : claude(saved.provider));
+    const provider = current ?? claude(saved.provider);
     return provider ? withEffort(provider, saved.model, saved.effort) : undefined;
   }
   if (def) {
     // The default names its box on purpose (the dropdown is grouped by box), so a blank that is
-    // already Claude moves to that box unless someone picked a mount by hand. Opening it on the
-    // blank's own mount put a box's model id on the local CLI, which may not list it.
+    // already Claude moves to that box. Opening it on the blank's own mount put a box's model id
+    // on the local CLI, which may not list it.
     const provider = current
-      ? picked
-        ? current
-        : (claude(def.provider) ?? current)
-      : picked || !def.all
-        ? undefined
-        : claude(def.provider);
+      ? (claude(def.provider) ?? current)
+      : def.all
+        ? claude(def.provider)
+        : undefined;
     return provider ? withEffort(provider, def.model, def.effort) : undefined;
   }
   return undefined;
