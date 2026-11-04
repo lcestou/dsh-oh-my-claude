@@ -91,11 +91,16 @@ export function NewSessionDefaultRow() {
   useEffect(() => {
     let live = true;
     void loadSessionDefault().then((d) => live && setValue(d));
-    const loadModels = () =>
-      fetch(`${ROUTE}/models?all=1`)
+    // Only the newest read lands: two switches flipped in quick succession start two reads, and
+    // the older answer arriving last would put back the lineup from before the second flip.
+    let latest = 0;
+    const loadModels = () => {
+      const mine = ++latest;
+      return fetch(`${ROUTE}/models?all=1`)
         .then((r) => readJson<{ models?: PickerBox[] }>(r))
-        .then((b) => live && setBoxes(b.models ?? []))
+        .then((b) => live && mine === latest && setBoxes(b.models ?? []))
         .catch(() => {});
+    };
     void loadModels();
     // A model switched off or on in the Models block, and a box added or removed in the Boxes
     // card, change this list. Read once at mount, the dropdown kept the old lineup until Settings

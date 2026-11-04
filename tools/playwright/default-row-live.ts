@@ -42,6 +42,7 @@ await p.locator("[data-omc-models-block] > summary").first().click();
 await p.waitForTimeout(800);
 
 const options = p.locator("[data-omc-new-session-model] option");
+/** The model ids the default dropdown offers, read from each option's `provider\nmodel` value. */
 const values = async () =>
   (await options.evaluateAll((els) => els.map((e) => e.getAttribute("value") ?? ""))).map(
     (v) => v.split("\n")[1] ?? "",
