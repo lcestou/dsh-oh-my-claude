@@ -177,23 +177,17 @@ export function HistorySearch({
       live = false;
     };
   }, [open, scope, lists, ctx, sessionId]);
-  if (!open) return null;
-  const entries = lists[scope];
-  const rows = historyMatches(entries ?? [], query);
-  const picked = rows[Math.min(at, Math.max(0, rows.length - 1))];
-  const close = () => {
-    onClose();
-    focusComposer();
-  };
   // Two ways out that do not depend on the keyboard being in the field. Zen and Arc take Ctrl+S
   // at the browser level and move the keyboard to their sidebar, outside the page, so the card
   // sat open with no Esc able to reach it (owner, 2026-11-04). The window losing focus is that
   // moment, and closing then hands the composer back when the page is clicked again. Esc on the
   // document (capture, before dsh's own Esc Esc stop) covers the keyboard landing elsewhere in
-  // the page. The card is transient, so closing on a tab switch costs nothing.
-  const closeRef = useRef(close);
-  closeRef.current = close;
+  // the page. The card is transient, so closing on a tab switch costs nothing. Declared above
+  // the early return below, so a closed render runs the same hooks as an open one; the listeners
+  // themselves exist only while the card is open.
+  const closeRef = useRef<() => void>(() => {});
   useEffect(() => {
+    if (!open) return;
     const onBlur = () => closeRef.current();
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || e.isComposing) return;
@@ -207,7 +201,16 @@ export function HistorySearch({
       window.removeEventListener("blur", onBlur);
       document.removeEventListener("keydown", onKey, true);
     };
-  }, []);
+  }, [open]);
+  if (!open) return null;
+  const entries = lists[scope];
+  const rows = historyMatches(entries ?? [], query);
+  const picked = rows[Math.min(at, Math.max(0, rows.length - 1))];
+  const close = () => {
+    onClose();
+    focusComposer();
+  };
+  closeRef.current = close;
   const fill = () => {
     if (picked) setDraft(picked.text);
     close();
