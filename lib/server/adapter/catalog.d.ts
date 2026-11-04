@@ -8,10 +8,17 @@ export declare const EFFORTS_ALL: readonly ["low", "medium", "high", "xhigh", "m
 type EffortLevelCaps = {
     supported?: boolean;
 };
-/** The effort capability block: an overall flag plus one flag per level. */
+/** The effort capability block: an overall flag plus one flag per level. A level the plugin does
+ *  not know is still a key here; `unknownEffortsOf` reads those. */
 type EffortCaps = {
     supported?: boolean;
-} & Partial<Record<(typeof EFFORTS_ALL)[number], EffortLevelCaps>>;
+} & Partial<Record<(typeof EFFORTS_ALL)[number], EffortLevelCaps>> & {
+    [level: string]: EffortLevelCaps | boolean | undefined;
+};
+/** Levels the Models API marks supported that are not in `EFFORTS_ALL`. They are kept out of the
+ *  picker on purpose (a new level is offered only after it has been looked at), and this is how
+ *  one gets noticed: the names land on the row and Diagnostics lists them. */
+export declare function unknownEffortsOf(eff: EffortCaps | undefined): string[];
 /** One picker row. `description` is dsh's own optional field, drawn under the name; only the CLI's
  *  rows carry one, and a row without one has no key, since dsh validates the shape it is given. */
 interface CatalogModel {
@@ -24,6 +31,8 @@ interface CatalogModel {
     /** The Models API's `created_at`, as epoch ms; absent on a known or CLI row. Read by
      *  `mergeCatalog` to tell a model newer than the installed CLI from an old id it dropped. */
     createdAt?: number;
+    /** Effort levels the Models API reports for this model that the plugin does not know yet. */
+    unknownEfforts?: string[];
 }
 /** Build one KNOWN_MODELS row: the provider is always claude-code, so callers pass only the id, label, context window and efforts, filling description when given. */
 declare const M: (id: string, label: string, contextWindow: number, efforts: readonly string[], description?: string) => CatalogModel;
@@ -114,6 +123,13 @@ export declare const hintHiddenModels: (hints: Record<string, boolean | number>,
  *  name so the picker offers the same lineup whether or not the CLI has yet learned the model's
  *  short spelling. */
 export declare function mergeCatalog(cli: CliModel[], base: ReturnType<typeof M>[], picker?: PickerSettings): CatalogModel[];
+/** Each effort level the last Models API read reported that the plugin does not know, with the
+ *  models that carry it, for Diagnostics. Empty until a read has happened, and after a read that
+ *  found none. */
+export declare function unknownEffortLevels(): Array<{
+    level: string;
+    models: string[];
+}>;
 /** Serves the model catalog from cache, fetching Anthropic's API when the cache is stale, and
  *  keeps the last good catalog on any failure so the picker never goes empty. */
 export declare function getCatalog(fetchImpl?: typeof fetch, cli?: CliModel[], picker?: PickerSettings): Promise<CatalogModel[]>;

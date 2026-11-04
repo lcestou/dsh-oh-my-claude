@@ -9,6 +9,7 @@ import {
   mergeCatalog,
   modelFromApi,
   nameFromId,
+  unknownEffortsOf,
   noteLiveWindow,
   resolveModelInfo,
   seedLiveWindows,
@@ -197,3 +198,32 @@ assert.deepEqual(
 );
 assert.deepEqual(hintHiddenModels({}, "claude-code"), []);
 console.log("hint hidden models ok");
+
+// A level the plugin does not know is kept out of the picker but named on the row, so Diagnostics
+// can say a new one appeared; a known level and an unsupported unknown one are not reported.
+{
+  const row = modelFromApi({
+    id: "claude-next-9",
+    capabilities: {
+      effort: {
+        supported: true,
+        high: { supported: true },
+        ultra: { supported: true },
+        turbo: { supported: false },
+      },
+    },
+  });
+  assert.deepEqual(row.efforts, ["high"], "only known levels reach the picker");
+  assert.deepEqual(row.unknownEfforts, ["ultra"], "the supported unknown level is named");
+  assert.equal(
+    modelFromApi({ id: "claude-x" }).unknownEfforts,
+    undefined,
+    "no effort block, nothing named",
+  );
+  assert.deepEqual(
+    unknownEffortsOf({ supported: false, ultra: { supported: true } }),
+    [],
+    "effort off overall",
+  );
+  console.log("unknown efforts ok");
+}

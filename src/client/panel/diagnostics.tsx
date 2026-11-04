@@ -62,6 +62,8 @@ interface DiagnosticsReply {
   };
   configFiles: Array<{ scope: string; path: string; exists: boolean; parseError?: string }>;
   session?: { claudeId: string; cwd: string };
+  /** Effort levels the Models API reports that the plugin does not offer yet. */
+  unknownEfforts?: Array<{ level: string; models: string[] }>;
 }
 type DiagnosticsError = { ok: false; error: string };
 /** The slice of a turn record this tab reads: when the turn ran, and the calls a rule refused. */
@@ -605,6 +607,15 @@ export function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: Cl
               )}
             </div>
             <SessionRepairsNotice repairs={data.runtime.sessionRepairs} ctx={ctx} cwd={cwd} />
+            {data.unknownEfforts && data.unknownEfforts.length > 0 ? (
+              <output data-omc-unknown-efforts="" style={{ display: "block", color: T.warn }}>
+                {t("panel.diag.unknownEfforts", {
+                  levels: data.unknownEfforts
+                    .map((u) => `${u.level} (${u.models.join(", ")})`)
+                    .join("; "),
+                })}
+              </output>
+            ) : null}
             <div>
               {t("panel.diag.loginLabel")}{" "}
               {data.runtime.loggedIn ? (

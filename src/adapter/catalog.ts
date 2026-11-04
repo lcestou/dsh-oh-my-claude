@@ -25,10 +25,26 @@ function capEfforts(efforts: readonly string[], cap?: (typeof EFFORTS_ALL)[numbe
 }
 /** One effort level's capability flag, as the Models API reports it. */
 type EffortLevelCaps = { supported?: boolean };
-/** The effort capability block: an overall flag plus one flag per level. */
+/** The effort capability block: an overall flag plus one flag per level. A level the plugin does
+ *  not know is still a key here; `unknownEffortsOf` reads those. */
 type EffortCaps = { supported?: boolean } & Partial<
   Record<(typeof EFFORTS_ALL)[number], EffortLevelCaps>
->;
+> & { [level: string]: EffortLevelCaps | boolean | undefined };
+
+/** A level's flag block, or undefined for the overall boolean and for an absent key. */
+const levelCaps = (v: EffortLevelCaps | boolean | undefined): EffortLevelCaps | undefined =>
+  v === undefined || v === true || v === false ? undefined : v;
+
+/** Levels the Models API marks supported that are not in `EFFORTS_ALL`. They are kept out of the
+ *  picker on purpose (a new level is offered only after it has been looked at), and this is how
+ *  one gets noticed: the names land on the row and Diagnostics lists them. */
+export function unknownEffortsOf(eff: EffortCaps | undefined): string[] {
+  if (!eff?.supported) return [];
+  const known: readonly string[] = EFFORTS_ALL;
+  return Object.entries(eff)
+    .filter(([k, v]) => k !== "supported" && !known.includes(k) && levelCaps(v)?.supported === true)
+    .map(([k]) => k);
+}
 const EFFORTS_45 = ["low", "medium", "high"];
 /** One picker row. `description` is dsh's own optional field, drawn under the name; only the CLI's
  *  rows carry one, and a row without one has no key, since dsh validates the shape it is given. */
@@ -42,6 +58,8 @@ interface CatalogModel {
   /** The Models API's `created_at`, as epoch ms; absent on a known or CLI row. Read by
    *  `mergeCatalog` to tell a model newer than the installed CLI from an old id it dropped. */
   createdAt?: number;
+  /** Effort levels the Models API reports for this model that the plugin does not know yet. */
+  unknownEfforts?: string[];
 }
 
 /** Build one KNOWN_MODELS row: the provider is always claude-code, so callers pass only the id, label, context window and efforts, filling description when given. */
@@ -184,6 +202,8 @@ export function modelFromApi(m: {
   const efforts: string[] = eff?.supported ? EFFORTS_ALL.filter((l) => eff[l]?.supported) : [];
   const id = stableModelId(m.id ?? "");
   const row = M(id, m.display_name ?? id, m.max_input_tokens ?? 200_000, efforts);
+  const unknown = unknownEffortsOf(eff);
+  if (unknown.length > 0) row.unknownEfforts = unknown;
   const created = m.created_at ? Date.parse(m.created_at) : Number.NaN;
   if (!Number.isNaN(created)) row.createdAt = created;
   return row;
@@ -479,6 +499,17 @@ export function mergeCatalog(
   // Two aliases can resolve to one model, and they now share its id; the first listed wins.
   return [...new Map(rows.map((r) => [r.row.id, r.row])).values()];
 }
+/** Each effort level the last Models API read reported that the plugin does not know, with the
+ *  models that carry it, for Diagnostics. Empty until a read has happened, and after a read that
+ *  found none. */
+export function unknownEffortLevels(): Array<{ level: string; models: string[] }> {
+  const byLevel = new Map<string, string[]>();
+  for (const m of catalog.models)
+    for (const level of m.unknownEfforts ?? [])
+      byLevel.set(level, [...(byLevel.get(level) ?? []), m.name]);
+  return [...byLevel].map(([level, models]) => ({ level, models }));
+}
+
 /** Serves the model catalog from cache, fetching Anthropic's API when the cache is stale, and
  *  keeps the last good catalog on any failure so the picker never goes empty. */
 export async function getCatalog(fetchImpl = fetch, cli: CliModel[] = [], picker?: PickerSettings) {
