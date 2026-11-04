@@ -8,6 +8,8 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Added
 
+- Default for new Claude sessions, in Settings → Oh My Claude: a model and an effort for a blank Claude session whose workspace remembers nothing, with a checkbox to also pull workspaces that never ran Claude onto it. A provider picked by hand on the blank still wins, and a workspace that has run Claude still opens on what it last ran while Remember model per workspace is on.
+- Remember model per workspace now remembers the effort as well as the model, so a workspace last run on Opus at high reopens on Opus at high.
 - The history search card closes when the page loses focus and on Esc wherever the keyboard is in the page, not only from its own field. A browser that takes Ctrl+S for itself (Zen, Arc) moved the keyboard to its sidebar and left the card open with no way out.
 - Ctrl+Down and Ctrl+Up cycle the history search's scope alongside Ctrl+S. Zen and Arc take Ctrl+S at the browser level to toggle their sidebar, so the card never saw it there; no browser binds Ctrl with an arrow. The scope pill on the card stays clickable too, and the tooltip, the card's key line and the Settings description name both.
 

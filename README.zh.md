@@ -150,7 +150,7 @@ dsh 只发布预发行版，客户端 API 也会在版本之间变动，所以�
 24. 在回复中选中文本，即可将其引用到消息中，或作为旁问向 Claude 提问，不占用对话本身；问题留空时，Claude 会解释这段内容。你自己消息里的引用也会像 Claude 回复中的引用一样显示：缩进，左侧有强调色竖线。[旁问](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#asides)
 25. 一轮结束后，标题处保留一行收尾，和终端里一样：`✻ 烘焙了 27s · 03:21 完成`。被你停止的一轮显示 `已中断 · 想让 Claude 改做什么？`。[轮次状态](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#turn-status)
 26. 在 dsh 0.1.7 上，Claude 的工具调用显示为 dsh 自己的工具卡片，和其他提供方一样，文字在卡片之间实时输出。也可以在设置中切换回行内文本。[工具行](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/configuration.md)
-27. 在工作区中新建会话时，会使用该工作区上次运行的 Claude 主机和模型。[按工作区记住模型](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#remember-model-per-workspace)
+27. 在工作区中新建会话时，会使用该工作区上次运行的 Claude 主机、模型和推理强度；没有记录的工作区则使用你选定的默认模型和推理强度。[按工作区记住模型](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#remember-model-per-workspace)
 28. 每次回复后，Claude 对你下一条提示的猜测显示在输入框上方：「采用」填入输入框，「发送」原样发出，你输入别的内容时它会自动收起。默认开启，与终端一致；设置中有开关可关闭。[下一条提示建议](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#suggested-next-prompt)
 29. Claude 的后台 shell 任务和子智能体运行时列在任务标签里，每项都有「停止」，shell 任务还有「输出」；运行中的有两个以上时还有「全部停止」。已结束的 shell 任务保留其行和「输出」，最多十条；会话已运行过的子智能体列在「之前的子智能体」下，每个都能以 Markdown 打开。聊天中子智能体的那一行会按 CLI 的报告逐步列出它在做什么。[任务](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#tasks)
 30. 如果 dsh 环境里的 `ANTHROPIC_API_KEY` 取代了你的登录成为 Claude Code 的计费来源，会话开始时会用一行说明。[Where things live](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#where-things-live)

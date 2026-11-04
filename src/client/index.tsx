@@ -3,6 +3,7 @@
 // here or jump to the box) and Boxes (this box as the first row, plus the ssh and linked-dsh
 // machines you add, each probed for claude version and login). Built into lib/client.js by
 // `bun run build`.
+import { NewSessionDefaultRow } from "./new-session-default.js";
 import { installLocale, t, useLocale } from "./i18n.js";
 import { useEffect, useState } from "react";
 import {
@@ -339,6 +340,7 @@ export function apply(ctx: ClientCtx) {
         <CostSwitch />
         <LimitWarningsSwitch />
         <WorkspaceModelSwitch />
+        <NewSessionDefaultRow />
         <ModelsBlock />
         <ToolRowsSwitch />
         <SuggestionSwitch />
