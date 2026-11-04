@@ -6,6 +6,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+## [1.5.13] - 2026-11-04
+
+dsh: runs on 0.2.0-rc.1 through 0.2.2-rc.1; built and tested on 0.2.2-rc.1.
+
 ### Added
 
 - Default for new Claude sessions, in Settings → Oh My Claude: a model and an effort for a blank Claude session whose workspace remembers nothing, with a checkbox to also pull workspaces that never ran Claude onto it. A provider picked by hand on the blank still wins, and a workspace that has run Claude still opens on what it last ran while Remember model per workspace is on.
