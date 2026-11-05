@@ -727,15 +727,15 @@ export function watchContextMeter(ctx: ClientCtx) {
     const ring = arc?.closest("button");
     if (tip.parentElement !== document.body || !tip.hasAttribute("data-portal")) return false;
     if (ring?.matches(":hover, :focus-visible") !== true) return false;
-    const t = tip.getBoundingClientRect();
-    if (t.width === 0 && t.height === 0) return true;
+    const box = tip.getBoundingClientRect();
+    if (box.width === 0 && box.height === 0) return true;
     const r = ring.getBoundingClientRect();
     const near = 24;
     return (
-      t.left < r.right + near &&
-      t.right > r.left - near &&
-      t.top < r.bottom + near &&
-      t.bottom > r.top - near
+      box.left < r.right + near &&
+      box.right > r.left - near &&
+      box.top < r.bottom + near &&
+      box.bottom > r.top - near
     );
   };
   const scan = (root: ParentNode) => {
