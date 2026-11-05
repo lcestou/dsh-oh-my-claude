@@ -5924,6 +5924,15 @@ console.log("interrupt-on-abort ok");
   proc.queue.push("not json");
   await adapter.drainAdopted(proc, "d", 1, 5);
   assert.equal(calls.length, 0, "only system frames and noise: no wake");
+  // A background task that finished while dsh was away: its completion is work to show.
+  proc.queue.push(
+    JSON.stringify({ type: "system", subtype: "task_notification", status: "completed" }),
+  );
+  answers = [true];
+  await adapter.drainAdopted(proc, "d", 1, 5);
+  assert.equal(calls.length, 1, "a finished background task: wake");
+  calls.length = 0;
+  proc.queue = new LineQueue();
   proc.queue.push({ type: "dsh_relay" });
   answers = [true];
   await adapter.drainAdopted(proc, "d", 1, 5);

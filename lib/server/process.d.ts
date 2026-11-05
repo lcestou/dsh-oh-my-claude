@@ -932,7 +932,9 @@ export declare class ClaudeProcess {
      *  from a stale background-task completion. */
     countStaleResults(): number;
     /** True when the queue holds a frame a turn has to read out: anything but the CLI's own `system`
-     *  notices and non-JSON noise, so a notice an adoption provokes never wakes an idle session. */
+     *  notices and non-JSON noise, so a notice an adoption provokes never wakes an idle session. A
+     *  `task_notification` is the exception: a background task that finished while dsh was away is
+     *  work done, and the translator draws its completion line. */
     hasTurnOutput(): boolean;
     /** Tell the child a stdout line was used: a keeper keeps a line until then, so a line a dsh
      *  read but never used (its turn ended as it shut down) reaches the next dsh (automagik#62). */
