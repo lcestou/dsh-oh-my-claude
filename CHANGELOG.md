@@ -16,6 +16,8 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 ### Removed
 
 - The plugin no longer asks dsh for `@deepseek-ai/dsh-client-runtime`, a package dsh has deleted. dsh skipped the missing name, so nothing changes on screen. Thanks to @zhu1090093659 for spotting it in the community index review.
+- The cost pill is back in the footer stats row on dsh builds after 0.2.2-rc.1. Those builds drop the positioning hook its dialog was placed with, and the pill crashed on render and disappeared. The dialog is now placed with CSS anchor positioning the way dsh places its own stat dialogs, so it works on every supported dsh.
+- The context ring's hover tooltip shows the Claude usage line and the CLI's context count again. dsh 0.2.2-alpha.3 moved that tooltip to the end of the page, and the plugin no longer recognised it as the ring's.
 
 ## [1.5.13] - 2026-11-04
 

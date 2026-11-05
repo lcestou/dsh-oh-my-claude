@@ -1,13 +1,9 @@
 // The cost line in dsh's footer stats row from the browser's side: the pill, the dialog behind it,
 // and the turn-record readers that fill it. The entry splices this file's CSS constant into its sheet.
 import { t, useLocale } from "./i18n.js";
-import type { CSSProperties } from "react";
-import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import {
-  useAnchoredPosition,
-  useDismissOnOutsidePointer,
-} from "@deepseek-ai/dsh-client-ui-primitives";
+import { useDismissOnOutsidePointer } from "@deepseek-ai/dsh-client-ui-primitives";
 import {
   ROUTE,
   fmtCost,
@@ -100,6 +96,14 @@ export const costDetails = (turns: TurnRecord[]): [string, string][] => {
  *  the stats dialog beside it (440 against 300, measured on dsh 0.1.6-alpha.2). */
 export const COST_DIALOG_CSS =
   "[data-omc-cost-dialog]{z-index:1100;box-sizing:border-box;background:var(--dsw-specific-menu);backdrop-filter:var(--dsw-menu-backdrop-filter);--dsw-elevation-stroke-color:var(--dsw-alias-border-l1);width:max-content;min-width:min(300px,100vw - 24px);max-width:min(320px,100vw - 24px);box-shadow:var(--dsw-elevation-prominent);color:var(--dsw-alias-label-secondary);cursor:default;border:0;border-radius:12px;padding:16px;font-size:12px;line-height:18px;position:fixed}" +
+  // Placement is dsh's too: CSS anchors since dsh removed `useAnchoredPosition` (2026-11-02), above
+  // the pill with an 8px gap and a 12px window inset, then the same fallbacks in the same order.
+  "[data-omc-cost-dialog]{max-height:calc(100dvh - 12px - max(12px,var(--dsh-frame-overlay-top,12px)));overflow-x:hidden;overflow-y:auto;--dsh-scrollbar-thumb:var(--dsw-alias-scrollbar-bg-l2);--dsh-scrollbar-thumb-hover:var(--dsw-alias-scrollbar-hover-l2);position-area:none;top:max(12px,var(--dsh-frame-overlay-top,12px));bottom:max(12px,calc(anchor(top) + 8px));left:max(12px,anchor(left));right:12px;position-try-fallbacks:--omc-cost-window,--omc-cost-opposite,--omc-cost-wide-opposite,--omc-cost-tall,--omc-cost-viewport;align-self:end;justify-self:start;height:fit-content;min-height:0;margin:0}" +
+  "@position-try --omc-cost-window{position-area:none;top:max(12px,var(--dsh-frame-overlay-top,12px));bottom:max(12px,calc(anchor(top) + 8px));left:12px;right:12px;margin:0;align-self:safe end;justify-self:safe end}" +
+  "@position-try --omc-cost-opposite{top:max(12px,calc(anchor(bottom) + 8px));bottom:12px;align-self:start}" +
+  "@position-try --omc-cost-wide-opposite{top:max(12px,calc(anchor(bottom) + 8px));bottom:12px;left:12px;right:12px;align-self:start;justify-self:safe end}" +
+  "@position-try --omc-cost-tall{position-area:none;top:max(12px,var(--dsh-frame-overlay-top,12px));bottom:12px;left:max(12px,anchor(left));right:12px;margin:0;align-self:safe start;justify-self:start}" +
+  "@position-try --omc-cost-viewport{position-area:none;inset:max(12px,var(--dsh-frame-overlay-top,12px)) 12px 12px;margin:0;align-self:safe start;justify-self:safe end}" +
   "[data-omc-cost-dialog]:focus{outline:none}" +
   "[data-omc-cost-title]{color:var(--dsw-alias-label-primary);justify-content:space-between;gap:16px;margin-bottom:8px;font-weight:500;display:flex}" +
   "[data-omc-cost-title-label]{align-items:center;gap:6px;min-width:0;display:inline-flex}" +
@@ -120,9 +124,6 @@ export const COST_DIALOG_CSS =
   "[data-omc-cost-guard] input{width:64px;font:inherit;color:inherit;background:var(--dsw-alias-bg-module-platform,rgba(128,128,128,.1));border:0;border-radius:6px;padding:2px 6px}" +
   "[data-omc-cost-guard] button{font:inherit;font-size:12px;color:inherit;background:transparent;border:1px solid var(--dsw-alias-border-l1);border-radius:999px;padding:2px 8px;cursor:pointer}" +
   "[data-omc-cost-note]{flex-basis:100%;margin:4px 0 0;color:var(--dsw-alias-label-tertiary)}";
-
-/** dsh's unplaced-portal style: mounted so it can be measured, invisible until it has coordinates. */
-const MEASURE_STYLE: CSSProperties = { visibility: "hidden", left: 0, top: 0 };
 
 let statusOnce: Promise<boolean> | undefined;
 
@@ -317,24 +318,16 @@ export function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
     else setGuardDraft(numberOr(sessionLine) === undefined ? "" : String(sessionLine));
   };
   // The pill's dialog, the same seat dsh's own pills use (`useStatDialog`, ui-chat): the injected
-  // anchor span is the trigger root, the panel is fixed-positioned above it by dsh's own hook and
-  // closes on an outside pointer or Escape. Portaled to `document.body` the way dsh's own are:
-  // rendered beside the slot span it sat inside dsh's composer seat, and from 0.2.2-alpha.3 that
-  // seat carries `will-change: transform`, which makes it the containing block for a fixed
-  // descendant. The hook's viewport coordinates were then read from the seat's corner, and the
-  // dialog drew 770px below the pill, off the bottom of the screen (owner, 2026-11-03).
+  // anchor span is the trigger root and carries the CSS `anchor-name`, the panel is placed above it
+  // by `COST_DIALOG_CSS` and closes on an outside pointer or Escape. Portaled to `document.body`
+  // the way dsh's own are: dsh's composer seat carries `will-change: transform` from 0.2.2-alpha.3,
+  // which makes it the containing block for a fixed descendant, and the dialog drew 770px below
+  // the pill, off the bottom of the screen (owner, 2026-11-03). The window insets need the viewport.
   const [open, setOpen] = useState(false);
   const openRef = useRef(open);
   const pillRef = useRef<HTMLElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
-  const pos = useAnchoredPosition({
-    open,
-    anchorRef: pillRef,
-    panelRef,
-    side: "top",
-    gap: 8,
-    margin: 12,
-  });
+  const anchorName = `--omc-cost-${useId().replace(/[^\w-]/g, "")}`;
   useDismissOnOutsidePointer(pillRef, open, setOpen, panelRef);
   useEffect(() => {
     if (!open) return;
@@ -348,12 +341,10 @@ export function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [open]);
   // The dialog is portaled to the end of the body, so the Tab after the pill used to land in the
-  // composer and the warn field was out of keyboard reach. Focus moves into it once it has
-  // coordinates: on its first frame it is `visibility: hidden` and cannot take focus.
-  const placed = pos !== null;
+  // composer and the warn field was out of keyboard reach. Focus moves into it on open.
   useEffect(() => {
-    if (open && placed) panelRef.current?.focus({ preventScroll: true });
-  }, [open, placed]);
+    if (open) panelRef.current?.focus({ preventScroll: true });
+  }, [open]);
   // A cost that left the row takes its dialog with it.
   useEffect(() => {
     if (!text) setOpen(false);
@@ -539,6 +530,7 @@ export function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
         // dsh's pills lead with a 14px icon in the pill's own text colour; ours is Claude's spark.
         trigger.append(sparkNode(14, "currentColor"), body);
         inline.append(trigger);
+        inline.style.setProperty("anchor-name", anchorName);
         pillRef.current = inline;
       } else {
         pad = ` ${CLAUDE_MARK} `;
@@ -636,7 +628,7 @@ export function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
             aria-label={t("main.cost.dialogLabel")}
             tabIndex={-1}
             data-omc-cost-dialog=""
-            style={pos ?? MEASURE_STYLE}
+            style={{ positionAnchor: anchorName }}
           >
             <div data-omc-cost-title="">
               <span data-omc-cost-title-label="">

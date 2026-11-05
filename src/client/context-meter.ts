@@ -529,7 +529,7 @@ export function watchContextMeter(ctx: ClientCtx) {
   };
   // The hover tooltip can sit between the button and the dialog at insertion time, so the
   // dialog is matched through its parent rather than as the button's next sibling.
-  // The hover bubble (`role=tooltip`, a sibling of the ring button) gets one compact line on top.
+  // The hover bubble (`role=tooltip`, see `isRingTip`) gets one compact line on top.
   const bubble = (tip: HTMLElement) => {
     const already = ours(tip);
     if (already) return rehide(tip, already);
@@ -715,6 +715,16 @@ export function watchContextMeter(ctx: ClientCtx) {
     }
     return null;
   };
+  /**
+   * The ring's hover bubble. From dsh 0.2.2-alpha.3 it is portaled to `<body>` and holds no link
+   * back to the ring, so a portaled bubble is the ring's when it shows while the ring is hovered or
+   * keyboard-focused, which is what opens it.
+   */
+  const isRingTip = (tip: HTMLElement) =>
+    isRingRoot(tip.parentElement) ||
+    (tip.parentElement === document.body &&
+      tip.hasAttribute("data-portal") &&
+      arc?.closest("button")?.matches(":hover, :focus-visible") === true);
   const scan = (root: ParentNode) => {
     // Looked for only until it is found. The ring outlives every burst that follows, and this query
     // would otherwise run over each of them for an element already in hand.
@@ -733,13 +743,13 @@ export function watchContextMeter(ctx: ClientCtx) {
     for (const el of root.querySelectorAll<HTMLElement>('[role="dialog"]'))
       if (isRingRoot(el.parentElement)) attach(el);
     for (const el of root.querySelectorAll<HTMLElement>('[role="tooltip"]'))
-      if (isRingRoot(el.parentElement)) bubble(el);
+      if (isRingTip(el)) bubble(el);
     // A re-render adds nodes inside the dialog, not the dialog itself, so climb to it as well.
     if (root instanceof Element) {
       const dialog = root.closest<HTMLElement>('[role="dialog"]');
       if (dialog && isRingRoot(dialog.parentElement)) attach(dialog);
       const tip = root.closest<HTMLElement>('[role="tooltip"]');
-      if (tip && isRingRoot(tip.parentElement)) bubble(tip);
+      if (tip && isRingTip(tip)) bubble(tip);
     }
     const portal = portalPanel();
     if (portal) attach(portal);
