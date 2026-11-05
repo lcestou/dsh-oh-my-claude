@@ -6,6 +6,11 @@ export declare const MCP_PATH = "/dsh-oh-my-claude/mcp";
 /** dsh tools Claude Code already has natively; proxying them would only confuse the model.
  *  `str_replace_editor` is the file editor some presets offer in place of `edit`. */
 export declare const HIDDEN: Set<string>;
+/** dsh's code-mode tool: under a PTC preset it is the only tool the model may call directly. */
+export declare const RUN_CODE = "run_code";
+/** `run_code` when dsh offers the agent only that tool (a code-mode preset), else undefined. dsh's
+ *  registry lists every registered tool either way; the request header holds what the model sees. */
+export declare const codeModeTool: (agent: Agent) => ToolSchema | undefined;
 /** The open_session arguments Claude sends, as far as the bridge reads them. */
 interface OpenSessionArgs {
     prompt?: JsonValue;

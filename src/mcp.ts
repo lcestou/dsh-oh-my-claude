@@ -44,10 +44,24 @@ export const HIDDEN = new Set([
   "run_code",
 ]);
 
-/** The dsh tools the bridge offers `agent`: what dsh shows that agent, minus the ones Claude Code
- *  has natively. `open_session` is the bridge's own and is added by the callers that offer it. */
-const bridgedSchemas = (tools: DshToolsRegistry, agent: Agent): ToolSchema[] =>
-  tools.schemas(agent).filter((t) => !HIDDEN.has(t.name));
+/** dsh's code-mode tool: under a PTC preset it is the only tool the model may call directly. */
+export const RUN_CODE = "run_code";
+
+/** `run_code` when dsh offers the agent only that tool (a code-mode preset), else undefined. dsh's
+ *  registry lists every registered tool either way; the request header holds what the model sees. */
+export const codeModeTool = (agent: Agent): ToolSchema | undefined => {
+  const offered = agent.session?.requestHeader()?.tools;
+  const only = offered?.length === 1 ? offered[0] : undefined;
+  return only?.name === RUN_CODE ? only : undefined;
+};
+
+/** The dsh tools the bridge offers `agent`: in code mode only `run_code`; otherwise what dsh shows
+ *  that agent, minus the ones Claude Code has natively. `open_session` is the bridge's own and is
+ *  added by the callers that offer it. */
+const bridgedSchemas = (tools: DshToolsRegistry, agent: Agent): ToolSchema[] => {
+  const runCode = codeModeTool(agent);
+  return runCode ? [runCode] : tools.schemas(agent).filter((t) => !HIDDEN.has(t.name));
+};
 
 /** Bridge-only tool: a new top-level dsh session (sidebar row), not a child of the caller. */
 const OPEN_SESSION: ToolSchema = {
@@ -242,8 +256,15 @@ export async function handleRpc(
           return failed(e);
         }
       }
-      const tool = HIDDEN.has(name) ? undefined : tools.get(name, agent);
-      if (!tool) return errorReply(msg.id, `unknown tool ${name}`);
+      const codeMode = codeModeTool(agent) !== undefined;
+      if (codeMode && name !== RUN_CODE)
+        return errorReply(
+          msg.id,
+          `only ${RUN_CODE} is callable directly in code mode; call ${name} from a ${RUN_CODE} program`,
+        );
+      // run_code is dsh's executor transport, not a registered tool: only a live turn's relay can run it.
+      const tool = codeMode || HIDDEN.has(name) ? undefined : tools.get(name, agent);
+      if (!tool && !(codeMode && relay)) return errorReply(msg.id, `unknown tool ${name}`);
       try {
         // A live Claude turn takes the call first: dsh then runs the tool itself and renders it
         // natively (subagent cards, counts, notices). Otherwise execute it here.
@@ -255,6 +276,7 @@ export async function handleRpc(
           if (relayed.isError) result.isError = true;
           return reply(result);
         }
+        if (!tool) return errorReply(msg.id, `${RUN_CODE} needs a live dsh turn`);
         const exec = { agent, signal, name, arguments: args, callId: randomUUID() };
         const returned = await tool.execute(args, exec);
         const rendered = tool.output?.render ? tool.output.render(args, returned) : returned;
