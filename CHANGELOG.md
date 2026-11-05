@@ -6,6 +6,17 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Fixed
+
+- `open_session` from Claude opens the new session on the provider and model it names again. On dsh 0.2 it failed with `selectForNextRequest is not a function` whenever both were given, and left an empty session behind. The pick applies to that session only; the default model for new sessions is unchanged.
+- dsh's Back-to-bottom button can be clicked again while Claude's working line shows above the composer. On dsh 0.2.2 the composer area is drawn over the button, so the line covered it and took the click.
+- Under a code-mode agent preset (dsh's `ptc`), Claude gets only `run_code` from dsh, as the preset intends, instead of every dsh tool one by one, and is told to reach subagents from its programs. Thanks to @tusharcora (#234).
+- A Claude session that sat idle when dsh restarted is no longer woken with "dsh restarted and reattached … Continue where you are." Reattaching re-sends the CLI its `initialize`, and the CLI answers that with a snapshot of its background tasks; the plugin read the snapshot as output written while dsh was away and opened a turn for it, one model call per idle session per restart. A session that could not be woken (a dsh subagent's) kept the snapshot unread instead: the plugin retried the wake every 2 s for a minute, and the keeper replayed the snapshot after the next restart, one more each time. The snapshot is now used on arrival, so neither happens. A session that did work while dsh was away, a reply or a background task that finished, is still woken to show it. Thanks to @fancn (#232).
+
+### Removed
+
+- The plugin no longer asks dsh for `@deepseek-ai/dsh-client-runtime`, a package dsh has deleted. dsh skipped the missing name, so nothing changes on screen. Thanks to @zhu1090093659 for spotting it in the community index review.
+
 ## [1.5.13] - 2026-11-04
 
 dsh: runs on 0.2.0-rc.1 through 0.2.2-rc.1; built and tested on 0.2.2-rc.1.

@@ -231,6 +231,14 @@ export function dshToolsGuidance(tools: readonly ToolSchema[] = []): string {
       "notice arrives next turn.",
     );
   }
+  // Code mode: dsh offers only run_code, so subagents and jobs live inside its programs and the
+  // rules above never fire; the one about native Agent children still has to reach Claude.
+  if (byName.has("run_code"))
+    out.push(
+      `Every other dsh tool, subagents included, is called from a ${bridgedName("run_code")}`,
+      "program (see its description), never the built-in Agent/Task tool: a native Agent child",
+      "is invisible to dsh.",
+    );
   if (byName.has("open_session"))
     out.push(`${bridgedName("open_session")} makes a new top-level session, not a child.`);
 

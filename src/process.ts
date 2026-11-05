@@ -1140,6 +1140,24 @@ export function isResultLine(line: string): boolean {
   }
 }
 
+/** True for the CLI's `background_tasks_changed` frame, the snapshot of its live background tasks;
+ *  a tool's text that merely mentions the name is another frame type and is false. */
+export function isBackgroundTasksFrame(line: string): boolean {
+  try {
+    const parsed: unknown = JSON.parse(line);
+    // SAFETY: a non-null object; each field is compared to a literal, never trusted as typed
+    const r = parsed as { type?: unknown; subtype?: unknown };
+    return (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      r.type === "system" &&
+      r.subtype === "background_tasks_changed"
+    );
+  } catch {
+    return false;
+  }
+}
+
 /**
  * A `result` line that arrived while no turn was reading, and that is worth a wake: a completed
  * reply. An error result is not: on a rate limit the CLI retries on its own and emits one error
@@ -1272,10 +1290,6 @@ export class LineQueue {
     this.lines = [];
     this.waiters = [];
     this.closed = false;
-  }
-  /** Lines waiting with no turn reading them. */
-  get size(): number {
-    return this.lines.length;
   }
   /** Hand a line to the earliest waiter if one is waiting, else buffer it, so a line never arrives
    *  before its reader. */
@@ -1867,6 +1881,11 @@ export class ClaudeProcess {
         return this.used(index);
       // Same reason: the frame lands at startup and after a rename, outside any turn.
       if (line.includes('"session_title_changed"') && this.noteTitle(line)) return this.used(index);
+      // The CLI sends this snapshot right behind the answer to a re-sent `initialize` (an adoption),
+      // and the translator draws nothing for it. Queued, it woke idle sessions after every dsh
+      // restart, and the keeper replayed it on the next one, since no turn ever used it.
+      if (line.includes('"background_tasks_changed"') && isBackgroundTasksFrame(line))
+        return this.used(index);
       // `"type":"result"` is how the CLI's JSON spells it; a result inside a tool's text would
       // need the space-free key too, and a false positive only lets a suggestion through early.
       if (line.includes('"type":"result"')) {
@@ -2036,6 +2055,25 @@ export class ClaudeProcess {
       }
     }
     return n;
+  }
+
+  /** True when the queue holds a frame a turn has to read out: anything but the CLI's own `system`
+   *  notices and non-JSON noise, so a notice an adoption provokes never wakes an idle session. A
+   *  `task_notification` is the exception: a background task that finished while dsh was away is
+   *  work done, and the translator draws its completion line. */
+  hasTurnOutput(): boolean {
+    return this.queue.lines.some((line) => {
+      if (typeof line !== "string") return true;
+      try {
+        const parsed: unknown = JSON.parse(line);
+        if (typeof parsed !== "object" || parsed === null) return false;
+        // SAFETY: a non-null object; each field is compared to a literal, never trusted as typed
+        const r = parsed as { type?: unknown; subtype?: unknown };
+        return r.type !== "system" || r.subtype === "task_notification";
+      } catch {
+        return false;
+      }
+    });
   }
 
   /** Tell the child a stdout line was used: a keeper keeps a line until then, so a line a dsh
