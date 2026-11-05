@@ -6,6 +6,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+## [1.5.14] - 2026-11-05
+
+dsh: runs on 0.2.0-rc.1 through 0.2.2-rc.1; built and tested on 0.2.2-rc.1.
+
 ### Fixed
 
 - The cost pill keeps working on the dsh after 0.2.2-rc.1. That build drops the positioning hook its dialog was placed with, and the pill would crash on render and disappear. The dialog is now placed with CSS anchor positioning, the way that build places its own stat dialogs, and opens in the same place on 0.2.2-rc.1. Thanks to @fancn (#236).
