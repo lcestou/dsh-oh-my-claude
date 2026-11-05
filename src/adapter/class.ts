@@ -3500,7 +3500,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   }
 
   /** Every 2 s for a minute: a reply waiting in an adopted process's queue opens a dsh turn. A
-   *  `system` notice on its own is no reply and wakes nobody; the next turn reads it. */
+   *  `system` notice on its own is no reply and wakes nobody; the next turn reads it. The one
+   *  notice that wakes is `task_notification`, a background task that finished while dsh was away. */
   async drainAdopted(proc: ClaudeProcess, sessionId: string, everyMs = 2000, tries = 30) {
     for (let i = 0; i < tries && proc.alive; i++) {
       await new Promise((r) => setTimeout(r, everyMs));
