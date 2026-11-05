@@ -101,6 +101,15 @@ export interface SessionStore {
 export interface Agent {
     readonly id: SessionId;
     readonly session?: Session;
+    /** dsh-agent's `AgentModel`: `select` replaces the next step's route for this agent alone and
+     *  validates nothing. Optional because the mirror also types agents built some other way. */
+    readonly model?: {
+        select(selection: {
+            provider: string;
+            model: string;
+            reasoningEffort?: string;
+        }): void;
+    };
     ctx?: PluginContext;
     followup(message: Message): void;
     /** Put a message on dsh's steer list: a running turn takes it at its next step, an idle session
@@ -304,12 +313,6 @@ export interface SessionController {
             text: string;
         }>;
     }, signal?: AbortSignal): Promise<void>;
-    agents: {
-        selectForNextRequest(agent: Agent | undefined, route: {
-            provider: string;
-            model: string;
-        }): void;
-    };
 }
 /** Mirrors: @deepseek-ai/dsh-attachment/lib/types/index.d.ts */
 export interface ImageAttachmentRef {
