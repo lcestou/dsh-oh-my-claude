@@ -8,6 +8,8 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- The cost pill keeps working on the dsh after 0.2.2-rc.1. That build drops the positioning hook its dialog was placed with, and the pill would crash on render and disappear. The dialog is now placed with CSS anchor positioning, the way that build places its own stat dialogs, and opens in the same place on 0.2.2-rc.1. Thanks to @fancn (#236).
+- The context ring's hover tooltip shows the Claude usage line and the CLI's context count again. dsh 0.2.2-alpha.3 moved that tooltip to the end of the page, and the plugin no longer recognised it as the ring's. Thanks to @fancn (#236).
 - `open_session` from Claude opens the new session on the provider and model it names again. On dsh 0.2 it failed with `selectForNextRequest is not a function` whenever both were given, and left an empty session behind. The pick applies to that session only; the default model for new sessions is unchanged.
 - dsh's Back-to-bottom button can be clicked again while Claude's working line shows above the composer. On dsh 0.2.2 the composer area is drawn over the button, so the line covered it and took the click.
 - Under a code-mode agent preset (dsh's `ptc`), Claude gets only `run_code` from dsh, as the preset intends, instead of every dsh tool one by one, and is told to reach subagents from its programs. Thanks to @tusharcora (#234).
