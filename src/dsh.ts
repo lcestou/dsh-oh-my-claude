@@ -79,8 +79,8 @@ export interface Session {
     ...opts: unknown[]
   ): SessionEvent;
   deriveMessages(): Message[];
-  /** The folded `request/header`; `config.provider` is the provider the last request ran on. */
-  /** `tools` is exactly what dsh offers the model next, so code mode shows only `run_code` there. */
+  /** The folded `request/header`; `config.provider` is the provider the last request ran on, and
+   *  `tools` is exactly what dsh offers the model next, so code mode shows only `run_code` there. */
   requestHeader():
     | { version: number; config?: { provider?: string }; readonly tools?: readonly ToolSchema[] }
     | undefined;

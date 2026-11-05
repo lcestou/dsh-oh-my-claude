@@ -355,6 +355,25 @@ console.log("mcp ok");
     true,
     "run_code without a live turn fails instead of running nothing",
   );
+  assert.match(
+    JSON.stringify(idle),
+    /run_code needs a live dsh turn/,
+    "the failure says why, not unknown tool",
+  );
+  // open_session is the bridge's own tool, not dsh's, so code mode still offers it.
+  // SAFETY: cast to HandleRpcParams shape for test double
+  const withOpen = (await handleRpc({ jsonrpc: "2.0", id: 45, method: "tools/list" }, {
+    ...env,
+    agent: ptcAgent,
+    open: async () => "opened",
+  } as unknown as Parameters<typeof handleRpc>[1])) as {
+    result: { tools: Array<{ name: string }> };
+  };
+  assert.deepEqual(
+    withOpen.result.tools.map((t) => t.name),
+    ["run_code", "open_session"],
+    "code mode keeps the bridge's own open_session",
+  );
   // A header offering more than run_code is ordinary mode: the full bridged list comes back.
   const nativeAgent = {
     id: "a3",
