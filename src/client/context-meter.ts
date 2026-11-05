@@ -717,14 +717,27 @@ export function watchContextMeter(ctx: ClientCtx) {
   };
   /**
    * The ring's hover bubble. From dsh 0.2.2-alpha.3 it is portaled to `<body>` and holds no link
-   * back to the ring, so a portaled bubble is the ring's when it shows while the ring is hovered or
-   * keyboard-focused, which is what opens it.
+   * back to the ring (no id, no `aria-describedby`), so a portaled bubble is the ring's when it
+   * shows while the ring is hovered or keyboard-focused, which is what opens it, and sits beside
+   * the ring. The second test keeps the line off another control's tooltip while the ring keeps
+   * keyboard focus; a bubble not placed yet (an empty box) passes, as it did before.
    */
-  const isRingTip = (tip: HTMLElement) =>
-    isRingRoot(tip.parentElement) ||
-    (tip.parentElement === document.body &&
-      tip.hasAttribute("data-portal") &&
-      arc?.closest("button")?.matches(":hover, :focus-visible") === true);
+  const isRingTip = (tip: HTMLElement) => {
+    if (isRingRoot(tip.parentElement)) return true;
+    const ring = arc?.closest("button");
+    if (tip.parentElement !== document.body || !tip.hasAttribute("data-portal")) return false;
+    if (ring?.matches(":hover, :focus-visible") !== true) return false;
+    const t = tip.getBoundingClientRect();
+    if (t.width === 0 && t.height === 0) return true;
+    const r = ring.getBoundingClientRect();
+    const near = 24;
+    return (
+      t.left < r.right + near &&
+      t.right > r.left - near &&
+      t.top < r.bottom + near &&
+      t.bottom > r.top - near
+    );
+  };
   const scan = (root: ParentNode) => {
     // Looked for only until it is found. The ring outlives every burst that follows, and this query
     // would otherwise run over each of them for an element already in hand.
