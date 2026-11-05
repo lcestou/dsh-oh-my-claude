@@ -3974,7 +3974,7 @@ console.log("schema-guard ok");
   );
   await new Promise((r) => setTimeout(r, 20));
   assert.deepEqual(acked, [0, 2], "both snapshots are used on arrival");
-  assert.equal(proc.queue.size, 1, "only the tool result waits for a turn");
+  assert.equal(proc.queue.lines.length, 1, "only the tool result waits for a turn");
   assert.equal((await proc.nextEvent())?.type, "user");
 }
 

@@ -627,8 +627,6 @@ export declare class LineQueue {
     /** Start with no queued lines, no waiters and no close flag; every field stays empty until the
      *  first push. */
     constructor();
-    /** Lines waiting with no turn reading them. */
-    get size(): number;
     /** Hand a line to the earliest waiter if one is waiting, else buffer it, so a line never arrives
      *  before its reader. */
     push(line: string | ClaudeEvent | Record<string, unknown>): void;

@@ -1291,10 +1291,6 @@ export class LineQueue {
     this.waiters = [];
     this.closed = false;
   }
-  /** Lines waiting with no turn reading them. */
-  get size(): number {
-    return this.lines.length;
-  }
   /** Hand a line to the earliest waiter if one is waiting, else buffer it, so a line never arrives
    *  before its reader. */
   push(line: string | ClaudeEvent | Record<string, unknown>) {
