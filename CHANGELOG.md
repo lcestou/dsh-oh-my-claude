@@ -8,7 +8,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
-- The cost pill is back in the footer stats row on dsh builds after 0.2.2-rc.1. Those builds drop the positioning hook its dialog was placed with, and the pill crashed on render and disappeared. The dialog is now placed with CSS anchor positioning the way dsh places its own stat dialogs, so it works on every supported dsh. Thanks to @fancn (#236).
+- The cost pill keeps working on the dsh after 0.2.2-rc.1. That build drops the positioning hook its dialog was placed with, and the pill would crash on render and disappear. The dialog is now placed with CSS anchor positioning, the way that build places its own stat dialogs, and opens in the same place on 0.2.2-rc.1. Thanks to @fancn (#236).
 - The context ring's hover tooltip shows the Claude usage line and the CLI's context count again. dsh 0.2.2-alpha.3 moved that tooltip to the end of the page, and the plugin no longer recognised it as the ring's. Thanks to @fancn (#236).
 - `open_session` from Claude opens the new session on the provider and model it names again. On dsh 0.2 it failed with `selectForNextRequest is not a function` whenever both were given, and left an empty session behind. The pick applies to that session only; the default model for new sessions is unchanged.
 - dsh's Back-to-bottom button can be clicked again while Claude's working line shows above the composer. On dsh 0.2.2 the composer area is drawn over the button, so the line covered it and took the click.

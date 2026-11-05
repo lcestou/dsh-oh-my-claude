@@ -96,7 +96,8 @@ export const costDetails = (turns: TurnRecord[]): [string, string][] => {
  *  the stats dialog beside it (440 against 300, measured on dsh 0.1.6-alpha.2). */
 export const COST_DIALOG_CSS =
   "[data-omc-cost-dialog]{z-index:1100;box-sizing:border-box;background:var(--dsw-specific-menu);backdrop-filter:var(--dsw-menu-backdrop-filter);--dsw-elevation-stroke-color:var(--dsw-alias-border-l1);width:max-content;min-width:min(300px,100vw - 24px);max-width:min(320px,100vw - 24px);box-shadow:var(--dsw-elevation-prominent);color:var(--dsw-alias-label-secondary);cursor:default;border:0;border-radius:12px;padding:16px;font-size:12px;line-height:18px;position:fixed}" +
-  // Placement is dsh's too: CSS anchors since dsh removed `useAnchoredPosition` (2026-11-02), above
+  // Placement is dsh's too: CSS anchors, as dsh's stat dialogs use from dsh master 2c990f0b14
+  // (2026-11-02), which removed `useAnchoredPosition`; 0.2.2-rc.1 still has the hook. Above
   // the pill with an 8px gap and a 12px window inset, then the same fallbacks in the same order.
   "[data-omc-cost-dialog]{max-height:calc(100dvh - 12px - max(12px,var(--dsh-frame-overlay-top,12px)));overflow-x:hidden;overflow-y:auto;--dsh-scrollbar-thumb:var(--dsw-alias-scrollbar-bg-l2);--dsh-scrollbar-thumb-hover:var(--dsw-alias-scrollbar-hover-l2);position-area:none;top:max(12px,var(--dsh-frame-overlay-top,12px));bottom:max(12px,calc(anchor(top) + 8px));left:max(12px,anchor(left));right:12px;position-try-fallbacks:--omc-cost-window,--omc-cost-opposite,--omc-cost-wide-opposite,--omc-cost-tall,--omc-cost-viewport;align-self:end;justify-self:start;height:fit-content;min-height:0;margin:0}" +
   "@position-try --omc-cost-window{position-area:none;top:max(12px,var(--dsh-frame-overlay-top,12px));bottom:max(12px,calc(anchor(top) + 8px));left:12px;right:12px;margin:0;align-self:safe end;justify-self:safe end}" +
