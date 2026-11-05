@@ -573,6 +573,9 @@ export declare function elicitationResult(request: ElicitationRequest, response:
 }, requestId: string): Record<string, JsonValue>;
 /** True for a `result` frame of any outcome; anything unparsable or of another type is false. */
 export declare function isResultLine(line: string): boolean;
+/** True for the CLI's `background_tasks_changed` frame, the snapshot of its live background tasks;
+ *  a tool's text that merely mentions the name is another frame type and is false. */
+export declare function isBackgroundTasksFrame(line: string): boolean;
 /**
  * A `result` line that arrived while no turn was reading, and that is worth a wake: a completed
  * reply. An error result is not: on a rate limit the CLI retries on its own and emits one error
@@ -624,8 +627,6 @@ export declare class LineQueue {
     /** Start with no queued lines, no waiters and no close flag; every field stays empty until the
      *  first push. */
     constructor();
-    /** Lines waiting with no turn reading them. */
-    get size(): number;
     /** Hand a line to the earliest waiter if one is waiting, else buffer it, so a line never arrives
      *  before its reader. */
     push(line: string | ClaudeEvent | Record<string, unknown>): void;
@@ -930,6 +931,9 @@ export declare class ClaudeProcess {
     /** Count buffered `result` events with no turn reading them, so the loop can tell a real reply
      *  from a stale background-task completion. */
     countStaleResults(): number;
+    /** True when the queue holds a frame a turn has to read out: anything but the CLI's own `system`
+     *  notices and non-JSON noise, so a notice an adoption provokes never wakes an idle session. */
+    hasTurnOutput(): boolean;
     /** Tell the child a stdout line was used: a keeper keeps a line until then, so a line a dsh
      *  read but never used (its turn ended as it shut down) reaches the next dsh (automagik#62). */
     used(index: number): void;

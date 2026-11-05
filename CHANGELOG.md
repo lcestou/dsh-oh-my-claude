@@ -6,6 +6,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Fixed
+
+- A Claude session that sat idle when dsh restarted is no longer woken with "dsh restarted and reattached … Continue where you are." Reattaching re-sends the CLI its `initialize`, and the CLI answers that with a snapshot of its background tasks; the plugin read the snapshot as output written while dsh was away and opened a turn for it, one model call per idle session per restart. A session that could not be woken (a dsh subagent's) kept the snapshot unread instead: the plugin retried the wake every 2 s for a minute, and the keeper replayed the snapshot after the next restart, one more each time. The snapshot is now used on arrival, so neither happens. A session that did work while dsh was away is still woken to show it.
+
 ## [1.5.13] - 2026-11-04
 
 dsh: runs on 0.2.0-rc.1 through 0.2.2-rc.1; built and tested on 0.2.2-rc.1.
