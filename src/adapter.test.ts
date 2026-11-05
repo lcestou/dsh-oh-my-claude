@@ -591,6 +591,12 @@ assert.ok(
   assert.ok(!persistent.includes("Agent/Task"), "no subagent tools, no subagent rule");
   assert.ok(persistent.includes("mcp__dsh__open_session makes a new top-level session"));
   assert.equal(dshToolsGuidance(), "dsh tools are available as mcp__dsh__* over MCP.");
+  // Code mode lists only run_code (and the bridge's open_session), and still keeps Claude off
+  // native Agent children, pointing it at run_code programs instead.
+  const code = dshToolsGuidance([bridgedTool("run_code"), bridgedTool("open_session")]);
+  assert.ok(code.includes("called from a mcp__dsh__run_code program"));
+  assert.ok(code.includes("never the built-in Agent/Task tool"));
+  assert.ok(!code.includes("mcp__dsh__subagent"), "no direct subagent tool is named");
 }
 const fresh = buildArgs({
   model: "m",

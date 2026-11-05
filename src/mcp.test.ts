@@ -289,3 +289,105 @@ assert.equal(bridge2.key, bridge.key, "restart keeps the bridge key");
 assert.equal(bridge.key, plain.key, "one key whichever way the bridge is reached");
 for (const fn of cleanups) fn();
 console.log("mcp ok");
+
+// Code mode: when dsh offers the model only run_code, the bridge offers exactly that and refuses
+// direct calls to anything else, so Claude reaches every tool from a run_code program.
+{
+  const runCode = {
+    name: "run_code",
+    description: "Execute a TypeScript program",
+    parameters: { type: "object" },
+  };
+  const ptcAgent = { id: "a2", session: { requestHeader: () => ({ tools: [runCode] }) } };
+  const relayed: string[] = [];
+  // SAFETY: cast to HandleRpcParams shape for test double
+  const ptcEnv = {
+    ...env,
+    agent: ptcAgent,
+    relay: async (name: string) => (relayed.push(name), { text: "ran", isError: false }),
+  } as unknown as Parameters<typeof handleRpc>[1];
+  const ptcList = (await handleRpc({ jsonrpc: "2.0", id: 40, method: "tools/list" }, ptcEnv)) as {
+    result: { tools: Array<{ name: string }> };
+  };
+  assert.deepEqual(
+    ptcList.result.tools.map((t) => t.name),
+    ["run_code"],
+    "code mode offers only run_code",
+  );
+  const direct = (await handleRpc(
+    {
+      jsonrpc: "2.0",
+      id: 41,
+      method: "tools/call",
+      params: { name: "subagent_local", arguments: {} },
+    },
+    ptcEnv,
+  )) as { result?: { isError?: boolean; content: Array<{ text: string }> } };
+  assert.equal(direct.result?.isError, true);
+  assert.match(
+    direct.result?.content[0]?.text ?? "",
+    /only run_code is callable directly/,
+    "direct calls are refused in code mode",
+  );
+  const program = (await handleRpc(
+    {
+      jsonrpc: "2.0",
+      id: 42,
+      method: "tools/call",
+      params: { name: "run_code", arguments: { code: "1" } },
+    },
+    ptcEnv,
+  )) as { result?: { content: Array<{ text: string }> } };
+  assert.equal(
+    program.result?.content[0]?.text,
+    "ran",
+    "run_code runs through the live turn's relay",
+  );
+  assert.deepEqual(relayed, ["run_code"]);
+  // SAFETY: cast to HandleRpcParams shape for test double
+  const noRelay = { ...env, agent: ptcAgent } as unknown as Parameters<typeof handleRpc>[1];
+  const idle = (await handleRpc(
+    { jsonrpc: "2.0", id: 43, method: "tools/call", params: { name: "run_code", arguments: {} } },
+    noRelay,
+  )) as { result?: { isError?: boolean } };
+  assert.equal(
+    idle.result?.isError,
+    true,
+    "run_code without a live turn fails instead of running nothing",
+  );
+  assert.match(
+    JSON.stringify(idle),
+    /run_code needs a live dsh turn/,
+    "the failure says why, not unknown tool",
+  );
+  // open_session is the bridge's own tool, not dsh's, so code mode still offers it.
+  // SAFETY: cast to HandleRpcParams shape for test double
+  const withOpen = (await handleRpc({ jsonrpc: "2.0", id: 45, method: "tools/list" }, {
+    ...env,
+    agent: ptcAgent,
+    open: async () => "opened",
+  } as unknown as Parameters<typeof handleRpc>[1])) as {
+    result: { tools: Array<{ name: string }> };
+  };
+  assert.deepEqual(
+    withOpen.result.tools.map((t) => t.name),
+    ["run_code", "open_session"],
+    "code mode keeps the bridge's own open_session",
+  );
+  // A header offering more than run_code is ordinary mode: the full bridged list comes back.
+  const nativeAgent = {
+    id: "a3",
+    session: { requestHeader: () => ({ tools: [runCode, { name: "bash", parameters: {} }] }) },
+  };
+  // SAFETY: cast to HandleRpcParams shape for test double
+  const nativeList = (await handleRpc({ jsonrpc: "2.0", id: 44, method: "tools/list" }, {
+    ...env,
+    agent: nativeAgent,
+  } as unknown as Parameters<typeof handleRpc>[1])) as {
+    result: { tools: Array<{ name: string }> };
+  };
+  assert.deepEqual(
+    nativeList.result.tools.map((t) => t.name),
+    ["subagent_local", "bash"],
+  );
+}
