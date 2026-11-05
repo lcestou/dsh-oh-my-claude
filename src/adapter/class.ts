@@ -3499,12 +3499,13 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     }
   }
 
-  /** Every 2 s for a minute: a reply waiting in an adopted process's queue opens a dsh turn. */
+  /** Every 2 s for a minute: a reply waiting in an adopted process's queue opens a dsh turn. A
+   *  `system` notice on its own is no reply and wakes nobody; the next turn reads it. */
   async drainAdopted(proc: ClaudeProcess, sessionId: string, everyMs = 2000, tries = 30) {
     for (let i = 0; i < tries && proc.alive; i++) {
       await new Promise((r) => setTimeout(r, everyMs));
       if (proc.busy) return; // a prompt got there first; the turn drains the queue itself
-      if (proc.queue.size === 0) continue;
+      if (!proc.hasTurnOutput()) continue;
       if (await this.wake(sessionId, proc, RECONNECT_TEXT)) return;
     }
   }
