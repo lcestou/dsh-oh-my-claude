@@ -19,6 +19,14 @@ interface OpenSessionArgs {
     model?: JsonValue;
     agentPreset?: JsonValue;
 }
+/** The host services openSession needs; all are injected before the bridge mounts. */
+type OpenHost = Required<Pick<PluginContext, "sessions" | "workspaceRegistry" | "sessionController">>;
+/**
+ * Creates and initializes a new top-level dsh session with an initial prompt.
+ * Used by the MCP bridge to fan out sessions from Claude Code to dsh. A provider is applied only
+ * with a model; either alone is ignored and the session opens on dsh's default route.
+ */
+export declare function openSession(ctx: OpenHost, agent: Agent, args: OpenSessionArgs, signal: AbortSignal): Promise<string>;
 /** One JSON-RPC request as the CLI sends it; only `id`, `method` and `params` are read. */
 export interface JsonRpcRequest {
     jsonrpc?: string;
