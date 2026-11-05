@@ -719,8 +719,9 @@ export function watchContextMeter(ctx: ClientCtx) {
    * The ring's hover bubble. From dsh 0.2.2-alpha.3 it is portaled to `<body>` and holds no link
    * back to the ring (no id, no `aria-describedby`), so a portaled bubble is the ring's when it
    * shows while the ring is hovered or keyboard-focused, which is what opens it, and sits beside
-   * the ring. The second test keeps the line off another control's tooltip while the ring keeps
-   * keyboard focus; a bubble not placed yet (an empty box) passes, as it did before.
+   * the ring, within 24 px of its box. The second test keeps the line off another control's
+   * tooltip while the ring keeps keyboard focus. A bubble not placed yet fails it and is matched on
+   * the scan after dsh places it (measured on 0.2.2-rc.1, 2026-11-05: the line shows every time).
    */
   const isRingTip = (tip: HTMLElement) => {
     if (isRingRoot(tip.parentElement)) return true;
@@ -728,7 +729,6 @@ export function watchContextMeter(ctx: ClientCtx) {
     if (tip.parentElement !== document.body || !tip.hasAttribute("data-portal")) return false;
     if (ring?.matches(":hover, :focus-visible") !== true) return false;
     const box = tip.getBoundingClientRect();
-    if (box.width === 0 && box.height === 0) return true;
     const r = ring.getBoundingClientRect();
     const near = 24;
     return (
