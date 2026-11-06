@@ -118,7 +118,12 @@ assert.equal(updateCommand("dsh-oh-my-claude", "desktop"), undefined);
   assert.deepEqual(
     updateOffer("1.5.14", newest, undefined, "cmd"),
     { latest: "1.6.0", update: "cmd" },
-    "an unreadable dsh version is offered the update, as before",
+    "no dsh version reported: offered the update, as before",
+  );
+  assert.deepEqual(
+    updateOffer("1.5.14", newest, "garbage", "cmd"),
+    { latest: "1.6.0", needsDsh: "0.2.2-alpha.2" },
+    "a dsh version that does not parse is told the floor",
   );
 }
 

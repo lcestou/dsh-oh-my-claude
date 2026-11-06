@@ -87,10 +87,10 @@ export function UpdatePill({
   );
 }
 
-/** The status route's answer, shared for a moment: the heading and the Boxes card open together
- *  and would otherwise run the box's CLI probes twice. */
 /** The status fields the pill and the star line read. */
 type PillStatus = { latest?: string; update?: string; needsDsh?: string; stars?: number };
+/** The status route's answer, shared for a moment: the heading and the Boxes card open together
+ *  and would otherwise run the box's CLI probes twice. */
 let statusOnce: { at: number; p: Promise<PillStatus> } | undefined;
 /** Fetches the status route once and shares the promise for ten seconds, so the Settings heading
  *  and the Boxes card that open together do not hit it twice. */

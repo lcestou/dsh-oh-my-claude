@@ -138,10 +138,12 @@ export async function latestRelease(
  *  when this box's dsh is below that release's dsh floor, the release with the dsh it needs and no
  *  command, since installing it would replace a working plugin with one that refuses to mount. Both
  *  numbers are the registry's, never this build's. Undefined when the plugin is current or the
- *  registry did not answer; a dsh version this box could not read is offered the update, as before. */
+ *  registry did not answer. A box that reports no dsh version is offered the update, as before; one
+ *  whose version does not parse is told the floor, where it used to see nothing. */
 export type UpdateOffer = { latest: string; update: string } | { latest: string; needsDsh: string };
 
-/** See `UpdateOffer`. */
+/** Picks the pill's offer for a box on `current` with `dsh`: undefined when `newest` is missing or
+ *  not newer, the floor alone when `dsh` is set and below `newest`'s floor, else `command`. */
 export function updateOffer(
   current: string,
   newest: LatestRelease | undefined,
