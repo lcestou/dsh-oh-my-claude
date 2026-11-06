@@ -11,7 +11,7 @@ export declare const ASIDE_QUOTE_KEEP = 300;
 export declare const SELECTION_EXPLAIN = "Explain the passage below from our conversation.";
 /**
  * The side question's context for a selected passage: a lead line and the passage as a Markdown quote.
- * Kept here rather than shared with the client's `quoteMarkdown`, since server code does not import
+ * Built here, on the server: the client sends the bare passage, and server code does not import
  * from `src/client/`.
  */
 export declare const selectionContext: (quote: string) => string;

@@ -343,3 +343,30 @@ export function SelectionActions(props: SelectionActionsProps) {
     </div>
   );
 }
+
+/**
+ * Puts Ask into dsh's selection popover (dsh 0.2.2-alpha.2 on), beside its Quote text. Priority -1
+ * shadows dsh's `quote` entry; if ours crashes or unloads, dsh's comes back. An older dsh never
+ * declares the slot, so there is no selection action at all. The slot is declared per chat view,
+ * so the registration is handed back to be undone with it; a dsh that refuses the shadow keeps its
+ * own Quote and Ask is simply absent.
+ */
+export function mountSelectionActions(ctx: ClientCtx): void {
+  ctx.slots.inject("conversation.chat.text-interaction", () => {
+    try {
+      return ctx.slots.register(
+        {
+          name: "conversation.chat.text-interaction",
+          key: "quote",
+          priority: -1,
+          locale: "messageQuotes",
+        },
+        (props) => <SelectionActions {...props} ctx={ctx} />,
+      );
+    } catch (e) {
+      // A dsh that refuses the shadow keeps its own Quote; Ask is simply absent.
+      console.warn("[oh-my-claude] selection actions not registered:", e);
+      return () => {};
+    }
+  });
+}
