@@ -3995,12 +3995,17 @@ console.log("schema-guard ok");
     terminate() {},
     waitForExit: async () => {},
   };
-  const spawner = seamSpawner({
-    spawn: (s) => {
-      spec = s;
-      return idle;
+  // An empty environment: since #241 dsh's own credential names pass through on purpose, which
+  // spawn-mode.test.ts covers, and this block checks that nothing else rides along.
+  const spawner = seamSpawner(
+    {
+      spawn: (s) => {
+        spec = s;
+        return idle;
+      },
     },
-  });
+    {},
+  );
   spawner("claude", ["-p", "--verbose"], "/w");
   assert.ok(spec, "spawn was called");
   assert.deepEqual(spec.argv, ["claude", "-p", "--verbose"]);
@@ -5018,7 +5023,7 @@ assert.equal(scopeFailed(null, 40), false, "killed by a signal");
 
 // keeper mode: the default spawn, one keeper dir per provider id and dsh session, stable across calls.
 {
-  assert.equal(Config({}).spawn, "keeper");
+  assert.equal(Config({}).spawn, undefined, "no default: the Settings switch decides");
   const a1 = defaultAdapter.keeperDir("s1");
   assert.equal(a1, defaultAdapter.keeperDir("s1"), "deterministic");
   assert.notEqual(a1, defaultAdapter.keeperDir("s2"));

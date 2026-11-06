@@ -173,11 +173,25 @@ dsh 只发布预发行版，客户端 API 也会在版本之间变动，所以�
 
 ```yaml
 permissionMode: dsh      # 跟随会话的盾牌（默认），或固定为 CLI 的六种模式之一
-spawn: keeper            # Claude 在 dsh 重启后继续运行（默认）；node 或 dsh 则作为普通子进程
+# spawn: node            # 不设置：由下方的设置开关决定；设为 node 或 dsh 则以此为准
 sshHost: ""              # "[user@]host" 通过 ssh 驱动另一台机器上的 claude
 ```
 
 每个键及其默认值见 [docs/configuration.md](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/configuration.md)。
+
+### dsh 重启时保持 Claude 运行
+
+设置 → Oh My Claude 下的这个开关决定 Claude Code 的启动方式，默认开启。配置中的 `spawn: node` 或 `spawn: dsh` 会覆盖它并锁定开关；`spawn: keeper` 不会锁定。切换后，每个会话在下一个回合生效。
+
+| | 开启（`keeper`） | 关闭（`dsh`） | `node`（仅限配置） |
+|---|---|---|---|
+| dsh 重启时正在进行的回合 | 继续运行；新的 dsh 重新接上并显示它做了什么 | 结束；重启约十秒后，会话会收到一条“dsh 在此回合进行中重启”的提示并继续 | 同关闭 |
+| dsh 退出后仍在运行的进程 | Claude，直到它在没有 dsh 连接且没有输出的情况下经过 `processIdleMs`（30 分钟，最少 5 分钟） | 正常退出后没有：dsh 会结束 Claude 及它启动的一切 | dsh 结束时 Claude 也结束；它启动的进程不受追踪 |
+| dsh 的环境变量 | 全部传递 | 除 `DSH_*` 外全部传递：dsh 的 subprocess 接口会过滤含 KEY、TOKEN、SECRET、PASSWORD 的变量名，插件会把它们传回 | 全部传递 |
+| SSH 主机和远程工作区 | 远端的 `claude` 托管在该主机上，同样不受重启影响；上面的空闲时限对它无效，它会一直运行，直到有 dsh 重新接上或主机重启 | 远端的 `claude` 随 ssh 连接一起结束 | 同关闭 |
+| 平台 | Linux 和 macOS；Windows 上为 `node` | 全部；dsh 未挂载 subprocess 接口时为 `node` | 全部 |
+
+DSH Web 和 DSH Desktop 使用各自的 dsh profile，因此只会重新接上各自启动的 Claude 进程。在同一个 profile 目录上启动的两个 dsh 仍会共用它们。
 
 ## 远程主机和账号
 

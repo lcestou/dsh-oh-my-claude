@@ -6,14 +6,24 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Added
+
+- A switch under Settings → Oh My Claude, Keep Claude running across dsh restarts. On, as before, Claude Code runs under a keeper and survives a restart. Off, it runs inside dsh through its subprocess seam and ends with dsh, along with everything it started; on an SSH box or a remote workspace the far `claude` ends with the ssh connection. Thanks to @fancn (#241).
+
 ### Changed
 
+- `spawn` has no default in the config any more. Unset, or `keeper`, the new switch decides; `node` or `dsh` still wins and shows the switch locked.
+- Under `spawn: dsh` the plugin passes the credential-shaped variables dsh runs with (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `GH_TOKEN` and the rest) through dsh's environment scrub, and puts the installer folders on `PATH`, so Claude starts and logs in as it does under a keeper. Thanks to @fancn (#241).
 - The selection bar is gone; Ask moved into dsh's own selection popover (dsh 0.2.2), beside its Quote text. dsh shows one plugin's popover per selection, so the plugin draws dsh's Quote text there itself, doing what dsh's does: the passage goes into the composer as dsh's quote chip. Ask turns the popover into a question box (Enter asks, Shift+Enter starts a new line, Escape closes) that stays beside the passage as the chat scrolls, and sends the passage as an aside, as before. Both buttons take the Claude accent in a Claude session. The plugin's own Quote, which wrote the passage as Markdown into the draft, is gone. The Settings switch is now "Ask about a selection" and hides only Ask.
 - The plugin now needs dsh 0.2.2-alpha.2 or newer, the first dsh with the selection popover and its quote chip: `engines.dsh` and the `@deepseek-ai/dsh-llm` peer range both start there. On dsh 0.2.0 or 0.2.1, stay on 1.5.14.
 - A quote in a message you sent now shows as dsh's own quote chip (dsh 0.2.2); the plugin no longer lays its own quote block over the message. The composer still dims quoted lines while you type, now by dsh's own rule: `>5 items` and a `>` line inside a code fence count, a lone `>` does not, and a chip in the composer is skipped.
 
 ### Fixed
 
+- A keeper no dsh has attached to for `processIdleMs` (30 minutes by default, never under 5 minutes), while Claude writes nothing, now ends its Claude. Keepers used to run until someone killed them. Thanks to @fancn (#241).
+- An idle Claude process is ended after `processIdleMs` on its own, checked every 30 seconds, unless a background task is still running. It used to wait until another session started one. Thanks to @fancn (#241).
+- A dsh restart no longer wakes an idle session with "dsh restarted and reattached" over a frame that was not Claude's output, such as a reply to a control request that arrived late. Thanks to @fancn (#241).
+- DSH Web and DSH Desktop on one machine reattach only to their own Claude processes and leave each other's restart nudges alone; the one that started later used to take over the other's sessions. Thanks to @fancn (#241).
 - `open_session` with a provider and model reports an error when the new session has no model route to set, instead of opening it on dsh's default model without a word, and archives the empty session it created. Thanks to @tusharcora (#240).
 
 ## [1.5.14] - 2026-11-05

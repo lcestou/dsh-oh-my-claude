@@ -53,6 +53,8 @@ export interface HoldRecord {
   /** Bytes of `out.log` this box has read: the next attach tails from here. */
   offset: number;
   startedAt: number;
+  /** The dsh that started it (spawn-mode.ts `keeperOwner`); another dsh on the box leaves it alone. */
+  owner?: string;
 }
 
 /** One far dir per spawn, never reused: a respawn must not tail the log of the CLI it replaced. */
@@ -304,5 +306,6 @@ export function asHoldRecord(raw: unknown): HoldRecord | undefined {
     procSpec: r.procSpec as ClaudeProcessSpec,
     offset: r.offset,
     startedAt: r.startedAt,
+    owner: typeof r.owner === "string" ? r.owner : undefined,
   };
 }

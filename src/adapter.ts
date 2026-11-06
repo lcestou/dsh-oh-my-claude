@@ -208,8 +208,11 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
   // Transcripts of loaded sessions go under watch now and on a timer, one per process like the
   // resume timer, reading the newest adapters at each tick.
   const sweep = () => {
-    for (const a of g[ADAPTER_CURRENT]?.values() ?? [])
+    for (const a of g[ADAPTER_CURRENT]?.values() ?? []) {
       void a.watchLoadedSessions().catch((e) => a.log("warn", `watch sweep: ${errorText(e)}`));
+      // The idle reaper rides the same tick; before #241 it ran only when a session spawned.
+      a.reapIdle();
+    }
   };
   setTimeout(sweep, 5000).unref?.();
   if (!g[WATCH_SWEEP]) {
@@ -381,6 +384,7 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
         info: () => adapter.toolModeInfo(),
         set: (mode: ToolMode) => adapter.setToolMode(mode),
       },
+      spawnMode: { info: () => adapter.spawnModeInfo() },
       terminalSync: {
         info: () => adapter.terminalSyncInfo(),
         set: (enabled: boolean) => adapter.setTerminalSync(enabled),
