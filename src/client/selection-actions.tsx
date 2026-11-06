@@ -444,11 +444,12 @@ export function mountSelectionActions(ctx: ClientCtx): void {
       return () => {};
     }
   });
-  // The touch-screen dock: the composer dock is where the old selection bar sat, the one place a
-  // phone's own selection toolbar never covers. Draws nothing with a mouse.
+  // The touch-screen dock: the composer dock is the one place a phone's own selection toolbar
+  // never covers. Order 40, below every other dock entry's, so the buttons sit first, above the
+  // cards and chips already there rather than under them (owner, 2026-11-06). Nothing with a mouse.
   ctx.slots.inject("conversation.input.dock", () => {
     ctx.slots.register(
-      { name: "conversation.input.dock", id: "claude-selection-touch", order: 50 },
+      { name: "conversation.input.dock", id: "claude-selection-touch", order: 40 },
       (props) => (
         <TouchSelectionDock
           ctx={ctx}
