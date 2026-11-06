@@ -9382,7 +9382,7 @@ console.log("watch-save-race ok");
 }
 
 {
-  // The selection bar's aside: a blank question with a quote asks Claude to explain the passage,
+  // The selection popover's Ask: a blank question with a quote asks Claude to explain the passage,
   // the passage goes to the CLI as a Markdown quote, and the ring keeps the blank question and the
   // first 300 characters of the quote for the card.
   assert.equal(

@@ -559,7 +559,8 @@ export function ThemeSwitch() {
   );
 }
 
-/** The settings switch for the selection bar, under the prompt-starter switch. Box-wide, like it. */
+/** The settings switch for Ask in the selection popover, under the prompt-starter switch.
+ *  Box-wide, like it. */
 export function SelectionSwitch() {
   useLocale();
   const [off, setOff] = useHintFlag("selectionOff");

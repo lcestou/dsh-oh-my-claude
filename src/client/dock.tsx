@@ -560,7 +560,7 @@ export function AsideBubble({
             {open ? (
               // A very tall answer scrolls inside the card rather than pushing the composer down.
               <div style={{ padding: "0 10px 8px 24px", maxHeight: "40vh", overflow: "auto" }}>
-                {/* The passage a selection-bar aside asked about, a few lines, above its answer. */}
+                {/* The passage a selection Ask asked about, a few lines, above its answer. */}
                 {it.quote ? (
                   <blockquote
                     data-omc-aside-quote={it.id}

@@ -81,7 +81,7 @@ import { watchUltrathink } from "./ultrathink.js";
 import { watchRunButtons } from "./run-button.js";
 import { DraftRelay, StarterSlot } from "./cards.js";
 import { AsideBubble, IdleChip } from "./dock.js";
-import { SelectionSlot } from "./selection-bar.js";
+import { SelectionActions } from "./selection-actions.js";
 export { type SessionData, isOwnedActive, fmtCost, fmtDuration, cacheShare };
 // The entry keeps its export list while the split runs, re-exporting from the module that owns each.
 export { spinnerFrameAt, bracketOpen, pickVerb, mergeVerbs } from "./verbs.js";
@@ -490,13 +490,29 @@ export function apply(ctx: ClientCtx) {
       (props) =>
         props.sessionId ? <StaleModelRepair sessionId={props.sessionId} ctx={ctx} /> : null,
     );
-    // Select text in the chat and this bar docks on the composer: quote it into the draft, or ask
-    // about it as an aside. Highest order of the dock, so it sits on the composer itself.
-    ctx.slots.register(
-      { name: "conversation.input.dock", id: "claude-selection", order: 50 },
-      (props) => <SelectionSlot {...props} ctx={ctx} />,
-    );
     return null;
+  });
+
+  // dsh's selection popover (0.2.2-alpha.2 on) with Ask beside its Quote. Priority -1 shadows
+  // dsh's `quote` entry; if ours crashes or unloads, dsh's comes back. An older dsh never
+  // declares the slot, so there is no selection action at all.
+  // The slot is declared per chat view, so the registration is handed back to be undone with it.
+  ctx.slots.inject("conversation.chat.text-interaction", () => {
+    try {
+      return ctx.slots.register(
+        {
+          name: "conversation.chat.text-interaction",
+          key: "quote",
+          priority: -1,
+          locale: "messageQuotes",
+        },
+        (props) => <SelectionActions {...props} ctx={ctx} />,
+      );
+    } catch (e) {
+      // A dsh that refuses the shadow keeps its own Quote; Ask is simply absent.
+      console.warn("[oh-my-claude] selection actions not registered:", e);
+      return () => {};
+    }
   });
 
   // Add workspace, with a box to pick it on: the directory picker as a slot occupant in both the

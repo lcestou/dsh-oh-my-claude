@@ -36,7 +36,7 @@ export interface AsideItem {
   pending: boolean;
   at: number;
   dismissed?: boolean;
-  /** The passage the selection bar asked about; a blank `question` beside it means "explain". */
+  /** The passage the selection popover's Ask sent; a blank `question` beside it means "explain". */
   quote?: string;
 }
 /** A box whose Claude needs a login, as the card names it. */

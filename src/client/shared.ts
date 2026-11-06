@@ -763,11 +763,16 @@ export function useNarrow(): boolean {
 }
 
 type DshSlots = {
-  inject: (slot: string, factory: () => ReactNode) => void;
+  // The factory's disposer, when it returns one, runs when the slot's declaration goes away.
+  inject: (slot: string, factory: () => ReactNode | (() => void)) => void;
   register: (
     spec: {
       name: string;
       id?: string;
+      /** The cell of a keyed slot (`conversation.chat.text-interaction` takes `quote`). */
+      key?: string;
+      /** A dsh locale namespace; the entry then receives that dictionary as `t`. */
+      locale?: string;
       order?: number;
       label?: string;
       // A negative priority shadows dsh's own occupant of the same cell (the lowest live entry
@@ -780,27 +785,31 @@ type DshSlots = {
     // passes it so a section can dismiss the settings panel, e.g. after opening a restored session).
     // `inputActions` is the composer's own action face, handed to every entry of the session-scoped
     // composer slots (`conversation.input.dock` among them): `setDraft` writes the composer without
-    // sending, which is what a prompt starter needs; `captureInsertion` and `insertText` (dsh 0.1.7
-    // on) insert at the caret without replacing the draft, which is what the selection bar's Quote needs;
-    // `removeAttachment` takes one draft attachment off the row, which is how the steer card undoes
-    // dsh putting back a steer it withdrew.
+    // sending, which is what a prompt starter needs; `insertQuote` (dsh 0.2.2-alpha.2 on) adds
+    // dsh's quote chip at the caret; `removeAttachment` takes one draft attachment off the row,
+    // which is how the steer card undoes dsh putting back a steer it withdrew.
     Component: (props: {
       sessionId?: string;
       close?: () => void;
       inputActions?: {
         setDraft: (text: string) => void;
         submit?: () => void;
-        captureInsertion?: () => {
-          readonly start: number;
-          readonly end: number;
-          readonly draftRev: number;
-        };
-        insertText?: (
-          text: string,
-          span: { readonly start: number; readonly end: number; readonly draftRev: number },
-        ) => boolean;
+        insertQuote?: (text: string) => boolean;
         removeAttachment?: (id: string) => void;
       };
+      // `conversation.chat.text-interaction` (dsh-client-ui-conversation `TextInteractionSurface`):
+      // the selection the surface opened for, and closing it.
+      readText?: () => string | null;
+      dismiss?: () => void;
+      clearSelection?: () => void;
+      useSession?: <T>(
+        select: (s: {
+          removed: boolean;
+          subagent: null | { address: { mode: string }; parentAvailable?: boolean };
+        }) => T,
+      ) => T;
+      /** The entry's `locale` dictionary. */
+      t?: (key: string) => string;
       // The composer's published state, read through dsh's snapshot-selector hook; `draft` is the
       // text in the box right now, `phase` whether a send holds the editor, `attachmentIds` the draft
       // attachments on the row, in row order.

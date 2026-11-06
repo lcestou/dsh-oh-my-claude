@@ -1,4 +1,4 @@
-// The caps, shapes and helpers behind the /btw aside ring, the selection-bar question and revive.
+// The caps, shapes and helpers behind the /btw aside ring, the selection popover's Ask and revive.
 // Declarations here came out of src/adapter.ts unchanged, each with the comment above it.
 import z from "@deepseek-ai/schemastery";
 import type { JsonValue } from "../dsh.js";
@@ -11,7 +11,7 @@ export const ASIDE_ASKED_KEEP = 200;
 export const ASIDE_KEEP = 10;
 /** How much of a selected passage the ring keeps for the card; the whole passage went to Claude. */
 export const ASIDE_QUOTE_KEEP = 300;
-/** What Claude is asked when the selection bar's question is left blank. Claude reads it: English only. */
+/** What Claude is asked when the selection popover's Ask is left blank. English only. */
 export const SELECTION_EXPLAIN = "Explain the passage below from our conversation.";
 /**
  * The side question's context for a selected passage: a lead line and the passage as a Markdown quote.

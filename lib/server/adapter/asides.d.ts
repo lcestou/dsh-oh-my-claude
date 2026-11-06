@@ -7,7 +7,7 @@ export declare const ASIDE_ASKED_KEEP = 200;
 export declare const ASIDE_KEEP = 10;
 /** How much of a selected passage the ring keeps for the card; the whole passage went to Claude. */
 export declare const ASIDE_QUOTE_KEEP = 300;
-/** What Claude is asked when the selection bar's question is left blank. Claude reads it: English only. */
+/** What Claude is asked when the selection popover's Ask is left blank. English only. */
 export declare const SELECTION_EXPLAIN = "Explain the passage below from our conversation.";
 /**
  * The side question's context for a selected passage: a lead line and the passage as a Markdown quote.

@@ -497,7 +497,7 @@ console.log("state.test: ok");
 }
 
 {
-  // An aside asked from the selection bar keeps its passage and its blank question across a reload,
+  // An aside asked from a selection keeps its passage and its blank question across a reload,
   // so the card still shows what was asked about after a restart.
   const dir = await mkdtemp(join(tmpdir(), "omc-asides-quote-"));
   await saveAsides(dir, "s", [

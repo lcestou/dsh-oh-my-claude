@@ -6,6 +6,12 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Changed
+
+- The selection bar is gone; Ask moved into dsh's own selection popover (dsh 0.2.2), beside its Quote text. dsh shows one plugin's popover per selection, so the plugin draws dsh's Quote text there itself, doing what dsh's does: the passage goes into the composer as dsh's quote chip. Ask turns the popover into a question box (Enter asks, Shift+Enter starts a new line, Escape closes) that stays beside the passage as the chat scrolls, and sends the passage as an aside, as before. Both buttons take the Claude accent in a Claude session. The plugin's own Quote, which wrote the passage as Markdown into the draft, is gone. The Settings switch is now "Ask about a selection" and hides only Ask.
+- The plugin now needs dsh 0.2.2-alpha.2 or newer, the first dsh with the selection popover and its quote chip: `engines.dsh` and the `@deepseek-ai/dsh-llm` peer range both start there. On dsh 0.2.0 or 0.2.1, stay on 1.5.14.
+- A quote in a message you sent now shows as dsh's own quote chip (dsh 0.2.2); the plugin no longer lays its own quote block over the message. The composer still dims quoted lines while you type, now by dsh's own rule: `>5 items` and a `>` line inside a code fence count, a lone `>` does not, and a chip in the composer is skipped.
+
 ### Fixed
 
 - `open_session` with a provider and model reports an error when the new session has no model route to set, instead of opening it on dsh's default model without a word, and archives the empty session it created. Thanks to @tusharcora (#240).
