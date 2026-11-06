@@ -14,6 +14,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 - `spawn` has no default in the config any more. Unset, or `keeper`, the new switch decides; `node` or `dsh` still wins and shows the switch locked.
 - Under `spawn: dsh` the plugin passes the credential-shaped variables dsh runs with (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `GH_TOKEN` and the rest) through dsh's environment scrub, and puts the installer folders on `PATH`, so Claude starts and logs in as it does under a keeper. Thanks to @fancn (#241).
+- dsh's compaction of a Claude session runs Claude Code's own `/compact` and takes its summary. dsh measures the prompt the CLI reports, which its one-shot summary of dsh's own copy never lowered, so past its threshold it compacted before every step (33 one-shot summaries in one team member's turns). A compaction asked for mid-turn waits until the session is idle, a subagent's or team member's until its next turn starts, and a compaction the CLI makes on its own reaches dsh's copy without another model call. Switch: `cliCompaction`, on by default. Thanks to @fancn (#243).
 
 ### Fixed
 
