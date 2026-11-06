@@ -173,11 +173,25 @@ Settings come in two kinds. The switches under Settings → Oh My Claude and in 
 
 ```yaml
 permissionMode: dsh      # follow the session's shield (default), or pin one of the CLI's six modes
-spawn: keeper            # Claude outlives a dsh restart (default); node or dsh for a plain child
+# spawn: node            # unset: the Settings switch below decides; node or dsh here wins
 sshHost: ""              # "[user@]host" drives a claude on another machine over ssh
 ```
 
 Every key, with its default, is in [docs/configuration.md](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/configuration.md).
+
+### Keep Claude running across dsh restarts
+
+This switch under Settings → Oh My Claude picks how Claude Code is started, and it is on unless you turn it off. `spawn: node` or `spawn: dsh` in the config overrides it and locks the switch; `spawn: keeper` leaves it free. A flip reaches each session on its next turn.
+
+| | On (`keeper`) | Off (`dsh`) | `node` (config only) |
+|---|---|---|---|
+| A turn running when dsh restarts | Keeps running; the new dsh reattaches and shows what it did | Ends; about ten seconds after the restart the session gets a "dsh restarted while this turn was in progress" prompt and carries on | Same as off |
+| Left running after dsh exits | Claude, until it has gone `processIdleMs` (30 min, never under 5) with no dsh attached and no output | Nothing after a normal shutdown: dsh ends Claude and everything it started | Claude ends when dsh does; what it started is not tracked |
+| dsh's environment | Passed whole | Passed whole except `DSH_*` names: dsh's seam drops names with KEY, TOKEN, SECRET or PASSWORD, and the plugin passes them back | Passed whole |
+| SSH boxes and remote workspaces | The far `claude` is held on the box and survives too | The far `claude` ends with the ssh connection | Same as off |
+| Platforms | Linux and macOS; Windows runs `node` | All; `node` when dsh mounts no subprocess seam | All |
+
+DSH Web and DSH Desktop run separate dsh profiles, so each reattaches only to the Claude processes it started. Two dsh started on the same profile directory still share them.
 
 ## Remote boxes and accounts
 
