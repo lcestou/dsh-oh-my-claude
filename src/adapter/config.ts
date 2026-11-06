@@ -63,7 +63,8 @@ export function remoteWorkspaceFor(cwd: string): RemoteWorkspace | undefined {
 /** Configuration shape produced by the Config schema with defaults applied. */
 export type Config = {
   command: string;
-  spawn: "node" | "dsh";
+  /** Unset unless the plugin config names one; the Settings switch decides then (spawn-mode.ts). */
+  spawn?: "keeper" | "node" | "dsh";
   sshHost: string;
   configDir: string;
   permissionMode:
@@ -109,17 +110,17 @@ export const Config = z.object({
     .string()
     .default("claude")
     .description("Claude Code binary: a name on PATH or an absolute path"),
+  // No default on purpose: unset (or keeper) means the Settings switch decides; node or dsh wins.
   spawn: z
     .union(["keeper", "node", "dsh"])
-    .default("keeper")
     .description(
-      "How the Claude Code process is started. 'keeper' (default): under a small keeper outside dsh's process tree (its own systemd user scope when available), so a dsh restart leaves Claude running and the new dsh reattaches. 'node': directly, as dsh's child. 'dsh': through dsh's subprocess seam (ctx.subprocess); with a remote provider mounted on that seam, a remote workspace then runs Claude Code on that machine. The seam scrubs credential-shaped env vars (KEY/TOKEN/SECRET/PASSWORD), so log in on the machine that runs it",
+      "How the Claude Code process is started. Unset or 'keeper' follows Settings → Oh My Claude → Keep Claude running across dsh restarts (on: 'keeper', off: 'dsh'); 'node' or 'dsh' here wins over that switch and locks it. 'keeper': under a small keeper outside dsh's process tree (its own systemd user scope when available), so a dsh restart leaves Claude running and the new dsh reattaches; an SSH box holds the far claude the same way. 'node': directly, as dsh's child. 'dsh': through dsh's subprocess seam (ctx.subprocess), which ends Claude and everything it started when dsh shuts down; the plugin passes the credential-shaped env vars (KEY/TOKEN/SECRET/PASSWORD) dsh runs with through the seam's scrub and puts the installer folders on PATH, and with a remote provider mounted on that seam a remote workspace runs Claude Code on that machine",
     ),
   sshHost: z
     .string()
     .default("")
     .description(
-      "Run this instance's Claude Code on a remote host over SSH (e.g. 'user@box' or an ssh_config alias). Empty = local. This box's harness drives the far `claude` with `ssh -o BatchMode=yes`; nothing runs on the remote but the CLI, using the remote's own ~/.claude login. Needs a working SSH key to the host. With spawn: keeper (the default) the far claude is held in a session of its own on the box, so a dsh restart here reattaches to it; the dsh MCP bridge does not reach the remote",
+      "Run this instance's Claude Code on a remote host over SSH (e.g. 'user@box' or an ssh_config alias). Empty = local. This box's harness drives the far `claude` with `ssh -o BatchMode=yes`; nothing runs on the remote but the CLI, using the remote's own ~/.claude login. Needs a working SSH key to the host. With the Settings switch Keep Claude running across dsh restarts on (the default) the far claude is held in a session of its own on the box, so a dsh restart here reattaches to it, and with it off the far claude ends with the ssh connection; the dsh MCP bridge does not reach the remote",
     ),
   permissionMode: z
     .union(["dsh", "acceptEdits", "bypassPermissions", "plan", "dontAsk", "auto", "manual"])
@@ -278,7 +279,7 @@ export const Config = z.object({
  *  still reaches the CLI; a remote one is left alone, the far box has its own PATH. On Windows the
  *  keeper gives way to a plain child: it needs a Unix socket and `systemd-run`, neither of which
  *  exists there, so a keeper spawn would fail every turn. */
-export function localConfig<T extends { command: string; sshHost: string; spawn: string }>(
+export function localConfig<T extends { command: string; sshHost: string; spawn?: string }>(
   config: T,
   platform: NodeJS.Platform = process.platform,
   resolve: (command: string) => string = resolveCommand,

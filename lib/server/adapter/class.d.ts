@@ -7,6 +7,7 @@ import { type McpBridge } from "../mcp.js";
 import { type ClaudeEvent, ClaudeProcess } from "../process.js";
 import type { Agent, ImageAttachmentRef, JsonValue, PluginContext, SessionController, SubprocessRuntime } from "../dsh.js";
 import { type ToolMode, type ToolModeInfo } from "../rows-probe.js";
+import { type SpawnModeInfo, type SpawnSetting } from "./spawn-mode.js";
 import { type FsBox } from "../remote-fs.js";
 import { sshRunner, type HoldRecord } from "../hold.js";
 import { type HealHost } from "../session-heal.js";
@@ -23,6 +24,16 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     ctx: PluginContext;
     config: Schemastery.TypeT<typeof Config>;
     subprocess?: Pick<SubprocessRuntime, "spawn">;
+    /** The tag on the keepers and holds this dsh starts and adopts (spawn-mode.ts `ownsKeeper`), read
+     *  from dsh's profile context at construction so SSH-box mounts carry it too; undefined in tests
+     *  and on a dsh without a profile context. */
+    keeperOwner?: string;
+    /** The config's `spawn` before `localConfig`, which turns a Windows `keeper` into `node`: the
+     *  switch has to tell the pasted default from a real choice. */
+    spawnSetting?: SpawnSetting;
+    /** Sessions whose live keeper or hold belongs to the other dsh on this box, found at adoption;
+     *  the boot nudge leaves them to that dsh. */
+    foreignSessions: Set<string>;
     /** dsh's permission preset service, when mounted: the shield's current preset per session. */
     permissionPresets?: {
         current: (session: object) => string;
@@ -806,6 +817,9 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     terminalSyncInfo(): {
         enabled: boolean;
     };
+    /** What the Settings switch shows beside its hint: the `spawn` key from the plugin config, which
+     *  wins over the switch, and whether this platform runs a keeper. Fixed until dsh restarts. */
+    spawnModeInfo(): SpawnModeInfo;
     /** Turn terminal sync on or off for every mount. Off stops each mount's watchers and drops any
      *  queued mirror; on lets the next sweep pick loaded sessions back up. */
     setTerminalSync(enabled: boolean): Promise<{
@@ -849,7 +863,9 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     localEnvOverride(firstParty?: boolean): Record<string, string> | undefined;
     /** The child env a keeper hands Claude: dsh's environment plus the plugin's additions. */
     keeperEnv(firstParty?: boolean): Record<string, string>;
-    /** Spawner for one session: keeper mode needs the session to place and name the keeper. */
+    /** Spawner for one session: keeper mode needs the session to place and name the keeper. A spec
+     *  with `child` set runs as dsh's child whatever the switch says now: the spec is the decision
+     *  `prepare` made for this process. */
     spawnerFor(sessionId: string | undefined, spec: ClaudeProcessSpec): Spawner;
     /**
      * Start the far `claude` in a hold on `host` (see hold.ts) and attach to it. The record is what a
@@ -888,8 +904,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * local turn. Mirrors prepare()'s targetHost so a logged-out error names the right machine: a
      * purpose one-shot (title/compaction) always runs on the local claude for the default provider. */
     hostLabelFor(sessionId: string | undefined, purpose?: string): string | undefined;
-    /** The function that spawns a session's claude: over SSH for an ssh box, over SSH on the box for a remote-workspace cwd, else the local seam or node spawner with this box's login. */
-    spawner(firstParty?: boolean): Spawner;
+    /** The function that spawns a session's claude: over SSH for an ssh box, over SSH on the box for a remote-workspace cwd, else the local seam or node spawner with this box's login. `child` picks the seam or node; a one-shot with no session passes none and gets the seam only under `spawn: dsh` in the config, as before the switch existed. */
+    spawner(firstParty?: boolean, child?: "node" | "dsh"): Spawner;
     /** Kill this instance's live processes and drop them from the shared registry: called when an SSH
      * box is removed from the panel, so its remote `claude` sessions do not outlive the mount. */
     disposeProcesses(): void;
@@ -996,7 +1012,14 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     forgetSession(sessionId: string): void;
     /** The session id inside a registry key this adapter owns. */
     private ownSessionId;
-    /** Kill this adapter's own settled processes that have been idle past the threshold and forget their sessions, leaving the rest sorted last-used so an eviction can pick the oldest. */
+    /** Kill this adapter's own processes that are dead, or settled and idle past processIdleMs, and
+     *  forget their sessions. Runs before each spawn and on every WATCH_SWEEP_MS tick of `apply`'s
+     *  sweep; before #241 it ran only before a spawn, so an idle process lived until another session
+     *  started one. A process mid-turn, waiting on a relayed tool, parked for a steer, running a
+     *  background task, or whose CLI wrote turn output within processIdleMs is never idle. */
+    reapIdle(): void;
+    /** Reap the idle, then kill the longest-idle settled processes until a spawn fits under
+     *  maxProcesses. Before each spawn only: the cap is room for the next process, not a target. */
     evict(): void;
     /**
      * How this dsh request continues the session's Claude process, if at all:

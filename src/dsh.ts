@@ -437,6 +437,9 @@ export interface PluginContext {
   get(name: "desktopBrowserAccess"): { readonly ordinaryBrowserEnabled: boolean } | undefined;
   /** dsh's settings service, narrowed to the locale namespace the server strings read. */
   get(name: "settings"): import("./locale.js").LocaleSettingsReader | undefined;
+  /** Mirrors: @deepseek-ai/dsh-app-boot `ProfileContext`, narrowed to its directory. dsh provides it
+   *  on the host before any plugin loads (profile-boot, 0.2.2-rc.1), so it is there at `apply`. */
+  get(name: "profileContext"): { readonly dir: string } | undefined;
   /** dsh-commands (`/name` in the composer); optional so a host without it still mounts the plugin. */
   commands?: {
     register(definition: {

@@ -28,6 +28,15 @@ export declare const CHILD_ENV: {
  *  `childEnv`; a child on another machine starts from that machine's shell, so the remote paths
  *  carry each one that is set here, as set. None is ever invented. */
 export declare const FORWARDED_ENV: readonly ["DISABLE_TELEMETRY", "DISABLE_ERROR_REPORTING", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "DISABLE_AUTOUPDATER", "DISABLE_BUG_COMMAND", "DO_NOT_TRACK"];
+/**
+ * The credential-shaped entries of `base` that dsh's seam would drop, so `spawn: dsh` gives Claude
+ * the login and tokens a keeper or a node child gets: `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
+ * cloud keys, and the `GH_TOKEN` and `MAX_THINKING_TOKENS` the CLI also reads (the 2.1.318 binary
+ * names 62 variables the pattern matches). `DSH_*` names stay dropped, the seam's other rule; no
+ * mode needs them in Claude. Wrong for someone who picked the seam to keep a secret away from
+ * Claude: dsh's environment reaches Claude in every mode.
+ */
+export declare function credentialEnv(base: NodeJS.ProcessEnv): Record<string, string>;
 /** The FORWARDED_ENV pairs set in `base`, in that order. */
 export declare function forwardedEnv(base?: NodeJS.ProcessEnv): [string, string][];
 /** The environment a Claude child runs with: dsh's own, then the plugin's additions, then whatever
@@ -319,10 +328,13 @@ export interface ClaudeStreamPartial {
  */
 export declare function nodeSpawner(command: string, args: string[], cwd: string, envOverride?: Record<string, string>): SubprocessHandle;
 /**
- * dsh's subprocess seam (`ctx.subprocess`). Same shape by definition. With a remote provider
- * mounted, Claude Code runs on the remote machine for a remote workspace; the seam
- * scrubs credential-shaped env vars, so credentials come from the login on that machine.
- * `envOverride` is merged last so configured values win.
+ * dsh's subprocess seam (`ctx.subprocess`). Same shape by definition. The seam owns the whole
+ * process tree, so Claude and what it started end when dsh exits. It drops credential-shaped names
+ * from the environment it hands a child and keeps the ones the caller passes, so the ones dsh runs
+ * with are passed here (`credentialEnv`): an `ANTHROPIC_API_KEY` login keeps working, as it does
+ * under a keeper. With a remote provider mounted, Claude Code runs on the remote machine for a
+ * remote workspace and those values go with it. `envOverride` is merged last so configured values
+ * win.
  */
 export declare const seamSpawner: (subprocess: Pick<SubprocessRuntime, "spawn">, base?: NodeJS.ProcessEnv) => Spawner;
 /** POSIX single-quote a string for a remote shell: wrap in `'...'`, escaping any embedded quote. */
@@ -667,6 +679,11 @@ export interface ClaudeProcessSpec {
      *  Present only when on, so a spec saved before the switch existed still keys the same; a flip
      *  changes the key, and the session's next turn replaces the process, as an effort change does. */
     firstParty?: true;
+    /** Started as dsh's child rather than under a keeper: the Settings switch off, or `spawn: node` or
+     *  `dsh` in the config. Absent for a keeper, so a keeper's saved spec keys the same as it did
+     *  before the field existed; a flip changes the key and the session's next turn respawns, never
+     *  the turn in flight. */
+    child?: "node" | "dsh";
 }
 /** What the caller wants to know when a Claude process ends, live or after a restart. */
 export interface ClaudeProcessOnExit {
@@ -689,8 +706,9 @@ export interface KeeperInfo {
         code: number | null;
         signal: string | null;
     } | null;
-    /** Who ended Claude: a kill message from dsh, Claude itself, or the keeper crashing; null while it runs. */
-    endedBy: "client" | "child" | "keeper-crash" | null;
+    /** Who ended Claude: a kill message from dsh, Claude itself, the keeper crashing, or the keeper's
+     *  orphan timer (nobody attached for orphanMs); null while it runs. */
+    endedBy: "client" | "child" | "keeper-crash" | "orphan" | null;
 }
 /** The keeper record in a spawn directory, or undefined when it is missing or damaged. */
 export declare function readKeeperInfo(dir: string): KeeperInfo | undefined;
@@ -720,6 +738,10 @@ export interface KeeperSpec {
     sessionId: string;
     /** The adapter's process spec, so an adopted keeper matches the next request's spec. */
     procSpec?: ClaudeProcessSpec;
+    /** The dsh that started it (spawn-mode.ts `keeperOwner`); another dsh on the box leaves it alone. */
+    owner?: string;
+    /** keeper.ts ends Claude after this long with no dsh attached and no output; absent, never. */
+    orphanMs?: number;
 }
 /** The spawn arguments a keeper was started with, for adopting or respawning it after a restart. */
 export declare function readKeeperSpec(dir: string): KeeperSpec | undefined;
@@ -934,10 +956,14 @@ export declare class ClaudeProcess {
     /** Count buffered `result` events with no turn reading them, so the loop can tell a real reply
      *  from a stale background-task completion. */
     countStaleResults(): number;
-    /** True when the queue holds a frame a turn has to read out: anything but the CLI's own `system`
-     *  notices and non-JSON noise, so a notice an adoption provokes never wakes an idle session. A
-     *  `task_notification` is the exception: a background task that finished while dsh was away is
-     *  work done, and the translator draws its completion line. */
+    /** True when the queue holds a frame a turn has to read out: a frame of a turn Claude ran while
+     *  dsh was away (TURN_FRAMES), a relayed call injected for a turn, or the `task_notification` of
+     *  a background task that finished meanwhile, which the translator draws as a completion line.
+     *  Everything else waits for the next turn and wakes nobody: the CLI's `system` notices, the
+     *  `keep_alive`, `rate_limit_event` and `auth_status` frames 2.1.318 can send between turns, and
+     *  non-JSON noise. Before #241 this listed what not to wake for, and each frame the list missed
+     *  woke an idle session after a restart. Wrong for a frame type a later CLI adds for real output:
+     *  it waits for the next prompt instead of opening a turn. */
     hasTurnOutput(): boolean;
     /** Tell the child a stdout line was used: a keeper keeps a line until then, so a line a dsh
      *  read but never used (its turn ended as it shut down) reaches the next dsh (automagik#62). */

@@ -1418,6 +1418,7 @@ export interface RouteCtx {
   stopTask: SessionRouteOptions["stopTask"];
   targetOf: <T extends string | null>(url: URL, cwd: T) => CwdTarget<T>;
   taskOutput: SessionRouteOptions["taskOutput"];
+  spawnMode: SessionRouteOptions["spawnMode"];
   terminalSync: SessionRouteOptions["terminalSync"];
   thinking: SessionRouteOptions["thinking"];
   toolMode: SessionRouteOptions["toolMode"];
@@ -1910,6 +1911,8 @@ export interface SessionRouteOptions {
     info(): Promise<ToolModeInfo>;
     set(mode: ToolMode): Promise<ToolModeInfo>;
   };
+  /** The keeper switch's facts: the config's `spawn` key and whether this platform runs a keeper. */
+  spawnMode?: { info(): import("./adapter/spawn-mode.js").SpawnModeInfo };
   /** Terminal sync: whether terminal `/resume` exchanges mirror into the dsh session. */
   terminalSync?: {
     info(): { enabled: boolean };
@@ -2135,6 +2138,7 @@ export function registerSessionRoutes(
     events,
     idle,
     toolMode,
+    spawnMode,
     terminalSync,
     permissionModes,
     thinking,
@@ -2625,6 +2629,7 @@ export function registerSessionRoutes(
       settingsTexts,
       sideQuestions,
       skillDoctor,
+      spawnMode,
       sshBoxesPath,
       startedIds,
       starters,
