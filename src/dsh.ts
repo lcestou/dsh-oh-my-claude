@@ -79,8 +79,8 @@ export interface Session {
     ...opts: unknown[]
   ): SessionEvent;
   deriveMessages(): Message[];
-  /** The folded `request/header`; `config.provider` is the provider the last request ran on. */
-  /** `tools` is exactly what dsh offers the model next, so code mode shows only `run_code` there. */
+  /** The folded `request/header`; `config.provider` is the provider the last request ran on, and
+   *  `tools` is exactly what dsh offers the model next, so code mode shows only `run_code` there. */
   requestHeader():
     | { version: number; config?: { provider?: string }; readonly tools?: readonly ToolSchema[] }
     | undefined;
@@ -109,6 +109,11 @@ export interface SessionStore {
 export interface Agent {
   readonly id: SessionId;
   readonly session?: Session;
+  /** dsh-agent's `AgentModel`: `select` replaces the next step's route for this agent alone and
+   *  validates nothing. Optional because the mirror also types agents built some other way. */
+  readonly model?: {
+    select(selection: { provider: string; model: string; reasoningEffort?: string }): void;
+  };
   ctx?: PluginContext;
   /** The agent's model route; `select` applies from its next request. Optional: the mirror also
    *  types agents dsh built some other way. */

@@ -56,8 +56,8 @@ export const codeModeTool = (agent: Agent): ToolSchema | undefined => {
 };
 
 /** The dsh tools the bridge offers `agent`: in code mode only `run_code`; otherwise what dsh shows
- *  that agent, minus the ones Claude Code has natively. `open_session` is the bridge's own and is
- *  added by the callers that offer it. */
+ *  that agent, minus the ones Claude Code has natively. `open_session` is the bridge's own, not a
+ *  dsh tool, so code mode leaves it alone; the callers that offer it add it. */
 const bridgedSchemas = (tools: DshToolsRegistry, agent: Agent): ToolSchema[] => {
   const runCode = codeModeTool(agent);
   return runCode ? [runCode] : tools.schemas(agent).filter((t) => !HIDDEN.has(t.name));
@@ -99,14 +99,15 @@ const str = (v: JsonValue | undefined): string | undefined =>
 
 /** The host services openSession needs; all are injected before the bridge mounts. */
 type OpenHost = Required<
-  Pick<PluginContext, "sessions" | "workspaceRegistry" | "sessionController" | "agents">
+  Pick<PluginContext, "sessions" | "workspaceRegistry" | "sessionController">
 >;
 
 /**
  * Creates and initializes a new top-level dsh session with an initial prompt.
- * Used by the MCP bridge to fan out sessions from Claude Code to dsh.
+ * Used by the MCP bridge to fan out sessions from Claude Code to dsh. A provider is applied only
+ * with a model; either alone is ignored and the session opens on dsh's default route.
  */
-async function openSession(
+export async function openSession(
   ctx: OpenHost,
   agent: Agent,
   args: OpenSessionArgs,
@@ -125,12 +126,16 @@ async function openSession(
   const { sessionId } = await ctx.sessionController.create(create);
   const provider = str(args.provider);
   const model = str(args.model);
+  // dsh 0.2 dropped `agents.selectForNextRequest`. The controller's `selectModel` is not the
+  // replacement: it also saves the pick as the box's default for every new session, so a model
+  // Claude named for one child would become everyone's. The child's own agent takes the route
+  // instead, the step `selectModel` runs before that save. dsh leaves validation to the caller,
+  // so an unknown model fails in the new session's first turn, where it shows.
   if (provider && model) {
-    // dsh dropped sessionController.agents.selectForNextRequest; select on the child agent itself.
-    // Not sessionController.selectModel: that also saves the route as the user's default model.
-    const child = ctx.agents.get(sessionId);
-    if (!child?.model) throw new Error(`session ${sessionId} has no agent to select ${provider}/${model} on`);
-    child.model.select({ provider, model });
+    const found = await ctx.sessionController.resolveAgent(sessionId);
+    if ("error" in found)
+      throw found.error instanceof Error ? found.error : new Error(String(found.error));
+    found.agent.model?.select({ provider, model });
   }
   await ctx.sessionController.prompt(
     {
@@ -266,8 +271,9 @@ export async function handleRpc(
           `only ${RUN_CODE} is callable directly in code mode; call ${name} from a ${RUN_CODE} program`,
         );
       // run_code is dsh's executor transport, not a registered tool: only a live turn's relay can run it.
+      if (codeMode && !relay) return errorReply(msg.id, `${RUN_CODE} needs a live dsh turn`);
       const tool = codeMode || HIDDEN.has(name) ? undefined : tools.get(name, agent);
-      if (!tool && !(codeMode && relay)) return errorReply(msg.id, `unknown tool ${name}`);
+      if (!tool && !codeMode) return errorReply(msg.id, `unknown tool ${name}`);
       try {
         // A live Claude turn takes the call first: dsh then runs the tool itself and renders it
         // natively (subagent cards, counts, notices). Otherwise execute it here.
@@ -463,7 +469,7 @@ export function registerMcpBridge(
         void (async () => {
           const { webServer, tools, agents, sessions, sessionController, workspaceRegistry } = host;
           if (!webServer || !tools || !sessionController) return;
-          const openHost: OpenHost = { sessions, workspaceRegistry, sessionController, agents };
+          const openHost: OpenHost = { sessions, workspaceRegistry, sessionController };
           const serve = async (req: IncomingMessage, res: ServerResponse) => {
             if (req.headers[KEY_HEADER] !== key) return send(res, 403, { error: "forbidden" });
             if (req.method !== "POST") return send(res, 405, { error: "POST only" });

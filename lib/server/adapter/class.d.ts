@@ -859,7 +859,9 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * drain turn so what Claude did during the gap shows up without anyone typing.
      */
     adoptKeepers(): Promise<void>;
-    /** Every 2 s for a minute: a reply waiting in an adopted process's queue opens a dsh turn. */
+    /** Every 2 s for a minute: a reply waiting in an adopted process's queue opens a dsh turn. A
+     *  `system` notice on its own is no reply and wakes nobody; the next turn reads it. The one
+     *  notice that wakes is `task_notification`, a background task that finished while dsh was away. */
     drainAdopted(proc: ClaudeProcess, sessionId: string, everyMs?: number, tries?: number): Promise<void>;
     /**
      * After a reattach, the surviving Claude still holds an MCP session against the previous dsh's

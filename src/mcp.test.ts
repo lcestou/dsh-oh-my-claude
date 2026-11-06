@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { handleRpc, HIDDEN, KEY_HEADER, MCP_PATH, registerMcpBridge } from "./mcp.js";
+import { handleRpc, HIDDEN, KEY_HEADER, MCP_PATH, openSession, registerMcpBridge } from "./mcp.js";
+import type { Agent } from "./dsh.js";
 
 const agent = { id: "a1" };
 // SAFETY: partial fake for tests
@@ -355,6 +356,25 @@ console.log("mcp ok");
     true,
     "run_code without a live turn fails instead of running nothing",
   );
+  assert.match(
+    JSON.stringify(idle),
+    /run_code needs a live dsh turn/,
+    "the failure says why, not unknown tool",
+  );
+  // open_session is the bridge's own tool, not dsh's, so code mode still offers it.
+  // SAFETY: cast to HandleRpcParams shape for test double
+  const withOpen = (await handleRpc({ jsonrpc: "2.0", id: 45, method: "tools/list" }, {
+    ...env,
+    agent: ptcAgent,
+    open: async () => "opened",
+  } as unknown as Parameters<typeof handleRpc>[1])) as {
+    result: { tools: Array<{ name: string }> };
+  };
+  assert.deepEqual(
+    withOpen.result.tools.map((t) => t.name),
+    ["run_code", "open_session"],
+    "code mode keeps the bridge's own open_session",
+  );
   // A header offering more than run_code is ordinary mode: the full bridged list comes back.
   const nativeAgent = {
     id: "a3",
@@ -371,4 +391,53 @@ console.log("mcp ok");
     nativeList.result.tools.map((t) => t.name),
     ["subagent_local", "bash"],
   );
+}
+
+// openSession: a provider and model go on the new session's own agent before the first prompt,
+// so its first turn already runs on that route and no box default changes; without both, none.
+{
+  const calls: string[] = [];
+  const selected: unknown[] = [];
+  const child = {
+    model: { select: (r: unknown) => void (calls.push("select"), selected.push(r)) },
+  };
+  // SAFETY: a stand-in for the three host services openSession reads; there is no selectModel,
+  // since that one would also save the pick as the box's default for new sessions
+  const host = {
+    sessions: { get: () => undefined },
+    workspaceRegistry: { list: () => [{ id: "w1", path: "/p" }] },
+    sessionController: {
+      create: async () => (calls.push("create"), { sessionId: "n1" }),
+      resolveAgent: async () => ({ agent: child }),
+      prompt: async () => void calls.push("prompt"),
+    },
+  } as unknown as Parameters<typeof openSession>[0];
+  // SAFETY: an agent whose session header names the workspace path
+  const caller = { id: "a", session: { id: "s", header: { cwd: "/p" } } } as unknown as Agent;
+  const signal = new AbortController().signal;
+  const text = await openSession(
+    host,
+    caller,
+    { prompt: "go", provider: "claude-code", model: "claude-haiku-5-5" },
+    signal,
+  );
+  assert.equal(text, "opened session n1 in workspace w1");
+  assert.deepEqual(calls, ["create", "select", "prompt"], "route set before the first prompt");
+  assert.deepEqual(selected, [{ provider: "claude-code", model: "claude-haiku-5-5" }]);
+  calls.length = 0;
+  await openSession(host, caller, { prompt: "go", model: "claude-haiku-5-5" }, signal);
+  assert.deepEqual(calls, ["create", "prompt"], "a model without a provider sets no route");
+  // A session the controller cannot resolve is reported, never prompted on dsh's default route.
+  calls.length = 0;
+  // SAFETY: the same stand-in with a controller that cannot resolve the new session
+  const lost = {
+    ...host,
+    sessionController: { ...host.sessionController, resolveAgent: async () => ({ error: "gone" }) },
+  } as unknown as Parameters<typeof openSession>[0];
+  await assert.rejects(
+    openSession(lost, caller, { prompt: "go", provider: "p", model: "m" }, signal),
+    /gone/,
+  );
+  assert.deepEqual(calls, ["create"], "no prompt after a failed resolve");
+  console.log("open-session ok");
 }

@@ -591,6 +591,12 @@ assert.ok(
   assert.ok(!persistent.includes("Agent/Task"), "no subagent tools, no subagent rule");
   assert.ok(persistent.includes("mcp__dsh__open_session makes a new top-level session"));
   assert.equal(dshToolsGuidance(), "dsh tools are available as mcp__dsh__* over MCP.");
+  // Code mode lists only run_code (and the bridge's open_session), and still keeps Claude off
+  // native Agent children, pointing it at run_code programs instead.
+  const code = dshToolsGuidance([bridgedTool("run_code"), bridgedTool("open_session")]);
+  assert.ok(code.includes("called from a mcp__dsh__run_code program"));
+  assert.ok(code.includes("never the built-in Agent/Task tool"));
+  assert.ok(!code.includes("mcp__dsh__subagent"), "no direct subagent tool is named");
 }
 const fresh = buildArgs({
   model: "m",
@@ -3943,6 +3949,41 @@ console.log("schema-guard ok");
   assert.deepEqual(acked, [1, 0, 2, 3], "an injected event is no stdout line, so it acks nothing");
 }
 
+// The background-task snapshot a re-sent `initialize` draws (probed on 2.1.310) is used on arrival
+// and never queued; a tool result that only mentions the name is queued like any other line.
+{
+  const stdout = new PassThrough();
+  const acked: number[] = [];
+  const handle: SubprocessHandle = {
+    stdin: new PassThrough(),
+    stdout,
+    stderr: new PassThrough(),
+    done: new Promise(() => {}),
+    terminate: () => {},
+    ack: (index) => acked.push(index),
+  };
+  const proc = new ClaudeProcess({
+    args: ["-p"],
+    cwd: "/",
+    spec: emptySpec,
+    spawner: () => handle,
+    command: "/opt/claude",
+  });
+  stdout.write(
+    `${JSON.stringify({ type: "system", subtype: "background_tasks_changed", tasks: [] })}\n`,
+  );
+  stdout.write(
+    `${JSON.stringify({ type: "user", message: { content: "grep background_tasks_changed" } })}\n`,
+  );
+  stdout.write(
+    `${JSON.stringify({ type: "system", subtype: "background_tasks_changed", tasks: [{ task_id: "b1" }] })}\n`,
+  );
+  await new Promise((r) => setTimeout(r, 20));
+  assert.deepEqual(acked, [0, 2], "both snapshots are used on arrival");
+  assert.equal(proc.queue.lines.length, 1, "only the tool result waits for a turn");
+  assert.equal((await proc.nextEvent())?.type, "user");
+}
+
 // The seam spawner hands dsh a fully explicit spec: raw pipes, the binary first in argv, small env.
 {
   let spec: SubprocessSpawnSpec | undefined;
@@ -5874,15 +5915,35 @@ console.log("interrupt-on-abort ok");
     calls.push(id);
     return answers.shift() ?? true;
   };
-  const proc: any = { alive: true, busy: false, queue: { size: 1 } };
+  const proc: any = { alive: true, busy: false, queue: new LineQueue() };
+  proc.hasTurnOutput = ClaudeProcess.prototype.hasTurnOutput;
+  proc.queue.push(JSON.stringify({ type: "result", subtype: "success", is_error: false }));
   await adapter.drainAdopted(proc, "d", 1, 10);
   assert.equal(calls.length, 3, "retries until a wake opens a turn");
   calls.length = 0;
   answers = [false, false];
-  proc.queue.size = 0;
+  proc.queue = new LineQueue();
   await adapter.drainAdopted(proc, "d", 1, 5);
   assert.equal(calls.length, 0, "nothing queued: no wake");
-  proc.queue.size = 1;
+  // A CLI notice no turn asked for, plus stderr noise: neither is a reply to show.
+  proc.queue.push(JSON.stringify({ type: "system", subtype: "status", status: null }));
+  proc.queue.push("not json");
+  await adapter.drainAdopted(proc, "d", 1, 5);
+  assert.equal(calls.length, 0, "only system frames and noise: no wake");
+  // A background task that finished while dsh was away: its completion is work to show.
+  proc.queue.push(
+    JSON.stringify({ type: "system", subtype: "task_notification", status: "completed" }),
+  );
+  answers = [true];
+  await adapter.drainAdopted(proc, "d", 1, 5);
+  assert.equal(calls.length, 1, "a finished background task: wake");
+  calls.length = 0;
+  proc.queue = new LineQueue();
+  proc.queue.push({ type: "dsh_relay" });
+  answers = [true];
+  await adapter.drainAdopted(proc, "d", 1, 5);
+  assert.equal(calls.length, 1, "an injected relay waits on a turn: wake");
+  calls.length = 0;
   proc.busy = true;
   await adapter.drainAdopted(proc, "d", 1, 5);
   assert.equal(calls.length, 0, "busy: a turn is already draining");
