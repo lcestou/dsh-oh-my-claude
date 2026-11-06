@@ -17,7 +17,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
-- A keeper no dsh has attached to for `processIdleMs` (30 minutes by default, never under 5), while Claude writes nothing, now ends its Claude. Keepers used to run until someone killed them. Thanks to @fancn (#241).
+- A keeper no dsh has attached to for `processIdleMs` (30 minutes by default, never under 5 minutes), while Claude writes nothing, now ends its Claude. Keepers used to run until someone killed them. Thanks to @fancn (#241).
 - An idle Claude process is ended after `processIdleMs` on its own, checked every 30 seconds, unless a background task is still running. It used to wait until another session started one. Thanks to @fancn (#241).
 - A dsh restart no longer wakes an idle session with "dsh restarted and reattached" over a frame that was not Claude's output, such as a reply to a control request that arrived late. Thanks to @fancn (#241).
 - DSH Web and DSH Desktop on one machine reattach only to their own Claude processes and leave each other's restart nudges alone; the one that started later used to take over the other's sessions. Thanks to @fancn (#241).
