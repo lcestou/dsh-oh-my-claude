@@ -57,7 +57,7 @@ Once an SSH box is saved, dsh's own Add workspace dialog gains a box dropdown: a
 
 ## Install
 
-You need the Claude Code CLI on `PATH` and logged in (`claude --version` works, `claude` opens without asking you to sign in), and dsh 0.2 (0.2.0-rc.1 or newer). On dsh 0.1.x, install the npm tag for your line from the Compatibility table below. Nothing else: no API key, no Node build step.
+You need the Claude Code CLI on `PATH` and logged in (`claude --version` works, `claude` opens without asking you to sign in), and dsh 0.2 (0.2.2-alpha.2 or newer). On dsh 0.2.0 or 0.2.1, install 1.5.14; on dsh 0.1.x, install the npm tag for your line from the Compatibility table below. Nothing else: no API key, no Node build step.
 
 **From dsh's Plugins page**, in the web app or DSH Desktop:
 
@@ -149,7 +149,7 @@ dsh ships prereleases only and moves client APIs between them, so every release 
 21. dsh's own goal and every earlier goal of the session, beside Claude Code's goal and its scheduled tasks. [Tasks](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#tasks)
 22. Edit or remove a message you steered in while Claude works, or all of them as one, until Claude reads it. A file or image on the message stays on it; only the text changes. Nothing goes out while you edit. Send now stops Claude and sends one as the next turn. [Steering](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#dsh-tools-over-mcp)
 23. Claude's working line (spinner, verb, figures) repeats above the composer once you scroll up past it, so reading back through a long turn never hides what Claude is doing. A switch in Settings turns it off. [Turn status](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#turn-status)
-24. Select text in a reply to quote it into your message, or to ask Claude about it as a side question that leaves the conversation alone; leave the question blank and Claude explains the passage. A quote in your own message reads like one in Claude's replies, indented with the accent bar. [Asides](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#asides)
+24. Select text in a reply and dsh's popover (dsh 0.2.2) shows Ask beside its Quote text, or on a phone a row above the composer does: ask Claude about the passage as a side question that leaves the conversation alone; ask with the question blank and Claude explains the passage. [Asides](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#asides)
 25. A finished turn keeps a closing line where the working verb was, the way the terminal ends one: `✻ Crunched for 27s · done 3:21 AM`. A turn you stopped reads `Interrupted · What should Claude do instead?`. [Turn status](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#turn-status)
 26. On dsh 0.1.7, Claude's tool calls show as dsh's own tool cards, the way every other provider's do, with the text streaming between them. Inline text is a switch away in Settings. [Tool rows](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/configuration.md)
 27. A new session in a workspace opens on the Claude box, model and effort that workspace last ran, and a workspace with nothing remembered opens on a default model and effort you pick. [Remember model per workspace](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#remember-model-per-workspace)

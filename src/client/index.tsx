@@ -82,7 +82,7 @@ import { watchUltrathink } from "./ultrathink.js";
 import { watchRunButtons } from "./run-button.js";
 import { DraftRelay, StarterSlot } from "./cards.js";
 import { AsideBubble, IdleChip } from "./dock.js";
-import { SelectionSlot } from "./selection-bar.js";
+import { mountSelectionActions } from "./selection-actions.js";
 export { type SessionData, isOwnedActive, fmtCost, fmtDuration, cacheShare };
 // The entry keeps its export list while the split runs, re-exporting from the module that owns each.
 export { spinnerFrameAt, bracketOpen, pickVerb, mergeVerbs } from "./verbs.js";
@@ -492,14 +492,10 @@ export function apply(ctx: ClientCtx) {
       (props) =>
         props.sessionId ? <StaleModelRepair sessionId={props.sessionId} ctx={ctx} /> : null,
     );
-    // Select text in the chat and this bar docks on the composer: quote it into the draft, or ask
-    // about it as an aside. Highest order of the dock, so it sits on the composer itself.
-    ctx.slots.register(
-      { name: "conversation.input.dock", id: "claude-selection", order: 50 },
-      (props) => <SelectionSlot {...props} ctx={ctx} />,
-    );
     return null;
   });
+
+  mountSelectionActions(ctx);
 
   // Add workspace, with a box to pick it on: the directory picker as a slot occupant in both the
   // sidebar and the hero, so the dialog is ours on every dsh. Shadowing is per cell, not per

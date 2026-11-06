@@ -1,6 +1,6 @@
 // The ultrathink painter: the CLI's rainbow over a person's own words in the composer and the
-// sent messages, via the CSS Highlight API, plus the quote copy it lays out beside dsh's span.
-import { quoteSpans, quotedLines, unquote, type QuoteSeg } from "./selection.js";
+// sent messages, via the CSS Highlight API, plus the dimming of quoted lines in the composer.
+import { quoteSpans, type QuoteSeg } from "./selection.js";
 import {
   guard,
   whenContextGone,
@@ -9,8 +9,8 @@ import {
   T,
   type ClientCtx,
 } from "./shared.js";
-import { gated, hasTheme } from "./theme.js";
-import { pageIsDark, type Face } from "./dom.js";
+import { hasTheme } from "./theme.js";
+import { pageIsDark } from "./dom.js";
 
 /** The CLI's rainbow for the word `ultrathink` (2.1.268, `ZT` over the `rainbow_*` theme entries,
  *  the same seven values in all four themes): each character of the word takes the next colour,
@@ -45,25 +45,13 @@ export const ULTRACODE_DARK = "rgb(175,135,255)";
 export const ULTRACODE_LIGHT = "rgb(135,0,255)";
 export const ULTRACODE_SHIMMER = "rgb(208,180,255)";
 export const ULTRACODE_INDEX = RAINBOW.length;
-/** The copy of a sent message the plugin lays out with quote blocks, beside dsh's plain span. */
-export const QUOTE_COPY = "data-omc-quote-copy";
-/** A run of quoted lines inside that copy, drawn with the bar dsh gives a reply's quote. */
-export const QUOTE_BLOCK = "data-omc-quote-block";
-/** On dsh's own span while its copy stands in for it; the sheet hides it. */
-export const QUOTE_SOURCE = "data-omc-quote-source";
 export const RAINBOW_CSS =
   RAINBOW.map((c, i) => `::highlight(omc-rainbow-${i}){color:${c}}`).join("") +
   RAINBOW_SHIMMER.map((c, i) => `::highlight(omc-rainbow-s${i}){color:${c}}`).join("") +
   `::highlight(omc-rainbow-${ULTRACODE_INDEX}){color:var(--omc-ultracode,${ULTRACODE_DARK})}` +
   `::highlight(omc-rainbow-s${ULTRACODE_INDEX}){color:${ULTRACODE_SHIMMER}}` +
-  // Quoted lines in a person's own words, the way a Markdown quote reads: dimmed, the marker more so
-  // in the composer. In a sent message the copy draws the quote block dsh gives a reply's quote
-  // (a 2px bar, the accent at half strength, 14px to the text, measured on 2026-09-24).
-  `::highlight(omc-quote){color:${T.muted}}::highlight(omc-quote-mark){color:${T.faint}}` +
-  `[data-omc-quote-source]{display:none!important}[data-omc-quote-copy]{white-space:pre-wrap}` +
-  `[data-omc-quote-copy]>[data-omc-quote-block]{border-left:2px solid ${T.border};padding-left:14px;color:${T.muted};margin:16px 0}` +
-  `[data-omc-quote-copy]>[data-omc-quote-block]:first-child{margin-top:0}[data-omc-quote-copy]>[data-omc-quote-block]:last-child{margin-bottom:0}` +
-  `${gated("prose", "[data-omc-quote-copy]>[data-omc-quote-block]", false)}{border-left-color:color-mix(in srgb,var(--omc-accent) 50.2%,transparent)}`;
+  // Quoted lines in the composer, the way a Markdown quote reads: dimmed, the marker more so.
+  `::highlight(omc-quote){color:${T.muted}}::highlight(omc-quote-mark){color:${T.faint}}`;
 export const ULTRATHINK = /\bultrathink\b/gi;
 /** One character of a match: where it sits, which colour it takes, and its index in the
  *  composer's text (the sweep runs over those indices, as the CLI's does over its input string). */
@@ -88,25 +76,47 @@ export interface HostText {
   nodes: Node[];
   segs: QuoteSeg[];
 }
-/** The host's text as the quote scan reads it: each text node, marked where a paragraph or a
- *  `<br>` (the composer's line breaks) opens a new line without a newline character. */
+/** The host's text as dsh's composer projection reads it: each child a paragraph, joined by one
+ *  newline, a `<br>` inside one a newline (not the one Lexical adds itself), a chip
+ *  (`contenteditable="false"`) one opaque character, and an empty line an empty segment. */
 export const segsIn = (host: Element): HostText => {
   const nodes: Node[] = [];
   const segs: QuoteSeg[] = [];
-  const walker = document.createTreeWalker(host, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
-  let block: Element | null = null;
-  let broke = false;
-  let node: Node | null;
-  while ((node = walker.nextNode())) {
-    if (node instanceof HTMLBRElement) broke = true;
-    if (node.nodeType !== Node.TEXT_NODE) continue;
-    // The plugin's own quote copy is not the person's text; dsh's span beside it is.
-    if (node.parentElement?.closest(`[${QUOTE_COPY}]`)) continue;
-    const own = node.parentElement?.closest("p, div, li") ?? null;
-    segs.push({ text: node.textContent ?? "", newLine: broke || own !== block });
+  let line = "";
+  let lineHasSeg = false;
+  let lineStart: Node = host;
+  const push = (node: Node, text: string) => {
+    segs.push({ text, newLine: !lineHasSeg });
     nodes.push(node);
-    block = own;
-    broke = false;
+    line += text;
+    lineHasSeg = true;
+  };
+  const endLine = () => {
+    if (!lineHasSeg) push(lineStart, "");
+    line = "";
+    lineHasSeg = false;
+  };
+  for (const [i, para] of [...host.children].entries()) {
+    if (i > 0) endLine();
+    lineStart = para;
+    const walker = document.createTreeWalker(para, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
+    for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+      const chip = node.parentElement?.closest('[contenteditable="false"]');
+      if (chip && para.contains(chip)) continue;
+      if (node instanceof Element && node.getAttribute("contenteditable") === "false") {
+        // Before any `>` the chip is U+FFFC, so the line no longer opens with one and is never
+        // painted. After a `>` it is empty: a quote line is painted end to end, and the chip must
+        // not be. A block holding nothing but a chip then reads blank, where dsh's would not.
+        push(node, /^ {0,3}>/.test(line) ? "" : "\uFFFC");
+        continue;
+      }
+      if (node instanceof HTMLBRElement && !node.hasAttribute("data-lexical-managed-linebreak")) {
+        endLine();
+        lineStart = node;
+        continue;
+      }
+      if (node.nodeType === Node.TEXT_NODE) push(node, node.textContent ?? "");
+    }
   }
   return { nodes, segs };
 };
@@ -145,154 +155,23 @@ export function watchUltrathink(ctx: ClientCtx) {
   const clear = () => {
     for (const key of [...names, ...shimmerNames]) registry.delete(key);
   };
-  // Sent messages that carry a quote, each with the copy drawn for it, rebuilt only when the text
-  // changes (every write is a mutation this scan is woken by). Keyed by the element holding the
-  // message's parts: its text spans and any chips dsh drew for a `/command` or a file.
-  const copies = new Map<HTMLElement, { text: string; copy: HTMLElement }>();
-  /**
-   * Lay a sent message out with its quotes as quote blocks, the way dsh renders a reply's: dsh draws
-   * a person's message as plain-text spans with chips between them, which a highlight can colour
-   * but cannot indent, so those parts are hidden and a copy sits in their place. The parts stay in
-   * the page untouched; the copy is real text, so selecting and the selection bar read it as they
-   * would dsh's. A chip is cloned onto its line, looking the same but not clickable: the click
-   * belongs to dsh's own, hidden beside it.
-   */
-  const drawCopy = (box: HTMLElement, parts: ChildNode[], text: string, face: () => Face) => {
-    const had = copies.get(box);
-    if (had !== undefined && had.text === text && had.copy.isConnected) {
-      // The marks can go without the text changing: a hot reload's outgoing bundle clearing its own
-      // copy took them off this one's parts, and dsh's text showed under the copy. Put them back.
-      for (const part of parts)
-        if (part instanceof Element && !part.hasAttribute(QUOTE_SOURCE))
-          part.setAttribute(QUOTE_SOURCE, "1");
-      return;
-    }
-    had?.copy.remove();
-    // The message as lines of pieces: text as fresh text nodes, a chip as its clone, in order.
-    let line: Node[] = [];
-    const lines = [line];
-    for (const part of parts) {
-      if (part instanceof HTMLSpanElement && part.childElementCount === 0) {
-        (part.textContent ?? "").split("\n").forEach((piece, i) => {
-          if (i > 0) {
-            line = [];
-            lines.push(line);
-          }
-          if (piece !== "") line.push(document.createTextNode(piece));
-        });
-      } else line.push(part.cloneNode(true));
-    }
-    const quoted = quotedLines(lines.map((l) => l.map((x) => x.textContent ?? "").join("")));
-    const copy = document.createElement("div");
-    copy.setAttribute(QUOTE_COPY, "1");
-    // The spans' own type, read once per copy: the copy inherits the bubble's, not the span's. Not
-    // the colour: a colour read here is frozen, and a switch to light mode left the text white on a
-    // light bubble. The bubble's own colour is the span's, in either theme, so the copy inherits it.
-    Object.assign(copy.style, face());
-    // One row per line, an empty line holding its height with a `<br>`: a block ending in a line
-    // break drops that last empty line.
-    // A quote block carries its own 16px gap above and below, as a rendered quote does. The one
-    // empty line that normally separates it from the text is that gap, so "text, quote" and "text,
-    // blank line, quote" read the same; every empty line past that one shows, as it does in a plain
-    // message, so extra returns still add space. Between two quotes the margins meet as one gap, and
-    // one empty line goes to it the same way.
-    const blank = (i: number) => (lines[i] ?? []).every((n) => (n.textContent ?? "").trim() === "");
-    const gap = new Set<number>();
-    for (let i = 0; i < lines.length; i++) {
-      if (!blank(i) || quoted[i] === true) continue;
-      let end = i;
-      while (end + 1 < lines.length && blank(end + 1) && quoted[end + 1] !== true) end++;
-      if (quoted[end + 1] === true) gap.add(end);
-      else if (quoted[i - 1] === true) gap.add(i);
-      i = end;
-    }
-    let block: HTMLElement | undefined;
-    let blockQuoted = false;
-    for (const [i, pieces] of lines.entries()) {
-      const q = quoted[i] === true;
-      // An empty line inside a quote stays; one at a quote's edge (a bare `>`) is the gap's too.
-      if (gap.has(i)) continue;
-      if (blank(i) && q && (quoted[i - 1] !== true || quoted[i + 1] !== true)) continue;
-      if (block === undefined || q !== blockQuoted) {
-        block = document.createElement("div");
-        if (q) block.setAttribute(QUOTE_BLOCK, "1");
-        copy.append(block);
-        blockQuoted = q;
-      }
-      const lineEl = document.createElement("div");
-      for (const [j, piece] of pieces.entries()) {
-        if (q && j === 0 && piece instanceof Text) piece.data = unquote(piece.data);
-        lineEl.append(piece);
-      }
-      if ((lineEl.textContent ?? "") === "" && lineEl.childElementCount === 0)
-        lineEl.append(document.createElement("br"));
-      block.append(lineEl);
-    }
-    for (const part of parts) if (part instanceof Element) part.setAttribute(QUOTE_SOURCE, "1");
-    parts[0]?.before(copy);
-    copies.set(box, { text, copy });
-  };
-  /** Remove this bundle's copy, and put dsh's parts back unless another copy still stands in for
-   *  them: on a hot reload the incoming bundle may have drawn its own before this one is torn down. */
-  const dropCopy = (box: HTMLElement) => {
-    copies.get(box)?.copy.remove();
-    copies.delete(box);
-    if (box.querySelector(`:scope > [${QUOTE_COPY}]`) !== null) return;
-    for (const part of box.querySelectorAll(`:scope > [${QUOTE_SOURCE}]`))
-      part.removeAttribute(QUOTE_SOURCE);
-  };
-  /** Quotes read as quotes: dimmed with their `>` fainter still in the composer, where the person is
-   *  typing, and laid out as quote blocks in a sent message (see `drawCopy`). Not part of the
-   *  rainbow's look switch: it is how a quote reads, not the Claude colour. */
+  /** Quotes in the composer read as quotes while the person types: dimmed, the `>` fainter still. A
+   *  sent message's quotes are dsh's own quote chips (0.2.2). Not part of the rainbow's look
+   *  switch: it is how a quote reads, not the Claude colour. */
   const paintQuotes = () => {
     const text: Range[] = [];
     const mark: Range[] = [];
-    const seen = new Set<HTMLElement>();
-    // Every sent message shares one face: read it once per pass, before this pass writes a copy, so
-    // a session opening on many quoted messages recalculates style once rather than once each.
-    let shared: Face | undefined;
-    const faceFrom = (span: Element) => (): Face => {
-      if (shared === undefined) {
-        const { fontSize, fontWeight, fontFamily, lineHeight } = getComputedStyle(span);
-        shared = { fontSize, fontWeight, fontFamily, lineHeight };
-      }
-      return shared;
-    };
-    for (const host of document.querySelectorAll<HTMLElement>(HOSTS)) {
-      const composer = host.hasAttribute("data-composer-input");
-      // Every keystroke runs this pass over every sent message. One without a `>` has no quote and
-      // no copy (a copy's hidden source still holds its `>`), so it costs one text read, not a walk.
-      if (!composer && !(host.textContent ?? "").includes(">")) continue;
+    for (const host of document.querySelectorAll<HTMLElement>("[data-composer-input]")) {
       const { nodes, segs } = segsIn(host);
-      const spans = quoteSpans(segs);
-      if (composer) {
-        for (const span of spans) {
-          const node = nodes[span.seg];
-          if (node === undefined) continue;
-          const r = document.createRange();
-          r.setStart(node, span.start);
-          r.setEnd(node, span.end);
-          (span.mark ? mark : text).push(r);
-        }
-        continue;
+      for (const span of quoteSpans(segs)) {
+        const node = nodes[span.seg];
+        if (node === undefined) continue;
+        const r = document.createRange();
+        r.setStart(node, span.start);
+        r.setEnd(node, span.end);
+        (span.mark ? mark : text).push(r);
       }
-      // A sent message's words sit in one element as spans and chips, the first text in the host;
-      // the clock and the actions after it are dsh's, in another. A bare text node among the parts
-      // could not be hidden, so a message shaped like that is left as dsh draws it.
-      const box = nodes[0]?.parentElement?.parentElement;
-      if (!box) continue;
-      const parts = [...box.childNodes].filter(
-        (n) => !(n instanceof Element && n.hasAttribute(QUOTE_COPY)),
-      );
-      if (parts.some((n) => n.nodeType === Node.TEXT_NODE && (n.textContent ?? "").trim() !== ""))
-        continue;
-      const whole = parts.map((n) => n.textContent ?? "").join("");
-      if (!quotedLines(whole.split("\n")).includes(true)) continue;
-      seen.add(box);
-      const span = parts.find((n) => n instanceof HTMLSpanElement);
-      if (span instanceof Element) drawCopy(box, parts, whole, faceFrom(span));
     }
-    for (const src of copies.keys()) if (!seen.has(src)) dropCopy(src);
     // Below the rainbow, so `ultrathink` inside a quote keeps its colours.
     for (const [key, ranges] of [
       ["omc-quote", text],
@@ -366,7 +245,6 @@ export function watchUltrathink(ctx: ClientCtx) {
       clear();
       registry.delete("omc-quote");
       registry.delete("omc-quote-mark");
-      for (const src of copies.keys()) dropCopy(src);
       return;
     }
     paintQuotes();
@@ -421,16 +299,6 @@ export function watchUltrathink(ctx: ClientCtx) {
   };
   const touchesHost = (records: MutationRecord[]): boolean => {
     for (const r of records) {
-      // A quote copy this pass adds is not a change to answer. A removed one is: a hot reload's
-      // outgoing bundle takes its copy away, and this pass has to redraw and re-mark. The pass
-      // writes only when a message's text changed, so answering its own removals ends there.
-      const added = [...r.addedNodes];
-      if (
-        r.removedNodes.length === 0 &&
-        added.length > 0 &&
-        added.every((n) => n instanceof Element && n.hasAttribute(QUOTE_COPY))
-      )
-        continue;
       const el = r.target instanceof Element ? r.target : r.target.parentElement;
       if (el?.closest(HOSTS)) return true;
       for (const n of r.addedNodes)
@@ -453,6 +321,5 @@ export function watchUltrathink(ctx: ClientCtx) {
     document.removeEventListener("visibilitychange", request);
     stopSweep();
     clear();
-    for (const src of copies.keys()) dropCopy(src);
   });
 }

@@ -56,8 +56,8 @@ export type Page = {
   setViewportSize(size: Size): Promise<void>;
   keyboard: { press(key: string): Promise<void>; type(text: string): Promise<void> };
   on(event: "console", handler: (message: { text(): string }) => void): void;
-  /** Every request the page makes; a counter check reads `url()` off each one. */
-  on(event: "request", handler: (request: { url(): string }) => void): void;
+  /** Every request the page makes; a counter check reads `url()` and `method()` off each one. */
+  on(event: "request", handler: (request: { url(): string; method(): string }) => void): void;
   video(): { path(): Promise<string> };
   url(): string;
   /** Answer one of the page's requests from the check: the handler may fetch the real reply and
@@ -77,6 +77,8 @@ export type Route = {
   fulfill(how: { response?: Reply; status?: number; json: JsonDoc }): Promise<void>;
   /** The request being answered; a check on one URL for GET and POST reads the method and body. */
   request(): { method(): string; postData(): string | null };
+  /** Let the request through to the box unchanged, as when a check only watches it. */
+  continue(): Promise<void>;
 };
 export type Reply = { json(): Promise<JsonDoc> };
 

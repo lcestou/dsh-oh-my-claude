@@ -3048,7 +3048,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const owner = this.ownerFor(sessionId);
     // The ring keeps `q`, which is what the bubble and the Asides tab show. `context` (a diff, today)
     // is sent to the CLI and dropped: a persisted ring is not the place for a copy of the tree.
-    // A blank question only arrives with a selected passage: the bar's "explain this".
+    // A blank question only arrives with a selected passage: Ask sent with nothing typed, "explain this".
     const ask = q === "" ? SELECTION_EXPLAIN : q;
     const asked = context === undefined || context === "" ? ask : `${ask}\n\n${context}`;
     const send = (proc: ClaudeProcess) =>
