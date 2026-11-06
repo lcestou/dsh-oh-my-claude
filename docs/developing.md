@@ -126,6 +126,15 @@ DSH_OMC_STATE_DIR=$(mktemp -d) bun tools/effort-switch-check.ts   # no prompt is
 
 It starts a real `claude -p`, hands it to the adapter as the process it drives, asks for each effort level, and after each one reads the level back from the CLI and compares the pid. Run it after a Claude Code update.
 
+`tools/cli-compaction-check.ts` runs `cliCompaction` ([Compaction](how-it-works.md#compaction)) on a real dsh and a real `claude`:
+
+```sh
+bun run build && bun tools/cli-compaction-check.ts --dsh desktop       # DSH Desktop's own runtime; spends tokens
+bun tools/cli-compaction-check.ts --dsh /path/to/deepseek-harness/apps/cli/lib/bin.js --only s1,s2
+```
+
+Each scenario links this checkout into dsh's `acp` profile under throwaway `DSH_HOME`, `DSH_OMC_STATE_DIR` and cwd directories, where one dsh process serves several turns over stdio, and runs claude-haiku-4-5 with compaction-basic's threshold lowered. dsh starts with a pared-down environment, since run from inside a Claude Code session the rest would make the CLI it spawns a child of that session. A prompt carrying a long log pushes the context past the threshold: a user message, which dsh's tool-result pruner leaves alone. s1 crosses it in a turn's last step and expects one `/compact` at the next turn's start, the same check's second ask refused, and dsh holding the CLI's summary. s2 crosses it mid-turn, a dsh tool call splitting the turn, and expects the request refused and one `/compact` once the session is idle. s3 lowers Claude Code's own threshold below dsh's with `CLAUDE_CODE_AUTO_COMPACT_WINDOW` and expects the CLI's summary reused with no model call. s4 to s6 pick another model through ACP's config option: sonnet before the turn that compacts, deepseek-flash (with a dummy key, since only the compaction ahead of its request matters), and sonnet with a threshold only the switch itself crosses, which dsh 0.2.2 prices and 0.2.1 does not. s7 and s8 fork a subagent and a team member (the latter on a dsh shipping the experimental agent-team bundle) that cross the threshold in their own turn, and expect nothing run on them once idle, the parent told at once, and one `/compact` at the start of a later turn when they are woken; s9 forks one that inherits a parent past the threshold and expects the one-shot summarizer before its CLI starts. s2 and s7 to s9 also mount a web server, the session controller and what it needs, so the plugin's MCP bridge comes up and Claude can call dsh tools, and keep Claude Code's own Agent, Task and SendMessage from the CLI so the model spawns dsh's children. dsh's session logs, the plugin's `resume.log` and the CLI's transcripts are read after each run; a precondition the run did not reach (a pick ACP keeps out of the log, a dsh build without `send_message`) reports INCONCLUSIVE rather than a verdict. The keepers, the directories and the transcripts it made are removed after; `--keep` leaves the directories. Run it after a dsh or Claude Code update.
+
 Two checks under `tools/playwright/` watch things that only happen on a live dsh:
 
 ```sh

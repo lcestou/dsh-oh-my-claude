@@ -29,14 +29,17 @@ export declare function writeJson(file: string, value: unknown, opts?: {
 export declare function markBusy(id: string, on: boolean, path?: string): Promise<void>;
 /** Sessions whose turn the previous dsh process left unfinished; cleared on read. */
 export declare function takeInterrupted(path?: string): Promise<string[]>;
-/** The provider of a `model/selection` no request has run on yet: the newest selection after the
- *  last `request/header`, if any. dsh treats a pick as spent once a request runs (its
+/** A `model/selection` no request has run on yet: the newest selection after the last
+ *  `request/header`, if any. dsh treats a pick as spent once a request runs (its
  *  modelSelection projection), and a fork child carries its parent's spent picks, so a selection
  *  before the last header says nothing about what the session runs on. Read from the tail. */
-export declare function pendingProvider(events: readonly {
+export declare function pendingSelection(events: readonly {
     type: string;
     data?: unknown;
-}[]): string | undefined;
+}[]): {
+    provider: string;
+    model: string | undefined;
+} | undefined;
 /** The bridged slash-command names, or an empty list when the file is missing, unreadable or not
  *  an array. Never throws. */
 export declare function loadCommandCatalog(dir: string): Promise<string[]>;
