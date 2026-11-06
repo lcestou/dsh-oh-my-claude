@@ -149,7 +149,7 @@ dsh 只发布预发行版，客户端 API 也会在版本之间变动，所以�
 21. dsh 自己的目标和会话以往的每个目标，与 Claude Code 的目标和定时任务并列显示。[Tasks](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#tasks)
 22. Claude 工作时你插话发送的消息，在 Claude 读取之前可以编辑或移除，也可以合并为一条编辑。消息上的文件或图片会保留，只修改文字。编辑期间消息不会发出。“立即发送”会打断 Claude，把这条消息作为下一轮发出。[Steering](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#dsh-tools-over-mcp)
 23. 向上滚动越过 Claude 的工作状态行（旋转图标、动词、数字）后，它会在输入框上方重复显示，回看一长轮时也不会错过 Claude 正在做的事。设置中有开关可关闭。[轮次状态](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#turn-status)
-24. 在回复中选中文本，dsh 的浮层（dsh 0.2.2）会在「引用文本」旁多一个「提问」：把这段内容作为旁问向 Claude 提问，不占用对话本身；问题留空，Claude 会解释这段内容。[旁问](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#asides)
+24. 在回复中选中文本，dsh 的浮层（dsh 0.2.2）会在「引用文本」旁多一个「提问」，手机上则显示在输入框上方的一行：把这段内容作为旁问向 Claude 提问，不占用对话本身；问题留空，Claude 会解释这段内容。[旁问](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#asides)
 25. 一轮结束后，标题处保留一行收尾，和终端里一样：`✻ 烘焙了 27s · 03:21 完成`。被你停止的一轮显示 `已中断 · 想让 Claude 改做什么？`。[轮次状态](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#turn-status)
 26. 在 dsh 0.1.7 上，Claude 的工具调用显示为 dsh 自己的工具卡片，和其他提供方一样，文字在卡片之间实时输出。也可以在设置中切换回行内文本。[工具行](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/configuration.md)
 27. 在工作区中新建会话时，会使用该工作区上次运行的 Claude 主机、模型和推理强度；没有记录的工作区则使用你选定的默认模型和推理强度。[按工作区记住模型](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#remember-model-per-workspace)
