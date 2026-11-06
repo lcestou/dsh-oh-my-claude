@@ -327,6 +327,13 @@ export const en = {
   "main.settingsUi.selectionTitle": "Selection bar",
   "main.settingsUi.selectionDesc":
     "Select text in the chat to quote it into your message or ask Claude about it as a side question.",
+  "main.settingsUi.keeperTitle": "Keep Claude running across dsh restarts",
+  "main.settingsUi.keeperDesc":
+    "Claude Code runs outside dsh, so a restart leaves a turn running and dsh picks it back up. Off, it runs inside dsh and closes with it, along with everything it started. A running session switches on its next turn.",
+  "main.settingsUi.keeperLocked":
+    "Set by spawn: {mode} in the plugin config, which wins over this switch. Remove that key to use the switch.",
+  "main.settingsUi.keeperNoKeeper":
+    "Windows has no keeper: with this on, Claude Code runs as a plain child of dsh, and a restart ends it too.",
   "main.settingsUi.claudeMdLoaded":
     "Claude Code loads these itself. The copy dsh sends is dropped.",
   "main.settingsUi.claudeMdOffEnv":
@@ -881,6 +888,13 @@ export const zh = {
   "main.settingsUi.selectionTitle": "选中内容栏",
   "main.settingsUi.selectionDesc":
     "在对话中选中文本后，可将其引用到消息中，或作为旁问向 Claude 提问。",
+  "main.settingsUi.keeperTitle": "dsh 重启时保持 Claude 运行",
+  "main.settingsUi.keeperDesc":
+    "Claude Code 在 dsh 之外运行，重启 dsh 不会打断正在进行的回合，dsh 启动后会重新接上。关闭后，Claude Code 在 dsh 内运行，随 dsh 一起关闭，它启动的进程也一并结束。正在运行的会话会在下一个回合切换。",
+  "main.settingsUi.keeperLocked":
+    "由插件配置中的 spawn: {mode} 决定，优先于此开关。删除该配置项即可使用此开关。",
+  "main.settingsUi.keeperNoKeeper":
+    "Windows 没有 keeper：开启时 Claude Code 作为 dsh 的普通子进程运行，重启 dsh 同样会结束它。",
   "main.settingsUi.claudeMdLoaded": "Claude Code 会自行加载这些文件。dsh 发送的副本会被丢弃。",
   "main.settingsUi.claudeMdOffEnv":
     "已关闭：CLAUDE_CODE_DISABLE_CLAUDE_MDS 设置在 dsh 运行的环境中，而不在任何设置文件里。",

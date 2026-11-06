@@ -68,6 +68,7 @@ export function controlsRoutes(ctx: RouteCtx): RouteHandler {
       setStarter,
       sideQuestions,
       skillDoctor,
+      spawnMode,
       sshBoxesPath,
       starters,
       steersFor,
@@ -510,6 +511,10 @@ export function controlsRoutes(ctx: RouteCtx): RouteHandler {
       }
       return json(res, 405, { error: "method not allowed" });
     }
+    // The keeper switch's facts beside its hint: the config's `spawn` key, which wins over the
+    // switch, and whether this platform runs a keeper. Read-only; the switch itself is the hint.
+    if (spawnMode && req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/spawn-mode`)
+      return json(res, 200, spawnMode.info());
     // Terminal sync: whether terminal /resume exchanges mirror into the dsh session. The
     // Tune tab reads it on open; a PUT takes effect at once, no restart.
     if (terminalSync && url.pathname === `${ROUTE_PREFIX}/terminal-sync`) {
