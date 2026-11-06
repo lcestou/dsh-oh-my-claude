@@ -5023,7 +5023,7 @@ assert.equal(scopeFailed(null, 40), false, "killed by a signal");
 
 // keeper mode: the default spawn, one keeper dir per provider id and dsh session, stable across calls.
 {
-  assert.equal(Config({}).spawn, "keeper");
+  assert.equal(Config({}).spawn, undefined, "no default: the Settings switch decides");
   const a1 = defaultAdapter.keeperDir("s1");
   assert.equal(a1, defaultAdapter.keeperDir("s1"), "deterministic");
   assert.notEqual(a1, defaultAdapter.keeperDir("s2"));
