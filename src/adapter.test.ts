@@ -3995,12 +3995,17 @@ console.log("schema-guard ok");
     terminate() {},
     waitForExit: async () => {},
   };
-  const spawner = seamSpawner({
-    spawn: (s) => {
-      spec = s;
-      return idle;
+  // An empty environment: since #241 dsh's own credential names pass through on purpose, which
+  // spawn-mode.test.ts covers, and this block checks that nothing else rides along.
+  const spawner = seamSpawner(
+    {
+      spawn: (s) => {
+        spec = s;
+        return idle;
+      },
     },
-  });
+    {},
+  );
   spawner("claude", ["-p", "--verbose"], "/w");
   assert.ok(spec, "spawn was called");
   assert.deepEqual(spec.argv, ["claude", "-p", "--verbose"]);

@@ -69,6 +69,26 @@ export const FORWARDED_ENV = [
   "DO_NOT_TRACK",
 ] as const;
 
+/** The names dsh's subprocess seam leaves out of a child's environment, copied from
+ *  `SENSITIVE_ENV_PATTERN` in @deepseek-ai/dsh-subprocess (0.2.2-rc.1); the package is not a
+ *  dependency of this plugin. */
+const SCRUBBED_NAME = /KEY|PASSWORD|SECRET|TOKEN/i;
+
+/**
+ * The credential-shaped entries of `base` that dsh's seam would drop, so `spawn: dsh` gives Claude
+ * the login and tokens a keeper or a node child gets: `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
+ * cloud keys, and the `GH_TOKEN` and `MAX_THINKING_TOKENS` the CLI also reads (the 2.1.318 binary
+ * names 62 variables the pattern matches). `DSH_*` names stay dropped, the seam's other rule; no
+ * mode needs them in Claude. Wrong for someone who picked the seam to keep a secret away from
+ * Claude: dsh's environment reaches Claude in every mode.
+ */
+export function credentialEnv(base: NodeJS.ProcessEnv) {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(base))
+    if (v !== undefined && SCRUBBED_NAME.test(k) && !/^DSH_/i.test(k)) out[k] = v;
+  return out;
+}
+
 /** The FORWARDED_ENV pairs set in `base`, in that order. */
 export function forwardedEnv(base: NodeJS.ProcessEnv = process.env): [string, string][] {
   return FORWARDED_ENV.flatMap((key): [string, string][] => {
@@ -442,10 +462,13 @@ export function nodeSpawner(
 }
 
 /**
- * dsh's subprocess seam (`ctx.subprocess`). Same shape by definition. With a remote provider
- * mounted, Claude Code runs on the remote machine for a remote workspace; the seam
- * scrubs credential-shaped env vars, so credentials come from the login on that machine.
- * `envOverride` is merged last so configured values win.
+ * dsh's subprocess seam (`ctx.subprocess`). Same shape by definition. The seam owns the whole
+ * process tree, so Claude and what it started end when dsh exits. It drops credential-shaped names
+ * from the environment it hands a child and keeps the ones the caller passes, so the ones dsh runs
+ * with are passed here (`credentialEnv`): an `ANTHROPIC_API_KEY` login keeps working, as it does
+ * under a keeper. With a remote provider mounted, Claude Code runs on the remote machine for a
+ * remote workspace and those values go with it. `envOverride` is merged last so configured values
+ * win.
  */
 export const seamSpawner =
   (subprocess: Pick<SubprocessRuntime, "spawn">, base: NodeJS.ProcessEnv = process.env): Spawner =>
@@ -453,10 +476,27 @@ export const seamSpawner =
     subprocess.spawn({
       argv: [command, ...args],
       cwd,
-      env: { ...Object.fromEntries(forwardedEnv(base)), ...CHILD_ENV, ...envOverride },
+      env: {
+        ...credentialEnv(base),
+        ...seamPath(base),
+        ...Object.fromEntries(forwardedEnv(base)),
+        ...CHILD_ENV,
+        ...envOverride,
+      },
       graceMs: 5000,
       stdio: { stdin: "pipe", stdout: "pipe", stderr: "pipe" },
     });
+
+/** The PATH a seam child gets: dsh's own, then the installer folders, as `childEnv` gives a node
+ *  child. DSH Desktop started from the macOS Dock has `/usr/bin:/bin:/usr/sbin:/sbin`, where an npm
+ *  or Volta `claude` cannot find its `node` and Claude's Bash loses `~/.local/bin`. Nothing on
+ *  Windows, or with no PATH in `base` to extend: the seam's own PATH stands then. Wrong for a
+ *  remote seam provider: this box's folders go to the other machine, where they are most likely
+ *  absent and harmless. */
+function seamPath(base: NodeJS.ProcessEnv) {
+  if (process.platform === "win32" || base.PATH === undefined) return {};
+  return { PATH: withClaudeDirs(base.PATH) };
+}
 
 /** POSIX single-quote a string for a remote shell: wrap in `'...'`, escaping any embedded quote. */
 export function shq(value: string): string {
@@ -1363,6 +1403,11 @@ export interface ClaudeProcessSpec {
    *  Present only when on, so a spec saved before the switch existed still keys the same; a flip
    *  changes the key, and the session's next turn replaces the process, as an effort change does. */
   firstParty?: true;
+  /** Started as dsh's child rather than under a keeper: the Settings switch off, or `spawn: node` or
+   *  `dsh` in the config. Absent for a keeper, so a keeper's saved spec keys the same as it did
+   *  before the field existed; a flip changes the key and the session's next turn respawns, never
+   *  the turn in flight. */
+  child?: "node" | "dsh";
 }
 
 /** What the caller wants to know when a Claude process ends, live or after a restart. */
@@ -1414,8 +1459,9 @@ export interface KeeperInfo {
     code: number | null;
     signal: string | null;
   } | null;
-  /** Who ended Claude: a kill message from dsh, Claude itself, or the keeper crashing; null while it runs. */
-  endedBy: "client" | "child" | "keeper-crash" | null;
+  /** Who ended Claude: a kill message from dsh, Claude itself, the keeper crashing, or the keeper's
+   *  orphan timer (nobody attached for orphanMs); null while it runs. */
+  endedBy: "client" | "child" | "keeper-crash" | "orphan" | null;
 }
 
 /** The keeper record in a spawn directory, or undefined when it is missing or damaged. */
@@ -1433,7 +1479,10 @@ export function readKeeperInfo(dir: string): KeeperInfo | undefined {
       startedAt: typeof p.startedAt === "number" ? p.startedAt : 0,
       exit: p.exit ?? null,
       endedBy:
-        p.endedBy === "client" || p.endedBy === "child" || p.endedBy === "keeper-crash"
+        p.endedBy === "client" ||
+        p.endedBy === "child" ||
+        p.endedBy === "keeper-crash" ||
+        p.endedBy === "orphan"
           ? p.endedBy
           : null,
     };
@@ -1606,6 +1655,10 @@ export interface KeeperSpec {
   sessionId: string;
   /** The adapter's process spec, so an adopted keeper matches the next request's spec. */
   procSpec?: ClaudeProcessSpec;
+  /** The dsh that started it (spawn-mode.ts `keeperOwner`); another dsh on the box leaves it alone. */
+  owner?: string;
+  /** keeper.ts ends Claude after this long with no dsh attached and no output; absent, never. */
+  orphanMs?: number;
 }
 
 /** The spawn arguments a keeper was started with, for adopting or respawning it after a restart. */
