@@ -186,9 +186,9 @@ This switch under Settings → Oh My Claude picks how Claude Code is started, an
 | | On (`keeper`) | Off (`dsh`) | `node` (config only) |
 |---|---|---|---|
 | A turn running when dsh restarts | Keeps running; the new dsh reattaches and shows what it did | Ends; about ten seconds after the restart the session gets a "dsh restarted while this turn was in progress" prompt and carries on | Same as off |
-| Left running after dsh exits | Claude, until it has gone `processIdleMs` (30 min, never under 5) with no dsh attached and no output | Nothing after a normal shutdown: dsh ends Claude and everything it started | Claude ends when dsh does; what it started is not tracked |
+| Left running after dsh exits | Claude, until it has gone `processIdleMs` (30 min, never under 5 min) with no dsh attached and no output | Nothing after a normal shutdown: dsh ends Claude and everything it started | Claude ends when dsh does; what it started is not tracked |
 | dsh's environment | Passed whole | Passed whole except `DSH_*` names: dsh's seam drops names with KEY, TOKEN, SECRET or PASSWORD, and the plugin passes them back | Passed whole |
-| SSH boxes and remote workspaces | The far `claude` is held on the box and survives too | The far `claude` ends with the ssh connection | Same as off |
+| SSH boxes and remote workspaces | The far `claude` is held on the box and survives too; the idle limit above does not reach it, so it runs until a dsh reattaches or the box restarts | The far `claude` ends with the ssh connection | Same as off |
 | Platforms | Linux and macOS; Windows runs `node` | All; `node` when dsh mounts no subprocess seam | All |
 
 DSH Web and DSH Desktop run separate dsh profiles, so each reattaches only to the Claude processes it started. Two dsh started on the same profile directory still share them.

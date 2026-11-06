@@ -21,19 +21,21 @@ import { Switch } from "./switch.js";
 export function KeeperSwitch() {
   useLocale();
   const [off, setOff] = useHintFlag("keeperOff");
-  const [info, setInfo] = useState<SpawnModeInfo | null>(null);
+  // undefined until the facts arrive (the switch waits disabled, so a locked box never paints
+  // unlocked); null when the route answered nothing usable.
+  const [info, setInfo] = useState<SpawnModeInfo | null | undefined>(undefined);
   useEffect(() => {
     let live = true;
     fetch(`${ROUTE}/spawn-mode`)
       .then((r) => readJson<SpawnModeInfo>(r))
       .then((b) => live && setInfo(b))
-      .catch(() => {});
+      .catch(() => live && setInfo(null));
     return () => {
       live = false;
     };
   }, []);
   const configured = info?.configured ?? null;
-  const noKeeper = info !== null && !info.keeper;
+  const noKeeper = info !== undefined && info !== null && !info.keeper;
   // A configured mode is never the keeper, so a lock always shows off.
   const on = configured === null && !off;
   return (
@@ -66,7 +68,7 @@ export function KeeperSwitch() {
         on={on}
         onChange={(next) => setOff(!next)}
         label={t("main.settingsUi.keeperTitle")}
-        disabled={configured !== null}
+        disabled={info === undefined || configured !== null}
       />
     </div>
   );

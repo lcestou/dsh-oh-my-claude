@@ -2,7 +2,7 @@
 // background task; adoption leaves another dsh's keeper alone, keeps its boot nudge for it, and
 // tags an untagged keeper it takes (#241).
 import { strict as assert } from "node:assert";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { PluginContext } from "../dsh.js";
 import type { ClaudeProcess } from "../process.js";
@@ -125,6 +125,16 @@ const WEB = "/home/u/.dsh/profiles/web";
   await adapter.resumeInterrupted(busyPath);
   assert.equal(woken, 0, "the other dsh's session is not nudged from here");
   assert.deepEqual(await takeInterrupted(busyPath), ["s-foreign"], "and stays listed for it");
+
+  // A busy session with no live keeper and no session here (the other dsh's, its keeper gone, or
+  // that dsh running with the switch off): the wake finds nothing, and the id stays listed for the
+  // dsh that owns it instead of being dropped.
+  await markBusy("s-elsewhere", true, busyPath);
+  // A second boot within a minute is the crash-loop backoff, which leaves busy.json untouched.
+  rmSync(join(adapter.stateDir, "boot.json"), { force: true });
+  adapter.wake = async () => false;
+  await adapter.resumeInterrupted(busyPath);
+  assert.deepEqual(await takeInterrupted(busyPath), ["s-elsewhere"], "an unwakeable nudge is kept");
 }
 
 {

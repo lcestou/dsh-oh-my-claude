@@ -3250,7 +3250,13 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         continue;
       }
       try {
-        await this.wake(id, undefined, RESTART_TEXT);
+        // No session here to wake (another dsh's, whose keeper has ended): put it back so the dsh
+        // that owns it still sends its nudge at its own boot (#241 round two).
+        if (!(await this.wake(id, undefined, RESTART_TEXT))) {
+          await markBusy(id, true, path);
+          await trace(log, `kept ${id}: no session here to wake`);
+          continue;
+        }
         await trace(log, `nudged ${id}`);
       } catch (e) {
         await trace(log, `nudge ${id} failed: ${errorText(e)}`);
@@ -3535,10 +3541,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       // the other dsh reads it as anyone's until the session respawns. The keeper reads spec.json
       // only at start, so this changes nothing it does.
       if (!spec.owner && this.keeperOwner)
-        await writeFile(
-          join(dir, "spec.json"),
-          JSON.stringify({ ...spec, owner: this.keeperOwner }),
-        ).catch(() => {});
+        // writeJson renames a temp file into place, so a second dsh booting at the same moment never
+        // reads a half-written spec and drops a live keeper's directory as unreadable.
+        await writeJson(join(dir, "spec.json"), { ...spec, owner: this.keeperOwner }).catch(
+          () => {},
+        );
       const procSpec = spec.procSpec;
       const key2 = registryKey(this.providerId, spec.sessionId);
       if (this.processes.has(key2)) {
