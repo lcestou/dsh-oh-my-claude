@@ -103,7 +103,7 @@ import {
   loadToolMode,
   saveToolMode,
   type PermissionMode,
-  pendingProvider,
+  pendingSelection,
   loadLimitWaits,
   loadTurnRecords,
   saveLimitWait,
@@ -245,6 +245,7 @@ import {
   SELECTION_EXPLAIN,
 } from "./asides.js";
 import { claudeOnlyRefusal } from "./claude-only.js";
+import { cliMidTurn, compactionRoute } from "./cli-compaction.js";
 import { claudeCommandText, skillContent } from "./skill-line.js";
 import {
   claudeSessionExists,
@@ -598,7 +599,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       // the card can edit or remove it from dsh's inbox meanwhile. `busy` is not the signal: it
       // drops a few statements after the relay is registered.
       const toolPending = proc.relays.size > 0;
-      if (!toolPending && !proc.busy) return;
+      // During dsh's own `/compact` the message stays in dsh's inbox and goes with the next prompt.
+      if (proc.compacting || (!toolPending && !proc.busy)) return;
       for (const m of event.data?.inserted ?? []) {
         const key = steerKey(m);
         if (!key) continue;
@@ -933,9 +935,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    * switch against the target's capacity and fails the whole request when there is none, so every
    * switch between two Claude models answered "Cannot switch to claude-code/…: no context capacity"
    * and the typed message was lost. Reporting the window is what dsh's contract asks for, so it is
-   * reported. The cost is that dsh's compaction can run again on these routes, now only once its
-   * measured surface passes 80% of the window less its reservations (~740,000 tokens on a 1M model),
-   * far from the September numbers.
+   * reported. dsh's compaction then ran again on these routes: dsh prices the prompt the CLI last
+   * reported, which compacting its own copy never lowers, so past 80% of a 1M window it ran before
+   * every step (33 one-shot summaries in one teammate's turns, 2026-11-01). `cliCompaction` now
+   * answers it with Claude Code's own `/compact` (`compactionFromCli`).
    */
   override async resolveModel(provider: string, model: string, _signal?: AbortSignal) {
     return this.fullModelInfo(provider, model);
@@ -1343,6 +1346,18 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   /** The agents that already carry the plugin's agent-scoped `/compact`; a disposed agent drops
    *  out on its own, and a session dsh reloads gets a new agent and a new mount. */
   readonly compactOwned = new WeakSet<Agent>();
+
+  /** Claude Code compaction summaries dsh has not taken yet, by dsh session id: written when the
+   *  CLI compacts during a turn, taken by the next dsh compaction (`compactionFromCli`), dropped
+   *  when the next Claude turn starts, since a summary covers nothing after its own turn. */
+  readonly pendingCompactions = new Map<string, string>();
+  /** Sessions whose compaction was refused mid-turn, to compact once the agent is idle
+   *  (`syncCompaction`); dropped like a pending summary when the next Claude turn starts. */
+  readonly owedCompactions = new Set<string>();
+  /** Sessions whose CLI ran `/compact` since its last request; cleared when the next one starts. */
+  readonly compactedSinceRequest = new Set<string>();
+  /** Sessions with a `syncCompaction` waiting or running, so one compaction syncs once. */
+  readonly syncingCompactions = new Set<string>();
 
   /**
    * Shadow dsh's `/compact` for one Claude session with Claude Code's. dsh's global `/compact`
@@ -3634,6 +3649,14 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         return;
       }
     }
+    if (options.purpose === "compaction" && options.sessionId) {
+      const summary = await this.compactionFromCli(options.sessionId, options.signal);
+      if (summary !== undefined) {
+        yield* new Translator({ toolActivity: false }).wholeBlock("text", summary);
+        yield { type: "finish", reason: { kind: "stop" } };
+        return;
+      }
+    }
     if (options.purpose || !options.sessionId || !this.config.resume) {
       yield* this.oneShot(options);
       return;
@@ -4575,6 +4598,16 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     return true;
   }
 
+  /** Ask the CLI to stop what it is running; it answers with a result and stays alive. False when
+   *  the request could not be written. */
+  private interruptCli(proc: ClaudeProcess): boolean {
+    noteInterrupt(proc);
+    if (!proc.write(interruptLine(`interrupt-${randomUUID()}`))) return false;
+    proc.interruptOwed = true;
+    proc.interruptMark = proc.queue.lines.length;
+    return true;
+  }
+
   /** Why a turn that neither finished nor parked ended. */
   endReason(proc: ClaudeProcess, options: SessionOptions, idle: boolean): FinishReason {
     if (options.signal?.aborted)
@@ -4674,6 +4707,14 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     }
     const cont = this.continuationFor(options, forceFresh);
     options = cont.options;
+    // The usage this request reports is what dsh prices next, so a compaction before it is spent.
+    this.compactedSinceRequest.delete(options.sessionId);
+    // A new Claude turn: a pending summary covers none of it, and dsh's check at its start has
+    // already settled what was owed (`compactionFromCli`).
+    if (cont.mode === "prompt") {
+      this.pendingCompactions.delete(options.sessionId);
+      this.owedCompactions.delete(options.sessionId);
+    }
     if (cont.mode === "abandon") {
       for (const r of cont.proc.relays.values())
         r.reject(new Error("dsh moved on without a result for this tool call"));
@@ -4998,10 +5039,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       // Ask the CLI to stop; it answers with a result and stays alive for the next turn. Kill only
       // if it does not.
       tr.aborting = true;
-      noteInterrupt(proc);
-      if (!proc.write(interruptLine(`interrupt-${randomUUID()}`))) return proc.kill();
-      proc.interruptOwed = true;
-      proc.interruptMark = proc.queue.lines.length;
+      if (!this.interruptCli(proc)) return proc.kill();
       // A process that ignores the interrupt is killed after a grace period, except under a keeper:
       // there the idle watchdog already ends a hung process, and a kill here cost a respawn on
       // every model switch (2026-09-06 21:08: abort kind=none, kill at +5 s, "claude exited 143").
@@ -5031,8 +5069,14 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const noteLogin = (r: ResultFrame) => this.noteTurnLogin(options.sessionId, r);
     const publishAsidesFor = () => this.publishAsides(options.sessionId);
     // Bound here: `dispatch` is a plain generator function, so `this` is not the adapter inside it.
-    const compactSummary = (preTokens: number | undefined) =>
-      this.compactSummary(prep.cwd, prep.session?.id, preTokens);
+    const compactSummary = async (preTokens: number | undefined) => {
+      const summary = await this.compactSummary(prep.cwd, prep.session?.id, preTokens);
+      if (summary !== undefined && this.config.cliCompaction) {
+        this.pendingCompactions.set(options.sessionId, summary);
+        void this.syncCompaction(options.sessionId);
+      }
+      return summary;
+    };
     const dispatch = async function* (event: ClaudeEvent) {
       if (event.type === "idle_warning") {
         yield* tr.wholeBlock(
@@ -5385,19 +5429,29 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       }
       return undefined;
     };
-    const sessions = this.ctx?.sessions;
-    if (!sessions?.get) return unreadable("no session service");
+    if (!this.ctx?.sessions?.get) return unreadable("no session service");
     let logged: string | undefined;
     try {
-      const session = sessions.get(asSessionId(sessionId));
-      if (!session) return undefined;
-      logged =
-        pendingProvider(session.snapshotEvents()) ?? session.requestHeader()?.config?.provider;
+      const routes = this.sessionRoutes(sessionId);
+      if (!routes) return undefined;
+      logged = routes.picked?.provider ?? routes.ran?.provider;
     } catch (error) {
       return unreadable(errorText(error));
     }
     // Outside the try: a failing default read is not a session read and must not use up its warning.
     return logged ?? this.ctx?.get?.("agentDefaultModel")?.currentSelection().provider;
+  }
+
+  /** A session's pick no request has run on yet, and the route its last request ran on: the one
+   *  read of its log both `sessionProvider` and `modelSwitchPending` make. Undefined without the
+   *  session; throws when it cannot be read. */
+  private sessionRoutes(sessionId: string) {
+    const session = this.ctx?.sessions?.get?.(asSessionId(sessionId));
+    if (!session) return undefined;
+    return {
+      picked: pendingSelection(session.snapshotEvents()),
+      ran: session.requestHeader()?.config,
+    };
   }
 
   /** Cancel and forget a session's limit-wait timer, if any, so a usage reset does not fire it twice. */
@@ -5431,6 +5485,164 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       }
     }
     return undefined;
+  }
+
+  /** A dsh child agent's session: a subagent or a team member. dsh settles and disposes it as soon
+   *  as it is idle, so nothing is scheduled on it then (`syncCompaction`). */
+  isSubagentSession(sessionId: string): boolean {
+    try {
+      return this.ctx?.sessions?.get?.(asSessionId(sessionId))?.header?.origin === "subagent";
+    } catch {
+      return false;
+    }
+  }
+
+  /** A model picked since the session's last request that is not the one it ran on. */
+  modelSwitchPending(sessionId: string): boolean {
+    try {
+      const routes = this.sessionRoutes(sessionId);
+      const { picked, ran } = routes ?? {};
+      return (
+        picked !== undefined && (picked.provider !== ran?.provider || picked.model !== ran?.model)
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  /** dsh's compaction summary for a Claude session, from Claude Code's own compaction: the one it
+   *  made since dsh last compacted, or a `/compact` run now. Undefined hands the request to the
+   *  one-shot summarizer; a refusal throws, which dsh logs before it carries on with the step. */
+  async compactionFromCli(sessionId: string, signal?: AbortSignal): Promise<string | undefined> {
+    const live = this.processFor(sessionId);
+    const route = compactionRoute({
+      enabled: this.config.cliCompaction,
+      pending: this.pendingCompactions.get(sessionId),
+      provider: this.sessionProvider(sessionId),
+      ownProvider: this.providerId,
+      mirrored: this.terminalSync,
+      reachable: live?.alive === true || this.lastTurnOptions.has(sessionId),
+      midTurn: live?.alive === true && cliMidTurn(live),
+      justCompacted: this.compactedSinceRequest.has(sessionId),
+      switchPending: this.modelSwitchPending(sessionId),
+    });
+    const note = (line: string) =>
+      trace(join(this.stateDir, "resume.log"), `compaction ${sessionId}: ${line}`);
+    if (route.kind === "fallback") {
+      await note(`one-shot, ${route.why}`);
+      return undefined;
+    }
+    if (route.kind === "reuse") {
+      this.pendingCompactions.delete(sessionId);
+      await note("reused the CLI's own compaction");
+      return route.summary;
+    }
+    if (route.kind === "refuse") {
+      const owed = route.owe && !this.isSubagentSession(sessionId);
+      await note(`refused${owed ? ", owed until idle" : ""}: ${route.why}`);
+      if (owed) {
+        this.owedCompactions.add(sessionId);
+        void this.syncCompaction(sessionId);
+      }
+      throw new LlmError(route.why, "PROVIDER_ERROR");
+    }
+    const startedAt = Date.now();
+    const summary = await this.compactOnCli(sessionId, signal);
+    await note(
+      summary === undefined
+        ? "one-shot, /compact on the CLI gave no summary"
+        : `ran /compact on the CLI in ${Date.now() - startedAt} ms`,
+    );
+    return summary;
+  }
+
+  /** Compact dsh's copy once the agent is idle, after a compaction Claude Code made during a turn
+   *  (answered from the pending summary, so no model runs) or one refused mid-turn (answered with
+   *  `/compact` on the CLI). Never on a child agent: dsh settles it when it is idle and the parent
+   *  waits on that; the child's next turn compacts at its start instead. */
+  async syncCompaction(sessionId: string, retries = 1): Promise<void> {
+    const agent = this.ctx?.agents?.get?.(asSessionId(sessionId));
+    const compaction = this.ctx?.get?.("compaction");
+    if (!agent?.whenIdle || !compaction || this.syncingCompactions.has(sessionId)) return;
+    if (this.isSubagentSession(sessionId)) return;
+    this.syncingCompactions.add(sessionId);
+    let busy = false;
+    try {
+      await agent.whenIdle();
+      if (!this.pendingCompactions.has(sessionId) && !this.owedCompactions.has(sessionId)) return;
+      const result = await compaction.compactNow(agent, new AbortController().signal);
+      if (result === null) this.pendingCompactions.delete(sessionId);
+      this.owedCompactions.delete(sessionId);
+    } catch (error) {
+      busy = error instanceof Error && "code" in error && error.code === "busy";
+      if (!busy) {
+        this.pendingCompactions.delete(sessionId);
+        this.owedCompactions.delete(sessionId);
+        this.log("warn", `compaction sync ${sessionId}: ${errorText(error)}`);
+      }
+    } finally {
+      this.syncingCompactions.delete(sessionId);
+    }
+    // New work beat the sync to the agent: try once more after it. Bounded, since an idle agent
+    // with queued work answers `busy` at once; past that, the next Claude turn drops what is left
+    // and dsh's check at its start compacts if it still has to.
+    if (busy && retries > 0) void this.syncCompaction(sessionId, retries - 1);
+  }
+
+  /** Run `/compact` on the session's idle Claude Code, started on the last turn's spec when it is
+   *  not running, and read back its summary. Undefined when the CLI could not or did not compact. */
+  async compactOnCli(sessionId: string, signal?: AbortSignal): Promise<string | undefined> {
+    const held = this.processFor(sessionId);
+    const proc = await this.revive(sessionId);
+    if (!proc?.alive || cliMidTurn(proc)) return undefined;
+    const { cwd, sessionId: claudeId } = proc.spec;
+    const started =
+      claudeId !== null &&
+      (proc.resuming ||
+        (await loadStarted()).has(claudeId) ||
+        (await claudeSessionExists(this.claudeHome, cwd, claudeId)));
+    // A Claude session that never finished a turn has nothing to compact, and a prompt would start it.
+    if (!started) {
+      if (proc !== held) proc.kill();
+      return undefined;
+    }
+    let compacted = false;
+    let preTokens: number | undefined;
+    let failed = false;
+    const idleKey = `compact-${sessionId}`;
+    const onAbort = () => {
+      if (!this.interruptCli(proc)) proc.kill();
+    };
+    proc.busy = true;
+    proc.compacting = true;
+    proc.lastUsed = Date.now();
+    signal?.addEventListener("abort", onAbort, { once: true });
+    try {
+      if (!proc.write(buildInput("/compact", []))) return undefined;
+      this.armIdle(idleKey, proc, false);
+      for (;;) {
+        const event = await proc.nextEvent();
+        if (event === null || event.type === "result") break;
+        this.armIdle(idleKey, proc, false);
+        if (event.type === "control_request")
+          proc.write(controlErrorLine(event.request_id, "not supported while compacting"));
+        else if (event.type === "control_response") this.resolveControl(event);
+        else if (event.type === "system" && event.subtype === "compact_boundary") {
+          compacted = true;
+          const pre = Number(event.compact_metadata?.pre_tokens);
+          preTokens = Number.isFinite(pre) ? pre : undefined;
+        } else if (event.type === "system" && event.compact_result === "failed") failed = true;
+      }
+    } finally {
+      this.clearIdle(idleKey);
+      signal?.removeEventListener("abort", onAbort);
+      proc.busy = false;
+      proc.compacting = false;
+      proc.lastUsed = Date.now();
+    }
+    if (compacted && !failed) this.compactedSinceRequest.add(sessionId);
+    if (!compacted || failed || signal?.aborted) return undefined;
+    return this.compactSummary(cwd, claudeId, preTokens);
   }
 
   /** Claude finished a turn of its own (a background task it launched completed) while dsh was

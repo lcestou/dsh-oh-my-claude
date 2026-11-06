@@ -51,6 +51,7 @@ export type Config = {
     commandBridge: boolean;
     redactSecrets: boolean;
     persistTodos: boolean;
+    cliCompaction: boolean;
     debug: boolean;
     approvals: boolean;
     processIdleMs: number;
@@ -84,6 +85,7 @@ export declare const Config: z<Schemastery.ObjectS<{
     commandBridge: z<boolean, boolean>;
     redactSecrets: z<boolean, boolean>;
     persistTodos: z<boolean, boolean>;
+    cliCompaction: z<boolean, boolean>;
     continueAfterLimit: z<boolean, boolean>;
     debug: z<boolean, boolean>;
     approvals: z<boolean, boolean>;
@@ -118,6 +120,7 @@ export declare const Config: z<Schemastery.ObjectS<{
     commandBridge: z<boolean, boolean>;
     redactSecrets: z<boolean, boolean>;
     persistTodos: z<boolean, boolean>;
+    cliCompaction: z<boolean, boolean>;
     continueAfterLimit: z<boolean, boolean>;
     debug: z<boolean, boolean>;
     approvals: z<boolean, boolean>;

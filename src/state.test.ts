@@ -9,7 +9,7 @@ import {
   recordRepair,
   saveSessionRepairs,
   SESSION_REPAIRS_FILE,
-  pendingProvider,
+  pendingSelection,
   loadPermissionModes,
   savePermissionMode,
   modesUpTo,
@@ -439,17 +439,22 @@ console.log("state.test: ok");
     { type: "model/selection", data: { provider: 42 } },
     { type: "assistant/message", data: {} },
   ];
-  assert.equal(
-    pendingProvider(events),
-    "claude-code",
+  assert.deepEqual(
+    pendingSelection(events),
+    { provider: "claude-code", model: "claude-fable-5-1" },
     "the newest selection with a string provider",
   );
-  assert.equal(pendingProvider(events.slice(0, 1)), undefined, "no selection: undefined");
-  assert.equal(pendingProvider([]), undefined);
+  assert.equal(pendingSelection(events.slice(0, 1)), undefined, "no selection: undefined");
+  assert.equal(pendingSelection([]), undefined);
   assert.equal(
-    pendingProvider([...events, { type: "request/header", data: {} }]),
+    pendingSelection([...events, { type: "request/header", data: {} }]),
     undefined,
     "a pick a request has run on is spent",
+  );
+  assert.deepEqual(
+    pendingSelection([{ type: "model/selection", data: { provider: "claude-code" } }]),
+    { provider: "claude-code", model: undefined },
+    "a pick without a model still names its provider",
   );
   console.log("last-selected-provider ok");
 }

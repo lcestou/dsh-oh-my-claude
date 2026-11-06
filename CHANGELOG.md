@@ -6,6 +6,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Added
+
+- dsh's compaction of a Claude session runs Claude Code's own `/compact` and takes its summary. dsh measures the prompt the CLI reports, which its one-shot summary of dsh's own copy never lowered, so past its threshold it compacted before every step (33 one-shot summaries in one team member's turns). A compaction asked for mid-turn waits until the session is idle, a subagent's or team member's until its next turn starts, and a compaction the CLI makes on its own reaches dsh's copy without another model call. Switch: `cliCompaction`, on by default.
+
 ### Fixed
 
 - `open_session` with a provider and model reports an error when the new session has no model route to set, instead of opening it on dsh's default model without a word, and archives the empty session it created. Thanks to @tusharcora (#240).

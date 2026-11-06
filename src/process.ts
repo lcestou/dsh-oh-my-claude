@@ -1763,6 +1763,9 @@ export class ClaudeProcess {
    *  init frame and an `assistant` frame saying "Compaction canceled."), which the next turn would
    *  otherwise read as its own and draw. */
   interruptMark?: number;
+  /** A `/compact` dsh asked for (`compactOnCli`) is running. It holds `busy` like a turn, but no
+   *  turn is reading: a line written to stdin now would start a turn of its own after it. */
+  compacting: boolean = false;
   dshIds?: Set<string>;
   relayed?: Set<string>;
   steerPending: boolean = false;

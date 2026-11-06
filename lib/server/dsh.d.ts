@@ -60,12 +60,13 @@ export interface Session {
     get seq(): number;
     append<T extends string>(type: T, data: Record<string, JsonValue>, ...opts: unknown[]): SessionEvent;
     deriveMessages(): Message[];
-    /** The folded `request/header`; `config.provider` is the provider the last request ran on, and
-     *  `tools` is exactly what dsh offers the model next, so code mode shows only `run_code` there. */
+    /** The folded `request/header`; `config` is the route the last request ran on, and `tools` is
+     *  exactly what dsh offers the model next, so code mode shows only `run_code` there. */
     requestHeader(): {
         version: number;
         config?: {
             provider?: string;
+            model?: string;
         };
         readonly tools?: readonly ToolSchema[];
     } | undefined;

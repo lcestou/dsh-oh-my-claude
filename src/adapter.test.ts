@@ -1508,7 +1508,8 @@ const soon = Math.floor(Date.now() / 1000) + 120;
   );
   assert.match(
     resetClock(Date.now() + 9 * day, "America/New_York"),
-    /^[A-Z][a-z]{2} \d{1,2}, \d{1,2}(:\d{2})?[ap]m \(America\/New_York\)$/,
+    // ICU joins date and time with ", " or " at " depending on its version (Bun 1.4.4: " at ").
+    /^[A-Z][a-z]{2} \d{1,2}(,| at) \d{1,2}(:\d{2})?[ap]m \(America\/New_York\)$/,
     "beyond the week: date and time",
   );
   assert.equal(resetClock(1_757_199_600_000, "America/New_York"), "7pm (America/New_York)");
@@ -3158,22 +3159,28 @@ console.log("ok");
       data: { provider: "llama-local", model: "kat" },
     },
   ];
+  const sessionRoutes = ClaudeCodeAdapter.prototype["sessionRoutes"];
   const stub = {
-    ctx: { sessions: { get: () => ({ snapshotEvents: () => events }) } },
+    sessionRoutes,
+    ctx: {
+      sessions: { get: () => ({ snapshotEvents: () => events, requestHeader: () => undefined }) },
+    },
   };
   assert.equal(ClaudeCodeAdapter.prototype.sessionProvider.call(stub, "s"), "llama-local");
   const none = {
+    sessionRoutes,
     ctx: {
       sessions: { get: () => ({ snapshotEvents: () => [], requestHeader: () => undefined }) },
     },
   };
   assert.equal(ClaudeCodeAdapter.prototype.sessionProvider.call(none, "s"), undefined);
-  const gone = { ctx: { sessions: { get: () => undefined } } };
+  const gone = { sessionRoutes, ctx: { sessions: { get: () => undefined } } };
   assert.equal(ClaudeCodeAdapter.prototype.sessionProvider.call(gone, "s"), undefined);
   // A read that throws (a dsh that dropped snapshotEvents) answers undefined, which routes every
   // remote session to the local mount; that is logged once, not per routed message.
   const warned: string[] = [];
   const broken = {
+    sessionRoutes,
     warnedNoSessionRead: false,
     log: (level: string, message: string) => warned.push(`${level}: ${message}`),
     ctx: {

@@ -230,9 +230,10 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * switch against the target's capacity and fails the whole request when there is none, so every
      * switch between two Claude models answered "Cannot switch to claude-code/…: no context capacity"
      * and the typed message was lost. Reporting the window is what dsh's contract asks for, so it is
-     * reported. The cost is that dsh's compaction can run again on these routes, now only once its
-     * measured surface passes 80% of the window less its reservations (~740,000 tokens on a 1M model),
-     * far from the September numbers.
+     * reported. dsh's compaction then ran again on these routes: dsh prices the prompt the CLI last
+     * reported, which compacting its own copy never lowers, so past 80% of a 1M window it ran before
+     * every step (33 one-shot summaries in one teammate's turns, 2026-11-01). `cliCompaction` now
+     * answers it with Claude Code's own `/compact` (`compactionFromCli`).
      */
     resolveModel(provider: string, model: string, _signal?: AbortSignal): Promise<LlmResolvedModelInfo>;
     /** The window for the context ring: `request/context` carries it to the token meter, and this
@@ -339,6 +340,17 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     /** The agents that already carry the plugin's agent-scoped `/compact`; a disposed agent drops
      *  out on its own, and a session dsh reloads gets a new agent and a new mount. */
     readonly compactOwned: WeakSet<Agent>;
+    /** Claude Code compaction summaries dsh has not taken yet, by dsh session id: written when the
+     *  CLI compacts during a turn, taken by the next dsh compaction (`compactionFromCli`), dropped
+     *  when the next Claude turn starts, since a summary covers nothing after its own turn. */
+    readonly pendingCompactions: Map<string, string>;
+    /** Sessions whose compaction was refused mid-turn, to compact once the agent is idle
+     *  (`syncCompaction`); dropped like a pending summary when the next Claude turn starts. */
+    readonly owedCompactions: Set<string>;
+    /** Sessions whose CLI ran `/compact` since its last request; cleared when the next one starts. */
+    readonly compactedSinceRequest: Set<string>;
+    /** Sessions with a `syncCompaction` waiting or running, so one compaction syncs once. */
+    readonly syncingCompactions: Set<string>;
     /**
      * Shadow dsh's `/compact` for one Claude session with Claude Code's. dsh's global `/compact`
      * condenses dsh's own copy of the conversation, which Claude never reads, so typed in a Claude
@@ -1022,6 +1034,9 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * is the first refusal of that flag, which is the only time a retry can help: the box the turn
      * ran on is the one whose probe was wrong, so the denial is recorded against that box. */
     dropRejectedFlag(proc: ClaudeProcess, options: SessionOptions): boolean;
+    /** Ask the CLI to stop what it is running; it answers with a result and stays alive. False when
+     *  the request could not be written. */
+    private interruptCli;
     /** Why a turn that neither finished nor parked ended. */
     endReason(proc: ClaudeProcess, options: SessionOptions, idle: boolean): FinishReason;
     /** The persistent turn loop: drive one session's turn end to end. Stream the chunks, relay
@@ -1051,6 +1066,10 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      *  which routes remote workspaces to the local mount instead of failing. Too quiet to debug from
      *  the symptom, so it says so once. */
     sessionProvider(sessionId: string): string | undefined;
+    /** A session's pick no request has run on yet, and the route its last request ran on: the one
+     *  read of its log both `sessionProvider` and `modelSwitchPending` make. Undefined without the
+     *  session; throws when it cannot be read. */
+    private sessionRoutes;
     /** Cancel and forget a session's limit-wait timer, if any, so a usage reset does not fire it twice. */
     clearLimitWait(sessionId: string): void;
     /** Claude Code's summary for the compaction whose boundary reported `preTokens`, read from the
@@ -1058,6 +1077,23 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      *  boundary frame can reach stdout before the row is flushed. Undefined with no transcript, no
      *  matching row after both reads, or a box that cannot be read, which is logged. */
     compactSummary(cwd: string, claudeId: string | undefined, preTokens: number | undefined): Promise<string | undefined>;
+    /** A dsh child agent's session: a subagent or a team member. dsh settles and disposes it as soon
+     *  as it is idle, so nothing is scheduled on it then (`syncCompaction`). */
+    isSubagentSession(sessionId: string): boolean;
+    /** A model picked since the session's last request that is not the one it ran on. */
+    modelSwitchPending(sessionId: string): boolean;
+    /** dsh's compaction summary for a Claude session, from Claude Code's own compaction: the one it
+     *  made since dsh last compacted, or a `/compact` run now. Undefined hands the request to the
+     *  one-shot summarizer; a refusal throws, which dsh logs before it carries on with the step. */
+    compactionFromCli(sessionId: string, signal?: AbortSignal): Promise<string | undefined>;
+    /** Compact dsh's copy once the agent is idle, after a compaction Claude Code made during a turn
+     *  (answered from the pending summary, so no model runs) or one refused mid-turn (answered with
+     *  `/compact` on the CLI). Never on a child agent: dsh settles it when it is idle and the parent
+     *  waits on that; the child's next turn compacts at its start instead. */
+    syncCompaction(sessionId: string, retries?: number): Promise<void>;
+    /** Run `/compact` on the session's idle Claude Code, started on the last turn's spec when it is
+     *  not running, and read back its summary. Undefined when the CLI could not or did not compact. */
+    compactOnCli(sessionId: string, signal?: AbortSignal): Promise<string | undefined>;
     /** Claude finished a turn of its own (a background task it launched completed) while dsh was
      *  idle. Drop a notice into the session's inbox so dsh opens a turn now and the reply shows,
      *  instead of riding on top of the user's next prompt. */

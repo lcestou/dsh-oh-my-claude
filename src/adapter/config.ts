@@ -94,6 +94,7 @@ export type Config = {
   commandBridge: boolean;
   redactSecrets: boolean;
   persistTodos: boolean;
+  cliCompaction: boolean;
   debug: boolean;
   approvals: boolean;
   processIdleMs: number;
@@ -214,6 +215,12 @@ export const Config = z.object({
     .default(true)
     .description(
       "Keep the todo list on screen across messages and resume (dsh clears it each turn by default)",
+    ),
+  cliCompaction: z
+    .boolean()
+    .default(true)
+    .description(
+      "When dsh compacts a Claude session, have that session's Claude Code run /compact (or reuse the compaction it just made) and hand dsh its summary, so both sides compact once, at dsh's threshold, with one summary. While Claude Code is mid-turn the compaction waits: the session compacts once it is idle, a subagent or team member at the start of its next turn. A session moving to another provider keeps dsh's own summarizer",
     ),
   continueAfterLimit: z
     .boolean()
