@@ -112,6 +112,7 @@ const cliAnswering = (events: object[], o: object = {}) => {
     parked: undefined,
     steers: new Map(),
     queue: { lines: [] as string[] },
+    hasTurnOutput: () => false,
     spec: { cwd: "/work", sessionId: "claude-1" },
     lastUsed: 0,
     killed: false,
@@ -461,6 +462,62 @@ for (const mode of ["relay", "steer", "prompt"] as const) {
   await a.syncCompaction("s1");
   assert.deepEqual(calls, []);
   assert.equal(a.pendingCompactions.get("s1"), "S", "kept for its next turn's start");
+}
+
+// dsh's web and desktop profiles mount compaction inside the agent's preset and disable the root
+// seam: syncCompaction asks the preset first, and still logs why when there is neither.
+{
+  const calls: string[] = [];
+  const agent = { whenIdle: async () => {} };
+  const compaction = {
+    compactNow: async () => {
+      calls.push("preset compactNow");
+      return { shadowedSeqs: [1], shadowedTokenCount: 9 };
+    },
+  };
+  const a = adapterWith({
+    agents: { get: () => agent },
+    get: (name: string) => (name === "agentPresets" ? { serviceFor: () => compaction } : undefined),
+  });
+  a.owedCompactions.add("s1");
+  await a.syncCompaction("s1");
+  assert.deepEqual(calls, ["preset compactNow"], "the preset's compaction runs the owed one");
+
+  const none = adapterWith({ agents: { get: () => agent }, get: () => undefined });
+  none.owedCompactions.add("s2");
+  await none.syncCompaction("s2");
+  const log = await readFile(join(stateDir, "resume.log"), "utf8");
+  assert.match(log, /compaction s2: sync skipped, no compaction service/);
+}
+
+// A typed /compact on its way to the CLI: dsh's check before that turn's step is refused, so the
+// CLI compacts once, and the turn's start clears the mark.
+{
+  const a = adapterWith();
+  a.compactQueued.add("s1");
+  await assert.rejects(a.compactionFromCli("s1"), /typed \/compact/);
+}
+
+// A turn the CLI started on its own (output queued, no dsh turn reading): /compact is not written
+// behind it.
+{
+  const a = adapterWith();
+  let wrote = 0;
+  // SAFETY: compactOnCli reads alive, busy, the queue and spec before it writes
+  const proc = {
+    alive: true,
+    busy: false,
+    relays: new Map(),
+    hasTurnOutput: () => true,
+    spec: { cwd: "/tmp", sessionId: "c1" },
+    write: () => {
+      wrote++;
+      return true;
+    },
+  } as unknown as ClaudeProcess;
+  a.revive = async () => proc;
+  assert.equal(await a.compactOnCli("s1"), undefined);
+  assert.equal(wrote, 0, "nothing written behind the CLI's own turn");
 }
 
 console.log("cli-compaction ok");

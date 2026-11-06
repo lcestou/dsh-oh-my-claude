@@ -1394,6 +1394,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   readonly compactedSinceRequest = new Set<string>();
   /** Sessions with a `syncCompaction` waiting or running, so one compaction syncs once. */
   readonly syncingCompactions = new Set<string>();
+  /** Sessions where a typed `/compact` is on its way to the CLI as the next turn. dsh's check before
+   *  that turn's step is refused, or the CLI would compact twice, the second time a summary of its
+   *  own summary; the turn's `compact_boundary` feeds `syncCompaction` instead. Cleared at turn start. */
+  readonly compactQueued = new Set<string>();
 
   /**
    * Shadow dsh's `/compact` for one Claude session with Claude Code's. dsh's global `/compact`
@@ -1423,6 +1427,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
                   if (rawInput.trim() !== "")
                     return { kind: "error", text: serverText("compactNoArgs") };
                   if (this.notClaude(target, "compact") === undefined) {
+                    this.compactQueued.add(target.id);
                     target.followup(
                       createUserMessage({
                         content: [{ type: "text", text: "/compact" }],
@@ -2527,7 +2532,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    *  watchdog on every frame. `key` is the session id, except the aux decide stream's `aux-`
    *  keys, which share the map and reach no tab. */
   private publishIdle(key: string): void {
-    if (key.startsWith("aux-")) return;
+    if (key.startsWith("aux-") || key.startsWith("compact-")) return;
     hub.coalesce(`idle:${key}`, () => ({ kind: "idle", session: key, data: this.idleReply(key) }));
   }
 
@@ -4760,6 +4765,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   /** The persistent turn loop: drive one session's turn end to end. Stream the chunks, relay
    * tool calls, honor interrupts and usage limits, and yield the finish. */
   async *turn(options: SessionOptions, forceFresh?: boolean): AsyncGenerator<StreamChunk> {
+    this.compactQueued.delete(options.sessionId);
     const asides = sideQuestionsIn(options.messages).filter(
       (a) => a.message.source?.rpcId === undefined || !this.asked.has(a.message.source.rpcId),
     );
@@ -5655,6 +5661,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     });
     const note = (line: string) =>
       trace(join(this.stateDir, "resume.log"), `compaction ${sessionId}: ${line}`);
+    if (this.compactQueued.has(sessionId)) {
+      await note("refused: a typed /compact runs on the CLI in this turn");
+      throw new LlmError("a typed /compact runs on the CLI in this turn", "PROVIDER_ERROR");
+    }
     if (route.kind === "fallback") {
       await note(`one-shot, ${route.why}`);
       return undefined;
@@ -5676,9 +5686,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const startedAt = Date.now();
     const summary = await this.compactOnCli(sessionId, signal);
     await note(
-      summary === undefined
-        ? "one-shot, /compact on the CLI gave no summary"
-        : `ran /compact on the CLI in ${Date.now() - startedAt} ms`,
+      signal?.aborted
+        ? "aborted while /compact ran on the CLI"
+        : summary === undefined
+          ? "one-shot, /compact on the CLI gave no summary"
+          : `ran /compact on the CLI in ${Date.now() - startedAt} ms`,
     );
     return summary;
   }
@@ -5689,8 +5701,20 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    *  waits on that; the child's next turn compacts at its start instead. */
   async syncCompaction(sessionId: string, retries = 1): Promise<void> {
     const agent = this.ctx?.agents?.get?.(asSessionId(sessionId));
-    const compaction = this.ctx?.get?.("compaction");
-    if (!agent?.whenIdle || !compaction || this.syncingCompactions.has(sessionId)) return;
+    // dsh's web and desktop profiles mount compaction inside each agent preset and disable the
+    // root one, so the agent's own preset is asked first, the way dsh's session controller reads
+    // a preset service; the root seam is the fallback (the ACP profile keeps it).
+    const compaction =
+      (agent && this.ctx?.get?.("agentPresets")?.serviceFor?.(agent, "compaction")) ??
+      this.ctx?.get?.("compaction");
+    const note = (line: string) =>
+      trace(join(this.stateDir, "resume.log"), `compaction ${sessionId}: sync ${line}`);
+    if (this.syncingCompactions.has(sessionId)) return;
+    if (!agent?.whenIdle || !compaction) {
+      if (this.pendingCompactions.has(sessionId) || this.owedCompactions.has(sessionId))
+        await note(`skipped, ${!agent?.whenIdle ? "no live agent" : "no compaction service"}`);
+      return;
+    }
     if (this.isSubagentSession(sessionId)) return;
     this.syncingCompactions.add(sessionId);
     let busy = false;
@@ -5698,6 +5722,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       await agent.whenIdle();
       if (!this.pendingCompactions.has(sessionId) && !this.owedCompactions.has(sessionId)) return;
       const result = await compaction.compactNow(agent, new AbortController().signal);
+      await note(result === null ? "ran, dsh had nothing to compact" : "ran");
       if (result === null) this.pendingCompactions.delete(sessionId);
       this.owedCompactions.delete(sessionId);
     } catch (error) {
@@ -5706,6 +5731,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         this.pendingCompactions.delete(sessionId);
         this.owedCompactions.delete(sessionId);
         this.log("warn", `compaction sync ${sessionId}: ${errorText(error)}`);
+        await note(`failed: ${errorText(error)}`);
       }
     } finally {
       this.syncingCompactions.delete(sessionId);
@@ -5721,7 +5747,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   async compactOnCli(sessionId: string, signal?: AbortSignal): Promise<string | undefined> {
     const held = this.processFor(sessionId);
     const proc = await this.revive(sessionId);
-    if (!proc?.alive || cliMidTurn(proc)) return undefined;
+    // A turn the CLI started on its own (a background task finished) leaves output queued with no
+    // dsh turn reading it; `/compact` would queue behind it and this loop would eat that turn.
+    if (!proc?.alive || cliMidTurn(proc) || proc.hasTurnOutput()) return undefined;
     const { cwd, sessionId: claudeId } = proc.spec;
     const started =
       claudeId !== null &&
@@ -5753,7 +5781,6 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         this.armIdle(idleKey, proc, false);
         if (event.type === "control_request")
           proc.write(controlErrorLine(event.request_id, "not supported while compacting"));
-        else if (event.type === "control_response") this.resolveControl(event);
         else if (event.type === "system" && event.subtype === "compact_boundary") {
           compacted = true;
           const pre = Number(event.compact_metadata?.pre_tokens);

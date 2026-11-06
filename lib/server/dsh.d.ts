@@ -549,12 +549,20 @@ export interface PluginContext {
         inject?: string[];
         apply(ctx: PluginContext): void;
     }): object;
-    /** dsh's compaction seam (`dsh-compaction`), mounted when a backend is; its `compactNow` is what
-     *  dsh's own `/compact` runs. `shadowedSeqs` and `shadowedTokenCount` are what that command reports. */
-    get(name: "compaction"): {
-        compactNow(agent: Agent, signal: AbortSignal, sourceCommandId?: string): Promise<{
-            shadowedSeqs: readonly number[];
-            shadowedTokenCount: number;
-        } | null>;
+    /** dsh's compaction seam (`dsh-compaction`) at the root, mounted when a backend is. dsh's web and
+     *  desktop profiles disable it and mount one inside each agent preset; see `agentPresets`. */
+    get(name: "compaction"): CompactionService | undefined;
+    /** Mirrors `serviceFor` in @deepseek-ai/dsh-agent-preset-registry: a service supplied inside the
+     *  agent's isolated preset group, undefined when its preset has none. */
+    get(name: "agentPresets"): {
+        serviceFor?(agent: Agent, name: "compaction"): CompactionService | undefined;
     } | undefined;
+}
+/** dsh's compaction service (`dsh-compaction`): its `compactNow` is what dsh's own `/compact` runs.
+ *  `shadowedSeqs` and `shadowedTokenCount` are what that command reports; null is nothing to compact. */
+export interface CompactionService {
+    compactNow(agent: Agent, signal: AbortSignal, sourceCommandId?: string): Promise<{
+        shadowedSeqs: readonly number[];
+        shadowedTokenCount: number;
+    } | null>;
 }

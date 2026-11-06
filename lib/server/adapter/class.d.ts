@@ -362,6 +362,10 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     readonly compactedSinceRequest: Set<string>;
     /** Sessions with a `syncCompaction` waiting or running, so one compaction syncs once. */
     readonly syncingCompactions: Set<string>;
+    /** Sessions where a typed `/compact` is on its way to the CLI as the next turn. dsh's check before
+     *  that turn's step is refused, or the CLI would compact twice, the second time a summary of its
+     *  own summary; the turn's `compact_boundary` feeds `syncCompaction` instead. Cleared at turn start. */
+    readonly compactQueued: Set<string>;
     /**
      * Shadow dsh's `/compact` for one Claude session with Claude Code's. dsh's global `/compact`
      * condenses dsh's own copy of the conversation, which Claude never reads, so typed in a Claude
