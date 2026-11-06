@@ -11,14 +11,35 @@ import { t, useLocale } from "./i18n.js";
 const ROUTE = "/dsh-oh-my-claude";
 
 /** The "<version> available" pill: a button whose click copies the update `command` to the
- *  clipboard and flashes whether it copied or the clipboard refused. */
-export function UpdatePill({ latest, command }: { latest: string; command: string }) {
+ *  clipboard and flashes whether it copied or the clipboard refused. With `needsDsh` instead (this
+ *  box's dsh is below the release's floor) it is plain text naming the dsh to update first, since
+ *  there is no plugin command that would work yet. */
+export function UpdatePill({
+  latest,
+  command,
+  needsDsh,
+}: {
+  latest: string;
+  command?: string;
+  needsDsh?: string;
+}) {
   useLocale();
   const [said, setSaid] = useState<"" | "copied" | "blocked">("");
   const say = (what: "copied" | "blocked") => {
     setSaid(what);
     setTimeout(() => setSaid(""), 1500);
   };
+  if (needsDsh || !command)
+    return (
+      <span
+        style={{ ...pill(T.muted), display: "inline-flex", alignItems: "center" }}
+        title={t("update.needsDshTitle", { latest, floor: needsDsh ?? "" })}
+        data-omc-update={latest}
+        data-omc-update-needs-dsh={needsDsh}
+      >
+        {t("update.needsDsh", { latest, floor: needsDsh ?? "" })}
+      </span>
+    );
   const copy = () => {
     if (!navigator.clipboard) return say("blocked");
     navigator.clipboard.writeText(command).then(
@@ -68,15 +89,15 @@ export function UpdatePill({ latest, command }: { latest: string; command: strin
 
 /** The status route's answer, shared for a moment: the heading and the Boxes card open together
  *  and would otherwise run the box's CLI probes twice. */
-let statusOnce:
-  | { at: number; p: Promise<{ latest?: string; update?: string; stars?: number }> }
-  | undefined;
+/** The status fields the pill and the star line read. */
+type PillStatus = { latest?: string; update?: string; needsDsh?: string; stars?: number };
+let statusOnce: { at: number; p: Promise<PillStatus> } | undefined;
 /** Fetches the status route once and shares the promise for ten seconds, so the Settings heading
  *  and the Boxes card that open together do not hit it twice. */
-const loadStatus = (): Promise<{ latest?: string; update?: string; stars?: number }> => {
+const loadStatus = (): Promise<PillStatus> => {
   if (statusOnce && Date.now() - statusOnce.at < 10_000) return statusOnce.p;
   const p = fetch(`${ROUTE}/status`)
-    .then((r) => readJson<{ latest?: string; update?: string; stars?: number }>(r))
+    .then((r) => readJson<PillStatus>(r))
     .catch(() => ({}));
   statusOnce = { at: Date.now(), p };
   return p;
@@ -84,17 +105,19 @@ const loadStatus = (): Promise<{ latest?: string; update?: string; stars?: numbe
 
 /** The pill beside the Settings heading, or nothing while the plugin is current. */
 export function PluginUpdateBadge() {
-  const [upd, setUpd] = useState<{ latest: string; command: string } | null>(null);
+  const [upd, setUpd] = useState<PillStatus | null>(null);
   useEffect(() => {
     let live = true;
     void loadStatus().then((s) => {
-      if (live && s.latest && s.update) setUpd({ latest: s.latest, command: s.update });
+      if (live && s.latest && (s.update || s.needsDsh)) setUpd(s);
     });
     return () => {
       live = false;
     };
   }, []);
-  return upd ? <UpdatePill latest={upd.latest} command={upd.command} /> : null;
+  return upd?.latest ? (
+    <UpdatePill latest={upd.latest} command={upd.update} needsDsh={upd.needsDsh} />
+  ) : null;
 }
 
 /** A quiet one-line nudge under the Settings heading: the live star count and a link to the repo,

@@ -9,6 +9,7 @@ import {
   latestVersion,
   profileFromPath,
   updateCommand,
+  updateOffer,
 } from "./update.js";
 
 // Version order: numbers first, then a release beats its own prerelease; junk is never newer.
@@ -94,6 +95,31 @@ assert.equal(updateCommand("dsh-oh-my-claude", "desktop"), undefined);
     throw new Error("ENOTFOUND");
   }) as typeof fetch;
   assert.equal(await latestVersion("dsh-oh-my-claude", boom, t0), undefined);
+}
+
+// The pill's offer: the command when this box's dsh reaches the release's floor, the floor alone
+// when it does not, nothing when current; both numbers are the registry's.
+{
+  const newest = { version: "1.6.0", dshFloor: "0.2.2-alpha.2" };
+  assert.deepEqual(updateOffer("1.5.14", newest, "0.2.2-rc.1", "cmd"), {
+    latest: "1.6.0",
+    update: "cmd",
+  });
+  assert.deepEqual(updateOffer("1.5.14", newest, "0.2.1-rc.5", "cmd"), {
+    latest: "1.6.0",
+    needsDsh: "0.2.2-alpha.2",
+  });
+  assert.equal(updateOffer("1.6.0", newest, "0.2.1-rc.5", "cmd"), undefined, "current: no pill");
+  assert.equal(
+    updateOffer("1.5.14", undefined, "0.2.2-rc.1", "cmd"),
+    undefined,
+    "no registry answer",
+  );
+  assert.deepEqual(
+    updateOffer("1.5.14", newest, undefined, "cmd"),
+    { latest: "1.6.0", update: "cmd" },
+    "an unreadable dsh version is offered the update, as before",
+  );
 }
 
 console.log("ok update");

@@ -134,6 +134,26 @@ export async function latestRelease(
   return value;
 }
 
+/** What the update pill offers this box: the newer release with the command that installs it, or,
+ *  when this box's dsh is below that release's dsh floor, the release with the dsh it needs and no
+ *  command, since installing it would replace a working plugin with one that refuses to mount. Both
+ *  numbers are the registry's, never this build's. Undefined when the plugin is current or the
+ *  registry did not answer; a dsh version this box could not read is offered the update, as before. */
+export type UpdateOffer = { latest: string; update: string } | { latest: string; needsDsh: string };
+
+/** See `UpdateOffer`. */
+export function updateOffer(
+  current: string,
+  newest: LatestRelease | undefined,
+  dsh: string | null | undefined,
+  command: string,
+): UpdateOffer | undefined {
+  if (!newest || !isNewer(current, newest.version)) return undefined;
+  if (newest.dshFloor && dsh && !atLeast(dsh, newest.dshFloor))
+    return { latest: newest.version, needsDsh: newest.dshFloor };
+  return { latest: newest.version, update: command };
+}
+
 /** The newest published version of `name`; see `latestRelease`. */
 export async function latestVersion(
   name: string,
