@@ -445,11 +445,13 @@ export function mountSelectionActions(ctx: ClientCtx): void {
     }
   });
   // The touch-screen dock: the composer dock is the one place a phone's own selection toolbar
-  // never covers. Order 40, below every other dock entry's, so the buttons sit first, above the
-  // cards and chips already there rather than under them (owner, 2026-11-06). Nothing with a mouse.
+  // never covers. The renderer draws the lowest order first: dsh's todo is 0, forge 5, goal 10,
+  // the queue 20 (0.2.2-rc.1), the plugin's own 42 to 49. -10 puts the buttons above all of them,
+  // which suits a row that exists only while text is selected (owner, 2026-11-06). Nothing with a
+  // mouse.
   ctx.slots.inject("conversation.input.dock", () => {
     ctx.slots.register(
-      { name: "conversation.input.dock", id: "claude-selection-touch", order: 40 },
+      { name: "conversation.input.dock", id: "claude-selection-touch", order: -10 },
       (props) => (
         <TouchSelectionDock
           ctx={ctx}
