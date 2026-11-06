@@ -12,8 +12,13 @@ import {
   useActiveClaude,
   type ClientCtx,
 } from "./shared.js";
-import { askBody, QUOTE_MAX } from "./selection.js";
+import { askBody, chatSelection, QUOTE_MAX } from "./selection.js";
 import { useHintFlag } from "./hints.js";
+
+/** A phone or tablet: the main pointer is a finger. There the OS draws its own copy and paste
+ *  toolbar and drag handles at the selection, over dsh's popover, so the actions dock above the
+ *  composer instead (`TouchSelectionDock`). A narrow desktop window still has a mouse: popover. */
+export const touchScreen = (): boolean => matchMedia("(pointer: coarse)").matches;
 
 /** The marker the stylesheet (turn-status.tsx) paints dsh's floating pill and the accent on. */
 const ACTION_ATTR = "data-omc-selection-action";
@@ -34,6 +39,8 @@ export interface SelectionActionsProps {
   ) => V;
   /** dsh's `messageQuotes` dictionary, so Quote reads exactly as dsh's own button. */
   t?: (key: string) => string;
+  /** Drawn by `TouchSelectionDock` above the composer rather than in dsh's popover. */
+  docked?: boolean;
 }
 
 /** Keeps focus where it is on a press: moving it out of the chat collapses the selection Quote
@@ -176,15 +183,23 @@ export function SelectionActions(props: SelectionActionsProps) {
     };
   }, []);
 
+  // On a touch screen the dock above the composer carries the actions; dsh's popover is closed.
+  const touch = props.docked !== true && touchScreen();
   useEffect(() => {
-    if (!enabled) dismiss?.();
-  }, [enabled, dismiss]);
+    if (!enabled || touch) dismiss?.();
+  }, [enabled, touch, dismiss]);
   useEffect(() => {
     if (passage !== null) fieldRef.current?.focus();
   }, [passage]);
 
   const quoteLabel = props.t;
-  if (!enabled || readText === undefined || dismiss === undefined || quoteLabel === undefined)
+  if (
+    !enabled ||
+    touch ||
+    readText === undefined ||
+    dismiss === undefined ||
+    quoteLabel === undefined
+  )
     return null;
 
   const close = () => {
@@ -345,6 +360,66 @@ export function SelectionActions(props: SelectionActionsProps) {
 }
 
 /**
+ * On a touch screen, the same Quote and Ask above the composer, where the OS's selection toolbar and
+ * drag handles never cover them. The passage is read when the selection changes, since a tap on a
+ * button can collapse the selection before the tap lands; a collapse from a press outside the dock
+ * (a tap elsewhere in the chat) hides it, one inside (the question box) does not.
+ */
+export function TouchSelectionDock({
+  ctx,
+  sessionId,
+  inputActions,
+}: {
+  ctx: ClientCtx;
+  sessionId?: string;
+  inputActions?: SelectionActionsProps["inputActions"];
+}) {
+  useLocale();
+  const touch = touchScreen();
+  const [picked, setPicked] = useState<string | null>(null);
+  const dockRef = useRef<HTMLDivElement>(null);
+  const pressedInside = useRef(false);
+  useEffect(() => {
+    if (!touch) return;
+    const onDown = (e: PointerEvent) => {
+      pressedInside.current =
+        e.target instanceof Node && dockRef.current?.contains(e.target) === true;
+    };
+    const onChange = () => {
+      const text = chatSelection(document.getSelection(), document.body);
+      if (text !== null) setPicked(text);
+      else if (!pressedInside.current && document.getSelection()?.isCollapsed !== false)
+        setPicked(null);
+    };
+    window.addEventListener("pointerdown", onDown, true);
+    document.addEventListener("selectionchange", onChange);
+    return () => {
+      window.removeEventListener("pointerdown", onDown, true);
+      document.removeEventListener("selectionchange", onChange);
+    };
+  }, [touch]);
+  if (!touch || picked === null || !sessionId) return null;
+  return (
+    <div
+      ref={dockRef}
+      data-omc-selection-dock=""
+      style={{ display: "flex", justifyContent: "center", padding: "4px 0" }}
+    >
+      <SelectionActions
+        ctx={ctx}
+        sessionId={sessionId}
+        docked
+        readText={() => picked}
+        dismiss={() => setPicked(null)}
+        clearSelection={() => document.getSelection()?.removeAllRanges()}
+        inputActions={inputActions}
+        t={() => t("main.selection.quote")}
+      />
+    </div>
+  );
+}
+
+/**
  * Puts Ask into dsh's selection popover (dsh 0.2.2-alpha.2 on), beside its Quote text. Priority -1
  * shadows dsh's `quote` entry; if ours crashes or unloads, dsh's comes back. An older dsh never
  * declares the slot, so there is no selection action at all. The slot is declared per chat view,
@@ -368,5 +443,20 @@ export function mountSelectionActions(ctx: ClientCtx): void {
       console.warn("[oh-my-claude] selection actions not registered:", e);
       return () => {};
     }
+  });
+  // The touch-screen dock: the composer dock is where the old selection bar sat, the one place a
+  // phone's own selection toolbar never covers. Draws nothing with a mouse.
+  ctx.slots.inject("conversation.input.dock", () => {
+    ctx.slots.register(
+      { name: "conversation.input.dock", id: "claude-selection-touch", order: 50 },
+      (props) => (
+        <TouchSelectionDock
+          ctx={ctx}
+          sessionId={props.sessionId}
+          inputActions={props.inputActions}
+        />
+      ),
+    );
+    return null;
   });
 }

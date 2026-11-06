@@ -548,6 +548,7 @@ export const en = {
   "main.selection.explain": "Explain this",
   "main.selection.questionAria": "Question about the selected text",
   "main.selection.questionPlaceholder": "Ask about it, or leave blank to explain",
+  "main.selection.quote": "Quote text",
   "main.selection.ask": "Ask",
   "main.selection.asking": "Asking…",
   "main.selection.noProcess":
@@ -1089,6 +1090,7 @@ export const zh = {
   "main.selection.explain": "解释这段内容",
   "main.selection.questionAria": "关于选中文本的问题",
   "main.selection.questionPlaceholder": "输入问题，留空则解释",
+  "main.selection.quote": "引用文本",
   "main.selection.ask": "提问",
   "main.selection.asking": "正在提问…",
   "main.selection.noProcess": "此会话的 Claude 未在运行。请先发送一条消息，再提问。",
