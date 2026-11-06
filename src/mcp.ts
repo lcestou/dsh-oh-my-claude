@@ -131,14 +131,21 @@ export async function openSession(
   // Claude named for one child would become everyone's. The child's own agent takes the route
   // instead, the step `selectModel` runs before that save. dsh leaves validation to the caller,
   // so an unknown model fails in the new session's first turn, where it shows.
+  // A route that cannot be set archives the new, still empty session before the error goes back,
+  // so a failed call leaves no blank row in the sidebar.
   if (provider && model) {
-    const found = await ctx.sessionController.resolveAgent(sessionId);
-    if ("error" in found)
-      throw found.error instanceof Error ? found.error : new Error(String(found.error));
-    // An agent without a model route would leave the session on dsh's default without a word.
-    if (!found.agent.model)
-      throw new Error(`session ${sessionId} has no agent to select ${provider}/${model} on`);
-    found.agent.model.select({ provider, model });
+    try {
+      const found = await ctx.sessionController.resolveAgent(sessionId);
+      if ("error" in found)
+        throw found.error instanceof Error ? found.error : new Error(String(found.error));
+      // An agent without a model route would leave the session on dsh's default without a word.
+      if (!found.agent.model)
+        throw new Error(`session ${sessionId} has no agent to select ${provider}/${model} on`);
+      found.agent.model.select({ provider, model });
+    } catch (e) {
+      await ctx.workspaceRegistry.archiveSession(sessionId).catch(() => {});
+      throw e;
+    }
   }
   await ctx.sessionController.prompt(
     {

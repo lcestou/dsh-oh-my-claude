@@ -405,7 +405,10 @@ console.log("mcp ok");
   // since that one would also save the pick as the box's default for new sessions
   const host = {
     sessions: { get: () => undefined },
-    workspaceRegistry: { list: () => [{ id: "w1", path: "/p" }] },
+    workspaceRegistry: {
+      list: () => [{ id: "w1", path: "/p" }],
+      archiveSession: async () => void calls.push("archive"),
+    },
     sessionController: {
       create: async () => (calls.push("create"), { sessionId: "n1" }),
       resolveAgent: async () => ({ agent: child }),
@@ -438,7 +441,11 @@ console.log("mcp ok");
     openSession(lost, caller, { prompt: "go", provider: "p", model: "m" }, signal),
     /gone/,
   );
-  assert.deepEqual(calls, ["create"], "no prompt after a failed resolve");
+  assert.deepEqual(
+    calls,
+    ["create", "archive"],
+    "archived, never prompted, after a failed resolve",
+  );
   // An agent with no model route is reported too, instead of opening on dsh's default model.
   calls.length = 0;
   // SAFETY: the same stand-in with an agent that carries no model route
@@ -450,6 +457,6 @@ console.log("mcp ok");
     openSession(bare, caller, { prompt: "go", provider: "p", model: "m" }, signal),
     /has no agent to select p\/m on/,
   );
-  assert.deepEqual(calls, ["create"], "no prompt on the default route");
+  assert.deepEqual(calls, ["create", "archive"], "archived, never prompted on the default route");
   console.log("open-session ok");
 }
