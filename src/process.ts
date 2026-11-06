@@ -1370,6 +1370,25 @@ export interface ClaudeProcessOnExit {
   (proc: ClaudeProcess): void;
 }
 
+/** The stream-json frame types that only come out of a turn Claude is running; a queued one is a
+ *  reply nobody has seen yet. `control_request` is the CLI asking something a turn has to answer
+ *  (a permission, a dsh tool call). `tool_progress` comes every 30 s while a tool runs (probed on
+ *  2.1.318 with a 100 s Bash), so a restart during a long build wakes within 30 s of adoption, as
+ *  it did before the allow list. */
+const TURN_FRAMES = new Set([
+  "assistant",
+  "user",
+  "result",
+  "stream_event",
+  "control_request",
+  "tool_progress",
+]);
+
+/** The same frames found by text, for the line handler's cheap "Claude is working" check; a match
+ *  inside a tool's own text only delays the idle reaper. */
+const TURN_FRAME_TEXT =
+  /"type":"(?:assistant|user|result|stream_event|control_request|tool_progress)"/;
+
 /** Where a keeper lives: its socket, spec, info and the Claude process it owns. */
 export interface KeeperPaths {
   dir: string;
@@ -1894,14 +1913,24 @@ export class ClaudeProcess {
         // follows this result, if the CLI sends one, is the new guess.
         this.suggestion = undefined;
       }
-      if (this.controlListener && line.includes('"control_response"')) {
+      if (line.includes('"control_response"')) {
         try {
           // SAFETY: I/O boundary; the listener branches on `type` and ignores anything else
-          if (this.controlListener(JSON.parse(line) as ClaudeEvent)) return this.used(index);
+          const event = JSON.parse(line) as ClaudeEvent;
+          if (this.controlListener?.(event)) return this.used(index);
+          // Every control_response answers a request this plugin sent. One nobody took came after
+          // its waiter gave up (initialize waits 15 s, mcp_reconnect 10 s) or answers an interrupt
+          // whose turn had ended. Queued, it woke an idle session after a restart, and the keeper
+          // replayed it to every boot until a turn read it (#241). No turn reads it for anything.
+          if (event.type === "control_response") return this.used(index);
         } catch {
           // not JSON: queue it like any other line
         }
       }
+      // Output of a turn the CLI is running counts as use, so the idle reaper never ends a process
+      // mid-turn only because no dsh turn is attached to it: an adopted keeper whose drain wake gave
+      // up, or a tool that outlasts the drain window after a restart (#241 review).
+      if (TURN_FRAME_TEXT.test(line)) this.lastUsed = Date.now();
       // Only nextEvent takes from the queue, and it takes lines in the order they were queued.
       this.queuedIndexes.push(index);
       this.queue.push(line);
@@ -2057,10 +2086,14 @@ export class ClaudeProcess {
     return n;
   }
 
-  /** True when the queue holds a frame a turn has to read out: anything but the CLI's own `system`
-   *  notices and non-JSON noise, so a notice an adoption provokes never wakes an idle session. A
-   *  `task_notification` is the exception: a background task that finished while dsh was away is
-   *  work done, and the translator draws its completion line. */
+  /** True when the queue holds a frame a turn has to read out: a frame of a turn Claude ran while
+   *  dsh was away (TURN_FRAMES), a relayed call injected for a turn, or the `task_notification` of
+   *  a background task that finished meanwhile, which the translator draws as a completion line.
+   *  Everything else waits for the next turn and wakes nobody: the CLI's `system` notices, the
+   *  `keep_alive`, `rate_limit_event` and `auth_status` frames 2.1.318 can send between turns, and
+   *  non-JSON noise. Before #241 this listed what not to wake for, and each frame the list missed
+   *  woke an idle session after a restart. Wrong for a frame type a later CLI adds for real output:
+   *  it waits for the next prompt instead of opening a turn. */
   hasTurnOutput(): boolean {
     return this.queue.lines.some((line) => {
       if (typeof line !== "string") return true;
@@ -2069,7 +2102,8 @@ export class ClaudeProcess {
         if (typeof parsed !== "object" || parsed === null) return false;
         // SAFETY: a non-null object; each field is compared to a literal, never trusted as typed
         const r = parsed as { type?: unknown; subtype?: unknown };
-        return r.type !== "system" || r.subtype === "task_notification";
+        if (r.type === "system") return r.subtype === "task_notification";
+        return typeof r.type === "string" && TURN_FRAMES.has(r.type);
       } catch {
         return false;
       }
