@@ -34,6 +34,9 @@ interface KeeperSpec {
   cwd: string;
   env: Record<string, string>;
   sessionId: string;
+  /** End Claude after this long with no dsh attached and no output from it. Absent in a spec an
+   *  older plugin wrote, which keeps such a keeper running until Claude exits or a client kills it. */
+  orphanMs?: number;
 }
 
 /** sun_path is 108 bytes on Linux with the terminator inside it. */
@@ -70,7 +73,7 @@ function main(dir: string) {
     process.exit(78); // EX_CONFIG
   }
 
-  let endedBy: "client" | "child" | "keeper-crash" | null = null;
+  let endedBy: "client" | "child" | "keeper-crash" | "orphan" | null = null;
   let exit: { code: number | null; signal: string | null } | undefined;
 
   // A keeper that dies takes Claude with it: the next boot cannot reattach to a child whose
@@ -127,6 +130,31 @@ function main(dir: string) {
   let lastOut = 0;
   let dropped = 0;
   const attached = () => client !== undefined && !client.destroyed;
+  // Nobody attached and Claude silent for `orphanMs`: the dsh that started this keeper is gone for
+  // good (stopped, or the other app on a shared state dir), so end Claude rather than hold it
+  // forever (#241: keepers 15 to 20 hours old, one for a finished subagent session). Each stdout
+  // line while detached restarts the wait, so a turn still producing output while dsh is down
+  // finishes. Closing stdin is how `claude -p` ends cleanly (exit 0 in 0.4 s on 2.1.318); SIGTERM
+  // and then SIGKILL catch one that does not. Wrong for a silent tool that runs longer than
+  // `orphanMs` while dsh is down: that turn is cut, and the next prompt resumes the transcript.
+  let orphanTimer: ReturnType<typeof setTimeout> | undefined;
+  const endOrphan = () => {
+    if (attached() || exit) return;
+    log(`orphan: nobody attached and no output for ${spec.orphanMs} ms, ending claude`);
+    endedBy = "orphan";
+    child.stdin.end();
+    setTimeout(() => {
+      if (!exit) child.kill("SIGTERM");
+    }, 5000).unref();
+    setTimeout(() => {
+      if (!exit) child.kill("SIGKILL");
+    }, 10_000).unref();
+  };
+  const armOrphan = () => {
+    clearTimeout(orphanTimer);
+    if (spec.orphanMs && !attached() && !exit) orphanTimer = setTimeout(endOrphan, spec.orphanMs);
+  };
+  armOrphan();
 
   const send = (msg: object) => {
     const line = `${JSON.stringify(msg)}\n`;
@@ -145,6 +173,7 @@ function main(dir: string) {
   const sendOut = (text: string) => {
     const line = `${JSON.stringify({ t: "out", line: text, n: ++lastOut })}\n`;
     if (attached()) client?.write(line);
+    else armOrphan();
     if (attached() && !clientAcks) return;
     if (unacked.size >= BUFFER_LINES) {
       const oldest = unacked.keys().next().value;
@@ -193,12 +222,14 @@ function main(dir: string) {
     if (client && !client.destroyed) client.destroy();
     client = sock;
     clientAcks = false;
+    clearTimeout(orphanTimer);
     sock.on("error", () => {});
     log(`attach buffered=${buffer.length} unacked=${unacked.size} dropped=${dropped}`);
     sock.on("close", () => {
       if (client === sock) {
         client = undefined;
         log(`detach buffered=${buffer.length} unacked=${unacked.size} dropped=${dropped}`);
+        armOrphan();
       }
     });
     createInterface({ input: sock, crlfDelay: Infinity }).on("line", (raw) => {
