@@ -102,6 +102,14 @@ export interface Agent {
     readonly id: SessionId;
     readonly session?: Session;
     ctx?: PluginContext;
+    /** The agent's model route; `select` applies from its next request. Optional: the mirror also
+     *  types agents dsh built some other way. */
+    readonly model?: {
+        select(selection: {
+            provider: string;
+            model: string;
+        }): void;
+    };
     followup(message: Message): void;
     /** Put a message on dsh's steer list: a running turn takes it at its next step, an idle session
      *  starts a turn for it. Optional because the mirror also types agents built some other way. */
@@ -304,12 +312,6 @@ export interface SessionController {
             text: string;
         }>;
     }, signal?: AbortSignal): Promise<void>;
-    agents: {
-        selectForNextRequest(agent: Agent | undefined, route: {
-            provider: string;
-            model: string;
-        }): void;
-    };
 }
 /** Mirrors: @deepseek-ai/dsh-attachment/lib/types/index.d.ts */
 export interface ImageAttachmentRef {

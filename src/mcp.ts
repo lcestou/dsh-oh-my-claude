@@ -126,8 +126,11 @@ async function openSession(
   const provider = str(args.provider);
   const model = str(args.model);
   if (provider && model) {
+    // dsh dropped sessionController.agents.selectForNextRequest; select on the child agent itself.
+    // Not sessionController.selectModel: that also saves the route as the user's default model.
     const child = ctx.agents.get(sessionId);
-    ctx.sessionController.agents.selectForNextRequest(child, { provider, model });
+    if (!child?.model) throw new Error(`session ${sessionId} has no agent to select ${provider}/${model} on`);
+    child.model.select({ provider, model });
   }
   await ctx.sessionController.prompt(
     {
