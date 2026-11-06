@@ -74,6 +74,7 @@ import {
   WorkspaceModelSwitch,
 } from "./settings-card.js";
 import { ShortcutSwitches } from "./shortcut-switches.js";
+import { KeeperSwitch } from "./keeper-switch.js";
 import { mountShortcutRows } from "./shortcut-rows.js";
 
 import { watchContextMeter } from "./context-meter.js";
@@ -347,6 +348,7 @@ export function apply(ctx: ClientCtx) {
         <ShortcutSwitches />
         <ClaudeSkillsSwitch />
         <CompactNudgeSwitch />
+        <KeeperSwitch />
         {/* The switches that start off sit together after the ones that start on, so the card reads
             as what the plugin does by default first, then what you can add to it. The proxy control
             keeps company with them rather than with the spend field it used to precede: it answers

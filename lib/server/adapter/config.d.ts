@@ -27,7 +27,8 @@ export declare function remoteWorkspaceFor(cwd: string): RemoteWorkspace | undef
 /** Configuration shape produced by the Config schema with defaults applied. */
 export type Config = {
     command: string;
-    spawn: "node" | "dsh";
+    /** Unset unless the plugin config names one; the Settings switch decides then (spawn-mode.ts). */
+    spawn?: "keeper" | "node" | "dsh";
     sshHost: string;
     configDir: string;
     permissionMode: "dsh" | "acceptEdits" | "bypassPermissions" | "plan" | "dontAsk" | "auto" | "manual";
@@ -136,5 +137,5 @@ export declare const Config: z<Schemastery.ObjectS<{
 export declare function localConfig<T extends {
     command: string;
     sshHost: string;
-    spawn: string;
+    spawn?: string;
 }>(config: T, platform?: NodeJS.Platform, resolve?: (command: string) => string): T;
