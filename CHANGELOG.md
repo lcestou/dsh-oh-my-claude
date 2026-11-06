@@ -6,8 +6,21 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Added
+
+- A switch under Settings → Oh My Claude, Keep Claude running across dsh restarts. On, as before, Claude Code runs under a keeper and survives a restart. Off, it runs inside dsh through its subprocess seam and ends with dsh, along with everything it started; on an SSH box or a remote workspace the far `claude` ends with the ssh connection. Thanks to @fancn (#241).
+
+### Changed
+
+- `spawn` has no default in the config any more. Unset, or `keeper`, the new switch decides; `node` or `dsh` still wins and shows the switch locked.
+- Under `spawn: dsh` the plugin passes the credential-shaped variables dsh runs with (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `GH_TOKEN` and the rest) through dsh's environment scrub, and puts the installer folders on `PATH`, so Claude starts and logs in as it does under a keeper. Thanks to @fancn (#241).
+
 ### Fixed
 
+- A keeper no dsh has attached to for `processIdleMs` (30 minutes by default, never under 5), while Claude writes nothing, now ends its Claude. Keepers used to run until someone killed them. Thanks to @fancn (#241).
+- An idle Claude process is ended after `processIdleMs` on its own, checked every 30 seconds, unless a background task is still running. It used to wait until another session started one. Thanks to @fancn (#241).
+- A dsh restart no longer wakes an idle session with "dsh restarted and reattached" over a frame that was not Claude's output, such as a reply to a control request that arrived late. Thanks to @fancn (#241).
+- DSH Web and DSH Desktop on one machine reattach only to their own Claude processes and leave each other's restart nudges alone; the one that started later used to take over the other's sessions. Thanks to @fancn (#241).
 - `open_session` with a provider and model reports an error when the new session has no model route to set, instead of opening it on dsh's default model without a word, and archives the empty session it created. Thanks to @tusharcora (#240).
 
 ## [1.5.14] - 2026-11-05
