@@ -101,7 +101,7 @@ Working on the plugin itself? Start at [docs/developing.md](https://github.com/l
 
 ## Compatibility
 
-dsh ships prereleases only and moves client APIs between them, so every release of the plugin records the dsh line it was written for and the dsh it was driven on. "Runs on" is the range the code carries branches for; "tested on" is the dsh installed on the box when the release was cut. The update pill reads the floor off the registry and never offers a release to a box whose dsh is below it.
+dsh ships prereleases only and moves client APIs between them, so every release of the plugin records the dsh line it was written for and the dsh it was driven on. "Runs on" is the range the code carries branches for; "tested on" is the dsh installed on the box when the release was cut. The update pill reads the floor off the registry: a box whose dsh is below it is never offered the update command, and the pill names the dsh that release needs instead.
 
 | Plugin | Runs on dsh | Tested on dsh | npm tag |
 | --- | --- | --- | --- |

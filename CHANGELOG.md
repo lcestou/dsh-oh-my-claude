@@ -8,6 +8,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Added
 
+- A plugin release your dsh is too old for is no longer silent: the update pill shows "1.6.0 needs dsh 0.2.2-alpha.2" (the release and the dsh it needs, both read from npm), with no command to copy until dsh is updated.
 - A switch under Settings → Oh My Claude, Keep Claude running across dsh restarts. On, as before, Claude Code runs under a keeper and survives a restart. Off, it runs inside dsh through its subprocess seam and ends with dsh, along with everything it started; on an SSH box or a remote workspace the far `claude` ends with the ssh connection. Thanks to @fancn (#241).
 
 ### Changed

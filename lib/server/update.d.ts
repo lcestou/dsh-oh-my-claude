@@ -32,6 +32,22 @@ export declare function atLeast(version: string, floor: string): boolean;
  * Memoised per name; `timeoutMs` bounds the one read so a slow registry cannot hold the status route.
  */
 export declare function latestRelease(name: string, fetchFn?: FetchFn, now?: number, timeoutMs?: number): Promise<LatestRelease | undefined>;
+/** What the update pill offers this box: the newer release with the command that installs it, or,
+ *  when this box's dsh is below that release's dsh floor, the release with the dsh it needs and no
+ *  command, since installing it would replace a working plugin with one that refuses to mount. Both
+ *  numbers are the registry's, never this build's. Undefined when the plugin is current or the
+ *  registry did not answer. A box that reports no dsh version is offered the update, as before; one
+ *  whose version does not parse is told the floor, where it used to see nothing. */
+export type UpdateOffer = {
+    latest: string;
+    update: string;
+} | {
+    latest: string;
+    needsDsh: string;
+};
+/** Picks the pill's offer for a box on `current` with `dsh`: undefined when `newest` is missing or
+ *  not newer, the floor alone when `dsh` is set and below `newest`'s floor, else `command`. */
+export declare function updateOffer(current: string, newest: LatestRelease | undefined, dsh: string | null | undefined, command: string): UpdateOffer | undefined;
 /** The newest published version of `name`; see `latestRelease`. */
 export declare function latestVersion(name: string, fetchFn?: FetchFn, now?: number, timeoutMs?: number): Promise<string | undefined>;
 /** Test seam: forget what was read. */

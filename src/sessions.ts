@@ -32,12 +32,12 @@ import {
 } from "./transcript.js";
 import { shq, sshArgs } from "./process.js";
 import {
-  atLeast,
   dshFloor,
-  isNewer,
   latestRelease,
   profileFromPath,
   updateCommand,
+  updateOffer,
+  type UpdateOffer,
 } from "./update.js";
 import { stars } from "./stars.js";
 import { ClaudeUpdater, newer, type Exec } from "./claude-update.js";
@@ -380,22 +380,17 @@ export function updateHints(
   return next;
 }
 
-/** A newer release on npm than the one running, with the command that brings it in. Only this box
- *  asks: a remote dsh box answers its own `/status` from its own copy. The Update notice switch
- *  (`updateCheckOff` in the hints store) turns the read off entirely, not just the pill. A release
- *  whose dsh floor this box's dsh does not reach is not offered: installing it would replace a
- *  working plugin with one that refuses to mount, and the box's dsh channel brings the newer dsh
- *  in its own time. */
+/** A newer release on npm than the one running: the command that brings it in, or the dsh it needs
+ *  when this box's is older (`updateOffer`). Only this box asks: a remote dsh box answers its own
+ *  `/status` from its own copy. The Update notice switch (`updateCheckOff` in the hints store)
+ *  turns the read off entirely, not just the pill. */
 async function pluginUpdate(
   hintsPath: string,
   dsh: string | null | undefined,
-): Promise<{ latest: string; update: string } | undefined> {
+): Promise<UpdateOffer | undefined> {
   if (!PLUGIN_NAME || !PLUGIN_VERSION || !UPDATE_COMMAND) return undefined;
   if ((await readHints(hintsPath)).updateCheckOff === true) return undefined;
-  const newest = await latestRelease(PLUGIN_NAME);
-  if (!newest || !isNewer(PLUGIN_VERSION, newest.version)) return undefined;
-  if (newest.dshFloor && dsh && !atLeast(dsh, newest.dshFloor)) return undefined;
-  return { latest: newest.version, update: UPDATE_COMMAND };
+  return updateOffer(PLUGIN_VERSION, await latestRelease(PLUGIN_NAME), dsh, UPDATE_COMMAND);
 }
 
 /** The repo's star count for the nudge in Settings, this box only. The dismiss flag (`starOff` in
@@ -650,9 +645,11 @@ export interface RuntimeStatus {
   projectsDirectory?: string | null;
   /** For an SSH box: why it did not answer, sorted so the row can name the fix (reach.ts). */
   reach?: Reach;
-  /** A newer plugin release on npm, and the command that installs it. This box only. */
+  /** A newer plugin release on npm, and the command that installs it, or the dsh it needs when
+   *  this box's dsh is older (then no `update`). This box only. */
   latest?: string;
   update?: string;
+  needsDsh?: string;
   /** GitHub stargazers_count for this repo; absent when offline, rate-limited or dismissed. This box only. */
   stars?: number;
   /** Session logs the plugin healed, could not heal, or rolled back since the last dismissal. */

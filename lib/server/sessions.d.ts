@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { type FoldedTranscript } from "./transcript.js";
+import { type UpdateOffer } from "./update.js";
 import { ClaudeUpdater } from "./claude-update.js";
 import { type Reach } from "./reach.js";
 import { type FsBox } from "./remote-fs.js";
@@ -115,16 +116,11 @@ export declare function readHints(hintsPath: string): Promise<Record<string, boo
  * switch returning to its default clears itself. Anything else is ignored, key names included.
  */
 export declare function updateHints(hintsPath: string, patch: Record<string, unknown>): Promise<Record<string, boolean | number>>;
-/** A newer release on npm than the one running, with the command that brings it in. Only this box
- *  asks: a remote dsh box answers its own `/status` from its own copy. The Update notice switch
- *  (`updateCheckOff` in the hints store) turns the read off entirely, not just the pill. A release
- *  whose dsh floor this box's dsh does not reach is not offered: installing it would replace a
- *  working plugin with one that refuses to mount, and the box's dsh channel brings the newer dsh
- *  in its own time. */
-declare function pluginUpdate(hintsPath: string, dsh: string | null | undefined): Promise<{
-    latest: string;
-    update: string;
-} | undefined>;
+/** A newer release on npm than the one running: the command that brings it in, or the dsh it needs
+ *  when this box's is older (`updateOffer`). Only this box asks: a remote dsh box answers its own
+ *  `/status` from its own copy. The Update notice switch (`updateCheckOff` in the hints store)
+ *  turns the read off entirely, not just the pill. */
+declare function pluginUpdate(hintsPath: string, dsh: string | null | undefined): Promise<UpdateOffer | undefined>;
 /** The repo's star count for the nudge in Settings, this box only. The dismiss flag (`starOff` in
  *  the hints store) turns the read off, so a person who hid the line pays no GitHub call. */
 declare function pluginStars(hintsPath: string): Promise<number | undefined>;
@@ -233,9 +229,11 @@ export interface RuntimeStatus {
     projectsDirectory?: string | null;
     /** For an SSH box: why it did not answer, sorted so the row can name the fix (reach.ts). */
     reach?: Reach;
-    /** A newer plugin release on npm, and the command that installs it. This box only. */
+    /** A newer plugin release on npm, and the command that installs it, or the dsh it needs when
+     *  this box's dsh is older (then no `update`). This box only. */
     latest?: string;
     update?: string;
+    needsDsh?: string;
     /** GitHub stargazers_count for this repo; absent when offline, rate-limited or dismissed. This box only. */
     stars?: number;
     /** Session logs the plugin healed, could not heal, or rolled back since the last dismissal. */

@@ -4,6 +4,9 @@
 export const en = {
   "update.available": "{latest} available",
   "update.commandCopied": "Command copied",
+  "update.needsDsh": "{latest} needs dsh {floor}",
+  "update.needsDshTitle":
+    "Oh My Claude {latest} needs dsh {floor} or newer. Update dsh first; the plugin's update command shows here once it is in.",
   "update.pillTitle": "{command}\nthen restart dsh. Click to copy the command.",
   "update.pillLabel": "Plugin {latest} available. Copy the update command.",
   "star.like": "Like Oh My Claude?",
@@ -52,6 +55,9 @@ export const en = {
 export const zh = {
   "update.available": "{latest} 可更新",
   "update.commandCopied": "命令已复制",
+  "update.needsDsh": "{latest} 需要 dsh {floor}",
+  "update.needsDshTitle":
+    "Oh My Claude {latest} 需要 dsh {floor} 或更新版本。请先更新 dsh，之后这里会显示插件的更新命令。",
   "update.pillTitle": "{command}\n然后重启 dsh。点击复制该命令。",
   "update.pillLabel": "插件 {latest} 可更新。复制更新命令。",
   "star.like": "喜欢 Oh My Claude？",

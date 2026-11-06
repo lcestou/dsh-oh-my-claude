@@ -49,6 +49,7 @@ interface DiagnosticsReply {
     /** A newer plugin release on npm, and the command that installs it. This box only. */
     latest?: string;
     update?: string;
+    needsDsh?: string;
     error?: string;
     /** Session logs the plugin healed, could not heal, or rolled back since the last dismissal;
      *  this box only. `refused` names the ones a click can reseed from their transcript. */
@@ -600,9 +601,13 @@ export function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: Cl
             </div>
             <div>
               {t("panel.diag.pluginLabel")} {data.runtime.plugin || t("panel.diag.unknown")}
-              {data.runtime.latest && data.runtime.update && (
+              {data.runtime.latest && (data.runtime.update || data.runtime.needsDsh) && (
                 <span style={{ marginLeft: 6 }}>
-                  <UpdatePill latest={data.runtime.latest} command={data.runtime.update} />
+                  <UpdatePill
+                    latest={data.runtime.latest}
+                    command={data.runtime.update}
+                    needsDsh={data.runtime.needsDsh}
+                  />
                 </span>
               )}
             </div>
