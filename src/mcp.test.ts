@@ -439,5 +439,17 @@ console.log("mcp ok");
     /gone/,
   );
   assert.deepEqual(calls, ["create"], "no prompt after a failed resolve");
+  // An agent with no model route is reported too, instead of opening on dsh's default model.
+  calls.length = 0;
+  // SAFETY: the same stand-in with an agent that carries no model route
+  const bare = {
+    ...host,
+    sessionController: { ...host.sessionController, resolveAgent: async () => ({ agent: {} }) },
+  } as unknown as Parameters<typeof openSession>[0];
+  await assert.rejects(
+    openSession(bare, caller, { prompt: "go", provider: "p", model: "m" }, signal),
+    /has no agent to select p\/m on/,
+  );
+  assert.deepEqual(calls, ["create"], "no prompt on the default route");
   console.log("open-session ok");
 }

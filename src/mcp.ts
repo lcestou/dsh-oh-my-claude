@@ -135,7 +135,10 @@ export async function openSession(
     const found = await ctx.sessionController.resolveAgent(sessionId);
     if ("error" in found)
       throw found.error instanceof Error ? found.error : new Error(String(found.error));
-    found.agent.model?.select({ provider, model });
+    // An agent without a model route would leave the session on dsh's default without a word.
+    if (!found.agent.model)
+      throw new Error(`session ${sessionId} has no agent to select ${provider}/${model} on`);
+    found.agent.model.select({ provider, model });
   }
   await ctx.sessionController.prompt(
     {

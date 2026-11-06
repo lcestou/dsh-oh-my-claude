@@ -6,6 +6,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Fixed
+
+- `open_session` with a provider and model reports an error when the new session has no model route to set, instead of opening it on dsh's default model without a word. Thanks to @tusharcora (#240).
+
 ## [1.5.14] - 2026-11-05
 
 dsh: runs on 0.2.0-rc.1 through 0.2.2-rc.1; built and tested on 0.2.2-rc.1.
