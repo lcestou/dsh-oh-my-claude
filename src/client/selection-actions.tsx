@@ -361,9 +361,10 @@ export function SelectionActions(props: SelectionActionsProps) {
 
 /**
  * On a touch screen, the same Quote and Ask above the composer, where the OS's selection toolbar and
- * drag handles never cover them. The passage is read when the selection changes, since a tap on a
- * button can collapse the selection before the tap lands; a collapse from a press outside the dock
- * (a tap elsewhere in the chat) hides it, one inside (the question box) does not.
+ * drag handles never cover them. The passage is read 250 ms after the selection stops changing,
+ * since a tap on a button can collapse the selection before the tap lands. A press inside the dock
+ * keeps it, as does a question being typed; any other change that leaves no chat selection, a tap
+ * elsewhere or a selection outside the chat, hides it.
  */
 export function TouchSelectionDock({
   ctx,
@@ -385,15 +386,27 @@ export function TouchSelectionDock({
       pressedInside.current =
         e.target instanceof Node && dockRef.current?.contains(e.target) === true;
     };
-    const onChange = () => {
+    // Read once the selection holds still for a moment: a phone extends a selection word by word
+    // as the handles move, and the row appearing mid-drag would grow the composer stack and shift
+    // the chat under the finger (the old bar's 2026-09-24 fix, for a triple-click).
+    let settle: ReturnType<typeof setTimeout> | undefined;
+    const read = () => {
       const text = chatSelection(document.getSelection(), document.body);
-      if (text !== null) setPicked(text);
-      else if (!pressedInside.current && document.getSelection()?.isCollapsed !== false)
-        setPicked(null);
+      if (text !== null) return setPicked(text);
+      if (pressedInside.current) return;
+      // A question being typed survives a stray tap; anything else outside the chat, a sidebar or
+      // header selection among them, drops the passage so Quote never inserts a stale one.
+      if (dockRef.current?.querySelector("textarea")?.value.trim()) return;
+      setPicked(null);
+    };
+    const onChange = () => {
+      clearTimeout(settle);
+      settle = setTimeout(read, 250);
     };
     window.addEventListener("pointerdown", onDown, true);
     document.addEventListener("selectionchange", onChange);
     return () => {
+      clearTimeout(settle);
       window.removeEventListener("pointerdown", onDown, true);
       document.removeEventListener("selectionchange", onChange);
     };
