@@ -224,6 +224,23 @@ assert.equal(openSessionId(listCtx(undefined)), undefined);
   assert.deepEqual(events, ["refresh", "opened:t2"]);
 }
 
+// A session dsh never lists after the route answered: the open throws for the row's error line
+// instead of returning as if it had opened something (#246 review).
+{
+  const opened: string[] = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response("{}")) as unknown as typeof fetch;
+  const ctx = {
+    sessions: { list: { getSnapshot: () => ({ byId: {} }) }, refresh: async () => {} },
+    workspaces: { list: { getSnapshot: () => ({ items: [], archivedSessionIds: [] }) } },
+    get: (name: string) =>
+      name === "uiWorkspace" ? { openSession: (id: string) => opened.push(id) } : undefined,
+  } as unknown as ClientCtx;
+  await assert.rejects(openHere(ctx, { id: "t3" }, "/w"), /did not list it/);
+  globalThis.fetch = realFetch;
+  assert.deepEqual(opened, [], "nothing opened");
+}
+
 // groupSkillsByScope sorts each scope into its bucket; an unknown scope falls to plugin.
 {
   const g = groupSkillsByScope([

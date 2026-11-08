@@ -1578,7 +1578,9 @@ const responder =
 // The format a restore creates when dsh's catalog cannot be read (no dsh above this checkout, as
 // on Windows before #246): a stored log dsh marks current names it, and 4 stands when none does.
 {
+  /** A stored session header at `version`; only the version matters to createVersion. */
   const header = (version: number) => ({ id: "s", version, createdAt: 0, isSeeded: false });
+  /** A persistence whose list() answers `entries`, or rejects when given an Error. */
   // SAFETY: partial fakes; createVersion reads only list()
   const persistence = (entries: unknown[] | Error) =>
     ({

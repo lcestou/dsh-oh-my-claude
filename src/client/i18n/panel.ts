@@ -5,6 +5,8 @@ export const en = {
   // Session label / restore
   "panel.session.untitled": "Untitled · {id}",
   "panel.restore.failed": "Could not restore this session: {error}",
+  "panel.restore.notListed":
+    "dsh restored the session but did not list it in time to open it. Look for it in the sidebar.",
   "panel.retention.default":
     "Claude Code deletes transcripts older than {days} days (cleanupPeriodDays, its default).",
   "panel.retention.scoped":
@@ -368,6 +370,7 @@ export const en = {
 export const zh = {
   "panel.session.untitled": "未命名 · {id}",
   "panel.restore.failed": "无法恢复这个会话：{error}",
+  "panel.restore.notListed": "dsh 已恢复这个会话，但没能及时列出来打开。请在侧边栏里找它。",
   "panel.retention.default":
     "Claude Code 会删除超过 {days} 天的会话记录（cleanupPeriodDays，默认值）。",
   "panel.retention.scoped":
