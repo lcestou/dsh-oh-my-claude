@@ -57,7 +57,7 @@ Once an SSH box is saved, dsh's own Add workspace dialog gains a box dropdown: a
 
 ## Install
 
-You need the Claude Code CLI on `PATH` and logged in (`claude --version` works, `claude` opens without asking you to sign in), and dsh 0.2 (0.2.2-alpha.2 or newer). On dsh 0.2.0 or 0.2.1, install 1.5.14; on dsh 0.1.x, install the npm tag for your line from the Compatibility table below. Nothing else: no API key, no Node build step.
+You need the Claude Code CLI on `PATH` and logged in (`claude --version` works, `claude` opens without asking you to sign in), and dsh 0.2 (0.2.2-alpha.2 or newer). On dsh 0.2.0 or 0.2.1, install 1.5.14 (`dsh-oh-my-claude@dsh-0.2.1`); on dsh 0.1.x, install the npm tag for your line from the Compatibility table below. Nothing else: no API key, no Node build step.
 
 **From dsh's Plugins page**, in the web app or DSH Desktop:
 
@@ -105,7 +105,8 @@ dsh ships prereleases only and moves client APIs between them, so every release 
 
 | Plugin | Runs on dsh | Tested on dsh | npm tag |
 | --- | --- | --- | --- |
-| 1.5.14 | 0.2.0-rc.1 through 0.2.2-rc.1 | 0.2.2-rc.1 | `latest`, `dsh-0.2` |
+| 1.6.0 | 0.2.2-alpha.2 through 0.2.2-rc.1 | 0.2.2-rc.1 | `latest` |
+| 1.5.14 | 0.2.0-rc.1 through 0.2.2-rc.1 | 0.2.2-rc.1 | `dsh-0.2.1`, `dsh-0.2` |
 | 1.5.13 | 0.2.0-rc.1 through 0.2.2-rc.1 | 0.2.2-rc.1 | none, superseded by 1.5.14 |
 | 1.5.12 | 0.2.0-rc.1 through 0.2.2-alpha.2 | 0.2.2-alpha.2 | none, superseded by 1.5.13 |
 | 1.5.11 | 0.2.0-rc.1 through 0.2.2-alpha.2 | 0.2.2-alpha.2 | none, superseded by 1.5.12 |
