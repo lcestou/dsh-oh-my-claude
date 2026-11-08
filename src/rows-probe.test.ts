@@ -1,6 +1,11 @@
 // Offline self-check: bun src/rows-probe.test.ts. The live probe needs a dsh install and runs in
 // the plugin at startup; here the log it sends is checked, and the answer when no dsh is around.
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { probeRawToolRows, rawRowsLog } from "./rows-probe.js";
 
 {
@@ -35,6 +40,34 @@ import { probeRawToolRows, rawRowsLog } from "./rows-probe.js";
   const off = await probeRawToolRows("/nonexistent/omc-probe/lib/bin.js");
   assert.equal(off.ok, false);
   assert.match(off.reason, /catalog not found/);
+}
+
+{
+  // The plugin runs on Node, which reads a bare path handed to `import()` as a URL: a Windows path
+  // fails as the scheme "c:" (#246) and a `#` in a folder name cuts the path short. Bun imports
+  // both, so this half runs the read under Node, from a dsh tree whose folder has a `#` in it.
+  const root = join(await mkdtemp(join(tmpdir(), "omc-catalog-")), "dsh#1");
+  const lib = join(root, "node_modules", "@deepseek-ai", "dsh-session-format-catalog", "lib");
+  await mkdir(lib, { recursive: true });
+  await writeFile(join(lib, "..", "package.json"), '{"type":"module"}');
+  await writeFile(
+    join(lib, "index.js"),
+    "export const sessionFormatCatalog = { currentVersion: 4 };",
+  );
+  const probe = fileURLToPath(new URL("./rows-probe.ts", import.meta.url));
+  const out = spawnSync(
+    "node",
+    [
+      "--input-type=module",
+      "-e",
+      "const m = await import(process.argv[1]); console.log(await m.currentLogVersion(process.argv[2]));",
+      pathToFileURL(probe).href,
+      join(root, "lib", "bin.js"),
+    ],
+    { encoding: "utf8" },
+  );
+  assert.equal(out.stdout.trim(), "4", `Node read the catalog through a # folder: ${out.stderr}`);
+  await rm(dirname(root), { recursive: true, force: true });
 }
 
 console.log("rows-probe.test: ok");

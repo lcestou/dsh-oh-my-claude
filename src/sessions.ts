@@ -1642,6 +1642,25 @@ function openTranscript(
 }
 
 /**
+ * The session format the installed dsh creates: its catalog's current version; without the
+ * catalog, the version of a stored log dsh marks current; without either, 4, the only version a
+ * supported dsh creates. A lower guess fails the open, since dsh refuses to create an older log
+ * ("encodeCurrent requires Session format v4"), which is what Restore hit on Windows (#246). The
+ * stored-log fallback is @kiluahh's, from the same issue.
+ */
+export async function createVersion(persistence: {
+  list: SessionPersistence["list"];
+}): Promise<number> {
+  const fromCatalog = await currentLogVersion();
+  if (fromCatalog !== undefined) return fromCatalog;
+  const listed = await persistence.list().catch(() => []);
+  const current = listed.flatMap((e) =>
+    "header" in e && e.formatStatus === "current" ? [e.header.version] : [],
+  );
+  return current.length > 0 ? Math.max(...current) : 4;
+}
+
+/**
  * Loads a Claude Code transcript and creates a dsh session from it, or
  * returns the existing session if one with this id is already live.
  */
@@ -1727,7 +1746,7 @@ export async function openTranscriptOnce(
   if (folded === undefined) throw new Error("transcript not found");
   if (folded.turns.length === 0) throw new Error("transcript has no completed turn");
   // The version this dsh writes decides both the header below and the shape of every tool result.
-  const logVersion = (await currentLogVersion()) ?? 3;
+  const logVersion = await createVersion(ctx.sessionPersistence);
   const seed = toSessionEvents(folded, logVersion);
   const pick = await pickSettings?.(folded);
   if (pick)
@@ -1746,10 +1765,9 @@ export async function openTranscriptOnce(
   let handle: Awaited<ReturnType<typeof ctx.sessionPersistence.create>>;
   try {
     handle = await ctx.sessionPersistence.create({
-      // The version the installed dsh reads: 0.1.7 writes v4 files and refuses one whose header
-      // says 3 ("session generation filename identifies v4, but its header identifies v3"), which
-      // would make every adopted transcript unreadable there. 3 stays the fallback for a dsh whose
-      // catalog cannot be read, which is what 0.1.5 and 0.1.6 want anyway.
+      // The version the installed dsh reads: since 0.1.7 dsh writes v4 files and refuses one whose
+      // header says 3 ("session generation filename identifies v4, but its header identifies v3"),
+      // which would make every adopted transcript unreadable there.
       version: logVersion,
       id: asSessionId(id),
       createdAt: folded.createdAt,

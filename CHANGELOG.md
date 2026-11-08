@@ -27,6 +27,8 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 - A dsh restart no longer wakes an idle session with "dsh restarted and reattached" over a frame that was not Claude's output, such as a reply to a control request that arrived late. Thanks to @fancn (#241).
 - DSH Web and DSH Desktop on one machine reattach only to their own Claude processes and leave each other's restart nudges alone; the one that started later used to take over the other's sessions. Thanks to @fancn (#241).
 - `open_session` with a provider and model reports an error when the new session has no model route to set, instead of opening it on dsh's default model without a word, and archives the empty session it created. Thanks to @tusharcora (#240).
+- On Windows, restoring a transcript from the ✻ panel opens it. The plugin could not read dsh's session-format catalog from a Windows path, so it wrote the session in a format dsh refuses. Native tool rows and the session-log repair, which read the same catalog, now work on Windows too. Thanks to @kiluahh (#246).
+- A restore that fails now shows why under its row; the click used to look like it did nothing.
 
 ## [1.5.14] - 2026-11-05
 

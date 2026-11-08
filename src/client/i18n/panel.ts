@@ -4,6 +4,7 @@
 export const en = {
   // Session label / restore
   "panel.session.untitled": "Untitled · {id}",
+  "panel.restore.failed": "Could not restore this session: {error}",
   "panel.retention.default":
     "Claude Code deletes transcripts older than {days} days (cleanupPeriodDays, its default).",
   "panel.retention.scoped":
@@ -366,6 +367,7 @@ export const en = {
 /** Chinese, one per English key. */
 export const zh = {
   "panel.session.untitled": "未命名 · {id}",
+  "panel.restore.failed": "无法恢复这个会话：{error}",
   "panel.retention.default":
     "Claude Code 会删除超过 {days} 天的会话记录（cleanupPeriodDays，默认值）。",
   "panel.retention.scoped":
