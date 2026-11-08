@@ -6,6 +6,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-11-08
+
+dsh: runs on 0.2.2-alpha.2 through 0.2.2-rc.1; built and tested on 0.2.2-rc.1. On dsh 0.2.0 or 0.2.1, stay on 1.5.14 (npm tag `dsh-0.2.1`).
+
 ### Added
 
 - A plugin release your dsh is too old for is no longer silent: the update pill shows "1.6.0 needs dsh 0.2.2-alpha.2" (the release and the dsh it needs, both read from npm), with no command to copy until dsh is updated.
