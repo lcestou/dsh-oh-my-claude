@@ -468,10 +468,10 @@ async function openHere(
       ctx.workspaces.list.getSnapshot()?.archivedSessionIds?.includes(id) === true;
     for (let i = 0; i < 40 && (!known()[id] || archived()); i++)
       await new Promise((r) => setTimeout(r, 50));
-    // If it never appeared (server-side open/import error), `open` below is a no-op and the row just
-    // does nothing; leave a breadcrumb so a stuck restore is diagnosable rather than silent.
-    if (!known()[id])
-      console.warn(`[oh-my-claude] session ${id} did not appear after open; not opened`);
+    // Never listed: `open` below would be a no-op and the click would look dead, so throw for the
+    // caller's error line instead (every caller shows or logs it). The route answered, so the
+    // session may still reach the sidebar after a slow list.
+    if (!known()[id]) throw new Error(t("panel.restore.notListed"));
   }
   openSession(ctx, id);
 }

@@ -620,6 +620,16 @@ export type PickSettings = (folded: FoldedTranscript) => Promise<{
 /** Same id opened twice at once (double click, two tabs) shares one creation. */
 declare function openTranscript(ctx: RouteHost, dirs: string[], cwd: string, id: string, claudeIdOf: (id: string) => string, registry: WorkspaceRegistry | undefined, heal?: HealHost, pickSettings?: PickSettings): Promise<Opened>;
 /**
+ * The session format the installed dsh creates: its catalog's current version; without the
+ * catalog, the version of a stored log dsh marks current; without either, 4, the only version a
+ * supported dsh creates. A lower guess fails the open, since dsh refuses to create an older log
+ * ("encodeCurrent requires Session format v4"), which is what Restore hit on Windows (#246). The
+ * stored-log fallback is @kiluahh's, from the same issue.
+ */
+export declare function createVersion(persistence: {
+    list: SessionPersistence["list"];
+}): Promise<number>;
+/**
  * Loads a Claude Code transcript and creates a dsh session from it, or
  * returns the existing session if one with this id is already live.
  */

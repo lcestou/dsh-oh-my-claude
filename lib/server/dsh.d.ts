@@ -372,9 +372,11 @@ export interface ConnectionPolicy {
 }
 /** Mirrors: @deepseek-ai/dsh-session-persistence-jsonl/lib/types/index.d.ts */
 export interface SessionPersistence {
-    /** dsh 0.1.5 answers `{ header, revision, sizeBytes? }` snapshots; older dsh answered headers. */
+    /** dsh 0.1.5 answers `{ header, revision, sizeBytes? }` snapshots; older dsh answered headers.
+     *  `formatStatus` says whether the stored log is at the version this dsh writes. */
     list(): Promise<Array<SessionHeader | {
         header: SessionHeader;
+        formatStatus?: "current" | "migration-required";
     }>>;
     /** Opens the write handle that owns a new session's log; the only way events reach disk. */
     create(header: SessionHeader, options?: {

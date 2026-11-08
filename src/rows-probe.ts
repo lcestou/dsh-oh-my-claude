@@ -11,6 +11,7 @@
 // dsh that starts checking at load locks the switch again without a plugin release.
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import type { JsonValue } from "./dsh.js";
 
 /** Tool activity as the Tune switch names it: inline text, or dsh's native tool rows. */
@@ -208,6 +209,13 @@ const catalogPath = (entry = process.argv[1] ?? ""): string | undefined => {
   }
 };
 
+/** The catalog as `import()` takes it: a file URL. Node reads a bare path as a URL, so a Windows
+ *  path fails as the scheme "c:" and a `#` or `%` in a folder name is cut off or decoded (#246). */
+const importCatalog = async (at: string): Promise<{ sessionFormatCatalog?: Catalog }> =>
+  // SAFETY: `at` is dsh's own catalog module, found on disk by catalogPath; a dsh that renames the
+  // export answers undefined at the caller, and a failed load throws to the caller's catch.
+  (await import(pathToFileURL(at).href)) as { sessionFormatCatalog?: Catalog };
+
 /**
  * The installed dsh's session-format catalog, the module its own loader restores a log with.
  * Undefined when dsh cannot be found next to the running entry or the module has no such export,
@@ -217,10 +225,7 @@ export async function loadSessionCatalog(entry?: string): Promise<Catalog | unde
   const at = catalogPath(entry);
   if (at === undefined) return undefined;
   try {
-    // SAFETY: `at` is dsh's own catalog module, checked to exist above, and its export carries the
-    // version it reads and writes. A dsh that renames either answers undefined through the catch.
-    const { sessionFormatCatalog } = (await import(at)) as { sessionFormatCatalog?: Catalog };
-    return sessionFormatCatalog;
+    return (await importCatalog(at)).sessionFormatCatalog;
   } catch {
     return undefined;
   }
@@ -240,10 +245,10 @@ export async function probeRawToolRows(entry?: string): Promise<RowsSupport> {
   const at = catalogPath(entry);
   if (at === undefined) return { ok: false, reason: "dsh session-format catalog not found" };
   try {
-    // SAFETY: `at` is dsh's own catalog module, checked to exist above; the export name is the one
-    // tools/dsh-session-repair.ts reads. A dsh that renames it fails on the call below, and the
-    // catch answers "rows off" with the message, which is the safe side.
-    const { sessionFormatCatalog } = (await import(at)) as { sessionFormatCatalog: Catalog };
+    // A dsh that renames the export fails on the read below, and the catch answers "rows off" with
+    // the message, which is the safe side. The export name is the one tools/dsh-session-repair.ts reads.
+    const { sessionFormatCatalog } = await importCatalog(at);
+    if (!sessionFormatCatalog) throw new Error("dsh's catalog module has no sessionFormatCatalog");
     const version = sessionFormatCatalog.currentVersion ?? 3;
     const { header, rows } = rawRowsLog(version);
     // The pair dsh-session-persistence-jsonl hands createRestore when it loads a session. Up to

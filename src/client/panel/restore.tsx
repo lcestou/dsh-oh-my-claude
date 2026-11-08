@@ -22,7 +22,9 @@ import { SearchField } from "../search-field.js";
 import type { FeatureSwitches } from "../../switches.js";
 import { readHints, markHintValue, sessionLabel, workspaceName } from "./shared.js";
 
-/** One-row transcript pick inside the compact restore list. */
+/** One-row transcript pick inside the compact restore list. A failed open keeps the panel up and
+ *  shows the route's sentence under the row: the click used to drop the rejection, so a 500 looked
+ *  exactly like a click that did nothing (#246). */
 function TranscriptRow({
   s,
   cwd,
@@ -36,31 +38,57 @@ function TranscriptRow({
 }) {
   useLocale();
   const label = sessionLabel(s);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
   return (
-    <button
-      type="button"
-      style={{
-        ...rowBtn,
-        overflow: "hidden",
-      }}
-      onClick={async () => {
-        await openHere(ctx, s, cwd);
-        onClose();
-      }}
-    >
-      <span
+    <div data-omc-restore-row={s.id}>
+      <button
+        type="button"
+        data-omc-restore-open={s.id}
+        aria-busy={busy}
+        disabled={busy}
         style={{
-          flex: 1,
-          minWidth: 0,
+          ...rowBtn,
           overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
+        }}
+        onClick={async () => {
+          setBusy(true);
+          setError("");
+          try {
+            await openHere(ctx, s, cwd);
+            onClose();
+          } catch (e) {
+            setError(
+              t("panel.restore.failed", { error: e instanceof Error ? e.message : String(e) }),
+            );
+          } finally {
+            setBusy(false);
+          }
         }}
       >
-        {label}
-      </span>
-      <span style={{ ...meta, flex: "none", marginLeft: 8 }}>{ago(s.modifiedAt)}</span>
-    </button>
+        <span
+          style={{
+            flex: 1,
+            minWidth: 0,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {label}
+        </span>
+        <span style={{ ...meta, flex: "none", marginLeft: 8 }}>{ago(s.modifiedAt)}</span>
+      </button>
+      {error && (
+        <span
+          data-omc-restore-error=""
+          role="alert"
+          style={{ ...errText, display: "block", padding: "2px 10px" }}
+        >
+          {error}
+        </span>
+      )}
+    </div>
   );
 }
 

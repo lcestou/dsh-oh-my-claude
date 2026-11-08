@@ -8,6 +8,7 @@ import { join } from "node:path";
 import {
   dshSessionsFor,
   openTranscriptOnce,
+  createVersion,
   probeBox,
   readPickerSettings,
   readRemoteWorkspaces,
@@ -1522,6 +1523,9 @@ const responder =
   assert.equal(r.written?.header.id, id);
   assert.equal(r.written?.header.cwd, cwd);
   assert.equal(r.written?.header.isSeeded, false);
+  // No dsh above this checkout, so the catalog read fails as it did on Windows (#246): the seed
+  // still says v4, the only version a supported dsh creates.
+  assert.equal(r.written?.header.version, 4, "a catalog that cannot be read falls back to v4");
   assert.equal(r.written?.events.length, r.out.events, "every seed event was appended");
   assert.ok((r.out.events ?? 0) > 0, "the transcript's turn produced events");
   assert.deepEqual(
@@ -1569,6 +1573,40 @@ const responder =
   r = await run({ inStore: false, persisted: false, archived: true, createCollision: true });
   assert.equal(r.out.existed, true);
   assert.deepEqual(r.state.archivedSessionIds, [], "unarchived before attach");
+}
+
+// The format a restore creates when dsh's catalog cannot be read (no dsh above this checkout, as
+// on Windows before #246): a stored log dsh marks current names it, and 4 stands when none does.
+{
+  /** A stored session header at `version`; only the version matters to createVersion. */
+  const header = (version: number) => ({ id: "s", version, createdAt: 0, isSeeded: false });
+  /** A persistence whose list() answers `entries`, or rejects when given an Error. */
+  // SAFETY: partial fakes; createVersion reads only list()
+  const persistence = (entries: unknown[] | Error) =>
+    ({
+      list: async () => {
+        if (entries instanceof Error) throw entries;
+        return entries;
+      },
+    }) as any;
+  assert.equal(
+    await createVersion(persistence([{ header: header(5), formatStatus: "current" }])),
+    5,
+    "a log at the version dsh writes names it",
+  );
+  assert.equal(
+    await createVersion(
+      persistence([
+        { header: header(3), formatStatus: "migration-required" },
+        { header: header(4), formatStatus: "current" },
+      ]),
+    ),
+    4,
+    "a log waiting for migration does not count",
+  );
+  assert.equal(await createVersion(persistence([])), 4, "no stored session: 4");
+  assert.equal(await createVersion(persistence([header(3)])), 4, "a bare header says nothing");
+  assert.equal(await createVersion(persistence(new Error("disk"))), 4, "a failed list: 4");
 }
 
 // The two on-disk lists the panel reads at boot, and how each treats a file it does not like. They
