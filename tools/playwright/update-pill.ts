@@ -1,6 +1,7 @@
-// Dev-only check: the "<version> available" pill on the This box row. The box's own status is
-// rewritten on the way to the page so npm appears to hold 1.0.1; the click must put the update
-// command on the clipboard and the pill must say so for a moment, at a desktop and a phone width.
+// Dev-only check: the "<version> available" pill beside the Oh My Claude heading in Settings. The
+// box's own status is rewritten on the way to the page so npm appears to hold 1.0.1. The copy half
+// must put the update command on the clipboard and announce it; the pill itself must close Settings
+// and open the plugin's page in dsh's Plugins panel. Both at a desktop and a phone width.
 // Point PLAYWRIGHT_ROOT at any project with Playwright installed; arg 1 is the dsh launch token,
 // arg 2 a directory for the screenshots.
 import { dshUrl, launch } from "./pw.js";
@@ -26,8 +27,20 @@ for (const [label, width] of [
   });
   await p.goto(dshUrl(token), { waitUntil: "networkidle" });
   await p.waitForTimeout(2000);
+  // dsh's first-run notice covers the page on a fresh profile.
+  const notice = p.getByRole("button", { name: /^Continue$/ });
+  if (await notice.count()) await notice.first().click();
+  // A phone keeps the sidebar, and with it the Account menu, folded away until it is opened.
+  const sidebar = p.getByRole("button", { name: /^Open sidebar$/ });
+  if (width < 600 && (await sidebar.count())) await sidebar.first().click();
+  // Since dsh 0.2.2 Settings sits in the Account menu at the foot of the sidebar.
   await p
-    .locator('button[aria-label*="Settings" i], a[aria-label*="Settings" i]')
+    .getByRole("button", { name: /^Account menu$/ })
+    .first()
+    .click();
+  await p.waitForTimeout(600);
+  await p
+    .getByText(/^Settings$/)
     .first()
     .click({ force: true });
   await p.waitForTimeout(800);
@@ -36,37 +49,31 @@ for (const [label, width] of [
     .first()
     .click({ force: true });
   await p.waitForTimeout(1500);
-  // A phone keeps dsh's sidebar over the page until it is collapsed.
-  const collapse = p.getByRole("button", { name: /^Collapse sidebar$/ });
-  if (width < 600 && (await collapse.count())) {
-    await collapse.first().click({ force: true });
-    await p.waitForTimeout(600);
-  }
   const pill = p.locator("[data-omc-update]");
-  if (!(await pill.count())) {
-    await p
-      .locator("#dsh-oh-my-claude-boxes")
-      .locator("button, summary, [role=button]", { hasText: /^Boxes$/ })
-      .first()
-      .click({ force: true });
-    await p.waitForTimeout(1500);
-  }
-  const shown = await pill.first().innerText();
+  const open = p.locator("[data-omc-update-open]");
+  const shown = (await open.first().innerText()).trim();
   await pill.first().scrollIntoViewIfNeeded();
   await pill
     .first()
     .locator("xpath=..")
     .screenshot({ path: `${out}/update-pill-${label}.png` });
-  await pill.first().click();
+  await p.locator("[data-omc-update-copy]").first().click();
   await p.waitForTimeout(300);
-  const after = await pill.first().innerText();
+  const said = await p.locator("[data-omc-update] output").first().innerText();
   const clip = await p.evaluate(() => navigator.clipboard.readText());
-  await p.waitForTimeout(1500);
-  const back = await pill.first().innerText();
+  await open.first().click();
+  await p.waitForTimeout(2000);
+  const settingsGone = (await p.locator("[data-omc-settings]").count()) === 0;
+  // dsh's bundle page names the package under its title; the plugin list does not.
+  const onPage = (await p.getByText(/^dsh-oh-my-claude$/).count()) > 0;
   const ok =
-    shown === "1.0.1 available" && after === "command copied" && clip === UPDATE && back === shown;
+    shown === "1.0.1 available" &&
+    said === "Command copied" &&
+    clip === UPDATE &&
+    settingsGone &&
+    onPage;
   console.log(
-    `${ok ? "PASS" : "FAIL"} ${label}: shown=${JSON.stringify(shown)} after=${JSON.stringify(after)} clipboard=${JSON.stringify(clip)} back=${JSON.stringify(back)}`,
+    `${ok ? "PASS" : "FAIL"} ${label}: shown=${JSON.stringify(shown)} said=${JSON.stringify(said)} clipboard=${JSON.stringify(clip)} settingsGone=${settingsGone} onPluginPage=${onPage}`,
   );
   if (!ok) failed = true;
   await ctx.close();

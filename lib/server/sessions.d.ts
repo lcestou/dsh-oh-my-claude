@@ -230,7 +230,8 @@ export interface RuntimeStatus {
     /** For an SSH box: why it did not answer, sorted so the row can name the fix (reach.ts). */
     reach?: Reach;
     /** A newer plugin release on npm, and the command that installs it, or the dsh it needs when
-     *  this box's dsh is older (then no `update`). This box only. */
+     *  this box's dsh is older (then no `update`). DSH Desktop gets `latest` alone: its CLI has no
+     *  command for the pill to copy, so the pill opens dsh's Plugins page. This box only. */
     latest?: string;
     update?: string;
     needsDsh?: string;

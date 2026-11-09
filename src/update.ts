@@ -39,7 +39,7 @@ export function profileFromPath(path: string, fallback = "web"): string {
 /** The two lines that bring in a new version, as the README's Install section gives them. */
 export function updateCommand(name: string, profile: string): string | undefined {
   // DSH Desktop owns the `desktop` profile and the dsh CLI refuses it, so a copied command would
-  // only fail; Desktop users update from the app's own Plugin Manager instead.
+  // only fail; Desktop users update from the app's own Plugins page, which the pill opens.
   if (profile === "desktop") return undefined;
   return `dsh plugin --profile ${profile} update ${name}`;
 }
@@ -140,20 +140,24 @@ export async function latestRelease(
  *  numbers are the registry's, never this build's. Undefined when the plugin is current or the
  *  registry did not answer. A box that reports no dsh version is offered the update, as before; one
  *  whose version does not parse is told the floor, where it used to see nothing. */
-export type UpdateOffer = { latest: string; update: string } | { latest: string; needsDsh: string };
+export type UpdateOffer =
+  | { latest: string; update?: string }
+  | { latest: string; needsDsh: string };
 
 /** Picks the pill's offer for a box on `current` with `dsh`: undefined when `newest` is missing or
- *  not newer, the floor alone when `dsh` is set and below `newest`'s floor, else `command`. */
+ *  not newer, the floor alone when `dsh` is set and below `newest`'s floor, else `command`. With no
+ *  `command` (DSH Desktop, whose profile the CLI refuses) the offer is the release alone, which
+ *  the pill sends to dsh's Plugins page to install. */
 export function updateOffer(
   current: string,
   newest: LatestRelease | undefined,
   dsh: string | null | undefined,
-  command: string,
+  command: string | undefined,
 ): UpdateOffer | undefined {
   if (!newest || !isNewer(current, newest.version)) return undefined;
   if (newest.dshFloor && dsh && !atLeast(dsh, newest.dshFloor))
     return { latest: newest.version, needsDsh: newest.dshFloor };
-  return { latest: newest.version, update: command };
+  return command ? { latest: newest.version, update: command } : { latest: newest.version };
 }
 
 /** The newest published version of `name`; see `latestRelease`. */

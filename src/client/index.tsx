@@ -38,6 +38,7 @@ import { sparkNode } from "./spark.js";
 import { HINTS_EVENT, loadHints, writeHints, applyTheme } from "./hints.js";
 import { watchSessionNotices } from "./session-notices.js";
 import { ToolIconSprites, watchToolFolds } from "./tool-folds.js";
+import { watchPluginsPage } from "./plugins-page.js";
 import {
   DockStatus,
   RowMark,
@@ -265,6 +266,7 @@ export function apply(ctx: ClientCtx) {
   watchSessionSpinners(ctx);
   watchUltrathink(ctx);
   watchToolFolds();
+  watchPluginsPage(ctx);
 
   // The Claude look: apply the stored switches once the hints load, and again on every change
   // (a Settings switch dispatches HINTS_EVENT after its POST). Removed with the module, like the
@@ -326,7 +328,7 @@ export function apply(ctx: ClientCtx) {
           {/* A newer plugin on npm is a fact about the plugin, so it sits by its name, not in a
               box row: the one place everyone who opens this section looks. */}
           <span style={{ marginLeft: "auto" }}>
-            <PluginUpdateBadge />
+            <PluginUpdateBadge onOpen={props.close} />
           </span>
         </div>
         <StarLine />

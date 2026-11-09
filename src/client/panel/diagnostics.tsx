@@ -334,9 +334,19 @@ function HookRunsList({ runs }: { runs: HookRun[] }) {
 
 /**
  * "Diagnostics" body in the Oh My Claude dialog: runtime status, config file parse errors,
- * MCP servers that are not connected with their errors, and a doctor output button.
+ * MCP servers that are not connected with their errors, and a doctor output button. `onLeave`
+ * closes the dialog; the update pill calls it after opening dsh's Plugins page, which would
+ * otherwise sit behind the dialog.
  */
-export function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
+export function DiagnosticsBody({
+  sessionId,
+  ctx,
+  onLeave,
+}: {
+  sessionId: string;
+  ctx: ClientCtx;
+  onLeave?: () => void;
+}) {
   useLocale();
   const cwd = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.cwd;
   const running = activeClaudeSession(ctx) === sessionId;
@@ -601,12 +611,13 @@ export function DiagnosticsBody({ sessionId, ctx }: { sessionId: string; ctx: Cl
             </div>
             <div>
               {t("panel.diag.pluginLabel")} {data.runtime.plugin || t("panel.diag.unknown")}
-              {data.runtime.latest && (data.runtime.update || data.runtime.needsDsh) && (
+              {data.runtime.latest && (
                 <span style={{ marginLeft: 6 }}>
                   <UpdatePill
                     latest={data.runtime.latest}
                     command={data.runtime.update}
                     needsDsh={data.runtime.needsDsh}
+                    onOpen={onLeave}
                   />
                 </span>
               )}

@@ -82,7 +82,7 @@ systemctl --user restart dsh-web.service
 
 **DSH Desktop**（macOS 和 Windows）按上面插件页面的步骤安装。从 Dock 启动的应用看不到你 shell 的 PATH，所以插件会在常见的安装目录里查找 `claude`。在 Windows 上，插件把 Claude 作为 dsh 的普通子进程运行，因此重启应用会中断正在进行的回合，需要 Unix shell 的功能（在设置里登录、SSH 主机）也不可用。服务端已按 Desktop 的方式在 Linux 上用 Electron 运行过，也在 Windows 11 上配合 npm 安装的 Claude Code 运行过。
 
-npm 上有新版本时，设置和面板的运行环境行会出现一个带版本号的橙色标签，点击即可复制在终端里用的更新命令。在插件页面上，dsh 更新第三方插件的方式是先移除再重新添加。详情以及插件在 dsh 升级后自行完成的修复，见 [Plugin updates](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#plugin-updates)。
+npm 上有新版本时，设置和面板的运行环境行会出现一个带版本号的橙色标签。点击它会在 dsh 的插件页面中打开 Oh My Claude，用 dsh 自己的更新按钮安装；标签旁的复制按钮会复制在终端里用的更新命令。DSH Desktop 也会显示这个标签，但没有复制按钮，因为它的命令行没有可复制的命令。详情以及插件在 dsh 升级后自行完成的修复，见 [Plugin updates](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#plugin-updates)。
 
 可选，在 `~/.dsh/settings.yaml` 中：
 
