@@ -1,5 +1,6 @@
 // A control_response no waiter takes is consumed rather than queued, and only a turn's own frames
-// count as output an adopted process wakes its session for (#241).
+// count as output an adopted process wakes its session for (#241); an exit callback that throws
+// does not take the host down (#251).
 import { strict as assert } from "node:assert";
 import { PassThrough } from "node:stream";
 import { ClaudeProcess } from "./process.js";
@@ -73,5 +74,14 @@ for (const type of [
   await feed({ type });
   assert.equal(proc.hasTurnOutput(), true, `${type} wakes`);
 }
+// A throw from the exit callback stays inside closed() (#251): it runs in the child's `done`
+// settlement, and an unhandled rejection there exits the whole dsh host.
+let ran = false;
+proc.closed(1, () => {
+  ran = true;
+  throw new Error('cannot get required service "sessions" in inactive context');
+});
+assert.ok(ran, "the exit callback still runs");
+assert.equal(proc.alive, false, "and the process reads as ended");
 console.log("process-wake ok");
 process.exit(0);

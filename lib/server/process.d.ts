@@ -928,7 +928,9 @@ export declare class ClaudeProcess {
         spawner?: Spawner;
     });
     /** When the child ends, reject every relayed tool call as failed, close the queue and run the
-     *  exit callback. */
+     *  exit callback. A throw from the callback is dropped, never passed on: this runs in the
+     *  child's `done` settlement, where it would be an unhandled rejection, and dsh exits the whole
+     *  host on one (#251). */
     closed(code: number, onExit: ClaudeProcessOnExit | undefined): void;
     /** True while the child has not exited, so a write to a finished process is refused. */
     get alive(): boolean;
