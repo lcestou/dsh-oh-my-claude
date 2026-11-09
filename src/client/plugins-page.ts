@@ -34,13 +34,16 @@ export function watchPluginsPage(ctx: ClientCtx): void {
   });
 }
 
+/** The opener right now: the snapshot `usePluginsPage` renders from. */
+export const pluginsPageOpener = (): Opener => opener;
+
+/** Calls `fn` whenever the opener comes or goes; returns the unsubscribe. */
+export function onPluginsPageChange(fn: () => void): () => void {
+  listeners.add(fn);
+  return () => listeners.delete(fn);
+}
+
 /** The opener as React state, so a pill re-renders when dsh's navigation appears or goes. */
 export function usePluginsPage(): Opener {
-  return useSyncExternalStore(
-    (fn) => {
-      listeners.add(fn);
-      return () => listeners.delete(fn);
-    },
-    () => opener,
-  );
+  return useSyncExternalStore(onPluginsPageChange, pluginsPageOpener);
 }
