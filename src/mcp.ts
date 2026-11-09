@@ -78,6 +78,11 @@ const OPEN_SESSION: ToolSchema = {
       },
       provider: { type: "string", description: "LLM provider id, e.g. claude-code." },
       model: { type: "string", description: "Model id for that provider." },
+      reasoningEffort: {
+        type: "string",
+        description:
+          "Thinking level for that model, e.g. low, medium, high. Applied only with provider and model. Default: the provider's default.",
+      },
       agentPreset: { type: "string", description: "Agent preset id. Default: the dsh default." },
     },
     required: ["prompt"],
@@ -90,6 +95,7 @@ interface OpenSessionArgs {
   workspaceId?: JsonValue;
   provider?: JsonValue;
   model?: JsonValue;
+  reasoningEffort?: JsonValue;
   agentPreset?: JsonValue;
 }
 
@@ -105,7 +111,9 @@ type OpenHost = Required<
 /**
  * Creates and initializes a new top-level dsh session with an initial prompt.
  * Used by the MCP bridge to fan out sessions from Claude Code to dsh. A provider is applied only
- * with a model; either alone is ignored and the session opens on dsh's default route.
+ * with a model; either alone is ignored and the session opens on dsh's default route. A reasoning
+ * effort rides on that route and is ignored without it; dsh does not check it against the model,
+ * so an effort the model lacks shows up in the new session's first turn, like an unknown model.
  */
 export async function openSession(
   ctx: OpenHost,
@@ -126,6 +134,8 @@ export async function openSession(
   const { sessionId } = await ctx.sessionController.create(create);
   const provider = str(args.provider);
   const model = str(args.model);
+  // From huananhuxu-debug's patch in #250: without it every child ran at the provider's default.
+  const reasoningEffort = str(args.reasoningEffort);
   // dsh 0.2 dropped `agents.selectForNextRequest`. The controller's `selectModel` is not the
   // replacement: it also saves the pick as the box's default for every new session, so a model
   // Claude named for one child would become everyone's. The child's own agent takes the route
@@ -141,7 +151,9 @@ export async function openSession(
       // An agent without a model route would leave the session on dsh's default without a word.
       if (!found.agent.model)
         throw new Error(`session ${sessionId} has no agent to select ${provider}/${model} on`);
-      found.agent.model.select({ provider, model });
+      found.agent.model.select(
+        reasoningEffort ? { provider, model, reasoningEffort } : { provider, model },
+      );
     } catch (e) {
       await ctx.workspaceRegistry.archiveSession(sessionId).catch(() => {});
       throw e;
