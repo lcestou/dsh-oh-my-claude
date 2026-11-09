@@ -6,6 +6,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-11-09
+
+dsh: runs on 0.2.2-alpha.2 through 0.2.2-rc.1; built and tested on 0.2.2-rc.1.
+
 ### Added
 
 - `open_session` takes a `reasoningEffort` beside `provider` and `model`, so Claude can open a session on another model at a thinking level other than that provider's default. Thanks to @huananhuxu-debug (#250).
@@ -16,7 +20,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
-- Reloading or updating the plugin while a Claude session was open could exit the whole dsh host with `cannot get required service "sessions" in inactive context`. The plugin instance being replaced still reacted when its Claude process ended, after dsh had already shut it down. Thanks to @huananhuxu-debug (#251).
+- Reloading or updating the plugin while a Claude session was open could exit the whole dsh host with `cannot get required service "sessions" in inactive context`. The plugin instance being replaced still reacted when its Claude process ended, after dsh had already shut it down. The fix lives in the version being replaced, so updating from 1.6.0 or older with a Claude session open can still restart dsh once; nothing is lost, and updates from 1.6.1 on are safe. Thanks to @huananhuxu-debug (#251).
 
 ## [1.6.0] - 2026-11-08
 
