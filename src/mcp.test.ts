@@ -427,6 +427,21 @@ console.log("mcp ok");
   assert.equal(text, "opened session n1 in workspace w1");
   assert.deepEqual(calls, ["create", "select", "prompt"], "route set before the first prompt");
   assert.deepEqual(selected, [{ provider: "claude-code", model: "claude-haiku-5-5" }]);
+  // A reasoning effort rides on the route (#250); without a route it is dropped with it.
+  selected.length = 0;
+  calls.length = 0;
+  await openSession(
+    host,
+    caller,
+    { prompt: "go", provider: "openai-codex", model: "gpt-6.1-sol", reasoningEffort: "high" },
+    signal,
+  );
+  assert.deepEqual(selected, [
+    { provider: "openai-codex", model: "gpt-6.1-sol", reasoningEffort: "high" },
+  ]);
+  calls.length = 0;
+  await openSession(host, caller, { prompt: "go", reasoningEffort: "high" }, signal);
+  assert.deepEqual(calls, ["create", "prompt"], "an effort without a route sets nothing");
   calls.length = 0;
   await openSession(host, caller, { prompt: "go", model: "claude-haiku-5-5" }, signal);
   assert.deepEqual(calls, ["create", "prompt"], "a model without a provider sets no route");

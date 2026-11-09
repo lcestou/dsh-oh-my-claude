@@ -1999,14 +1999,23 @@ export class ClaudeProcess {
   }
 
   /** When the child ends, reject every relayed tool call as failed, close the queue and run the
-   *  exit callback. */
+   *  exit callback. A throw from the callback goes to the process warning log, never further:
+   *  this runs in the child's `done` settlement, where it would be an unhandled rejection, and dsh
+   *  exits the whole host on one (#251). */
   closed(code: number, onExit: ClaudeProcessOnExit | undefined) {
     this.exitCode = code;
     this.queue.close();
     for (const r of this.relays.values())
       r.reject(new Error(`claude exited ${this.exitCode} while dsh ran its tool call`));
     this.relays.clear();
-    onExit?.(this);
+    try {
+      onExit?.(this);
+    } catch (e) {
+      // The known throw: a plugin reload disposed the adapter before its process ended, and the
+      // callback's read of a dsh service fails on the inactive context. That mount has no tab
+      // left to update, and the new mount republishes its own state. Any other throw still shows.
+      process.emitWarning(`claude exit callback failed: ${errorText(e)}`);
+    }
   }
 
   /** True while the child has not exited, so a write to a finished process is refused. */
