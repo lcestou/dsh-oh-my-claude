@@ -129,7 +129,9 @@ export function UpdatePill({
   // The copy outcome of the split pill, announced: its visible change is only a glyph, which a
   // screen reader does not see change on its own.
   const status = (
-    <output
+    <div
+      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a live notice, not a form result, which is what <output> is for
+      role="status"
       aria-live="polite"
       style={{
         position: "absolute",
@@ -140,7 +142,7 @@ export function UpdatePill({
       }}
     >
       {said === "copied" ? t("update.commandCopied") : said === "blocked" ? t("copy.failed") : ""}
-    </output>
+    </div>
   );
   if (!openPlugins && command)
     return (

@@ -59,7 +59,7 @@ for (const [label, width] of [
     .screenshot({ path: `${out}/update-pill-${label}.png` });
   await p.locator("[data-omc-update-copy]").first().click();
   await p.waitForTimeout(300);
-  const said = await p.locator("[data-omc-update] output").first().innerText();
+  const said = await p.locator('[data-omc-update] [role="status"]').first().innerText();
   const clip = await p.evaluate(() => navigator.clipboard.readText());
   await open.first().click();
   await p.waitForTimeout(2000);
