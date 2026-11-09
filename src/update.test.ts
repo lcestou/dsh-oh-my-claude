@@ -125,6 +125,13 @@ assert.equal(updateCommand("dsh-oh-my-claude", "desktop"), undefined);
     { latest: "1.6.0", needsDsh: "0.2.2-alpha.2" },
     "a dsh version that does not parse is told the floor",
   );
+  // DSH Desktop has no command: the release alone, for the pill to send to the Plugins page.
+  assert.deepEqual(updateOffer("1.5.14", newest, "0.2.2-rc.1", undefined), { latest: "1.6.0" });
+  assert.deepEqual(
+    updateOffer("1.5.14", newest, "0.2.1-rc.5", undefined),
+    { latest: "1.6.0", needsDsh: "0.2.2-alpha.2" },
+    "Desktop below the floor is told the floor too",
+  );
 }
 
 console.log("ok update");

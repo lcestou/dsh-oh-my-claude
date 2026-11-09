@@ -40,14 +40,16 @@ export declare function latestRelease(name: string, fetchFn?: FetchFn, now?: num
  *  whose version does not parse is told the floor, where it used to see nothing. */
 export type UpdateOffer = {
     latest: string;
-    update: string;
+    update?: string;
 } | {
     latest: string;
     needsDsh: string;
 };
 /** Picks the pill's offer for a box on `current` with `dsh`: undefined when `newest` is missing or
- *  not newer, the floor alone when `dsh` is set and below `newest`'s floor, else `command`. */
-export declare function updateOffer(current: string, newest: LatestRelease | undefined, dsh: string | null | undefined, command: string): UpdateOffer | undefined;
+ *  not newer, the floor alone when `dsh` is set and below `newest`'s floor, else `command`. With no
+ *  `command` (DSH Desktop, whose profile the CLI refuses) the offer is the release alone, which
+ *  the pill sends to dsh's Plugins page to install. */
+export declare function updateOffer(current: string, newest: LatestRelease | undefined, dsh: string | null | undefined, command: string | undefined): UpdateOffer | undefined;
 /** The newest published version of `name`; see `latestRelease`. */
 export declare function latestVersion(name: string, fetchFn?: FetchFn, now?: number, timeoutMs?: number): Promise<string | undefined>;
 /** Test seam: forget what was read. */

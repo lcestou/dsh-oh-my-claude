@@ -426,7 +426,9 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
               {tab === "Changes" && <ChangesBody sessionId={sessionId} ctx={ctx} onClose={close} />}
               {tab === "MCP" && <McpBody sessionId={sessionId} ctx={ctx} onClose={close} />}
               {tab === "Asides" && <AsidesBody sessionId={sessionId} />}
-              {tab === "Diagnostics" && <DiagnosticsBody sessionId={sessionId} ctx={ctx} />}
+              {tab === "Diagnostics" && (
+                <DiagnosticsBody sessionId={sessionId} ctx={ctx} onLeave={() => close()} />
+              )}
               {tab === "Tasks" && <TasksBody sessionId={sessionId} ctx={ctx} />}
               {tab === "Tune" && <TuneBody sessionId={sessionId} ctx={ctx} />}
             </div>

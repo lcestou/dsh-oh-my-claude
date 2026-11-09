@@ -303,7 +303,8 @@ const ISSUES_URL = "https://github.com/lcestou/dsh-oh-my-claude/issues/new";
  *  summary line in `src/client/index.tsx` says "five", so a change here changes that too. */
 const CHANGELOG_RELEASES = 5;
 /** The one `dsh plugin ... update` line for this install; the profile is read off this file's path.
- *  Undefined under DSH Desktop, which updates plugins from its own manager, so no pill is offered. */
+ *  Undefined under DSH Desktop, which updates plugins from its own Plugins page, so the pill offers
+ *  that page and no command. */
 const UPDATE_COMMAND = updateCommand(PLUGIN_NAME, profileFromPath(import.meta.url));
 /** The box-wide booleans and non-negative numbers under `hints.json`: one-time hints and the
  *  settings switches. Only `true` and finite non-negative numbers are kept, so a missing or
@@ -388,7 +389,7 @@ async function pluginUpdate(
   hintsPath: string,
   dsh: string | null | undefined,
 ): Promise<UpdateOffer | undefined> {
-  if (!PLUGIN_NAME || !PLUGIN_VERSION || !UPDATE_COMMAND) return undefined;
+  if (!PLUGIN_NAME || !PLUGIN_VERSION) return undefined;
   if ((await readHints(hintsPath)).updateCheckOff === true) return undefined;
   return updateOffer(PLUGIN_VERSION, await latestRelease(PLUGIN_NAME), dsh, UPDATE_COMMAND);
 }
@@ -646,7 +647,8 @@ export interface RuntimeStatus {
   /** For an SSH box: why it did not answer, sorted so the row can name the fix (reach.ts). */
   reach?: Reach;
   /** A newer plugin release on npm, and the command that installs it, or the dsh it needs when
-   *  this box's dsh is older (then no `update`). This box only. */
+   *  this box's dsh is older (then no `update`). DSH Desktop gets `latest` alone: its CLI has no
+   *  command for the pill to copy, so the pill opens dsh's Plugins page. This box only. */
   latest?: string;
   update?: string;
   needsDsh?: string;

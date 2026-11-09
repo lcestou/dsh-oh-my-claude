@@ -10,6 +10,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 - `open_session` takes a `reasoningEffort` beside `provider` and `model`, so Claude can open a session on another model at a thinking level other than that provider's default. Thanks to @huananhuxu-debug (#250).
 
+### Changed
+
+- The update pill opens Oh My Claude on dsh's Plugins page, where dsh's own Update button installs the new release, and closes Settings or the panel on the way. The update command is still one click away on the copy button beside it. DSH Desktop, which had no pill because its CLI has no command to copy, now shows one that opens the Plugins page.
+
 ### Fixed
 
 - Reloading or updating the plugin while a Claude session was open could exit the whole dsh host with `cannot get required service "sessions" in inactive context`. The plugin instance being replaced still reacted when its Claude process ended, after dsh had already shut it down. Thanks to @huananhuxu-debug (#251).

@@ -876,11 +876,24 @@ export interface DirectoryFlowOwnerProps {
   onError: (message: string) => void;
 }
 
+/** Mirrors: @deepseek-ai/dsh-client-ui-plugin-manager/lib/types/client/index.d.ts (`pluginNavigation`).
+ *  dsh's plugin manager provides it; a dsh without that plugin has none. */
+export interface PluginNavigation {
+  /** Select the Plugins panel and open one bundle's page; an unknown name shows the plugin list. */
+  openBundle(packageName: string): void;
+}
+
 /** The dsh client services this panel uses, the ones `inject` names. */
 export interface ClientCtx {
   /** cordis: run `fn` now and its returned cleanup when this context is disposed. Optional because
    *  test fakes and older dsh contexts may not carry it. */
   effect?: (fn: () => () => void, label?: string) => void;
+  /** cordis: run `fn` in a scope of its own while every named service is present, and dispose that
+   *  scope when one goes. Optional for the same reason as `effect`. */
+  inject?: (
+    names: string[],
+    fn: (scope: { effect: (fn: () => () => void, label?: string) => void }) => void,
+  ) => void;
   slots: DshSlots;
   sessions: {
     // `cwd`, `blank`, `running`, `completed` and `displayTitle` come from SessionSummary

@@ -82,7 +82,7 @@ If the picker lists it as `Oh My Claude (not logged in)`, run `claude auth login
 
 **DSH Desktop** (macOS and Windows) uses the Plugins page steps above. The plugin looks for `claude` in the usual install folders, since an app started from the Dock does not see your shell's PATH. On Windows it runs Claude as a plain child of dsh, so restarting the app ends a running turn, and the parts that need a Unix shell (Log in from Settings, SSH boxes) are not available. The server half has run under Electron on Linux the way Desktop runs it, and on Windows 11 with Claude Code installed from npm.
 
-When a newer version is on npm, an orange pill with the version number appears in Settings and on the panel's Runtime line; a click copies the update command for a terminal. On the Plugins page, dsh updates a third-party plugin by removing it and adding it again. Details, and the repairs the plugin makes on its own after a dsh upgrade, are under [Plugin updates](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#plugin-updates).
+When a newer version is on npm, an orange pill with the version number appears in Settings and on the panel's Runtime line. A click opens Oh My Claude on dsh's Plugins page, where dsh's own Update button installs it; the copy button beside the pill puts the update command on the clipboard for a terminal. DSH Desktop gets the pill too, without the copy button, since its CLI has no command to copy. Details, and the repairs the plugin makes on its own after a dsh upgrade, are under [Plugin updates](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#plugin-updates).
 
 Optional, in `~/.dsh/settings.yaml`:
 
