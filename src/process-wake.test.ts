@@ -83,5 +83,11 @@ proc.closed(1, () => {
 });
 assert.ok(ran, "the exit callback still runs");
 assert.equal(proc.alive, false, "and the process reads as ended");
+const warned = await new Promise<string>((r) => process.once("warning", (w) => r(w.message)));
+assert.match(
+  warned,
+  /exit callback failed: cannot get required service/,
+  "and the throw is logged",
+);
 console.log("process-wake ok");
 process.exit(0);
