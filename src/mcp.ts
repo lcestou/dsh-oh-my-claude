@@ -74,7 +74,7 @@ const bridgedSchemas = (tools: DshToolsRegistry, agent: Agent): ToolSchema[] => 
 const OPEN_SESSION: ToolSchema = {
   name: "open_session",
   description:
-    "Start a new top-level dsh session in a workspace and send it a first prompt. It appears in the sidebar as its own session, not under this one, and runs independently; nothing comes back here. Omit provider and model for the dsh default. Returns the new session id.",
+    "Start a new top-level dsh session in a workspace and send it a first prompt. It appears in the sidebar as its own session, not under this one, and runs independently. Its replies do not come back here on their own: read them with wait_session. Omit provider and model for the dsh default. Returns the new session id.",
   parameters: {
     type: "object",
     properties: {

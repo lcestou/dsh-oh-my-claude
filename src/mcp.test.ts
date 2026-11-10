@@ -376,13 +376,15 @@ console.log("mcp ok");
     ...env,
     agent: ptcAgent,
     open: async () => "opened",
+    prompt: async () => "sent",
+    wait: async () => "waited",
   } as unknown as Parameters<typeof handleRpc>[1])) as {
     result: { tools: Array<{ name: string }> };
   };
   assert.deepEqual(
     withOpen.result.tools.map((t) => t.name),
-    ["run_code", "open_session"],
-    "code mode keeps the bridge's own open_session",
+    ["run_code", "open_session", "prompt_session", "wait_session"],
+    "code mode keeps the bridge's own tools",
   );
   // A header offering more than run_code is ordinary mode: the full bridged list comes back.
   const nativeAgent = {
