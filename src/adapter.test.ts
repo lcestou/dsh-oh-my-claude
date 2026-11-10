@@ -9682,6 +9682,121 @@ console.log("approval beside relay ok");
   console.log("approval beside steer park ok");
 }
 
+// The same hold covers a question: AskUserQuestion beside a relayed subagent. dsh's question
+// dialog rejects when its signal aborts, which used to reach Claude as "question cancelled".
+{
+  const session = {
+    header: { version: 0 },
+    snapshotEvents: () => [
+      { type: "turn/start", data: { turn: 1 } },
+      { type: "step/start", data: { step: 1 } },
+    ],
+    append: () => ({ seq: 1 }),
+  };
+  let answer: ((response: object) => void) | undefined;
+  const a = new ClaudeCodeAdapter(
+    fakeCtx({
+      on() {},
+      sessions: { get: () => session },
+      agents: { get: () => ({ id: "ag", session: { id: "sq" } }) },
+      userQuestions: {
+        ask: ({ signal }: { signal: AbortSignal }) =>
+          new Promise<object>((resolve, reject) => {
+            answer = resolve;
+            signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+          }),
+      },
+    }),
+    Config({ resume: true, toolActivity: true, toolsInline: false, dshTools: true }),
+  );
+  a.stateDir = joinPath(tmpdir(), "omc-flush-test-nowrite");
+  (a as any).mcp = { base: "http://127.0.0.1:1", key: "k", via: "webserver", toolsFor: () => [] };
+  const input = { questions: [{ question: "Pick a colour?", options: [{ label: "Blue" }] }] };
+  const queue: Array<unknown> = [
+    {
+      type: "assistant",
+      message: {
+        id: "m1",
+        role: "assistant",
+        content: [
+          { type: "tool_use", id: "q1", name: "AskUserQuestion", input },
+          { type: "tool_use", id: "d1", name: "mcp__dsh__subagent", input: {} },
+        ],
+      },
+    },
+    {
+      type: "control_request",
+      request_id: "c1",
+      request: { subtype: "can_use_tool", tool_name: "AskUserQuestion", input, tool_use_id: "q1" },
+    },
+    { type: "dsh_relay", id: "r1", name: "subagent", args: {}, resolve() {}, reject() {} },
+  ];
+  const written: string[] = [];
+  let timedReads = 0;
+  const proc: any = {
+    alive: true,
+    busy: false,
+    parked: undefined,
+    steerPending: false,
+    relays: new Map(),
+    sent: new Set(),
+    queue: { lines: [] },
+    queuedIndexes: [],
+    idleKilled: false,
+    exitCode: 0,
+    stderr: "",
+    stray: "",
+    staleResults: 0,
+    countStaleResults: () => 0,
+    write: (line: string) => (written.push(line), true),
+    nextEvent: async (ms?: number) => {
+      if (queue.length) return queue.shift();
+      if (ms === undefined) return null;
+      if (++timedReads === 2) answer?.({ answers: [{ id: "q1:0", selected: ["Blue"] }] });
+      return { type: "timeout" };
+    },
+    kill: () => {},
+  };
+  const prep = {
+    input: "go",
+    spec: { model: "m" },
+    cwd: "/tmp",
+    session: undefined,
+    args: [],
+    accessMode: "workspace-write",
+  };
+  a.acquire = async () => ({ prep, proc }) as any;
+  a.reconnectIfStale = async () => {};
+  a.watchTranscript = (async () => {}) as any;
+  a.pumpMirror = (async () => {}) as any;
+  const chunks: any[] = [];
+  for await (const c of a.stream({
+    sessionId: "sq",
+    model: "m",
+    messages: messageList([{ role: "user", content: [{ type: "text", text: "go" }] }]),
+    signal: new AbortController().signal,
+  } as any))
+    chunks.push(c);
+  await new Promise((r) => setTimeout(r, 20));
+  const answers = written
+    .flatMap((line) => {
+      try {
+        return [JSON.parse(line)];
+      } catch {
+        return [];
+      }
+    })
+    .filter((m) => m.type === "control_response")
+    .map((m) => [m.response.response.behavior, m.response.response.updatedInput?.answers]);
+  assert.deepEqual(
+    answers,
+    [["allow", { "Pick a colour?": "Blue" }]],
+    "the person's pick reaches Claude: the question is not cancelled by the relay",
+  );
+  assert.equal(chunks.at(-1)?.reason?.kind, "tool-calls");
+  console.log("question beside relay ok");
+}
+
 // Regression (2026-09-23 13:01, a second session lost the same day #100 shipped): a user Stop
 // while a native call is running. The adapter asks the CLI to interrupt, the CLI answers with a
 // result frame, and dsh, seeing its abort, breaks out of the stream at the first chunk of that
