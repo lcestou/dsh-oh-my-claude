@@ -297,7 +297,12 @@ function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
     setSaved("");
   };
 
+  // Newest read wins: two quick scope changes can answer out of order, and the older answer
+  // showed the previous scope's file under the new scope's tab.
+  const loadSeq = useRef(0);
   const load = () => {
+    const seq = ++loadSeq.current;
+    const current = () => seq === loadSeq.current;
     setBusy(true);
     setError("");
     // A box answers one file and knows nothing of scopes; everything else reads every scope at
@@ -305,17 +310,20 @@ function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
     const done = box
       ? fetch(settingsUrl)
           .then((r) => readJson<SettingsFile>(r))
-          .then(show)
+          .then((f) => current() && show(f))
       : fetch(scopesUrl)
           .then((r) => readJson<{ scopes?: SettingsScopeInfo[] }>(r))
           .then((b) => {
+            if (!current()) return;
             const all = b.scopes ?? [];
             setScopes(all);
             const wanted =
               all.find((s) => s.scope === scope) ?? all.find((s) => s.scope === "user");
             if (wanted) show(wanted);
           });
-    done.catch((e: Error) => setError(e.message)).finally(() => setBusy(false));
+    done
+      .catch((e: Error) => current() && setError(e.message))
+      .finally(() => current() && setBusy(false));
   };
   useEffect(load, [settingsUrl, scopesUrl, scope]);
   // Another control on the page wrote a settings file (the Claude updates channel, the Tune tab):
