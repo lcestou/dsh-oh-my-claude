@@ -1036,7 +1036,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // With the picker's own rows in the list: a model only a `customModels` entry or a
     // `modelPicker.options` row names is in no catalog, and with no row it resolved without a
     // window, which dsh answers with "no context capacity" on the switch to it.
-    const models = await getCatalog(undefined, this.cliModels, picker);
+    // The two filters are left out: they shape the listing, and a session already on a model
+    // the allowlist excludes keeps resolving it, as the terminal does.
+    const rows = picker && { ...picker, availableModels: undefined, replaceBuiltInOptions: false };
+    const models = await getCatalog(undefined, this.cliModels, rows);
     const cap = picker?.modelEffortCaps?.[model] ?? picker?.maxEffortLevel;
     return resolveModelInfo(provider, model, models, cap);
   }

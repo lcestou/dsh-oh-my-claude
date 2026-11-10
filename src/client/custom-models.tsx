@@ -17,12 +17,14 @@ export interface CustomModelEntry {
 /** The router this feature was asked for, named the way the proxy row names Headroom. */
 const CC_SWITCH_URL = "https://github.com/farion1231/cc-switch";
 
-/** The form's text as an entry to send. The window is left out when the field is empty and sent
- *  as typed otherwise, digits or not: the server owns the rules and words the refusal. */
+/** The form's text as an entry to send. The window is left out when the field is empty. Text that
+ *  is not all digits goes as 0, a number the server refuses with the sentence about windows; sent
+ *  as `Number("12k")` it would be NaN, which JSON turns into null and the server cannot place. */
 const draftEntry = (id: string, name: string, tokens: string): CustomModelEntry => {
   const entry: CustomModelEntry = { model: id.trim() };
   if (name.trim() !== "") entry.label = name.trim();
-  if (tokens.trim() !== "") entry.contextWindow = Number(tokens.trim());
+  if (tokens.trim() !== "")
+    entry.contextWindow = /^\d+$/.test(tokens.trim()) ? Number(tokens.trim()) : 0;
   return entry;
 };
 

@@ -100,6 +100,7 @@ import { isPluginScope, pluginScopeNeedsCwd, type PluginLoadError } from "./plug
 import { CLAUDE_HOME, STATE_DIR, loadWorkspaceModels, trace, writeJson } from "./state.js";
 import { EFFORTS_ALL } from "./adapter/catalog.js";
 import type { CustomModel } from "./adapter/config.js";
+import { saveCustomModels } from "./adapter/custom-models.js";
 import { projectDirName } from "./adapter/transcript-watch.js";
 import type {
   LoginNeed,
@@ -2792,6 +2793,15 @@ export function registerSessionRoutes(
                         : updateHints(hintsPath, Object.fromEntries(drop.map((k) => [k, false])));
                     })
                     .catch((e: unknown) => log("warn", `box removal, hints: ${errorText(e)}`));
+                  // And the models added for it in Settings, for the same reason.
+                  for (const b of before.filter((x) => gone.has(x.host)))
+                    await saveCustomModels(
+                      dirname(sshBoxesPath),
+                      sshBoxProviderId(b.name),
+                      [],
+                    ).catch((e: unknown) =>
+                      log("warn", `box removal, added models: ${errorText(e)}`),
+                    );
                 }
                 if (remoteWorkspacesPath && gone.size > 0) {
                   const rwPath = remoteWorkspacesPath;

@@ -159,7 +159,8 @@ assert.equal(
 
 // The list Settings saves. A request body is parsed first: anything that is not a list of entries
 // is refused there, before a rule is looked at.
-assert.deepEqual(parseCustomModels(undefined), [], "a body with no list is an empty list");
+assert.throws(() => parseCustomModels(undefined), "a body with no list clears nothing");
+assert.deepEqual(parseCustomModels([]), [], "an empty list is how a box's models are cleared");
 assert.throws(() => parseCustomModels("deepseek-flash"));
 assert.throws(() => parseCustomModels([{ label: "no id" }]));
 assert.throws(() => parseCustomModels([{ model: "x", contextWindow: "big" }]));
@@ -222,5 +223,19 @@ try {
   }
 } finally {
   rmSync(dir, { recursive: true, force: true });
+}
+// Resolution reads the rows before the listing's filters: the adapter hands `resolveModelInfo`
+// the merge without `availableModels`, so a session already on an excluded model keeps its window.
+{
+  const filtered = withCustomModels(
+    { options: [], replaceBuiltInOptions: false, availableModels: ["opus"] },
+    [{ model: "deepseek-flash", contextWindow: 64_000 }],
+  );
+  const unfiltered = filtered && { ...filtered, availableModels: undefined };
+  const all = mergeCatalog([], KNOWN_MODELS, unfiltered);
+  assert.equal(
+    resolveModelInfo("claude-code", "deepseek-flash", all).context?.contextWindow,
+    64_000,
+  );
 }
 console.log("custom models ok");

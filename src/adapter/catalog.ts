@@ -542,7 +542,9 @@ export function mergeCatalog(
     if (allow)
       rows = rows.filter((r) => r.row.id === "default" || allow.some((e) => allows(e, r.match)));
   }
-  // Two aliases can resolve to one model, and they now share its id; the first listed wins.
+  // Two aliases can resolve to one model, and they now share its id. The row keeps the place of
+  // the first one listed and the values of the last, which is why a `customModels` entry, added
+  // after settings.json's own, is the one whose label and window show.
   return [...new Map(rows.map((r) => [r.row.id, r.row])).values()];
 }
 /** Each effort level the last Models API read reported that the plugin does not know, with the

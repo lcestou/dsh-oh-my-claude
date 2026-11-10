@@ -105,7 +105,6 @@ export type Config = {
   providerName: string;
 };
 
-/** Configuration schema for Claude Code plugin settings. */
 /** One `customModels` entry: a model the picker offers although neither the Models API nor the
  *  CLI's own lineup lists it, such as an alias a local router sends to another model. */
 export interface CustomModel {
@@ -119,6 +118,7 @@ export interface CustomModel {
   efforts?: string[];
 }
 
+/** Configuration schema for Claude Code plugin settings. */
 export const Config = z.object({
   command: z
     .string()

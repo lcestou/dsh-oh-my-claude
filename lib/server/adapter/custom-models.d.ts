@@ -5,7 +5,8 @@ export declare const CUSTOM_MODELS_MAX = 50;
 /** Where the saved lists live: one object keyed by provider id, each value that mount's entries. */
 export declare const CUSTOM_MODELS_FILE: (dir: string) => string;
 /** A request body's `models` as entries. Throws on anything that is not a list of entries: a
- *  string where a number goes, an entry with no id. A body with no `models` is an empty list. */
+ *  string where a number goes, an entry with no id, and a body with no `models` at all, which
+ *  would otherwise read as "clear this box's list". */
 export declare function parseCustomModels(value: JsonValue | undefined): CustomModel[];
 /**
  * A parsed list as the entries to store, or the sentence that says what is wrong with it, in the

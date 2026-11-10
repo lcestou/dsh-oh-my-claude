@@ -31,11 +31,13 @@ const CustomModelList = z.array(
 const StoredLists = z.dict(CustomModelList);
 
 /** A request body's `models` as entries. Throws on anything that is not a list of entries: a
- *  string where a number goes, an entry with no id. A body with no `models` is an empty list. */
+ *  string where a number goes, an entry with no id, and a body with no `models` at all, which
+ *  would otherwise read as "clear this box's list". */
 export function parseCustomModels(value: JsonValue | undefined): CustomModel[] {
+  if (!Array.isArray(value)) throw new TypeError("models is not a list");
   // SAFETY: the schema checks every field at run time; its parameter type describes valid input,
   // which is exactly what is not known yet about a request body.
-  return CustomModelList((value ?? []) as Parameters<typeof CustomModelList>[0]);
+  return CustomModelList(value as Parameters<typeof CustomModelList>[0]);
 }
 
 let chain = Promise.resolve();
