@@ -314,6 +314,39 @@ export interface SessionController {
             text: string;
         }>;
     }, signal?: AbortSignal): Promise<void>;
+    /** The session's passive state; `cursor` is the seq of its last committed event. Reading it does
+     *  not wake a cold session. */
+    state(request: {
+        sessionId: SessionId;
+    }, signal: AbortSignal): Promise<SessionWaitState>;
+    /** Resolves when the session goes idle, needs input (an approval, a question) or `timeoutMs`
+     *  passes (dsh's default 30 s), with its assistant messages after `afterSeq`, newest first. */
+    wait(request: {
+        sessionId: SessionId;
+        timeoutMs?: number;
+        afterSeq?: number;
+        maxMessages?: number;
+    }, signal: AbortSignal): Promise<{
+        reason: "idle" | "input-required" | "timeout";
+        state: SessionWaitState;
+        output: {
+            records: ReadonlyArray<{
+                event: {
+                    type: string;
+                    seq: number;
+                    data: JsonValue;
+                };
+            }>;
+            truncated: boolean;
+        };
+    }>;
+}
+/** Mirrors `SessionState` in @deepseek-ai/dsh-api-session-controller, as far as the bridge reads it. */
+export interface SessionWaitState {
+    cursor: number;
+    running: boolean;
+    queue: readonly unknown[] | null;
+    pendingInput: readonly unknown[];
 }
 /** Mirrors: @deepseek-ai/dsh-attachment/lib/types/index.d.ts */
 export interface ImageAttachmentRef {

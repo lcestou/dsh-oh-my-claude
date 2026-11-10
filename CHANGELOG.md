@@ -6,6 +6,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Added
+
+- Claude can send a follow-up into a session it opened, and read the answer back. `prompt_session` queues a message behind the session's running turn or steers it into that turn; the session keeps its own model and context, so a correction does not cost a fresh session. `wait_session` waits until the session goes idle or needs input and returns its replies. Thanks to @huananhuxu-debug (#255).
+
 ## [1.6.1] - 2026-11-09
 
 dsh: runs on 0.2.2-alpha.2 through 0.2.2-rc.1; built and tested on 0.2.2-rc.1.
