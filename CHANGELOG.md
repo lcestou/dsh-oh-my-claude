@@ -24,8 +24,8 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 - In the Tune tab, pressing Enter to pick a candidate in a Chinese or other IME no longer adds a half-typed permission rule or saves a half-typed text setting.
 - The "This box" choice in Claude updates follows a switch of dsh's language right away.
 - A dsh box added or removed from Settings in another tab or on another device shows in this tab's Boxes and Sessions cards once you come back to it, without reopening Settings.
-- Changing the scope in the settings.json editor twice in quick succession no longer can show the previous scope's file under the new scope.
-- A dismissed or answered aside no longer comes back for up to half a minute when a background check lands just after it closed, and an approval prompt no longer can raise a second desktop notification the same way.
+- Changing the scope in the settings.json editor twice in quick succession can no longer show the previous scope's file under the new scope.
+- A dismissed or answered aside no longer comes back for up to half a minute when a background check lands just after it closed, and an approval prompt can no longer raise a second desktop notification the same way.
 
 ## [1.6.1] - 2026-11-09
 
