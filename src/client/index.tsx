@@ -6,6 +6,8 @@
 import { NewSessionDefaultRow } from "./new-session-default.js";
 import { installLocale, t, useLocale } from "./i18n.js";
 import { useEffect, useState } from "react";
+import type { SetStateAction } from "react";
+import { newestWins } from "./events.js";
 import {
   ROUTE,
   fmtCost,
@@ -312,18 +314,30 @@ export function apply(ctx: ClientCtx) {
     // This tab's Boxes card writes the list through `setBoxes`. A box added or removed in another
     // tab or device is not pushed, so read again when this tab comes back into view, the way the
     // picker does. BOXES_EVENT is not enough: it follows the ssh box list, not this one.
+    // A re-read that started before the Boxes card's last save answers with the list before that
+    // save; showing it would drop the new box, and the next save would PUT the shorter list.
+    const [order] = useState(newestWins);
+    /** The Boxes card's setter: a saved list counts as newer than any read already in flight. */
+    const savedBoxes = (next: SetStateAction<BoxData[]>) => {
+      order.pushed();
+      setBoxes(next);
+    };
     useEffect(() => {
-      const load = () =>
-        fetch(`${ROUTE}/boxes`)
+      const load = () => {
+        const fresh = order.ask();
+        return fetch(`${ROUTE}/boxes`)
           .then((r) => readJson<{ boxes?: BoxData[] }>(r))
           .then((b) => {
+            if (!fresh()) return;
             setError("");
             setBoxes(b.boxes ?? []);
           })
           .catch((e: Error) => {
-            setError(e.message);
-            setBoxes([]);
+            // A failed read keeps what is shown. Emptying it (the list starts empty, so a failed
+            // first read still shows none) made the next add PUT a one-box list over every saved box.
+            if (fresh()) setError(e.message);
           });
+      };
       const onVisible = () => {
         if (document.visibilityState === "visible") void load();
       };
@@ -390,7 +404,7 @@ export function apply(ctx: ClientCtx) {
           <Boxes
             ctx={ctx}
             boxes={boxes}
-            setBoxes={setBoxes}
+            setBoxes={savedBoxes}
             open={openBoxes}
             onToggle={() => setOpenBoxes((v) => !v)}
           />
