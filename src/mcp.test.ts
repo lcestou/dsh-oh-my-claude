@@ -507,7 +507,9 @@ console.log("mcp ok");
     ["subagent_local", "bash", "open_session", "prompt_session", "wait_session"],
   );
   assert.deepEqual(
-    listed.result.tools.map((t) => t.name).filter((n) => OWN_TOOL_NAMES.has(n)),
+    // Everything listed after the two dsh tools is the bridge's own, so a tool added to one list
+    // and not the other fails here in either direction.
+    listed.result.tools.map((t) => t.name).slice(2),
     [...OWN_TOOL_NAMES],
     "the names the translator keeps out of relay matching are the bridge's own tools",
   );
