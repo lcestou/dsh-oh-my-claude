@@ -30,6 +30,20 @@ type OpenHost = Required<Pick<PluginContext, "sessions" | "workspaceRegistry" | 
  * so an effort the model lacks shows up in the new session's first turn, like an unknown model.
  */
 export declare function openSession(ctx: OpenHost, agent: Agent, args: OpenSessionArgs, signal: AbortSignal): Promise<string>;
+/**
+ * Sends a follow-up into an existing session (#255, from huananhuxu-debug's patch). The session is
+ * resolved first so an unknown id fails with dsh's own error instead of a bare prompt rejection; a
+ * cold session resumes on dsh's side and keeps its route. The cursor is read before the prompt, so
+ * replies past it are this message's, plus any the session's running turn finishes meanwhile.
+ */
+export declare function promptSession(ctx: Pick<OpenHost, "sessionController">, agent: Agent, args: Record<string, JsonValue>, signal: AbortSignal): Promise<string>;
+/**
+ * Waits on a session through dsh's own `sessionController.wait` and renders its assistant replies
+ * as text, oldest first, under a status line with the cursor to pass next time. Only text blocks
+ * are kept: tool calls and thinking are the session's working, not its answer. A timeout outside
+ * 1..WAIT_MAX_S seconds is clamped rather than refused.
+ */
+export declare function waitSession(ctx: Pick<OpenHost, "sessionController">, agent: Agent, args: Record<string, JsonValue>, signal: AbortSignal): Promise<string>;
 /** One JSON-RPC request as the CLI sends it; only `id`, `method` and `params` are read. */
 export interface JsonRpcRequest {
     jsonrpc?: string;
@@ -54,11 +68,14 @@ export interface RpcEnv {
     signal: AbortSignal;
     version: string;
     open?: (args: OpenSessionArgs) => Promise<string>;
+    /** prompt_session and wait_session; each is offered only when given, like `open`. */
+    prompt?: (args: Record<string, JsonValue>) => Promise<string>;
+    wait?: (args: Record<string, JsonValue>) => Promise<string>;
     relay?: (name: string, args: Record<string, JsonValue>, signal: AbortSignal) => Promise<RelayResult | undefined> | undefined;
     log?: (level: string, msg: string) => void;
 }
 /** One JSON-RPC request against the tools visible to `agent`. Returns null for notifications. */
-export declare function handleRpc(msg: JsonRpcRequest, { tools, agent, signal, version, open, relay, log }: RpcEnv): Promise<JsonRpcReply | null>;
+export declare function handleRpc(msg: JsonRpcRequest, { tools, agent, signal, version, open, prompt, wait, relay, log }: RpcEnv): Promise<JsonRpcReply | null>;
 /** What the adapter hands the bridge. */
 export interface BridgeOptions {
     log: (level: string, msg: string) => void;
@@ -79,7 +96,7 @@ export interface McpBridge {
      *  server route (also when the listener could not start). The CLI's `--mcp-config` URL is built
      *  off `base` either way. */
     via: "loopback" | "webserver";
-    /** The tools `tools/list` will answer that session with, `open_session` included, so the system
+    /** The tools `tools/list` will answer that session with, the bridge's own included, so the system
      *  prompt can name the ones that are really there. Undefined when the session has no live agent
      *  or dsh refuses the listing; the bridge has nothing for that session either. */
     toolsFor: (sessionId: string) => ToolSchema[] | undefined;

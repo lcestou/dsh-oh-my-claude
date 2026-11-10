@@ -590,8 +590,16 @@ assert.ok(
   assert.ok(!persistent.includes("run_in_background"));
   assert.ok(!persistent.includes("Agent/Task"), "no subagent tools, no subagent rule");
   assert.ok(persistent.includes("mcp__dsh__open_session makes a new top-level session"));
+  assert.ok(!persistent.includes("prompt_session"), "not offered, so not named");
+  const followUp = dshToolsGuidance([
+    bridgedTool("open_session"),
+    bridgedTool("prompt_session"),
+    bridgedTool("wait_session"),
+  ]);
+  assert.ok(followUp.includes("mcp__dsh__prompt_session sends that session a follow-up"));
+  assert.ok(followUp.includes("mcp__dsh__wait_session reads its replies back."));
   assert.equal(dshToolsGuidance(), "dsh tools are available as mcp__dsh__* over MCP.");
-  // Code mode lists only run_code (and the bridge's open_session), and still keeps Claude off
+  // Code mode lists only run_code (and the bridge's own tools), and still keeps Claude off
   // native Agent children, pointing it at run_code programs instead.
   const code = dshToolsGuidance([bridgedTool("run_code"), bridgedTool("open_session")]);
   assert.ok(code.includes("called from a mcp__dsh__run_code program"));

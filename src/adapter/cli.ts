@@ -241,6 +241,11 @@ export function dshToolsGuidance(tools: readonly ToolSchema[] = []): string {
     );
   if (byName.has("open_session"))
     out.push(`${bridgedName("open_session")} makes a new top-level session, not a child.`);
+  if (byName.has("prompt_session"))
+    out.push(
+      `${bridgedName("prompt_session")} sends that session a follow-up, keeping its context;`,
+      `${bridgedName("wait_session")} reads its replies back.`,
+    );
 
   const shell = [byName.get("bash"), byName.get("pwsh")].find((t) => takes(t, "run_in_background"));
   if (shell) {

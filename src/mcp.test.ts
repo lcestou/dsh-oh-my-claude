@@ -2,7 +2,16 @@ import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { handleRpc, HIDDEN, KEY_HEADER, MCP_PATH, openSession, registerMcpBridge } from "./mcp.js";
+import {
+  handleRpc,
+  HIDDEN,
+  KEY_HEADER,
+  MCP_PATH,
+  openSession,
+  promptSession,
+  registerMcpBridge,
+  waitSession,
+} from "./mcp.js";
 import type { Agent } from "./dsh.js";
 
 const agent = { id: "a1" };
@@ -361,19 +370,21 @@ console.log("mcp ok");
     /run_code needs a live dsh turn/,
     "the failure says why, not unknown tool",
   );
-  // open_session is the bridge's own tool, not dsh's, so code mode still offers it.
+  // The bridge's own tools are not dsh's, so code mode still offers them.
   // SAFETY: cast to HandleRpcParams shape for test double
   const withOpen = (await handleRpc({ jsonrpc: "2.0", id: 45, method: "tools/list" }, {
     ...env,
     agent: ptcAgent,
     open: async () => "opened",
+    prompt: async () => "sent",
+    wait: async () => "waited",
   } as unknown as Parameters<typeof handleRpc>[1])) as {
     result: { tools: Array<{ name: string }> };
   };
   assert.deepEqual(
     withOpen.result.tools.map((t) => t.name),
-    ["run_code", "open_session"],
-    "code mode keeps the bridge's own open_session",
+    ["run_code", "open_session", "prompt_session", "wait_session"],
+    "code mode keeps the bridge's own tools",
   );
   // A header offering more than run_code is ordinary mode: the full bridged list comes back.
   const nativeAgent = {
@@ -474,4 +485,146 @@ console.log("mcp ok");
   );
   assert.deepEqual(calls, ["create", "archive"], "archived, never prompted on the default route");
   console.log("open-session ok");
+}
+
+// prompt_session and wait_session (#255): offered only when the host provides them, after
+// open_session, and also in code mode, since they are the bridge's own.
+{
+  // SAFETY: cast to HandleRpcParams shape for test double
+  const own = {
+    ...env,
+    open: async () => "opened",
+    prompt: async (a: unknown) => `prompted ${JSON.stringify(a)}`,
+    wait: async () => "waited",
+  } as unknown as Parameters<typeof handleRpc>[1];
+  // SAFETY: tools/list always returns a response
+  const listed = (await handleRpc({ jsonrpc: "2.0", id: 60, method: "tools/list" }, own)) as {
+    result: { tools: Array<{ name: string; annotations: { readOnlyHint: boolean } }> };
+  };
+  assert.deepEqual(
+    listed.result.tools.map((t) => t.name),
+    ["subagent_local", "bash", "open_session", "prompt_session", "wait_session"],
+  );
+  assert.deepEqual(
+    listed.result.tools.filter((t) => !t.annotations.readOnlyHint).map((t) => t.name),
+    ["prompt_session"],
+    "only prompt_session runs alone, so a batched wait_session cannot read ahead of it",
+  );
+  // SAFETY: tools/call always returns a response
+  const sent = (await handleRpc(
+    {
+      jsonrpc: "2.0",
+      id: 61,
+      method: "tools/call",
+      params: { name: "prompt_session", arguments: { sessionId: "s2", prompt: "redo step 2" } },
+    },
+    own,
+  )) as { result: { content: Array<{ text: string }> } };
+  assert.equal(sent.result.content[0]?.text, 'prompted {"sessionId":"s2","prompt":"redo step 2"}');
+  // Without the host functions the tools are neither listed nor callable.
+  // SAFETY: tools/call always returns a response
+  const absent = (await handleRpc(
+    { jsonrpc: "2.0", id: 62, method: "tools/call", params: { name: "wait_session" } },
+    env,
+  )) as { result: { isError?: boolean } };
+  assert.equal(absent.result.isError, true);
+
+  const calls: string[] = [];
+  let waited: unknown;
+  // SAFETY: a stand-in for the controller methods the two tools read
+  const host = {
+    sessionController: {
+      resolveAgent: async (id: string) =>
+        id === "gone" ? { error: new Error("session gone not found") } : { agent: {} },
+      state: async () => (calls.push("state"), { cursor: 41 }),
+      prompt: async (r: { mode: string; content: Array<{ text: string }> }) =>
+        void calls.push(`prompt ${r.mode} ${r.content[0]?.text}`),
+      wait: async (r: unknown) => {
+        waited = r;
+        return {
+          reason: "idle",
+          state: { cursor: 47, running: false, queue: [], pendingInput: [] },
+          output: {
+            truncated: false,
+            // newest first, as dsh returns them
+            records: [
+              {
+                event: {
+                  type: "assistant/message",
+                  seq: 46,
+                  data: {
+                    message: {
+                      content: [
+                        { type: "thinking", thinking: "hidden" },
+                        { type: "text", text: "step 2 redone" },
+                      ],
+                    },
+                  },
+                },
+              },
+              {
+                event: {
+                  type: "assistant/message",
+                  seq: 43,
+                  data: { message: { content: [{ type: "tool_use", name: "bash" }] } },
+                },
+              },
+              {
+                event: {
+                  type: "assistant/message",
+                  seq: 42,
+                  data: { message: { content: [{ type: "text", text: "on it" }] } },
+                },
+              },
+            ],
+          },
+        };
+      },
+    },
+  } as unknown as Parameters<typeof promptSession>[0];
+  // SAFETY: the calling agent's session is s1
+  const caller = { id: "a", session: { id: "s1" } } as unknown as Agent;
+  const signal = new AbortController().signal;
+  assert.equal(
+    await promptSession(host, caller, { sessionId: "s2", prompt: "redo step 2" }, signal),
+    "sent to session s2 (queue); afterSeq 41",
+  );
+  assert.deepEqual(calls, ["state", "prompt queue redo step 2"], "cursor read before the prompt");
+  calls.length = 0;
+  await promptSession(host, caller, { sessionId: "s2", prompt: "hint", mode: "steer" }, signal);
+  assert.deepEqual(calls, ["state", "prompt steer hint"]);
+  calls.length = 0;
+  await assert.rejects(
+    promptSession(host, caller, { sessionId: "s1", prompt: "x" }, signal),
+    /cannot target the calling session/,
+  );
+  await assert.rejects(promptSession(host, caller, { prompt: "x" }, signal), /needs a sessionId/);
+  await assert.rejects(
+    promptSession(host, caller, { sessionId: "s2", prompt: "  " }, signal),
+    /non-empty prompt/,
+  );
+  await assert.rejects(
+    promptSession(host, caller, { sessionId: "gone", prompt: "x" }, signal),
+    /session gone not found/,
+  );
+  assert.deepEqual(calls, [], "a refused call never prompts");
+
+  const text = await waitSession(host, caller, { sessionId: "s2", afterSeq: 41 }, signal);
+  assert.deepEqual(waited, { sessionId: "s2", timeoutMs: 30_000, afterSeq: 41 });
+  assert.equal(
+    text,
+    [
+      "session s2: idle, not running, 0 queued, afterSeq 47",
+      "--- reply at seq 42 ---\non it",
+      "--- reply at seq 46 ---\nstep 2 redone",
+    ].join("\n"),
+    "replies oldest first, text blocks only, tool-only messages left out",
+  );
+  await waitSession(host, caller, { sessionId: "s2", timeoutSeconds: 9999 }, signal);
+  assert.deepEqual(waited, { sessionId: "s2", timeoutMs: 240_000 }, "timeout clamped, no cursor");
+  await assert.rejects(
+    waitSession(host, caller, { sessionId: "s1" }, signal),
+    /cannot target the calling session/,
+  );
+  console.log("prompt-session ok");
 }
