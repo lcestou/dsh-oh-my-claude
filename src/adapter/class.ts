@@ -241,6 +241,7 @@ import {
   resolveModelInfo,
   windowKey,
   hintHiddenModels,
+  withCustomModels,
   withoutHiddenModels,
 } from "./catalog.js";
 import {
@@ -759,9 +760,13 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     };
   }
 
-  /** Read on every listing rather than cached: an edit to settings.json takes effect at once. */
-  private pickerSettings() {
-    return readPickerSettings(join(this.claudeHome, "settings.json"));
+  /** settings.json's say over the picker, plus this mount's `customModels`. The file is read on
+   *  every listing rather than cached: an edit to settings.json takes effect at once. */
+  private async pickerSettings() {
+    return withCustomModels(
+      await readPickerSettings(join(this.claudeHome, "settings.json")),
+      this.config.customModels,
+    );
   }
 
   /** A box without a login lists nothing: dsh's catalog drops a provider whose listing throws into
@@ -980,8 +985,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
 
   /** Full metadata for one model, capacity included: the single source both methods above narrow. */
   private async fullModelInfo(provider: string, model: string): Promise<LlmResolvedModelInfo> {
-    const models = await getCatalog(undefined, this.cliModels);
     const picker = await this.pickerSettings();
+    // With the picker's own rows in the list: a model only a `customModels` entry or a
+    // `modelPicker.options` row names is in no catalog, and with no row it resolved without a
+    // window, which dsh answers with "no context capacity" on the switch to it.
+    const models = await getCatalog(undefined, this.cliModels, picker);
     const cap = picker?.modelEffortCaps?.[model] ?? picker?.maxEffortLevel;
     return resolveModelInfo(provider, model, models, cap);
   }

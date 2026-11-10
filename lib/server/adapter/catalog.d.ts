@@ -2,6 +2,7 @@ import type { LlmModelInfo, LlmResolvedModelInfo } from "@deepseek-ai/dsh-llm";
 import { type FirstPartyProbe } from "../first-party.js";
 import type { CliModel } from "../process.js";
 import type { PickerSettings } from "../sessions.js";
+import type { CustomModel } from "./config.js";
 /** The CLI's effort ladder, low to high; `readPickerSettings` validates `maxEffortLevel` against it. */
 export declare const EFFORTS_ALL: readonly ["low", "medium", "high", "xhigh", "max"];
 /** One effort level's capability flag, as the Models API reports it. */
@@ -119,6 +120,16 @@ export declare const hideModelHint: (provider: string, id: string) => string;
  * nothing.
  */
 export declare const hintHiddenModels: (hints: Record<string, boolean | number>, provider: string) => string[];
+/**
+ * settings.json's picker with the plugin config's `customModels` added as option rows, after the
+ * file's own: `mergeCatalog` keeps the last row written for an id, so a model named in both takes
+ * the plugin's label and window. Entries the picker
+ * cannot use are dropped rather than refused: one with no model id, a window that is not a positive
+ * whole number, an effort level the CLI does not have. No entries leaves `picker` as it was,
+ * undefined included, so a box with none configured lists exactly what it listed before.
+ * `availableModels` in settings.json still applies to these rows, as it does to the file's own.
+ */
+export declare function withCustomModels(picker: PickerSettings | undefined, custom: readonly CustomModel[]): PickerSettings | undefined;
 /** Merges the CLI's model rows into the catalog, giving each known model a single stable id and
  *  name so the picker offers the same lineup whether or not the CLI has yet learned the model's
  *  short spelling. */

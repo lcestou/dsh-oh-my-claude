@@ -156,7 +156,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
         id: string;
         name: string;
     };
-    /** Read on every listing rather than cached: an edit to settings.json takes effect at once. */
+    /** settings.json's say over the picker, plus this mount's `customModels`. The file is read on
+     *  every listing rather than cached: an edit to settings.json takes effect at once. */
     private pickerSettings;
     /** A box without a login lists nothing: dsh's catalog drops a provider whose listing throws into
      *  its "could not load" row with a Retry, which is the honest picker for a box no turn can use.

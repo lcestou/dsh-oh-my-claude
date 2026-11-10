@@ -76,6 +76,7 @@ export type Config = {
     | "auto"
     | "manual";
   hiddenModels: string[];
+  customModels: CustomModel[];
   allowedTools: string[];
   disallowedTools: string[];
   addDirs: string[];
@@ -105,6 +106,19 @@ export type Config = {
 };
 
 /** Configuration schema for Claude Code plugin settings. */
+/** One `customModels` entry: a model the picker offers although neither the Models API nor the
+ *  CLI's own lineup lists it, such as an alias a local router sends to another model. */
+export interface CustomModel {
+  /** Passed to `claude --model` exactly as written. */
+  model: string;
+  /** The name the picker shows; the id when absent. */
+  label?: string;
+  /** The model's context window in tokens; 200,000 when absent. */
+  contextWindow?: number;
+  /** Effort levels the model takes; none when absent, and the effort picker stays hidden. */
+  efforts?: string[];
+}
+
 export const Config = z.object({
   command: z
     .string()
@@ -133,6 +147,19 @@ export const Config = z.object({
     .default([])
     .description(
       "Model ids to leave out of the model picker: the exact id, or the id plus a date stamp. Display only",
+    ),
+  customModels: z
+    .array(
+      z.object({
+        model: z.string().required().description("The id passed to `claude --model`"),
+        label: z.string().description("The name shown in the picker"),
+        contextWindow: z.number().step(1).min(1).description("Context window in tokens"),
+        efforts: z.array(z.string()).description("Effort levels: low, medium, high, xhigh, max"),
+      }),
+    )
+    .default([])
+    .description(
+      "Extra rows for the model picker: models the lineup does not list, such as an alias a local router sends to another model. `model` goes to `claude --model` as written",
     ),
   allowedTools: z.array(z.string()).default([]).description("Extra --allowedTools entries"),
   disallowedTools: z.array(z.string()).default([]).description("--disallowedTools entries"),

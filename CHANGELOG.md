@@ -8,6 +8,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Added
 
+- `customModels` in the plugin config adds your own rows to the model picker, for a model that neither Anthropic's list nor Claude Code's lineup has, such as an alias a local router like CC Switch sends to another model. An entry gives the id passed to `claude --model`, and can give the name the picker shows, a context window and effort levels. A model that only a `modelPicker.options` row in `settings.json` names now reports a context window to dsh as well (200,000 unless the catalog knows it), which dsh asks for before a session switches to it. Thanks to @chopstick1009 (#259).
 - Claude can send a follow-up into a session it opened, and read the answer back. `prompt_session` queues a message behind the session's running turn or steers it into that turn; the session keeps its own model and context, so a correction does not cost a fresh session. The message arrives marked with the session that sent it. `wait_session` waits until the session goes idle or needs input and returns its latest replies, with the cursor to continue from. Thanks to @huananhuxu-debug (#255).
 
 ### Fixed

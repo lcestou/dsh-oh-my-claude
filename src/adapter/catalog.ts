@@ -7,7 +7,8 @@ import z from "@deepseek-ai/schemastery";
 import { type FirstPartyProbe, probeFirstParty } from "../first-party.js";
 import { serverText } from "../locale.js";
 import type { CliModel } from "../process.js";
-import type { PickerSettings } from "../sessions.js";
+import type { PickerOption, PickerSettings } from "../sessions.js";
+import type { CustomModel } from "./config.js";
 import { authHeaders, CLAUDE_HOME, STATE_DIR, writeJson } from "../state.js";
 
 // No default effort is advertised: `--effort` is only sent when dsh picks one, so the CLI's own default rules.
@@ -420,6 +421,37 @@ export const hintHiddenModels = (
     .filter(([k, v]) => k.startsWith(prefix) && v === true)
     .map(([k]) => k.slice(prefix.length));
 };
+/**
+ * settings.json's picker with the plugin config's `customModels` added as option rows, after the
+ * file's own: `mergeCatalog` keeps the last row written for an id, so a model named in both takes
+ * the plugin's label and window. Entries the picker
+ * cannot use are dropped rather than refused: one with no model id, a window that is not a positive
+ * whole number, an effort level the CLI does not have. No entries leaves `picker` as it was,
+ * undefined included, so a box with none configured lists exactly what it listed before.
+ * `availableModels` in settings.json still applies to these rows, as it does to the file's own.
+ */
+export function withCustomModels(
+  picker: PickerSettings | undefined,
+  custom: readonly CustomModel[],
+): PickerSettings | undefined {
+  const rows = custom.flatMap((c): PickerOption[] => {
+    const model = c.model.trim();
+    if (model === "") return [];
+    const row: PickerOption = { model };
+    if (c.label !== undefined && c.label.trim() !== "") row.label = c.label.trim();
+    if (c.contextWindow !== undefined && Number.isInteger(c.contextWindow) && c.contextWindow > 0)
+      row.contextWindow = c.contextWindow;
+    // An empty list is what the config schema fills in for an entry that names none, so it means
+    // "not said" and a model the catalog knows keeps its own levels.
+    const efforts = EFFORTS_ALL.filter((level) => c.efforts?.includes(level));
+    if (efforts.length > 0) row.efforts = efforts;
+    return [row];
+  });
+  if (rows.length === 0) return picker;
+  const base = picker ?? { options: [], replaceBuiltInOptions: false };
+  return { ...base, options: [...base.options, ...rows] };
+}
+
 /** Merges the CLI's model rows into the catalog, giving each known model a single stable id and
  *  name so the picker offers the same lineup whether or not the CLI has yet learned the model's
  *  short spelling. */
@@ -489,7 +521,12 @@ export function mergeCatalog(
       const known = base.find((b) => allows(o.model, b.id) || allows(b.id, o.model));
       const label = o.label ?? known?.name ?? o.model;
       return {
-        row: M(o.model, label, known?.contextWindow ?? 200_000, known?.efforts ?? []),
+        row: M(
+          o.model,
+          label,
+          o.contextWindow ?? known?.contextWindow ?? 200_000,
+          o.efforts ?? known?.efforts ?? [],
+        ),
         match: o.model,
       };
     });

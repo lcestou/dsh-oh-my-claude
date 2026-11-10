@@ -33,6 +33,7 @@ export type Config = {
     configDir: string;
     permissionMode: "dsh" | "acceptEdits" | "bypassPermissions" | "plan" | "dontAsk" | "auto" | "manual";
     hiddenModels: string[];
+    customModels: CustomModel[];
     allowedTools: string[];
     disallowedTools: string[];
     addDirs: string[];
@@ -61,12 +62,35 @@ export type Config = {
     providerName: string;
 };
 /** Configuration schema for Claude Code plugin settings. */
+/** One `customModels` entry: a model the picker offers although neither the Models API nor the
+ *  CLI's own lineup lists it, such as an alias a local router sends to another model. */
+export interface CustomModel {
+    /** Passed to `claude --model` exactly as written. */
+    model: string;
+    /** The name the picker shows; the id when absent. */
+    label?: string;
+    /** The model's context window in tokens; 200,000 when absent. */
+    contextWindow?: number;
+    /** Effort levels the model takes; none when absent, and the effort picker stays hidden. */
+    efforts?: string[];
+}
 export declare const Config: z<Schemastery.ObjectS<{
     command: z<string, string>;
     spawn: z<"dsh" | "keeper" | "node", "dsh" | "keeper" | "node">;
     sshHost: z<string, string>;
     permissionMode: z<"acceptEdits" | "auto" | "bypassPermissions" | "dontAsk" | "dsh" | "manual" | "plan", "acceptEdits" | "auto" | "bypassPermissions" | "dontAsk" | "dsh" | "manual" | "plan">;
     hiddenModels: z<string[], string[]>;
+    customModels: z<({
+        model?: string | null | undefined;
+        label?: string | null | undefined;
+        contextWindow?: number | null | undefined;
+        efforts?: string[] | null | undefined;
+    } & import("@deepseek-ai/cosmokit").Dict)[], Schemastery.ObjectT<{
+        model: z<string, string>;
+        label: z<string, string>;
+        contextWindow: z<number, number>;
+        efforts: z<string[], string[]>;
+    }>[]>;
     allowedTools: z<string[], string[]>;
     disallowedTools: z<string[], string[]>;
     addDirs: z<string[], string[]>;
@@ -102,6 +126,17 @@ export declare const Config: z<Schemastery.ObjectS<{
     sshHost: z<string, string>;
     permissionMode: z<"acceptEdits" | "auto" | "bypassPermissions" | "dontAsk" | "dsh" | "manual" | "plan", "acceptEdits" | "auto" | "bypassPermissions" | "dontAsk" | "dsh" | "manual" | "plan">;
     hiddenModels: z<string[], string[]>;
+    customModels: z<({
+        model?: string | null | undefined;
+        label?: string | null | undefined;
+        contextWindow?: number | null | undefined;
+        efforts?: string[] | null | undefined;
+    } & import("@deepseek-ai/cosmokit").Dict)[], Schemastery.ObjectT<{
+        model: z<string, string>;
+        label: z<string, string>;
+        contextWindow: z<number, number>;
+        efforts: z<string[], string[]>;
+    }>[]>;
     allowedTools: z<string[], string[]>;
     disallowedTools: z<string[], string[]>;
     addDirs: z<string[], string[]>;

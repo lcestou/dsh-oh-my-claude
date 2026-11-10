@@ -1109,10 +1109,14 @@ async function settingsTexts(
   return texts;
 }
 
-/** One `modelPicker.options` row, down to what a picker row shows. */
-interface PickerOption {
+/** One `modelPicker.options` row, down to what a picker row shows. A row that comes from the
+ *  plugin's own `customModels` config can also say how large the model's window is and which
+ *  effort levels it takes, which settings.json has no key for. */
+export interface PickerOption {
   model: string;
   label?: string;
+  contextWindow?: number;
+  efforts?: string[];
 }
 
 type EffortLevel = (typeof EFFORTS_ALL)[number];
