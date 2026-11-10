@@ -151,6 +151,20 @@ const named = (id: string) =>
   )?.name;
 assert.ok(routed.includes("default"));
 assert.equal(named("claude-sonnet-5"), "Local Qwen");
+// The router's rows do not borrow Claude's window: Sonnet 5 holds 1M, the model behind the
+// alias is somebody else's, and the row reports what the CLI assumes behind a router.
+const windowOf = (id: string, route?: { state: "routed"; claudeToo: boolean }) =>
+  mergeCatalog(cli, KNOWN_MODELS, picker, route).find((m) => m.id === id)?.contextWindow;
+assert.equal(windowOf("claude-sonnet-5", { state: "routed", claudeToo: false }), 200_000);
+assert.equal(windowOf("claude-sonnet-5"), 200_000, "whoever lists it: the row is the router's");
+assert.equal(
+  mergeCatalog(
+    cli.map((row) => ({ ...row, displayName: row.value })),
+    KNOWN_MODELS,
+  ).find((m) => m.id === "claude-sonnet-5")?.contextWindow,
+  1_000_000,
+  "Claude's own Sonnet keeps its window",
+);
 assert.equal(named("claude-haiku-4-5"), "Local Qwen small");
 assert.ok(routed.includes("lutechi-llm") && routed.includes("by-hand"));
 assert.ok(routed.includes("claude-opus-4-5"), "an added row stays whatever it names");

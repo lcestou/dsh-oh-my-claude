@@ -441,6 +441,10 @@ export function withCustomModels(
   return { ...base, options: [...base.options, ...rows] };
 }
 
+/** The window a router's alias row reports: the CLI's own assumption for a base URL that is not
+ *  Anthropic's, since the model behind the alias is not one this catalog can look up. */
+export const ROUTED_WINDOW = 200_000;
+
 /** One row on its way through `mergeCatalog`: the row, the id the allowlist reads it by, and what
  *  the route filter needs to know about where it came from. */
 interface MergedRow {
@@ -497,7 +501,17 @@ export function mergeCatalog(
         ? c.displayName
         : `${name}${c.resolvedModel.endsWith("[1m]") ? " (1M context)" : ""}`;
     const row: MergedRow = {
-      row: M(stable ?? c.value, label, window, c.efforts, c.description),
+      // A row the router took over reaches some other model, whose window nobody here knows.
+      // Claude's figure for the alias (1M for Sonnet 5) promised room a local model may not
+      // have. 200,000 is what the CLI itself assumes, and compacts at, behind an endpoint that
+      // is not Anthropic; a `customModels` entry for the same id can state the real size.
+      row: M(
+        stable ?? c.value,
+        label,
+        named || remapped ? ROUTED_WINDOW : window,
+        c.efforts,
+        c.description,
+      ),
       match: c.resolvedModel,
       routers: named || remapped,
     };

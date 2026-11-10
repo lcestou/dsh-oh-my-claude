@@ -138,6 +138,9 @@ export declare const hintHiddenModels: (hints: Record<string, boolean | number>,
  * `availableModels` in settings.json still applies to these rows, as it does to the file's own.
  */
 export declare function withCustomModels(picker: PickerSettings | undefined, custom: readonly CustomModel[]): PickerSettings | undefined;
+/** The window a router's alias row reports: the CLI's own assumption for a base URL that is not
+ *  Anthropic's, since the model behind the alias is not one this catalog can look up. */
+export declare const ROUTED_WINDOW = 200000;
 /** Merges the CLI's model rows into the catalog, giving each known model a single stable id and
  *  name so the picker offers the same lineup whether or not the CLI has yet learned the model's
  *  short spelling. */
