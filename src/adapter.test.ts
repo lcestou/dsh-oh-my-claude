@@ -9797,6 +9797,102 @@ console.log("approval beside relay ok");
   console.log("question beside relay ok");
 }
 
+// Regression: a steer already on the CLI's stdin when Claude calls a native tool and a subagent in
+// one message. The subagent relays, and the step waits a moment for the native result so it can
+// end with every call answered. That result is a tool result, and with a steer pending the step
+// parked on it: the park left through the batch's "turn ended under us" exit, which rejected the
+// subagent's call ("claude turn ended before dsh could run the tool") although nothing had ended.
+// A step already ending on a relay does not park. dsh draws the steer when it opens the next step.
+{
+  const appended: Array<{ type: string; data: any }> = [];
+  const session = {
+    header: { version: 0 },
+    snapshotEvents: () => [
+      { type: "turn/start", data: { turn: 1 } },
+      { type: "step/start", data: { step: 1 } },
+    ],
+    append: (type: string, data: any) => {
+      appended.push({ type, data });
+      return { seq: appended.length };
+    },
+  };
+  const a = new ClaudeCodeAdapter(
+    fakeCtx({ on() {}, sessions: { get: () => session } }),
+    Config({ resume: true, toolActivity: true, toolsInline: false, dshTools: true }),
+  );
+  a.stateDir = joinPath(tmpdir(), "omc-flush-test-nowrite");
+  (a as any).mcp = { base: "http://127.0.0.1:1", key: "k", via: "webserver", toolsFor: () => [] };
+  const rejected: string[] = [];
+  const queue: Array<unknown> = [
+    {
+      type: "assistant",
+      message: {
+        id: "m1",
+        role: "assistant",
+        content: [
+          { type: "tool_use", id: "b1", name: "Bash", input: { command: "ls" } },
+          { type: "tool_use", id: "d1", name: "mcp__dsh__subagent", input: {} },
+        ],
+      },
+    },
+    {
+      type: "dsh_relay",
+      id: "r1",
+      name: "subagent",
+      args: {},
+      resolve() {},
+      reject: (e: Error) => void rejected.push(e.message),
+    },
+    {
+      type: "user",
+      message: { content: [{ type: "tool_result", tool_use_id: "b1", content: "file.txt" }] },
+    },
+  ];
+  const proc: any = {
+    alive: true,
+    busy: false,
+    parked: undefined,
+    steerPending: true,
+    forwarded: 1,
+    relays: new Map(),
+    sent: new Set(),
+    queue: { lines: [] },
+    queuedIndexes: [],
+    idleKilled: false,
+    exitCode: 0,
+    stderr: "",
+    stray: "",
+    staleResults: 0,
+    countStaleResults: () => 0,
+    write: () => true,
+    nextEvent: async (ms?: number) =>
+      queue.length ? queue.shift() : ms === undefined ? null : { type: "timeout" },
+    kill: () => {},
+  };
+  const prep = { input: "go", spec: { model: "m" }, cwd: "/tmp", session: undefined, args: [] };
+  a.acquire = async () => ({ prep, proc }) as any;
+  a.reconnectIfStale = async () => {};
+  a.watchTranscript = (async () => {}) as any;
+  a.pumpMirror = (async () => {}) as any;
+  const chunks: any[] = [];
+  for await (const c of a.stream({
+    sessionId: "ssr",
+    model: "m",
+    messages: messageList([{ role: "user", content: [{ type: "text", text: "go" }] }]),
+    signal: new AbortController().signal,
+  } as any))
+    chunks.push(c);
+  assert.deepEqual(rejected, [], "the subagent's call is not rejected");
+  assert.deepEqual([...proc.relays.keys()], ["r1"], "it is parked for dsh to run");
+  assert.equal(chunks.at(-1)?.reason?.kind, "tool-calls", "and the step ends on the relay");
+  assert.equal(proc.parked, undefined, "not on a park for the steer");
+  assert.ok(
+    appended.some((e) => e.type === "tool/result"),
+    "the native result that arrived in the wait is still recorded",
+  );
+  console.log("steer beside relay ok");
+}
+
 // Regression (2026-09-23 13:01, a second session lost the same day #100 shipped): a user Stop
 // while a native call is running. The adapter asks the CLI to interrupt, the CLI answers with a
 // result frame, and dsh, seeing its abort, breaks out of the stream at the first chunk of that
