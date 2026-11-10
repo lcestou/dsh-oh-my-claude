@@ -477,8 +477,14 @@ export function mergeCatalog(
     // in one menu read as two lineups (owner, 2026-09-16). A row landing on a known model takes
     // that model's name, with the window named the way the CLI names it; Default keeps its own.
     const name = known?.name ?? nameFromId(c.resolvedModel);
+    // The exception is a name someone gave the alias on purpose (`aliasNames`): a router that
+    // sends `sonnet` to another model says so there, the CLI's row carries that name, and
+    // replacing it with "Claude Sonnet 5" named a model the turn never reaches.
+    const given = picker?.aliasNames?.[c.value];
     const label =
-      c.value === "default" || name === undefined
+      c.value === "default" ||
+      name === undefined ||
+      (given !== undefined && given === c.displayName)
         ? c.displayName
         : `${name}${c.resolvedModel.endsWith("[1m]") ? " (1M context)" : ""}`;
     return {

@@ -13,6 +13,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- A Claude alias that a router renamed keeps that name in dsh's model picker and in Settings. CC Switch and similar tools set `ANTHROPIC_DEFAULT_SONNET_MODEL_NAME` and its siblings to say which model `sonnet` really reaches, Claude Code's own picker shows the name, and dsh's read "Claude Sonnet 5" regardless.
 - In a permission mode that asks, a tool call waiting for your approval is no longer refused when Claude starts a subagent in the same step, or when a subagent's report or another message reaches the session while another call of that step finishes. The approval used to be cancelled before anyone could answer it. The subagent now starts, and the message is shown, once the dialog is answered.
 - A subagent Claude starts beside one of its own tools is no longer refused with "claude turn ended before dsh could run the tool" when a message reached the session a moment earlier.
 - A subagent Claude starts in the same step as `open_session` no longer has its result shown twice when the new session is slow to open. The step also no longer pauses a second and a half before the subagent starts.

@@ -369,7 +369,17 @@ export interface PickerSettings {
     maxEffortLevel?: EffortLevel;
     /** Per-model `modelSettings.<id>.maxEffortLevel`, which overrides the top level for that model. */
     modelEffortCaps?: Record<string, EffortLevel>;
+    /** Names settings.json's `env` gives the CLI's aliases, by alias (`sonnet`, `opus`, `haiku`,
+     *  `fable`): `ANTHROPIC_DEFAULT_<ALIAS>_MODEL_NAME`. A router such as CC Switch sets these to say
+     *  which model an alias really reaches, and the CLI's own picker shows them. */
+    aliasNames?: AliasNames;
 }
+/** A name per CLI alias (`sonnet`, `opus`, `haiku`, `fable`), as someone set them. */
+export type AliasNames = Record<string, string>;
+/** The alias names an `env` block sets (`ANTHROPIC_DEFAULT_SONNET_MODEL_NAME` gives `sonnet`),
+ *  blank ones left out. Also read off the plugin's own environment by the adapter, since the same
+ *  variables work exported in a shell. */
+export declare function aliasNamesIn(env: Record<string, string | undefined>): AliasNames;
 /**
  * Read what settings.json says about the picker. Anything the CLI would ignore is dropped here,
  * and a file that is missing, unreadable or silent on both keys reads as undefined, so a settings

@@ -24,7 +24,13 @@ import { repairStoredTurns } from "../turn-repair.js";
 import { wantsFirstParty } from "../first-party.js";
 import { readCompactSummary } from "../compact-summary.js";
 import { CONTEXT_SIZE_KEYS, contextDrops, type ContextSizes } from "../context-sources.js";
-import { accountIdentity, forgetIdentity, readHints, readPickerSettings } from "../sessions.js";
+import {
+  accountIdentity,
+  aliasNamesIn,
+  forgetIdentity,
+  readHints,
+  readPickerSettings,
+} from "../sessions.js";
 import { hub, type OmcEvent } from "../events.js";
 import { readUsage, stillLimitedUntil } from "../usage.js";
 import { MCP_PATH, type McpBridge } from "../mcp.js";
@@ -765,7 +771,18 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   /** settings.json's say over the picker, plus this mount's `customModels`. The file is read on
    *  every listing rather than cached: an edit to settings.json takes effect at once. */
   private async pickerSettings() {
-    return withCustomModels(await readPickerSettings(join(this.claudeHome, "settings.json")), [
+    const fromFile = await readPickerSettings(join(this.claudeHome, "settings.json"));
+    // The alias names work exported in the shell dsh started from as well as in settings.json;
+    // the file wins, as it does for the CLI. A remote box's environment is not this one's.
+    const exported = this.config.sshHost ? {} : aliasNamesIn(process.env);
+    const named =
+      Object.keys(exported).length === 0
+        ? fromFile
+        : {
+            ...(fromFile ?? { options: [], replaceBuiltInOptions: false }),
+            aliasNames: { ...exported, ...fromFile?.aliasNames },
+          };
+    return withCustomModels(named, [
       ...this.config.customModels,
       ...(await this.savedCustomModels()),
     ]);

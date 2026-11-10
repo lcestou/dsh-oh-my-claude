@@ -1138,6 +1138,26 @@ export interface PickerSettings {
   maxEffortLevel?: EffortLevel;
   /** Per-model `modelSettings.<id>.maxEffortLevel`, which overrides the top level for that model. */
   modelEffortCaps?: Record<string, EffortLevel>;
+  /** Names settings.json's `env` gives the CLI's aliases, by alias (`sonnet`, `opus`, `haiku`,
+   *  `fable`): `ANTHROPIC_DEFAULT_<ALIAS>_MODEL_NAME`. A router such as CC Switch sets these to say
+   *  which model an alias really reaches, and the CLI's own picker shows them. */
+  aliasNames?: AliasNames;
+}
+
+/** A name per CLI alias (`sonnet`, `opus`, `haiku`, `fable`), as someone set them. */
+export type AliasNames = Record<string, string>;
+
+/** The alias names an `env` block sets (`ANTHROPIC_DEFAULT_SONNET_MODEL_NAME` gives `sonnet`),
+ *  blank ones left out. Also read off the plugin's own environment by the adapter, since the same
+ *  variables work exported in a shell. */
+export function aliasNamesIn(env: Record<string, string | undefined>) {
+  const out: AliasNames = {};
+  for (const [key, value] of Object.entries(env)) {
+    const alias = /^ANTHROPIC_DEFAULT_([A-Z]+)_MODEL_NAME$/.exec(key)?.[1];
+    if (alias !== undefined && value !== undefined && value.trim() !== "")
+      out[alias.toLowerCase()] = value.trim();
+  }
+  return out;
 }
 
 /**
@@ -1154,14 +1174,20 @@ export async function readPickerSettings(path: string): Promise<PickerSettings |
   const allowed = value.availableModels;
   const cap = value.maxEffortLevel;
   const modelSettings = value.modelSettings;
+  const named: Record<string, string> = {};
+  if (isJsonObject(value.env))
+    for (const [k, v] of Object.entries(value.env)) if (typeof v === "string") named[k] = v;
+  const aliasNames = aliasNamesIn(named);
   if (
     !Array.isArray(allowed) &&
     !isJsonObject(picker) &&
     !isEffortLevel(cap) &&
-    !isJsonObject(modelSettings)
+    !isJsonObject(modelSettings) &&
+    Object.keys(aliasNames).length === 0
   )
     return undefined;
   const out: PickerSettings = { options: [], replaceBuiltInOptions: false };
+  if (Object.keys(aliasNames).length > 0) out.aliasNames = aliasNames;
   if (Array.isArray(allowed))
     out.availableModels = allowed.filter((m): m is string => typeof m === "string");
   if (isJsonObject(picker)) {

@@ -6,6 +6,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { KNOWN_MODELS, mergeCatalog, resolveModelInfo, withCustomModels } from "./catalog.js";
+import { aliasNamesIn, readPickerSettings } from "../sessions.js";
 import { Config } from "./config.js";
 import {
   checkCustomModels,
@@ -104,6 +105,58 @@ assert.equal(
   mergeCatalog([], KNOWN_MODELS, allowed).some((m) => m.id === "deepseek-flash"),
   false,
 );
+// A router that sends a Claude alias to another model names the alias in settings.json
+// (`ANTHROPIC_DEFAULT_SONNET_MODEL_NAME`), and the CLI's own row then carries that name. The
+// picker keeps it; without it, the row takes the catalog's name as before.
+assert.deepEqual(
+  aliasNamesIn({
+    ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: " Local Qwen ",
+    ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME: "",
+    ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus-5",
+    ANTHROPIC_BASE_URL: "http://127.0.0.1:15721",
+  }),
+  { sonnet: "Local Qwen" },
+);
+const routedRow = {
+  value: "sonnet",
+  displayName: "Local Qwen",
+  resolvedModel: "claude-sonnet-5",
+  description: "Local llama · lutechi-llm",
+  efforts: [],
+};
+const nameOf = (cliRow: typeof routedRow, names?: Record<string, string>) =>
+  mergeCatalog(
+    [cliRow],
+    KNOWN_MODELS,
+    names ? { options: [], replaceBuiltInOptions: false, aliasNames: names } : undefined,
+  ).find((m) => m.id === "claude-sonnet-5")?.name;
+assert.equal(nameOf(routedRow, { sonnet: "Local Qwen" }), "Local Qwen", "the router's name stays");
+assert.equal(nameOf(routedRow), "Claude Sonnet 5", "no name given: the catalog's, as before");
+assert.equal(
+  nameOf({ ...routedRow, displayName: "Sonnet" }, { sonnet: "Local Qwen" }),
+  "Claude Sonnet 5",
+  "a row the CLI did not rename keeps the catalog's name",
+);
+{
+  const dir = mkdtempSync(join(tmpdir(), "omc-alias-names-"));
+  try {
+    const file = join(dir, "settings.json");
+    writeFileSync(
+      file,
+      JSON.stringify({ env: { ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: "Local Qwen" } }),
+    );
+    assert.deepEqual((await readPickerSettings(file))?.aliasNames, { sonnet: "Local Qwen" });
+    writeFileSync(file, JSON.stringify({ env: { ANTHROPIC_BASE_URL: "http://x" } }));
+    assert.equal(
+      await readPickerSettings(file),
+      undefined,
+      "an env with no names is no picker say",
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 // The list Settings saves. A request body is parsed first: anything that is not a list of entries
 // is refused there, before a rule is looked at.
 assert.deepEqual(parseCustomModels(undefined), [], "a body with no list is an empty list");
