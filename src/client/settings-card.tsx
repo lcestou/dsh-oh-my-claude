@@ -33,6 +33,7 @@ import { ConfirmButton } from "./tune.js";
 import { ClaudeUpdateDetails } from "./claude-updates.js";
 import { COMPACT_AT, COMPACT_AT_CHOICES, compactThreshold } from "./nudge.js";
 import { BOXES_EVENT } from "./picker.js";
+import { LiveNote } from "./live-note.js";
 import { Switch } from "./switch.js";
 import type { ToolMode, ToolModeInfo } from "../rows-probe.js";
 import { RECAP_AWAY_MS, RECAP_AWAY_CHOICES, recapAwayIn } from "./notices.js";
@@ -328,6 +329,8 @@ export function StarterCard({
             </span>
           </button>
         </Slide>
+        {/* The chip's label swaps by visibility, which a screen reader does not hear change. */}
+        <LiveNote text={note} />
         <Slide open={opener !== ""}>
           <ConfirmButton
             label={t("main.starter.forget")}
@@ -1236,7 +1239,8 @@ export function ToolRowsSwitch() {
     >
       <div>
         <div>{t("main.settingsUi.toolRowsTitle")}</div>
-        <div style={{ color: T.faint, fontSize: 12 }}>
+        {/* Live, so a failed switch is read out: the error replaces the description in place. */}
+        <div aria-live="polite" style={{ color: T.faint, fontSize: 12 }}>
           {err
             ? err
             : locked
@@ -1783,7 +1787,8 @@ export function TerminalSyncSwitch() {
           {t("main.settingsUi.terminalTitle")}{" "}
           <span style={{ color: T.err }}>{t("main.settingsUi.experimental")}</span>
         </div>
-        <div style={{ color: T.faint, fontSize: 12 }}>
+        {/* Live, so a failed switch is read out: the error replaces the description in place. */}
+        <div aria-live="polite" style={{ color: T.faint, fontSize: 12 }}>
           {err || t("main.settingsUi.terminalDesc")}
         </div>
       </div>

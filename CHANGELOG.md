@@ -16,6 +16,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 - A subagent Claude starts beside one of its own tools is no longer refused with "claude turn ended before dsh could run the tool" when a message reached the session a moment earlier.
 - A subagent Claude starts in the same step as `open_session` no longer has its result shown twice when the new session is slow to open. The step also no longer pauses a second and a half before the subagent starts.
 - The Sessions card in Settings says "1 prompt" for a session with a single prompt, not "1 prompts".
+- Screen readers now read out the outcome of a save or check in Settings: the settings editor's "Saved at" line and a refused save, the starter's Saved note, Check now in Claude updates, and a failed tool rows or terminal sync switch.
 
 ## [1.6.1] - 2026-11-09
 

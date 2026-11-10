@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import type { ClaudeUpdateState } from "../claude-update.js";
 import { BOXES_EVENT } from "./picker.js";
 import { btn, errText, meta, nested, readJson, ROUTE, select, T } from "./shared.js";
+import { LiveNote } from "./live-note.js";
 import { Switch } from "./switch.js";
 import { onBox, read, readTunables, updateSettings } from "./tune.js";
 import { t, useLocale } from "./i18n.js";
@@ -295,7 +296,12 @@ export function ClaudeUpdateDetails() {
           </div>
         </>
       )}
-      {err ? <span style={errText}>{err}</span> : null}
+      <LiveNote text={checkLine} />
+      {err ? (
+        <span role="alert" style={errText}>
+          {err}
+        </span>
+      ) : null}
     </div>
   );
 }

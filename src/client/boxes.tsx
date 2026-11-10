@@ -5,6 +5,7 @@ import { t, useLocale } from "./i18n.js";
 import { BOXES_EVENT, canBrowseDirs, OPEN_EVENT, RW_EVENT } from "./picker.js";
 import { SCOPE_LABELS, SETTINGS_SCOPES, overrideNote } from "./settings.js";
 import type { SettingsScope, SettingsScopeInfo } from "./settings.js";
+import { LiveNote } from "./live-note.js";
 import { ConfirmButton } from "./tune.js";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -529,10 +530,13 @@ function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
         </span>
         <span style={{ ...meta, whiteSpace: "normal", textAlign: "right" }}>
           {error ? (
-            <span style={{ color: T.err }}>{error}</span>
+            <span role="alert" style={{ color: T.err }}>
+              {error}
+            </span>
           ) : (
             saved || (editing ? t("main.settings.editHint") : t("main.settings.readOnlyHint"))
           )}
+          <LiveNote text={error ? "" : saved} />
         </span>
       </div>
     </Card>
