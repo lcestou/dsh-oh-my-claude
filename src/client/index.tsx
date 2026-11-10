@@ -309,14 +309,27 @@ export function apply(ctx: ClientCtx) {
     const [openChangelog, setOpenChangelog] = useState(false);
     const [openReport, setOpenReport] = useState(false);
     const [error, setError] = useState("");
+    // This tab's Boxes card writes the list through `setBoxes`. A box added or removed in another
+    // tab or device is not pushed, so read again when this tab comes back into view, the way the
+    // picker does. BOXES_EVENT is not enough: it follows the ssh box list, not this one.
     useEffect(() => {
-      fetch(`${ROUTE}/boxes`)
-        .then((r) => readJson<{ boxes?: BoxData[] }>(r))
-        .then((b) => setBoxes(b.boxes ?? []))
-        .catch((e: Error) => {
-          setError(e.message);
-          setBoxes([]);
-        });
+      const load = () =>
+        fetch(`${ROUTE}/boxes`)
+          .then((r) => readJson<{ boxes?: BoxData[] }>(r))
+          .then((b) => {
+            setError("");
+            setBoxes(b.boxes ?? []);
+          })
+          .catch((e: Error) => {
+            setError(e.message);
+            setBoxes([]);
+          });
+      const onVisible = () => {
+        if (document.visibilityState === "visible") void load();
+      };
+      void load();
+      document.addEventListener("visibilitychange", onVisible);
+      return () => document.removeEventListener("visibilitychange", onVisible);
     }, []);
     return (
       <div data-omc-settings="">
