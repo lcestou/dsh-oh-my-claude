@@ -596,8 +596,12 @@ assert.ok(
     bridgedTool("prompt_session"),
     bridgedTool("wait_session"),
   ]);
-  assert.ok(followUp.includes("mcp__dsh__prompt_session sends that session a follow-up"));
-  assert.ok(followUp.includes("mcp__dsh__wait_session reads its replies back."));
+  assert.ok(followUp.includes("mcp__dsh__prompt_session sends a session a follow-up"));
+  assert.ok(followUp.includes("mcp__dsh__wait_session reads a session's replies back."));
+  // The host offers the two independently, so each is named only when it is listed.
+  const promptOnly = dshToolsGuidance([bridgedTool("prompt_session")]);
+  assert.ok(promptOnly.includes("mcp__dsh__prompt_session"));
+  assert.ok(!promptOnly.includes("wait_session"), "not offered, so not named");
   assert.equal(dshToolsGuidance(), "dsh tools are available as mcp__dsh__* over MCP.");
   // Code mode lists only run_code (and the bridge's own tools), and still keeps Claude off
   // native Agent children, pointing it at run_code programs instead.
@@ -2263,6 +2267,41 @@ console.log("ok");
     },
   });
   assert.equal(tr.dshIds.size, 2, "whole-message path counts outstanding dsh calls for batching");
+  assert.deepEqual(tr.relayableIds(), ["d1", "d2"], "every relayed tool is a relay candidate");
+}
+// The bridge's own tools answer inside the bridge and never relay. Counted as relay candidates, a
+// wait_session held open beside a subagent made the batch wait for a second relay, then took the
+// subagent's mark: the subagent's result drew twice and wait_session's own row was dropped.
+{
+  const names = new Map<string, string>();
+  const ids = new Set<string>();
+  const tr = new Translator({ relay: true, dshIds: ids, dshNames: names }) as any;
+  tr.translate({
+    type: "assistant",
+    message: {
+      content: [
+        { type: "tool_use", id: "w1", name: "mcp__dsh__wait_session", input: {} },
+        { type: "tool_use", id: "o1", name: "mcp__dsh__open_session", input: {} },
+        { type: "tool_use", id: "p1", name: "mcp__dsh__prompt_session", input: {} },
+        { type: "tool_use", id: "d1", name: "mcp__dsh__subagent", input: {} },
+      ],
+    },
+  });
+  assert.equal(tr.dshIds.size, 4, "own tools stay tracked, so their results still draw a row");
+  assert.deepEqual(tr.relayableIds(), ["d1"], "only the subagent can relay");
+  // The next step's translator shares the turn's ids and names, so the answer holds there too.
+  const next = new Translator({ relay: true, dshIds: ids, dshNames: names }) as any;
+  assert.deepEqual(next.relayableIds(), ["d1"], "still told apart a step later");
+  const row = next.translate({
+    type: "user",
+    message: { content: [{ type: "tool_result", tool_use_id: "w1", content: "waited" }] },
+  });
+  assert.ok(
+    JSON.stringify(row).includes("wait_session"),
+    "a result that lands a step later still names its tool",
+  );
+  assert.equal(names.has("w1"), false, "the name goes when the result lands");
+  assert.deepEqual(next.relayableIds(), ["d1"]);
 }
 {
   const line = (o: any) => JSON.stringify(o);
@@ -9282,6 +9321,88 @@ console.log("watch-save-race ok");
     "the placeholder carries the pending note",
   );
   console.log("flush-on-death ok");
+}
+
+// Regression: Claude calls wait_session and a subagent in one message. wait_session answers inside
+// the bridge, up to four minutes later, and never relays; the subagent relays at once. The batch
+// used to count both as relays to come, wait out its window for the second, then give the oldest
+// id, wait_session's, the mark that says "dsh drew this one": the subagent's result then drew a
+// second time as a bridge row and wait_session's own row was dropped. Same stubbed stream() as
+// above; a timed read on the empty queue answers the timeout a real process would.
+{
+  const session = {
+    header: { version: 0 },
+    snapshotEvents: () => [
+      { type: "turn/start", data: { turn: 1 } },
+      { type: "step/start", data: { step: 1 } },
+    ],
+    append: () => ({ seq: 1 }),
+  };
+  const a = new ClaudeCodeAdapter(
+    fakeCtx({ on() {}, sessions: { get: () => session } }),
+    Config({ resume: true, toolActivity: true, toolsInline: false, dshTools: true }),
+  );
+  a.stateDir = joinPath(tmpdir(), "omc-flush-test-nowrite");
+  // A mounted bridge is what turns relaying on.
+  (a as any).mcp = { base: "http://127.0.0.1:1", key: "k", via: "webserver", toolsFor: () => [] };
+  const queue: Array<unknown> = [
+    {
+      type: "assistant",
+      message: {
+        id: "m1",
+        role: "assistant",
+        content: [
+          { type: "tool_use", id: "w1", name: "mcp__dsh__wait_session", input: {} },
+          { type: "tool_use", id: "d1", name: "mcp__dsh__subagent", input: {} },
+        ],
+      },
+    },
+    { type: "dsh_relay", id: "r1", name: "subagent", args: {}, resolve() {}, reject() {} },
+  ];
+  const timedReads: number[] = [];
+  const proc: any = {
+    alive: true,
+    busy: false,
+    parked: undefined,
+    steerPending: false,
+    relays: new Map(),
+    sent: new Set(),
+    queue: { lines: [] },
+    queuedIndexes: [],
+    idleKilled: false,
+    exitCode: 0,
+    stderr: "",
+    stray: "",
+    staleResults: 0,
+    countStaleResults: () => 0,
+    write: () => true,
+    nextEvent: async (ms?: number) => {
+      if (queue.length) return queue.shift();
+      if (ms === undefined) return null;
+      timedReads.push(ms);
+      return { type: "timeout" };
+    },
+    kill: () => {},
+  };
+  const prep = { input: "go", spec: { model: "m" }, cwd: "/tmp", session: undefined, args: [] };
+  a.acquire = async () => ({ prep, proc }) as any;
+  a.reconnectIfStale = async () => {};
+  a.watchTranscript = (async () => {}) as any;
+  a.pumpMirror = (async () => {}) as any;
+  const chunks: any[] = [];
+  for await (const c of a.stream({
+    sessionId: "sbatch",
+    model: "m",
+    messages: messageList([{ role: "user", content: [{ type: "text", text: "go" }] }]),
+    signal: new AbortController().signal,
+  } as any))
+    chunks.push(c);
+  assert.equal(chunks.at(-1)?.reason?.kind, "tool-calls", "the step ends on the relayed call");
+  assert.deepEqual([...proc.relays.keys()], ["r1"], "the subagent relay is parked for dsh");
+  assert.deepEqual([...proc.relayed], ["d1"], "the mark goes to the subagent, not wait_session");
+  assert.deepEqual(timedReads, [], "no window spent waiting on a relay wait_session never sends");
+  assert.deepEqual([...proc.dshIds], ["w1", "d1"], "wait_session stays tracked for its own row");
+  console.log("relay beside own tool ok");
 }
 
 // Regression (2026-09-23 13:01, a second session lost the same day #100 shipped): a user Stop

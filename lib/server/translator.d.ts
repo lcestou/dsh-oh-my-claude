@@ -256,13 +256,14 @@ export declare class Translator {
     private fireToolCall;
     /** Every option is optional: a bare Translator shows tool activity, relays nothing and reports
      *  to no callbacks, which is what a one-shot call wants. */
-    constructor({ toolActivity, continueAfterLimit, timeZone, toolTextLimit, relay, dshIds, relayed, log, onToolCall, onToolResult, onResult, redact, onInit, onProgress, onModel, noteApiKey, onTask, onHookRun, hostLabel, statusNote, }?: {
+    constructor({ toolActivity, continueAfterLimit, timeZone, toolTextLimit, relay, dshIds, dshNames, relayed, log, onToolCall, onToolResult, onResult, redact, onInit, onProgress, onModel, noteApiKey, onTask, onHookRun, hostLabel, statusNote, }?: {
         toolActivity?: boolean;
         continueAfterLimit?: boolean;
         timeZone?: string;
         toolTextLimit?: number;
         relay?: boolean;
         dshIds?: Set<string>;
+        dshNames?: Map<string, string>;
         relayed?: Set<string>;
         log?: (level: string, msg: string) => void;
         onToolCall?: (callId: string, name: string, args: string) => number | undefined;
@@ -331,6 +332,12 @@ export declare class Translator {
     /** A whole assistant message as chunks. A subagent's message folds into one reasoning row, and
      *  the echo of a message that already streamed as deltas is dropped. */
     assistant(content: ClaudeContentBlock[], parentToolUseId: string | null | undefined, id?: string): StreamChunk[];
+    /** Outstanding dsh tool_use ids a relay can still come from, oldest first. The bridge's own tools
+     *  (open_session, wait_session…) are answered inside the bridge and never relay: counted here, a
+     *  wait_session held open for minutes made the batch wait for a relay that never came and then
+     *  took the mark meant for the call beside it. An id whose name was never seen counts as
+     *  relayable, the safe side: at worst the batch waits out its window. */
+    relayableIds(): string[];
     /** dsh tools reached over the MCP bridge (subagents, jobs...) render as visible text rows, the
      *  rest as collapsed reasoning. Returns [block kind, lead text]. */
     toolLead(cb: {

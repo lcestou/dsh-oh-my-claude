@@ -1,6 +1,10 @@
 import { type FsBox } from "./remote-fs.js";
 /** HTTP header name for the MCP bridge authentication key. */
 export declare const KEY_HEADER = "x-dsh-oh-my-claude-key";
+/** The tools the bridge answers itself. They never relay to dsh's loop, so the translator leaves
+ *  their calls out when it matches relays to tool_use blocks. Here, in a leaf, so the translator
+ *  can read the names without importing the bridge; `mcp.test.ts` holds them to the schemas. */
+export declare const OWN_TOOL_NAMES: ReadonlySet<string>;
 export interface ConfiguredMcp {
     name: string;
     scope: "user" | "local" | "project";

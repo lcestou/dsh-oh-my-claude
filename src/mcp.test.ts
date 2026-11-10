@@ -12,6 +12,7 @@ import {
   registerMcpBridge,
   waitSession,
 } from "./mcp.js";
+import { OWN_TOOL_NAMES } from "./mcp-config.js";
 import type { Agent } from "./dsh.js";
 
 const agent = { id: "a1" };
@@ -506,6 +507,13 @@ console.log("mcp ok");
     ["subagent_local", "bash", "open_session", "prompt_session", "wait_session"],
   );
   assert.deepEqual(
+    // Everything listed after the two dsh tools is the bridge's own, so a tool added to one list
+    // and not the other fails here in either direction.
+    listed.result.tools.map((t) => t.name).slice(2),
+    [...OWN_TOOL_NAMES],
+    "the names the translator keeps out of relay matching are the bridge's own tools",
+  );
+  assert.deepEqual(
     listed.result.tools.filter((t) => !t.annotations.readOnlyHint).map((t) => t.name),
     ["prompt_session"],
     "only prompt_session runs alone, so a batched wait_session cannot read ahead of it",
@@ -531,12 +539,34 @@ console.log("mcp ok");
 
   const calls: string[] = [];
   let waited: unknown;
+  /** One assistant message record as dsh's wait returns it. */
+  const record = (seq: number, content: unknown[]) => ({
+    event: { type: "assistant/message", seq, data: { message: { content } } },
+  });
+  // newest first, as dsh returns them; the block shapes are dsh's own, where thinking is a
+  // `reasoning` block that carries `text` like a text block does
+  let records = [
+    record(46, [
+      { type: "reasoning", text: "hidden" },
+      { type: "text", text: "step 2 redone" },
+    ]),
+    record(44, [
+      { type: "reasoning", text: "thinking only" },
+      { type: "tool-call", toolName: "bash" },
+    ]),
+    record(43, [{ type: "tool-call", toolName: "bash" }]),
+    record(42, [{ type: "text", text: "on it" }]),
+  ];
+  let truncated = false;
   // SAFETY: a stand-in for the controller methods the two tools read
   const host = {
     sessionController: {
-      resolveAgent: async (id: string) =>
-        id === "gone" ? { error: new Error("session gone not found") } : { agent: {} },
-      state: async () => (calls.push("state"), { cursor: 41 }),
+      // dsh's state read is what refuses an unknown id; promptSession resolves nothing itself.
+      state: async (r: { sessionId: string }) => {
+        if (r.sessionId === "gone") throw new Error('session "gone" not found');
+        calls.push("state");
+        return { cursor: 41 };
+      },
       prompt: async (r: { mode: string; content: Array<{ text: string }> }) =>
         void calls.push(`prompt ${r.mode} ${r.content[0]?.text}`),
       wait: async (r: unknown) => {
@@ -544,44 +574,13 @@ console.log("mcp ok");
         return {
           reason: "idle",
           state: { cursor: 47, running: false, queue: [], pendingInput: [] },
-          output: {
-            truncated: false,
-            // newest first, as dsh returns them
-            records: [
-              {
-                event: {
-                  type: "assistant/message",
-                  seq: 46,
-                  data: {
-                    message: {
-                      content: [
-                        { type: "thinking", thinking: "hidden" },
-                        { type: "text", text: "step 2 redone" },
-                      ],
-                    },
-                  },
-                },
-              },
-              {
-                event: {
-                  type: "assistant/message",
-                  seq: 43,
-                  data: { message: { content: [{ type: "tool_use", name: "bash" }] } },
-                },
-              },
-              {
-                event: {
-                  type: "assistant/message",
-                  seq: 42,
-                  data: { message: { content: [{ type: "text", text: "on it" }] } },
-                },
-              },
-            ],
-          },
+          output: { truncated, records },
         };
       },
     },
   } as unknown as Parameters<typeof promptSession>[0];
+  const from =
+    "[Sent by the agent in dsh session s1 through prompt_session, not typed by the user.]";
   // SAFETY: the calling agent's session is s1
   const caller = { id: "a", session: { id: "s1" } } as unknown as Agent;
   const signal = new AbortController().signal;
@@ -589,10 +588,14 @@ console.log("mcp ok");
     await promptSession(host, caller, { sessionId: "s2", prompt: "redo step 2" }, signal),
     "sent to session s2 (queue); afterSeq 41",
   );
-  assert.deepEqual(calls, ["state", "prompt queue redo step 2"], "cursor read before the prompt");
+  assert.deepEqual(
+    calls,
+    ["state", `prompt queue ${from}\n\nredo step 2`],
+    "cursor read before the prompt, and the message names its sender",
+  );
   calls.length = 0;
   await promptSession(host, caller, { sessionId: "s2", prompt: "hint", mode: "steer" }, signal);
-  assert.deepEqual(calls, ["state", "prompt steer hint"]);
+  assert.deepEqual(calls, ["state", `prompt steer ${from}\n\nhint`]);
   calls.length = 0;
   await assert.rejects(
     promptSession(host, caller, { sessionId: "s1", prompt: "x" }, signal),
@@ -605,12 +608,12 @@ console.log("mcp ok");
   );
   await assert.rejects(
     promptSession(host, caller, { sessionId: "gone", prompt: "x" }, signal),
-    /session gone not found/,
+    /session "gone" not found/,
   );
   assert.deepEqual(calls, [], "a refused call never prompts");
 
   const text = await waitSession(host, caller, { sessionId: "s2", afterSeq: 41 }, signal);
-  assert.deepEqual(waited, { sessionId: "s2", timeoutMs: 30_000, afterSeq: 41 });
+  assert.deepEqual(waited, { sessionId: "s2", timeoutMs: 30_000, maxMessages: 50, afterSeq: 41 });
   assert.equal(
     text,
     [
@@ -618,13 +621,119 @@ console.log("mcp ok");
       "--- reply at seq 42 ---\non it",
       "--- reply at seq 46 ---\nstep 2 redone",
     ].join("\n"),
-    "replies oldest first, text blocks only, tool-only messages left out",
+    "replies oldest first, text blocks only: reasoning and tool-only messages left out",
   );
   await waitSession(host, caller, { sessionId: "s2", timeoutSeconds: 9999 }, signal);
-  assert.deepEqual(waited, { sessionId: "s2", timeoutMs: 240_000 }, "timeout clamped, no cursor");
+  assert.deepEqual(
+    waited,
+    { sessionId: "s2", timeoutMs: 240_000, maxMessages: 50 },
+    "timeout clamped, no cursor",
+  );
   await assert.rejects(
     waitSession(host, caller, { sessionId: "s1" }, signal),
     /cannot target the calling session/,
   );
+  // A cursor of the wrong type is refused: run without it, the wait returned the session's old
+  // replies as if they answered the message just sent.
+  waited = undefined;
+  for (const afterSeq of ["41", 41.5, -2, true])
+    await assert.rejects(
+      waitSession(host, caller, { sessionId: "s2", afterSeq }, signal),
+      /afterSeq must be an integer/,
+    );
+  await assert.rejects(
+    waitSession(host, caller, { sessionId: "s2", timeoutSeconds: "60" }, signal),
+    /timeoutSeconds must be a number/,
+  );
+  assert.equal(waited, undefined, "a refused wait never reaches dsh");
+  await waitSession(
+    host,
+    caller,
+    { sessionId: "s2", afterSeq: null, timeoutSeconds: null },
+    signal,
+  );
+  assert.deepEqual(
+    waited,
+    { sessionId: "s2", timeoutMs: 30_000, maxMessages: 50 },
+    "null reads as not given",
+  );
+  await waitSession(host, caller, { sessionId: "s2", afterSeq: -0 }, signal);
+  // SAFETY: the stand-in recorded the request waitSession built
+  assert.ok(Object.is((waited as { afterSeq: number }).afterSeq, 0), "-0 goes to dsh as 0");
+  await waitSession(host, caller, { sessionId: "s2", afterSeq: -1 }, signal);
+  // SAFETY: as above
+  assert.equal((waited as { afterSeq: number }).afterSeq, -1, "-1 is dsh's own 'from the start'");
+
+  // The output is bounded: the newest replies are kept up to the budget, the oldest kept one is
+  // cut short, and a line says older ones were left out.
+  records = [
+    record(53, [{ type: "text", text: "c".repeat(10_000) }]),
+    record(52, [{ type: "text", text: "b".repeat(10_000) }]),
+    record(51, [{ type: "text", text: "a".repeat(10_000) }]),
+  ];
+  const long = (await waitSession(host, caller, { sessionId: "s2" }, signal)).split("\n");
+  assert.deepEqual(
+    [long[1], long[2], long[3]?.length, long[4], long[5]?.length, long.length],
+    [
+      "(older replies left out)",
+      "--- reply at seq 52 ---",
+      6000 + "… (reply cut short)".length,
+      "--- reply at seq 53 ---",
+      10_000,
+      6,
+    ],
+    "16,000 characters of reply text at most, the newest whole",
+  );
+  // A cut that lands inside an emoji drops the half it would have left behind.
+  records = [record(55, [{ type: "text", text: `${"d".repeat(15_999)}😀 tail` }])];
+  const emoji = (await waitSession(host, caller, { sessionId: "s2" }, signal)).split("\n")[2];
+  assert.equal(emoji, `${"d".repeat(15_999)}… (reply cut short)`, "no lone surrogate at the cut");
+  records = [record(60, [{ type: "text", text: "latest" }])];
+  truncated = true;
+  assert.ok(
+    (await waitSession(host, caller, { sessionId: "s2" }, signal)).includes(
+      "(older replies left out)\n--- reply at seq 60 ---",
+    ),
+    "dsh's own cut at 50 messages is reported the same way",
+  );
+
+  // Through the bridge, a failed call of the bridge's own answers with the message alone. Only a
+  // failure that is not the caller's argument reaches the log, with its stack.
+  const logLines: string[] = [];
+  // SAFETY: cast to HandleRpcParams shape for test double
+  const live = {
+    ...env,
+    prompt: (a: Record<string, never>) => promptSession(host, caller, a, signal),
+    log: (_level: string, line: string) => void logLines.push(line),
+  } as unknown as Parameters<typeof handleRpc>[1];
+  /** The result of a prompt_session call through handleRpc. */
+  const callPrompt = async (args: Record<string, string>) =>
+    // SAFETY: tools/call always returns a response
+    (
+      (await handleRpc(
+        {
+          jsonrpc: "2.0",
+          id: 63,
+          method: "tools/call",
+          params: { name: "prompt_session", arguments: args },
+        },
+        live,
+      )) as { result: { isError?: boolean; content: Array<{ text: string }> } }
+    ).result;
+  const refused = await callPrompt({ sessionId: "s2", prompt: " " });
+  assert.deepEqual(
+    [refused.isError, refused.content[0]?.text],
+    [true, "prompt_session needs a non-empty prompt"],
+    "a refused argument answers with its message, no stack",
+  );
+  assert.deepEqual(logLines, [], "and is not logged");
+  const unknown = await callPrompt({ sessionId: "gone", prompt: "x" });
+  assert.deepEqual(
+    [unknown.isError, unknown.content[0]?.text],
+    [true, 'session "gone" not found'],
+    "dsh's own error answers with its message too",
+  );
+  assert.equal(logLines.length, 1, "but is logged");
+  assert.match(logLines[0] ?? "", /prompt_session failed: Error: session "gone" not found\n\s+at /);
   console.log("prompt-session ok");
 }
