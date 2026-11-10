@@ -772,7 +772,10 @@ export function Sessions({ ctx, boxes, close }: SessionsProps) {
                   <span style={{ flex: "0 0 auto" }}>
                     {ago(r.s.modifiedAt)} ·{" "}
                     {t(
-                      r.s.turns === 1 ? "main.sessions.promptsOne" : "main.sessions.promptsOther",
+                      // "1+" is more than one, so it takes the plural.
+                      r.s.turns === 1 && !r.s.turnsPartial
+                        ? "main.sessions.promptsOne"
+                        : "main.sessions.promptsOther",
                       {
                         n: r.s.turns,
                         more: r.s.turnsPartial ? "+" : "",
