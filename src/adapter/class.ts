@@ -5285,7 +5285,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     };
     /** Claude fires parallel dsh calls as separate MCP requests: gather the batch (one per
      *  outstanding dsh tool_use block), end this step with those tool-calls, keep Claude parked on
-     *  its requests, and resolve them when dsh calls back. Returns the turn outcome: "relayed", or
+     *  its requests, and resolve them when dsh calls back. A dialog still open for another call of
+     *  the message holds the step until a person answers it. Returns the turn outcome: "relayed", or
      *  whatever ended the turn under us (its calls are then rejected). */
     const relayBatch = async function* (first: RelayEvent) {
       const calls: RelayEvent[] = [first];
