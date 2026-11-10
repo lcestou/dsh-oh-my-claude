@@ -346,11 +346,17 @@ const wireTurnStatus = (
     // SAFETY: spinnerFrameAt answers an index in [0, frames.length).
     spinner.textContent = frames[spinnerFrameAt(Date.now() - spinStart, frames.length)]!;
   };
+  // Set below once the gone watcher is registered; `undefined` while it runs immediately on a
+  // retired bundle, which is why `stop` calls it optionally.
+  let offGone: (() => void) | undefined;
   const stop = () => {
     clearInterval(interval);
     clearInterval(pollTimer);
     offLive();
     obs.disconnect();
+    // Drop the gone watcher too: it holds `el`, the spinner and the observer, and the Set it sits
+    // in lives as long as the bundle, so every row dsh ever unmounted stayed reachable.
+    offGone?.();
   };
   const interval = setInterval(
     () => {
@@ -381,7 +387,7 @@ const wireTurnStatus = (
   // next bundle refuses to wire.
   // Tear down this row: stop the spinner beat and poll, remove the wired mark and spinner, so a
   // row that outlives its bundle leaves nothing animating.
-  whenContextGone(() => {
+  offGone = whenContextGone(() => {
     stop();
     el.removeAttribute(TURN_MARK);
     spinner.remove();
