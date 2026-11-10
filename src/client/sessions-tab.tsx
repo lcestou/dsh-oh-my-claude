@@ -770,8 +770,15 @@ export function Sessions({ ctx, boxes, close }: SessionsProps) {
                     </span>
                   )}
                   <span style={{ flex: "0 0 auto" }}>
-                    {ago(r.s.modifiedAt)} · {r.s.turns}
-                    {r.s.turnsPartial ? "+" : ""} {t("main.sessions.prompts")} · {size(r.s.bytes)} ·{" "}
+                    {ago(r.s.modifiedAt)} ·{" "}
+                    {t(
+                      r.s.turns === 1 ? "main.sessions.promptsOne" : "main.sessions.promptsOther",
+                      {
+                        n: r.s.turns,
+                        more: r.s.turnsPartial ? "+" : "",
+                      },
+                    )}{" "}
+                    · {size(r.s.bytes)} ·{" "}
                     <span style={{ fontFamily: T.mono }}>{r.s.id.slice(0, 8)}</span>
                   </span>
                 </div>
