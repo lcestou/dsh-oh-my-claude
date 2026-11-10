@@ -205,6 +205,9 @@ export function StarterCard({
   const [starter, setStarter] = useState<StarterReply | null>(null);
   const [note, setNote] = useState("");
 
+  // Read once per session: this card is the only control in the tab that writes the starter, and it
+  // updates its own state on save. A save from a second tab on the same session is not pushed and
+  // shows here when the card remounts.
   useEffect(() => {
     let live = true;
     fetch(`${ROUTE}/starter?session=${encodeURIComponent(sessionId)}`)
@@ -1203,6 +1206,8 @@ export function ToolRowsSwitch() {
   useLocale();
   const [info, setInfo] = useState<ToolModeInfo | null>(null);
   const [err, setErr] = useState("");
+  // Read once on mount: this switch is the only control in the tab that writes the tool mode, and it
+  // takes the route's answer as its new state. A change from another tab shows when Settings reopens.
   useEffect(() => {
     let live = true;
     fetch(`${ROUTE}/tool-mode`)
@@ -1750,6 +1755,8 @@ export function TerminalSyncSwitch() {
   useLocale();
   const [on, setOn] = useState<boolean | null>(null);
   const [err, setErr] = useState("");
+  // Read once on mount: this switch is the only control in the tab that writes terminal sync, and it
+  // takes the route's answer as its new state. A change from another tab shows when Settings reopens.
   useEffect(() => {
     let live = true;
     fetch(`${ROUTE}/terminal-sync`)
