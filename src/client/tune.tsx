@@ -916,9 +916,13 @@ export function TuneBody({
                   disabled={busy}
                   placeholder={t("tune.claudeDefault")}
                   aria-label={t(hintKey)}
-                  // Not while an IME composes: that Enter picks a candidate, not the value.
+                  // Not while an IME composes: that Enter picks a candidate, not the value. Safari
+                  // sends that Enter with isComposing false and keyCode 229.
                   onKeyDown={(e) =>
-                    e.key === "Enter" && !e.nativeEvent.isComposing && e.currentTarget.blur()
+                    e.key === "Enter" &&
+                    !e.nativeEvent.isComposing &&
+                    e.keyCode !== 229 &&
+                    e.currentTarget.blur()
                   }
                   onBlur={(e) => {
                     const typed = e.target.value;
@@ -1148,8 +1152,14 @@ function PermissionsBlock({
           aria-label={t("tune.rule")}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
-            // Not while an IME composes: that Enter picks a candidate, not the rule.
-            if (e.key === "Enter" && !e.nativeEvent.isComposing && draft.trim())
+            // Not while an IME composes: that Enter picks a candidate, not the rule. Safari sends
+            // that Enter with isComposing false and keyCode 229.
+            if (
+              e.key === "Enter" &&
+              !e.nativeEvent.isComposing &&
+              e.keyCode !== 229 &&
+              draft.trim()
+            )
               void change("add", kind, draft);
           }}
           placeholder="Bash(npm run:*)"
