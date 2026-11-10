@@ -12,6 +12,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- In a permission mode that asks, a tool call waiting for your approval is no longer refused when Claude starts a subagent in the same step. The approval used to be cancelled before anyone could answer it. The subagent now starts once the dialog is answered.
 - A subagent Claude starts in the same step as `open_session` no longer has its result shown twice when the new session is slow to open. The step also no longer pauses a second and a half before the subagent starts.
 
 ## [1.6.1] - 2026-11-09

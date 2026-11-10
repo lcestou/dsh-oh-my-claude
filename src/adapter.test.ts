@@ -9405,6 +9405,140 @@ console.log("watch-save-race ok");
   console.log("relay beside own tool ok");
 }
 
+// Regression: in a permission mode that asks, Claude calls a tool that needs approval and a
+// subagent in one message. The CLI asks for the approval, the subagent relays, and the step used
+// to end on that relay at once: the exit aborts every open dialog, so the approval answered
+// "cancelled before anyone answered" before a person could click, and the tool was refused. The
+// relay now waits for the dialog. Same stubbed stream(); the approval is granted after the loop
+// has read the empty queue twice, the way a click arrives while nothing else is happening. Run
+// once for each answer a person can give: either way it is their answer that reaches Claude.
+for (const [outcome, behavior, message] of [
+  ["allowed-once", "allow", undefined],
+  ["rejected", "deny", "The user denied this action in dsh."],
+] as const) {
+  const session = {
+    header: { version: 0 },
+    snapshotEvents: () => [
+      { type: "turn/start", data: { turn: 1 } },
+      { type: "step/start", data: { step: 1 } },
+    ],
+    append: () => ({ seq: 1 }),
+  };
+  let grant: ((outcome: string) => void) | undefined;
+  let asked = 0;
+  const a = new ClaudeCodeAdapter(
+    fakeCtx({
+      on() {},
+      sessions: { get: () => session },
+      agents: { get: () => ({ id: "ag", session: { id: "sask" } }) },
+      approval: {
+        // dsh's approval settles "cancelled" when the request's signal aborts.
+        request: ({ signal }: { signal: AbortSignal }) =>
+          new Promise<string>((resolve) => {
+            asked++;
+            grant = resolve;
+            signal.addEventListener("abort", () => resolve("cancelled"), { once: true });
+          }),
+      },
+    }),
+    Config({ resume: true, toolActivity: true, toolsInline: false, dshTools: true }),
+  );
+  a.stateDir = joinPath(tmpdir(), "omc-flush-test-nowrite");
+  (a as any).mcp = { base: "http://127.0.0.1:1", key: "k", via: "webserver", toolsFor: () => [] };
+  const queue: Array<unknown> = [
+    {
+      type: "assistant",
+      message: {
+        id: "m1",
+        role: "assistant",
+        content: [
+          { type: "tool_use", id: "w1", name: "mcp__dsh__wait_session", input: {} },
+          { type: "tool_use", id: "d1", name: "mcp__dsh__subagent", input: {} },
+        ],
+      },
+    },
+    {
+      type: "control_request",
+      request_id: "c1",
+      request: {
+        subtype: "can_use_tool",
+        tool_name: "mcp__dsh__wait_session",
+        input: { sessionId: "other" },
+        tool_use_id: "w1",
+      },
+    },
+    { type: "dsh_relay", id: "r1", name: "subagent", args: {}, resolve() {}, reject() {} },
+  ];
+  const written: string[] = [];
+  let timedReads = 0;
+  const proc: any = {
+    alive: true,
+    busy: false,
+    parked: undefined,
+    steerPending: false,
+    relays: new Map(),
+    sent: new Set(),
+    queue: { lines: [] },
+    queuedIndexes: [],
+    idleKilled: false,
+    exitCode: 0,
+    stderr: "",
+    stray: "",
+    staleResults: 0,
+    countStaleResults: () => 0,
+    write: (line: string) => (written.push(line), true),
+    nextEvent: async (ms?: number) => {
+      if (queue.length) return queue.shift();
+      if (ms === undefined) return null;
+      if (++timedReads === 2) grant?.(outcome);
+      return { type: "timeout" };
+    },
+    kill: () => {},
+  };
+  const prep = {
+    input: "go",
+    spec: { model: "m" },
+    cwd: "/tmp",
+    session: undefined,
+    args: [],
+    accessMode: "workspace-write",
+  };
+  a.acquire = async () => ({ prep, proc }) as any;
+  a.reconnectIfStale = async () => {};
+  a.watchTranscript = (async () => {}) as any;
+  a.pumpMirror = (async () => {}) as any;
+  const chunks: any[] = [];
+  for await (const c of a.stream({
+    sessionId: "sask",
+    model: "m",
+    messages: messageList([{ role: "user", content: [{ type: "text", text: "go" }] }]),
+    signal: new AbortController().signal,
+  } as any))
+    chunks.push(c);
+  // Let a decision that settled as the stream closed write its answer.
+  await new Promise((r) => setTimeout(r, 20));
+  const answers = written
+    // The prompt itself goes down the same pipe and is not always JSON.
+    .flatMap((line) => {
+      try {
+        return [JSON.parse(line)];
+      } catch {
+        return [];
+      }
+    })
+    .filter((m) => m.type === "control_response")
+    .map((m) => m.response.response);
+  assert.equal(asked, 1, "the approval was put to dsh");
+  assert.deepEqual(
+    answers.map((r) => [r.behavior, r.toolUseID, r.message]),
+    [[behavior, "w1", message]],
+    "the person's answer reaches Claude: the dialog is not cancelled by the relay",
+  );
+  assert.equal(chunks.at(-1)?.reason?.kind, "tool-calls", "the step still ends on the relay");
+  assert.deepEqual([...proc.relays.keys()], ["r1"], "and the subagent relay is parked for dsh");
+}
+console.log("approval beside relay ok");
+
 // Regression (2026-09-23 13:01, a second session lost the same day #100 shipped): a user Stop
 // while a native call is running. The adapter asks the CLI to interrupt, the CLI answers with a
 // result frame, and dsh, seeing its abort, breaks out of the stream at the first chunk of that

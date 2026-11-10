@@ -379,6 +379,8 @@ export const RELAY_BATCH_MS = 1500;
 /** How long a step handing dsh a relay waits for Claude's own tool results still in flight.
  *  Its Read, Grep and short Bash land in milliseconds; a longer Bash gets a placeholder row. */
 export const NATIVE_RESULT_WAIT_MS = 10_000;
+/** How often a step holding a relay for an open dialog looks whether the dialog was answered. */
+export const DIALOG_POLL_MS = 250;
 /** After asking the CLI to interrupt, how long before falling back to killing the process. */
 export const INTERRUPT_GRACE_MS = 5000;
 

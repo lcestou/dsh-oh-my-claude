@@ -333,6 +333,7 @@ import {
   OUTCOME_MESSAGE,
   RECONNECT_TEXT,
   RELAY_BATCH_MS,
+  DIALOG_POLL_MS,
   relayBlocks,
   resolvedAgent,
   RESTART_TEXT,
@@ -5309,16 +5310,29 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       // under us (pr-review #99): a step that ends with a tool/call and no tool/result is the
       // corruption this guards against whether the turn ended for a relay or because the process
       // died mid-step, and the session log outlives the process, so the append is valid either way.
-      const waitUntil = Date.now() + NATIVE_RESULT_WAIT_MS;
-      while (callSeqs.size > 0) {
-        const left = waitUntil - Date.now();
+      //
+      // A dialog still open (an approval, a question, a plan review) belongs to another call of
+      // this same message, and ending the step aborts it in `finally`: the person's approval came
+      // back "cancelled before anyone answered" and the call was refused, before they could click.
+      // So the relay waits for every open dialog first, with no deadline, as a step without a
+      // relay waits for one; the stream keeps flowing meanwhile. A settled dialog queues no event,
+      // hence the short timed reads. The bounded wait for native results starts once no dialog is
+      // open, since a call approved a moment ago has only just begun.
+      let waitUntil = Date.now() + NATIVE_RESULT_WAIT_MS;
+      while (pending.size > 0 || callSeqs.size > 0) {
+        const asking = pending.size > 0;
+        if (asking) waitUntil = Date.now() + NATIVE_RESULT_WAIT_MS;
+        const left = asking ? DIALOG_POLL_MS : waitUntil - Date.now();
         if (left <= 0) break;
         const more = await proc.nextEvent(left);
         if (more === null) {
           flushPending();
           return abandon("ended");
         }
-        if (more.type === "timeout") break;
+        if (more.type === "timeout") {
+          if (asking) continue;
+          break;
+        }
         if (more.type === "dsh_relay") {
           calls.push(more);
           continue;
