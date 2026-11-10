@@ -33,6 +33,7 @@ import type {
 } from "./dsh.js";
 import { asSessionId } from "./dsh.js";
 import { resolvedAgent } from "./adapter/turn.js";
+import { PLAN_REFUSAL, planRefuses } from "./plan-gate.js";
 
 /** HTTP endpoint path for the MCP bridge handler. */
 export const MCP_PATH = "/dsh-oh-my-claude/mcp";
@@ -431,13 +432,16 @@ export interface RpcEnv {
     args: Record<string, JsonValue>,
     signal: AbortSignal,
   ) => Promise<RelayResult | undefined> | undefined;
+  /** The session CLI's permission mode right now, read once per tools/call so a switch made after
+   *  spawn counts; undefined when unknown, which gates nothing. */
+  mode?: () => string | undefined;
   log?: (level: string, msg: string) => void;
 }
 
 /** One JSON-RPC request against the tools visible to `agent`. Returns null for notifications. */
 export async function handleRpc(
   msg: JsonRpcRequest,
-  { tools, agent, signal, version, open, prompt, wait, relay, log }: RpcEnv,
+  { tools, agent, signal, version, open, prompt, wait, relay, mode, log }: RpcEnv,
 ): Promise<JsonRpcReply | null> {
   // The bridge's own tools the host provided, by name; dsh never sees these.
   const own = new Map<string, (args: Record<string, JsonValue>) => Promise<string>>();
@@ -491,6 +495,8 @@ export async function handleRpc(
       const rawArgs = msg.params?.arguments;
       const args: Record<string, JsonValue> =
         rawArgs && typeof rawArgs === "object" && !Array.isArray(rawArgs) ? rawArgs : {};
+      // First, ahead of the bridge's own tools and code mode: plan mode runs hinted tools unasked.
+      if (planRefuses(name, mode?.())) return errorReply(msg.id, PLAN_REFUSAL);
       const ownTool = own.get(name);
       if (ownTool) {
         try {
@@ -561,6 +567,8 @@ export interface BridgeOptions {
     args: Record<string, JsonValue>,
     signal: AbortSignal,
   ) => Promise<RelayResult | undefined> | undefined;
+  /** The permission mode the session's CLI is in right now; feeds the plan-mode gate. */
+  mode?: (sessionId: string) => string | undefined;
   /** Path of a file holding the bridge key; created once, reused across restarts. */
   keyFile?: string;
   /** Path of a file holding the loopback listener's port, so a restart rebinds the same port and
@@ -694,7 +702,7 @@ async function startLoopback(
  *  web port is the one address that is fixed by configuration. */
 export function registerMcpBridge(
   ctx: PluginContext,
-  { log, version, relay, keyFile, portFile }: BridgeOptions,
+  { log, version, relay, mode, keyFile, portFile }: BridgeOptions,
 ): Promise<McpBridge> {
   // SAFETY: the key symbol is this plugin's own key on globalThis, typed here once
   const g = globalThis as typeof globalThis & { [KEY_REGISTRY]?: string };
@@ -741,6 +749,7 @@ export function registerMcpBridge(
                 relay: relay
                   ? (name, args, signal) => relay(sessionId, name, args, signal)
                   : undefined,
+                mode: mode ? () => mode(sessionId) : undefined,
                 log,
               });
               return out === null ? send(res, 202) : send(res, 200, out);

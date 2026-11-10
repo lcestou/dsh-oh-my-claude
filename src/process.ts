@@ -1823,13 +1823,34 @@ export type WaitingSteer = {
 );
 
 /**
+ * The permission mode a CLI stdout line reports, else undefined. The CLI writes
+ * `{"type":"system","subtype":"status","permissionMode":…}` whenever its mode changes, including a
+ * change it makes itself (EnterPlanMode, an approved ExitPlanMode), the only way the plugin learns
+ * of those (CLI 2.1.322). Lines without the key are not parsed, so the hot path stays cheap.
+ */
+export function statusMode(line: string): string | undefined {
+  if (!line.includes('"permissionMode"') || !line.includes('"status"')) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== "object" || parsed === null) return undefined;
+  // SAFETY: a non-null object; each field is compared to a literal or type-checked before use
+  const r = parsed as { type?: unknown; subtype?: unknown; permissionMode?: unknown };
+  if (r.type !== "system" || r.subtype !== "status") return undefined;
+  return typeof r.permissionMode === "string" ? r.permissionMode : undefined;
+}
+
+/**
  * A running Claude Code process bound to one dsh session. `spec` is what the process was spawned
  * with (cwd, model, effort, permission mode, session flags); a turn whose spec differs replaces it.
  */
 export class ClaudeProcess {
   spec: ClaudeProcessSpec;
   /** The permission mode the CLI is running in right now: `spec.mode` at spawn, then whatever the
-   *  last accepted `set_permission_mode` set. `spec.mode` stays the launch mode on purpose, since
+   *  last accepted `set_permission_mode` or the CLI's own status frame set. `spec.mode` stays the launch mode on purpose, since
    *  the CLI takes a live switch to bypassPermissions only from a process launched in it. */
   liveMode: string;
   args: string[];
@@ -1984,6 +2005,10 @@ export class ClaudeProcess {
     let lineIndex = 0;
     rl.on("line", (line) => {
       const index = lineIndex++;
+      // The CLI's own mode changes (EnterPlanMode, an approved plan) reach the plugin only here;
+      // the bridge's plan-mode gate reads liveMode. The frame still queues as before.
+      const reported = statusMode(line);
+      if (reported !== undefined) this.liveMode = reported;
       // Consumed here, not queued: the frame lands after the result that ended the turn, when no
       // turn is reading, and a queued copy would open the next turn as an unknown event.
       if (line.includes('"prompt_suggestion"') && this.noteSuggestion(line))

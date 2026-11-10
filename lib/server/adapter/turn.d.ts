@@ -23,6 +23,9 @@ export interface TurnRecord {
      *  the same process after a dsh restart knows where to count from. Absent on older records. */
     costTotal?: number;
     apiTotal?: number;
+    /** The result frame carried no `total_cost_usd`, so `costUsd` and `apiMs` above are stand-in
+     *  zeros and not totals. Set by the translator, read and removed before the record is kept. */
+    noTotals?: true;
     /** The host this turn's requests went to when that was a router or gateway and not Anthropic.
      *  The CLI prices every turn at Claude's API rates whatever answered it, so `costUsd` on such
      *  a turn is a figure for a bill nobody gets (a local model's turn was recorded at $0.08,

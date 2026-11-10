@@ -53,7 +53,7 @@ declare const EN: {
     readonly toolResult: "Result";
     readonly toolError: "Error";
     readonly moreLines: "… {n} more lines";
-    readonly limitSession: "session limit";
+    readonly limitSession: "5-hour limit";
     readonly limitWeekly: "weekly limit";
     readonly limitOpus: "Opus limit";
     readonly limitSonnet: "Sonnet limit";

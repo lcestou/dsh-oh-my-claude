@@ -32,6 +32,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 - An answer to a question Claude asks is no longer refused by Claude Code 2.1.321 and later when Claude had set an away timeout on that question.
 - A turn whose result carried no cost figure no longer makes the next turn's cost read as the whole session's.
 - A subagent Claude starts in the same step as `open_session` no longer has its result shown twice when the new session is slow to open. The step also no longer pauses a second and a half before the subagent starts.
+- In plan mode Claude could run dsh's shell, start subagents and use dsh's other tools that change things, without being asked, although plan mode promises nothing changes. Those calls are now refused and Claude is told to finish the plan and leave plan mode first. Tools that only read, such as listing jobs or reading a session's replies, still work in plan mode.
 
 ## [1.6.1] - 2026-11-09
 
