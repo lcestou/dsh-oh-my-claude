@@ -682,6 +682,10 @@ console.log("mcp ok");
     ],
     "16,000 characters of reply text at most, the newest whole",
   );
+  // A cut that lands inside an emoji drops the half it would have left behind.
+  records = [record(55, [{ type: "text", text: `${"d".repeat(15_999)}😀 tail` }])];
+  const emoji = (await waitSession(host, caller, { sessionId: "s2" }, signal)).split("\n")[2];
+  assert.equal(emoji, `${"d".repeat(15_999)}… (reply cut short)`, "no lone surrogate at the cut");
   records = [record(60, [{ type: "text", text: "latest" }])];
   truncated = true;
   assert.ok(

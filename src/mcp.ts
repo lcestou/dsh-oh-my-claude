@@ -364,7 +364,11 @@ export async function waitSession(
       leftOut = true;
       break;
     }
-    const kept = text.length > room ? `${text.slice(0, room)}… (reply cut short)` : text;
+    // A cut that lands inside an emoji would leave half of its surrogate pair behind.
+    const kept =
+      text.length > room
+        ? `${text.slice(0, room).replace(/[\uD800-\uDBFF]$/, "")}… (reply cut short)`
+        : text;
     room -= text.length;
     replies.unshift(`--- reply at seq ${event.seq} ---\n${kept}`);
   }
