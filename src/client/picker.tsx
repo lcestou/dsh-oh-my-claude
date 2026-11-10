@@ -95,6 +95,10 @@ export const RW_EVENT = "omc-remote-workspaces";
 /** What the Boxes card dispatches after saving the ssh box list, so this dialog's takeover engages
  *  for a first box, or lets go after the last, without a reload. */
 export const BOXES_EVENT = "omc-ssh-boxes";
+/** What a write to a Claude settings file dispatches once it lands (the settings editor, the Claude
+ *  updates channel, the Tune tab), so the rows that read those files on this page read them again.
+ *  This tab only: a write from another tab or the CLI is not pushed. */
+export const SETTINGS_EVENT = "omc-settings-written";
 
 /** dsh's own dialog copy, and its English fallback when the locale service is not mounted. */
 const DIALOG_EN = {

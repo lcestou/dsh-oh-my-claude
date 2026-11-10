@@ -24,6 +24,7 @@ import {
 } from "../permissions.js";
 import { SCOPE_LABELS, type SettingsScopeInfo } from "./settings.js";
 import { t, useLocale } from "./i18n.js";
+import { SETTINGS_EVENT } from "./picker.js";
 
 /** What the usage route answers about extra usage. */
 interface UsageReply {
@@ -408,6 +409,7 @@ export function TuneBody({
       // reply as the new state left `text` undefined, every switch drawn from it read as off, and
       // the real value only appeared when another tab remounted the panel and fetched afresh.
       setFile(await read(provider));
+      window.dispatchEvent(new Event(SETTINGS_EVENT));
       return undefined;
     } catch (e) {
       return e instanceof Error ? e.message : String(e);

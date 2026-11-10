@@ -32,7 +32,7 @@ import { livingModelId } from "../model-ids.js";
 import { ConfirmButton } from "./tune.js";
 import { ClaudeUpdateDetails } from "./claude-updates.js";
 import { COMPACT_AT, COMPACT_AT_CHOICES, compactThreshold } from "./nudge.js";
-import { BOXES_EVENT } from "./picker.js";
+import { BOXES_EVENT, SETTINGS_EVENT } from "./picker.js";
 import { LiveNote } from "./live-note.js";
 import { Switch } from "./switch.js";
 import type { ToolMode, ToolModeInfo } from "../rows-probe.js";
@@ -674,8 +674,13 @@ function useClaudeMd(ctx: ClientCtx): ClaudeMdState | null {
       if (live) setState(reply);
     };
     void run().catch(() => {});
+    // The settings editor and the Claude updates card on the same page write the files this answer
+    // is worked out from (`CLAUDE_CODE_DISABLE_CLAUDE_MDS` in `env`), so read again after either.
+    const again = () => void run().catch(() => {});
+    window.addEventListener(SETTINGS_EVENT, again);
     return () => {
       live = false;
+      window.removeEventListener(SETTINGS_EVENT, again);
     };
   }, [cwd, provider]);
   return state;

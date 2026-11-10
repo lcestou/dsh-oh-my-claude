@@ -5,7 +5,7 @@
 import { useEffect, useState } from "react";
 
 import type { ClaudeUpdateState } from "../claude-update.js";
-import { BOXES_EVENT } from "./picker.js";
+import { BOXES_EVENT, SETTINGS_EVENT } from "./picker.js";
 import { btn, errText, meta, nested, readJson, ROUTE, select, T } from "./shared.js";
 import { LiveNote } from "./live-note.js";
 import { Switch } from "./switch.js";
@@ -92,14 +92,20 @@ export function ClaudeUpdateDetails() {
       .then((r) => readJson<UpdateReply>(r))
       .then((s) => live && setUpd(s))
       .catch((e: Error) => live && setErr(e.message));
-    read(provider)
-      .then((f) => {
-        if (!live) return;
-        setChannel(readTunables(f.text).autoUpdatesChannel);
-      })
-      .catch(() => live && setChannel(undefined));
+    /** The channel as the box's settings.json holds it now. */
+    const readChannel = () =>
+      read(provider)
+        .then((f) => {
+          if (!live) return;
+          setChannel(readTunables(f.text).autoUpdatesChannel);
+        })
+        .catch(() => live && setChannel(undefined));
+    void readChannel();
+    // The settings editor on the same page writes the same file, so a channel set there shows here.
+    window.addEventListener(SETTINGS_EVENT, readChannel);
     return () => {
       live = false;
+      window.removeEventListener(SETTINGS_EVENT, readChannel);
     };
   }, [host, provider]);
 
@@ -161,6 +167,7 @@ export function ClaudeUpdateDetails() {
         }),
       );
       setChannel(next);
+      window.dispatchEvent(new Event(SETTINGS_EVENT));
       // The updater reads the channel before each check; ask for one so the card follows.
       setUpd(await readJson<UpdateReply>(await fetch(url("&now=1"))));
     } catch (e) {

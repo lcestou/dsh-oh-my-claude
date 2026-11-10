@@ -2,13 +2,13 @@
 // and the JSON helpers the panel reads through.
 import { isNewer } from "../update.js";
 import { t, useLocale } from "./i18n.js";
-import { BOXES_EVENT, canBrowseDirs, OPEN_EVENT, RW_EVENT } from "./picker.js";
+import { BOXES_EVENT, canBrowseDirs, OPEN_EVENT, RW_EVENT, SETTINGS_EVENT } from "./picker.js";
 import { SCOPE_LABELS, SETTINGS_SCOPES, overrideNote } from "./settings.js";
 import type { SettingsScope, SettingsScopeInfo } from "./settings.js";
 import { LiveNote } from "./live-note.js";
 import { ConfirmButton } from "./tune.js";
 import type { ReactNode } from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ACCENT,
   type ClientCtx,
@@ -318,6 +318,18 @@ function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
     done.catch((e: Error) => setError(e.message)).finally(() => setBusy(false));
   };
   useEffect(load, [settingsUrl, scopesUrl, scope]);
+  // Another control on the page wrote a settings file (the Claude updates channel, the Tune tab):
+  // show the new text, unless an edit is open, which would lose what was typed. The editor's own
+  // save skips this, so its "Saved at" line stays up.
+  const ownSave = useRef(false);
+  useEffect(() => {
+    if (editing) return;
+    const again = () => {
+      if (!ownSave.current) load();
+    };
+    window.addEventListener(SETTINGS_EVENT, again);
+    return () => window.removeEventListener(SETTINGS_EVENT, again);
+  });
 
   const parsed = useMemo<{ value?: JsonObject; error?: string }>(() => {
     try {
@@ -355,6 +367,9 @@ function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
             backup: b.backup ?? "?",
           }),
         );
+        ownSave.current = true;
+        window.dispatchEvent(new Event(SETTINGS_EVENT));
+        ownSave.current = false;
       })
       .catch((e: Error) => setError(e.message))
       .finally(() => setBusy(false));
