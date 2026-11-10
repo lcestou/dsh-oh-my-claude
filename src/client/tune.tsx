@@ -916,7 +916,10 @@ export function TuneBody({
                   disabled={busy}
                   placeholder={t("tune.claudeDefault")}
                   aria-label={t(hintKey)}
-                  onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+                  // Not while an IME composes: that Enter picks a candidate, not the value.
+                  onKeyDown={(e) =>
+                    e.key === "Enter" && !e.nativeEvent.isComposing && e.currentTarget.blur()
+                  }
                   onBlur={(e) => {
                     const typed = e.target.value;
                     if (typed !== (settings[key] ?? "")) void write(key, typed);
@@ -1145,7 +1148,9 @@ function PermissionsBlock({
           aria-label={t("tune.rule")}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && draft.trim()) void change("add", kind, draft);
+            // Not while an IME composes: that Enter picks a candidate, not the rule.
+            if (e.key === "Enter" && !e.nativeEvent.isComposing && draft.trim())
+              void change("add", kind, draft);
           }}
           placeholder="Bash(npm run:*)"
           disabled={busy}

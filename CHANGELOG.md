@@ -21,6 +21,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 - After a save in the settings.json editor in Settings, the CLAUDE.md row and the Claude updates channel show the new values at once. A channel picked in Claude updates, or a change from the Tune tab, now shows in the settings.json editor too, unless an edit is open there.
 - Switching a Claude session to a non-Claude model after picking a permission mode from the shield no longer leaves a Claude mode name on dsh's own access control.
 - Spinner verbs changed in the settings.json editor in Settings show on the next working line, without reloading the tab.
+- In the Tune tab, pressing Enter to pick a candidate in a Chinese or other IME no longer adds a half-typed permission rule or saves a half-typed text setting.
 
 ## [1.6.1] - 2026-11-09
 
