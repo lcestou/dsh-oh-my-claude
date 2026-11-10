@@ -1249,14 +1249,15 @@ export function ToolRowsSwitch() {
     >
       <div>
         <div>{t("main.settingsUi.toolRowsTitle")}</div>
-        {/* Live, so a failed switch is read out: the error replaces the description in place. */}
-        <div aria-live="polite" style={{ color: T.faint, fontSize: 12 }}>
+        <div style={{ color: T.faint, fontSize: 12 }}>
           {err
             ? err
             : locked
               ? t("tune.rowsLocked", { reason: info?.rows.reason ?? "" })
               : t("main.settingsUi.toolRowsDesc")}
         </div>
+        {/* Only the outcome is read out: a live description line repeated itself on every open. */}
+        <LiveNote text={err} />
       </div>
       <Switch
         on={info?.mode === "rows"}
@@ -1799,10 +1800,11 @@ export function TerminalSyncSwitch() {
           {t("main.settingsUi.terminalTitle")}{" "}
           <span style={{ color: T.err }}>{t("main.settingsUi.experimental")}</span>
         </div>
-        {/* Live, so a failed switch is read out: the error replaces the description in place. */}
-        <div aria-live="polite" style={{ color: T.faint, fontSize: 12 }}>
+        <div style={{ color: T.faint, fontSize: 12 }}>
           {err || t("main.settingsUi.terminalDesc")}
         </div>
+        {/* Only the outcome is read out: a live description line repeated itself on every open. */}
+        <LiveNote text={err} />
       </div>
       <Switch
         on={on ?? false}
