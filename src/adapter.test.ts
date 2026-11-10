@@ -599,7 +599,7 @@ assert.ok(
   assert.ok(followUp.includes("mcp__dsh__prompt_session sends that session a follow-up"));
   assert.ok(followUp.includes("mcp__dsh__wait_session reads its replies back."));
   assert.equal(dshToolsGuidance(), "dsh tools are available as mcp__dsh__* over MCP.");
-  // Code mode lists only run_code (and the bridge's open_session), and still keeps Claude off
+  // Code mode lists only run_code (and the bridge's own tools), and still keeps Claude off
   // native Agent children, pointing it at run_code programs instead.
   const code = dshToolsGuidance([bridgedTool("run_code"), bridgedTool("open_session")]);
   assert.ok(code.includes("called from a mcp__dsh__run_code program"));

@@ -370,7 +370,7 @@ console.log("mcp ok");
     /run_code needs a live dsh turn/,
     "the failure says why, not unknown tool",
   );
-  // open_session is the bridge's own tool, not dsh's, so code mode still offers it.
+  // The bridge's own tools are not dsh's, so code mode still offers them.
   // SAFETY: cast to HandleRpcParams shape for test double
   const withOpen = (await handleRpc({ jsonrpc: "2.0", id: 45, method: "tools/list" }, {
     ...env,
@@ -499,11 +499,16 @@ console.log("mcp ok");
   } as unknown as Parameters<typeof handleRpc>[1];
   // SAFETY: tools/list always returns a response
   const listed = (await handleRpc({ jsonrpc: "2.0", id: 60, method: "tools/list" }, own)) as {
-    result: { tools: Array<{ name: string }> };
+    result: { tools: Array<{ name: string; annotations: { readOnlyHint: boolean } }> };
   };
   assert.deepEqual(
     listed.result.tools.map((t) => t.name),
     ["subagent_local", "bash", "open_session", "prompt_session", "wait_session"],
+  );
+  assert.deepEqual(
+    listed.result.tools.filter((t) => !t.annotations.readOnlyHint).map((t) => t.name),
+    ["prompt_session"],
+    "only prompt_session runs alone, so a batched wait_session cannot read ahead of it",
   );
   // SAFETY: tools/call always returns a response
   const sent = (await handleRpc(

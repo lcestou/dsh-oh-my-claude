@@ -409,7 +409,9 @@ export async function handleRpc(
               name: t.name,
               description: t.description,
               inputSchema: t.parameters,
-              annotations: { readOnlyHint: true },
+              // prompt_session changes another session, so the CLI runs it on its own: batched
+              // beside a wait_session, the wait could otherwise read the session before it lands.
+              annotations: { readOnlyHint: t !== PROMPT_SESSION },
             })),
           ),
       });
