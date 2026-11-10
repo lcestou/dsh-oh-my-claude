@@ -616,6 +616,9 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     private cliModelsPath;
     /** Persist the CLI's model list to disk under the state dir; a read-only state dir or full disk is swallowed, since the live answer still serves this boot. */
     private persistCliModels;
+    /** Counts the routing changes seen this boot (`relistCliModels`). An answer to `list_models`
+     *  that was asked for under an earlier count is dropped. */
+    private lineupEpoch;
     /** This boot's one lineup probe, shared by every listing that waits on it. */
     private lineupProbe;
     /**

@@ -815,6 +815,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   private async routeFirstSeen(signature: string) {
     this.routeSeen = signature;
     const kept = await readFile(this.routeSeenPath(), "utf8").catch(() => "");
+    // A settings change landed during the read and has written its own, newer signature.
+    if (this.routeSeen !== signature) return;
     if (kept === signature) return;
     await this.keepRouteSeen(signature);
     // A lineup asked for this boot (the boot probe, a session's process) was asked under these
@@ -2366,7 +2368,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   async refreshCliModels(proc: ClaudeProcess): Promise<boolean> {
     if (Date.now() - this.cliModelsAt < CATALOG_TTL_MS) return false;
     this.cliModelsAt = Date.now();
+    const asked = this.lineupEpoch;
     const reply = await this.control(proc, { subtype: "list_models" }, 10_000);
+    // The routing variables moved while this process was answering: it was started under the
+    // old ones, and its lineup would replace the one asked for since.
+    if (asked !== this.lineupEpoch) return false;
     if (!reply.ok) {
       this.log("info", `list_models declined: ${reply.error}`);
       return false;
@@ -2395,6 +2401,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       /* read-only state dir or full disk: the live answer still served this boot */
     }
   }
+  /** Counts the routing changes seen this boot (`relistCliModels`). An answer to `list_models`
+   *  that was asked for under an earlier count is dropped. */
+  private lineupEpoch = 0;
   /** This boot's one lineup probe, shared by every listing that waits on it. */
   private lineupProbe: Promise<void> | undefined;
   /**
@@ -2471,6 +2480,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   async relistCliModels(): Promise<void> {
     if (this.config.sshHost) return;
     const before = this.cliModels;
+    this.lineupEpoch++;
     this.cliModelsAt = 0;
     this.lineupProbe = this.askLineup();
     await this.lineupProbe;

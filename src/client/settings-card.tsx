@@ -180,8 +180,17 @@ export function StaleModelRepair({ sessionId, ctx }: { sessionId: string; ctx: C
         .then((r) => readJson<{ models?: PickerBox[] }>(r))
         .then((b) => {
           const route = b.models?.find((box) => box.provider === cur.provider)?.route;
-          if (route === undefined || route.state === "direct")
-            return pick({ provider: cur.provider, model: living });
+          if (route !== undefined && route.state !== "direct") return;
+          // The read took a moment, and a turn may have started or the model been changed in
+          // it. Either way this repair is off: left unsettled, the next store change (the turn
+          // ending) runs it again from the top.
+          const now = dir.store.getSnapshot().current;
+          const moved = now?.provider !== cur.provider || now.model !== cur.model;
+          if (moved || ctx.sessions.list.getSnapshot()?.byId[sessionId]?.running) {
+            settled = false;
+            return;
+          }
+          return pick({ provider: cur.provider, model: living });
         })
         .catch(() => {});
     });

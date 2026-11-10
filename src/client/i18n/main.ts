@@ -449,6 +449,8 @@ export const en = {
     "Claude Code on this box is going through {host}, not straight to Anthropic.",
   "main.settingsUi.routeDirectWaiting":
     "Claude Code on this box is talking to Anthropic. The models you added join the model menu when a router is switched on.",
+  "main.settingsUi.routeQuiet":
+    "Claude Code on this box is pointed at {host}, which is not answering, so its turns will fail. Start the router there, or switch its routing off.",
   "main.settingsUi.routeClaudeToo": "Also list Claude's own models",
   "main.settingsUi.routeClaudeTooDesc": "A turn on one goes wherever the router sends it.",
   "main.settingsUi.customAdded": "Models you added",
@@ -1026,6 +1028,8 @@ export const zh = {
     "这台主机上的 Claude Code 正经由 {host}，而非直连 Anthropic。",
   "main.settingsUi.routeDirectWaiting":
     "这台主机上的 Claude Code 直连 Anthropic。你添加的模型会在路由打开后出现在模型菜单里。",
+  "main.settingsUi.routeQuiet":
+    "这台主机上的 Claude Code 指向 {host}，但那里没有响应，对话会失败。请启动那里的路由，或关闭它的路由功能。",
   "main.settingsUi.routeClaudeToo": "同时列出 Claude 自带的模型",
   "main.settingsUi.routeClaudeTooDesc": "在这些模型上的对话会被发往路由指定的去处。",
   "main.settingsUi.customAdded": "你添加的模型",

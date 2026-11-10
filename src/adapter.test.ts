@@ -6761,6 +6761,31 @@ console.log("interrupt-on-abort ok");
       undefined,
       "with the router off the spec has no route, so it differs from the routed one",
     );
+
+    // A router switched while dsh was down. The lineup on disk was answered under the old
+    // variables, and the signature kept beside it says so: the next boot asks the CLI again,
+    // once, and the boot after that, with nothing changed, asks nothing.
+    await writeFile(
+      settings,
+      JSON.stringify({
+        env: { ANTHROPIC_BASE_URL: routerUrl, ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: "Local Qwen" },
+      }),
+    );
+    const boot = async () => {
+      const cliAtBoot = fakeCli(routedLineup);
+      const booted = new ClaudeCodeAdapter(
+        fakeCtx({ on() {} }),
+        Config({ providerId: "claude-code-route-routed", configDir: home }),
+      );
+      booted.spawner = () => cliAtBoot.spawner;
+      await booted.listModels("claude-code-route-routed");
+      for (let i = 0; i < 10 && cliAtBoot.spawned.length === 0; i++)
+        await new Promise((r) => setTimeout(r, 50));
+      await new Promise((r) => setTimeout(r, 50));
+      return cliAtBoot.spawned.length;
+    };
+    assert.equal(await boot(), 1, "a boot that finds other routing variables re-asks the lineup");
+    assert.equal(await boot(), 0, "a boot that finds the same ones does not");
     console.log("route listing ok");
   } finally {
     forgetFirstParty();

@@ -26,7 +26,10 @@ export const routeNote = (route: BoxRoute | undefined): string =>
 /**
  * One box's line: which state it is in, in a sentence, when there is something to explain. A
  * routed box always gets one. A box talking to Anthropic gets one only while it has rows waiting
- * for a router (`waiting`), since otherwise nothing on screen needs explaining. A routed box
+ * for a router (`waiting`), since otherwise nothing on screen needs explaining. A box pointed at
+ * an endpoint that does not answer gets one too (a router closed with its routing left on is the
+ * usual way there, and every turn on that box fails until it is started or switched off); the
+ * other unknown boxes, with no host to name, get none. A routed box
  * whose router renamed the aliases also gets the switch that keeps Claude's own rows listed
  * (`routedClaude:<provider>`, box-wide like every hint): shown while rows are set aside or the
  * switch is on, so it can be turned back off. The line is announced when it changes, which is
@@ -45,12 +48,18 @@ export function RouteLine({
   const [claudeToo, setClaudeToo] = useHintFlag(`routedClaude:${provider}`);
   const host = route?.host ?? "";
   const routed = route?.state === "routed";
+  // The sentence follows what is set aside right now; the switch stays up while it is on, with
+  // nothing set aside, so it can be turned back off.
   const aside = routed && (waiting > 0 || claudeToo);
   const text = routed
-    ? t(aside ? "main.settingsUi.routeRoutedNamed" : "main.settingsUi.routeRoutedPlain", { host })
+    ? t(waiting > 0 ? "main.settingsUi.routeRoutedNamed" : "main.settingsUi.routeRoutedPlain", {
+        host,
+      })
     : route?.state === "direct" && waiting > 0
       ? t("main.settingsUi.routeDirectWaiting")
-      : "";
+      : route?.state === "unknown" && host !== ""
+        ? t("main.settingsUi.routeQuiet", { host })
+        : "";
   return (
     <div data-omc-route-line={route?.state ?? "unknown"} style={{ marginBottom: text ? 10 : 0 }}>
       <div aria-live="polite" style={{ color: T.muted, fontSize: 12 }}>
