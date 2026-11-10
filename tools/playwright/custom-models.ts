@@ -6,7 +6,10 @@
 import { dshUrl, launch } from "./pw.js";
 
 const [token, out = "/tmp/pw", keep] = process.argv.slice(2);
-const MODEL = "omc-check-model";
+// A fresh id each run: once a session has run on a custom model, Claude Code's own lineup lists
+// it, and that row stays after the Settings entry is removed. A reused id would fail the last
+// expectation for that reason and not for one the form can do anything about.
+const MODEL = `omc-check-${Date.now().toString(36)}`;
 const NAME = "Check Model";
 const b = await launch();
 // Dark, the way the owner runs dsh: a form that only holds in light mode is not checked.
@@ -44,6 +47,12 @@ await p.waitForTimeout(1800);
 await p.locator("[data-omc-models-block] > summary").first().click();
 await p.waitForTimeout(800);
 
+// With more than one box each is a fold of its own, shut by default; with one, the rows show.
+const boxFold = p.locator("details[data-omc-models-box] > summary").first();
+if (await boxFold.count()) {
+  await boxFold.click();
+  await p.waitForTimeout(400);
+}
 const editor = p.locator("[data-omc-custom-models]").first();
 expect("the block has an Add a model part", (await editor.count()) === 1);
 await editor.locator("[data-omc-custom-models-add] > summary").click();
@@ -103,7 +112,12 @@ await p.screenshot({ path: `${out}/custom-models-added.png` });
 
 if (keep !== "keep") {
   await p.locator(`[data-omc-custom-model="${MODEL}"] [data-omc-custom-model-remove]`).click();
-  await p.waitForTimeout(1500);
+  // The block re-reads every box after a save, and a box whose CLI lineup is not cached yet can
+  // take a few seconds to answer, so the row is waited for rather than given a fixed pause.
+  for (let i = 0; i < 20; i++) {
+    await p.waitForTimeout(500);
+    if ((await p.locator(`[data-omc-model-row="${MODEL}"]`).count()) === 0) break;
+  }
   expect(
     "Remove takes it out of the added models",
     (await p.locator(`[data-omc-custom-model="${MODEL}"]`).count()) === 0,
