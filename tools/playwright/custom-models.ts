@@ -65,7 +65,20 @@ await p.screenshot({ path: `${out}/custom-models-refused.png` });
 
 await editor.locator("[data-omc-custom-model-id]").fill(MODEL);
 await editor.locator("[data-omc-custom-model-name]").fill(NAME);
-await editor.locator("[data-omc-custom-model-window]").fill("128000");
+// The window is a dropdown of the common sizes; "Other" opens a field for an exact number.
+const size = editor.locator("[data-omc-custom-model-window]");
+await size.selectOption("other");
+await p.waitForTimeout(200);
+expect(
+  "Other opens a field for the exact size",
+  (await editor.locator("[data-omc-custom-model-tokens]").count()) === 1,
+);
+await size.selectOption("128000");
+await p.waitForTimeout(200);
+expect(
+  "a named size needs no field",
+  (await editor.locator("[data-omc-custom-model-tokens]").count()) === 0,
+);
 await add.click();
 await p.waitForTimeout(1500);
 expect(

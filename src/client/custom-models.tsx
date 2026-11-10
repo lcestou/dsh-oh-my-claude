@@ -4,7 +4,7 @@
 // beyond the form's draft.
 import { useRef, useState } from "react";
 import { t, useLocale } from "./i18n.js";
-import { ACCENT, btn, btnPrimary, inputStyle, readJson, ROUTE, T } from "./shared.js";
+import { ACCENT, btn, btnPrimary, inputStyle, readJson, ROUTE, select, T } from "./shared.js";
 
 /** One model added in Settings, as the server stores it and `GET /models?all=1` returns it. */
 export interface CustomModelEntry {
@@ -13,6 +13,14 @@ export interface CustomModelEntry {
   contextWindow?: number;
   efforts?: string[];
 }
+
+/** The window sizes the form offers by name; anything else is typed under "Other". */
+const WINDOWS = [128_000, 200_000, 256_000, 512_000, 1_000_000] as const;
+/** The dropdown's value for "type an exact number". */
+const OTHER = "other";
+/** A window size the way people say it: 128000 is "128k", 1000000 is "1M". */
+const windowLabel = (tokens: number): string =>
+  tokens >= 1_000_000 ? `${tokens / 1_000_000}M` : `${tokens / 1000}k`;
 
 /** The router this feature was asked for, named the way the proxy row names Headroom. */
 const CC_SWITCH_URL = "https://github.com/farion1231/cc-switch";
@@ -46,6 +54,9 @@ export function CustomModelsEditor({
   useLocale();
   const [id, setId] = useState("");
   const [name, setName] = useState("");
+  // The dropdown's pick: empty for the default, one of WINDOWS as text, or OTHER, which shows
+  // the field `tokens` is typed into.
+  const [size, setSize] = useState("");
   const [tokens, setTokens] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -74,12 +85,13 @@ export function CustomModelsEditor({
       .finally(() => setBusy(false));
   };
   const add = () => {
-    const entry = draftEntry(id, name, tokens);
+    const entry = draftEntry(id, name, size === OTHER ? tokens : size);
     void save([...saved, entry]).then((ok) => {
       if (!ok) return;
       setDone(t("main.settingsUi.customDidAdd", { name: entry.label ?? entry.model }));
       setId("");
       setName("");
+      setSize("");
       setTokens("");
       idField.current?.focus();
     });
@@ -178,14 +190,33 @@ export function CustomModelsEditor({
           </label>
           <label style={field}>
             {t("main.settingsUi.customWindow")}
-            <input
+            <select
               data-omc-custom-model-window=""
-              style={{ ...inputStyle, flex: "none" }}
-              value={tokens}
-              inputMode="numeric"
-              onChange={(e) => setTokens(e.target.value)}
-            />
+              style={{ ...select, flex: "none", maxWidth: "none" }}
+              value={size}
+              onChange={(e) => setSize(e.target.value)}
+            >
+              <option value="">{t("main.settingsUi.customWindowDefault")}</option>
+              {WINDOWS.map((n) => (
+                <option key={n} value={String(n)}>
+                  {windowLabel(n)}
+                </option>
+              ))}
+              <option value={OTHER}>{t("main.settingsUi.customWindowOther")}</option>
+            </select>
           </label>
+          {size === OTHER && (
+            <label style={field}>
+              {t("main.settingsUi.customWindowTokens")}
+              <input
+                data-omc-custom-model-tokens=""
+                style={{ ...inputStyle, flex: "none" }}
+                value={tokens}
+                inputMode="numeric"
+                onChange={(e) => setTokens(e.target.value)}
+              />
+            </label>
+          )}
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <button
               type="submit"
