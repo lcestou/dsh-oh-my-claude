@@ -13,7 +13,7 @@ import {
 } from "./shared.js";
 import { livingModelId } from "../model-ids.js";
 import type { FallbackRecord } from "../translator.js";
-import { pollEvery, streamUp, subscribe } from "./events.js";
+import { newestWins, pollEvery, streamUp, subscribe } from "./events.js";
 import { draftPending } from "./draft.js";
 import {
   awaitingBody,
@@ -74,7 +74,15 @@ export function watchSessionNotices(ctx: ClientCtx) {
     }
     prevAwaiting = nextAwaiting;
   };
-  whenContextGone(subscribe("awaiting", (_session, data) => onSnapshot(data)));
+  // A fallback read sent before a prompt was answered can land after the event that cleared it,
+  // and its older map would announce the same prompt a second time.
+  const order = newestWins();
+  whenContextGone(
+    subscribe("awaiting", (_session, data) => {
+      order.pushed();
+      onSnapshot(data);
+    }),
+  );
   // The recap's two settings, kept beside the tick rather than read in it: the tick is synchronous
   // and the store is a fetch. Re-read on the same event the settings switches dispatch, so flipping
   // the switch reaches this watcher without a reload.
@@ -113,9 +121,12 @@ export function watchSessionNotices(ctx: ClientCtx) {
       // the stream is up, once a second when it is not.
       if (Date.now() - lastRead >= pollEvery(true, 1000, 1000)) {
         lastRead = Date.now();
+        const fresh = order.ask();
         void fetch(`${ROUTE}/awaiting`)
           .then((r) => readJson<{ sessions?: Record<string, AwaitingRow> }>(r))
-          .then((body) => onSnapshot(body.sessions ?? {}))
+          .then((body) => {
+            if (fresh()) onSnapshot(body.sessions ?? {});
+          })
           .catch(() => {
             // A failed poll says nothing. The next tick asks again; a prompt is not urgent enough
             // to report a network error over.

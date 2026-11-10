@@ -179,6 +179,26 @@ export function pollEvery(running: boolean, fast: number, slow: number): number 
   return streamUp() ? SLOW_MS : running ? fast : slow;
 }
 
+/**
+ * Order between pushed events and a fallback read of the same state. A read sent before the server
+ * moved but answered after the event that says so carries the older state, and applying it put a
+ * dismissed aside back on screen. Call `pushed()` on each event; take `ask()` when a read is sent,
+ * and apply its answer only while the returned check is true, which it stops being once any event
+ * arrives after the read was sent.
+ */
+export function newestWins() {
+  let seq = 0;
+  return {
+    pushed: () => {
+      seq++;
+    },
+    ask: () => {
+      const at = seq;
+      return () => at === seq;
+    },
+  };
+}
+
 /** Route one parsed message to its kind's listeners; exported for the test. */
 export function dispatch<K extends keyof EventData>(
   kind: K,
