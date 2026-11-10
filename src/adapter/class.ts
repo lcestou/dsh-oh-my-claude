@@ -333,6 +333,7 @@ import {
   OUTCOME_MESSAGE,
   RECONNECT_TEXT,
   RELAY_BATCH_MS,
+  DIALOG_POLL_MS,
   relayBlocks,
   resolvedAgent,
   RESTART_TEXT,
@@ -5152,6 +5153,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       onToolResult: appendNativeResult,
     });
     const pending = new Map(); // control request id → AbortController
+    // Set once this step starts gathering a relay batch; from then on it ends on that relay.
+    let relaying = false;
     let outcome: Outcome = "ended"; // ended | finished | relayed | parked | retry
     const wakeOnly = cont.mode === "prompt" && wakeOnlyTurn(options.messages);
     const onAbort = () => {
@@ -5265,7 +5268,16 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         publishAsidesFor();
         return "finished";
       }
-      if (proc.steerPending && event.type === "user") {
+      // Not while a dialog is open: this result belongs to one call of a batch, another call of it
+      // is still waiting on a person, and ending the step would abort that dialog in `finally`.
+      // The CLI takes the steer once the whole batch has answered, so the answered call's own
+      // result comes next and the step parks there. If none ever comes, the steer is handled as
+      // one that never met a tool result is: at the turn's end.
+      // Nor once a relay batch is being gathered: the step is already ending, on that relay, and a
+      // park from inside the batch left through its "turn ended under us" exit, which rejected the
+      // relayed calls although nothing had ended. dsh draws the steer when it opens the next step,
+      // and that step drops this flag.
+      if (proc.steerPending && event.type === "user" && pending.size === 0 && !relaying) {
         // Tool results are in; the CLI injects the forwarded steer next. End the dsh step here
         // so dsh draws the steer now, then resume this same Claude turn on the next call. The CLI
         // takes its whole queue at one tool result (probed 2026-09-22), so no steer stays editable.
@@ -5279,9 +5291,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     };
     /** Claude fires parallel dsh calls as separate MCP requests: gather the batch (one per
      *  outstanding dsh tool_use block), end this step with those tool-calls, keep Claude parked on
-     *  its requests, and resolve them when dsh calls back. Returns the turn outcome: "relayed", or
+     *  its requests, and resolve them when dsh calls back. A dialog still open for another call of
+     *  the message holds the step until a person answers it. Returns the turn outcome: "relayed", or
      *  whatever ended the turn under us (its calls are then rejected). */
     const relayBatch = async function* (first: RelayEvent) {
+      relaying = true;
       const calls: RelayEvent[] = [first];
       const abandon = (outcomeUnderUs: Outcome) => {
         for (const c of calls)
@@ -5309,16 +5323,30 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       // under us (pr-review #99): a step that ends with a tool/call and no tool/result is the
       // corruption this guards against whether the turn ended for a relay or because the process
       // died mid-step, and the session log outlives the process, so the append is valid either way.
-      const waitUntil = Date.now() + NATIVE_RESULT_WAIT_MS;
-      while (callSeqs.size > 0) {
-        const left = waitUntil - Date.now();
+      //
+      // A dialog still open (an approval, a question, a plan review) belongs to another call of
+      // this same message, and ending the step aborts it in `finally`: the person's approval came
+      // back "cancelled before anyone answered" and the call was refused, before they could click.
+      // So the relay waits for every open dialog first, with no deadline of its own: the idle
+      // watchdog bounds it exactly as it bounds a dialog in a step without a relay. The stream
+      // keeps flowing meanwhile. A settled dialog queues no event,
+      // hence the short timed reads. The bounded wait for native results starts once no dialog is
+      // open, since a call approved a moment ago has only just begun.
+      let waitUntil = Date.now() + NATIVE_RESULT_WAIT_MS;
+      while (pending.size > 0 || callSeqs.size > 0) {
+        const asking = pending.size > 0;
+        if (asking) waitUntil = Date.now() + NATIVE_RESULT_WAIT_MS;
+        const left = asking ? DIALOG_POLL_MS : waitUntil - Date.now();
         if (left <= 0) break;
         const more = await proc.nextEvent(left);
         if (more === null) {
           flushPending();
           return abandon("ended");
         }
-        if (more.type === "timeout") break;
+        if (more.type === "timeout") {
+          if (asking) continue;
+          break;
+        }
         if (more.type === "dsh_relay") {
           calls.push(more);
           continue;
