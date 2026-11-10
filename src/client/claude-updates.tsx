@@ -49,6 +49,15 @@ const FOLD = {
  *  option. A browser without it sizes by the longest option. */
 const pick = { ...select, flex: "0 0 auto", fieldSizing: "content", minWidth: 0 } as const;
 
+/** The local row. Its name is left empty and drawn at render with `boxLabel`, so a language switch
+ *  renames it; a translated name stored here stayed in the language it was read in. */
+const LOCAL_BOX: UpdateBox = { name: "", host: "" };
+
+/** The name a box is shown under: "This box" in the active language for the local row (host ""), or
+ *  when no box is chosen yet, and the saved name for an ssh box. */
+const boxLabel = (b: UpdateBox | undefined): string =>
+  b === undefined || b.host === "" ? t("updates.thisBox") : b.name;
+
 /**
  * The rows under the Claude Code updates switch. Reads the box list (and rereads it when the Boxes
  * card saves), then the chosen box's updater state and its settings.json for the channel. The box
@@ -57,7 +66,7 @@ const pick = { ...select, flex: "0 0 auto", fieldSizing: "content", minWidth: 0 
  */
 export function ClaudeUpdateDetails() {
   useLocale();
-  const [boxes, setBoxes] = useState<UpdateBox[]>([{ name: t("updates.thisBox"), host: "" }]);
+  const [boxes, setBoxes] = useState<UpdateBox[]>([LOCAL_BOX]);
   const [host, setHost] = useState("");
   const [upd, setUpd] = useState<UpdateReply | null>(null);
   const [channel, setChannel] = useState<string | undefined>(undefined);
@@ -72,7 +81,7 @@ export function ClaudeUpdateDetails() {
     const load = () =>
       fetch(`${ROUTE}/ssh-boxes`)
         .then((r) => readJson<{ boxes?: UpdateBox[] }>(r))
-        .then((b) => setBoxes([{ name: t("updates.thisBox"), host: "" }, ...(b.boxes ?? [])]))
+        .then((b) => setBoxes([LOCAL_BOX, ...(b.boxes ?? [])]))
         .catch(() => {});
     void load();
     window.addEventListener(BOXES_EVENT, load);
@@ -187,7 +196,7 @@ export function ClaudeUpdateDetails() {
           ? t("updates.channelLatest")
           : t("updates.channelDefault");
   const summary = [
-    boxes.length > 1 ? (box?.name ?? t("updates.thisBox")) : null,
+    boxes.length > 1 ? boxLabel(box) : null,
     channelName,
     upd?.auto ? t("updates.installsOnItsOwn") : t("updates.byTheCard"),
     t("updates.runs", { n: upd?.log.length ?? 0 }),
@@ -228,7 +237,7 @@ export function ClaudeUpdateDetails() {
           >
             {boxes.map((b) => (
               <option key={b.host} value={b.host}>
-                {b.name}
+                {boxLabel(b)}
               </option>
             ))}
           </select>
