@@ -1,0 +1,169 @@
+// Where one mount's Claude Code traffic goes, read from what a router leaves in Claude Code's own
+// config rather than from any router's files: a base URL, and names for the aliases it remaps.
+// The model listing follows the answer (`mergeCatalog`), and so does the Settings card.
+import { type FSWatcher, watch } from "node:fs";
+import type { FirstPartyProbe } from "../first-party.js";
+import { type AliasNames, aliasNamesIn } from "../sessions.js";
+import { proxyBaseUrl } from "./catalog.js";
+
+/**
+ * `direct`: the CLI talks to Anthropic, straight or through a proxy that forwards (headroom).
+ * `routed`: its base URL is an endpoint that answers and is not Anthropic, a router such as CC
+ * Switch or a gateway. `unknown`: this process cannot tell, so nothing is hidden: an ssh box,
+ * whose loopback is not this one's; a Bedrock, Vertex or Foundry setup, where the CLI ignores
+ * the base URL; an endpoint that does not answer.
+ */
+export type RouteState = "direct" | "routed" | "unknown";
+
+/** A mount's state, with the endpoint's host when a base URL is in force (for the Settings line). */
+export interface Route {
+  state: RouteState;
+  host?: string;
+}
+
+/** What the listing is filtered by: the state, and the Settings switch that keeps Claude's own
+ *  rows listed while routed. */
+export interface RouteFilter {
+  state: RouteState;
+  claudeToo: boolean;
+}
+
+/** The variables that decide a route, out of the env in force for a mount. */
+export interface RouteEnv {
+  /** `ANTHROPIC_BASE_URL` as written, blank left out. */
+  baseUrl?: string;
+  /** One of the CLI's cloud-provider switches is on, so the base URL is not what it calls. */
+  cloud: boolean;
+  /** `ANTHROPIC_DEFAULT_<ALIAS>_MODEL_NAME`, by alias: the names a router gives what it remaps. */
+  aliasNames: AliasNames;
+  /** `ANTHROPIC_DEFAULT_<ALIAS>_MODEL`, by alias: the id each alias is pointed at. CC Switch in
+   *  its direct mode points them at the provider's own model and names only some. */
+  aliasModels: AliasNames;
+}
+
+/** The CLI's switches for a cloud provider; with one on it never calls `ANTHROPIC_BASE_URL`. */
+const CLOUD_FLAGS = [
+  "CLAUDE_CODE_USE_BEDROCK",
+  "CLAUDE_CODE_USE_VERTEX",
+  "CLAUDE_CODE_USE_FOUNDRY",
+] as const;
+/** The CLI's own reading of a boolean variable: anything but blank, `0`, `false`, `no`, `off`. */
+const envOn = (value: string | undefined): boolean =>
+  value !== undefined && !["", "0", "false", "no", "off"].includes(value.trim().toLowerCase());
+
+/** Pick the routing variables out of an env. The caller merges the layers first (this process's
+ *  environment, then settings.json's `env`, then the managed file's), in the order the CLI lets
+ *  each outrank the one before. */
+export function routeEnvIn(env: Record<string, string | undefined>): RouteEnv {
+  const out: RouteEnv = {
+    cloud: CLOUD_FLAGS.some((flag) => envOn(env[flag])),
+    aliasNames: aliasNamesIn(env),
+    aliasModels: aliasNamesIn(env, ""),
+  };
+  const baseUrl = env.ANTHROPIC_BASE_URL?.trim();
+  if (baseUrl) out.baseUrl = baseUrl;
+  return out;
+}
+
+/** A stable text for "the routing variables as last seen", compared to tell a real change from
+ *  one more write to a settings file that left them alone. */
+export const routeSignature = (env: RouteEnv): string =>
+  JSON.stringify([
+    env.baseUrl ?? "",
+    env.cloud,
+    Object.entries(env.aliasNames).toSorted(([a], [b]) => a.localeCompare(b)),
+    Object.entries(env.aliasModels).toSorted(([a], [b]) => a.localeCompare(b)),
+  ]);
+
+/**
+ * The state of one mount. `known` answers whether a base URL reaches Anthropic from what is
+ * already kept, without waiting (`firstPartyKnown`); `forwards` is the Settings control "Proxy
+ * reaches Anthropic" set to on, which outranks the endpoint's own answer as it does for the
+ * CLI's flag. An ssh mount and a cloud setup are `unknown` before any URL is looked at.
+ */
+export function routeOf(
+  env: RouteEnv,
+  mount: { ssh: boolean; forwards: boolean },
+  known: (baseUrl: string) => FirstPartyProbe,
+): Route {
+  if (mount.ssh || env.cloud) return { state: "unknown" };
+  const baseUrl = proxyBaseUrl(env.baseUrl);
+  if (!baseUrl) return { state: "direct" };
+  let host = baseUrl;
+  try {
+    host = new URL(baseUrl).host;
+  } catch {
+    /* not a URL: the CLI will refuse it too, and the text as written is the honest host */
+  }
+  if (mount.forwards) return { state: "direct", host };
+  const answer = known(baseUrl);
+  if (answer === undefined) return { state: "unknown", host };
+  return { state: answer ? "direct" : "routed", host };
+}
+
+/** The settings files whose `env` can route the CLI, by name: the user's and the managed one. */
+const SETTINGS_FILES = new Set(["settings.json", "managed-settings.json"]);
+/** How long a burst of writes to a settings file is left to settle before it is read. */
+export const SETTINGS_SETTLE_MS = 400;
+
+/** The watches kept per directory, on the process, each with one listener per mount. */
+const WATCHES = Symbol.for("dsh-oh-my-claude.routeWatches");
+interface Watched {
+  fw: FSWatcher;
+  timer?: ReturnType<typeof setTimeout>;
+  listeners: Map<string, () => void>;
+}
+/** The process-wide registry, made on first use. */
+const watches = (): Map<string, Watched> => {
+  // SAFETY: this plugin's own key on globalThis, typed here once
+  const g = globalThis as typeof globalThis & { [WATCHES]?: Map<string, Watched> };
+  return (g[WATCHES] ??= new Map());
+};
+
+/**
+ * Call `changed` when a settings file in `dir` is written, once per burst. The directory is
+ * watched, not the file: a tool that saves by writing a temp file and renaming it over leaves a
+ * watch on the file holding the old inode. Every other name in the directory is ignored, which
+ * matters in a Claude home, where the CLI writes its history, credentials and backups on every
+ * start. `key` names the listener (a mount's provider id): a second call with the same key
+ * replaces the first, so an adapter rebuilt by dsh does not leave its predecessor listening.
+ * A directory that does not exist, or a watch that fails later, is dropped quietly and armed
+ * again by the next call. Never keeps the process alive.
+ */
+export function watchSettingsIn(dir: string, key: string, changed: () => void): void {
+  const all = watches();
+  const kept = all.get(dir);
+  if (kept) {
+    kept.listeners.set(key, changed);
+    return;
+  }
+  try {
+    const entry: Watched = {
+      listeners: new Map([[key, changed]]),
+      fw: watch(dir, { persistent: false }, (_event, name) => {
+        if (name === null || !SETTINGS_FILES.has(name)) return;
+        if (entry.timer) clearTimeout(entry.timer);
+        entry.timer = setTimeout(() => {
+          for (const listener of entry.listeners.values()) listener();
+        }, SETTINGS_SETTLE_MS);
+        entry.timer.unref();
+      }),
+    };
+    entry.fw.on("error", () => {
+      entry.fw.close();
+      all.delete(dir);
+    });
+    all.set(dir, entry);
+  } catch {
+    /* no such directory (no managed settings on this box): nothing to watch */
+  }
+}
+
+/** Close every watch; tests leave none behind. */
+export const unwatchSettings = () => {
+  for (const entry of watches().values()) {
+    if (entry.timer) clearTimeout(entry.timer);
+    entry.fw.close();
+  }
+  watches().clear();
+};

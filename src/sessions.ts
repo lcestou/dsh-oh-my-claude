@@ -100,6 +100,7 @@ import { isPluginScope, pluginScopeNeedsCwd, type PluginLoadError } from "./plug
 import { CLAUDE_HOME, STATE_DIR, loadWorkspaceModels, trace, writeJson } from "./state.js";
 import { EFFORTS_ALL } from "./adapter/catalog.js";
 import type { CustomModel } from "./adapter/config.js";
+import type { Route } from "./adapter/routing.js";
 import { saveCustomModels } from "./adapter/custom-models.js";
 import { projectDirName } from "./adapter/transcript-watch.js";
 import type {
@@ -1119,6 +1120,10 @@ export interface PickerOption {
   label?: string;
   contextWindow?: number;
   efforts?: string[];
+  /** True for a row the plugin added (`customModels`, the Settings form), unset for one
+   *  settings.json's own `modelPicker.options` names. Only the first kind follows the router
+   *  state: see `mergeCatalog`. */
+  added?: true;
 }
 
 type EffortLevel = (typeof EFFORTS_ALL)[number];
@@ -1143,6 +1148,9 @@ export interface PickerSettings {
    *  `fable`): `ANTHROPIC_DEFAULT_<ALIAS>_MODEL_NAME`. A router such as CC Switch sets these to say
    *  which model an alias really reaches, and the CLI's own picker shows them. */
   aliasNames?: AliasNames;
+  /** The model ids the same `env` points the aliases at (`ANTHROPIC_DEFAULT_<ALIAS>_MODEL`), by
+   *  alias. A router that names nothing still says here which aliases it took over. */
+  aliasModels?: AliasNames;
 }
 
 /** A name per CLI alias (`sonnet`, `opus`, `haiku`, `fable`), as someone set them. */
@@ -1150,14 +1158,33 @@ export type AliasNames = Record<string, string>;
 
 /** The alias names an `env` block sets (`ANTHROPIC_DEFAULT_SONNET_MODEL_NAME` gives `sonnet`),
  *  blank ones left out. Also read off the plugin's own environment by the adapter, since the same
- *  variables work exported in a shell. */
-export function aliasNamesIn(env: Record<string, string | undefined>) {
+ *  variables work exported in a shell. With `suffix` empty it reads the model ids the aliases
+ *  are pointed at instead (`ANTHROPIC_DEFAULT_SONNET_MODEL`). */
+export function aliasNamesIn(
+  env: Record<string, string | undefined>,
+  suffix: "_NAME" | "" = "_NAME",
+) {
   const out: AliasNames = {};
+  const pattern = new RegExp(`^ANTHROPIC_DEFAULT_([A-Z]+)_MODEL${suffix}$`);
   for (const [key, value] of Object.entries(env)) {
-    const alias = /^ANTHROPIC_DEFAULT_([A-Z]+)_MODEL_NAME$/.exec(key)?.[1];
+    const alias = pattern.exec(key)?.[1];
     if (alias !== undefined && value !== undefined && value.trim() !== "")
       out[alias.toLowerCase()] = value.trim();
   }
+  return out;
+}
+
+/**
+ * The `env` block of one settings file, string values only, which is what the CLI exports to
+ * itself at start. A file that is missing, unreadable or mid-edit reads as no variables: the
+ * callers ask "does this file route Claude Code somewhere", and no answer is "no".
+ */
+export async function readSettingsEnv(path: string): Promise<Record<string, string>> {
+  const file = await readSettings({}, path).catch(() => undefined);
+  const env = file?.exists ? parseSettingsText(file.text).value?.env : undefined;
+  const out: Record<string, string> = {};
+  if (isJsonObject(env))
+    for (const [k, v] of Object.entries(env)) if (typeof v === "string") out[k] = v;
   return out;
 }
 
@@ -1395,6 +1422,7 @@ export interface RouteCtx {
   mcp: SessionRouteOptions["mcp"];
   memoryDirAt: (box: MountBox, cwd: string) => Promise<string>;
   models: SessionRouteOptions["models"];
+  offeredModels: SessionRouteOptions["offeredModels"];
   pickerModels: SessionRouteOptions["pickerModels"];
   modelsUpdated: SessionRouteOptions["modelsUpdated"];
   setCustomModels: SessionRouteOptions["setCustomModels"];
@@ -2090,13 +2118,18 @@ export interface SessionRouteOptions {
   };
   /** The model catalog for advisor model selection. */
   models?: () => Promise<Array<{ id: string; name: string }>>;
-  /** The Settings card's Models block: every mount with its rows, hidden ones included. */
+  /** Every model one mount can still name, whatever its picker leaves out right now: what a
+   *  remembered model is judged against (`ClaudeCodeAdapter.offeredModels`). */
+  offeredModels?: (provider?: string) => Promise<Array<{ id: string; name: string }>>;
+  /** The Settings card's Models block: every mount with its rows, hidden ones included, and
+   *  where the mount's traffic goes. */
   pickerModels?: () => Promise<
     Array<{
       provider: string;
       host: string | null;
-      models: Array<{ id: string; name: string; hidden: boolean; locked: boolean }>;
+      models: Array<{ id: string; name: string; hidden: boolean; locked: boolean; off: boolean }>;
       custom: CustomModel[];
+      route: Route;
     }>
   >;
   /** Announces a changed picker to dsh, after a hints write that hid or showed a model. */
@@ -2227,6 +2260,7 @@ export function registerSessionRoutes(
     starters,
     setStarter,
     models,
+    offeredModels,
     pickerModels,
     modelsUpdated,
     setCustomModels,
@@ -2399,7 +2433,11 @@ export function registerSessionRoutes(
     async (folded) => {
       const saved = (await loadWorkspaceModels(STATE_DIR)).get(cwd);
       const wanted = lastModelOf(folded) ?? saved?.model;
-      const offered = models ? (await models()).map((m) => m.id) : undefined;
+      // Against the workspace's own mount and everything it can name: the advisor list this
+      // used to read knows no added model and no second mount's rows, so a workspace last run
+      // on either came back with no model at all.
+      const list = offeredModels ? () => offeredModels(saved?.provider) : models;
+      const offered = list ? (await list()).map((m) => m.id) : undefined;
       return {
         provider: saved?.provider ?? (workspaceAt(cwd) ? undefined : (providerId ?? "claude-code")),
         model: wanted && offered ? livingModelId(wanted, offered) : undefined,
@@ -2642,6 +2680,7 @@ export function registerSessionRoutes(
       mcp,
       memoryDirAt,
       models,
+      offeredModels,
       pickerModels,
       modelsUpdated,
       setCustomModels,

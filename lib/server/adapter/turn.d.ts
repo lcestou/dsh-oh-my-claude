@@ -84,9 +84,15 @@ export interface ResultFrame {
  *  API's 401 once a stored token has been revoked. The one test both the error text and the login
  *  card key on, so they cannot disagree about what counts. */
 export declare function isLoginFailure(result: ResultFrame): boolean;
-/** On an error result it builds the message a person sees: it names the box the turn ran on and,
- *  for a 5xx, appends the incident the status page reports so the failure reads as the provider's. */
-export declare function finishReason(result: ResultFrame, hostLabel?: string): FinishReason;
+/**
+ * On an error result it builds the message a person sees: it names the box the turn ran on and,
+ * for a 5xx, appends the incident the status page reports so the failure reads as the provider's.
+ * `routerOnly` is the turn's model by name when only a router answers for it and the box is not
+ * behind one: Anthropic refuses the id, and the CLI's "it may not exist or you may not have
+ * access" sends the reader looking for a typo or a plan limit, so the refusal says what is
+ * missing. Any other failure on that model keeps the CLI's own words.
+ */
+export declare function finishReason(result: ResultFrame, hostLabel?: string, routerOnly?: string): FinishReason;
 /**
  * Incremental translator from Claude Code stream-json lines to dsh StreamChunks.
  * Prefers partial `stream_event`s; falls back to whole `assistant` messages when no partials arrived.

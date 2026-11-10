@@ -1403,6 +1403,12 @@ export interface ClaudeProcessSpec {
    *  Present only when on, so a spec saved before the switch existed still keys the same; a flip
    *  changes the key, and the session's next turn replaces the process, as an effort change does. */
   firstParty?: true;
+  /** The base URL a settings file gave the CLI at spawn, when it is not the one dsh itself was
+   *  started with: a router switched on in settings.json. Absent otherwise, so every spec saved
+   *  before the field existed keys the same. A process reads its environment once, so a router
+   *  switched on or off under a running session changes the key and the session's next turn
+   *  replaces the process; without that it would go on talking to wherever it was started for. */
+  route?: string;
   /** Started as dsh's child rather than under a keeper: the Settings switch off, or `spawn: node` or
    *  `dsh` in the config. Absent for a keeper, so a keeper's saved spec keys the same as it did
    *  before the field existed; a flip changes the key and the session's next turn respawns, never

@@ -1,6 +1,8 @@
 // Dev-only check: the Models block's "Add a model" form. Adds a model, expects it among the added
 // models and in the block's own rows with a switch, expects a refused id to keep the draft and say
-// why, then removes the model again unless told to keep it. Point PLAYWRIGHT_ROOT at any project
+// why, then removes the model again unless told to keep it. Also checks that the row follows the
+// box's route: on a box that talks to Anthropic an added model is marked as waiting for a router
+// and the block says so; on a routed box, or one whose route cannot be told, it is listed. Point PLAYWRIGHT_ROOT at any project
 // with Playwright installed and DSH_ORIGIN at the dsh to drive; arg 1 is the dsh launch token,
 // arg 2 (optional) a folder for screenshots, arg 3 `keep` to leave the model in place.
 import { dshUrl, launch } from "./pw.js";
@@ -102,12 +104,39 @@ expect(
   "the form is cleared after an add",
   (await editor.locator("[data-omc-custom-model-id]").inputValue()) === "",
 );
-// The picker's own list, which is what a session's model menu reads.
-const listed = await p.evaluate(async () => {
+// The Settings read, which carries every row and each box's route.
+interface BoxRead {
+  provider: string;
+  route?: { state: string };
+  models: { id: string; off?: boolean }[];
+}
+const boxes = await p.evaluate(async (): Promise<BoxRead[]> => {
   const r = await fetch("/dsh-oh-my-claude/models?all=1");
-  return JSON.stringify(await r.json());
+  return (await r.json()).models;
 });
-expect("GET /models?all=1 carries the added model", listed.includes(`"${MODEL}"`));
+const provider = (await editor.getAttribute("data-omc-custom-models")) ?? "";
+const read = boxes.find((box) => box.provider === provider);
+const served = read?.models.find((m) => m.id === MODEL);
+expect("GET /models?all=1 carries the added model", served !== undefined);
+// The route decides whether the picker lists it, and the block says which it is.
+const state = read?.route?.state ?? "";
+const line = p.locator(`[data-omc-models-box="${provider}"] [data-omc-route-line]`).first();
+expect("the box says where its traffic goes", ["direct", "routed", "unknown"].includes(state));
+expect(
+  "the block's line carries the same state",
+  (await line.getAttribute("data-omc-route-line")) === state,
+);
+const marked =
+  (await p.locator(`[data-omc-model-row="${MODEL}"] [data-omc-model-off]`).count()) === 1;
+expect(
+  state === "direct"
+    ? "talking to Anthropic: the added model waits for a router, and its row says so"
+    : "routed, or not known: the added model is listed",
+  marked === (state === "direct") && (served?.off ?? false) === (state === "direct"),
+);
+if (state === "direct")
+  expect("and the block explains the waiting rows", (await line.innerText()).trim() !== "");
+console.log(`route: ${provider} is ${state}`);
 await p.screenshot({ path: `${out}/custom-models-added.png` });
 
 if (keep !== "keep") {

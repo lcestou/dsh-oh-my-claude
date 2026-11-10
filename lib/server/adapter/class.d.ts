@@ -15,6 +15,7 @@ import { Translator, type FallbackRecord, type SuggestionRow, type LiveTask, typ
 import type { FinishReason } from "@deepseek-ai/dsh-llm";
 import type { ClaudeProcessSpec, RelayResult, TurnPrep } from "../process.js";
 import { Config, type CustomModel } from "./config.js";
+import { type Route } from "./routing.js";
 import { type AsideEntry, type AsidesReply, type AwaitingRow, Continuation, ControlRequestEvent, type ControlReply, type ContextUsageReply, type Decision, type HeldSteer, type HoldReply, type IdleReply, type LoginNeed, type LiveTurnReply, type McpAuthReply, type McpStatusReply, type PermissionModeInfo, type PermissionModeReply, type PermissionModeState, type PermissionReadoutReply, type RewindReply, type SessionOptions, type SkillDoctorReply, type SteerCardState, type SteerEditReply, type WorkspaceDiffReply } from "./types.js";
 import { type MirrorQueue, type StreamState, type TranscriptWatch } from "./transcript-watch.js";
 import { type LoadedImage } from "./prompt.js";
@@ -156,6 +157,61 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
         id: string;
         name: string;
     };
+    /**
+     * The environment the CLI of this mount runs with, as far as this process can know it: dsh's
+     * own, then the `env` of the mount's settings.json, then the managed file's, each outranking
+     * the one before as it does for the CLI (measured on 2.1.322: a base URL in settings.json wins
+     * over an exported one). Empty for an ssh box, whose files and shell are not this one's. A
+     * project's own `.claude/settings*.json` is not read: its `env` holds for sessions in that
+     * directory only, and the listing is per mount.
+     */
+    private claudeEnv;
+    /** The routing variables as the last listing or settings change saw them (`routeSignature`),
+     *  so a write to settings.json that left them alone is not taken for a change. */
+    private routeSeen;
+    /** Where `routeSeen` is kept across restarts, beside the lineup it vouches for. */
+    private routeSeenPath;
+    /**
+     * The first look at the routing variables this boot. The lineup on disk was answered under
+     * whatever they were when it was written; a router switched while dsh was down leaves it
+     * naming the wrong models until some session's process answers again, which without this is
+     * the first turn. So the signature is kept on disk with the lineup, and a boot that finds
+     * another one asks the CLI again before the picker is trusted. A box that has no kept
+     * signature yet asks once, unless its lineup was answered this boot. Failures are swallowed:
+     * the listing goes on with what it has.
+     */
+    private routeFirstSeen;
+    /** Write the signature the lineup now on disk was answered under. */
+    private keepRouteSeen;
+    /**
+     * Where this mount's traffic goes right now. Never waits on the endpoint: it answers from what
+     * is kept and, when that is missing or old, asks behind the caller and lists again if the
+     * answer moved (`routeChanged`). Also arms the watch on the settings files, here rather than
+     * in the constructor because dsh builds adapters it never lists from.
+     */
+    route(): Promise<Route>;
+    /**
+     * The name of `model` when only a router can answer for it and this mount is talking to
+     * Anthropic, else undefined. A session can sit on such a model after the router is switched
+     * off (dsh refuses a new pick of an unlisted model, not a prompt on one already picked), and so
+     * can a new session, which opens on the last model picked. Its turn fails with the API's
+     * "issue with the selected model", and this is what lets the failure say why (`finishReason`).
+     */
+    private routerOnly;
+    /** What a listing is filtered by: the state, and this mount's "also list Claude's own models"
+     *  switch (`routedClaude:<provider>` in the hints store). */
+    private routeFilter;
+    /**
+     * A settings file was written. When the routing variables really moved (a router switched on
+     * or off, a provider changed), the CLI's lineup is asked for again before anything is told:
+     * the rows it names are the router's only once the lineup says so, and the kept one is from
+     * before the change. A write that left those variables alone ends here, which is most of them.
+     */
+    private settingsMoved;
+    /** Tell dsh's pickers and the plugin's own views that this box's lists moved: the event dsh
+     *  reloads `listModels` on, and the hints event the Settings rows built on these lists re-read
+     *  on (the same one a saved custom model sends). */
+    private routeChanged;
     /** settings.json's say over the picker, plus this mount's `customModels`. The file is read on
      *  every listing rather than cached: an edit to settings.json takes effect at once. */
     private pickerSettings;
@@ -196,8 +252,10 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
             name: string;
             hidden: boolean;
             locked: boolean;
+            off: boolean;
         }>;
         custom: CustomModel[];
+        route: Route;
     }>>;
     /**
      * Tell dsh every mount's picker changed, the event dsh's own providers send when their lineup
@@ -209,14 +267,18 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     /**
      * One mount's model list: every row the catalog and settings.json would offer, hidden or
      * not, so a hidden model can be switched back on. `locked` marks a row the plugin config hides,
-     * which the switch cannot undo; `hidden` is the picker's answer either way. Default is left out,
-     * since it is never hidden.
+     * which the switch cannot undo; `hidden` is that switch's answer either way. `off` marks a row
+     * the picker leaves out because of where the box's traffic goes (`mergeCatalog`'s route
+     * filter), whatever its switch says: a model only a router answers for while the box talks to
+     * Anthropic, or one of Claude's own while a router has renamed the aliases. Default is left
+     * out, since it is never hidden.
      */
     pickerModels(): Promise<Array<{
         id: string;
         name: string;
         hidden: boolean;
         locked: boolean;
+        off: boolean;
     }>>;
     /** After a `result` frame: remember a login failure for the card, and name the box's providers
      *  logged out so the picker stops offering them; a turn that succeeded clears both. */
@@ -270,6 +332,19 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     }>;
     /** Full metadata for one model, capacity included: the single source both methods above narrow. */
     private fullModelInfo;
+    /**
+     * Every model the mount `provider` names can still name, whatever its listing leaves out right
+     * now: the lineup, settings.json's rows and the added models, with no allowlist, no route
+     * filter and no hide switches. This is what a remembered model is judged against (a
+     * workspace's last model, the new-session default): a model the picker is not showing at the
+     * moment is not a retired one, and treating it as retired would move a workspace to another
+     * model each time a router is switched. A provider no mount carries is judged against this
+     * mount, which is what the callers did before they could name one.
+     */
+    offeredModels(provider?: string): Promise<Array<{
+        id: string;
+        name: string;
+    }>>;
     /** Get the effective permission mode for a session, checking for an override first. */
     getPermissionMode(sessionId: string, accessMode: string | undefined): string;
     /** The working directory a session runs in, read from its header, or undefined when the session is unknown or its header throws (a detached session cannot be read). */
@@ -559,6 +634,14 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      *  logging at info why no lineup came back (the CLI's stderr tail, when it wrote one). A probe
      *  that got no lineup leaves the TTL stamp clear, so the first session still asks. */
     private askLineup;
+    /**
+     * Ask the CLI for its lineup again now, past the once-per-TTL stamp and the "already have one"
+     * exit: what settings.json tells the CLI about its aliases changed, and the kept lineup was
+     * answered under the old file. The same short-lived process as the boot probe, so no model is
+     * called. Not on an ssh box. An ask that brings nothing back keeps the old rows and clears the
+     * stamp, so the next session's process is asked.
+     */
+    relistCliModels(): Promise<void>;
     /** Seed from the last answer, unless a process has already answered this boot. */
     seedCliModels(): Promise<void>;
     /** Get the current model catalog for advisor selection. */

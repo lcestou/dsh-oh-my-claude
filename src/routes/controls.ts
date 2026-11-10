@@ -48,6 +48,7 @@ export function controlsRoutes(ctx: RouteCtx): RouteHandler {
       loginNeeded,
       mcp,
       models,
+      offeredModels,
       modelsUpdated,
       setCustomModels,
       notOnBox,
@@ -107,7 +108,18 @@ export function controlsRoutes(ctx: RouteCtx): RouteHandler {
         events?.hub.publish({ kind: "hints", session: null, data: next });
         // A model switched off or on changes what `listModels` answers; dsh's picker reloads on
         // the event its own providers send for that, so the open menu follows without a reload.
-        if (Object.keys(patch).some((k) => k.startsWith("hideModel:"))) modelsUpdated?.();
+        // So do the two switches the route filter reads: "also list Claude's own models", and
+        // "Proxy reaches Anthropic", which decides whether a base URL counts as a router.
+        if (
+          Object.keys(patch).some(
+            (k) =>
+              k.startsWith("hideModel:") ||
+              k.startsWith("routedClaude:") ||
+              k === "proxyFirstParty" ||
+              k === "proxyFirstPartyOff",
+          )
+        )
+          modelsUpdated?.();
         return json(res, 200, next);
       }
     }
@@ -207,7 +219,10 @@ export function controlsRoutes(ctx: RouteCtx): RouteHandler {
       // The remembered id may be one the CLI has since renamed; answer the form the
       // lineup still has, or nothing, never an id the picker cannot name. Without the
       // catalog (a test harness) the saved id goes out as it is.
-      const offered = models ? (await models()).map((m) => m.id) : undefined;
+      // Against the saved mount's own rows, added models and rows the picker is leaving out
+      // for now included (`offeredModels`): a model that is only out of the menu is not retired.
+      const list = offeredModels ? () => offeredModels(saved.provider) : models;
+      const offered = list ? (await list()).map((m) => m.id) : undefined;
       const model = offered ? livingModelId(saved.model, offered) : saved.model;
       return json(res, 200, model ? { ...saved, model } : {});
     }
@@ -231,7 +246,8 @@ export function controlsRoutes(ctx: RouteCtx): RouteHandler {
       if (!saved) return json(res, 200, {});
       // Same rule as the workspace memory: a model the CLI has since renamed answers in the form
       // the lineup still has, and one it no longer offers answers nothing.
-      const offered = models ? (await models()).map((m) => m.id) : undefined;
+      const list = offeredModels ? () => offeredModels(saved.provider) : models;
+      const offered = list ? (await list()).map((m) => m.id) : undefined;
       const model = offered ? livingModelId(saved.model, offered) : saved.model;
       return json(res, 200, model ? { ...saved, model } : {});
     }

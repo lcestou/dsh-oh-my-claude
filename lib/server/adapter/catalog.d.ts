@@ -1,5 +1,6 @@
 import type { LlmModelInfo, LlmResolvedModelInfo } from "@deepseek-ai/dsh-llm";
 import { type FirstPartyProbe } from "../first-party.js";
+import type { RouteFilter } from "./routing.js";
 import type { CliModel } from "../process.js";
 import type { PickerSettings } from "../sessions.js";
 import type { CustomModel } from "./config.js";
@@ -83,8 +84,15 @@ export declare const FIRST_PARTY_FLAG = "_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_UR
  *  test is the CLI's own (`av()` in 2.1.274: `new URL(e).host` against `["api.anthropic.com"]`),
  *  `host` with its port included, so this fires exactly when the CLI demotes. */
 export declare const proxyBaseUrl: (raw: string | undefined) => string | undefined;
-/** Ask once per dsh process whether this box is first-party, memoised on globalThis (the adapter is built more than once at boot) and retried while unanswered, so a proxy still starting does not fail the turn. */
-export declare const detectFirstParty: () => Promise<FirstPartyProbe>;
+/**
+ * Whether the base URL in force for a mount reaches Anthropic. `raw` is that URL as the mount's
+ * settings and environment give it (`routeEnv`), which is not always this process's own
+ * `ANTHROPIC_BASE_URL`: settings.json's `env` outranks it for the CLI. No URL, or Anthropic's
+ * own, is false without a request, since the flag changes nothing there. Otherwise the answer is
+ * kept per URL (`firstPartyOf`), so one turn in a while waits on the request and an unanswered
+ * probe is asked again by the next turn, a proxy still starting being the likeliest reason.
+ */
+export declare const detectFirstParty: (raw: string | undefined) => Promise<FirstPartyProbe>;
 /** Record what a session answered. A missing or nonsense figure leaves the last good one standing. */
 export declare const noteLiveWindow: (modelId: string | undefined, maxTokens: number | undefined) => void;
 /** The context window a live session last reported for this model, which beats the catalog's
@@ -133,7 +141,7 @@ export declare function withCustomModels(picker: PickerSettings | undefined, cus
 /** Merges the CLI's model rows into the catalog, giving each known model a single stable id and
  *  name so the picker offers the same lineup whether or not the CLI has yet learned the model's
  *  short spelling. */
-export declare function mergeCatalog(cli: CliModel[], base: ReturnType<typeof M>[], picker?: PickerSettings): CatalogModel[];
+export declare function mergeCatalog(cli: CliModel[], base: ReturnType<typeof M>[], picker?: PickerSettings, route?: RouteFilter): CatalogModel[];
 /** Each effort level the last Models API read reported that the plugin does not know, with the
  *  models that carry it, for Diagnostics. Empty until a read has happened, and after a read that
  *  found none. */
@@ -143,7 +151,7 @@ export declare function unknownEffortLevels(): Array<{
 }>;
 /** Serves the model catalog from cache, fetching Anthropic's API when the cache is stale, and
  *  keeps the last good catalog on any failure so the picker never goes empty. */
-export declare function getCatalog(fetchImpl?: typeof fetch, cli?: CliModel[], picker?: PickerSettings): Promise<CatalogModel[]>;
+export declare function getCatalog(fetchImpl?: typeof fetch, cli?: CliModel[], picker?: PickerSettings, route?: RouteFilter): Promise<CatalogModel[]>;
 /** The provider-scoped half of a model entry; every Claude model takes text and images. */
 export declare function modelInfo(provider: string, model: {
     id?: string;

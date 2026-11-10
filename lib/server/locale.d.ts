@@ -71,6 +71,7 @@ declare const EN: {
     readonly apiKeyBilling: "⚠ Claude Code is using the ANTHROPIC_API_KEY from dsh's environment, so this session bills that key, not your Claude subscription. Unset it where dsh starts (its .env or service file) to use the login.";
     readonly taskCompleted: "completed";
     readonly modelNeedsCliUpdate: "Newer than the installed Claude Code; update the CLI to unlock it.";
+    readonly modelNeedsRouter: "{model} only answers through a router, and Claude Code on this box is talking to Anthropic right now. Switch the router on, or pick another model for this session.";
     readonly taskFailed: "failed";
     readonly taskKilled: "killed";
     readonly taskDone: "done";

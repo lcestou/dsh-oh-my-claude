@@ -98,6 +98,8 @@ const EN = {
     "⚠ Claude Code is using the ANTHROPIC_API_KEY from dsh's environment, so this session bills that key, not your Claude subscription. Unset it where dsh starts (its .env or service file) to use the login.",
   taskCompleted: "completed",
   modelNeedsCliUpdate: "Newer than the installed Claude Code; update the CLI to unlock it.",
+  modelNeedsRouter:
+    "{model} only answers through a router, and Claude Code on this box is talking to Anthropic right now. Switch the router on, or pick another model for this session.",
   taskFailed: "failed",
   taskKilled: "killed",
   taskDone: "done",
@@ -229,6 +231,8 @@ const ZH = {
     "⚠ Claude Code 正在使用 dsh 环境里的 ANTHROPIC_API_KEY，此会话按该密钥计费，而不是你的 Claude 订阅。在 dsh 启动处（.env 或服务文件）去掉该变量即可改用登录账号。",
   taskCompleted: "已完成",
   modelNeedsCliUpdate: "比已安装的 Claude Code 更新；更新 CLI 后即可使用。",
+  modelNeedsRouter:
+    "{model} 只能通过路由工具使用，而这台主机上的 Claude Code 目前直连 Anthropic。请打开路由，或为此会话另选一个模型。",
   taskFailed: "失败",
   taskKilled: "已终止",
   taskDone: "已完成",

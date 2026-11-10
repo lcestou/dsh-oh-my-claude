@@ -39,12 +39,20 @@ const picker = withCustomModels(undefined, [
   { model: "   " },
   { model: "odd", label: " ", contextWindow: 0, efforts: ["max", "turbo", "low"] },
 ]);
+// Each row is marked as the plugin's own (`added`), which is what lets the listing tell it from a
+// row settings.json wrote out when it follows the router state.
 assert.deepEqual(picker?.options, [
-  { model: "deepseek-flash", label: "DeepSeek Flash", contextWindow: 128_000, efforts: ["high"] },
-  { model: "bare-alias" },
+  {
+    model: "deepseek-flash",
+    label: "DeepSeek Flash",
+    contextWindow: 128_000,
+    efforts: ["high"],
+    added: true,
+  },
+  { model: "bare-alias", added: true },
   // A blank label and a window that is not a positive whole number are dropped; an effort the CLI
   // does not have goes too, and the rest come back in the CLI's order.
-  { model: "odd", efforts: ["low", "max"] },
+  { model: "odd", efforts: ["low", "max"], added: true },
 ]);
 assert.equal(picker?.replaceBuiltInOptions, false, "the built-in lineup stays");
 

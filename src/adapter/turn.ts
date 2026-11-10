@@ -135,11 +135,27 @@ export function isLoginFailure(result: ResultFrame): boolean {
   );
 }
 
-/** On an error result it builds the message a person sees: it names the box the turn ran on and,
- *  for a 5xx, appends the incident the status page reports so the failure reads as the provider's. */
-export function finishReason(result: ResultFrame, hostLabel?: string): FinishReason {
+/** The API's refusal of a model id, as the CLI words it, or its 404 when the wording moves. */
+const isModelRefusal = (result: ResultFrame): boolean =>
+  result.api_error_status === 404 || /issue with the selected model/i.test(resultMessage(result));
+
+/**
+ * On an error result it builds the message a person sees: it names the box the turn ran on and,
+ * for a 5xx, appends the incident the status page reports so the failure reads as the provider's.
+ * `routerOnly` is the turn's model by name when only a router answers for it and the box is not
+ * behind one: Anthropic refuses the id, and the CLI's "it may not exist or you may not have
+ * access" sends the reader looking for a typo or a plan limit, so the refusal says what is
+ * missing. Any other failure on that model keeps the CLI's own words.
+ */
+export function finishReason(
+  result: ResultFrame,
+  hostLabel?: string,
+  routerOnly?: string,
+): FinishReason {
   if (result.is_error) {
     let message = resultMessage(result);
+    if (routerOnly !== undefined && isModelRefusal(result))
+      message = serverText("modelNeedsRouter", { model: routerOnly });
     // Name the box the turn actually ran on: an SSH box or a remote workspace runs the far claude, so
     // the local hostname would point the user at the wrong machine to run `claude auth login` on.
     if (isLoginFailure(result))

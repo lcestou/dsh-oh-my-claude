@@ -617,6 +617,8 @@ export class Translator {
   /** IANA zone for reset clocks: the browser's when dsh stamped one, else the box's. */
   timeZone: string | undefined;
   hostLabel: string | undefined;
+  /** Set when this turn's model needs a router the box is not behind: see `finishReason`. */
+  routerOnly: string | undefined;
   /** The suffix for a 5xx retry line, from the adapter's cache of Anthropic's status page. */
   statusNote: ((httpStatus: number) => string) | undefined;
   relay: boolean; // dsh tool calls are relayed to dsh's own loop: hide Claude's view of them
@@ -762,6 +764,7 @@ export class Translator {
     onTask,
     onHookRun,
     hostLabel,
+    routerOnly,
     statusNote,
   }: {
     toolActivity?: boolean;
@@ -791,6 +794,8 @@ export class Translator {
     onHookRun?: (run: HookRun) => void;
     /** The box a remote turn runs on, so a logged-out error names it, not this local host. */
     hostLabel?: string;
+    /** This turn's model by name, when only a router answers for it and the box is not routed. */
+    routerOnly?: string;
     /** What to append to a 5xx retry line from the Anthropic status page cache. */
     statusNote?: (httpStatus: number) => string;
   } = {}) {
@@ -802,6 +807,7 @@ export class Translator {
     this.limitFailure = undefined;
     this.timeZone = timeZone;
     this.hostLabel = hostLabel;
+    this.routerOnly = routerOnly;
     this.statusNote = statusNote;
     this.relay = relay; // dsh tool calls are relayed to dsh's own loop: hide Claude's view of them
     this.dshIds = dshIds ?? new Set(); // tool_use ids of dsh tools called over the MCP bridge
@@ -1389,7 +1395,7 @@ export class Translator {
             ? { kind: "aborted", failure: { message: "aborted", code: "ABORTED" } }
             : this.limitFailure
               ? { kind: "error", failure: this.limitFailure }
-              : finishReason(event, this.hostLabel),
+              : finishReason(event, this.hostLabel, this.routerOnly),
         });
         return events;
       }

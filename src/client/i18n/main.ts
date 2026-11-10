@@ -440,6 +440,17 @@ export const en = {
     "Switch a model off to leave it out of that box's model picker. Each box has its own list, so a box you added over SSH can keep a model this one hides. A session already on it keeps running. A newer model shows up on its own.",
   "main.settingsUi.modelsLocked": "hidden by hiddenModels in the plugin config",
   "main.settingsUi.modelsSummary": "{shown} listed, {hidden} hidden",
+  "main.settingsUi.modelsWaiting": "{count} not listed right now",
+  "main.settingsUi.modelOffDirect": "listed while a router is on",
+  "main.settingsUi.modelOffRouted": "set aside while the router is on",
+  "main.settingsUi.routeRoutedNamed":
+    "Claude Code on this box is going through a router at {host}. The model menu lists the router's models, and Claude's own are set aside until the router is switched off.",
+  "main.settingsUi.routeRoutedPlain":
+    "Claude Code on this box is going through {host}, not straight to Anthropic.",
+  "main.settingsUi.routeDirectWaiting":
+    "Claude Code on this box is talking to Anthropic. The models you added join the model menu when a router is switched on.",
+  "main.settingsUi.routeClaudeToo": "Also list Claude's own models",
+  "main.settingsUi.routeClaudeTooDesc": "A turn on one goes wherever the router sends it.",
   "main.settingsUi.customAdded": "Models you added",
   "main.settingsUi.customAddTitle": "Add a model",
   "main.settingsUi.customDescBefore":
@@ -1006,6 +1017,17 @@ export const zh = {
     "关掉一个模型，它就不再出现在该主机的模型选择器里。每台主机各有一份列表，所以通过 SSH 添加的主机可以保留本机隐藏的模型。已在用它的会话照常运行。新模型会自动出现。",
   "main.settingsUi.modelsLocked": "已被插件配置的 hiddenModels 隐藏",
   "main.settingsUi.modelsSummary": "{shown} 个显示，{hidden} 个隐藏",
+  "main.settingsUi.modelsWaiting": "{count} 个当前未列出",
+  "main.settingsUi.modelOffDirect": "路由打开时列出",
+  "main.settingsUi.modelOffRouted": "路由打开期间暂不列出",
+  "main.settingsUi.routeRoutedNamed":
+    "这台主机上的 Claude Code 正经由 {host} 上的路由。模型菜单列出路由提供的模型，Claude 自带的模型在路由关闭前暂不列出。",
+  "main.settingsUi.routeRoutedPlain":
+    "这台主机上的 Claude Code 正经由 {host}，而非直连 Anthropic。",
+  "main.settingsUi.routeDirectWaiting":
+    "这台主机上的 Claude Code 直连 Anthropic。你添加的模型会在路由打开后出现在模型菜单里。",
+  "main.settingsUi.routeClaudeToo": "同时列出 Claude 自带的模型",
+  "main.settingsUi.routeClaudeTooDesc": "在这些模型上的对话会被发往路由指定的去处。",
   "main.settingsUi.customAdded": "你添加的模型",
   "main.settingsUi.customAddTitle": "添加模型",
   "main.settingsUi.customDescBefore": "用于上面列表里没有、由你的网关或本地路由提供的模型，例如在 ",

@@ -13,6 +13,7 @@ import type { ToolMode, ToolModeInfo } from "./rows-probe.js";
 import { type PluginLoadError } from "./plugins.js";
 import { EFFORTS_ALL } from "./adapter/catalog.js";
 import type { CustomModel } from "./adapter/config.js";
+import type { Route } from "./adapter/routing.js";
 import type { LoginNeed, PermissionModeInfo, PermissionModeReply, PermissionModeState, RewindReply, ContextUsageReply, SkillDoctorReply, WorkspaceDiffReply, PermissionReadoutReply, McpStatusReply, AsideEntry, AsidesReply, IdleReply, LiveTurnReply } from "./adapter/types.js";
 import type { TurnsReply, LiveTurn } from "./adapter/turn.js";
 import { type EventHub, type OmcEvent } from "./events.js";
@@ -355,6 +356,10 @@ export interface PickerOption {
     label?: string;
     contextWindow?: number;
     efforts?: string[];
+    /** True for a row the plugin added (`customModels`, the Settings form), unset for one
+     *  settings.json's own `modelPicker.options` names. Only the first kind follows the router
+     *  state: see `mergeCatalog`. */
+    added?: true;
 }
 type EffortLevel = (typeof EFFORTS_ALL)[number];
 /** The two settings.json keys that shape Claude Code's own `/model` picker. */
@@ -373,13 +378,23 @@ export interface PickerSettings {
      *  `fable`): `ANTHROPIC_DEFAULT_<ALIAS>_MODEL_NAME`. A router such as CC Switch sets these to say
      *  which model an alias really reaches, and the CLI's own picker shows them. */
     aliasNames?: AliasNames;
+    /** The model ids the same `env` points the aliases at (`ANTHROPIC_DEFAULT_<ALIAS>_MODEL`), by
+     *  alias. A router that names nothing still says here which aliases it took over. */
+    aliasModels?: AliasNames;
 }
 /** A name per CLI alias (`sonnet`, `opus`, `haiku`, `fable`), as someone set them. */
 export type AliasNames = Record<string, string>;
 /** The alias names an `env` block sets (`ANTHROPIC_DEFAULT_SONNET_MODEL_NAME` gives `sonnet`),
  *  blank ones left out. Also read off the plugin's own environment by the adapter, since the same
- *  variables work exported in a shell. */
-export declare function aliasNamesIn(env: Record<string, string | undefined>): AliasNames;
+ *  variables work exported in a shell. With `suffix` empty it reads the model ids the aliases
+ *  are pointed at instead (`ANTHROPIC_DEFAULT_SONNET_MODEL`). */
+export declare function aliasNamesIn(env: Record<string, string | undefined>, suffix?: "_NAME" | ""): AliasNames;
+/**
+ * The `env` block of one settings file, string values only, which is what the CLI exports to
+ * itself at start. A file that is missing, unreadable or mid-edit reads as no variables: the
+ * callers ask "does this file route Claude Code somewhere", and no answer is "no".
+ */
+export declare function readSettingsEnv(path: string): Promise<Record<string, string>>;
 /**
  * Read what settings.json says about the picker. Anything the CLI would ignore is dropped here,
  * and a file that is missing, unreadable or silent on both keys reads as undefined, so a settings
@@ -523,6 +538,7 @@ export interface RouteCtx {
     mcp: SessionRouteOptions["mcp"];
     memoryDirAt: (box: MountBox, cwd: string) => Promise<string>;
     models: SessionRouteOptions["models"];
+    offeredModels: SessionRouteOptions["offeredModels"];
     pickerModels: SessionRouteOptions["pickerModels"];
     modelsUpdated: SessionRouteOptions["modelsUpdated"];
     setCustomModels: SessionRouteOptions["setCustomModels"];
@@ -930,7 +946,14 @@ export interface SessionRouteOptions {
         id: string;
         name: string;
     }>>;
-    /** The Settings card's Models block: every mount with its rows, hidden ones included. */
+    /** Every model one mount can still name, whatever its picker leaves out right now: what a
+     *  remembered model is judged against (`ClaudeCodeAdapter.offeredModels`). */
+    offeredModels?: (provider?: string) => Promise<Array<{
+        id: string;
+        name: string;
+    }>>;
+    /** The Settings card's Models block: every mount with its rows, hidden ones included, and
+     *  where the mount's traffic goes. */
     pickerModels?: () => Promise<Array<{
         provider: string;
         host: string | null;
@@ -939,8 +962,10 @@ export interface SessionRouteOptions {
             name: string;
             hidden: boolean;
             locked: boolean;
+            off: boolean;
         }>;
         custom: CustomModel[];
+        route: Route;
     }>>;
     /** Announces a changed picker to dsh, after a hints write that hid or showed a model. */
     modelsUpdated?: () => void;
@@ -987,7 +1012,7 @@ declare function sessionTranscript(box: MountBox, dir: string, sessionId: string
 /** True when this session already had one within the gap. Records the ask when it does not. */
 declare function recapIsRepeat(sessionId: string, now: number): boolean;
 /** `projectDir(cwd)` → Claude Code project dir; `startedIds()` → ids the adapter started itself. */
-export declare function registerSessionRoutes(ctx: PluginContext, { log, onHeal, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, importedDir, sshBoxesPath, onSshBoxes, remoteWorkspacesPath, onRemoteWorkspaces, command, boxCommand, sshHost, turnRecords, dshVersion, liveTurn, events, idle, toolMode, spawnMode, terminalSync, permissionModes, thinking, rewind, contextUsage, skillDoctor, workspaceDiff, permissionReadout, hookRuns, askAside, mcp, permissionAsks, sideQuestions, liveTasks, stopTask, taskOutput, compactNow, steersFor, holdSteers, releaseHold, sendSteerNow, loginNeeded, sessionFallbacks, boxOfSession, claudeUpdated, loginDone, logoutDone, liveCount, persistAsides, starters, setStarter, models, pickerModels, modelsUpdated, setCustomModels, providerId, reloadPlugins, reloadSkills, pluginErrors, pluginWarnings, awaiting, continueAfterLimit, instanceFor, instanceForHost, onLoginStatus, }: SessionRouteOptions): void;
+export declare function registerSessionRoutes(ctx: PluginContext, { log, onHeal, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, importedDir, sshBoxesPath, onSshBoxes, remoteWorkspacesPath, onRemoteWorkspaces, command, boxCommand, sshHost, turnRecords, dshVersion, liveTurn, events, idle, toolMode, spawnMode, terminalSync, permissionModes, thinking, rewind, contextUsage, skillDoctor, workspaceDiff, permissionReadout, hookRuns, askAside, mcp, permissionAsks, sideQuestions, liveTasks, stopTask, taskOutput, compactNow, steersFor, holdSteers, releaseHold, sendSteerNow, loginNeeded, sessionFallbacks, boxOfSession, claudeUpdated, loginDone, logoutDone, liveCount, persistAsides, starters, setStarter, models, offeredModels, pickerModels, modelsUpdated, setCustomModels, providerId, reloadPlugins, reloadSkills, pluginErrors, pluginWarnings, awaiting, continueAfterLimit, instanceFor, instanceForHost, onLoginStatus, }: SessionRouteOptions): void;
 /** One settings file as the Diagnostics tab reports it: where it is, and why the CLI refuses it. */
 export interface DiagnosticFile {
     scope: SettingsScope;

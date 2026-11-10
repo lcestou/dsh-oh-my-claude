@@ -57,3 +57,22 @@ export declare const firstPartyMode: (hints: Record<string, boolean | number>) =
  * window, the cost of claiming it wrongly is a session that believes a gateway can serve 1M.
  */
 export declare const wantsFirstParty: (hints: Record<string, boolean | number>, detected: FirstPartyProbe) => boolean;
+/** How long an answer stands before the endpoint is asked again. The software behind a URL
+ *  rarely changes, but a router starts and stops, and something else can take its port. */
+export declare const PROBE_TTL_MS = 60000;
+/**
+ * Whether `baseUrl` reaches Anthropic, for a caller that can wait: a turn about to spawn a
+ * process. A kept answer is returned at once, however old, and refreshed behind the caller when
+ * it is past `PROBE_TTL_MS`, so only the first turn after a boot, or after the endpoint went
+ * quiet, waits on the request. Unanswered is `undefined` and is asked again by the next caller.
+ */
+export declare function firstPartyOf(baseUrl: string, probe?: typeof probeFirstParty, now?: number): Promise<FirstPartyProbe>;
+/**
+ * The same question for a caller that must not wait: a model listing, which the picker holds
+ * open. Answers what is kept, `undefined` when nothing is, and asks the endpoint behind the
+ * caller when the answer is missing or old. `changed` is called when that request comes back with
+ * something other than what this call returned, so the caller can list again.
+ */
+export declare function firstPartyKnown(baseUrl: string, changed: () => void, probe?: typeof probeFirstParty, now?: number): FirstPartyProbe;
+/** Forget every kept answer; tests start from an empty store. */
+export declare const forgetFirstParty: () => void;

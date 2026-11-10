@@ -34,6 +34,7 @@ import { ClaudeUpdateDetails } from "./claude-updates.js";
 import { COMPACT_AT, COMPACT_AT_CHOICES, compactThreshold } from "./nudge.js";
 import { BOXES_EVENT } from "./picker.js";
 import { CustomModelsEditor, type CustomModelEntry } from "./custom-models.js";
+import { type BoxRoute, RouteLine, routeNote } from "./route-line.js";
 import { Switch } from "./switch.js";
 import type { ToolMode, ToolModeInfo } from "../rows-probe.js";
 import { RECAP_AWAY_MS, RECAP_AWAY_CHOICES, recapAwayIn } from "./notices.js";
@@ -142,7 +143,8 @@ export function WorkspaceModelMemory({ sessionId, ctx }: { sessionId: string; ct
  * composer seat read `claude-code/claude-fable-5-1[1m]`: dsh names a selection by finding it in the
  * catalog and prints the raw pair when it is not there (owner, 2026-09-17). Same model, new
  * spelling, so the repair is a plain select; never while a turn runs, since a model change makes the
- * next turn respawn the process. An id with no living form is left alone.
+ * next turn respawn the process. An id with no living form is left alone, and so is every session
+ * on a box whose Claude Code goes through a router, where a missing row means something else.
  */
 export function StaleModelRepair({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   useEffect(() => {
@@ -167,8 +169,21 @@ export function StaleModelRepair({ sessionId, ctx }: { sessionId: string; ctx: C
       if (ctx.sessions.list.getSnapshot()?.byId[sessionId]?.running) return;
       settled = true;
       const living = livingModelId(cur.model, offered);
-      if (living && dir.select)
-        void dir.select({ provider: cur.provider, model: living }).catch(() => {});
+      if (!living || !dir.select) return;
+      const pick = dir.select;
+      // Only on a box that talks to Anthropic. Behind a router the list is the router's: a model
+      // missing from it is set aside, not renamed, and moving the session to its family's alias
+      // would put it on whatever the router sends that alias to, for good. Where the state
+      // cannot be told nothing is moved either. An older server sends no state and is repaired
+      // as before; a failed read repairs nothing, and the next open asks again.
+      void fetch(`${ROUTE}/models?all=1`)
+        .then((r) => readJson<{ models?: PickerBox[] }>(r))
+        .then((b) => {
+          const route = b.models?.find((box) => box.provider === cur.provider)?.route;
+          if (route === undefined || route.state === "direct")
+            return pick({ provider: cur.provider, model: living });
+        })
+        .catch(() => {});
     });
     repair();
     // The directory store for the catalog arriving, the list store for the turn ending: a session
@@ -1335,20 +1350,25 @@ export function RecallSwitch() {
   );
 }
 
-type PickerModel = { id: string; name: string; hidden: boolean; locked: boolean };
-/** `custom` is absent from a server older than this client: the client hot-reloads, the server
- *  waits for a restart. */
+/** `off` is the picker leaving the row out because of where the box's traffic goes, whatever its
+ *  switch says. */
+type PickerModel = { id: string; name: string; hidden: boolean; locked: boolean; off?: boolean };
+/** `custom` and `route` are absent from a server older than this client: the client hot-reloads,
+ *  the server waits for a restart. */
 type PickerBox = {
   provider: string;
   host: string | null;
   models: PickerModel[];
   custom?: CustomModelEntry[];
+  route?: BoxRoute;
 };
 
 /** One model's row in the Models block: a switch over that box's `hideModel:<provider>:<id>` hint,
  *  on when the model is listed. A row the plugin config hides is shown off and disabled, with a note
- *  saying why, since a switch here cannot undo a config entry. Reports its live state up so the
- *  summary can count. */
+ *  saying why, since a switch here cannot undo a config entry. A row the picker leaves out because
+ *  of the box's route (`model.off`) is dimmed with a note saying when it comes back; its switch
+ *  still works, since it is the row's own setting for when it does. Reports its live state up so
+ *  the summary can count. */
 function ModelRow({
   box,
   model,
@@ -1367,11 +1387,12 @@ function ModelRow({
       data-omc-model-row={model.id}
       style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}
     >
-      <div style={{ minWidth: 0, color: hidden ? T.faint : undefined }}>
+      <div style={{ minWidth: 0, color: hidden || model.off ? T.faint : undefined }}>
         <div>{model.name}</div>
-        <div style={{ color: T.faint, fontSize: 11, fontFamily: "monospace" }}>
-          {model.id}
+        <div style={{ color: T.faint, fontSize: 11 }}>
+          <span style={{ fontFamily: "monospace" }}>{model.id}</span>
           {model.locked ? ` · ${t("main.settingsUi.modelsLocked")}` : ""}
+          {model.off && <span data-omc-model-off="">{` · ${routeNote(box.route)}`}</span>}
         </div>
       </div>
       <Switch
@@ -1383,6 +1404,11 @@ function ModelRow({
     </div>
   );
 }
+
+/** "4 listed, 1 hidden", plus how many rows the route keeps out of the picker when any are. */
+const modelsSummary = (all: number, hidden: number, out: number) =>
+  t("main.settingsUi.modelsSummary", { shown: all - hidden - out, hidden }) +
+  (out > 0 ? ` · ${t("main.settingsUi.modelsWaiting", { count: out })}` : "");
 
 /** The Models block: a folded `details` whose summary counts what the pickers list and what is
  *  hidden, so a long lineup reads as one line until opened. Inside, one group per box (this one
@@ -1438,6 +1464,12 @@ export function ModelsBlock() {
     // `reads` is the block's own save: the form below bumps it after the server took a change.
   }, [reads]);
   const total = boxes?.reduce((n, b) => n + b.models.length, 0) ?? 0;
+  /** A box's rows the picker leaves out for the route alone: not counting one switched off as
+   *  well, which the "hidden" figure already has. */
+  const waitingIn = (box: PickerBox) =>
+    box.models.filter((m) => m.off && !hiddenKeys.has(`hideModel:${box.provider}:${m.id}`)).length;
+  const waiting = boxes?.reduce((n, b) => n + waitingIn(b), 0) ?? 0;
+
   return (
     <details data-omc-models-block="" style={NESTED}>
       <summary style={{ cursor: "pointer" }}>
@@ -1445,7 +1477,7 @@ export function ModelsBlock() {
         <span style={{ color: T.faint, fontSize: 12 }}>
           {boxes === undefined
             ? ` · ${t("loading")}`
-            : ` · ${t("main.settingsUi.modelsSummary", { shown: total - hiddenKeys.size, hidden: hiddenKeys.size })}`}
+            : ` · ${modelsSummary(total, hiddenKeys.size, waiting)}`}
         </span>
       </summary>
       <div style={{ padding: "8px 0 0 16px" }}>
@@ -1478,6 +1510,15 @@ export function ModelsBlock() {
                 ))}
               </fieldset>
             );
+            // Counted from the server's rows, not the live switches: whether the route sets a row
+            // aside is the server's call, and the line explains the rows the reader can see.
+            const line = (
+              <RouteLine
+                provider={box.provider}
+                route={box.route}
+                waiting={box.models.filter((m) => m.off).length}
+              />
+            );
             const added = (
               <CustomModelsEditor
                 provider={box.provider}
@@ -1490,6 +1531,7 @@ export function ModelsBlock() {
             // the others at one line each.
             return (boxes ?? []).length === 1 ? (
               <div key={box.provider} data-omc-models-box={box.provider}>
+                {line}
                 {rows}
                 {added}
               </div>
@@ -1502,10 +1544,11 @@ export function ModelsBlock() {
                 <summary style={{ cursor: "pointer", color: T.muted, fontSize: 13 }}>
                   {box.host ?? t("main.sessions.thisBox")}
                   <span style={{ color: T.faint, fontSize: 12 }}>
-                    {` · ${t("main.settingsUi.modelsSummary", { shown: box.models.length - hiddenHere, hidden: hiddenHere })}`}
+                    {` · ${modelsSummary(box.models.length, hiddenHere, waitingIn(box))}`}
                   </span>
                 </summary>
                 <div style={{ padding: "8px 0 0 16px" }}>
+                  {line}
                   {rows}
                   {added}
                 </div>
