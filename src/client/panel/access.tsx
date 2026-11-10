@@ -16,6 +16,7 @@ import {
 } from "../icons.js";
 import type { FeatureSwitches } from "../../switches.js";
 import type { PermissionRules, HooksListing } from "../../process.js";
+import { clearsOverride, keepsShield, PRESET_FOR_MODE, presetForMode } from "./mode-pick.js";
 
 /** The mode to show for a session: the process's own when one runs, else the one the next spawn gets. */
 const shownMode = (snap: PermissionModeState): string => snap.liveMode ?? snap.mode;
@@ -42,16 +43,6 @@ const PRESETS = [
 const presetOfText = (text: string | null): (typeof PRESETS)[number] | undefined =>
   PRESETS.find((p) => p.labels.some((label) => label === text));
 
-// Claude mode → dsh preset it needs.
-const PRESET_FOR_MODE = {
-  plan: "read-only",
-  default: "workspace-write",
-  acceptEdits: "workspace-write",
-  auto: "danger-full-access",
-  dontAsk: "danger-full-access",
-  bypassPermissions: "danger-full-access",
-} satisfies Record<string, string>;
-
 // The six Claude mode rows and the trigger, in key order; their labels come from
 // `panel.access.mode.<mode>` at build time so the menu reads in the active language.
 const MODE_KEYS = [
@@ -63,11 +54,6 @@ const MODE_KEYS = [
   "bypassPermissions",
 ] as const;
 
-// Narrowed indexers so callers can use arbitrary strings without widening the object type.
-/** The dsh permission preset that matches a Claude mode. */
-const presetForMode = (m: string): string =>
-  // SAFETY: PRESET_FOR_MODE has exactly the six Claude modes as keys; all paths below pass a known key.
-  PRESET_FOR_MODE[m as keyof typeof PRESET_FOR_MODE];
 /** The glyph dsh draws for a preset in its own permission menu, keyed the way `PRESET_FOR_MODE`
  *  names them; a Claude mode shows the glyph of the preset it maps to, so the six rows read like
  *  dsh's three. Draws nothing for an unknown mode (the empty string before the first fetch). */
@@ -362,6 +348,14 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
               });
             });
             const pick = (snap: PermissionModeState) => {
+              // A pinned mode already in force above its shield: sending it on would widen dsh's
+              // shield to the mode's preset, so the pick only closes the menu.
+              if (keepsShield(m, snap)) {
+                document.dispatchEvent(
+                  new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+                );
+                return;
+              }
               const need = presetForMode(m);
               const have = snap.accessMode;
               // The label takes the pick at once. What follows is a dsh command, a settle and two
@@ -376,10 +370,7 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
                 reapplyLabel();
               };
               const doSet = () => {
-                const clearDefault =
-                  (need === "read-only" && m === "plan") ||
-                  (need === "workspace-write" && m === "acceptEdits") ||
-                  (need === "danger-full-access" && m === "bypassPermissions");
+                const clearDefault = clearsOverride(m, snap);
                 fetch(`${ROUTE}/permission-mode`, {
                   method: "PUT",
                   headers: { "content-type": "application/json" },
@@ -684,15 +675,14 @@ export function AccessTrigger({ sessionId, ctx }: { sessionId: string; ctx: Clie
     setOpen(false);
     fetchModeState(sessionId).then((snap) => {
       if (!snap) return; // nothing to compare against; leave the current mode as is
+      // A pinned mode already in force above its shield: sending it on would widen dsh's shield.
+      if (keepsShield(m, snap)) return;
       const wasMode = mode;
       setMode(m); // optimistic, like the shield's reapplyLabel
       const revert = () => setMode(wasMode);
       const need = presetForMode(m);
       const settle = () => {
-        const clearDefault =
-          (need === "read-only" && m === "plan") ||
-          (need === "workspace-write" && m === "acceptEdits") ||
-          (need === "danger-full-access" && m === "bypassPermissions");
+        const clearDefault = clearsOverride(m, snap);
         fetch(`${ROUTE}/permission-mode`, {
           method: "PUT",
           headers: { "content-type": "application/json" },

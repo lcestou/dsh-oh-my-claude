@@ -112,6 +112,9 @@ export interface PermissionModeState {
   modes: string[];
   accessMode: string | null;
   ceiling: string;
+  /** The mode a session with no override runs in on each dsh access mode: dsh's mapping by
+   *  default, the pinned mode on every shield when the config pins one. */
+  defaultModes: Record<string, string>;
   /** The mode the running process is in; null without a process. Differs from `mode` after a pick
    *  the CLI could not take live, until the next turn respawns. */
   liveMode?: string | null;
